@@ -18,6 +18,31 @@ include(ChronosInstall)
 
 chronos_validate_sanitizers()
 
+function(chronos_validate_standard_library)
+  include(CheckCXXSourceCompiles)
+  set(CMAKE_CXX_STANDARD 23)
+  set(CMAKE_CXX_STANDARD_REQUIRED ON)
+  check_cxx_source_compiles(
+    "#include <expected>
+     #ifndef __cpp_lib_expected
+     #error std::expected is unavailable
+     #endif
+     int main() {
+       std::expected<int, int> value{42};
+       return value.value() == 42 ? 0 : 1;
+     }"
+    CHRONOS_HAS_CXX23_STD_EXPECTED
+  )
+  if(NOT CHRONOS_HAS_CXX23_STD_EXPECTED)
+    message(
+      FATAL_ERROR
+        "ChronosDB requires C++23 std::expected, but ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} with the selected C++ standard library does not provide it. Select a compatible standard library and configure a fresh build tree; on Ubuntu 24.04 with Clang, install libc++-dev and libc++abi-dev and set CXXFLAGS=-stdlib=libc++."
+    )
+  endif()
+endfunction()
+
+chronos_validate_standard_library()
+
 set(CHRONOS_GIT_COMMIT "unknown")
 set(CHRONOS_GIT_METADATA_AVAILABLE 0)
 set(CHRONOS_GIT_DIRTY 0)

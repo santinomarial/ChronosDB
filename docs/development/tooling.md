@@ -50,8 +50,10 @@ FetchContent directories.
 
 ## CI matrix
 
-GitHub Actions builds and tests Debug configurations on Linux with GCC, Linux with Clang, and macOS
-with AppleClang. The GCC job treats warnings as errors. Separate Linux Clang jobs run ASan+UBSan and
-TSan. Independent jobs verify clang-format and clang-tidy. Test logs are uploaded when a test job
-fails. Benchmarks do not gate shared CI because trustworthy performance comparisons require a
-controlled environment.
+GitHub Actions builds and tests Debug configurations on Linux with GCC/libstdc++, Linux with
+Clang/libc++, and macOS with AppleClang/libc++. Ubuntu 24.04's default Clang/libstdc++ pairing does
+not expose C++23 `std::expected`, so every Linux Clang job installs and selects libc++ explicitly.
+The GCC job treats warnings as errors. Separate Linux Clang/libc++ jobs run ASan+UBSan and TSan.
+Independent jobs verify clang-format and clang-tidy. Test logs are uploaded when a test job fails.
+Benchmarks do not gate shared CI because trustworthy performance comparisons require a controlled
+environment.

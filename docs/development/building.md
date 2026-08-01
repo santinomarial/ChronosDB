@@ -9,7 +9,8 @@ macOS, including Apple silicon.
 
 - CMake 3.25 or newer
 - Ninja 1.10 or newer
-- a C++23 compiler: GCC 13+, Clang 17+, or a current AppleClang
+- a C++23 compiler and standard library that provide `std::expected`: GCC 13+, Clang 17+ paired
+  with a capable libc++/libstdc++, or a current AppleClang
 - Git, so CMake can fetch pinned test dependencies and optionally record revision metadata
 - Python only as required by CMake/GoogleTest test discovery
 - clang-format and clang-tidy from a reasonably current LLVM release (17+ recommended)
@@ -21,15 +22,19 @@ vendored into this repository.
 ## Linux setup
 
 On Ubuntu 24.04, install the distribution packages for `cmake`, `ninja-build`, `g++`, `clang`,
-`clang-format`, and `clang-tidy`. GCC and Clang are both CI-supported. Select a compiler before the
-first configure when needed:
+`libc++-dev`, `libc++abi-dev`, `clang-format`, and `clang-tidy`. GCC and Clang are both
+CI-supported. Ubuntu's Clang 18 defaults to libstdc++ 13, but that compiler/library pairing does not
+expose the required C++23 `std::expected`; the supported Clang pairing uses libc++. Select the
+compiler and standard library before the first configure:
 
 ```sh
 CC=gcc CXX=g++ cmake --preset debug
-CC=clang CXX=clang++ cmake --preset debug
+CC=clang CXX=clang++ CXXFLAGS=-stdlib=libc++ cmake --preset debug
 ```
 
-Do not switch compilers inside an existing build directory; use a fresh preset build directory.
+Configuration checks `std::expected` support and fails early with a direct diagnostic when it is
+missing. Do not switch compilers, standard libraries, or standard-library flags inside an existing
+build directory; use a fresh preset build directory.
 
 ## macOS setup
 
@@ -148,6 +153,8 @@ a leak whose stack enters ChronosDB code, and do not describe a smoke run as a f
 - a FetchContent clone fails: confirm Git/network access, then rerun the same configure command.
 - `clang-tidy was not found`: install it or set `CLANG_TIDY` to its executable before running the
   lint script.
+- `std::expected` is unavailable: select a standard library that implements the required C++23 API
+  and use a fresh build tree; Ubuntu 24.04 Clang uses the libc++ command shown above.
 - stale compiler or option results: remove only the affected `build/<preset>` directory and
   reconfigure. The scripts never delete build trees.
 - no Git metadata: builds outside a checkout remain valid and report Git fields as unavailable.

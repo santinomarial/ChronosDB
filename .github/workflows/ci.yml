@@ -21,26 +21,35 @@ jobs:
             os: ubuntu-24.04
             cc: gcc
             cxx: g++
+            cxxflags: ''
             werror: 'ON'
           - name: Linux Clang
             os: ubuntu-24.04
             cc: clang
             cxx: clang++
+            cxxflags: '-stdlib=libc++'
             werror: 'OFF'
           - name: macOS AppleClang
             os: macos-14
             cc: clang
             cxx: clang++
+            cxxflags: ''
             werror: 'OFF'
     runs-on: ${{ matrix.os }}
     env:
       CC: ${{ matrix.cc }}
       CXX: ${{ matrix.cxx }}
+      CXXFLAGS: ${{ matrix.cxxflags }}
     steps:
       - uses: actions/checkout@v4
       - name: Install Ninja on macOS
         if: runner.os == 'macOS'
         run: brew install ninja
+      - name: Install libc++ for Linux Clang
+        if: matrix.name == 'Linux Clang'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libc++-dev libc++abi-dev
       - name: Configure
         run: cmake --preset debug -DCHRONOS_WARNINGS_AS_ERRORS=${{ matrix.werror }}
       - name: Build
@@ -69,8 +78,13 @@ jobs:
     env:
       CC: clang
       CXX: clang++
+      CXXFLAGS: -stdlib=libc++
     steps:
       - uses: actions/checkout@v4
+      - name: Install libc++
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libc++-dev libc++abi-dev
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
       - name: Build
@@ -99,9 +113,12 @@ jobs:
     env:
       CC: clang
       CXX: clang++
+      CXXFLAGS: -stdlib=libc++
     steps:
       - uses: actions/checkout@v4
       - name: Install clang-tidy
-        run: sudo apt-get update && sudo apt-get install --yes clang-tidy
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clang-tidy libc++-dev libc++abi-dev
       - name: Configure and run clang-tidy
         run: scripts/lint.sh debug
