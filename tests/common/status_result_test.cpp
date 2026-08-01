@@ -96,5 +96,12 @@ TEST(ResultTest, SupportsVoidAndMoveOnlyValues) {
   EXPECT_EQ(*extracted, 73);
 }
 
+TEST(ResultTest, ProjectErrorHelperRejectsOkErrorState) {
+  const Result<int> result = make_unexpected(Status::ok());
+  ASSERT_FALSE(result.has_value());
+  EXPECT_EQ(result.error().code(), StatusCode::kInternal);
+  EXPECT_FALSE(result.error().message().empty());
+}
+
 } // namespace
 } // namespace chronos::common

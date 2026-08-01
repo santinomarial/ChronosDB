@@ -142,7 +142,11 @@ endif()
 
 if(CHRONOS_BUILD_BENCHMARKS)
   chronos_fetch_google_benchmark()
-  add_executable(chronos_common_benchmarks benchmarks/common/version_benchmark.cpp)
+  add_executable(
+    chronos_common_benchmarks
+    benchmarks/common/binary_foundations_benchmark.cpp
+    benchmarks/common/version_benchmark.cpp
+  )
   set_target_properties(chronos_common_benchmarks PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_common_benchmarks PRIVATE cxx_std_23)
   target_link_libraries(chronos_common_benchmarks PRIVATE chronos::common benchmark::benchmark_main)

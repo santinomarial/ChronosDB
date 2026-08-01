@@ -21,6 +21,7 @@ void benchmark_version_json(benchmark::State& state) {
     std::string json = chronos::common::version_json(kInfo);
     benchmark::DoNotOptimize(json);
   }
+  state.SetLabel("local measurement only; version JSON serialization");
 }
 
 BENCHMARK(benchmark_version_json);

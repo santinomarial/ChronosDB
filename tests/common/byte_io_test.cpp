@@ -249,7 +249,15 @@ TEST(ByteIoTest, RejectsEveryTruncatedBoundary) {
     ByteReader reader{ByteView{complete}.first(size)};
     const Status status = read_mixed_values(reader);
     EXPECT_FALSE(status.is_ok());
-    EXPECT_LE(reader.offset(), size);
+    constexpr std::array<std::size_t, 10> kFieldWidths{1, 2, 4, 8, 1, 2, 4, 8, 4, 8};
+    std::size_t expected_offset = 0;
+    for (const std::size_t width : kFieldWidths) {
+      if (width > size - expected_offset) {
+        break;
+      }
+      expected_offset += width;
+    }
+    EXPECT_EQ(reader.offset(), expected_offset);
   }
 }
 

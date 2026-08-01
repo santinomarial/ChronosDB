@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -28,8 +29,7 @@ TEST(Crc32cTest, ProcessesBinaryZerosAndArbitraryBytesDeterministically) {
   const std::array<std::byte, 8> binary{
       std::byte{0x00}, std::byte{0xff}, std::byte{0x80}, std::byte{0x01},
       std::byte{0x7f}, std::byte{0x55}, std::byte{0xaa}, std::byte{0x00}};
-  EXPECT_EQ(crc32c(zeros), crc32c(zeros));
-  EXPECT_NE(crc32c(zeros), 0U);
+  EXPECT_EQ(crc32c(zeros), 0x8a9136aaU);
   EXPECT_EQ(crc32c(binary), crc32c(binary));
   EXPECT_NE(crc32c(binary), crc32c(zeros));
 }
