@@ -69,6 +69,23 @@ TEST(VersionTest, RepresentsUnavailableGitMetadata) {
   EXPECT_NE(version_text(info).find("git commit: unavailable"), std::string::npos);
 }
 
+TEST(VersionTest, PreservesValidUtf8AndReplacesInvalidBytes) {
+  constexpr VersionInfo info{
+      .semantic_version = "caf\xc3\xa9",
+      .git_commit = "bad\xff",
+      .git_metadata_available = true,
+      .git_dirty = false,
+      .build_type = "Debug",
+      .compiler = "Test Compiler",
+      .target_architecture = "test-arch",
+      .operating_system = "TestOS",
+  };
+
+  const std::string json = version_json(info);
+  EXPECT_NE(json.find("caf\xc3\xa9"), std::string::npos);
+  EXPECT_NE(json.find(R"("git_commit":"bad\ufffd")"), std::string::npos);
+}
+
 TEST(VersionTest, StableInputsProduceDeterministicOutput) {
   const VersionInfo info = version_info();
   EXPECT_EQ(version_text(info), version_text(info));

@@ -52,7 +52,7 @@ Checks: >-
   readability-string-compare,
   readability-uniqueptr-delete-release
 WarningsAsErrors: '*'
-HeaderFilterRegex: '^(include|src|tools|tests|benchmarks)/'
+HeaderFilterRegex: '(^|.*/)(include|src|tools|tests|benchmarks)/'
 FormatStyle: file
 CheckOptions:
   readability-implicit-bool-conversion.AllowIntegerConditions: false

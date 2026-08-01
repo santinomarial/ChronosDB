@@ -1,4 +1,5 @@
-#pragma once
+#ifndef CHRONOS_COMMON_VERSION_HPP_
+#define CHRONOS_COMMON_VERSION_HPP_
 
 #include <string>
 #include <string_view>
@@ -6,6 +7,8 @@
 namespace chronos::common {
 
 struct VersionInfo {
+  // All views are borrowed. version_info() returns views with static storage duration; callers of
+  // the rendering overloads need only keep custom views alive for the duration of that call.
   std::string_view semantic_version;
   std::string_view git_commit;
   bool git_metadata_available;
@@ -24,3 +27,5 @@ struct VersionInfo {
 [[nodiscard]] std::string version_json();
 
 } // namespace chronos::common
+
+#endif // CHRONOS_COMMON_VERSION_HPP_

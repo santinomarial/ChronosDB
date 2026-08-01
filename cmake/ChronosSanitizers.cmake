@@ -9,6 +9,13 @@ function(chronos_validate_sanitizers)
     if(MSVC OR NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
       message(FATAL_ERROR "Requested sanitizers require a supported GCC, Clang, or AppleClang toolchain")
     endif()
+
+    if(CMAKE_BUILD_TYPE MATCHES "^(Release|MinSizeRel)$")
+      message(
+        WARNING
+          "Sanitizers are enabled in ${CMAKE_BUILD_TYPE}; ChronosDB sanitizer presets use Debug so assertions and diagnostics remain useful"
+      )
+    endif()
   endif()
 endfunction()
 
