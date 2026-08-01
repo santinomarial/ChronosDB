@@ -122,6 +122,12 @@ if(CHRONOS_BUILD_TESTS)
 
   add_executable(
     chronos_common_tests
+    tests/common/byte_io_test.cpp
+    tests/common/byte_writer_header_self_contained.cpp
+    tests/common/bytes_test.cpp
+    tests/common/checked_math_test.cpp
+    tests/common/crc32c_test.cpp
+    tests/common/status_result_test.cpp
     tests/common/version_header_self_contained.cpp
     tests/common/version_test.cpp
   )
