@@ -33,7 +33,7 @@ void benchmark_byte_reader_u64(benchmark::State& state) {
     const chronos::common::Status status = setup_writer.write_u64_le(0x0123456789abcdefULL);
     if (!status.is_ok()) {
       const std::string message = status.to_string();
-      state.SkipWithError(message.c_str());
+      state.SkipWithError(message);
       return;
     }
   }
@@ -45,7 +45,7 @@ void benchmark_byte_reader_u64(benchmark::State& state) {
       const auto value = reader.read_u64_le();
       if (!value.has_value()) {
         const std::string message = value.error().to_string();
-        state.SkipWithError(message.c_str());
+        state.SkipWithError(message);
         return;
       }
       aggregate ^= *value;
@@ -66,7 +66,7 @@ void benchmark_byte_writer_u64(benchmark::State& state) {
       const chronos::common::Status status = writer.write_u64_le(0x0123456789abcdefULL);
       if (!status.is_ok()) {
         const std::string message = status.to_string();
-        state.SkipWithError(message.c_str());
+        state.SkipWithError(message);
         return;
       }
     }
@@ -77,8 +77,12 @@ void benchmark_byte_writer_u64(benchmark::State& state) {
   state.SetLabel("local measurement only; sequential little-endian u64 encode");
 }
 
+// Google Benchmark intentionally registers functions during static initialization.
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 BENCHMARK(benchmark_crc32c)->Arg(64)->Arg(1024)->Arg(65536);
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 BENCHMARK(benchmark_byte_reader_u64)->Arg(1024)->Arg(65536);
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 BENCHMARK(benchmark_byte_writer_u64)->Arg(1024)->Arg(65536);
 
 } // namespace

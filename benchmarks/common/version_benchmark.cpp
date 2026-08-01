@@ -24,6 +24,8 @@ void benchmark_version_json(benchmark::State& state) {
   state.SetLabel("local measurement only; version JSON serialization");
 }
 
+// Google Benchmark intentionally registers functions during static initialization.
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 BENCHMARK(benchmark_version_json);
 
 } // namespace
