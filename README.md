@@ -1,6 +1,7 @@
 # ChronosDB
 
-> **Pre-alpha — architecture phase.** ChronosDB currently consists of project and architecture documentation; no database engine, server, client, file format, or protocol is implemented yet.
+> **Pre-alpha — foundation phase.** Phase 1A's C++23 build and tooling foundation is implemented.
+> No database engine, server, client, durable format, or network protocol is implemented yet.
 
 ChronosDB is a greenfield, Linux-first distributed real-time analytical database planned primarily in C++23. It is intended to unite durable, low-latency ingestion of event-heavy data with historical columnar SQL, event-time-aware live analytics, system-time history, and resumable subscriptions—through purpose-built storage, query, networking, and replication subsystems rather than an existing database engine hidden behind a new interface.
 
@@ -39,7 +40,29 @@ The diagram is an accepted architectural direction, not a diagram of implemented
 
 ## Current status
 
-Phase 0 is in progress: product semantics, invariants, durable-format contracts, protocol contracts, and architectural decisions must be specified before implementation begins. The present repository establishes the constitution, vision, workload models, architecture outline, invariants, non-goals, roadmap, and ADR process. It contains no implementation and publishes no benchmark results.
+Phase 0 established the initial architecture and specification baseline. Phase 1 has begun, and its
+Phase 1A build foundation is implemented: target-scoped CMake, Ninja presets, pinned test and optional
+benchmark dependencies, formatting/static-analysis workflows, sanitizers, CI configuration, and a
+small common version API with `chronosctl version`. This does not satisfy the full Phase 1 exit gates;
+the remaining common foundations are planned. The repository publishes no database benchmark
+results.
+
+## Build and test
+
+Prerequisites and platform details are in the [building guide](docs/development/building.md). With
+CMake 3.25+, Ninja, a C++23 compiler, and Git installed:
+
+```sh
+cmake --preset dev
+cmake --build --preset dev
+ctest --preset dev
+
+build/dev/chronosctl version
+build/dev/chronosctl version --json
+```
+
+Run the normal local format, build, test, and static-analysis sequence with `scripts/check.sh`.
+Sanitizer and release commands are documented in the building guide.
 
 ## Planned technical depth
 
@@ -51,5 +74,7 @@ The roadmap calls for a checksummed segmented WAL and idempotent recovery; appen
 - [Architecture overview](docs/architecture/overview.md)
 - [Non-negotiable invariants](docs/architecture/invariants.md)
 - [Roadmap and phase gates](docs/roadmap.md)
+- [Building and testing](docs/development/building.md)
+- [Development tooling](docs/development/tooling.md)
 - [Product workloads](docs/product/workloads.md)
 - [ADR index and process](docs/adr/README.md)
