@@ -163,6 +163,26 @@ if(CHRONOS_BUILD_FUZZERS)
     message(FATAL_ERROR "libFuzzer targets cannot be combined with ThreadSanitizer")
   endif()
 
+  include(CheckCXXSourceCompiles)
+  set(CHRONOS_SAVED_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS}")
+  set(CHRONOS_SAVED_REQUIRED_LINK_OPTIONS "${CMAKE_REQUIRED_LINK_OPTIONS}")
+  set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} -fsanitize=fuzzer")
+  list(APPEND CMAKE_REQUIRED_LINK_OPTIONS -fsanitize=fuzzer)
+  check_cxx_source_compiles(
+    "#include <cstddef>
+     #include <cstdint>
+     extern \"C\" int LLVMFuzzerTestOneInput(const std::uint8_t*, std::size_t) { return 0; }"
+    CHRONOS_HAS_LIBFUZZER_RUNTIME
+  )
+  set(CMAKE_REQUIRED_FLAGS "${CHRONOS_SAVED_REQUIRED_FLAGS}")
+  set(CMAKE_REQUIRED_LINK_OPTIONS "${CHRONOS_SAVED_REQUIRED_LINK_OPTIONS}")
+  if(NOT CHRONOS_HAS_LIBFUZZER_RUNTIME)
+    message(
+      FATAL_ERROR
+        "CHRONOS_BUILD_FUZZERS=ON, but ${CMAKE_CXX_COMPILER} cannot compile and link a libFuzzer target; install a Clang distribution with its libFuzzer runtime and configure a fresh build"
+    )
+  endif()
+
   add_executable(chronos_byte_reader_fuzz tests/fuzz/byte_reader_fuzz.cpp)
   set_target_properties(chronos_byte_reader_fuzz PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_byte_reader_fuzz PRIVATE cxx_std_23)
