@@ -6,6 +6,10 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 
 - [Vision](product/vision.md): problem, users, differentiators, principles, and success criteria.
 - [Workloads](product/workloads.md): representative financial and observability data models and query patterns.
+- [Data model](product/data-model.md): typed tables, physical policies, row versions, retention, and late-data classification.
+- [SQL v1](product/sql-v1.md): bounded grammar and deterministic expression/query semantics.
+- [Consistency and durability](product/consistency-and-durability.md): acknowledgment modes, snapshots, future read modes, and idempotency.
+- [Live queries](product/live-query-semantics.md): gap-free historical-to-live handoff, change records, windows, and resumption.
 
 ## Architecture
 
@@ -19,5 +23,11 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Roadmap](roadmap.md): implementation phases and evidence-based exit gates.
 - [Architecture Decision Records](adr/README.md): decision process and index.
 - [ADR template](adr/template.md): required structure for new decisions.
+
+## Verification and measurement
+
+- [Correctness strategy](testing/correctness-strategy.md): future test taxonomy and mapping for all architecture invariants.
+- [Benchmark contract](benchmarks/benchmark-contract.md): mandatory run metadata, metrics, and comparison rules.
+- [ChronosBench](benchmarks/chronosbench.md): planned correctness-checked workload scenarios.
 
 Future format, protocol, subsystem, operations, and learning documents should be linked here when they are added by their corresponding roadmap phase.

@@ -30,3 +30,22 @@ These definitions are normative vocabulary for architecture documents. Detailed 
 - **Quorum:** A majority of the voting members of a Raft configuration sufficient for the operation defined by the consensus protocol.
 - **Linearizable read:** A read ordered after all operations that completed before it began, using a validated current-leader/read-index mechanism or equivalent protocol.
 - **Bounded-stale read:** A read permitted from a replica only when its commit/applied lag satisfies an explicit bound; it is not linearizable.
+- **Physical ordering key:** The typed tuple used to sort rows within a tablet part; it is an access-layout and deterministic tie-breaking tool, not necessarily row identity.
+- **Time partition expression:** A deterministic mapping from event time to a bounded storage partition.
+- **Sharding key:** The typed tuple used to route a row to a tablet; all versions of one logical row must route together.
+- **Deduplication key:** The table-declared typed tuple that defines logical row identity for duplicate, correction, and tombstone handling.
+- **Logical row identity:** The stable identity shared by all physical versions of one logical entity.
+- **Physical row version:** An immutable committed version of a logical row at one system commit position.
+- **Replacement version:** A later physical version that supersedes an earlier version of the same logical row without mutating it.
+- **Tombstone:** A committed version that makes a logical row absent from current views while earlier retained system-time views can still observe prior versions.
+- **Reorder horizon:** The event-time distance behind a tablet frontier within which out-of-order input remains in the active reorder path; older accepted input uses a delta path.
+- **System-history retention:** The policy controlling how long superseded versions and tombstones remain available to system-time queries, subject to active pins.
+- **Query-plan identity:** A stable fingerprint of bound query semantics, schema identities, and relevant options used to scope live resume state.
+- **Snapshot row:** A row from the finite historical phase of a live subscription at its selected committed boundary.
+- **Change record:** A sequenced `UPSERT` or `DELETE` describing how a live query result changes after its snapshot boundary.
+- **Sequence number:** A deterministic monotonic ordinal within one subscription history used to order and deduplicate delivered change records; it is not event time or commit position.
+- **Finalized window:** A window whose watermark has passed its end plus allowed lateness; accepted corrections may still produce a corrected result.
+- **Corrected window:** A previously emitted window result revised because of late input, a replacement version, or a tombstone.
+- **Idempotency horizon:** The advertised interval during which retrying the same client batch identity is guaranteed to return the prior outcome without duplicate logical input.
+- **At-least-once delivery:** Delivery in which every retained matching record is eventually delivered but reconnect or acknowledgment races may produce duplicates.
+- **Local-eventual read:** A future replica read of local applied committed state with no leader contact and no freshness bound.

@@ -1,6 +1,6 @@
 # Non-Negotiable Invariants
 
-These properties define correctness for every future ChronosDB implementation. A roadmap phase cannot pass while it violates an applicable invariant. Tests named here are required future validation strategies, not tests that currently exist. Terms follow the [glossary](../glossary.md), and component boundaries follow the [overview](overview.md).
+These properties define correctness for every future ChronosDB implementation. A roadmap phase cannot pass while it violates an applicable invariant. Tests named here are required future validation strategies, not tests that currently exist. The [correctness strategy](../testing/correctness-strategy.md) maps every invariant to future executable test types. Terms follow the [glossary](../glossary.md), and component boundaries follow the [overview](overview.md).
 
 ## 1. Acknowledged durability survives covered failures
 

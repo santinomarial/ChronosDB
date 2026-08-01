@@ -14,7 +14,7 @@ The primary users are engineers and analysts operating event-driven systems wher
 - observability platform engineers and SRE teams working with metrics, traces, structured events, high-cardinality labels, dashboards, and continuous aggregates; and
 - systems engineers who need explicit, testable storage, recovery, and delivery contracts rather than opaque best-effort behavior.
 
-The initial workload definitions are in [workloads.md](workloads.md).
+The initial workload definitions are in [workloads.md](workloads.md), with canonical typed table semantics in the [data-model contract](data-model.md).
 
 ## Why historical SQL and live analytics belong together
 
@@ -79,4 +79,4 @@ Object-storage tiering is a later capability and is not required to call the rep
 
 ## Benchmark claims
 
-ChronosDB will publish no estimated, extrapolated, or invented performance results. A claim must identify the commit, hardware, operating system, compiler, configuration, durability mode, dataset, workload generator, run duration, warmup, repetitions, percentiles, and resource consumption needed to reproduce it. Comparisons must use equivalent correctness and durability settings. Regressions and unfavorable results remain part of the record.
+ChronosDB will publish no estimated, extrapolated, or invented performance results. A claim must satisfy the full [benchmark publication contract](../benchmarks/benchmark-contract.md), including commit, hardware, software, configuration, durability, dataset, procedure, raw samples, statistics, and resources. Comparisons must use equivalent correctness and durability settings. Regressions and unfavorable results remain part of the record.

@@ -65,7 +65,7 @@ Commit precedes query visibility and live emission. This sequence is logical: a 
 
 ### Read plane
 
-The custom query engine will parse SQL into syntax trees, bind names and types against a versioned catalog, form a logical plan, optimize it, and lower it into physical vectorized operators. Before scanning data, it acquires a stable snapshot containing the relevant schema versions, per-tablet committed positions, head generations, installed CSEG parts, and row-version visibility rule.
+The custom query engine will implement the bounded [SQL v1 contract](../product/sql-v1.md), bind names and types against a versioned catalog, form a logical plan, optimize it, and lower it into physical vectorized operators. Before scanning data, it acquires a stable snapshot governed by the [consistency contract](../product/consistency-and-durability.md), containing the relevant schema versions, per-tablet committed positions, head generations, installed CSEG parts, and row-version visibility rule.
 
 Scans combine visible mutable/sealed heads with immutable parts, use zone maps and sparse or optional secondary indexes to prune work, and feed bounded columnar vectors into operators. The planned scalar engine is a reference oracle before vectorization becomes authoritative.
 
@@ -88,7 +88,7 @@ SQL
 
 The live plane consumes only committed tablet operations in log order. It updates supported incremental operators and materialized views, records sufficient progress to recover or replay, and emits changes through bounded subscription buffers. Slow consumers face a specified policy—backpressure up to a bound, spill if explicitly designed, or disconnect with a resumable position—but cannot stall ingestion indefinitely.
 
-For a historical-to-live query, snapshot acquisition also registers or retains the continuation boundary. Historical results are evaluated at that snapshot; streaming then begins strictly after its commit position. The handoff protocol must close the race between those acts. Resume tokens are opaque, versioned, integrity-protected representations of deterministic committed boundaries, not promises that an external consumer applied each result exactly once.
+For a historical-to-live query, snapshot acquisition also registers or retains the continuation boundary. Historical results are evaluated at that snapshot; streaming then begins strictly after its commit position. The [live-query contract](../product/live-query-semantics.md) closes the race between those acts and specifies at-least-once change delivery. Resume tokens are opaque, versioned, integrity-protected representations of deterministic committed boundaries, not promises that an external consumer applied each result exactly once.
 
 Event-time watermarks and allowed lateness control incremental window behavior. They do not determine database commit visibility. Corrections retain their source event-time meaning and create later system-time versions.
 
