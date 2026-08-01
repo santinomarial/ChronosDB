@@ -1,9 +1,8 @@
 #include "chronos/common/checked_math.hpp"
 
-#include <gtest/gtest.h>
-
 #include <cstddef>
 #include <cstdint>
+#include <gtest/gtest.h>
 #include <limits>
 #include <optional>
 
@@ -19,8 +18,7 @@ TEST(CheckedMathTest, AdditionCoversZeroLimitsAndOverflow) {
   constexpr auto kMaximum = std::numeric_limits<std::uint64_t>::max();
   EXPECT_EQ(checked_add<std::uint64_t>(0, 0), std::optional<std::uint64_t>{0});
   EXPECT_EQ(checked_add<std::uint64_t>(kMaximum, 0), std::optional<std::uint64_t>{kMaximum});
-  EXPECT_EQ(checked_add<std::uint64_t>(kMaximum - 1U, 1U),
-            std::optional<std::uint64_t>{kMaximum});
+  EXPECT_EQ(checked_add<std::uint64_t>(kMaximum - 1U, 1U), std::optional<std::uint64_t>{kMaximum});
   EXPECT_FALSE(checked_add<std::uint64_t>(kMaximum, 1U).has_value());
   EXPECT_FALSE(checked_range_end<std::uint64_t>(kMaximum - 4U, 5U).has_value());
 }
@@ -28,8 +26,7 @@ TEST(CheckedMathTest, AdditionCoversZeroLimitsAndOverflow) {
 TEST(CheckedMathTest, MultiplicationCoversZeroLimitsAndOverflow) {
   constexpr auto kMaximum = std::numeric_limits<std::size_t>::max();
   EXPECT_EQ(checked_multiply<std::size_t>(0, kMaximum), std::optional<std::size_t>{0});
-  EXPECT_EQ(checked_multiply<std::size_t>(1, kMaximum),
-            std::optional<std::size_t>{kMaximum});
+  EXPECT_EQ(checked_multiply<std::size_t>(1, kMaximum), std::optional<std::size_t>{kMaximum});
   EXPECT_EQ(checked_multiply<std::size_t>(kMaximum / 2U, 2U),
             std::optional<std::size_t>{kMaximum - 1U});
   EXPECT_FALSE(checked_multiply<std::size_t>((kMaximum / 2U) + 1U, 2U).has_value());

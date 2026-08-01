@@ -1,7 +1,7 @@
 # Building ChronosDB
 
-ChronosDB's implemented code currently consists of the Phase 1A common version library, its
-command-line probe, and build verification. Engine components described elsewhere remain planned.
+ChronosDB's implemented code currently consists of the Phase 1A build/version foundation and the
+Phase 1B portable common binary primitives. Engine components described elsewhere remain planned.
 The reference production platform is Linux x86-64; this portable common code also supports modern
 macOS, including Apple silicon.
 
@@ -101,6 +101,47 @@ ctest --preset tsan
 The flags attach only to ChronosDB targets. A requested unsupported compiler fails configuration.
 Sanitizer support also depends on the compiler runtime and host OS; Linux Clang is the CI reference.
 
+## Microbenchmarks
+
+The optional benchmark preset builds Release-mode CRC32C, ByteReader, ByteWriter, and harness
+microbenchmarks:
+
+```sh
+cmake --preset benchmark
+cmake --build --preset benchmark
+build/benchmark/chronos_common_benchmarks
+```
+
+The executable labels results as local measurements only. Record the command, compiler, host,
+revision, and full output when using a run as evidence. A smoke run is neither a stable result nor a
+database performance claim.
+
+## ByteReader fuzz target
+
+The fuzz preset is optional and requires Clang with a linkable libFuzzer runtime. It builds the
+ByteReader operation-sequence target with ASan and UBSan while leaving ordinary tests out of that
+build tree:
+
+```sh
+cmake --preset fuzz
+cmake --build --preset fuzz
+build/fuzz/chronos_byte_reader_fuzz -runs=10000 -max_len=4096
+```
+
+Apple's Command Line Tools compiler may omit the libFuzzer runtime even when it accepts Clang
+sanitizer flags. Configuration detects that case and fails with a direct diagnostic. On a Homebrew
+LLVM installation, select that compiler before a fresh configure:
+
+```sh
+CC="$(brew --prefix llvm)/bin/clang" CXX="$(brew --prefix llvm)/bin/clang++" cmake --fresh --preset fuzz
+cmake --build --preset fuzz
+```
+
+If LeakSanitizer on macOS reports only exit-time allocations owned by the libFuzzer/symbolizer
+runtime, first retain that output and ensure the normal ASan/UBSan test suite passes. A bounded fuzz
+smoke may then be repeated with `ASAN_OPTIONS=detect_leaks=0`; do not use that workaround to dismiss
+a leak whose stack enters ChronosDB code, and do not describe a smoke run as a fuzz campaign.
+
 ## Troubleshooting
 
 - `Could not find Ninja`: install Ninja and rerun configure.
@@ -110,3 +151,5 @@ Sanitizer support also depends on the compiler runtime and host OS; Linux Clang 
 - stale compiler or option results: remove only the affected `build/<preset>` directory and
   reconfigure. The scripts never delete build trees.
 - no Git metadata: builds outside a checkout remain valid and report Git fields as unavailable.
+- the fuzz preset reports a missing runtime: select a Clang distribution that includes libFuzzer;
+  enabling the option with GCC or a runtime-less AppleClang is intentionally unsupported.

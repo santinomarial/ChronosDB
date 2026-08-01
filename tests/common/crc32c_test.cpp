@@ -1,20 +1,19 @@
 #include "chronos/common/crc32c.hpp"
 
-#include <gtest/gtest.h>
-
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <gtest/gtest.h>
 #include <random>
 #include <vector>
 
 namespace chronos::common {
 namespace {
 
-constexpr std::array<std::byte, 9> kCheckInput{
-    std::byte{0x31}, std::byte{0x32}, std::byte{0x33}, std::byte{0x34}, std::byte{0x35},
-    std::byte{0x36}, std::byte{0x37}, std::byte{0x38}, std::byte{0x39}};
+constexpr std::array<std::byte, 9> kCheckInput{std::byte{0x31}, std::byte{0x32}, std::byte{0x33},
+                                               std::byte{0x34}, std::byte{0x35}, std::byte{0x36},
+                                               std::byte{0x37}, std::byte{0x38}, std::byte{0x39}};
 
 TEST(Crc32cTest, HandlesEmptyAndStandardCheckInputs) {
   EXPECT_EQ(crc32c(ByteView{}), 0U);
@@ -26,9 +25,9 @@ TEST(Crc32cTest, HandlesEmptyAndStandardCheckInputs) {
 
 TEST(Crc32cTest, ProcessesBinaryZerosAndArbitraryBytesDeterministically) {
   const std::array<std::byte, 32> zeros{};
-  const std::array<std::byte, 8> binary{
-      std::byte{0x00}, std::byte{0xff}, std::byte{0x80}, std::byte{0x01},
-      std::byte{0x7f}, std::byte{0x55}, std::byte{0xaa}, std::byte{0x00}};
+  const std::array<std::byte, 8> binary{std::byte{0x00}, std::byte{0xff}, std::byte{0x80},
+                                        std::byte{0x01}, std::byte{0x7f}, std::byte{0x55},
+                                        std::byte{0xaa}, std::byte{0x00}};
   EXPECT_EQ(crc32c(zeros), 0x8a9136aaU);
   EXPECT_EQ(crc32c(binary), crc32c(binary));
   EXPECT_NE(crc32c(binary), crc32c(zeros));
@@ -50,6 +49,8 @@ TEST(Crc32cTest, EverySplitPointMatchesOneShot) {
 
 TEST(Crc32cTest, RandomChunkBoundariesMatchOneShot) {
   constexpr std::uint64_t kSeed = 0x7a91dce542683fb0ULL;
+  // Determinism is required so a reported seed and trial reproduce a failure.
+  // NOLINTNEXTLINE(bugprone-random-generator-seed)
   std::mt19937_64 random{kSeed};
   std::vector<std::byte> bytes(4096);
   for (std::byte& byte : bytes) {

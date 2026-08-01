@@ -1,10 +1,11 @@
 # Roadmap and Phase Gates
 
 ChronosDB has established the initial Phase 0 architecture baseline and has begun Phase 1. Phase 1A,
-the build and tooling foundation, is implemented and locally verified on macOS ARM64 with
-AppleClang; the Linux compiler/CI matrix is configured but is not claimed as executed locally. This
-status does not mean that the complete Phase 1 gates have passed. Unimplemented portions of Phase 1
-and all later phases remain planned work, not implemented functionality or delivery commitments.
+the build and tooling foundation, and Phase 1B, the portable binary foundations, are implemented.
+Local verification is recorded per change; the Linux compiler/CI matrix remains the reference for
+portable support and is not implied by a macOS-only local run. This status does not mean that the
+complete Phase 1 gates have passed. Unimplemented portions of Phase 1 and all later phases remain
+planned work, not implemented functionality or delivery commitments.
 Work should proceed in order unless an accepted ADR explains why a limited dependency must move
 earlier.
 
@@ -23,9 +24,11 @@ No phase passes because its code merely compiles. A phase passes only when its a
 
 - **Implementation status:** Phase 1A provides the C++23 target graph, pinned test/benchmark
   dependencies, presets, install/export rules, formatting, static analysis, sanitizer workflows,
-  CI configuration, and the version-reporting proof executable. Foundational error/result, byte,
-  checksum, file-I/O, time, identity, logging, and broader test utilities remain unimplemented. The
-  phase exit gates below remain unchanged and have not yet been declared complete.
+  CI configuration, and the version-reporting proof executable. Phase 1B adds status/result values,
+  byte views, checked unsigned arithmetic, bounded little-endian binary I/O, portable incremental
+  CRC32C, unit/property-style tests, an optional ByteReader fuzz target, local-only microbenchmarks,
+  and a learning document. File I/O, time, identity, logging, and broader test utilities remain
+  unimplemented. The phase exit gates below remain unchanged and have not been declared complete.
 
 - **Scope:** reproducible C++23 build profiles; foundational error/result, byte, checksum, file-I/O, time, identity, logging, and test utilities; sanitizers and initial Linux CI policy.
 - **Explicit non-scope:** WAL record semantics, storage engines, SQL, networking, custom allocators without a measured user, and production dependencies not covered by policy/ADR.

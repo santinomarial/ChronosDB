@@ -8,11 +8,17 @@ namespace chronos::common {
 
 ByteReader::ByteReader(const ByteView bytes) noexcept : bytes_(bytes) {}
 
-std::size_t ByteReader::offset() const noexcept { return offset_; }
+std::size_t ByteReader::offset() const noexcept {
+  return offset_;
+}
 
-std::size_t ByteReader::remaining() const noexcept { return bytes_.size() - offset_; }
+std::size_t ByteReader::remaining() const noexcept {
+  return bytes_.size() - offset_;
+}
 
-bool ByteReader::empty() const noexcept { return remaining() == 0; }
+bool ByteReader::empty() const noexcept {
+  return remaining() == 0;
+}
 
 Status ByteReader::bounds_error(const std::size_t requested, const char* const operation) const {
   std::string message{"byte reader "};

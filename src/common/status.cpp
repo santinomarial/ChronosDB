@@ -41,13 +41,21 @@ Status::Status(const StatusCode code, std::string message) : code_(code) {
   message_ = message.empty() ? std::string{status_code_name(code_)} : std::move(message);
 }
 
-Status Status::ok() noexcept { return {}; }
+Status Status::ok() noexcept {
+  return {};
+}
 
-bool Status::is_ok() const noexcept { return code_ == StatusCode::kOk; }
+bool Status::is_ok() const noexcept {
+  return code_ == StatusCode::kOk;
+}
 
-StatusCode Status::code() const noexcept { return code_; }
+StatusCode Status::code() const noexcept {
+  return code_;
+}
 
-const std::string& Status::message() const noexcept { return message_; }
+const std::string& Status::message() const noexcept {
+  return message_;
+}
 
 std::string Status::to_string() const {
   if (is_ok()) {

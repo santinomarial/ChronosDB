@@ -19,6 +19,7 @@ The current graph is:
 chronosctl ───────────► chronos::common
 chronos_common_tests ─► chronos::common + GTest::gtest_main
 chronos_common_benchmarks (optional) ─► chronos::common + benchmark::benchmark_main
+chronos_byte_reader_fuzz (optional) ──► chronos::common + Clang libFuzzer
 ```
 
 ## Reproducibility choices

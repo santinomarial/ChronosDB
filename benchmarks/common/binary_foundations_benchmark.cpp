@@ -3,7 +3,6 @@
 #include "chronos/common/crc32c.hpp"
 
 #include <benchmark/benchmark.h>
-
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -19,7 +18,7 @@ void benchmark_crc32c(benchmark::State& state) {
   }
 
   for ([[maybe_unused]] auto iteration : state) {
-    const std::uint32_t checksum = chronos::common::crc32c(buffer);
+    std::uint32_t checksum = chronos::common::crc32c(buffer);
     benchmark::DoNotOptimize(checksum);
   }
   state.SetBytesProcessed(state.iterations() * state.range(0));
@@ -31,8 +30,7 @@ void benchmark_byte_reader_u64(benchmark::State& state) {
   std::vector<std::byte> buffer(size);
   chronos::common::ByteWriter setup_writer{buffer};
   while (setup_writer.remaining() >= sizeof(std::uint64_t)) {
-    const chronos::common::Status status =
-        setup_writer.write_u64_le(0x0123456789abcdefULL);
+    const chronos::common::Status status = setup_writer.write_u64_le(0x0123456789abcdefULL);
     if (!status.is_ok()) {
       const std::string message = status.to_string();
       state.SkipWithError(message.c_str());

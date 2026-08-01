@@ -33,11 +33,17 @@ inline constexpr auto kCrc32cTable = make_crc32c_table();
 
 } // namespace
 
-void Crc32c::extend(const ByteView bytes) noexcept { state_ = extend_state(state_, bytes); }
+void Crc32c::extend(const ByteView bytes) noexcept {
+  state_ = extend_state(state_, bytes);
+}
 
-void Crc32c::reset() noexcept { state_ = 0xffffffffU; }
+void Crc32c::reset() noexcept {
+  state_ = 0xffffffffU;
+}
 
-std::uint32_t Crc32c::value() const noexcept { return state_ ^ 0xffffffffU; }
+std::uint32_t Crc32c::value() const noexcept {
+  return state_ ^ 0xffffffffU;
+}
 
 std::uint32_t crc32c(const ByteView bytes) noexcept {
   Crc32c checksum;

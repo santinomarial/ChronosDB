@@ -9,9 +9,10 @@
 
 namespace {
 
-template <typename T> void verify_failure_is_atomic(const chronos::common::Result<T>& result,
-                                                    const chronos::common::ByteReader& reader,
-                                                    const std::size_t offset_before) {
+template <typename T>
+void verify_failure_is_atomic(const chronos::common::Result<T>& result,
+                              const chronos::common::ByteReader& reader,
+                              const std::size_t offset_before) {
   if (!result.has_value() && reader.offset() != offset_before) {
     std::abort();
   }
@@ -37,8 +38,8 @@ void verify_failure_is_atomic(const chronos::common::Status& status,
 } // namespace
 
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_t size) {
-  using chronos::common::ByteReader;
   using chronos::common::byte_view;
+  using chronos::common::ByteReader;
 
   ByteReader reader{byte_view(std::span<const std::uint8_t>{data, size})};
   while (!reader.empty()) {

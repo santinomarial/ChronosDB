@@ -34,7 +34,9 @@ public:
   [[nodiscard]] Status zero_fill(std::size_t size);
 
 private:
-  [[nodiscard]] Status write_unsigned_le(std::uint64_t value, std::size_t width,
+  enum class FixedWidth : std::uint8_t { k1 = 1, k2 = 2, k4 = 4, k8 = 8 };
+
+  [[nodiscard]] Status write_unsigned_le(std::uint64_t value, FixedWidth width,
                                          const char* operation);
   [[nodiscard]] Status bounds_error(std::size_t requested, const char* operation) const;
 

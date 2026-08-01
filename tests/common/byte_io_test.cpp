@@ -1,13 +1,11 @@
 #include "chronos/common/byte_reader.hpp"
-
 #include "chronos/common/byte_writer.hpp"
-
-#include <gtest/gtest.h>
 
 #include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <gtest/gtest.h>
 #include <limits>
 #include <random>
 #include <string>
@@ -80,8 +78,8 @@ Status read_mixed_values(ByteReader& reader) {
     return float64.error();
   }
 
-  if (*u8 != 0xa5U || *u16 != 0x1234U || *u32 != 0x89abcdefU ||
-      *u64 != 0x0123456789abcdefULL || *i8 != -7 || *i16 != -1234 || *i32 != -12345678 ||
+  if (*u8 != 0xa5U || *u16 != 0x1234U || *u32 != 0x89abcdefU || *u64 != 0x0123456789abcdefULL ||
+      *i8 != -7 || *i16 != -1234 || *i32 != -12345678 ||
       *i64 != std::numeric_limits<std::int64_t>::min() || *float32 != 1.5F || *float64 != -2.25) {
     return Status{StatusCode::kInternal, "mixed-value test decoded unexpected data"};
   }
@@ -155,8 +153,7 @@ TEST(ByteIoTest, FailedBulkWritesDoNotPartiallyModify) {
   std::array<std::byte, 3> destination{};
   destination.fill(std::byte{0x55});
   const auto original = destination;
-  const std::array<std::byte, 4> source{
-      std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}};
+  const std::array<std::byte, 4> source{std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}};
   ByteWriter writer{destination};
 
   EXPECT_FALSE(writer.write_exact(source).is_ok());
@@ -169,8 +166,8 @@ TEST(ByteIoTest, FailedBulkWritesDoNotPartiallyModify) {
 }
 
 TEST(ByteIoTest, PeekAndSubreaderHaveExplicitAdvanceBehavior) {
-  const std::array<std::byte, 5> buffer{
-      std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}, std::byte{5}};
+  const std::array<std::byte, 5> buffer{std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4},
+                                        std::byte{5}};
   ByteReader reader{buffer};
   const auto peeked = reader.peek_exact(2);
   ASSERT_TRUE(peeked.has_value());
@@ -192,15 +189,13 @@ TEST(ByteIoTest, PeekAndSubreaderHaveExplicitAdvanceBehavior) {
 
 TEST(ByteIoTest, PreservesFloatingPointBitPatterns) {
   constexpr std::array<std::uint32_t, 7> kFloatPatterns{
-      0x00000000U, 0x80000000U, 0x7f800000U, 0xff800000U,
-      0x7fc12345U, 0x00000001U, 0x7f7fffffU};
+      0x00000000U, 0x80000000U, 0x7f800000U, 0xff800000U, 0x7fc12345U, 0x00000001U, 0x7f7fffffU};
   constexpr std::array<std::uint64_t, 7> kDoublePatterns{
-      0x0000000000000000ULL, 0x8000000000000000ULL, 0x7ff0000000000000ULL,
-      0xfff0000000000000ULL, 0x7ff8123456789abcULL, 0x0000000000000001ULL,
-      0x7fefffffffffffffULL};
+      0x0000000000000000ULL, 0x8000000000000000ULL, 0x7ff0000000000000ULL, 0xfff0000000000000ULL,
+      0x7ff8123456789abcULL, 0x0000000000000001ULL, 0x7fefffffffffffffULL};
 
-  std::array<std::byte, (kFloatPatterns.size() * sizeof(float)) +
-                            (kDoublePatterns.size() * sizeof(double))>
+  std::array<std::byte,
+             (kFloatPatterns.size() * sizeof(float)) + (kDoublePatterns.size() * sizeof(double))>
       buffer{};
   ByteWriter writer{buffer};
   for (const std::uint32_t bits : kFloatPatterns) {
@@ -263,6 +258,8 @@ TEST(ByteIoTest, RejectsEveryTruncatedBoundary) {
 
 TEST(ByteIoTest, DeterministicRandomIntegerRoundTrips) {
   constexpr std::uint64_t kSeed = 0x8d6f3a21c497b5e0ULL;
+  // Determinism is required so a reported seed and iteration reproduce a failure.
+  // NOLINTNEXTLINE(bugprone-random-generator-seed)
   std::mt19937_64 random{kSeed};
   for (std::size_t iteration = 0; iteration < 2000; ++iteration) {
     SCOPED_TRACE(::testing::Message() << "seed=" << kSeed << " iteration=" << iteration);
@@ -290,6 +287,34 @@ TEST(ByteIoTest, DeterministicRandomIntegerRoundTrips) {
     EXPECT_EQ(*decoded_u32, u32);
     EXPECT_EQ(*decoded_u16, u16);
     EXPECT_EQ(*decoded_u8, u8);
+    EXPECT_TRUE(reader.empty());
+  }
+}
+
+TEST(ByteIoTest, DeterministicRandomFloatBitPatternsRoundTrip) {
+  constexpr std::uint64_t kSeed = 0x12486acefdb97531ULL;
+  // Determinism is required so a reported seed and iteration reproduce a failure.
+  // NOLINTNEXTLINE(bugprone-random-generator-seed)
+  std::mt19937_64 random{kSeed};
+  for (std::size_t iteration = 0; iteration < 2000; ++iteration) {
+    SCOPED_TRACE(::testing::Message() << "seed=" << kSeed << " iteration=" << iteration);
+    const std::uint32_t float_bits = static_cast<std::uint32_t>(random());
+    const std::uint64_t double_bits = random();
+    const float float_value = std::bit_cast<float>(float_bits);
+    const double double_value = std::bit_cast<double>(double_bits);
+
+    std::array<std::byte, 12> buffer{};
+    ByteWriter writer{buffer};
+    ASSERT_TRUE(writer.write_float32_le(float_value).is_ok());
+    ASSERT_TRUE(writer.write_float64_le(double_value).is_ok());
+
+    ByteReader reader{buffer};
+    const auto decoded_float = reader.read_float32_le();
+    const auto decoded_double = reader.read_float64_le();
+    ASSERT_TRUE(decoded_float.has_value());
+    ASSERT_TRUE(decoded_double.has_value());
+    EXPECT_EQ(std::bit_cast<std::uint32_t>(*decoded_float), float_bits);
+    EXPECT_EQ(std::bit_cast<std::uint64_t>(*decoded_double), double_bits);
     EXPECT_TRUE(reader.empty());
   }
 }

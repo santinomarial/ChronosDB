@@ -36,8 +36,7 @@ public:
   [[nodiscard]] Result<ByteReader> read_subreader(std::size_t size);
 
 private:
-  [[nodiscard]] Result<std::uint64_t> read_unsigned_le(std::size_t width,
-                                                      const char* operation);
+  [[nodiscard]] Result<std::uint64_t> read_unsigned_le(std::size_t width, const char* operation);
   [[nodiscard]] Status bounds_error(std::size_t requested, const char* operation) const;
 
   ByteView bytes_;

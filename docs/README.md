@@ -36,5 +36,7 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 
 - [Project foundation](learning/project-foundation.md): rationale and extension guide for the Phase
   1A build graph.
+- [Common binary foundations](learning/common-binary-foundations.md): ownership, bounds, encoding,
+  failure, and CRC32C contracts for the Phase 1B primitives.
 
 Future format, protocol, subsystem, operations, and learning documents should be linked here when they are added by their corresponding roadmap phase.

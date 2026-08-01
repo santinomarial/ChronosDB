@@ -1,10 +1,9 @@
 #include "chronos/common/bytes.hpp"
 
-#include <gtest/gtest.h>
-
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <gtest/gtest.h>
 #include <span>
 #include <type_traits>
 

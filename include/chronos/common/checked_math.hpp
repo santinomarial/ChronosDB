@@ -11,8 +11,7 @@
 namespace chronos::common {
 
 template <typename T>
-concept UnsignedInteger =
-    std::unsigned_integral<T> && (!std::same_as<std::remove_cv_t<T>, bool>);
+concept UnsignedInteger = std::unsigned_integral<T> && (!std::same_as<std::remove_cv_t<T>, bool>);
 
 template <UnsignedInteger T> [[nodiscard]] constexpr std::optional<T> checked_add(T left, T right) {
   if (right > std::numeric_limits<T>::max() - left) {
@@ -34,6 +33,8 @@ template <UnsignedInteger T>
   return checked_add(offset, length);
 }
 
+// The same-type arguments are intrinsic to the conventional align_up(value, alignment) API.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 template <UnsignedInteger T> [[nodiscard]] Result<T> checked_align_up(T value, T alignment) {
   if (alignment == 0 || (alignment & static_cast<T>(alignment - 1)) != 0) {
     return make_unexpected(

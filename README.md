@@ -1,6 +1,7 @@
 # ChronosDB
 
-> **Pre-alpha — foundation phase.** Phase 1A's C++23 build and tooling foundation is implemented.
+> **Pre-alpha — foundation phase.** Phase 1A's build/tooling and Phase 1B's portable binary
+> foundations are implemented.
 > No database engine, server, client, durable format, or network protocol is implemented yet.
 
 ChronosDB is a greenfield, Linux-first distributed real-time analytical database planned primarily in C++23. It is intended to unite durable, low-latency ingestion of event-heavy data with historical columnar SQL, event-time-aware live analytics, system-time history, and resumable subscriptions—through purpose-built storage, query, networking, and replication subsystems rather than an existing database engine hidden behind a new interface.
@@ -40,12 +41,13 @@ The diagram is an accepted architectural direction, not a diagram of implemented
 
 ## Current status
 
-Phase 0 established the initial architecture and specification baseline. Phase 1 has begun, and its
-Phase 1A build foundation is implemented: target-scoped CMake, Ninja presets, pinned test and optional
-benchmark dependencies, formatting/static-analysis workflows, sanitizers, CI configuration, and a
-small common version API with `chronosctl version`. This does not satisfy the full Phase 1 exit gates;
-the remaining common foundations are planned. The repository publishes no database benchmark
-results.
+Phase 0 established the initial architecture and specification baseline. Phase 1 has begun. Phase
+1A provides the build/tooling foundation and version-reporting proof executable. Phase 1B provides
+operational status/result values, non-owning byte views, checked unsigned arithmetic, bounded
+little-endian readers and writers, and portable incremental CRC32C, with unit/property-style tests,
+an optional fuzz target, and local-only microbenchmarks. This does not satisfy the full Phase 1 exit
+gates: file I/O, time, identity, logging, and broader test utilities remain planned. The repository
+publishes no database benchmark results.
 
 ## Build and test
 
@@ -76,5 +78,6 @@ The roadmap calls for a checksummed segmented WAL and idempotent recovery; appen
 - [Roadmap and phase gates](docs/roadmap.md)
 - [Building and testing](docs/development/building.md)
 - [Development tooling](docs/development/tooling.md)
+- [Common binary foundations](docs/learning/common-binary-foundations.md)
 - [Product workloads](docs/product/workloads.md)
 - [ADR index and process](docs/adr/README.md)

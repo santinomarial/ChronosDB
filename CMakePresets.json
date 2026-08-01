@@ -48,6 +48,16 @@
       }
     },
     {
+      "name": "benchmark",
+      "displayName": "Release Microbenchmarks",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CHRONOS_BUILD_TESTS": "OFF",
+        "CHRONOS_BUILD_BENCHMARKS": "ON"
+      }
+    },
+    {
       "name": "asan-ubsan",
       "displayName": "AddressSanitizer and UndefinedBehaviorSanitizer",
       "inherits": "base",
@@ -83,6 +93,7 @@
     { "name": "dev", "configurePreset": "dev" },
     { "name": "debug", "configurePreset": "debug" },
     { "name": "release", "configurePreset": "release" },
+    { "name": "benchmark", "configurePreset": "benchmark" },
     { "name": "asan-ubsan", "configurePreset": "asan-ubsan" },
     { "name": "tsan", "configurePreset": "tsan" },
     { "name": "fuzz", "configurePreset": "fuzz" }

@@ -1,9 +1,8 @@
 #include "chronos/common/result.hpp"
 
-#include <gtest/gtest.h>
-
 #include <array>
 #include <expected>
+#include <gtest/gtest.h>
 #include <memory>
 #include <string>
 #include <string_view>
