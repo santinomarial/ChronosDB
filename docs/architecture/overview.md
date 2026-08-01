@@ -1,6 +1,6 @@
 # Architecture Overview
 
-This document records the accepted high-level architecture for a system that has not yet been implemented. It fixes component responsibilities and ordering constraints while leaving encodings, algorithms, and operational policies to specifications and ADRs created in the relevant [roadmap](../roadmap.md) phase. All components are governed by the [non-negotiable invariants](invariants.md).
+This document records the accepted high-level architecture for a system that has not yet been implemented. It fixes component responsibilities and ordering constraints while leaving encodings, algorithms, and operational policies to specifications and ADRs created in the relevant [roadmap](../roadmap.md) phase. All components are governed by the [non-negotiable invariants](invariants.md) and the accepted [ADR index](../adr/README.md).
 
 ## Component map
 
@@ -41,9 +41,9 @@ Arrows express intended data or control flow, not implemented interfaces.
 
 ### Write plane
 
-The write plane accepts versioned network frames, decodes them into immutable columnar batches, selects a tablet, and transfers each batch to the tablet's owning shard worker over a bounded single-producer/single-consumer queue. The reactor owns socket progress and admission; it does not modify tablet storage.
+The write plane accepts versioned network frames, decodes them into immutable columnar batches, selects a tablet, and transfers each batch to the tablet's owning shard worker over a bounded single-producer/single-consumer queue. The reactor owns socket progress and admission; it does not modify tablet storage. [ADR 0004](../adr/0004-thread-ownership-and-ingress-concurrency.md) defines this ownership and handoff contract.
 
-Exactly one shard worker owns a mutable tablet at a time. That worker validates schema, event-time, logical identity, and limits; serializes the operation to the single-node WAL or future tablet Raft log; crosses the requested durability boundary; marks the operation committed; and publishes fully initialized columnar rows. Acknowledgment semantics are parameterized by an explicit durability mode. The concrete modes and their crash envelopes require a WAL/protocol ADR.
+Exactly one shard worker owns a mutable tablet at a time. That worker validates schema, event-time, logical identity, and limits; serializes the operation to the single-node WAL or future tablet Raft log; crosses the requested durability boundary; marks the operation committed; and publishes fully initialized columnar rows. [ADR 0006](../adr/0006-wal-durability-and-group-commit.md) fixes the `ASYNC`, `LOCAL_SYNC`, and future `QUORUM_SYNC` acknowledgment modes; their platform sync sequences, defaults, group-commit parameters, and replicated persistence details remain deferred.
 
 The intended write flow is:
 
@@ -100,13 +100,13 @@ The control plane owns relatively cold metadata: schema and table definitions, p
 
 ### Mutable and sealed heads
 
-A mutable head is an append-only, in-memory, columnar collection for one tablet's recent committed versions. One shard worker performs mutation; readers acquire a stable published boundary or generation. The writer initializes every selected column slot before publishing a new row count or reference visible to readers. Capacity, null representation, variable-length ownership, and publication memory ordering remain to be specified and benchmarked.
+A mutable head is an append-only, in-memory, columnar collection for one tablet's recent committed versions. One shard worker performs mutation; readers acquire a stable published boundary or generation. The writer initializes every selected column slot before publishing a new row count or reference visible to readers. Capacity, null representation, variable-length ownership, and publication memory ordering remain to be specified and benchmarked. [ADR 0005](../adr/0005-columnar-heads-and-immutable-cseg-parts.md) fixes the head/part storage model.
 
 When a head reaches a policy threshold, the owner seals it. A sealed head accepts no more rows, remains readable by active snapshots, and becomes flush input. New writes continue in a new mutable generation so durable I/O does not stop the shard.
 
 ### WAL
 
-The single-node WAL is planned as a segmented, checksummed sequence of versioned logical records. It establishes recovery and commit order per tablet before durable CSEG installation covers those operations. Record framing must permit safe rejection or truncation of torn/corrupt tails without interpreting unchecked fields. Segment rotation, group commit, sync modes, checkpoint retention, and log multiplexing are future specifications.
+The single-node WAL is planned as a segmented, checksummed sequence of versioned logical records. It establishes recovery and commit order per tablet before durable CSEG installation covers those operations. Record framing must permit safe rejection or truncation of torn/corrupt tails without interpreting unchecked fields. Segment rotation, record fields, group-commit scheduling, platform synchronization mechanics, checkpoint retention, and log multiplexing are future specifications; the durability-mode meanings are already accepted in [ADR 0006](../adr/0006-wal-durability-and-group-commit.md).
 
 In the distributed phase, each tablet's authoritative ordering is its committed Raft log. Many logical Raft groups will share a multiplexed physical log while preserving per-group ordering, durability, fairness, reclamation safety, and recovery identity. Reusing the single-node record codec may be desirable but is not yet decided.
 
@@ -130,19 +130,19 @@ Zone maps and sparse indexes are part metadata used to prune granules/pages with
 
 ## Query engine
 
-ChronosDB plans a custom parser, binder, optimizer, and execution engine. Binding assigns stable catalog identities and types; optimization must preserve SQL null, decimal, temporal, and system-time semantics; physical execution processes bounded column vectors rather than allocating per row. The scalar reference engine and differential tests provide an oracle for vectorized operators.
+ChronosDB plans a custom parser, binder, optimizer, and execution engine under [ADR 0008](../adr/0008-custom-sql-and-vectorized-execution.md). Binding assigns stable catalog identities and types; optimization must preserve SQL null, decimal, temporal, and system-time semantics; physical execution processes bounded column vectors rather than allocating per row. The scalar reference engine and differential tests provide an oracle for vectorized operators.
 
 Parallel scheduling, spilling, memory accounting, adaptive behavior, join algorithms, and the precise supported SQL surface are deferred. Query resource use must eventually be admitted and bounded; cancellation must release snapshot pins and memory safely.
 
 ## Networking
 
-Linux `epoll` is the first server backend. Reactors use nonblocking sockets, bounded frame sizes, explicit connection state machines, and bounded queues to shard workers. Thread-per-connection is excluded. Network formats are versioned from their first implementation and all lengths, offsets, compression envelopes, and state transitions are validated before allocation or access.
+Linux `epoll` is the first server backend under [ADR 0009](../adr/0009-network-reactor-strategy.md). Reactors use nonblocking sockets, bounded frame sizes, explicit connection state machines, and bounded queues to shard workers. Thread-per-connection is excluded. Network formats are versioned from their first implementation and all lengths, offsets, compression envelopes, and state transitions are validated before allocation or access.
 
 An `io_uring` backend is optional and may be accepted only after the epoll path is correct, profiled, and reproducibly benchmarked. TLS and cryptography will use maintained external libraries behind a defined interface; ChronosDB will not implement cryptographic primitives.
 
 ## Future distribution: tablets and Raft
 
-Tablets are the distribution and replication unit from the data model's beginning, but replication is deferred until the single-node engine passes its gates. Each future tablet maps to one logical Raft group with deterministic state-machine application. Readers may observe only committed and applied entries under an explicitly selected consistency level. Leader leases, read index, membership changes, snapshot transfer, and bounded-stale policies need separate ADRs and deterministic simulation.
+Tablets are the distribution and replication unit from the data model's beginning, but [ADR 0003](../adr/0003-single-node-first-development-order.md) defers replication until the single-node engine passes its gates. Under [ADR 0010](../adr/0010-tablets-raft-and-multiplexed-log-storage.md), each future tablet maps to one logical Raft group with deterministic state-machine application, while a small metadata group owns schemas, placement, membership, and cluster metadata. Readers may observe only committed and applied entries under an explicitly selected consistency level. Leader leases, read index, membership changes, snapshot transfer, and bounded-stale policies need lower-level ADRs and deterministic simulation.
 
 Multi-Raft will multiplex many groups over shared threads, network connections, timers, and a physical log without conflating their logical indexes. Distributed queries will acquire compatible per-tablet snapshot boundaries and report consistency; rebalancing must preserve identities, resume positions, and retention pins.
 
@@ -164,4 +164,6 @@ The following are accepted project constraints:
 - networking is event-driven and epoll-first; and
 - historical-to-live handoff is anchored to deterministic committed positions.
 
-Deferred design areas include exact durability modes and acknowledgment points; row identities and correction syntax; binary encodings; CSEG layout and codecs; head memory layout and publication ordering; checkpoint and garbage-collection protocol; SQL grammar and type system; optimizer rules; subscription result/change model; watermark finalization; scheduler and memory limits; authentication/TLS integration; Raft protocol details; multi-Raft log layout; distributed snapshot coordination; and object-tier policy. Each becomes accepted only through its phase artifacts, validation evidence, and any required ADR.
+Deferred design areas include durability defaults, platform synchronization mechanics, and group-commit parameters; row identities and correction syntax; binary encodings; CSEG layout and codecs; head memory layout and publication ordering; checkpoint and garbage-collection protocol; SQL grammar and type system; optimizer rules; subscription result/change model; watermark finalization; scheduler and memory limits; authentication/TLS integration; Raft protocol details; multi-Raft log layout; distributed snapshot coordination; and object-tier policy. Each becomes accepted only through its phase artifacts, validation evidence, and any required ADR.
+
+The product scope and portability boundary are fixed by [ADRs 0001–0002](../adr/README.md). The dependency boundary is fixed by [ADR 0011](../adr/0011-dependency-and-build-versus-buy-policy.md), and [ADR 0012](../adr/0012-correctness-testing-and-performance-evidence.md) defines the evidence required before any component or optimization is accepted as correct or performant.

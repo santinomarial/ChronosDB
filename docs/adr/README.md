@@ -7,11 +7,11 @@ Architecture Decision Records (ADRs) preserve the context and reasoning behind c
 Use a four-digit, monotonically increasing repository-wide number followed by a short lowercase hyphenated title:
 
 ```text
-0001-wal-durability-modes.md
-0002-cseg-v1-layout.md
+0013-short-decision-title.md
+0014-another-decision-title.md
 ```
 
-Reserve the number when opening the ADR. Numbers are never reused, even when a proposal is rejected. This file will list ADRs in number order once records exist; there are no decisions recorded yet.
+Reserve the number when opening the ADR. Numbers are never reused, even when a proposal is rejected. The index below lists records in number order.
 
 ## Statuses
 
@@ -33,4 +33,17 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 
 ## Index
 
-No ADRs have been proposed or accepted yet.
+| ADR | Decision | Status |
+| --- | --- | --- |
+| [0001](0001-project-scope-and-workloads.md) | Project scope and workloads | accepted |
+| [0002](0002-language-platform-and-portability.md) | Language, platform, and portability | accepted |
+| [0003](0003-single-node-first-development-order.md) | Single-node-first development order | accepted |
+| [0004](0004-thread-ownership-and-ingress-concurrency.md) | Thread ownership and ingress concurrency | accepted |
+| [0005](0005-columnar-heads-and-immutable-cseg-parts.md) | Columnar heads and immutable CSEG parts | accepted |
+| [0006](0006-wal-durability-and-group-commit.md) | WAL durability and group commit | accepted |
+| [0007](0007-event-time-system-time-and-row-versioning.md) | Event time, system time, and row versioning | accepted |
+| [0008](0008-custom-sql-and-vectorized-execution.md) | Custom SQL and vectorized execution | accepted |
+| [0009](0009-network-reactor-strategy.md) | Network reactor strategy | accepted |
+| [0010](0010-tablets-raft-and-multiplexed-log-storage.md) | Tablets, Raft, and multiplexed log storage | accepted |
+| [0011](0011-dependency-and-build-versus-buy-policy.md) | Dependency and build-versus-buy policy | accepted |
+| [0012](0012-correctness-testing-and-performance-evidence.md) | Correctness testing and performance evidence | accepted |
