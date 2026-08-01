@@ -47,9 +47,6 @@ jobs:
         run: cmake --build --preset debug
       - name: Test
         run: ctest --preset debug
-      - name: Check public header is self-contained
-        shell: bash
-        run: printf '#include "chronos/common/version.hpp"\n' | $CXX -std=c++23 -Iinclude -fsyntax-only -x c++ -
       - name: Upload test log on failure
         if: failure()
         uses: actions/upload-artifact@v4

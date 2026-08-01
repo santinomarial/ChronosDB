@@ -113,7 +113,11 @@ if(CHRONOS_BUILD_TESTS)
   chronos_fetch_googletest()
   include(GoogleTest)
 
-  add_executable(chronos_common_tests tests/common/version_test.cpp)
+  add_executable(
+    chronos_common_tests
+    tests/common/version_header_self_contained.cpp
+    tests/common/version_test.cpp
+  )
   set_target_properties(chronos_common_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_common_tests PRIVATE cxx_std_23)
   target_link_libraries(chronos_common_tests PRIVATE chronos::common GTest::gtest_main)
