@@ -1,0 +1,32 @@
+# Glossary
+
+These definitions are normative vocabulary for architecture documents. Detailed encodings and algorithms remain future specifications.
+
+- **Event time:** Time at which an event occurred in its source domain, supplied by the producer and used for time-window semantics. It can be late, duplicated, corrected, or out of order.
+- **Ingestion time:** Time at which a ChronosDB node first accepts an input batch for processing. It is operational metadata, not a substitute for event time or commit ordering.
+- **System time:** Database-assigned time or order at which a logical version becomes committed and query-visible. It supports “what did the database know then?” queries independently of event time.
+- **Commit position:** A totally ordered, durable boundary within a tablet's committed operation stream. On a single node it derives from the committed WAL; under Raft it incorporates the committed log position and enough identity to reject another tablet or history.
+- **Snapshot:** A stable view of the relevant schemas, row versions, mutable heads, immutable parts, and commit positions for a query.
+- **Tablet:** The unit of data partitioning, ordered mutation, recovery, and—later—Raft replication. A table is divided into tablets by an explicit partitioning rule.
+- **Shard worker:** A single execution owner for one or more mutable tablets. Exactly one shard worker owns a mutable tablet at a time.
+- **Reactor:** An event-loop worker that handles nonblocking network I/O and passes decoded immutable batches through bounded queues; it does not mutate tablet state directly.
+- **Mutable head:** An append-only, in-memory columnar structure containing recent committed rows or row versions for a tablet.
+- **Sealed head:** A mutable head closed to further appends and held stable while it is flushed or read.
+- **CSEG:** ChronosDB's planned versioned, immutable, sorted, compressed columnar on-disk format.
+- **Part:** An immutable CSEG file or atomic set of files representing a sorted tablet data range and installed through the manifest.
+- **Granule:** A contiguous logical row range within a part and the unit addressed by sparse index entries.
+- **Page:** A bounded encoded block of one column within a part, independently integrity-checked and suitable for selective decoding.
+- **Manifest:** The authoritative, versioned description of installed parts and associated durable storage state for a tablet or database generation.
+- **Version edit:** An atomic logical change to manifest state, such as adding newly installed parts and removing superseded parts.
+- **WAL:** The segmented write-ahead log that durably records accepted operations before their effects are acknowledged under modes that promise persistence.
+- **Checkpoint:** A durable recovery boundary that identifies state already represented by installed parts and the earliest log position still needed.
+- **Compaction:** A background transformation of immutable input parts into new immutable parts while preserving exactly the same visible logical rows under the applicable snapshot rules.
+- **Delta part:** An immutable part containing late, out-of-order, corrected, or otherwise non-base data pending or surviving merge with primary sorted parts.
+- **Watermark:** A per-stream or derived event-time assertion that events earlier than a position are not expected, subject to the stated lateness policy; it is not a system-time commit boundary.
+- **Allowed lateness:** The configured event-time interval during which late data may revise live window results before a defined finalization or correction policy applies.
+- **Materialized view:** Stored state maintained incrementally from committed source changes according to a versioned query definition.
+- **Resume token:** An opaque, versioned, integrity-protected encoding of a deterministic committed subscription boundary plus identities needed to validate resumption.
+- **Raft log index:** A monotonically increasing position in one Raft group's replicated log. An index is meaningful only with the group and log-history identity, including term where required.
+- **Quorum:** A majority of the voting members of a Raft configuration sufficient for the operation defined by the consensus protocol.
+- **Linearizable read:** A read ordered after all operations that completed before it began, using a validated current-leader/read-index mechanism or equivalent protocol.
+- **Bounded-stale read:** A read permitted from a replica only when its commit/applied lag satisfies an explicit bound; it is not linearizable.
