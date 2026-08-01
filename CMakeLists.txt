@@ -84,7 +84,14 @@ configure_file(
   @ONLY
 )
 
-add_library(chronos_common src/common/version.cpp)
+add_library(
+  chronos_common
+  src/common/byte_reader.cpp
+  src/common/byte_writer.cpp
+  src/common/crc32c.cpp
+  src/common/status.cpp
+  src/common/version.cpp
+)
 add_library(chronos::common ALIAS chronos_common)
 set_target_properties(chronos_common PROPERTIES EXPORT_NAME common)
 set_target_properties(chronos_common PROPERTIES CXX_EXTENSIONS OFF)
@@ -136,6 +143,25 @@ if(CHRONOS_BUILD_BENCHMARKS)
   chronos_set_project_warnings(chronos_common_benchmarks)
   chronos_enable_sanitizers(chronos_common_benchmarks)
   chronos_enable_static_analysis(chronos_common_benchmarks)
+endif()
+
+if(CHRONOS_BUILD_FUZZERS)
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|AppleClang")
+    message(FATAL_ERROR "CHRONOS_BUILD_FUZZERS requires Clang or AppleClang with libFuzzer")
+  endif()
+  if(CHRONOS_ENABLE_TSAN)
+    message(FATAL_ERROR "libFuzzer targets cannot be combined with ThreadSanitizer")
+  endif()
+
+  add_executable(chronos_byte_reader_fuzz tests/fuzz/byte_reader_fuzz.cpp)
+  set_target_properties(chronos_byte_reader_fuzz PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_byte_reader_fuzz PRIVATE cxx_std_23)
+  target_link_libraries(chronos_byte_reader_fuzz PRIVATE chronos::common)
+  target_compile_options(chronos_byte_reader_fuzz PRIVATE -fsanitize=fuzzer)
+  target_link_options(chronos_byte_reader_fuzz PRIVATE -fsanitize=fuzzer)
+  chronos_set_project_warnings(chronos_byte_reader_fuzz)
+  chronos_enable_sanitizers(chronos_byte_reader_fuzz)
+  chronos_enable_static_analysis(chronos_byte_reader_fuzz)
 endif()
 
 chronos_configure_installation()

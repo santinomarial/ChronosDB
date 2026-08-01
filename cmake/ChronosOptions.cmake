@@ -2,6 +2,7 @@ include_guard(GLOBAL)
 
 option(CHRONOS_BUILD_TESTS "Build ChronosDB unit tests" ON)
 option(CHRONOS_BUILD_BENCHMARKS "Build ChronosDB microbenchmarks" OFF)
+option(CHRONOS_BUILD_FUZZERS "Build ChronosDB libFuzzer targets" OFF)
 option(CHRONOS_ENABLE_ASAN "Enable AddressSanitizer on ChronosDB targets" OFF)
 option(CHRONOS_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer on ChronosDB targets" OFF)
 option(CHRONOS_ENABLE_TSAN "Enable ThreadSanitizer on ChronosDB targets" OFF)

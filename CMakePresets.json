@@ -15,6 +15,7 @@
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "CHRONOS_BUILD_TESTS": "ON",
         "CHRONOS_BUILD_BENCHMARKS": "OFF",
+        "CHRONOS_BUILD_FUZZERS": "OFF",
         "CHRONOS_ENABLE_ASAN": "OFF",
         "CHRONOS_ENABLE_UBSAN": "OFF",
         "CHRONOS_ENABLE_TSAN": "OFF",
@@ -64,6 +65,18 @@
         "CMAKE_BUILD_TYPE": "Debug",
         "CHRONOS_ENABLE_TSAN": "ON"
       }
+    },
+    {
+      "name": "fuzz",
+      "displayName": "Clang libFuzzer with AddressSanitizer and UndefinedBehaviorSanitizer",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CHRONOS_BUILD_TESTS": "OFF",
+        "CHRONOS_BUILD_FUZZERS": "ON",
+        "CHRONOS_ENABLE_ASAN": "ON",
+        "CHRONOS_ENABLE_UBSAN": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -71,7 +84,8 @@
     { "name": "debug", "configurePreset": "debug" },
     { "name": "release", "configurePreset": "release" },
     { "name": "asan-ubsan", "configurePreset": "asan-ubsan" },
-    { "name": "tsan", "configurePreset": "tsan" }
+    { "name": "tsan", "configurePreset": "tsan" },
+    { "name": "fuzz", "configurePreset": "fuzz" }
   ],
   "testPresets": [
     {
