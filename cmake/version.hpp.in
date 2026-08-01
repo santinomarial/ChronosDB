@@ -1,0 +1,16 @@
+#pragma once
+
+#include <string_view>
+
+namespace chronos::common::build {
+
+inline constexpr std::string_view kSemanticVersion{"@CHRONOS_VERSION_ESCAPED@"};
+inline constexpr std::string_view kGitCommit{"@CHRONOS_GIT_COMMIT_ESCAPED@"};
+inline constexpr bool kGitMetadataAvailable = @CHRONOS_GIT_METADATA_AVAILABLE@;
+inline constexpr bool kGitDirty = @CHRONOS_GIT_DIRTY@;
+inline constexpr std::string_view kBuildType{"@CHRONOS_BUILD_TYPE_ESCAPED@"};
+inline constexpr std::string_view kCompiler{"@CHRONOS_COMPILER_ESCAPED@"};
+inline constexpr std::string_view kTargetArchitecture{"@CHRONOS_TARGET_ARCHITECTURE_ESCAPED@"};
+inline constexpr std::string_view kOperatingSystem{"@CHRONOS_OPERATING_SYSTEM_ESCAPED@"};
+
+}  // namespace chronos::common::build

@@ -1,0 +1,110 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CMAKE_BUILD_PARALLEL_LEVEL: 2
+
+jobs:
+  build-test:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux GCC
+            os: ubuntu-24.04
+            cc: gcc
+            cxx: g++
+            werror: 'ON'
+          - name: Linux Clang
+            os: ubuntu-24.04
+            cc: clang
+            cxx: clang++
+            werror: 'OFF'
+          - name: macOS AppleClang
+            os: macos-14
+            cc: clang
+            cxx: clang++
+            werror: 'OFF'
+    runs-on: ${{ matrix.os }}
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Ninja on macOS
+        if: runner.os == 'macOS'
+        run: brew install ninja
+      - name: Configure
+        run: cmake --preset debug -DCHRONOS_WARNINGS_AS_ERRORS=${{ matrix.werror }}
+      - name: Build
+        run: cmake --build --preset debug
+      - name: Test
+        run: ctest --preset debug
+      - name: Check public header is self-contained
+        shell: bash
+        run: printf '#include "chronos/common/version.hpp"\n' | $CXX -std=c++23 -Iinclude -fsyntax-only -x c++ -
+      - name: Upload test log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-log-${{ matrix.name }}
+          path: build/debug/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+
+  sanitizers:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ASan and UBSan
+            preset: asan-ubsan
+          - name: TSan
+            preset: tsan
+    env:
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+      - name: Test
+        run: ctest --preset ${{ matrix.preset }}
+      - name: Upload test log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-log-${{ matrix.preset }}
+          path: build/${{ matrix.preset }}/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+
+  format:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang-format
+        run: sudo apt-get update && sudo apt-get install --yes clang-format
+      - name: Check formatting
+        run: scripts/format.sh --check
+
+  clang-tidy:
+    runs-on: ubuntu-24.04
+    env:
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang-tidy
+        run: sudo apt-get update && sudo apt-get install --yes clang-tidy
+      - name: Configure and run clang-tidy
+        run: scripts/lint.sh debug

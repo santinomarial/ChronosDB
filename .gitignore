@@ -1,0 +1,9 @@
+# CMake build trees and generated development metadata
+/build/
+/cmake-build-*/
+/compile_commands.json
+
+# Platform and editor files
+.DS_Store
+*.swp
+*.swo

@@ -1,0 +1,57 @@
+# Development Tooling
+
+The local workflows mirror CI and keep compiler policy attached to ChronosDB targets. Third-party
+targets fetched for tests or benchmarks do not inherit ChronosDB warnings, sanitizers, or tidy.
+
+## Formatting
+
+`.clang-format` defines the C++ style. LLVM clang-format 17 or newer is recommended; nearby current
+versions should produce compatible results. Apply or verify it with:
+
+```sh
+scripts/format.sh
+scripts/format.sh --check
+```
+
+Set `CLANG_FORMAT` when the executable has a versioned or nonstandard name.
+
+## Lint and static analysis
+
+`.clang-tidy` enables focused analyzer, bug-prone, performance, portability, safe-modernization, and
+objective readability checks. It deliberately excludes broad subjective style rules. Run it as part
+of compilation:
+
+```sh
+scripts/lint.sh debug
+```
+
+This reconfigures the selected build with `CHRONOS_ENABLE_CLANG_TIDY=ON`, so subsequent builds of
+that directory continue to run tidy. Set `CLANG_TIDY` to select a nonstandard executable. LLVM
+clang-tidy 17+ is the supported compatibility baseline.
+
+The normal full local sequence is:
+
+```sh
+scripts/check.sh
+```
+
+It checks formatting, configures, builds, tests, and then compiles with clang-tidy. Failures are not
+suppressed. Sanitizers remain separate commands because running all sanitizer configurations on
+every edit is expensive and TSan cannot share a runtime with ASan.
+
+## Dependency updates
+
+All external declarations live in `cmake/ChronosDependencies.cmake` and use immutable commit IDs.
+An update must be intentional: review upstream release notes and provenance, change the single pin,
+configure from an empty build tree, and run normal, sanitizer, formatting, and static-analysis
+checks. A new production dependency additionally requires the review/ADR evidence described in
+[ADR-0011](../adr/0011-dependency-and-build-versus-buy-policy.md). Do not commit populated
+FetchContent directories.
+
+## CI matrix
+
+GitHub Actions builds and tests Debug configurations on Linux with GCC, Linux with Clang, and macOS
+with AppleClang. The GCC job treats warnings as errors. Separate Linux Clang jobs run ASan+UBSan and
+TSan. Independent jobs verify clang-format and clang-tidy. Test logs are uploaded when a test job
+fails. Benchmarks do not gate shared CI because trustworthy performance comparisons require a
+controlled environment.

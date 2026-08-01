@@ -21,6 +21,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 ## Delivery
 
 - [Roadmap](roadmap.md): implementation phases and evidence-based exit gates.
+- [Building](development/building.md): supported toolchains, presets, tests, and sanitizer workflows.
+- [Tooling](development/tooling.md): formatting, static analysis, dependencies, and the CI matrix.
 - [Architecture Decision Records](adr/README.md): decision process and index.
 - [ADR template](adr/template.md): required structure for new decisions.
 
@@ -29,5 +31,10 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Correctness strategy](testing/correctness-strategy.md): future test taxonomy and mapping for all architecture invariants.
 - [Benchmark contract](benchmarks/benchmark-contract.md): mandatory run metadata, metrics, and comparison rules.
 - [ChronosBench](benchmarks/chronosbench.md): planned correctness-checked workload scenarios.
+
+## Learning
+
+- [Project foundation](learning/project-foundation.md): rationale and extension guide for the Phase
+  1A build graph.
 
 Future format, protocol, subsystem, operations, and learning documents should be linked here when they are added by their corresponding roadmap phase.
