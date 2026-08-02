@@ -10,6 +10,11 @@ No acknowledged durable write disappears after any failure covered by the select
 - **How it could be violated:** an acknowledgment is sent before the required sync/quorum boundary; a mode is ambiguous; a torn record is treated as durable; recovery skips a committed record; or checkpoint reclamation removes the only durable copy.
 - **Eventual tests:** enumerate each durability mode and inject process crashes, power-loss approximations, short writes, sync failures, segment rotation failures, and later replica loss at every acknowledgment boundary. Recovered committed identities must match the acknowledged set allowed by that mode.
 
+For the unimplemented single-node WAL, [WAL recovery](wal-recovery.md) now fixes the exact `ASYNC`
+and `LOCAL_SYNC` eligibility boundaries and the covered Linux persistence assumptions. A
+`LOCAL_SYNC` record cannot be discarded as an incomplete tail under that contract; encountering such
+an outcome is a durability defect or an excluded platform failure, not permitted loss.
+
 ## 2. Manifests reference only completely installed durable parts
 
 A manifest version may name a part only after every required byte and piece of metadata for that part has been written, validated, and made durable according to the installation protocol.
@@ -66,6 +71,10 @@ Running recovery repeatedly over unchanged durable bytes yields the same durable
 - **How it could be violated:** replay appends a second row, temporary-file cleanup changes the chosen generation, version edits are applied twice, or view output is emitted again without a defined replay contract.
 - **Eventual tests:** crash recovery itself at every mutation point, restart repeatedly from copied disk images, and compare manifests, applied positions, logical rows, and retained files to a single successful recovery.
 
+WAL v1 recovery concretizes the first part of this obligation: physical verification and optional
+tail repair complete before replay, repair is synchronized and repeatable, and replay does not
+publish state until whole-log semantic preflight succeeds.
+
 ## 9. Idempotent batch retry does not duplicate logical input
 
 Retrying a batch with the same idempotency identity and compatible content cannot create duplicate logical input. Reuse of an identity with conflicting content must follow an explicit deterministic error or correction contract.
@@ -81,6 +90,10 @@ Every durable log record and CSEG data page is covered by an integrity check tha
 - **Owner:** WAL and CSEG codecs, format specifications, readers, writers, recovery, compaction, and tiering.
 - **How it could be violated:** checksumming only payload but trusting corrupt lengths, leaving metadata unprotected, failing open on mismatch, or verifying compressed bytes after unsafe allocation or decoding.
 - **Eventual tests:** bit-flip, truncate, splice, reorder, and replace each field and payload region; fuzz parsers with hostile lengths and offsets; require a bounded clean error before unchecked data influences memory access or durable state.
+
+The authoritative [WAL v1 format](../formats/wal-v1.md) satisfies the design obligation for log
+framing by protecting segment interpretation fields, record framing fields, and each complete stored
+record with specified CRC32C ranges. Implementation evidence remains required.
 
 ## 11. Referenced storage is not reclaimed
 
@@ -113,6 +126,9 @@ Every durable file/record and network frame carries or inherits an unambiguous f
 - **Owner:** format and protocol specifications, codec registries, upgrade tooling, handshake, and recovery.
 - **How it could be violated:** inferring layout from file size, dumping native structs, reinterpreting an old field, accepting unknown required flags, or changing semantics without changing the version/feature negotiation.
 - **Eventual tests:** maintain golden fixtures for every released version; test supported upgrade/downgrade matrices, unknown versions and flags, byte order, mixed-version connections, and corrupted version headers.
+
+WAL physical format 1.0 now has an immutable compatibility and rejection policy. Logical application
+kinds remain unavailable until their independently versioned payload specifications are accepted.
 
 ## 15. Slow subscribers cannot block ingestion indefinitely
 

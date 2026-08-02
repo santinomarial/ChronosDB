@@ -5,7 +5,10 @@ the build and tooling foundation, and Phase 1B, the portable binary foundations,
 Local verification is recorded per change; the Linux compiler/CI matrix remains the reference for
 portable support and is not implied by a macOS-only local run. This status does not mean that the
 complete Phase 1 gates have passed. Unimplemented portions of Phase 1 and all later phases remain
-planned work, not implemented functionality or delivery commitments.
+planned work, not implemented functionality or delivery commitments. The Phase 2–3
+[WAL v1 format](formats/wal-v1.md), [recovery design](architecture/wal-recovery.md), and
+[ADR 0013](adr/0013-wal-v1-format-and-recovery.md) are accepted design artifacts only; no WAL code,
+fixture, test, or storage behavior exists yet.
 Work should proceed in order unless an accepted ADR explains why a limited dependency must move
 earlier.
 
@@ -39,18 +42,33 @@ No phase passes because its code merely compiles. A phase passes only when its a
 
 ## Phase 2 — WAL record codec
 
-- **Scope:** specify and implement versioned, checksummed logical WAL record framing and typed operation payloads using fixed-width encodings.
+- **Implementation status:** the WAL v1 physical directory/segment/record format, integrity scopes,
+  limits, application envelope, and compatibility policy are accepted. The physical codec, golden
+  fixtures, fuzzers, and every kind-specific logical application body remain unimplemented.
+- **Scope:** complete the kind-specific logical operation payload specification and implement the
+  accepted versioned, checksummed WAL framing and typed payloads using fixed-width encodings.
 - **Explicit non-scope:** segment files, sync/acknowledgment policy, recovery across segments, mutable-head application, Raft, and compression unless justified by the record specification.
-- **Required artifacts:** WAL record v1 specification and ADRs; encoder/decoder; golden fixtures; compatibility policy; fuzz targets; corruption/error taxonomy; learning document.
+- **Required artifacts:** the accepted WAL v1/ADR/learning documents; accepted kind-specific
+  application payload specification; encoder/decoder; golden fixtures; fuzz targets; and executable
+  corruption/error taxonomy.
 - **Correctness exit gate:** a decoder validates framing and integrity before unsafe allocation/access, rejects unsupported versions/flags, round-trips all valid records, and never serializes native object representation; invariant 10 and 14 obligations for records are met.
 - **Testing exit gate:** unit, property, golden, truncation, bit-flip, hostile-length, cross-endian fixture, and coverage-guided fuzz tests pass under sanitizers.
 - **Measurement exit gate:** publish reproducible codec throughput, latency, allocation, and size baselines across representative record/batch sizes with checksum cost isolated; correctness checks remain enabled.
 
 ## Phase 3 — Segmented WAL and recovery
 
-- **Scope:** segment lifecycle, append/grouping, explicitly named durability modes, acknowledgment boundary, rotation, torn-tail handling, replay, checkpoints needed to bound replay, and idempotent single-node recovery.
-- **Explicit non-scope:** CSEG/head state, log deletion based on future manifests, replication, multiplexed multi-Raft storage, and asynchronous durability modes without precise loss contracts.
-- **Required artifacts:** WAL storage/recovery specification; durability-mode ADR; segment and checkpoint formats; append/replay APIs; crash harness; operational diagnostics; learning document.
+- **Implementation status:** segment naming/lifecycle, install and synchronization order,
+  acknowledgment eligibility, recovery classification, explicit tail repair, semantic preflight, and
+  replay ordering are accepted design artifacts. No segmented writer, recovery implementation,
+  process lock, crash harness, or operational metric exists.
+- **Scope:** implement WAL v1 segment lifecycle, append/grouping, explicitly named durability modes,
+  acknowledgment boundaries, rotation, torn-tail handling, ordered replay, and idempotent
+  single-node recovery.
+- **Explicit non-scope:** CSEG/head state, checkpoint format and old-segment removal, replication,
+  multiplexed multi-Raft storage, and asynchronous durability modes without precise loss contracts.
+- **Required artifacts:** the accepted WAL storage/recovery specification and ADR; append/replay APIs;
+  fault-injecting storage boundary; crash harness; operational diagnostics; and implementation
+  evidence mapped to the WAL v1 test contract.
 - **Correctness exit gate:** acknowledged writes satisfy their named crash envelope; log order is stable; corruption fails closed at a known boundary; repeated recovery is idempotent; no required segment is reclaimed.
 - **Testing exit gate:** deterministic fault injection for short writes, sync errors, rotation, truncation, corruption, process kill, and recovery-during-recovery; model comparison and sanitizer/fuzz suites pass.
 - **Measurement exit gate:** characterize append/ack latency distributions and throughput by durability mode, batch size, group-commit setting, and storage device; record sync counts and recovery time separately.

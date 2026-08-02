@@ -15,8 +15,15 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 
 - [Overview](architecture/overview.md): planes, components, data flows, and accepted versus deferred design areas.
 - [Invariants](architecture/invariants.md): correctness properties every implementation must preserve.
+- [WAL recovery](architecture/wal-recovery.md): accepted segment lifecycle, durability boundaries,
+  failure classification, tail repair, and replay design.
 - [Non-goals](architecture/non-goals.md): deliberately excluded or deferred scope.
 - [Glossary](glossary.md): canonical terminology.
+
+## Durable formats
+
+- [WAL v1](formats/wal-v1.md): authoritative single-node WAL directory, segment, record, integrity,
+  limits, and compatibility specification; accepted but not implemented.
 
 ## Delivery
 
@@ -44,5 +51,7 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   1A build graph.
 - [Common binary foundations](learning/common-binary-foundations.md): ownership, bounds, encoding,
   failure, and CRC32C contracts for the Phase 1B primitives.
+- [WAL design](learning/wal-design.md): rationale, lifecycle, ownership, failure model, tradeoffs, and
+  validation methodology for the accepted but unimplemented WAL.
 
 Future format, protocol, subsystem, operations, and learning documents should be linked here when they are added by their corresponding roadmap phase.

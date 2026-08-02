@@ -1,13 +1,13 @@
 # Consistency and Durability Contract
 
-> **Status: specified, not implemented.** This document refines [ADR 0006](../adr/0006-wal-durability-and-group-commit.md) and the snapshot invariants. It does not strengthen guarantees beyond what a process, operating system, filesystem, device, or future replica protocol can establish.
+> **Status: specified, not implemented.** This document refines [ADR 0006](../adr/0006-wal-durability-and-group-commit.md), [ADR 0013](../adr/0013-wal-v1-format-and-recovery.md), and the snapshot invariants. It does not strengthen guarantees beyond what a process, operating system, filesystem, device, or future replica protocol can establish.
 
 ## Durability modes
 
 | Mode | Acknowledgment boundary | Intended covered failures | Outside the guarantee | Group commit |
 | --- | --- | --- | --- | --- |
-| `ASYNC` | The operation is validated, appended to process/kernel-visible log state as later specified, committed for current-process visibility, and accepted without waiting for stable-media synchronization. | Normal continued process operation; no crash-survival claim. | Process or OS crash, power loss, device loss, and any failure before bytes reach required stable media may lose acknowledged operations. It must never be described as durable. | Requests may share write and later sync work, but acknowledgment does not wait for that sync. |
-| `LOCAL_SYNC` | Relevant local WAL bytes and required ordering metadata have completed the documented platform synchronization sequence before acknowledgment. | Process termination and ordinary OS crashes on that local node under the documented filesystem/device assumptions. | Device loss, controller/firmware lies, incomplete power-loss protection, filesystem/kernel defects, operator destruction, or failures excluded by the platform contract. | Multiple requests may share one sync; each acknowledgment waits for the sync covering its log extent. |
+| `ASYNC` | The complete WAL v1 record has been accepted successfully through the active WAL file write path after its segment installation boundary; acknowledgment does not wait for data synchronization. | Normal continued process operation; no crash-survival claim. | Process or OS crash, power loss, device loss, and any failure before bytes reach required stable media may lose acknowledged operations. It must never be described as durable. | Requests may share write and later sync work, but acknowledgment does not wait for that sync. |
+| `LOCAL_SYNC` | The complete record has finished the write path and is covered by a successful WAL data synchronization after any required synchronized segment installation. | Process termination and ordinary OS crashes on that local node under the documented filesystem/device assumptions. | Device loss, controller/firmware lies, incomplete power-loss protection, filesystem/kernel defects, operator destruction, or failures excluded by the platform contract. | Multiple requests may share one captured sync frontier; each acknowledgment waits for the successful sync covering its record end. |
 | `QUORUM_SYNC` | Available only in the future replicated system. A majority of the tablet's voting replicas, including the committed leader protocol state, satisfy the documented persistence condition before acknowledgment. | Loss of a minority of replicas under the stated membership, independence, storage, and Raft assumptions. | Correlated majority loss, faulty persistence below the stated assumptions, unsafe membership, Byzantine behavior, or disaster beyond the replica topology. | Entries from one or many groups may share physical synchronization, but each request waits for its own group to satisfy quorum persistence and commit. |
 
 The server must expose requested and effective mode in the acknowledgment. It must never silently downgrade. Required operational metrics are:
@@ -19,7 +19,12 @@ The server must expose requested and effective mode in the acknowledgment. It mu
 - rejected or downgraded-mode attempts (downgrade remains an error); and
 - recovery reconciliation counts, including acknowledged-write loss count when a controlled test can determine it.
 
-The exact sync syscalls, directory-ordering requirements, default mode, group size/delay, and future replica persistence condition remain deferred. Benchmarks must follow the [benchmark contract](../benchmarks/benchmark-contract.md).
+The [WAL recovery design](../architecture/wal-recovery.md) fixes the Linux reference operations and
+ordering: synchronized temporary-file installation, same-directory atomic rename, directory sync,
+complete record write, and `fdatasync`/stronger data sync for `LOCAL_SYNC`. It also states the
+filesystem/device assumptions and macOS limitation. Default mode, group size/byte/delay policy, and
+future replica persistence remain deferred. Benchmarks must follow the
+[benchmark contract](../benchmarks/benchmark-contract.md).
 
 ## Single-node read behavior
 
@@ -48,7 +53,7 @@ All rows in the result are evaluated against that descriptor even while later co
 
 ### Recovery
 
-Normal query service remains unavailable until recovery selects a complete manifest, validates required parts, identifies the valid log end, and idempotently reapplies committed records through its recovered boundary. A partial final WAL record is treated as an incomplete tail; corruption before the valid durable end is a surfaced recovery failure. Operations acknowledged only under `ASYNC` may be absent after restart. No “best effort” query may silently skip corrupt required state.
+Normal query service remains unavailable until recovery selects a complete manifest, validates required parts, and completes the [WAL recovery state machine](../architecture/wal-recovery.md). WAL recovery verifies every segment and physical record before replay, optionally performs only the explicitly authorized synchronized repair of an incomplete suffix in the highest segment, re-verifies, preflights semantic support, and idempotently applies records in sequence. Corruption, discontinuity, and unsupported required semantics fail before query service; no “best effort” query may skip them. Operations acknowledged only under `ASYNC` may be absent after restart, while a `LOCAL_SYNC` operation cannot be absent under the covered platform failures.
 
 ## Future distributed read modes
 

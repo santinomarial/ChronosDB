@@ -22,6 +22,12 @@ Each table declares:
 
 The sharding expression must be compatible with the deduplication key: all versions of one logical row must route to the same tablet. A table specification is invalid if it cannot guarantee that property. Physical ordering is an access-layout decision, not a uniqueness constraint.
 
+The accepted [WAL v1](../formats/wal-v1.md) `record_sequence`, paired with its `wal_id`, supplies a
+single-node physical total order for application entries. A future application-entry specification
+must encode the tablet, client-batch identity, digest, outcome, operation kind, and mutation needed
+to derive the logical per-tablet commit position and replay this data model. WAL record sequence is
+not event time, receive time, or a complete row-version identity by itself.
+
 The illustrative DDL clauses below are part of the planned [SQL v1](sql-v1.md) contract. Exact catalog storage and CSEG encodings remain deferred.
 
 ## Initial logical types
@@ -182,4 +188,8 @@ The reorder stage and delta builder must be query-visible through a stable snaps
 
 ## Deferred parameters
 
-Catalog encoding, generated-identity representation, correction/tombstone write syntax, default retention and lateness, system timestamp assignment, CSEG type encodings, dictionary scope, collation, partition evolution, tablet hashing, and cross-tablet temporal coordination remain deferred. Replication factor is unavailable until the cluster phases.
+Catalog encoding, generated-identity representation, the WAL application-entry body,
+correction/tombstone write syntax, default retention and lateness, system timestamp assignment,
+CSEG type encodings, dictionary scope, collation, partition evolution, tablet hashing, and
+cross-tablet temporal coordination remain deferred. Replication factor is unavailable until the
+cluster phases.

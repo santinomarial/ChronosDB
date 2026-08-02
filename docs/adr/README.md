@@ -47,3 +47,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0010](0010-tablets-raft-and-multiplexed-log-storage.md) | Tablets, Raft, and multiplexed log storage | accepted |
 | [0011](0011-dependency-and-build-versus-buy-policy.md) | Dependency and build-versus-buy policy | accepted |
 | [0012](0012-correctness-testing-and-performance-evidence.md) | Correctness testing and performance evidence | accepted |
+| [0013](0013-wal-v1-format-and-recovery.md) | WAL v1 format and recovery | accepted |

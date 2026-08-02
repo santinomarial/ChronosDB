@@ -1,6 +1,6 @@
 # Correctness Strategy
 
-> **Status: partially implemented.** This document turns the [architecture invariants](../architecture/invariants.md) into verification obligations under [ADR 0012](../adr/0012-correctness-testing-and-performance-evidence.md). Phase 1 has unit/property-style tests, sanitizer jobs, and an optional ByteReader libFuzzer target. Storage, query, concurrency, crash, and distributed harnesses remain planned for their roadmap phases.
+> **Status: partially implemented.** This document turns the [architecture invariants](../architecture/invariants.md) into verification obligations under [ADR 0012](../adr/0012-correctness-testing-and-performance-evidence.md). Phase 1 has unit/property-style tests, sanitizer jobs, and an optional ByteReader libFuzzer target. WAL v1 now has an accepted format/recovery test contract, but no WAL codec, storage, crash harness, fixtures, or tests are implemented. Query, concurrency, and distributed harnesses also remain planned for their roadmap phases.
 
 ## Test types
 
@@ -20,20 +20,20 @@ Every randomized failure prints the random seed, generator/scenario version, min
 
 | # | Invariant | Primary future test types and oracle |
 | --- | --- | --- |
-| 1 | Acknowledged durability | Failpoint crash and long stress reconcile sent/acknowledged/recovered identities for each mode; future distributed simulation removes minority replicas. |
+| 1 | Acknowledged durability | WAL v1 failpoint crash and long stress reconcile sent/fully-written/synchronized/acknowledged/recovered identities for each mode at every installation, append, sync-frontier, and repair boundary; future distributed simulation removes minority replicas. |
 | 2 | Complete manifest installation | Failpoint crash at every write/sync/rename/edit step plus fuzzed missing/corrupt files; oracle accepts only old or new complete generation. |
 | 3 | Part immutability | Unit/property tests hash installed parts across flush, compaction, repair, and tiering; sanitizer/stress detects writes or identity reuse. |
 | 4 | Per-tablet log order | Property and deterministic concurrency compare applied storage/live state after every position with a serial reference state machine. |
 | 5 | No uncommitted Raft visibility | Deterministic distributed simulation tags every returned version and proves its index committed and applied despite partitions/divergent tails. |
 | 6 | Stable query snapshots | Differential and deterministic concurrency hold queries across commits, seal, flush, schema edits, and compaction and compare with the captured descriptor model. |
 | 7 | Compaction equivalence | Property/differential generation of overlapping base/delta versions compares every retained snapshot before and after compaction; crash tests cover install. |
-| 8 | Idempotent recovery | Failpoint crash recovery-of-recovery repeats from identical images and compares manifest, applied position, files, and logical rows byte/logically. |
+| 8 | Idempotent recovery | WAL tail repair and later manifest recovery crash recursively, repeat from identical images, and compare classification, segment bytes, applied position, files, and logical rows byte-for-byte and logically. |
 | 9 | Idempotent retry | Property, crash, and long stress retry matching/conflicting client batch identities around acknowledgments/restarts and compare with the identity model. |
-| 10 | Integrity coverage | Codec property tests and fuzzing flip, truncate, splice, and corrupt framing/page metadata; sanitizers require bounded failure before unsafe access. |
+| 10 | Integrity coverage | WAL v1 golden/property/fuzz suites flip, truncate, splice, and corrupt every segment/record field, payload, padding, and CRC; later page codecs receive equivalent coverage, and sanitizers require bounded failure before unsafe access. |
 | 11 | Safe reclamation | Deterministic concurrency pauses readers at dereferences while seal/compact/cancel/evict runs; ASan/TSan and stress verify reuse after final pin only. |
 | 12 | Deterministic resume boundaries | Property/fuzz tokens, tampering, restart, retention expiry, and future topology changes; differential replay requires the same suffix or exact error. |
 | 13 | Dual-time corrections | Bitemporal property/differential model covers late originals, replacements, tombstones, watermark crossings, history retention, and compaction. |
-| 14 | Versioned formats | Golden fixtures, fuzzing, compatibility matrices, endian-cross checks, and unknown version/flag rejection for every durable/network release. |
+| 14 | Versioned formats | WAL v1 and every later durable/network release maintain golden fixtures, fuzzing, compatibility matrices, endian-cross checks, and deterministic unknown version/type/flag rejection. |
 | 15 | Bounded slow subscribers | Long stress and deterministic concurrency halt consumers, fill every bound, and verify explicit overflow while ingest and reclamation continue. |
 | 16 | Complete mutable-row publication | Deterministic concurrency yields after every column write/publication step; poisoned memory, TSan, and scan assertions permit old boundary or complete row only. |
 | 17 | Gap-free snapshot-to-stream | Differential/failpoint/concurrency tests commit at every handoff step, disconnect/restart, and compare snapshot plus deduplicated continuation with source log. |
@@ -49,7 +49,33 @@ WAL, CSEG, manifest, checkpoint, resume-token, and network codecs require golden
 
 ### Partial writes and crash consistency
 
-The storage test environment can return short writes, delayed completion, sync errors, reordered completion where the platform permits it, and crashes after each state transition. WAL tail recovery, part installation, manifest edit, checkpoint advancement, and reclamation are tested separately. Corruption before a valid WAL end is an error; only a partial final record is an incomplete tail.
+The storage test environment can return short writes, delayed completion, sync errors, reordered completion where the platform permits it, and crashes after each state transition. WAL tail recovery, part installation, manifest edit, checkpoint advancement, and reclamation are tested separately. The exact [WAL v1 incomplete-tail rule](../formats/wal-v1.md#clean-end-incomplete-final-tail-and-corruption) permits only a short suffix at the verified end of the highest segment. Complete-record checksum failure and any non-final truncation are corruption, never a truncation hint.
+
+### WAL v1 implementation gate
+
+The WAL implementation phases must introduce named suites covering:
+
+- **golden format:** empty and multi-segment files, every fixed field, application envelope,
+  alignment class, maximum accepted length, and cross-endian byte equality;
+- **structural property:** independent encode/decode round trips, sequence continuity, exact CRC
+  ranges, checked size arithmetic, and records that end exactly at the segment limit;
+- **corruption and fuzz:** every bit/field/padding region, hostile length/complement combinations,
+  unknown versions/types/kinds/flags, gaps, duplicate/spliced segments, and bounded allocation/read;
+- **append failpoint:** every short-write prefix and hard error, with proof that the poisoned writer
+  never appends a later record;
+- **installation crash:** before/after WAL-directory creation and parent sync, temporary header
+  write, file sync, rename, directory sync, prior-segment sync, recovery's writer-startup namespace
+  barrier, and first successor append;
+- **acknowledgment oracle:** reconcile requested/effective mode and sent, complete-write, sync-frontier,
+  acknowledged, recovered, and applied identities; covered failures may lose no `LOCAL_SYNC` identity;
+- **tail repair:** every final-header/payload/trailer truncation, forbidden middle/full-CRC cases,
+  synchronization failures, repeated repair, and crash during repair; and
+- **whole-log preflight/replay:** unknown semantic support fails before apply, repeated recovery is
+  idempotent, and no state is query-visible before complete replay.
+
+Fixtures and randomized failures record WAL format, generator version, seed, platform/filesystem,
+fault point, durability mode, and an exact reproduction command. These suites are required future
+evidence; listing them here does not claim implementation.
 
 ### Recovery idempotence and manifest installation
 

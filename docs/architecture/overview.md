@@ -43,7 +43,7 @@ Arrows express intended data or control flow, not implemented interfaces.
 
 The write plane accepts versioned network frames, decodes them into immutable columnar batches, selects a tablet, and transfers each batch to the tablet's owning shard worker over a bounded single-producer/single-consumer queue. The reactor owns socket progress and admission; it does not modify tablet storage. [ADR 0004](../adr/0004-thread-ownership-and-ingress-concurrency.md) defines this ownership and handoff contract.
 
-Exactly one shard worker owns a mutable tablet at a time. That worker validates schema, event-time, logical identity, and limits; serializes the operation to the single-node WAL or future tablet Raft log; crosses the requested durability boundary; marks the operation committed; and publishes fully initialized columnar rows. [ADR 0006](../adr/0006-wal-durability-and-group-commit.md) fixes the `ASYNC`, `LOCAL_SYNC`, and future `QUORUM_SYNC` acknowledgment modes; their platform sync sequences, defaults, group-commit parameters, and replicated persistence details remain deferred.
+Exactly one shard worker owns a mutable tablet at a time. That worker validates schema, event-time, logical identity, and limits; serializes the operation to the single-node WAL or future tablet Raft log; crosses the requested durability boundary; marks the operation committed; and publishes fully initialized columnar rows. [ADR 0006](../adr/0006-wal-durability-and-group-commit.md) fixes the `ASYNC`, `LOCAL_SYNC`, and future `QUORUM_SYNC` acknowledgment modes. [ADR 0013](../adr/0013-wal-v1-format-and-recovery.md) and the [WAL recovery design](wal-recovery.md) now fix the single-node file/directory synchronization and acknowledgment ordering; defaults, group-commit parameters, and replicated persistence remain deferred.
 
 The intended write flow is:
 
@@ -106,7 +106,19 @@ When a head reaches a policy threshold, the owner seals it. A sealed head accept
 
 ### WAL
 
-The single-node WAL is planned as a segmented, checksummed sequence of versioned logical records. It establishes recovery and commit order per tablet before durable CSEG installation covers those operations. Record framing must permit safe rejection or truncation of torn/corrupt tails without interpreting unchecked fields. Segment rotation, record fields, group-commit scheduling, platform synchronization mechanics, checkpoint retention, and log multiplexing are future specifications; the durability-mode meanings are already accepted in [ADR 0006](../adr/0006-wal-durability-and-group-commit.md).
+The accepted, unimplemented single-node [WAL v1 format](../formats/wal-v1.md) is a segmented,
+append-only sequence of bounded versioned records with little-endian fields, protected framing,
+full-record CRC32C, and WAL-wide sequence order. A record never crosses a segment. One logical
+writer holds the WAL-directory advisory lock, installs each segment through synchronized temporary
+file/rename/directory boundaries, and synchronizes the prior segment before activating its
+successor.
+
+The [WAL recovery state machine](wal-recovery.md) verifies the complete physical history before
+semantic preflight or replay. It can explicitly truncate only a narrowly defined incomplete suffix
+of the highest active segment; bad checksums, discontinuities, and middle-of-log damage fail closed.
+WAL v1 establishes physical order before durable CSEG installation covers operations. The
+kind-specific logical mutation payload, group-commit tuning, checkpoints, and old-segment removal
+remain future work.
 
 In the distributed phase, each tablet's authoritative ordering is its committed Raft log. Many logical Raft groups will share a multiplexed physical log while preserving per-group ordering, durability, fairness, reclamation safety, and recovery identity. Reusing the single-node record codec may be desirable but is not yet decided.
 
@@ -164,6 +176,14 @@ The following are accepted project constraints:
 - networking is event-driven and epoll-first; and
 - historical-to-live handoff is anchored to deterministic committed positions.
 
-Deferred design areas include durability defaults, platform synchronization mechanics, and group-commit parameters; row identities and correction syntax; binary encodings; CSEG layout and codecs; head memory layout and publication ordering; checkpoint and garbage-collection protocol; SQL grammar and type system; optimizer rules; subscription result/change model; watermark finalization; scheduler and memory limits; authentication/TLS integration; Raft protocol details; multi-Raft log layout; distributed snapshot coordination; and object-tier policy. Each becomes accepted only through its phase artifacts, validation evidence, and any required ADR.
+Deferred design areas include durability defaults and group-commit parameters; WAL application
+record kinds and checkpoint/reclamation integration; row identities and correction syntax; CSEG
+layout and codecs; head memory layout and publication ordering; manifest and garbage-collection
+protocol; SQL grammar and type system; optimizer rules; subscription result/change model; watermark
+finalization; scheduler and memory limits; authentication/TLS integration; Raft protocol details;
+multi-Raft log layout; distributed snapshot coordination; and object-tier policy. The WAL v1
+physical bytes, synchronization ordering, and recovery-tail classification are no longer deferred.
+Each remaining area becomes accepted only through its phase artifacts, validation evidence, and any
+required ADR.
 
 The product scope and portability boundary are fixed by [ADRs 0001–0002](../adr/README.md). The dependency boundary is fixed by [ADR 0011](../adr/0011-dependency-and-build-versus-buy-policy.md), and [ADR 0012](../adr/0012-correctness-testing-and-performance-evidence.md) defines the evidence required before any component or optimization is accepted as correct or performant.

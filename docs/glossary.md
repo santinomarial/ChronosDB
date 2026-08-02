@@ -1,11 +1,11 @@
 # Glossary
 
-These definitions are normative vocabulary for architecture documents. Detailed encodings and algorithms remain future specifications.
+These definitions are normative vocabulary for architecture documents. Detailed encodings and algorithms remain future specifications except where an accepted format, such as [WAL v1](formats/wal-v1.md), is linked explicitly.
 
 - **Event time:** Time at which an event occurred in its source domain, supplied by the producer and used for time-window semantics. It can be late, duplicated, corrected, or out of order.
 - **Ingestion time:** Time at which a ChronosDB node first accepts an input batch for processing. It is operational metadata, not a substitute for event time or commit ordering.
 - **System time:** Database-assigned time or order at which a logical version becomes committed and query-visible. It supports “what did the database know then?” queries independently of event time.
-- **Commit position:** A totally ordered, durable boundary within a tablet's committed operation stream. On a single node it derives from the committed WAL; under Raft it incorporates the committed log position and enough identity to reject another tablet or history.
+- **Commit position:** A totally ordered boundary within a tablet's committed operation stream, with durability determined by the effective acknowledgment mode. On a single node it derives from the WAL identity plus the relevant WAL-wide record sequence/application mapping; under Raft it incorporates the committed log position and enough identity to reject another tablet or history.
 - **Snapshot:** A stable view of the relevant schemas, row versions, mutable heads, immutable parts, and commit positions for a query.
 - **Tablet:** The unit of data partitioning, ordered mutation, recovery, and—later—Raft replication. A table is divided into tablets by an explicit partitioning rule.
 - **Shard worker:** A single execution owner for one or more mutable tablets. Exactly one shard worker owns a mutable tablet at a time.
@@ -18,7 +18,13 @@ These definitions are normative vocabulary for architecture documents. Detailed 
 - **Page:** A bounded encoded block of one column within a part, independently integrity-checked and suitable for selective decoding.
 - **Manifest:** The authoritative, versioned description of installed parts and associated durable storage state for a tablet or database generation.
 - **Version edit:** An atomic logical change to manifest state, such as adding newly installed parts and removing superseded parts.
-- **WAL:** The segmented write-ahead log that durably records accepted operations before their effects are acknowledged under modes that promise persistence.
+- **WAL:** The segmented write-ahead log that orders accepted application entries and records them before acknowledgment. Persistence is promised only at the named mode's boundary; `ASYNC` is not durable.
+- **WAL identity:** The nonzero opaque 128-bit `wal_id` shared by all segments in one WAL history. A record sequence is unambiguous only with this history identity.
+- **WAL segment:** One consecutively numbered `.cwal` file with a synchronized versioned header and a contiguous sequence of complete physical records. Only the highest segment is active; all predecessors are immutable.
+- **Segment installation durability boundary:** Successful synchronization of a complete temporary segment header, atomic same-directory rename to its final name, and synchronization of the WAL directory. No record in that segment can be acknowledgment-eligible before this boundary.
+- **Sync frontier:** The active segment number, covered end offset, and final covered record sequence captured for one WAL data-synchronization attempt. A successful group sync can release `LOCAL_SYNC` requests covered in that segment, never later appends or offsets from another file.
+- **Incomplete final tail:** The only repairable WAL truncation class: after every preceding byte verifies, the highest segment ends with fewer than one complete header or with a valid header whose declared valid record extends beyond EOF.
+- **Recovery-tail repair:** Explicit locked truncation of an incomplete final tail to the last verified record boundary, followed by segment and directory synchronization and full re-verification. It is never applied to corruption.
 - **Checkpoint:** A durable recovery boundary that identifies state already represented by installed parts and the earliest log position still needed.
 - **Compaction:** A background transformation of immutable input parts into new immutable parts while preserving exactly the same visible logical rows under the applicable snapshot rules.
 - **Delta part:** An immutable part containing late, out-of-order, corrected, or otherwise non-base data pending or surviving merge with primary sorted parts.
