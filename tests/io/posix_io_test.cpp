@@ -91,6 +91,8 @@ public:
       *metadata = {};
       metadata->st_mode = metadata_mode;
       metadata->st_size = metadata_size;
+      metadata->st_dev = static_cast<dev_t>(1);
+      metadata->st_ino = static_cast<ino_t>(descriptor);
     }
     return integer_result(outcome);
   }
@@ -550,6 +552,31 @@ TEST(PosixIoIntegrationTest, HoldsTheAdvisoryLockAgainstAnotherProcess) {
   ASSERT_TRUE(WIFEXITED(child_status));
   EXPECT_EQ(WEXITSTATUS(child_status), 0);
   EXPECT_TRUE(lock->close().is_ok());
+}
+
+TEST(PosixIoIntegrationTest, RejectsASecondOwnerForTheSameLockInOneProcess) {
+  TemporaryDirectory temporary;
+  ASSERT_TRUE(temporary.valid());
+  common::Result<PosixDirectory> first_directory =
+      PosixDirectory::open(temporary.path().string());
+  common::Result<PosixDirectory> second_directory =
+      PosixDirectory::open(temporary.path().string());
+  ASSERT_TRUE(first_directory.has_value());
+  ASSERT_TRUE(second_directory.has_value());
+
+  common::Result<PosixAdvisoryLock> first =
+      first_directory->acquire_exclusive_lock("LOCK");
+  ASSERT_TRUE(first.has_value()) << first.error().to_string();
+  const common::Result<PosixAdvisoryLock> second =
+      second_directory->acquire_exclusive_lock("LOCK");
+  ASSERT_FALSE(second.has_value());
+  EXPECT_EQ(second.error().code(), common::StatusCode::kUnavailable);
+  EXPECT_NE(second.error().message().find("this process"), std::string::npos);
+
+  ASSERT_TRUE(first->close().is_ok());
+  common::Result<PosixAdvisoryLock> after_release =
+      second_directory->acquire_exclusive_lock("LOCK");
+  EXPECT_TRUE(after_release.has_value()) << after_release.error().to_string();
 }
 
 } // namespace

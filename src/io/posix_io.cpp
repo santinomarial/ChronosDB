@@ -8,6 +8,9 @@
 #include <cstdint>
 #include <fcntl.h>
 #include <limits>
+#include <memory>
+#include <mutex>
+#include <set>
 #include <string>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -220,6 +223,74 @@ void ignore_destructor_close_exception() noexcept {
 } // namespace
 
 namespace detail {
+
+struct LockIdentity {
+  dev_t device;
+  ino_t inode;
+
+  friend bool operator<(const LockIdentity& left, const LockIdentity& right) noexcept {
+    if (left.device != right.device) {
+      return left.device < right.device;
+    }
+    return left.inode < right.inode;
+  }
+};
+
+[[nodiscard]] std::mutex& process_lock_mutex() {
+  static std::mutex mutex;
+  return mutex;
+}
+
+[[nodiscard]] std::set<LockIdentity>& process_lock_identities() {
+  static std::set<LockIdentity> identities;
+  return identities;
+}
+
+class ProcessLockReservation {
+public:
+  explicit ProcessLockReservation(const LockIdentity identity) noexcept : identity_(identity) {}
+
+  ~ProcessLockReservation() {
+    const std::scoped_lock lock{process_lock_mutex()};
+    process_lock_identities().erase(identity_);
+  }
+
+  ProcessLockReservation(const ProcessLockReservation&) = delete;
+  ProcessLockReservation& operator=(const ProcessLockReservation&) = delete;
+  ProcessLockReservation(ProcessLockReservation&&) = delete;
+  ProcessLockReservation& operator=(ProcessLockReservation&&) = delete;
+
+private:
+  LockIdentity identity_;
+};
+
+[[nodiscard]] common::Result<std::unique_ptr<ProcessLockReservation>>
+reserve_process_lock(PosixSyscalls& syscalls, const int descriptor) {
+  struct stat metadata {};
+  int result = 0;
+  do {
+    result = syscalls.fstat(descriptor, &metadata);
+  } while (result == -1 && errno == EINTR);
+  if (result == -1) {
+    return common::make_unexpected(errno_status("fstat advisory lock", errno));
+  }
+  if (!S_ISREG(metadata.st_mode)) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kInvalidArgument, "opened advisory-lock entry is not a regular file"});
+  }
+
+  const LockIdentity identity{.device = metadata.st_dev, .inode = metadata.st_ino};
+  const std::scoped_lock lock{process_lock_mutex()};
+  if (process_lock_identities().contains(identity)) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kUnavailable, "exclusive advisory lock is held by this process"});
+  }
+  std::unique_ptr<ProcessLockReservation> reservation =
+      std::make_unique<ProcessLockReservation>(identity);
+  process_lock_identities().insert(identity);
+  return reservation;
+}
+
 namespace {
 
 class SystemPosixSyscalls final : public PosixSyscalls {
@@ -516,8 +587,15 @@ void PosixFile::close_best_effort() noexcept {
   }
 }
 
+PosixAdvisoryLock::PosixAdvisoryLock() noexcept = default;
+
 PosixAdvisoryLock::PosixAdvisoryLock(const int descriptor, detail::PosixSyscalls& syscalls) noexcept
     : descriptor_(descriptor), syscalls_(&syscalls) {}
+
+PosixAdvisoryLock::PosixAdvisoryLock(
+    const int descriptor, detail::PosixSyscalls& syscalls,
+    std::unique_ptr<detail::ProcessLockReservation> reservation) noexcept
+    : descriptor_(descriptor), syscalls_(&syscalls), reservation_(std::move(reservation)) {}
 
 PosixAdvisoryLock::~PosixAdvisoryLock() {
   close_best_effort();
@@ -525,13 +603,14 @@ PosixAdvisoryLock::~PosixAdvisoryLock() {
 
 PosixAdvisoryLock::PosixAdvisoryLock(PosixAdvisoryLock&& other) noexcept
     : descriptor_(std::exchange(other.descriptor_, kInvalidDescriptor)),
-      syscalls_(std::exchange(other.syscalls_, nullptr)) {}
+      syscalls_(std::exchange(other.syscalls_, nullptr)), reservation_(std::move(other.reservation_)) {}
 
 PosixAdvisoryLock& PosixAdvisoryLock::operator=(PosixAdvisoryLock&& other) noexcept {
   if (this != &other) {
     close_best_effort();
     descriptor_ = std::exchange(other.descriptor_, kInvalidDescriptor);
     syscalls_ = std::exchange(other.syscalls_, nullptr);
+    reservation_ = std::move(other.reservation_);
   }
   return *this;
 }
@@ -546,7 +625,9 @@ common::Status PosixAdvisoryLock::close() {
   }
   const int descriptor = std::exchange(descriptor_, kInvalidDescriptor);
   detail::PosixSyscalls* const syscalls = std::exchange(syscalls_, nullptr);
-  if (syscalls->close(descriptor) == -1) {
+  const int result = syscalls->close(descriptor);
+  reservation_.reset();
+  if (result == -1) {
     return errno_status("close advisory lock", errno);
   }
   return common::Status::ok();
@@ -561,6 +642,7 @@ void PosixAdvisoryLock::close_best_effort() noexcept {
     } catch (...) {
       ignore_destructor_close_exception();
     }
+    reservation_.reset();
   }
 }
 
@@ -726,10 +808,11 @@ PosixDirectory::acquire_exclusive_lock(const std::string_view name,
     return common::make_unexpected(errno_status("openat advisory lock", errno));
   }
 
-  const common::Status validation = validate_regular_file(*syscalls_, descriptor);
-  if (!validation.is_ok()) {
+  common::Result<std::unique_ptr<detail::ProcessLockReservation>> reservation =
+      detail::reserve_process_lock(*syscalls_, descriptor);
+  if (!reservation.has_value()) {
     close_after_failed_open(*syscalls_, descriptor);
-    return common::make_unexpected(validation);
+    return common::make_unexpected(reservation.error());
   }
 
   int lock_result = 0;
@@ -739,13 +822,14 @@ PosixDirectory::acquire_exclusive_lock(const std::string_view name,
   if (lock_result == -1) {
     const int error_number = errno;
     close_after_failed_open(*syscalls_, descriptor);
+    reservation->reset();
     if (error_number == EACCES || error_number == EAGAIN) {
       return common::make_unexpected(common::Status{
           common::StatusCode::kUnavailable, "exclusive advisory lock is held by another process"});
     }
     return common::make_unexpected(errno_status("fcntl exclusive advisory lock", error_number));
   }
-  return PosixAdvisoryLock{descriptor, *syscalls_};
+  return PosixAdvisoryLock{descriptor, *syscalls_, std::move(*reservation)};
 }
 
 common::Status PosixDirectory::rename_no_replace(const RenameRequest& request) const {

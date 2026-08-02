@@ -7,12 +7,14 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string_view>
 
 namespace chronos::io {
 
 namespace detail {
 class PosixHandleFactory;
+class ProcessLockReservation;
 class PosixSyscalls;
 } // namespace detail
 
@@ -78,7 +80,7 @@ private:
 // closing the same inode can release it.
 class PosixAdvisoryLock {
 public:
-  PosixAdvisoryLock() noexcept = default;
+  PosixAdvisoryLock() noexcept;
   ~PosixAdvisoryLock();
 
   PosixAdvisoryLock(const PosixAdvisoryLock&) = delete;
@@ -91,10 +93,13 @@ public:
 
 private:
   PosixAdvisoryLock(int descriptor, detail::PosixSyscalls& syscalls) noexcept;
+  PosixAdvisoryLock(int descriptor, detail::PosixSyscalls& syscalls,
+                    std::unique_ptr<detail::ProcessLockReservation> reservation) noexcept;
   void close_best_effort() noexcept;
 
   int descriptor_{-1};
   detail::PosixSyscalls* syscalls_{nullptr};
+  std::unique_ptr<detail::ProcessLockReservation> reservation_;
 
   friend class PosixDirectory;
   friend class detail::PosixHandleFactory;
