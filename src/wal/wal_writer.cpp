@@ -4,10 +4,10 @@
 #include "chronos/wal/codec.hpp"
 #include "chronos/wal/wal_paths.hpp"
 #include "io/posix_syscalls.hpp"
-#include "wal/wal_segment_internal.hpp"
 #include "wal/wal_recovery_internal.hpp"
-#include "wal/wal_writer_internal.hpp"
+#include "wal/wal_segment_internal.hpp"
 #include "wal/wal_writer_config_internal.hpp"
+#include "wal/wal_writer_internal.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -178,9 +178,8 @@ public:
         target_segment_size_(config.target_segment_size),
         maximum_application_payload_(config.maximum_application_payload),
         written_position_(report.valid_end), durable_position_(report.valid_end),
-        next_record_sequence_(report.sequence_exhausted
-                                  ? std::numeric_limits<std::uint64_t>::max()
-                                  : report.last_record_sequence + 1U),
+        next_record_sequence_(report.sequence_exhausted ? std::numeric_limits<std::uint64_t>::max()
+                                                        : report.last_record_sequence + 1U),
         written_record_sequence_(report.last_record_sequence),
         durable_record_sequence_(report.last_record_sequence),
         sequence_exhausted_(report.sequence_exhausted) {}

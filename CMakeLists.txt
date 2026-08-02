@@ -215,10 +215,20 @@ if(CHRONOS_BUILD_TESTS)
     tests/wal/codec_header_self_contained.cpp
     tests/wal/codec_test.cpp
     tests/wal/types_header_self_contained.cpp
+    tests/wal/wal_corruption_test.cpp
+    tests/wal/wal_discovery_test.cpp
     tests/wal/wal_append_result_header_self_contained.cpp
     tests/wal/wal_log_id_generator_header_self_contained.cpp
     tests/wal/wal_paths_header_self_contained.cpp
+    tests/wal/wal_recovery_header_self_contained.cpp
+    tests/wal/wal_recovery_report_header_self_contained.cpp
+    tests/wal/wal_recovery_test.cpp
+    tests/wal/wal_reopen_test.cpp
+    tests/wal/wal_replay_sink_header_self_contained.cpp
+    tests/wal/wal_replay_test.cpp
     tests/wal/wal_rotation_test.cpp
+    tests/wal/wal_scan_header_self_contained.cpp
+    tests/wal/wal_scan_test.cpp
     tests/wal/wal_segment_header_self_contained.cpp
     tests/wal/wal_segment_installation_test.cpp
     tests/wal/wal_writer_directory_test.cpp
@@ -226,12 +236,18 @@ if(CHRONOS_BUILD_TESTS)
     tests/wal/wal_writer_config_header_self_contained.cpp
     tests/wal/wal_writer_header_self_contained.cpp
     tests/wal/wal_writer_test.cpp
+    tests/wal/wal_tail_repair_test.cpp
+    tests/wal/waldump_test.cpp
   )
   set_target_properties(chronos_wal_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_wal_tests PRIVATE cxx_std_23)
   target_include_directories(chronos_wal_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
                                                        "${CMAKE_CURRENT_SOURCE_DIR}/tests")
   target_link_libraries(chronos_wal_tests PRIVATE chronos::wal GTest::gtest_main)
+  target_compile_definitions(
+    chronos_wal_tests PRIVATE CHRONOS_WALDUMP_PATH="$<TARGET_FILE:chronos-waldump>"
+  )
+  add_dependencies(chronos_wal_tests chronos-waldump)
   chronos_set_project_warnings(chronos_wal_tests)
   chronos_enable_sanitizers(chronos_wal_tests)
   chronos_enable_static_analysis(chronos_wal_tests)

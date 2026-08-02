@@ -35,19 +35,19 @@ namespace {
   constexpr std::string_view kSuffix = ".cwal";
   if (name.size() != kPrefix.size() + 20U + kSuffix.size() || !name.starts_with(kPrefix) ||
       !name.ends_with(kSuffix)) {
-    return common::make_unexpected(corruption("malformed final WAL segment name: " +
-                                               std::string{name}));
+    return common::make_unexpected(
+        corruption("malformed final WAL segment name: " + std::string{name}));
   }
   std::uint64_t value = 0;
   for (const char character : name.substr(kPrefix.size(), 20U)) {
     if (character < '0' || character > '9') {
-      return common::make_unexpected(corruption("malformed final WAL segment name: " +
-                                                 std::string{name}));
+      return common::make_unexpected(
+          corruption("malformed final WAL segment name: " + std::string{name}));
     }
     const std::uint64_t digit = static_cast<std::uint64_t>(character - '0');
     if (value > (std::numeric_limits<std::uint64_t>::max() - digit) / 10U) {
-      return common::make_unexpected(corruption("WAL segment filename number overflows uint64: " +
-                                                 std::string{name}));
+      return common::make_unexpected(
+          corruption("WAL segment filename number overflows uint64: " + std::string{name}));
     }
     value = (value * 10U) + digit;
   }
@@ -78,8 +78,7 @@ namespace {
                      is_lower_hex);
 }
 
-[[nodiscard]] common::Result<detail::WalDiscovery>
-discover_wal(io::PosixDirectory& directory) {
+[[nodiscard]] common::Result<detail::WalDiscovery> discover_wal(io::PosixDirectory& directory) {
   const common::Result<std::vector<io::DirectoryEntry>> entries = directory.list_entries();
   if (!entries.has_value()) {
     return common::make_unexpected(with_context("list WAL directory", entries.error()));
@@ -115,8 +114,8 @@ discover_wal(io::PosixDirectory& directory) {
               corruption("temporary WAL segment is not a regular file: " + entry.name));
         }
         if (discovery.temporary_file_count == std::numeric_limits<std::uint64_t>::max()) {
-          return common::make_unexpected(common::Status{
-              common::StatusCode::kResourceExhausted, "too many temporary WAL entries"});
+          return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                        "too many temporary WAL entries"});
         }
         ++discovery.temporary_file_count;
         continue;
@@ -129,8 +128,8 @@ discover_wal(io::PosixDirectory& directory) {
           corruption("unrecognized entry in dedicated WAL directory: " + entry.name));
     }
   } catch (const std::bad_alloc&) {
-    return common::make_unexpected(common::Status{
-        common::StatusCode::kResourceExhausted, "cannot allocate WAL discovery snapshot"});
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                  "cannot allocate WAL discovery snapshot"});
   }
 
   if (!saw_lock) {
@@ -146,7 +145,8 @@ discover_wal(io::PosixDirectory& directory) {
   for (std::size_t index = 0; index < discovery.segments.size(); ++index) {
     const std::uint64_t expected = static_cast<std::uint64_t>(index) + 1U;
     if (discovery.segments[index].number != expected) {
-      return common::make_unexpected(corruption("WAL segment sequence has a gap or does not begin at 1"));
+      return common::make_unexpected(
+          corruption("WAL segment sequence has a gap or does not begin at 1"));
     }
   }
   return discovery;
@@ -180,10 +180,10 @@ discover_wal(io::PosixDirectory& directory) {
 
 namespace detail {
 
-common::Result<LockedWalDirectory>
-open_locked_wal_directory(const std::string_view directory_path,
-                          const std::uint16_t lock_permissions, const bool create_lock,
-                          io::detail::PosixSyscalls& syscalls) {
+common::Result<LockedWalDirectory> open_locked_wal_directory(const std::string_view directory_path,
+                                                             const std::uint16_t lock_permissions,
+                                                             const bool create_lock,
+                                                             io::detail::PosixSyscalls& syscalls) {
   common::Result<io::PosixDirectory> directory =
       io::detail::PosixHandleFactory::open_directory(directory_path, syscalls);
   if (!directory.has_value()) {
@@ -204,12 +204,13 @@ open_locked_wal_directory(const std::string_view directory_path,
                             .discovery = std::move(*discovery)};
 }
 
-common::Result<WalRecoveryReport>
-scan_discovered_wal(io::PosixDirectory& directory, const WalDiscovery& discovery,
-                    const ScanPass pass, WalReplaySink* const sink) {
+common::Result<WalRecoveryReport> scan_discovered_wal(io::PosixDirectory& directory,
+                                                      const WalDiscovery& discovery,
+                                                      const ScanPass pass,
+                                                      WalReplaySink* const sink) {
   if ((pass == ScanPass::kPreflight || pass == ScanPass::kReplay) && sink == nullptr) {
-    return common::make_unexpected(common::Status{common::StatusCode::kInternal,
-                                                  "WAL scan callback pass has no sink"});
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInternal, "WAL scan callback pass has no sink"});
   }
   WalRecoveryReport report;
   report.segment_count = static_cast<std::uint64_t>(discovery.segments.size());
@@ -218,14 +219,15 @@ scan_discovered_wal(io::PosixDirectory& directory, const WalDiscovery& discovery
   bool have_wal_id = false;
 
   try {
-    for (std::size_t segment_index = 0; segment_index < discovery.segments.size(); ++segment_index) {
+    for (std::size_t segment_index = 0; segment_index < discovery.segments.size();
+         ++segment_index) {
       const DiscoveredWalSegment& discovered = discovery.segments[segment_index];
       const bool is_final = segment_index + 1U == discovery.segments.size();
       common::Result<io::PosixFile> file =
           directory.open_regular_file(discovered.file_name, io::FileOpenMode::kReadOnly);
       if (!file.has_value()) {
-        return common::make_unexpected(with_context("open WAL segment " + discovered.file_name,
-                                                    file.error()));
+        return common::make_unexpected(
+            with_context("open WAL segment " + discovered.file_name, file.error()));
       }
       const common::Result<std::uint64_t> size = file->size();
       if (!size.has_value()) {
@@ -241,8 +243,8 @@ scan_discovered_wal(io::PosixDirectory& directory, const WalDiscovery& discovery
         return common::make_unexpected(with_context("validate WAL segment size", size_status));
       }
       if (report.physical_bytes > std::numeric_limits<std::uint64_t>::max() - *size) {
-        return common::make_unexpected(common::Status{
-            common::StatusCode::kResourceExhausted, "total WAL physical bytes exceed uint64"});
+        return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                      "total WAL physical bytes exceed uint64"});
       }
       report.physical_bytes += *size;
 
@@ -286,9 +288,8 @@ scan_discovered_wal(io::PosixDirectory& directory, const WalDiscovery& discovery
                 corruption("incomplete record header appears in a non-final WAL segment"));
           }
           report.classification = WalScanClassification::kIncompleteFinalTail;
-          report.valid_end = PhysicalWalPosition{.wal_id = report.wal_id,
-                                                 .segment_number = discovered.number,
-                                                 .byte_offset = offset};
+          report.valid_end = PhysicalWalPosition{
+              .wal_id = report.wal_id, .segment_number = discovered.number, .byte_offset = offset};
           report.observed_final_size = *size;
           return report;
         }
@@ -301,14 +302,13 @@ scan_discovered_wal(io::PosixDirectory& directory, const WalDiscovery& discovery
         const common::Result<RecordHeader> record_header =
             decode_record_header(encoded_record_header);
         if (!record_header.has_value()) {
-          return common::make_unexpected(with_context(
-              "decode WAL record header at offset " + std::to_string(offset),
-              record_header.error()));
+          return common::make_unexpected(
+              with_context("decode WAL record header at offset " + std::to_string(offset),
+                           record_header.error()));
         }
         if (record_header->record_sequence != expected_record_sequence) {
-          return common::make_unexpected(
-              corruption("WAL record sequence is not contiguous at offset " +
-                         std::to_string(offset)));
+          return common::make_unexpected(corruption(
+              "WAL record sequence is not contiguous at offset " + std::to_string(offset)));
         }
         if (record_header->total_length > remaining) {
           if (!is_final) {
@@ -316,9 +316,8 @@ scan_discovered_wal(io::PosixDirectory& directory, const WalDiscovery& discovery
                 corruption("incomplete record appears in a non-final WAL segment"));
           }
           report.classification = WalScanClassification::kIncompleteFinalTail;
-          report.valid_end = PhysicalWalPosition{.wal_id = report.wal_id,
-                                                 .segment_number = discovered.number,
-                                                 .byte_offset = offset};
+          report.valid_end = PhysicalWalPosition{
+              .wal_id = report.wal_id, .segment_number = discovered.number, .byte_offset = offset};
           report.observed_final_size = *size;
           return report;
         }
@@ -330,17 +329,15 @@ scan_discovered_wal(io::PosixDirectory& directory, const WalDiscovery& discovery
         }
         const common::Result<DecodedRecord> decoded = decode_record(encoded_record);
         if (!decoded.has_value()) {
-          return common::make_unexpected(
-              with_context("decode WAL record at offset " + std::to_string(offset), decoded.error()));
+          return common::make_unexpected(with_context(
+              "decode WAL record at offset " + std::to_string(offset), decoded.error()));
         }
 
-        const PhysicalWalPosition record_start{.wal_id = report.wal_id,
-                                               .segment_number = discovered.number,
-                                               .byte_offset = offset};
+        const PhysicalWalPosition record_start{
+            .wal_id = report.wal_id, .segment_number = discovered.number, .byte_offset = offset};
         offset += record_header->total_length;
-        const PhysicalWalPosition record_end{.wal_id = report.wal_id,
-                                             .segment_number = discovered.number,
-                                             .byte_offset = offset};
+        const PhysicalWalPosition record_end{
+            .wal_id = report.wal_id, .segment_number = discovered.number, .byte_offset = offset};
         if (pass != ScanPass::kVerify) {
           const WalReplayRecord callback_record{.header = decoded->header,
                                                 .record_start = record_start,
@@ -380,15 +377,14 @@ scan_discovered_wal(io::PosixDirectory& directory, const WalDiscovery& discovery
             corruption("terminal WAL record sequence is followed by another segment"));
       }
       if (is_final) {
-        report.valid_end = PhysicalWalPosition{.wal_id = report.wal_id,
-                                               .segment_number = discovered.number,
-                                               .byte_offset = offset};
+        report.valid_end = PhysicalWalPosition{
+            .wal_id = report.wal_id, .segment_number = discovered.number, .byte_offset = offset};
         report.observed_final_size = *size;
       }
     }
   } catch (const std::bad_alloc&) {
-    return common::make_unexpected(common::Status{
-        common::StatusCode::kResourceExhausted, "cannot allocate bounded WAL record buffer"});
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                  "cannot allocate bounded WAL record buffer"});
   }
   return report;
 }
@@ -396,10 +392,11 @@ scan_discovered_wal(io::PosixDirectory& directory, const WalDiscovery& discovery
 common::Status require_same_verified_history(const WalRecoveryReport& expected,
                                              const WalRecoveryReport& observed) {
   if (expected.classification != WalScanClassification::kClean ||
-      observed.classification != WalScanClassification::kClean || expected.wal_id != observed.wal_id ||
-      expected.segment_count != observed.segment_count ||
+      observed.classification != WalScanClassification::kClean ||
+      expected.wal_id != observed.wal_id || expected.segment_count != observed.segment_count ||
       expected.temporary_file_count != observed.temporary_file_count ||
-      expected.record_count != observed.record_count || expected.physical_bytes != observed.physical_bytes ||
+      expected.record_count != observed.record_count ||
+      expected.physical_bytes != observed.physical_bytes ||
       expected.valid_end != observed.valid_end ||
       expected.last_record_sequence != observed.last_record_sequence ||
       expected.sequence_exhausted != observed.sequence_exhausted) {

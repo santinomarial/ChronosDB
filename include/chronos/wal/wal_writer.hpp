@@ -24,7 +24,7 @@ namespace chronos::wal {
 namespace detail {
 class WalWriterTestAccess;
 struct RecoveredWalState;
-}
+} // namespace detail
 
 // WalWriter owns the process advisory lock, WAL directory descriptor, and active segment. It is not
 // internally synchronized: one caller must serialize append, synchronize, observation, and close.
@@ -42,9 +42,9 @@ public:
   [[nodiscard]] static common::Result<WalWriter> create_new(const WalWriterConfig& config);
   [[nodiscard]] static common::Result<WalWriter> create_new(const WalWriterConfig& config,
                                                             WalLogIdGenerator& id_generator);
-  [[nodiscard]] static common::Result<WalWriter>
-  open_existing(const WalWriterConfig& config, const WalRecoveryOptions& options,
-                WalReplaySink& replay_sink);
+  [[nodiscard]] static common::Result<WalWriter> open_existing(const WalWriterConfig& config,
+                                                               const WalRecoveryOptions& options,
+                                                               WalReplaySink& replay_sink);
 
   // Appends one structurally valid physical APPLICATION_ENTRY. This layer does not assign or
   // interpret application format/kind values. Success is the ASYNC write-path boundary only.

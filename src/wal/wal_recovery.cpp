@@ -36,14 +36,15 @@ namespace {
   return common::Status::ok();
 }
 
-[[nodiscard]] common::Result<WalRecoveryReport>
-repair_tail(detail::LockedWalDirectory& locked, const WalRecoveryReport& incomplete) {
+[[nodiscard]] common::Result<WalRecoveryReport> repair_tail(detail::LockedWalDirectory& locked,
+                                                            const WalRecoveryReport& incomplete) {
   if (incomplete.classification != WalScanClassification::kIncompleteFinalTail ||
       locked.discovery.segments.empty() ||
       incomplete.valid_end.segment_number != locked.discovery.segments.back().number ||
       incomplete.valid_end.byte_offset >= incomplete.observed_final_size) {
-    return common::make_unexpected(common::Status{
-        common::StatusCode::kInternal, "tail repair requested without a valid incomplete-tail report"});
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInternal,
+                       "tail repair requested without a valid incomplete-tail report"});
   }
   const detail::DiscoveredWalSegment& final = locked.discovery.segments.back();
   common::Result<io::PosixFile> file =
@@ -56,21 +57,23 @@ repair_tail(detail::LockedWalDirectory& locked, const WalRecoveryReport& incompl
     return common::make_unexpected(with_context("recheck final WAL size for repair", size.error()));
   }
   if (*size != incomplete.observed_final_size) {
-    return common::make_unexpected(common::Status{
-        common::StatusCode::kCorruption, "final WAL segment changed before tail repair"});
+    return common::make_unexpected(common::Status{common::StatusCode::kCorruption,
+                                                  "final WAL segment changed before tail repair"});
   }
   EncodedSegmentHeader encoded_header{};
-  common::Status status = read_exact(*file, 0U, encoded_header, "recheck final WAL header for repair");
+  common::Status status =
+      read_exact(*file, 0U, encoded_header, "recheck final WAL header for repair");
   if (!status.is_ok()) {
     return common::make_unexpected(status);
   }
   const common::Result<SegmentHeader> header = decode_segment_header(encoded_header);
   if (!header.has_value()) {
-    return common::make_unexpected(with_context("decode final WAL header for repair", header.error()));
+    return common::make_unexpected(
+        with_context("decode final WAL header for repair", header.error()));
   }
   if (header->wal_id != incomplete.wal_id || header->segment_number != final.number) {
-    return common::make_unexpected(common::Status{
-        common::StatusCode::kCorruption, "final WAL identity changed before tail repair"});
+    return common::make_unexpected(common::Status{common::StatusCode::kCorruption,
+                                                  "final WAL identity changed before tail repair"});
   }
 
   status = file->truncate(incomplete.valid_end.byte_offset);
@@ -83,7 +86,8 @@ repair_tail(detail::LockedWalDirectory& locked, const WalRecoveryReport& incompl
   }
   status = locked.directory.sync();
   if (!status.is_ok()) {
-    return common::make_unexpected(with_context("synchronize WAL directory after tail repair", status));
+    return common::make_unexpected(
+        with_context("synchronize WAL directory after tail repair", status));
   }
 
   common::Result<WalRecoveryReport> verified =
@@ -92,8 +96,8 @@ repair_tail(detail::LockedWalDirectory& locked, const WalRecoveryReport& incompl
     return common::make_unexpected(with_context("reverify repaired WAL", verified.error()));
   }
   if (verified->classification != WalScanClassification::kClean) {
-    return common::make_unexpected(common::Status{
-        common::StatusCode::kCorruption, "tail repair did not produce a clean WAL"});
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kCorruption, "tail repair did not produce a clean WAL"});
   }
   verified->repaired = true;
   verified->repair_original_size = incomplete.observed_final_size;
@@ -144,23 +148,23 @@ common::Result<WalRecoveryReport> inspect_wal(const std::string_view directory_p
   return preflight_and_replay(*locked, *verified, sink);
 }
 
-common::Result<WalRecoveryReport> recover_wal(const WalWriterConfig& config,
-                                              const WalRecoveryOptions& options,
-                                              WalReplaySink& sink) {
+common::Result<WalRecoveryReport>
+recover_wal(const WalWriterConfig& config, const WalRecoveryOptions& options, WalReplaySink& sink) {
   return detail::recover_wal_with(config, options, sink, io::detail::system_posix_syscalls());
 }
 
 namespace detail {
 
-common::Result<RecoveredWalState>
-recover_existing_for_writer(const WalWriterConfig& config, const WalRecoveryOptions& options,
-                            WalReplaySink& replay_sink, io::detail::PosixSyscalls& syscalls) {
+common::Result<RecoveredWalState> recover_existing_for_writer(const WalWriterConfig& config,
+                                                              const WalRecoveryOptions& options,
+                                                              WalReplaySink& replay_sink,
+                                                              io::detail::PosixSyscalls& syscalls) {
   const common::Status config_status = validate_writer_config(config);
   if (!config_status.is_ok()) {
     return common::make_unexpected(config_status);
   }
-  common::Result<LockedWalDirectory> locked = open_locked_wal_directory(
-      config.directory_path, config.file_permissions, true, syscalls);
+  common::Result<LockedWalDirectory> locked =
+      open_locked_wal_directory(config.directory_path, config.file_permissions, true, syscalls);
   if (!locked.has_value()) {
     return common::make_unexpected(locked.error());
   }
@@ -184,8 +188,7 @@ recover_existing_for_writer(const WalWriterConfig& config, const WalRecoveryOpti
   const bool repaired = report->repaired;
   const std::uint64_t repair_original_size = report->repair_original_size;
   const std::uint64_t repair_new_size = report->repair_new_size;
-  common::Result<WalRecoveryReport> replayed =
-      preflight_and_replay(*locked, *report, replay_sink);
+  common::Result<WalRecoveryReport> replayed = preflight_and_replay(*locked, *report, replay_sink);
   if (!replayed.has_value()) {
     return common::make_unexpected(replayed.error());
   }
@@ -208,11 +211,13 @@ recover_existing_for_writer(const WalWriterConfig& config, const WalRecoveryOpti
   common::Result<io::PosixFile> active_file =
       locked->directory.open_regular_file(final.file_name, io::FileOpenMode::kReadWrite);
   if (!active_file.has_value()) {
-    return common::make_unexpected(with_context("open recovered active WAL segment", active_file.error()));
+    return common::make_unexpected(
+        with_context("open recovered active WAL segment", active_file.error()));
   }
   const common::Result<std::uint64_t> active_size = active_file->size();
   if (!active_size.has_value()) {
-    return common::make_unexpected(with_context("recheck recovered active WAL size", active_size.error()));
+    return common::make_unexpected(
+        with_context("recheck recovered active WAL size", active_size.error()));
   }
   if (*active_size != final_verification->valid_end.byte_offset) {
     return common::make_unexpected(common::Status{
@@ -237,11 +242,13 @@ recover_existing_for_writer(const WalWriterConfig& config, const WalRecoveryOpti
   // prior interrupted repair durable before the recovered state is published.
   status = active_file->sync_all();
   if (!status.is_ok()) {
-    return common::make_unexpected(with_context("synchronize recovered active WAL segment", status));
+    return common::make_unexpected(
+        with_context("synchronize recovered active WAL segment", status));
   }
   status = locked->directory.sync();
   if (!status.is_ok()) {
-    return common::make_unexpected(with_context("synchronize WAL startup namespace barrier", status));
+    return common::make_unexpected(
+        with_context("synchronize WAL startup namespace barrier", status));
   }
 
   ActiveWalSegment active_segment{
@@ -256,9 +263,10 @@ recover_existing_for_writer(const WalWriterConfig& config, const WalRecoveryOpti
                            .active_segment = std::move(active_segment)};
 }
 
-common::Result<WalRecoveryReport>
-recover_wal_with(const WalWriterConfig& config, const WalRecoveryOptions& options,
-                 WalReplaySink& replay_sink, io::detail::PosixSyscalls& syscalls) {
+common::Result<WalRecoveryReport> recover_wal_with(const WalWriterConfig& config,
+                                                   const WalRecoveryOptions& options,
+                                                   WalReplaySink& replay_sink,
+                                                   io::detail::PosixSyscalls& syscalls) {
   common::Result<RecoveredWalState> recovered =
       recover_existing_for_writer(config, options, replay_sink, syscalls);
   if (!recovered.has_value()) {
