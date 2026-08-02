@@ -429,11 +429,12 @@ common::Result<DecodedRecord> decode_record(const common::ByteView encoded_bytes
   if (!header.has_value()) {
     return common::make_unexpected(header.error());
   }
-  if (header->record_flags != 0U) {
-    return common::make_unexpected(not_supported("WAL record required flags are not supported"));
-  }
   const auto total_length = static_cast<std::size_t>(header->total_length);
   if (encoded_bytes.size() < total_length) {
+    if (header->record_flags != 0U) {
+      return common::make_unexpected(
+          not_supported("WAL record required flags are not supported"));
+    }
     return common::make_unexpected(out_of_range("complete WAL record extends beyond input"));
   }
 
@@ -454,6 +455,9 @@ common::Result<DecodedRecord> decode_record(const common::ByteView encoded_bytes
   const std::uint32_t stored_crc = load_u32_le(record, trailer_offset);
   if (common::crc32c(record.first(trailer_offset)) != stored_crc) {
     return common::make_unexpected(corruption("WAL complete-record CRC32C mismatch"));
+  }
+  if (header->record_flags != 0U) {
+    return common::make_unexpected(not_supported("WAL record required flags are not supported"));
   }
   if (header->record_type == kApplicationEntryRecordType) {
     const common::Status application_status = validate_application_envelope(payload);

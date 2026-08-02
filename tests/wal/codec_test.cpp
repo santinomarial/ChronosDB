@@ -359,6 +359,11 @@ TEST(WalRecordTest, StructurallyDecodesUnknownFormatsAndTypesButRejectsRequiredF
   const auto flags = decode_record(bytes);
   ASSERT_FALSE(flags.has_value());
   EXPECT_EQ(flags.error().code(), common::StatusCode::kNotSupported);
+
+  bytes[63] ^= std::byte{1};
+  const auto corrupt_flagged_record = decode_record(bytes);
+  ASSERT_FALSE(corrupt_flagged_record.has_value());
+  EXPECT_EQ(corrupt_flagged_record.error().code(), common::StatusCode::kCorruption);
 }
 
 TEST(WalRecordTest, FailedEncodingLeavesDestinationUnchanged) {
