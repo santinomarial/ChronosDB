@@ -28,9 +28,7 @@ encode_segment_header(const SegmentHeader& header);
 
 // Constructs a supported WAL v1 outer header. Nonzero record types are structurally frameable; the
 // WAL writer remains responsible for enforcing the specification's type-allocation policy.
-[[nodiscard]] common::Result<RecordHeader> make_record_header(std::uint16_t record_type,
-                                                              std::uint64_t record_sequence,
-                                                              std::size_t payload_length);
+[[nodiscard]] common::Result<RecordHeader> make_record_header(const RecordHeaderInput& input);
 
 [[nodiscard]] common::Result<EncodedRecordHeader> encode_record_header(const RecordHeader& header);
 

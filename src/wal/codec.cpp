@@ -307,26 +307,24 @@ common::Result<SegmentHeader> decode_segment_header(const common::ByteView encod
   return header;
 }
 
-common::Result<RecordHeader> make_record_header(const std::uint16_t record_type,
-                                                const std::uint64_t record_sequence,
-                                                const std::size_t payload_length) {
-  if (record_type == 0U) {
+common::Result<RecordHeader> make_record_header(const RecordHeaderInput& input) {
+  if (input.record_type == 0U) {
     return common::make_unexpected(
         common::Status{common::StatusCode::kInvalidArgument, "record type must be nonzero"});
   }
-  if (record_sequence == 0U) {
+  if (input.record_sequence == 0U) {
     return common::make_unexpected(
         common::Status{common::StatusCode::kInvalidArgument, "record sequence must be nonzero"});
   }
-  const common::Result<RecordLayout> layout = calculate_record_layout(payload_length);
+  const common::Result<RecordLayout> layout = calculate_record_layout(input.payload_length);
   if (!layout.has_value()) {
     return common::make_unexpected(layout.error());
   }
   return RecordHeader{.total_length = layout->total_length,
                       .record_format = kRecordFormat,
-                      .record_type = record_type,
+                      .record_type = input.record_type,
                       .record_flags = 0U,
-                      .record_sequence = record_sequence,
+                      .record_sequence = input.record_sequence,
                       .payload_length = layout->payload_length};
 }
 

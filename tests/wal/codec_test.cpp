@@ -71,13 +71,12 @@ void refresh_record_crc(const common::MutableByteView bytes) {
 
 [[nodiscard]] std::vector<std::byte> golden_application_payload() {
   const auto record = as_bytes(kGoldenRecord);
-  return std::vector<std::byte>(record.begin() + static_cast<std::ptrdiff_t>(kRecordHeaderSize),
-                                record.end() - 5);
+  return {record.begin() + static_cast<std::ptrdiff_t>(kRecordHeaderSize), record.end() - 5};
 }
 
 TEST(WalTypesTest, ConstantsMatchTheAcceptedFormat) {
   static_assert(kSegmentHeaderSize == 64U);
-  static_assert(kSegmentSizeLimit == 64U * 1024U * 1024U);
+  static_assert(kSegmentSizeLimit == 64ULL * 1024ULL * 1024ULL);
   static_assert(kRecordHeaderSize == 40U);
   static_assert(kMaximumRecordLength == 16U * 1024U * 1024U);
   static_assert(kMaximumPayloadLength == kMaximumRecordLength - 44U);
@@ -212,7 +211,9 @@ TEST(WalSegmentHeaderTest, EncoderRejectsInvalidIdentityAndFirstSegmentSequence)
 
 TEST(WalRecordTest, MatchesIndependentGoldenBytesAndDecodesBorrowedPayload) {
   const std::vector<std::byte> payload = golden_application_payload();
-  const auto header = make_record_header(kApplicationEntryRecordType, 42U, payload.size());
+  const auto header = make_record_header({.record_type = kApplicationEntryRecordType,
+                                          .record_sequence = 42U,
+                                          .payload_length = payload.size()});
   ASSERT_TRUE(header.has_value());
   EXPECT_EQ(header->total_length, 64U);
 
@@ -240,7 +241,9 @@ TEST(WalRecordTest, MatchesIndependentGoldenBytesAndDecodesBorrowedPayload) {
 
 TEST(WalRecordTest, SupportsUnalignedInputAndOutput) {
   const std::vector<std::byte> payload = golden_application_payload();
-  const auto header = make_record_header(kApplicationEntryRecordType, 42U, payload.size());
+  const auto header = make_record_header({.record_type = kApplicationEntryRecordType,
+                                          .record_sequence = 42U,
+                                          .payload_length = payload.size()});
   ASSERT_TRUE(header.has_value());
   std::array<std::byte, 66> storage{};
   const common::MutableByteView unaligned = common::MutableByteView{storage}.subspan(1U, 64U);
@@ -257,7 +260,9 @@ TEST(WalRecordTest, SupportsPayloadAliasingDestination) {
   std::copy(expected.begin() + static_cast<std::ptrdiff_t>(kRecordHeaderSize), expected.end() - 5,
             storage.begin());
   const common::ByteView aliased_payload{storage.data(), expected_payload.size()};
-  const auto header = make_record_header(kApplicationEntryRecordType, 42U, expected_payload.size());
+  const auto header = make_record_header({.record_type = kApplicationEntryRecordType,
+                                          .record_sequence = 42U,
+                                          .payload_length = expected_payload.size()});
   ASSERT_TRUE(header.has_value());
   ASSERT_TRUE(encode_record(*header, aliased_payload, storage).has_value());
 
@@ -316,7 +321,8 @@ TEST(WalRecordTest, ValidatesAssignedApplicationEnvelopeAfterChecksums) {
   std::array<std::byte, 8> short_payload{};
   store_u32_le(short_payload, 0U, 1U);
   store_u32_le(short_payload, 4U, 1U);
-  const auto short_header = make_record_header(2U, 1U, short_payload.size());
+  const auto short_header = make_record_header(
+      {.record_type = 2U, .record_sequence = 1U, .payload_length = short_payload.size()});
   ASSERT_TRUE(short_header.has_value());
   std::array<std::byte, 56> short_record{};
   ASSERT_TRUE(encode_record(*short_header, short_payload, short_record).has_value());
@@ -359,7 +365,9 @@ TEST(WalRecordTest, StructurallyDecodesUnknownFormatsAndTypesButRejectsRequiredF
 
 TEST(WalRecordTest, FailedEncodingLeavesDestinationUnchanged) {
   const std::vector<std::byte> payload = golden_application_payload();
-  const auto header = make_record_header(kApplicationEntryRecordType, 42U, payload.size());
+  const auto header = make_record_header({.record_type = kApplicationEntryRecordType,
+                                          .record_sequence = 42U,
+                                          .payload_length = payload.size()});
   ASSERT_TRUE(header.has_value());
 
   std::array<std::byte, 64> destination{};
@@ -400,7 +408,9 @@ TEST(WalRecordTest, DeterministicPropertyRoundTripsPayloadsAndPaddingClasses) {
     }
     std::uint64_t sequence = random();
     sequence = sequence == 0U ? 1U : sequence;
-    const auto header = make_record_header(kApplicationEntryRecordType, sequence, payload.size());
+    const auto header = make_record_header({.record_type = kApplicationEntryRecordType,
+                                            .record_sequence = sequence,
+                                            .payload_length = payload.size()});
     ASSERT_TRUE(header.has_value());
     std::vector<std::byte> encoded(static_cast<std::size_t>(header->total_length) + 7U,
                                    std::byte{0xa5});

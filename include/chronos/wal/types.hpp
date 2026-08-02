@@ -66,6 +66,12 @@ struct RecordLayout {
   friend bool operator==(const RecordLayout&, const RecordLayout&) = default;
 };
 
+struct RecordHeaderInput {
+  std::uint16_t record_type{};
+  std::uint64_t record_sequence{};
+  std::size_t payload_length{};
+};
+
 struct RecordHeader {
   std::uint32_t total_length{};
   std::uint16_t record_format{};
