@@ -45,6 +45,32 @@ The physical WAL handles opaque versioned application entries. It does not decid
 deduplication, schema, row-version, or tablet semantics. Those belong to future kind-specific
 payload contracts and apply logic.
 
+## Current codec interface and ownership
+
+The public headers are `chronos/wal/types.hpp` and `chronos/wal/codec.hpp`, exported by
+`chronos::wal`. `WalId`, `PhysicalWalPosition`, `SegmentHeader`, `RecordLayout`, and `RecordHeader`
+are owning values. `DecodedRecord` owns its header values but borrows its payload as a `ByteView`;
+the complete encoded input must therefore outlive the decoded result and every copy of that view.
+The codec is not internally synchronized because it owns no shared mutable state.
+
+`calculate_record_layout` derives padding and total size before access or allocation.
+`encode_segment_header` and `encode_record_header` return fixed-size owning arrays. `encode_record`
+writes a complete record into caller-owned storage only after every fallible validation has passed;
+on error the entire destination is unchanged. Payload may alias the destination. The decode
+functions accept arbitrary borrowed bytes, use alignment-safe little-endian loads, validate CRCs and
+structure before returning views, and allocate no payload memory. Only diagnostic construction may
+allocate.
+
+`PhysicalWalPosition` is deliberately not a new durable encoding. It is the checked in-memory tuple
+of WAL identity, segment number, and aligned byte offset needed by later storage code.
+`advance_physical_wal_position` rejects invalid frame sizes and any record that would cross the
+segment limit; rotation remains the responsibility of the future writer.
+
+Decoder errors preserve the recovery distinction without implementing recovery: incomplete input
+is `kOutOfRange`, contradictory or checksum-invalid bytes are `kCorruption`, and a checksum-valid
+unknown required outer feature is `kNotSupported`. Unknown nonzero record formats and physical types
+remain structurally decodable as required by WAL v1; semantic preflight is future work.
+
 ## Why segmentation helps
 
 Segmentation bounds individual files, gives rotation an auditable installation protocol, and creates
