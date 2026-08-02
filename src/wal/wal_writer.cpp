@@ -96,8 +96,10 @@ public:
 
     const std::uint64_t next_segment_number = active_segment_.metadata.header.segment_number + 1U;
     common::Result<detail::ActiveWalSegment> next_segment =
-        detail::install_segment(directory_, active_segment_.metadata.header.wal_id,
-                                next_segment_number, next_record_sequence_, file_permissions_);
+        detail::install_segment(directory_, {.wal_id = active_segment_.metadata.header.wal_id,
+                                             .segment_number = next_segment_number,
+                                             .first_record_sequence = next_record_sequence_,
+                                             .file_permissions = file_permissions_});
     if (!next_segment.has_value()) {
       return poison(with_context("rotate WAL segment", next_segment.error()));
     }
@@ -173,8 +175,11 @@ common::Result<WalWriter> WalWriter::create_new_with(const WalWriterConfig& conf
         common::StatusCode::kInvalidArgument, "WAL identity generator returned an all-zero value"});
   }
 
-  common::Result<detail::ActiveWalSegment> active_segment = detail::install_segment(
-      *directory, *wal_id, kFirstSegmentNumber, kFirstRecordSequence, config.file_permissions);
+  common::Result<detail::ActiveWalSegment> active_segment =
+      detail::install_segment(*directory, {.wal_id = *wal_id,
+                                           .segment_number = kFirstSegmentNumber,
+                                           .first_record_sequence = kFirstRecordSequence,
+                                           .file_permissions = config.file_permissions});
   if (!active_segment.has_value()) {
     return common::make_unexpected(
         with_context("install initial WAL segment", active_segment.error()));

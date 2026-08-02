@@ -2,6 +2,7 @@
 #include "wal/wal_writer_internal.hpp"
 #include "wal/wal_writer_test_support.hpp"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstddef>
 #include <gtest/gtest.h>
@@ -100,6 +101,32 @@ TEST(WalWriterFailureTest, RotationSyncFailureCannotCreateOrAppendToASuccessor) 
                 syscalls.events.begin(), syscalls.events.end(),
                 [](const std::string& event) { return event.starts_with("open_at:"); })),
             open_count_before);
+}
+
+TEST(WalWriterFailureTest, SuccessorInstallationFailurePoisonsTheSynchronizedWriter) {
+  test::ScriptedWalSyscalls syscalls;
+  WalWriter writer = make_injected_writer(syscalls);
+  ASSERT_TRUE(writer.is_open());
+  const std::vector<std::byte> maximum_payload =
+      test::make_application_payload(kMaximumPayloadLength);
+  for (int index = 0; index < 3; ++index) {
+    ASSERT_TRUE(writer.append_application_entry(maximum_payload).has_value());
+  }
+
+  syscalls.rename_outcomes = {{-1, EIO}};
+  const common::Result<WalAppendResult> rotation = writer.append_application_entry(maximum_payload);
+  ASSERT_FALSE(rotation.has_value());
+  EXPECT_EQ(rotation.error().code(), common::StatusCode::kIoError);
+  EXPECT_TRUE(writer.is_failed());
+  EXPECT_EQ(writer.active_segment().header.segment_number, 1U);
+  EXPECT_EQ(writer.written_record_sequence(), 3U);
+  EXPECT_EQ(writer.durable_record_sequence(), 3U);
+  EXPECT_TRUE(std::any_of(syscalls.events.begin(), syscalls.events.end(),
+                          [](const std::string& event) { return event.starts_with("rename:"); }));
+
+  const std::size_t event_count = syscalls.events.size();
+  EXPECT_FALSE(writer.append_application_entry(maximum_payload).has_value());
+  EXPECT_EQ(syscalls.events.size(), event_count);
 }
 
 } // namespace

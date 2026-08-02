@@ -44,7 +44,8 @@ TEST(WalRotationTest, SynchronizesPriorSegmentAndNeverSplitsARecord) {
   EXPECT_EQ(writer.durable_position().byte_offset, kSegmentHeaderSize);
 
   EXPECT_EQ(std::filesystem::file_size(temporary.path() / "wal-00000000000000000001.cwal"),
-            kSegmentHeaderSize + (3U * kMaximumRecordLength));
+            static_cast<std::uintmax_t>(kSegmentHeaderSize) +
+                (3U * static_cast<std::uintmax_t>(kMaximumRecordLength)));
   EXPECT_EQ(std::filesystem::file_size(temporary.path() / "wal-00000000000000000002.cwal"),
             kSegmentHeaderSize + kMaximumRecordLength);
 

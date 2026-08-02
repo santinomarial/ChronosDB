@@ -2,6 +2,6 @@
 
 namespace {
 
-static_assert(sizeof(chronos::wal::WalWriter) > 0U);
+[[maybe_unused]] chronos::wal::WalWriter writer;
 
 } // namespace

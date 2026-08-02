@@ -9,7 +9,7 @@
 #include <utility>
 
 #if defined(__APPLE__)
-#include <stdlib.h>
+#include <cstdlib>
 #elif defined(__linux__)
 #include <sys/random.h>
 #else

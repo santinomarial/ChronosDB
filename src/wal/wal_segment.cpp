@@ -19,29 +19,27 @@ namespace {
 
 } // namespace
 
-common::Result<ActiveWalSegment> install_segment(io::PosixDirectory& directory, const WalId& wal_id,
-                                                 const std::uint64_t segment_number,
-                                                 const std::uint64_t first_record_sequence,
-                                                 const std::uint16_t file_permissions) {
-  const SegmentHeader header{.wal_id = wal_id,
-                             .segment_number = segment_number,
-                             .first_record_sequence = first_record_sequence};
+common::Result<ActiveWalSegment> install_segment(io::PosixDirectory& directory,
+                                                 const SegmentInstallRequest& request) {
+  const SegmentHeader header{.wal_id = request.wal_id,
+                             .segment_number = request.segment_number,
+                             .first_record_sequence = request.first_record_sequence};
   const common::Result<EncodedSegmentHeader> encoded_header = encode_segment_header(header);
   if (!encoded_header.has_value()) {
     return common::make_unexpected(encoded_header.error());
   }
-  const common::Result<std::string> final_name = wal_segment_file_name(segment_number);
+  const common::Result<std::string> final_name = wal_segment_file_name(request.segment_number);
   if (!final_name.has_value()) {
     return common::make_unexpected(final_name.error());
   }
   const common::Result<std::string> temporary_name =
-      wal_temporary_segment_file_name(segment_number, wal_id);
+      wal_temporary_segment_file_name(request.segment_number, request.wal_id);
   if (!temporary_name.has_value()) {
     return common::make_unexpected(temporary_name.error());
   }
 
   common::Result<io::PosixFile> temporary =
-      directory.create_exclusive_regular_file(*temporary_name, file_permissions);
+      directory.create_exclusive_regular_file(*temporary_name, request.file_permissions);
   if (!temporary.has_value()) {
     return common::make_unexpected(with_context("create temporary WAL segment", temporary.error()));
   }

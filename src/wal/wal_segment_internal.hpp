@@ -15,9 +15,15 @@ struct ActiveWalSegment {
   io::PosixFile file;
 };
 
+struct SegmentInstallRequest {
+  WalId wal_id;
+  std::uint64_t segment_number;
+  std::uint64_t first_record_sequence;
+  std::uint16_t file_permissions;
+};
+
 [[nodiscard]] common::Result<ActiveWalSegment>
-install_segment(io::PosixDirectory& directory, const WalId& wal_id, std::uint64_t segment_number,
-                std::uint64_t first_record_sequence, std::uint16_t file_permissions);
+install_segment(io::PosixDirectory& directory, const SegmentInstallRequest& request);
 
 } // namespace chronos::wal::detail
 

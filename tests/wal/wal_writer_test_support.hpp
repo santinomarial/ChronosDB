@@ -13,7 +13,6 @@
 #include <cstdint>
 #include <deque>
 #include <filesystem>
-#include <stdlib.h>
 #include <string>
 #include <string_view>
 #include <sys/stat.h>

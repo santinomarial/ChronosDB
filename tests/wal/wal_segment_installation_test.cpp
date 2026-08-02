@@ -50,8 +50,9 @@ TEST(WalSegmentInstallationTest, OrdersHeaderWriteFileSyncRenameAndDirectorySync
       "pwrite:12@0",
       "fstat:12",
       "fsync:12",
-      "rename:.wal-00000000000000000001.cwal.tmp-ab0102030405060708090a0b0c0d0e0f->wal-"
-      "00000000000000000001.cwal",
+      std::string{
+          "rename:.wal-00000000000000000001.cwal.tmp-ab0102030405060708090a0b0c0d0e0f->wal-"} +
+          "00000000000000000001.cwal",
       "fsync:10",
   };
   ASSERT_GE(syscalls.events.size(), expected.size());
