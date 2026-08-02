@@ -158,6 +158,7 @@ if(CHRONOS_BUILD_TESTS)
       COMMAND
         "${CMAKE_COMMAND}"
         "-DCOMPILE_COMMANDS=${CMAKE_BINARY_DIR}/compile_commands.json"
+        "-DSOURCE_ROOT=${CMAKE_SOURCE_DIR}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/build/check_ubsan_nonrecovering.cmake"
     )
   endif()

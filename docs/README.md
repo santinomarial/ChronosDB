@@ -28,9 +28,15 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 
 ## Verification and measurement
 
-- [Correctness strategy](testing/correctness-strategy.md): future test taxonomy and mapping for all architecture invariants.
+- [Correctness strategy](testing/correctness-strategy.md): implemented foundation checks and the
+  future test taxonomy mapped to architecture invariants.
 - [Benchmark contract](benchmarks/benchmark-contract.md): mandatory run metadata, metrics, and comparison rules.
 - [ChronosBench](benchmarks/chronosbench.md): planned correctness-checked workload scenarios.
+
+## Reviews
+
+- [Phase 1 foundation review](reviews/phase-1-foundation-review.md): adversarial audit and validation
+  evidence for the implemented build and common binary foundation before WAL design.
 
 ## Learning
 

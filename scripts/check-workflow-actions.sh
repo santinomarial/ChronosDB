@@ -19,7 +19,14 @@ for workflow in "${workflow_files[@]}"; do
       continue
     fi
     action="${BASH_REMATCH[1]}"
-    if [[ "${action}" == ./* || "${action}" == docker://* ]]; then
+    if [[ "${action}" == ./* ]]; then
+      continue
+    fi
+    if [[ "${action}" == docker://* ]]; then
+      if [[ ! "${action}" =~ @sha256:[0-9a-f]{64}$ ]]; then
+        echo "error: ${workflow}:${line_number}: Docker action '${action}' is not pinned to a sha256 digest" >&2
+        failed=true
+      fi
       continue
     fi
     reference="${action##*@}"
