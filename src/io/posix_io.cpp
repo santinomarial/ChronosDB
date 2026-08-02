@@ -203,6 +203,12 @@ void close_after_failed_open(detail::PosixSyscalls& syscalls, const int descript
   }
 }
 
+void ignore_destructor_close_exception() noexcept {
+  // A test double may allocate while recording close. Destruction has no error channel and the
+  // production syscall implementation is noexcept, so an injected exception is intentionally
+  // discarded after ownership has already been invalidated.
+}
+
 } // namespace
 
 namespace detail {
@@ -231,8 +237,8 @@ public:
     return ::fstat(descriptor, metadata);
   }
 
-  int ftruncate(const int descriptor, const off_t size) noexcept override {
-    return ::ftruncate(descriptor, size);
+  int ftruncate(const TruncateRequest& request) noexcept override {
+    return ::ftruncate(request.descriptor, request.size);
   }
 
   int fdatasync(const int descriptor) noexcept override {
@@ -333,7 +339,12 @@ common::Result<std::size_t> PosixFile::read_at(const std::uint64_t offset,
         .offset = *current_offset,
     });
     if (result > 0) {
-      transferred += static_cast<std::size_t>(result);
+      const auto completed = static_cast<std::size_t>(result);
+      if (completed > request_size) {
+        return common::make_unexpected(common::Status{
+            common::StatusCode::kIoError, "pread reported more bytes than requested"});
+      }
+      transferred += completed;
       continue;
     }
     if (result == 0) {
@@ -375,7 +386,12 @@ common::Status PosixFile::write_all_at(const std::uint64_t offset,
         .offset = *current_offset,
     });
     if (result > 0) {
-      transferred += static_cast<std::size_t>(result);
+      const auto completed = static_cast<std::size_t>(result);
+      if (completed > request_size) {
+        return common::Status{common::StatusCode::kIoError,
+                              "pwrite reported more bytes than requested"};
+      }
+      transferred += completed;
       continue;
     }
     if (result == 0) {
@@ -433,7 +449,8 @@ common::Status PosixFile::truncate(const std::uint64_t new_size) const {
 
   int result = 0;
   do {
-    result = syscalls_->ftruncate(descriptor_, *converted_size);
+    result = syscalls_->ftruncate(
+        detail::TruncateRequest{.descriptor = descriptor_, .size = *converted_size});
   } while (result == -1 && errno == EINTR);
   if (result == -1) {
     return errno_status("ftruncate", errno);
@@ -485,7 +502,11 @@ void PosixFile::close_best_effort() noexcept {
   if (is_open()) {
     const int descriptor = std::exchange(descriptor_, kInvalidDescriptor);
     detail::PosixSyscalls* const syscalls = std::exchange(syscalls_, nullptr);
-    static_cast<void>(syscalls->close(descriptor));
+    try {
+      static_cast<void>(syscalls->close(descriptor));
+    } catch (...) {
+      ignore_destructor_close_exception();
+    }
   }
 }
 
@@ -530,7 +551,11 @@ void PosixAdvisoryLock::close_best_effort() noexcept {
   if (is_held()) {
     const int descriptor = std::exchange(descriptor_, kInvalidDescriptor);
     detail::PosixSyscalls* const syscalls = std::exchange(syscalls_, nullptr);
-    static_cast<void>(syscalls->close(descriptor));
+    try {
+      static_cast<void>(syscalls->close(descriptor));
+    } catch (...) {
+      ignore_destructor_close_exception();
+    }
   }
 }
 
@@ -595,7 +620,17 @@ PosixDirectory::open_regular_file(const std::string_view name, const FileOpenMod
     return common::make_unexpected(name_status);
   }
   const std::string owned_name{name};
-  const int access = mode == FileOpenMode::kReadOnly ? O_RDONLY : O_RDWR;
+  int access = 0;
+  switch (mode) {
+  case FileOpenMode::kReadOnly:
+    access = O_RDONLY;
+    break;
+  case FileOpenMode::kReadWrite:
+    access = O_RDWR;
+    break;
+  default:
+    return common::make_unexpected(invalid_argument("unknown regular-file open mode"));
+  }
   const int flags = access | O_CLOEXEC | O_NOFOLLOW;
   int descriptor = kInvalidDescriptor;
   do {
@@ -770,7 +805,11 @@ void PosixDirectory::close_best_effort() noexcept {
   if (is_open()) {
     const int descriptor = std::exchange(descriptor_, kInvalidDescriptor);
     detail::PosixSyscalls* const syscalls = std::exchange(syscalls_, nullptr);
-    static_cast<void>(syscalls->close(descriptor));
+    try {
+      static_cast<void>(syscalls->close(descriptor));
+    } catch (...) {
+      ignore_destructor_close_exception();
+    }
   }
 }
 

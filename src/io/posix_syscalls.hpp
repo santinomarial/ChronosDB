@@ -34,6 +34,11 @@ struct WriteAtRequest {
   off_t offset;
 };
 
+struct TruncateRequest {
+  int descriptor;
+  off_t size;
+};
+
 struct RenameAtRequest {
   int directory_descriptor;
   const char* old_name;
@@ -52,7 +57,7 @@ public:
   virtual ssize_t pread(const ReadAtRequest& request) = 0;
   virtual ssize_t pwrite(const WriteAtRequest& request) = 0;
   virtual int fstat(int descriptor, struct stat* metadata) = 0;
-  virtual int ftruncate(int descriptor, off_t size) = 0;
+  virtual int ftruncate(const TruncateRequest& request) = 0;
   virtual int fdatasync(int descriptor) = 0;
   virtual int fsync(int descriptor) = 0;
   virtual int rename_no_replace(const RenameAtRequest& request) = 0;

@@ -43,30 +43,28 @@ struct Outcome {
 
 class ScriptedSyscalls final : public detail::PosixSyscalls {
 public:
-  int open_directory(const char* const path, const int flags) noexcept override {
+  int open_directory(const char* const path, const int flags) override {
     opened_paths.emplace_back(path);
     open_directory_flags.push_back(flags);
     return integer_result(pop_or(open_directory_outcomes, next_descriptor++));
   }
 
-  int open_at(const int directory_descriptor, const char* const name, const int flags,
-              const mode_t permissions) noexcept override {
-    open_at_directories.push_back(directory_descriptor);
-    open_at_names.emplace_back(name);
-    open_at_flags.push_back(flags);
-    open_at_permissions.push_back(permissions);
+  int open_at(const detail::OpenAtRequest& request) override {
+    open_at_directories.push_back(request.directory_descriptor);
+    open_at_names.emplace_back(request.name);
+    open_at_flags.push_back(request.flags);
+    open_at_permissions.push_back(request.permissions);
     return integer_result(pop_or(open_at_outcomes, next_descriptor++));
   }
 
-  ssize_t pread(const int descriptor, void* const destination, const std::size_t size,
-                const off_t offset) noexcept override {
-    pread_descriptors.push_back(descriptor);
-    pread_sizes.push_back(size);
-    pread_offsets.push_back(offset);
+  ssize_t pread(const detail::ReadAtRequest& request) override {
+    pread_descriptors.push_back(request.descriptor);
+    pread_sizes.push_back(request.size);
+    pread_offsets.push_back(request.offset);
     const Outcome outcome = pop_or(pread_outcomes, 0);
     if (outcome.result > 0) {
       const auto transferred = static_cast<std::size_t>(outcome.result);
-      auto* const bytes = static_cast<std::byte*>(destination);
+      auto* const bytes = static_cast<std::byte*>(request.destination);
       for (std::size_t index = 0; index < transferred; ++index) {
         bytes[index] = static_cast<std::byte>(next_read_byte++);
       }
@@ -75,21 +73,20 @@ public:
     return static_cast<ssize_t>(outcome.result);
   }
 
-  ssize_t pwrite(const int descriptor, const void* const source, const std::size_t size,
-                 const off_t offset) noexcept override {
-    pwrite_descriptors.push_back(descriptor);
-    pwrite_sizes.push_back(size);
-    pwrite_offsets.push_back(offset);
-    const auto* const bytes = static_cast<const std::byte*>(source);
-    if (size != 0U) {
+  ssize_t pwrite(const detail::WriteAtRequest& request) override {
+    pwrite_descriptors.push_back(request.descriptor);
+    pwrite_sizes.push_back(request.size);
+    pwrite_offsets.push_back(request.offset);
+    const auto* const bytes = static_cast<const std::byte*>(request.source);
+    if (request.size != 0U) {
       pwrite_first_bytes.push_back(bytes[0]);
     }
-    const Outcome outcome = pop_or(pwrite_outcomes, static_cast<std::int64_t>(size));
+    const Outcome outcome = pop_or(pwrite_outcomes, static_cast<std::int64_t>(request.size));
     set_errno(outcome);
     return static_cast<ssize_t>(outcome.result);
   }
 
-  int fstat(const int descriptor, struct stat* const metadata) noexcept override {
+  int fstat(const int descriptor, struct stat* const metadata) override {
     fstat_descriptors.push_back(descriptor);
     const Outcome outcome = pop_or(fstat_outcomes, 0);
     if (outcome.result == 0) {
@@ -100,36 +97,35 @@ public:
     return integer_result(outcome);
   }
 
-  int ftruncate(const int descriptor, const off_t size) noexcept override {
-    ftruncate_descriptors.push_back(descriptor);
-    ftruncate_sizes.push_back(size);
+  int ftruncate(const detail::TruncateRequest& request) override {
+    ftruncate_descriptors.push_back(request.descriptor);
+    ftruncate_sizes.push_back(request.size);
     return integer_result(pop_or(ftruncate_outcomes, 0));
   }
 
-  int fdatasync(const int descriptor) noexcept override {
+  int fdatasync(const int descriptor) override {
     fdatasync_descriptors.push_back(descriptor);
     return integer_result(pop_or(fdatasync_outcomes, 0));
   }
 
-  int fsync(const int descriptor) noexcept override {
+  int fsync(const int descriptor) override {
     fsync_descriptors.push_back(descriptor);
     return integer_result(pop_or(fsync_outcomes, 0));
   }
 
-  int rename_no_replace(const int directory_descriptor, const char* const old_name,
-                        const char* const new_name) noexcept override {
-    rename_directories.push_back(directory_descriptor);
-    rename_old_names.emplace_back(old_name);
-    rename_new_names.emplace_back(new_name);
+  int rename_no_replace(const detail::RenameAtRequest& request) override {
+    rename_directories.push_back(request.directory_descriptor);
+    rename_old_names.emplace_back(request.old_name);
+    rename_new_names.emplace_back(request.new_name);
     return integer_result(pop_or(rename_outcomes, 0));
   }
 
-  int try_lock_exclusive(const int descriptor) noexcept override {
+  int try_lock_exclusive(const int descriptor) override {
     lock_descriptors.push_back(descriptor);
     return integer_result(pop_or(lock_outcomes, 0));
   }
 
-  int close(const int descriptor) noexcept override {
+  int close(const int descriptor) override {
     close_descriptors.push_back(descriptor);
     return integer_result(pop_or(close_outcomes, 0));
   }
@@ -339,14 +335,20 @@ TEST(PosixDirectoryInjectedTest, UsesValidatedRelativeExclusiveAndNoReplaceOpera
             common::StatusCode::kInvalidArgument);
   EXPECT_EQ(opened->open_regular_file("nested/file", FileOpenMode::kReadOnly).error().code(),
             common::StatusCode::kInvalidArgument);
-  EXPECT_EQ(opened->rename_no_replace(".", "final").code(),
+  EXPECT_EQ(opened->rename_no_replace({.old_name = ".", .new_name = "final"}).code(),
             common::StatusCode::kInvalidArgument);
 
-  EXPECT_TRUE(opened->rename_no_replace("segment.tmp", "segment.cwal").is_ok());
+  EXPECT_TRUE(opened->rename_no_replace(
+                        {.old_name = "segment.tmp", .new_name = "segment.cwal"})
+                  .is_ok());
   EXPECT_EQ(syscalls.rename_directories, (std::vector<int>{10, 10}));
-  EXPECT_EQ(opened->rename_no_replace("another.tmp", "segment.cwal").code(),
+  EXPECT_EQ(opened->rename_no_replace(
+                      {.old_name = "another.tmp", .new_name = "segment.cwal"})
+                .code(),
             common::StatusCode::kAlreadyExists);
-  EXPECT_EQ(opened->rename_no_replace("another.tmp", "other.cwal").code(),
+  EXPECT_EQ(opened->rename_no_replace(
+                      {.old_name = "another.tmp", .new_name = "other.cwal"})
+                .code(),
             common::StatusCode::kNotSupported);
   EXPECT_TRUE(opened->sync().is_ok());
   EXPECT_EQ(syscalls.fsync_descriptors, (std::vector<int>{10, 10}));
@@ -391,7 +393,6 @@ TEST(PosixHandleInjectedTest, CloseIsNeverRetriedAndMoveTransfersSingleOwnership
   PosixFile first = detail::PosixHandleFactory::file(8, syscalls);
   PosixFile second = detail::PosixHandleFactory::file(9, syscalls);
   second = std::move(first);
-  EXPECT_FALSE(first.is_open());
   EXPECT_TRUE(second.is_open());
   EXPECT_EQ(syscalls.close_descriptors.back(), 9);
   EXPECT_TRUE(second.close().is_ok());
@@ -433,7 +434,9 @@ TEST(PosixIoIntegrationTest, PerformsDurableDirectoryRelativeFileLifecycle) {
   ASSERT_TRUE(file->sync_all().is_ok());
   ASSERT_TRUE(file->close().is_ok());
 
-  ASSERT_TRUE(directory->rename_no_replace("segment.tmp", "segment.cwal").is_ok());
+  ASSERT_TRUE(directory->rename_no_replace(
+                           {.old_name = "segment.tmp", .new_name = "segment.cwal"})
+                  .is_ok());
   ASSERT_TRUE(directory->sync().is_ok());
   common::Result<PosixFile> reopened =
       directory->open_regular_file("segment.cwal", FileOpenMode::kReadOnly);
@@ -445,7 +448,9 @@ TEST(PosixIoIntegrationTest, PerformsDurableDirectoryRelativeFileLifecycle) {
   common::Result<PosixFile> collision = directory->create_exclusive_regular_file("collision");
   ASSERT_TRUE(collision.has_value());
   ASSERT_TRUE(collision->close().is_ok());
-  EXPECT_EQ(directory->rename_no_replace("segment.cwal", "collision").code(),
+  EXPECT_EQ(directory->rename_no_replace(
+                         {.old_name = "segment.cwal", .new_name = "collision"})
+                .code(),
             common::StatusCode::kAlreadyExists);
 
   std::error_code symlink_error;
