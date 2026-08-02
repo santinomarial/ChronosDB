@@ -102,6 +102,10 @@ chronos_set_project_warnings(chronos_common)
 chronos_enable_sanitizers(chronos_common)
 chronos_enable_static_analysis(chronos_common)
 
+if(NOT CMAKE_SYSTEM_NAME MATCHES "^(Linux|Darwin)$")
+  message(FATAL_ERROR "chronos_io currently supports only Linux and macOS")
+endif()
+
 add_library(chronos_io src/io/posix_io.cpp)
 add_library(chronos::io ALIAS chronos_io)
 set_target_properties(chronos_io PROPERTIES EXPORT_NAME io)
