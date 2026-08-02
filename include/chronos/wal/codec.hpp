@@ -28,12 +28,11 @@ encode_segment_header(const SegmentHeader& header);
 
 // Constructs a supported WAL v1 outer header. Nonzero record types are structurally frameable; the
 // WAL writer remains responsible for enforcing the specification's type-allocation policy.
-[[nodiscard]] common::Result<RecordHeader>
-make_record_header(std::uint16_t record_type, std::uint64_t record_sequence,
-                   std::size_t payload_length);
+[[nodiscard]] common::Result<RecordHeader> make_record_header(std::uint16_t record_type,
+                                                              std::uint64_t record_sequence,
+                                                              std::size_t payload_length);
 
-[[nodiscard]] common::Result<EncodedRecordHeader>
-encode_record_header(const RecordHeader& header);
+[[nodiscard]] common::Result<EncodedRecordHeader> encode_record_header(const RecordHeader& header);
 
 // encoded_bytes must contain at least the 40-byte common header. A nonzero unknown record format or
 // type remains structurally decodable. Unknown required outer flags return kNotSupported.
@@ -41,9 +40,9 @@ encode_record_header(const RecordHeader& header);
 
 // On failure, destination is unchanged. On success, exactly header.total_length bytes are written;
 // extra destination capacity is untouched. Payload may alias destination.
-[[nodiscard]] common::Result<std::size_t>
-encode_record(const RecordHeader& header, common::ByteView payload,
-              common::MutableByteView destination);
+[[nodiscard]] common::Result<std::size_t> encode_record(const RecordHeader& header,
+                                                        common::ByteView payload,
+                                                        common::MutableByteView destination);
 
 // Decodes the first complete record in encoded_bytes and ignores later bytes. Truncation returns
 // kOutOfRange so the recovery layer can apply its final-segment tail rules. Integrity or structural

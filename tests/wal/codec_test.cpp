@@ -1,6 +1,5 @@
-#include "chronos/wal/codec.hpp"
-
 #include "chronos/common/crc32c.hpp"
+#include "chronos/wal/codec.hpp"
 
 #include <algorithm>
 #include <array>
@@ -15,19 +14,17 @@ namespace chronos::wal {
 namespace {
 
 constexpr std::array<std::uint8_t, kSegmentHeaderSize> kGoldenSegmentHeader{
-    0x43, 0x48, 0x52, 0x4e, 0x57, 0x41, 0x4c, 0x00, 0x01, 0x00, 0x00, 0x00, 0x40,
-    0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
-    0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x53, 0x5e, 0x9e,
+    0x43, 0x48, 0x52, 0x4e, 0x57, 0x41, 0x4c, 0x00, 0x01, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00,
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+    0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x53, 0x5e, 0x9e,
 };
 
 constexpr std::array<std::uint8_t, 64> kGoldenRecord{
-    0x40, 0x00, 0x00, 0x00, 0xbf, 0xff, 0xff, 0xff, 0x52, 0x45, 0x43, 0x31, 0x01,
-    0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00, 0x2a, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x13, 0x00, 0x00, 0x00, 0x79, 0xea, 0x85,
-    0x9b, 0x01, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x08, 0x07, 0x06, 0x05,
-    0x04, 0x03, 0x02, 0x01, 0xde, 0xad, 0xbe, 0x00, 0x04, 0x2c, 0x86, 0xe6,
+    0x40, 0x00, 0x00, 0x00, 0xbf, 0xff, 0xff, 0xff, 0x52, 0x45, 0x43, 0x31, 0x01, 0x00, 0x01, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00, 0x2a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x13, 0x00, 0x00, 0x00, 0x79, 0xea, 0x85, 0x9b, 0x01, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00,
+    0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01, 0xde, 0xad, 0xbe, 0x00, 0x04, 0x2c, 0x86, 0xe6,
 };
 
 [[nodiscard]] WalId test_wal_id() {
@@ -39,8 +36,7 @@ constexpr std::array<std::uint8_t, 64> kGoldenRecord{
 }
 
 template <std::size_t Size>
-[[nodiscard]] std::array<std::byte, Size>
-as_bytes(const std::array<std::uint8_t, Size>& input) {
+[[nodiscard]] std::array<std::byte, Size> as_bytes(const std::array<std::uint8_t, Size>& input) {
   std::array<std::byte, Size> output{};
   std::transform(input.begin(), input.end(), output.begin(),
                  [](const std::uint8_t byte) { return static_cast<std::byte>(byte); });
@@ -88,7 +84,7 @@ TEST(WalTypesTest, ConstantsMatchTheAcceptedFormat) {
   EXPECT_EQ(kSegmentMagic.front(), std::byte{0x43});
   EXPECT_EQ(kSegmentMagic.back(), std::byte{0x00});
   EXPECT_EQ(kRecordMagic, (std::array<std::byte, 4>{std::byte{0x52}, std::byte{0x45},
-                                                   std::byte{0x43}, std::byte{0x31}}));
+                                                    std::byte{0x43}, std::byte{0x31}}));
 }
 
 TEST(WalTypesTest, IdentityAndPhysicalPositionValidationIsExplicit) {
@@ -106,12 +102,10 @@ TEST(WalTypesTest, IdentityAndPhysicalPositionValidationIsExplicit) {
 
   PhysicalWalPosition invalid = start;
   invalid.wal_id = zero;
-  EXPECT_EQ(validate_physical_wal_position(invalid).code(),
-            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(validate_physical_wal_position(invalid).code(), common::StatusCode::kInvalidArgument);
   invalid = start;
   invalid.byte_offset = 65U;
-  EXPECT_EQ(validate_physical_wal_position(invalid).code(),
-            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(validate_physical_wal_position(invalid).code(), common::StatusCode::kInvalidArgument);
   invalid = start;
   invalid.byte_offset = kSegmentSizeLimit;
   const auto crosses = advance_physical_wal_position(invalid, 48U);
@@ -135,21 +129,19 @@ TEST(WalLayoutTest, CalculatesEveryPaddingClassAndBoundaryExactly) {
   ASSERT_TRUE(maximum.has_value());
   EXPECT_EQ(maximum->padding_length, 0U);
   EXPECT_EQ(maximum->total_length, kMaximumRecordLength);
-  EXPECT_FALSE(calculate_record_layout(static_cast<std::size_t>(kMaximumPayloadLength) + 1U)
-                   .has_value());
+  EXPECT_FALSE(
+      calculate_record_layout(static_cast<std::size_t>(kMaximumPayloadLength) + 1U).has_value());
   EXPECT_FALSE(calculate_record_layout(std::numeric_limits<std::size_t>::max()).has_value());
 
   EXPECT_EQ(validate_segment_size(63U).code(), common::StatusCode::kOutOfRange);
   EXPECT_TRUE(validate_segment_size(64U).is_ok());
   EXPECT_TRUE(validate_segment_size(kSegmentSizeLimit).is_ok());
-  EXPECT_EQ(validate_segment_size(kSegmentSizeLimit + 1U).code(),
-            common::StatusCode::kOutOfRange);
+  EXPECT_EQ(validate_segment_size(kSegmentSizeLimit + 1U).code(), common::StatusCode::kOutOfRange);
 }
 
 TEST(WalSegmentHeaderTest, MatchesIndependentGoldenBytesAndRoundTrips) {
-  const SegmentHeader header{.wal_id = test_wal_id(),
-                             .segment_number = 1U,
-                             .first_record_sequence = 1U};
+  const SegmentHeader header{
+      .wal_id = test_wal_id(), .segment_number = 1U, .first_record_sequence = 1U};
   const auto encoded = encode_segment_header(header);
   ASSERT_TRUE(encoded.has_value());
   EXPECT_EQ(*encoded, as_bytes(kGoldenSegmentHeader));
@@ -265,8 +257,7 @@ TEST(WalRecordTest, SupportsPayloadAliasingDestination) {
   std::copy(expected.begin() + static_cast<std::ptrdiff_t>(kRecordHeaderSize), expected.end() - 5,
             storage.begin());
   const common::ByteView aliased_payload{storage.data(), expected_payload.size()};
-  const auto header =
-      make_record_header(kApplicationEntryRecordType, 42U, expected_payload.size());
+  const auto header = make_record_header(kApplicationEntryRecordType, 42U, expected_payload.size());
   ASSERT_TRUE(header.has_value());
   ASSERT_TRUE(encode_record(*header, aliased_payload, storage).has_value());
 
@@ -374,8 +365,8 @@ TEST(WalRecordTest, FailedEncodingLeavesDestinationUnchanged) {
   std::array<std::byte, 64> destination{};
   destination.fill(std::byte{0xa5});
   const auto original = destination;
-  EXPECT_FALSE(encode_record(*header, payload, common::MutableByteView{destination}.first(63U))
-                   .has_value());
+  EXPECT_FALSE(
+      encode_record(*header, payload, common::MutableByteView{destination}.first(63U)).has_value());
   EXPECT_EQ(destination, original);
 
   RecordHeader inconsistent = *header;
@@ -409,8 +400,7 @@ TEST(WalRecordTest, DeterministicPropertyRoundTripsPayloadsAndPaddingClasses) {
     }
     std::uint64_t sequence = random();
     sequence = sequence == 0U ? 1U : sequence;
-    const auto header =
-        make_record_header(kApplicationEntryRecordType, sequence, payload.size());
+    const auto header = make_record_header(kApplicationEntryRecordType, sequence, payload.size());
     ASSERT_TRUE(header.has_value());
     std::vector<std::byte> encoded(static_cast<std::size_t>(header->total_length) + 7U,
                                    std::byte{0xa5});

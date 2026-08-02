@@ -40,9 +40,8 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
       declared_payload |= static_cast<std::uint64_t>(data[index]) << (index * 8U);
     }
     const auto layout = chronos::wal::calculate_record_layout(declared_payload);
-    if (layout.has_value() &&
-        (layout->total_length > chronos::wal::kMaximumRecordLength ||
-         layout->payload_length > chronos::wal::kMaximumPayloadLength)) {
+    if (layout.has_value() && (layout->total_length > chronos::wal::kMaximumRecordLength ||
+                               layout->payload_length > chronos::wal::kMaximumPayloadLength)) {
       std::abort();
     }
   }

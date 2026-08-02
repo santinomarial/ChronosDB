@@ -85,8 +85,7 @@ void store_u64_le(const common::MutableByteView bytes, const std::size_t offset,
     return common::Status{common::StatusCode::kInvalidArgument, "WAL identity must be nonzero"};
   }
   if (header.segment_number == 0U) {
-    return common::Status{common::StatusCode::kInvalidArgument,
-                          "segment number must be nonzero"};
+    return common::Status{common::StatusCode::kInvalidArgument, "segment number must be nonzero"};
   }
   if (header.first_record_sequence == 0U) {
     return common::Status{common::StatusCode::kInvalidArgument,
@@ -103,8 +102,7 @@ void store_u64_le(const common::MutableByteView bytes, const std::size_t offset,
 [[nodiscard]] common::Result<RecordHeader>
 parse_record_header(const common::ByteView encoded_bytes) {
   if (encoded_bytes.size() < kRecordHeaderSize) {
-    return common::make_unexpected(
-        out_of_range("WAL record header requires 40 available bytes"));
+    return common::make_unexpected(out_of_range("WAL record header requires 40 available bytes"));
   }
   const common::ByteView bytes = encoded_bytes.first(kRecordHeaderSize);
   if (!bytes_equal(bytes, 8U, kRecordMagic)) {
@@ -124,8 +122,7 @@ parse_record_header(const common::ByteView encoded_bytes) {
       .record_sequence = load_u64_le(bytes, 24U),
       .payload_length = load_u32_le(bytes, 32U),
   };
-  if ((header.total_length ^ load_u32_le(bytes, 4U)) !=
-      std::numeric_limits<std::uint32_t>::max()) {
+  if ((header.total_length ^ load_u32_le(bytes, 4U)) != std::numeric_limits<std::uint32_t>::max()) {
     return common::make_unexpected(corruption("WAL record length complement mismatch"));
   }
   if (load_u32_le(bytes, 20U) != kRecordHeaderSize) {
@@ -167,9 +164,8 @@ parse_record_header(const common::ByteView encoded_bytes) {
 } // namespace
 
 bool WalId::is_valid() const noexcept {
-  return std::any_of(bytes.begin(), bytes.end(), [](const std::byte byte) {
-    return byte != std::byte{0};
-  });
+  return std::any_of(bytes.begin(), bytes.end(),
+                     [](const std::byte byte) { return byte != std::byte{0}; });
 }
 
 common::Result<RecordLayout> calculate_record_layout(const std::size_t payload_length) {
@@ -262,8 +258,7 @@ common::Result<EncodedSegmentHeader> encode_segment_header(const SegmentHeader& 
 
 common::Result<SegmentHeader> decode_segment_header(const common::ByteView encoded_bytes) {
   if (encoded_bytes.size() < kSegmentHeaderSize) {
-    return common::make_unexpected(
-        out_of_range("WAL segment header requires 64 available bytes"));
+    return common::make_unexpected(out_of_range("WAL segment header requires 64 available bytes"));
   }
   const common::ByteView bytes = encoded_bytes.first(kSegmentHeaderSize);
   if (!bytes_equal(bytes, 0U, kSegmentMagic)) {
@@ -316,12 +311,12 @@ common::Result<RecordHeader> make_record_header(const std::uint16_t record_type,
                                                 const std::uint64_t record_sequence,
                                                 const std::size_t payload_length) {
   if (record_type == 0U) {
-    return common::make_unexpected(common::Status{common::StatusCode::kInvalidArgument,
-                                                   "record type must be nonzero"});
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInvalidArgument, "record type must be nonzero"});
   }
   if (record_sequence == 0U) {
-    return common::make_unexpected(common::Status{common::StatusCode::kInvalidArgument,
-                                                   "record sequence must be nonzero"});
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInvalidArgument, "record sequence must be nonzero"});
   }
   const common::Result<RecordLayout> layout = calculate_record_layout(payload_length);
   if (!layout.has_value()) {
@@ -343,8 +338,8 @@ common::Result<EncodedRecordHeader> encode_record_header(const RecordHeader& hea
     return common::make_unexpected(not_supported("WAL record required flags cannot be encoded"));
   }
   if (header.record_type == 0U || header.record_sequence == 0U) {
-    return common::make_unexpected(common::Status{
-        common::StatusCode::kInvalidArgument, "record type and sequence must be nonzero"});
+    return common::make_unexpected(common::Status{common::StatusCode::kInvalidArgument,
+                                                  "record type and sequence must be nonzero"});
   }
   const common::Result<RecordLayout> layout = calculate_record_layout(header.payload_length);
   if (!layout.has_value()) {
@@ -390,14 +385,14 @@ common::Result<std::size_t> encode_record(const RecordHeader& header,
     return common::make_unexpected(encoded_header.error());
   }
   if (payload.size() != header.payload_length) {
-    return common::make_unexpected(common::Status{
-        common::StatusCode::kInvalidArgument, "payload size does not match record header"});
+    return common::make_unexpected(common::Status{common::StatusCode::kInvalidArgument,
+                                                  "payload size does not match record header"});
   }
   if (header.record_type == kApplicationEntryRecordType) {
     const common::Status application_status = validate_application_envelope(payload);
     if (!application_status.is_ok()) {
-      return common::make_unexpected(common::Status{common::StatusCode::kInvalidArgument,
-                                                     application_status.message()});
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kInvalidArgument, application_status.message()});
     }
   }
   const auto total_length = static_cast<std::size_t>(header.total_length);
@@ -432,8 +427,7 @@ common::Result<DecodedRecord> decode_record(const common::ByteView encoded_bytes
   const auto total_length = static_cast<std::size_t>(header->total_length);
   if (encoded_bytes.size() < total_length) {
     if (header->record_flags != 0U) {
-      return common::make_unexpected(
-          not_supported("WAL record required flags are not supported"));
+      return common::make_unexpected(not_supported("WAL record required flags are not supported"));
     }
     return common::make_unexpected(out_of_range("complete WAL record extends beyond input"));
   }

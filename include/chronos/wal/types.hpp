@@ -29,8 +29,8 @@ inline constexpr std::array<std::byte, 8> kSegmentMagic{
     std::byte{0x43}, std::byte{0x48}, std::byte{0x52}, std::byte{0x4e},
     std::byte{0x57}, std::byte{0x41}, std::byte{0x4c}, std::byte{0x00},
 };
-inline constexpr std::array<std::byte, 4> kRecordMagic{
-    std::byte{0x52}, std::byte{0x45}, std::byte{0x43}, std::byte{0x31}};
+inline constexpr std::array<std::byte, 4> kRecordMagic{std::byte{0x52}, std::byte{0x45},
+                                                       std::byte{0x43}, std::byte{0x31}};
 
 struct WalId {
   std::array<std::byte, kWalIdSize> bytes{};
