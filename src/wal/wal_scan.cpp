@@ -113,11 +113,7 @@ namespace {
           return common::make_unexpected(
               corruption("temporary WAL segment is not a regular file: " + entry.name));
         }
-        if (discovery.temporary_file_count == std::numeric_limits<std::uint64_t>::max()) {
-          return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
-                                                        "too many temporary WAL entries"});
-        }
-        ++discovery.temporary_file_count;
+        discovery.temporary_file_names.push_back(entry.name);
         continue;
       }
       if (entry.name.starts_with(".wal-")) {
@@ -214,7 +210,8 @@ common::Result<WalRecoveryReport> scan_discovered_wal(io::PosixDirectory& direct
   }
   WalRecoveryReport report;
   report.segment_count = static_cast<std::uint64_t>(discovery.segments.size());
-  report.temporary_file_count = discovery.temporary_file_count;
+  report.temporary_file_count =
+      static_cast<std::uint64_t>(discovery.temporary_file_names.size());
   std::uint64_t expected_record_sequence = kFirstRecordSequence;
   bool have_wal_id = false;
 

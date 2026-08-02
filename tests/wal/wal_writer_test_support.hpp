@@ -128,6 +128,11 @@ public:
     return integer_result(outcome);
   }
 
+  int unlink_at(const int directory_descriptor, const char* const name) override {
+    events.emplace_back("unlink_at:" + std::to_string(directory_descriptor) + ":" + name);
+    return integer_result(pop_or(unlink_outcomes, 0));
+  }
+
   int close(const int descriptor) override {
     events.emplace_back("close:" + std::to_string(descriptor));
     return integer_result(pop_or(close_outcomes, 0));
@@ -144,6 +149,7 @@ public:
   std::deque<SyscallOutcome> rename_outcomes;
   std::deque<SyscallOutcome> lock_outcomes;
   std::deque<SyscallOutcome> list_directory_outcomes;
+  std::deque<SyscallOutcome> unlink_outcomes;
   std::deque<SyscallOutcome> close_outcomes;
   std::vector<io::DirectoryEntry> directory_entries;
   std::deque<std::vector<io::DirectoryEntry>> directory_entry_snapshots;

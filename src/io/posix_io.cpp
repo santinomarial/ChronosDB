@@ -449,6 +449,10 @@ public:
     return 0;
   }
 
+  int unlink_at(const int directory_descriptor, const char* const name) override {
+    return ::unlinkat(directory_descriptor, name, 0);
+  }
+
   int close(const int descriptor) noexcept override {
     return ::close(descriptor);
   }
@@ -1012,6 +1016,22 @@ common::Result<std::vector<DirectoryEntry>> PosixDirectory::list_entries() const
                                                   "cannot allocate directory-entry snapshot"});
   }
   return entries;
+}
+
+common::Status PosixDirectory::remove_file(const std::string_view name) const {
+  if (!is_open()) {
+    return closed_handle("remove_file");
+  }
+  const common::Status name_status = validate_entry_name(name);
+  if (!name_status.is_ok()) {
+    return name_status;
+  }
+  const std::string owned_name{name};
+  int result = 0;
+  do {
+    result = syscalls_->unlink_at(descriptor_, owned_name.c_str());
+  } while (result == -1 && errno == EINTR);
+  return result == 0 ? common::Status::ok() : errno_status("unlinkat WAL entry", errno);
 }
 
 common::Status PosixDirectory::rename_no_replace(const RenameRequest& request) const {

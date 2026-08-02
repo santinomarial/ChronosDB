@@ -130,6 +130,28 @@ preflight_and_replay(detail::LockedWalDirectory& locked, const WalRecoveryReport
   return replay;
 }
 
+[[nodiscard]] common::Result<std::uint64_t>
+cleanup_temporary_files(detail::LockedWalDirectory& locked) {
+  std::uint64_t removed = 0;
+  for (const std::string& name : locked.discovery.temporary_file_names) {
+    const common::Status status = locked.directory.remove_file(name);
+    if (!status.is_ok() && status.code() != common::StatusCode::kNotFound) {
+      return common::make_unexpected(with_context("remove orphan temporary WAL segment", status));
+    }
+    if (status.is_ok()) {
+      ++removed;
+    }
+  }
+  if (removed != 0U) {
+    const common::Status status = locked.directory.sync();
+    if (!status.is_ok()) {
+      return common::make_unexpected(
+          with_context("synchronize WAL directory after temporary cleanup", status));
+    }
+  }
+  return removed;
+}
+
 } // namespace
 
 common::Result<WalRecoveryReport> inspect_wal(const std::string_view directory_path,
@@ -185,6 +207,11 @@ common::Result<RecoveredWalState> recover_existing_for_writer(const WalWriterCon
     }
   }
 
+  const common::Result<std::uint64_t> removed = cleanup_temporary_files(*locked);
+  if (!removed.has_value()) {
+    return common::make_unexpected(removed.error());
+  }
+
   const bool repaired = report->repaired;
   const std::uint64_t repair_original_size = report->repair_original_size;
   const std::uint64_t repair_new_size = report->repair_new_size;
@@ -204,6 +231,7 @@ common::Result<RecoveredWalState> recover_existing_for_writer(const WalWriterCon
     return common::make_unexpected(status);
   }
   final_verification->repaired = repaired;
+  final_verification->temporary_files_removed = *removed;
   final_verification->repair_original_size = repair_original_size;
   final_verification->repair_new_size = repair_new_size;
 

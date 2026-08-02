@@ -65,6 +65,7 @@ public:
   virtual int rename_no_replace(const RenameAtRequest& request) = 0;
   virtual int try_lock_exclusive(int descriptor) = 0;
   virtual int list_directory_entries(int descriptor, std::vector<DirectoryEntry>& entries) = 0;
+  virtual int unlink_at(int directory_descriptor, const char* name) = 0;
   virtual int close(int descriptor) = 0;
 };
 

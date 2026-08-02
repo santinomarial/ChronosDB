@@ -17,6 +17,7 @@ struct WalRecoveryReport {
   WalId wal_id;
   std::uint64_t segment_count{};
   std::uint64_t temporary_file_count{};
+  std::uint64_t temporary_files_removed{};
   std::uint64_t record_count{};
   std::uint64_t physical_bytes{};
   PhysicalWalPosition valid_end;

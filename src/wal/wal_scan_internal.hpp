@@ -23,7 +23,7 @@ struct DiscoveredWalSegment {
 
 struct WalDiscovery {
   std::vector<DiscoveredWalSegment> segments;
-  std::uint64_t temporary_file_count{};
+  std::vector<std::string> temporary_file_names;
 };
 
 struct LockedWalDirectory {

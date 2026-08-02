@@ -134,6 +134,12 @@ public:
     return integer_result(outcome);
   }
 
+  int unlink_at(const int directory_descriptor, const char* const name) override {
+    unlinked_directories.push_back(directory_descriptor);
+    unlinked_names.emplace_back(name);
+    return integer_result(pop_or(unlink_outcomes, 0));
+  }
+
   int close(const int descriptor) override {
     close_descriptors.push_back(descriptor);
     return integer_result(pop_or(close_outcomes, 0));
@@ -150,6 +156,7 @@ public:
   std::deque<Outcome> rename_outcomes;
   std::deque<Outcome> lock_outcomes;
   std::deque<Outcome> list_directory_outcomes;
+  std::deque<Outcome> unlink_outcomes;
   std::deque<Outcome> close_outcomes;
 
   std::vector<DirectoryEntry> directory_entries;
@@ -177,6 +184,8 @@ public:
   std::vector<std::string> rename_new_names;
   std::vector<int> lock_descriptors;
   std::vector<int> listed_directory_descriptors;
+  std::vector<int> unlinked_directories;
+  std::vector<std::string> unlinked_names;
   std::vector<int> close_descriptors;
 
   int next_descriptor{10};
@@ -414,6 +423,12 @@ TEST(PosixDirectoryInjectedTest, UsesValidatedRelativeExclusiveAndNoReplaceOpera
 
   syscalls.list_directory_outcomes = {{-1, EIO}};
   EXPECT_EQ(opened->list_entries().error().code(), common::StatusCode::kIoError);
+
+  EXPECT_TRUE(opened->remove_file("orphan.tmp").is_ok());
+  EXPECT_EQ(syscalls.unlinked_names, (std::vector<std::string>{"orphan.tmp"}));
+  EXPECT_EQ(opened->remove_file("../escape").code(), common::StatusCode::kInvalidArgument);
+  syscalls.unlink_outcomes = {{-1, ENOENT}};
+  EXPECT_EQ(opened->remove_file("missing").code(), common::StatusCode::kNotFound);
 }
 
 TEST(PosixDirectoryInjectedTest, ValidatesRegularFilesAndMapsLockContention) {
@@ -436,6 +451,12 @@ TEST(PosixDirectoryInjectedTest, ValidatesRegularFilesAndMapsLockContention) {
   ASSERT_TRUE(lock.has_value()) << lock.error().to_string();
   EXPECT_EQ(syscalls.lock_descriptors.size(), 2U);
   ASSERT_TRUE(lock->close().is_ok());
+
+  common::Result<PosixAdvisoryLock> existing = directory.acquire_existing_exclusive_lock("LOCK");
+  ASSERT_TRUE(existing.has_value()) << existing.error().to_string();
+  ASSERT_FALSE(syscalls.open_at_flags.empty());
+  EXPECT_EQ(syscalls.open_at_flags.back() & O_CREAT, 0);
+  ASSERT_TRUE(existing->close().is_ok());
 
   syscalls.lock_outcomes = {{-1, EAGAIN}};
   const common::Result<PosixAdvisoryLock> contention = directory.acquire_exclusive_lock("LOCK");
@@ -462,7 +483,10 @@ TEST(PosixHandleTest, DefaultClosedHandlesRejectOperationsWithoutCallingSyscalls
             common::StatusCode::kInvalidArgument);
   EXPECT_EQ(directory.acquire_exclusive_lock("LOCK").error().code(),
             common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(directory.acquire_existing_exclusive_lock("LOCK").error().code(),
+            common::StatusCode::kInvalidArgument);
   EXPECT_EQ(directory.list_entries().error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(directory.remove_file("entry").code(), common::StatusCode::kInvalidArgument);
   EXPECT_EQ(directory.rename_no_replace({.old_name = "old", .new_name = "new"}).code(),
             common::StatusCode::kInvalidArgument);
   EXPECT_EQ(directory.sync().code(), common::StatusCode::kInvalidArgument);

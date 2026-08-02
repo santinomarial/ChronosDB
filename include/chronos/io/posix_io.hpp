@@ -154,6 +154,10 @@ public:
   // modification.
   [[nodiscard]] common::Result<std::vector<DirectoryEntry>> list_entries() const;
 
+  // Removes one directory-relative non-directory entry. Callers classify it without following
+  // symlinks while holding their ownership lock and synchronize the directory after a cleanup batch.
+  [[nodiscard]] common::Status remove_file(std::string_view name) const;
+
   // The operation is atomic, confined to this directory, and never replaces an existing target.
   // A platform without an atomic no-replace primitive returns kNotSupported.
   [[nodiscard]] common::Status rename_no_replace(const RenameRequest& request) const;

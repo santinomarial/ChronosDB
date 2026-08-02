@@ -56,6 +56,9 @@ public:
                              std::vector<io::DirectoryEntry>& entries) override {
     return delegate_.list_directory_entries(descriptor, entries);
   }
+  int unlink_at(const int directory_descriptor, const char* const name) override {
+    return delegate_.unlink_at(directory_descriptor, name);
+  }
   int close(const int descriptor) override {
     return delegate_.close(descriptor);
   }
