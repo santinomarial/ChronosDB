@@ -6,12 +6,12 @@ The audit began from a clean `main` working tree at commit
 `d827b888db0f0a90b09e41e0eee8e071bc57e6eb`. The complete reachable Git history through that
 commit was inspected with `git log`, `git show`, and per-commit name/status and statistics views.
 
-During the audit, the desktop workspace unexpectedly checkpointed the repair set as commits
-`e8a29d3999cd04582b71f4cd1ca5ef5c5231b6b1` and
-`8cb9fe174936e42c8ad489b22162e6919f21d82a`, then checkpointed the final documentation and check
-hardening as `2109075a61af5fef04a4d536178b1b4b53c15bc6`; all three advanced `origin/main`. The reviewer
+During the audit, the repository owner committed and pushed the repair set as
+`e8a29d3999cd04582b71f4cd1ca5ef5c5231b6b1`,
+`8cb9fe174936e42c8ad489b22162e6919f21d82a`, and
+`2109075a61af5fef04a4d536178b1b4b53c15bc6` while the reviewer continued validation. The reviewer
 did not run `git commit` or `git push`. This document records the resulting tree relative to the
-original reviewed base rather than implying that those commits were requested review output.
+original reviewed base.
 
 ## Scope
 
@@ -44,8 +44,8 @@ was reviewed or implemented. This is strictly a Phase 1 foundation review.
 - Ubuntu 24.04 arm64 in an isolated container, with CMake 3.28.3, Ninja 1.11.1, GCC 13.3.0,
   Clang 18.1.3, and libc++ 18.
 
-Windows/MSVC, a physical Linux host, and x86-64 were not available. The reviewer did not push the
-post-repair tree, but the desktop checkpoint did trigger a GitHub-hosted Actions run for `2109075`.
+Windows/MSVC, a physical Linux host, and x86-64 were not available. The repository owner's push
+triggered a GitHub-hosted Actions run for `2109075`.
 
 ## Findings
 
@@ -220,11 +220,11 @@ All source trees began clean at `d827b88`.
   CLANG_TIDY=/opt/homebrew/opt/llvm/bin/clang-tidy scripts/check.sh`: passed after the review
   document was added; its integrated test run passed 40/40.
 - `build/dev/chronosctl version --json`: passed and reported commit `8cb9fe174936` with
-  `"git_dirty":true`, correctly reflecting the review documentation before the final automatic
-  checkpoint.
+  `"git_dirty":true`, correctly reflecting the review documentation before the final
+  repository-owner commit.
 - Final `git diff --check`: passed. Immediately before this state-record correction, the repository
-  was clean at the automatically created and pushed `2109075`; no commit or push command was run by
-  the reviewer.
+  was clean at the repository-owner-created and pushed `2109075`; no commit or push command was run
+  by the reviewer.
 - GitHub Actions run
   [30727622121](https://github.com/santinomarial/ChronosDB/actions/runs/30727622121) for exact commit
   `2109075`: passed all seven jobs (Linux GCC, Linux Clang, macOS AppleClang, ASan/UBSan, TSan,
@@ -254,5 +254,5 @@ All source trees began clean at `d827b88`.
 
 The confirmed Phase 1 foundation problems were repaired without adding a dependency, redesigning a
 subsystem, weakening a warning or sanitizer, or adding Phase 2 functionality. The validation gate is
-green. The repository owner should nevertheless note that the desktop created and pushed commits
-despite the explicit no-commit instruction; the reviewer did not rewrite that published history.
+green. The repository owner committed and pushed the changes during the audit; the reviewer did not
+run commit or push commands or rewrite the published history.
