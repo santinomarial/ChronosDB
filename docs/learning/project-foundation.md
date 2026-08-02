@@ -24,10 +24,11 @@ chronos_byte_reader_fuzz (optional) ──► chronos::common + Clang libFuzzer
 
 ## Reproducibility choices
 
-GoogleTest and optional Google Benchmark are pinned by full commit hashes. A moving branch could
-silently change behavior or disappear; an immutable revision makes dependency review and failure
-reproduction practical. Configure-time metadata deliberately omits timestamps. CMake rewrites the
-generated header only when content changes, avoiding gratuitous recompilation.
+GoogleTest, optional Google Benchmark, and CI actions are pinned by full commit hashes. A moving
+branch could silently change behavior or disappear; an immutable revision makes dependency review
+and failure reproduction practical. Build metadata deliberately omits timestamps. A small build
+target refreshes Git commit and dirty state before compilation, while CMake rewrites the generated
+header only when content changes, avoiding gratuitous recompilation.
 
 There is no default `-march=native`. That flag tailors binaries to the build host and can create
 instructions unavailable on the deployment host, undermining portable artifacts and reproducible
@@ -39,7 +40,7 @@ ASan finds invalid memory access and lifetime errors; UBSan detects selected lan
 behavior, and their runtimes can coexist. TSan instruments synchronization and must run alone. It
 also has higher overhead and platform/runtime constraints. Separate build directories prevent
 instrumentation from contaminating normal binaries and make every result attributable to a known
-configuration.
+configuration. UBSan recovery is disabled so any finding makes the test process fail.
 
 ## Portable core and Linux-specific code
 

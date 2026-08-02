@@ -86,6 +86,39 @@ TEST(VersionTest, PreservesValidUtf8AndReplacesInvalidBytes) {
   EXPECT_NE(json.find(R"("git_commit":"bad\ufffd")"), std::string::npos);
 }
 
+TEST(VersionTest, ValidatesUtf8BoundarySequences) {
+  const std::string valid{"\xc2\x80|\xe0\xa0\x80|\xed\x9f\xbf|\xee\x80\x80|"
+                          "\xf0\x90\x80\x80|\xf4\x8f\xbf\xbf"};
+  const VersionInfo valid_info{
+      .semantic_version = "0.1.0",
+      .git_commit = "0123456789ab",
+      .git_metadata_available = true,
+      .git_dirty = false,
+      .build_type = "Test",
+      .compiler = "Test Compiler",
+      .target_architecture = "test-architecture",
+      .operating_system = valid,
+  };
+  EXPECT_NE(version_json(valid_info).find(valid), std::string::npos);
+
+  const std::string invalid{"\xc0\xaf|\xed\xa0\x80|\xf4\x90\x80\x80|\xe2\x82"};
+  const VersionInfo invalid_info{
+      .semantic_version = "0.1.0",
+      .git_commit = "0123456789ab",
+      .git_metadata_available = true,
+      .git_dirty = false,
+      .build_type = "Test",
+      .compiler = "Test Compiler",
+      .target_architecture = "test-architecture",
+      .operating_system = invalid,
+  };
+  EXPECT_NE(
+      version_json(invalid_info)
+          .find(
+              R"("operating_system":"\ufffd\ufffd|\ufffd\ufffd\ufffd|\ufffd\ufffd\ufffd\ufffd|\ufffd\ufffd")"),
+      std::string::npos);
+}
+
 TEST(VersionTest, StableInputsProduceDeterministicOutput) {
   const VersionInfo info = version_info();
   EXPECT_EQ(version_text(info), version_text(info));

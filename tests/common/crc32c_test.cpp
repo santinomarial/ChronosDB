@@ -33,6 +33,22 @@ TEST(Crc32cTest, ProcessesBinaryZerosAndArbitraryBytesDeterministically) {
   EXPECT_NE(crc32c(binary), crc32c(zeros));
 }
 
+TEST(Crc32cTest, MatchesPublishedBinaryCheckVectors) {
+  std::array<std::byte, 32> all_ones{};
+  all_ones.fill(std::byte{0xff});
+
+  std::array<std::byte, 32> ascending{};
+  std::array<std::byte, 32> descending{};
+  for (std::size_t index = 0; index < ascending.size(); ++index) {
+    ascending[index] = static_cast<std::byte>(index);
+    descending[index] = static_cast<std::byte>(descending.size() - index - 1U);
+  }
+
+  EXPECT_EQ(crc32c(all_ones), 0x62a8ab43U);
+  EXPECT_EQ(crc32c(ascending), 0x46dd794eU);
+  EXPECT_EQ(crc32c(descending), 0x113fdb5cU);
+}
+
 TEST(Crc32cTest, EverySplitPointMatchesOneShot) {
   const std::uint32_t expected = crc32c(kCheckInput);
   for (std::size_t split = 0; split <= kCheckInput.size(); ++split) {
@@ -61,14 +77,18 @@ TEST(Crc32cTest, RandomChunkBoundariesMatchOneShot) {
   for (std::size_t trial = 0; trial < 200; ++trial) {
     SCOPED_TRACE(::testing::Message() << "seed=" << kSeed << " trial=" << trial);
     Crc32c checksum;
+    std::uint32_t extended_checksum = crc32c(ByteView{});
     std::size_t offset = 0;
     while (offset < bytes.size()) {
       const std::size_t requested = 1U + static_cast<std::size_t>(random() % 97U);
       const std::size_t chunk = std::min(requested, bytes.size() - offset);
-      checksum.extend(ByteView{bytes}.subspan(offset, chunk));
+      const ByteView chunk_bytes = ByteView{bytes}.subspan(offset, chunk);
+      checksum.extend(chunk_bytes);
+      extended_checksum = extend_crc32c(extended_checksum, chunk_bytes);
       offset += chunk;
     }
     EXPECT_EQ(checksum.value(), expected);
+    EXPECT_EQ(extended_checksum, expected);
   }
 }
 

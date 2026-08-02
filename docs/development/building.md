@@ -77,7 +77,9 @@ cmake --build --preset release
 ctest --preset release
 ```
 
-The resulting proof executable reports configure-time build metadata:
+The resulting proof executable reports build metadata. Git commit and dirty state are refreshed at
+the start of every build, including a rebuild after source changes that do not require CMake to
+reconfigure. The generated header is rewritten only when its content changes:
 
 ```sh
 build/dev/chronosctl version
@@ -85,7 +87,7 @@ build/dev/chronosctl version --json
 ```
 
 Install to a staging prefix with `cmake --install build/release --prefix <directory>`. This installs
-`chronosctl`, the common library and public header, and a CMake package exporting
+`chronosctl`, the common library and public headers, and a CMake package exporting
 `chronos::common`.
 
 ## Sanitizers
@@ -104,7 +106,9 @@ ctest --preset tsan
 ```
 
 The flags attach only to ChronosDB targets. A requested unsupported compiler fails configuration.
-Sanitizer support also depends on the compiler runtime and host OS; Linux Clang is the CI reference.
+UBSan findings are configured as non-recovering so a test process cannot emit undefined-behavior
+diagnostics and still exit successfully. Sanitizer support also depends on the compiler runtime and
+host OS; Linux Clang is the CI reference.
 
 ## Microbenchmarks
 

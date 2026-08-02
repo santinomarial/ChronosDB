@@ -1,6 +1,6 @@
 # Correctness Strategy
 
-> **Status: planned, not implemented.** This document turns the [architecture invariants](../architecture/invariants.md) into future verification obligations under [ADR 0012](../adr/0012-correctness-testing-and-performance-evidence.md). Frameworks, targets, and CI cadence remain deferred.
+> **Status: partially implemented.** This document turns the [architecture invariants](../architecture/invariants.md) into verification obligations under [ADR 0012](../adr/0012-correctness-testing-and-performance-evidence.md). Phase 1 has unit/property-style tests, sanitizer jobs, and an optional ByteReader libFuzzer target. Storage, query, concurrency, crash, and distributed harnesses remain planned for their roadmap phases.
 
 ## Test types
 

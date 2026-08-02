@@ -28,20 +28,20 @@ jobs:
             cc: clang
             cxx: clang++
             cxxflags: '-stdlib=libc++'
-            werror: 'OFF'
+            werror: 'ON'
           - name: macOS AppleClang
             os: macos-14
             cc: clang
             cxx: clang++
             cxxflags: ''
-            werror: 'OFF'
+            werror: 'ON'
     runs-on: ${{ matrix.os }}
     env:
       CC: ${{ matrix.cc }}
       CXX: ${{ matrix.cxx }}
       CXXFLAGS: ${{ matrix.cxxflags }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Install Ninja on macOS
         if: runner.os == 'macOS'
         run: brew install ninja
@@ -58,7 +58,7 @@ jobs:
         run: ctest --preset debug
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: test-log-${{ matrix.name }}
           path: build/debug/Testing/Temporary/LastTest.log
@@ -80,7 +80,7 @@ jobs:
       CXX: clang++
       CXXFLAGS: -stdlib=libc++
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Install libc++
         run: |
           sudo apt-get update
@@ -93,7 +93,7 @@ jobs:
         run: ctest --preset ${{ matrix.preset }}
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: test-log-${{ matrix.preset }}
           path: build/${{ matrix.preset }}/Testing/Temporary/LastTest.log
@@ -102,11 +102,13 @@ jobs:
   format:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Install clang-format
         run: sudo apt-get update && sudo apt-get install --yes clang-format
       - name: Check formatting
         run: scripts/format.sh --check
+      - name: Check workflow action pins
+        run: scripts/check-workflow-actions.sh
 
   clang-tidy:
     runs-on: ubuntu-24.04
@@ -115,7 +117,7 @@ jobs:
       CXX: clang++
       CXXFLAGS: -stdlib=libc++
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Install clang-tidy
         run: |
           sudo apt-get update

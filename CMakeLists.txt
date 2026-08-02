@@ -43,37 +43,6 @@ endfunction()
 
 chronos_validate_standard_library()
 
-set(CHRONOS_GIT_COMMIT "unknown")
-set(CHRONOS_GIT_METADATA_AVAILABLE 0)
-set(CHRONOS_GIT_DIRTY 0)
-
-find_package(Git QUIET)
-if(Git_FOUND)
-  execute_process(
-    COMMAND "${GIT_EXECUTABLE}" rev-parse --short=12 HEAD
-    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-    RESULT_VARIABLE CHRONOS_GIT_REVISION_RESULT
-    OUTPUT_VARIABLE CHRONOS_GIT_REVISION
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET
-  )
-  if(CHRONOS_GIT_REVISION_RESULT EQUAL 0)
-    set(CHRONOS_GIT_COMMIT "${CHRONOS_GIT_REVISION}")
-    set(CHRONOS_GIT_METADATA_AVAILABLE 1)
-    execute_process(
-      COMMAND "${GIT_EXECUTABLE}" status --porcelain
-      WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-      RESULT_VARIABLE CHRONOS_GIT_STATUS_RESULT
-      OUTPUT_VARIABLE CHRONOS_GIT_STATUS
-      OUTPUT_STRIP_TRAILING_WHITESPACE
-      ERROR_QUIET
-    )
-    if(CHRONOS_GIT_STATUS_RESULT EQUAL 0 AND NOT CHRONOS_GIT_STATUS STREQUAL "")
-      set(CHRONOS_GIT_DIRTY 1)
-    endif()
-  endif()
-endif()
-
 set(CHRONOS_BUILD_TYPE "${CMAKE_BUILD_TYPE}")
 if(CHRONOS_BUILD_TYPE STREQUAL "")
   set(CHRONOS_BUILD_TYPE "unknown")
@@ -85,28 +54,28 @@ if(CHRONOS_TARGET_ARCHITECTURE STREQUAL "")
 endif()
 set(CHRONOS_OPERATING_SYSTEM "${CMAKE_SYSTEM_NAME}")
 
-function(chronos_escape_cpp_string input output)
-  set(value "${input}")
-  string(REPLACE "\\" "\\\\" value "${value}")
-  string(REPLACE "\"" "\\\"" value "${value}")
-  string(REPLACE "\n" "\\n" value "${value}")
-  string(REPLACE "\r" "\\r" value "${value}")
-  set("${output}" "${value}" PARENT_SCOPE)
-endfunction()
-
-chronos_escape_cpp_string("${PROJECT_VERSION}" CHRONOS_VERSION_ESCAPED)
-chronos_escape_cpp_string("${CHRONOS_GIT_COMMIT}" CHRONOS_GIT_COMMIT_ESCAPED)
-chronos_escape_cpp_string("${CHRONOS_BUILD_TYPE}" CHRONOS_BUILD_TYPE_ESCAPED)
-chronos_escape_cpp_string("${CHRONOS_COMPILER}" CHRONOS_COMPILER_ESCAPED)
-chronos_escape_cpp_string("${CHRONOS_TARGET_ARCHITECTURE}" CHRONOS_TARGET_ARCHITECTURE_ESCAPED)
-chronos_escape_cpp_string("${CHRONOS_OPERATING_SYSTEM}" CHRONOS_OPERATING_SYSTEM_ESCAPED)
-
 set(CHRONOS_GENERATED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 file(MAKE_DIRECTORY "${CHRONOS_GENERATED_INCLUDE_DIR}/chronos/common")
-configure_file(
-  cmake/version.hpp.in
+set(
+  CHRONOS_VERSION_HEADER
   "${CHRONOS_GENERATED_INCLUDE_DIR}/chronos/common/version_config.hpp"
-  @ONLY
+)
+add_custom_target(
+  chronos_version_header ALL
+  COMMAND
+    "${CMAKE_COMMAND}"
+    "-DCHRONOS_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+    "-DCHRONOS_OUTPUT_FILE=${CHRONOS_VERSION_HEADER}"
+    "-DCHRONOS_TEMPLATE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/version.hpp.in"
+    "-DCHRONOS_VERSION=${PROJECT_VERSION}"
+    "-DCHRONOS_BUILD_TYPE=${CHRONOS_BUILD_TYPE}"
+    "-DCHRONOS_COMPILER=${CHRONOS_COMPILER}"
+    "-DCHRONOS_TARGET_ARCHITECTURE=${CHRONOS_TARGET_ARCHITECTURE}"
+    "-DCHRONOS_OPERATING_SYSTEM=${CHRONOS_OPERATING_SYSTEM}"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerateVersionHeader.cmake"
+  BYPRODUCTS "${CHRONOS_VERSION_HEADER}"
+  COMMENT "Refreshing ChronosDB version metadata"
+  VERBATIM
 )
 
 add_library(
@@ -118,6 +87,7 @@ add_library(
   src/common/version.cpp
 )
 add_library(chronos::common ALIAS chronos_common)
+add_dependencies(chronos_common chronos_version_header)
 set_target_properties(chronos_common PROPERTIES EXPORT_NAME common)
 set_target_properties(chronos_common PROPERTIES CXX_EXTENSIONS OFF)
 target_compile_features(chronos_common PUBLIC cxx_std_23)
@@ -148,10 +118,16 @@ if(CHRONOS_BUILD_TESTS)
   add_executable(
     chronos_common_tests
     tests/common/byte_io_test.cpp
+    tests/common/byte_reader_header_self_contained.cpp
     tests/common/byte_writer_header_self_contained.cpp
     tests/common/bytes_test.cpp
+    tests/common/bytes_header_self_contained.cpp
     tests/common/checked_math_test.cpp
+    tests/common/checked_math_header_self_contained.cpp
     tests/common/crc32c_test.cpp
+    tests/common/crc32c_header_self_contained.cpp
+    tests/common/result_header_self_contained.cpp
+    tests/common/status_header_self_contained.cpp
     tests/common/status_result_test.cpp
     tests/common/version_header_self_contained.cpp
     tests/common/version_test.cpp
@@ -163,6 +139,28 @@ if(CHRONOS_BUILD_TESTS)
   chronos_enable_sanitizers(chronos_common_tests)
   chronos_enable_static_analysis(chronos_common_tests)
   gtest_discover_tests(chronos_common_tests DISCOVERY_TIMEOUT 30)
+
+  if(UNIX)
+    find_program(CHRONOS_BASH_EXECUTABLE bash REQUIRED)
+    add_test(
+      NAME BuildMetadataTest.RefreshesGitStateWithoutReconfigure
+      COMMAND
+        "${CHRONOS_BASH_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/build/version_metadata_test.sh"
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${CMAKE_COMMAND}"
+    )
+  endif()
+
+  if(CHRONOS_ENABLE_UBSAN AND CMAKE_EXPORT_COMPILE_COMMANDS)
+    add_test(
+      NAME BuildConfigurationTest.UbsanIsNonRecovering
+      COMMAND
+        "${CMAKE_COMMAND}"
+        "-DCOMPILE_COMMANDS=${CMAKE_BINARY_DIR}/compile_commands.json"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/build/check_ubsan_nonrecovering.cmake"
+    )
+  endif()
 endif()
 
 if(CHRONOS_BUILD_BENCHMARKS)

@@ -41,10 +41,12 @@ every edit is expensive and TSan cannot share a runtime with ASan.
 
 ## Dependency updates
 
-All external declarations live in `cmake/ChronosDependencies.cmake` and use immutable commit IDs.
-An update must be intentional: review upstream release notes and provenance, change the single pin,
-configure from an empty build tree, and run normal, sanitizer, formatting, and static-analysis
-checks. A new production dependency additionally requires the review/ADR evidence described in
+C++ test and benchmark dependency declarations live in `cmake/ChronosDependencies.cmake` and use
+immutable commit IDs. External GitHub Actions in `.github/workflows/` are also pinned to full commit
+IDs; `scripts/check-workflow-actions.sh` enforces that rule. An update must be intentional: review
+upstream release notes and provenance, update the pin and its nearby release comment, configure from
+an empty build tree, and run normal, sanitizer, formatting, and static-analysis checks. A new
+production dependency additionally requires the review/ADR evidence described in
 [ADR-0011](../adr/0011-dependency-and-build-versus-buy-policy.md). Do not commit populated
 FetchContent directories.
 
@@ -53,7 +55,7 @@ FetchContent directories.
 GitHub Actions builds and tests Debug configurations on Linux with GCC/libstdc++, Linux with
 Clang/libc++, and macOS with AppleClang/libc++. Ubuntu 24.04's default Clang/libstdc++ pairing does
 not expose C++23 `std::expected`, so every Linux Clang job installs and selects libc++ explicitly.
-The GCC job treats warnings as errors. Separate Linux Clang/libc++ jobs run ASan+UBSan and TSan.
-Independent jobs verify clang-format and clang-tidy. Test logs are uploaded when a test job fails.
-Benchmarks do not gate shared CI because trustworthy performance comparisons require a controlled
-environment.
+Every normal compiler-matrix job treats warnings in ChronosDB targets as errors. Separate Linux
+Clang/libc++ jobs run ASan+UBSan and TSan. Independent jobs verify clang-format, immutable workflow
+action pins, and clang-tidy. Test logs are uploaded when a test job fails. Benchmarks do not gate
+shared CI because trustworthy performance comparisons require a controlled environment.
