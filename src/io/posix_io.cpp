@@ -230,7 +230,14 @@ public:
   }
 
   int fdatasync(const int descriptor) noexcept override {
+#if defined(__APPLE__)
+    // Darwin does not expose fdatasync through its public libc headers. fsync is the documented
+    // portable fallback and is at least as strong with respect to file metadata; this does not
+    // advertise a macOS power-loss guarantee.
+    return ::fsync(descriptor);
+#elif defined(__linux__)
     return ::fdatasync(descriptor);
+#endif
   }
 
   int fsync(const int descriptor) noexcept override {
