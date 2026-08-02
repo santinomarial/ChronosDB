@@ -1,6 +1,7 @@
 #include "chronos/wal/codec.hpp"
 #include "chronos/wal/wal_paths.hpp"
 #include "chronos/wal/wal_writer.hpp"
+#include "wal/wal_writer_internal.hpp"
 #include "wal/wal_writer_test_support.hpp"
 
 #include <cstddef>
@@ -9,11 +10,111 @@
 #include <fstream>
 #include <gtest/gtest.h>
 #include <iterator>
+#include <limits>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace chronos::wal {
 namespace {
+
+TEST(WalWriterConfigTest, DefaultsMatchTheAcceptedWalV1Limits) {
+  const WalWriterConfig config;
+  EXPECT_EQ(config.target_segment_size, kSegmentSizeLimit);
+  EXPECT_EQ(config.maximum_application_payload, kMaximumPayloadLength);
+  EXPECT_EQ(config.file_permissions, 0600U);
+}
+
+TEST(WalWriterConfigTest, ValidatesEveryBoundBeforeFilesystemMutation) {
+  struct Case {
+    WalWriterConfig config;
+    common::StatusCode expected_code;
+    std::string_view diagnostic;
+  };
+  const std::vector<Case> cases{
+      {.config = {.directory_path = "/database/wal", .file_permissions = 01000U},
+       .expected_code = common::StatusCode::kInvalidArgument,
+       .diagnostic = "permissions"},
+      {.config = {.directory_path = "/database/wal", .target_segment_size = 0U},
+       .expected_code = common::StatusCode::kInvalidArgument,
+       .diagnostic = "segment size"},
+      {.config = {.directory_path = "/database/wal",
+                  .target_segment_size = kSegmentHeaderSize + kMaximumRecordLength - 1U},
+       .expected_code = common::StatusCode::kInvalidArgument,
+       .diagnostic = "cannot hold"},
+      {.config = {.directory_path = "/database/wal", .target_segment_size = kSegmentSizeLimit + 1U},
+       .expected_code = common::StatusCode::kOutOfRange,
+       .diagnostic = "64 MiB"},
+      {.config = {.directory_path = "/database/wal", .maximum_application_payload = 0U},
+       .expected_code = common::StatusCode::kInvalidArgument,
+       .diagnostic = "application envelope"},
+      {.config = {.directory_path = "/database/wal",
+                  .maximum_application_payload =
+                      static_cast<std::size_t>(kMaximumPayloadLength) + 1U},
+       .expected_code = common::StatusCode::kOutOfRange,
+       .diagnostic = "format limit"},
+      {.config = {.directory_path = "/database/wal",
+                  .maximum_application_payload = std::numeric_limits<std::size_t>::max()},
+       .expected_code = common::StatusCode::kOutOfRange,
+       .diagnostic = "format limit"},
+  };
+
+  for (const Case& test_case : cases) {
+    test::ScriptedWalSyscalls syscalls;
+    test::FixedWalIdGenerator generator{test::make_wal_id()};
+    const common::Result<WalWriter> result =
+        detail::WalWriterTestAccess::create_new(test_case.config, generator, syscalls);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code(), test_case.expected_code);
+    EXPECT_NE(result.error().message().find(test_case.diagnostic), std::string::npos);
+    EXPECT_EQ(generator.calls, 0U);
+    EXPECT_TRUE(syscalls.events.empty());
+  }
+}
+
+TEST(WalWriterConfigTest, AcceptsTheMinimumAndFormatMaximumTargetSizes) {
+  {
+    test::ScriptedWalSyscalls syscalls;
+    test::FixedWalIdGenerator generator{test::make_wal_id()};
+    const common::Result<WalWriter> created = detail::WalWriterTestAccess::create_new(
+        {.directory_path = "/database/wal",
+         .target_segment_size = kSegmentHeaderSize + 64U,
+         .maximum_application_payload = kApplicationEnvelopeSize},
+        generator, syscalls);
+    ASSERT_TRUE(created.has_value()) << created.error().to_string();
+  }
+  {
+    test::ScriptedWalSyscalls syscalls;
+    test::FixedWalIdGenerator generator{test::make_wal_id()};
+    const common::Result<WalWriter> created = detail::WalWriterTestAccess::create_new(
+        {.directory_path = "/database/wal",
+         .target_segment_size = kSegmentHeaderSize + kMaximumRecordLength},
+        generator, syscalls);
+    ASSERT_TRUE(created.has_value()) << created.error().to_string();
+  }
+  {
+    test::ScriptedWalSyscalls syscalls;
+    test::FixedWalIdGenerator generator{test::make_wal_id()};
+    const common::Result<WalWriter> created = detail::WalWriterTestAccess::create_new(
+        {.directory_path = "/database/wal", .target_segment_size = kSegmentSizeLimit}, generator,
+        syscalls);
+    ASSERT_TRUE(created.has_value()) << created.error().to_string();
+  }
+}
+
+TEST(WalWriterConfigTest, RequiresAnExistingDirectoryWithoutCreatingItOrCallingTheGenerator) {
+  test::TemporaryDirectory parent{"chronos-wal-missing-directory"};
+  ASSERT_TRUE(parent.valid());
+  const std::filesystem::path missing = parent.path() / "wal";
+  test::FixedWalIdGenerator generator{test::make_wal_id()};
+
+  const common::Result<WalWriter> created =
+      WalWriter::create_new({.directory_path = missing.string()}, generator);
+  ASSERT_FALSE(created.has_value());
+  EXPECT_EQ(created.error().code(), common::StatusCode::kNotFound);
+  EXPECT_EQ(generator.calls, 0U);
+  EXPECT_FALSE(std::filesystem::exists(missing));
+}
 
 [[nodiscard]] std::vector<std::byte> read_bytes(const std::filesystem::path& path) {
   std::ifstream input(path, std::ios::binary);
@@ -132,6 +233,37 @@ TEST(WalWriterTest, RejectsInvalidConfigurationGeneratorAndApplicationEnvelopeBe
   EXPECT_EQ(created->written_position(), initial);
 }
 
+TEST(WalWriterTest, EnforcesConfiguredPayloadMaximumBeforeAnyWriterStateOrIoChanges) {
+  test::ScriptedWalSyscalls syscalls;
+  test::FixedWalIdGenerator generator{test::make_wal_id()};
+  common::Result<WalWriter> created =
+      detail::WalWriterTestAccess::create_new({.directory_path = "/database/wal",
+                                               .target_segment_size = 256U,
+                                               .maximum_application_payload = 24U},
+                                              generator, syscalls);
+  ASSERT_TRUE(created.has_value()) << created.error().to_string();
+
+  const std::vector<std::byte> exact = test::make_application_payload(24U);
+  ASSERT_TRUE(created->append_application_entry(exact).has_value());
+  const PhysicalWalPosition written = created->written_position();
+  const std::uint64_t sequence = created->written_record_sequence();
+  ASSERT_TRUE(created->next_record_sequence().has_value());
+  const std::uint64_t next_sequence = *created->next_record_sequence();
+  const std::size_t event_count = syscalls.events.size();
+
+  const std::vector<std::byte> oversized = test::make_application_payload(25U);
+  const common::Result<WalAppendResult> rejected = created->append_application_entry(oversized);
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kOutOfRange);
+  EXPECT_NE(rejected.error().message().find("configured writer maximum"), std::string::npos);
+  EXPECT_FALSE(created->is_failed());
+  EXPECT_EQ(created->written_position(), written);
+  EXPECT_EQ(created->written_record_sequence(), sequence);
+  ASSERT_TRUE(created->next_record_sequence().has_value());
+  EXPECT_EQ(*created->next_record_sequence(), next_sequence);
+  EXPECT_EQ(syscalls.events.size(), event_count);
+}
+
 TEST(WalWriterTest, NeverReplacesAnExistingInitialSegment) {
   test::TemporaryDirectory temporary{"chronos-wal-writer-existing-test"};
   ASSERT_TRUE(temporary.valid());
@@ -146,6 +278,7 @@ TEST(WalWriterTest, NeverReplacesAnExistingInitialSegment) {
       WalWriter::create_new({.directory_path = temporary.path().string()}, second_generator);
   ASSERT_FALSE(second.has_value());
   EXPECT_EQ(second.error().code(), common::StatusCode::kAlreadyExists);
+  EXPECT_EQ(second_generator.calls, 0U);
   EXPECT_TRUE(std::filesystem::is_regular_file(temporary.path() / "wal-00000000000000000001.cwal"));
 }
 

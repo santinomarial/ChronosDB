@@ -113,6 +113,21 @@ public:
     return integer_result(pop_or(lock_outcomes, 0));
   }
 
+  int list_directory_entries(const int descriptor,
+                             std::vector<io::DirectoryEntry>& entries) override {
+    events.emplace_back("list_directory:" + std::to_string(descriptor));
+    const SyscallOutcome outcome = pop_or(list_directory_outcomes, 0);
+    if (outcome.result == 0) {
+      if (!directory_entry_snapshots.empty()) {
+        entries = std::move(directory_entry_snapshots.front());
+        directory_entry_snapshots.pop_front();
+      } else {
+        entries = directory_entries;
+      }
+    }
+    return integer_result(outcome);
+  }
+
   int close(const int descriptor) override {
     events.emplace_back("close:" + std::to_string(descriptor));
     return integer_result(pop_or(close_outcomes, 0));
@@ -128,7 +143,10 @@ public:
   std::deque<SyscallOutcome> fsync_outcomes;
   std::deque<SyscallOutcome> rename_outcomes;
   std::deque<SyscallOutcome> lock_outcomes;
+  std::deque<SyscallOutcome> list_directory_outcomes;
   std::deque<SyscallOutcome> close_outcomes;
+  std::vector<io::DirectoryEntry> directory_entries;
+  std::deque<std::vector<io::DirectoryEntry>> directory_entry_snapshots;
   std::vector<std::string> events;
   std::unordered_map<int, off_t> file_sizes;
   int directory_descriptor{10};

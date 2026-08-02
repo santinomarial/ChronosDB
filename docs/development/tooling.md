@@ -5,15 +5,19 @@ targets fetched for tests or benchmarks do not inherit ChronosDB warnings, sanit
 
 ## Formatting
 
-`.clang-format` defines the C++ style. LLVM clang-format 17 or newer is recommended; nearby current
-versions should produce compatible results. Apply or verify it with:
+`.clang-format` defines the C++ style. Formatting is pinned to clang-format major version 18 because
+different LLVM majors can produce different output from the same style file. The script verifies
+the selected executable's major version and refuses clang-format 17, 19, 22, or another unpinned
+major. Apply or verify it with:
 
 ```sh
 scripts/format.sh
 scripts/format.sh --check
 ```
 
-Set `CLANG_FORMAT` when the executable has a versioned or nonstandard name.
+The script searches for `clang-format-18` and the standard Homebrew `llvm@18` paths before an
+unversioned executable. Set `CLANG_FORMAT` when the executable has another location; it must still
+report version 18.x. CI installs `clang-format-18` explicitly and runs the same check command.
 
 ## Lint and static analysis
 

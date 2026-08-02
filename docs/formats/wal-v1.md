@@ -106,6 +106,12 @@ Creation and opening are distinct operations. Creation requires a directory with
 and installs segment 1. Opening an existing database with no final segment is a missing-log failure;
 it MUST NOT silently create a new history.
 
+The implemented new-history creator applies a stricter, fail-closed creation policy: before identity
+generation and again under the writer lock, the directory must contain no entry other than a regular
+`LOCK`. It does not delete recognized temporary files because cleanup belongs to the recovery-capable
+opener. A valid final segment, recognized orphan temporary, malformed reserved `wal-`/`.wal-` name,
+unrelated entry, symlink, or nonregular entry rejects creation without being removed or overwritten.
+
 The containing database-creation protocol MUST durably install the `wal/` directory itself before
 initial segment creation: create it beneath the already opened database root, synchronize the
 database-root directory entry, and then perform the segment installation protocol. WAL v1 specifies
@@ -303,9 +309,13 @@ only through the explicit synchronized repair procedure in the
   explicitly repairs the tail.
 - The file grows only by record writes. WAL v1 MUST NOT use `fallocate`, `posix_fallocate`, growth by
   `ftruncate`, sparse reservations, or any other preallocation.
-- If the complete next record would end beyond 64 MiB, the writer rotates before writing any of it.
-  A record never crosses a segment boundary. If the active segment number is `UINT64_MAX`, rotation
-  is impossible and the append fails without writing.
+- A writer may configure an earlier runtime rotation target greater than 64 bytes and no greater
+  than 64 MiB, provided the target can hold the 64-byte header plus one maximum configured record.
+  The target is an operational policy and is not serialized: every v1 header still stores the
+  frozen 64 MiB `segment_size_limit`. If the complete next record would end beyond the runtime
+  target, the writer rotates before writing any of it. A record never crosses a segment boundary.
+  If the active segment number is `UINT64_MAX`, rotation is impossible and the append fails without
+  writing.
 - A closed segment may end below 64 MiB. WAL v1 writes no footer and pads no unused segment capacity.
 - Once a newer final segment is active, every prior segment is immutable. The final active segment
   is append-only except for explicit recovery-tail truncation.

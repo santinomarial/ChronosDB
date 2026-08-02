@@ -1,8 +1,8 @@
 # Durable POSIX I/O Foundations
 
 > **Status: implemented primitive layer.** The `chronos::io` library provides the blocking Linux
-> and macOS file, directory, synchronization, no-replace rename, and advisory-lock operations needed
-> by the future WAL. It does not implement WAL naming, segment installation, append state,
+> and macOS file, directory, synchronization, no-replace rename, and advisory-lock operations used
+> by the current WAL writer. It does not itself implement WAL naming, segment installation, append state,
 > acknowledgment, recovery, or replay.
 
 ## Purpose and boundary
@@ -19,6 +19,7 @@ mechanisms already required by the accepted WAL design:
 - file size inspection and non-growing truncation;
 - data and full-file synchronization;
 - directory-relative regular-file open and exclusive creation;
+- owning directory-entry snapshots with no-follow type classification;
 - same-directory atomic no-replace rename and directory synchronization; and
 - a nonblocking process-level whole-file advisory lock.
 
@@ -87,6 +88,14 @@ swapped at a call site. Both resolve under the same directory descriptor. Linux 
 `renameat2(..., RENAME_NOREPLACE)` and macOS uses `renameatx_np(..., RENAME_EXCL)`. There is no
 check-then-rename fallback: `ENOSYS`, `ENOTSUP`, `EOPNOTSUPP`, or the fixed-operation `EINVAL` case
 returns `kNotSupported` rather than weakening atomicity.
+
+`list_entries()` opens an independent directory stream relative to the owned descriptor, omits `.`
+and `..`, classifies each returned name with `fstatat(..., AT_SYMLINK_NOFOLLOW)`, and sorts the owning
+results by bytewise name for deterministic diagnostics. It does not follow symlinks. The snapshot is
+not a lock: a caller making an authoritative mutation decision must hold the WAL writer lock and retain the
+no-out-of-band-mutation deployment assumption. The new-history writer performs an unlocked preflight
+to avoid consuming an identity for obviously invalid contents, then repeats the snapshot under its
+acquired lock before installation.
 
 ## Synchronization and truncation
 

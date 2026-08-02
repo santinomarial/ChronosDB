@@ -10,10 +10,12 @@ No acknowledged durable write disappears after any failure covered by the select
 - **How it could be violated:** an acknowledgment is sent before the required sync/quorum boundary; a mode is ambiguous; a torn record is treated as durable; recovery skips a committed record; or checkpoint reclamation removes the only durable copy.
 - **Eventual tests:** enumerate each durability mode and inject process crashes, power-loss approximations, short writes, sync failures, segment rotation failures, and later replica loss at every acknowledgment boundary. Recovered committed identities must match the acknowledged set allowed by that mode.
 
-For the unimplemented single-node WAL, [WAL recovery](wal-recovery.md) now fixes the exact `ASYNC`
-and `LOCAL_SYNC` eligibility boundaries and the covered Linux persistence assumptions. A
-`LOCAL_SYNC` record cannot be discarded as an incomplete tail under that contract; encountering such
-an outcome is a durability defect or an excluded platform failure, not permitted loss.
+For the partially implemented single-node WAL, [WAL recovery](wal-recovery.md) fixes the exact
+`ASYNC` and `LOCAL_SYNC` eligibility boundaries and the covered Linux persistence assumptions. The
+new-history writer exposes complete-write and explicit synchronization frontiers, while
+acknowledgment coordination and recovery remain unimplemented. A `LOCAL_SYNC` record cannot be
+discarded as an incomplete tail under the completed contract; encountering such an outcome is a
+durability defect or an excluded platform failure, not permitted loss.
 
 ## 2. Manifests reference only completely installed durable parts
 

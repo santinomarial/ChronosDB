@@ -59,6 +59,9 @@ The WAL v1 directory identity, consecutive segment/record sequences, exact 64-by
 40-byte record header, 64 MiB segment limit, 16 MiB record limit, CRC scopes, padding formula,
 filename grammar, and compatibility policy are durable contracts in the format specification. They
 cannot be changed by an implementation prompt or optimization without a new accepted format/ADR.
+An implementation may rotate below 64 MiB as an operational policy when its validated target can
+hold one maximum configured record. That earlier target is not serialized and does not reinterpret
+the header's immutable 64 MiB limit.
 
 WAL compression, encryption, direct I/O, memory-mapped writing, and `io_uring` are deferred. The
 initial implementation owns its WAL framing, segmented persistence, and recovery under

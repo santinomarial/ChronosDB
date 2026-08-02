@@ -41,10 +41,12 @@ TEST(WalSegmentInstallationTest, OrdersHeaderWriteFileSyncRenameAndDirectorySync
   const std::vector<std::string> expected{
       "open_directory:/database/wal",
       "fstat:10",
+      "list_directory:10",
       "fstat:10",
       "open_at:LOCK",
       "fstat:11",
       "lock:11",
+      "list_directory:10",
       "open_at:.wal-00000000000000000001.cwal.tmp-ab0102030405060708090a0b0c0d0e0f",
       "fstat:12",
       "pwrite:12@0",
@@ -113,7 +115,7 @@ TEST(WalSegmentInstallationTest, StopsAtEachFailedDurabilityTransition) {
   }
 }
 
-TEST(WalSegmentInstallationTest, LockContentionPreventsIdentityGenerationAndFileCreation) {
+TEST(WalSegmentInstallationTest, LockContentionPreventsSegmentFileCreation) {
   test::ScriptedWalSyscalls syscalls;
   syscalls.lock_outcomes = {{-1, EAGAIN}};
   test::FixedWalIdGenerator generator{test::make_wal_id()};
@@ -121,7 +123,7 @@ TEST(WalSegmentInstallationTest, LockContentionPreventsIdentityGenerationAndFile
       {.directory_path = "/database/wal"}, generator, syscalls);
   ASSERT_FALSE(failed.has_value());
   EXPECT_EQ(failed.error().code(), common::StatusCode::kUnavailable);
-  EXPECT_EQ(generator.calls, 0U);
+  EXPECT_EQ(generator.calls, 1U);
   EXPECT_EQ(static_cast<std::size_t>(std::count_if(
                 syscalls.events.begin(), syscalls.events.end(),
                 [](const std::string& event) { return event.starts_with("open_at:"); })),

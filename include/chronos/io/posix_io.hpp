@@ -8,7 +8,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace chronos::io {
 
@@ -26,6 +28,20 @@ enum class FileOpenMode : std::uint8_t {
 struct RenameRequest {
   std::string_view old_name;
   std::string_view new_name;
+};
+
+enum class DirectoryEntryType : std::uint8_t {
+  kRegularFile,
+  kDirectory,
+  kSymlink,
+  kOther,
+};
+
+struct DirectoryEntry {
+  std::string name;
+  DirectoryEntryType type{DirectoryEntryType::kOther};
+
+  friend bool operator==(const DirectoryEntry&, const DirectoryEntry&) = default;
 };
 
 // PosixFile exclusively owns one descriptor for a verified regular file. It is movable but not
@@ -127,6 +143,12 @@ public:
   create_exclusive_regular_file(std::string_view name, std::uint16_t permissions = 0600U) const;
   [[nodiscard]] common::Result<PosixAdvisoryLock>
   acquire_exclusive_lock(std::string_view name, std::uint16_t permissions = 0600U) const;
+
+  // Returns an owning snapshot of every entry except . and .., sorted by bytewise name. Entry types
+  // are obtained without following symlinks. Callers that require an authoritative mutation
+  // decision must hold the directory's exclusive writer lock and reject concurrent out-of-band
+  // modification.
+  [[nodiscard]] common::Result<std::vector<DirectoryEntry>> list_entries() const;
 
   // The operation is atomic, confined to this directory, and never replaces an existing target.
   // A platform without an atomic no-replace primitive returns kNotSupported.

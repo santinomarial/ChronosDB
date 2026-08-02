@@ -55,10 +55,13 @@ The implemented POSIX and WAL-writer boundaries have deterministic syscall subst
 `EINTR`, short reads and writes, EOF, hard errors, zero-progress writes,
 metadata/truncate/synchronization failures, rename support and collisions, lock contention, close
 behavior, ordered initial segment installation, partial-append poisoning, explicit sync failure, and
-pre-rotation sync failure. Host-filesystem integration tests cover directory-relative lifecycle,
-same-process and cross-process locking, complete record append, sync frontiers, and two-segment
-rotation. Crash images and process-kill recovery tests remain future obligations; injected syscall
-ordering is not by itself crash-persistence evidence.
+pre-rotation sync failure. Writer tests also cover configuration bounds before mutation, strict
+new-directory entry classification, identity-generation ordering, configured payload admission,
+small-target rotation, sequence exhaustion diagnostics, and invalid internal-position poisoning.
+Host-filesystem integration tests cover directory-relative lifecycle, entry types without symlink
+following, same-process and cross-process locking, complete record append, sync frontiers, and
+two-segment rotation. Crash images and process-kill recovery tests remain future obligations;
+injected syscall ordering is not by itself crash-persistence evidence.
 
 ### WAL v1 implementation gate
 

@@ -29,6 +29,11 @@ into a public durability mode yet. Default mode, group size/byte/delay policy, a
 persistence remain deferred. Benchmarks must follow the
 [benchmark contract](../benchmarks/benchmark-contract.md).
 
+The writer's runtime segment target and maximum application-payload setting are admission and
+rotation policies, not durability modes or durable-format fields. Both are validated before
+filesystem mutation; the runtime target never exceeds the header's fixed 64 MiB v1 limit, and an
+oversized application payload is rejected before sequence assignment or record I/O.
+
 ## Single-node read behavior
 
 ### Committed visibility

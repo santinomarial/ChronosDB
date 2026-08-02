@@ -1,11 +1,12 @@
 # Building ChronosDB
 
 ChronosDB's implemented code currently consists of the Phase 1A build/version foundation, the Phase
-1B portable common binary primitives, the pure in-memory WAL v1 physical codec, and the minimal
-blocking POSIX file/directory layer used by future durable storage. The segmented WAL writer,
-recovery, and other engine components described elsewhere remain planned. The reference production
-platform is Linux x86-64; the common, WAL codec, and POSIX I/O targets support Linux and modern
-macOS, including Apple silicon. macOS correctness support is not a power-loss durability claim.
+1B portable common binary primitives, the pure in-memory WAL v1 physical codec, the minimal blocking
+POSIX file/directory layer, and the new-history segmented WAL writer. Existing-history opening,
+recovery, repair, replay, and other engine components described elsewhere remain planned. The
+reference production platform is Linux x86-64; the common, WAL codec, POSIX I/O, and writer targets
+support Linux and modern macOS, including Apple silicon. macOS correctness support is not a
+power-loss durability claim.
 
 ## Prerequisites
 
@@ -15,7 +16,7 @@ macOS, including Apple silicon. macOS correctness support is not a power-loss du
   with a capable libc++/libstdc++, or a current AppleClang
 - Git, so CMake can fetch pinned test dependencies and optionally record revision metadata
 - Python only as required by CMake/GoogleTest test discovery
-- clang-format and clang-tidy from a reasonably current LLVM release (17+ recommended)
+- clang-format 18 exactly, plus clang-tidy from a reasonably current LLVM release (17+ supported)
 
 The first test or benchmark configuration needs network access to fetch its pinned dependency.
 Subsequent configurations reuse CMake's build-tree dependency checkout. No dependency source is
@@ -24,7 +25,7 @@ vendored into this repository.
 ## Linux setup
 
 On Ubuntu 24.04, install the distribution packages for `cmake`, `ninja-build`, `g++`, `clang`,
-`libc++-dev`, `libc++abi-dev`, `clang-format`, and `clang-tidy`. GCC and Clang are both
+`libc++-dev`, `libc++abi-dev`, `clang-format-18`, and `clang-tidy`. GCC and Clang are both
 CI-supported. Ubuntu's Clang 18 defaults to libstdc++ 13, but that compiler/library pairing does not
 expose the required C++23 `std::expected`; the supported Clang pairing uses libc++. Select the
 compiler and standard library before the first configure:
@@ -44,12 +45,13 @@ Install Xcode Command Line Tools and CMake/Ninja. Homebrew users can run:
 
 ```sh
 xcode-select --install
-brew install cmake ninja llvm
+brew install cmake ninja llvm llvm@18
 ```
 
-Homebrew's LLVM tools may not be on `PATH`. If so, set `CLANG_FORMAT` and `CLANG_TIDY` to the
-corresponding executables under `$(brew --prefix llvm)/bin`. AppleClang builds the portable common
-and WAL targets plus the macOS POSIX I/O backend. The backend uses `fsync` where Linux uses
+Homebrew's versioned LLVM tools may not be on `PATH`. `scripts/format.sh` searches the standard
+`llvm@18` prefix; otherwise set `CLANG_FORMAT=$(brew --prefix llvm@18)/bin/clang-format`. Set
+`CLANG_TIDY` separately to the chosen current LLVM tidy executable. AppleClang builds the portable
+common and WAL targets plus the macOS POSIX I/O backend. The backend uses `fsync` where Linux uses
 `fdatasync`; this does not advertise a macOS power-loss envelope. Future server, direct-I/O, and
 reactor components may require Linux and will be guarded by explicit platform checks rather than
 weakened portable interfaces.

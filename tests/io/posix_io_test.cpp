@@ -125,6 +125,15 @@ public:
     return integer_result(pop_or(lock_outcomes, 0));
   }
 
+  int list_directory_entries(const int descriptor, std::vector<DirectoryEntry>& entries) override {
+    listed_directory_descriptors.push_back(descriptor);
+    const Outcome outcome = pop_or(list_directory_outcomes, 0);
+    if (outcome.result == 0) {
+      entries = directory_entries;
+    }
+    return integer_result(outcome);
+  }
+
   int close(const int descriptor) override {
     close_descriptors.push_back(descriptor);
     return integer_result(pop_or(close_outcomes, 0));
@@ -140,7 +149,10 @@ public:
   std::deque<Outcome> fsync_outcomes;
   std::deque<Outcome> rename_outcomes;
   std::deque<Outcome> lock_outcomes;
+  std::deque<Outcome> list_directory_outcomes;
   std::deque<Outcome> close_outcomes;
+
+  std::vector<DirectoryEntry> directory_entries;
 
   std::vector<std::string> opened_paths;
   std::vector<int> open_directory_flags;
@@ -164,6 +176,7 @@ public:
   std::vector<std::string> rename_old_names;
   std::vector<std::string> rename_new_names;
   std::vector<int> lock_descriptors;
+  std::vector<int> listed_directory_descriptors;
   std::vector<int> close_descriptors;
 
   int next_descriptor{10};
@@ -385,6 +398,22 @@ TEST(PosixDirectoryInjectedTest, UsesValidatedRelativeExclusiveAndNoReplaceOpera
             common::StatusCode::kNotSupported);
   EXPECT_TRUE(opened->sync().is_ok());
   EXPECT_EQ(syscalls.fsync_descriptors, (std::vector<int>{10, 10}));
+
+  syscalls.directory_entries = {
+      {.name = std::string(1U, static_cast<char>(0xFF)), .type = DirectoryEntryType::kOther},
+      {.name = "nested", .type = DirectoryEntryType::kDirectory},
+      {.name = "LOCK", .type = DirectoryEntryType::kRegularFile},
+  };
+  const common::Result<std::vector<DirectoryEntry>> entries = opened->list_entries();
+  ASSERT_TRUE(entries.has_value()) << entries.error().to_string();
+  ASSERT_EQ(entries->size(), 3U);
+  EXPECT_EQ((*entries)[0].name, "LOCK");
+  EXPECT_EQ((*entries)[1].name, "nested");
+  EXPECT_EQ((*entries)[2].name, std::string(1U, static_cast<char>(0xFF)));
+  EXPECT_EQ(syscalls.listed_directory_descriptors, (std::vector<int>{10}));
+
+  syscalls.list_directory_outcomes = {{-1, EIO}};
+  EXPECT_EQ(opened->list_entries().error().code(), common::StatusCode::kIoError);
 }
 
 TEST(PosixDirectoryInjectedTest, ValidatesRegularFilesAndMapsLockContention) {
@@ -433,6 +462,7 @@ TEST(PosixHandleTest, DefaultClosedHandlesRejectOperationsWithoutCallingSyscalls
             common::StatusCode::kInvalidArgument);
   EXPECT_EQ(directory.acquire_exclusive_lock("LOCK").error().code(),
             common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(directory.list_entries().error().code(), common::StatusCode::kInvalidArgument);
   EXPECT_EQ(directory.rename_no_replace({.old_name = "old", .new_name = "new"}).code(),
             common::StatusCode::kInvalidArgument);
   EXPECT_EQ(directory.sync().code(), common::StatusCode::kInvalidArgument);
@@ -523,6 +553,21 @@ TEST(PosixIoIntegrationTest, PerformsDurableDirectoryRelativeFileLifecycle) {
   const common::Result<PosixFile> symlink =
       directory->open_regular_file("segment-link", FileOpenMode::kReadOnly);
   EXPECT_FALSE(symlink.has_value());
+
+  const common::Result<std::vector<DirectoryEntry>> entries = directory->list_entries();
+  ASSERT_TRUE(entries.has_value()) << entries.error().to_string();
+  const auto find_type = [&entries](const std::string_view name) {
+    const auto entry = std::find_if(entries->begin(), entries->end(),
+                                    [name](const auto& value) { return value.name == name; });
+    EXPECT_NE(entry, entries->end());
+    return entry == entries->end() ? DirectoryEntryType::kOther : entry->type;
+  };
+  EXPECT_EQ(find_type("segment.cwal"), DirectoryEntryType::kRegularFile);
+  EXPECT_EQ(find_type("segment-link"), DirectoryEntryType::kSymlink);
+
+  const common::Result<std::vector<DirectoryEntry>> repeated = directory->list_entries();
+  ASSERT_TRUE(repeated.has_value()) << repeated.error().to_string();
+  EXPECT_EQ(repeated->size(), entries->size());
 }
 
 TEST(PosixIoIntegrationTest, HoldsTheAdvisoryLockAgainstAnotherProcess) {

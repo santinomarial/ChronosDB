@@ -6,9 +6,11 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <string_view>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <vector>
 
 namespace chronos::io::detail {
 
@@ -44,9 +46,10 @@ struct RenameAtRequest {
   const char* new_name;
 };
 
-// Raw syscall boundary used by production and deterministic failure-injection tests. It is not a
-// filesystem abstraction: operations intentionally correspond one-for-one with the POSIX calls
-// needed by the WAL durability protocol.
+// Narrow POSIX boundary used by production and deterministic failure-injection tests. It is not a
+// virtual filesystem. Most methods correspond one-for-one with a syscall; directory enumeration is
+// one bounded composite because portable DIR iteration state cannot be represented as an integer
+// syscall outcome.
 class PosixSyscalls {
 public:
   virtual ~PosixSyscalls() = default;
@@ -61,6 +64,7 @@ public:
   virtual int fsync(int descriptor) = 0;
   virtual int rename_no_replace(const RenameAtRequest& request) = 0;
   virtual int try_lock_exclusive(int descriptor) = 0;
+  virtual int list_directory_entries(int descriptor, std::vector<DirectoryEntry>& entries) = 0;
   virtual int close(int descriptor) = 0;
 };
 

@@ -51,10 +51,19 @@ payload contracts and apply logic.
 ## Current writer interface and ownership
 
 `WalWriter::create_new` accepts an existing dedicated WAL directory whose parent installation has
-already been synchronized. It acquires `LOCK`, obtains a nonzero identity through an injectable
-`WalLogIdGenerator`, and installs segment 1 through exclusive temporary creation, complete header
-write, exact-size verification, file sync, no-replace rename, and directory sync. The system
-generator uses platform entropy; deterministic tests inject fixed identities.
+already been synchronized. Configuration and a read-only directory-content preflight complete
+before an injectable `WalLogIdGenerator` is called. The creator then acquires `LOCK`, repeats the
+classification under that lock, and installs segment 1 through exclusive temporary creation,
+complete header write, exact-size verification, file sync, no-replace rename, and directory sync.
+Only an empty directory or a regular `LOCK` is accepted. Existing history, recognized orphan
+temporaries, malformed reserved names, unrelated entries, symlinks, and nonregular entries are
+rejected without cleanup. The system generator uses platform entropy; deterministic tests inject
+fixed identities. Identity failure occurs before lock creation and leaves the directory unchanged.
+
+The caller, not `WalWriter`, creates and durably installs the `wal/` directory under the database
+root. This ownership is deliberate: the writer has no parent-directory descriptor and therefore
+cannot prove durability of the `wal/` name. Existing/crashed history must later go through the
+recovery-capable opener rather than `create_new`.
 
 `append_application_entry` finishes encoding one bounded record before its first `pwrite`, assigns
 the next sequence, writes at the explicit active end offset, and returns record start/end positions.
@@ -62,6 +71,14 @@ Its success is only the complete-write (`ASYNC`-eligible) boundary. `synchronize
 data sync and advances the durable position/sequence. It does not acknowledge a request or implement
 group commit. Rotation synchronizes the prior file, durably installs its successor, closes the prior
 descriptor, and writes the complete record at offset 64 of the successor.
+
+`WalWriterConfig` defaults its runtime target to 64 MiB and its maximum application payload to the
+v1 hard maximum. Deployments and deterministic tests may choose smaller values. Validation requires
+the target to exceed the header, remain at or below 64 MiB, and fit the header plus one record at the
+configured payload maximum. The configured payload includes the application envelope, cannot be
+smaller than that envelope or larger than the v1 maximum, and is checked before encoding, rotation,
+sequence mutation, or file I/O. Earlier rotation does not alter segment bytes: the header continues
+to encode the frozen v1 64 MiB limit.
 
 `WalWriter` is move-only and not internally synchronized. One caller serializes every operation and
 keeps payload bytes alive through the append call. Any attempted record-write error, sync error, or

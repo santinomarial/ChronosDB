@@ -101,10 +101,14 @@ jobs:
 
   format:
     runs-on: ubuntu-24.04
+    env:
+      CLANG_FORMAT: clang-format-18
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - name: Install clang-format
-        run: sudo apt-get update && sudo apt-get install --yes clang-format
+      - name: Install clang-format 18
+        run: sudo apt-get update && sudo apt-get install --yes clang-format-18
+      - name: Report clang-format version
+        run: clang-format-18 --version
       - name: Check formatting
         run: scripts/format.sh --check
       - name: Check workflow action pins

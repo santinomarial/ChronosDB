@@ -13,6 +13,11 @@ public:
                                                             io::detail::PosixSyscalls& syscalls) {
     return WalWriter::create_new_with(config, id_generator, syscalls);
   }
+
+  static void set_sequence_state(WalWriter& writer, std::uint64_t next_record_sequence,
+                                 bool sequence_exhausted);
+  static void set_active_segment_number(WalWriter& writer, std::uint64_t segment_number);
+  static void set_active_end_offset(WalWriter& writer, std::uint64_t end_offset);
 };
 
 } // namespace chronos::wal::detail

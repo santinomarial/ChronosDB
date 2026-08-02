@@ -112,13 +112,23 @@ atomic no-replace primitive must report the platform unsupported for writable WA
 Initial WAL creation applies the same steps to segment 1. Opening an existing database never invokes
 initial creation as a fallback for missing history.
 
+The current new-history API requires the already installed `wal/` directory to be empty except for
+an optional regular `LOCK`. It performs a read-only content classification before consuming an
+identity and repeats that classification after acquiring the lock. It rejects rather than deletes
+recognized orphan temporaries; cleanup requires the future recovery-capable opener and its
+synchronized cleanup protocol. Malformed reserved names, unrelated entries, symlinks, and
+nonregular entries also fail closed. The API never creates `wal/`, because it does not own the
+database-root descriptor or the required parent-directory synchronization boundary.
+
 ### Rotation
 
 The writer computes the complete next record length before writing. If it would exceed the current
-segment's logical size limit, the writer installs the next consecutive segment using the procedure
-above and places the entire record there. The new header's first sequence is the sequence assigned to
-that record. Because the prior segment is data-synchronized first, installing a successor cannot
-make an older `ASYNC` prefix less durable; it may make that prefix durable incidentally.
+writer's validated runtime target, the writer installs the next consecutive segment using the
+procedure above and places the entire record there. The runtime target may be below the v1 64 MiB
+format limit, is not serialized, and must fit one maximum configured record. The new header's first
+sequence is the sequence assigned to that record. Because the prior segment is data-synchronized
+first, installing a successor cannot make an older `ASYNC` prefix less durable; it may make that
+prefix durable incidentally.
 
 An installation error never permits append to the temporary or ambiguously installed segment.
 Recovery later observes either the previous complete directory state or the new valid final name

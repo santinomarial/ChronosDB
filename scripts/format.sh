@@ -10,9 +10,34 @@ if [[ "${mode}" != "format" && "${mode}" != "--check" ]]; then
   exit 2
 fi
 
-clang_format="${CLANG_FORMAT:-clang-format}"
-if ! command -v "${clang_format}" >/dev/null 2>&1; then
-  echo "error: ${clang_format} was not found; set CLANG_FORMAT to a compatible executable" >&2
+supported_major=18
+
+if [[ -n "${CLANG_FORMAT:-}" ]]; then
+  candidates=("${CLANG_FORMAT}")
+else
+  candidates=(
+    clang-format-18
+    /opt/homebrew/opt/llvm@18/bin/clang-format
+    /usr/local/opt/llvm@18/bin/clang-format
+    clang-format
+  )
+fi
+
+clang_format=""
+for candidate in "${candidates[@]}"; do
+  if command -v "${candidate}" >/dev/null 2>&1; then
+    clang_format="$(command -v "${candidate}")"
+    break
+  fi
+done
+if [[ -z "${clang_format}" ]]; then
+  echo "error: clang-format ${supported_major} was not found; install it or set CLANG_FORMAT" >&2
+  exit 1
+fi
+
+version="$("${clang_format}" --version)"
+if [[ ! "${version}" =~ version[[:space:]]+${supported_major}\. ]]; then
+  echo "error: ChronosDB requires clang-format ${supported_major}.x, found: ${version}" >&2
   exit 1
 fi
 

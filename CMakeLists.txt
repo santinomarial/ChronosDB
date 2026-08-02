@@ -210,6 +210,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/wal/wal_rotation_test.cpp
     tests/wal/wal_segment_header_self_contained.cpp
     tests/wal/wal_segment_installation_test.cpp
+    tests/wal/wal_writer_directory_test.cpp
     tests/wal/wal_writer_failure_test.cpp
     tests/wal/wal_writer_config_header_self_contained.cpp
     tests/wal/wal_writer_header_self_contained.cpp

@@ -2,8 +2,11 @@
 #include "chronos/wal/wal_writer.hpp"
 #include "wal/wal_writer_test_support.hpp"
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <gtest/gtest.h>
 #include <vector>
 
@@ -53,6 +56,46 @@ TEST(WalRotationTest, SynchronizesPriorSegmentAndNeverSplitsARecord) {
   ASSERT_TRUE(synchronized.has_value()) << synchronized.error().to_string();
   EXPECT_EQ(writer.durable_record_sequence(), 4U);
   EXPECT_EQ(writer.durable_position(), writer.written_position());
+}
+
+TEST(WalRotationTest, UsesASmallRuntimeTargetWithoutChangingSerializedSegmentHeaders) {
+  test::TemporaryDirectory temporary{"chronos-wal-small-rotation-test"};
+  ASSERT_TRUE(temporary.valid());
+  test::FixedWalIdGenerator generator{test::make_wal_id()};
+  common::Result<WalWriter> created =
+      WalWriter::create_new({.directory_path = temporary.path().string(),
+                             .target_segment_size = 192U,
+                             .maximum_application_payload = kApplicationEnvelopeSize},
+                            generator);
+  ASSERT_TRUE(created.has_value()) << created.error().to_string();
+
+  const std::vector<std::byte> payload = test::make_application_payload(kApplicationEnvelopeSize);
+  const common::Result<WalAppendResult> first = created->append_application_entry(payload);
+  const common::Result<WalAppendResult> second = created->append_application_entry(payload);
+  const common::Result<WalAppendResult> third = created->append_application_entry(payload);
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(second.has_value());
+  ASSERT_TRUE(third.has_value());
+  EXPECT_EQ(first->record_start.segment_number, 1U);
+  EXPECT_EQ(second->record_end.byte_offset, 192U);
+  EXPECT_EQ(third->record_start.segment_number, 2U);
+  EXPECT_EQ(third->record_start.byte_offset, kSegmentHeaderSize);
+  EXPECT_EQ(created->active_segment().header.first_record_sequence, 3U);
+  EXPECT_EQ(created->durable_record_sequence(), 2U);
+
+  const std::vector<std::byte> second_header = [&temporary] {
+    std::ifstream input(temporary.path() / "wal-00000000000000000002.cwal", std::ios::binary);
+    std::vector<char> bytes(kSegmentHeaderSize);
+    input.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    std::vector<std::byte> result(bytes.size());
+    std::transform(bytes.begin(), bytes.end(), result.begin(), [](const char value) {
+      return static_cast<std::byte>(static_cast<unsigned char>(value));
+    });
+    return result;
+  }();
+  const common::Result<SegmentHeader> decoded = decode_segment_header(second_header);
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  EXPECT_EQ(decoded->segment_number, 2U);
 }
 
 } // namespace

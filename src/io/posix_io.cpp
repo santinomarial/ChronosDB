@@ -6,12 +6,14 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <dirent.h>
 #include <fcntl.h>
 #include <limits>
 #include <memory>
 #include <mutex>
 #include <set>
 #include <string>
+#include <string_view>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <system_error>
@@ -177,7 +179,7 @@ struct TransferRange {
 
 [[nodiscard]] common::Status validate_regular_file(detail::PosixSyscalls& syscalls,
                                                    const int descriptor) {
-  struct stat metadata{};
+  struct stat metadata {};
   int result = 0;
   do {
     result = syscalls.fstat(descriptor, &metadata);
@@ -194,7 +196,7 @@ struct TransferRange {
 
 [[nodiscard]] common::Status validate_directory(detail::PosixSyscalls& syscalls,
                                                 const int descriptor) {
-  struct stat metadata{};
+  struct stat metadata {};
   int result = 0;
   do {
     result = syscalls.fstat(descriptor, &metadata);
@@ -293,7 +295,7 @@ private:
 [[nodiscard]] common::Result<std::unique_ptr<ProcessLockReservation>>
 reserve_process_lock(PosixSyscalls& syscalls, const int directory_descriptor,
                      const std::string_view name) {
-  struct stat metadata{};
+  struct stat metadata {};
   int result = 0;
   do {
     result = syscalls.fstat(directory_descriptor, &metadata);
@@ -372,12 +374,79 @@ public:
   }
 
   int try_lock_exclusive(const int descriptor) noexcept override {
-    struct flock lock{};
+    struct flock lock {};
     lock.l_type = F_WRLCK;
     lock.l_whence = SEEK_SET;
     lock.l_start = 0;
     lock.l_len = 0;
     return ::fcntl(descriptor, F_SETLK, &lock);
+  }
+
+  int list_directory_entries(const int descriptor, std::vector<DirectoryEntry>& entries) override {
+    int stream_descriptor = -1;
+    do {
+      stream_descriptor = ::openat(descriptor, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    } while (stream_descriptor == -1 && errno == EINTR);
+    if (stream_descriptor == -1) {
+      return -1;
+    }
+
+    DIR* const stream = ::fdopendir(stream_descriptor);
+    if (stream == nullptr) {
+      const int error_number = errno;
+      static_cast<void>(::close(stream_descriptor));
+      errno = error_number;
+      return -1;
+    }
+    std::unique_ptr<DIR, decltype(&::closedir)> owned_stream{stream, &::closedir};
+
+    while (true) {
+      errno = 0;
+      dirent* const entry = ::readdir(owned_stream.get());
+      if (entry == nullptr) {
+        if (errno == EINTR) {
+          continue;
+        }
+        if (errno != 0) {
+          const int error_number = errno;
+          owned_stream.reset();
+          errno = error_number;
+          return -1;
+        }
+        break;
+      }
+      const std::string_view name{entry->d_name};
+      if (name == "." || name == "..") {
+        continue;
+      }
+
+      struct stat metadata {};
+      int stat_result = 0;
+      do {
+        stat_result = ::fstatat(descriptor, entry->d_name, &metadata, AT_SYMLINK_NOFOLLOW);
+      } while (stat_result == -1 && errno == EINTR);
+      if (stat_result == -1) {
+        const int error_number = errno;
+        owned_stream.reset();
+        errno = error_number;
+        return -1;
+      }
+
+      DirectoryEntryType type = DirectoryEntryType::kOther;
+      if (S_ISREG(metadata.st_mode)) {
+        type = DirectoryEntryType::kRegularFile;
+      } else if (S_ISDIR(metadata.st_mode)) {
+        type = DirectoryEntryType::kDirectory;
+      } else if (S_ISLNK(metadata.st_mode)) {
+        type = DirectoryEntryType::kSymlink;
+      }
+      entries.push_back(DirectoryEntry{.name = std::string{name}, .type = type});
+    }
+
+    if (::closedir(owned_stream.release()) == -1) {
+      return -1;
+    }
+    return 0;
   }
 
   int close(const int descriptor) noexcept override {
@@ -515,7 +584,7 @@ common::Result<std::uint64_t> PosixFile::size() const {
   if (!is_open()) {
     return common::make_unexpected(closed_handle("size"));
   }
-  struct stat metadata{};
+  struct stat metadata {};
   int result = 0;
   do {
     result = syscalls_->fstat(descriptor_, &metadata);
@@ -864,6 +933,29 @@ PosixDirectory::acquire_exclusive_lock(const std::string_view name,
     return common::make_unexpected(errno_status("fcntl exclusive advisory lock", error_number));
   }
   return PosixAdvisoryLock{descriptor, *syscalls_, std::move(*reservation)};
+}
+
+common::Result<std::vector<DirectoryEntry>> PosixDirectory::list_entries() const {
+  if (!is_open()) {
+    return common::make_unexpected(closed_handle("list_entries"));
+  }
+  std::vector<DirectoryEntry> entries;
+  try {
+    if (syscalls_->list_directory_entries(descriptor_, entries) == -1) {
+      return common::make_unexpected(errno_status("list directory entries", errno));
+    }
+    std::sort(entries.begin(), entries.end(), [](const auto& left, const auto& right) {
+      return std::lexicographical_compare(
+          left.name.begin(), left.name.end(), right.name.begin(), right.name.end(),
+          [](const char left_byte, const char right_byte) {
+            return static_cast<unsigned char>(left_byte) < static_cast<unsigned char>(right_byte);
+          });
+    });
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                  "cannot allocate directory-entry snapshot"});
+  }
+  return entries;
 }
 
 common::Status PosixDirectory::rename_no_replace(const RenameRequest& request) const {
