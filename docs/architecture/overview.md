@@ -108,11 +108,12 @@ When a head reaches a policy threshold, the owner seals it. A sealed head accept
 
 The accepted single-node [WAL v1 format](../formats/wal-v1.md) is a segmented, append-only sequence
 of bounded versioned records with little-endian fields, protected framing, full-record CRC32C, and
-WAL-wide sequence order. Its pure in-memory physical codec and the minimal POSIX file/directory
-primitives are implemented; the WAL directory owner, segment lifecycle, and writer are not. A
-record never crosses a segment. The planned logical writer holds the WAL-directory
+WAL-wide sequence order. Its physical codec, minimal POSIX primitives, and exclusive new-history
+writer are implemented through crash-safe segment installation, append, explicit sync-frontier
+tracking, and rotation. A record never crosses a segment. The writer holds the WAL-directory
 advisory lock, installs each segment through synchronized temporary file/rename/directory
-boundaries, and synchronizes the prior segment before activating its successor.
+boundaries, and synchronizes the prior segment before activating its successor. Existing-history
+opening, recovery, repair, and acknowledgment coordination remain unimplemented.
 
 The [WAL recovery state machine](wal-recovery.md) verifies the complete physical history before
 semantic preflight or replay. It can explicitly truncate only a narrowly defined incomplete suffix

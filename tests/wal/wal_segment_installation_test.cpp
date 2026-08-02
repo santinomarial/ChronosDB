@@ -62,6 +62,19 @@ TEST(WalSegmentInstallationTest, OrdersHeaderWriteFileSyncRenameAndDirectorySync
 TEST(WalSegmentInstallationTest, StopsAtEachFailedDurabilityTransition) {
   {
     test::ScriptedWalSyscalls syscalls;
+    syscalls.pwrite_outcomes = {{-1, EIO}};
+    test::FixedWalIdGenerator generator{test::make_wal_id()};
+    const common::Result<WalWriter> failed = detail::WalWriterTestAccess::create_new(
+        {.directory_path = "/database/wal"}, generator, syscalls);
+    ASSERT_FALSE(failed.has_value());
+    EXPECT_EQ(failed.error().code(), common::StatusCode::kIoError);
+    EXPECT_TRUE(
+        std::none_of(syscalls.events.begin(), syscalls.events.end(), [](const std::string& event) {
+          return event.starts_with("fsync:") || event.starts_with("rename:");
+        }));
+  }
+  {
+    test::ScriptedWalSyscalls syscalls;
     syscalls.fsync_outcomes = {{-1, EIO}};
     test::FixedWalIdGenerator generator{test::make_wal_id()};
     const common::Result<WalWriter> failed = detail::WalWriterTestAccess::create_new(

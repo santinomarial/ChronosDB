@@ -87,7 +87,7 @@ allocate.
 `PhysicalWalPosition` is deliberately not a new durable encoding. It is the checked in-memory tuple
 of WAL identity, segment number, and aligned byte offset needed by later storage code.
 `advance_physical_wal_position` rejects invalid frame sizes and any record that would cross the
-segment limit; rotation remains the responsibility of the future writer.
+segment limit; the current writer performs rotation before submitting such a record.
 
 Decoder errors preserve the recovery distinction without implementing recovery: incomplete input
 is `kOutOfRange`, contradictory or checksum-invalid bytes are `kCorruption`, and a checksum-valid

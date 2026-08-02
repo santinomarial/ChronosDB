@@ -26,6 +26,13 @@ namespace {
   return bytes;
 }
 
+TEST(WalLogIdGeneratorTest, SystemGeneratorReturnsANonzeroIdentity) {
+  SystemWalLogIdGenerator generator;
+  const common::Result<WalId> generated = generator.generate();
+  ASSERT_TRUE(generated.has_value()) << generated.error().to_string();
+  EXPECT_TRUE(generated->is_valid());
+}
+
 TEST(WalWriterTest, CreatesLockedInitialSegmentAndTracksWrittenAndDurableFrontiers) {
   test::TemporaryDirectory temporary{"chronos-wal-writer-test"};
   ASSERT_TRUE(temporary.valid());
@@ -123,6 +130,23 @@ TEST(WalWriterTest, RejectsInvalidConfigurationGeneratorAndApplicationEnvelopeBe
   EXPECT_EQ(invalid.error().code(), common::StatusCode::kInvalidArgument);
   EXPECT_FALSE(created->is_failed());
   EXPECT_EQ(created->written_position(), initial);
+}
+
+TEST(WalWriterTest, NeverReplacesAnExistingInitialSegment) {
+  test::TemporaryDirectory temporary{"chronos-wal-writer-existing-test"};
+  ASSERT_TRUE(temporary.valid());
+  test::FixedWalIdGenerator first_generator{test::make_wal_id(1U)};
+  common::Result<WalWriter> first =
+      WalWriter::create_new({.directory_path = temporary.path().string()}, first_generator);
+  ASSERT_TRUE(first.has_value()) << first.error().to_string();
+  ASSERT_TRUE(first->close().is_ok());
+
+  test::FixedWalIdGenerator second_generator{test::make_wal_id(2U)};
+  const common::Result<WalWriter> second =
+      WalWriter::create_new({.directory_path = temporary.path().string()}, second_generator);
+  ASSERT_FALSE(second.has_value());
+  EXPECT_EQ(second.error().code(), common::StatusCode::kAlreadyExists);
+  EXPECT_TRUE(std::filesystem::is_regular_file(temporary.path() / "wal-00000000000000000001.cwal"));
 }
 
 } // namespace

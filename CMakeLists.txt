@@ -204,10 +204,15 @@ if(CHRONOS_BUILD_TESTS)
     tests/wal/codec_header_self_contained.cpp
     tests/wal/codec_test.cpp
     tests/wal/types_header_self_contained.cpp
+    tests/wal/wal_append_result_header_self_contained.cpp
+    tests/wal/wal_log_id_generator_header_self_contained.cpp
+    tests/wal/wal_paths_header_self_contained.cpp
     tests/wal/wal_rotation_test.cpp
+    tests/wal/wal_segment_header_self_contained.cpp
     tests/wal/wal_segment_installation_test.cpp
     tests/wal/wal_writer_failure_test.cpp
-    tests/wal/wal_writer_headers_self_contained.cpp
+    tests/wal/wal_writer_config_header_self_contained.cpp
+    tests/wal/wal_writer_header_self_contained.cpp
     tests/wal/wal_writer_test.cpp
   )
   set_target_properties(chronos_wal_tests PROPERTIES CXX_EXTENSIONS OFF)

@@ -7,9 +7,9 @@
 namespace chronos::wal {
 
 struct WalWriterConfig {
-  // The caller must supply an existing, dedicated WAL directory whose own directory entry has
-  // already crossed the parent-directory durability boundary. create_new() never opens or repairs
-  // an existing WAL history.
+  // The caller must supply an existing, dedicated WAL directory with no final segment names and
+  // whose own directory entry has already crossed the parent-directory durability boundary.
+  // create_new() never opens or repairs an existing WAL history.
   std::string directory_path;
   std::uint16_t file_permissions{0600U};
 };
