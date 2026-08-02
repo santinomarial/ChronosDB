@@ -23,7 +23,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 ## Durable formats
 
 - [WAL v1](formats/wal-v1.md): authoritative single-node WAL directory, segment, record, integrity,
-  limits, and compatibility specification; accepted but not implemented.
+  limits, and compatibility specification; its pure in-memory physical codec is implemented, while
+  segmented persistence and recovery remain unimplemented.
 
 ## Delivery
 

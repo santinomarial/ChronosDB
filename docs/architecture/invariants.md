@@ -93,7 +93,8 @@ Every durable log record and CSEG data page is covered by an integrity check tha
 
 The authoritative [WAL v1 format](../formats/wal-v1.md) satisfies the design obligation for log
 framing by protecting segment interpretation fields, record framing fields, and each complete stored
-record with specified CRC32C ranges. Implementation evidence remains required.
+record with specified CRC32C ranges. The in-memory codec now has golden, boundary, corruption,
+property-style, sanitizer, and fuzz-target coverage; storage and recovery evidence remains required.
 
 ## 11. Referenced storage is not reclaimed
 

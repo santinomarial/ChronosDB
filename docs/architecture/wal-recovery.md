@@ -1,9 +1,9 @@
 # WAL Segment Lifecycle and Recovery
 
-> **Status: accepted design, not implemented.** The authoritative byte layout is
-> [WAL v1](../formats/wal-v1.md). This document defines ownership, installation, durability
-> boundaries, failure classification, tail repair, and replay ordering without repeating the format
-> tables.
+> **Status: accepted recovery design, not implemented.** The pure in-memory physical codec from
+> [WAL v1](../formats/wal-v1.md) is implemented, but this document's file ownership, installation,
+> durability, recovery, repair, and replay behavior is not. This document defines those boundaries
+> without repeating the format tables.
 
 ## Safety goals and scope
 
