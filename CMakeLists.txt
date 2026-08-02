@@ -123,7 +123,14 @@ chronos_set_project_warnings(chronos_io)
 chronos_enable_sanitizers(chronos_io)
 chronos_enable_static_analysis(chronos_io)
 
-add_library(chronos_wal src/wal/codec.cpp)
+add_library(
+  chronos_wal
+  src/wal/codec.cpp
+  src/wal/wal_log_id_generator.cpp
+  src/wal/wal_paths.cpp
+  src/wal/wal_segment.cpp
+  src/wal/wal_writer.cpp
+)
 add_library(chronos::wal ALIAS chronos_wal)
 set_target_properties(chronos_wal PROPERTIES EXPORT_NAME wal)
 set_target_properties(chronos_wal PROPERTIES CXX_EXTENSIONS OFF)
@@ -133,8 +140,9 @@ target_include_directories(
   PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+  PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
-target_link_libraries(chronos_wal PUBLIC chronos::common)
+target_link_libraries(chronos_wal PUBLIC chronos::common PRIVATE chronos::io)
 chronos_set_project_warnings(chronos_wal)
 chronos_enable_sanitizers(chronos_wal)
 chronos_enable_static_analysis(chronos_wal)
