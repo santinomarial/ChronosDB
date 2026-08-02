@@ -1,10 +1,12 @@
 # WAL Segment Lifecycle and Recovery
 
-> **Status: accepted recovery design, not implemented.** The pure in-memory physical codec from
-> [WAL v1](../formats/wal-v1.md) and the reusable blocking POSIX file/directory primitives are
-> implemented, but this document's WAL ownership, segment installation, acknowledgment, recovery,
-> repair workflow, and replay behavior are not. This document defines those boundaries without
-> repeating the format tables.
+> **Status: accepted design, partially implemented.** The pure in-memory physical codec from
+> [WAL v1](../formats/wal-v1.md), reusable blocking POSIX primitives, exclusive new-history writer,
+> crash-safe segment installation, append, explicit synchronization, rotation, frontier tracking,
+> and terminal write/sync failure behavior are implemented. Opening an existing history, startup
+> verification, repair, semantic preflight, replay, durability-mode acknowledgment coordination,
+> and operational metrics are not. This document defines those boundaries without repeating the
+> format tables.
 
 ## Safety goals and scope
 

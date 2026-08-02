@@ -1,6 +1,6 @@
 # Correctness Strategy
 
-> **Status: partially implemented.** This document turns the [architecture invariants](../architecture/invariants.md) into verification obligations under [ADR 0012](../adr/0012-correctness-testing-and-performance-evidence.md). Phase 1 has unit/property-style tests, sanitizer jobs, optional ByteReader and WAL-codec libFuzzer targets, and deterministically injected POSIX I/O failure tests. WAL v1 has an implemented pure in-memory physical codec and reusable file/directory primitives; the WAL storage state machine, crash harness, recovery, replay, and application-kind codecs remain unimplemented. Query, concurrency, and distributed harnesses also remain planned for their roadmap phases.
+> **Status: partially implemented.** This document turns the [architecture invariants](../architecture/invariants.md) into verification obligations under [ADR 0012](../adr/0012-correctness-testing-and-performance-evidence.md). Phase 1 has unit/property-style tests, sanitizer jobs, optional ByteReader and WAL-codec libFuzzer targets, and deterministically injected POSIX I/O failure tests. WAL v1 has an implemented pure in-memory physical codec, reusable file/directory primitives, and the new-history writer state machine through append, explicit synchronization, and rotation. Opening, crash-image recovery/repair, replay, acknowledgment coordination, and application-kind codecs remain unimplemented. Query, concurrency, and distributed harnesses also remain planned for their roadmap phases.
 
 ## Test types
 
@@ -51,11 +51,14 @@ WAL, CSEG, manifest, checkpoint, resume-token, and network codecs require golden
 
 The storage test environment can return short writes, delayed completion, sync errors, reordered completion where the platform permits it, and crashes after each state transition. WAL tail recovery, part installation, manifest edit, checkpoint advancement, and reclamation are tested separately. The exact [WAL v1 incomplete-tail rule](../formats/wal-v1.md#clean-end-incomplete-final-tail-and-corruption) permits only a short suffix at the verified end of the highest segment. Complete-record checksum failure and any non-final truncation are corruption, never a truncation hint.
 
-The implemented POSIX boundary has deterministic syscall substitution for `EINTR`, short reads and
-writes, EOF, hard errors, zero-progress writes, metadata/truncate/sync failures, rename support and
-collisions, lock contention, and close behavior. Host-filesystem integration tests cover actual
-directory-relative lifecycle and cross-process locking. Crash images and operation-order failpoints
-remain obligations of the future WAL state machine; passing primitive tests is not crash evidence.
+The implemented POSIX and WAL-writer boundaries have deterministic syscall substitution for
+`EINTR`, short reads and writes, EOF, hard errors, zero-progress writes,
+metadata/truncate/synchronization failures, rename support and collisions, lock contention, close
+behavior, ordered initial segment installation, partial-append poisoning, explicit sync failure, and
+pre-rotation sync failure. Host-filesystem integration tests cover directory-relative lifecycle,
+same-process and cross-process locking, complete record append, sync frontiers, and two-segment
+rotation. Crash images and process-kill recovery tests remain future obligations; injected syscall
+ordering is not by itself crash-persistence evidence.
 
 ### WAL v1 implementation gate
 
@@ -81,9 +84,10 @@ The WAL implementation phases must introduce named suites covering:
 
 Fixtures and randomized failures record WAL format, generator version, seed, platform/filesystem,
 fault point, durability mode, and an exact reproduction command. These suites are required future
-evidence. The physical codec currently implements the golden-format, structural-property,
-corruption/truncation, and coverage-guided fuzz foundations; installation, acknowledgment, repair,
-and replay suites remain future work.
+evidence. The physical codec implements the golden-format, structural-property,
+corruption/truncation, and coverage-guided fuzz foundations. The writer adds deterministic
+installation ordering, append failure, sync failure, and rotation coverage; crash interruption,
+acknowledgment reconciliation, repair, and replay suites remain future work.
 
 ### Recovery idempotence and manifest installation
 

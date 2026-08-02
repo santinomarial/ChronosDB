@@ -22,9 +22,11 @@ The server must expose requested and effective mode in the acknowledgment. It mu
 The [WAL recovery design](../architecture/wal-recovery.md) fixes the Linux reference operations and
 ordering: synchronized temporary-file installation, same-directory atomic rename, directory sync,
 complete record write, and `fdatasync`/stronger data sync for `LOCAL_SYNC`. It also states the
-filesystem/device assumptions and macOS limitation. The low-level blocking POSIX operations now
-exist, but no WAL writer or acknowledgment coordinator composes them into either mode. Default mode,
-group size/byte/delay policy, and future replica persistence remain deferred. Benchmarks must follow the
+filesystem/device assumptions and macOS limitation. The blocking POSIX operations and serialized
+new-history WAL writer now implement the complete-write boundary and an explicit data-sync frontier.
+No request/response acknowledgment coordinator or group-commit scheduler composes those primitives
+into a public durability mode yet. Default mode, group size/byte/delay policy, and future replica
+persistence remain deferred. Benchmarks must follow the
 [benchmark contract](../benchmarks/benchmark-contract.md).
 
 ## Single-node read behavior

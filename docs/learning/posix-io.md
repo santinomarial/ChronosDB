@@ -23,7 +23,7 @@ mechanisms already required by the accepted WAL design:
 - a nonblocking process-level whole-file advisory lock.
 
 The library depends on `chronos::common` for byte views and explicit `Status`/`Result` failures. The
-WAL codec remains independent from I/O; a future WAL writer will compose `chronos::wal` and
+WAL codec remains independent from I/O. The current WAL writer composes `chronos::wal` and
 `chronos::io` rather than hiding storage inside the codec.
 
 ## Public interface and ownership
@@ -43,8 +43,11 @@ kernel may have reused it.
 
 `PosixAdvisoryLock` owns the lock descriptor until close or destruction. Traditional POSIX `fcntl`
 record locks are process-associated: closing another descriptor for the same inode in the same
-process can release the lock. The future WAL directory owner must therefore be the only code that
-opens `LOCK` and must retain the returned lock object for its complete lifetime.
+process can release the lock. Acquisition therefore reserves the directory-inode/basename pair in a
+process-local registry before opening `LOCK`, rejects a second in-process owner without opening and
+closing the lock inode, and retains that reservation with the descriptor. `fcntl` remains the
+cross-process authority. The registry detects `fork` and does not treat the parent's userspace
+reservation as the child's.
 
 ## Explicit-offset transfer semantics
 
@@ -56,8 +59,8 @@ prefix.
 
 `PosixFile::write_all_at` similarly retries `EINTR` and short `pwrite` results until the source is
 complete. A zero-byte write before completion is an I/O error rather than an infinite retry. A hard
-failure after a prefix remains an error and reports its progress; the future WAL writer must poison
-its append state rather than append another record after that prefix.
+failure after a prefix remains an error and reports its progress; the WAL writer poisons its append
+state rather than appending another record after that prefix.
 
 Before the first syscall, both operations prove that the starting offset and final addressed byte
 fit signed `off_t`. Per-call lengths are capped at `SSIZE_MAX`, and each retry recomputes the checked
