@@ -1,10 +1,11 @@
 # Building ChronosDB
 
 ChronosDB's implemented code currently consists of the Phase 1A build/version foundation, the Phase
-1B portable common binary primitives, and the pure in-memory WAL v1 physical codec. File-backed WAL
-storage and other engine components described elsewhere remain planned. The reference production
-platform is Linux x86-64; the common and WAL codec targets are portable to modern macOS, including
-Apple silicon.
+1B portable common binary primitives, the pure in-memory WAL v1 physical codec, and the minimal
+blocking POSIX file/directory layer used by future durable storage. The segmented WAL writer,
+recovery, and other engine components described elsewhere remain planned. The reference production
+platform is Linux x86-64; the common, WAL codec, and POSIX I/O targets support Linux and modern
+macOS, including Apple silicon. macOS correctness support is not a power-loss durability claim.
 
 ## Prerequisites
 
@@ -48,8 +49,10 @@ brew install cmake ninja llvm
 
 Homebrew's LLVM tools may not be on `PATH`. If so, set `CLANG_FORMAT` and `CLANG_TIDY` to the
 corresponding executables under `$(brew --prefix llvm)/bin`. AppleClang builds the portable common
-targets. Future server, direct-I/O, and reactor components may require Linux and will be guarded by
-explicit platform checks rather than weakened portable interfaces.
+and WAL targets plus the macOS POSIX I/O backend. The backend uses `fsync` where Linux uses
+`fdatasync`; this does not advertise a macOS power-loss envelope. Future server, direct-I/O, and
+reactor components may require Linux and will be guarded by explicit platform checks rather than
+weakened portable interfaces.
 
 ## Configure, build, and test
 
@@ -88,8 +91,8 @@ build/dev/chronosctl version --json
 ```
 
 Install to a staging prefix with `cmake --install build/release --prefix <directory>`. This installs
-`chronosctl`, the common and WAL libraries and public headers, and a CMake package exporting
-`chronos::common` and `chronos::wal`.
+`chronosctl`, the common, POSIX I/O, and WAL libraries and public headers, and a CMake package
+exporting `chronos::common`, `chronos::io`, and `chronos::wal`.
 
 ## Sanitizers
 

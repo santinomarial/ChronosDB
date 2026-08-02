@@ -1,10 +1,11 @@
 # WAL Design
 
-> **Status: design accepted; physical codec implemented.** The normative bytes are in
+> **Status: design accepted; codec and POSIX primitives implemented.** The normative bytes are in
 > [WAL v1](../formats/wal-v1.md), and the normative lifecycle/recovery behavior is in
-> [WAL recovery](../architecture/wal-recovery.md). The in-memory codec exists, while file I/O,
-> writing, synchronization, recovery, repair, and replay do not. This learning document explains the
-> reasoning and should not be used as a substitute for either specification.
+> [WAL recovery](../architecture/wal-recovery.md). The in-memory codec and reusable blocking POSIX
+> file/directory operations exist, while the WAL directory owner, writer, lifecycle,
+> acknowledgment, recovery, repair workflow, and replay do not. This learning document explains
+> the reasoning and should not be used as a substitute for either specification.
 
 ## Purpose
 
@@ -28,6 +29,9 @@ ambiguous acknowledgments.
 The `chronos::wal` library now implements WAL identity/position values, checked layout calculation,
 segment and record header codecs, and allocation-free complete-record validation over borrowed
 bytes. Its encoder writes into caller-owned storage and leaves that storage unchanged on failure.
+The independent `chronos::io` library now supplies checked explicit-offset transfer loops, file and
+directory synchronization, non-growing truncation, exclusive relative creation, atomic no-replace
+rename, and process-level advisory locking. These primitives do not enforce WAL lifecycle order.
 The remaining implementation will need responsibilities equivalent to these boundaries without
 being required to use these names:
 

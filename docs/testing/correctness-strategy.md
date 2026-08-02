@@ -1,6 +1,6 @@
 # Correctness Strategy
 
-> **Status: partially implemented.** This document turns the [architecture invariants](../architecture/invariants.md) into verification obligations under [ADR 0012](../adr/0012-correctness-testing-and-performance-evidence.md). Phase 1 has unit/property-style tests, sanitizer jobs, and optional ByteReader and WAL-codec libFuzzer targets. WAL v1 has an implemented pure in-memory physical codec with golden, boundary, corruption, and property-style tests; WAL storage, crash harnesses, recovery, replay, and application-kind codecs remain unimplemented. Query, concurrency, and distributed harnesses also remain planned for their roadmap phases.
+> **Status: partially implemented.** This document turns the [architecture invariants](../architecture/invariants.md) into verification obligations under [ADR 0012](../adr/0012-correctness-testing-and-performance-evidence.md). Phase 1 has unit/property-style tests, sanitizer jobs, optional ByteReader and WAL-codec libFuzzer targets, and deterministically injected POSIX I/O failure tests. WAL v1 has an implemented pure in-memory physical codec and reusable file/directory primitives; the WAL storage state machine, crash harness, recovery, replay, and application-kind codecs remain unimplemented. Query, concurrency, and distributed harnesses also remain planned for their roadmap phases.
 
 ## Test types
 
@@ -50,6 +50,12 @@ WAL, CSEG, manifest, checkpoint, resume-token, and network codecs require golden
 ### Partial writes and crash consistency
 
 The storage test environment can return short writes, delayed completion, sync errors, reordered completion where the platform permits it, and crashes after each state transition. WAL tail recovery, part installation, manifest edit, checkpoint advancement, and reclamation are tested separately. The exact [WAL v1 incomplete-tail rule](../formats/wal-v1.md#clean-end-incomplete-final-tail-and-corruption) permits only a short suffix at the verified end of the highest segment. Complete-record checksum failure and any non-final truncation are corruption, never a truncation hint.
+
+The implemented POSIX boundary has deterministic syscall substitution for `EINTR`, short reads and
+writes, EOF, hard errors, zero-progress writes, metadata/truncate/sync failures, rename support and
+collisions, lock contention, and close behavior. Host-filesystem integration tests cover actual
+directory-relative lifecycle and cross-process locking. Crash images and operation-order failpoints
+remain obligations of the future WAL state machine; passing primitive tests is not crash evidence.
 
 ### WAL v1 implementation gate
 

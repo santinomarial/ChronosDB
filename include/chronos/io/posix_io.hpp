@@ -49,8 +49,7 @@ public:
 
   // Writes every source byte, retrying EINTR and short writes. A hard error after a prefix has been
   // written is still an error; a WAL writer must poison its append state in that case.
-  [[nodiscard]] common::Status write_all_at(std::uint64_t offset,
-                                            common::ByteView source) const;
+  [[nodiscard]] common::Status write_all_at(std::uint64_t offset, common::ByteView source) const;
 
   [[nodiscard]] common::Result<std::uint64_t> size() const;
 
@@ -73,9 +72,10 @@ private:
   friend class detail::PosixHandleFactory;
 };
 
-// PosixAdvisoryLock exclusively owns the only descriptor ChronosDB may use for a WAL LOCK inode.
-// The nonblocking whole-file fcntl lock remains held until close or destruction. As POSIX record
-// locks are process-associated, independently opening and closing the same inode can release it.
+// PosixAdvisoryLock exclusively owns its descriptor. The caller must make it the only descriptor
+// ChronosDB opens for a WAL LOCK inode. The nonblocking whole-file fcntl lock remains held until
+// close or destruction. As POSIX record locks are process-associated, independently opening and
+// closing the same inode can release it.
 class PosixAdvisoryLock {
 public:
   PosixAdvisoryLock() noexcept = default;
@@ -119,8 +119,7 @@ public:
   [[nodiscard]] common::Result<PosixFile> open_regular_file(std::string_view name,
                                                             FileOpenMode mode) const;
   [[nodiscard]] common::Result<PosixFile>
-  create_exclusive_regular_file(std::string_view name,
-                                std::uint16_t permissions = 0600U) const;
+  create_exclusive_regular_file(std::string_view name, std::uint16_t permissions = 0600U) const;
   [[nodiscard]] common::Result<PosixAdvisoryLock>
   acquire_exclusive_lock(std::string_view name, std::uint16_t permissions = 0600U) const;
 
@@ -133,8 +132,8 @@ public:
 
 private:
   PosixDirectory(int descriptor, detail::PosixSyscalls& syscalls) noexcept;
-  [[nodiscard]] static common::Result<PosixDirectory>
-  open_with(std::string_view path, detail::PosixSyscalls& syscalls);
+  [[nodiscard]] static common::Result<PosixDirectory> open_with(std::string_view path,
+                                                                detail::PosixSyscalls& syscalls);
   void close_best_effort() noexcept;
 
   int descriptor_{-1};

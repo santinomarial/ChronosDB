@@ -2,8 +2,9 @@
 
 > **Status: accepted specification; physical codec implemented.** The `chronos::wal` in-memory
 > codec implements segment headers, record headers, complete records, identities, positions, size
-> calculations, and structural/integrity validation. Segment files, I/O, locking, synchronization,
-> recovery, and replay remain unimplemented. This document is the normative byte-level definition
+> calculations, and structural/integrity validation. The reusable `chronos::io` POSIX primitives
+> implement file/directory operations, synchronization, no-replace rename, and advisory locking,
+> but no WAL segment lifecycle, writer, recovery, or replay exists. This document is the normative byte-level definition
 > of the ChronosDB single-node WAL v1 physical format. [ADR 0013](../adr/0013-wal-v1-format-and-recovery.md)
 > accepts the design, and the [recovery architecture](../architecture/wal-recovery.md) defines how
 > these bytes are installed, classified, repaired, and replayed. If another document disagrees with

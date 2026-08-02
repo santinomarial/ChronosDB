@@ -9,12 +9,11 @@
 #include <fcntl.h>
 #include <limits>
 #include <string>
-#include <system_error>
-#include <utility>
-
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <system_error>
 #include <unistd.h>
+#include <utility>
 
 #if defined(__APPLE__)
 #include <sys/stdio.h>
@@ -58,6 +57,16 @@ struct TransferProgress {
     break;
   case EEXIST:
     code = common::StatusCode::kAlreadyExists;
+    break;
+  case EDQUOT:
+  case EMFILE:
+  case ENFILE:
+  case ENOSPC:
+    code = common::StatusCode::kResourceExhausted;
+    break;
+  case EFBIG:
+  case EOVERFLOW:
+    code = common::StatusCode::kOutOfRange;
     break;
   case ENOSYS:
 #if ENOTSUP != EOPNOTSUPP
@@ -165,7 +174,7 @@ struct TransferRange {
 
 [[nodiscard]] common::Status validate_regular_file(detail::PosixSyscalls& syscalls,
                                                    const int descriptor) {
-  struct stat metadata {};
+  struct stat metadata{};
   int result = 0;
   do {
     result = syscalls.fstat(descriptor, &metadata);
@@ -182,7 +191,7 @@ struct TransferRange {
 
 [[nodiscard]] common::Status validate_directory(detail::PosixSyscalls& syscalls,
                                                 const int descriptor) {
-  struct stat metadata {};
+  struct stat metadata{};
   int result = 0;
   do {
     result = syscalls.fstat(descriptor, &metadata);
@@ -191,8 +200,7 @@ struct TransferRange {
     return errno_status("fstat directory", errno);
   }
   if (!S_ISDIR(metadata.st_mode)) {
-    return common::Status{common::StatusCode::kInvalidArgument,
-                          "opened path is not a directory"};
+    return common::Status{common::StatusCode::kInvalidArgument, "opened path is not a directory"};
   }
   return common::Status::ok();
 }
@@ -221,8 +229,7 @@ public:
   }
 
   int open_at(const OpenAtRequest& request) noexcept override {
-    return ::openat(request.directory_descriptor, request.name, request.flags,
-                    request.permissions);
+    return ::openat(request.directory_descriptor, request.name, request.flags, request.permissions);
   }
 
   ssize_t pread(const ReadAtRequest& request) noexcept override {
@@ -261,14 +268,14 @@ public:
     return ::renameatx_np(request.directory_descriptor, request.old_name,
                           request.directory_descriptor, request.new_name, RENAME_EXCL);
 #elif defined(__linux__)
-    return static_cast<int>(::syscall(SYS_renameat2, request.directory_descriptor,
-                                      request.old_name, request.directory_descriptor,
-                                      request.new_name, RENAME_NOREPLACE));
+    return static_cast<int>(::syscall(SYS_renameat2, request.directory_descriptor, request.old_name,
+                                      request.directory_descriptor, request.new_name,
+                                      RENAME_NOREPLACE));
 #endif
   }
 
   int try_lock_exclusive(const int descriptor) noexcept override {
-    struct flock lock {};
+    struct flock lock{};
     lock.l_type = F_WRLCK;
     lock.l_whence = SEEK_SET;
     lock.l_start = 0;
@@ -315,7 +322,7 @@ bool PosixFile::is_open() const noexcept {
 }
 
 common::Result<std::size_t> PosixFile::read_at(const std::uint64_t offset,
-                                              const common::MutableByteView destination) const {
+                                               const common::MutableByteView destination) const {
   if (!is_open()) {
     return common::make_unexpected(closed_handle("read_at"));
   }
@@ -341,8 +348,8 @@ common::Result<std::size_t> PosixFile::read_at(const std::uint64_t offset,
     if (result > 0) {
       const auto completed = static_cast<std::size_t>(result);
       if (completed > request_size) {
-        return common::make_unexpected(common::Status{
-            common::StatusCode::kIoError, "pread reported more bytes than requested"});
+        return common::make_unexpected(common::Status{common::StatusCode::kIoError,
+                                                      "pread reported more bytes than requested"});
       }
       transferred += completed;
       continue;
@@ -354,8 +361,7 @@ common::Result<std::size_t> PosixFile::read_at(const std::uint64_t offset,
     if (error_number == EINTR) {
       continue;
     }
-    const TransferProgress progress{.transferred = transferred,
-                                    .requested = destination.size()};
+    const TransferProgress progress{.transferred = transferred, .requested = destination.size()};
     return common::make_unexpected(errno_status("pread", error_number, &progress));
   }
   return transferred;
@@ -412,7 +418,7 @@ common::Result<std::uint64_t> PosixFile::size() const {
   if (!is_open()) {
     return common::make_unexpected(closed_handle("size"));
   }
-  struct stat metadata {};
+  struct stat metadata{};
   int result = 0;
   do {
     result = syscalls_->fstat(descriptor_, &metadata);
@@ -421,8 +427,8 @@ common::Result<std::uint64_t> PosixFile::size() const {
     return common::make_unexpected(errno_status("fstat file size", errno));
   }
   if (!S_ISREG(metadata.st_mode)) {
-    return common::make_unexpected(common::Status{common::StatusCode::kInvalidArgument,
-                                                   "file handle is not a regular file"});
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInvalidArgument, "file handle is not a regular file"});
   }
   if (metadata.st_size < 0) {
     return common::make_unexpected(
@@ -510,8 +516,7 @@ void PosixFile::close_best_effort() noexcept {
   }
 }
 
-PosixAdvisoryLock::PosixAdvisoryLock(const int descriptor,
-                                     detail::PosixSyscalls& syscalls) noexcept
+PosixAdvisoryLock::PosixAdvisoryLock(const int descriptor, detail::PosixSyscalls& syscalls) noexcept
     : descriptor_(descriptor), syscalls_(&syscalls) {}
 
 PosixAdvisoryLock::~PosixAdvisoryLock() {
@@ -584,7 +589,7 @@ common::Result<PosixDirectory> PosixDirectory::open(const std::string_view path)
 }
 
 common::Result<PosixDirectory> PosixDirectory::open_with(const std::string_view path,
-                                                        detail::PosixSyscalls& syscalls) {
+                                                         detail::PosixSyscalls& syscalls) {
   const common::Result<std::string> owned_path = nul_terminated(path, "directory path");
   if (!owned_path.has_value()) {
     return common::make_unexpected(owned_path.error());
@@ -610,8 +615,8 @@ bool PosixDirectory::is_open() const noexcept {
   return descriptor_ != kInvalidDescriptor;
 }
 
-common::Result<PosixFile>
-PosixDirectory::open_regular_file(const std::string_view name, const FileOpenMode mode) const {
+common::Result<PosixFile> PosixDirectory::open_regular_file(const std::string_view name,
+                                                            const FileOpenMode mode) const {
   if (!is_open()) {
     return common::make_unexpected(closed_handle("open_regular_file"));
   }
@@ -653,8 +658,9 @@ PosixDirectory::open_regular_file(const std::string_view name, const FileOpenMod
   return PosixFile{descriptor, *syscalls_};
 }
 
-common::Result<PosixFile> PosixDirectory::create_exclusive_regular_file(
-    const std::string_view name, const std::uint16_t permissions) const {
+common::Result<PosixFile>
+PosixDirectory::create_exclusive_regular_file(const std::string_view name,
+                                              const std::uint16_t permissions) const {
   if (!is_open()) {
     return common::make_unexpected(closed_handle("create_exclusive_regular_file"));
   }

@@ -7,7 +7,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
-
 #include <sys/stat.h>
 #include <sys/types.h>
 
@@ -69,8 +68,8 @@ public:
 
 class PosixHandleFactory {
 public:
-  [[nodiscard]] static common::Result<PosixDirectory>
-  open_directory(std::string_view path, PosixSyscalls& syscalls) {
+  [[nodiscard]] static common::Result<PosixDirectory> open_directory(std::string_view path,
+                                                                     PosixSyscalls& syscalls) {
     return PosixDirectory::open_with(path, syscalls);
   }
 
@@ -78,13 +77,11 @@ public:
     return PosixFile{descriptor, syscalls};
   }
 
-  [[nodiscard]] static PosixDirectory directory(int descriptor,
-                                                PosixSyscalls& syscalls) noexcept {
+  [[nodiscard]] static PosixDirectory directory(int descriptor, PosixSyscalls& syscalls) noexcept {
     return PosixDirectory{descriptor, syscalls};
   }
 
-  [[nodiscard]] static PosixAdvisoryLock lock(int descriptor,
-                                              PosixSyscalls& syscalls) noexcept {
+  [[nodiscard]] static PosixAdvisoryLock lock(int descriptor, PosixSyscalls& syscalls) noexcept {
     return PosixAdvisoryLock{descriptor, syscalls};
   }
 };

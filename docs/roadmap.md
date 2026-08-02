@@ -8,8 +8,9 @@ complete Phase 1 gates have passed. Unimplemented portions of Phase 1 and all la
 planned work, not implemented functionality or delivery commitments. The Phase 2–3
 [WAL v1 format](formats/wal-v1.md), [recovery design](architecture/wal-recovery.md), and
 [ADR 0013](adr/0013-wal-v1-format-and-recovery.md) are accepted design artifacts. The pure in-memory
-WAL physical codec, fixtures, tests, and fuzz target now exist; no WAL file I/O, segmented writer,
-durability boundary, recovery, replay, or application-kind codec exists yet.
+WAL physical codec, fixtures, tests, fuzz target, and the minimal blocking POSIX file/directory
+primitives now exist. No segmented writer, installed segment, acknowledgment boundary, recovery,
+replay, or application-kind codec exists yet.
 Work should proceed in order unless an accepted ADR explains why a limited dependency must move
 earlier.
 
@@ -31,7 +32,9 @@ No phase passes because its code merely compiles. A phase passes only when its a
   CI configuration, and the version-reporting proof executable. Phase 1B adds status/result values,
   byte views, checked unsigned arithmetic, bounded little-endian binary I/O, portable incremental
   CRC32C, unit/property-style tests, an optional ByteReader fuzz target, local-only microbenchmarks,
-  and a learning document. File I/O, time, identity, logging, and broader test utilities remain
+  and a learning document. The minimal durable POSIX file/directory layer adds explicit-offset
+  transfer loops, synchronization, no-replace rename, and advisory locking with deterministic
+  syscall injection. Time, general identity, logging, and broader test utilities remain
   unimplemented. The phase exit gates below remain unchanged and have not been declared complete.
 
 - **Scope:** reproducible C++23 build profiles; foundational error/result, byte, checksum, file-I/O, time, identity, logging, and test utilities; sanitizers and initial Linux CI policy.
@@ -62,8 +65,9 @@ No phase passes because its code merely compiles. A phase passes only when its a
 
 - **Implementation status:** segment naming/lifecycle, install and synchronization order,
   acknowledgment eligibility, recovery classification, explicit tail repair, semantic preflight, and
-  replay ordering are accepted design artifacts. No segmented writer, recovery implementation,
-  process lock, crash harness, or operational metric exists.
+  replay ordering are accepted design artifacts. The reusable POSIX operations and process-lock
+  primitive exist, but no WAL directory owner, segmented writer, recovery implementation, crash
+  harness, acknowledgment coordinator, or operational metric exists.
 - **Scope:** implement WAL v1 segment lifecycle, append/grouping, explicitly named durability modes,
   acknowledgment boundaries, rotation, torn-tail handling, ordered replay, and idempotent
   single-node recovery.

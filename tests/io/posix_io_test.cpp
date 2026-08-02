@@ -1,5 +1,4 @@
 #include "chronos/io/posix_io.hpp"
-
 #include "io/posix_syscalls.hpp"
 
 #include <algorithm>
@@ -9,20 +8,19 @@
 #include <cstdint>
 #include <cstring>
 #include <deque>
-#include <filesystem>
 #include <fcntl.h>
+#include <filesystem>
 #include <gtest/gtest.h>
 #include <limits>
 #include <string>
 #include <string_view>
-#include <system_error>
-#include <utility>
-#include <vector>
-
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <system_error>
 #include <unistd.h>
+#include <utility>
+#include <vector>
 
 namespace chronos::io {
 namespace {
@@ -205,8 +203,12 @@ public:
   TemporaryDirectory(const TemporaryDirectory&) = delete;
   TemporaryDirectory& operator=(const TemporaryDirectory&) = delete;
 
-  [[nodiscard]] bool valid() const noexcept { return !path_.empty(); }
-  [[nodiscard]] const std::filesystem::path& path() const noexcept { return path_; }
+  [[nodiscard]] bool valid() const noexcept {
+    return !path_.empty();
+  }
+  [[nodiscard]] const std::filesystem::path& path() const noexcept {
+    return path_;
+  }
 
 private:
   std::filesystem::path path_;
@@ -228,7 +230,7 @@ TEST(PosixFileInjectedTest, RetriesEintrAndShortTransfersAtCheckedExplicitOffset
   EXPECT_EQ(destination[2], std::byte{3});
 
   const std::array<std::byte, 5> source{std::byte{9}, std::byte{8}, std::byte{7}, std::byte{6},
-                                         std::byte{5}};
+                                        std::byte{5}};
   const common::Status write = file.write_all_at(200, source);
   ASSERT_TRUE(write.is_ok()) << write.to_string();
   EXPECT_EQ((std::vector<off_t>{200, 200, 202, 204}), syscalls.pwrite_offsets);
@@ -306,12 +308,40 @@ TEST(PosixFileInjectedTest, RetriesMetadataTruncateAndSynchronizationEintr) {
   EXPECT_EQ(syscalls.fsync_descriptors.size(), 2U);
 }
 
+TEST(PosixFileInjectedTest, SurfacesMetadataTruncateSyncAndInvalidSyscallOutcomes) {
+  ScriptedSyscalls syscalls;
+  PosixFile file = detail::PosixHandleFactory::file(7, syscalls);
+
+  syscalls.metadata_size = -1;
+  EXPECT_EQ(file.size().error().code(), common::StatusCode::kIoError);
+
+  syscalls.metadata_size = 8;
+  syscalls.metadata_mode = S_IFDIR | 0700;
+  EXPECT_EQ(file.size().error().code(), common::StatusCode::kInvalidArgument);
+
+  syscalls.metadata_mode = S_IFREG | 0600;
+  syscalls.fstat_outcomes = {{-1, EIO}};
+  EXPECT_EQ(file.size().error().code(), common::StatusCode::kIoError);
+
+  syscalls.ftruncate_outcomes = {{-1, EIO}};
+  EXPECT_EQ(file.truncate(4).code(), common::StatusCode::kIoError);
+
+  syscalls.fdatasync_outcomes = {{-1, ENOSPC}};
+  EXPECT_EQ(file.sync_data().code(), common::StatusCode::kResourceExhausted);
+  syscalls.fsync_outcomes = {{-1, EIO}};
+  EXPECT_EQ(file.sync_all().code(), common::StatusCode::kIoError);
+
+  const std::array<std::byte, 2> source{};
+  syscalls.pwrite_outcomes = {{3, 0}};
+  EXPECT_EQ(file.write_all_at(0, source).code(), common::StatusCode::kIoError);
+}
+
 TEST(PosixDirectoryInjectedTest, UsesValidatedRelativeExclusiveAndNoReplaceOperations) {
   ScriptedSyscalls syscalls;
   syscalls.open_directory_outcomes = {{-1, EINTR}, {10, 0}};
   syscalls.fstat_outcomes = {{-1, EINTR}, {0, 0}, {0, 0}};
   syscalls.open_at_outcomes = {{-1, EINTR}, {20, 0}};
-  syscalls.rename_outcomes = {{-1, EINTR}, {0, 0}, {-1, EEXIST}, {-1, ENOSYS}};
+  syscalls.rename_outcomes = {{-1, EINTR}, {0, 0}, {-1, EEXIST}, {-1, ENOSYS}, {-1, EINVAL}};
   syscalls.fsync_outcomes = {{-1, EINTR}, {0, 0}};
 
   syscalls.metadata_mode = S_IFDIR | 0700;
@@ -338,17 +368,15 @@ TEST(PosixDirectoryInjectedTest, UsesValidatedRelativeExclusiveAndNoReplaceOpera
   EXPECT_EQ(opened->rename_no_replace({.old_name = ".", .new_name = "final"}).code(),
             common::StatusCode::kInvalidArgument);
 
-  EXPECT_TRUE(opened->rename_no_replace(
-                        {.old_name = "segment.tmp", .new_name = "segment.cwal"})
-                  .is_ok());
+  EXPECT_TRUE(
+      opened->rename_no_replace({.old_name = "segment.tmp", .new_name = "segment.cwal"}).is_ok());
   EXPECT_EQ(syscalls.rename_directories, (std::vector<int>{10, 10}));
-  EXPECT_EQ(opened->rename_no_replace(
-                      {.old_name = "another.tmp", .new_name = "segment.cwal"})
-                .code(),
-            common::StatusCode::kAlreadyExists);
-  EXPECT_EQ(opened->rename_no_replace(
-                      {.old_name = "another.tmp", .new_name = "other.cwal"})
-                .code(),
+  EXPECT_EQ(
+      opened->rename_no_replace({.old_name = "another.tmp", .new_name = "segment.cwal"}).code(),
+      common::StatusCode::kAlreadyExists);
+  EXPECT_EQ(opened->rename_no_replace({.old_name = "another.tmp", .new_name = "other.cwal"}).code(),
+            common::StatusCode::kNotSupported);
+  EXPECT_EQ(opened->rename_no_replace({.old_name = "another.tmp", .new_name = "third.cwal"}).code(),
             common::StatusCode::kNotSupported);
   EXPECT_TRUE(opened->sync().is_ok());
   EXPECT_EQ(syscalls.fsync_descriptors, (std::vector<int>{10, 10}));
@@ -357,6 +385,9 @@ TEST(PosixDirectoryInjectedTest, UsesValidatedRelativeExclusiveAndNoReplaceOpera
 TEST(PosixDirectoryInjectedTest, ValidatesRegularFilesAndMapsLockContention) {
   ScriptedSyscalls syscalls;
   PosixDirectory directory = detail::PosixHandleFactory::directory(10, syscalls);
+
+  EXPECT_EQ(directory.create_exclusive_regular_file("entry", 01000U).error().code(),
+            common::StatusCode::kInvalidArgument);
 
   syscalls.metadata_mode = S_IFDIR | 0700;
   const common::Result<PosixFile> not_regular =
@@ -410,8 +441,8 @@ TEST(PosixIoIntegrationTest, PerformsDurableDirectoryRelativeFileLifecycle) {
   EXPECT_EQ(directory->create_exclusive_regular_file("segment.tmp").error().code(),
             common::StatusCode::kAlreadyExists);
 
-  const std::array<std::byte, 6> first{std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4},
-                                       std::byte{5}, std::byte{6}};
+  const std::array<std::byte, 6> first{std::byte{1}, std::byte{2}, std::byte{3},
+                                       std::byte{4}, std::byte{5}, std::byte{6}};
   const std::array<std::byte, 2> replacement{std::byte{9}, std::byte{8}};
   ASSERT_TRUE(file->write_all_at(0, first).is_ok());
   ASSERT_TRUE(file->write_all_at(2, replacement).is_ok());
@@ -425,8 +456,8 @@ TEST(PosixIoIntegrationTest, PerformsDurableDirectoryRelativeFileLifecycle) {
   const common::Result<std::size_t> read = file->read_at(0, read_buffer);
   ASSERT_TRUE(read.has_value());
   EXPECT_EQ(*read, 6U);
-  const std::array<std::byte, 6> expected{std::byte{1}, std::byte{2}, std::byte{9}, std::byte{8},
-                                           std::byte{5}, std::byte{6}};
+  const std::array<std::byte, 6> expected{std::byte{1}, std::byte{2}, std::byte{9},
+                                          std::byte{8}, std::byte{5}, std::byte{6}};
   EXPECT_TRUE(std::equal(expected.begin(), expected.end(), read_buffer.begin()));
 
   EXPECT_EQ(file->truncate(7).code(), common::StatusCode::kInvalidArgument);
@@ -434,8 +465,7 @@ TEST(PosixIoIntegrationTest, PerformsDurableDirectoryRelativeFileLifecycle) {
   ASSERT_TRUE(file->sync_all().is_ok());
   ASSERT_TRUE(file->close().is_ok());
 
-  ASSERT_TRUE(directory->rename_no_replace(
-                           {.old_name = "segment.tmp", .new_name = "segment.cwal"})
+  ASSERT_TRUE(directory->rename_no_replace({.old_name = "segment.tmp", .new_name = "segment.cwal"})
                   .is_ok());
   ASSERT_TRUE(directory->sync().is_ok());
   common::Result<PosixFile> reopened =
@@ -448,10 +478,9 @@ TEST(PosixIoIntegrationTest, PerformsDurableDirectoryRelativeFileLifecycle) {
   common::Result<PosixFile> collision = directory->create_exclusive_regular_file("collision");
   ASSERT_TRUE(collision.has_value());
   ASSERT_TRUE(collision->close().is_ok());
-  EXPECT_EQ(directory->rename_no_replace(
-                         {.old_name = "segment.cwal", .new_name = "collision"})
-                .code(),
-            common::StatusCode::kAlreadyExists);
+  EXPECT_EQ(
+      directory->rename_no_replace({.old_name = "segment.cwal", .new_name = "collision"}).code(),
+      common::StatusCode::kAlreadyExists);
 
   std::error_code symlink_error;
   std::filesystem::create_symlink(temporary.path() / "segment.cwal",
@@ -473,16 +502,16 @@ TEST(PosixIoIntegrationTest, HoldsTheAdvisoryLockAgainstAnotherProcess) {
   const pid_t child = ::fork();
   ASSERT_NE(child, -1);
   if (child == 0) {
-    common::Result<PosixDirectory> child_directory = PosixDirectory::open(temporary.path().string());
+    common::Result<PosixDirectory> child_directory =
+        PosixDirectory::open(temporary.path().string());
     if (!child_directory.has_value()) {
       ::_exit(2);
     }
     const common::Result<PosixAdvisoryLock> child_lock =
         child_directory->acquire_exclusive_lock("LOCK");
-    ::_exit(!child_lock.has_value() &&
-                   child_lock.error().code() == common::StatusCode::kUnavailable
-               ? 0
-               : 3);
+    ::_exit(!child_lock.has_value() && child_lock.error().code() == common::StatusCode::kUnavailable
+                ? 0
+                : 3);
   }
 
   int child_status = 0;

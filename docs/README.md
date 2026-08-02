@@ -24,7 +24,7 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 
 - [WAL v1](formats/wal-v1.md): authoritative single-node WAL directory, segment, record, integrity,
   limits, and compatibility specification; its pure in-memory physical codec is implemented, while
-  segmented persistence and recovery remain unimplemented.
+  the primitive POSIX I/O layer exists and segmented persistence/recovery remain unimplemented.
 
 ## Delivery
 
@@ -52,7 +52,9 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   1A build graph.
 - [Common binary foundations](learning/common-binary-foundations.md): ownership, bounds, encoding,
   failure, and CRC32C contracts for the Phase 1B primitives.
+- [Durable POSIX I/O foundations](learning/posix-io.md): owned file/directory/lock handles,
+  explicit-offset transfer loops, synchronization, atomic rename, fault injection, and portability.
 - [WAL design](learning/wal-design.md): rationale, lifecycle, ownership, failure model, tradeoffs, and
-  validation methodology for the accepted but unimplemented WAL.
+  validation methodology for the partially implemented WAL foundations.
 
 Future format, protocol, subsystem, operations, and learning documents should be linked here when they are added by their corresponding roadmap phase.
