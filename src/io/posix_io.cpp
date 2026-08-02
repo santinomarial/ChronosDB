@@ -126,6 +126,23 @@ constexpr int kInvalidDescriptor = -1;
   return static_cast<off_t>(offset + static_cast<std::uint64_t>(progress));
 }
 
+[[nodiscard]] common::Status validate_transfer_range(const std::uint64_t offset,
+                                                     const std::size_t size) {
+  const common::Result<off_t> converted_offset = checked_offset(offset);
+  if (!converted_offset.has_value()) {
+    return converted_offset.error();
+  }
+  if (size == 0U) {
+    return common::Status::ok();
+  }
+  constexpr auto kMaximumOffset = static_cast<std::uint64_t>(std::numeric_limits<off_t>::max());
+  const std::size_t last_index = size - 1U;
+  if (last_index > kMaximumOffset - offset) {
+    return out_of_range("file transfer range exceeds off_t bounds");
+  }
+  return common::Status::ok();
+}
+
 [[nodiscard]] std::size_t syscall_chunk_size(const std::size_t remaining) noexcept {
   constexpr auto kMaximumTransfer = static_cast<std::size_t>(std::numeric_limits<ssize_t>::max());
   return std::min(remaining, kMaximumTransfer);
@@ -283,9 +300,9 @@ common::Result<std::size_t> PosixFile::read_at(const std::uint64_t offset,
   if (!is_open()) {
     return common::make_unexpected(closed_handle("read_at"));
   }
-  const common::Result<off_t> initial_offset = checked_offset(offset);
-  if (!initial_offset.has_value()) {
-    return common::make_unexpected(initial_offset.error());
+  const common::Status range_status = validate_transfer_range(offset, destination.size());
+  if (!range_status.is_ok()) {
+    return common::make_unexpected(range_status);
   }
 
   std::size_t transferred = 0;
@@ -319,9 +336,9 @@ common::Status PosixFile::write_all_at(const std::uint64_t offset,
   if (!is_open()) {
     return closed_handle("write_all_at");
   }
-  const common::Result<off_t> initial_offset = checked_offset(offset);
-  if (!initial_offset.has_value()) {
-    return initial_offset.error();
+  const common::Status range_status = validate_transfer_range(offset, source.size());
+  if (!range_status.is_ok()) {
+    return range_status;
   }
 
   std::size_t transferred = 0;
