@@ -204,9 +204,16 @@ if(CHRONOS_BUILD_TESTS)
     tests/wal/codec_header_self_contained.cpp
     tests/wal/codec_test.cpp
     tests/wal/types_header_self_contained.cpp
+    tests/wal/wal_rotation_test.cpp
+    tests/wal/wal_segment_installation_test.cpp
+    tests/wal/wal_writer_failure_test.cpp
+    tests/wal/wal_writer_headers_self_contained.cpp
+    tests/wal/wal_writer_test.cpp
   )
   set_target_properties(chronos_wal_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_wal_tests PRIVATE cxx_std_23)
+  target_include_directories(chronos_wal_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
+                                                       "${CMAKE_CURRENT_SOURCE_DIR}/tests")
   target_link_libraries(chronos_wal_tests PRIVATE chronos::wal GTest::gtest_main)
   chronos_set_project_warnings(chronos_wal_tests)
   chronos_enable_sanitizers(chronos_wal_tests)
