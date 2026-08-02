@@ -282,6 +282,29 @@ TEST(WalRecordTest, EveryTruncationIsBoundedAndReportedAsOutOfRange) {
   }
 }
 
+TEST(WalRecordTest, EncodesAndDecodesTheMaximumRecordWithoutLengthWraparound) {
+  std::vector<std::byte> payload(kMaximumPayloadLength, std::byte{0x5a});
+  store_u32_le(payload, 0U, 1U);
+  store_u32_le(payload, 4U, 1U);
+  const auto header =
+      make_record_header({.record_type = kApplicationEntryRecordType,
+                          .record_sequence = std::numeric_limits<std::uint64_t>::max(),
+                          .payload_length = payload.size()});
+  ASSERT_TRUE(header.has_value());
+  EXPECT_EQ(header->total_length, kMaximumRecordLength);
+
+  std::vector<std::byte> encoded(kMaximumRecordLength);
+  const auto written = encode_record(*header, payload, encoded);
+  ASSERT_TRUE(written.has_value());
+  EXPECT_EQ(*written, kMaximumRecordLength);
+  const auto decoded = decode_record(encoded);
+  ASSERT_TRUE(decoded.has_value());
+  EXPECT_EQ(decoded->header, *header);
+  EXPECT_EQ(decoded->payload.size(), kMaximumPayloadLength);
+  EXPECT_EQ(decoded->payload.front(), std::byte{0x01});
+  EXPECT_EQ(decoded->payload.back(), std::byte{0x5a});
+}
+
 TEST(WalRecordTest, DetectsHeaderLengthAndIntegrityCorruption) {
   auto bytes = as_bytes(kGoldenRecord);
   bytes[8] ^= std::byte{1};
