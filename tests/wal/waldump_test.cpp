@@ -2,9 +2,9 @@
 
 #include <array>
 #include <cerrno>
+#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
-#include <fcntl.h>
 #include <gtest/gtest.h>
 #include <iterator>
 #include <spawn.h>
@@ -33,14 +33,13 @@ struct WaldumpInvocation {
 };
 
 [[nodiscard]] int run_waldump(const WaldumpInvocation& invocation) {
-  posix_spawn_file_actions_t actions;
+  posix_spawn_file_actions_t actions{};
   if (::posix_spawn_file_actions_init(&actions) != 0) {
     return -1;
   }
   const auto destroy_actions = [&actions]() { ::posix_spawn_file_actions_destroy(&actions); };
-  if (::posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO,
-                                         invocation.output.c_str(), O_WRONLY | O_CREAT | O_TRUNC,
-                                         0600) != 0 ||
+  if (::posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, invocation.output.c_str(),
+                                         O_WRONLY | O_CREAT | O_TRUNC, 0600) != 0 ||
       ::posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, invocation.error.c_str(),
                                          O_WRONLY | O_CREAT | O_TRUNC, 0600) != 0) {
     destroy_actions();

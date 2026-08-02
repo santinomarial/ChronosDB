@@ -253,6 +253,16 @@ if(CHRONOS_BUILD_TESTS)
   chronos_enable_static_analysis(chronos_wal_tests)
   gtest_discover_tests(chronos_wal_tests DISCOVERY_TIMEOUT 30)
 
+  add_test(
+    NAME InstallLayoutTest.IncludesWaldump
+    COMMAND
+      "${CMAKE_COMMAND}"
+      "-DCHRONOS_TEST_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+      "-DCHRONOS_TEST_INSTALL_BINDIR=${CMAKE_INSTALL_BINDIR}"
+      "-DCHRONOS_TEST_EXECUTABLE_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/install_layout_test.cmake"
+  )
+
   if(UNIX)
     find_program(CHRONOS_BASH_EXECUTABLE bash REQUIRED)
     add_test(
