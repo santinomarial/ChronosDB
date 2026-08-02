@@ -102,6 +102,22 @@ chronos_set_project_warnings(chronos_common)
 chronos_enable_sanitizers(chronos_common)
 chronos_enable_static_analysis(chronos_common)
 
+add_library(chronos_wal src/wal/codec.cpp)
+add_library(chronos::wal ALIAS chronos_wal)
+set_target_properties(chronos_wal PROPERTIES EXPORT_NAME wal)
+set_target_properties(chronos_wal PROPERTIES CXX_EXTENSIONS OFF)
+target_compile_features(chronos_wal PUBLIC cxx_std_23)
+target_include_directories(
+  chronos_wal
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+)
+target_link_libraries(chronos_wal PUBLIC chronos::common)
+chronos_set_project_warnings(chronos_wal)
+chronos_enable_sanitizers(chronos_wal)
+chronos_enable_static_analysis(chronos_wal)
+
 add_executable(chronosctl tools/chronosctl/main.cpp)
 set_target_properties(chronosctl PROPERTIES CXX_EXTENSIONS OFF)
 target_compile_features(chronosctl PRIVATE cxx_std_23)
@@ -139,6 +155,20 @@ if(CHRONOS_BUILD_TESTS)
   chronos_enable_sanitizers(chronos_common_tests)
   chronos_enable_static_analysis(chronos_common_tests)
   gtest_discover_tests(chronos_common_tests DISCOVERY_TIMEOUT 30)
+
+  add_executable(
+    chronos_wal_tests
+    tests/wal/codec_header_self_contained.cpp
+    tests/wal/codec_test.cpp
+    tests/wal/types_header_self_contained.cpp
+  )
+  set_target_properties(chronos_wal_tests PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_wal_tests PRIVATE cxx_std_23)
+  target_link_libraries(chronos_wal_tests PRIVATE chronos::wal GTest::gtest_main)
+  chronos_set_project_warnings(chronos_wal_tests)
+  chronos_enable_sanitizers(chronos_wal_tests)
+  chronos_enable_static_analysis(chronos_wal_tests)
+  gtest_discover_tests(chronos_wal_tests DISCOVERY_TIMEOUT 30)
 
   if(UNIX)
     find_program(CHRONOS_BASH_EXECUTABLE bash REQUIRED)
@@ -216,6 +246,16 @@ if(CHRONOS_BUILD_FUZZERS)
   chronos_set_project_warnings(chronos_byte_reader_fuzz)
   chronos_enable_sanitizers(chronos_byte_reader_fuzz)
   chronos_enable_static_analysis(chronos_byte_reader_fuzz)
+
+  add_executable(chronos_wal_codec_fuzz tests/fuzz/wal_codec_fuzz.cpp)
+  set_target_properties(chronos_wal_codec_fuzz PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_wal_codec_fuzz PRIVATE cxx_std_23)
+  target_link_libraries(chronos_wal_codec_fuzz PRIVATE chronos::wal)
+  target_compile_options(chronos_wal_codec_fuzz PRIVATE -fsanitize=fuzzer)
+  target_link_options(chronos_wal_codec_fuzz PRIVATE -fsanitize=fuzzer)
+  chronos_set_project_warnings(chronos_wal_codec_fuzz)
+  chronos_enable_sanitizers(chronos_wal_codec_fuzz)
+  chronos_enable_static_analysis(chronos_wal_codec_fuzz)
 endif()
 
 chronos_configure_installation()
