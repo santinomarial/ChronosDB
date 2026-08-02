@@ -250,6 +250,19 @@ struct LockIdentity {
   return identities;
 }
 
+[[nodiscard]] pid_t& process_lock_pid() {
+  static pid_t process_id = ::getpid();
+  return process_id;
+}
+
+void refresh_process_lock_registry_after_fork() {
+  const pid_t current_process = ::getpid();
+  if (process_lock_pid() != current_process) {
+    process_lock_identities().clear();
+    process_lock_pid() = current_process;
+  }
+}
+
 class ProcessLockReservation {
 public:
   explicit ProcessLockReservation(LockIdentity identity) : identity_(std::move(identity)) {}
@@ -259,6 +272,7 @@ public:
       return;
     }
     const std::scoped_lock lock{process_lock_mutex()};
+    refresh_process_lock_registry_after_fork();
     process_lock_identities().erase(identity_);
   }
 
@@ -291,6 +305,7 @@ reserve_process_lock(PosixSyscalls& syscalls, const int directory_descriptor,
   const LockIdentity identity{
       .device = metadata.st_dev, .inode = metadata.st_ino, .name = std::string{name}};
   const std::scoped_lock lock{process_lock_mutex()};
+  refresh_process_lock_registry_after_fork();
   if (process_lock_identities().contains(identity)) {
     return common::make_unexpected(common::Status{
         common::StatusCode::kUnavailable, "exclusive advisory lock is held by this process"});

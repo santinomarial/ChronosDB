@@ -570,6 +570,25 @@ TEST(PosixIoIntegrationTest, RejectsASecondOwnerForTheSameLockInOneProcess) {
   EXPECT_EQ(second.error().code(), common::StatusCode::kUnavailable);
   EXPECT_NE(second.error().message().find("this process"), std::string::npos);
 
+  const pid_t child = ::fork();
+  ASSERT_NE(child, -1);
+  if (child == 0) {
+    common::Result<PosixDirectory> child_directory =
+        PosixDirectory::open(temporary.path().string());
+    if (!child_directory.has_value()) {
+      ::_exit(2);
+    }
+    const common::Result<PosixAdvisoryLock> child_lock =
+        child_directory->acquire_exclusive_lock("LOCK");
+    ::_exit(!child_lock.has_value() && child_lock.error().code() == common::StatusCode::kUnavailable
+                ? 0
+                : 3);
+  }
+  int child_status = 0;
+  ASSERT_EQ(::waitpid(child, &child_status, 0), child);
+  ASSERT_TRUE(WIFEXITED(child_status));
+  EXPECT_EQ(WEXITSTATUS(child_status), 0);
+
   ASSERT_TRUE(first->close().is_ok());
   common::Result<PosixAdvisoryLock> after_release =
       second_directory->acquire_exclusive_lock("LOCK");
