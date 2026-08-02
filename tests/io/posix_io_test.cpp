@@ -363,6 +363,9 @@ TEST(PosixDirectoryInjectedTest, UsesValidatedRelativeExclusiveAndNoReplaceOpera
 
   EXPECT_EQ(opened->create_exclusive_regular_file("../escape").error().code(),
             common::StatusCode::kInvalidArgument);
+  const std::string embedded_nul{"bad\0name", 8};
+  EXPECT_EQ(opened->open_regular_file(embedded_nul, FileOpenMode::kReadOnly).error().code(),
+            common::StatusCode::kInvalidArgument);
   EXPECT_EQ(opened->open_regular_file("nested/file", FileOpenMode::kReadOnly).error().code(),
             common::StatusCode::kInvalidArgument);
   EXPECT_EQ(opened->rename_no_replace({.old_name = ".", .new_name = "final"}).code(),
@@ -407,6 +410,34 @@ TEST(PosixDirectoryInjectedTest, ValidatesRegularFilesAndMapsLockContention) {
   ASSERT_FALSE(contention.has_value());
   EXPECT_EQ(contention.error().code(), common::StatusCode::kUnavailable);
   EXPECT_NE(contention.error().message().find("another process"), std::string::npos);
+}
+
+TEST(PosixHandleTest, DefaultClosedHandlesRejectOperationsWithoutCallingSyscalls) {
+  PosixFile file;
+  std::array<std::byte, 1> byte{};
+  EXPECT_EQ(file.read_at(0, byte).error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(file.write_all_at(0, byte).code(), common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(file.size().error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(file.truncate(0).code(), common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(file.sync_data().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(file.sync_all().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_TRUE(file.close().is_ok());
+
+  PosixDirectory directory;
+  EXPECT_EQ(directory.open_regular_file("entry", FileOpenMode::kReadOnly).error().code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(directory.create_exclusive_regular_file("entry").error().code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(directory.acquire_exclusive_lock("LOCK").error().code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(directory.rename_no_replace({.old_name = "old", .new_name = "new"}).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(directory.sync().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_TRUE(directory.close().is_ok());
+
+  PosixAdvisoryLock lock;
+  EXPECT_FALSE(lock.is_held());
+  EXPECT_TRUE(lock.close().is_ok());
 }
 
 TEST(PosixHandleInjectedTest, CloseIsNeverRetriedAndMoveTransfersSingleOwnership) {
