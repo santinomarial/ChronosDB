@@ -13,6 +13,33 @@
 
 namespace chronos::io::detail {
 
+struct OpenAtRequest {
+  int directory_descriptor;
+  const char* name;
+  int flags;
+  mode_t permissions;
+};
+
+struct ReadAtRequest {
+  int descriptor;
+  void* destination;
+  std::size_t size;
+  off_t offset;
+};
+
+struct WriteAtRequest {
+  int descriptor;
+  const void* source;
+  std::size_t size;
+  off_t offset;
+};
+
+struct RenameAtRequest {
+  int directory_descriptor;
+  const char* old_name;
+  const char* new_name;
+};
+
 // Raw syscall boundary used by production and deterministic failure-injection tests. It is not a
 // filesystem abstraction: operations intentionally correspond one-for-one with the POSIX calls
 // needed by the WAL durability protocol.
@@ -20,21 +47,17 @@ class PosixSyscalls {
 public:
   virtual ~PosixSyscalls() = default;
 
-  virtual int open_directory(const char* path, int flags) noexcept = 0;
-  virtual int open_at(int directory_descriptor, const char* name, int flags,
-                      mode_t permissions) noexcept = 0;
-  virtual ssize_t pread(int descriptor, void* destination, std::size_t size,
-                        off_t offset) noexcept = 0;
-  virtual ssize_t pwrite(int descriptor, const void* source, std::size_t size,
-                         off_t offset) noexcept = 0;
-  virtual int fstat(int descriptor, struct stat* metadata) noexcept = 0;
-  virtual int ftruncate(int descriptor, off_t size) noexcept = 0;
-  virtual int fdatasync(int descriptor) noexcept = 0;
-  virtual int fsync(int descriptor) noexcept = 0;
-  virtual int rename_no_replace(int directory_descriptor, const char* old_name,
-                                const char* new_name) noexcept = 0;
-  virtual int try_lock_exclusive(int descriptor) noexcept = 0;
-  virtual int close(int descriptor) noexcept = 0;
+  virtual int open_directory(const char* path, int flags) = 0;
+  virtual int open_at(const OpenAtRequest& request) = 0;
+  virtual ssize_t pread(const ReadAtRequest& request) = 0;
+  virtual ssize_t pwrite(const WriteAtRequest& request) = 0;
+  virtual int fstat(int descriptor, struct stat* metadata) = 0;
+  virtual int ftruncate(int descriptor, off_t size) = 0;
+  virtual int fdatasync(int descriptor) = 0;
+  virtual int fsync(int descriptor) = 0;
+  virtual int rename_no_replace(const RenameAtRequest& request) = 0;
+  virtual int try_lock_exclusive(int descriptor) = 0;
+  virtual int close(int descriptor) = 0;
 };
 
 [[nodiscard]] PosixSyscalls& system_posix_syscalls() noexcept;

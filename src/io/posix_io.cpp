@@ -44,9 +44,13 @@ constexpr int kInvalidDescriptor = -1;
   return common::Status{common::StatusCode::kInvalidArgument, std::move(message)};
 }
 
+struct TransferProgress {
+  std::size_t transferred;
+  std::size_t requested;
+};
+
 [[nodiscard]] common::Status errno_status(const char* operation, const int error_number,
-                                          const std::size_t transferred = 0,
-                                          const std::size_t requested = 0) {
+                                          const TransferProgress* const progress = nullptr) {
   common::StatusCode code = common::StatusCode::kIoError;
   switch (error_number) {
   case ENOENT:
@@ -68,11 +72,11 @@ constexpr int kInvalidDescriptor = -1;
 
   std::string message{operation};
   message.append(" failed");
-  if (requested != 0U) {
+  if (progress != nullptr) {
     message.append(" after ");
-    message.append(std::to_string(transferred));
+    message.append(std::to_string(progress->transferred));
     message.append(" of ");
-    message.append(std::to_string(requested));
+    message.append(std::to_string(progress->requested));
     message.append(" bytes");
   }
   message.append(": ");
@@ -126,18 +130,22 @@ constexpr int kInvalidDescriptor = -1;
   return static_cast<off_t>(offset + static_cast<std::uint64_t>(progress));
 }
 
-[[nodiscard]] common::Status validate_transfer_range(const std::uint64_t offset,
-                                                     const std::size_t size) {
-  const common::Result<off_t> converted_offset = checked_offset(offset);
+struct TransferRange {
+  std::uint64_t offset;
+  std::size_t size;
+};
+
+[[nodiscard]] common::Status validate_transfer_range(const TransferRange& range) {
+  const common::Result<off_t> converted_offset = checked_offset(range.offset);
   if (!converted_offset.has_value()) {
     return converted_offset.error();
   }
-  if (size == 0U) {
+  if (range.size == 0U) {
     return common::Status::ok();
   }
   constexpr auto kMaximumOffset = static_cast<std::uint64_t>(std::numeric_limits<off_t>::max());
-  const std::size_t last_index = size - 1U;
-  if (last_index > kMaximumOffset - offset) {
+  const std::size_t last_index = range.size - 1U;
+  if (last_index > kMaximumOffset - range.offset) {
     return out_of_range("file transfer range exceeds off_t bounds");
   }
   return common::Status::ok();
@@ -189,7 +197,7 @@ constexpr int kInvalidDescriptor = -1;
   return common::Status::ok();
 }
 
-void close_after_failed_open(detail::PosixSyscalls& syscalls, const int descriptor) noexcept {
+void close_after_failed_open(detail::PosixSyscalls& syscalls, const int descriptor) {
   if (descriptor != kInvalidDescriptor) {
     static_cast<void>(syscalls.close(descriptor));
   }
@@ -206,19 +214,17 @@ public:
     return ::open(path, flags);
   }
 
-  int open_at(const int directory_descriptor, const char* const name, const int flags,
-              const mode_t permissions) noexcept override {
-    return ::openat(directory_descriptor, name, flags, permissions);
+  int open_at(const OpenAtRequest& request) noexcept override {
+    return ::openat(request.directory_descriptor, request.name, request.flags,
+                    request.permissions);
   }
 
-  ssize_t pread(const int descriptor, void* const destination, const std::size_t size,
-                const off_t offset) noexcept override {
-    return ::pread(descriptor, destination, size, offset);
+  ssize_t pread(const ReadAtRequest& request) noexcept override {
+    return ::pread(request.descriptor, request.destination, request.size, request.offset);
   }
 
-  ssize_t pwrite(const int descriptor, const void* const source, const std::size_t size,
-                 const off_t offset) noexcept override {
-    return ::pwrite(descriptor, source, size, offset);
+  ssize_t pwrite(const WriteAtRequest& request) noexcept override {
+    return ::pwrite(request.descriptor, request.source, request.size, request.offset);
   }
 
   int fstat(const int descriptor, struct stat* const metadata) noexcept override {
@@ -244,14 +250,14 @@ public:
     return ::fsync(descriptor);
   }
 
-  int rename_no_replace(const int directory_descriptor, const char* const old_name,
-                        const char* const new_name) noexcept override {
+  int rename_no_replace(const RenameAtRequest& request) noexcept override {
 #if defined(__APPLE__)
-    return ::renameatx_np(directory_descriptor, old_name, directory_descriptor, new_name,
-                          RENAME_EXCL);
+    return ::renameatx_np(request.directory_descriptor, request.old_name,
+                          request.directory_descriptor, request.new_name, RENAME_EXCL);
 #elif defined(__linux__)
-    return static_cast<int>(::syscall(SYS_renameat2, directory_descriptor, old_name,
-                                      directory_descriptor, new_name, RENAME_NOREPLACE));
+    return static_cast<int>(::syscall(SYS_renameat2, request.directory_descriptor,
+                                      request.old_name, request.directory_descriptor,
+                                      request.new_name, RENAME_NOREPLACE));
 #endif
   }
 
@@ -307,7 +313,8 @@ common::Result<std::size_t> PosixFile::read_at(const std::uint64_t offset,
   if (!is_open()) {
     return common::make_unexpected(closed_handle("read_at"));
   }
-  const common::Status range_status = validate_transfer_range(offset, destination.size());
+  common::Status range_status =
+      validate_transfer_range(TransferRange{.offset = offset, .size = destination.size()});
   if (!range_status.is_ok()) {
     return common::make_unexpected(range_status);
   }
@@ -319,8 +326,12 @@ common::Result<std::size_t> PosixFile::read_at(const std::uint64_t offset,
       return common::make_unexpected(current_offset.error());
     }
     const std::size_t request_size = syscall_chunk_size(destination.size() - transferred);
-    const ssize_t result = syscalls_->pread(descriptor_, destination.data() + transferred,
-                                            request_size, *current_offset);
+    const ssize_t result = syscalls_->pread(detail::ReadAtRequest{
+        .descriptor = descriptor_,
+        .destination = destination.data() + transferred,
+        .size = request_size,
+        .offset = *current_offset,
+    });
     if (result > 0) {
       transferred += static_cast<std::size_t>(result);
       continue;
@@ -332,8 +343,9 @@ common::Result<std::size_t> PosixFile::read_at(const std::uint64_t offset,
     if (error_number == EINTR) {
       continue;
     }
-    return common::make_unexpected(
-        errno_status("pread", error_number, transferred, destination.size()));
+    const TransferProgress progress{.transferred = transferred,
+                                    .requested = destination.size()};
+    return common::make_unexpected(errno_status("pread", error_number, &progress));
   }
   return transferred;
 }
@@ -343,7 +355,8 @@ common::Status PosixFile::write_all_at(const std::uint64_t offset,
   if (!is_open()) {
     return closed_handle("write_all_at");
   }
-  const common::Status range_status = validate_transfer_range(offset, source.size());
+  common::Status range_status =
+      validate_transfer_range(TransferRange{.offset = offset, .size = source.size()});
   if (!range_status.is_ok()) {
     return range_status;
   }
@@ -355,8 +368,12 @@ common::Status PosixFile::write_all_at(const std::uint64_t offset,
       return current_offset.error();
     }
     const std::size_t request_size = syscall_chunk_size(source.size() - transferred);
-    const ssize_t result =
-        syscalls_->pwrite(descriptor_, source.data() + transferred, request_size, *current_offset);
+    const ssize_t result = syscalls_->pwrite(detail::WriteAtRequest{
+        .descriptor = descriptor_,
+        .source = source.data() + transferred,
+        .size = request_size,
+        .offset = *current_offset,
+    });
     if (result > 0) {
       transferred += static_cast<std::size_t>(result);
       continue;
@@ -369,7 +386,8 @@ common::Status PosixFile::write_all_at(const std::uint64_t offset,
     if (error_number == EINTR) {
       continue;
     }
-    return errno_status("pwrite", error_number, transferred, source.size());
+    const TransferProgress progress{.transferred = transferred, .requested = source.size()};
+    return errno_status("pwrite", error_number, &progress);
   }
   return common::Status::ok();
 }
@@ -581,7 +599,12 @@ PosixDirectory::open_regular_file(const std::string_view name, const FileOpenMod
   const int flags = access | O_CLOEXEC | O_NOFOLLOW;
   int descriptor = kInvalidDescriptor;
   do {
-    descriptor = syscalls_->open_at(descriptor_, owned_name.c_str(), flags, 0);
+    descriptor = syscalls_->open_at(detail::OpenAtRequest{
+        .directory_descriptor = descriptor_,
+        .name = owned_name.c_str(),
+        .flags = flags,
+        .permissions = 0,
+    });
   } while (descriptor == kInvalidDescriptor && errno == EINTR);
   if (descriptor == kInvalidDescriptor) {
     return common::make_unexpected(errno_status("openat regular file", errno));
@@ -613,8 +636,12 @@ common::Result<PosixFile> PosixDirectory::create_exclusive_regular_file(
   constexpr int kFlags = O_CREAT | O_EXCL | O_RDWR | O_CLOEXEC | O_NOFOLLOW;
   int descriptor = kInvalidDescriptor;
   do {
-    descriptor = syscalls_->open_at(descriptor_, owned_name.c_str(), kFlags,
-                                    static_cast<mode_t>(permissions));
+    descriptor = syscalls_->open_at(detail::OpenAtRequest{
+        .directory_descriptor = descriptor_,
+        .name = owned_name.c_str(),
+        .flags = kFlags,
+        .permissions = static_cast<mode_t>(permissions),
+    });
   } while (descriptor == kInvalidDescriptor && errno == EINTR);
   if (descriptor == kInvalidDescriptor) {
     return common::make_unexpected(errno_status("openat exclusive regular file", errno));
@@ -647,8 +674,12 @@ PosixDirectory::acquire_exclusive_lock(const std::string_view name,
   constexpr int kFlags = O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW;
   int descriptor = kInvalidDescriptor;
   do {
-    descriptor = syscalls_->open_at(descriptor_, owned_name.c_str(), kFlags,
-                                    static_cast<mode_t>(permissions));
+    descriptor = syscalls_->open_at(detail::OpenAtRequest{
+        .directory_descriptor = descriptor_,
+        .name = owned_name.c_str(),
+        .flags = kFlags,
+        .permissions = static_cast<mode_t>(permissions),
+    });
   } while (descriptor == kInvalidDescriptor && errno == EINTR);
   if (descriptor == kInvalidDescriptor) {
     return common::make_unexpected(errno_status("openat advisory lock", errno));
@@ -676,28 +707,34 @@ PosixDirectory::acquire_exclusive_lock(const std::string_view name,
   return PosixAdvisoryLock{descriptor, *syscalls_};
 }
 
-common::Status PosixDirectory::rename_no_replace(const std::string_view old_name,
-                                                 const std::string_view new_name) const {
+common::Status PosixDirectory::rename_no_replace(const RenameRequest& request) const {
   if (!is_open()) {
     return closed_handle("rename_no_replace");
   }
-  const common::Status old_status = validate_entry_name(old_name);
+  common::Status old_status = validate_entry_name(request.old_name);
   if (!old_status.is_ok()) {
     return old_status;
   }
-  const common::Status new_status = validate_entry_name(new_name);
+  common::Status new_status = validate_entry_name(request.new_name);
   if (!new_status.is_ok()) {
     return new_status;
   }
-  const std::string owned_old_name{old_name};
-  const std::string owned_new_name{new_name};
+  const std::string owned_old_name{request.old_name};
+  const std::string owned_new_name{request.new_name};
 
   int result = 0;
   do {
-    result = syscalls_->rename_no_replace(descriptor_, owned_old_name.c_str(),
-                                          owned_new_name.c_str());
+    result = syscalls_->rename_no_replace(detail::RenameAtRequest{
+        .directory_descriptor = descriptor_,
+        .old_name = owned_old_name.c_str(),
+        .new_name = owned_new_name.c_str(),
+    });
   } while (result == -1 && errno == EINTR);
   if (result == -1) {
+    if (errno == EINVAL) {
+      return common::Status{common::StatusCode::kNotSupported,
+                            "filesystem does not support atomic no-replace rename"};
+    }
     return errno_status("same-directory no-replace rename", errno);
   }
   return common::Status::ok();

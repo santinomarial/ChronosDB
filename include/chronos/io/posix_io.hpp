@@ -21,6 +21,11 @@ enum class FileOpenMode : std::uint8_t {
   kReadWrite,
 };
 
+struct RenameRequest {
+  std::string_view old_name;
+  std::string_view new_name;
+};
+
 // PosixFile exclusively owns one descriptor for a verified regular file. It is movable but not
 // copyable and is not internally synchronized. Explicit-offset operations do not mutate a shared
 // file cursor. Destruction closes best-effort; callers use close() when a close error is material.
@@ -121,8 +126,7 @@ public:
 
   // The operation is atomic, confined to this directory, and never replaces an existing target.
   // A platform without an atomic no-replace primitive returns kNotSupported.
-  [[nodiscard]] common::Status rename_no_replace(std::string_view old_name,
-                                                 std::string_view new_name) const;
+  [[nodiscard]] common::Status rename_no_replace(const RenameRequest& request) const;
 
   [[nodiscard]] common::Status sync() const;
   [[nodiscard]] common::Status close();
