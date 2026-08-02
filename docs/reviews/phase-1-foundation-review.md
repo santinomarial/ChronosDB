@@ -8,9 +8,10 @@ commit was inspected with `git log`, `git show`, and per-commit name/status and 
 
 During the audit, the desktop workspace unexpectedly checkpointed the repair set as commits
 `e8a29d3999cd04582b71f4cd1ca5ef5c5231b6b1` and
-`8cb9fe174936e42c8ad489b22162e6919f21d82a` and advanced `origin/main`. The reviewer did not run
-`git commit` or `git push`. This document records the resulting tree relative to the original
-reviewed base rather than implying that those commits were requested review output.
+`8cb9fe174936e42c8ad489b22162e6919f21d82a`, then checkpointed the final documentation and check
+hardening as `2109075a61af5fef04a4d536178b1b4b53c15bc6`; all three advanced `origin/main`. The reviewer
+did not run `git commit` or `git push`. This document records the resulting tree relative to the
+original reviewed base rather than implying that those commits were requested review output.
 
 ## Scope
 
@@ -43,8 +44,8 @@ was reviewed or implemented. This is strictly a Phase 1 foundation review.
 - Ubuntu 24.04 arm64 in an isolated container, with CMake 3.28.3, Ninja 1.11.1, GCC 13.3.0,
   Clang 18.1.3, and libc++ 18.
 
-Windows/MSVC, a physical Linux host, and x86-64 were not available. The post-repair tree was not
-pushed by the reviewer to start a fresh GitHub-hosted Actions run.
+Windows/MSVC, a physical Linux host, and x86-64 were not available. The reviewer did not push the
+post-repair tree, but the desktop checkpoint did trigger a GitHub-hosted Actions run for `2109075`.
 
 ## Findings
 
@@ -219,18 +220,20 @@ All source trees began clean at `d827b88`.
   CLANG_TIDY=/opt/homebrew/opt/llvm/bin/clang-tidy scripts/check.sh`: passed after the review
   document was added; its integrated test run passed 40/40.
 - `build/dev/chronosctl version --json`: passed and reported commit `8cb9fe174936` with
-  `"git_dirty":true`, reflecting the still-uncommitted review documentation.
-- Final `git diff --check`: passed. Final repository inspection found the review document, its
-  documentation-index update, and final strengthening of the action-pin and all-owned-target UBSan
-  checks uncommitted; no reviewer-created commit was added after the unexpected checkpoints
-  described above.
+  `"git_dirty":true`, correctly reflecting the review documentation before the final automatic
+  checkpoint.
+- Final `git diff --check`: passed. Immediately before this state-record correction, the repository
+  was clean at the automatically created and pushed `2109075`; no commit or push command was run by
+  the reviewer.
+- GitHub Actions run
+  [30727622121](https://github.com/santinomarial/ChronosDB/actions/runs/30727622121) for exact commit
+  `2109075`: passed all seven jobs (Linux GCC, Linux Clang, macOS AppleClang, ASan/UBSan, TSan,
+  clang-tidy, and format/action-pin verification).
 
 ## Checks not performed
 
 - Windows/MSVC and multi-config generator builds: unavailable on the review host.
 - x86-64 compilation or execution: neither the Apple host nor the Ubuntu container was x86-64.
-- A new GitHub-hosted Actions run for the exact repaired state: not started because the reviewer was
-  instructed not to commit or push.
 - Sustained or corpus-backed fuzzing: only bounded 10,000-run smoke tests were performed.
 - Statistically controlled performance measurement: only benchmark validity smoke runs were
   performed, with no publication-quality environment or claim.
@@ -250,6 +253,6 @@ All source trees began clean at `d827b88`.
 ## Conclusion
 
 The confirmed Phase 1 foundation problems were repaired without adding a dependency, redesigning a
-subsystem, weakening a warning or sanitizer, or adding Phase 2 functionality. The current evidence
-supports beginning WAL design only after the unexpected checkpoint/remote state is reconciled by the
-repository owner and the final integrated checks below remain green.
+subsystem, weakening a warning or sanitizer, or adding Phase 2 functionality. The validation gate is
+green. The repository owner should nevertheless note that the desktop created and pushed commits
+despite the explicit no-commit instruction; the reviewer did not rewrite that published history.
