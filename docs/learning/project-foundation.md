@@ -2,16 +2,18 @@
 
 Phase 1A establishes enough real code to prove how ChronosDB will be built without pretending that
 the database engine exists. `chronos_common` exposes stable version/build information,
-`chronosctl version` renders it for people or automation, and unit tests exercise the same public
-interface an eventual consumer will use.
+`chronos_wal` provides the portable in-memory WAL v1 physical codec, `chronosctl version` renders
+metadata for people or automation, and unit tests exercise the same public interfaces eventual
+consumers will use.
 
 ## Why target-scoped CMake
 
 CMake properties propagate along target relationships. ChronosDB therefore assigns the C++23
 requirement, include paths, warnings, sanitizers, and static analysis to each owned target. This
 makes the dependency graph explicit and prevents strict local flags from leaking into GoogleTest or
-Google Benchmark. The build-tree alias and installed export are both `chronos::common`, so consumers
-use one name while the concrete target remains `chronos_common`.
+Google Benchmark. Build-tree aliases and installed exports use the `chronos::` namespace, so
+consumers link `chronos::common` or `chronos::wal` while the concrete targets remain
+`chronos_common` and `chronos_wal`.
 
 The current graph is:
 
@@ -20,6 +22,9 @@ chronosctl ───────────► chronos::common
 chronos_common_tests ─► chronos::common + GTest::gtest_main
 chronos_common_benchmarks (optional) ─► chronos::common + benchmark::benchmark_main
 chronos_byte_reader_fuzz (optional) ──► chronos::common + Clang libFuzzer
+chronos::wal ─────────► chronos::common
+chronos_wal_tests ────► chronos::wal + GTest::gtest_main
+chronos_wal_codec_fuzz (optional) ────► chronos::wal + Clang libFuzzer
 ```
 
 ## Reproducibility choices

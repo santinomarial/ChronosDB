@@ -1,9 +1,10 @@
 # WAL Design
 
-> **Status: design accepted, implementation absent.** The normative bytes are in
+> **Status: design accepted; physical codec implemented.** The normative bytes are in
 > [WAL v1](../formats/wal-v1.md), and the normative lifecycle/recovery behavior is in
-> [WAL recovery](../architecture/wal-recovery.md). This learning document explains the reasoning and
-> should not be used as a substitute for either specification.
+> [WAL recovery](../architecture/wal-recovery.md). The in-memory codec exists, while file I/O,
+> writing, synchronization, recovery, repair, and replay do not. This learning document explains the
+> reasoning and should not be used as a substitute for either specification.
 
 ## Purpose
 
@@ -24,11 +25,15 @@ ambiguous acknowledgments.
 
 ## Planned subsystem boundaries
 
-No C++ WAL API exists yet. An implementation following the accepted design will need responsibilities
-equivalent to these boundaries without being required to use these names:
+The `chronos::wal` library now implements WAL identity/position values, checked layout calculation,
+segment and record header codecs, and allocation-free complete-record validation over borrowed
+bytes. Its encoder writes into caller-owned storage and leaves that storage unchanged on failure.
+The remaining implementation will need responsibilities equivalent to these boundaries without
+being required to use these names:
 
 - a directory owner that acquires `LOCK`, discovers files, and owns the active descriptor;
-- a physical codec that encodes and validates segment headers and records exactly as WAL v1;
+- the implemented physical codec that encodes and validates segment headers and records exactly as
+  WAL v1;
 - a serialized appender that assigns sequences, handles short writes, rotates, and tracks sync
   frontiers;
 - a durability coordinator that releases requests only at their effective-mode boundary;

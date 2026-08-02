@@ -1,9 +1,10 @@
 # Building ChronosDB
 
-ChronosDB's implemented code currently consists of the Phase 1A build/version foundation and the
-Phase 1B portable common binary primitives. Engine components described elsewhere remain planned.
-The reference production platform is Linux x86-64; this portable common code also supports modern
-macOS, including Apple silicon.
+ChronosDB's implemented code currently consists of the Phase 1A build/version foundation, the Phase
+1B portable common binary primitives, and the pure in-memory WAL v1 physical codec. File-backed WAL
+storage and other engine components described elsewhere remain planned. The reference production
+platform is Linux x86-64; the common and WAL codec targets are portable to modern macOS, including
+Apple silicon.
 
 ## Prerequisites
 
@@ -87,8 +88,8 @@ build/dev/chronosctl version --json
 ```
 
 Install to a staging prefix with `cmake --install build/release --prefix <directory>`. This installs
-`chronosctl`, the common library and public headers, and a CMake package exporting
-`chronos::common`.
+`chronosctl`, the common and WAL libraries and public headers, and a CMake package exporting
+`chronos::common` and `chronos::wal`.
 
 ## Sanitizers
 
@@ -125,16 +126,17 @@ The executable labels results as local measurements only. Record the command, co
 revision, and full output when using a run as evidence. A smoke run is neither a stable result nor a
 database performance claim.
 
-## ByteReader fuzz target
+## Fuzz targets
 
 The fuzz preset is optional and requires Clang with a linkable libFuzzer runtime. It builds the
-ByteReader operation-sequence target with ASan and UBSan while leaving ordinary tests out of that
-build tree:
+ByteReader operation-sequence and WAL physical-codec targets with ASan and UBSan while leaving
+ordinary tests out of that build tree:
 
 ```sh
 cmake --preset fuzz
 cmake --build --preset fuzz
 build/fuzz/chronos_byte_reader_fuzz -runs=10000 -max_len=4096
+build/fuzz/chronos_wal_codec_fuzz -runs=10000 -max_len=16777216
 ```
 
 Apple's Command Line Tools compiler may omit the libFuzzer runtime even when it accepts Clang

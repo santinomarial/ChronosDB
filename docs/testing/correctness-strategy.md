@@ -1,6 +1,6 @@
 # Correctness Strategy
 
-> **Status: partially implemented.** This document turns the [architecture invariants](../architecture/invariants.md) into verification obligations under [ADR 0012](../adr/0012-correctness-testing-and-performance-evidence.md). Phase 1 has unit/property-style tests, sanitizer jobs, and an optional ByteReader libFuzzer target. WAL v1 now has an accepted format/recovery test contract, but no WAL codec, storage, crash harness, fixtures, or tests are implemented. Query, concurrency, and distributed harnesses also remain planned for their roadmap phases.
+> **Status: partially implemented.** This document turns the [architecture invariants](../architecture/invariants.md) into verification obligations under [ADR 0012](../adr/0012-correctness-testing-and-performance-evidence.md). Phase 1 has unit/property-style tests, sanitizer jobs, and optional ByteReader and WAL-codec libFuzzer targets. WAL v1 has an implemented pure in-memory physical codec with golden, boundary, corruption, and property-style tests; WAL storage, crash harnesses, recovery, replay, and application-kind codecs remain unimplemented. Query, concurrency, and distributed harnesses also remain planned for their roadmap phases.
 
 ## Test types
 
@@ -75,7 +75,9 @@ The WAL implementation phases must introduce named suites covering:
 
 Fixtures and randomized failures record WAL format, generator version, seed, platform/filesystem,
 fault point, durability mode, and an exact reproduction command. These suites are required future
-evidence; listing them here does not claim implementation.
+evidence. The physical codec currently implements the golden-format, structural-property,
+corruption/truncation, and coverage-guided fuzz foundations; installation, acknowledgment, repair,
+and replay suites remain future work.
 
 ### Recovery idempotence and manifest installation
 

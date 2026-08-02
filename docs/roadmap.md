@@ -7,8 +7,9 @@ portable support and is not implied by a macOS-only local run. This status does 
 complete Phase 1 gates have passed. Unimplemented portions of Phase 1 and all later phases remain
 planned work, not implemented functionality or delivery commitments. The Phase 2–3
 [WAL v1 format](formats/wal-v1.md), [recovery design](architecture/wal-recovery.md), and
-[ADR 0013](adr/0013-wal-v1-format-and-recovery.md) are accepted design artifacts only; no WAL code,
-fixture, test, or storage behavior exists yet.
+[ADR 0013](adr/0013-wal-v1-format-and-recovery.md) are accepted design artifacts. The pure in-memory
+WAL physical codec, fixtures, tests, and fuzz target now exist; no WAL file I/O, segmented writer,
+durability boundary, recovery, replay, or application-kind codec exists yet.
 Work should proceed in order unless an accepted ADR explains why a limited dependency must move
 earlier.
 
@@ -43,8 +44,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
 ## Phase 2 — WAL record codec
 
 - **Implementation status:** the WAL v1 physical directory/segment/record format, integrity scopes,
-  limits, application envelope, and compatibility policy are accepted. The physical codec, golden
-  fixtures, fuzzers, and every kind-specific logical application body remain unimplemented.
+  limits, application envelope, and compatibility policy are accepted. The pure in-memory segment
+  header, record header, and complete-record codec plus identities, physical positions, checked
+  layout calculations, golden fixtures, tests, and fuzz target are implemented. Every kind-specific
+  logical application body remains unimplemented.
 - **Scope:** complete the kind-specific logical operation payload specification and implement the
   accepted versioned, checksummed WAL framing and typed payloads using fixed-width encodings.
 - **Explicit non-scope:** segment files, sync/acknowledgment policy, recovery across segments, mutable-head application, Raft, and compression unless justified by the record specification.
