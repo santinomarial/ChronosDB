@@ -2,11 +2,12 @@
 
 ChronosDB's implemented code currently consists of the Phase 1A build/version foundation, the Phase
 1B portable common binary primitives, the pure in-memory WAL v1 physical codec, the minimal blocking
-POSIX file/directory layer, and the new-history segmented WAL writer. Existing-history opening,
-recovery, repair, replay, and other engine components described elsewhere remain planned. The
-reference production platform is Linux x86-64; the common, WAL codec, POSIX I/O, and writer targets
-support Linux and modern macOS, including Apple silicon. macOS correctness support is not a
-power-loss durability claim.
+POSIX file/directory layer, the segmented WAL writer, locked physical recovery/reopen path, and the
+read-only `chronos-waldump` inspector. Acknowledgment coordination, application-kind codecs, and
+other engine components described elsewhere remain planned. The reference production platform is
+Linux x86-64; the common, WAL codec, POSIX I/O, writer, recovery, and inspection targets support
+Linux and modern macOS, including Apple silicon. macOS correctness support is not a power-loss
+durability claim.
 
 ## Prerequisites
 
@@ -92,9 +93,21 @@ build/dev/chronosctl version
 build/dev/chronosctl version --json
 ```
 
+The read-only WAL inspector acquires the existing writer lock, verifies the complete physical log,
+preflights every record, and then prints record metadata in deterministic order without dumping
+payload contents:
+
+```sh
+build/dev/chronos-waldump <path-to-wal-directory>
+```
+
+It exits `0` for a clean WAL, `3` for an incomplete but potentially repairable final tail, `1` for
+verification or lock failure, and `2` for invalid command-line use. It never repairs or creates a
+missing `LOCK` file.
+
 Install to a staging prefix with `cmake --install build/release --prefix <directory>`. This installs
-`chronosctl`, the common, POSIX I/O, and WAL libraries and public headers, and a CMake package
-exporting `chronos::common`, `chronos::io`, and `chronos::wal`.
+`chronosctl`, `chronos-waldump`, the common, POSIX I/O, and WAL libraries and public headers, and a
+CMake package exporting `chronos::common`, `chronos::io`, and `chronos::wal`.
 
 ## Sanitizers
 

@@ -4,7 +4,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
-#include <string>
 #include <string_view>
 
 namespace {
@@ -26,15 +25,16 @@ public:
   }
 };
 
-[[nodiscard]] std::string wal_id_hex(const chronos::wal::WalId& id) {
+[[nodiscard]] std::array<char, 33> wal_id_hex(const chronos::wal::WalId& id) {
   constexpr std::array<char, 16> kHex{'0', '1', '2', '3', '4', '5', '6', '7',
                                       '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
-  std::string result;
-  result.reserve(id.bytes.size() * 2U);
+  std::array<char, 33> result{};
+  std::size_t output_index = 0;
   for (const std::byte byte : id.bytes) {
     const std::uint8_t value = std::to_integer<std::uint8_t>(byte);
-    result.push_back(kHex[value >> 4U]);
-    result.push_back(kHex[value & 0x0fU]);
+    result[output_index] = kHex[value >> 4U];
+    result[output_index + 1U] = kHex[value & 0x0fU];
+    output_index += 2U;
   }
   return result;
 }
@@ -60,8 +60,9 @@ int main(const int argc, const char* const argv[]) {
   }
   const bool incomplete =
       report->classification == chronos::wal::WalScanClassification::kIncompleteFinalTail;
+  const std::array<char, 33> wal_id = wal_id_hex(report->wal_id);
   std::cout << "classification=" << (incomplete ? "INCOMPLETE_FINAL_TAIL" : "CLEAN")
-            << " wal_id=" << wal_id_hex(report->wal_id) << " segments=" << report->segment_count
+            << " wal_id=" << wal_id.data() << " segments=" << report->segment_count
             << " temporary_files=" << report->temporary_file_count
             << " records=" << report->record_count << " bytes=" << report->physical_bytes
             << " valid_end_segment=" << report->valid_end.segment_number

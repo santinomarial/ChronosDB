@@ -9,9 +9,10 @@ planned work, not implemented functionality or delivery commitments. The Phase 2
 [WAL v1 format](formats/wal-v1.md), [recovery design](architecture/wal-recovery.md), and
 [ADR 0013](adr/0013-wal-v1-format-and-recovery.md) are accepted design artifacts. The pure in-memory
 WAL physical codec, fixtures, tests, fuzz target, minimal blocking POSIX file/directory primitives,
-and the new-history segmented writer through installation, append, explicit sync, and rotation now
-exist. No existing-history opener, acknowledgment coordinator, recovery, repair, replay, or
-application-kind codec exists yet.
+the segmented writer, locked discovery and verification, explicit final-tail repair, replay-sink
+passes, existing-history reopen path, and read-only inspector now exist. No acknowledgment
+coordinator, application-kind codec, process-kill crash-image harness, or operational metrics exist
+yet.
 Work should proceed in order unless an accepted ADR explains why a limited dependency must move
 earlier.
 
@@ -66,11 +67,12 @@ No phase passes because its code merely compiles. A phase passes only when its a
 
 - **Implementation status:** segment naming/lifecycle, install and synchronization order,
   acknowledgment eligibility, recovery classification, explicit tail repair, semantic preflight, and
-  replay ordering are accepted design artifacts. The reusable POSIX operations, process lock,
-  exclusive new-history owner, segment installation, append/sync frontiers, terminal failure state,
-  and rotation are implemented with deterministic syscall injection. Existing-history opening,
-  recovery/repair, crash-image harness, acknowledgment coordinator, and operational metrics do not
-  exist.
+  replay ordering are accepted and implemented at the physical layer. The reusable POSIX
+  operations, process lock, creation and existing-history owners, segment installation,
+  append/sync frontiers, terminal failure state, rotation, discovery, whole-log verification,
+  explicit repair, preflight/replay, reopen, and inspection tool have deterministic tests and
+  syscall injection where mutation occurs. The crash-image/process-kill harness, acknowledgment
+  coordinator, application-kind semantics, and operational metrics do not exist.
 - **Scope:** implement WAL v1 segment lifecycle, append/grouping, explicitly named durability modes,
   acknowledgment boundaries, rotation, torn-tail handling, ordered replay, and idempotent
   single-node recovery.

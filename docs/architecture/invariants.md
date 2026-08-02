@@ -12,10 +12,11 @@ No acknowledged durable write disappears after any failure covered by the select
 
 For the partially implemented single-node WAL, [WAL recovery](wal-recovery.md) fixes the exact
 `ASYNC` and `LOCAL_SYNC` eligibility boundaries and the covered Linux persistence assumptions. The
-new-history writer exposes complete-write and explicit synchronization frontiers, while
-acknowledgment coordination and recovery remain unimplemented. A `LOCAL_SYNC` record cannot be
-discarded as an incomplete tail under the completed contract; encountering such an outcome is a
-durability defect or an excluded platform failure, not permitted loss.
+writer exposes complete-write and explicit synchronization frontiers, and locked recovery verifies,
+optionally repairs, replays, and reopens existing history. Acknowledgment coordination remains
+unimplemented. A `LOCAL_SYNC` record cannot be discarded as an incomplete tail under the completed
+contract; encountering such an outcome is a durability defect or an excluded platform failure, not
+permitted loss.
 
 ## 2. Manifests reference only completely installed durable parts
 
@@ -96,7 +97,9 @@ Every durable log record and CSEG data page is covered by an integrity check tha
 The authoritative [WAL v1 format](../formats/wal-v1.md) satisfies the design obligation for log
 framing by protecting segment interpretation fields, record framing fields, and each complete stored
 record with specified CRC32C ranges. The in-memory codec now has golden, boundary, corruption,
-property-style, sanitizer, and fuzz-target coverage; storage and recovery evidence remains required.
+property-style, sanitizer, and fuzz-target coverage. Locked physical verification, corruption
+classification, explicit final-tail repair, and ordered replay have deterministic tests; a
+process-kill crash-image harness and storage qualification remain required.
 
 ## 11. Referenced storage is not reclaimed
 

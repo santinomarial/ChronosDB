@@ -18,7 +18,8 @@ void create_marker(const std::filesystem::path& path) {
 TEST(WalDiscoveryTest, DiscoversConsecutiveSegmentsAndRecognizedTemporaryFiles) {
   test::TemporaryDirectory temporary{"chronos-wal-discovery"};
   ASSERT_TRUE(temporary.valid());
-  test::create_wal(temporary.path(), 2U, kSegmentHeaderSize + 64U);
+  test::create_wal(temporary.path(),
+                   {.record_count = 2U, .target_segment_size = kSegmentHeaderSize + 64U});
   create_marker(temporary.path() /
                 ".wal-00000000000000000003.cwal.tmp-0102030405060708090a0b0c0d0e0f10");
 
@@ -87,6 +88,18 @@ TEST(WalDiscoveryTest, RejectsSymlinkedFinalSegmentAndActiveWriter) {
     EXPECT_EQ(report.error().code(), common::StatusCode::kUnavailable);
     EXPECT_TRUE(writer->close().is_ok());
   }
+}
+
+TEST(WalDiscoveryTest, ReadOnlyScanNeverCreatesAMissingLockFile) {
+  test::TemporaryDirectory temporary{"chronos-wal-missing-lock"};
+  ASSERT_TRUE(temporary.valid());
+  test::create_wal(temporary.path(), 0U);
+  ASSERT_TRUE(std::filesystem::remove(temporary.path() / "LOCK"));
+
+  const common::Result<WalRecoveryReport> report = scan_wal(temporary.path().string());
+  ASSERT_FALSE(report.has_value());
+  EXPECT_EQ(report.error().code(), common::StatusCode::kNotFound);
+  EXPECT_FALSE(std::filesystem::exists(temporary.path() / "LOCK"));
 }
 
 } // namespace

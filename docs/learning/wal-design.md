@@ -1,11 +1,12 @@
 # WAL Design
 
-> **Status: design accepted; new-history writer implemented.** The normative bytes are in
+> **Status: design accepted; physical lifecycle implemented.** The normative bytes are in
 > [WAL v1](../formats/wal-v1.md), and the normative lifecycle/recovery behavior is in
 > [WAL recovery](../architecture/wal-recovery.md). The in-memory codec, blocking POSIX operations,
-> and exclusive writer for a new history through install, append, sync, and rotation exist.
-> Existing-history opening, acknowledgment coordination, recovery, repair, and replay do not. This
-> learning document explains the reasoning and should not substitute for either specification.
+> exclusive writer, locked verification, explicit repair, replay passes, and existing-history reopen
+> path exist. Acknowledgment coordination and application-kind semantics do not. This learning
+> document explains the reasoning and should not substitute for either specification; implementation
+> details are in [WAL recovery implementation](wal-recovery.md).
 
 ## Purpose
 
@@ -24,25 +25,26 @@ completion gates `ASYNC`, data synchronization gates `LOCAL_SYNC`, CRC32C establ
 integrity, semantic preflight establishes compatibility, and idempotent logical replay handles
 ambiguous acknowledgments.
 
-## Planned subsystem boundaries
+## Subsystem boundaries
 
 The `chronos::wal` library implements WAL identity/position values, checked layout calculation,
-segment and record codecs, allocation-free validation over borrowed bytes, and the serialized
-new-history writer. Its encoder writes into caller-owned storage and leaves that storage unchanged
-on failure. The independent `chronos::io` library supplies checked explicit-offset transfer loops,
-file and directory synchronization, non-growing truncation, exclusive relative creation, atomic
-no-replace rename, and process-level advisory locking. The writer composes these primitives in the
-specified lifecycle order. Current and remaining boundaries are:
+segment and record codecs, allocation-free validation over borrowed bytes, the serialized writer,
+and physical recovery. Its encoder writes into caller-owned storage and leaves that storage
+unchanged on failure. The independent `chronos::io` library supplies checked explicit-offset
+transfer loops, file and directory synchronization, non-growing truncation, exclusive relative
+creation, atomic no-replace rename, entry removal, and process-level advisory locking. The writer
+and recovery driver compose these primitives in the specified lifecycle order. Current and
+remaining boundaries are:
 
-- the implemented new-history directory owner that acquires `LOCK` and owns the active descriptor;
+- the implemented directory owner that acquires `LOCK` and owns the active descriptor;
 - the implemented physical codec that encodes and validates segment headers and records exactly as
   WAL v1;
 - the implemented serialized appender that assigns sequences, handles short writes, rotates, and
   tracks written and durable frontiers;
+- the implemented read-only scanner, explicit tail-repair path, whole-log semantic preflight/replay
+  driver, and existing-history opener;
 - a durability coordinator that releases requests only at their effective-mode boundary;
-- a read-only verifier that returns exact file/offset classifications without mutation;
-- an explicit tail-repair path; and
-- a recovery driver that verifies, preflights, and then replays into fresh/resettable state.
+- application-kind codecs and fresh/resettable logical state that give replay domain semantics.
 
 The physical WAL handles opaque versioned application entries. It does not decide table mutation,
 deduplication, schema, row-version, or tablet semantics. Those belong to future kind-specific
@@ -62,8 +64,15 @@ fixed identities. Identity failure occurs before lock creation and leaves the di
 
 The caller, not `WalWriter`, creates and durably installs the `wal/` directory under the database
 root. This ownership is deliberate: the writer has no parent-directory descriptor and therefore
-cannot prove durability of the `wal/` name. Existing/crashed history must later go through the
-recovery-capable opener rather than `create_new`.
+cannot prove durability of the `wal/` name. Existing/crashed history goes through
+`WalWriter::open_existing`, never `create_new`.
+
+`open_existing` acquires the same exclusive ownership lock, verifies the entire physical history,
+optionally performs only an explicitly authorized incomplete-final-tail repair, removes recognized
+orphan temporaries after verification, preflights and replays through a caller-supplied sink,
+re-verifies, crosses the startup synchronization barriers, and returns a writer at the exact valid
+end. It preserves the WAL identity and record-sequence history. The lock transfers into the returned
+writer, so there is no unlocked interval between recovery and append.
 
 `append_application_entry` finishes encoding one bounded record before its first `pwrite`, assigns
 the next sequence, writes at the explicit active end offset, and returns record start/end positions.
@@ -106,10 +115,11 @@ of WAL identity, segment number, and aligned byte offset needed by later storage
 `advance_physical_wal_position` rejects invalid frame sizes and any record that would cross the
 segment limit; the current writer performs rotation before submitting such a record.
 
-Decoder errors preserve the recovery distinction without implementing recovery: incomplete input
-is `kOutOfRange`, contradictory or checksum-invalid bytes are `kCorruption`, and a checksum-valid
-unknown required outer feature is `kNotSupported`. Unknown nonzero record formats and physical types
-remain structurally decodable as required by WAL v1; semantic preflight is future work.
+Decoder errors preserve the recovery distinction: incomplete input is `kOutOfRange`, contradictory
+or checksum-invalid bytes are `kCorruption`, and a checksum-valid unknown required outer feature is
+`kNotSupported`. Unknown nonzero record formats and physical types remain structurally decodable as
+required by WAL v1; the replay sink decides whether their semantics are supported during whole-log
+preflight.
 
 ## Why segmentation helps
 

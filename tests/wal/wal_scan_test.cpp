@@ -20,7 +20,7 @@ TEST(WalScanTest, ReportsExactCleanPhysicalEndAndSequenceHistory) {
   EXPECT_EQ(report->wal_id, test::make_wal_id());
   EXPECT_EQ(report->record_count, 3U);
   EXPECT_EQ(report->last_record_sequence, 3U);
-  EXPECT_EQ(report->valid_end.byte_offset, kSegmentHeaderSize + (3U * 64U));
+  EXPECT_EQ(report->valid_end.byte_offset, kSegmentHeaderSize + (std::uint64_t{3U} * 64U));
   EXPECT_EQ(report->observed_final_size, report->valid_end.byte_offset);
 }
 
@@ -58,7 +58,7 @@ TEST(WalScanTest, ClassifiesOnlyTheTwoAcceptedIncompleteFinalTailShapes) {
   }
 }
 
-TEST(WalScanTest, UsesOneMaximumRecordBufferRatherThanRetainingPayloadHistory) {
+TEST(WalScanTest, ScansManyRecordsWithoutRetainingReplayPayloads) {
   test::TemporaryDirectory temporary{"chronos-wal-bounded-scan"};
   ASSERT_TRUE(temporary.valid());
   test::create_wal(temporary.path(), 128U);

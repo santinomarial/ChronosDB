@@ -1,9 +1,12 @@
+#include "chronos/wal/wal_paths.hpp"
 #include "chronos/wal/wal_scan.hpp"
 #include "chronos/wal/wal_writer.hpp"
 #include "wal/wal_recovery_test_support.hpp"
 
 #include <cstdint>
+#include <filesystem>
 #include <gtest/gtest.h>
+#include <string>
 #include <vector>
 
 namespace chronos::wal {
@@ -79,6 +82,34 @@ TEST(WalReopenTest, RetainsExclusiveLockForEntireReturnedWriterLifetime) {
   EXPECT_EQ(concurrent.error().code(), common::StatusCode::kUnavailable);
   EXPECT_TRUE(reopened->close().is_ok());
   EXPECT_TRUE(scan_wal(temporary.path().string()).has_value());
+}
+
+TEST(WalReopenTest, RemovesRecognizedOrphanTemporaryBeforeFutureRotation) {
+  test::TemporaryDirectory temporary{"chronos-wal-reopen-orphan"};
+  ASSERT_TRUE(temporary.valid());
+  test::create_wal(temporary.path(),
+                   {.record_count = 1U, .target_segment_size = kSegmentHeaderSize + 64U});
+  const common::Result<std::string> orphan_name =
+      wal_temporary_segment_file_name(2U, test::make_wal_id());
+  ASSERT_TRUE(orphan_name.has_value());
+  const std::filesystem::path orphan = temporary.path() / *orphan_name;
+  const EncodedSegmentHeader zero_header{};
+  test::write_file(orphan, zero_header);
+  ASSERT_TRUE(std::filesystem::exists(orphan));
+  test::CollectingReplaySink sink;
+
+  common::Result<WalWriter> reopened =
+      WalWriter::open_existing({.directory_path = temporary.path().string(),
+                                .target_segment_size = kSegmentHeaderSize + 64U,
+                                .maximum_application_payload = kApplicationEnvelopeSize},
+                               {}, sink);
+  ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+  EXPECT_FALSE(std::filesystem::exists(orphan));
+  const common::Result<WalAppendResult> appended =
+      reopened->append_application_entry(test::make_application_payload());
+  ASSERT_TRUE(appended.has_value()) << appended.error().to_string();
+  EXPECT_EQ(appended->record_start.segment_number, 2U);
+  EXPECT_TRUE(reopened->close().is_ok());
 }
 
 } // namespace

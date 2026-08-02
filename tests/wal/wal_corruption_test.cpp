@@ -28,7 +28,8 @@ TEST(WalCorruptionTest, RejectsCompleteChecksumInvalidFinalRecordWithoutRepairCl
 TEST(WalCorruptionTest, RejectsIncompleteBytesInClosedSegment) {
   test::TemporaryDirectory temporary{"chronos-wal-middle-tail"};
   ASSERT_TRUE(temporary.valid());
-  test::create_wal(temporary.path(), 2U, kSegmentHeaderSize + 64U);
+  test::create_wal(temporary.path(),
+                   {.record_count = 2U, .target_segment_size = kSegmentHeaderSize + 64U});
   const std::array<std::byte, 7> suffix{std::byte{0x01}};
   test::append_bytes(temporary.path() / "wal-00000000000000000001.cwal", suffix);
 
@@ -41,7 +42,8 @@ TEST(WalCorruptionTest, RejectsIncompleteBytesInClosedSegment) {
 TEST(WalCorruptionTest, RejectsMixedWalIdentityEvenWithValidHeaderChecksum) {
   test::TemporaryDirectory temporary{"chronos-wal-mixed-id"};
   ASSERT_TRUE(temporary.valid());
-  test::create_wal(temporary.path(), 2U, kSegmentHeaderSize + 64U);
+  test::create_wal(temporary.path(),
+                   {.record_count = 2U, .target_segment_size = kSegmentHeaderSize + 64U});
   const std::filesystem::path second = temporary.path() / "wal-00000000000000000002.cwal";
   std::vector<std::byte> bytes = test::read_file(second);
   ASSERT_GE(bytes.size(), kSegmentHeaderSize);

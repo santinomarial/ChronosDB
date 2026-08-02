@@ -32,7 +32,8 @@ public:
 TEST(WalReplayTest, ReplaysDeterministicallyInGlobalSequenceOrderAcrossSegments) {
   test::TemporaryDirectory temporary{"chronos-wal-replay-order"};
   ASSERT_TRUE(temporary.valid());
-  test::create_wal(temporary.path(), 3U, kSegmentHeaderSize + 64U);
+  test::create_wal(temporary.path(),
+                   {.record_count = 3U, .target_segment_size = kSegmentHeaderSize + 64U});
   test::CollectingReplaySink sink;
 
   const common::Result<WalRecoveryReport> report = inspect_wal(temporary.path().string(), sink);

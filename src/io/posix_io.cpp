@@ -1022,7 +1022,7 @@ common::Status PosixDirectory::remove_file(const std::string_view name) const {
   if (!is_open()) {
     return closed_handle("remove_file");
   }
-  const common::Status name_status = validate_entry_name(name);
+  common::Status name_status = validate_entry_name(name);
   if (!name_status.is_ok()) {
     return name_status;
   }

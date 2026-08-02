@@ -128,8 +128,8 @@ public:
     return integer_result(outcome);
   }
 
-  int unlink_at(const int directory_descriptor, const char* const name) override {
-    events.emplace_back("unlink_at:" + std::to_string(directory_descriptor) + ":" + name);
+  int unlink_at(const int parent_descriptor, const char* const name) override {
+    events.emplace_back("unlink_at:" + std::to_string(parent_descriptor) + ":" + name);
     return integer_result(pop_or(unlink_outcomes, 0));
   }
 

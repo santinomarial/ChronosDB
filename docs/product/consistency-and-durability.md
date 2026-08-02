@@ -1,6 +1,12 @@
 # Consistency and Durability Contract
 
-> **Status: specified, not implemented.** This document refines [ADR 0006](../adr/0006-wal-durability-and-group-commit.md), [ADR 0013](../adr/0013-wal-v1-format-and-recovery.md), and the snapshot invariants. It does not strengthen guarantees beyond what a process, operating system, filesystem, device, or future replica protocol can establish.
+> **Status: contract specified; physical WAL foundations partially implemented.** This document
+> refines [ADR 0006](../adr/0006-wal-durability-and-group-commit.md),
+> [ADR 0013](../adr/0013-wal-v1-format-and-recovery.md), and the snapshot invariants. The writer and
+> recovery paths implement the physical write, synchronization, verification, repair, and reopen
+> boundaries. No request acknowledgment coordinator, query service, or distributed mode exists.
+> This document does not strengthen guarantees beyond what a process, operating system, filesystem,
+> device, or future replica protocol can establish.
 
 ## Durability modes
 
@@ -23,10 +29,12 @@ The [WAL recovery design](../architecture/wal-recovery.md) fixes the Linux refer
 ordering: synchronized temporary-file installation, same-directory atomic rename, directory sync,
 complete record write, and `fdatasync`/stronger data sync for `LOCAL_SYNC`. It also states the
 filesystem/device assumptions and macOS limitation. The blocking POSIX operations and serialized
-new-history WAL writer now implement the complete-write boundary and an explicit data-sync frontier.
-No request/response acknowledgment coordinator or group-commit scheduler composes those primitives
-into a public durability mode yet. Default mode, group size/byte/delay policy, and future replica
-persistence remain deferred. Benchmarks must follow the
+WAL writer implement the complete-write boundary and an explicit data-sync frontier. Locked
+recovery verifies the complete physical history, permits only explicit synchronized final-tail
+repair, and reopens at the verified end after a startup synchronization barrier. No request/response
+acknowledgment coordinator or group-commit scheduler composes those primitives into a public
+durability mode yet. Default mode, group size/byte/delay policy, and future replica persistence
+remain deferred. Benchmarks must follow the
 [benchmark contract](../benchmarks/benchmark-contract.md).
 
 The writer's runtime segment target and maximum application-payload setting are admission and

@@ -1,11 +1,12 @@
 # ChronosDB WAL v1
 
-> **Status: accepted specification; physical codec and new-history writer implemented.** The
+> **Status: accepted specification; physical WAL lifecycle implemented.** The
 > `chronos::wal` library implements segment headers, record headers, complete records, identities,
 > positions, size calculations, structural/integrity validation, crash-safe segment installation,
-> append, explicit synchronization, and rotation for a newly created history. Opening an existing
-> WAL, recovery, repair, replay, durability-mode acknowledgment coordination, and application-kind
-> semantics remain unimplemented. This document is the normative byte-level definition
+> append, explicit synchronization, rotation, locked discovery, whole-log physical verification,
+> explicit final-tail repair, replay-sink preflight/replay, and reopening an existing history.
+> Durability-mode acknowledgment coordination and application-kind semantics remain unimplemented.
+> This document is the normative byte-level definition
 > of the ChronosDB single-node WAL v1 physical format. [ADR 0013](../adr/0013-wal-v1-format-and-recovery.md)
 > accepts the design, and the [recovery architecture](../architecture/wal-recovery.md) defines how
 > these bytes are installed, classified, repaired, and replayed. If another document disagrees with

@@ -2,8 +2,8 @@
 
 > **Status: implemented primitive layer.** The `chronos::io` library provides the blocking Linux
 > and macOS file, directory, synchronization, no-replace rename, and advisory-lock operations used
-> by the current WAL writer. It does not itself implement WAL naming, segment installation, append state,
-> acknowledgment, recovery, or replay.
+> by the current WAL writer and recovery path. It does not itself implement WAL naming, segment
+> installation, append state, acknowledgment, recovery policy, or replay.
 
 ## Purpose and boundary
 
@@ -20,8 +20,10 @@ mechanisms already required by the accepted WAL design:
 - data and full-file synchronization;
 - directory-relative regular-file open and exclusive creation;
 - owning directory-entry snapshots with no-follow type classification;
+- directory-relative removal of a previously classified non-directory entry;
 - same-directory atomic no-replace rename and directory synchronization; and
-- a nonblocking process-level whole-file advisory lock.
+- nonblocking process-level whole-file advisory locks that either create or require an existing lock
+  file.
 
 The library depends on `chronos::common` for byte views and explicit `Status`/`Result` failures. The
 WAL codec remains independent from I/O. The current WAL writer composes `chronos::wal` and
@@ -97,6 +99,18 @@ no-out-of-band-mutation deployment assumption. The new-history writer performs a
 to avoid consuming an identity for obviously invalid contents, then repeats the snapshot under its
 acquired lock before installation.
 
+`remove_file()` unlinks one validated basename relative to the directory. It is deliberately narrow:
+the caller must already have classified the entry without following symlinks, must hold the relevant
+ownership lock, and must synchronize the directory after a cleanup batch. WAL recovery uses it only
+for recognized temporary segment names after the named history has verified; the read-only scanner
+never calls it.
+
+`acquire_exclusive_lock()` may create a missing regular lock file for a mutating writer/recovery
+owner. `acquire_existing_exclusive_lock()` requires that regular entry to exist and is used by
+read-only inspection, so diagnosis cannot mutate an invalid or incomplete directory merely by
+creating `LOCK`. Both variants share the same process-local reservation and cross-process `fcntl`
+authority.
+
 ## Synchronization and truncation
 
 `sync_data()` uses `fdatasync` on Linux. Darwin does not expose `fdatasync` through its public libc
@@ -131,9 +145,9 @@ surfacing the close failure is the only safe common rule.
 
 Production calls a concrete syscall adapter. Unit tests substitute a narrow internal adapter whose
 methods correspond one-for-one with the operations above. Scripted outcomes force `EINTR`, short
-transfers, EOF, hard errors, zero progress, lock contention, unsupported rename, and close failure,
-while recording descriptors, offsets, lengths, flags, and ordering. This seam is not installed as a
-public filesystem interface.
+transfers, EOF, hard errors, zero progress, lock contention, unsupported rename, unlink outcomes,
+and close failure while recording descriptors, offsets, lengths, flags, and ordering. This seam is
+not installed as a public filesystem interface.
 
 Separate integration tests use the host filesystem to exercise exclusive creation, explicit-offset
 overwrite/read, size, synchronization, non-growing truncation, no-replace rename, symlink rejection,

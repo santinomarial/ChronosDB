@@ -47,7 +47,7 @@ TEST(WalTailRepairTest, TruncatesOnlyToVerifiedEndSynchronizesAndIsIdempotent) {
   ASSERT_TRUE(repaired.has_value()) << repaired.error().to_string();
   EXPECT_TRUE(repaired->repaired);
   EXPECT_EQ(repaired->repair_original_size, original_size);
-  EXPECT_EQ(repaired->repair_new_size, kSegmentHeaderSize + (2U * 64U));
+  EXPECT_EQ(repaired->repair_new_size, kSegmentHeaderSize + (std::uint64_t{2U} * 64U));
   EXPECT_EQ(std::filesystem::file_size(segment), repaired->repair_new_size);
   EXPECT_EQ(first_sink.replay_sequences, (std::vector<std::uint64_t>{1U, 2U}));
 

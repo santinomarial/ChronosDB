@@ -1,6 +1,15 @@
 # Correctness Strategy
 
-> **Status: partially implemented.** This document turns the [architecture invariants](../architecture/invariants.md) into verification obligations under [ADR 0012](../adr/0012-correctness-testing-and-performance-evidence.md). Phase 1 has unit/property-style tests, sanitizer jobs, optional ByteReader and WAL-codec libFuzzer targets, and deterministically injected POSIX I/O failure tests. WAL v1 has an implemented pure in-memory physical codec, reusable file/directory primitives, and the new-history writer state machine through append, explicit synchronization, and rotation. Opening, crash-image recovery/repair, replay, acknowledgment coordination, and application-kind codecs remain unimplemented. Query, concurrency, and distributed harnesses also remain planned for their roadmap phases.
+> **Status: partially implemented.** This document turns the
+> [architecture invariants](../architecture/invariants.md) into verification obligations under
+> [ADR 0012](../adr/0012-correctness-testing-and-performance-evidence.md). Phase 1 has
+> unit/property-style tests, sanitizer jobs, optional ByteReader and WAL-codec libFuzzer targets,
+> and deterministically injected POSIX I/O failure tests. WAL v1 has an implemented physical codec,
+> reusable file/directory primitives, writer, locked discovery and verification, explicit final-tail
+> repair, preflight/replay passes, existing-history reopen path, and read-only inspection tool.
+> Process-kill crash-image recovery, acknowledgment coordination, and application-kind codecs remain
+> unimplemented. Query, concurrency, and distributed harnesses also remain planned for their roadmap
+> phases.
 
 ## Test types
 
@@ -60,8 +69,11 @@ new-directory entry classification, identity-generation ordering, configured pay
 small-target rotation, sequence exhaustion diagnostics, and invalid internal-position poisoning.
 Host-filesystem integration tests cover directory-relative lifecycle, entry types without symlink
 following, same-process and cross-process locking, complete record append, sync frontiers, and
-two-segment rotation. Crash images and process-kill recovery tests remain future obligations;
-injected syscall ordering is not by itself crash-persistence evidence.
+two-segment rotation. Recovery tests cover strict discovery, segment/record continuity, corruption,
+both accepted incomplete-tail shapes, read-only classification, explicit and repeated repair,
+temporary cleanup, synchronization failures, whole-log preflight before replay, deterministic replay
+order, exact reopen positions, and lock lifetime. Crash images and process-kill recovery tests remain
+future obligations; injected syscall ordering is not by itself crash-persistence evidence.
 
 ### WAL v1 implementation gate
 
@@ -86,11 +98,12 @@ The WAL implementation phases must introduce named suites covering:
   idempotent, and no state is query-visible before complete replay.
 
 Fixtures and randomized failures record WAL format, generator version, seed, platform/filesystem,
-fault point, durability mode, and an exact reproduction command. These suites are required future
-evidence. The physical codec implements the golden-format, structural-property,
-corruption/truncation, and coverage-guided fuzz foundations. The writer adds deterministic
-installation ordering, append failure, sync failure, and rotation coverage; crash interruption,
-acknowledgment reconciliation, repair, and replay suites remain future work.
+fault point, durability mode, and an exact reproduction command. The physical codec implements the
+golden-format, structural-property, corruption/truncation, and coverage-guided fuzz foundations. The
+writer adds deterministic installation ordering, append failure, sync failure, and rotation
+coverage. Discovery, physical scan, corruption classification, explicit repair, preflight/replay,
+reopen, and inspector suites are implemented. Crash interruption during each durable transition,
+process-kill image recovery, and acknowledgment reconciliation remain future evidence.
 
 ### Recovery idempotence and manifest installation
 

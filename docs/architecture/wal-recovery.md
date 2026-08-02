@@ -1,12 +1,12 @@
 # WAL Segment Lifecycle and Recovery
 
-> **Status: accepted design, partially implemented.** The pure in-memory physical codec from
-> [WAL v1](../formats/wal-v1.md), reusable blocking POSIX primitives, exclusive new-history writer,
+> **Status: accepted design, physical recovery implemented.** The pure in-memory physical codec from
+> [WAL v1](../formats/wal-v1.md), reusable blocking POSIX primitives, exclusive writer,
 > crash-safe segment installation, append, explicit synchronization, rotation, frontier tracking,
-> and terminal write/sync failure behavior are implemented. Opening an existing history, startup
-> verification, repair, semantic preflight, replay, durability-mode acknowledgment coordination,
-> and operational metrics are not. This document defines those boundaries without repeating the
-> format tables.
+> terminal write/sync failure behavior, locked discovery, verification, explicit repair,
+> sink-directed semantic preflight/replay, startup barriers, and reopening are implemented.
+> Application-kind codecs, durability-mode acknowledgment coordination, and operational metrics are
+> not. This document defines those boundaries without repeating the format tables.
 
 ## Safety goals and scope
 
@@ -115,10 +115,11 @@ initial creation as a fallback for missing history.
 The current new-history API requires the already installed `wal/` directory to be empty except for
 an optional regular `LOCK`. It performs a read-only content classification before consuming an
 identity and repeats that classification after acquiring the lock. It rejects rather than deletes
-recognized orphan temporaries; cleanup requires the future recovery-capable opener and its
-synchronized cleanup protocol. Malformed reserved names, unrelated entries, symlinks, and
-nonregular entries also fail closed. The API never creates `wal/`, because it does not own the
-database-root descriptor or the required parent-directory synchronization boundary.
+recognized orphan temporaries; only the existing-history recovery opener may remove them after the
+named history verifies and then synchronize that cleanup. Malformed reserved names, unrelated
+entries, symlinks, and nonregular entries also fail closed. The creation API never creates `wal/`,
+because it does not own the database-root descriptor or the required parent-directory
+synchronization boundary.
 
 ### Rotation
 
@@ -250,6 +251,10 @@ deletion until the named WAL has verified, so a corruption report does not perfo
 cleanup first. Temp cleanup is idempotent; `ENOENT` after a prior successful removal is harmless,
 and directory synchronization follows any cleanup batch before writes are enabled.
 
+The implementation follows that policy: read-only scans retain and report recognized temporaries;
+writer recovery removes them only after physical verification (and any authorized repair), then
+synchronizes the directory. This prevents an orphan from colliding with a later segment install.
+
 ### Physical verification
 
 Recovery verifies:
@@ -316,6 +321,11 @@ service and writing disabled.
 A read-only verifier does not perform this barrier and cannot enable a writer. Initial creation and
 ordinary rotation already cross their own installation directory sync; the startup barrier is a
 conservative re-establishment, not a substitute for those transitions.
+
+The reference recovery implementation additionally calls full-file synchronization on the final
+active segment before the directory barrier. This conservative strengthening makes surviving
+process-crash page-cache bytes and a prior interrupted repair durable before it reports the
+recovered written/durable frontier; it does not change the WAL v1 format or acknowledgment modes.
 
 ## Semantic preflight and replay
 
