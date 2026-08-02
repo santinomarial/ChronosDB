@@ -128,6 +128,9 @@ add_library(
   src/wal/codec.cpp
   src/wal/wal_log_id_generator.cpp
   src/wal/wal_paths.cpp
+  src/wal/wal_recovery.cpp
+  src/wal/wal_reopen.cpp
+  src/wal/wal_scan.cpp
   src/wal/wal_segment.cpp
   src/wal/wal_writer.cpp
 )
@@ -154,6 +157,14 @@ target_link_libraries(chronosctl PRIVATE chronos::common)
 chronos_set_project_warnings(chronosctl)
 chronos_enable_sanitizers(chronosctl)
 chronos_enable_static_analysis(chronosctl)
+
+add_executable(chronos-waldump tools/chronos-waldump/main.cpp)
+set_target_properties(chronos-waldump PROPERTIES CXX_EXTENSIONS OFF)
+target_compile_features(chronos-waldump PRIVATE cxx_std_23)
+target_link_libraries(chronos-waldump PRIVATE chronos::wal)
+chronos_set_project_warnings(chronos-waldump)
+chronos_enable_sanitizers(chronos-waldump)
+chronos_enable_static_analysis(chronos-waldump)
 
 if(CHRONOS_BUILD_TESTS)
   enable_testing()

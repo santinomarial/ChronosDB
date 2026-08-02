@@ -143,6 +143,10 @@ public:
   create_exclusive_regular_file(std::string_view name, std::uint16_t permissions = 0600U) const;
   [[nodiscard]] common::Result<PosixAdvisoryLock>
   acquire_exclusive_lock(std::string_view name, std::uint16_t permissions = 0600U) const;
+  // Acquires the same lock without O_CREAT. Read-only diagnostic tools use this to avoid changing
+  // the directory when LOCK is absent.
+  [[nodiscard]] common::Result<PosixAdvisoryLock>
+  acquire_existing_exclusive_lock(std::string_view name) const;
 
   // Returns an owning snapshot of every entry except . and .., sorted by bytewise name. Entry types
   // are obtained without following symlinks. Callers that require an authoritative mutation

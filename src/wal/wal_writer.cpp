@@ -5,7 +5,9 @@
 #include "chronos/wal/wal_paths.hpp"
 #include "io/posix_syscalls.hpp"
 #include "wal/wal_segment_internal.hpp"
+#include "wal/wal_recovery_internal.hpp"
 #include "wal/wal_writer_internal.hpp"
+#include "wal/wal_writer_config_internal.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -42,51 +44,6 @@ namespace {
 [[nodiscard]] common::Status segment_sequence_exhausted() {
   return common::Status{common::StatusCode::kResourceExhausted,
                         "WAL segment sequence UINT64_MAX has no successor"};
-}
-
-[[nodiscard]] common::Status validate_writer_config(const WalWriterConfig& config) {
-  if (config.directory_path.empty()) {
-    return common::Status{common::StatusCode::kInvalidArgument,
-                          "WAL directory path must not be empty"};
-  }
-  if (config.directory_path.find('\0') != std::string::npos) {
-    return common::Status{common::StatusCode::kInvalidArgument,
-                          "WAL directory path contains an embedded NUL byte"};
-  }
-  if ((config.file_permissions & static_cast<std::uint16_t>(~0777U)) != 0U) {
-    return common::Status{common::StatusCode::kInvalidArgument,
-                          "WAL file permissions contain bits outside 0777"};
-  }
-  if (config.maximum_application_payload < kApplicationEnvelopeSize) {
-    return common::Status{
-        common::StatusCode::kInvalidArgument,
-        "configured WAL payload maximum is smaller than the application envelope"};
-  }
-  if (config.maximum_application_payload > kMaximumPayloadLength) {
-    return common::Status{common::StatusCode::kOutOfRange,
-                          "configured WAL payload maximum exceeds the v1 format limit"};
-  }
-  const common::Result<RecordLayout> maximum_layout =
-      calculate_record_layout(config.maximum_application_payload);
-  if (!maximum_layout.has_value()) {
-    return with_context("validate configured WAL payload maximum", maximum_layout.error());
-  }
-  if (config.target_segment_size <= kSegmentHeaderSize) {
-    return common::Status{common::StatusCode::kInvalidArgument,
-                          "target WAL segment size must exceed the segment header size"};
-  }
-  if (config.target_segment_size > kSegmentSizeLimit) {
-    return common::Status{common::StatusCode::kOutOfRange,
-                          "target WAL segment size exceeds the 64 MiB v1 format limit"};
-  }
-  const std::uint64_t required_size =
-      static_cast<std::uint64_t>(kSegmentHeaderSize) + maximum_layout->total_length;
-  if (config.target_segment_size < required_size) {
-    return common::Status{
-        common::StatusCode::kInvalidArgument,
-        "target WAL segment size cannot hold one maximum configured application record"};
-  }
-  return common::Status::ok();
 }
 
 [[nodiscard]] bool parse_nonzero_segment_digits(const std::string_view digits) {
@@ -213,6 +170,21 @@ public:
                           .byte_offset = active_segment_.metadata.end_offset},
         durable_position_(written_position_) {}
 
+  Impl(io::PosixDirectory directory, io::PosixAdvisoryLock lock,
+       detail::ActiveWalSegment active_segment, const WalWriterConfig& config,
+       const WalRecoveryReport& report) noexcept
+      : directory_(std::move(directory)), lock_(std::move(lock)),
+        active_segment_(std::move(active_segment)), file_permissions_(config.file_permissions),
+        target_segment_size_(config.target_segment_size),
+        maximum_application_payload_(config.maximum_application_payload),
+        written_position_(report.valid_end), durable_position_(report.valid_end),
+        next_record_sequence_(report.sequence_exhausted
+                                  ? std::numeric_limits<std::uint64_t>::max()
+                                  : report.last_record_sequence + 1U),
+        written_record_sequence_(report.last_record_sequence),
+        durable_record_sequence_(report.last_record_sequence),
+        sequence_exhausted_(report.sequence_exhausted) {}
+
   [[nodiscard]] common::Status poison(common::Status status) {
     if (failure_.is_ok()) {
       failure_ = std::move(status);
@@ -284,7 +256,7 @@ public:
 
   [[nodiscard]] common::Status validate_active_state() const {
     const WalSegment& segment = active_segment_.metadata;
-    if (segment.end_offset < kSegmentHeaderSize || segment.end_offset > target_segment_size_ ||
+    if (segment.end_offset < kSegmentHeaderSize || segment.end_offset > kSegmentSizeLimit ||
         (segment.end_offset % 8U) != 0U) {
       return common::Status{common::StatusCode::kInternal,
                             "active WAL segment end is outside configured record boundaries"};
@@ -337,7 +309,7 @@ common::Result<WalWriter> WalWriter::create_new(const WalWriterConfig& config,
 common::Result<WalWriter> WalWriter::create_new_with(const WalWriterConfig& config,
                                                      WalLogIdGenerator& id_generator,
                                                      io::detail::PosixSyscalls& syscalls) {
-  const common::Status config_status = validate_writer_config(config);
+  const common::Status config_status = detail::validate_writer_config(config);
   if (!config_status.is_ok()) {
     return common::make_unexpected(config_status);
   }
@@ -425,7 +397,9 @@ WalWriter::append_application_entry(const common::ByteView application_payload) 
     return common::make_unexpected(encoded.error());
   }
   const auto record_length = static_cast<std::uint64_t>(encoded->size());
-  if (record_length > implementation_->target_segment_size_ -
+  if (implementation_->active_segment_.metadata.end_offset >=
+          implementation_->target_segment_size_ ||
+      record_length > implementation_->target_segment_size_ -
                           implementation_->active_segment_.metadata.end_offset) {
     const common::Status rotation_status = implementation_->rotate();
     if (!rotation_status.is_ok()) {
@@ -454,6 +428,17 @@ WalWriter::append_application_entry(const common::ByteView application_payload) 
   return WalAppendResult{.record_sequence = appended_sequence,
                          .record_start = record_start,
                          .record_end = implementation_->written_position_};
+}
+
+common::Result<WalWriter> WalWriter::from_recovered_state(const WalWriterConfig& config,
+                                                          detail::RecoveredWalState state) {
+  try {
+    return WalWriter{std::make_unique<Impl>(std::move(state.directory), std::move(state.lock),
+                                            std::move(state.active_segment), config, state.report)};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                  "cannot allocate recovered WAL writer state"});
+  }
 }
 
 void detail::WalWriterTestAccess::set_sequence_state(WalWriter& writer,

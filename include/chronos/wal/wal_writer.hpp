@@ -7,6 +7,8 @@
 #include "chronos/wal/types.hpp"
 #include "chronos/wal/wal_append_result.hpp"
 #include "chronos/wal/wal_log_id_generator.hpp"
+#include "chronos/wal/wal_recovery.hpp"
+#include "chronos/wal/wal_replay_sink.hpp"
 #include "chronos/wal/wal_segment.hpp"
 #include "chronos/wal/wal_writer_config.hpp"
 
@@ -21,6 +23,7 @@ namespace chronos::wal {
 
 namespace detail {
 class WalWriterTestAccess;
+struct RecoveredWalState;
 }
 
 // WalWriter owns the process advisory lock, WAL directory descriptor, and active segment. It is not
@@ -39,6 +42,9 @@ public:
   [[nodiscard]] static common::Result<WalWriter> create_new(const WalWriterConfig& config);
   [[nodiscard]] static common::Result<WalWriter> create_new(const WalWriterConfig& config,
                                                             WalLogIdGenerator& id_generator);
+  [[nodiscard]] static common::Result<WalWriter>
+  open_existing(const WalWriterConfig& config, const WalRecoveryOptions& options,
+                WalReplaySink& replay_sink);
 
   // Appends one structurally valid physical APPLICATION_ENTRY. This layer does not assign or
   // interpret application format/kind values. Success is the ASYNC write-path boundary only.
@@ -71,6 +77,11 @@ private:
   [[nodiscard]] static common::Result<WalWriter>
   create_new_with(const WalWriterConfig& config, WalLogIdGenerator& id_generator,
                   io::detail::PosixSyscalls& syscalls);
+  [[nodiscard]] static common::Result<WalWriter>
+  open_existing_with(const WalWriterConfig& config, const WalRecoveryOptions& options,
+                     WalReplaySink& replay_sink, io::detail::PosixSyscalls& syscalls);
+  [[nodiscard]] static common::Result<WalWriter>
+  from_recovered_state(const WalWriterConfig& config, detail::RecoveredWalState state);
 
   std::unique_ptr<Impl> implementation_;
 

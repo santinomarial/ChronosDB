@@ -935,6 +935,62 @@ PosixDirectory::acquire_exclusive_lock(const std::string_view name,
   return PosixAdvisoryLock{descriptor, *syscalls_, std::move(*reservation)};
 }
 
+common::Result<PosixAdvisoryLock>
+PosixDirectory::acquire_existing_exclusive_lock(const std::string_view name) const {
+  if (!is_open()) {
+    return common::make_unexpected(closed_handle("acquire_existing_exclusive_lock"));
+  }
+  const common::Status name_status = validate_entry_name(name);
+  if (!name_status.is_ok()) {
+    return common::make_unexpected(name_status);
+  }
+
+  const std::string owned_name{name};
+  common::Result<std::unique_ptr<detail::ProcessLockReservation>> reservation =
+      detail::reserve_process_lock(*syscalls_, descriptor_, owned_name);
+  if (!reservation.has_value()) {
+    return common::make_unexpected(reservation.error());
+  }
+  int descriptor = kInvalidDescriptor;
+  constexpr int kFlags = O_RDWR | O_CLOEXEC | O_NOFOLLOW;
+  do {
+    descriptor = syscalls_->open_at(detail::OpenAtRequest{
+        .directory_descriptor = descriptor_,
+        .name = owned_name.c_str(),
+        .flags = kFlags,
+        .permissions = 0,
+    });
+  } while (descriptor == kInvalidDescriptor && errno == EINTR);
+  if (descriptor == kInvalidDescriptor) {
+    const int error_number = errno;
+    reservation->reset();
+    return common::make_unexpected(errno_status("openat existing advisory lock", error_number));
+  }
+
+  const common::Status validation = validate_regular_file(*syscalls_, descriptor);
+  if (!validation.is_ok()) {
+    close_after_failed_open(*syscalls_, descriptor);
+    reservation->reset();
+    return common::make_unexpected(validation);
+  }
+
+  int lock_result = 0;
+  do {
+    lock_result = syscalls_->try_lock_exclusive(descriptor);
+  } while (lock_result == -1 && errno == EINTR);
+  if (lock_result == -1) {
+    const int error_number = errno;
+    close_after_failed_open(*syscalls_, descriptor);
+    reservation->reset();
+    if (error_number == EACCES || error_number == EAGAIN) {
+      return common::make_unexpected(common::Status{
+          common::StatusCode::kUnavailable, "exclusive advisory lock is held by another process"});
+    }
+    return common::make_unexpected(errno_status("fcntl exclusive advisory lock", error_number));
+  }
+  return PosixAdvisoryLock{descriptor, *syscalls_, std::move(*reservation)};
+}
+
 common::Result<std::vector<DirectoryEntry>> PosixDirectory::list_entries() const {
   if (!is_open()) {
     return common::make_unexpected(closed_handle("list_entries"));
