@@ -102,6 +102,23 @@ chronos_set_project_warnings(chronos_common)
 chronos_enable_sanitizers(chronos_common)
 chronos_enable_static_analysis(chronos_common)
 
+add_library(chronos_io src/io/posix_io.cpp)
+add_library(chronos::io ALIAS chronos_io)
+set_target_properties(chronos_io PROPERTIES EXPORT_NAME io)
+set_target_properties(chronos_io PROPERTIES CXX_EXTENSIONS OFF)
+target_compile_features(chronos_io PUBLIC cxx_std_23)
+target_include_directories(
+  chronos_io
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+  PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
+target_link_libraries(chronos_io PUBLIC chronos::common)
+chronos_set_project_warnings(chronos_io)
+chronos_enable_sanitizers(chronos_io)
+chronos_enable_static_analysis(chronos_io)
+
 add_library(chronos_wal src/wal/codec.cpp)
 add_library(chronos::wal ALIAS chronos_wal)
 set_target_properties(chronos_wal PROPERTIES EXPORT_NAME wal)
@@ -155,6 +172,20 @@ if(CHRONOS_BUILD_TESTS)
   chronos_enable_sanitizers(chronos_common_tests)
   chronos_enable_static_analysis(chronos_common_tests)
   gtest_discover_tests(chronos_common_tests DISCOVERY_TIMEOUT 30)
+
+  add_executable(
+    chronos_io_tests
+    tests/io/posix_io_header_self_contained.cpp
+    tests/io/posix_io_test.cpp
+  )
+  set_target_properties(chronos_io_tests PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_io_tests PRIVATE cxx_std_23)
+  target_include_directories(chronos_io_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+  target_link_libraries(chronos_io_tests PRIVATE chronos::io GTest::gtest_main)
+  chronos_set_project_warnings(chronos_io_tests)
+  chronos_enable_sanitizers(chronos_io_tests)
+  chronos_enable_static_analysis(chronos_io_tests)
+  gtest_discover_tests(chronos_io_tests DISCOVERY_TIMEOUT 30)
 
   add_executable(
     chronos_wal_tests
