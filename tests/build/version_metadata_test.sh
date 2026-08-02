@@ -53,3 +53,9 @@ if [[ "${first_commit}" == "${second_commit}" ]]; then
   echo "error: version metadata did not observe the new commit" >&2
   exit 1
 fi
+
+printf 'invalid index\n' >"${repository}/.git/index"
+generate_header
+grep -Fq 'kGitCommit{"unknown"}' "${output}"
+grep -Fq 'kGitMetadataAvailable = 0' "${output}"
+grep -Fq 'kGitDirty = 0' "${output}"
