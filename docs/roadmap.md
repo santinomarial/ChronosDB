@@ -8,9 +8,10 @@ complete Phase 1 gates have passed. Unimplemented portions of Phase 1 and all la
 planned work, not implemented functionality or delivery commitments. The Phase 2–3
 [WAL v1 format](formats/wal-v1.md), [recovery design](architecture/wal-recovery.md), and
 [ADR 0013](adr/0013-wal-v1-format-and-recovery.md) are accepted design artifacts. The pure in-memory
-WAL physical codec, fixtures, tests, fuzz target, and the minimal blocking POSIX file/directory
-primitives now exist. No segmented writer, installed segment, acknowledgment boundary, recovery,
-replay, or application-kind codec exists yet.
+WAL physical codec, fixtures, tests, fuzz target, minimal blocking POSIX file/directory primitives,
+and the new-history segmented writer through installation, append, explicit sync, and rotation now
+exist. No existing-history opener, acknowledgment coordinator, recovery, repair, replay, or
+application-kind codec exists yet.
 Work should proceed in order unless an accepted ADR explains why a limited dependency must move
 earlier.
 
@@ -65,9 +66,11 @@ No phase passes because its code merely compiles. A phase passes only when its a
 
 - **Implementation status:** segment naming/lifecycle, install and synchronization order,
   acknowledgment eligibility, recovery classification, explicit tail repair, semantic preflight, and
-  replay ordering are accepted design artifacts. The reusable POSIX operations and process-lock
-  primitive exist, but no WAL directory owner, segmented writer, recovery implementation, crash
-  harness, acknowledgment coordinator, or operational metric exists.
+  replay ordering are accepted design artifacts. The reusable POSIX operations, process lock,
+  exclusive new-history owner, segment installation, append/sync frontiers, terminal failure state,
+  and rotation are implemented with deterministic syscall injection. Existing-history opening,
+  recovery/repair, crash-image harness, acknowledgment coordinator, and operational metrics do not
+  exist.
 - **Scope:** implement WAL v1 segment lifecycle, append/grouping, explicitly named durability modes,
   acknowledgment boundaries, rotation, torn-tail handling, ordered replay, and idempotent
   single-node recovery.

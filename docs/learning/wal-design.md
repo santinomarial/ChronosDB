@@ -1,11 +1,11 @@
 # WAL Design
 
-> **Status: design accepted; codec and POSIX primitives implemented.** The normative bytes are in
+> **Status: design accepted; new-history writer implemented.** The normative bytes are in
 > [WAL v1](../formats/wal-v1.md), and the normative lifecycle/recovery behavior is in
-> [WAL recovery](../architecture/wal-recovery.md). The in-memory codec and reusable blocking POSIX
-> file/directory operations exist, while the WAL directory owner, writer, lifecycle,
-> acknowledgment, recovery, repair workflow, and replay do not. This learning document explains
-> the reasoning and should not be used as a substitute for either specification.
+> [WAL recovery](../architecture/wal-recovery.md). The in-memory codec, blocking POSIX operations,
+> and exclusive writer for a new history through install, append, sync, and rotation exist.
+> Existing-history opening, acknowledgment coordination, recovery, repair, and replay do not. This
+> learning document explains the reasoning and should not substitute for either specification.
 
 ## Purpose
 
@@ -26,20 +26,19 @@ ambiguous acknowledgments.
 
 ## Planned subsystem boundaries
 
-The `chronos::wal` library now implements WAL identity/position values, checked layout calculation,
-segment and record header codecs, and allocation-free complete-record validation over borrowed
-bytes. Its encoder writes into caller-owned storage and leaves that storage unchanged on failure.
-The independent `chronos::io` library now supplies checked explicit-offset transfer loops, file and
-directory synchronization, non-growing truncation, exclusive relative creation, atomic no-replace
-rename, and process-level advisory locking. These primitives do not enforce WAL lifecycle order.
-The remaining implementation will need responsibilities equivalent to these boundaries without
-being required to use these names:
+The `chronos::wal` library implements WAL identity/position values, checked layout calculation,
+segment and record codecs, allocation-free validation over borrowed bytes, and the serialized
+new-history writer. Its encoder writes into caller-owned storage and leaves that storage unchanged
+on failure. The independent `chronos::io` library supplies checked explicit-offset transfer loops,
+file and directory synchronization, non-growing truncation, exclusive relative creation, atomic
+no-replace rename, and process-level advisory locking. The writer composes these primitives in the
+specified lifecycle order. Current and remaining boundaries are:
 
-- a directory owner that acquires `LOCK`, discovers files, and owns the active descriptor;
+- the implemented new-history directory owner that acquires `LOCK` and owns the active descriptor;
 - the implemented physical codec that encodes and validates segment headers and records exactly as
   WAL v1;
-- a serialized appender that assigns sequences, handles short writes, rotates, and tracks sync
-  frontiers;
+- the implemented serialized appender that assigns sequences, handles short writes, rotates, and
+  tracks written and durable frontiers;
 - a durability coordinator that releases requests only at their effective-mode boundary;
 - a read-only verifier that returns exact file/offset classifications without mutation;
 - an explicit tail-repair path; and
@@ -48,6 +47,26 @@ being required to use these names:
 The physical WAL handles opaque versioned application entries. It does not decide table mutation,
 deduplication, schema, row-version, or tablet semantics. Those belong to future kind-specific
 payload contracts and apply logic.
+
+## Current writer interface and ownership
+
+`WalWriter::create_new` accepts an existing dedicated WAL directory whose parent installation has
+already been synchronized. It acquires `LOCK`, obtains a nonzero identity through an injectable
+`WalLogIdGenerator`, and installs segment 1 through exclusive temporary creation, complete header
+write, exact-size verification, file sync, no-replace rename, and directory sync. The system
+generator uses platform entropy; deterministic tests inject fixed identities.
+
+`append_application_entry` finishes encoding one bounded record before its first `pwrite`, assigns
+the next sequence, writes at the explicit active end offset, and returns record start/end positions.
+Its success is only the complete-write (`ASYNC`-eligible) boundary. `synchronize` performs the WAL
+data sync and advances the durable position/sequence. It does not acknowledge a request or implement
+group commit. Rotation synchronizes the prior file, durably installs its successor, closes the prior
+descriptor, and writes the complete record at offset 64 of the successor.
+
+`WalWriter` is move-only and not internally synchronized. One caller serializes every operation and
+keeps payload bytes alive through the append call. Any attempted record-write error, sync error, or
+rotation lifecycle error retains the first failure and permanently rejects later append/sync calls.
+Validation errors before I/O do not poison the writer. `close` adds no implicit synchronization.
 
 ## Current codec interface and ownership
 
