@@ -37,8 +37,8 @@ public:
   WalWriter& operator=(WalWriter&&) noexcept;
 
   [[nodiscard]] static common::Result<WalWriter> create_new(const WalWriterConfig& config);
-  [[nodiscard]] static common::Result<WalWriter>
-  create_new(const WalWriterConfig& config, WalLogIdGenerator& id_generator);
+  [[nodiscard]] static common::Result<WalWriter> create_new(const WalWriterConfig& config,
+                                                            WalLogIdGenerator& id_generator);
 
   // Appends one structurally valid physical APPLICATION_ENTRY. This layer does not assign or
   // interpret application format/kind values. Success is the ASYNC write-path boundary only.

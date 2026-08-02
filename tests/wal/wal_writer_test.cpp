@@ -1,7 +1,6 @@
 #include "chronos/wal/codec.hpp"
 #include "chronos/wal/wal_paths.hpp"
 #include "chronos/wal/wal_writer.hpp"
-
 #include "wal/wal_writer_test_support.hpp"
 
 #include <cstddef>
@@ -53,8 +52,7 @@ TEST(WalWriterTest, CreatesLockedInitialSegmentAndTracksWrittenAndDurableFrontie
   EXPECT_EQ(*writer.next_record_sequence(), 1U);
 
   EXPECT_TRUE(std::filesystem::is_regular_file(temporary.path() / "LOCK"));
-  EXPECT_TRUE(std::filesystem::is_regular_file(
-      temporary.path() / "wal-00000000000000000001.cwal"));
+  EXPECT_TRUE(std::filesystem::is_regular_file(temporary.path() / "wal-00000000000000000001.cwal"));
 
   test::FixedWalIdGenerator competing_generator{test::make_wal_id(9U)};
   const common::Result<WalWriter> competing =
@@ -114,8 +112,8 @@ TEST(WalWriterTest, RejectsInvalidConfigurationGeneratorAndApplicationEnvelopeBe
 
   test::TemporaryDirectory valid_temporary{"chronos-wal-writer-invalid-payload-test"};
   test::FixedWalIdGenerator valid_generator{test::make_wal_id()};
-  common::Result<WalWriter> created = WalWriter::create_new(
-      {.directory_path = valid_temporary.path().string()}, valid_generator);
+  common::Result<WalWriter> created =
+      WalWriter::create_new({.directory_path = valid_temporary.path().string()}, valid_generator);
   ASSERT_TRUE(created.has_value()) << created.error().to_string();
   const PhysicalWalPosition initial = created->written_position();
   const std::vector<std::byte> invalid_payload(15U);

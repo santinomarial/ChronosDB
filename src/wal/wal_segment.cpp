@@ -1,7 +1,6 @@
-#include "wal/wal_segment_internal.hpp"
-
 #include "chronos/wal/codec.hpp"
 #include "chronos/wal/wal_paths.hpp"
+#include "wal/wal_segment_internal.hpp"
 
 #include <cstdint>
 #include <string>
@@ -20,10 +19,10 @@ namespace {
 
 } // namespace
 
-common::Result<ActiveWalSegment>
-install_segment(io::PosixDirectory& directory, const WalId& wal_id,
-                const std::uint64_t segment_number, const std::uint64_t first_record_sequence,
-                const std::uint16_t file_permissions) {
+common::Result<ActiveWalSegment> install_segment(io::PosixDirectory& directory, const WalId& wal_id,
+                                                 const std::uint64_t segment_number,
+                                                 const std::uint64_t first_record_sequence,
+                                                 const std::uint16_t file_permissions) {
   const SegmentHeader header{.wal_id = wal_id,
                              .segment_number = segment_number,
                              .first_record_sequence = first_record_sequence};
@@ -72,7 +71,8 @@ install_segment(io::PosixDirectory& directory, const WalId& wal_id,
   }
 
   return ActiveWalSegment{
-      .metadata = WalSegment{.file_name = *final_name, .header = header, .end_offset = kSegmentHeaderSize},
+      .metadata =
+          WalSegment{.file_name = *final_name, .header = header, .end_offset = kSegmentHeaderSize},
       .file = std::move(*temporary),
   };
 }

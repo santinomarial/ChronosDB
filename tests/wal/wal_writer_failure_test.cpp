@@ -1,5 +1,4 @@
 #include "chronos/wal/wal_writer.hpp"
-
 #include "wal/wal_writer_internal.hpp"
 #include "wal/wal_writer_test_support.hpp"
 
@@ -25,11 +24,9 @@ TEST(WalWriterFailureTest, PartialRecordFailurePoisonsWriterAndPreventsEveryLate
   test::ScriptedWalSyscalls syscalls;
   WalWriter writer = make_injected_writer(syscalls);
   ASSERT_TRUE(writer.is_open());
-  const std::size_t creation_write_count =
-      static_cast<std::size_t>(std::count_if(syscalls.events.begin(), syscalls.events.end(),
-                                             [](const std::string& event) {
-                                               return event.starts_with("pwrite:");
-                                             }));
+  const std::size_t creation_write_count = static_cast<std::size_t>(
+      std::count_if(syscalls.events.begin(), syscalls.events.end(),
+                    [](const std::string& event) { return event.starts_with("pwrite:"); }));
 
   syscalls.pwrite_outcomes = {{5, 0}, {-1, EIO}};
   const std::vector<std::byte> payload = test::make_application_payload();
@@ -89,14 +86,11 @@ TEST(WalWriterFailureTest, RotationSyncFailureCannotCreateOrAppendToASuccessor) 
     ASSERT_TRUE(writer.append_application_entry(maximum_payload).has_value());
   }
 
-  const std::size_t open_count_before =
-      static_cast<std::size_t>(std::count_if(syscalls.events.begin(), syscalls.events.end(),
-                                             [](const std::string& event) {
-                                               return event.starts_with("open_at:");
-                                             }));
+  const std::size_t open_count_before = static_cast<std::size_t>(
+      std::count_if(syscalls.events.begin(), syscalls.events.end(),
+                    [](const std::string& event) { return event.starts_with("open_at:"); }));
   syscalls.fdatasync_outcomes = {{-1, EIO}};
-  const common::Result<WalAppendResult> rotation =
-      writer.append_application_entry(maximum_payload);
+  const common::Result<WalAppendResult> rotation = writer.append_application_entry(maximum_payload);
   ASSERT_FALSE(rotation.has_value());
   EXPECT_EQ(rotation.error().code(), common::StatusCode::kIoError);
   EXPECT_TRUE(writer.is_failed());

@@ -406,6 +406,7 @@ TEST(PosixDirectoryInjectedTest, ValidatesRegularFilesAndMapsLockContention) {
   common::Result<PosixAdvisoryLock> lock = directory.acquire_exclusive_lock("LOCK");
   ASSERT_TRUE(lock.has_value()) << lock.error().to_string();
   EXPECT_EQ(syscalls.lock_descriptors.size(), 2U);
+  ASSERT_TRUE(lock->close().is_ok());
 
   syscalls.lock_outcomes = {{-1, EAGAIN}};
   const common::Result<PosixAdvisoryLock> contention = directory.acquire_exclusive_lock("LOCK");
@@ -557,18 +558,14 @@ TEST(PosixIoIntegrationTest, HoldsTheAdvisoryLockAgainstAnotherProcess) {
 TEST(PosixIoIntegrationTest, RejectsASecondOwnerForTheSameLockInOneProcess) {
   TemporaryDirectory temporary;
   ASSERT_TRUE(temporary.valid());
-  common::Result<PosixDirectory> first_directory =
-      PosixDirectory::open(temporary.path().string());
-  common::Result<PosixDirectory> second_directory =
-      PosixDirectory::open(temporary.path().string());
+  common::Result<PosixDirectory> first_directory = PosixDirectory::open(temporary.path().string());
+  common::Result<PosixDirectory> second_directory = PosixDirectory::open(temporary.path().string());
   ASSERT_TRUE(first_directory.has_value());
   ASSERT_TRUE(second_directory.has_value());
 
-  common::Result<PosixAdvisoryLock> first =
-      first_directory->acquire_exclusive_lock("LOCK");
+  common::Result<PosixAdvisoryLock> first = first_directory->acquire_exclusive_lock("LOCK");
   ASSERT_TRUE(first.has_value()) << first.error().to_string();
-  const common::Result<PosixAdvisoryLock> second =
-      second_directory->acquire_exclusive_lock("LOCK");
+  const common::Result<PosixAdvisoryLock> second = second_directory->acquire_exclusive_lock("LOCK");
   ASSERT_FALSE(second.has_value());
   EXPECT_EQ(second.error().code(), common::StatusCode::kUnavailable);
   EXPECT_NE(second.error().message().find("this process"), std::string::npos);

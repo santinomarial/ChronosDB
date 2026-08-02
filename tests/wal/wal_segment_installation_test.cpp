@@ -1,6 +1,5 @@
 #include "chronos/wal/wal_paths.hpp"
 #include "chronos/wal/wal_writer.hpp"
-
 #include "wal/wal_writer_internal.hpp"
 #include "wal/wal_writer_test_support.hpp"
 
@@ -27,8 +26,7 @@ TEST(WalPathsTest, ProducesTheExactAcceptedFinalAndTemporaryNames) {
   const WalId nonce = test::make_wal_id(0xabU);
   const common::Result<std::string> temporary = wal_temporary_segment_file_name(1U, nonce);
   ASSERT_TRUE(temporary.has_value());
-  EXPECT_EQ(*temporary,
-            ".wal-00000000000000000001.cwal.tmp-ab0102030405060708090a0b0c0d0e0f");
+  EXPECT_EQ(*temporary, ".wal-00000000000000000001.cwal.tmp-ab0102030405060708090a0b0c0d0e0f");
   EXPECT_EQ(wal_temporary_segment_file_name(1U, WalId{}).error().code(),
             common::StatusCode::kInvalidArgument);
 }
@@ -42,6 +40,7 @@ TEST(WalSegmentInstallationTest, OrdersHeaderWriteFileSyncRenameAndDirectorySync
 
   const std::vector<std::string> expected{
       "open_directory:/database/wal",
+      "fstat:10",
       "fstat:10",
       "open_at:LOCK",
       "fstat:11",
@@ -69,10 +68,9 @@ TEST(WalSegmentInstallationTest, StopsAtEachFailedDurabilityTransition) {
         {.directory_path = "/database/wal"}, generator, syscalls);
     ASSERT_FALSE(failed.has_value());
     EXPECT_EQ(failed.error().code(), common::StatusCode::kIoError);
-    EXPECT_TRUE(std::none_of(syscalls.events.begin(), syscalls.events.end(),
-                             [](const std::string& event) {
-                               return event.starts_with("rename:");
-                             }));
+    EXPECT_TRUE(
+        std::none_of(syscalls.events.begin(), syscalls.events.end(),
+                     [](const std::string& event) { return event.starts_with("rename:"); }));
   }
   {
     test::ScriptedWalSyscalls syscalls;
@@ -97,9 +95,7 @@ TEST(WalSegmentInstallationTest, StopsAtEachFailedDurabilityTransition) {
     ASSERT_FALSE(failed.has_value());
     EXPECT_EQ(failed.error().code(), common::StatusCode::kIoError);
     EXPECT_TRUE(std::any_of(syscalls.events.begin(), syscalls.events.end(),
-                            [](const std::string& event) {
-                              return event.starts_with("rename:");
-                            }));
+                            [](const std::string& event) { return event.starts_with("rename:"); }));
   }
 }
 

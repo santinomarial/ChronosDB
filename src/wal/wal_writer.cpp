@@ -3,7 +3,6 @@
 #include "chronos/io/posix_io.hpp"
 #include "chronos/wal/codec.hpp"
 #include "chronos/wal/wal_paths.hpp"
-
 #include "io/posix_syscalls.hpp"
 #include "wal/wal_segment_internal.hpp"
 
@@ -60,10 +59,10 @@ public:
 
   [[nodiscard]] common::Result<std::vector<std::byte>>
   encode_application_record(const common::ByteView application_payload) const {
-    const common::Result<RecordHeader> header = make_record_header(
-        {.record_type = kApplicationEntryRecordType,
-         .record_sequence = next_record_sequence_,
-         .payload_length = application_payload.size()});
+    const common::Result<RecordHeader> header =
+        make_record_header({.record_type = kApplicationEntryRecordType,
+                            .record_sequence = next_record_sequence_,
+                            .payload_length = application_payload.size()});
     if (!header.has_value()) {
       return common::make_unexpected(header.error());
     }
@@ -95,11 +94,10 @@ public:
     durable_position_ = written_position_;
     durable_record_sequence_ = written_record_sequence_;
 
-    const std::uint64_t next_segment_number =
-        active_segment_.metadata.header.segment_number + 1U;
-    common::Result<detail::ActiveWalSegment> next_segment = detail::install_segment(
-        directory_, active_segment_.metadata.header.wal_id, next_segment_number,
-        next_record_sequence_, file_permissions_);
+    const std::uint64_t next_segment_number = active_segment_.metadata.header.segment_number + 1U;
+    common::Result<detail::ActiveWalSegment> next_segment =
+        detail::install_segment(directory_, active_segment_.metadata.header.wal_id,
+                                next_segment_number, next_record_sequence_, file_permissions_);
     if (!next_segment.has_value()) {
       return poison(with_context("rotate WAL segment", next_segment.error()));
     }
@@ -153,9 +151,9 @@ common::Result<WalWriter> WalWriter::create_new(const WalWriterConfig& config,
   return create_new_with(config, id_generator, io::detail::system_posix_syscalls());
 }
 
-common::Result<WalWriter>
-WalWriter::create_new_with(const WalWriterConfig& config, WalLogIdGenerator& id_generator,
-                           io::detail::PosixSyscalls& syscalls) {
+common::Result<WalWriter> WalWriter::create_new_with(const WalWriterConfig& config,
+                                                     WalLogIdGenerator& id_generator,
+                                                     io::detail::PosixSyscalls& syscalls) {
   common::Result<io::PosixDirectory> directory =
       io::detail::PosixHandleFactory::open_directory(config.directory_path, syscalls);
   if (!directory.has_value()) {
@@ -178,15 +176,16 @@ WalWriter::create_new_with(const WalWriterConfig& config, WalLogIdGenerator& id_
   common::Result<detail::ActiveWalSegment> active_segment = detail::install_segment(
       *directory, *wal_id, kFirstSegmentNumber, kFirstRecordSequence, config.file_permissions);
   if (!active_segment.has_value()) {
-    return common::make_unexpected(with_context("install initial WAL segment", active_segment.error()));
+    return common::make_unexpected(
+        with_context("install initial WAL segment", active_segment.error()));
   }
 
   try {
     return WalWriter{std::make_unique<Impl>(std::move(*directory), std::move(*lock),
                                             std::move(*active_segment), config.file_permissions)};
   } catch (const std::bad_alloc&) {
-    return common::make_unexpected(common::Status{
-        common::StatusCode::kResourceExhausted, "cannot allocate WAL writer ownership state"});
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                  "cannot allocate WAL writer ownership state"});
   }
 }
 
@@ -219,8 +218,8 @@ WalWriter::append_application_entry(const common::ByteView application_payload) 
   const common::Status write_status = implementation_->active_segment_.file.write_all_at(
       record_start.byte_offset, common::ByteView{*encoded});
   if (!write_status.is_ok()) {
-    return common::make_unexpected(implementation_->poison(
-        with_context("append complete WAL record", write_status)));
+    return common::make_unexpected(
+        implementation_->poison(with_context("append complete WAL record", write_status)));
   }
 
   implementation_->active_segment_.metadata.end_offset += record_length;
@@ -272,7 +271,8 @@ common::Status WalWriter::failure_status() const {
 }
 
 WalId WalWriter::wal_id() const noexcept {
-  return implementation_ == nullptr ? WalId{} : implementation_->active_segment_.metadata.header.wal_id;
+  return implementation_ == nullptr ? WalId{}
+                                    : implementation_->active_segment_.metadata.header.wal_id;
 }
 
 WalSegment WalWriter::active_segment() const {

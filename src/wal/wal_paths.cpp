@@ -10,11 +10,11 @@
 namespace chronos::wal {
 namespace {
 
-[[nodiscard]] common::Result<std::array<char, 20>> segment_digits(
-    const std::uint64_t segment_number) {
+[[nodiscard]] common::Result<std::array<char, 20>>
+segment_digits(const std::uint64_t segment_number) {
   if (segment_number == 0U) {
-    return common::make_unexpected(common::Status{common::StatusCode::kInvalidArgument,
-                                                   "WAL segment number must be nonzero"});
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInvalidArgument, "WAL segment number must be nonzero"});
   }
 
   std::array<char, 20> digits{};
@@ -40,11 +40,11 @@ common::Result<std::string> wal_segment_file_name(const std::uint64_t segment_nu
   return name;
 }
 
-common::Result<std::string>
-wal_temporary_segment_file_name(const std::uint64_t segment_number, const WalId& nonce) {
+common::Result<std::string> wal_temporary_segment_file_name(const std::uint64_t segment_number,
+                                                            const WalId& nonce) {
   if (!nonce.is_valid()) {
     return common::make_unexpected(common::Status{common::StatusCode::kInvalidArgument,
-                                                   "WAL temporary-name nonce must be nonzero"});
+                                                  "WAL temporary-name nonce must be nonzero"});
   }
   const common::Result<std::string> final_name = wal_segment_file_name(segment_number);
   if (!final_name.has_value()) {
@@ -52,7 +52,7 @@ wal_temporary_segment_file_name(const std::uint64_t segment_number, const WalId&
   }
 
   constexpr std::array<char, 16> kHexDigits{'0', '1', '2', '3', '4', '5', '6', '7',
-                                             '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
+                                            '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
   std::string name{"."};
   name.append(*final_name);
   name.append(".tmp-");

@@ -4,7 +4,6 @@
 #include "chronos/common/status.hpp"
 #include "chronos/wal/types.hpp"
 #include "chronos/wal/wal_log_id_generator.hpp"
-
 #include "io/posix_syscalls.hpp"
 
 #include <algorithm>
@@ -19,8 +18,8 @@
 #include <string_view>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <unordered_map>
 #include <unistd.h>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -63,8 +62,7 @@ public:
   ssize_t pwrite(const io::detail::WriteAtRequest& request) override {
     events.emplace_back("pwrite:" + std::to_string(request.descriptor) + "@" +
                         std::to_string(request.offset));
-    const SyscallOutcome outcome =
-        pop_or(pwrite_outcomes, static_cast<std::int64_t>(request.size));
+    const SyscallOutcome outcome = pop_or(pwrite_outcomes, static_cast<std::int64_t>(request.size));
     if (outcome.result > 0) {
       const off_t end = request.offset + static_cast<off_t>(outcome.result);
       file_sizes[request.descriptor] = std::max(file_sizes[request.descriptor], end);
@@ -215,8 +213,12 @@ public:
   TemporaryDirectory(const TemporaryDirectory&) = delete;
   TemporaryDirectory& operator=(const TemporaryDirectory&) = delete;
 
-  [[nodiscard]] bool valid() const noexcept { return !path_.empty(); }
-  [[nodiscard]] const std::filesystem::path& path() const noexcept { return path_; }
+  [[nodiscard]] bool valid() const noexcept {
+    return !path_.empty();
+  }
+  [[nodiscard]] const std::filesystem::path& path() const noexcept {
+    return path_;
+  }
 
 private:
   std::filesystem::path path_;
