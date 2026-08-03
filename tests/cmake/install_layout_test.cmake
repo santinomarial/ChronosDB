@@ -13,6 +13,13 @@ if(NOT install_result EQUAL 0)
   message(FATAL_ERROR "ChronosDB staging install failed with status ${install_result}")
 endif()
 
+if(NOT DEFINED CHRONOS_TEST_INSTALL_INCLUDEDIR)
+  message(FATAL_ERROR "CHRONOS_TEST_INSTALL_INCLUDEDIR is required")
+endif()
+if(NOT DEFINED CHRONOS_TEST_INSTALL_LIBDIR)
+  message(FATAL_ERROR "CHRONOS_TEST_INSTALL_LIBDIR is required")
+endif()
+
 foreach(tool IN ITEMS chronosctl chronos-waldump chronos-walbench)
   set(installed_tool
       "${install_prefix}/${CHRONOS_TEST_INSTALL_BINDIR}/${tool}${CHRONOS_TEST_EXECUTABLE_SUFFIX}")
@@ -20,6 +27,20 @@ foreach(tool IN ITEMS chronosctl chronos-waldump chronos-walbench)
     message(FATAL_ERROR "staging install omitted ${installed_tool}")
   endif()
 endforeach()
+
+set(installed_schema_header
+    "${install_prefix}/${CHRONOS_TEST_INSTALL_INCLUDEDIR}/chronos/schema/table_schema.hpp")
+if(NOT EXISTS "${installed_schema_header}")
+  message(FATAL_ERROR "staging install omitted ${installed_schema_header}")
+endif()
+
+set(installed_targets
+    "${install_prefix}/${CHRONOS_TEST_INSTALL_LIBDIR}/cmake/ChronosDB/ChronosTargets.cmake")
+file(READ "${installed_targets}" installed_targets_contents)
+string(FIND "${installed_targets_contents}" "chronos::schema" schema_target_offset)
+if(schema_target_offset EQUAL -1)
+  message(FATAL_ERROR "installed CMake package omitted chronos::schema")
+endif()
 
 set(installed_walbench
     "${install_prefix}/${CHRONOS_TEST_INSTALL_BINDIR}/chronos-walbench${CHRONOS_TEST_EXECUTABLE_SUFFIX}")

@@ -103,6 +103,30 @@ chronos_set_project_warnings(chronos_common)
 chronos_enable_sanitizers(chronos_common)
 chronos_enable_static_analysis(chronos_common)
 
+add_library(
+  chronos_schema
+  src/schema/column_definition.cpp
+  src/schema/identity.cpp
+  src/schema/logical_type.cpp
+  src/schema/schema_lineage.cpp
+  src/schema/table_schema.cpp
+  src/schema/utf8.cpp
+)
+add_library(chronos::schema ALIAS chronos_schema)
+set_target_properties(chronos_schema PROPERTIES EXPORT_NAME schema)
+set_target_properties(chronos_schema PROPERTIES CXX_EXTENSIONS OFF)
+target_compile_features(chronos_schema PUBLIC cxx_std_23)
+target_include_directories(
+  chronos_schema
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+)
+target_link_libraries(chronos_schema PUBLIC chronos::common)
+chronos_set_project_warnings(chronos_schema)
+chronos_enable_sanitizers(chronos_schema)
+chronos_enable_static_analysis(chronos_schema)
+
 if(NOT CMAKE_SYSTEM_NAME MATCHES "^(Linux|Darwin)$")
   message(FATAL_ERROR "chronos_io currently supports only Linux and macOS")
 endif()
@@ -195,6 +219,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/common/result_header_self_contained.cpp
     tests/common/status_header_self_contained.cpp
     tests/common/status_result_test.cpp
+    tests/common/uuid_header_self_contained.cpp
+    tests/common/uuid_test.cpp
     tests/common/version_header_self_contained.cpp
     tests/common/version_test.cpp
   )
@@ -205,6 +231,29 @@ if(CHRONOS_BUILD_TESTS)
   chronos_enable_sanitizers(chronos_common_tests)
   chronos_enable_static_analysis(chronos_common_tests)
   gtest_discover_tests(chronos_common_tests DISCOVERY_TIMEOUT 30)
+
+  add_executable(
+    chronos_schema_tests
+    tests/schema/column_definition_header_self_contained.cpp
+    tests/schema/column_definition_test.cpp
+    tests/schema/identity_header_self_contained.cpp
+    tests/schema/identity_test.cpp
+    tests/schema/logical_type_header_self_contained.cpp
+    tests/schema/logical_type_test.cpp
+    tests/schema/schema_lineage_header_self_contained.cpp
+    tests/schema/schema_lineage_test.cpp
+    tests/schema/table_schema_header_self_contained.cpp
+    tests/schema/table_schema_test.cpp
+    tests/schema/utf8_header_self_contained.cpp
+    tests/schema/utf8_test.cpp
+  )
+  set_target_properties(chronos_schema_tests PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_schema_tests PRIVATE cxx_std_23)
+  target_link_libraries(chronos_schema_tests PRIVATE chronos::schema GTest::gtest_main)
+  chronos_set_project_warnings(chronos_schema_tests)
+  chronos_enable_sanitizers(chronos_schema_tests)
+  chronos_enable_static_analysis(chronos_schema_tests)
+  gtest_discover_tests(chronos_schema_tests DISCOVERY_TIMEOUT 30)
 
   add_executable(
     chronos_io_tests
@@ -293,6 +342,8 @@ if(CHRONOS_BUILD_TESTS)
       "${CMAKE_COMMAND}"
       "-DCHRONOS_TEST_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
       "-DCHRONOS_TEST_INSTALL_BINDIR=${CMAKE_INSTALL_BINDIR}"
+      "-DCHRONOS_TEST_INSTALL_INCLUDEDIR=${CMAKE_INSTALL_INCLUDEDIR}"
+      "-DCHRONOS_TEST_INSTALL_LIBDIR=${CMAKE_INSTALL_LIBDIR}"
       "-DCHRONOS_TEST_EXECUTABLE_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/install_layout_test.cmake"
   )
