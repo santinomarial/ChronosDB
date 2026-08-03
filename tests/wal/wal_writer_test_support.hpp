@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <deque>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <sys/stat.h>
@@ -95,6 +96,9 @@ public:
 
   int fdatasync(const int descriptor) override {
     events.emplace_back("fdatasync:" + std::to_string(descriptor));
+    if (fdatasync_hook) {
+      fdatasync_hook();
+    }
     return integer_result(pop_or(fdatasync_outcomes, 0));
   }
 
@@ -151,6 +155,7 @@ public:
   std::deque<SyscallOutcome> list_directory_outcomes;
   std::deque<SyscallOutcome> unlink_outcomes;
   std::deque<SyscallOutcome> close_outcomes;
+  std::function<void()> fdatasync_hook;
   std::vector<io::DirectoryEntry> directory_entries;
   std::deque<std::vector<io::DirectoryEntry>> directory_entry_snapshots;
   std::vector<std::string> events;
