@@ -31,7 +31,9 @@
 #include <thread>
 #include <unistd.h>
 
+#if defined(__APPLE__)
 extern char** environ;
+#endif
 #endif
 
 namespace chronos::wal::test {

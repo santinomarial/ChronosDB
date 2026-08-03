@@ -16,7 +16,9 @@
 #error "CHRONOS_WALDUMP_PATH must name the built chronos-waldump executable"
 #endif
 
+#if defined(__APPLE__)
 extern char** environ;
+#endif
 
 namespace chronos::wal {
 namespace {
