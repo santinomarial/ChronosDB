@@ -8,8 +8,10 @@
 > reusable file/directory primitives, writer, locked discovery and verification, explicit final-tail
 > repair, preflight/replay passes, existing-history reopen path, and read-only inspection tool.
 > The bounded WAL commit coordinator now has deterministic concurrency, backpressure, mixed-mode,
-> group-limit, rotation-frontier, failure, shutdown, and metrics tests. Process-kill crash-image
-> recovery and application-kind codecs remain unimplemented. Query and distributed harnesses also
+> group-limit, rotation-frontier, failure, shutdown, and metrics tests. Its deterministic
+> subprocess crash harness covers real host-filesystem creation, installation, append, sync,
+> group commit, rotation, process kill, recovery, repair, reopen, corruption, and locking.
+> Application-kind codecs remain unimplemented. Query and distributed harnesses also
 > remain planned for their roadmap
 > phases.
 
@@ -74,8 +76,10 @@ following, same-process and cross-process locking, complete record append, sync 
 two-segment rotation. Recovery tests cover strict discovery, segment/record continuity, corruption,
 both accepted incomplete-tail shapes, read-only classification, explicit and repeated repair,
 temporary cleanup, synchronization failures, whole-log preflight before replay, deterministic replay
-order, exact reopen positions, and lock lifetime. Crash images and process-kill recovery tests remain
-future obligations; injected syscall ordering is not by itself crash-persistence evidence.
+order, exact reopen positions, and lock lifetime. The subprocess harness now interrupts real
+host-filesystem operations after selected successful syscalls, reconciles parent-observed
+acknowledgments with recovered records, and checks repeated crash-image recovery. It remains process
+termination evidence rather than physical power-loss or storage-device qualification.
 
 The commit-coordinator suite gates its sole worker before admission so count/byte limits and batch
 composition do not depend on scheduler timing. It checks concurrent producer admission against
@@ -112,8 +116,11 @@ fault point, durability mode, and an exact reproduction command. The physical co
 golden-format, structural-property, corruption/truncation, and coverage-guided fuzz foundations. The
 writer adds deterministic installation ordering, append failure, sync failure, and rotation
 coverage. Discovery, physical scan, corruption classification, explicit repair, preflight/replay,
-reopen, and inspector suites are implemented. Crash interruption during each durable transition,
-process-kill image recovery, and acknowledgment reconciliation remain future evidence.
+reopen, and inspector suites are implemented. The subprocess harness implements process-kill image
+recovery and acknowledgment reconciliation across initial/successor installation, append,
+synchronization, grouped completion, repair, reopen, corruption, and locking. Power-cut execution,
+filesystem/device qualification, and crashing recovery inside every one of its own synchronization
+steps remain future evidence.
 
 ### Recovery idempotence and manifest installation
 

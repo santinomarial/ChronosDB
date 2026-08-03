@@ -410,7 +410,8 @@ user data. Diagnostics report identities, lengths, checksums, and bounded contex
 
 ## Deferred work
 
-Group-commit size/delay policy, default durability mode, logical application kinds, checkpoint
+Deployment tuning and the server default for the implemented group-commit size/delay policy,
+logical application kinds, checkpoint
 format and old-segment removal, CSEG/manifest integration, encryption, compression, direct I/O,
 memory-mapped writing, `io_uring`, replication, and broader filesystem qualification remain future
 work. None may weaken the lifecycle or acknowledgment boundaries silently.

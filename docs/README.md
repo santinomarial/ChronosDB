@@ -39,6 +39,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 
 - [Correctness strategy](testing/correctness-strategy.md): implemented foundation checks and the
   future test taxonomy mapped to architecture invariants.
+- [WAL crash harness](testing/wal-crash-harness.md): subprocess protocol, real-syscall crash
+  boundaries, durability/recovery oracle, deterministic matrices, and evidence limitations.
 - [Benchmark contract](benchmarks/benchmark-contract.md): mandatory run metadata, metrics, and comparison rules.
 - [ChronosBench](benchmarks/chronosbench.md): planned correctness-checked workload scenarios.
 

@@ -5,7 +5,8 @@
 > positions, size calculations, structural/integrity validation, crash-safe segment installation,
 > append, explicit synchronization, rotation, locked discovery, whole-log physical verification,
 > explicit final-tail repair, replay-sink preflight/replay, and reopening an existing history.
-> Durability-mode acknowledgment coordination and application-kind semantics remain unimplemented.
+> Durability-mode acknowledgment coordination and its subprocess crash/recovery harness are
+> implemented; application-kind semantics remain unimplemented.
 > This document is the normative byte-level definition
 > of the ChronosDB single-node WAL v1 physical format. [ADR 0013](../adr/0013-wal-v1-format-and-recovery.md)
 > accepts the design, and the [recovery architecture](../architecture/wal-recovery.md) defines how

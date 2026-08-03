@@ -135,9 +135,11 @@ preflight-before-replay, deterministic cross-segment replay, explicit and repeat
 sync failure, temporary cleanup, exact reopen state, subsequent rotation, writer lock lifetime, and
 the inspector's output and exit codes. Public recovery headers also compile independently.
 
-These tests do not prove storage survival across power loss. The Linux production contract still
-requires CI compiler/sanitizer evidence and a future process-kill/crash-image harness that interrupts
-every durable transition. macOS remains a correctness-development platform rather than a qualified
+The subprocess crash harness interrupts initial and successor installation, complete/short append,
+data synchronization, grouped completion, repair/reopen, and locking on real host files, then runs
+the production recovery oracle. These tests still do not prove storage survival across power loss.
+The Linux production contract requires CI compiler/sanitizer evidence and qualified local
+filesystem/device testing. macOS remains a correctness-development platform rather than a qualified
 power-loss durability platform.
 
 ## Complexity and tradeoffs

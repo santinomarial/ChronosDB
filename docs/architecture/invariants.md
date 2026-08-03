@@ -99,8 +99,8 @@ The authoritative [WAL v1 format](../formats/wal-v1.md) satisfies the design obl
 framing by protecting segment interpretation fields, record framing fields, and each complete stored
 record with specified CRC32C ranges. The in-memory codec now has golden, boundary, corruption,
 property-style, sanitizer, and fuzz-target coverage. Locked physical verification, corruption
-classification, explicit final-tail repair, and ordered replay have deterministic tests; a
-process-kill crash-image harness and storage qualification remain required.
+classification, explicit final-tail repair, ordered replay, and a process-kill crash-image matrix
+have deterministic tests. Physical power-loss and storage-stack qualification remain required.
 
 ## 11. Referenced storage is not reclaimed
 

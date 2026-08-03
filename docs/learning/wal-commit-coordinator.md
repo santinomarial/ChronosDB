@@ -137,9 +137,11 @@ mixed-mode completion while sync is blocked, count/byte/delay triggers, rotation
 nonterminal validation, append and sync failure, graceful drain, and metric conservation. Public
 header compilation and ThreadSanitizer are part of the validation matrix.
 
-The tests establish in-process ordering and injected syscall behavior, not power-loss persistence.
-Process-kill crash images and qualified Linux filesystem/device testing remain necessary to prove
-the full `LOCAL_SYNC` failure envelope. The coordinator also does not define application mutation
+The subprocess crash harness now reconciles parent-received completion events with records recovered
+after `SIGKILL`, including grouped `LOCAL_SYNC`, rotation, complete writes, and the synchronized but
+not yet published window. This is process-termination evidence, not power-loss persistence.
+Qualified Linux filesystem/device testing remains necessary for the full `LOCAL_SYNC` failure
+envelope. The coordinator also does not define application mutation
 kinds, idempotency bodies, server response delivery, checkpoint reclamation, or replication.
 
 ## Likely interview questions
