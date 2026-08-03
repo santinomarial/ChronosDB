@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <condition_variable>
 #include <deque>
+#include <exception>
 #include <limits>
 #include <mutex>
 #include <new>
@@ -91,6 +92,10 @@ public:
   [[nodiscard]] common::Result<WalCommitResult> wait() const {
     std::unique_lock lock{mutex_};
     condition_.wait(lock, [this] { return result_.has_value(); });
+    if (!result_.has_value()) {
+      return common::make_unexpected(common::Status{common::StatusCode::kInternal,
+                                                    "WAL completion wait ended without a result"});
+    }
     return result_.value();
   }
 
@@ -145,8 +150,9 @@ public:
     try {
       static_cast<void>(shutdown());
     } catch (...) {
-      // Destruction has no error channel. Explicit shutdown() remains the required path when join
-      // or close errors are material.
+      // A throwing mutex/join operation means the thread lifecycle invariant cannot be recovered,
+      // and allowing std::thread's destructor to discover a joinable worker also terminates.
+      std::terminate();
     }
   }
 
