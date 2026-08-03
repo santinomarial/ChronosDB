@@ -61,7 +61,11 @@ network frame
   → eventual flush to CSEG
 ```
 
-Commit precedes query visibility and live emission. This sequence is logical: a later detailed design must specify whether head population is prepared before commit and atomically published after it, how failures between steps are replayed, and what acknowledgment waits for. It may not expose an uncommitted operation or a partially initialized row.
+Commit precedes query visibility and live emission. The accepted
+[columnar-ingestion design](columnar-ingestion.md) reserves bounded head/retry resources before WAL
+admission, materializes after the requested WAL boundary, and atomically publishes the complete
+batch before external logical success. Its recovery path replays durable-but-unpublished commands
+into fresh state. No path may expose an uncommitted operation or a partially initialized row.
 
 ### Read plane
 
@@ -100,7 +104,14 @@ The control plane owns relatively cold metadata: schema and table definitions, p
 
 ### Mutable and sealed heads
 
-A mutable head is an append-only, in-memory, columnar collection for one tablet's recent committed versions. One shard worker performs mutation; readers acquire a stable published boundary or generation. The writer initializes every selected column slot before publishing a new row count or reference visible to readers. Capacity, null representation, variable-length ownership, and publication memory ordering remain to be specified and benchmarked. [ADR 0005](../adr/0005-columnar-heads-and-immutable-cseg-parts.md) fixes the head/part storage model.
+A mutable head is an append-only, in-memory, columnar collection for one tablet's recent committed
+versions. One shard worker performs mutation; readers acquire a stable published boundary or
+generation. The writer initializes every selected column slot before publishing a new row count or
+reference visible to readers. The accepted
+[mutable-head publication contract](mutable-head-publication.md) fixes schema-bound generations,
+stable storage, batch-atomic release/acquire publication, snapshot pins, and sealing ownership.
+Concrete vector/allocator layouts remain implementation choices requiring evidence.
+[ADR 0005](../adr/0005-columnar-heads-and-immutable-cseg-parts.md) fixes the head/part storage model.
 
 When a head reaches a policy threshold, the owner seals it. A sealed head accepts no more rows, remains readable by active snapshots, and becomes flush input. New writes continue in a new mutable generation so durable I/O does not stop the shard.
 
@@ -118,14 +129,15 @@ coordinator now accepts concurrent producers, transfers all physical writer call
 orders records by linearized admission, acknowledges `ASYNC` after complete write, and groups
 `LOCAL_SYNC` requests behind covering synchronization frontiers. A subprocess crash harness checks
 those acknowledgment frontiers against strict recovery, repair, rotation, reopening, and process
-locking on real host files. Application-kind semantics remain unimplemented.
+locking on real host files. The first columnar application-kind semantics are now
+[specified](columnar-ingestion.md#columnar-append-command-v1) but remain unimplemented.
 
 The [WAL recovery state machine](wal-recovery.md) verifies the complete physical history before
 semantic preflight or replay. It can explicitly truncate only a narrowly defined incomplete suffix
 of the highest active segment; bad checksums, discontinuities, and middle-of-log damage fail closed.
-WAL v1 establishes physical order before durable CSEG installation covers operations. The
-kind-specific logical mutation payload, deployment tuning of the implemented group-commit limits,
-checkpoints, and old-segment removal remain future work.
+WAL v1 establishes physical order before durable CSEG installation covers operations. The columnar
+logical mutation payload is specified but unimplemented. Deployment tuning of the implemented
+group-commit limits, checkpoints, and old-segment removal remain future work.
 
 In the distributed phase, each tablet's authoritative ordering is its committed Raft log. Many logical Raft groups will share a multiplexed physical log while preserving per-group ordering, durability, fairness, reclamation safety, and recovery identity. Reusing the single-node record codec may be desirable but is not yet decided.
 

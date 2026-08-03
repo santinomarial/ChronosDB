@@ -5,14 +5,16 @@ the build and tooling foundation, and Phase 1B, the portable binary foundations,
 Local verification is recorded per change; the Linux compiler/CI matrix remains the reference for
 portable support and is not implied by a macOS-only local run. This status does not mean that the
 complete Phase 1 gates have passed. Unimplemented portions of Phase 1 and all later phases remain
-planned work, not implemented functionality or delivery commitments. The Phase 2–3
+planned work, not implemented functionality or delivery commitments. Phase 4 has accepted design
+artifacts but no implementation. The Phase 2–3
 [WAL v1 format](formats/wal-v1.md), [recovery design](architecture/wal-recovery.md), and
 [ADR 0013](adr/0013-wal-v1-format-and-recovery.md) are accepted design artifacts. The pure in-memory
 WAL physical codec, fixtures, tests, fuzz target, minimal blocking POSIX file/directory primitives,
 the segmented writer, bounded commit coordinator, locked discovery and verification, explicit
 final-tail repair, replay-sink passes, existing-history reopen path, and read-only inspector now
-exist. Coordinator metrics and a deterministic process-kill crash-image harness exist; no
-application-kind codec or server-wide operational metrics/export path exists yet.
+exist. Coordinator metrics and a deterministic process-kill crash-image harness exist. The first
+application-kind format is specified but no codec or server-wide operational metrics/export path
+exists yet.
 Work should proceed in order unless an accepted ADR explains why a limited dependency must move
 earlier.
 
@@ -51,8 +53,8 @@ No phase passes because its code merely compiles. A phase passes only when its a
 - **Implementation status:** the WAL v1 physical directory/segment/record format, integrity scopes,
   limits, application envelope, and compatibility policy are accepted. The pure in-memory segment
   header, record header, and complete-record codec plus identities, physical positions, checked
-  layout calculations, golden fixtures, tests, and fuzz target are implemented. Every kind-specific
-  logical application body remains unimplemented.
+  layout calculations, golden fixtures, tests, and fuzz target are implemented. The first
+  kind-specific logical body is specified but remains unimplemented.
 - **Scope:** complete the kind-specific logical operation payload specification and implement the
   accepted versioned, checksummed WAL framing and typed payloads using fixed-width encodings.
 - **Explicit non-scope:** segment files, sync/acknowledgment policy, recovery across segments, mutable-head application, Raft, and compression unless justified by the record specification.
@@ -75,8 +77,8 @@ No phase passes because its code merely compiles. A phase passes only when its a
   `ASYNC`/`LOCAL_SYNC` completion, group commit, graceful drain, terminal propagation, and coordinator
   metric snapshots are implemented with deterministic tests. The subprocess crash harness exercises
   real host files across installation, append/sync, grouped acknowledgment, rotation, corruption,
-  repair, reopen, and locking. Application-kind semantics and the server-wide operational
-  metrics/export path do not exist.
+  repair, reopen, and locking. The first application-kind semantics are specified but unimplemented;
+  the server-wide operational metrics/export path does not exist.
 - **Scope:** implement WAL v1 segment lifecycle, append/grouping, explicitly named durability modes,
   acknowledgment boundaries, rotation, torn-tail handling, ordered replay, and idempotent
   single-node recovery.
@@ -90,6 +92,11 @@ No phase passes because its code merely compiles. A phase passes only when its a
 - **Measurement exit gate:** characterize append/ack latency distributions and throughput by durability mode, batch size, group-commit setting, and storage device; record sync counts and recovery time separately.
 
 ## Phase 4 — Columnar batches and mutable heads
+
+- **Design status:** logical types and stable identities, immutable schema versions and initial
+  evolution, columnar-batch v1 bytes, the first WAL append command, ordered replay/retry semantics,
+  mutable-head publication, snapshots, and sealing/handoff are accepted specifications. No Phase 4
+  C++, tests, or benchmarks are implemented.
 
 - **Scope:** typed immutable input batches; null/variable-width representation; append-only tablet heads; sealing; single shard-worker ownership; stable reader boundaries; idempotent ordered replay into heads.
 - **Explicit non-scope:** durable columnar parts, SQL execution, secondary indexes, general lock-free containers, live subscriptions, and a universal allocator.

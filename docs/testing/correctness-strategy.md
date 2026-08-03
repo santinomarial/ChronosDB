@@ -11,9 +11,8 @@
 > group-limit, rotation-frontier, failure, shutdown, and metrics tests. Its deterministic
 > subprocess crash harness covers real host-filesystem creation, installation, append, sync,
 > group commit, rotation, process kill, recovery, repair, reopen, corruption, and locking.
-> Application-kind codecs remain unimplemented. Query and distributed harnesses also
-> remain planned for their roadmap
-> phases.
+> The first application-kind codec is specified but remains unimplemented. Query and distributed
+> harnesses also remain planned for their roadmap phases.
 
 ## Test types
 

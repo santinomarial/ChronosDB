@@ -6,7 +6,7 @@
 > append, explicit synchronization, rotation, locked discovery, whole-log physical verification,
 > explicit final-tail repair, replay-sink preflight/replay, and reopening an existing history.
 > Durability-mode acknowledgment coordination and its subprocess crash/recovery harness are
-> implemented; application-kind semantics remain unimplemented.
+> implemented; the first application-kind semantics are specified but remain unimplemented.
 > This document is the normative byte-level definition
 > of the ChronosDB single-node WAL v1 physical format. [ADR 0013](../adr/0013-wal-v1-format-and-recovery.md)
 > accepts the design, and the [recovery architecture](../architecture/wal-recovery.md) defines how
@@ -215,11 +215,13 @@ For `record_type = 1`, the physical payload begins with this 16-byte application
 | 8 | 8 | `application_flags` | Required features for that application format/kind; meaning is owned by its specification. |
 | 16 | variable | `application_body` | Exact kind-specific bytes. |
 
-An application entry therefore has `payload_length >= 16`. WAL v1 assigns the envelope, but no
-application kind in this document. A future logical-operation specification must allocate the
-`application_format`, `application_kind`, flag semantics, body layout, limits, and compatibility
-rules before such entries are used. WAL implementations preserve the payload exactly and do not
-infer table semantics from it.
+An application entry therefore has `payload_length >= 16`. WAL implementations preserve the
+payload exactly and do not infer table semantics from it. The accepted higher-layer
+[columnar ingestion specification](../architecture/columnar-ingestion.md#columnar-append-command-v1)
+allocates application format `1`, kind `2` (`COLUMNAR_APPEND`), with required flags `0`; its command
+header, batch body, limits, and compatibility rules are authoritative there. Other nonzero
+format/kind combinations remain unassigned until an accepted higher-layer specification defines
+them.
 
 For a complete type-1 record, `payload_length < 16`, `application_format = 0`, or
 `application_kind = 0` is corruption. A checksum-valid nonzero but unsupported application format,

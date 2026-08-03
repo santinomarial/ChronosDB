@@ -97,4 +97,8 @@ A **client identity** is a stable, authenticated UUID-scoped producer identity. 
 - The deduplication horizon is a configured time and/or commit-position interval reported by the server. Clients must retain outcomes or reconcile once an identity is older than that horizon; ChronosDB does not promise infinite identity retention.
 - For synchronized modes, identity, digest, result, and mutation become recoverable under the same durability boundary. For `ASYNC`, both may be lost within that mode's failure envelope. Recovery replays them idempotently and cannot retain a mutation while forgetting its protected identity.
 
-Garbage collection may remove identity records only after the advertised horizon and any recovery, replication, subscription, or backup pins permit it. Exact digest encoding, authentication, horizon defaults, multi-tablet batch atomicity, and protocol error representation remain deferred.
+Garbage collection may remove identity records only after the advertised horizon and any recovery,
+replication, subscription, or backup pins permit it. The initial one-tablet columnar append digest
+and outcome are fixed by [ADR 0015](../adr/0015-columnar-batch-v1-and-wal-append-command.md) and the
+[ingestion architecture](../architecture/columnar-ingestion.md). Authentication, horizon defaults,
+multi-tablet batch atomicity, and protocol error representation remain deferred.

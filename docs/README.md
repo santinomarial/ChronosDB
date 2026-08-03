@@ -17,6 +17,10 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Invariants](architecture/invariants.md): correctness properties every implementation must preserve.
 - [WAL recovery](architecture/wal-recovery.md): accepted segment lifecycle, durability boundaries,
   failure classification, tail repair, and replay design.
+- [Columnar ingestion](architecture/columnar-ingestion.md): schema-bound batches, WAL append command,
+  retry interaction, ordered replay, and failure ownership.
+- [Mutable-head publication](architecture/mutable-head-publication.md): single-writer ownership,
+  batch-atomic visibility, snapshot pins, sealing, and future flush handoff.
 - [Non-goals](architecture/non-goals.md): deliberately excluded or deferred scope.
 - [Glossary](glossary.md): canonical terminology.
 
@@ -26,6 +30,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   limits, and compatibility specification; its physical codec, writer, durability coordinator,
   locked discovery, verification, explicit tail repair, replay interface, and existing-history
   reopen path are implemented.
+- [Columnar batch v1](formats/columnar-batch-v1.md): accepted self-describing immutable batch bytes,
+  logical type registry, integrity coverage, and canonical validation rules; not implemented.
 
 ## Delivery
 
@@ -67,5 +73,7 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   contract, reopening, bounded-memory behavior, and failure handling.
 - [WAL commit coordination](learning/wal-commit-coordinator.md): bounded admission, single-worker
   ownership, mixed durability, group commit, shutdown, metrics, and synchronization argument.
+- [Columnar ingestion design](learning/columnar-ingestion-design.md): batch/schema boundaries, WAL
+  command flow, retry identity, publication proof, recovery model, and implementation questions.
 
 Future format, protocol, subsystem, operations, and learning documents should be linked here when they are added by their corresponding roadmap phase.

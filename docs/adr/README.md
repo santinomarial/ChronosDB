@@ -48,3 +48,5 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0011](0011-dependency-and-build-versus-buy-policy.md) | Dependency and build-versus-buy policy | accepted |
 | [0012](0012-correctness-testing-and-performance-evidence.md) | Correctness testing and performance evidence | accepted |
 | [0013](0013-wal-v1-format-and-recovery.md) | WAL v1 format and recovery | accepted |
+| [0014](0014-logical-types-schema-identity-and-evolution.md) | Logical types, schema identity, and evolution | accepted |
+| [0015](0015-columnar-batch-v1-and-wal-append-command.md) | Columnar batch v1 and WAL append command | accepted |

@@ -8,6 +8,11 @@ These definitions are normative vocabulary for architecture documents. Detailed 
 - **Commit position:** A totally ordered boundary within a tablet's committed operation stream, with durability determined by the effective acknowledgment mode. On a single node it derives from the WAL identity plus the relevant WAL-wide record sequence/application mapping; under Raft it incorporates the committed log position and enough identity to reject another tablet or history.
 - **Snapshot:** A stable view of the relevant schemas, row versions, mutable heads, immutable parts, and commit positions for a query.
 - **Tablet:** The unit of data partitioning, ordered mutation, recovery, and—later—Raft replication. A table is divided into tablets by an explicit partitioning rule.
+- **Table identity (`TableId`):** A stable nonzero opaque 128-bit identity for one table, independent of its name.
+- **Column identity (`ColumnId`):** A stable nonzero opaque 128-bit identity preserved across an allowed rename.
+- **Schema identity (`SchemaId`):** A stable nonzero opaque 128-bit identity for one immutable schema version in a table's linear lineage.
+- **Tablet identity (`TabletId`):** A stable nonzero opaque 128-bit identity for one tablet, independent of its current owner or placement.
+- **Columnar batch:** One immutable, schema-shaped, self-describing set of user-column values for a single table schema; the v1 bytes are specified in [columnar-batch v1](formats/columnar-batch-v1.md).
 - **Shard worker:** A single execution owner for one or more mutable tablets. Exactly one shard worker owns a mutable tablet at a time.
 - **Reactor:** An event-loop worker that handles nonblocking network I/O and passes decoded immutable batches through bounded queues; it does not mutate tablet state directly.
 - **Mutable head:** An append-only, in-memory columnar structure containing recent committed rows or row versions for a tablet.
