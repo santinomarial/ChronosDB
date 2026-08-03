@@ -14,6 +14,12 @@ public:
     return WalWriter::create_new_with(config, id_generator, syscalls);
   }
 
+  [[nodiscard]] static common::Result<WalWriter>
+  open_existing(const WalWriterConfig& config, const WalRecoveryOptions& options,
+                WalReplaySink& replay_sink, io::detail::PosixSyscalls& syscalls) {
+    return WalWriter::open_existing_with(config, options, replay_sink, syscalls);
+  }
+
   static void set_sequence_state(WalWriter& writer, std::uint64_t next_record_sequence,
                                  bool sequence_exhausted);
   static void set_active_segment_number(WalWriter& writer, std::uint64_t segment_number);

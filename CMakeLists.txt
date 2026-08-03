@@ -243,15 +243,30 @@ if(CHRONOS_BUILD_TESTS)
     tests/wal/wal_tail_repair_test.cpp
     tests/wal/waldump_test.cpp
   )
+
+  add_executable(chronos_wal_crash_child tests/wal/wal_crash_child.cpp)
+  set_target_properties(chronos_wal_crash_child PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_wal_crash_child PRIVATE cxx_std_23)
+  target_include_directories(
+    chronos_wal_crash_child PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
+                                    "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+  )
+  target_link_libraries(chronos_wal_crash_child PRIVATE chronos::wal Threads::Threads)
+  chronos_set_project_warnings(chronos_wal_crash_child)
+  chronos_enable_sanitizers(chronos_wal_crash_child)
+  chronos_enable_static_analysis(chronos_wal_crash_child)
+
   set_target_properties(chronos_wal_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_wal_tests PRIVATE cxx_std_23)
   target_include_directories(chronos_wal_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
                                                        "${CMAKE_CURRENT_SOURCE_DIR}/tests")
   target_link_libraries(chronos_wal_tests PRIVATE chronos::wal GTest::gtest_main)
   target_compile_definitions(
-    chronos_wal_tests PRIVATE CHRONOS_WALDUMP_PATH="$<TARGET_FILE:chronos-waldump>"
+    chronos_wal_tests
+    PRIVATE CHRONOS_WALDUMP_PATH="$<TARGET_FILE:chronos-waldump>"
+            CHRONOS_WAL_CRASH_CHILD_PATH="$<TARGET_FILE:chronos_wal_crash_child>"
   )
-  add_dependencies(chronos_wal_tests chronos-waldump)
+  add_dependencies(chronos_wal_tests chronos-waldump chronos_wal_crash_child)
   chronos_set_project_warnings(chronos_wal_tests)
   chronos_enable_sanitizers(chronos_wal_tests)
   chronos_enable_static_analysis(chronos_wal_tests)
