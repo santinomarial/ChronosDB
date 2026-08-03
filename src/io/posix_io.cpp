@@ -321,6 +321,12 @@ reserve_process_lock(PosixSyscalls& syscalls, const int directory_descriptor,
 
 namespace {
 
+struct DirectoryStreamCloser {
+  void operator()(DIR* const stream) const noexcept {
+    static_cast<void>(::closedir(stream));
+  }
+};
+
 class SystemPosixSyscalls final : public PosixSyscalls {
 public:
   int open_directory(const char* const path, const int flags) noexcept override {
@@ -398,7 +404,7 @@ public:
       errno = error_number;
       return -1;
     }
-    std::unique_ptr<DIR, decltype(&::closedir)> owned_stream{stream, &::closedir};
+    std::unique_ptr<DIR, DirectoryStreamCloser> owned_stream{stream};
 
     while (true) {
       errno = 0;
