@@ -44,22 +44,28 @@ struct WalCommitResult {
 
   // Present only for LOCAL_SYNC. It is the writer frontier returned by, or observed after, the
   // successful synchronization that covers append.record_sequence. A rotation frontier can be in
-  // the newly installed segment, so callers compare record sequences rather than cross-file
-  // offsets.
+  // the newly installed segment, so durable_record_sequence is the coverage authority rather than
+  // a comparison of cross-file offsets.
   std::optional<PhysicalWalPosition> synchronization_position;
+  std::optional<std::uint64_t> durable_record_sequence;
 
   friend bool operator==(const WalCommitResult&, const WalCommitResult&) = default;
 };
 
 struct WalCommitMetrics {
+  // Cumulative uint64 counters saturate instead of wrapping. Current and high-water admission
+  // values remain exact within the configured size_t bounds.
   std::uint64_t admitted_requests{};
   std::uint64_t admitted_encoded_bytes{};
   std::uint64_t rejected_requests{};
   std::uint64_t appended_requests{};
   std::uint64_t appended_encoded_bytes{};
   std::uint64_t acknowledged_async_requests{};
+  std::uint64_t acknowledged_async_encoded_bytes{};
   std::uint64_t acknowledged_local_sync_requests{};
+  std::uint64_t acknowledged_local_sync_encoded_bytes{};
   std::uint64_t failed_requests{};
+  std::uint64_t failed_encoded_bytes{};
 
   // These count synchronize() calls made by the coordinator. Synchronization performed internally
   // by WalWriter during rotation is not mislabeled as a coordinator call.

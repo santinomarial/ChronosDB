@@ -130,6 +130,39 @@ TEST(WalCommitCoordinatorAdmissionTest, BoundsQueuedAndInFlightRequestsAndEncode
   EXPECT_EQ(drained.acknowledged_async_requests, 2U);
 }
 
+TEST(WalCommitCoordinatorAdmissionTest, RejectsUnknownModeAndOversizedLocalBatchBeforeAdmission) {
+  test::ScriptedWalSyscalls syscalls;
+  Gate gate;
+  common::Result<WalCommitCoordinator> started =
+      start_gated(make_injected_writer(syscalls),
+                  {.maximum_pending_requests = 1U,
+                   .maximum_pending_encoded_bytes = 128U,
+                   .maximum_sync_batch_encoded_bytes = 64U},
+                  gate);
+  ASSERT_TRUE(started.has_value());
+  WalCommitCoordinator coordinator = std::move(*started);
+
+  const common::Result<WalCommitCompletion> unknown = coordinator.try_submit(
+      test::make_application_payload(), static_cast<WalDurabilityMode>(255U));
+  ASSERT_FALSE(unknown.has_value());
+  EXPECT_EQ(unknown.error().code(), common::StatusCode::kInvalidArgument);
+  const common::Result<WalCommitCompletion> oversized_local =
+      coordinator.try_submit(test::make_application_payload(24U), WalDurabilityMode::kLocalSync);
+  ASSERT_FALSE(oversized_local.has_value());
+  EXPECT_EQ(oversized_local.error().code(), common::StatusCode::kOutOfRange);
+
+  common::Result<WalCommitCompletion> async =
+      coordinator.try_submit(test::make_application_payload(24U), WalDurabilityMode::kAsync);
+  ASSERT_TRUE(async.has_value());
+  gate.release();
+  EXPECT_TRUE(async->wait().has_value());
+  EXPECT_TRUE(coordinator.shutdown().is_ok());
+  const WalCommitMetrics metrics = coordinator.metrics();
+  EXPECT_EQ(metrics.rejected_requests, 2U);
+  EXPECT_EQ(metrics.admitted_requests, 1U);
+  EXPECT_EQ(metrics.acknowledged_async_encoded_bytes, 72U);
+}
+
 TEST(WalCommitCoordinatorBatchTest, MixedModesPreserveIndividualAcknowledgmentBoundaries) {
   test::ScriptedWalSyscalls syscalls;
   Gate worker_gate;
@@ -167,6 +200,7 @@ TEST(WalCommitCoordinatorBatchTest, MixedModesPreserveIndividualAcknowledgmentBo
   EXPECT_EQ(async_result->requested_durability, WalDurabilityMode::kAsync);
   EXPECT_EQ(async_result->effective_durability, WalDurabilityMode::kAsync);
   EXPECT_FALSE(async_result->synchronization_position.has_value());
+  EXPECT_FALSE(async_result->durable_record_sequence.has_value());
 
   sync_gate.release();
   const common::Result<WalCommitResult> first_result = first_local->wait();
@@ -175,6 +209,10 @@ TEST(WalCommitCoordinatorBatchTest, MixedModesPreserveIndividualAcknowledgmentBo
   ASSERT_TRUE(second_result.has_value());
   EXPECT_TRUE(first_result->synchronization_position.has_value());
   EXPECT_TRUE(second_result->synchronization_position.has_value());
+  ASSERT_TRUE(first_result->durable_record_sequence.has_value());
+  ASSERT_TRUE(second_result->durable_record_sequence.has_value());
+  EXPECT_GE(*first_result->durable_record_sequence, first_result->append.record_sequence);
+  EXPECT_GE(*second_result->durable_record_sequence, second_result->append.record_sequence);
   EXPECT_EQ(first_result->requested_durability, WalDurabilityMode::kLocalSync);
   EXPECT_EQ(first_result->effective_durability, WalDurabilityMode::kLocalSync);
   EXPECT_EQ(first_result->admission_sequence, 1U);
@@ -192,7 +230,9 @@ TEST(WalCommitCoordinatorBatchTest, MixedModesPreserveIndividualAcknowledgmentBo
   EXPECT_EQ(metrics.local_sync_requests_in_batches, 2U);
   EXPECT_EQ(metrics.maximum_observed_local_sync_batch_requests, 2U);
   EXPECT_EQ(metrics.acknowledged_async_requests, 1U);
+  EXPECT_EQ(metrics.acknowledged_async_encoded_bytes, 64U);
   EXPECT_EQ(metrics.acknowledged_local_sync_requests, 2U);
+  EXPECT_EQ(metrics.acknowledged_local_sync_encoded_bytes, 128U);
 }
 
 TEST(WalCommitCoordinatorBatchTest, EncodedByteLimitAndZeroDelayTriggerSynchronization) {
@@ -271,6 +311,8 @@ TEST(WalCommitCoordinatorBatchTest, RotationSyncReleasesPriorLocalRequestWithout
   ASSERT_TRUE(local_result.has_value());
   ASSERT_TRUE(async_result.has_value());
   ASSERT_TRUE(local_result->synchronization_position.has_value());
+  ASSERT_TRUE(local_result->durable_record_sequence.has_value());
+  EXPECT_GE(*local_result->durable_record_sequence, local_result->append.record_sequence);
   EXPECT_EQ(local_result->append.record_start.segment_number, 1U);
   EXPECT_EQ(local_result->synchronization_position->segment_number, 2U);
   EXPECT_EQ(async_result->append.record_start.segment_number, 2U);
@@ -434,6 +476,7 @@ TEST(WalCommitCoordinatorFailureTest, AppendFailurePoisonsAndFailsAllAcceptedReq
   EXPECT_FALSE(metrics.accepting);
   EXPECT_EQ(metrics.pending_requests, 0U);
   EXPECT_EQ(metrics.failed_requests, 3U);
+  EXPECT_EQ(metrics.failed_encoded_bytes, 192U);
   EXPECT_EQ(metrics.appended_requests, 0U);
 }
 
@@ -473,10 +516,60 @@ TEST(WalCommitCoordinatorFailureTest, SyncFailureKeepsAsyncSuccessAndFailsLocalW
   const WalCommitMetrics metrics = coordinator.metrics();
   EXPECT_EQ(metrics.appended_requests, 3U);
   EXPECT_EQ(metrics.acknowledged_async_requests, 1U);
+  EXPECT_EQ(metrics.acknowledged_async_encoded_bytes, 64U);
   EXPECT_EQ(metrics.acknowledged_local_sync_requests, 0U);
+  EXPECT_EQ(metrics.acknowledged_local_sync_encoded_bytes, 0U);
   EXPECT_EQ(metrics.failed_requests, 2U);
+  EXPECT_EQ(metrics.failed_encoded_bytes, 128U);
   EXPECT_EQ(metrics.synchronization_attempts, 1U);
   EXPECT_EQ(metrics.failed_synchronizations, 1U);
+  EXPECT_EQ(metrics.pending_requests, 0U);
+}
+
+TEST(WalCommitCoordinatorFailureTest, RotationCoverageSurvivesSuccessorAppendFailure) {
+  test::ScriptedWalSyscalls syscalls;
+  test::FixedWalIdGenerator generator{test::make_wal_id()};
+  common::Result<WalWriter> writer = detail::WalWriterTestAccess::create_new(
+      {.directory_path = "/database/wal",
+       .target_segment_size = kSegmentHeaderSize + 64U,
+       .maximum_application_payload = kApplicationEnvelopeSize},
+      generator, syscalls);
+  ASSERT_TRUE(writer.has_value());
+  Gate gate;
+  common::Result<WalCommitCoordinator> started =
+      start_gated(std::move(*writer),
+                  {.maximum_pending_requests = 2U,
+                   .maximum_pending_encoded_bytes = 128U,
+                   .maximum_sync_batch_requests = 2U,
+                   .maximum_sync_batch_encoded_bytes = 128U,
+                   .maximum_sync_batch_delay = std::chrono::hours{1}},
+                  gate);
+  ASSERT_TRUE(started.has_value());
+  WalCommitCoordinator coordinator = std::move(*started);
+  // First record, successor header, then the successor's first record.
+  syscalls.pwrite_outcomes = {{64, 0}, {64, 0}, {-1, EIO}};
+  common::Result<WalCommitCompletion> local =
+      coordinator.try_submit(test::make_application_payload(), WalDurabilityMode::kLocalSync);
+  common::Result<WalCommitCompletion> async =
+      coordinator.try_submit(test::make_application_payload(), WalDurabilityMode::kAsync);
+  ASSERT_TRUE(local.has_value());
+  ASSERT_TRUE(async.has_value());
+  gate.release();
+
+  const common::Result<WalCommitResult> local_result = local->wait();
+  const common::Result<WalCommitResult> async_result = async->wait();
+  ASSERT_TRUE(local_result.has_value());
+  ASSERT_TRUE(local_result->durable_record_sequence.has_value());
+  EXPECT_EQ(*local_result->durable_record_sequence, 1U);
+  ASSERT_FALSE(async_result.has_value());
+  EXPECT_EQ(async_result.error().code(), common::StatusCode::kIoError);
+  EXPECT_EQ(coordinator.shutdown(), async_result.error());
+  const WalCommitMetrics metrics = coordinator.metrics();
+  EXPECT_TRUE(metrics.terminal_failure);
+  EXPECT_EQ(metrics.acknowledged_local_sync_requests, 1U);
+  EXPECT_EQ(metrics.failed_requests, 1U);
+  EXPECT_EQ(metrics.local_sync_batches, 1U);
+  EXPECT_EQ(metrics.synchronization_attempts, 0U);
   EXPECT_EQ(metrics.pending_requests, 0U);
 }
 

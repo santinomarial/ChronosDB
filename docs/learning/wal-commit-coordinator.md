@@ -16,7 +16,8 @@ creating multiple physical writers.
 `try_submit(payload, mode)` copies the payload into coordinator ownership or immediately rejects it
 when count/byte capacity is full. It returns an owning `WalCommitCompletion`; `wait()` returns either
 the retained failure or a `WalCommitResult` containing admission sequence, requested/effective
-mode, append positions, and a synchronization frontier only for `LOCAL_SYNC`.
+mode, append positions, and synchronization position/record-sequence frontiers only for
+`LOCAL_SYNC`.
 
 Only `ASYNC` and `LOCAL_SYNC` are representable. `QUORUM_SYNC` remains outside this API until
 replication has an accepted persistence and commit contract. No request is silently downgraded.
@@ -108,11 +109,11 @@ objects remain usable after the coordinator has joined and been destroyed.
 
 ## Metrics
 
-`WalCommitMetrics` reports admitted/rejected/appended requests and bytes, acknowledgments by mode,
-failed requests, exact current and high-water admission usage, explicit coordinator sync attempts
-and outcomes, and local batches released by durable frontiers. Rotation sync is not mislabeled as
-an explicit coordinator `synchronize()` call, but any local requests it releases form a reported
-local-sync batch.
+`WalCommitMetrics` reports admitted/rejected/appended requests and bytes, acknowledged requests and
+encoded bytes by mode, failed requests and encoded bytes, exact current and high-water admission
+usage, explicit coordinator sync attempts and outcomes, and local batches released by durable
+frontiers. Rotation sync is not mislabeled as an explicit coordinator `synchronize()` call, but any
+local requests it releases form a reported local-sync batch.
 
 Metrics are process-local observability, not durable recovery evidence. Filesystem-sync latency
 histograms, oldest-wait age, crash reconciliation, and server export remain higher-level work.

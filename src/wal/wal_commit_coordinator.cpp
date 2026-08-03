@@ -135,7 +135,9 @@ public:
        void* worker_start_context)
       : writer_(std::move(writer)), config_(config), worker_start_hook_(worker_start_hook),
         worker_start_context_(worker_start_context) {
-    pending_local_sync_.reserve(config_.maximum_pending_requests);
+    pending_local_sync_.reserve(std::min(config_.maximum_pending_requests,
+                                         config_.maximum_pending_encoded_bytes /
+                                             static_cast<std::size_t>(kMinimumRecordLength)));
     metrics_.accepting = true;
   }
 
@@ -286,11 +288,14 @@ private:
   void finish_failure(std::unique_ptr<Request> request, const common::Status& status) {
     request->completion->complete(common::make_unexpected(status));
     saturating_increment(metrics_.failed_requests);
+    saturating_add(metrics_.failed_encoded_bytes,
+                   static_cast<std::uint64_t>(request->encoded_bytes));
     release_admission(*request);
   }
 
   void finish_success(std::unique_ptr<Request> request, const WalAppendResult& append,
-                      const std::optional<PhysicalWalPosition>& synchronization_position) {
+                      const std::optional<PhysicalWalPosition>& synchronization_position,
+                      const std::optional<std::uint64_t> durable_record_sequence = std::nullopt) {
     const WalDurabilityMode durability = request->durability;
     request->completion->complete(WalCommitResult{
         .admission_sequence = request->admission_sequence,
@@ -298,11 +303,16 @@ private:
         .effective_durability = durability,
         .append = append,
         .synchronization_position = synchronization_position,
+        .durable_record_sequence = durable_record_sequence,
     });
     if (durability == WalDurabilityMode::kAsync) {
       saturating_increment(metrics_.acknowledged_async_requests);
+      saturating_add(metrics_.acknowledged_async_encoded_bytes,
+                     static_cast<std::uint64_t>(request->encoded_bytes));
     } else {
       saturating_increment(metrics_.acknowledged_local_sync_requests);
+      saturating_add(metrics_.acknowledged_local_sync_encoded_bytes,
+                     static_cast<std::uint64_t>(request->encoded_bytes));
     }
     release_admission(*request);
   }
@@ -317,7 +327,8 @@ private:
       PendingLocalSync pending = std::move(pending_local_sync_[released_prefix]);
       ++released_requests;
       released_bytes += pending.request->encoded_bytes;
-      finish_success(std::move(pending.request), pending.append, durable_position);
+      finish_success(std::move(pending.request), pending.append, durable_position,
+                     durable_sequence);
       ++released_prefix;
     }
     if (released_prefix != 0U) {
