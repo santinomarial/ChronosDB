@@ -42,6 +42,7 @@ function(chronos_validate_standard_library)
 endfunction()
 
 chronos_validate_standard_library()
+find_package(Threads REQUIRED)
 
 set(CHRONOS_BUILD_TYPE "${CMAKE_BUILD_TYPE}")
 if(CHRONOS_BUILD_TYPE STREQUAL "")
@@ -126,6 +127,7 @@ chronos_enable_static_analysis(chronos_io)
 add_library(
   chronos_wal
   src/wal/codec.cpp
+  src/wal/wal_commit_coordinator.cpp
   src/wal/wal_log_id_generator.cpp
   src/wal/wal_paths.cpp
   src/wal/wal_recovery.cpp
@@ -145,7 +147,7 @@ target_include_directories(
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
   PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
-target_link_libraries(chronos_wal PUBLIC chronos::common PRIVATE chronos::io)
+target_link_libraries(chronos_wal PUBLIC chronos::common PRIVATE chronos::io Threads::Threads)
 chronos_set_project_warnings(chronos_wal)
 chronos_enable_sanitizers(chronos_wal)
 chronos_enable_static_analysis(chronos_wal)
@@ -215,6 +217,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/wal/codec_header_self_contained.cpp
     tests/wal/codec_test.cpp
     tests/wal/types_header_self_contained.cpp
+    tests/wal/wal_commit_coordinator_header_self_contained.cpp
+    tests/wal/wal_commit_coordinator_test.cpp
     tests/wal/wal_corruption_test.cpp
     tests/wal/wal_discovery_test.cpp
     tests/wal/wal_append_result_header_self_contained.cpp
