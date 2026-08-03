@@ -113,15 +113,18 @@ verification, explicit final-tail repair, deterministic replay interface, and ex
 reopen path are implemented. A record never crosses a segment. The writer holds the WAL-directory
 advisory lock, installs each segment through synchronized temporary file/rename/directory
 boundaries, and synchronizes the prior segment before activating its successor. Existing-history
-recovery preserves that lock and the recovered identity/sequence/offset. Acknowledgment coordination
-and application-kind semantics remain unimplemented.
+recovery preserves that lock and the recovered identity/sequence/offset. A bounded commit
+coordinator now accepts concurrent producers, transfers all physical writer calls to one worker,
+orders records by linearized admission, acknowledges `ASYNC` after complete write, and groups
+`LOCAL_SYNC` requests behind covering synchronization frontiers. Application-kind semantics remain
+unimplemented.
 
 The [WAL recovery state machine](wal-recovery.md) verifies the complete physical history before
 semantic preflight or replay. It can explicitly truncate only a narrowly defined incomplete suffix
 of the highest active segment; bad checksums, discontinuities, and middle-of-log damage fail closed.
 WAL v1 establishes physical order before durable CSEG installation covers operations. The
-kind-specific logical mutation payload, group-commit tuning, checkpoints, and old-segment removal
-remain future work.
+kind-specific logical mutation payload, deployment tuning of the implemented group-commit limits,
+checkpoints, and old-segment removal remain future work.
 
 In the distributed phase, each tablet's authoritative ordering is its committed Raft log. Many logical Raft groups will share a multiplexed physical log while preserving per-group ordering, durability, fairness, reclamation safety, and recovery identity. Reusing the single-node record codec may be desirable but is not yet decided.
 
@@ -179,7 +182,8 @@ The following are accepted project constraints:
 - networking is event-driven and epoll-first; and
 - historical-to-live handoff is anchored to deterministic committed positions.
 
-Deferred design areas include durability defaults and group-commit parameters; WAL application
+Deferred design areas include the server durability default and production tuning of the bounded
+group-commit parameters; WAL application
 record kinds and checkpoint/reclamation integration; row identities and correction syntax; CSEG
 layout and codecs; head memory layout and publication ordering; manifest and garbage-collection
 protocol; SQL grammar and type system; optimizer rules; subscription result/change model; watermark

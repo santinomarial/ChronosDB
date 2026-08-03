@@ -32,7 +32,7 @@ struct WalCommitCoordinatorConfig {
   // physically appended while that window is open count toward its request and byte limits even
   // though their completions do not wait for the sync.
   std::size_t maximum_sync_batch_requests{64U};
-  std::size_t maximum_sync_batch_encoded_bytes{4U * 1024U * 1024U};
+  std::size_t maximum_sync_batch_encoded_bytes{kMaximumRecordLength};
   std::chrono::microseconds maximum_sync_batch_delay{1000};
 };
 
@@ -137,7 +137,7 @@ public:
   [[nodiscard]] common::Status shutdown();
 
   [[nodiscard]] WalCommitMetrics metrics() const;
-  [[nodiscard]] bool is_accepting() const noexcept;
+  [[nodiscard]] bool is_accepting() const;
   [[nodiscard]] common::Status terminal_status() const;
 
 private:

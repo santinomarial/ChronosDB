@@ -1,12 +1,13 @@
 # WAL Segment Lifecycle and Recovery
 
-> **Status: accepted design, physical recovery implemented.** The pure in-memory physical codec from
+> **Status: accepted design, physical recovery and acknowledgment coordination implemented.** The pure in-memory physical codec from
 > [WAL v1](../formats/wal-v1.md), reusable blocking POSIX primitives, exclusive writer,
 > crash-safe segment installation, append, explicit synchronization, rotation, frontier tracking,
 > terminal write/sync failure behavior, locked discovery, verification, explicit repair,
-> sink-directed semantic preflight/replay, startup barriers, and reopening are implemented.
-> Application-kind codecs, durability-mode acknowledgment coordination, and operational metrics are
-> not. This document defines those boundaries without repeating the format tables.
+> sink-directed semantic preflight/replay, startup barriers, reopening, bounded multi-producer
+> admission, single-worker append ordering, `ASYNC`/`LOCAL_SYNC` completion, group commit, and
+> coordinator metrics are implemented. Application-kind codecs and server-level acknowledgment
+> transport are not. This document defines those boundaries without repeating the format tables.
 
 ## Safety goals and scope
 
@@ -185,6 +186,32 @@ and is never converted into `ASYNC` success.
 
 The response names requested and effective mode. `QUORUM_SYNC` is rejected as unavailable until the
 replication specification is implemented; no downgrade is permitted.
+
+### Current commit coordinator
+
+`WalCommitCoordinator` transfers an open `WalWriter` to one worker thread. Producer threads copy
+application payloads into a mutex-protected FIFO, and the mutex acquisition that admits a request
+assigns its admission sequence and linearizes physical append order. The worker alone calls append,
+synchronize, observe-frontier, and close operations on the writer. This is a focused MPSC boundary
+for WAL persistence, not a replacement for the reactor-to-shard SPSC topology in ADR 0004.
+
+Admission is nonblocking and bounded by both unfinished request count and exact encoded WAL bytes.
+The charge remains until completion, including while a request is in the worker or waiting for
+`LOCAL_SYNC`; popping the FIFO therefore cannot evade the bound. Full admission returns
+`RESOURCE_EXHAUSTED`. An accepted payload is owned by the coordinator until append finishes, after
+which its storage is released even when the completion still waits for synchronization.
+
+A sync window begins after the first `LOCAL_SYNC` record completes its write. The worker admits
+subsequent FIFO records into that window until the configured physical request count, encoded-byte
+limit, or delay expires. Intervening `ASYNC` records count toward the physical batch limits but
+complete immediately after their own writes. Waiting `LOCAL_SYNC` records complete only after a
+successful covering frontier. Rotation's mandatory prior-file synchronization releases covered
+prior-segment waiters without an unnecessary second sync; cross-file offsets are never compared.
+
+Shutdown closes admission, drains the FIFO, synchronizes a partial final group, closes the writer,
+and joins the worker. A terminal writer failure preserves already completed `ASYNC` results and any
+`LOCAL_SYNC` result whose sequence is already covered, then fails all other accepted requests with
+the retained root status. The coordinator performs no retry or downgrade.
 
 ### Acknowledgment ambiguity
 

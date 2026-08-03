@@ -12,9 +12,10 @@ No acknowledged durable write disappears after any failure covered by the select
 
 For the partially implemented single-node WAL, [WAL recovery](wal-recovery.md) fixes the exact
 `ASYNC` and `LOCAL_SYNC` eligibility boundaries and the covered Linux persistence assumptions. The
-writer exposes complete-write and explicit synchronization frontiers, and locked recovery verifies,
-optionally repairs, replays, and reopens existing history. Acknowledgment coordination remains
-unimplemented. A `LOCAL_SYNC` record cannot be discarded as an incomplete tail under the completed
+writer exposes complete-write and explicit synchronization frontiers, the commit coordinator
+releases `ASYNC` and `LOCAL_SYNC` requests only at their respective boundaries, and locked recovery
+verifies, optionally repairs, replays, and reopens existing history. A `LOCAL_SYNC` record cannot be
+discarded as an incomplete tail under the completed
 contract; encountering such an outcome is a durability defect or an excluded platform failure, not
 permitted loss.
 

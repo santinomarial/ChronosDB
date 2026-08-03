@@ -79,6 +79,7 @@ TEST(WalCommitCoordinatorConfigTest, RejectsInvalidBoundsAndClosedWriters) {
       {.maximum_sync_batch_requests = 0U},
       {.maximum_sync_batch_encoded_bytes = kMinimumRecordLength - 1U},
       {.maximum_sync_batch_delay = std::chrono::microseconds{-1}},
+      {.maximum_sync_batch_delay = std::chrono::hours{25}},
   };
   for (const WalCommitCoordinatorConfig& config : invalid) {
     const common::Result<WalCommitCoordinator> result =
@@ -239,6 +240,49 @@ TEST(WalCommitCoordinatorBatchTest, EncodedByteLimitAndZeroDelayTriggerSynchroni
   }
 }
 
+TEST(WalCommitCoordinatorBatchTest, RotationSyncReleasesPriorLocalRequestWithoutAnExtraSync) {
+  test::ScriptedWalSyscalls syscalls;
+  test::FixedWalIdGenerator generator{test::make_wal_id()};
+  common::Result<WalWriter> writer = detail::WalWriterTestAccess::create_new(
+      {.directory_path = "/database/wal",
+       .target_segment_size = kSegmentHeaderSize + 64U,
+       .maximum_application_payload = kApplicationEnvelopeSize},
+      generator, syscalls);
+  ASSERT_TRUE(writer.has_value());
+  Gate gate;
+  common::Result<WalCommitCoordinator> started = start_gated(
+      std::move(*writer),
+      {.maximum_pending_requests = 2U,
+       .maximum_pending_encoded_bytes = 128U,
+       .maximum_sync_batch_requests = 2U,
+       .maximum_sync_batch_encoded_bytes = 128U,
+       .maximum_sync_batch_delay = std::chrono::hours{1}},
+      gate);
+  ASSERT_TRUE(started.has_value());
+  WalCommitCoordinator coordinator = std::move(*started);
+  common::Result<WalCommitCompletion> local = coordinator.try_submit(
+      test::make_application_payload(), WalDurabilityMode::kLocalSync);
+  common::Result<WalCommitCompletion> async = coordinator.try_submit(
+      test::make_application_payload(), WalDurabilityMode::kAsync);
+  ASSERT_TRUE(local.has_value());
+  ASSERT_TRUE(async.has_value());
+  gate.release();
+
+  const common::Result<WalCommitResult> local_result = local->wait();
+  const common::Result<WalCommitResult> async_result = async->wait();
+  ASSERT_TRUE(local_result.has_value());
+  ASSERT_TRUE(async_result.has_value());
+  ASSERT_TRUE(local_result->synchronization_position.has_value());
+  EXPECT_EQ(local_result->append.record_start.segment_number, 1U);
+  EXPECT_EQ(local_result->synchronization_position->segment_number, 2U);
+  EXPECT_EQ(async_result->append.record_start.segment_number, 2U);
+  EXPECT_TRUE(coordinator.shutdown().is_ok());
+  const WalCommitMetrics metrics = coordinator.metrics();
+  EXPECT_EQ(metrics.synchronization_attempts, 0U);
+  EXPECT_EQ(metrics.local_sync_batches, 1U);
+  EXPECT_EQ(metrics.acknowledged_local_sync_requests, 1U);
+}
+
 TEST(WalCommitCoordinatorConcurrencyTest, PhysicalSequenceMatchesLinearizedAdmissionOrder) {
   constexpr std::size_t kProducerCount = 16U;
   test::ScriptedWalSyscalls syscalls;
@@ -321,6 +365,41 @@ TEST(WalCommitCoordinatorShutdownTest, StopsAdmissionAndDrainsAPartialSyncGroup)
   EXPECT_EQ(metrics.pending_requests, 0U);
   EXPECT_EQ(metrics.acknowledged_local_sync_requests, 1U);
   EXPECT_EQ(metrics.synchronization_attempts, 1U);
+}
+
+TEST(WalCommitCoordinatorFailureTest, RequestValidationFailureDoesNotPoisonLaterAdmission) {
+  test::ScriptedWalSyscalls syscalls;
+  Gate gate;
+  common::Result<WalCommitCoordinator> started = start_gated(
+      make_injected_writer(syscalls),
+      {.maximum_pending_requests = 2U, .maximum_pending_encoded_bytes = 128U}, gate);
+  ASSERT_TRUE(started.has_value());
+  WalCommitCoordinator coordinator = std::move(*started);
+  const std::vector<std::byte> invalid_payload(15U);
+  common::Result<WalCommitCompletion> invalid =
+      coordinator.try_submit(invalid_payload, WalDurabilityMode::kAsync);
+  common::Result<WalCommitCompletion> valid = coordinator.try_submit(
+      test::make_application_payload(), WalDurabilityMode::kAsync);
+  ASSERT_TRUE(invalid.has_value());
+  ASSERT_TRUE(valid.has_value());
+  gate.release();
+
+  const common::Result<WalCommitResult> invalid_result = invalid->wait();
+  const common::Result<WalCommitResult> valid_result = valid->wait();
+  ASSERT_FALSE(invalid_result.has_value());
+  EXPECT_EQ(invalid_result.error().code(), common::StatusCode::kInvalidArgument);
+  ASSERT_TRUE(valid_result.has_value());
+  EXPECT_EQ(valid_result->append.record_sequence, 1U);
+  EXPECT_TRUE(coordinator.shutdown().is_ok());
+  const WalCommitMetrics metrics = coordinator.metrics();
+  EXPECT_FALSE(metrics.terminal_failure);
+  EXPECT_EQ(metrics.failed_requests, 1U);
+  EXPECT_EQ(metrics.appended_requests, 1U);
+  EXPECT_EQ(metrics.acknowledged_async_requests, 1U);
+  EXPECT_EQ(metrics.pending_requests, 0U);
+  EXPECT_EQ(metrics.admitted_requests,
+            metrics.acknowledged_async_requests + metrics.acknowledged_local_sync_requests +
+                metrics.failed_requests);
 }
 
 TEST(WalCommitCoordinatorFailureTest, AppendFailurePoisonsAndFailsAllAcceptedRequests) {

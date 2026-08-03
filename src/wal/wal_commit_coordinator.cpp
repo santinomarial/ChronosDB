@@ -48,6 +48,10 @@ namespace {
     return common::Status{common::StatusCode::kInvalidArgument,
                           "maximum WAL sync batch delay must not be negative"};
   }
+  if (config.maximum_sync_batch_delay > std::chrono::hours{24}) {
+    return common::Status{common::StatusCode::kInvalidArgument,
+                          "maximum WAL sync batch delay exceeds 24 hours"};
+  }
   return common::Status::ok();
 }
 
@@ -245,7 +249,7 @@ public:
     return metrics_;
   }
 
-  [[nodiscard]] bool is_accepting() const noexcept {
+  [[nodiscard]] bool is_accepting() const {
     const std::lock_guard lock{mutex_};
     return metrics_.accepting;
   }
@@ -385,7 +389,7 @@ private:
   }
 
   void append_request(std::unique_ptr<Request> request, SyncWindow& window) {
-    const std::uint64_t segment_before = writer_.active_segment().header.segment_number;
+    const std::uint64_t segment_before = writer_.written_position().segment_number;
     common::Result<WalAppendResult> appended = writer_.append_application_entry(request->payload);
     if (!appended.has_value()) {
       {
@@ -617,7 +621,7 @@ WalCommitMetrics WalCommitCoordinator::metrics() const {
   return implementation_ == nullptr ? WalCommitMetrics{} : implementation_->metrics();
 }
 
-bool WalCommitCoordinator::is_accepting() const noexcept {
+bool WalCommitCoordinator::is_accepting() const {
   return implementation_ != nullptr && implementation_->is_accepting();
 }
 

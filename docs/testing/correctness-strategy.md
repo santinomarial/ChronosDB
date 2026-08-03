@@ -7,8 +7,10 @@
 > and deterministically injected POSIX I/O failure tests. WAL v1 has an implemented physical codec,
 > reusable file/directory primitives, writer, locked discovery and verification, explicit final-tail
 > repair, preflight/replay passes, existing-history reopen path, and read-only inspection tool.
-> Process-kill crash-image recovery, acknowledgment coordination, and application-kind codecs remain
-> unimplemented. Query, concurrency, and distributed harnesses also remain planned for their roadmap
+> The bounded WAL commit coordinator now has deterministic concurrency, backpressure, mixed-mode,
+> group-limit, rotation-frontier, failure, shutdown, and metrics tests. Process-kill crash-image
+> recovery and application-kind codecs remain unimplemented. Query and distributed harnesses also
+> remain planned for their roadmap
 > phases.
 
 ## Test types
@@ -74,6 +76,14 @@ both accepted incomplete-tail shapes, read-only classification, explicit and rep
 temporary cleanup, synchronization failures, whole-log preflight before replay, deterministic replay
 order, exact reopen positions, and lock lifetime. Crash images and process-kill recovery tests remain
 future obligations; injected syscall ordering is not by itself crash-persistence evidence.
+
+The commit-coordinator suite gates its sole worker before admission so count/byte limits and batch
+composition do not depend on scheduler timing. It checks concurrent producer admission against
+physical sequence order, `ASYNC` completion while a mixed group is blocked in sync, shared
+`LOCAL_SYNC` frontiers, count/byte/zero-delay triggers, rotation-provided durability, nonterminal
+validation errors, terminal append/sync propagation, graceful draining shutdown, and metric
+conservation. ThreadSanitizer remains required evidence for this shared-state boundary where the
+host toolchain supports it.
 
 ### WAL v1 implementation gate
 

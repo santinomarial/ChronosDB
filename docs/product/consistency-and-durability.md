@@ -1,10 +1,11 @@
 # Consistency and Durability Contract
 
-> **Status: contract specified; physical WAL foundations partially implemented.** This document
+> **Status: contract specified; single-node WAL durability coordination implemented.** This document
 > refines [ADR 0006](../adr/0006-wal-durability-and-group-commit.md),
 > [ADR 0013](../adr/0013-wal-v1-format-and-recovery.md), and the snapshot invariants. The writer and
 > recovery paths implement the physical write, synchronization, verification, repair, and reopen
-> boundaries. No request acknowledgment coordinator, query service, or distributed mode exists.
+> boundaries. The bounded commit coordinator implements `ASYNC` and `LOCAL_SYNC` completion and
+> group commit; no query service, transport acknowledgment path, or distributed mode exists.
 > This document does not strengthen guarantees beyond what a process, operating system, filesystem,
 > device, or future replica protocol can establish.
 
@@ -29,12 +30,15 @@ The [WAL recovery design](../architecture/wal-recovery.md) fixes the Linux refer
 ordering: synchronized temporary-file installation, same-directory atomic rename, directory sync,
 complete record write, and `fdatasync`/stronger data sync for `LOCAL_SYNC`. It also states the
 filesystem/device assumptions and macOS limitation. The blocking POSIX operations and serialized
-WAL writer implement the complete-write boundary and an explicit data-sync frontier. Locked
+WAL writer implement the complete-write boundary and an explicit data-sync frontier. The commit
+coordinator owns that writer on one worker, bounds unfinished requests and encoded bytes, preserves
+FIFO admission order, completes `ASYNC` after write, and groups `LOCAL_SYNC` requests behind one
+covering frontier subject to configured request, byte, and delay limits. Locked
 recovery verifies the complete physical history, permits only explicit synchronized final-tail
-repair, and reopens at the verified end after a startup synchronization barrier. No request/response
-acknowledgment coordinator or group-commit scheduler composes those primitives into a public
-durability mode yet. Default mode, group size/byte/delay policy, and future replica persistence
-remain deferred. Benchmarks must follow the
+repair, and reopens at the verified end after a startup synchronization barrier. The server's
+default mode and deployment-specific group-limit tuning remain deferred; the coordinator requires
+an explicit mode per request and never exposes `QUORUM_SYNC`. Future replica persistence also
+remains deferred. Benchmarks must follow the
 [benchmark contract](../benchmarks/benchmark-contract.md).
 
 The writer's runtime segment target and maximum application-payload setting are admission and
