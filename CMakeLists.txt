@@ -168,6 +168,14 @@ chronos_set_project_warnings(chronos-waldump)
 chronos_enable_sanitizers(chronos-waldump)
 chronos_enable_static_analysis(chronos-waldump)
 
+add_executable(chronos-walbench tools/chronos-walbench/main.cpp)
+set_target_properties(chronos-walbench PROPERTIES CXX_EXTENSIONS OFF)
+target_compile_features(chronos-walbench PRIVATE cxx_std_23)
+target_link_libraries(chronos-walbench PRIVATE chronos::wal Threads::Threads)
+chronos_set_project_warnings(chronos-walbench)
+chronos_enable_sanitizers(chronos-walbench)
+chronos_enable_static_analysis(chronos-walbench)
+
 if(CHRONOS_BUILD_TESTS)
   enable_testing()
   chronos_fetch_googletest()
@@ -280,13 +288,22 @@ if(CHRONOS_BUILD_TESTS)
   gtest_discover_tests(chronos_wal_tests DISCOVERY_TIMEOUT 30 NO_PRETTY_VALUES)
 
   add_test(
-    NAME InstallLayoutTest.IncludesWaldump
+    NAME InstallLayoutTest.IncludesOperatorAndBenchmarkTools
     COMMAND
       "${CMAKE_COMMAND}"
       "-DCHRONOS_TEST_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
       "-DCHRONOS_TEST_INSTALL_BINDIR=${CMAKE_INSTALL_BINDIR}"
       "-DCHRONOS_TEST_EXECUTABLE_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/install_layout_test.cmake"
+  )
+
+  add_test(
+    NAME WalBenchmarkSmokeTest.ModesAndArtifacts
+    COMMAND
+      "${CMAKE_COMMAND}"
+      "-DCHRONOS_WALBENCH=$<TARGET_FILE:chronos-walbench>"
+      "-DCHRONOS_TEST_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/walbench_smoke_test.cmake"
   )
 
   if(UNIX)

@@ -3,6 +3,7 @@
 #include "chronos/wal/codec.hpp"
 #include "chronos/wal/wal_paths.hpp"
 #include "io/posix_syscalls.hpp"
+#include "wal/codec_internal.hpp"
 #include "wal/wal_scan_internal.hpp"
 
 #include <algorithm>
@@ -296,7 +297,7 @@ common::Result<WalRecoveryReport> scan_discovered_wal(io::PosixDirectory& direct
           return common::make_unexpected(status);
         }
         const common::Result<RecordHeader> record_header =
-            decode_record_header(encoded_record_header);
+            decode_record_header_for_physical_scan(encoded_record_header);
         if (!record_header.has_value()) {
           return common::make_unexpected(
               with_context("decode WAL record header at offset " + std::to_string(offset),
@@ -307,6 +308,11 @@ common::Result<WalRecoveryReport> scan_discovered_wal(io::PosixDirectory& direct
               "WAL record sequence is not contiguous at offset " + std::to_string(offset)));
         }
         if (record_header->total_length > remaining) {
+          if (record_header->record_flags != 0U) {
+            return common::make_unexpected(common::Status{
+                common::StatusCode::kNotSupported,
+                "WAL record required flags are not supported at offset " + std::to_string(offset)});
+          }
           if (!is_final) {
             return common::make_unexpected(
                 corruption("incomplete record appears in a non-final WAL segment"));

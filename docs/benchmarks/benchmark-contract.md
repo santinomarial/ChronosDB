@@ -1,6 +1,9 @@
 # Benchmark Publication Contract
 
-> **Status: specified, not implemented.** No ChronosDB engine or benchmark result currently exists. This contract governs future measurements under [ADR 0012](../adr/0012-correctness-testing-and-performance-evidence.md).
+> **Status: contract implemented by the focused WAL harness; no result is published here.** The
+> [WAL benchmark harness](wal-benchmarks.md) emits reviewable local WAL measurement artifacts. The
+> broader ChronosDB engine and ChronosBench suite remain unimplemented. This contract governs every
+> measurement under [ADR 0012](../adr/0012-correctness-testing-and-performance-evidence.md).
 
 ## Required run manifest
 

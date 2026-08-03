@@ -295,6 +295,10 @@ device/cache assumptions, write and sync counts, queue delay, acknowledgment lat
 throughput, CPU, allocations, and recovery scan/replay time. Comparing `ASYNC` with `LOCAL_SYNC` as
 though their guarantees were equal is invalid.
 
+The implemented [WAL benchmark harness](../benchmarks/wal-benchmarks.md) supplies this focused
+production-path measurement and exact recovery reconciliation. It retains raw per-operation samples
+and verified images; its smoke tests and local output are not published performance claims.
+
 ## Likely interview questions
 
 - Why does a successful `rename` not by itself prove the new filename is durable?

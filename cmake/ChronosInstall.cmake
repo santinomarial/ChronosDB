@@ -5,7 +5,7 @@ include(CMakePackageConfigHelpers)
 
 function(chronos_configure_installation)
   install(
-    TARGETS chronos_common chronos_io chronos_wal chronosctl chronos-waldump
+    TARGETS chronos_common chronos_io chronos_wal chronosctl chronos-waldump chronos-walbench
     EXPORT ChronosTargets
     ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
     LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"

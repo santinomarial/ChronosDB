@@ -1,3 +1,4 @@
+#include "chronos/common/crc32c.hpp"
 #include "chronos/wal/wal_scan.hpp"
 #include "wal/wal_recovery_test_support.hpp"
 
@@ -8,6 +9,13 @@
 
 namespace chronos::wal {
 namespace {
+
+void store_u32_le(const common::MutableByteView bytes, const std::size_t offset,
+                  const std::uint32_t value) {
+  for (std::size_t index = 0; index < sizeof(value); ++index) {
+    bytes[offset + index] = static_cast<std::byte>((value >> (index * 8U)) & 0xffU);
+  }
+}
 
 TEST(WalCorruptionTest, RejectsCompleteChecksumInvalidFinalRecordWithoutRepairClassification) {
   test::TemporaryDirectory temporary{"chronos-wal-bad-final-crc"};
@@ -74,6 +82,26 @@ TEST(WalCorruptionTest, RejectsRecordSequenceDiscontinuity) {
   ASSERT_FALSE(report.has_value());
   EXPECT_EQ(report.error().code(), common::StatusCode::kCorruption);
   EXPECT_NE(report.error().message().find("sequence"), std::string::npos);
+}
+
+TEST(WalCorruptionTest, ValidatesCompleteRecordIntegrityBeforeRejectingRequiredFlags) {
+  test::TemporaryDirectory temporary{"chronos-wal-flagged-corruption"};
+  ASSERT_TRUE(temporary.valid());
+  test::create_wal(temporary.path(), 0U);
+  std::vector<std::byte> record = test::encode_physical_record(1U, kApplicationEntryRecordType);
+  ASSERT_GE(record.size(), kRecordHeaderSize + kApplicationEnvelopeSize + kRecordTrailerSize);
+
+  store_u32_le(record, 16U, 1U);
+  store_u32_le(record, 36U, common::crc32c(common::ByteView{record}.first(36U)));
+  store_u32_le(record, record.size() - kRecordTrailerSize,
+               common::crc32c(common::ByteView{record}.first(record.size() - kRecordTrailerSize)));
+  record[kRecordHeaderSize + 8U] ^= std::byte{0x01};
+  test::append_bytes(temporary.path() / "wal-00000000000000000001.cwal", record);
+
+  const common::Result<WalRecoveryReport> report = scan_wal(temporary.path().string());
+  ASSERT_FALSE(report.has_value());
+  EXPECT_EQ(report.error().code(), common::StatusCode::kCorruption);
+  EXPECT_NE(report.error().message().find("CRC32C"), std::string::npos);
 }
 
 } // namespace

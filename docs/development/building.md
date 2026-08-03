@@ -3,8 +3,9 @@
 ChronosDB's implemented code currently consists of the Phase 1A build/version foundation, the Phase
 1B portable common binary primitives, the pure in-memory WAL v1 physical codec, the minimal blocking
 POSIX file/directory layer, the segmented WAL writer, locked physical recovery/reopen path, and the
-read-only `chronos-waldump` inspector. Acknowledgment coordination, application-kind codecs, and
-other engine components described elsewhere remain planned. The reference production platform is
+bounded commit coordinator, subprocess crash harness, read-only `chronos-waldump` inspector, and
+correctness-gated `chronos-walbench` measurement tool. Application-kind codecs and other engine
+components described elsewhere remain planned. The reference production platform is
 Linux x86-64; the common, WAL codec, POSIX I/O, writer, recovery, and inspection targets support
 Linux and modern macOS, including Apple silicon. macOS correctness support is not a power-loss
 durability claim.
@@ -106,8 +107,8 @@ verification or lock failure, and `2` for invalid command-line use. It never rep
 missing `LOCK` file.
 
 Install to a staging prefix with `cmake --install build/release --prefix <directory>`. This installs
-`chronosctl`, `chronos-waldump`, the common, POSIX I/O, and WAL libraries and public headers, and a
-CMake package exporting `chronos::common`, `chronos::io`, and `chronos::wal`.
+`chronosctl`, `chronos-waldump`, `chronos-walbench`, the common, POSIX I/O, and WAL libraries and
+public headers, and a CMake package exporting `chronos::common`, `chronos::io`, and `chronos::wal`.
 
 ## Sanitizers
 
@@ -130,6 +131,15 @@ diagnostics and still exit successfully. Sanitizer support also depends on the c
 host OS; Linux Clang is the CI reference.
 
 ## Microbenchmarks
+
+The production-path WAL measurement harness has a dependency-free Release preset and a wrapper that
+captures metadata and refuses unsafe output/source states:
+
+```sh
+scripts/benchmark-wal.sh /new/path/outside/the/repository/wal-run --mode LOCAL_SYNC
+```
+
+See [WAL benchmarks](../benchmarks/wal-benchmarks.md) before interpreting or publishing output.
 
 The optional benchmark preset builds Release-mode CRC32C, ByteReader, ByteWriter, and harness
 microbenchmarks:

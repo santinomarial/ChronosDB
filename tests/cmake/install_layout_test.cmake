@@ -13,7 +13,7 @@ if(NOT install_result EQUAL 0)
   message(FATAL_ERROR "ChronosDB staging install failed with status ${install_result}")
 endif()
 
-foreach(tool IN ITEMS chronosctl chronos-waldump)
+foreach(tool IN ITEMS chronosctl chronos-waldump chronos-walbench)
   set(installed_tool
       "${install_prefix}/${CHRONOS_TEST_INSTALL_BINDIR}/${tool}${CHRONOS_TEST_EXECUTABLE_SUFFIX}")
   if(NOT EXISTS "${installed_tool}")

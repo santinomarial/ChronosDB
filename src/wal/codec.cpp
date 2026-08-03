@@ -1,6 +1,7 @@
 #include "chronos/wal/codec.hpp"
 
 #include "chronos/common/crc32c.hpp"
+#include "wal/codec_internal.hpp"
 
 #include <algorithm>
 #include <array>
@@ -365,7 +366,8 @@ common::Result<EncodedRecordHeader> encode_record_header(const RecordHeader& hea
 }
 
 common::Result<RecordHeader> decode_record_header(const common::ByteView encoded_bytes) {
-  common::Result<RecordHeader> header = parse_record_header(encoded_bytes);
+  common::Result<RecordHeader> header =
+      detail::decode_record_header_for_physical_scan(encoded_bytes);
   if (!header.has_value()) {
     return header;
   }
@@ -373,6 +375,11 @@ common::Result<RecordHeader> decode_record_header(const common::ByteView encoded
     return common::make_unexpected(not_supported("WAL record required flags are not supported"));
   }
   return header;
+}
+
+common::Result<RecordHeader>
+detail::decode_record_header_for_physical_scan(const common::ByteView encoded_bytes) {
+  return parse_record_header(encoded_bytes);
 }
 
 common::Result<std::size_t> encode_record(const RecordHeader& header,

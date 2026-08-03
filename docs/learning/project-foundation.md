@@ -3,8 +3,9 @@
 Phase 1A establishes enough real code to prove how ChronosDB will be built without pretending that
 the database engine exists. `chronos_common` exposes stable version/build information,
 `chronos_io` owns the minimal Linux/macOS POSIX durability primitives, `chronos_wal` provides the
-portable in-memory WAL v1 physical codec, `chronosctl version` renders metadata for people or
-automation, and unit tests exercise the same public interfaces eventual consumers will use.
+physical codec, segmented writer, recovery/reopen path, and durability coordinator,
+`chronosctl version` renders metadata for people or automation, and operator, benchmark, fuzz,
+crash, and unit targets exercise the same production libraries.
 
 ## Why target-scoped CMake
 
@@ -24,7 +25,10 @@ chronos_common_benchmarks (optional) ─► chronos::common + benchmark::benchma
 chronos_byte_reader_fuzz (optional) ──► chronos::common + Clang libFuzzer
 chronos::io ──────────► chronos::common
 chronos_io_tests ─────► chronos::io + GTest::gtest_main
-chronos::wal ─────────► chronos::common
+chronos::wal ─────────► chronos::common + chronos::io + Threads
+chronos-waldump ──────► chronos::wal
+chronos-walbench ─────► chronos::wal + Threads
+chronos_wal_crash_child ─► chronos::wal + Threads
 chronos_wal_tests ────► chronos::wal + GTest::gtest_main
 chronos_wal_codec_fuzz (optional) ────► chronos::wal + Clang libFuzzer
 ```

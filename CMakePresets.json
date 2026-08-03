@@ -58,6 +58,16 @@
       }
     },
     {
+      "name": "wal-benchmark",
+      "displayName": "Release WAL Benchmark Harness",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CHRONOS_BUILD_TESTS": "OFF",
+        "CHRONOS_BUILD_BENCHMARKS": "OFF"
+      }
+    },
+    {
       "name": "asan-ubsan",
       "displayName": "AddressSanitizer and UndefinedBehaviorSanitizer",
       "inherits": "base",
@@ -94,6 +104,7 @@
     { "name": "debug", "configurePreset": "debug" },
     { "name": "release", "configurePreset": "release" },
     { "name": "benchmark", "configurePreset": "benchmark" },
+    { "name": "wal-benchmark", "configurePreset": "wal-benchmark" },
     { "name": "asan-ubsan", "configurePreset": "asan-ubsan" },
     { "name": "tsan", "configurePreset": "tsan" },
     { "name": "fuzz", "configurePreset": "fuzz" }

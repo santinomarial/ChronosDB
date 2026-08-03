@@ -42,12 +42,16 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [WAL crash harness](testing/wal-crash-harness.md): subprocess protocol, real-syscall crash
   boundaries, durability/recovery oracle, deterministic matrices, and evidence limitations.
 - [Benchmark contract](benchmarks/benchmark-contract.md): mandatory run metadata, metrics, and comparison rules.
+- [WAL benchmarks](benchmarks/wal-benchmarks.md): production-path WAL measurement harness, safety
+  controls, correctness gate, artifact schema, and evidence limitations.
 - [ChronosBench](benchmarks/chronosbench.md): planned correctness-checked workload scenarios.
 
 ## Reviews
 
 - [Phase 1 foundation review](reviews/phase-1-foundation-review.md): adversarial audit and validation
   evidence for the implemented build and common binary foundation before WAL design.
+- [WAL v1 exit review](reviews/wal-v1-review.md): storage, concurrency, recovery, portability,
+  testing, installation, and measurement audit of the implemented WAL lifecycle.
 
 ## Learning
 
