@@ -128,6 +128,8 @@ struct CrashChildOptions {
   std::size_t maximum_sync_batch_requests{64U};
   std::size_t maximum_sync_batch_encoded_bytes{kMaximumRecordLength};
   std::chrono::microseconds maximum_sync_batch_delay{1'000'000};
+  // Clang 18 requires this explicit default for omitted designated-initializer fields.
+  // NOLINTNEXTLINE(readability-redundant-member-init)
   std::string pause_after{};
   std::uint64_t pause_occurrence{1U};
   std::size_t short_record_prefix{};
