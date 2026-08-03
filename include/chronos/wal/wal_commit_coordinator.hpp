@@ -26,7 +26,7 @@ struct WalCommitCoordinatorConfig {
   // These limits cover every accepted request that has not completed, including a request being
   // appended by the worker and LOCAL_SYNC requests waiting for a synchronization boundary.
   std::size_t maximum_pending_requests{1024U};
-  std::size_t maximum_pending_encoded_bytes{64U * 1024U * 1024U};
+  std::size_t maximum_pending_encoded_bytes{std::size_t{64U} * 1024U * 1024U};
 
   // A sync window begins when the worker completes the first LOCAL_SYNC append. ASYNC records
   // physically appended while that window is open count toward its request and byte limits even

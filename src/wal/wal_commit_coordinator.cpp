@@ -91,7 +91,7 @@ public:
   [[nodiscard]] common::Result<WalCommitResult> wait() const {
     std::unique_lock lock{mutex_};
     condition_.wait(lock, [this] { return result_.has_value(); });
-    return *result_;
+    return result_.value();
   }
 
 private:
@@ -121,7 +121,7 @@ public:
     bool active{false};
     std::size_t request_count{};
     std::size_t encoded_bytes{};
-    std::chrono::steady_clock::time_point deadline{};
+    std::chrono::steady_clock::time_point deadline;
 
     void reset() noexcept {
       active = false;
@@ -141,8 +141,13 @@ public:
     metrics_.accepting = true;
   }
 
-  ~Impl() {
-    static_cast<void>(shutdown());
+  ~Impl() noexcept {
+    try {
+      static_cast<void>(shutdown());
+    } catch (...) {
+      // Destruction has no error channel. Explicit shutdown() remains the required path when join
+      // or close errors are material.
+    }
   }
 
   [[nodiscard]] common::Status start_worker() {
