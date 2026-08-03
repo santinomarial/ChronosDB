@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -17,13 +18,13 @@ namespace {
 ProjectionEntry::ProjectionEntry(ColumnId descendant_column_id,
                                  const std::size_t descendant_ordinal,
                                  std::optional<std::size_t> ancestor_ordinal) noexcept
-    : descendant_column_id_(std::move(descendant_column_id)),
-      descendant_ordinal_(descendant_ordinal), ancestor_ordinal_(ancestor_ordinal) {}
+    : descendant_column_id_(descendant_column_id), descendant_ordinal_(descendant_ordinal),
+      ancestor_ordinal_(ancestor_ordinal) {}
 
-SchemaProjection::SchemaProjection(SchemaId ancestor_schema_id, SchemaId descendant_schema_id,
+SchemaProjection::SchemaProjection(ProjectionRequest request,
                                    std::vector<ProjectionEntry> entries) noexcept
-    : ancestor_schema_id_(std::move(ancestor_schema_id)),
-      descendant_schema_id_(std::move(descendant_schema_id)), entries_(std::move(entries)) {}
+    : ancestor_schema_id_(request.ancestor_schema_id),
+      descendant_schema_id_(request.descendant_schema_id), entries_(std::move(entries)) {}
 
 SchemaLineage::SchemaLineage(std::shared_ptr<const TableSchema> initial_schema)
     : schemas_{std::move(initial_schema)} {}
@@ -38,7 +39,7 @@ common::Result<SchemaLineage> SchemaLineage::create(TableSchema initial_schema) 
 
 common::Status SchemaLineage::append(TableSchema successor) {
   const std::shared_ptr<const TableSchema>& predecessor = schemas_.back();
-  const common::Status compatibility = validate_v1_successor(*predecessor, successor);
+  common::Status compatibility = validate_v1_successor(*predecessor, successor);
   if (!compatibility.is_ok()) {
     return compatibility;
   }
@@ -112,16 +113,14 @@ SchemaLineage::historical_column_id(const std::string_view name) const noexcept 
   return std::nullopt;
 }
 
-common::Result<SchemaProjection>
-SchemaLineage::projection(const SchemaId ancestor_schema_id,
-                          const SchemaId descendant_schema_id) const {
+common::Result<SchemaProjection> SchemaLineage::projection(const ProjectionRequest request) const {
   std::optional<std::size_t> ancestor_index;
   std::optional<std::size_t> descendant_index;
   for (std::size_t index = 0; index < schemas_.size(); ++index) {
-    if (schemas_[index]->schema_id() == ancestor_schema_id) {
+    if (schemas_[index]->schema_id() == request.ancestor_schema_id) {
       ancestor_index = index;
     }
-    if (schemas_[index]->schema_id() == descendant_schema_id) {
+    if (schemas_[index]->schema_id() == request.descendant_schema_id) {
       descendant_index = index;
     }
   }
@@ -145,7 +144,7 @@ SchemaLineage::projection(const SchemaId ancestor_schema_id,
     }
     entries.emplace_back(descendant.columns()[index].id(), index, source_ordinal);
   }
-  return SchemaProjection{ancestor.schema_id(), descendant.schema_id(), std::move(entries)};
+  return SchemaProjection{request, std::move(entries)};
 }
 
 } // namespace chronos::schema

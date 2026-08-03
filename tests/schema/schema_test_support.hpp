@@ -13,8 +13,7 @@
 
 namespace chronos::schema::test {
 
-template <typename IdentifierType>
-[[nodiscard]] IdentifierType make_id(const std::uint16_t value) {
+template <typename IdentifierType> [[nodiscard]] IdentifierType make_id(const std::uint16_t value) {
   common::Uuid::Bytes bytes{};
   bytes[14] = static_cast<std::byte>((value >> 8U) & 0xffU);
   bytes[15] = static_cast<std::byte>(value & 0xffU);
@@ -26,8 +25,7 @@ template <typename IdentifierType>
 }
 
 [[nodiscard]] inline ColumnDefinition make_column(const std::uint16_t id, std::string name,
-                                                  const LogicalTypeKind kind,
-                                                  const bool nullable) {
+                                                  const LogicalTypeKind kind, const bool nullable) {
   return ColumnDefinition::create(make_id<ColumnId>(id), std::move(name), make_type(kind), nullable)
       .value();
 }

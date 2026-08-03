@@ -1,6 +1,5 @@
 #include "chronos/schema/table_schema.hpp"
-
-#include "schema/schema_test_support.hpp"
+#include "schema_test_support.hpp"
 
 #include <gtest/gtest.h>
 #include <optional>
@@ -26,24 +25,21 @@ static_assert(!std::is_default_constructible_v<TableSchema>);
 [[nodiscard]] TableSchemaRoles base_roles() {
   return TableSchemaRoles{
       .event_time_column = test::make_id<ColumnId>(1),
-      .physical_ordering_key =
-          {test::make_id<ColumnId>(2), test::make_id<ColumnId>(1),
-           test::make_id<ColumnId>(3)},
+      .physical_ordering_key = {test::make_id<ColumnId>(2), test::make_id<ColumnId>(1),
+                                test::make_id<ColumnId>(3)},
       .partition_columns = {test::make_id<ColumnId>(1)},
       .shard_key = {test::make_id<ColumnId>(2)},
       .deduplication_key = {test::make_id<ColumnId>(2), test::make_id<ColumnId>(3)},
   };
 }
 
-[[nodiscard]] common::Result<TableSchema>
-make_schema(std::vector<ColumnDefinition> columns = base_columns(),
-            TableSchemaRoles roles = base_roles(), const std::uint16_t schema_id = 100,
-            const std::uint64_t version = 1,
-            std::optional<SchemaId> parent_schema_id = std::nullopt,
-            const std::uint16_t table_id = 50) {
+[[nodiscard]] common::Result<TableSchema> make_schema(
+    std::vector<ColumnDefinition> columns = base_columns(), TableSchemaRoles roles = base_roles(),
+    const std::uint16_t schema_id = 100, const std::uint64_t version = 1,
+    std::optional<SchemaId> parent_schema_id = std::nullopt, const std::uint16_t table_id = 50) {
   return TableSchema::create(test::make_id<TableId>(table_id), test::make_id<SchemaId>(schema_id),
-                             SchemaVersion::from_value(version).value(),
-                             std::move(parent_schema_id), std::move(columns), std::move(roles));
+                             SchemaVersion::from_value(version).value(), parent_schema_id,
+                             std::move(columns), std::move(roles));
 }
 
 TEST(TableSchemaTest, PreservesSchemaOrdinalOrderAndRoleOrder) {
@@ -94,16 +90,13 @@ TEST(TableSchemaTest, RejectsDuplicateColumnIdentityAndExactName) {
 }
 
 TEST(TableSchemaTest, EnforcesInitialAndSuccessorParentShape) {
-  EXPECT_FALSE(make_schema(base_columns(), base_roles(), 100, 1,
-                           test::make_id<SchemaId>(99))
-                   .has_value());
+  EXPECT_FALSE(
+      make_schema(base_columns(), base_roles(), 100, 1, test::make_id<SchemaId>(99)).has_value());
   EXPECT_FALSE(make_schema(base_columns(), base_roles(), 100, 2).has_value());
-  EXPECT_FALSE(make_schema(base_columns(), base_roles(), 100, 2,
-                           test::make_id<SchemaId>(100))
-                   .has_value());
-  EXPECT_TRUE(make_schema(base_columns(), base_roles(), 101, 2,
-                          test::make_id<SchemaId>(100))
-                  .has_value());
+  EXPECT_FALSE(
+      make_schema(base_columns(), base_roles(), 100, 2, test::make_id<SchemaId>(100)).has_value());
+  EXPECT_TRUE(
+      make_schema(base_columns(), base_roles(), 101, 2, test::make_id<SchemaId>(100)).has_value());
 }
 
 TEST(TableSchemaTest, RequiresOneKnownNonNullTimestampEventColumn) {
@@ -168,8 +161,8 @@ TEST(TableSchemaTest, EnforcesTheColumnarBatchV1ColumnLimit) {
   columns.push_back(test::make_column(1, "ts", LogicalTypeKind::kTimestampNs, false));
   for (std::size_t index = 1; index <= kMaximumSchemaColumnCount; ++index) {
     columns.push_back(test::make_column(static_cast<std::uint16_t>(index + 1U),
-                                        "column_" + std::to_string(index),
-                                        LogicalTypeKind::kInt64, true));
+                                        "column_" + std::to_string(index), LogicalTypeKind::kInt64,
+                                        true));
   }
   EXPECT_FALSE(make_schema(std::move(columns)).has_value());
 }

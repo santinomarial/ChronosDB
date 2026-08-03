@@ -1,6 +1,5 @@
 #include "chronos/schema/identity.hpp"
-
-#include "schema/schema_test_support.hpp"
+#include "schema_test_support.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -14,6 +13,9 @@ namespace {
 static_assert(!std::is_same_v<TableId, ColumnId>);
 static_assert(!std::is_same_v<TableId, SchemaId>);
 static_assert(!std::is_same_v<TableId, TabletId>);
+static_assert(!std::is_same_v<ColumnId, SchemaId>);
+static_assert(!std::is_same_v<ColumnId, TabletId>);
+static_assert(!std::is_same_v<SchemaId, TabletId>);
 static_assert(!std::is_convertible_v<TableId, ColumnId>);
 static_assert(!std::is_default_constructible_v<TableId>);
 static_assert(!std::is_default_constructible_v<SchemaVersion>);

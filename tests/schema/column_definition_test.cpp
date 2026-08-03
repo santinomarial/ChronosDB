@@ -1,6 +1,5 @@
 #include "chronos/schema/column_definition.hpp"
-
-#include "schema/schema_test_support.hpp"
+#include "schema_test_support.hpp"
 
 #include <gtest/gtest.h>
 #include <string>
@@ -32,9 +31,8 @@ TEST(ColumnDefinitionTest, RejectsEmptyInvalidUtf8AndEmbeddedNullNames) {
   ASSERT_FALSE(empty.has_value());
   EXPECT_EQ(empty.error().code(), common::StatusCode::kInvalidArgument);
 
-  const common::Result<ColumnDefinition> invalid =
-      ColumnDefinition::create(id, std::string{static_cast<char>(0xc0), static_cast<char>(0x80)},
-                               type, false);
+  const common::Result<ColumnDefinition> invalid = ColumnDefinition::create(
+      id, std::string{static_cast<char>(0xc0), static_cast<char>(0x80)}, type, false);
   ASSERT_FALSE(invalid.has_value());
   EXPECT_EQ(invalid.error().code(), common::StatusCode::kInvalidArgument);
 
@@ -47,14 +45,14 @@ TEST(ColumnDefinitionTest, RejectsEmptyInvalidUtf8AndEmbeddedNullNames) {
 TEST(ColumnDefinitionTest, UsesExactUtf8BytesRatherThanNormalization) {
   const std::string composed = "é";
   const std::string decomposed = "e\xcc\x81";
-  const ColumnDefinition first = ColumnDefinition::create(
-                                     test::make_id<ColumnId>(1), composed,
-                                     test::make_type(LogicalTypeKind::kString), false)
-                                     .value();
-  const ColumnDefinition second = ColumnDefinition::create(
-                                      test::make_id<ColumnId>(2), decomposed,
-                                      test::make_type(LogicalTypeKind::kString), false)
-                                      .value();
+  const ColumnDefinition first =
+      ColumnDefinition::create(test::make_id<ColumnId>(1), composed,
+                               test::make_type(LogicalTypeKind::kString), false)
+          .value();
+  const ColumnDefinition second =
+      ColumnDefinition::create(test::make_id<ColumnId>(2), decomposed,
+                               test::make_type(LogicalTypeKind::kString), false)
+          .value();
   EXPECT_NE(first.name(), second.name());
 }
 

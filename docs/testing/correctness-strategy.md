@@ -11,8 +11,10 @@
 > group-limit, rotation-frontier, failure, shutdown, and metrics tests. Its deterministic
 > subprocess crash harness covers real host-filesystem creation, installation, append, sync,
 > group commit, rotation, process kill, recovery, repair, reopen, corruption, and locking.
-> The first application-kind codec is specified but remains unimplemented. Query and distributed
-> harnesses also remain planned for their roadmap phases.
+> The logical schema foundation has deterministic identity, type, UTF-8, schema, successor,
+> historical-reuse, and generated-lineage projection tests. The first application-kind codec,
+> columnar-batch codec, and mutable heads remain unimplemented. Query and distributed harnesses
+> also remain planned for their roadmap phases.
 
 ## Test types
 

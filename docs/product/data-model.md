@@ -1,10 +1,11 @@
 # Data Model Contract
 
-> **Status: specified, not implemented.** This document defines the logical contract. Logical type
-> and schema identity/evolution rules are frozen by
+> **Status: specified; logical schema foundation implemented.** This document defines the logical
+> contract. Logical type and schema identity/evolution rules are frozen by
 > [ADR 0014](../adr/0014-logical-types-schema-identity-and-evolution.md), and ingestion bytes are
 > frozen by [columnar-batch v1](../formats/columnar-batch-v1.md). CSEG and catalog encodings remain
-> deferred to their roadmap phases and [accepted ADRs](../adr/README.md).
+> deferred to their roadmap phases and [accepted ADRs](../adr/README.md). The `chronos_schema`
+> target implements the in-memory identity/type/schema/lineage subset; table storage remains absent.
 
 ## Core table concepts
 

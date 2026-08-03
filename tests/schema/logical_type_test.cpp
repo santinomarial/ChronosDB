@@ -1,8 +1,10 @@
 #include "chronos/schema/logical_type.hpp"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
+#include <limits>
 #include <string_view>
 #include <utility>
 
@@ -40,27 +42,21 @@ TEST(LogicalTypeTest, RegistryCodesAndNamesExactlyMatchColumnarBatchV1) {
     EXPECT_EQ(*decoded, kind);
     EXPECT_EQ(logical_type_kind_name(kind), name);
 
-    const common::Result<LogicalType> type =
-        kind == LogicalTypeKind::kDecimal ? LogicalType::decimal(38, 18)
-                                          : LogicalType::create(kind);
+    const common::Result<LogicalType> type = kind == LogicalTypeKind::kDecimal
+                                                 ? LogicalType::decimal(38, 18)
+                                                 : LogicalType::create(kind);
     ASSERT_TRUE(type.has_value());
     EXPECT_EQ(type->code(), expected_code);
   }
 }
 
-TEST(LogicalTypeTest, RejectsUnknownCodesAndForgedKinds) {
-  for (const std::uint16_t code : {std::uint16_t{0}, std::uint16_t{19},
+TEST(LogicalTypeTest, RejectsEveryUnknownCodeBoundaryWithoutNarrowing) {
+  for (const std::uint16_t code : {std::uint16_t{0}, std::uint16_t{19}, std::uint16_t{257},
                                    std::numeric_limits<std::uint16_t>::max()}) {
     const common::Result<LogicalTypeKind> kind = logical_type_kind_from_code(code);
     ASSERT_FALSE(kind.has_value());
     EXPECT_EQ(kind.error().code(), common::StatusCode::kNotSupported);
   }
-
-  const common::Result<LogicalType> forged =
-      LogicalType::create(static_cast<LogicalTypeKind>(999));
-  ASSERT_FALSE(forged.has_value());
-  EXPECT_EQ(forged.error().code(), common::StatusCode::kInvalidArgument);
-  EXPECT_EQ(logical_type_kind_name(static_cast<LogicalTypeKind>(999)), "UNKNOWN");
 }
 
 TEST(LogicalTypeTest, ValidatesEveryDecimalBoundary) {

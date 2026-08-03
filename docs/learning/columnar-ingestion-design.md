@@ -1,6 +1,8 @@
 # Columnar Ingestion Design Guide
 
-> **Status: design guide; implementation pending.** The normative sources are
+> **Status: design guide; schema foundation implemented, batch/head implementation pending.** The
+> identity, logical-type, immutable-schema, lineage, and projection layer is documented in
+> [logical schema foundation](schema-foundation.md). The remaining normative sources are
 > [columnar batch v1](../formats/columnar-batch-v1.md),
 > [columnar ingestion](../architecture/columnar-ingestion.md),
 > [mutable-head publication](../architecture/mutable-head-publication.md), and

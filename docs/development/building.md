@@ -1,7 +1,8 @@
 # Building ChronosDB
 
 ChronosDB's implemented code currently consists of the Phase 1A build/version foundation, the Phase
-1B portable common binary primitives, the pure in-memory WAL v1 physical codec, the minimal blocking
+1B portable common binary primitives, the logical schema/model foundation, the pure in-memory WAL
+v1 physical codec, the minimal blocking
 POSIX file/directory layer, the segmented WAL writer, locked physical recovery/reopen path, and the
 bounded commit coordinator, subprocess crash harness, read-only `chronos-waldump` inspector, and
 correctness-gated `chronos-walbench` measurement tool. Application-kind codecs and other engine
@@ -107,8 +108,9 @@ verification or lock failure, and `2` for invalid command-line use. It never rep
 missing `LOCK` file.
 
 Install to a staging prefix with `cmake --install build/release --prefix <directory>`. This installs
-`chronosctl`, `chronos-waldump`, `chronos-walbench`, the common, POSIX I/O, and WAL libraries and
-public headers, and a CMake package exporting `chronos::common`, `chronos::io`, and `chronos::wal`.
+`chronosctl`, `chronos-waldump`, `chronos-walbench`, the common, schema, POSIX I/O, and WAL libraries
+and public headers, and a CMake package exporting `chronos::common`, `chronos::schema`,
+`chronos::io`, and `chronos::wal`.
 
 ## Sanitizers
 

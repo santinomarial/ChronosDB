@@ -7,6 +7,7 @@
 #include "chronos/schema/identity.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -32,24 +33,35 @@ struct TableSchemaRoles {
   std::vector<ColumnId> partition_columns;
   std::vector<ColumnId> shard_key;
   std::vector<ColumnId> deduplication_key;
+
+  friend bool operator==(const TableSchemaRoles&, const TableSchemaRoles&) = default;
 };
 
 class TableSchema {
 public:
   TableSchema() = delete;
 
-  [[nodiscard]] static common::Result<TableSchema>
-  create(TableId table_id, SchemaId schema_id, SchemaVersion version,
-         std::optional<SchemaId> parent_schema_id, std::vector<ColumnDefinition> columns,
-         TableSchemaRoles roles);
+  [[nodiscard]] static common::Result<TableSchema> create(TableId table_id, SchemaId schema_id,
+                                                          SchemaVersion version,
+                                                          std::optional<SchemaId> parent_schema_id,
+                                                          std::vector<ColumnDefinition> columns,
+                                                          TableSchemaRoles roles);
 
-  [[nodiscard]] constexpr const TableId& table_id() const noexcept { return table_id_; }
-  [[nodiscard]] constexpr const SchemaId& schema_id() const noexcept { return schema_id_; }
-  [[nodiscard]] constexpr SchemaVersion version() const noexcept { return version_; }
+  [[nodiscard]] constexpr const TableId& table_id() const noexcept {
+    return table_id_;
+  }
+  [[nodiscard]] constexpr const SchemaId& schema_id() const noexcept {
+    return schema_id_;
+  }
+  [[nodiscard]] constexpr SchemaVersion version() const noexcept {
+    return version_;
+  }
   [[nodiscard]] constexpr const std::optional<SchemaId>& parent_schema_id() const noexcept {
     return parent_schema_id_;
   }
-  [[nodiscard]] std::span<const ColumnDefinition> columns() const noexcept { return columns_; }
+  [[nodiscard]] std::span<const ColumnDefinition> columns() const noexcept {
+    return columns_;
+  }
   [[nodiscard]] const ColumnId& event_time_column() const noexcept {
     return roles_.event_time_column;
   }
@@ -59,7 +71,9 @@ public:
   [[nodiscard]] std::span<const ColumnId> partition_columns() const noexcept {
     return roles_.partition_columns;
   }
-  [[nodiscard]] std::span<const ColumnId> shard_key() const noexcept { return roles_.shard_key; }
+  [[nodiscard]] std::span<const ColumnId> shard_key() const noexcept {
+    return roles_.shard_key;
+  }
   [[nodiscard]] std::span<const ColumnId> deduplication_key() const noexcept {
     return roles_.deduplication_key;
   }
@@ -73,8 +87,8 @@ public:
 
 private:
   TableSchema(TableId table_id, SchemaId schema_id, SchemaVersion version,
-              std::optional<SchemaId> parent_schema_id,
-              std::vector<ColumnDefinition> columns, TableSchemaRoles roles) noexcept;
+              std::optional<SchemaId> parent_schema_id, std::vector<ColumnDefinition> columns,
+              TableSchemaRoles roles) noexcept;
 
   TableId table_id_;
   SchemaId schema_id_;
@@ -87,7 +101,7 @@ private:
 // Validates only one direct v1 transition. Lineage-wide schema/name/identity reuse protection is
 // provided by SchemaLineage.
 [[nodiscard]] common::Status validate_v1_successor(const TableSchema& predecessor,
-                                                    const TableSchema& successor);
+                                                   const TableSchema& successor);
 
 } // namespace chronos::schema
 

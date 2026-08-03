@@ -17,7 +17,9 @@ public:
   constexpr Uuid() noexcept = default;
   explicit constexpr Uuid(Bytes bytes) noexcept : bytes_(bytes) {}
 
-  [[nodiscard]] constexpr const Bytes& bytes() const noexcept { return bytes_; }
+  [[nodiscard]] constexpr const Bytes& bytes() const noexcept {
+    return bytes_;
+  }
 
   [[nodiscard]] constexpr bool is_nil() const noexcept {
     for (const std::byte value : bytes_) {

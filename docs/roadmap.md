@@ -95,8 +95,9 @@ No phase passes because its code merely compiles. A phase passes only when its a
 
 - **Design status:** logical types and stable identities, immutable schema versions and initial
   evolution, columnar-batch v1 bytes, the first WAL append command, ordered replay/retry semantics,
-  mutable-head publication, snapshots, and sealing/handoff are accepted specifications. No Phase 4
-  C++, tests, or benchmarks are implemented.
+  mutable-head publication, snapshots, and sealing/handoff are accepted specifications. The
+  `chronos_schema` identity/type/immutable-schema/lineage/projection foundation and its tests are
+  implemented; batch codecs, mutable heads, and Phase 4 benchmarks remain unimplemented.
 
 - **Scope:** typed immutable input batches; null/variable-width representation; append-only tablet heads; sealing; single shard-worker ownership; stable reader boundaries; idempotent ordered replay into heads.
 - **Explicit non-scope:** durable columnar parts, SQL execution, secondary indexes, general lock-free containers, live subscriptions, and a universal allocator.

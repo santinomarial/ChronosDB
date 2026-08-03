@@ -15,6 +15,11 @@
 
 namespace chronos::schema {
 
+struct ProjectionRequest {
+  SchemaId ancestor_schema_id;
+  SchemaId descendant_schema_id;
+};
+
 class ProjectionEntry {
 public:
   ProjectionEntry(ColumnId descendant_column_id, std::size_t descendant_ordinal,
@@ -51,13 +56,14 @@ public:
   [[nodiscard]] constexpr const SchemaId& descendant_schema_id() const noexcept {
     return descendant_schema_id_;
   }
-  [[nodiscard]] std::span<const ProjectionEntry> entries() const noexcept { return entries_; }
+  [[nodiscard]] std::span<const ProjectionEntry> entries() const noexcept {
+    return entries_;
+  }
 
   friend bool operator==(const SchemaProjection&, const SchemaProjection&) = default;
 
 private:
-  SchemaProjection(SchemaId ancestor_schema_id, SchemaId descendant_schema_id,
-                   std::vector<ProjectionEntry> entries) noexcept;
+  SchemaProjection(ProjectionRequest request, std::vector<ProjectionEntry> entries) noexcept;
 
   SchemaId ancestor_schema_id_;
   SchemaId descendant_schema_id_;
@@ -81,10 +87,8 @@ public:
   [[nodiscard]] std::shared_ptr<const TableSchema> current() const noexcept;
   [[nodiscard]] std::shared_ptr<const TableSchema> at(std::size_t index) const noexcept;
   [[nodiscard]] std::shared_ptr<const TableSchema> find(SchemaId schema_id) const noexcept;
-  [[nodiscard]] std::optional<ColumnId>
-  historical_column_id(std::string_view name) const noexcept;
-  [[nodiscard]] common::Result<SchemaProjection>
-  projection(SchemaId ancestor_schema_id, SchemaId descendant_schema_id) const;
+  [[nodiscard]] std::optional<ColumnId> historical_column_id(std::string_view name) const noexcept;
+  [[nodiscard]] common::Result<SchemaProjection> projection(ProjectionRequest request) const;
 
 private:
   explicit SchemaLineage(std::shared_ptr<const TableSchema> initial_schema);

@@ -40,8 +40,7 @@ bool is_valid_utf8(const std::string_view value) noexcept {
       }
       const std::uint8_t second = byte_at(value, index + 1U);
       const std::uint8_t third = byte_at(value, index + 2U);
-      const bool valid_second = is_continuation(second) &&
-                                (first != 0xe0U || second >= 0xa0U) &&
+      const bool valid_second = is_continuation(second) && (first != 0xe0U || second >= 0xa0U) &&
                                 (first != 0xedU || second <= 0x9fU);
       if (!valid_second || !is_continuation(third)) {
         return false;
@@ -57,8 +56,7 @@ bool is_valid_utf8(const std::string_view value) noexcept {
       const std::uint8_t second = byte_at(value, index + 1U);
       const std::uint8_t third = byte_at(value, index + 2U);
       const std::uint8_t fourth = byte_at(value, index + 3U);
-      const bool valid_second = is_continuation(second) &&
-                                (first != 0xf0U || second >= 0x90U) &&
+      const bool valid_second = is_continuation(second) && (first != 0xf0U || second >= 0x90U) &&
                                 (first != 0xf4U || second <= 0x8fU);
       if (!valid_second || !is_continuation(third) || !is_continuation(fourth)) {
         return false;

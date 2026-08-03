@@ -9,6 +9,7 @@ namespace chronos::common {
 namespace {
 
 static_assert(sizeof(Uuid::Bytes) == Uuid::kSize);
+static_assert(sizeof(Uuid) == Uuid::kSize);
 static_assert(std::is_trivially_copyable_v<Uuid>);
 
 TEST(UuidTest, PreservesExactNetworkOrderBytes) {

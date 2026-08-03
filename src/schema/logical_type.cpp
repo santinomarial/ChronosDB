@@ -31,11 +31,12 @@ namespace {
 } // namespace
 
 common::Result<LogicalTypeKind> logical_type_kind_from_code(const std::uint16_t code) {
-  const auto kind = static_cast<LogicalTypeKind>(code);
-  if (!is_known_kind(kind)) {
-    return common::make_unexpected(common::Status{common::StatusCode::kNotSupported,
-                                                   "logical type code is unsupported"});
+  if (code < static_cast<std::uint16_t>(LogicalTypeKind::kBool) ||
+      code > static_cast<std::uint16_t>(LogicalTypeKind::kUuid)) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kNotSupported, "logical type code is unsupported"});
   }
+  const auto kind = static_cast<LogicalTypeKind>(code);
   return kind;
 }
 
@@ -85,8 +86,8 @@ common::Result<LogicalType> LogicalType::create(const LogicalTypeKind kind,
                                                 const std::uint16_t parameter_0,
                                                 const std::uint16_t parameter_1) {
   if (!is_known_kind(kind)) {
-    return common::make_unexpected(common::Status{common::StatusCode::kInvalidArgument,
-                                                   "logical type kind is invalid"});
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInvalidArgument, "logical type kind is invalid"});
   }
   if (kind == LogicalTypeKind::kDecimal) {
     if (parameter_0 == 0 || parameter_0 > 38U) {
@@ -94,8 +95,8 @@ common::Result<LogicalType> LogicalType::create(const LogicalTypeKind kind,
           common::StatusCode::kInvalidArgument, "decimal precision must be in the range 1..38"});
     }
     if (parameter_1 > parameter_0) {
-      return common::make_unexpected(common::Status{
-          common::StatusCode::kInvalidArgument, "decimal scale must not exceed precision"});
+      return common::make_unexpected(common::Status{common::StatusCode::kInvalidArgument,
+                                                    "decimal scale must not exceed precision"});
     }
     return LogicalType{kind, parameter_0, parameter_1};
   }

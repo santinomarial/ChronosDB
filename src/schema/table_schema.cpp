@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 
 namespace chronos::schema {
@@ -13,7 +15,7 @@ namespace {
 }
 
 [[nodiscard]] const ColumnDefinition*
-find_column(const std::vector<ColumnDefinition>& columns, const ColumnId id) noexcept {
+find_column_by_id(const std::vector<ColumnDefinition>& columns, const ColumnId id) noexcept {
   for (const ColumnDefinition& column : columns) {
     if (column.id() == id) {
       return &column;
@@ -35,7 +37,7 @@ find_column(const std::vector<ColumnDefinition>& columns, const ColumnId id) noe
     return invalid(std::string{label} + " must not be empty");
   }
   for (std::size_t index = 0; index < ids.size(); ++index) {
-    const ColumnDefinition* column = find_column(columns, ids[index]);
+    const ColumnDefinition* column = find_column_by_id(columns, ids[index]);
     if (column == nullptr) {
       return invalid(std::string{label} + " references an unknown column");
     }
@@ -61,14 +63,14 @@ find_column(const std::vector<ColumnDefinition>& columns, const ColumnId id) noe
 TableSchema::TableSchema(TableId table_id, SchemaId schema_id, SchemaVersion version,
                          std::optional<SchemaId> parent_schema_id,
                          std::vector<ColumnDefinition> columns, TableSchemaRoles roles) noexcept
-    : table_id_(std::move(table_id)), schema_id_(std::move(schema_id)), version_(version),
-      parent_schema_id_(std::move(parent_schema_id)), columns_(std::move(columns)),
-      roles_(std::move(roles)) {}
+    : table_id_(table_id), schema_id_(schema_id), version_(version),
+      parent_schema_id_(parent_schema_id), columns_(std::move(columns)), roles_(std::move(roles)) {}
 
-common::Result<TableSchema>
-TableSchema::create(TableId table_id, SchemaId schema_id, const SchemaVersion version,
-                    std::optional<SchemaId> parent_schema_id,
-                    std::vector<ColumnDefinition> columns, TableSchemaRoles roles) {
+common::Result<TableSchema> TableSchema::create(TableId table_id, SchemaId schema_id,
+                                                const SchemaVersion version,
+                                                std::optional<SchemaId> parent_schema_id,
+                                                std::vector<ColumnDefinition> columns,
+                                                TableSchemaRoles roles) {
   if (version == SchemaVersion::initial()) {
     if (parent_schema_id.has_value()) {
       return common::make_unexpected(invalid("schema version 1 must not have a parent"));
@@ -97,7 +99,7 @@ TableSchema::create(TableId table_id, SchemaId schema_id, const SchemaVersion ve
     }
   }
 
-  const ColumnDefinition* event_time = find_column(columns, roles.event_time_column);
+  const ColumnDefinition* event_time = find_column_by_id(columns, roles.event_time_column);
   if (event_time == nullptr) {
     return common::make_unexpected(invalid("event-time role references an unknown column"));
   }
@@ -139,12 +141,12 @@ TableSchema::create(TableId table_id, SchemaId schema_id, const SchemaVersion ve
     }
   }
 
-  return TableSchema{std::move(table_id), std::move(schema_id), version,
-                     std::move(parent_schema_id), std::move(columns), std::move(roles)};
+  return TableSchema{table_id,         schema_id,          version,
+                     parent_schema_id, std::move(columns), std::move(roles)};
 }
 
 const ColumnDefinition* TableSchema::find_column(const ColumnId id) const noexcept {
-  return schema::find_column(columns_, id);
+  return find_column_by_id(columns_, id);
 }
 
 const ColumnDefinition* TableSchema::find_column(const std::string_view name) const noexcept {
@@ -181,8 +183,7 @@ bool TableSchema::has_role(const ColumnId id, const ColumnRole role) const noexc
   return false;
 }
 
-common::Status validate_v1_successor(const TableSchema& predecessor,
-                                     const TableSchema& successor) {
+common::Status validate_v1_successor(const TableSchema& predecessor, const TableSchema& successor) {
   if (predecessor.table_id() != successor.table_id()) {
     return invalid("successor must preserve table identity");
   }
@@ -211,6 +212,13 @@ common::Status validate_v1_successor(const TableSchema& predecessor,
     }
     if (before.nullable() != after.nullable()) {
       return invalid("v1 evolution cannot change column nullability");
+    }
+  }
+  for (const ColumnDefinition& candidate : successor.columns()) {
+    for (const ColumnDefinition& historical : predecessor.columns()) {
+      if (candidate.name() == historical.name() && candidate.id() != historical.id()) {
+        return invalid("a predecessor column name cannot be reassigned to another identity");
+      }
     }
   }
   for (std::size_t index = predecessor.columns().size(); index < successor.columns().size();

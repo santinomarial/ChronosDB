@@ -9,6 +9,8 @@
 
 namespace chronos::schema {
 
+// The frozen batch descriptor stores this code in a 16-bit field.
+// NOLINTNEXTLINE(performance-enum-size)
 enum class LogicalTypeKind : std::uint16_t {
   kBool = 1,
   kInt8 = 2,
@@ -38,17 +40,22 @@ public:
   LogicalType() = delete;
 
   [[nodiscard]] static common::Result<LogicalType>
-  create(LogicalTypeKind kind, std::uint16_t parameter_0 = 0,
-         std::uint16_t parameter_1 = 0);
+  create(LogicalTypeKind kind, std::uint16_t parameter_0 = 0, std::uint16_t parameter_1 = 0);
   [[nodiscard]] static common::Result<LogicalType> decimal(std::uint16_t precision,
                                                            std::uint16_t scale);
 
-  [[nodiscard]] constexpr LogicalTypeKind kind() const noexcept { return kind_; }
+  [[nodiscard]] constexpr LogicalTypeKind kind() const noexcept {
+    return kind_;
+  }
   [[nodiscard]] constexpr std::uint16_t code() const noexcept {
     return static_cast<std::uint16_t>(kind_);
   }
-  [[nodiscard]] constexpr std::uint16_t parameter_0() const noexcept { return parameter_0_; }
-  [[nodiscard]] constexpr std::uint16_t parameter_1() const noexcept { return parameter_1_; }
+  [[nodiscard]] constexpr std::uint16_t parameter_0() const noexcept {
+    return parameter_0_;
+  }
+  [[nodiscard]] constexpr std::uint16_t parameter_1() const noexcept {
+    return parameter_1_;
+  }
   [[nodiscard]] constexpr bool is_decimal() const noexcept {
     return kind_ == LogicalTypeKind::kDecimal;
   }

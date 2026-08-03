@@ -75,5 +75,7 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   ownership, mixed durability, group commit, shutdown, metrics, and synchronization argument.
 - [Columnar ingestion design](learning/columnar-ingestion-design.md): batch/schema boundaries, WAL
   command flow, retry identity, publication proof, recovery model, and implementation questions.
+- [Logical schema foundation](learning/schema-foundation.md): implemented UUID/identity/type/schema
+  APIs, lineage evolution, historical projection, ownership, failure, and validation contracts.
 
 Future format, protocol, subsystem, operations, and learning documents should be linked here when they are added by their corresponding roadmap phase.
