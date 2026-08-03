@@ -277,7 +277,7 @@ if(CHRONOS_BUILD_TESTS)
   chronos_set_project_warnings(chronos_wal_tests)
   chronos_enable_sanitizers(chronos_wal_tests)
   chronos_enable_static_analysis(chronos_wal_tests)
-  gtest_discover_tests(chronos_wal_tests DISCOVERY_TIMEOUT 30)
+  gtest_discover_tests(chronos_wal_tests DISCOVERY_TIMEOUT 30 NO_PRETTY_VALUES)
 
   add_test(
     NAME InstallLayoutTest.IncludesWaldump

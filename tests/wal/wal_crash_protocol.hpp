@@ -85,7 +85,8 @@ struct CrashEvent {
                                                   "crash-child protocol line exceeds 4096 bytes"});
   }
   std::istringstream input{line};
-  CrashEvent event{.raw = std::move(line)};
+  CrashEvent event;
+  event.raw = std::move(line);
   if (!(input >> event.name)) {
     return common::make_unexpected(common::Status{common::StatusCode::kCorruption,
                                                   "crash-child emitted an empty protocol line"});
@@ -127,7 +128,7 @@ struct CrashChildOptions {
   std::size_t maximum_sync_batch_requests{64U};
   std::size_t maximum_sync_batch_encoded_bytes{kMaximumRecordLength};
   std::chrono::microseconds maximum_sync_batch_delay{1'000'000};
-  std::string pause_after;
+  std::string pause_after{};
   std::uint64_t pause_occurrence{1U};
   std::size_t short_record_prefix{};
 };

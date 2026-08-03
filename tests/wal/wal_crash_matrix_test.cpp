@@ -45,8 +45,8 @@ INSTANTIATE_TEST_SUITE_P(SegmentLifecycle, WalInstallationCrashMatrixTest,
                          ::testing::Values(test::kAfterSegmentHeaderWrite,
                                            test::kAfterSegmentFileSync, test::kAfterSegmentRename,
                                            test::kAfterSegmentDirectorySync),
-                         [](const ::testing::TestParamInfo<std::string_view>& info) {
-                           return std::string{info.param};
+                         [](const ::testing::TestParamInfo<std::string_view>& parameter) {
+                           return std::string{parameter.param};
                          });
 
 struct RotationCrashPoint {
@@ -156,9 +156,9 @@ INSTANTIATE_TEST_SUITE_P(
                                          .occurrence = 1U,
                                          .expected_segments = 2U,
                                          .expected_records = 2U}),
-    [](const ::testing::TestParamInfo<RotationCrashPoint>& info) {
-      return std::string{info.param.failpoint} + "_occurrence_" +
-             std::to_string(info.param.occurrence);
+    [](const ::testing::TestParamInfo<RotationCrashPoint>& parameter) {
+      return std::string{parameter.param.failpoint} + "_occurrence_" +
+             std::to_string(parameter.param.occurrence);
     });
 
 TEST(WalCrashMatrixTest, ParentObservedLocalSyncCompletionSurvivesSigkillExactlyOnce) {
