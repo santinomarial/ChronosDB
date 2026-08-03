@@ -219,13 +219,20 @@ if(CHRONOS_BUILD_TESTS)
     tests/wal/types_header_self_contained.cpp
     tests/wal/wal_commit_coordinator_header_self_contained.cpp
     tests/wal/wal_commit_coordinator_test.cpp
+    tests/wal/wal_corruption_matrix_test.cpp
     tests/wal/wal_corruption_test.cpp
+    tests/wal/wal_crash_group_commit_test.cpp
+    tests/wal/wal_crash_harness_test.cpp
+    tests/wal/wal_crash_matrix_test.cpp
+    tests/wal/wal_crash_reopen_test.cpp
     tests/wal/wal_discovery_test.cpp
     tests/wal/wal_append_result_header_self_contained.cpp
     tests/wal/wal_log_id_generator_header_self_contained.cpp
     tests/wal/wal_paths_header_self_contained.cpp
+    tests/wal/wal_process_lock_test.cpp
     tests/wal/wal_recovery_header_self_contained.cpp
     tests/wal/wal_recovery_report_header_self_contained.cpp
+    tests/wal/wal_recovery_idempotence_test.cpp
     tests/wal/wal_recovery_test.cpp
     tests/wal/wal_reopen_test.cpp
     tests/wal/wal_replay_sink_header_self_contained.cpp
