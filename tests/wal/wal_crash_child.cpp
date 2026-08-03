@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <iostream>
 #include <limits>
 #include <mutex>
@@ -132,11 +133,15 @@ template <typename Integer>
 
 class ObservingPosixSyscalls final : public io::detail::PosixSyscalls {
 public:
+  struct Config {
+    std::string pause_after;
+    std::uint64_t pause_occurrence;
+    std::size_t short_record_prefix;
+  };
+
   ObservingPosixSyscalls(io::detail::PosixSyscalls& delegate, ProtocolWriter& protocol,
-                         std::string pause_after, const std::uint64_t pause_occurrence,
-                         const std::size_t short_record_prefix)
-      : delegate_(delegate), protocol_(protocol), pause_after_(std::move(pause_after)),
-        pause_occurrence_(pause_occurrence), short_record_prefix_(short_record_prefix) {}
+                         Config config)
+      : delegate_(delegate), protocol_(protocol), config_(std::move(config)) {}
 
   int open_directory(const char* const path, const int flags) override {
     const int descriptor = delegate_.open_directory(path, flags);
@@ -156,11 +161,11 @@ public:
   }
 
   ssize_t pwrite(const io::detail::WriteAtRequest& request) override {
-    if (request.offset >= static_cast<off_t>(kSegmentHeaderSize) && short_record_prefix_ != 0U &&
-        !short_record_write_used_) {
+    if (request.offset >= static_cast<off_t>(kSegmentHeaderSize) &&
+        config_.short_record_prefix != 0U && !short_record_write_used_) {
       short_record_write_used_ = true;
       io::detail::WriteAtRequest shortened = request;
-      shortened.size = std::min(short_record_prefix_, request.size);
+      shortened.size = std::min(config_.short_record_prefix, request.size);
       const ssize_t result = delegate_.pwrite(shortened);
       if (result >= 0) {
         observe(kAfterShortRecordWrite);
@@ -230,7 +235,7 @@ private:
     if (occurrence != std::numeric_limits<std::uint64_t>::max()) {
       ++occurrence;
     }
-    if (point != pause_after_ || occurrence != pause_occurrence_) {
+    if (point != config_.pause_after || occurrence != config_.pause_occurrence) {
       return;
     }
     static_cast<void>(
@@ -242,9 +247,7 @@ private:
 
   io::detail::PosixSyscalls& delegate_;
   ProtocolWriter& protocol_;
-  std::string pause_after_;
-  std::uint64_t pause_occurrence_;
-  std::size_t short_record_prefix_;
+  Config config_;
   int directory_descriptor_{-1};
   bool short_record_write_used_{false};
   std::unordered_map<std::string, std::uint64_t> occurrences_;
@@ -274,134 +277,144 @@ private:
 } // namespace chronos::wal::test
 
 int main(const int argc, char** const argv) {
-  using namespace chronos;
-  using namespace chronos::wal;
-  using namespace chronos::wal::test;
+  try {
+    using namespace chronos;
+    using namespace chronos::wal;
+    using namespace chronos::wal::test;
 
-  ProtocolWriter protocol;
-  const std::optional<ChildConfig> child_config = parse_arguments(argc, argv);
-  if (!child_config.has_value()) {
-    static_cast<void>(protocol.send("ERROR 0 arguments"));
-    return 64;
-  }
-
-  const WalWriterConfig writer_config{
-      .directory_path = child_config->directory,
-      .target_segment_size = child_config->target_segment_size,
-      .maximum_application_payload = kCrashPayloadSize,
-  };
-  ObservingPosixSyscalls syscalls{io::detail::system_posix_syscalls(), protocol,
-                                  child_config->pause_after, child_config->pause_occurrence,
-                                  child_config->short_record_prefix};
-  common::Result<WalWriter> writer = common::make_unexpected(
-      common::Status{common::StatusCode::kInternal, "writer startup was not attempted"});
-  AcceptingReplaySink replay_sink;
-  if (child_config->reopen) {
-    writer = chronos::wal::detail::WalWriterTestAccess::open_existing(
-        writer_config, WalRecoveryOptions{}, replay_sink, syscalls);
-  } else {
-    FixedWalIdGenerator generator{make_wal_id(0x42U)};
-    writer =
-        chronos::wal::detail::WalWriterTestAccess::create_new(writer_config, generator, syscalls);
-  }
-  if (!writer.has_value()) {
-    return report_start_failure(protocol, writer.error());
-  }
-
-  const WalCommitCoordinatorConfig coordinator_config{
-      .maximum_pending_requests = 128U,
-      .maximum_pending_encoded_bytes = std::size_t{8U} * 1024U * 1024U,
-      .maximum_sync_batch_requests = child_config->maximum_sync_batch_requests,
-      .maximum_sync_batch_encoded_bytes = child_config->maximum_sync_batch_encoded_bytes,
-      .maximum_sync_batch_delay = child_config->maximum_sync_batch_delay,
-  };
-  common::Result<WalCommitCoordinator> started =
-      WalCommitCoordinator::start(std::move(*writer), coordinator_config);
-  if (!started.has_value()) {
-    return report_start_failure(protocol, started.error());
-  }
-  WalCommitCoordinator coordinator = std::move(*started);
-  if (!protocol.send("READY")) {
-    return 3;
-  }
-
-  std::vector<std::thread> completion_threads;
-  std::string command;
-  while (std::getline(std::cin, command)) {
-    std::istringstream input{command};
-    std::string operation;
-    input >> operation;
-    if (operation == "SUBMIT") {
-      std::uint64_t request_id = 0;
-      std::string durability_text;
-      std::string extra;
-      if (!(input >> request_id >> durability_text) || (input >> extra)) {
-        static_cast<void>(protocol.send("ERROR 0 command"));
-        continue;
-      }
-      const std::optional<WalDurabilityMode> durability = parse_mode(durability_text);
-      if (!durability.has_value()) {
-        static_cast<void>(protocol.send("ERROR 0 durability"));
-        continue;
-      }
-      const std::vector<std::byte> payload = make_crash_payload(request_id);
-      common::Result<WalCommitCompletion> submitted = coordinator.try_submit(payload, *durability);
-      if (!submitted.has_value()) {
-        static_cast<void>(
-            protocol.send("REJECTED " + std::to_string(request_id) + " " +
-                          std::to_string(static_cast<int>(submitted.error().code()))));
-        continue;
-      }
-      if (!protocol.send("ADMITTED " + std::to_string(request_id))) {
-        return 4;
-      }
-      try {
-        completion_threads.emplace_back(
-            [request_id, durability = *durability, completion = std::move(*submitted), &protocol] {
-              const common::Result<WalCommitResult> result = completion.wait();
-              if (!result.has_value()) {
-                static_cast<void>(
-                    protocol.send("FAILED " + std::to_string(request_id) + " " +
-                                  std::to_string(static_cast<int>(result.error().code()))));
-                return;
-              }
-              static_cast<void>(protocol.send("COMPLETED " + std::to_string(request_id) + " " +
-                                              mode_name(durability) + " " +
-                                              std::to_string(result->append.record_sequence) + " " +
-                                              std::to_string(result->admission_sequence)));
-            });
-      } catch (const std::system_error&) {
-        static_cast<void>(protocol.send("ERROR 0 thread"));
-        return 5;
-      }
-      continue;
+    ProtocolWriter protocol;
+    const std::optional<ChildConfig> child_config = parse_arguments(argc, argv);
+    if (!child_config.has_value()) {
+      static_cast<void>(protocol.send("ERROR 0 arguments"));
+      return 64;
     }
-    if (operation == "SHUTDOWN") {
-      const common::Status status = coordinator.shutdown();
-      for (std::thread& thread : completion_threads) {
-        if (thread.joinable()) {
-          thread.join();
+
+    const WalWriterConfig writer_config{
+        .directory_path = child_config->directory,
+        .target_segment_size = child_config->target_segment_size,
+        .maximum_application_payload = kCrashPayloadSize,
+    };
+    ObservingPosixSyscalls syscalls{io::detail::system_posix_syscalls(), protocol,
+                                    ObservingPosixSyscalls::Config{
+                                        .pause_after = child_config->pause_after,
+                                        .pause_occurrence = child_config->pause_occurrence,
+                                        .short_record_prefix = child_config->short_record_prefix,
+                                    }};
+    common::Result<WalWriter> writer = common::make_unexpected(
+        common::Status{common::StatusCode::kInternal, "writer startup was not attempted"});
+    AcceptingReplaySink replay_sink;
+    if (child_config->reopen) {
+      writer = chronos::wal::detail::WalWriterTestAccess::open_existing(
+          writer_config, WalRecoveryOptions{}, replay_sink, syscalls);
+    } else {
+      FixedWalIdGenerator generator{make_wal_id(0x42U)};
+      writer =
+          chronos::wal::detail::WalWriterTestAccess::create_new(writer_config, generator, syscalls);
+    }
+    if (!writer.has_value()) {
+      return report_start_failure(protocol, writer.error());
+    }
+
+    const WalCommitCoordinatorConfig coordinator_config{
+        .maximum_pending_requests = 128U,
+        .maximum_pending_encoded_bytes = std::size_t{8U} * 1024U * 1024U,
+        .maximum_sync_batch_requests = child_config->maximum_sync_batch_requests,
+        .maximum_sync_batch_encoded_bytes = child_config->maximum_sync_batch_encoded_bytes,
+        .maximum_sync_batch_delay = child_config->maximum_sync_batch_delay,
+    };
+    common::Result<WalCommitCoordinator> started =
+        WalCommitCoordinator::start(std::move(*writer), coordinator_config);
+    if (!started.has_value()) {
+      return report_start_failure(protocol, started.error());
+    }
+    WalCommitCoordinator coordinator = std::move(*started);
+    if (!protocol.send("READY")) {
+      return 3;
+    }
+
+    std::vector<std::thread> completion_threads;
+    std::string command;
+    while (std::getline(std::cin, command)) {
+      std::istringstream input{command};
+      std::string operation;
+      input >> operation;
+      if (operation == "SUBMIT") {
+        std::uint64_t request_id = 0;
+        std::string durability_text;
+        std::string extra;
+        if (!(input >> request_id >> durability_text) || (input >> extra)) {
+          static_cast<void>(protocol.send("ERROR 0 command"));
+          continue;
         }
+        const std::optional<WalDurabilityMode> durability = parse_mode(durability_text);
+        if (!durability.has_value()) {
+          static_cast<void>(protocol.send("ERROR 0 durability"));
+          continue;
+        }
+        const std::vector<std::byte> payload = make_crash_payload(request_id);
+        common::Result<WalCommitCompletion> submitted =
+            coordinator.try_submit(payload, *durability);
+        if (!submitted.has_value()) {
+          static_cast<void>(
+              protocol.send("REJECTED " + std::to_string(request_id) + " " +
+                            std::to_string(static_cast<int>(submitted.error().code()))));
+          continue;
+        }
+        if (!protocol.send("ADMITTED " + std::to_string(request_id))) {
+          return 4;
+        }
+        try {
+          completion_threads.emplace_back([request_id, durability = *durability,
+                                           completion = std::move(*submitted), &protocol] {
+            const common::Result<WalCommitResult> result = completion.wait();
+            if (!result.has_value()) {
+              static_cast<void>(
+                  protocol.send("FAILED " + std::to_string(request_id) + " " +
+                                std::to_string(static_cast<int>(result.error().code()))));
+              return;
+            }
+            static_cast<void>(protocol.send("COMPLETED " + std::to_string(request_id) + " " +
+                                            mode_name(durability) + " " +
+                                            std::to_string(result->append.record_sequence) + " " +
+                                            std::to_string(result->admission_sequence)));
+          });
+        } catch (const std::system_error&) {
+          static_cast<void>(protocol.send("ERROR 0 thread"));
+          return 5;
+        }
+        continue;
       }
-      const WalCommitMetrics metrics = coordinator.metrics();
-      static_cast<void>(protocol.send("METRICS " +
-                                      std::to_string(metrics.synchronization_attempts) + " " +
-                                      std::to_string(metrics.local_sync_batches) + " " +
-                                      std::to_string(metrics.local_sync_requests_in_batches) + " " +
-                                      std::to_string(metrics.acknowledged_async_requests) + " " +
-                                      std::to_string(metrics.acknowledged_local_sync_requests)));
-      static_cast<void>(
-          protocol.send(std::string{"SHUTDOWN "} + (status.is_ok() ? "OK" : "ERROR")));
-      return status.is_ok() ? 0 : 6;
+      if (operation == "SHUTDOWN") {
+        const common::Status status = coordinator.shutdown();
+        for (std::thread& thread : completion_threads) {
+          if (thread.joinable()) {
+            thread.join();
+          }
+        }
+        const WalCommitMetrics metrics = coordinator.metrics();
+        static_cast<void>(
+            protocol.send("METRICS " + std::to_string(metrics.synchronization_attempts) + " " +
+                          std::to_string(metrics.local_sync_batches) + " " +
+                          std::to_string(metrics.local_sync_requests_in_batches) + " " +
+                          std::to_string(metrics.acknowledged_async_requests) + " " +
+                          std::to_string(metrics.acknowledged_local_sync_requests)));
+        static_cast<void>(
+            protocol.send(std::string{"SHUTDOWN "} + (status.is_ok() ? "OK" : "ERROR")));
+        return status.is_ok() ? 0 : 6;
+      }
+      static_cast<void>(protocol.send("ERROR 0 unknown_command"));
     }
-    static_cast<void>(protocol.send("ERROR 0 unknown_command"));
-  }
 
-  static_cast<void>(coordinator.shutdown());
-  for (std::thread& thread : completion_threads) {
-    if (thread.joinable()) {
-      thread.join();
+    static_cast<void>(coordinator.shutdown());
+    for (std::thread& thread : completion_threads) {
+      if (thread.joinable()) {
+        thread.join();
+      }
     }
+    return 0;
+  } catch (const std::exception&) {
+    return 70;
+  } catch (...) {
+    return 71;
   }
-  return 0;
 }

@@ -44,7 +44,10 @@ TEST_P(WalInstallationCrashMatrixTest, LeavesOnlyAContractPermittedDiscoverableS
 INSTANTIATE_TEST_SUITE_P(SegmentLifecycle, WalInstallationCrashMatrixTest,
                          ::testing::Values(test::kAfterSegmentHeaderWrite,
                                            test::kAfterSegmentFileSync, test::kAfterSegmentRename,
-                                           test::kAfterSegmentDirectorySync));
+                                           test::kAfterSegmentDirectorySync),
+                         [](const ::testing::TestParamInfo<std::string_view>& info) {
+                           return std::string{info.param};
+                         });
 
 struct RotationCrashPoint {
   std::string_view failpoint;
@@ -152,7 +155,11 @@ INSTANTIATE_TEST_SUITE_P(
                       RotationCrashPoint{.failpoint = test::kAfterRecordWrite,
                                          .occurrence = 1U,
                                          .expected_segments = 2U,
-                                         .expected_records = 2U}));
+                                         .expected_records = 2U}),
+    [](const ::testing::TestParamInfo<RotationCrashPoint>& info) {
+      return std::string{info.param.failpoint} + "_occurrence_" +
+             std::to_string(info.param.occurrence);
+    });
 
 TEST(WalCrashMatrixTest, ParentObservedLocalSyncCompletionSurvivesSigkillExactlyOnce) {
   test::CrashWalDirectory directory{"chronos-wal-local-ack-crash"};

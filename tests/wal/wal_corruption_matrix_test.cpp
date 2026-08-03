@@ -66,7 +66,12 @@ INSTANTIATE_TEST_SUITE_P(
         CorruptionPoint{.name = "middle segment header CRC", .segment = 2U, .offset = 60U},
         CorruptionPoint{.name = "first record framing", .segment = 1U, .offset = 72U},
         CorruptionPoint{.name = "middle record payload", .segment = 2U, .offset = 124U},
-        CorruptionPoint{.name = "complete final record CRC", .segment = 3U, .offset = 135U}));
+        CorruptionPoint{.name = "complete final record CRC", .segment = 3U, .offset = 135U}),
+    [](const ::testing::TestParamInfo<CorruptionPoint>& info) {
+      std::string name{info.param.name};
+      std::replace(name.begin(), name.end(), ' ', '_');
+      return name;
+    });
 
 TEST(WalCorruptionMatrixTest, MissingMiddleSegmentIsNeverSkippedOrRecreated) {
   test::CrashWalDirectory directory{"chronos-wal-corruption-gap"};
