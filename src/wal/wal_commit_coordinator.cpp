@@ -18,8 +18,7 @@ namespace chronos::wal {
 namespace {
 
 [[nodiscard]] common::Status invalid_completion() {
-  return common::Status{common::StatusCode::kInvalidArgument,
-                        "WAL commit completion is not valid"};
+  return common::Status{common::StatusCode::kInvalidArgument, "WAL commit completion is not valid"};
 }
 
 [[nodiscard]] common::Status invalid_coordinator(std::string operation) {
@@ -156,11 +155,10 @@ public:
 
   [[nodiscard]] common::Result<WalCommitCompletion>
   try_submit(const common::ByteView application_payload, const WalDurabilityMode durability) {
-    if (durability != WalDurabilityMode::kAsync &&
-        durability != WalDurabilityMode::kLocalSync) {
+    if (durability != WalDurabilityMode::kAsync && durability != WalDurabilityMode::kLocalSync) {
       reject_request();
-      return common::make_unexpected(common::Status{
-          common::StatusCode::kInvalidArgument, "unknown WAL durability mode"});
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kInvalidArgument, "unknown WAL durability mode"});
     }
     const common::Result<RecordLayout> layout = calculate_record_layout(application_payload.size());
     if (!layout.has_value()) {
@@ -179,21 +177,21 @@ public:
     std::unique_lock lock{mutex_};
     if (!metrics_.accepting) {
       saturating_increment(metrics_.rejected_requests);
-      return common::make_unexpected(terminal_status_.is_ok()
-                                         ? common::Status{common::StatusCode::kUnavailable,
-                                                          "WAL commit admission is closed"}
-                                         : terminal_status_);
+      return common::make_unexpected(
+          terminal_status_.is_ok()
+              ? common::Status{common::StatusCode::kUnavailable, "WAL commit admission is closed"}
+              : terminal_status_);
     }
     if (admission_sequence_exhausted_) {
       saturating_increment(metrics_.rejected_requests);
-      return common::make_unexpected(common::Status{
-          common::StatusCode::kResourceExhausted, "WAL admission sequence UINT64_MAX exhausted"});
+      return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                    "WAL admission sequence UINT64_MAX exhausted"});
     }
     if (metrics_.pending_requests >= config_.maximum_pending_requests ||
         encoded_bytes > config_.maximum_pending_encoded_bytes - metrics_.pending_encoded_bytes) {
       saturating_increment(metrics_.rejected_requests);
-      return common::make_unexpected(common::Status{
-          common::StatusCode::kResourceExhausted, "WAL commit admission capacity is full"});
+      return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                    "WAL commit admission capacity is full"});
     }
 
     try {
@@ -224,8 +222,8 @@ public:
       return WalCommitCompletion{std::move(completion)};
     } catch (const std::bad_alloc&) {
       saturating_increment(metrics_.rejected_requests);
-      return common::make_unexpected(common::Status{
-          common::StatusCode::kResourceExhausted, "cannot allocate bounded WAL commit request"});
+      return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                    "cannot allocate bounded WAL commit request"});
     }
   }
 
@@ -270,8 +268,7 @@ private:
     if (window.request_count >= config_.maximum_sync_batch_requests) {
       return false;
     }
-    return request.encoded_bytes <=
-           config_.maximum_sync_batch_encoded_bytes - window.encoded_bytes;
+    return request.encoded_bytes <= config_.maximum_sync_batch_encoded_bytes - window.encoded_bytes;
   }
 
   void release_admission(const Request& request) noexcept {
@@ -324,9 +321,9 @@ private:
       ++released_prefix;
     }
     if (released_prefix != 0U) {
-      pending_local_sync_.erase(
-          pending_local_sync_.begin(),
-          pending_local_sync_.begin() + static_cast<std::ptrdiff_t>(released_prefix));
+      pending_local_sync_.erase(pending_local_sync_.begin(),
+                                pending_local_sync_.begin() +
+                                    static_cast<std::ptrdiff_t>(released_prefix));
     }
     if (released_requests != 0U) {
       saturating_increment(metrics_.local_sync_batches);
@@ -577,8 +574,8 @@ WalCommitCoordinator::start(WalWriter writer, const WalCommitCoordinatorConfig& 
 }
 
 common::Result<WalCommitCoordinator> WalCommitCoordinator::start_with_worker_hook(
-    WalWriter writer, const WalCommitCoordinatorConfig& config,
-    void (*worker_start_hook)(void*), void* const worker_start_context) {
+    WalWriter writer, const WalCommitCoordinatorConfig& config, void (*worker_start_hook)(void*),
+    void* const worker_start_context) {
   const common::Status config_status = validate_config(config);
   if (!config_status.is_ok()) {
     return common::make_unexpected(config_status);
@@ -591,16 +588,16 @@ common::Result<WalCommitCoordinator> WalCommitCoordinator::start_with_worker_hoo
     return common::make_unexpected(writer.failure_status());
   }
   try {
-    auto implementation = std::make_unique<Impl>(std::move(writer), config, worker_start_hook,
-                                                 worker_start_context);
+    auto implementation =
+        std::make_unique<Impl>(std::move(writer), config, worker_start_hook, worker_start_context);
     const common::Status worker_status = implementation->start_worker();
     if (!worker_status.is_ok()) {
       return common::make_unexpected(worker_status);
     }
     return WalCommitCoordinator{std::move(implementation)};
   } catch (const std::bad_alloc&) {
-    return common::make_unexpected(common::Status{
-        common::StatusCode::kResourceExhausted, "cannot allocate WAL commit coordinator state"});
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                  "cannot allocate WAL commit coordinator state"});
   }
 }
 

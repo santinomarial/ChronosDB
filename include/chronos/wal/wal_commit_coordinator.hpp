@@ -129,8 +129,8 @@ public:
 
   // Copies payload into bounded coordinator ownership before returning. Full admission returns
   // kResourceExhausted immediately; it never creates an unbounded side queue or blocks a producer.
-  [[nodiscard]] common::Result<WalCommitCompletion>
-  try_submit(common::ByteView application_payload, WalDurabilityMode durability);
+  [[nodiscard]] common::Result<WalCommitCompletion> try_submit(common::ByteView application_payload,
+                                                               WalDurabilityMode durability);
 
   // Stops new admission, drains every accepted request in admission order, synchronizes any final
   // LOCAL_SYNC group, closes the writer, and joins the worker. It is idempotent.
