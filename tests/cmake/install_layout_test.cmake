@@ -20,3 +20,15 @@ foreach(tool IN ITEMS chronosctl chronos-waldump chronos-walbench)
     message(FATAL_ERROR "staging install omitted ${installed_tool}")
   endif()
 endforeach()
+
+set(installed_walbench
+    "${install_prefix}/${CHRONOS_TEST_INSTALL_BINDIR}/chronos-walbench${CHRONOS_TEST_EXECUTABLE_SUFFIX}")
+execute_process(
+  COMMAND "${installed_walbench}" --help
+  RESULT_VARIABLE walbench_help_result
+  OUTPUT_QUIET
+  ERROR_QUIET
+)
+if(NOT walbench_help_result EQUAL 0)
+  message(FATAL_ERROR "installed chronos-walbench --help failed with status ${walbench_help_result}")
+endif()

@@ -313,17 +313,23 @@ void print_usage(const std::string_view program) {
   if (records_per_run > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max()) - 1U) {
     return invalid("operation count exceeds this platform's addressable recovery state");
   }
-  constexpr std::uint64_t kMaximumTextArtifactBytesPerRecord = 256U;
+  constexpr std::uint64_t kFixedArtifactAllowance = 64ULL * 1024ULL;
+  constexpr std::uint64_t kMaximumTextArtifactBytesPerRecord = 1024U;
+  if (options.maximum_artifact_bytes <= kFixedArtifactAllowance) {
+    return invalid("--maximum-artifact-bytes is too small for fixed run metadata");
+  }
+  const std::uint64_t variable_artifact_budget =
+      options.maximum_artifact_bytes - kFixedArtifactAllowance;
   const std::uint64_t maximum_artifact_bytes_per_record =
       layout->total_length + chronos::wal::kSegmentHeaderSize + kMaximumTextArtifactBytesPerRecord;
   if (records_per_run != 0U &&
-      maximum_artifact_bytes_per_record > options.maximum_artifact_bytes / records_per_run) {
+      maximum_artifact_bytes_per_record > variable_artifact_budget / records_per_run) {
     return invalid("benchmark run exceeds --maximum-artifact-bytes; raise it explicitly");
   }
   const std::uint64_t maximum_bytes_per_repetition =
       records_per_run * maximum_artifact_bytes_per_record;
   if (maximum_bytes_per_repetition != 0U &&
-      options.repetitions > options.maximum_artifact_bytes / maximum_bytes_per_repetition) {
+      options.repetitions > variable_artifact_budget / maximum_bytes_per_repetition) {
     return invalid("benchmark run exceeds --maximum-artifact-bytes; raise it explicitly");
   }
 

@@ -45,7 +45,16 @@ established. The public decoder contract is unchanged. A regression constructs a
 flagged header, recomputes the complete-record checksum, corrupts payload afterward, and requires a
 CRC32C corruption result.
 
-### WAL-EXIT-002: implemented subsystem and installation documentation was stale
+### WAL-EXIT-002: coordinator helper advertised a false no-throw contract
+
+Static analysis found that the private admission-release helper was declared `noexcept` while its
+defensive accounting-underflow branch constructs an owning `Status`. Standard-library string
+construction is permitted to throw, so the declaration could force immediate termination while
+trying to record the invariant failure. The inaccurate qualifier was removed. This does not claim
+general recovery from process-wide memory exhaustion; it keeps the helper's exception contract
+truthful while the accounting underflow remains an internal terminal error.
+
+### WAL-EXIT-003: implemented subsystem and installation documentation was stale
 
 The build guide still described acknowledgment coordination as planned and omitted the implemented
 crash harness and installed benchmark/operator surface. The project-foundation graph also omitted
@@ -53,7 +62,7 @@ current WAL dependencies and executables. These statements are updated so operat
 weaker implementation or incomplete install layout. The install-layout test now requires
 `chronos-walbench` as well as `chronosctl` and `chronos-waldump`.
 
-### WAL-EXIT-003: no reviewable end-to-end WAL measurement artifact existed
+### WAL-EXIT-004: no reviewable end-to-end WAL measurement artifact existed
 
 The existing Google Benchmark target measures common in-memory primitives, not production WAL
 acknowledgment and recovery. `chronos-walbench` and `scripts/benchmark-wal.sh` now provide an
@@ -86,11 +95,26 @@ proof of absence.
 
 ## Verification evidence
 
-The exit review requires clean results from the ordinary unit/integration suite, the focused crash
-and corruption suites, benchmark smoke tests, formatting/static analysis, supported sanitizer
-configurations, bounded fuzz smoke runs, installation layout, and final diff inspection. Commands
-and their actual outcomes are recorded in the review handoff; no throughput or latency value from a
-smoke run is retained as a claim.
+The following checks were executed after the changes. No throughput or latency value from a smoke
+run is retained as a claim.
+
+| Check | Result |
+| --- | --- |
+| `scripts/format.sh --check` and `git diff --check` | Passed. |
+| `CLANG_TIDY=/opt/homebrew/opt/llvm/bin/clang-tidy scripts/lint.sh dev` | Passed with LLVM clang-tidy 22. The first PATH-only invocation correctly reported that `clang-tidy` was not discoverable. |
+| `cmake --build --preset dev` and `ctest --preset dev` | Passed all 168 Debug tests. |
+| `cmake --build --preset release` and `ctest --preset release` | Passed all 168 Release tests. |
+| `cmake --build --preset asan-ubsan` and `ctest --preset asan-ubsan` | Passed all 169 tests, including the non-recovering UBSan configuration check. |
+| `cmake --build --preset tsan` and `ctest --preset tsan` | Passed all 168 TSan tests. |
+| Both fuzz targets with `-runs=1000` | Passed under ASan/UBSan. The macOS external symbolizer emitted availability warnings; no sanitizer finding occurred. This was a bounded smoke, not a fuzz campaign. |
+| `scripts/check-workflow-actions.sh` | Passed immutable-action-pin validation. |
+| Release `chronos-walbench` smoke in `ASYNC` and `LOCAL_SYNC` | Both completed production recovery reconciliation and emitted valid JSON with `validation_status: passed`; measurements were intentionally not recorded as results. |
+| `CHRONOS_BENCHMARK_ALLOW_DIRTY=1 scripts/benchmark-wal.sh ...` with a tracked-only review diff | Passed and retained manifest, raw samples, summary, WAL image, exact invocation, source diff, build files, environment allowlist, and system inventory. |
+| Install layout CTest | Passed and executed the installed `chronos-walbench --help`. |
+
+After the final conservative artifact-budget bound and installed-help assertion were added, the
+benchmark target was rebuilt under clang-tidy and the benchmark/install focused CTests were repeated
+successfully. The larger suites had already passed the same WAL and harness implementation.
 
 The deterministic subprocess suite provides process-crash evidence over real host syscalls. It does
 not prove behavior under every physical power loss, storage-firmware or controller-cache failure,
