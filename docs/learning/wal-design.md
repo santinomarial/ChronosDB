@@ -4,7 +4,7 @@
 > [WAL v1](../formats/wal-v1.md), and the normative lifecycle/recovery behavior is in
 > [WAL recovery](../architecture/wal-recovery.md). The in-memory codec, blocking POSIX operations,
 > exclusive writer, locked verification, explicit repair, replay passes, and existing-history reopen
-> path exist. Acknowledgment coordination and application-kind semantics do not. This learning
+> path and bounded durability coordinator exist. Application-kind semantics do not. This learning
 > document explains the reasoning and should not substitute for either specification; implementation
 > details are in [WAL recovery implementation](wal-recovery.md).
 
@@ -43,7 +43,8 @@ remaining boundaries are:
   tracks written and durable frontiers;
 - the implemented read-only scanner, explicit tail-repair path, whole-log semantic preflight/replay
   driver, and existing-history opener;
-- a durability coordinator that releases requests only at their effective-mode boundary;
+- the implemented durability coordinator that releases requests only at their effective-mode
+  boundary; and
 - application-kind codecs and fresh/resettable logical state that give replay domain semantics.
 
 The physical WAL handles opaque versioned application entries. It does not decide table mutation,
@@ -93,6 +94,18 @@ to encode the frozen v1 64 MiB limit.
 keeps payload bytes alive through the append call. Any attempted record-write error, sync error, or
 rotation lifecycle error retains the first failure and permanently rejects later append/sync calls.
 Validation errors before I/O do not poison the writer. `close` adds no implicit synchronization.
+
+`WalCommitCoordinator` is the current multi-producer boundary above this interface. Starting it
+transfers the writer to one worker thread; producers can only copy a request into bounded FIFO
+admission and wait on an owning completion. The admission mutex assigns a monotonic sequence, which
+defines the order in which the worker invokes append. Request and exact encoded-byte charges remain
+until completion, so in-flight appends and sync waiters cannot escape backpressure accounting.
+
+The coordinator opens a sync window after the first `LOCAL_SYNC` append. Count, encoded-byte, and
+delay limits bound the window; `ASYNC` records inside it complete immediately but count toward its
+physical work. One successful frontier releases every covered local waiter. Rotation may supply
+that frontier for the prior segment. The detailed API, synchronization argument, failure behavior,
+and metrics are described in [WAL commit coordination](wal-commit-coordinator.md).
 
 ## Current codec interface and ownership
 

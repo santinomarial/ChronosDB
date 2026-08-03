@@ -23,9 +23,9 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 ## Durable formats
 
 - [WAL v1](formats/wal-v1.md): authoritative single-node WAL directory, segment, record, integrity,
-  limits, and compatibility specification; its physical codec, writer, locked discovery,
-  verification, explicit tail repair, replay interface, and existing-history reopen path are
-  implemented.
+  limits, and compatibility specification; its physical codec, writer, durability coordinator,
+  locked discovery, verification, explicit tail repair, replay interface, and existing-history
+  reopen path are implemented.
 
 ## Delivery
 
@@ -59,5 +59,7 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   validation methodology for the WAL foundations.
 - [WAL recovery implementation](learning/wal-recovery.md): scan passes, repair policy, replay-sink
   contract, reopening, bounded-memory behavior, and failure handling.
+- [WAL commit coordination](learning/wal-commit-coordinator.md): bounded admission, single-worker
+  ownership, mixed durability, group commit, shutdown, metrics, and synchronization argument.
 
 Future format, protocol, subsystem, operations, and learning documents should be linked here when they are added by their corresponding roadmap phase.

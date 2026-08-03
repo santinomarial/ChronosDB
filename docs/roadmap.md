@@ -9,10 +9,10 @@ planned work, not implemented functionality or delivery commitments. The Phase 2
 [WAL v1 format](formats/wal-v1.md), [recovery design](architecture/wal-recovery.md), and
 [ADR 0013](adr/0013-wal-v1-format-and-recovery.md) are accepted design artifacts. The pure in-memory
 WAL physical codec, fixtures, tests, fuzz target, minimal blocking POSIX file/directory primitives,
-the segmented writer, locked discovery and verification, explicit final-tail repair, replay-sink
-passes, existing-history reopen path, and read-only inspector now exist. No acknowledgment
-coordinator, application-kind codec, process-kill crash-image harness, or operational metrics exist
-yet.
+the segmented writer, bounded commit coordinator, locked discovery and verification, explicit
+final-tail repair, replay-sink passes, existing-history reopen path, and read-only inspector now
+exist. Coordinator metrics exist; no application-kind codec, process-kill crash-image harness, or
+server-wide operational metrics/export path exists yet.
 Work should proceed in order unless an accepted ADR explains why a limited dependency must move
 earlier.
 
@@ -71,8 +71,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
   operations, process lock, creation and existing-history owners, segment installation,
   append/sync frontiers, terminal failure state, rotation, discovery, whole-log verification,
   explicit repair, preflight/replay, reopen, and inspection tool have deterministic tests and
-  syscall injection where mutation occurs. The crash-image/process-kill harness, acknowledgment
-  coordinator, application-kind semantics, and operational metrics do not exist.
+  syscall injection where mutation occurs. Bounded concurrent admission, one-worker ordering,
+  `ASYNC`/`LOCAL_SYNC` completion, group commit, graceful drain, terminal propagation, and coordinator
+  metric snapshots are implemented with deterministic tests. The crash-image/process-kill harness,
+  application-kind semantics, and server-wide operational metrics/export path do not exist.
 - **Scope:** implement WAL v1 segment lifecycle, append/grouping, explicitly named durability modes,
   acknowledgment boundaries, rotation, torn-tail handling, ordered replay, and idempotent
   single-node recovery.
