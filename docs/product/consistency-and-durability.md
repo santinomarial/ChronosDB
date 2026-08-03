@@ -38,7 +38,9 @@ recovery verifies the complete physical history, permits only explicit synchroni
 repair, and reopens at the verified end after a startup synchronization barrier. The server's
 default mode and deployment-specific group-limit tuning remain deferred; the coordinator requires
 an explicit mode per request and never exposes `QUORUM_SYNC`. Future replica persistence also
-remains deferred. Benchmarks must follow the
+remains deferred. The [subprocess crash harness](../testing/wal-crash-harness.md) reconciles
+parent-received acknowledgments with recovered physical records after controlled process death; it
+does not extend this contract to unqualified power-loss or storage-stack failures. Benchmarks must follow the
 [benchmark contract](../benchmarks/benchmark-contract.md).
 
 The writer's runtime segment target and maximum application-payload setting are admission and

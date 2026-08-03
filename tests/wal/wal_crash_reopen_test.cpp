@@ -1,9 +1,8 @@
 #include "wal/wal_crash_test_support.hpp"
 
-#include <gtest/gtest.h>
-
 #include <chrono>
 #include <cstdint>
+#include <gtest/gtest.h>
 #include <string>
 #include <utility>
 
@@ -22,8 +21,8 @@ namespace {
   return child;
 }
 
-[[nodiscard]] common::Result<test::CrashEvent>
-submit_local(test::CrashChildProcess& child, const std::uint64_t id) {
+[[nodiscard]] common::Result<test::CrashEvent> submit_local(test::CrashChildProcess& child,
+                                                            const std::uint64_t id) {
   const common::Status sent = child.send("SUBMIT " + std::to_string(id) + " LOCAL_SYNC");
   if (!sent.is_ok()) {
     return common::make_unexpected(sent);
@@ -77,15 +76,15 @@ TEST(WalCrashReopenTest, ReopenAfterAcknowledgedCrashContinuesAtExactNextSequenc
   EXPECT_EQ(recovered->report.segment_count, 2U);
   EXPECT_EQ(recovered->records,
             (std::vector<test::RecoveredCrashRecord>{{.sequence = 1U, .request_id = 601U},
-                                                      {.sequence = 2U, .request_id = 602U}}));
+                                                     {.sequence = 2U, .request_id = 602U}}));
   EXPECT_TRUE(test::validate_crash_prefix(recovered->records).is_ok());
 }
 
 TEST(WalCrashReopenTest, ReopenAfterTailRepairAppendsAfterTheVerifiedPrefix) {
   test::CrashWalDirectory directory{"chronos-wal-reopen-after-repair"};
   ASSERT_TRUE(directory.valid());
-  test::CrashChildProcess creator = ready_process(
-      {.directory = directory.path(), .maximum_sync_batch_requests = 1U});
+  test::CrashChildProcess creator =
+      ready_process({.directory = directory.path(), .maximum_sync_batch_requests = 1U});
   ASSERT_GT(creator.process_id(), 0);
   ASSERT_TRUE(submit_local(creator, 611U).has_value());
   stop_process(creator);
@@ -107,8 +106,8 @@ TEST(WalCrashReopenTest, ReopenAfterTailRepairAppendsAfterTheVerifiedPrefix) {
   ASSERT_TRUE(repaired.has_value()) << repaired.error().to_string();
   ASSERT_TRUE(repaired->report.repaired);
 
-  test::CrashChildProcess reopened = ready_process({
-      .directory = directory.path(), .reopen = true, .maximum_sync_batch_requests = 1U});
+  test::CrashChildProcess reopened = ready_process(
+      {.directory = directory.path(), .reopen = true, .maximum_sync_batch_requests = 1U});
   ASSERT_GT(reopened.process_id(), 0);
   const common::Result<test::CrashEvent> completed = submit_local(reopened, 613U);
   ASSERT_TRUE(completed.has_value()) << completed.error().to_string();
@@ -121,7 +120,7 @@ TEST(WalCrashReopenTest, ReopenAfterTailRepairAppendsAfterTheVerifiedPrefix) {
   ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
   EXPECT_EQ(recovered->records,
             (std::vector<test::RecoveredCrashRecord>{{.sequence = 1U, .request_id = 611U},
-                                                      {.sequence = 2U, .request_id = 613U}}));
+                                                     {.sequence = 2U, .request_id = 613U}}));
 }
 
 } // namespace

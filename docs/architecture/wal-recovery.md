@@ -6,7 +6,9 @@
 > terminal write/sync failure behavior, locked discovery, verification, explicit repair,
 > sink-directed semantic preflight/replay, startup barriers, reopening, bounded multi-producer
 > admission, single-worker append ordering, `ASYNC`/`LOCAL_SYNC` completion, group commit, and
-> coordinator metrics are implemented. Application-kind codecs and server-level acknowledgment
+> coordinator metrics are implemented. A deterministic subprocess harness reconciles
+> parent-received completions with strict recovery after process termination. Application-kind
+> codecs and server-level acknowledgment
 > transport are not. This document defines those boundaries without repeating the format tables.
 
 ## Safety goals and scope

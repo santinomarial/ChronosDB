@@ -3,8 +3,9 @@
 > **Status: design accepted; physical lifecycle implemented.** The normative bytes are in
 > [WAL v1](../formats/wal-v1.md), and the normative lifecycle/recovery behavior is in
 > [WAL recovery](../architecture/wal-recovery.md). The in-memory codec, blocking POSIX operations,
-> exclusive writer, locked verification, explicit repair, replay passes, and existing-history reopen
-> path and bounded durability coordinator exist. Application-kind semantics do not. This learning
+> exclusive writer, locked verification, explicit repair, replay passes, existing-history reopen
+> path, bounded durability coordinator, and subprocess crash/recovery harness exist. Application-kind
+> semantics do not. This learning
 > document explains the reasoning and should not substitute for either specification; implementation
 > details are in [WAL recovery implementation](wal-recovery.md).
 
@@ -285,6 +286,8 @@ Correctness evidence comes first: golden bytes, independent round trips, corrupt
 fixtures, coverage-guided fuzzing, and failpoint crashes at each write/sync/rename/repair boundary.
 Every randomized failure retains its seed and durable image. The durability oracle records sent,
 fully written, synchronized, acknowledged, recovered, and applied identities separately by mode.
+The implemented subprocess tier uses fixed failpoints and `SIGKILL` over real host files; physical
+power-cut and qualified-device campaigns remain a stronger, separate evidence tier.
 
 Performance work must use the [benchmark contract](../benchmarks/benchmark-contract.md). WAL reports
 record/payload sizes, segment rotation frequency, mode, group policy, filesystem, mount options,

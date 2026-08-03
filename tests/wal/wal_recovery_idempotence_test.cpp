@@ -1,9 +1,8 @@
 #include "wal/wal_crash_test_support.hpp"
 
-#include <gtest/gtest.h>
-
 #include <chrono>
 #include <cstdint>
+#include <gtest/gtest.h>
 #include <string>
 #include <utility>
 
@@ -40,8 +39,8 @@ void shutdown_cleanly(test::CrashChildProcess& child) {
 TEST(WalRecoveryIdempotenceTest, RepeatedCleanRecoveryPreservesBytesReportAndReplay) {
   test::CrashWalDirectory directory{"chronos-wal-recovery-repeat"};
   ASSERT_TRUE(directory.valid());
-  test::CrashChildProcess child = launch_ready(
-      {.directory = directory.path(), .maximum_sync_batch_requests = 1U});
+  test::CrashChildProcess child =
+      launch_ready({.directory = directory.path(), .maximum_sync_batch_requests = 1U});
   ASSERT_GT(child.process_id(), 0);
   durable_submit(child, 501U);
   durable_submit(child, 502U);
@@ -66,8 +65,8 @@ TEST(WalRecoveryIdempotenceTest, RepeatedCleanRecoveryPreservesBytesReportAndRep
 TEST(WalRecoveryIdempotenceTest, ExplicitFinalTailRepairIsSynchronizedAndConvergent) {
   test::CrashWalDirectory directory{"chronos-wal-tail-crash-repeat"};
   ASSERT_TRUE(directory.valid());
-  test::CrashChildProcess creator = launch_ready(
-      {.directory = directory.path(), .maximum_sync_batch_requests = 1U});
+  test::CrashChildProcess creator =
+      launch_ready({.directory = directory.path(), .maximum_sync_batch_requests = 1U});
   ASSERT_GT(creator.process_id(), 0);
   durable_submit(creator, 511U);
   shutdown_cleanly(creator);

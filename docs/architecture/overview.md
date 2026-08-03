@@ -116,8 +116,9 @@ boundaries, and synchronizes the prior segment before activating its successor. 
 recovery preserves that lock and the recovered identity/sequence/offset. A bounded commit
 coordinator now accepts concurrent producers, transfers all physical writer calls to one worker,
 orders records by linearized admission, acknowledges `ASYNC` after complete write, and groups
-`LOCAL_SYNC` requests behind covering synchronization frontiers. Application-kind semantics remain
-unimplemented.
+`LOCAL_SYNC` requests behind covering synchronization frontiers. A subprocess crash harness checks
+those acknowledgment frontiers against strict recovery, repair, rotation, reopening, and process
+locking on real host files. Application-kind semantics remain unimplemented.
 
 The [WAL recovery state machine](wal-recovery.md) verifies the complete physical history before
 semantic preflight or replay. It can explicitly truncate only a narrowly defined incomplete suffix

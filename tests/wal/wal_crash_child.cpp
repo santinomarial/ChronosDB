@@ -1,8 +1,8 @@
 #include "chronos/wal/wal_commit_coordinator.hpp"
 #include "chronos/wal/wal_writer.hpp"
 #include "io/posix_syscalls.hpp"
-#include "wal/wal_writer_internal.hpp"
 #include "wal/wal_crash_protocol.hpp"
+#include "wal/wal_writer_internal.hpp"
 #include "wal/wal_writer_test_support.hpp"
 
 #include <algorithm>
@@ -18,12 +18,12 @@
 #include <sstream>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <system_error>
+#include <thread>
+#include <unistd.h>
 #include <unordered_map>
 #include <utility>
 #include <vector>
-#include <unistd.h>
 
 namespace chronos::wal::test {
 namespace {
@@ -233,8 +233,8 @@ private:
     if (point != pause_after_ || occurrence != pause_occurrence_) {
       return;
     }
-    static_cast<void>(protocol_.send("FAILPOINT " + std::string{point} + " " +
-                                     std::to_string(occurrence)));
+    static_cast<void>(
+        protocol_.send("FAILPOINT " + std::string{point} + " " + std::to_string(occurrence)));
     for (;;) {
       static_cast<void>(::pause());
     }
@@ -265,8 +265,8 @@ private:
 }
 
 [[nodiscard]] int report_start_failure(ProtocolWriter& protocol, const common::Status& status) {
-  static_cast<void>(protocol.send("ERROR " + std::to_string(static_cast<int>(status.code())) +
-                                  " startup"));
+  static_cast<void>(
+      protocol.send("ERROR " + std::to_string(static_cast<int>(status.code())) + " startup"));
   return 2;
 }
 
@@ -301,8 +301,8 @@ int main(const int argc, char** const argv) {
         writer_config, WalRecoveryOptions{}, replay_sink, syscalls);
   } else {
     FixedWalIdGenerator generator{make_wal_id(0x42U)};
-    writer = chronos::wal::detail::WalWriterTestAccess::create_new(writer_config, generator,
-                                                                   syscalls);
+    writer =
+        chronos::wal::detail::WalWriterTestAccess::create_new(writer_config, generator, syscalls);
   }
   if (!writer.has_value()) {
     return report_start_failure(protocol, writer.error());
@@ -347,8 +347,9 @@ int main(const int argc, char** const argv) {
       const std::vector<std::byte> payload = make_crash_payload(request_id);
       common::Result<WalCommitCompletion> submitted = coordinator.try_submit(payload, *durability);
       if (!submitted.has_value()) {
-        static_cast<void>(protocol.send("REJECTED " + std::to_string(request_id) + " " +
-                                        std::to_string(static_cast<int>(submitted.error().code()))));
+        static_cast<void>(
+            protocol.send("REJECTED " + std::to_string(request_id) + " " +
+                          std::to_string(static_cast<int>(submitted.error().code()))));
         continue;
       }
       if (!protocol.send("ADMITTED " + std::to_string(request_id))) {
@@ -359,15 +360,15 @@ int main(const int argc, char** const argv) {
             [request_id, durability = *durability, completion = std::move(*submitted), &protocol] {
               const common::Result<WalCommitResult> result = completion.wait();
               if (!result.has_value()) {
-                static_cast<void>(protocol.send(
-                    "FAILED " + std::to_string(request_id) + " " +
-                    std::to_string(static_cast<int>(result.error().code()))));
+                static_cast<void>(
+                    protocol.send("FAILED " + std::to_string(request_id) + " " +
+                                  std::to_string(static_cast<int>(result.error().code()))));
                 return;
               }
-              static_cast<void>(protocol.send(
-                  "COMPLETED " + std::to_string(request_id) + " " + mode_name(durability) + " " +
-                  std::to_string(result->append.record_sequence) + " " +
-                  std::to_string(result->admission_sequence)));
+              static_cast<void>(protocol.send("COMPLETED " + std::to_string(request_id) + " " +
+                                              mode_name(durability) + " " +
+                                              std::to_string(result->append.record_sequence) + " " +
+                                              std::to_string(result->admission_sequence)));
             });
       } catch (const std::system_error&) {
         static_cast<void>(protocol.send("ERROR 0 thread"));
@@ -383,13 +384,14 @@ int main(const int argc, char** const argv) {
         }
       }
       const WalCommitMetrics metrics = coordinator.metrics();
-      static_cast<void>(protocol.send(
-          "METRICS " + std::to_string(metrics.synchronization_attempts) + " " +
-          std::to_string(metrics.local_sync_batches) + " " +
-          std::to_string(metrics.local_sync_requests_in_batches) + " " +
-          std::to_string(metrics.acknowledged_async_requests) + " " +
-          std::to_string(metrics.acknowledged_local_sync_requests)));
-      static_cast<void>(protocol.send(std::string{"SHUTDOWN "} + (status.is_ok() ? "OK" : "ERROR")));
+      static_cast<void>(protocol.send("METRICS " +
+                                      std::to_string(metrics.synchronization_attempts) + " " +
+                                      std::to_string(metrics.local_sync_batches) + " " +
+                                      std::to_string(metrics.local_sync_requests_in_batches) + " " +
+                                      std::to_string(metrics.acknowledged_async_requests) + " " +
+                                      std::to_string(metrics.acknowledged_local_sync_requests)));
+      static_cast<void>(
+          protocol.send(std::string{"SHUTDOWN "} + (status.is_ok() ? "OK" : "ERROR")));
       return status.is_ok() ? 0 : 6;
     }
     static_cast<void>(protocol.send("ERROR 0 unknown_command"));

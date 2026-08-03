@@ -3,8 +3,8 @@
 
 #include "chronos/common/result.hpp"
 #include "chronos/io/posix_io.hpp"
-#include "chronos/wal/wal_recovery.hpp"
 #include "chronos/wal/wal_paths.hpp"
+#include "chronos/wal/wal_recovery.hpp"
 #include "chronos/wal/wal_scan.hpp"
 #include "wal/wal_crash_protocol.hpp"
 
@@ -18,9 +18,9 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <unistd.h>
 #include <utility>
 #include <vector>
-#include <unistd.h>
 
 namespace chronos::wal::test {
 

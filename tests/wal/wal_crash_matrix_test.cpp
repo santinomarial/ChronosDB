@@ -1,10 +1,9 @@
 #include "wal/wal_crash_test_support.hpp"
 
-#include <gtest/gtest.h>
-
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <gtest/gtest.h>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -42,10 +41,10 @@ TEST_P(WalInstallationCrashMatrixTest, LeavesOnlyAContractPermittedDiscoverableS
   EXPECT_EQ(scanned->valid_end.byte_offset, kSegmentHeaderSize);
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    SegmentLifecycle, WalInstallationCrashMatrixTest,
-    ::testing::Values(test::kAfterSegmentHeaderWrite, test::kAfterSegmentFileSync,
-                      test::kAfterSegmentRename, test::kAfterSegmentDirectorySync));
+INSTANTIATE_TEST_SUITE_P(SegmentLifecycle, WalInstallationCrashMatrixTest,
+                         ::testing::Values(test::kAfterSegmentHeaderWrite,
+                                           test::kAfterSegmentFileSync, test::kAfterSegmentRename,
+                                           test::kAfterSegmentDirectorySync));
 
 struct RotationCrashPoint {
   std::string_view failpoint;
@@ -78,8 +77,8 @@ void submit_request(test::CrashChildProcess& child, const std::uint64_t request_
 void create_one_durable_record(const std::filesystem::path& directory,
                                const std::uint64_t target_segment_size) {
   test::CrashChildProcess child = ready_child({.directory = directory,
-                                                .target_segment_size = target_segment_size,
-                                                .maximum_sync_batch_requests = 1U});
+                                               .target_segment_size = target_segment_size,
+                                               .maximum_sync_batch_requests = 1U});
   ASSERT_GT(child.process_id(), 0);
   submit_request(child, 320U, "LOCAL_SYNC");
   ASSERT_TRUE(child.wait_for("COMPLETED", 320U).has_value());
@@ -125,43 +124,41 @@ TEST_P(WalRotationCrashMatrixTest, RecoversTheExactNamedPrefixAtEverySuccessorBo
       test::recover_crash_wal(directory.path(), false);
   ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
   EXPECT_EQ(recovered->records, inspected->records);
-  EXPECT_EQ(recovered->report.temporary_files_removed,
-            inspected->report.temporary_file_count);
+  EXPECT_EQ(recovered->report.temporary_files_removed, inspected->report.temporary_file_count);
 }
 
 INSTANTIATE_TEST_SUITE_P(
     SuccessorLifecycle, WalRotationCrashMatrixTest,
-    ::testing::Values(
-        RotationCrashPoint{.failpoint = test::kAfterDataSync,
-                           .occurrence = 1U,
-                           .expected_segments = 1U,
-                           .expected_records = 1U},
-        RotationCrashPoint{.failpoint = test::kAfterSegmentHeaderWrite,
-                           .occurrence = 1U,
-                           .expected_segments = 1U,
-                           .expected_records = 1U},
-        RotationCrashPoint{.failpoint = test::kAfterSegmentFileSync,
-                           .occurrence = 2U,
-                           .expected_segments = 1U,
-                           .expected_records = 1U},
-        RotationCrashPoint{.failpoint = test::kAfterSegmentRename,
-                           .occurrence = 1U,
-                           .expected_segments = 2U,
-                           .expected_records = 1U},
-        RotationCrashPoint{.failpoint = test::kAfterSegmentDirectorySync,
-                           .occurrence = 2U,
-                           .expected_segments = 2U,
-                           .expected_records = 1U},
-        RotationCrashPoint{.failpoint = test::kAfterRecordWrite,
-                           .occurrence = 1U,
-                           .expected_segments = 2U,
-                           .expected_records = 2U}));
+    ::testing::Values(RotationCrashPoint{.failpoint = test::kAfterDataSync,
+                                         .occurrence = 1U,
+                                         .expected_segments = 1U,
+                                         .expected_records = 1U},
+                      RotationCrashPoint{.failpoint = test::kAfterSegmentHeaderWrite,
+                                         .occurrence = 1U,
+                                         .expected_segments = 1U,
+                                         .expected_records = 1U},
+                      RotationCrashPoint{.failpoint = test::kAfterSegmentFileSync,
+                                         .occurrence = 2U,
+                                         .expected_segments = 1U,
+                                         .expected_records = 1U},
+                      RotationCrashPoint{.failpoint = test::kAfterSegmentRename,
+                                         .occurrence = 1U,
+                                         .expected_segments = 2U,
+                                         .expected_records = 1U},
+                      RotationCrashPoint{.failpoint = test::kAfterSegmentDirectorySync,
+                                         .occurrence = 2U,
+                                         .expected_segments = 2U,
+                                         .expected_records = 1U},
+                      RotationCrashPoint{.failpoint = test::kAfterRecordWrite,
+                                         .occurrence = 1U,
+                                         .expected_segments = 2U,
+                                         .expected_records = 2U}));
 
 TEST(WalCrashMatrixTest, ParentObservedLocalSyncCompletionSurvivesSigkillExactlyOnce) {
   test::CrashWalDirectory directory{"chronos-wal-local-ack-crash"};
   ASSERT_TRUE(directory.valid());
-  test::CrashChildProcess child = ready_child(
-      {.directory = directory.path(), .maximum_sync_batch_requests = 1U});
+  test::CrashChildProcess child =
+      ready_child({.directory = directory.path(), .maximum_sync_batch_requests = 1U});
   ASSERT_GT(child.process_id(), 0);
 
   submit_request(child, 301U, "LOCAL_SYNC");
@@ -181,9 +178,8 @@ TEST(WalCrashMatrixTest, SynchronizedButUnpublishedRequestMayRecover) {
   test::CrashWalDirectory directory{"chronos-wal-durable-unacknowledged"};
   ASSERT_TRUE(directory.valid());
   test::CrashChildProcess child = ready_child({.directory = directory.path(),
-                                                .maximum_sync_batch_requests = 1U,
-                                                .pause_after =
-                                                    std::string{test::kAfterDataSync}});
+                                               .maximum_sync_batch_requests = 1U,
+                                               .pause_after = std::string{test::kAfterDataSync}});
   ASSERT_GT(child.process_id(), 0);
 
   submit_request(child, 302U, "LOCAL_SYNC");

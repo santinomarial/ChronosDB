@@ -1,9 +1,8 @@
 #include "wal/wal_crash_test_support.hpp"
 
-#include <gtest/gtest.h>
-
 #include <chrono>
 #include <cstdint>
+#include <gtest/gtest.h>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -93,8 +92,8 @@ TEST(WalCrashGroupCommitTest, EveryParentObservedGroupedLocalCompletionSurvivesA
   ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
   EXPECT_EQ(recovered->records,
             (std::vector<test::RecoveredCrashRecord>{{.sequence = 1U, .request_id = 411U},
-                                                      {.sequence = 2U, .request_id = 412U},
-                                                      {.sequence = 3U, .request_id = 413U}}));
+                                                     {.sequence = 2U, .request_id = 412U},
+                                                     {.sequence = 3U, .request_id = 413U}}));
   EXPECT_TRUE(test::validate_crash_prefix(recovered->records).is_ok());
 }
 

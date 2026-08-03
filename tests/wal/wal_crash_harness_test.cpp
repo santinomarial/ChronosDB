@@ -1,8 +1,7 @@
 #include "wal/wal_crash_test_support.hpp"
 
-#include <gtest/gtest.h>
-
 #include <cstdint>
+#include <gtest/gtest.h>
 #include <string>
 #include <sys/wait.h>
 #include <utility>
@@ -66,7 +65,7 @@ TEST(WalCrashHarnessTest, GracefulChildExercisesCreateMixedAcknowledgmentAndReco
   EXPECT_TRUE(test::validate_crash_prefix(recovered->records).is_ok());
   EXPECT_EQ(recovered->records,
             (std::vector<test::RecoveredCrashRecord>{{.sequence = 1U, .request_id = 101U},
-                                                      {.sequence = 2U, .request_id = 102U}}));
+                                                     {.sequence = 2U, .request_id = 102U}}));
 }
 
 TEST(WalCrashHarnessTest, AsyncCompletionBeforeSigkillAllowsEitherRecoveryOutcome) {

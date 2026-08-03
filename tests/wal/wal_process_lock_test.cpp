@@ -1,7 +1,6 @@
 #include "wal/wal_crash_test_support.hpp"
 
 #include <gtest/gtest.h>
-
 #include <string>
 #include <sys/wait.h>
 #include <utility>

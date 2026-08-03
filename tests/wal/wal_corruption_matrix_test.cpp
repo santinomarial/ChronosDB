@@ -1,9 +1,8 @@
 #include "wal/wal_crash_test_support.hpp"
 
-#include <gtest/gtest.h>
-
 #include <cstdint>
 #include <filesystem>
+#include <gtest/gtest.h>
 #include <string>
 #include <string_view>
 #include <utility>

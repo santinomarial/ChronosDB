@@ -60,8 +60,8 @@ inline constexpr std::string_view kAfterDataSync = "after_data_sync";
 [[nodiscard]] inline common::Result<std::uint64_t>
 crash_payload_request_id(const common::ByteView payload) {
   if (payload.size() != kCrashPayloadSize) {
-    return common::make_unexpected(common::Status{
-        common::StatusCode::kCorruption, "crash-harness payload has an unexpected size"});
+    return common::make_unexpected(common::Status{common::StatusCode::kCorruption,
+                                                  "crash-harness payload has an unexpected size"});
   }
   std::uint64_t request_id = 0;
   for (std::size_t index = 0; index < sizeof(request_id); ++index) {
@@ -81,8 +81,8 @@ struct CrashEvent {
 
 [[nodiscard]] inline common::Result<CrashEvent> parse_crash_event(std::string line) {
   if (line.size() > 4096U) {
-    return common::make_unexpected(common::Status{
-        common::StatusCode::kOutOfRange, "crash-child protocol line exceeds 4096 bytes"});
+    return common::make_unexpected(common::Status{common::StatusCode::kOutOfRange,
+                                                  "crash-child protocol line exceeds 4096 bytes"});
   }
   std::istringstream input{line};
   CrashEvent event{.raw = std::move(line)};
@@ -110,8 +110,8 @@ struct CrashEvent {
     }
     const auto digit = static_cast<std::uint64_t>(character - '0');
     if (value > (std::numeric_limits<std::uint64_t>::max() - digit) / 10U) {
-      return common::make_unexpected(common::Status{common::StatusCode::kOutOfRange,
-                                                    "protocol integer exceeds uint64"});
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kOutOfRange, "protocol integer exceeds uint64"});
     }
     value = (value * 10U) + digit;
   }
@@ -190,8 +190,7 @@ public:
       close_fd(commands[1]);
       close_fd(events[0]);
       close_fd(events[1]);
-      return common::make_unexpected(
-          errno_status("configure crash-child process", spawn_error));
+      return common::make_unexpected(errno_status("configure crash-child process", spawn_error));
     }
 
     std::vector<std::string> arguments;
@@ -223,8 +222,8 @@ public:
     argv.push_back(nullptr);
 
     pid_t process = -1;
-    spawn_error = ::posix_spawn(&process, arguments.front().c_str(), &actions, nullptr, argv.data(),
-                                environ);
+    spawn_error =
+        ::posix_spawn(&process, arguments.front().c_str(), &actions, nullptr, argv.data(), environ);
     ::posix_spawn_file_actions_destroy(&actions);
     close_fd(commands[0]);
     close_fd(events[1]);
@@ -257,8 +256,8 @@ public:
     command.push_back('\n');
     std::size_t completed = 0;
     while (completed < command.size()) {
-      const ssize_t count = ::write(command_descriptor_, command.data() + completed,
-                                    command.size() - completed);
+      const ssize_t count =
+          ::write(command_descriptor_, command.data() + completed, command.size() - completed);
       if (count < 0) {
         if (errno == EINTR) {
           continue;
@@ -275,7 +274,8 @@ public:
   }
 
   [[nodiscard]] common::Result<CrashEvent>
-  wait_for(const std::string_view name, const std::optional<std::uint64_t> request_id = std::nullopt,
+  wait_for(const std::string_view name,
+           const std::optional<std::uint64_t> request_id = std::nullopt,
            const std::chrono::milliseconds timeout = std::chrono::seconds{20}) {
     const auto matches = [name, request_id](const CrashEvent& event) {
       if (event.name != name) {
@@ -292,7 +292,8 @@ public:
     };
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     while (true) {
-      for (auto iterator = buffered_events_.begin(); iterator != buffered_events_.end(); ++iterator) {
+      for (auto iterator = buffered_events_.begin(); iterator != buffered_events_.end();
+           ++iterator) {
         if (matches(*iterator)) {
           CrashEvent event = std::move(*iterator);
           buffered_events_.erase(iterator);
@@ -301,12 +302,11 @@ public:
       }
       const auto now = std::chrono::steady_clock::now();
       if (now >= deadline) {
-        return common::make_unexpected(common::Status{
-            common::StatusCode::kUnavailable, "timed out waiting for crash-child event " +
-                                                   std::string{name}});
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kUnavailable,
+                           "timed out waiting for crash-child event " + std::string{name}});
       }
-      const auto remaining =
-          std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
+      const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
       common::Result<CrashEvent> event = read_event(remaining);
       if (!event.has_value()) {
         return event;
@@ -320,8 +320,7 @@ public:
 
   [[nodiscard]] common::Status kill_abruptly() {
     if (process_ <= 0) {
-      return common::Status{common::StatusCode::kInvalidArgument,
-                            "crash child is not running"};
+      return common::Status{common::StatusCode::kInvalidArgument, "crash child is not running"};
     }
     if (::kill(process_, SIGKILL) != 0 && errno != ESRCH) {
       return errno_status("kill WAL crash child", errno);
@@ -367,8 +366,7 @@ public:
   }
 
 private:
-  [[nodiscard]] common::Result<CrashEvent>
-  read_event(const std::chrono::milliseconds timeout) {
+  [[nodiscard]] common::Result<CrashEvent> read_event(const std::chrono::milliseconds timeout) {
     while (true) {
       const std::size_t newline = partial_event_.find('\n');
       if (newline != std::string::npos) {
@@ -392,8 +390,8 @@ private:
       std::array<char, 512> buffer{};
       const ssize_t count = ::read(event_descriptor_, buffer.data(), buffer.size());
       if (count == 0) {
-        return common::make_unexpected(common::Status{common::StatusCode::kIoError,
-                                                      "crash-child event pipe reached EOF"});
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kIoError, "crash-child event pipe reached EOF"});
       }
       if (count < 0) {
         if (errno == EINTR) {
@@ -417,9 +415,9 @@ private:
 
   [[nodiscard]] static common::Status errno_status(const std::string_view operation,
                                                    const int error_number) {
-    return common::Status{common::StatusCode::kIoError,
-                          std::string{operation} + " failed with errno " +
-                              std::to_string(error_number)};
+    return common::Status{common::StatusCode::kIoError, std::string{operation} +
+                                                            " failed with errno " +
+                                                            std::to_string(error_number)};
   }
 
   static void close_fd(const int descriptor) noexcept {
