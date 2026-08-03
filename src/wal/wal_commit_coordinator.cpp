@@ -284,7 +284,7 @@ private:
     return request.encoded_bytes <= config_.maximum_sync_batch_encoded_bytes - window.encoded_bytes;
   }
 
-  void release_admission(const Request& request) noexcept {
+  void release_admission(const Request& request) {
     if (metrics_.pending_requests == 0U || metrics_.pending_encoded_bytes < request.encoded_bytes) {
       terminal_status_ = common::Status{common::StatusCode::kInternal,
                                         "WAL commit admission accounting underflow"};

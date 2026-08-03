@@ -107,6 +107,12 @@ struct RepetitionResult {
   std::vector<Sample> samples;
 };
 
+struct Phase {
+  std::uint64_t first_request_id{};
+  std::uint64_t operation_count{};
+  std::vector<Sample>* samples{};
+};
+
 [[nodiscard]] Status invalid(std::string message) {
   return Status{StatusCode::kInvalidArgument, std::move(message)};
 }
@@ -139,8 +145,8 @@ struct RepetitionResult {
       output.append("\\t");
       break;
     default:
-    if (byte < 0x20U || byte >= 0x80U) {
-        constexpr char kHex[] = "0123456789abcdef";
+      if (byte < 0x20U || byte >= 0x80U) {
+        constexpr std::string_view kHex = "0123456789abcdef";
         output.append("\\u00");
         output.push_back(kHex[byte >> 4U]);
         output.push_back(kHex[byte & 0x0fU]);
@@ -309,8 +315,7 @@ void print_usage(const std::string_view program) {
   }
   constexpr std::uint64_t kMaximumTextArtifactBytesPerRecord = 256U;
   const std::uint64_t maximum_artifact_bytes_per_record =
-      layout->total_length + chronos::wal::kSegmentHeaderSize +
-      kMaximumTextArtifactBytesPerRecord;
+      layout->total_length + chronos::wal::kSegmentHeaderSize + kMaximumTextArtifactBytesPerRecord;
   if (records_per_run != 0U &&
       maximum_artifact_bytes_per_record > options.maximum_artifact_bytes / records_per_run) {
     return invalid("benchmark run exceeds --maximum-artifact-bytes; raise it explicitly");
@@ -332,16 +337,16 @@ void print_usage(const std::string_view program) {
   return Status::ok();
 }
 
-[[nodiscard]] std::vector<std::byte>
-make_payload(const std::size_t size, const std::uint64_t request_id, const std::uint64_t seed) {
-  std::vector<std::byte> payload(size);
+[[nodiscard]] std::vector<std::byte> make_payload(const Options& options,
+                                                  const std::uint64_t request_id) {
+  std::vector<std::byte> payload(options.payload_bytes);
   payload[0] = std::byte{1};
   payload[4] = std::byte{1};
   for (std::size_t index = 0; index < sizeof(request_id); ++index) {
     payload[chronos::wal::kApplicationEnvelopeSize + index] =
         static_cast<std::byte>((request_id >> (index * 8U)) & 0xffU);
   }
-  std::uint64_t state = seed ^ (request_id * 0x9e3779b97f4a7c15ULL);
+  std::uint64_t state = options.seed ^ (request_id * 0x9e3779b97f4a7c15ULL);
   for (std::size_t index = chronos::wal::kApplicationEnvelopeSize + sizeof(request_id);
        index < payload.size(); ++index) {
     state ^= state >> 12U;
@@ -497,22 +502,20 @@ private:
 }
 
 [[nodiscard]] Status run_phase(WalCommitCoordinator& coordinator, const Options& options,
-                               const std::uint64_t first_request_id,
-                               const std::uint64_t operation_count, std::vector<Sample>* samples,
-                               std::uint64_t& elapsed_ns) {
-  if (operation_count == 0U) {
+                               const Phase& phase, std::uint64_t& elapsed_ns) {
+  if (phase.operation_count == 0U) {
     elapsed_ns = 0U;
     return Status::ok();
   }
-  const std::size_t thread_count = static_cast<std::size_t>(
-      std::min<std::uint64_t>(operation_count, static_cast<std::uint64_t>(options.producers)));
+  const std::size_t thread_count = static_cast<std::size_t>(std::min<std::uint64_t>(
+      phase.operation_count, static_cast<std::uint64_t>(options.producers)));
   std::atomic<std::uint64_t> next{0U};
   std::atomic<std::size_t> ready{0U};
   std::atomic<bool> begin{false};
   std::mutex failure_mutex;
   Status failure;
-  if (samples != nullptr) {
-    samples->resize(static_cast<std::size_t>(operation_count));
+  if (phase.samples != nullptr) {
+    phase.samples->resize(static_cast<std::size_t>(phase.operation_count));
   }
 
   std::vector<std::thread> workers;
@@ -526,12 +529,11 @@ private:
         }
         while (true) {
           const std::uint64_t ordinal = next.fetch_add(1U, std::memory_order_relaxed);
-          if (ordinal >= operation_count) {
+          if (ordinal >= phase.operation_count) {
             return;
           }
-          const std::uint64_t request_id = first_request_id + ordinal;
-          std::vector<std::byte> payload =
-              make_payload(options.payload_bytes, request_id, options.seed);
+          const std::uint64_t request_id = phase.first_request_id + ordinal;
+          std::vector<std::byte> payload = make_payload(options, request_id);
           const auto started = std::chrono::steady_clock::now();
           Result<chronos::wal::WalCommitCompletion> submitted =
               coordinator.try_submit(payload, options.durability);
@@ -564,8 +566,8 @@ private:
             }
             return;
           }
-          if (samples != nullptr) {
-            (*samples)[static_cast<std::size_t>(ordinal)] = Sample{
+          if (phase.samples != nullptr) {
+            (*phase.samples)[static_cast<std::size_t>(ordinal)] = Sample{
                 .ordinal = ordinal,
                 .request_id = request_id,
                 .latency_ns = static_cast<std::uint64_t>(
@@ -692,7 +694,11 @@ private:
   WalCommitCoordinator coordinator = std::move(*started);
 
   std::uint64_t ignored_elapsed = 0U;
-  status = run_phase(coordinator, options, 1U, options.warmup_operations, nullptr, ignored_elapsed);
+  status = run_phase(coordinator, options,
+                     Phase{.first_request_id = 1U,
+                           .operation_count = options.warmup_operations,
+                           .samples = nullptr},
+                     ignored_elapsed);
   if (!status.is_ok()) {
     static_cast<void>(coordinator.shutdown());
     return chronos::common::make_unexpected(status);
@@ -702,8 +708,11 @@ private:
 
   RepetitionResult result;
   result.index = repetition;
-  status = run_phase(coordinator, options, options.warmup_operations + 1U, options.operations,
-                     &result.samples, result.elapsed_ns);
+  status = run_phase(coordinator, options,
+                     Phase{.first_request_id = options.warmup_operations + 1U,
+                           .operation_count = options.operations,
+                           .samples = &result.samples},
+                     result.elapsed_ns);
   const ResourceSnapshot after_resources = resource_snapshot();
   const WalCommitMetrics after_metrics = coordinator.metrics();
   const Status shutdown_status = coordinator.shutdown();
@@ -869,7 +878,7 @@ private:
     const long double throughput = static_cast<long double>(options.operations) / seconds;
     output << "    {\"index\":" << result.index << ",\"elapsed_ns\":" << result.elapsed_ns
            << ",\"operations_per_second\":" << std::fixed << std::setprecision(6) << throughput
-           << ",\"latency_ns\":{\"p50\":" << percentile_nearest_rank(latencies, 0.50L)
+           << R"(,"latency_ns":{"p50":)" << percentile_nearest_rank(latencies, 0.50L)
            << ",\"p95\":" << percentile_nearest_rank(latencies, 0.95L)
            << ",\"p99\":" << percentile_nearest_rank(latencies, 0.99L) << ",\"p99_9\":";
     if (latencies.size() >= 1000U) {
@@ -940,7 +949,7 @@ private:
          << "  \"scenario\": " << quoted(kScenarioVersion) << ",\n"
          << "  \"created_utc\": " << quoted(utc_timestamp()) << ",\n"
          << "  \"invocation_argv\": " << invocation_json(options.invocation) << ",\n"
-         << "  \"source\": {\"git_commit\":" << quoted(version.git_commit)
+         << R"(  "source": {"git_commit":)" << quoted(version.git_commit)
          << ",\"git_metadata_available\":" << (version.git_metadata_available ? "true" : "false")
          << ",\"git_dirty\":" << (version.git_dirty ? "true" : "false")
          << ",\"dirty_diff_artifact_required\":" << (version.git_dirty ? "true" : "false") << "},\n"
@@ -957,7 +966,7 @@ private:
             "deterministic bytes; no production application kind is allocated\","
             "\"event_time_out_of_order_duplicates_corrections_tombstones\":\"not applicable to "
             "physical WAL benchmark\"},\n"
-         << "  \"wal\": {\"requested_mode\":" << quoted(durability_name(options.durability))
+         << R"(  "wal": {"requested_mode":)" << quoted(durability_name(options.durability))
          << ",\"effective_mode\":" << quoted(durability_name(options.durability))
          << ",\"target_segment_bytes\":" << options.target_segment_bytes
          << ",\"maximum_pending_requests\":" << options.maximum_pending_requests
@@ -968,7 +977,7 @@ private:
          << ",\"replication\":\"single-node\",\"read_consistency\":\"not applicable\","
             "\"flush_compaction_checkpoint_reclamation\":\"not implemented and not "
             "benchmarked\"},\n"
-         << "  \"build\": {\"semantic_version\":" << quoted(version.semantic_version)
+         << R"(  "build": {"semantic_version":)" << quoted(version.semantic_version)
          << ",\"build_type\":" << quoted(version.build_type)
          << ",\"compiler\":" << quoted(version.compiler)
          << ",\"standard_library\":" << quoted(standard_library())
@@ -976,7 +985,7 @@ private:
          << ",\"operating_system\":" << quoted(version.operating_system)
          << ",\"compiler_linker_flags\":\"retained by scripts/benchmark-wal.sh in "
             "CMakeCache.txt and compile_commands.json; unknown for direct invocation\"},\n"
-         << "  \"host\": {\"uname\":"
+         << R"(  "host": {"uname":)"
          << quoted(have_uname
                        ? std::string{system.sysname} + " " + system.release + " " + system.machine
                        : "unknown (uname failed)")
@@ -1004,7 +1013,7 @@ private:
             "samples\",\"cache_state\":\"uncontrolled host cache; warmup count is explicit\","
             "\"maximum_artifact_bytes_total\":"
          << options.maximum_artifact_bytes << "},\n"
-         << "  \"correctness\": {\"validation_status\":"
+         << R"(  "correctness": {"validation_status":)"
          << quoted(recovery_validated ? "passed" : "pending")
          << ",\"complete_physical_recovery_required\":true,"
             "\"exact_record_sequence_required\":true,\"unique_request_identity_required\":true,"
