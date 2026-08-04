@@ -8,6 +8,7 @@ function(chronos_configure_installation)
     TARGETS
       chronos_common
       chronos_schema
+      chronos_columnar
       chronos_io
       chronos_wal
       chronosctl
@@ -27,18 +28,18 @@ function(chronos_configure_installation)
 
   configure_package_config_file(
     "${PROJECT_SOURCE_DIR}/cmake/ChronosConfig.cmake.in"
-    "${PROJECT_BINARY_DIR}/ChronosConfig.cmake"
+    "${PROJECT_BINARY_DIR}/ChronosDBConfig.cmake"
     INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/ChronosDB"
   )
   write_basic_package_version_file(
-    "${PROJECT_BINARY_DIR}/ChronosConfigVersion.cmake"
+    "${PROJECT_BINARY_DIR}/ChronosDBConfigVersion.cmake"
     VERSION "${PROJECT_VERSION}"
     COMPATIBILITY SameMajorVersion
   )
   install(
     FILES
-      "${PROJECT_BINARY_DIR}/ChronosConfig.cmake"
-      "${PROJECT_BINARY_DIR}/ChronosConfigVersion.cmake"
+      "${PROJECT_BINARY_DIR}/ChronosDBConfig.cmake"
+      "${PROJECT_BINARY_DIR}/ChronosDBConfigVersion.cmake"
     DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/ChronosDB"
   )
   install(

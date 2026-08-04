@@ -34,12 +34,34 @@ if(NOT EXISTS "${installed_schema_header}")
   message(FATAL_ERROR "staging install omitted ${installed_schema_header}")
 endif()
 
+set(installed_columnar_header
+    "${install_prefix}/${CHRONOS_TEST_INSTALL_INCLUDEDIR}/chronos/columnar/columnar_batch.hpp")
+if(NOT EXISTS "${installed_columnar_header}")
+  message(FATAL_ERROR "staging install omitted ${installed_columnar_header}")
+endif()
+
 set(installed_targets
     "${install_prefix}/${CHRONOS_TEST_INSTALL_LIBDIR}/cmake/ChronosDB/ChronosTargets.cmake")
 file(READ "${installed_targets}" installed_targets_contents)
 string(FIND "${installed_targets_contents}" "chronos::schema" schema_target_offset)
 if(schema_target_offset EQUAL -1)
   message(FATAL_ERROR "installed CMake package omitted chronos::schema")
+endif()
+
+set(installed_package_config
+    "${install_prefix}/${CHRONOS_TEST_INSTALL_LIBDIR}/cmake/ChronosDB/ChronosDBConfig.cmake")
+if(NOT EXISTS "${installed_package_config}")
+  message(FATAL_ERROR "staging install omitted ${installed_package_config}")
+endif()
+set(installed_package_version
+    "${install_prefix}/${CHRONOS_TEST_INSTALL_LIBDIR}/cmake/ChronosDB/ChronosDBConfigVersion.cmake")
+if(NOT EXISTS "${installed_package_version}")
+  message(FATAL_ERROR "staging install omitted ${installed_package_version}")
+endif()
+
+string(FIND "${installed_targets_contents}" "chronos::columnar" columnar_target_offset)
+if(columnar_target_offset EQUAL -1)
+  message(FATAL_ERROR "installed CMake package omitted chronos::columnar")
 endif()
 
 set(installed_walbench

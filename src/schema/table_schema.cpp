@@ -187,8 +187,7 @@ common::Status validate_v1_successor(const TableSchema& predecessor, const Table
   if (predecessor.table_id() != successor.table_id()) {
     return invalid("successor must preserve table identity");
   }
-  if (!successor.parent_schema_id().has_value() ||
-      *successor.parent_schema_id() != predecessor.schema_id()) {
+  if (successor.parent_schema_id() != std::optional<SchemaId>{predecessor.schema_id()}) {
     return invalid("successor must name the current schema as its parent");
   }
   const common::Result<SchemaVersion> expected_version = predecessor.version().next();

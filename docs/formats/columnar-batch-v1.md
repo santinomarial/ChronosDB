@@ -1,7 +1,8 @@
 # Columnar Batch v1 Format
 
-> **Status: accepted, not implemented.** This is the normative byte specification for immutable
-> schema-shaped ingestion batches. It does not change the frozen [WAL v1](wal-v1.md) framing.
+> **Status: accepted; canonical in-memory vectors and batches implemented, byte codec not
+> implemented.** This is the normative byte specification for immutable schema-shaped ingestion
+> batches. It does not change the frozen [WAL v1](wal-v1.md) framing.
 
 ## Scope and conventions
 

@@ -2,13 +2,14 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 
 namespace chronos::schema {
 namespace {
 
-[[nodiscard]] constexpr std::uint8_t byte_at(const std::string_view value,
+[[nodiscard]] constexpr std::uint8_t byte_at(const common::ByteView value,
                                              const std::size_t index) noexcept {
-  return static_cast<std::uint8_t>(static_cast<unsigned char>(value[index]));
+  return std::to_integer<std::uint8_t>(value[index]);
 }
 
 [[nodiscard]] constexpr bool is_continuation(const std::uint8_t value) noexcept {
@@ -17,7 +18,7 @@ namespace {
 
 } // namespace
 
-bool is_valid_utf8(const std::string_view value) noexcept {
+bool is_valid_utf8(const common::ByteView value) noexcept {
   std::size_t index = 0;
   while (index < value.size()) {
     const std::uint8_t first = byte_at(value, index);
@@ -68,6 +69,10 @@ bool is_valid_utf8(const std::string_view value) noexcept {
     return false;
   }
   return true;
+}
+
+bool is_valid_utf8(const std::string_view value) noexcept {
+  return is_valid_utf8(std::as_bytes(std::span{value.data(), value.size()}));
 }
 
 } // namespace chronos::schema

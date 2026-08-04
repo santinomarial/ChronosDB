@@ -6,7 +6,7 @@ Local verification is recorded per change; the Linux compiler/CI matrix remains 
 portable support and is not implied by a macOS-only local run. This status does not mean that the
 complete Phase 1 gates have passed. Unimplemented portions of Phase 1 and all later phases remain
 planned work, not implemented functionality or delivery commitments. Phase 4 has accepted design
-artifacts but no implementation. The Phase 2–3
+artifacts plus schema and canonical immutable in-memory columnar foundations. The Phase 2–3
 [WAL v1 format](formats/wal-v1.md), [recovery design](architecture/wal-recovery.md), and
 [ADR 0013](adr/0013-wal-v1-format-and-recovery.md) are accepted design artifacts. The pure in-memory
 WAL physical codec, fixtures, tests, fuzz target, minimal blocking POSIX file/directory primitives,
@@ -96,8 +96,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
 - **Design status:** logical types and stable identities, immutable schema versions and initial
   evolution, columnar-batch v1 bytes, the first WAL append command, ordered replay/retry semantics,
   mutable-head publication, snapshots, and sealing/handoff are accepted specifications. The
-  `chronos_schema` identity/type/immutable-schema/lineage/projection foundation and its tests are
-  implemented; batch codecs, mutable heads, and Phase 4 benchmarks remain unimplemented.
+  `chronos_schema` identity/type/immutable-schema/lineage/projection foundation and the
+  `chronos_columnar` borrowed/owned immutable vector and schema-shaped batch foundation are
+  implemented with tests. Batch byte codecs, WAL command integration, mutable heads, and Phase 4
+  benchmarks remain unimplemented.
 
 - **Scope:** typed immutable input batches; null/variable-width representation; append-only tablet heads; sealing; single shard-worker ownership; stable reader boundaries; idempotent ordered replay into heads.
 - **Explicit non-scope:** durable columnar parts, SQL execution, secondary indexes, general lock-free containers, live subscriptions, and a universal allocator.

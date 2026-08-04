@@ -127,6 +127,26 @@ chronos_set_project_warnings(chronos_schema)
 chronos_enable_sanitizers(chronos_schema)
 chronos_enable_static_analysis(chronos_schema)
 
+add_library(
+  chronos_columnar
+  src/columnar/column_vector.cpp
+  src/columnar/columnar_batch.cpp
+)
+add_library(chronos::columnar ALIAS chronos_columnar)
+set_target_properties(chronos_columnar PROPERTIES EXPORT_NAME columnar)
+set_target_properties(chronos_columnar PROPERTIES CXX_EXTENSIONS OFF)
+target_compile_features(chronos_columnar PUBLIC cxx_std_23)
+target_include_directories(
+  chronos_columnar
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+)
+target_link_libraries(chronos_columnar PUBLIC chronos::schema)
+chronos_set_project_warnings(chronos_columnar)
+chronos_enable_sanitizers(chronos_columnar)
+chronos_enable_static_analysis(chronos_columnar)
+
 if(NOT CMAKE_SYSTEM_NAME MATCHES "^(Linux|Darwin)$")
   message(FATAL_ERROR "chronos_io currently supports only Linux and macOS")
 endif()
@@ -256,6 +276,23 @@ if(CHRONOS_BUILD_TESTS)
   gtest_discover_tests(chronos_schema_tests DISCOVERY_TIMEOUT 30)
 
   add_executable(
+    chronos_columnar_tests
+    tests/columnar/column_vector_header_self_contained.cpp
+    tests/columnar/column_vector_test.cpp
+    tests/columnar/column_vector_property_test.cpp
+    tests/columnar/columnar_batch_header_self_contained.cpp
+    tests/columnar/columnar_batch_test.cpp
+  )
+  set_target_properties(chronos_columnar_tests PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_columnar_tests PRIVATE cxx_std_23)
+  target_include_directories(chronos_columnar_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+  target_link_libraries(chronos_columnar_tests PRIVATE chronos::columnar GTest::gtest_main)
+  chronos_set_project_warnings(chronos_columnar_tests)
+  chronos_enable_sanitizers(chronos_columnar_tests)
+  chronos_enable_static_analysis(chronos_columnar_tests)
+  gtest_discover_tests(chronos_columnar_tests DISCOVERY_TIMEOUT 30)
+
+  add_executable(
     chronos_io_tests
     tests/io/posix_io_header_self_contained.cpp
     tests/io/posix_io_test.cpp
@@ -355,6 +392,17 @@ if(CHRONOS_BUILD_TESTS)
       "-DCHRONOS_WALBENCH=$<TARGET_FILE:chronos-walbench>"
       "-DCHRONOS_TEST_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/walbench_smoke_test.cmake"
+  )
+
+  add_test(
+    NAME ExternalConsumerTest.InstalledColumnarTarget
+    COMMAND
+      "${CMAKE_COMMAND}"
+      "-DCHRONOS_TEST_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+      "-DCHRONOS_TEST_INSTALL_LIBDIR=${CMAKE_INSTALL_LIBDIR}"
+      "-DCHRONOS_TEST_GENERATOR=${CMAKE_GENERATOR}"
+      "-DCHRONOS_TEST_EXECUTABLE_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/external_consumer_test.cmake"
   )
 
   if(UNIX)

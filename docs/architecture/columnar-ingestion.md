@@ -1,8 +1,10 @@
 # Columnar Ingestion Architecture
 
-> **Status: accepted design, not implemented.** This document fixes the logical state-machine and
-> WAL command contracts for Phase 4. The physical [WAL v1](../formats/wal-v1.md) framing and
-> application envelope remain unchanged.
+> **Status: accepted design, partially implemented.** The logical schema foundation and canonical
+> immutable in-memory vector/batch model exist. Batch serialization, WAL command integration,
+> retry, replay, mutable heads, and publication remain unimplemented. This document fixes the
+> logical state-machine and WAL command contracts for Phase 4; the physical
+> [WAL v1](../formats/wal-v1.md) framing and application envelope remain unchanged.
 
 ## Scope
 

@@ -1,8 +1,10 @@
 # Columnar Ingestion Design Guide
 
-> **Status: design guide; schema foundation implemented, batch/head implementation pending.** The
-> identity, logical-type, immutable-schema, lineage, and projection layer is documented in
-> [logical schema foundation](schema-foundation.md). The remaining normative sources are
+> **Status: design guide; schema and canonical in-memory batch foundations implemented.** The
+> identity/type/schema layer is documented in [logical schema foundation](schema-foundation.md),
+> and immutable vectors and batches in [columnar memory model](columnar-memory-model.md). The byte
+> codec, WAL command, retry, replay, and mutable-head implementation remain pending. The normative
+> sources are
 > [columnar batch v1](../formats/columnar-batch-v1.md),
 > [columnar ingestion](../architecture/columnar-ingestion.md),
 > [mutable-head publication](../architecture/mutable-head-publication.md), and

@@ -77,5 +77,7 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   command flow, retry identity, publication proof, recovery model, and implementation questions.
 - [Logical schema foundation](learning/schema-foundation.md): implemented UUID/identity/type/schema
   APIs, lineage evolution, historical projection, ownership, failure, and validation contracts.
+- [Columnar memory model](learning/columnar-memory-model.md): implemented immutable borrowed/owned
+  vectors, canonical buffers, schema-shaped batches, bounds, inspection, and validation contracts.
 
 Future format, protocol, subsystem, operations, and learning documents should be linked here when they are added by their corresponding roadmap phase.
