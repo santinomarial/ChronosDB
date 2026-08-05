@@ -447,6 +447,20 @@ if(CHRONOS_BUILD_TESTS)
   chronos_enable_static_analysis(chronos_ingest_tests)
   gtest_discover_tests(chronos_ingest_tests DISCOVERY_TIMEOUT 30)
 
+  add_executable(
+    chronos_head_tests
+    tests/head/mutable_head_header_self_contained.cpp
+    tests/head/mutable_head_test.cpp
+  )
+  set_target_properties(chronos_head_tests PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_head_tests PRIVATE cxx_std_23)
+  target_include_directories(chronos_head_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+  target_link_libraries(chronos_head_tests PRIVATE chronos::head GTest::gtest_main)
+  chronos_set_project_warnings(chronos_head_tests)
+  chronos_enable_sanitizers(chronos_head_tests)
+  chronos_enable_static_analysis(chronos_head_tests)
+  gtest_discover_tests(chronos_head_tests DISCOVERY_TIMEOUT 30)
+
   add_test(
     NAME InstallLayoutTest.IncludesOperatorAndBenchmarkTools
     COMMAND

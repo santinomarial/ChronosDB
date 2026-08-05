@@ -52,6 +52,12 @@ if(NOT EXISTS "${installed_ingest_header}")
   message(FATAL_ERROR "staging install omitted ${installed_ingest_header}")
 endif()
 
+set(installed_head_header
+    "${install_prefix}/${CHRONOS_TEST_INSTALL_INCLUDEDIR}/chronos/head/mutable_head.hpp")
+if(NOT EXISTS "${installed_head_header}")
+  message(FATAL_ERROR "staging install omitted ${installed_head_header}")
+endif()
+
 set(installed_targets
     "${install_prefix}/${CHRONOS_TEST_INSTALL_LIBDIR}/cmake/ChronosDB/ChronosTargets.cmake")
 file(READ "${installed_targets}" installed_targets_contents)
@@ -79,6 +85,11 @@ endif()
 string(FIND "${installed_targets_contents}" "chronos::ingest" ingest_target_offset)
 if(ingest_target_offset EQUAL -1)
   message(FATAL_ERROR "installed CMake package omitted chronos::ingest")
+endif()
+
+string(FIND "${installed_targets_contents}" "chronos::head" head_target_offset)
+if(head_target_offset EQUAL -1)
+  message(FATAL_ERROR "installed CMake package omitted chronos::head")
 endif()
 
 set(installed_walbench
