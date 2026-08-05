@@ -340,6 +340,8 @@ if(CHRONOS_BUILD_TESTS)
 
   add_executable(
     chronos_wal_tests
+    tests/wal/application_header_self_contained.cpp
+    tests/wal/application_test.cpp
     tests/wal/codec_header_self_contained.cpp
     tests/wal/codec_test.cpp
     tests/wal/types_header_self_contained.cpp
@@ -404,6 +406,27 @@ if(CHRONOS_BUILD_TESTS)
   chronos_enable_sanitizers(chronos_wal_tests)
   chronos_enable_static_analysis(chronos_wal_tests)
   gtest_discover_tests(chronos_wal_tests DISCOVERY_TIMEOUT 30 NO_PRETTY_VALUES)
+
+  add_executable(
+    chronos_ingest_tests
+    tests/ingest/columnar_append_corruption_test.cpp
+    tests/ingest/columnar_append_format_header_self_contained.cpp
+    tests/ingest/columnar_append_header_self_contained.cpp
+    tests/ingest/columnar_append_property_test.cpp
+    tests/ingest/columnar_append_test.cpp
+    tests/ingest/identity_header_self_contained.cpp
+    tests/ingest/identity_test.cpp
+    tests/ingest/sha256_header_self_contained.cpp
+    tests/ingest/sha256_test.cpp
+  )
+  set_target_properties(chronos_ingest_tests PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_ingest_tests PRIVATE cxx_std_23)
+  target_include_directories(chronos_ingest_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+  target_link_libraries(chronos_ingest_tests PRIVATE chronos::ingest GTest::gtest_main)
+  chronos_set_project_warnings(chronos_ingest_tests)
+  chronos_enable_sanitizers(chronos_ingest_tests)
+  chronos_enable_static_analysis(chronos_ingest_tests)
+  gtest_discover_tests(chronos_ingest_tests DISCOVERY_TIMEOUT 30)
 
   add_test(
     NAME InstallLayoutTest.IncludesOperatorAndBenchmarkTools

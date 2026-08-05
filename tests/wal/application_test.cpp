@@ -1,9 +1,10 @@
 #include "chronos/wal/application.hpp"
+#include "chronos/wal/types.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <gtest/gtest.h>
-#include <ranges>
 #include <vector>
 
 namespace chronos::wal {

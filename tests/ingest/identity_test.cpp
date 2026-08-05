@@ -1,6 +1,7 @@
 #include "chronos/ingest/identity.hpp"
 
 #include <gtest/gtest.h>
+#include <type_traits>
 
 namespace chronos::ingest {
 namespace {

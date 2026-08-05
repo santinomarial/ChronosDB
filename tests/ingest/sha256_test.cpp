@@ -3,7 +3,6 @@
 #include <array>
 #include <cstddef>
 #include <gtest/gtest.h>
-#include <ranges>
 
 namespace chronos::ingest {
 namespace {
