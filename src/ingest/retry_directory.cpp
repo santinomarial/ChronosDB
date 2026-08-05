@@ -317,14 +317,23 @@ RetryReservation::commit_published(std::shared_ptr<const ColumnarAppendRetryOutc
   if (implementation_ == nullptr) {
     return common::make_unexpected(invalid_argument("retry reservation is invalid"));
   }
-  return implementation_->commit_published(std::move(outcome));
+  common::Result<std::shared_ptr<const ColumnarAppendRetryOutcome>> committed =
+      implementation_->commit_published(std::move(outcome));
+  if (committed.has_value()) {
+    implementation_.reset();
+  }
+  return committed;
 }
 
 common::Status RetryReservation::cancel_before_wal() {
   if (implementation_ == nullptr) {
     return invalid_argument("retry reservation is invalid");
   }
-  return implementation_->cancel_before_wal();
+  const common::Status status = implementation_->cancel_before_wal();
+  if (status.is_ok()) {
+    implementation_.reset();
+  }
+  return status;
 }
 
 RetryDecision::RetryDecision(
