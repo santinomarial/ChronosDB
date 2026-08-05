@@ -72,6 +72,7 @@ struct HeadCellPosition {
 namespace detail {
 class HeadPublication;
 class MutableHeadState;
+class MutableHeadTestAccess;
 } // namespace detail
 
 // A cell returned from a head snapshot. Byte values borrow the snapshot's pinned generation;
@@ -268,9 +269,18 @@ public:
   [[nodiscard]] MutableHeadMetrics metrics() const;
 
 private:
+  using MaterializationHook = void (*)(void*, std::size_t) noexcept;
+
   explicit MutableHead(std::shared_ptr<detail::MutableHeadState> state) noexcept;
+  [[nodiscard]] static common::Result<MutableHead>
+  create_with_materialization_hook(std::shared_ptr<const schema::TableSchema> schema,
+                                   schema::TabletId tablet_id, std::uint64_t generation,
+                                   MutableHeadCapacity capacity, MaterializationHook hook,
+                                   void* hook_context);
 
   std::shared_ptr<detail::MutableHeadState> state_;
+
+  friend class detail::MutableHeadTestAccess;
 };
 
 } // namespace chronos::head

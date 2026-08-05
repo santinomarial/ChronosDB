@@ -105,9 +105,12 @@ No phase passes because its code merely compiles. A phase passes only when its a
   pure in-memory Columnar Batch v1 codec and `chronos_ingest` `COLUMNAR_APPEND` v1 command/digest
   codec are implemented with golden, property, corruption, fuzz, benchmark, sanitizer,
   installation, and external-consumer coverage. A bounded correctness-first live retry reservation
-  directory adds deterministic model and concurrency tests. WAL submission orchestration,
-  recovered/tablet retry state, retry retention, replay/application, mutable heads, and end-to-end
-  Phase 4 benchmarks remain unimplemented.
+  directory adds deterministic model and concurrency tests. The `chronos_head` single-generation
+  primitive adds fixed capacity, pre-WAL reservation, batch-atomic publication, owning snapshots,
+  hidden row-version identity, sealing, concurrency/property tests, and focused microbenchmarks.
+  WAL submission orchestration, recovered/tablet retry state, retry retention, ordered replay,
+  tablet-wide generation switching/joint publication, allocation failpoints, and end-to-end Phase 4
+  benchmarks remain unimplemented.
 
 - **Scope:** typed immutable input batches; null/variable-width representation; append-only tablet heads; sealing; single shard-worker ownership; stable reader boundaries; idempotent ordered replay into heads.
 - **Explicit non-scope:** durable columnar parts, SQL execution, secondary indexes, general lock-free containers, live subscriptions, and a universal allocator.

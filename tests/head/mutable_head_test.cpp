@@ -1,12 +1,15 @@
 #include "chronos/head/mutable_head.hpp"
 #include "columnar/columnar_test_support.hpp"
+#include "head/mutable_head_internal.hpp"
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
 #include <latch>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -445,6 +448,79 @@ TEST(MutableHeadPropertyTest, EveryFrozenLogicalTypeAndNullableShapeMaterializes
       }
     }
   }
+}
+
+class MaterializationGate {
+public:
+  static void pause(void* const context, const std::size_t point) noexcept {
+    auto& gate = *static_cast<MaterializationGate*>(context);
+    gate.reached_.store(point, std::memory_order_release);
+    while (gate.released_.load(std::memory_order_acquire) < point) {
+      std::this_thread::yield();
+    }
+  }
+
+  [[nodiscard]] bool wait_until_reached(const std::size_t point) const {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+    while (reached_.load(std::memory_order_acquire) < point) {
+      if (std::chrono::steady_clock::now() >= deadline) {
+        return false;
+      }
+      std::this_thread::yield();
+    }
+    return true;
+  }
+
+  void release(const std::size_t point) noexcept {
+    released_.store(point, std::memory_order_release);
+  }
+
+private:
+  std::atomic<std::size_t> reached_{0U};
+  std::atomic<std::size_t> released_{0U};
+};
+
+TEST(MutableHeadConcurrencyTest, ControlledInterleavingsKeepEveryUnpublishedStageInvisible) {
+  const auto input = batch();
+  MaterializationGate gate;
+  MutableHead target =
+      detail::MutableHeadTestAccess::create(
+          input->schema_ptr(), tablet_id(), 1U,
+          MutableHeadCapacity{.row_capacity = 2U, .variable_value_bytes = {0U, 1U, 0U}},
+          &MaterializationGate::pause, &gate)
+          .value();
+  std::atomic<bool> writer_failed{false};
+  std::jthread writer{[&] {
+    auto prepared = target.prepare_append(input, position(1U));
+    if (!prepared.has_value() || !prepared->mark_wal_started().is_ok() ||
+        !prepared->publish().has_value()) {
+      writer_failed.store(true, std::memory_order_release);
+      gate.release(std::numeric_limits<std::size_t>::max());
+    }
+  }};
+
+  constexpr std::size_t kColumnsAndMetadata = 4U;
+  for (std::size_t point = 1U; point <= kColumnsAndMetadata; ++point) {
+    if (!gate.wait_until_reached(point)) {
+      gate.release(std::numeric_limits<std::size_t>::max());
+      writer.join();
+      FAIL() << "writer did not reach controlled materialization point " << point;
+      return;
+    }
+    const HeadSnapshot observed = target.snapshot().value();
+    EXPECT_EQ(observed.row_count(), 0U);
+    EXPECT_FALSE(observed.applied_position().has_value());
+    EXPECT_TRUE(observed.column(0U)->fixed_values().empty());
+    EXPECT_TRUE(observed.column(1U)->variable_values().empty());
+    EXPECT_TRUE(observed.column(2U)->boolean_values().empty());
+    gate.release(point);
+  }
+  writer.join();
+
+  EXPECT_FALSE(writer_failed.load(std::memory_order_acquire));
+  const HeadSnapshot published = target.snapshot().value();
+  EXPECT_EQ(published.row_count(), 2U);
+  EXPECT_EQ(published.row_metadata(1U)->row_ordinal, 1U);
 }
 
 TEST(MutableHeadConcurrencyTest, AcquireSnapshotsObserveOnlyCompleteBatchBoundaries) {

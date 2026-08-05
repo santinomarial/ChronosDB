@@ -86,5 +86,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   identity, SHA-256 preimage, owned encoding, borrowed decoding, and schema-binding contracts.
 - [Retry reservation directory](learning/retry-reservation-directory.md): implemented bounded live
   identity state machine, ownership, linearization, failure behavior, and model-test contract.
+- [Mutable-head generation](learning/mutable-head.md): implemented fixed-capacity generation,
+  two-phase append ownership, batch-atomic release/acquire publication, owning snapshots, hidden row
+  identity, failure behavior, sealing, and measurement boundary.
 
 Future format, protocol, subsystem, operations, and learning documents should be linked here when they are added by their corresponding roadmap phase.

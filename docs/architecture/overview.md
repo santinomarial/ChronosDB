@@ -110,7 +110,9 @@ generation. The writer initializes every selected column slot before publishing 
 reference visible to readers. The accepted
 [mutable-head publication contract](mutable-head-publication.md) fixes schema-bound generations,
 stable storage, batch-atomic release/acquire publication, snapshot pins, and sealing ownership.
-Concrete vector/allocator layouts remain implementation choices requiring evidence.
+The implemented `chronos_head` boundary supplies one fixed-capacity generation with byte-per-row
+validity/Boolean storage, stable fixed/variable arenas, an immutable publication pointer, and owning
+snapshots. Tablet-wide generation-set publication and flush handoff remain future integration.
 [ADR 0005](../adr/0005-columnar-heads-and-immutable-cseg-parts.md) fixes the head/part storage model.
 
 When a head reaches a policy threshold, the owner seals it. A sealed head accepts no more rows, remains readable by active snapshots, and becomes flush input. New writes continue in a new mutable generation so durable I/O does not stop the shard.

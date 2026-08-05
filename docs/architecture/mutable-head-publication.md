@@ -1,8 +1,12 @@
 # Mutable-Head Publication and Snapshot Contract
 
-> **Status: accepted design, not implemented.** This document refines
-> [ADR 0005](../adr/0005-columnar-heads-and-immutable-cseg-parts.md) for Phase 4 without specifying
-> CSEG bytes, flush installation, or a concrete C++ API.
+> **Status: accepted design, generation primitive partially implemented.** `chronos_head` now
+> provides one bounded schema-bound generation, pre-WAL append preparation, batch-atomic
+> release/acquire publication, stable owning snapshots, hidden row identities, and idempotent
+> sealing. The tablet-wide publication descriptor, generation-set switching, retry-state
+> linearization, WAL orchestration/replay, and flush handoff remain unimplemented. This document
+> refines [ADR 0005](../adr/0005-columnar-heads-and-immutable-cseg-parts.md) for Phase 4 without
+> specifying CSEG bytes or flush installation.
 
 ## State and ownership
 
@@ -76,6 +80,13 @@ updates, or reading an uncaptured live boundary does not satisfy this argument. 
 implementation must document the exact atomic object, ownership/pinning mechanism, and reclamation
 edge and must pass ThreadSanitizer plus deterministic interleaving tests before claiming this
 contract.
+
+The implemented single-generation boundary atomically release-stores an immutable
+`shared_ptr<const HeadPublication>` after materialization. `HeadSnapshot` acquire-loads and owns
+that same descriptor plus the generation state, so its row count, byte frontiers, applied position,
+and storage lifetime come from one epoch. Tablet-wide publication will require a distinct outer
+descriptor before rows, tablet retry state, sealed generations, and applied position can be claimed
+as one complete tablet transition.
 
 ## Tablet snapshots
 

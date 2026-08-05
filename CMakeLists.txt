@@ -454,7 +454,10 @@ if(CHRONOS_BUILD_TESTS)
   )
   set_target_properties(chronos_head_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_head_tests PRIVATE cxx_std_23)
-  target_include_directories(chronos_head_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+  target_include_directories(
+    chronos_head_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
+                               "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+  )
   target_link_libraries(chronos_head_tests PRIVATE chronos::head GTest::gtest_main)
   chronos_set_project_warnings(chronos_head_tests)
   chronos_enable_sanitizers(chronos_head_tests)
@@ -559,6 +562,19 @@ if(CHRONOS_BUILD_BENCHMARKS)
   chronos_set_project_warnings(chronos_ingest_benchmarks)
   chronos_enable_sanitizers(chronos_ingest_benchmarks)
   chronos_enable_static_analysis(chronos_ingest_benchmarks)
+
+  add_executable(
+    chronos_head_benchmarks
+    benchmarks/head/mutable_head_benchmark.cpp
+  )
+  set_target_properties(chronos_head_benchmarks PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_head_benchmarks PRIVATE cxx_std_23)
+  target_link_libraries(
+    chronos_head_benchmarks PRIVATE chronos::head benchmark::benchmark_main
+  )
+  chronos_set_project_warnings(chronos_head_benchmarks)
+  chronos_enable_sanitizers(chronos_head_benchmarks)
+  chronos_enable_static_analysis(chronos_head_benchmarks)
 endif()
 
 if(CHRONOS_BUILD_FUZZERS)

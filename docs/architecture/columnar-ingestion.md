@@ -3,9 +3,11 @@
 > **Status: accepted design, partially implemented.** The logical schema foundation, canonical
 > immutable in-memory vector/batch model, standalone Columnar Batch v1 codec, generic WAL
 > application-envelope codec, pure in-memory `COLUMNAR_APPEND` v1 command/digest codec, and bounded
-> process-local retry reservation directory exist. WAL submission orchestration, recovered/tablet
-> retry state, replay, mutable heads, and publication remain
-> unimplemented. This document
+> process-local retry reservation directory exist. A bounded `chronos_head` generation now provides
+> pre-WAL capacity/descriptor preparation, batch-atomic materialization/publication, stable owning
+> snapshots, hidden row identity, and sealing. WAL submission orchestration, recovered/tablet retry
+> state, ordered replay, tablet-wide generation switching, and joint rows/retry-state publication
+> remain unimplemented. This document
 > fixes the logical state-machine and WAL command contracts for Phase 4; the physical
 > [WAL v1](../formats/wal-v1.md) framing and application envelope remain unchanged.
 

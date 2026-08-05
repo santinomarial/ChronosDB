@@ -24,10 +24,14 @@
 > fixture, explicit incomplete/corruption/unsupported/limit classification, nested-batch and
 > metadata validation, deterministic property/corruption suites, fuzzing, and digest/codec
 > microbenchmarks. The process-local retry reservation directory adds bounded capacity, exact
-> outcome-pointer, deterministic reference-model, lifetime, and concurrent single-owner tests. WAL
-> submission orchestration, recovered/tablet retry state, retry retention, replay, and mutable
-> heads remain unimplemented. Query
-> and distributed harnesses also remain planned for their roadmap phases.
+> outcome-pointer, deterministic reference-model, lifetime, and concurrent single-owner tests. The
+> bounded mutable-head generation adds capacity/schema rejection before WAL, complete-batch
+> materialization, exact old/new snapshot boundaries, hidden row identity, seal/lifetime coverage,
+> every-logical-type property cases, controlled pauses after every materialized column and hidden
+> metadata, and concurrent acquire/release publication tests. WAL
+> submission orchestration, recovered/tablet retry state, retry retention, ordered replay,
+> tablet-wide publication/generation switching, and allocation failpoints remain unimplemented.
+> Query and distributed harnesses also remain planned for their roadmap phases.
 
 ## Test types
 

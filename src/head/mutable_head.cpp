@@ -111,6 +111,8 @@ enum class PreparedPhase : std::uint8_t {
   kWalStarted,
 };
 
+using MaterializationHook = void (*)(void*, std::size_t) noexcept;
+
 } // namespace
 
 namespace detail {
@@ -137,6 +139,8 @@ struct MutableHeadStateConfig {
   std::shared_ptr<const HeadPublication> initial_publication;
   std::size_t variable_byte_capacity;
   std::size_t retained_storage_bytes;
+  MaterializationHook materialization_hook;
+  void* materialization_hook_context;
 };
 
 struct MaterializationRange {
@@ -152,7 +156,9 @@ public:
         columns_(std::move(config.columns)), row_metadata_(std::move(config.row_metadata)),
         publication_(std::move(config.initial_publication)),
         variable_byte_capacity_(config.variable_byte_capacity),
-        retained_storage_bytes_(config.retained_storage_bytes) {}
+        retained_storage_bytes_(config.retained_storage_bytes),
+        materialization_hook_(config.materialization_hook),
+        materialization_hook_context_(config.materialization_hook_context) {}
 
   [[nodiscard]] common::Result<PreparedHeadAppend>
   prepare(std::shared_ptr<const columnar::OwnedColumnarBatch> batch,
@@ -166,8 +172,12 @@ public:
   [[nodiscard]] common::Status cancel_before_wal(std::uint64_t token);
   void abandon(std::uint64_t token) noexcept;
 
-  [[nodiscard]] HeadSnapshot snapshot() {
-    return HeadSnapshot{shared_from_this(),
+  [[nodiscard]] common::Result<HeadSnapshot> snapshot() {
+    std::shared_ptr<MutableHeadState> self = weak_from_this().lock();
+    if (self == nullptr) {
+      return common::make_unexpected(internal("mutable-head generation lost its owning state"));
+    }
+    return HeadSnapshot{std::move(self),
                         std::atomic_load_explicit(&publication_, std::memory_order_acquire)};
   }
   [[nodiscard]] common::Result<HeadSnapshot> seal();
@@ -213,6 +223,8 @@ private:
   std::shared_ptr<const HeadPublication> publication_;
   std::size_t variable_byte_capacity_;
   std::size_t retained_storage_bytes_;
+  MaterializationHook materialization_hook_;
+  void* materialization_hook_context_;
 
   bool append_active_{false};
   std::uint64_t active_token_{};
@@ -363,9 +375,13 @@ detail::MutableHeadState::prepare(std::shared_ptr<const columnar::OwnedColumnarB
     }
     auto next =
         std::make_shared<const HeadPublication>(*end_row, position, std::move(next_frontiers));
+    std::shared_ptr<MutableHeadState> self = weak_from_this().lock();
+    if (self == nullptr) {
+      return common::make_unexpected(internal("mutable-head generation lost its owning state"));
+    }
     const std::uint64_t token = next_token_;
     auto implementation = std::make_unique<PreparedHeadAppend::Impl>(
-        shared_from_this(), std::move(batch), token, current, std::move(next));
+        std::move(self), std::move(batch), token, current, std::move(next));
 
     ++next_token_;
     append_active_ = true;
@@ -432,10 +448,7 @@ void detail::MutableHeadState::materialize(const columnar::OwnedColumnarBatch& b
       for (std::uint32_t row = 0U; row < rows; ++row) {
         destination.boolean_values[start_row + row] = bit_at(source.values(), row) ? 1U : 0U;
       }
-      continue;
-    }
-
-    if (source.type().is_variable_width()) {
+    } else if (source.type().is_variable_width()) {
       const std::size_t base_frontier = base.variable_frontiers_[ordinal];
       std::copy(source.values().begin(), source.values().end(),
                 destination.variable_values.begin() + static_cast<std::ptrdiff_t>(base_frontier));
@@ -446,18 +459,24 @@ void detail::MutableHeadState::materialize(const columnar::OwnedColumnarBatch& b
             base_frontier + static_cast<std::size_t>(read_u32_le(source.offsets(), source_offset));
         destination.variable_offsets[start_row + row + 1U] = static_cast<std::uint32_t>(absolute);
       }
-      continue;
+    } else {
+      const std::size_t destination_offset = start_row * destination.fixed_width;
+      std::copy(source.values().begin(), source.values().end(),
+                destination.fixed_values.begin() + static_cast<std::ptrdiff_t>(destination_offset));
     }
 
-    const std::size_t destination_offset = start_row * destination.fixed_width;
-    std::copy(source.values().begin(), source.values().end(),
-              destination.fixed_values.begin() + static_cast<std::ptrdiff_t>(destination_offset));
+    if (materialization_hook_ != nullptr) {
+      materialization_hook_(materialization_hook_context_, ordinal + 1U);
+    }
   }
 
   for (std::uint32_t row = 0U; row < rows; ++row) {
     row_metadata_[start_row + row] = HeadRowMetadata{.commit_position = range.position,
                                                      .row_ordinal = row,
                                                      .operation = HeadOperationKind::kAppendRows};
+  }
+  if (materialization_hook_ != nullptr) {
+    materialization_hook_(materialization_hook_context_, columns_.size() + 1U);
   }
 }
 
@@ -494,11 +513,17 @@ detail::MutableHeadState::publish(const std::uint64_t token,
         internal("mutable-head publication is missing its commit position"));
   }
 
+  std::shared_ptr<MutableHeadState> self = weak_from_this().lock();
+  if (self == nullptr) {
+    failed_.store(true, std::memory_order_release);
+    append_active_ = false;
+    return common::make_unexpected(internal("mutable-head generation lost its owning state"));
+  }
   materialize(batch,
               MaterializationRange{.base = *base, .position = next->applied_position_.value()});
   std::atomic_store_explicit(&publication_, next, std::memory_order_release);
   append_active_ = false;
-  return HeadSnapshot{shared_from_this(), next};
+  return HeadSnapshot{std::move(self), next};
 }
 
 common::Status detail::MutableHeadState::cancel_before_wal(const std::uint64_t token) {
@@ -773,6 +798,14 @@ common::Result<MutableHead> MutableHead::create(std::shared_ptr<const schema::Ta
                                                 const schema::TabletId tablet_id,
                                                 const std::uint64_t generation,
                                                 MutableHeadCapacity capacity) {
+  return create_with_materialization_hook(std::move(schema), tablet_id, generation,
+                                          std::move(capacity), nullptr, nullptr);
+}
+
+common::Result<MutableHead> MutableHead::create_with_materialization_hook(
+    std::shared_ptr<const schema::TableSchema> schema, const schema::TabletId tablet_id,
+    const std::uint64_t generation, MutableHeadCapacity capacity, const MaterializationHook hook,
+    void* const hook_context) {
   if (schema == nullptr) {
     return common::make_unexpected(invalid("mutable head requires an owning schema pointer"));
   }
@@ -888,7 +921,9 @@ common::Result<MutableHead> MutableHead::create(std::shared_ptr<const schema::Ta
                                        .row_metadata = std::move(metadata),
                                        .initial_publication = std::move(initial),
                                        .variable_byte_capacity = variable_byte_capacity,
-                                       .retained_storage_bytes = retained_storage_bytes});
+                                       .retained_storage_bytes = retained_storage_bytes,
+                                       .materialization_hook = hook,
+                                       .materialization_hook_context = hook_context});
     return MutableHead{std::move(state)};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("mutable-head storage allocation failed"));
