@@ -47,6 +47,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/ingest/columnar_append.hpp>
 #include <chronos/ingest/columnar_append_format.hpp>
 #include <chronos/ingest/identity.hpp>
+#include <chronos/ingest/retry_directory.hpp>
 #include <chronos/ingest/sha256.hpp>
 #include <chronos/wal/application.hpp>
 
@@ -59,8 +60,11 @@ int main() {
   std::array<std::byte, 0> empty{};
   const auto decoded = chronos::columnar::decode_columnar_batch_v1_exact(empty);
   const auto digest = chronos::ingest::sha256(chronos::common::ByteView{});
+  const auto retry_directory = chronos::ingest::RetryDirectory::create(
+      chronos::ingest::RetryDirectoryConfig{.maximum_entries = 8U});
   static_assert(chronos::ingest::columnar_append_v1::kCommandHeaderLength == 160U);
-  return limits.max_columns == 4096U && digest.has_value() && !decoded.has_value() &&
+  return limits.max_columns == 4096U && digest.has_value() && retry_directory.has_value() &&
+                 retry_directory->metrics().maximum_entries == 8U && !decoded.has_value() &&
                  decoded.error().kind() ==
                      chronos::columnar::ColumnarBatchDecodeErrorKind::kIncomplete
              ? 0

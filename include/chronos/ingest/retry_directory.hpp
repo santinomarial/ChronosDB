@@ -63,7 +63,9 @@ class RetryDirectoryState;
 
 // Move-only ownership of one absent-to-in-flight transition. Destruction cancels a reservation
 // only while it is still pre-WAL. Once mark_wal_started() succeeds, dropping the handle leaves the
-// identity in-flight and blocked until the owning state is discarded for fresh recovery.
+// identity in-flight and blocked until the owning state is discarded for fresh recovery. One
+// owner may transfer the handle between threads, but concurrent calls on the same handle are not
+// supported.
 class RetryReservation {
 public:
   RetryReservation() noexcept;
@@ -136,7 +138,8 @@ private:
   friend class detail::RetryDirectoryState;
 };
 
-// One process-local, database-wide identity directory. All operations linearize under one mutex;
+// One process-local, database-wide identity directory. Calls through the directory and distinct
+// reservation handles may be concurrent. All state operations linearize under one mutex;
 // lookup/reservation never waits for another reservation and reports kInFlight immediately.
 class RetryDirectory {
 public:

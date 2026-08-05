@@ -1,12 +1,15 @@
 #include "chronos/ingest/retry_directory.hpp"
 #include "ingest/ingest_test_support.hpp"
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
 #include <latch>
 #include <memory>
+#include <optional>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -66,6 +69,37 @@ void expect_metrics(const RetryDirectoryMetrics& actual,
   EXPECT_EQ(actual.committed_entries, expected.committed_entries);
   EXPECT_EQ(actual.high_water_entries, expected.high_water_entries);
 }
+
+class DeterministicGenerator {
+public:
+  [[nodiscard]] std::uint64_t next() noexcept {
+    state_ ^= state_ << 13U;
+    state_ ^= state_ >> 7U;
+    state_ ^= state_ << 17U;
+    return state_;
+  }
+
+  [[nodiscard]] std::size_t choose(const std::size_t bound) noexcept {
+    return static_cast<std::size_t>(next() % bound);
+  }
+
+private:
+  std::uint64_t state_{0x5A17C9E34D2B810FULL};
+};
+
+enum class ModelState : std::uint8_t {
+  kAbsent,
+  kPreWal,
+  kWalStarted,
+  kCommitted,
+};
+
+struct ModelEntry {
+  ModelState state{ModelState::kAbsent};
+  std::optional<ColumnarAppendMutationIdentity> mutation;
+  std::optional<RetryReservation> reservation;
+  std::shared_ptr<const ColumnarAppendRetryOutcome> committed_outcome;
+};
 
 TEST(RetryDirectoryTest, RequiresAnExplicitBoundAndReportsExactMetrics) {
   const auto invalid = RetryDirectory::create({.maximum_entries = 0U});
@@ -195,6 +229,133 @@ TEST(RetryDirectoryTest, IdentityScopeIncludesBothNominalComponents) {
   EXPECT_EQ(third_decision->kind(), RetryDecisionKind::kReserved);
   EXPECT_EQ(directory.metrics().entries, 3U);
   EXPECT_EQ(directory.metrics().high_water_entries, 3U);
+}
+
+TEST(RetryDirectoryTest, ReservationCanOutliveTheDirectoryOwner) {
+  std::optional<RetryReservation> reservation;
+  const ColumnarAppendMutationIdentity request = mutation(1U);
+  {
+    RetryDirectory directory = RetryDirectory::create({.maximum_entries = 1U}).value();
+    auto decision = directory.try_reserve(retry_identity(1U), request);
+    ASSERT_TRUE(decision.has_value());
+    reservation.emplace(take_reservation(*decision));
+  }
+
+  ASSERT_TRUE(reservation.has_value());
+  EXPECT_TRUE(reservation->mark_wal_started().is_ok());
+  const auto committed = reservation->commit_published(outcome(request));
+  ASSERT_TRUE(committed.has_value()) << committed.error().to_string();
+  EXPECT_FALSE(reservation->is_valid());
+}
+
+TEST(RetryDirectoryPropertyTest, DeterministicOperationsMatchTheReferenceStateMachine) {
+  constexpr std::size_t kScenarios = 128U;
+  constexpr std::size_t kStepsPerScenario = 64U;
+  constexpr std::size_t kKeys = 6U;
+  constexpr std::size_t kCapacity = 4U;
+  DeterministicGenerator generator;
+  std::size_t reservations = 0U;
+  std::size_t cancellations = 0U;
+  std::size_t commits = 0U;
+  std::size_t in_flight_observations = 0U;
+  std::size_t matching_observations = 0U;
+  std::size_t conflicts = 0U;
+  std::size_t capacity_rejections = 0U;
+
+  for (std::size_t scenario = 0U; scenario < kScenarios; ++scenario) {
+    static_cast<void>(scenario);
+    RetryDirectory directory = RetryDirectory::create({.maximum_entries = kCapacity}).value();
+    std::array<ModelEntry, kKeys> model;
+    std::size_t model_entries = 0U;
+    std::size_t model_committed = 0U;
+    std::size_t model_high_water = 0U;
+
+    for (std::size_t step = 0U; step < kStepsPerScenario; ++step) {
+      static_cast<void>(step);
+      const std::size_t key_index = generator.choose(kKeys);
+      ModelEntry& expected = model[key_index];
+      const std::uint8_t key_seed = static_cast<std::uint8_t>(key_index + 1U);
+      const std::uint8_t mutation_seed = static_cast<std::uint8_t>(
+          key_seed + (generator.choose(2U) == 0U ? 0U : 64U));
+      const RetryIdentity key = retry_identity(key_seed);
+      const ColumnarAppendMutationIdentity proposed = mutation(mutation_seed);
+      const std::size_t operation = generator.choose(4U);
+
+      if (operation == 1U && expected.state == ModelState::kPreWal) {
+        ASSERT_TRUE(expected.reservation.has_value());
+        ASSERT_TRUE(expected.reservation->mark_wal_started().is_ok());
+        expected.state = ModelState::kWalStarted;
+      } else if (operation == 2U && expected.state == ModelState::kPreWal) {
+        ASSERT_TRUE(expected.reservation.has_value());
+        ASSERT_TRUE(expected.reservation->cancel_before_wal().is_ok());
+        expected.reservation.reset();
+        expected.mutation.reset();
+        expected.state = ModelState::kAbsent;
+        --model_entries;
+        ++cancellations;
+      } else if (operation == 3U && expected.state == ModelState::kWalStarted) {
+        ASSERT_TRUE(expected.reservation.has_value());
+        ASSERT_TRUE(expected.mutation.has_value());
+        const auto published = outcome(*expected.mutation, generator.next() | 1U);
+        const auto committed = expected.reservation->commit_published(published);
+        ASSERT_TRUE(committed.has_value()) << committed.error().to_string();
+        ASSERT_EQ(*committed, published);
+        expected.reservation.reset();
+        expected.committed_outcome = published;
+        expected.state = ModelState::kCommitted;
+        ++model_committed;
+        ++commits;
+      } else {
+        auto actual = directory.try_reserve(key, proposed);
+        if (expected.state == ModelState::kAbsent) {
+          if (model_entries == kCapacity) {
+            ASSERT_FALSE(actual.has_value());
+            EXPECT_EQ(actual.error().code(), common::StatusCode::kResourceExhausted);
+            ++capacity_rejections;
+          } else {
+            ASSERT_TRUE(actual.has_value()) << actual.error().to_string();
+            ASSERT_EQ(actual->kind(), RetryDecisionKind::kReserved);
+            ASSERT_NE(actual->reservation(), nullptr);
+            expected.reservation.emplace(std::move(*actual->reservation()));
+            expected.mutation = proposed;
+            expected.state = ModelState::kPreWal;
+            ++model_entries;
+            model_high_water = std::max(model_high_water, model_entries);
+            ++reservations;
+          }
+        } else if (expected.state == ModelState::kPreWal ||
+                   expected.state == ModelState::kWalStarted) {
+          ASSERT_TRUE(actual.has_value()) << actual.error().to_string();
+          EXPECT_EQ(actual->kind(), RetryDecisionKind::kInFlight);
+          ++in_flight_observations;
+        } else if (proposed == *expected.mutation) {
+          ASSERT_TRUE(actual.has_value()) << actual.error().to_string();
+          EXPECT_EQ(actual->kind(), RetryDecisionKind::kMatchingCommitted);
+          EXPECT_EQ(actual->committed_outcome().get(), expected.committed_outcome.get());
+          ++matching_observations;
+        } else {
+          ASSERT_TRUE(actual.has_value()) << actual.error().to_string();
+          EXPECT_EQ(actual->kind(), RetryDecisionKind::kConflict);
+          ++conflicts;
+        }
+      }
+
+      expect_metrics(directory.metrics(),
+                     RetryDirectoryMetrics{.maximum_entries = kCapacity,
+                                           .entries = model_entries,
+                                           .in_flight_entries = model_entries - model_committed,
+                                           .committed_entries = model_committed,
+                                           .high_water_entries = model_high_water});
+    }
+  }
+
+  EXPECT_GT(reservations, 0U);
+  EXPECT_GT(cancellations, 0U);
+  EXPECT_GT(commits, 0U);
+  EXPECT_GT(in_flight_observations, 0U);
+  EXPECT_GT(matching_observations, 0U);
+  EXPECT_GT(conflicts, 0U);
+  EXPECT_GT(capacity_rejections, 0U);
 }
 
 TEST(RetryDirectoryConcurrencyTest, ExactlyOneConcurrentContenderOwnsTheReservation) {
