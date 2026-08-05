@@ -199,6 +199,22 @@ chronos_set_project_warnings(chronos_wal)
 chronos_enable_sanitizers(chronos_wal)
 chronos_enable_static_analysis(chronos_wal)
 
+add_library(chronos_head src/head/mutable_head.cpp)
+add_library(chronos::head ALIAS chronos_head)
+set_target_properties(chronos_head PROPERTIES EXPORT_NAME head)
+set_target_properties(chronos_head PROPERTIES CXX_EXTENSIONS OFF)
+target_compile_features(chronos_head PUBLIC cxx_std_23)
+target_include_directories(
+  chronos_head
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+)
+target_link_libraries(chronos_head PUBLIC chronos::columnar chronos::wal)
+chronos_set_project_warnings(chronos_head)
+chronos_enable_sanitizers(chronos_head)
+chronos_enable_static_analysis(chronos_head)
+
 add_library(
   chronos_ingest
   src/ingest/columnar_append.cpp
