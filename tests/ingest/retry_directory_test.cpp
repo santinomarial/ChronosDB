@@ -376,7 +376,12 @@ TEST(RetryDirectoryConcurrencyTest, ExactlyOneConcurrentContenderOwnsTheReservat
       }
       if (decision->kind() == RetryDecisionKind::kReserved) {
         ++reserved;
-        RetryReservation reservation = take_reservation(*decision);
+        RetryReservation* const owned = decision->reservation();
+        if (owned == nullptr) {
+          ++failures;
+          return;
+        }
+        RetryReservation reservation = std::move(*owned);
         if (!reservation.mark_wal_started().is_ok()) {
           ++failures;
         }

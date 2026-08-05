@@ -24,6 +24,11 @@ namespace {
                         "retry identity directory reached its configured entry bound"};
 }
 
+[[nodiscard]] common::Status reservation_tokens_exhausted() {
+  return common::Status{common::StatusCode::kResourceExhausted,
+                        "retry identity directory exhausted its reservation token space"};
+}
+
 enum class EntryState : std::uint8_t {
   kPreWal,
   kWalStarted,
@@ -165,9 +170,11 @@ detail::RetryDirectoryState::try_reserve(const RetryIdentity& identity,
     }
     return RetryDecision{RetryDecisionKind::kConflict, std::nullopt, nullptr};
   }
-  if (entries_.size() >= maximum_entries_ ||
-      next_reservation_token_ == std::numeric_limits<std::uint64_t>::max()) {
+  if (entries_.size() >= maximum_entries_) {
     return common::make_unexpected(capacity_exhausted());
+  }
+  if (next_reservation_token_ == std::numeric_limits<std::uint64_t>::max()) {
+    return common::make_unexpected(reservation_tokens_exhausted());
   }
 
   const std::uint64_t token = next_reservation_token_;
