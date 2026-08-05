@@ -202,6 +202,7 @@ chronos_enable_static_analysis(chronos_wal)
 add_library(
   chronos_ingest
   src/ingest/columnar_append.cpp
+  src/ingest/retry_directory.cpp
   src/ingest/sha256.cpp
 )
 add_library(chronos::ingest ALIAS chronos_ingest)
