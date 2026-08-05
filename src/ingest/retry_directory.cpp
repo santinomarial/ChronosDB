@@ -65,8 +65,7 @@ public:
   [[nodiscard]] common::Result<RetryDecision>
   try_reserve(const RetryIdentity& identity, const ColumnarAppendMutationIdentity& mutation);
   [[nodiscard]] bool wal_started(const RetryIdentity& identity, std::uint64_t token) const;
-  [[nodiscard]] common::Status mark_wal_started(const RetryIdentity& identity,
-                                                std::uint64_t token);
+  [[nodiscard]] common::Status mark_wal_started(const RetryIdentity& identity, std::uint64_t token);
   [[nodiscard]] common::Result<std::shared_ptr<const ColumnarAppendRetryOutcome>>
   commit_published(const RetryIdentity& identity, std::uint64_t token,
                    std::shared_ptr<const ColumnarAppendRetryOutcome> outcome);
@@ -176,16 +175,14 @@ detail::RetryDirectoryState::try_reserve(const RetryIdentity& identity,
   entries_.emplace(identity, RetryEntry{.mutation = mutation, .reservation_token = token});
   std::unique_ptr<RetryReservation::Impl> reservation;
   try {
-    reservation =
-        std::make_unique<RetryReservation::Impl>(shared_from_this(), identity, token);
+    reservation = std::make_unique<RetryReservation::Impl>(shared_from_this(), identity, token);
   } catch (...) {
     entries_.erase(identity);
     throw;
   }
   high_water_entries_ = std::max(high_water_entries_, entries_.size());
   return RetryDecision{RetryDecisionKind::kReserved,
-                       std::optional<RetryReservation>{
-                           RetryReservation{std::move(reservation)}},
+                       std::optional<RetryReservation>{RetryReservation{std::move(reservation)}},
                        nullptr};
 }
 
@@ -336,11 +333,10 @@ common::Status RetryReservation::cancel_before_wal() {
   return status;
 }
 
-RetryDecision::RetryDecision(
-    const RetryDecisionKind kind, std::optional<RetryReservation> reservation,
-    std::shared_ptr<const ColumnarAppendRetryOutcome> outcome) noexcept
-    : kind_(kind), reservation_(std::move(reservation)),
-      committed_outcome_(std::move(outcome)) {}
+RetryDecision::RetryDecision(const RetryDecisionKind kind,
+                             std::optional<RetryReservation> reservation,
+                             std::shared_ptr<const ColumnarAppendRetryOutcome> outcome) noexcept
+    : kind_(kind), reservation_(std::move(reservation)), committed_outcome_(std::move(outcome)) {}
 
 RetryReservation* RetryDecision::reservation() noexcept {
   return reservation_ ? &*reservation_ : nullptr;

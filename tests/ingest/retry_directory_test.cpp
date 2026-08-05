@@ -19,8 +19,8 @@ namespace {
 
 [[nodiscard]] RetryIdentity retry_identity(const std::uint8_t seed) {
   return RetryIdentity{.client_id = test::request_id<ClientId>(seed),
-                       .client_batch_id = test::request_id<ClientBatchId>(
-                           static_cast<std::uint8_t>(seed + 16U))};
+                       .client_batch_id =
+                           test::request_id<ClientBatchId>(static_cast<std::uint8_t>(seed + 16U))};
 }
 
 [[nodiscard]] Sha256Digest digest(const std::uint8_t seed) {
@@ -34,8 +34,7 @@ namespace {
 [[nodiscard]] ColumnarAppendMutationIdentity mutation(const std::uint8_t seed) {
   return ColumnarAppendMutationIdentity{
       .table_id = columnar::test::id<schema::TableId>(static_cast<std::uint16_t>(100U + seed)),
-      .tablet_id =
-          columnar::test::id<schema::TabletId>(static_cast<std::uint16_t>(200U + seed)),
+      .tablet_id = columnar::test::id<schema::TabletId>(static_cast<std::uint16_t>(200U + seed)),
       .request_digest = digest(seed)};
 }
 
@@ -48,11 +47,11 @@ namespace {
 [[nodiscard]] std::shared_ptr<const ColumnarAppendRetryOutcome>
 outcome(const ColumnarAppendMutationIdentity& identity, const std::uint64_t sequence = 7U,
         const std::uint32_t rows = 3U) {
-  return std::make_shared<const ColumnarAppendRetryOutcome>(ColumnarAppendRetryOutcome{
-      .mutation = identity,
-      .wal_id = wal_id(9U),
-      .record_sequence = sequence,
-      .applied_row_count = rows});
+  return std::make_shared<const ColumnarAppendRetryOutcome>(
+      ColumnarAppendRetryOutcome{.mutation = identity,
+                                 .wal_id = wal_id(9U),
+                                 .record_sequence = sequence,
+                                 .applied_row_count = rows});
 }
 
 [[nodiscard]] RetryReservation take_reservation(RetryDecision& decision) {
@@ -61,8 +60,7 @@ outcome(const ColumnarAppendMutationIdentity& identity, const std::uint64_t sequ
   return std::move(*decision.reservation());
 }
 
-void expect_metrics(const RetryDirectoryMetrics& actual,
-                    const RetryDirectoryMetrics& expected) {
+void expect_metrics(const RetryDirectoryMetrics& actual, const RetryDirectoryMetrics& expected) {
   EXPECT_EQ(actual.maximum_entries, expected.maximum_entries);
   EXPECT_EQ(actual.entries, expected.entries);
   EXPECT_EQ(actual.in_flight_entries, expected.in_flight_entries);
@@ -275,8 +273,8 @@ TEST(RetryDirectoryPropertyTest, DeterministicOperationsMatchTheReferenceStateMa
       const std::size_t key_index = generator.choose(kKeys);
       ModelEntry& expected = model[key_index];
       const std::uint8_t key_seed = static_cast<std::uint8_t>(key_index + 1U);
-      const std::uint8_t mutation_seed = static_cast<std::uint8_t>(
-          key_seed + (generator.choose(2U) == 0U ? 0U : 64U));
+      const std::uint8_t mutation_seed =
+          static_cast<std::uint8_t>(key_seed + (generator.choose(2U) == 0U ? 0U : 64U));
       const RetryIdentity key = retry_identity(key_seed);
       const ColumnarAppendMutationIdentity proposed = mutation(mutation_seed);
       const std::size_t operation = generator.choose(4U);
