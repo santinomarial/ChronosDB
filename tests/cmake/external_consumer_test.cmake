@@ -21,7 +21,7 @@ cmake_minimum_required(VERSION 3.25)
 project(ChronosIngestConsumer LANGUAGES CXX)
 find_package(ChronosDB 0.1 CONFIG REQUIRED)
 add_executable(consumer main.cpp)
-target_link_libraries(consumer PRIVATE chronos::ingest)
+target_link_libraries(consumer PRIVATE chronos::head chronos::ingest)
 target_compile_features(consumer PRIVATE cxx_std_23)
 set(consumer_sanitizers "")
 if(CHRONOS_TEST_ENABLE_ASAN)
@@ -44,6 +44,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/columnar/columnar_batch_codec.hpp>
 #include <chronos/columnar/columnar_batch_format.hpp>
 #include <chronos/columnar/column_vector.hpp>
+#include <chronos/head/mutable_head.hpp>
 #include <chronos/ingest/columnar_append.hpp>
 #include <chronos/ingest/columnar_append_format.hpp>
 #include <chronos/ingest/identity.hpp>
@@ -62,8 +63,11 @@ int main() {
   const auto digest = chronos::ingest::sha256(chronos::common::ByteView{});
   const auto retry_directory = chronos::ingest::RetryDirectory::create(
       chronos::ingest::RetryDirectoryConfig{.maximum_entries = 8U});
+  const chronos::head::MutableHeadCapacity head_capacity{.row_capacity = 4U,
+                                                        .variable_value_bytes = {}};
   static_assert(chronos::ingest::columnar_append_v1::kCommandHeaderLength == 160U);
-  return limits.max_columns == 4096U && digest.has_value() && retry_directory.has_value() &&
+  return limits.max_columns == 4096U && head_capacity.row_capacity == 4U && digest.has_value() &&
+                 retry_directory.has_value() &&
                  retry_directory->metrics().maximum_entries == 8U && !decoded.has_value() &&
                  decoded.error().kind() ==
                      chronos::columnar::ColumnarBatchDecodeErrorKind::kIncomplete
