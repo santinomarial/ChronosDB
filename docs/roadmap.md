@@ -14,8 +14,9 @@ WAL physical codec, fixtures, tests, fuzz target, minimal blocking POSIX file/di
 the segmented writer, bounded commit coordinator, locked discovery and verification, explicit
 final-tail repair, replay-sink passes, existing-history reopen path, and read-only inspector now
 exist. Coordinator metrics and a deterministic process-kill crash-image harness exist. The first
-application-kind codec exists independently of WAL submission; retry, replay/application, and the
-server-wide operational metrics/export path do not exist yet.
+application-kind codec and a bounded process-local retry reservation directory exist independently
+of WAL submission; recovered/tablet retry state, replay/application, and the server-wide
+operational metrics/export path do not exist yet.
 Work should proceed in order unless an accepted ADR explains why a limited dependency must move
 earlier.
 
@@ -103,8 +104,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
   `chronos_columnar` borrowed/owned immutable vector and schema-shaped batch foundation plus the
   pure in-memory Columnar Batch v1 codec and `chronos_ingest` `COLUMNAR_APPEND` v1 command/digest
   codec are implemented with golden, property, corruption, fuzz, benchmark, sanitizer,
-  installation, and external-consumer coverage. WAL submission orchestration, retry state,
-  replay/application, mutable heads, and end-to-end Phase 4 benchmarks remain unimplemented.
+  installation, and external-consumer coverage. A bounded correctness-first live retry reservation
+  directory adds deterministic model and concurrency tests. WAL submission orchestration,
+  recovered/tablet retry state, retry retention, replay/application, mutable heads, and end-to-end
+  Phase 4 benchmarks remain unimplemented.
 
 - **Scope:** typed immutable input batches; null/variable-width representation; append-only tablet heads; sealing; single shard-worker ownership; stable reader boundaries; idempotent ordered replay into heads.
 - **Explicit non-scope:** durable columnar parts, SQL execution, secondary indexes, general lock-free containers, live subscriptions, and a universal allocator.

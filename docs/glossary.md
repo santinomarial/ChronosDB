@@ -17,6 +17,7 @@ These definitions are normative vocabulary for architecture documents. Detailed 
 - **Columnar batch:** One immutable, schema-shaped, self-describing set of user-column values for a single table schema; the v1 bytes are specified in [columnar-batch v1](formats/columnar-batch-v1.md).
 - **`COLUMNAR_APPEND`:** The versioned WAL application command carrying one exact Columnar Batch v1 object, its target tablet, retry identities, duplicated batch metadata, canonical mutation digest, and deterministic applied outcome.
 - **Mutation digest:** The SHA-256 value over the frozen `COLUMNAR_APPEND` request preimage used to distinguish the same retry identity with the same logical mutation from conflicting reuse; it does not replace WAL or batch integrity checks.
+- **Retry reservation directory:** The database-wide live state machine keyed by `(ClientId, ClientBatchId)` that grants one pre-WAL owner, blocks contenders while in flight, and resolves committed matching retries to the owning tablet's immutable outcome.
 - **Shard worker:** A single execution owner for one or more mutable tablets. Exactly one shard worker owns a mutable tablet at a time.
 - **Reactor:** An event-loop worker that handles nonblocking network I/O and passes decoded immutable batches through bounded queues; it does not mutate tablet state directly.
 - **Mutable head:** An append-only, in-memory columnar structure containing recent committed rows or row versions for a tablet.

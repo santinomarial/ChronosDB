@@ -23,8 +23,10 @@
 > application-kind layer adds SHA-256 vectors/provider integration, a canonical-preimage golden
 > fixture, explicit incomplete/corruption/unsupported/limit classification, nested-batch and
 > metadata validation, deterministic property/corruption suites, fuzzing, and digest/codec
-> microbenchmarks. WAL submission orchestration, retry state, replay, and mutable heads remain
-> unimplemented. Query
+> microbenchmarks. The process-local retry reservation directory adds bounded capacity, exact
+> outcome-pointer, deterministic reference-model, lifetime, and concurrent single-owner tests. WAL
+> submission orchestration, recovered/tablet retry state, retry retention, replay, and mutable
+> heads remain unimplemented. Query
 > and distributed harnesses also remain planned for their roadmap phases.
 
 ## Test types

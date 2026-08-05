@@ -2,8 +2,9 @@
 
 > **Status: accepted design, partially implemented.** The logical schema foundation, canonical
 > immutable in-memory vector/batch model, standalone Columnar Batch v1 codec, generic WAL
-> application-envelope codec, and pure in-memory `COLUMNAR_APPEND` v1 command/digest codec exist.
-> WAL submission orchestration, retry state, replay, mutable heads, and publication remain
+> application-envelope codec, pure in-memory `COLUMNAR_APPEND` v1 command/digest codec, and bounded
+> process-local retry reservation directory exist. WAL submission orchestration, recovered/tablet
+> retry state, replay, mutable heads, and publication remain
 > unimplemented. This document
 > fixes the logical state-machine and WAL command contracts for Phase 4; the physical
 > [WAL v1](../formats/wal-v1.md) framing and application envelope remain unchanged.
@@ -173,6 +174,13 @@ a second record. Recovery reconstructs this directory in global record order bef
 The concrete directory may use a correctness-first lock or a later proven partitioned design. Its
 linearization and bounded ownership are required; calling it lock-free or weakening its ordering
 requires a separate proof and evidence.
+
+The current `chronos::ingest::RetryDirectory` is that correctness-first process-local primitive. It
+uses one mutex, requires an explicit entry bound, returns in-flight immediately instead of waiting,
+removes abandoned reservations only before their owner marks WAL I/O started, and stores the exact
+immutable outcome pointer supplied after publication. It intentionally has no pruning or recovery
+API yet and is not connected to WAL submission or tablet state. See the
+[retry reservation directory guide](../learning/retry-reservation-directory.md).
 
 ## APPEND_ROWS semantics
 

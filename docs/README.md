@@ -84,5 +84,7 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   vectors, canonical buffers, schema-shaped batches, bounds, inspection, and validation contracts.
 - [COLUMNAR_APPEND command codec](learning/columnar-append-command.md): implemented envelope,
   identity, SHA-256 preimage, owned encoding, borrowed decoding, and schema-binding contracts.
+- [Retry reservation directory](learning/retry-reservation-directory.md): implemented bounded live
+  identity state machine, ownership, linearization, failure behavior, and model-test contract.
 
 Future format, protocol, subsystem, operations, and learning documents should be linked here when they are added by their corresponding roadmap phase.
