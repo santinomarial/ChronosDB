@@ -11,6 +11,7 @@ function(chronos_configure_installation)
       chronos_columnar
       chronos_io
       chronos_wal
+      chronos_ingest
       chronosctl
       chronos-waldump
       chronos-walbench

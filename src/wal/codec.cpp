@@ -1,6 +1,7 @@
 #include "chronos/wal/codec.hpp"
 
 #include "chronos/common/crc32c.hpp"
+#include "chronos/wal/application.hpp"
 #include "wal/codec_internal.hpp"
 
 #include <algorithm>
@@ -147,19 +148,6 @@ parse_record_header(const common::ByteView encoded_bytes) {
     return common::make_unexpected(corruption("WAL record total length does not match payload"));
   }
   return header;
-}
-
-[[nodiscard]] common::Status validate_application_envelope(const common::ByteView payload) {
-  if (payload.size() < kApplicationEnvelopeSize) {
-    return corruption("WAL application entry payload is shorter than 16 bytes");
-  }
-  if (load_u32_le(payload, 0U) == 0U) {
-    return corruption("WAL application format zero is invalid");
-  }
-  if (load_u32_le(payload, 4U) == 0U) {
-    return corruption("WAL application kind zero is invalid");
-  }
-  return common::Status::ok();
 }
 
 } // namespace
@@ -394,10 +382,11 @@ common::Result<std::size_t> encode_record(const RecordHeader& header,
                                                   "payload size does not match record header"});
   }
   if (header.record_type == kApplicationEntryRecordType) {
-    const common::Status application_status = validate_application_envelope(payload);
-    if (!application_status.is_ok()) {
+    const common::Result<DecodedApplicationEnvelope> application =
+        decode_application_payload(payload);
+    if (!application.has_value()) {
       return common::make_unexpected(
-          common::Status{common::StatusCode::kInvalidArgument, application_status.message()});
+          common::Status{common::StatusCode::kInvalidArgument, application.error().message()});
     }
   }
   const auto total_length = static_cast<std::size_t>(header.total_length);
@@ -459,9 +448,10 @@ common::Result<DecodedRecord> decode_record(const common::ByteView encoded_bytes
     return common::make_unexpected(not_supported("WAL record required flags are not supported"));
   }
   if (header->record_type == kApplicationEntryRecordType) {
-    const common::Status application_status = validate_application_envelope(payload);
-    if (!application_status.is_ok()) {
-      return common::make_unexpected(application_status);
+    const common::Result<DecodedApplicationEnvelope> application =
+        decode_application_payload(payload);
+    if (!application.has_value()) {
+      return common::make_unexpected(application.error());
     }
   }
   return DecodedRecord{.header = *header, .payload = payload, .record_crc32c = stored_crc};

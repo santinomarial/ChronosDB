@@ -43,6 +43,7 @@ endfunction()
 
 chronos_validate_standard_library()
 find_package(Threads REQUIRED)
+find_package(OpenSSL 3.0 REQUIRED COMPONENTS Crypto)
 
 set(CHRONOS_BUILD_TYPE "${CMAKE_BUILD_TYPE}")
 if(CHRONOS_BUILD_TYPE STREQUAL "")
@@ -171,6 +172,7 @@ chronos_enable_static_analysis(chronos_io)
 
 add_library(
   chronos_wal
+  src/wal/application.cpp
   src/wal/codec.cpp
   src/wal/wal_commit_coordinator.cpp
   src/wal/wal_log_id_generator.cpp
@@ -196,6 +198,30 @@ target_link_libraries(chronos_wal PUBLIC chronos::common PRIVATE chronos::io Thr
 chronos_set_project_warnings(chronos_wal)
 chronos_enable_sanitizers(chronos_wal)
 chronos_enable_static_analysis(chronos_wal)
+
+add_library(
+  chronos_ingest
+  src/ingest/columnar_append.cpp
+  src/ingest/sha256.cpp
+)
+add_library(chronos::ingest ALIAS chronos_ingest)
+set_target_properties(chronos_ingest PROPERTIES EXPORT_NAME ingest)
+set_target_properties(chronos_ingest PROPERTIES CXX_EXTENSIONS OFF)
+target_compile_features(chronos_ingest PUBLIC cxx_std_23)
+target_include_directories(
+  chronos_ingest
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+)
+target_link_libraries(
+  chronos_ingest
+  PUBLIC chronos::columnar chronos::wal
+  PRIVATE OpenSSL::Crypto
+)
+chronos_set_project_warnings(chronos_ingest)
+chronos_enable_sanitizers(chronos_ingest)
+chronos_enable_static_analysis(chronos_ingest)
 
 add_executable(chronosctl tools/chronosctl/main.cpp)
 set_target_properties(chronosctl PROPERTIES CXX_EXTENSIONS OFF)
