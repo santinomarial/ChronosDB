@@ -151,7 +151,7 @@ TEST(MutableHeadTest, PublishesTheCompleteBatchAndHiddenMetadataAtOneBoundary) {
   const HeadSnapshot published = publish(prepared);
   EXPECT_FALSE(prepared.is_valid());
   ASSERT_TRUE(published.applied_position().has_value());
-  EXPECT_EQ(*published.applied_position(), position(7U));
+  EXPECT_EQ(published.applied_position().value_or(HeadCommitPosition{}), position(7U));
   EXPECT_EQ(published.row_count(), 2U);
 
   const HeadColumnView timestamps = published.column(0U).value();
@@ -170,15 +170,17 @@ TEST(MutableHeadTest, PublishesTheCompleteBatchAndHiddenMetadataAtOneBoundary) {
   EXPECT_EQ(strings.variable_offsets()[2], 1U);
   ASSERT_EQ(strings.variable_values().size(), 1U);
   EXPECT_EQ(strings.variable_values()[0], std::byte{'x'});
-  EXPECT_EQ(published.cell(1U, 0U)->bytes()->front(), std::byte{'x'});
-  EXPECT_TRUE(published.cell(1U, 1U)->is_null());
+  EXPECT_EQ(published.cell(HeadCellPosition{.column_ordinal = 1U, .row = 0U})->bytes()->front(),
+            std::byte{'x'});
+  EXPECT_TRUE(published.cell(HeadCellPosition{.column_ordinal = 1U, .row = 1U})->is_null());
 
   const HeadColumnView booleans = published.column(2U).value();
   ASSERT_EQ(booleans.boolean_values().size(), 2U);
   EXPECT_EQ(booleans.boolean_values()[0], 1U);
   EXPECT_EQ(booleans.boolean_values()[1], 0U);
-  EXPECT_TRUE(published.cell(2U, 0U)->boolean().value());
-  EXPECT_FALSE(published.cell(2U, 1U)->boolean().value());
+  EXPECT_TRUE(published.cell(HeadCellPosition{.column_ordinal = 2U, .row = 0U})->boolean().value());
+  EXPECT_FALSE(
+      published.cell(HeadCellPosition{.column_ordinal = 2U, .row = 1U})->boolean().value());
 
   EXPECT_EQ(published.row_metadata(0U).value(),
             (HeadRowMetadata{.commit_position = position(7U),
@@ -214,14 +216,16 @@ TEST(MutableHeadTest, OldSnapshotsKeepExactBoundariesAndStableStorageAcrossLater
   const HeadSnapshot second = publish(second_prepared);
 
   EXPECT_EQ(first.row_count(), 2U);
-  EXPECT_EQ(first.applied_position()->record_sequence, 1U);
+  ASSERT_TRUE(first.applied_position().has_value());
+  EXPECT_EQ(first.applied_position().value_or(HeadCommitPosition{}).record_sequence, 1U);
   EXPECT_EQ(first.column(0U)->fixed_values().data(), fixed_address);
   EXPECT_EQ(first.column(1U)->variable_values().data(), variable_address);
   EXPECT_EQ(first.column(1U)->variable_offsets().size(), 3U);
   EXPECT_EQ(first.column(1U)->variable_offsets().back(), 1U);
 
   EXPECT_EQ(second.row_count(), 4U);
-  EXPECT_EQ(second.applied_position()->record_sequence, 3U);
+  ASSERT_TRUE(second.applied_position().has_value());
+  EXPECT_EQ(second.applied_position().value_or(HeadCommitPosition{}).record_sequence, 3U);
   EXPECT_EQ(second.column(0U)->fixed_values().data(), fixed_address);
   EXPECT_EQ(second.column(1U)->variable_values().data(), variable_address);
   EXPECT_EQ(second.column(1U)->variable_offsets().size(), 5U);
@@ -315,7 +319,8 @@ TEST(MutableHeadTest, SealingIsIdempotentPinsStorageAndRejectsNewAppends) {
 
   ASSERT_TRUE(sealed.has_value());
   EXPECT_EQ(sealed->row_count(), 2U);
-  EXPECT_EQ(sealed->cell(1U, 0U)->bytes()->front(), std::byte{'x'});
+  EXPECT_EQ(sealed->cell(HeadCellPosition{.column_ordinal = 1U, .row = 0U})->bytes()->front(),
+            std::byte{'x'});
 }
 
 [[nodiscard]] std::size_t property_fixed_width(const schema::LogicalTypeKind kind) {
@@ -470,8 +475,10 @@ TEST(MutableHeadConcurrencyTest, AcquireSnapshotsObserveOnlyCompleteBatchBoundar
         }
         const std::uint32_t final_row = observed->row_count() - 1U;
         const auto metadata = observed->row_metadata(final_row);
-        const auto final_boolean = observed->cell(2U, final_row);
-        const auto first_boolean = observed->cell(2U, final_row - 1U);
+        const auto final_boolean =
+            observed->cell(HeadCellPosition{.column_ordinal = 2U, .row = final_row});
+        const auto first_boolean =
+            observed->cell(HeadCellPosition{.column_ordinal = 2U, .row = final_row - 1U});
         if (!metadata.has_value() || metadata->row_ordinal != 1U ||
             metadata->commit_position.record_sequence != observed->row_count() / 2U ||
             !final_boolean.has_value() || !first_boolean.has_value() ||

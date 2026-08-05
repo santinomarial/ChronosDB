@@ -82,8 +82,8 @@ struct StorageExtent {
   std::size_t width;
 };
 
-[[nodiscard]] common::Result<std::size_t>
-add_storage_bytes(const std::size_t current, const StorageExtent extent) {
+[[nodiscard]] common::Result<std::size_t> add_storage_bytes(const std::size_t current,
+                                                            const StorageExtent extent) {
   const auto bytes = common::checked_multiply(extent.count, extent.width);
   if (!bytes.has_value()) {
     return common::make_unexpected(
@@ -201,8 +201,7 @@ private:
   validate_append(const std::shared_ptr<const columnar::OwnedColumnarBatch>& batch,
                   const HeadCommitPosition& position,
                   const std::shared_ptr<const HeadPublication>& current) const;
-  [[nodiscard]] common::Status
-  validate_unpublished_boundaries(const HeadPublication& base) const;
+  [[nodiscard]] common::Status validate_unpublished_boundaries(const HeadPublication& base) const;
   void materialize(const columnar::OwnedColumnarBatch& batch, MaterializationRange range) noexcept;
 
   std::shared_ptr<const schema::TableSchema> schema_;
@@ -400,8 +399,8 @@ common::Status detail::MutableHeadState::mark_wal_started(const std::uint64_t to
   return common::Status::ok();
 }
 
-common::Status detail::MutableHeadState::validate_unpublished_boundaries(
-    const HeadPublication& base) const {
+common::Status
+detail::MutableHeadState::validate_unpublished_boundaries(const HeadPublication& base) const {
   for (std::size_t ordinal = 0U; ordinal < columns_.size(); ++ordinal) {
     const ColumnStorage& column = columns_[ordinal];
     if (!schema_->columns()[ordinal].type().is_variable_width()) {
@@ -487,6 +486,12 @@ detail::MutableHeadState::publish(const std::uint64_t token,
     failed_.store(true, std::memory_order_release);
     append_active_ = false;
     return common::make_unexpected(boundaries);
+  }
+  if (!next->applied_position_.has_value()) {
+    failed_.store(true, std::memory_order_release);
+    append_active_ = false;
+    return common::make_unexpected(
+        internal("mutable-head publication is missing its commit position"));
   }
 
   materialize(batch,
@@ -578,11 +583,11 @@ detail::MutableHeadState::column_view(const HeadPublication& publication,
                         definition.type(),
                         definition.nullable(),
                         publication.row_count_,
-                        validity,
-                        booleans,
-                        fixed,
-                        offsets,
-                        variable,
+                        HeadColumnView::Buffers{.validity = validity,
+                                                .boolean_values = booleans,
+                                                .fixed_values = fixed,
+                                                .variable_offsets = offsets,
+                                                .variable_values = variable},
                         storage.fixed_width};
 }
 
@@ -612,16 +617,11 @@ detail::MutableHeadState::row_version_identity(const HeadPublication& publicatio
 
 HeadColumnView::HeadColumnView(const schema::ColumnId column_id, const schema::LogicalType type,
                                const bool nullable, const std::uint32_t row_count,
-                               const std::span<const std::uint8_t> validity,
-                               const std::span<const std::uint8_t> boolean_values,
-                               const common::ByteView fixed_values,
-                               const std::span<const std::uint32_t> variable_offsets,
-                               const common::ByteView variable_values,
-                               const std::size_t fixed_width) noexcept
+                               const Buffers buffers, const std::size_t fixed_width) noexcept
     : column_id_(column_id), type_(type), nullable_(nullable), row_count_(row_count),
-      validity_(validity), boolean_values_(boolean_values), fixed_values_(fixed_values),
-      variable_offsets_(variable_offsets), variable_values_(variable_values),
-      fixed_width_(fixed_width) {}
+      validity_(buffers.validity), boolean_values_(buffers.boolean_values),
+      fixed_values_(buffers.fixed_values), variable_offsets_(buffers.variable_offsets),
+      variable_values_(buffers.variable_values), fixed_width_(fixed_width) {}
 
 common::Result<bool> HeadColumnView::is_null(const std::uint32_t row) const {
   if (row >= row_count_) {
@@ -701,13 +701,12 @@ common::Result<HeadColumnView> HeadSnapshot::column(const std::size_t ordinal) c
   return state_->column_view(*publication_, ordinal);
 }
 
-common::Result<HeadCellView> HeadSnapshot::cell(const std::size_t column_ordinal,
-                                                const std::uint32_t row) const {
-  const common::Result<HeadColumnView> view = column(column_ordinal);
+common::Result<HeadCellView> HeadSnapshot::cell(const HeadCellPosition position) const {
+  const common::Result<HeadColumnView> view = column(position.column_ordinal);
   if (!view.has_value()) {
     return common::make_unexpected(view.error());
   }
-  return view->cell(row);
+  return view->cell(position.row);
 }
 
 common::Result<HeadRowMetadata> HeadSnapshot::row_metadata(const std::uint32_t row) const {
@@ -822,9 +821,9 @@ common::Result<MutableHead> MutableHead::create(std::shared_ptr<const schema::Ta
         return common::make_unexpected(
             exhausted("mutable-head variable offset count overflowed this platform"));
       }
-      auto total = add_storage_bytes(
-          retained_storage_bytes,
-          StorageExtent{.count = *offset_count, .width = sizeof(std::uint32_t)});
+      auto total =
+          add_storage_bytes(retained_storage_bytes,
+                            StorageExtent{.count = *offset_count, .width = sizeof(std::uint32_t)});
       if (!total.has_value()) {
         return common::make_unexpected(total.error());
       }
@@ -841,10 +840,9 @@ common::Result<MutableHead> MutableHead::create(std::shared_ptr<const schema::Ta
       }
       variable_byte_capacity = *next_variable;
     } else {
-      const auto total =
-          add_storage_bytes(retained_storage_bytes,
-                            StorageExtent{.count = rows,
-                                          .width = fixed_width(definition.type().kind())});
+      const auto total = add_storage_bytes(
+          retained_storage_bytes,
+          StorageExtent{.count = rows, .width = fixed_width(definition.type().kind())});
       if (!total.has_value()) {
         return common::make_unexpected(total.error());
       }
@@ -882,8 +880,15 @@ common::Result<MutableHead> MutableHead::create(std::shared_ptr<const schema::Ta
     auto initial = std::make_shared<const detail::HeadPublication>(
         0U, std::nullopt, std::vector<std::size_t>(schema->columns().size(), 0U));
     auto state = std::make_shared<detail::MutableHeadState>(
-        std::move(schema), tablet_id, generation, capacity.row_capacity, std::move(columns),
-        std::move(metadata), std::move(initial), variable_byte_capacity, retained_storage_bytes);
+        detail::MutableHeadStateConfig{.schema = std::move(schema),
+                                       .tablet_id = tablet_id,
+                                       .generation = generation,
+                                       .row_capacity = capacity.row_capacity,
+                                       .columns = std::move(columns),
+                                       .row_metadata = std::move(metadata),
+                                       .initial_publication = std::move(initial),
+                                       .variable_byte_capacity = variable_byte_capacity,
+                                       .retained_storage_bytes = retained_storage_bytes});
     return MutableHead{std::move(state)};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("mutable-head storage allocation failed"));
