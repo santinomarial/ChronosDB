@@ -281,11 +281,11 @@ TEST(RetryDirectoryPropertyTest, DeterministicOperationsMatchTheReferenceStateMa
 
       if (operation == 1U && expected.state == ModelState::kPreWal) {
         ASSERT_TRUE(expected.reservation.has_value());
-        ASSERT_TRUE(expected.reservation->mark_wal_started().is_ok());
+        ASSERT_TRUE(expected.reservation.value().mark_wal_started().is_ok());
         expected.state = ModelState::kWalStarted;
       } else if (operation == 2U && expected.state == ModelState::kPreWal) {
         ASSERT_TRUE(expected.reservation.has_value());
-        ASSERT_TRUE(expected.reservation->cancel_before_wal().is_ok());
+        ASSERT_TRUE(expected.reservation.value().cancel_before_wal().is_ok());
         expected.reservation.reset();
         expected.mutation.reset();
         expected.state = ModelState::kAbsent;
@@ -294,8 +294,8 @@ TEST(RetryDirectoryPropertyTest, DeterministicOperationsMatchTheReferenceStateMa
       } else if (operation == 3U && expected.state == ModelState::kWalStarted) {
         ASSERT_TRUE(expected.reservation.has_value());
         ASSERT_TRUE(expected.mutation.has_value());
-        const auto published = outcome(*expected.mutation, generator.next() | 1U);
-        const auto committed = expected.reservation->commit_published(published);
+        const auto published = outcome(expected.mutation.value(), generator.next() | 1U);
+        const auto committed = expected.reservation.value().commit_published(published);
         ASSERT_TRUE(committed.has_value()) << committed.error().to_string();
         ASSERT_EQ(*committed, published);
         expected.reservation.reset();
@@ -326,7 +326,7 @@ TEST(RetryDirectoryPropertyTest, DeterministicOperationsMatchTheReferenceStateMa
           ASSERT_TRUE(actual.has_value()) << actual.error().to_string();
           EXPECT_EQ(actual->kind(), RetryDecisionKind::kInFlight);
           ++in_flight_observations;
-        } else if (proposed == *expected.mutation) {
+        } else if (proposed == expected.mutation.value()) {
           ASSERT_TRUE(actual.has_value()) << actual.error().to_string();
           EXPECT_EQ(actual->kind(), RetryDecisionKind::kMatchingCommitted);
           EXPECT_EQ(actual->committed_outcome().get(), expected.committed_outcome.get());
