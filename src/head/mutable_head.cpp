@@ -77,9 +77,8 @@ namespace {
   return value;
 }
 
-[[nodiscard]] common::Result<std::size_t> add_storage_bytes(const std::size_t current,
-                                                            const std::size_t count,
-                                                            const std::size_t width) {
+[[nodiscard]] common::Result<std::size_t>
+add_storage_bytes(const std::size_t current, const std::size_t count, const std::size_t width) {
   const auto bytes = common::checked_multiply(count, width);
   if (!bytes.has_value()) {
     return common::make_unexpected(
@@ -113,8 +112,7 @@ namespace detail {
 
 class HeadPublication {
 public:
-  HeadPublication(const std::uint32_t row_count,
-                  std::optional<HeadCommitPosition> applied_position,
+  HeadPublication(const std::uint32_t row_count, std::optional<HeadCommitPosition> applied_position,
                   std::vector<std::size_t> variable_frontiers) noexcept
       : row_count_(row_count), applied_position_(std::move(applied_position)),
         variable_frontiers_(std::move(variable_frontiers)) {}
@@ -174,20 +172,20 @@ public:
     return columns_.size();
   }
 
-  [[nodiscard]] common::Result<HeadColumnView>
-  column_view(const HeadPublication& publication, std::size_t ordinal) const;
-  [[nodiscard]] common::Result<HeadRowMetadata>
-  row_metadata(const HeadPublication& publication, std::uint32_t row) const;
+  [[nodiscard]] common::Result<HeadColumnView> column_view(const HeadPublication& publication,
+                                                           std::size_t ordinal) const;
+  [[nodiscard]] common::Result<HeadRowMetadata> row_metadata(const HeadPublication& publication,
+                                                             std::uint32_t row) const;
   [[nodiscard]] common::Result<RowVersionIdentity>
   row_version_identity(const HeadPublication& publication, std::uint32_t row) const;
 
 private:
-  [[nodiscard]] common::Status validate_append(
-      const std::shared_ptr<const columnar::OwnedColumnarBatch>& batch,
-      const HeadCommitPosition& position,
-      const std::shared_ptr<const HeadPublication>& current) const;
-  [[nodiscard]] common::Status validate_unpublished_boundaries(
-      const HeadPublication& base) const noexcept;
+  [[nodiscard]] common::Status
+  validate_append(const std::shared_ptr<const columnar::OwnedColumnarBatch>& batch,
+                  const HeadCommitPosition& position,
+                  const std::shared_ptr<const HeadPublication>& current) const;
+  [[nodiscard]] common::Status
+  validate_unpublished_boundaries(const HeadPublication& base) const noexcept;
   void materialize(const columnar::OwnedColumnarBatch& batch, const HeadPublication& base,
                    const HeadPublication& next) noexcept;
 
@@ -334,7 +332,8 @@ detail::MutableHeadState::prepare(std::shared_ptr<const columnar::OwnedColumnarB
       if (!source->type().is_variable_width()) {
         continue;
       }
-      const auto next = common::checked_add(next_frontiers[ordinal], source->view().values().size());
+      const auto next =
+          common::checked_add(next_frontiers[ordinal], source->view().values().size());
       if (!next.has_value() || *next > columns_[ordinal].variable_values.size()) {
         return common::make_unexpected(
             exhausted("mutable-head append exceeds a variable-column byte capacity"));
@@ -342,12 +341,13 @@ detail::MutableHeadState::prepare(std::shared_ptr<const columnar::OwnedColumnarB
       next_frontiers[ordinal] = *next;
     }
 
-    const auto end_row = common::checked_add<std::uint32_t>(current->row_count_, batch->row_count());
+    const auto end_row =
+        common::checked_add<std::uint32_t>(current->row_count_, batch->row_count());
     if (!end_row.has_value()) {
       return common::make_unexpected(internal("validated mutable-head row range overflowed"));
     }
-    auto next = std::make_shared<const HeadPublication>(*end_row, position,
-                                                        std::move(next_frontiers));
+    auto next =
+        std::make_shared<const HeadPublication>(*end_row, position, std::move(next_frontiers));
     const std::uint64_t token = next_token_;
     auto implementation = std::make_unique<PreparedHeadAppend::Impl>(
         shared_from_this(), std::move(batch), token, current, std::move(next));
@@ -423,23 +423,20 @@ void detail::MutableHeadState::materialize(const columnar::OwnedColumnarBatch& b
     if (source.type().is_variable_width()) {
       const std::size_t base_frontier = base.variable_frontiers_[ordinal];
       std::copy(source.values().begin(), source.values().end(),
-                destination.variable_values.begin() +
-                    static_cast<std::ptrdiff_t>(base_frontier));
+                destination.variable_values.begin() + static_cast<std::ptrdiff_t>(base_frontier));
       for (std::uint32_t row = 0U; row < rows; ++row) {
         const std::size_t source_offset =
             (static_cast<std::size_t>(row) + 1U) * sizeof(std::uint32_t);
         const std::size_t absolute =
             base_frontier + static_cast<std::size_t>(read_u32_le(source.offsets(), source_offset));
-        destination.variable_offsets[start_row + row + 1U] =
-            static_cast<std::uint32_t>(absolute);
+        destination.variable_offsets[start_row + row + 1U] = static_cast<std::uint32_t>(absolute);
       }
       continue;
     }
 
     const std::size_t destination_offset = start_row * destination.fixed_width;
     std::copy(source.values().begin(), source.values().end(),
-              destination.fixed_values.begin() +
-                  static_cast<std::ptrdiff_t>(destination_offset));
+              destination.fixed_values.begin() + static_cast<std::ptrdiff_t>(destination_offset));
   }
 
   const HeadCommitPosition& position = *next.applied_position_;
@@ -450,10 +447,11 @@ void detail::MutableHeadState::materialize(const columnar::OwnedColumnarBatch& b
   }
 }
 
-common::Result<HeadSnapshot> detail::MutableHeadState::publish(
-    const std::uint64_t token, const columnar::OwnedColumnarBatch& batch,
-    const std::shared_ptr<const HeadPublication>& base,
-    const std::shared_ptr<const HeadPublication>& next) noexcept {
+common::Result<HeadSnapshot>
+detail::MutableHeadState::publish(const std::uint64_t token,
+                                  const columnar::OwnedColumnarBatch& batch,
+                                  const std::shared_ptr<const HeadPublication>& base,
+                                  const std::shared_ptr<const HeadPublication>& next) noexcept {
   if (!append_active_ || active_token_ != token) {
     return common::make_unexpected(internal("prepared mutable-head append ownership was lost"));
   }
@@ -505,8 +503,7 @@ void detail::MutableHeadState::abandon(const std::uint64_t token) noexcept {
 
 common::Result<HeadSnapshot> detail::MutableHeadState::seal() {
   if (failed_.load(std::memory_order_acquire)) {
-    return common::make_unexpected(
-        unavailable("failed mutable head cannot be sealed for handoff"));
+    return common::make_unexpected(unavailable("failed mutable head cannot be sealed for handoff"));
   }
   if (append_active_) {
     return common::make_unexpected(
@@ -536,17 +533,15 @@ common::Result<HeadColumnView>
 detail::MutableHeadState::column_view(const HeadPublication& publication,
                                       const std::size_t ordinal) const {
   if (ordinal >= columns_.size()) {
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kOutOfRange,
-                       "mutable-head snapshot column ordinal is out of range"});
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kOutOfRange, "mutable-head snapshot column ordinal is out of range"});
   }
   const schema::ColumnDefinition& definition = schema_->columns()[ordinal];
   const ColumnStorage& storage = columns_[ordinal];
   const std::size_t rows = publication.row_count_;
   const std::span<const std::uint8_t> validity =
-      definition.nullable()
-          ? std::span<const std::uint8_t>{storage.validity.data(), rows}
-          : std::span<const std::uint8_t>{};
+      definition.nullable() ? std::span<const std::uint8_t>{storage.validity.data(), rows}
+                            : std::span<const std::uint8_t>{};
   const std::span<const std::uint8_t> booleans =
       definition.type().kind() == schema::LogicalTypeKind::kBool
           ? std::span<const std::uint8_t>{storage.boolean_values.data(), rows}
@@ -559,14 +554,19 @@ detail::MutableHeadState::column_view(const HeadPublication& publication,
       definition.type().is_variable_width()
           ? std::span<const std::uint32_t>{storage.variable_offsets.data(), rows + 1U}
           : std::span<const std::uint32_t>{};
-  const common::ByteView variable =
-      definition.type().is_variable_width()
-          ? common::ByteView{storage.variable_values.data(),
-                             publication.variable_frontiers_[ordinal]}
-          : common::ByteView{};
-  return HeadColumnView{definition.id(),       definition.type(), definition.nullable(),
-                        publication.row_count_, validity,          booleans,
-                        fixed,                 offsets,            variable,
+  const common::ByteView variable = definition.type().is_variable_width()
+                                        ? common::ByteView{storage.variable_values.data(),
+                                                           publication.variable_frontiers_[ordinal]}
+                                        : common::ByteView{};
+  return HeadColumnView{definition.id(),
+                        definition.type(),
+                        definition.nullable(),
+                        publication.row_count_,
+                        validity,
+                        booleans,
+                        fixed,
+                        offsets,
+                        variable,
                         storage.fixed_width};
 }
 
@@ -574,9 +574,8 @@ common::Result<HeadRowMetadata>
 detail::MutableHeadState::row_metadata(const HeadPublication& publication,
                                        const std::uint32_t row) const {
   if (row >= publication.row_count_) {
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kOutOfRange,
-                       "mutable-head snapshot row is out of range"});
+    return common::make_unexpected(common::Status{common::StatusCode::kOutOfRange,
+                                                  "mutable-head snapshot row is out of range"});
   }
   return row_metadata_[row];
 }
@@ -610,8 +609,8 @@ HeadColumnView::HeadColumnView(const schema::ColumnId column_id, const schema::L
 
 common::Result<bool> HeadColumnView::is_null(const std::uint32_t row) const {
   if (row >= row_count_) {
-    return common::make_unexpected(common::Status{common::StatusCode::kOutOfRange,
-                                                  "mutable-head column row is out of range"});
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kOutOfRange, "mutable-head column row is out of range"});
   }
   return nullable_ && validity_[row] == 0U;
 }
@@ -755,10 +754,10 @@ MutableHead::~MutableHead() = default;
 MutableHead::MutableHead(MutableHead&&) noexcept = default;
 MutableHead& MutableHead::operator=(MutableHead&&) noexcept = default;
 
-common::Result<MutableHead>
-MutableHead::create(std::shared_ptr<const schema::TableSchema> schema,
-                    const schema::TabletId tablet_id, const std::uint64_t generation,
-                    MutableHeadCapacity capacity) {
+common::Result<MutableHead> MutableHead::create(std::shared_ptr<const schema::TableSchema> schema,
+                                                const schema::TabletId tablet_id,
+                                                const std::uint64_t generation,
+                                                MutableHeadCapacity capacity) {
   if (schema == nullptr) {
     return common::make_unexpected(invalid("mutable head requires an owning schema pointer"));
   }
@@ -805,8 +804,7 @@ MutableHead::create(std::shared_ptr<const schema::TableSchema> schema,
         return common::make_unexpected(
             exhausted("mutable-head variable offset count overflowed this platform"));
       }
-      auto total =
-          add_storage_bytes(retained_storage_bytes, *offset_count, sizeof(std::uint32_t));
+      auto total = add_storage_bytes(retained_storage_bytes, *offset_count, sizeof(std::uint32_t));
       if (!total.has_value()) {
         return common::make_unexpected(total.error());
       }

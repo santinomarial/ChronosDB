@@ -39,18 +39,16 @@ batch(std::shared_ptr<const schema::TableSchema> schema = columnar::test::batch_
           .value());
 }
 
-[[nodiscard]] MutableHead head(const std::uint32_t rows = 8U,
-                               const std::size_t string_bytes = 8U) {
+[[nodiscard]] MutableHead head(const std::uint32_t rows = 8U, const std::size_t string_bytes = 8U) {
   return MutableHead::create(columnar::test::batch_schema(), tablet_id(), 1U,
                              MutableHeadCapacity{.row_capacity = rows,
                                                  .variable_value_bytes = {0U, string_bytes, 0U}})
       .value();
 }
 
-[[nodiscard]] PreparedHeadAppend prepare(MutableHead& target,
-                                         const std::shared_ptr<const columnar::OwnedColumnarBatch>&
-                                             input,
-                                         const std::uint64_t sequence) {
+[[nodiscard]] PreparedHeadAppend
+prepare(MutableHead& target, const std::shared_ptr<const columnar::OwnedColumnarBatch>& input,
+        const std::uint64_t sequence) {
   auto prepared = target.prepare_append(input, position(sequence));
   EXPECT_TRUE(prepared.has_value()) << prepared.error().to_string();
   return std::move(*prepared);
@@ -65,41 +63,41 @@ batch(std::shared_ptr<const schema::TableSchema> schema = columnar::test::batch_
 
 TEST(MutableHeadTest, ValidatesConfigurationAndStartsAtOneExactEmptyPublication) {
   const std::shared_ptr<const schema::TableSchema> schema = columnar::test::batch_schema();
-  EXPECT_EQ(MutableHead::create(nullptr, tablet_id(), 1U,
-                                MutableHeadCapacity{.row_capacity = 4U,
-                                                    .variable_value_bytes = {0U, 8U, 0U}})
+  EXPECT_EQ(MutableHead::create(
+                nullptr, tablet_id(), 1U,
+                MutableHeadCapacity{.row_capacity = 4U, .variable_value_bytes = {0U, 8U, 0U}})
                 .error()
                 .code(),
             common::StatusCode::kInvalidArgument);
-  EXPECT_EQ(MutableHead::create(schema, tablet_id(), 0U,
-                                MutableHeadCapacity{.row_capacity = 4U,
-                                                    .variable_value_bytes = {0U, 8U, 0U}})
+  EXPECT_EQ(MutableHead::create(
+                schema, tablet_id(), 0U,
+                MutableHeadCapacity{.row_capacity = 4U, .variable_value_bytes = {0U, 8U, 0U}})
                 .error()
                 .code(),
             common::StatusCode::kInvalidArgument);
-  EXPECT_EQ(MutableHead::create(schema, tablet_id(), 1U,
-                                MutableHeadCapacity{.row_capacity = 0U,
-                                                    .variable_value_bytes = {0U, 8U, 0U}})
+  EXPECT_EQ(MutableHead::create(
+                schema, tablet_id(), 1U,
+                MutableHeadCapacity{.row_capacity = 0U, .variable_value_bytes = {0U, 8U, 0U}})
                 .error()
                 .code(),
             common::StatusCode::kInvalidArgument);
-  EXPECT_EQ(MutableHead::create(schema, tablet_id(), 1U,
-                                MutableHeadCapacity{.row_capacity = 4U,
-                                                    .variable_value_bytes = {0U, 8U}})
-                .error()
-                .code(),
-            common::StatusCode::kInvalidArgument);
-  EXPECT_EQ(MutableHead::create(schema, tablet_id(), 1U,
-                                MutableHeadCapacity{.row_capacity = 4U,
-                                                    .variable_value_bytes = {1U, 8U, 0U}})
+  EXPECT_EQ(
+      MutableHead::create(schema, tablet_id(), 1U,
+                          MutableHeadCapacity{.row_capacity = 4U, .variable_value_bytes = {0U, 8U}})
+          .error()
+          .code(),
+      common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(MutableHead::create(
+                schema, tablet_id(), 1U,
+                MutableHeadCapacity{.row_capacity = 4U, .variable_value_bytes = {1U, 8U, 0U}})
                 .error()
                 .code(),
             common::StatusCode::kInvalidArgument);
 
   MutableHead target =
-      MutableHead::create(schema, tablet_id(), 1U,
-                          MutableHeadCapacity{.row_capacity = 4U,
-                                              .variable_value_bytes = {0U, 8U, 0U}})
+      MutableHead::create(
+          schema, tablet_id(), 1U,
+          MutableHeadCapacity{.row_capacity = 4U, .variable_value_bytes = {0U, 8U, 0U}})
           .value();
   const MutableHeadMetrics metrics = target.metrics();
   EXPECT_EQ(metrics.row_capacity, 4U);
@@ -256,26 +254,20 @@ TEST(MutableHeadTest, RejectsSchemaRowAndVariableCapacityBeforeWal) {
   EXPECT_EQ(byte_limited.snapshot()->row_count(), 2U);
 
   const auto other_schema = std::make_shared<const schema::TableSchema>(
-      schema::TableSchema::create(columnar::test::id<schema::TableId>(150U),
-                                  columnar::test::id<schema::SchemaId>(151U),
-                                  schema::SchemaVersion::initial(), std::nullopt,
-                                  std::vector<schema::ColumnDefinition>{
-                                      schema::ColumnDefinition::create(
-                                          columnar::test::id<schema::ColumnId>(152U), "ts",
-                                          columnar::test::type(
-                                              schema::LogicalTypeKind::kTimestampNs),
-                                          false)
-                                          .value()},
-                                  schema::TableSchemaRoles{
-                                      .event_time_column =
-                                          columnar::test::id<schema::ColumnId>(152U),
-                                      .physical_ordering_key = {
-                                          columnar::test::id<schema::ColumnId>(152U)},
-                                      .partition_columns = {
-                                          columnar::test::id<schema::ColumnId>(152U)},
-                                      .shard_key = {
-                                          columnar::test::id<schema::ColumnId>(152U)},
-                                      .deduplication_key = {}})
+      schema::TableSchema::create(
+          columnar::test::id<schema::TableId>(150U), columnar::test::id<schema::SchemaId>(151U),
+          schema::SchemaVersion::initial(), std::nullopt,
+          std::vector<schema::ColumnDefinition>{
+              schema::ColumnDefinition::create(
+                  columnar::test::id<schema::ColumnId>(152U), "ts",
+                  columnar::test::type(schema::LogicalTypeKind::kTimestampNs), false)
+                  .value()},
+          schema::TableSchemaRoles{
+              .event_time_column = columnar::test::id<schema::ColumnId>(152U),
+              .physical_ordering_key = {columnar::test::id<schema::ColumnId>(152U)},
+              .partition_columns = {columnar::test::id<schema::ColumnId>(152U)},
+              .shard_key = {columnar::test::id<schema::ColumnId>(152U)},
+              .deduplication_key = {}})
           .value());
   std::vector<columnar::OwnedColumnVector> other_columns;
   other_columns.push_back(columnar::test::fixed_vector(
@@ -374,8 +366,8 @@ TEST(MutableHeadPropertyTest, EveryFrozenLogicalTypeAndNullableShapeMaterializes
                               .value());
     variable_capacities.push_back(logical_type.is_variable_width() ? 4U : 0U);
 
-    std::vector<std::byte> validity = nullable ? std::vector<std::byte>{std::byte{0x05}}
-                                               : std::vector<std::byte>{};
+    std::vector<std::byte> validity =
+        nullable ? std::vector<std::byte>{std::byte{0x05}} : std::vector<std::byte>{};
     const std::uint32_t null_count = nullable ? 1U : 0U;
     if (logical_type.is_variable_width()) {
       std::vector<std::byte> offsets;
@@ -385,12 +377,12 @@ TEST(MutableHeadPropertyTest, EveryFrozenLogicalTypeAndNullableShapeMaterializes
       columnar::test::append_u32(offsets, 2U);
       vectors.push_back(
           columnar::OwnedColumnVector::create(
-              columnar::ColumnVectorMetadata{
-                  .column_id = columnar::test::id<schema::ColumnId>(code),
-                  .type = logical_type,
-                  .nullable = nullable,
-                  .row_count = kRows,
-                  .null_count = null_count},
+              columnar::ColumnVectorMetadata{.column_id =
+                                                 columnar::test::id<schema::ColumnId>(code),
+                                             .type = logical_type,
+                                             .nullable = nullable,
+                                             .row_count = kRows,
+                                             .null_count = null_count},
               columnar::ColumnVectorBuffers{.validity = std::move(validity),
                                             .offsets = std::move(offsets),
                                             .values = {std::byte{'a'}, std::byte{'b'}}})
@@ -403,18 +395,16 @@ TEST(MutableHeadPropertyTest, EveryFrozenLogicalTypeAndNullableShapeMaterializes
       if (kind == schema::LogicalTypeKind::kBool) {
         values[0] = std::byte{0x05};
       }
-      vectors.push_back(columnar::test::fixed_vector(code, logical_type, nullable, kRows,
-                                                      std::move(validity), null_count,
-                                                      std::move(values)));
+      vectors.push_back(columnar::test::fixed_vector(
+          code, logical_type, nullable, kRows, std::move(validity), null_count, std::move(values)));
     }
   }
 
   const schema::ColumnId event_time = columnar::test::id<schema::ColumnId>(13U);
   const auto schema = std::make_shared<const schema::TableSchema>(
       schema::TableSchema::create(
-          columnar::test::id<schema::TableId>(200U),
-          columnar::test::id<schema::SchemaId>(201U), schema::SchemaVersion::initial(),
-          std::nullopt, std::move(definitions),
+          columnar::test::id<schema::TableId>(200U), columnar::test::id<schema::SchemaId>(201U),
+          schema::SchemaVersion::initial(), std::nullopt, std::move(definitions),
           schema::TableSchemaRoles{.event_time_column = event_time,
                                    .physical_ordering_key = {event_time},
                                    .partition_columns = {event_time},
@@ -424,9 +414,9 @@ TEST(MutableHeadPropertyTest, EveryFrozenLogicalTypeAndNullableShapeMaterializes
   const auto input = std::make_shared<const columnar::OwnedColumnarBatch>(
       columnar::OwnedColumnarBatch::create(schema, std::move(vectors)).value());
   MutableHead target =
-      MutableHead::create(schema, tablet_id(), 1U,
-                          MutableHeadCapacity{.row_capacity = kRows,
-                                              .variable_value_bytes = variable_capacities})
+      MutableHead::create(
+          schema, tablet_id(), 1U,
+          MutableHeadCapacity{.row_capacity = kRows, .variable_value_bytes = variable_capacities})
           .value();
   PreparedHeadAppend prepared = prepare(target, input, 1U);
   const HeadSnapshot snapshot = publish(prepared);
@@ -485,8 +475,7 @@ TEST(MutableHeadConcurrencyTest, AcquireSnapshotsObserveOnlyCompleteBatchBoundar
         if (!metadata.has_value() || metadata->row_ordinal != 1U ||
             metadata->commit_position.record_sequence != observed->row_count() / 2U ||
             !final_boolean.has_value() || !first_boolean.has_value() ||
-            final_boolean->boolean().value_or(true) ||
-            !first_boolean->boolean().value_or(false)) {
+            final_boolean->boolean().value_or(true) || !first_boolean->boolean().value_or(false)) {
           ++failures;
         }
       }

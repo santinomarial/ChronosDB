@@ -147,8 +147,8 @@ private:
   HeadColumnView(schema::ColumnId column_id, schema::LogicalType type, bool nullable,
                  std::uint32_t row_count, std::span<const std::uint8_t> validity,
                  std::span<const std::uint8_t> boolean_values, common::ByteView fixed_values,
-                 std::span<const std::uint32_t> variable_offsets,
-                 common::ByteView variable_values, std::size_t fixed_width) noexcept;
+                 std::span<const std::uint32_t> variable_offsets, common::ByteView variable_values,
+                 std::size_t fixed_width) noexcept;
 
   schema::ColumnId column_id_;
   schema::LogicalType type_;
