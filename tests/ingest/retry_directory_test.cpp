@@ -58,27 +58,32 @@ outcome(const ColumnarAppendMutationIdentity& identity, const std::uint64_t sequ
   return std::move(*decision.reservation());
 }
 
+void expect_metrics(const RetryDirectoryMetrics& actual,
+                    const RetryDirectoryMetrics& expected) {
+  EXPECT_EQ(actual.maximum_entries, expected.maximum_entries);
+  EXPECT_EQ(actual.entries, expected.entries);
+  EXPECT_EQ(actual.in_flight_entries, expected.in_flight_entries);
+  EXPECT_EQ(actual.committed_entries, expected.committed_entries);
+  EXPECT_EQ(actual.high_water_entries, expected.high_water_entries);
+}
+
 TEST(RetryDirectoryTest, RequiresAnExplicitBoundAndReportsExactMetrics) {
   const auto invalid = RetryDirectory::create({.maximum_entries = 0U});
   ASSERT_FALSE(invalid.has_value());
   EXPECT_EQ(invalid.error().code(), common::StatusCode::kInvalidArgument);
 
   RetryDirectory directory = RetryDirectory::create({.maximum_entries = 2U}).value();
-  EXPECT_EQ(directory.metrics(), (RetryDirectoryMetrics{.maximum_entries = 2U,
-                                                        .entries = 0U,
-                                                        .in_flight_entries = 0U,
-                                                        .committed_entries = 0U,
-                                                        .high_water_entries = 0U}));
+  expect_metrics(directory.metrics(), RetryDirectoryMetrics{.maximum_entries = 2U});
 
   auto first = directory.try_reserve(retry_identity(1U), mutation(1U));
   auto second = directory.try_reserve(retry_identity(2U), mutation(2U));
   ASSERT_TRUE(first.has_value());
   ASSERT_TRUE(second.has_value());
-  EXPECT_EQ(directory.metrics(), (RetryDirectoryMetrics{.maximum_entries = 2U,
-                                                        .entries = 2U,
-                                                        .in_flight_entries = 2U,
-                                                        .committed_entries = 0U,
-                                                        .high_water_entries = 2U}));
+  expect_metrics(directory.metrics(), RetryDirectoryMetrics{.maximum_entries = 2U,
+                                                            .entries = 2U,
+                                                            .in_flight_entries = 2U,
+                                                            .committed_entries = 0U,
+                                                            .high_water_entries = 2U});
   const auto full = directory.try_reserve(retry_identity(3U), mutation(3U));
   ASSERT_FALSE(full.has_value());
   EXPECT_EQ(full.error().code(), common::StatusCode::kResourceExhausted);
@@ -154,11 +159,11 @@ TEST(RetryDirectoryTest, CommitsOnlyAValidPublishedOutcomeAfterWalStarts) {
   ASSERT_TRUE(committed.has_value()) << committed.error().to_string();
   EXPECT_EQ(*committed, published);
   EXPECT_FALSE(reservation.is_valid());
-  EXPECT_EQ(directory.metrics(), (RetryDirectoryMetrics{.maximum_entries = 2U,
-                                                        .entries = 1U,
-                                                        .in_flight_entries = 0U,
-                                                        .committed_entries = 1U,
-                                                        .high_water_entries = 1U}));
+  expect_metrics(directory.metrics(), RetryDirectoryMetrics{.maximum_entries = 2U,
+                                                            .entries = 1U,
+                                                            .in_flight_entries = 0U,
+                                                            .committed_entries = 1U,
+                                                            .high_water_entries = 1U});
 
   const auto matching = directory.try_reserve(key, request);
   ASSERT_TRUE(matching.has_value());

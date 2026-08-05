@@ -174,8 +174,15 @@ detail::RetryDirectoryState::try_reserve(const RetryIdentity& identity,
   const std::uint64_t token = next_reservation_token_;
   ++next_reservation_token_;
   entries_.emplace(identity, RetryEntry{.mutation = mutation, .reservation_token = token});
+  std::unique_ptr<RetryReservation::Impl> reservation;
+  try {
+    reservation =
+        std::make_unique<RetryReservation::Impl>(shared_from_this(), identity, token);
+  } catch (...) {
+    entries_.erase(identity);
+    throw;
+  }
   high_water_entries_ = std::max(high_water_entries_, entries_.size());
-  auto reservation = std::make_unique<RetryReservation::Impl>(shared_from_this(), identity, token);
   return RetryDecision{RetryDecisionKind::kReserved,
                        std::optional<RetryReservation>{
                            RetryReservation{std::move(reservation)}},
@@ -356,10 +363,16 @@ common::Result<RetryDirectory> RetryDirectory::create(const RetryDirectoryConfig
 common::Result<RetryDecision>
 RetryDirectory::try_reserve(const RetryIdentity& identity,
                             const ColumnarAppendMutationIdentity& mutation) {
+  if (implementation_ == nullptr) {
+    return common::make_unexpected(invalid_argument("retry directory is invalid"));
+  }
   return implementation_->state_->try_reserve(identity, mutation);
 }
 
 RetryDirectoryMetrics RetryDirectory::metrics() const {
+  if (implementation_ == nullptr) {
+    return {};
+  }
   return implementation_->state_->metrics();
 }
 

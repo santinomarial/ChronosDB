@@ -55,8 +55,6 @@ struct RetryDirectoryMetrics {
   std::size_t in_flight_entries{};
   std::size_t committed_entries{};
   std::size_t high_water_entries{};
-
-  friend bool operator==(const RetryDirectoryMetrics&, const RetryDirectoryMetrics&) = default;
 };
 
 namespace detail {
