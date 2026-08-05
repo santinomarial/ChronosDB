@@ -139,9 +139,9 @@ struct MutableHeadStateConfig {
   std::size_t retained_storage_bytes;
 };
 
-struct PublicationRange {
+struct MaterializationRange {
   const HeadPublication& base;
-  const HeadPublication& next;
+  const HeadCommitPosition& position;
 };
 
 class MutableHeadState : public std::enable_shared_from_this<MutableHeadState> {
@@ -203,7 +203,7 @@ private:
                   const std::shared_ptr<const HeadPublication>& current) const;
   [[nodiscard]] common::Status
   validate_unpublished_boundaries(const HeadPublication& base) const;
-  void materialize(const columnar::OwnedColumnarBatch& batch, PublicationRange range) noexcept;
+  void materialize(const columnar::OwnedColumnarBatch& batch, MaterializationRange range) noexcept;
 
   std::shared_ptr<const schema::TableSchema> schema_;
   schema::TabletId tablet_id_;
@@ -415,9 +415,8 @@ common::Status detail::MutableHeadState::validate_unpublished_boundaries(
 }
 
 void detail::MutableHeadState::materialize(const columnar::OwnedColumnarBatch& batch,
-                                           const PublicationRange range) noexcept {
+                                           const MaterializationRange range) noexcept {
   const HeadPublication& base = range.base;
-  const HeadPublication& next = range.next;
   const std::uint32_t rows = batch.row_count();
   const std::size_t start_row = base.row_count_;
   for (std::size_t ordinal = 0U; ordinal < columns_.size(); ++ordinal) {
@@ -456,9 +455,8 @@ void detail::MutableHeadState::materialize(const columnar::OwnedColumnarBatch& b
               destination.fixed_values.begin() + static_cast<std::ptrdiff_t>(destination_offset));
   }
 
-  const HeadCommitPosition& position = next.applied_position_.value();
   for (std::uint32_t row = 0U; row < rows; ++row) {
-    row_metadata_[start_row + row] = HeadRowMetadata{.commit_position = position,
+    row_metadata_[start_row + row] = HeadRowMetadata{.commit_position = range.position,
                                                      .row_ordinal = row,
                                                      .operation = HeadOperationKind::kAppendRows};
   }
@@ -491,7 +489,8 @@ detail::MutableHeadState::publish(const std::uint64_t token,
     return common::make_unexpected(boundaries);
   }
 
-  materialize(batch, PublicationRange{.base = *base, .next = *next});
+  materialize(batch,
+              MaterializationRange{.base = *base, .position = next->applied_position_.value()});
   std::atomic_store_explicit(&publication_, next, std::memory_order_release);
   append_active_ = false;
   return HeadSnapshot{shared_from_this(), next};
@@ -803,14 +802,16 @@ common::Result<MutableHead> MutableHead::create(std::shared_ptr<const schema::Ta
           invalid("mutable-head variable capacity exceeds the uint32 offset domain"));
     }
     if (definition.nullable()) {
-      const auto total = add_storage_bytes(retained_storage_bytes, rows, sizeof(std::uint8_t));
+      const auto total = add_storage_bytes(
+          retained_storage_bytes, StorageExtent{.count = rows, .width = sizeof(std::uint8_t)});
       if (!total.has_value()) {
         return common::make_unexpected(total.error());
       }
       retained_storage_bytes = *total;
     }
     if (definition.type().kind() == schema::LogicalTypeKind::kBool) {
-      const auto total = add_storage_bytes(retained_storage_bytes, rows, sizeof(std::uint8_t));
+      const auto total = add_storage_bytes(
+          retained_storage_bytes, StorageExtent{.count = rows, .width = sizeof(std::uint8_t)});
       if (!total.has_value()) {
         return common::make_unexpected(total.error());
       }
@@ -821,11 +822,14 @@ common::Result<MutableHead> MutableHead::create(std::shared_ptr<const schema::Ta
         return common::make_unexpected(
             exhausted("mutable-head variable offset count overflowed this platform"));
       }
-      auto total = add_storage_bytes(retained_storage_bytes, *offset_count, sizeof(std::uint32_t));
+      auto total = add_storage_bytes(
+          retained_storage_bytes,
+          StorageExtent{.count = *offset_count, .width = sizeof(std::uint32_t)});
       if (!total.has_value()) {
         return common::make_unexpected(total.error());
       }
-      total = add_storage_bytes(*total, variable_capacity, sizeof(std::byte));
+      total = add_storage_bytes(
+          *total, StorageExtent{.count = variable_capacity, .width = sizeof(std::byte)});
       if (!total.has_value()) {
         return common::make_unexpected(total.error());
       }
@@ -838,15 +842,17 @@ common::Result<MutableHead> MutableHead::create(std::shared_ptr<const schema::Ta
       variable_byte_capacity = *next_variable;
     } else {
       const auto total =
-          add_storage_bytes(retained_storage_bytes, rows, fixed_width(definition.type().kind()));
+          add_storage_bytes(retained_storage_bytes,
+                            StorageExtent{.count = rows,
+                                          .width = fixed_width(definition.type().kind())});
       if (!total.has_value()) {
         return common::make_unexpected(total.error());
       }
       retained_storage_bytes = *total;
     }
   }
-  const auto with_metadata =
-      add_storage_bytes(retained_storage_bytes, rows, sizeof(HeadRowMetadata));
+  const auto with_metadata = add_storage_bytes(
+      retained_storage_bytes, StorageExtent{.count = rows, .width = sizeof(HeadRowMetadata)});
   if (!with_metadata.has_value()) {
     return common::make_unexpected(with_metadata.error());
   }
