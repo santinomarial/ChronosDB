@@ -3,7 +3,8 @@
 > **Status: partially implemented.** This document turns the
 > [architecture invariants](../architecture/invariants.md) into verification obligations under
 > [ADR 0012](../adr/0012-correctness-testing-and-performance-evidence.md). Phase 1 has
-> unit/property-style tests, sanitizer jobs, optional ByteReader and WAL-codec libFuzzer targets,
+> unit/property-style tests, sanitizer jobs, and optional ByteReader, WAL-codec, and columnar-batch
+> codec libFuzzer targets,
 > and deterministically injected POSIX I/O failure tests. WAL v1 has an implemented physical codec,
 > reusable file/directory primitives, writer, locked discovery and verification, explicit final-tail
 > repair, preflight/replay passes, existing-history reopen path, and read-only inspection tool.
@@ -15,8 +16,11 @@
 > historical-reuse, and generated-lineage projection tests. The canonical immutable columnar-vector
 > and owned-batch model adds boundary and deterministic generated tests for bitmaps, offsets, value
 > domains, schema shape, row inspection, logical/retained-memory bounds, installation, and external
-> consumption. The first
-> application-kind codec, columnar-batch byte codec, and mutable heads remain unimplemented. Query
+> consumption. The pure in-memory Columnar Batch v1 codec adds checked layout planning, exact
+> encoding, prefix/exact borrowed decoding, explicit incomplete/invalid/unsupported/limit outcomes,
+> schema binding, independently generated golden bytes, deterministic property and hostile
+> corruption suites, fuzzing, and codec microbenchmarks. The first WAL application-kind codec and
+> mutable heads remain unimplemented. Query
 > and distributed harnesses also remain planned for their roadmap phases.
 
 ## Test types
@@ -62,7 +66,7 @@ Every invariant has at least one executable future test type; implementation pha
 
 ### Codecs and corruption
 
-WAL, CSEG, manifest, checkpoint, resume-token, and network codecs require golden fixtures plus property round trips for every type and boundary. Fuzzers target lengths, offsets, version/flag combinations, checksummed and unchecked regions, compression limits, truncation, and cross-endian fixtures. A parser must validate enough framing to bound work before allocation or interpretation.
+WAL, Columnar Batch, CSEG, manifest, checkpoint, resume-token, and network codecs require golden fixtures plus property round trips for every type and boundary. Fuzzers target lengths, offsets, version/flag combinations, checksummed and unchecked regions, compression limits, truncation, and cross-endian fixtures. A parser must validate enough framing to bound work before allocation or interpretation. The Columnar Batch v1 decoder implements this order by authenticating the fixed header before trusting counts or total length, enforcing configured and format bounds before descriptor allocation, authenticating the complete batch before value interpretation, and then validating canonical placement and value domains.
 
 ### Partial writes and crash consistency
 

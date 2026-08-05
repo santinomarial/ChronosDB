@@ -6,15 +6,16 @@ Local verification is recorded per change; the Linux compiler/CI matrix remains 
 portable support and is not implied by a macOS-only local run. This status does not mean that the
 complete Phase 1 gates have passed. Unimplemented portions of Phase 1 and all later phases remain
 planned work, not implemented functionality or delivery commitments. Phase 4 has accepted design
-artifacts plus schema and canonical immutable in-memory columnar foundations. The Phase 2–3
+artifacts plus schema, canonical immutable in-memory columnar foundations, and the standalone
+Columnar Batch v1 codec. The Phase 2–3
 [WAL v1 format](formats/wal-v1.md), [recovery design](architecture/wal-recovery.md), and
 [ADR 0013](adr/0013-wal-v1-format-and-recovery.md) are accepted design artifacts. The pure in-memory
 WAL physical codec, fixtures, tests, fuzz target, minimal blocking POSIX file/directory primitives,
 the segmented writer, bounded commit coordinator, locked discovery and verification, explicit
 final-tail repair, replay-sink passes, existing-history reopen path, and read-only inspector now
 exist. Coordinator metrics and a deterministic process-kill crash-image harness exist. The first
-application-kind format is specified but no codec or server-wide operational metrics/export path
-exists yet.
+application-kind format is specified but its WAL command codec and the server-wide operational
+metrics/export path do not exist yet.
 Work should proceed in order unless an accepted ADR explains why a limited dependency must move
 earlier.
 
@@ -97,9 +98,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
   evolution, columnar-batch v1 bytes, the first WAL append command, ordered replay/retry semantics,
   mutable-head publication, snapshots, and sealing/handoff are accepted specifications. The
   `chronos_schema` identity/type/immutable-schema/lineage/projection foundation and the
-  `chronos_columnar` borrowed/owned immutable vector and schema-shaped batch foundation are
-  implemented with tests. Batch byte codecs, WAL command integration, mutable heads, and Phase 4
-  benchmarks remain unimplemented.
+  `chronos_columnar` borrowed/owned immutable vector and schema-shaped batch foundation plus the
+  pure in-memory Columnar Batch v1 codec are implemented with golden, property, corruption, fuzz,
+  benchmark, sanitizer, installation, and external-consumer coverage. WAL command integration,
+  mutable heads, and end-to-end Phase 4 benchmarks remain unimplemented.
 
 - **Scope:** typed immutable input batches; null/variable-width representation; append-only tablet heads; sealing; single shard-worker ownership; stable reader boundaries; idempotent ordered replay into heads.
 - **Explicit non-scope:** durable columnar parts, SQL execution, secondary indexes, general lock-free containers, live subscriptions, and a universal allocator.

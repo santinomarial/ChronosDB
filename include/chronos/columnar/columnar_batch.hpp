@@ -2,6 +2,7 @@
 #define CHRONOS_COLUMNAR_COLUMNAR_BATCH_HPP_
 
 #include "chronos/columnar/column_vector.hpp"
+#include "chronos/columnar/columnar_batch_format.hpp"
 #include "chronos/common/result.hpp"
 #include "chronos/schema/table_schema.hpp"
 
@@ -14,7 +15,7 @@
 
 namespace chronos::columnar {
 
-inline constexpr std::size_t kMaximumV1BatchLength = 16'776'992;
+inline constexpr std::size_t kMaximumV1BatchLength = format::kMaximumEmbeddedBatchLength;
 
 // Limits are checked before an OwnedColumnarBatch retains the supplied vectors. Logical bytes count
 // exact buffer sizes; retained bytes count vector capacities so spare allocations cannot evade the

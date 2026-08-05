@@ -31,7 +31,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   locked discovery, verification, explicit tail repair, replay interface, and existing-history
   reopen path are implemented.
 - [Columnar batch v1](formats/columnar-batch-v1.md): accepted self-describing immutable batch bytes,
-  logical type registry, integrity coverage, and canonical validation rules; not implemented.
+  logical type registry, integrity coverage, and canonical validation rules; the standalone
+  in-memory codec is implemented independently of WAL framing.
 
 ## Delivery
 

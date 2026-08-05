@@ -26,12 +26,23 @@ target_compile_features(consumer PRIVATE cxx_std_23)
 ]=])
 file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/columnar/columnar_batch.hpp>
+#include <chronos/columnar/columnar_batch_codec.hpp>
+#include <chronos/columnar/columnar_batch_format.hpp>
 #include <chronos/columnar/column_vector.hpp>
+
+#include <array>
 
 int main() {
   static_assert(chronos::columnar::bitmap_size(9U) == 2U);
+  static_assert(chronos::columnar::format::kBatchHeaderLength == 96U);
   chronos::columnar::ColumnarBatchLimits limits;
-  return limits.max_columns == 4096U ? 0 : 1;
+  std::array<std::byte, 0> empty{};
+  const auto decoded = chronos::columnar::decode_columnar_batch_v1_exact(empty);
+  return limits.max_columns == 4096U && !decoded.has_value() &&
+                 decoded.error().kind() ==
+                     chronos::columnar::ColumnarBatchDecodeErrorKind::kIncomplete
+             ? 0
+             : 1;
 }
 ]=])
 

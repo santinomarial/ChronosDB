@@ -40,6 +40,12 @@ if(NOT EXISTS "${installed_columnar_header}")
   message(FATAL_ERROR "staging install omitted ${installed_columnar_header}")
 endif()
 
+set(installed_columnar_codec_header
+    "${install_prefix}/${CHRONOS_TEST_INSTALL_INCLUDEDIR}/chronos/columnar/columnar_batch_codec.hpp")
+if(NOT EXISTS "${installed_columnar_codec_header}")
+  message(FATAL_ERROR "staging install omitted ${installed_columnar_codec_header}")
+endif()
+
 set(installed_targets
     "${install_prefix}/${CHRONOS_TEST_INSTALL_LIBDIR}/cmake/ChronosDB/ChronosTargets.cmake")
 file(READ "${installed_targets}" installed_targets_contents)

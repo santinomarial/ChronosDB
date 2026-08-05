@@ -131,6 +131,7 @@ add_library(
   chronos_columnar
   src/columnar/column_vector.cpp
   src/columnar/columnar_batch.cpp
+  src/columnar/columnar_batch_codec.cpp
 )
 add_library(chronos::columnar ALIAS chronos_columnar)
 set_target_properties(chronos_columnar PROPERTIES EXPORT_NAME columnar)
@@ -277,6 +278,11 @@ if(CHRONOS_BUILD_TESTS)
 
   add_executable(
     chronos_columnar_tests
+    tests/columnar/columnar_batch_codec_corruption_test.cpp
+    tests/columnar/columnar_batch_codec_header_self_contained.cpp
+    tests/columnar/columnar_batch_codec_property_test.cpp
+    tests/columnar/columnar_batch_codec_test.cpp
+    tests/columnar/columnar_batch_format_header_self_contained.cpp
     tests/columnar/column_vector_header_self_contained.cpp
     tests/columnar/column_vector_test.cpp
     tests/columnar/column_vector_property_test.cpp
@@ -442,6 +448,19 @@ if(CHRONOS_BUILD_BENCHMARKS)
   chronos_set_project_warnings(chronos_common_benchmarks)
   chronos_enable_sanitizers(chronos_common_benchmarks)
   chronos_enable_static_analysis(chronos_common_benchmarks)
+
+  add_executable(
+    chronos_columnar_benchmarks
+    benchmarks/columnar/columnar_batch_codec_benchmark.cpp
+  )
+  set_target_properties(chronos_columnar_benchmarks PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_columnar_benchmarks PRIVATE cxx_std_23)
+  target_link_libraries(
+    chronos_columnar_benchmarks PRIVATE chronos::columnar benchmark::benchmark_main
+  )
+  chronos_set_project_warnings(chronos_columnar_benchmarks)
+  chronos_enable_sanitizers(chronos_columnar_benchmarks)
+  chronos_enable_static_analysis(chronos_columnar_benchmarks)
 endif()
 
 if(CHRONOS_BUILD_FUZZERS)
@@ -491,6 +510,16 @@ if(CHRONOS_BUILD_FUZZERS)
   chronos_set_project_warnings(chronos_wal_codec_fuzz)
   chronos_enable_sanitizers(chronos_wal_codec_fuzz)
   chronos_enable_static_analysis(chronos_wal_codec_fuzz)
+
+  add_executable(chronos_columnar_batch_codec_fuzz tests/fuzz/columnar_batch_codec_fuzz.cpp)
+  set_target_properties(chronos_columnar_batch_codec_fuzz PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_columnar_batch_codec_fuzz PRIVATE cxx_std_23)
+  target_link_libraries(chronos_columnar_batch_codec_fuzz PRIVATE chronos::columnar)
+  target_compile_options(chronos_columnar_batch_codec_fuzz PRIVATE -fsanitize=fuzzer)
+  target_link_options(chronos_columnar_batch_codec_fuzz PRIVATE -fsanitize=fuzzer)
+  chronos_set_project_warnings(chronos_columnar_batch_codec_fuzz)
+  chronos_enable_sanitizers(chronos_columnar_batch_codec_fuzz)
+  chronos_enable_static_analysis(chronos_columnar_batch_codec_fuzz)
 endif()
 
 chronos_configure_installation()
