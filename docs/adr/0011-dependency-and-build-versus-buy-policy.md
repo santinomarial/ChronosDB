@@ -82,7 +82,12 @@ Build system, package-resolution mechanism, initial test/benchmark frameworks, c
 
 ## Migration or reversal implications
 
-No dependencies are present. Permitted libraries are options, not commitments. Replacing a commodity dependency requires compatibility tests and, when it affects stored/wire bytes, versioned migration. Reclassifying a core subsystem for external implementation reverses this policy and requires a superseding ADR.
+OpenSSL 3 is the first production dependency, narrowly used through EVP as the maintained SHA-256
+provider for `chronos_ingest`; its required dependency record is under `docs/dependencies/`.
+Permitted libraries otherwise remain options, not commitments. Replacing a commodity dependency
+requires compatibility tests and, when it affects stored/wire bytes, versioned migration.
+Reclassifying a core subsystem for external implementation reverses this policy and requires a
+superseding ADR.
 
 ## References
 

@@ -43,8 +43,7 @@ encode_columnar_append_v1(const ColumnarAppendEncodeInput& input,
                           const columnar::EncodedColumnarBatch& batch);
 
 struct ColumnarAppendDecodeLimits {
-  std::size_t max_application_payload_length{
-      columnar_append_v1::kMaximumApplicationPayloadLength};
+  std::size_t max_application_payload_length{columnar_append_v1::kMaximumApplicationPayloadLength};
   columnar::ColumnarBatchDecodeLimits batch;
 };
 
@@ -137,8 +136,7 @@ using ColumnarAppendDecodeResult =
     std::expected<DecodedColumnarAppendView, ColumnarAppendDecodeError>;
 
 [[nodiscard]] ColumnarAppendDecodeResult
-decode_columnar_append_v1_prefix(common::ByteView bytes,
-                                 ColumnarAppendDecodeLimits limits = {});
+decode_columnar_append_v1_prefix(common::ByteView bytes, ColumnarAppendDecodeLimits limits = {});
 [[nodiscard]] ColumnarAppendDecodeResult
 decode_columnar_append_v1_exact(common::ByteView bytes, ColumnarAppendDecodeLimits limits = {});
 
@@ -150,8 +148,9 @@ decode_columnar_append_v1_record(const wal::DecodedRecord& record,
 
 // Catalog-dependent validation only. Routing, active-schema admission, retry state, and row-level
 // deduplication remain outside this pure command layer.
-[[nodiscard]] common::Status validate_columnar_append_schema(
-    const DecodedColumnarAppendView& command, const schema::TableSchema& schema);
+[[nodiscard]] common::Status
+validate_columnar_append_schema(const DecodedColumnarAppendView& command,
+                                const schema::TableSchema& schema);
 
 } // namespace chronos::ingest
 

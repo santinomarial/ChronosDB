@@ -7,7 +7,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
+#include <memory>
+#include <optional>
 #include <ranges>
+#include <utility>
 #include <vector>
 
 namespace chronos::ingest {
@@ -37,6 +40,25 @@ constexpr std::array<std::uint8_t, 176U> kGoldenCommandPrefix{
   return bytes;
 }
 
+[[nodiscard]] std::shared_ptr<const schema::TableSchema> single_timestamp_schema() {
+  const schema::ColumnId event_time = columnar::test::id<schema::ColumnId>(1U);
+  std::vector<schema::ColumnDefinition> columns;
+  columns.push_back(
+      schema::ColumnDefinition::create(
+          event_time, "ts", columnar::test::type(schema::LogicalTypeKind::kTimestampNs), false)
+          .value());
+  schema::TableSchemaRoles roles{.event_time_column = event_time,
+                                 .physical_ordering_key = {event_time},
+                                 .partition_columns = {event_time},
+                                 .shard_key = {event_time},
+                                 .deduplication_key = {}};
+  return std::make_shared<const schema::TableSchema>(
+      schema::TableSchema::create(
+          columnar::test::id<schema::TableId>(70U), columnar::test::id<schema::SchemaId>(71U),
+          schema::SchemaVersion::initial(), std::nullopt, std::move(columns), std::move(roles))
+          .value());
+}
+
 TEST(ColumnarAppendFormatTest, ConstantsMatchTheFrozenContractsAndWALBoundary) {
   using namespace columnar_append_v1;
   static_assert(kCommandHeaderLength == 160U);
@@ -64,6 +86,8 @@ TEST(ColumnarAppendCodecTest, MatchesIndependentGoldenHeaderAndDecodesBorrowedVi
   EXPECT_EQ(decoded->encoded_payload().data(), encoded.bytes().data());
   EXPECT_EQ(decoded->batch().encoded_bytes().data(), encoded.bytes().data() + 176U);
   EXPECT_TRUE(validate_columnar_append_schema(*decoded, *columnar::test::batch_schema()).is_ok());
+  EXPECT_EQ(validate_columnar_append_schema(*decoded, *single_timestamp_schema()).code(),
+            common::StatusCode::kInvalidArgument);
 }
 
 TEST(ColumnarAppendCodecTest, PrefixExactAndRecordAdaptersPreserveClassificationsAndOwnership) {
@@ -89,10 +113,9 @@ TEST(ColumnarAppendCodecTest, PrefixExactAndRecordAdaptersPreserveClassification
   ASSERT_FALSE(exact.has_value());
   EXPECT_EQ(exact.error().kind(), ColumnarAppendDecodeErrorKind::kCorruption);
 
-  const auto header = wal::make_record_header(
-      {.record_type = wal::kApplicationEntryRecordType,
-       .record_sequence = 7U,
-       .payload_length = encoded.size()});
+  const auto header = wal::make_record_header({.record_type = wal::kApplicationEntryRecordType,
+                                               .record_sequence = 7U,
+                                               .payload_length = encoded.size()});
   ASSERT_TRUE(header.has_value());
   std::vector<std::byte> record_bytes(header->total_length);
   ASSERT_TRUE(wal::encode_record(*header, encoded.bytes(), record_bytes).has_value());
@@ -118,6 +141,38 @@ TEST(ColumnarAppendCodecTest, EnforcesApplicationAndNestedBatchLimits) {
     ASSERT_FALSE(decoded.has_value());
     EXPECT_EQ(decoded.error().kind(), ColumnarAppendDecodeErrorKind::kResourceLimit);
   }
+}
+
+TEST(ColumnarAppendCodecTest, EncodesTheExactMaximumIntoAMaximumSizedWalRecord) {
+  constexpr std::size_t kBatchOverhead =
+      columnar::format::kBatchHeaderLength + columnar::format::kColumnDescriptorLength +
+      columnar::format::kTerminalPaddingLength + columnar::format::kBatchTrailerLength;
+  constexpr std::size_t kMaximumValues =
+      columnar::format::kMaximumEmbeddedBatchLength - kBatchOverhead;
+  constexpr std::uint32_t kMaximumRows =
+      static_cast<std::uint32_t>(kMaximumValues / sizeof(std::uint64_t));
+  std::vector<columnar::OwnedColumnVector> columns;
+  columns.push_back(columnar::test::fixed_vector(
+      1U, columnar::test::type(schema::LogicalTypeKind::kTimestampNs), false, kMaximumRows, {}, 0U,
+      std::vector<std::byte>(kMaximumValues)));
+  const columnar::OwnedColumnarBatch batch =
+      columnar::OwnedColumnarBatch::create(single_timestamp_schema(), std::move(columns)).value();
+  const columnar::EncodedColumnarBatch encoded_batch =
+      columnar::encode_columnar_batch_v1(batch).value();
+  ASSERT_EQ(encoded_batch.size(), columnar::format::kMaximumEmbeddedBatchLength);
+
+  const auto payload =
+      encode_columnar_append_v1({.client_id = test::request_id<ClientId>(0x10U),
+                                 .client_batch_id = test::request_id<ClientBatchId>(0x20U),
+                                 .tablet_id = columnar::test::id<schema::TabletId>(72U)},
+                                encoded_batch);
+  ASSERT_TRUE(payload.has_value()) << payload.error().to_string();
+  EXPECT_EQ(payload->size(), columnar_append_v1::kMaximumApplicationPayloadLength);
+  ASSERT_TRUE(decode_columnar_append_v1_exact(payload->bytes()).has_value());
+  const auto layout = wal::calculate_record_layout(payload->size());
+  ASSERT_TRUE(layout.has_value());
+  EXPECT_EQ(layout->padding_length, 4U);
+  EXPECT_EQ(layout->total_length, wal::kMaximumRecordLength);
 }
 
 } // namespace

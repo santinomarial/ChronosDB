@@ -99,6 +99,8 @@ namespace {
 
 TEST(ColumnarBatchCodecPropertyTest, DeterministicGeneratedBatchesRoundTripEveryExactBuffer) {
   constexpr std::uint32_t kSeed = 0x43423150U;
+  // A fixed seed makes property failures exactly reproducible.
+  // NOLINTNEXTLINE(bugprone-random-generator-seed)
   std::mt19937 generator{kSeed};
   for (std::uint32_t trial = 0U; trial < 150U; ++trial) {
     const std::uint32_t rows = 1U + generator() % 257U;

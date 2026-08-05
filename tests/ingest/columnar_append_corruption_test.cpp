@@ -18,7 +18,8 @@ void expect_kind(const common::ByteView bytes, const ColumnarAppendDecodeErrorKi
 TEST(ColumnarAppendCorruptionTest, RejectsUnsupportedEnvelopeAndCommandSemantics) {
   using namespace columnar_append_v1;
   constexpr std::array<std::size_t, 6U> kU32Offsets{
-      wal::kApplicationFormatOffset, wal::kApplicationKindOffset,
+      wal::kApplicationFormatOffset,
+      wal::kApplicationKindOffset,
       wal::kApplicationEnvelopeSize + kCommandFlagsOffset,
       wal::kApplicationEnvelopeSize + kMutationKindOffset,
       wal::kApplicationEnvelopeSize + kDigestAlgorithmOffset,
@@ -55,23 +56,23 @@ TEST(ColumnarAppendCorruptionTest, RejectsHostileHeaderDigestAndEmbeddedBatchDam
   expect_kind(length_bytes, ColumnarAppendDecodeErrorKind::kIncomplete);
 
   std::vector<std::byte> bytes = test::command_bytes();
-  std::fill_n(bytes.begin() + static_cast<std::ptrdiff_t>(wal::kApplicationEnvelopeSize +
-                                                          kClientIdOffset),
+  std::fill_n(bytes.begin() +
+                  static_cast<std::ptrdiff_t>(wal::kApplicationEnvelopeSize + kClientIdOffset),
               16U, std::byte{0U});
   expect_kind(bytes, ColumnarAppendDecodeErrorKind::kCorruption);
 }
 
 TEST(ColumnarAppendCorruptionTest, RejectsMismatchedRecordMetadataBeforeCommandDecoding) {
   const wal::EncodedApplicationPayload encoded = test::encoded_command();
-  wal::DecodedRecord record{.header = {.total_length = 0U,
-                                      .record_format = wal::kRecordFormat,
-                                      .record_type = wal::kApplicationEntryRecordType,
-                                      .record_flags = 0U,
-                                      .record_sequence = 1U,
-                                      .payload_length =
-                                          static_cast<std::uint32_t>(encoded.size() - 1U)},
-                            .payload = encoded.bytes(),
-                            .record_crc32c = 0U};
+  wal::DecodedRecord record{
+      .header = {.total_length = 0U,
+                 .record_format = wal::kRecordFormat,
+                 .record_type = wal::kApplicationEntryRecordType,
+                 .record_flags = 0U,
+                 .record_sequence = 1U,
+                 .payload_length = static_cast<std::uint32_t>(encoded.size() - 1U)},
+      .payload = encoded.bytes(),
+      .record_crc32c = 0U};
   expect_kind(record.payload.first(0U), ColumnarAppendDecodeErrorKind::kIncomplete);
   const auto decoded = decode_columnar_append_v1_record(record);
   ASSERT_FALSE(decoded.has_value());

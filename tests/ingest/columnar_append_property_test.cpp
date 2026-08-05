@@ -12,6 +12,8 @@ namespace {
 
 TEST(ColumnarAppendPropertyTest, DeterministicNominalIdentitiesRoundTripForFixedSeed) {
   constexpr std::uint32_t kSeed = 0x43415031U;
+  // A fixed seed makes property failures exactly reproducible.
+  // NOLINTNEXTLINE(bugprone-random-generator-seed)
   std::mt19937 generator{kSeed};
   const columnar::EncodedColumnarBatch batch = test::encoded_batch();
   for (std::uint32_t trial = 0U; trial < 200U; ++trial) {
@@ -29,8 +31,7 @@ TEST(ColumnarAppendPropertyTest, DeterministicNominalIdentitiesRoundTripForFixed
     EXPECT_TRUE(std::ranges::equal(first->bytes(), second->bytes()));
     const auto decoded = decode_columnar_append_v1_exact(first->bytes());
     ASSERT_TRUE(decoded.has_value())
-        << "seed=" << kSeed << " trial=" << trial << ' '
-        << decoded.error().status().to_string();
+        << "seed=" << kSeed << " trial=" << trial << ' ' << decoded.error().status().to_string();
     EXPECT_EQ(decoded->client_id(), input.client_id);
     EXPECT_EQ(decoded->client_batch_id(), input.client_batch_id);
     EXPECT_EQ(decoded->tablet_id(), input.tablet_id);
@@ -39,20 +40,20 @@ TEST(ColumnarAppendPropertyTest, DeterministicNominalIdentitiesRoundTripForFixed
 
 TEST(ColumnarAppendPropertyTest, ClientIdentityIsExcludedButMutationIdentityIsDigestProtected) {
   const columnar::EncodedColumnarBatch batch = test::encoded_batch();
-  const auto first = encode_columnar_append_v1(
-      {.client_id = test::request_id<ClientId>(1U),
-       .client_batch_id = test::request_id<ClientBatchId>(20U),
-       .tablet_id = columnar::test::id<schema::TabletId>(52U)},
-      batch);
-  const auto second = encode_columnar_append_v1(
-      {.client_id = test::request_id<ClientId>(2U),
-       .client_batch_id = test::request_id<ClientBatchId>(30U),
-       .tablet_id = columnar::test::id<schema::TabletId>(52U)},
-      batch);
+  const auto first =
+      encode_columnar_append_v1({.client_id = test::request_id<ClientId>(1U),
+                                 .client_batch_id = test::request_id<ClientBatchId>(20U),
+                                 .tablet_id = columnar::test::id<schema::TabletId>(52U)},
+                                batch);
+  const auto second =
+      encode_columnar_append_v1({.client_id = test::request_id<ClientId>(2U),
+                                 .client_batch_id = test::request_id<ClientBatchId>(30U),
+                                 .tablet_id = columnar::test::id<schema::TabletId>(52U)},
+                                batch);
   ASSERT_TRUE(first.has_value());
   ASSERT_TRUE(second.has_value());
-  constexpr std::size_t kDigest = wal::kApplicationEnvelopeSize +
-                                  columnar_append_v1::kRequestDigestOffset;
+  constexpr std::size_t kDigest =
+      wal::kApplicationEnvelopeSize + columnar_append_v1::kRequestDigestOffset;
   EXPECT_TRUE(std::ranges::equal(first->bytes().subspan(kDigest, Sha256Digest::kSize),
                                  second->bytes().subspan(kDigest, Sha256Digest::kSize)));
 

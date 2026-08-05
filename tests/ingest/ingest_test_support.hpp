@@ -22,9 +22,10 @@ template <typename Identifier> [[nodiscard]] Identifier request_id(const std::ui
 }
 
 [[nodiscard]] inline columnar::EncodedColumnarBatch encoded_batch() {
-  const columnar::OwnedColumnarBatch batch = columnar::OwnedColumnarBatch::create(
-      columnar::test::batch_schema(), columnar::test::batch_columns())
-                                                 .value();
+  const columnar::OwnedColumnarBatch batch =
+      columnar::OwnedColumnarBatch::create(columnar::test::batch_schema(),
+                                           columnar::test::batch_columns())
+          .value();
   return columnar::encode_columnar_batch_v1(batch).value();
 }
 

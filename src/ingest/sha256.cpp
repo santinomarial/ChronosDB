@@ -1,10 +1,10 @@
 #include "chronos/ingest/sha256.hpp"
 
-#include <openssl/evp.h>
-
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <memory>
+#include <openssl/evp.h>
 #include <span>
 
 namespace chronos::ingest {
@@ -26,9 +26,8 @@ common::Result<Sha256Digest> sha256(const std::span<const common::ByteView> frag
   }
   MessageDigestContext context{EVP_MD_CTX_new(), EVP_MD_CTX_free};
   if (context == nullptr) {
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kResourceExhausted,
-                       "OpenSSL SHA-256 context allocation failed"});
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                  "OpenSSL SHA-256 context allocation failed"});
   }
   if (EVP_DigestInit_ex2(context.get(), digest.get(), nullptr) != 1) {
     return common::make_unexpected(crypto_error("OpenSSL SHA-256 initialization failed"));
@@ -40,13 +39,15 @@ common::Result<Sha256Digest> sha256(const std::span<const common::ByteView> frag
     }
   }
 
-  Sha256Digest::Bytes bytes{};
+  std::array<unsigned char, Sha256Digest::kSize> output{};
   unsigned int digest_length = 0U;
-  if (EVP_DigestFinal_ex(context.get(), reinterpret_cast<unsigned char*>(bytes.data()),
-                         &digest_length) != 1 ||
-      digest_length != bytes.size()) {
+  if (EVP_DigestFinal_ex(context.get(), output.data(), &digest_length) != 1 ||
+      digest_length != output.size()) {
     return common::make_unexpected(crypto_error("OpenSSL SHA-256 finalization failed"));
   }
+  Sha256Digest::Bytes bytes{};
+  std::transform(output.begin(), output.end(), bytes.begin(),
+                 [](const unsigned char value) { return static_cast<std::byte>(value); });
   return Sha256Digest{bytes};
 }
 

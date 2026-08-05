@@ -42,14 +42,19 @@ jobs:
       CXXFLAGS: ${{ matrix.cxxflags }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - name: Install Ninja on macOS
+      - name: Install build dependencies on macOS
         if: runner.os == 'macOS'
-        run: brew install ninja
+        run: brew install ninja openssl@3
+      - name: Install OpenSSL on Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libssl-dev
       - name: Install libc++ for Linux Clang
         if: matrix.name == 'Linux Clang'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes libc++-dev libc++abi-dev
+          sudo apt-get install --yes libc++-dev libc++abi-dev libssl-dev
       - name: Configure
         run: cmake --preset debug -DCHRONOS_WARNINGS_AS_ERRORS=${{ matrix.werror }}
       - name: Build
@@ -125,6 +130,6 @@ jobs:
       - name: Install clang-tidy
         run: |
           sudo apt-get update
-          sudo apt-get install --yes clang-tidy libc++-dev libc++abi-dev
+          sudo apt-get install --yes clang-tidy libc++-dev libc++abi-dev libssl-dev
       - name: Configure and run clang-tidy
         run: scripts/lint.sh debug

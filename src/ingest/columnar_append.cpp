@@ -24,7 +24,7 @@ using namespace columnar_append_v1;
 }
 
 [[nodiscard]] ColumnarAppendDecodeError incomplete(std::string message,
-                                                    const std::size_t required_size) {
+                                                   const std::size_t required_size) {
   return ColumnarAppendDecodeError{
       ColumnarAppendDecodeErrorKind::kIncomplete,
       common::Status{common::StatusCode::kOutOfRange, std::move(message)}, required_size};
@@ -127,8 +127,8 @@ map_batch_error(const columnar::ColumnarBatchDecodeError& error) {
     return limit_exceeded(std::string{"embedded Columnar Batch v1 exceeds a decode limit: "} +
                           error.status().message());
   }
-  return internal_error(common::Status{common::StatusCode::kInternal,
-                                       "unknown embedded batch decode error"});
+  return internal_error(
+      common::Status{common::StatusCode::kInternal, "unknown embedded batch decode error"});
 }
 
 } // namespace
@@ -147,9 +147,9 @@ compute_columnar_append_v1_request_digest(const ColumnarAppendDigestInput& input
   const auto schema_version = encode_u64_le(input.schema_version.value());
   const auto batch_length = encode_u32_le(static_cast<std::uint32_t>(input.encoded_batch.size()));
   const std::array<common::ByteView, 10U> fragments{
-      kRequestDigestDomain, application_format, application_kind, mutation_kind,
+      kRequestDigestDomain,   application_format,      application_kind,        mutation_kind,
       input.table_id.bytes(), input.tablet_id.bytes(), input.schema_id.bytes(), schema_version,
-      batch_length, input.encoded_batch};
+      batch_length,           input.encoded_batch};
   return sha256(fragments);
 }
 
@@ -157,8 +157,8 @@ common::Result<wal::EncodedApplicationPayload>
 encode_columnar_append_v1(const ColumnarAppendEncodeInput& input,
                           const columnar::EncodedColumnarBatch& batch) {
   if (batch.size() > columnar::format::kMaximumEmbeddedBatchLength) {
-    return common::make_unexpected(common::Status{
-        common::StatusCode::kOutOfRange, "Columnar Batch v1 exceeds the command limit"});
+    return common::make_unexpected(common::Status{common::StatusCode::kOutOfRange,
+                                                  "Columnar Batch v1 exceeds the command limit"});
   }
   const columnar::ColumnarBatchDecodeResult decoded =
       columnar::decode_columnar_batch_v1_exact(batch.bytes());
@@ -197,11 +197,11 @@ encode_columnar_append_v1(const ColumnarAppendEncodeInput& input,
   store_u32_le(output, kOutcomeRowCountOffset, decoded->row_count());
   std::memcpy(body.data() + kBatchOffset, batch.bytes().data(), batch.size());
 
-  return wal::encode_application_payload(wal::ApplicationEnvelopeInput{
-      .application_format = kApplicationFormat,
-      .application_kind = kApplicationKind,
-      .application_flags = kApplicationFlags,
-      .application_body = body});
+  return wal::encode_application_payload(
+      wal::ApplicationEnvelopeInput{.application_format = kApplicationFormat,
+                                    .application_kind = kApplicationKind,
+                                    .application_flags = kApplicationFlags,
+                                    .application_body = body});
 }
 
 ColumnarAppendDecodeError::ColumnarAppendDecodeError(const ColumnarAppendDecodeErrorKind kind,
@@ -278,8 +278,8 @@ decode_columnar_append_v1_prefix(const common::ByteView bytes,
   if (batch_length == 0U || batch_length > columnar::format::kMaximumEmbeddedBatchLength) {
     return std::unexpected(corruption("COLUMNAR_APPEND batch length is outside v1 bounds"));
   }
-  const std::optional<std::size_t> total_length = common::checked_add(
-      kApplicationPayloadHeaderLength, static_cast<std::size_t>(batch_length));
+  const std::optional<std::size_t> total_length =
+      common::checked_add(kApplicationPayloadHeaderLength, static_cast<std::size_t>(batch_length));
   if (!total_length.has_value() || *total_length > kMaximumApplicationPayloadLength) {
     return std::unexpected(corruption("COLUMNAR_APPEND payload length is outside v1 bounds"));
   }
@@ -305,7 +305,8 @@ decode_columnar_append_v1_prefix(const common::ByteView bytes,
       schema::SchemaVersion::from_value(load_u64_le(header, kSchemaVersionOffset));
   if (!client_id.has_value() || !client_batch_id.has_value() || !table_id.has_value() ||
       !tablet_id.has_value() || !schema_id.has_value() || !schema_version.has_value()) {
-    return std::unexpected(corruption("COLUMNAR_APPEND contains a zero identity or schema version"));
+    return std::unexpected(
+        corruption("COLUMNAR_APPEND contains a zero identity or schema version"));
   }
 
   const std::uint32_t row_count = load_u32_le(header, kRowCountOffset);
@@ -329,13 +330,12 @@ decode_columnar_append_v1_prefix(const common::ByteView bytes,
   std::copy_n(header.begin() + static_cast<std::ptrdiff_t>(kRequestDigestOffset),
               digest_bytes.size(), digest_bytes.begin());
   const Sha256Digest request_digest{digest_bytes};
-  const common::Result<Sha256Digest> expected_digest =
-      compute_columnar_append_v1_request_digest(ColumnarAppendDigestInput{
-          .table_id = *table_id,
-          .tablet_id = *tablet_id,
-          .schema_id = *schema_id,
-          .schema_version = *schema_version,
-          .encoded_batch = encoded_batch});
+  const common::Result<Sha256Digest> expected_digest = compute_columnar_append_v1_request_digest(
+      ColumnarAppendDigestInput{.table_id = *table_id,
+                                .tablet_id = *tablet_id,
+                                .schema_id = *schema_id,
+                                .schema_version = *schema_version,
+                                .encoded_batch = encoded_batch});
   if (!expected_digest.has_value()) {
     return std::unexpected(internal_error(expected_digest.error()));
   }
@@ -343,9 +343,10 @@ decode_columnar_append_v1_prefix(const common::ByteView bytes,
     return std::unexpected(corruption("COLUMNAR_APPEND request digest mismatch"));
   }
 
-  return DecodedColumnarAppendView{*client_id, *client_batch_id, *table_id, *tablet_id,
-                                   *schema_id, *schema_version, row_count, request_digest,
-                                   std::move(*batch), bytes.first(*total_length)};
+  return DecodedColumnarAppendView{
+      *client_id,        *client_batch_id,          *table_id, *tablet_id,
+      *schema_id,        *schema_version,           row_count, request_digest,
+      std::move(*batch), bytes.first(*total_length)};
 }
 
 ColumnarAppendDecodeResult

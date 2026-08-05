@@ -129,14 +129,17 @@ coordinator now accepts concurrent producers, transfers all physical writer call
 orders records by linearized admission, acknowledges `ASYNC` after complete write, and groups
 `LOCAL_SYNC` requests behind covering synchronization frontiers. A subprocess crash harness checks
 those acknowledgment frontiers against strict recovery, repair, rotation, reopening, and process
-locking on real host files. The first columnar application-kind semantics are now
-[specified](columnar-ingestion.md#columnar-append-command-v1) but remain unimplemented.
+locking on real host files. The generic application envelope and first columnar application-kind
+in-memory codec are implemented according to the
+[accepted command contract](columnar-ingestion.md#columnar-append-command-v1); submission,
+state-machine application, and retry-state integration remain unimplemented.
 
 The [WAL recovery state machine](wal-recovery.md) verifies the complete physical history before
 semantic preflight or replay. It can explicitly truncate only a narrowly defined incomplete suffix
 of the highest active segment; bad checksums, discontinuities, and middle-of-log damage fail closed.
 WAL v1 establishes physical order before durable CSEG installation covers operations. The columnar
-logical mutation payload is specified but unimplemented. Deployment tuning of the implemented
+logical mutation payload has an independent byte codec but no state-machine application path.
+Deployment tuning of the implemented
 group-commit limits, checkpoints, and old-segment removal remain future work.
 
 In the distributed phase, each tablet's authoritative ordering is its committed Raft log. Many logical Raft groups will share a multiplexed physical log while preserving per-group ordering, durability, fairness, reclamation safety, and recovery identity. Reusing the single-node record codec may be desirable but is not yet decided.

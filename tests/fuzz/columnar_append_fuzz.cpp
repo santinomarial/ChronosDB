@@ -79,9 +79,9 @@ void exercise(const chronos::common::ByteView bytes) {
   store_u64_le(output, 160U, 176U);
   store_u64_le(output, 168U, 1U);
   bytes[176] = static_cast<std::byte>(value & 1U);
-  store_u32_le(output, format::kHeaderCrc32cOffset,
-               chronos::common::crc32c(chronos::common::ByteView{bytes}.first(
-                   format::kHeaderCrc32cOffset)));
+  store_u32_le(
+      output, format::kHeaderCrc32cOffset,
+      chronos::common::crc32c(chronos::common::ByteView{bytes}.first(format::kHeaderCrc32cOffset)));
   store_u32_le(output, bytes.size() - format::kBatchTrailerLength,
                chronos::common::crc32c(chronos::common::ByteView{bytes}.first(
                    bytes.size() - format::kBatchTrailerLength)));

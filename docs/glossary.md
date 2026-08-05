@@ -12,7 +12,11 @@ These definitions are normative vocabulary for architecture documents. Detailed 
 - **Column identity (`ColumnId`):** A stable nonzero opaque 128-bit identity preserved across an allowed rename.
 - **Schema identity (`SchemaId`):** A stable nonzero opaque 128-bit identity for one immutable schema version in a table's linear lineage.
 - **Tablet identity (`TabletId`):** A stable nonzero opaque 128-bit identity for one tablet, independent of its current owner or placement.
+- **Client identity (`ClientId`):** A stable nonzero opaque 128-bit identity naming one ingest client; together with a client-batch identity it scopes retry identity.
+- **Client-batch identity (`ClientBatchId`):** A nonzero opaque 128-bit identity assigned by a client to one logical batch and interpreted only together with that client identity.
 - **Columnar batch:** One immutable, schema-shaped, self-describing set of user-column values for a single table schema; the v1 bytes are specified in [columnar-batch v1](formats/columnar-batch-v1.md).
+- **`COLUMNAR_APPEND`:** The versioned WAL application command carrying one exact Columnar Batch v1 object, its target tablet, retry identities, duplicated batch metadata, canonical mutation digest, and deterministic applied outcome.
+- **Mutation digest:** The SHA-256 value over the frozen `COLUMNAR_APPEND` request preimage used to distinguish the same retry identity with the same logical mutation from conflicting reuse; it does not replace WAL or batch integrity checks.
 - **Shard worker:** A single execution owner for one or more mutable tablets. Exactly one shard worker owns a mutable tablet at a time.
 - **Reactor:** An event-loop worker that handles nonblocking network I/O and passes decoded immutable batches through bounded queues; it does not mutate tablet state directly.
 - **Mutable head:** An append-only, in-memory columnar structure containing recent committed rows or row versions for a tablet.

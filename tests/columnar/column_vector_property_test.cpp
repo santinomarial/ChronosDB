@@ -50,6 +50,8 @@ void decrement(std::array<std::byte, 16>& value) {
 
 TEST(ColumnVectorPropertyTest, DeterministicPackedBitmapsRoundTripEveryGeneratedRow) {
   constexpr std::uint32_t kSeed = 0x434f4c31U;
+  // A fixed seed makes property failures exactly reproducible.
+  // NOLINTNEXTLINE(bugprone-random-generator-seed)
   std::mt19937 generator{kSeed};
   for (std::uint32_t trial = 0; trial < 200U; ++trial) {
     const std::uint32_t rows = 1U + (generator() % 257U);
@@ -94,6 +96,8 @@ TEST(ColumnVectorPropertyTest, DeterministicPackedBitmapsRoundTripEveryGenerated
 
 TEST(ColumnVectorPropertyTest, DeterministicVariableOffsetsReturnExactGeneratedSlices) {
   constexpr std::uint32_t kSeed = 0x56415231U;
+  // A fixed seed makes property failures exactly reproducible.
+  // NOLINTNEXTLINE(bugprone-random-generator-seed)
   std::mt19937 generator{kSeed};
   for (std::uint32_t trial = 0; trial < 100U; ++trial) {
     const std::uint32_t rows = 1U + (generator() % 64U);

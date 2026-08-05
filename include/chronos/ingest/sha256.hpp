@@ -31,8 +31,7 @@ private:
 // SHA-256 is provided by the configured OpenSSL 3 provider. Fragments are hashed in order without
 // constructing a concatenated buffer. Every fragment's backing storage must remain alive during
 // the call; no storage is borrowed by the result.
-[[nodiscard]] common::Result<Sha256Digest>
-sha256(std::span<const common::ByteView> fragments);
+[[nodiscard]] common::Result<Sha256Digest> sha256(std::span<const common::ByteView> fragments);
 [[nodiscard]] common::Result<Sha256Digest> sha256(common::ByteView bytes);
 
 } // namespace chronos::ingest

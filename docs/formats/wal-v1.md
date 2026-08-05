@@ -6,7 +6,9 @@
 > append, explicit synchronization, rotation, locked discovery, whole-log physical verification,
 > explicit final-tail repair, replay-sink preflight/replay, and reopening an existing history.
 > Durability-mode acknowledgment coordination and its subprocess crash/recovery harness are
-> implemented; the first application-kind semantics are specified but remain unimplemented.
+> implemented. The generic 16-byte application-envelope codec and the independent
+> `COLUMNAR_APPEND` v1 command codec are implemented; WAL submission and logical application are
+> not.
 > This document is the normative byte-level definition
 > of the ChronosDB single-node WAL v1 physical format. [ADR 0013](../adr/0013-wal-v1-format-and-recovery.md)
 > accepts the design, and the [recovery architecture](../architecture/wal-recovery.md) defines how

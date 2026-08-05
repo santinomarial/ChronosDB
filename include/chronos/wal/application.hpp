@@ -56,7 +56,9 @@ struct DecodedApplicationEnvelope {
 encode_application_payload(const ApplicationEnvelopeInput& input);
 
 // The supplied bytes are one exact payload; every byte after the envelope belongs to the body.
-// Truncation returns OUT_OF_RANGE, while zero format/kind values return CORRUPTION.
+// The supplied bytes are an exact payload, so a short envelope, impossible physical size, or zero
+// format/kind is corruption. Higher layers with a streaming prefix contract classify truncation
+// before calling this exact structural decoder.
 [[nodiscard]] common::Result<DecodedApplicationEnvelope>
 decode_application_payload(common::ByteView encoded_bytes);
 

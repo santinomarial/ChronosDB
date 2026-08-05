@@ -18,17 +18,37 @@ endif()
 file(MAKE_DIRECTORY "${consumer_source}")
 file(WRITE "${consumer_source}/CMakeLists.txt" [=[
 cmake_minimum_required(VERSION 3.25)
-project(ChronosColumnarConsumer LANGUAGES CXX)
+project(ChronosIngestConsumer LANGUAGES CXX)
 find_package(ChronosDB 0.1 CONFIG REQUIRED)
 add_executable(consumer main.cpp)
-target_link_libraries(consumer PRIVATE chronos::columnar)
+target_link_libraries(consumer PRIVATE chronos::ingest)
 target_compile_features(consumer PRIVATE cxx_std_23)
+set(consumer_sanitizers "")
+if(CHRONOS_TEST_ENABLE_ASAN)
+  list(APPEND consumer_sanitizers address)
+endif()
+if(CHRONOS_TEST_ENABLE_UBSAN)
+  list(APPEND consumer_sanitizers undefined)
+endif()
+if(CHRONOS_TEST_ENABLE_TSAN)
+  list(APPEND consumer_sanitizers thread)
+endif()
+if(consumer_sanitizers)
+  list(JOIN consumer_sanitizers "," consumer_sanitizer_flags)
+  target_compile_options(consumer PRIVATE "-fsanitize=${consumer_sanitizer_flags}")
+  target_link_options(consumer PRIVATE "-fsanitize=${consumer_sanitizer_flags}")
+endif()
 ]=])
 file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/columnar/columnar_batch.hpp>
 #include <chronos/columnar/columnar_batch_codec.hpp>
 #include <chronos/columnar/columnar_batch_format.hpp>
 #include <chronos/columnar/column_vector.hpp>
+#include <chronos/ingest/columnar_append.hpp>
+#include <chronos/ingest/columnar_append_format.hpp>
+#include <chronos/ingest/identity.hpp>
+#include <chronos/ingest/sha256.hpp>
+#include <chronos/wal/application.hpp>
 
 #include <array>
 
@@ -38,7 +58,9 @@ int main() {
   chronos::columnar::ColumnarBatchLimits limits;
   std::array<std::byte, 0> empty{};
   const auto decoded = chronos::columnar::decode_columnar_batch_v1_exact(empty);
-  return limits.max_columns == 4096U && !decoded.has_value() &&
+  const auto digest = chronos::ingest::sha256(chronos::common::ByteView{});
+  static_assert(chronos::ingest::columnar_append_v1::kCommandHeaderLength == 160U);
+  return limits.max_columns == 4096U && digest.has_value() && !decoded.has_value() &&
                  decoded.error().kind() ==
                      chronos::columnar::ColumnarBatchDecodeErrorKind::kIncomplete
              ? 0
@@ -48,7 +70,10 @@ int main() {
 
 set(configure_command
     "${CMAKE_COMMAND}" -S "${consumer_source}" -B "${consumer_build}"
-    "-DChronosDB_DIR=${install_prefix}/${CHRONOS_TEST_INSTALL_LIBDIR}/cmake/ChronosDB")
+    "-DChronosDB_DIR=${install_prefix}/${CHRONOS_TEST_INSTALL_LIBDIR}/cmake/ChronosDB"
+    "-DCHRONOS_TEST_ENABLE_ASAN=${CHRONOS_TEST_ENABLE_ASAN}"
+    "-DCHRONOS_TEST_ENABLE_UBSAN=${CHRONOS_TEST_ENABLE_UBSAN}"
+    "-DCHRONOS_TEST_ENABLE_TSAN=${CHRONOS_TEST_ENABLE_TSAN}")
 if(DEFINED CHRONOS_TEST_GENERATOR AND NOT CHRONOS_TEST_GENERATOR STREQUAL "")
   list(APPEND configure_command -G "${CHRONOS_TEST_GENERATOR}")
 endif()

@@ -1,10 +1,11 @@
 # Columnar Ingestion Design Guide
 
-> **Status: design guide; schema, canonical in-memory batch, and codec foundations implemented.**
+> **Status: design guide; schema, canonical batch, batch codec, and command codec implemented.**
 > The identity/type/schema layer is documented in [logical schema foundation](schema-foundation.md),
 > and immutable vectors, batches, and byte codec in
-> [columnar memory model](columnar-memory-model.md). The WAL command, retry, replay, and mutable-head
-> implementation remain pending. The normative
+> [columnar memory model](columnar-memory-model.md). The pure in-memory WAL command layer is
+> documented in [COLUMNAR_APPEND command codec](columnar-append-command.md). WAL submission, retry
+> state, replay, and mutable-head implementation remain pending. The normative
 > sources are
 > [columnar batch v1](../formats/columnar-batch-v1.md),
 > [columnar ingestion](../architecture/columnar-ingestion.md),

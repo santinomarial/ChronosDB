@@ -1,8 +1,10 @@
 # Columnar Ingestion Architecture
 
 > **Status: accepted design, partially implemented.** The logical schema foundation, canonical
-> immutable in-memory vector/batch model, and standalone Columnar Batch v1 codec exist. WAL command
-> integration, retry, replay, mutable heads, and publication remain unimplemented. This document
+> immutable in-memory vector/batch model, standalone Columnar Batch v1 codec, generic WAL
+> application-envelope codec, and pure in-memory `COLUMNAR_APPEND` v1 command/digest codec exist.
+> WAL submission orchestration, retry state, replay, mutable heads, and publication remain
+> unimplemented. This document
 > fixes the logical state-machine and WAL command contracts for Phase 4; the physical
 > [WAL v1](../formats/wal-v1.md) framing and application envelope remain unchanged.
 

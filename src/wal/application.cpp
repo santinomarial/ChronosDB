@@ -2,7 +2,6 @@
 
 #include "chronos/wal/types.hpp"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -93,11 +92,13 @@ encode_application_payload(const ApplicationEnvelopeInput& input) {
 common::Result<DecodedApplicationEnvelope>
 decode_application_payload(const common::ByteView encoded_bytes) {
   if (encoded_bytes.size() < kApplicationEnvelopeSize) {
-    return common::make_unexpected(common::Status{
-        common::StatusCode::kOutOfRange, "WAL application payload requires a 16-byte envelope"});
+    return common::make_unexpected(
+        corruption("WAL application payload requires a complete 16-byte envelope"));
   }
-  const std::uint32_t application_format =
-      load_u32_le(encoded_bytes, kApplicationFormatOffset);
+  if (encoded_bytes.size() > kMaximumPayloadLength) {
+    return common::make_unexpected(corruption("WAL application payload exceeds the v1 limit"));
+  }
+  const std::uint32_t application_format = load_u32_le(encoded_bytes, kApplicationFormatOffset);
   const std::uint32_t application_kind = load_u32_le(encoded_bytes, kApplicationKindOffset);
   if (application_format == 0U || application_kind == 0U) {
     return common::make_unexpected(corruption("WAL application format or kind zero is invalid"));

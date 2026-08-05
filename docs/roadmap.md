@@ -6,16 +6,16 @@ Local verification is recorded per change; the Linux compiler/CI matrix remains 
 portable support and is not implied by a macOS-only local run. This status does not mean that the
 complete Phase 1 gates have passed. Unimplemented portions of Phase 1 and all later phases remain
 planned work, not implemented functionality or delivery commitments. Phase 4 has accepted design
-artifacts plus schema, canonical immutable in-memory columnar foundations, and the standalone
-Columnar Batch v1 codec. The Phase 2–3
+artifacts plus schema, canonical immutable in-memory columnar foundations, the standalone Columnar
+Batch v1 codec, and the pure in-memory `COLUMNAR_APPEND` command/digest codec. The Phase 2–3
 [WAL v1 format](formats/wal-v1.md), [recovery design](architecture/wal-recovery.md), and
 [ADR 0013](adr/0013-wal-v1-format-and-recovery.md) are accepted design artifacts. The pure in-memory
 WAL physical codec, fixtures, tests, fuzz target, minimal blocking POSIX file/directory primitives,
 the segmented writer, bounded commit coordinator, locked discovery and verification, explicit
 final-tail repair, replay-sink passes, existing-history reopen path, and read-only inspector now
 exist. Coordinator metrics and a deterministic process-kill crash-image harness exist. The first
-application-kind format is specified but its WAL command codec and the server-wide operational
-metrics/export path do not exist yet.
+application-kind codec exists independently of WAL submission; retry, replay/application, and the
+server-wide operational metrics/export path do not exist yet.
 Work should proceed in order unless an accepted ADR explains why a limited dependency must move
 earlier.
 
@@ -54,8 +54,9 @@ No phase passes because its code merely compiles. A phase passes only when its a
 - **Implementation status:** the WAL v1 physical directory/segment/record format, integrity scopes,
   limits, application envelope, and compatibility policy are accepted. The pure in-memory segment
   header, record header, and complete-record codec plus identities, physical positions, checked
-  layout calculations, golden fixtures, tests, and fuzz target are implemented. The first
-  kind-specific logical body is specified but remains unimplemented.
+  layout calculations, golden fixtures, tests, and fuzz target are implemented. The generic
+  application-envelope API and first kind-specific logical body codec are implemented independently
+  of physical WAL submission.
 - **Scope:** complete the kind-specific logical operation payload specification and implement the
   accepted versioned, checksummed WAL framing and typed payloads using fixed-width encodings.
 - **Explicit non-scope:** segment files, sync/acknowledgment policy, recovery across segments, mutable-head application, Raft, and compression unless justified by the record specification.
@@ -78,8 +79,9 @@ No phase passes because its code merely compiles. A phase passes only when its a
   `ASYNC`/`LOCAL_SYNC` completion, group commit, graceful drain, terminal propagation, and coordinator
   metric snapshots are implemented with deterministic tests. The subprocess crash harness exercises
   real host files across installation, append/sync, grouped acknowledgment, rotation, corruption,
-  repair, reopen, and locking. The first application-kind semantics are specified but unimplemented;
-  the server-wide operational metrics/export path does not exist.
+  repair, reopen, and locking. The first application-kind byte semantics are implemented, while
+  submission orchestration and logical state-machine application are not; the server-wide
+  operational metrics/export path does not exist.
 - **Scope:** implement WAL v1 segment lifecycle, append/grouping, explicitly named durability modes,
   acknowledgment boundaries, rotation, torn-tail handling, ordered replay, and idempotent
   single-node recovery.
@@ -99,9 +101,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
   mutable-head publication, snapshots, and sealing/handoff are accepted specifications. The
   `chronos_schema` identity/type/immutable-schema/lineage/projection foundation and the
   `chronos_columnar` borrowed/owned immutable vector and schema-shaped batch foundation plus the
-  pure in-memory Columnar Batch v1 codec are implemented with golden, property, corruption, fuzz,
-  benchmark, sanitizer, installation, and external-consumer coverage. WAL command integration,
-  mutable heads, and end-to-end Phase 4 benchmarks remain unimplemented.
+  pure in-memory Columnar Batch v1 codec and `chronos_ingest` `COLUMNAR_APPEND` v1 command/digest
+  codec are implemented with golden, property, corruption, fuzz, benchmark, sanitizer,
+  installation, and external-consumer coverage. WAL submission orchestration, retry state,
+  replay/application, mutable heads, and end-to-end Phase 4 benchmarks remain unimplemented.
 
 - **Scope:** typed immutable input batches; null/variable-width representation; append-only tablet heads; sealing; single shard-worker ownership; stable reader boundaries; idempotent ordered replay into heads.
 - **Explicit non-scope:** durable columnar parts, SQL execution, secondary indexes, general lock-free containers, live subscriptions, and a universal allocator.

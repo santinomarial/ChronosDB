@@ -15,13 +15,12 @@ public:
   [[nodiscard]] static common::Result<RequestIdentifier> from_uuid(common::Uuid value) {
     if (value.is_nil()) {
       return common::make_unexpected(common::Status{common::StatusCode::kInvalidArgument,
-                                                     "request identifier must be nonzero"});
+                                                    "request identifier must be nonzero"});
     }
     return RequestIdentifier{value};
   }
 
-  [[nodiscard]] static common::Result<RequestIdentifier>
-  from_bytes(common::Uuid::Bytes bytes) {
+  [[nodiscard]] static common::Result<RequestIdentifier> from_bytes(common::Uuid::Bytes bytes) {
     return from_uuid(common::Uuid{bytes});
   }
 

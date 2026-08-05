@@ -9,8 +9,7 @@ namespace {
 TEST(IngestIdentityTest, ClientAndBatchIdentitiesAreDistinctNonzeroNominalTypes) {
   common::Uuid::Bytes zero{};
   EXPECT_EQ(ClientId::from_bytes(zero).error().code(), common::StatusCode::kInvalidArgument);
-  EXPECT_EQ(ClientBatchId::from_bytes(zero).error().code(),
-            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(ClientBatchId::from_bytes(zero).error().code(), common::StatusCode::kInvalidArgument);
   zero.back() = std::byte{1U};
   const ClientId client = ClientId::from_bytes(zero).value();
   const ClientBatchId batch = ClientBatchId::from_bytes(zero).value();

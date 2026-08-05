@@ -33,6 +33,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Columnar batch v1](formats/columnar-batch-v1.md): accepted self-describing immutable batch bytes,
   logical type registry, integrity coverage, and canonical validation rules; the standalone
   in-memory codec is implemented independently of WAL framing.
+- [Production dependencies](dependencies/README.md): maintained external-library boundaries,
+  version sources, licenses, and update/security ownership.
 
 ## Delivery
 
@@ -80,5 +82,7 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   APIs, lineage evolution, historical projection, ownership, failure, and validation contracts.
 - [Columnar memory model](learning/columnar-memory-model.md): implemented immutable borrowed/owned
   vectors, canonical buffers, schema-shaped batches, bounds, inspection, and validation contracts.
+- [COLUMNAR_APPEND command codec](learning/columnar-append-command.md): implemented envelope,
+  identity, SHA-256 preimage, owned encoding, borrowed decoding, and schema-binding contracts.
 
 Future format, protocol, subsystem, operations, and learning documents should be linked here when they are added by their corresponding roadmap phase.

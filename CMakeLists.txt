@@ -43,7 +43,7 @@ endfunction()
 
 chronos_validate_standard_library()
 find_package(Threads REQUIRED)
-find_package(OpenSSL 3.0 REQUIRED COMPONENTS Crypto)
+find_package(OpenSSL 3.0...<4.0 REQUIRED COMPONENTS Crypto)
 
 set(CHRONOS_BUILD_TYPE "${CMAKE_BUILD_TYPE}")
 if(CHRONOS_BUILD_TYPE STREQUAL "")
@@ -450,13 +450,16 @@ if(CHRONOS_BUILD_TESTS)
   )
 
   add_test(
-    NAME ExternalConsumerTest.InstalledColumnarTarget
+    NAME ExternalConsumerTest.InstalledIngestTarget
     COMMAND
       "${CMAKE_COMMAND}"
       "-DCHRONOS_TEST_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
       "-DCHRONOS_TEST_INSTALL_LIBDIR=${CMAKE_INSTALL_LIBDIR}"
       "-DCHRONOS_TEST_GENERATOR=${CMAKE_GENERATOR}"
       "-DCHRONOS_TEST_EXECUTABLE_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}"
+      "-DCHRONOS_TEST_ENABLE_ASAN=${CHRONOS_ENABLE_ASAN}"
+      "-DCHRONOS_TEST_ENABLE_UBSAN=${CHRONOS_ENABLE_UBSAN}"
+      "-DCHRONOS_TEST_ENABLE_TSAN=${CHRONOS_ENABLE_TSAN}"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/external_consumer_test.cmake"
   )
 
@@ -510,6 +513,19 @@ if(CHRONOS_BUILD_BENCHMARKS)
   chronos_set_project_warnings(chronos_columnar_benchmarks)
   chronos_enable_sanitizers(chronos_columnar_benchmarks)
   chronos_enable_static_analysis(chronos_columnar_benchmarks)
+
+  add_executable(
+    chronos_ingest_benchmarks
+    benchmarks/ingest/columnar_append_benchmark.cpp
+  )
+  set_target_properties(chronos_ingest_benchmarks PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_ingest_benchmarks PRIVATE cxx_std_23)
+  target_link_libraries(
+    chronos_ingest_benchmarks PRIVATE chronos::ingest benchmark::benchmark_main
+  )
+  chronos_set_project_warnings(chronos_ingest_benchmarks)
+  chronos_enable_sanitizers(chronos_ingest_benchmarks)
+  chronos_enable_static_analysis(chronos_ingest_benchmarks)
 endif()
 
 if(CHRONOS_BUILD_FUZZERS)
