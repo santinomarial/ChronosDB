@@ -94,8 +94,8 @@ enum class ModelState : std::uint8_t {
 
 struct ModelEntry {
   ModelState state{ModelState::kAbsent};
-  std::optional<ColumnarAppendMutationIdentity> mutation;
-  std::optional<RetryReservation> reservation;
+  ColumnarAppendMutationIdentity expected_mutation{mutation(1U)};
+  RetryReservation reservation;
   std::shared_ptr<const ColumnarAppendRetryOutcome> committed_outcome;
 };
 
@@ -280,25 +280,23 @@ TEST(RetryDirectoryPropertyTest, DeterministicOperationsMatchTheReferenceStateMa
       const std::size_t operation = generator.choose(4U);
 
       if (operation == 1U && expected.state == ModelState::kPreWal) {
-        ASSERT_TRUE(expected.reservation.has_value());
-        ASSERT_TRUE(expected.reservation.value().mark_wal_started().is_ok());
+        ASSERT_TRUE(expected.reservation.is_valid());
+        ASSERT_TRUE(expected.reservation.mark_wal_started().is_ok());
         expected.state = ModelState::kWalStarted;
       } else if (operation == 2U && expected.state == ModelState::kPreWal) {
-        ASSERT_TRUE(expected.reservation.has_value());
-        ASSERT_TRUE(expected.reservation.value().cancel_before_wal().is_ok());
-        expected.reservation.reset();
-        expected.mutation.reset();
+        ASSERT_TRUE(expected.reservation.is_valid());
+        ASSERT_TRUE(expected.reservation.cancel_before_wal().is_ok());
+        expected.reservation = RetryReservation{};
         expected.state = ModelState::kAbsent;
         --model_entries;
         ++cancellations;
       } else if (operation == 3U && expected.state == ModelState::kWalStarted) {
-        ASSERT_TRUE(expected.reservation.has_value());
-        ASSERT_TRUE(expected.mutation.has_value());
-        const auto published = outcome(expected.mutation.value(), generator.next() | 1U);
-        const auto committed = expected.reservation.value().commit_published(published);
+        ASSERT_TRUE(expected.reservation.is_valid());
+        const auto published = outcome(expected.expected_mutation, generator.next() | 1U);
+        const auto committed = expected.reservation.commit_published(published);
         ASSERT_TRUE(committed.has_value()) << committed.error().to_string();
         ASSERT_EQ(*committed, published);
-        expected.reservation.reset();
+        expected.reservation = RetryReservation{};
         expected.committed_outcome = published;
         expected.state = ModelState::kCommitted;
         ++model_committed;
@@ -314,8 +312,8 @@ TEST(RetryDirectoryPropertyTest, DeterministicOperationsMatchTheReferenceStateMa
             ASSERT_TRUE(actual.has_value()) << actual.error().to_string();
             ASSERT_EQ(actual->kind(), RetryDecisionKind::kReserved);
             ASSERT_NE(actual->reservation(), nullptr);
-            expected.reservation.emplace(std::move(*actual->reservation()));
-            expected.mutation = proposed;
+            expected.reservation = std::move(*actual->reservation());
+            expected.expected_mutation = proposed;
             expected.state = ModelState::kPreWal;
             ++model_entries;
             model_high_water = std::max(model_high_water, model_entries);
@@ -326,7 +324,7 @@ TEST(RetryDirectoryPropertyTest, DeterministicOperationsMatchTheReferenceStateMa
           ASSERT_TRUE(actual.has_value()) << actual.error().to_string();
           EXPECT_EQ(actual->kind(), RetryDecisionKind::kInFlight);
           ++in_flight_observations;
-        } else if (proposed == expected.mutation.value()) {
+        } else if (proposed == expected.expected_mutation) {
           ASSERT_TRUE(actual.has_value()) << actual.error().to_string();
           EXPECT_EQ(actual->kind(), RetryDecisionKind::kMatchingCommitted);
           EXPECT_EQ(actual->committed_outcome().get(), expected.committed_outcome.get());
