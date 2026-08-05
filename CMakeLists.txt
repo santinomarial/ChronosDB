@@ -417,6 +417,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/ingest/columnar_append_test.cpp
     tests/ingest/identity_header_self_contained.cpp
     tests/ingest/identity_test.cpp
+    tests/ingest/retry_directory_header_self_contained.cpp
+    tests/ingest/retry_directory_test.cpp
     tests/ingest/sha256_header_self_contained.cpp
     tests/ingest/sha256_test.cpp
   )
