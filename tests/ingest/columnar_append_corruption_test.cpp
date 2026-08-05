@@ -38,7 +38,6 @@ TEST(ColumnarAppendCorruptionTest, RejectsHostileHeaderDigestAndEmbeddedBatchDam
   for (const std::size_t offset : {
            wal::kApplicationEnvelopeSize + kCommandHeaderLengthOffset,
            wal::kApplicationEnvelopeSize + kReservedOffset,
-           wal::kApplicationEnvelopeSize + kBatchLengthOffset,
            wal::kApplicationEnvelopeSize + kTableIdOffset + 15U,
            wal::kApplicationEnvelopeSize + kSchemaVersionOffset,
            wal::kApplicationEnvelopeSize + kRowCountOffset,
@@ -50,6 +49,10 @@ TEST(ColumnarAppendCorruptionTest, RejectsHostileHeaderDigestAndEmbeddedBatchDam
     bytes[offset] ^= std::byte{1U};
     expect_kind(bytes, ColumnarAppendDecodeErrorKind::kCorruption);
   }
+
+  std::vector<std::byte> length_bytes = test::command_bytes();
+  length_bytes[wal::kApplicationEnvelopeSize + kBatchLengthOffset] ^= std::byte{1U};
+  expect_kind(length_bytes, ColumnarAppendDecodeErrorKind::kIncomplete);
 
   std::vector<std::byte> bytes = test::command_bytes();
   std::fill_n(bytes.begin() + static_cast<std::ptrdiff_t>(wal::kApplicationEnvelopeSize +
