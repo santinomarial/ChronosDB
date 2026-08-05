@@ -77,9 +77,14 @@ namespace {
   return value;
 }
 
+struct StorageExtent {
+  std::size_t count;
+  std::size_t width;
+};
+
 [[nodiscard]] common::Result<std::size_t>
-add_storage_bytes(const std::size_t current, const std::size_t count, const std::size_t width) {
-  const auto bytes = common::checked_multiply(count, width);
+add_storage_bytes(const std::size_t current, const StorageExtent extent) {
+  const auto bytes = common::checked_multiply(extent.count, extent.width);
   if (!bytes.has_value()) {
     return common::make_unexpected(
         exhausted("mutable-head storage accounting overflowed this platform"));
@@ -114,7 +119,7 @@ class HeadPublication {
 public:
   HeadPublication(const std::uint32_t row_count, std::optional<HeadCommitPosition> applied_position,
                   std::vector<std::size_t> variable_frontiers) noexcept
-      : row_count_(row_count), applied_position_(std::move(applied_position)),
+      : row_count_(row_count), applied_position_(applied_position),
         variable_frontiers_(std::move(variable_frontiers)) {}
 
   std::uint32_t row_count_;
@@ -122,31 +127,43 @@ public:
   std::vector<std::size_t> variable_frontiers_;
 };
 
+struct MutableHeadStateConfig {
+  std::shared_ptr<const schema::TableSchema> schema;
+  schema::TabletId tablet_id;
+  std::uint64_t generation;
+  std::uint32_t row_capacity;
+  std::vector<ColumnStorage> columns;
+  std::vector<HeadRowMetadata> row_metadata;
+  std::shared_ptr<const HeadPublication> initial_publication;
+  std::size_t variable_byte_capacity;
+  std::size_t retained_storage_bytes;
+};
+
+struct PublicationRange {
+  const HeadPublication& base;
+  const HeadPublication& next;
+};
+
 class MutableHeadState : public std::enable_shared_from_this<MutableHeadState> {
 public:
-  MutableHeadState(std::shared_ptr<const schema::TableSchema> schema,
-                   const schema::TabletId tablet_id, const std::uint64_t generation,
-                   const std::uint32_t row_capacity, std::vector<ColumnStorage> columns,
-                   std::vector<HeadRowMetadata> row_metadata,
-                   std::shared_ptr<const HeadPublication> initial_publication,
-                   const std::size_t variable_byte_capacity,
-                   const std::size_t retained_storage_bytes) noexcept
-      : schema_(std::move(schema)), tablet_id_(tablet_id), generation_(generation),
-        row_capacity_(row_capacity), columns_(std::move(columns)),
-        row_metadata_(std::move(row_metadata)), publication_(std::move(initial_publication)),
-        variable_byte_capacity_(variable_byte_capacity),
-        retained_storage_bytes_(retained_storage_bytes) {}
+  explicit MutableHeadState(MutableHeadStateConfig config) noexcept
+      : schema_(std::move(config.schema)), tablet_id_(config.tablet_id),
+        generation_(config.generation), row_capacity_(config.row_capacity),
+        columns_(std::move(config.columns)), row_metadata_(std::move(config.row_metadata)),
+        publication_(std::move(config.initial_publication)),
+        variable_byte_capacity_(config.variable_byte_capacity),
+        retained_storage_bytes_(config.retained_storage_bytes) {}
 
   [[nodiscard]] common::Result<PreparedHeadAppend>
   prepare(std::shared_ptr<const columnar::OwnedColumnarBatch> batch,
           const HeadCommitPosition& position);
   [[nodiscard]] bool wal_started(std::uint64_t token) const noexcept;
-  [[nodiscard]] common::Status mark_wal_started(std::uint64_t token) noexcept;
+  [[nodiscard]] common::Status mark_wal_started(std::uint64_t token);
   [[nodiscard]] common::Result<HeadSnapshot>
   publish(std::uint64_t token, const columnar::OwnedColumnarBatch& batch,
           const std::shared_ptr<const HeadPublication>& base,
-          const std::shared_ptr<const HeadPublication>& next) noexcept;
-  [[nodiscard]] common::Status cancel_before_wal(std::uint64_t token) noexcept;
+          const std::shared_ptr<const HeadPublication>& next);
+  [[nodiscard]] common::Status cancel_before_wal(std::uint64_t token);
   void abandon(std::uint64_t token) noexcept;
 
   [[nodiscard]] HeadSnapshot snapshot() {
@@ -185,9 +202,8 @@ private:
                   const HeadCommitPosition& position,
                   const std::shared_ptr<const HeadPublication>& current) const;
   [[nodiscard]] common::Status
-  validate_unpublished_boundaries(const HeadPublication& base) const noexcept;
-  void materialize(const columnar::OwnedColumnarBatch& batch, const HeadPublication& base,
-                   const HeadPublication& next) noexcept;
+  validate_unpublished_boundaries(const HeadPublication& base) const;
+  void materialize(const columnar::OwnedColumnarBatch& batch, PublicationRange range) noexcept;
 
   std::shared_ptr<const schema::TableSchema> schema_;
   schema::TabletId tablet_id_;
@@ -231,14 +247,14 @@ public:
     return state_ != nullptr && state_->wal_started(token_);
   }
 
-  [[nodiscard]] common::Status mark_wal_started() noexcept {
+  [[nodiscard]] common::Status mark_wal_started() {
     if (state_ == nullptr) {
       return invalid("prepared mutable-head append is invalid");
     }
     return state_->mark_wal_started(token_);
   }
 
-  [[nodiscard]] common::Result<HeadSnapshot> publish() noexcept {
+  [[nodiscard]] common::Result<HeadSnapshot> publish() {
     if (state_ == nullptr || batch_ == nullptr || base_ == nullptr || next_ == nullptr) {
       return common::make_unexpected(invalid("prepared mutable-head append is invalid"));
     }
@@ -252,7 +268,7 @@ public:
     return published;
   }
 
-  [[nodiscard]] common::Status cancel_before_wal() noexcept {
+  [[nodiscard]] common::Status cancel_before_wal() {
     if (state_ == nullptr) {
       return invalid("prepared mutable-head append is invalid");
     }
@@ -370,7 +386,7 @@ bool detail::MutableHeadState::wal_started(const std::uint64_t token) const noex
   return append_active_ && active_token_ == token && active_phase_ == PreparedPhase::kWalStarted;
 }
 
-common::Status detail::MutableHeadState::mark_wal_started(const std::uint64_t token) noexcept {
+common::Status detail::MutableHeadState::mark_wal_started(const std::uint64_t token) {
   if (!append_active_ || active_token_ != token) {
     return internal("prepared mutable-head append ownership was lost");
   }
@@ -385,7 +401,7 @@ common::Status detail::MutableHeadState::mark_wal_started(const std::uint64_t to
 }
 
 common::Status detail::MutableHeadState::validate_unpublished_boundaries(
-    const HeadPublication& base) const noexcept {
+    const HeadPublication& base) const {
   for (std::size_t ordinal = 0U; ordinal < columns_.size(); ++ordinal) {
     const ColumnStorage& column = columns_[ordinal];
     if (!schema_->columns()[ordinal].type().is_variable_width()) {
@@ -399,8 +415,9 @@ common::Status detail::MutableHeadState::validate_unpublished_boundaries(
 }
 
 void detail::MutableHeadState::materialize(const columnar::OwnedColumnarBatch& batch,
-                                           const HeadPublication& base,
-                                           const HeadPublication& next) noexcept {
+                                           const PublicationRange range) noexcept {
+  const HeadPublication& base = range.base;
+  const HeadPublication& next = range.next;
   const std::uint32_t rows = batch.row_count();
   const std::size_t start_row = base.row_count_;
   for (std::size_t ordinal = 0U; ordinal < columns_.size(); ++ordinal) {
@@ -439,7 +456,7 @@ void detail::MutableHeadState::materialize(const columnar::OwnedColumnarBatch& b
               destination.fixed_values.begin() + static_cast<std::ptrdiff_t>(destination_offset));
   }
 
-  const HeadCommitPosition& position = *next.applied_position_;
+  const HeadCommitPosition& position = next.applied_position_.value();
   for (std::uint32_t row = 0U; row < rows; ++row) {
     row_metadata_[start_row + row] = HeadRowMetadata{.commit_position = position,
                                                      .row_ordinal = row,
@@ -451,7 +468,7 @@ common::Result<HeadSnapshot>
 detail::MutableHeadState::publish(const std::uint64_t token,
                                   const columnar::OwnedColumnarBatch& batch,
                                   const std::shared_ptr<const HeadPublication>& base,
-                                  const std::shared_ptr<const HeadPublication>& next) noexcept {
+                                  const std::shared_ptr<const HeadPublication>& next) {
   if (!append_active_ || active_token_ != token) {
     return common::make_unexpected(internal("prepared mutable-head append ownership was lost"));
   }
@@ -474,13 +491,13 @@ detail::MutableHeadState::publish(const std::uint64_t token,
     return common::make_unexpected(boundaries);
   }
 
-  materialize(batch, *base, *next);
+  materialize(batch, PublicationRange{.base = *base, .next = *next});
   std::atomic_store_explicit(&publication_, next, std::memory_order_release);
   append_active_ = false;
   return HeadSnapshot{shared_from_this(), next};
 }
 
-common::Status detail::MutableHeadState::cancel_before_wal(const std::uint64_t token) noexcept {
+common::Status detail::MutableHeadState::cancel_before_wal(const std::uint64_t token) {
   if (!append_active_ || active_token_ != token) {
     return internal("prepared mutable-head append ownership was lost");
   }

@@ -64,6 +64,11 @@ struct MutableHeadMetrics {
   bool failed{false};
 };
 
+struct HeadCellPosition {
+  std::size_t column_ordinal{};
+  std::uint32_t row{};
+};
+
 namespace detail {
 class HeadPublication;
 class MutableHeadState;
@@ -144,11 +149,16 @@ public:
   [[nodiscard]] common::Result<HeadCellView> cell(std::uint32_t row) const;
 
 private:
+  struct Buffers {
+    std::span<const std::uint8_t> validity;
+    std::span<const std::uint8_t> boolean_values;
+    common::ByteView fixed_values;
+    std::span<const std::uint32_t> variable_offsets;
+    common::ByteView variable_values;
+  };
+
   HeadColumnView(schema::ColumnId column_id, schema::LogicalType type, bool nullable,
-                 std::uint32_t row_count, std::span<const std::uint8_t> validity,
-                 std::span<const std::uint8_t> boolean_values, common::ByteView fixed_values,
-                 std::span<const std::uint32_t> variable_offsets, common::ByteView variable_values,
-                 std::size_t fixed_width) noexcept;
+                 std::uint32_t row_count, Buffers buffers, std::size_t fixed_width) noexcept;
 
   schema::ColumnId column_id_;
   schema::LogicalType type_;
@@ -184,8 +194,7 @@ public:
   [[nodiscard]] const std::optional<HeadCommitPosition>& applied_position() const noexcept;
 
   [[nodiscard]] common::Result<HeadColumnView> column(std::size_t ordinal) const;
-  [[nodiscard]] common::Result<HeadCellView> cell(std::size_t column_ordinal,
-                                                  std::uint32_t row) const;
+  [[nodiscard]] common::Result<HeadCellView> cell(HeadCellPosition position) const;
   [[nodiscard]] common::Result<HeadRowMetadata> row_metadata(std::uint32_t row) const;
   [[nodiscard]] common::Result<RowVersionIdentity> row_version_identity(std::uint32_t row) const;
 
