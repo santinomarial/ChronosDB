@@ -13,8 +13,9 @@ The implemented foundation has two deliberately separate authorities:
 - `validate_manifest_v1_compaction_transition()` checks that one Manifest generation removes and
   adds exactly the caller-authorized identities while every unrelated durable fact remains exact.
 - `validate_append_only_cseg_v1_equivalence()` proves that two borrowed CSEG image sets contain the
-  same complete append-only rows. It does not build outputs, install files, publish a generation, or
-  authorize deletion.
+  same complete append-only rows.
+- `merge_append_only_cseg_v1()` is the bounded reference output builder. It produces one fresh owned
+  CSEG v1 part, but does not install files, publish a generation, or authorize deletion.
 
 ## Public interface and ownership
 
@@ -43,6 +44,15 @@ fixed and floating-point bits, decimal bytes, variable bytes, WAL identity, sequ
 operation are all compared directly. Counts are only an early rejection; they never establish
 equivalence.
 
+The reference merger intentionally follows a different path. It fully materializes validated input
+pages within an aggregate bound, creates compact row references, and performs an error-propagating
+stable merge by the same frozen physical tuple. Equal adjacent tuples fail as corruption. It then
+plans canonical CSEG granules under row/page limits, copies exact physical cells into new canonical
+pages, derives WAL/sequence/event extrema, and encodes one caller-named fresh part. Before returning
+owned bytes and a Manifest descriptor, it calls the independent streaming oracle on the inputs and
+its output. A bug in sorting or materialization therefore cannot authorize itself merely because its
+metadata is internally consistent.
+
 ## Failure behavior and complexity
 
 Malformed or checksum-invalid CSEG bytes preserve the underlying corruption/unsupported/resource
@@ -50,23 +60,25 @@ classification. Bad caller shape, identity/schema/tablet/WAL context, reused out
 row disagreement is `kInvalidArgument`. Duplicate cross-part tuples are `kCorruption`; configured
 or allocation limits are `kResourceExhausted`. No partial success is returned.
 
-For `R` rows, `P` parts, and `K` ordering columns, the intentionally simple reference selection is
+For `R` rows, `P` parts, and `K` ordering columns, the intentionally simple oracle selection is
 `O(R * P * K)` plus full CSEG validation and complete-cell comparison. Resident decoded page memory
 is bounded by the configured aggregate granule limit; cursor and descriptor state is `O(P)`. This is
-an oracle, not the eventual optimized merger.
+an oracle, not the eventual optimized merger. The reference merger uses `O(R log R * K)` comparison
+work, `O(R)` row-reference/sort storage, bounded decoded input pages, and one complete encoded output.
 
 ## Evidence and tradeoffs
 
-Deterministic tests cover interleaved input partitions, changed non-key values, stored NaN payload
+Deterministic tests cover interleaved input partitions and reference merging, changed non-key values, stored NaN payload
 bits, null versus empty variable values, missing rows, wrong WALs, reused identities, duplicate
 tuples, corrupt bytes, and generated repartitionings. The microbenchmark measures four interleaved
 inputs against one output at declared row counts and includes full decode, validation, and direct
 cell proof; it makes no production throughput claim.
 
-The repeated validation and linear fan-in selection are expensive by design. A future heap-based
+The repeated validation, full materialization, and linear fan-in oracle selection are expensive by design. A future heap-based
 merger may be faster, but it must remain differentially identical to this path. Output construction,
 durable install ordering, publication, crash testing, and pin-aware reclamation remain later Phase 7
-tasks and cannot bypass this oracle.
+tasks and cannot bypass this oracle. The current builder intentionally returns one output part;
+requests that exceed its explicit row/page/file bounds require a later measured partitioning policy.
 
 ## Likely review and interview questions
 

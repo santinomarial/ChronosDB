@@ -272,8 +272,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > replacement authorization while preserving checkpoint, tablet, retry, and unrelated-part state.
 > An independent bounded streaming oracle now fully validates both CSEG sets, rejects duplicate
 > cross-part physical tuples, and compares every user/system cell without trusting hashes or
-> metadata totals. Merge, installation/publication, pin-aware reclamation, index, and end-to-end
-> benchmark evidence remain to be implemented.
+> metadata totals. The bounded reference merger independently stable-sorts validated row references,
+> emits one canonical fresh CSEG v1 part, and requires that oracle to accept its owned output before
+> returning. Installation/publication, pin-aware reclamation, indexes, and full workload benchmark
+> evidence remain to be implemented.
 
 - **Scope:** zone maps, sparse indexes, optional scoped secondary indexes; delta parts for late/out-of-order versions; selection and merge policy; atomic compaction installation; safe reclamation.
 - **Explicit non-scope:** indexes required for correctness, arbitrary in-place updates, distributed compaction, object tiering, and undocumented history loss.

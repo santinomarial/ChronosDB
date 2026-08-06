@@ -283,6 +283,7 @@ add_library(
   chronos_manifest
   src/manifest/checkpoint_builder.cpp
   src/manifest/codec.cpp
+  src/manifest/compaction.cpp
   src/manifest/compaction_equivalence.cpp
   src/manifest/generation_builder.cpp
   src/manifest/layout.cpp
@@ -620,6 +621,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/manifest/codec_header_self_contained.cpp
     tests/manifest/codec_property_test.cpp
     tests/manifest/codec_test.cpp
+    tests/manifest/compaction_header_self_contained.cpp
+    tests/manifest/compaction_test.cpp
     tests/manifest/compaction_equivalence_header_self_contained.cpp
     tests/manifest/compaction_equivalence_test.cpp
     tests/manifest/format_header_self_contained.cpp

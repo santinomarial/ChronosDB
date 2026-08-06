@@ -68,6 +68,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/manifest/format.hpp>
 #include <chronos/manifest/checkpoint_builder.hpp>
 #include <chronos/manifest/codec.hpp>
+#include <chronos/manifest/compaction.hpp>
 #include <chronos/manifest/compaction_equivalence.hpp>
 #include <chronos/manifest/generation_builder.hpp>
 #include <chronos/manifest/layout.hpp>
@@ -236,6 +237,10 @@ int main() {
       const chronos::wal::WalId&, chronos::manifest::CompactionEquivalenceLimits);
   const ValidateCompactionEquivalenceFunction validate_compaction_equivalence =
       &chronos::manifest::validate_append_only_cseg_v1_equivalence;
+  using MergeCompactionFunction = chronos::common::Result<chronos::manifest::EncodedCompactionPart> (*)(
+      const chronos::manifest::AppendOnlyCompactionRequest&);
+  const MergeCompactionFunction merge_compaction =
+      &chronos::manifest::merge_append_only_cseg_v1;
   using ValidateReferencedPartsFunction = chronos::common::Status (*)(
       const chronos::manifest::DecodedManifestView&,
       std::span<const chronos::manifest::TabletSchemaBinding>,
@@ -322,6 +327,7 @@ int main() {
                  decode_manifest != nullptr && validate_manifest_transition != nullptr &&
                  validate_manifest_compaction_transition != nullptr &&
                  validate_compaction_equivalence != nullptr &&
+                 merge_compaction != nullptr &&
                  validate_referenced_parts != nullptr &&
                  open_manifest_storage != nullptr &&
                  scan_manifest_namespace != nullptr &&

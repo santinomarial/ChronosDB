@@ -2,7 +2,7 @@
 #include "chronos/cseg/format.hpp"
 #include "chronos/cseg/page_codec.hpp"
 #include "chronos/cseg/part_codec.hpp"
-#include "chronos/manifest/compaction_equivalence.hpp"
+#include "chronos/manifest/compaction.hpp"
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/logical_type.hpp"
 #include "chronos/schema/table_schema.hpp"
@@ -195,7 +195,32 @@ void benchmark_compaction_equivalence(benchmark::State& state) {
   state.SetLabel("4 interleaved inputs to 1 output; full decode/validation/cell proof; local only");
 }
 
+void benchmark_compaction_merge(benchmark::State& state) {
+  const auto row_count = static_cast<std::uint32_t>(state.range(0));
+  const EquivalenceBenchmarkFixture fixture{row_count};
+  const AppendOnlyCompactionRequest request{
+      .inputs = fixture.inputs,
+      .schema = std::cref(fixture.schema),
+      .tablet_id = fixture.tablet_id,
+      .wal_id = fixture.wal_id,
+      .output_part_id = id<cseg::PartId>(1'000U),
+      .compression = cseg::PageCompression::kNone,
+      .limits = {.equivalence = {.max_parts_per_side = 4U, .max_rows_per_side = row_count},
+                 .max_rows = row_count},
+  };
+  for (auto _ : state) {
+    (void)_;
+    common::Result<EncodedCompactionPart> merged = merge_append_only_cseg_v1(request);
+    benchmark::DoNotOptimize(merged);
+  }
+  state.SetItemsProcessed(state.iterations() * row_count);
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<std::int64_t>(fixture.output_owners.front().size()));
+  state.SetLabel("4 interleaved inputs to 1 output; merge plus independent proof; local only");
+}
+
 BENCHMARK(benchmark_compaction_equivalence)->Arg(1'024)->Arg(65'536);
+BENCHMARK(benchmark_compaction_merge)->Arg(1'024)->Arg(65'536);
 
 } // namespace
 } // namespace chronos::manifest
