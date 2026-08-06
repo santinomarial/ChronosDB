@@ -1,4 +1,5 @@
 #include "chronos/query/lexer.hpp"
+#include "chronos/query/parser.hpp"
 
 #include <array>
 #include <benchmark/benchmark.h>
@@ -30,7 +31,19 @@ void tokenize_statement(benchmark::State& state) {
                           static_cast<std::int64_t>(sql.size()));
 }
 
+void parse_statement(benchmark::State& state) {
+  const std::string_view sql = kStatements[static_cast<std::size_t>(state.range(0))];
+  for (auto _ : state) {
+    static_cast<void>(_);
+    SqlResult<ParsedSqlSelect> result = parse_sql_v1_select(sql);
+    benchmark::DoNotOptimize(result);
+  }
+  state.SetBytesProcessed(static_cast<std::int64_t>(state.iterations()) *
+                          static_cast<std::int64_t>(sql.size()));
+}
+
 BENCHMARK(tokenize_statement)->DenseRange(0, 2);
+BENCHMARK(parse_statement)->DenseRange(0, 2);
 
 } // namespace
 } // namespace chronos::query

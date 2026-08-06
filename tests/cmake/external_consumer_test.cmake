@@ -83,6 +83,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/manifest/startup_recovery.hpp>
 #include <chronos/manifest/storage.hpp>
 #include <chronos/query/lexer.hpp>
+#include <chronos/query/parser.hpp>
 #include <chronos/manifest/types.hpp>
 #include <chronos/manifest/validation.hpp>
 #include <chronos/wal/application.hpp>
@@ -225,6 +226,7 @@ int main() {
   static_assert(chronos::manifest::format::kFileHeaderLength == 256U);
   const auto manifest_layout = chronos::manifest::plan_manifest_v1_layout({});
   const auto sql_tokens = chronos::query::tokenize_sql_v1("SELECT * FROM metrics");
+  const auto sql_select = chronos::query::parse_sql_v1_select("SELECT * FROM metrics");
   const auto manifest_name = chronos::manifest::manifest_file_name(1U);
   using DecodeManifestFunction = chronos::manifest::ManifestDecodeResult (*)(
       chronos::common::ByteView, chronos::manifest::ManifestDecodeLimits);
@@ -374,6 +376,7 @@ int main() {
                  cseg_layout.has_value() && cseg_layout->total_length == 1'248U &&
                  manifest_layout.has_value() && manifest_layout->total_length == 264U &&
                  sql_tokens.has_value() && sql_tokens->tokens().size() == 5U &&
+                 sql_select.has_value() && sql_select->items().size() == 1U &&
                  manifest_name.has_value() &&
                  *manifest_name == "manifest-00000000000000000001.cman" &&
                  decode_manifest != nullptr && validate_manifest_transition != nullptr &&

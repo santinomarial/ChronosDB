@@ -305,7 +305,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
   under implementation. The lexer owns normalized token text and exact byte/line/column spans,
   handles the specified quoting, comments, binary/numeric forms, operators, identifier folding,
   and reserved words, and reports stable lexical diagnostic codes under explicit input/token
-  limits. The parser, binder, plans, catalog snapshot, and scalar executor remain unimplemented.
+  limits. The owned, bounded parser implements the complete read-only SELECT family, including
+  expression precedence, typed literal/CAST shapes, system-time, LATEST BY, ASOF joins, grouping,
+  ordering, limits, EXPLAIN, and SUBSCRIBE syntax. CREATE TABLE and INSERT parsing, binding, plans,
+  the catalog snapshot, and scalar execution remain unimplemented.
 
 - **Scope:** specify a typed analytical SQL subset; custom lexer/parser; catalog binding; scalar expression/relational reference execution; event-time and system-time query syntax required by initial workloads.
 - **Explicit non-scope:** full SQL compliance, vectorization, cost-based optimization, distributed SQL, unsupported mutation syntax, and streaming syntax beyond contracts scheduled later.

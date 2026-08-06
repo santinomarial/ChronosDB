@@ -319,7 +319,13 @@ chronos_set_project_warnings(chronos_manifest)
 chronos_enable_sanitizers(chronos_manifest)
 chronos_enable_static_analysis(chronos_manifest)
 
-add_library(chronos_query src/query/diagnostic.cpp src/query/lexer.cpp)
+add_library(
+  chronos_query
+  src/query/ast.cpp
+  src/query/diagnostic.cpp
+  src/query/lexer.cpp
+  src/query/parser.cpp
+)
 add_library(chronos::query ALIAS chronos_query)
 set_target_properties(chronos_query PROPERTIES EXPORT_NAME query CXX_EXTENSIONS OFF)
 target_compile_features(chronos_query PUBLIC cxx_std_23)
@@ -710,8 +716,11 @@ if(CHRONOS_BUILD_TESTS)
   add_executable(
     chronos_query_tests
     tests/query/diagnostic_header_self_contained.cpp
+    tests/query/ast_header_self_contained.cpp
     tests/query/lexer_header_self_contained.cpp
     tests/query/lexer_test.cpp
+    tests/query/parser_header_self_contained.cpp
+    tests/query/parser_test.cpp
   )
   set_target_properties(chronos_query_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_query_tests PRIVATE cxx_std_23)
@@ -1044,6 +1053,16 @@ if(CHRONOS_BUILD_FUZZERS)
   chronos_set_project_warnings(chronos_sql_lexer_fuzz)
   chronos_enable_sanitizers(chronos_sql_lexer_fuzz)
   chronos_enable_static_analysis(chronos_sql_lexer_fuzz)
+
+  add_executable(chronos_sql_parser_fuzz tests/fuzz/sql_parser_fuzz.cpp)
+  set_target_properties(chronos_sql_parser_fuzz PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_sql_parser_fuzz PRIVATE cxx_std_23)
+  target_link_libraries(chronos_sql_parser_fuzz PRIVATE chronos::query)
+  target_compile_options(chronos_sql_parser_fuzz PRIVATE -fsanitize=fuzzer)
+  target_link_options(chronos_sql_parser_fuzz PRIVATE -fsanitize=fuzzer)
+  chronos_set_project_warnings(chronos_sql_parser_fuzz)
+  chronos_enable_sanitizers(chronos_sql_parser_fuzz)
+  chronos_enable_static_analysis(chronos_sql_parser_fuzz)
 endif()
 
 chronos_configure_installation()
