@@ -163,6 +163,37 @@ TEST(TabletStateTest, PublishesRowsPositionAndExactRetryOutcomeTogether) {
   EXPECT_EQ(reacquired.active_generation().row_count(), 2U);
 }
 
+TEST(TabletStateTest, MatchingRecoveredRetryAdvancesOnlyTheOuterAppliedPosition) {
+  TabletState target = tablet();
+  const auto input = batch();
+  PreparedTabletAppend prepared = prepare(target, 1U, input);
+  const TabletAppendResult first = publish(prepared, 1U);
+  const TabletSnapshot old_epoch = first.snapshot;
+
+  const auto advanced =
+      target.advance_recovered_retry(retry_identity(1U), mutation(1U), first.outcome, position(3U));
+  ASSERT_TRUE(advanced.has_value()) << advanced.error().to_string();
+  EXPECT_EQ(advanced->applied_position().value_or(head::HeadCommitPosition{}), position(3U));
+  EXPECT_EQ(advanced->visible_row_count(), 2U);
+  EXPECT_EQ(advanced->retry_entry_count(), 1U);
+  EXPECT_EQ(advanced->retry_outcome(retry_identity(1U)).get(), first.outcome.get());
+  EXPECT_EQ(advanced->active_generation().applied_position().value_or(head::HeadCommitPosition{}),
+            position(1U));
+
+  EXPECT_EQ(old_epoch.applied_position().value_or(head::HeadCommitPosition{}), position(1U));
+  EXPECT_EQ(old_epoch.visible_row_count(), 2U);
+  EXPECT_EQ(
+      target.advance_recovered_retry(retry_identity(2U), mutation(1U), first.outcome, position(4U))
+          .error()
+          .code(),
+      common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(
+      target.advance_recovered_retry(retry_identity(1U), mutation(1U), first.outcome, position(1U))
+          .error()
+          .code(),
+      common::StatusCode::kInvalidArgument);
+}
+
 TEST(TabletStateTest, HandsTheExactPublishedOutcomeToTheGlobalRetryDirectory) {
   TabletState target = tablet();
   RetryDirectory directory = RetryDirectory::create({.maximum_entries = 2U}).value();

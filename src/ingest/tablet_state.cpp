@@ -94,6 +94,11 @@ public:
           const std::shared_ptr<const ColumnarAppendRetryOutcome>& outcome);
   [[nodiscard]] common::Status cancel_before_wal(std::uint64_t token,
                                                  head::PreparedHeadAppend& head_append);
+  [[nodiscard]] common::Result<TabletSnapshot>
+  advance_recovered_retry(const RetryIdentity& retry_identity,
+                          const ColumnarAppendMutationIdentity& mutation,
+                          const std::shared_ptr<const ColumnarAppendRetryOutcome>& outcome,
+                          head::HeadCommitPosition position);
   void abandon(std::uint64_t token) noexcept;
 
   [[nodiscard]] common::Result<TabletSnapshot> snapshot();
@@ -494,6 +499,50 @@ common::Status detail::TabletStateCore::cancel_before_wal(const std::uint64_t to
   return common::Status::ok();
 }
 
+common::Result<TabletSnapshot> detail::TabletStateCore::advance_recovered_retry(
+    const RetryIdentity& retry_identity, const ColumnarAppendMutationIdentity& mutation,
+    const std::shared_ptr<const ColumnarAppendRetryOutcome>& outcome,
+    const head::HeadCommitPosition position) {
+  if (failed_.load(std::memory_order_acquire)) {
+    return common::make_unexpected(
+        unavailable("tablet state cannot advance recovered retry after failure"));
+  }
+  if (append_active_) {
+    return common::make_unexpected(
+        unavailable("tablet state cannot advance recovered retry during a prepared append"));
+  }
+  if (mutation.table_id != schema_->table_id() || mutation.tablet_id != tablet_id_ ||
+      outcome == nullptr || outcome->mutation != mutation) {
+    return common::make_unexpected(
+        invalid("recovered retry does not match the bound tablet mutation"));
+  }
+  const std::shared_ptr<const TabletPublication> current =
+      std::atomic_load_explicit(&publication_, std::memory_order_acquire);
+  const auto existing = current->retries_->find(retry_identity);
+  if (existing == current->retries_->end() || existing->second != outcome) {
+    return common::make_unexpected(
+        invalid("recovered retry outcome is not the tablet's exact published object"));
+  }
+  const common::Status position_status = validate_position(position, *current);
+  if (!position_status.is_ok()) {
+    return common::make_unexpected(position_status);
+  }
+
+  try {
+    std::shared_ptr<TabletStateCore> self = weak_from_this().lock();
+    if (self == nullptr) {
+      return common::make_unexpected(internal("tablet state lost its owning reference"));
+    }
+    auto next = std::make_shared<const TabletPublication>(
+        position, current->sealed_generations_, current->active_generation_, current->retries_);
+    std::atomic_store_explicit(&publication_, next, std::memory_order_release);
+    return TabletSnapshot{std::move(self), std::move(next)};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        exhausted("recovered retry position publication could not allocate its outer epoch"));
+  }
+}
+
 void detail::TabletStateCore::abandon(const std::uint64_t token) noexcept {
   if (!append_active_ || active_token_ != token) {
     return;
@@ -691,6 +740,17 @@ TabletState::prepare_append(const RetryIdentity& retry_identity,
     return common::make_unexpected(invalid("tablet state is invalid"));
   }
   return state_->prepare(retry_identity, mutation, std::move(batch));
+}
+
+common::Result<TabletSnapshot>
+TabletState::advance_recovered_retry(const RetryIdentity& retry_identity,
+                                     const ColumnarAppendMutationIdentity& mutation,
+                                     std::shared_ptr<const ColumnarAppendRetryOutcome> outcome,
+                                     const head::HeadCommitPosition position) {
+  if (state_ == nullptr) {
+    return common::make_unexpected(invalid("tablet state is invalid"));
+  }
+  return state_->advance_recovered_retry(retry_identity, mutation, outcome, position);
 }
 
 common::Result<TabletSnapshot> TabletState::snapshot() const {
