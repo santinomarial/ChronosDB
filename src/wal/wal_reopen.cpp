@@ -12,12 +12,19 @@ common::Result<WalWriter> WalWriter::open_existing(const WalWriterConfig& config
   return open_existing_with(config, options, replay_sink, io::detail::system_posix_syscalls());
 }
 
-common::Result<WalWriter> WalWriter::open_existing_with(const WalWriterConfig& config,
-                                                        const WalRecoveryOptions& options,
-                                                        WalReplaySink& replay_sink,
-                                                        io::detail::PosixSyscalls& syscalls) {
+common::Result<WalWriter> WalWriter::open_existing_from_checkpoint(
+    const WalWriterConfig& config, const WalRecoveryOptions& options,
+    const WalReplayCheckpoint& checkpoint, WalReplaySink& replay_sink) {
+  return open_existing_with(config, options, replay_sink, io::detail::system_posix_syscalls(),
+                            checkpoint);
+}
+
+common::Result<WalWriter>
+WalWriter::open_existing_with(const WalWriterConfig& config, const WalRecoveryOptions& options,
+                              WalReplaySink& replay_sink, io::detail::PosixSyscalls& syscalls,
+                              const std::optional<WalReplayCheckpoint> checkpoint) {
   common::Result<detail::RecoveredWalState> recovered =
-      detail::recover_existing_for_writer(config, options, replay_sink, syscalls);
+      detail::recover_existing_for_writer(config, options, replay_sink, syscalls, checkpoint);
   if (!recovered.has_value()) {
     return common::make_unexpected(recovered.error());
   }

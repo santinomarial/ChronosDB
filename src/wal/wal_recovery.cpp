@@ -7,6 +7,7 @@
 #include "wal/wal_writer_config_internal.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -36,8 +37,9 @@ namespace {
   return common::Status::ok();
 }
 
-[[nodiscard]] common::Result<WalRecoveryReport> repair_tail(detail::LockedWalDirectory& locked,
-                                                            const WalRecoveryReport& incomplete) {
+[[nodiscard]] common::Result<WalRecoveryReport>
+repair_tail(detail::LockedWalDirectory& locked, const WalRecoveryReport& incomplete,
+            const std::optional<WalReplayCheckpoint> checkpoint) {
   if (incomplete.classification != WalScanClassification::kIncompleteFinalTail ||
       locked.discovery.segments.empty() ||
       incomplete.valid_end.segment_number != locked.discovery.segments.back().number ||
@@ -90,8 +92,8 @@ namespace {
         with_context("synchronize WAL directory after tail repair", status));
   }
 
-  common::Result<WalRecoveryReport> verified =
-      detail::scan_discovered_wal(locked.directory, locked.discovery);
+  common::Result<WalRecoveryReport> verified = detail::scan_discovered_wal(
+      locked.directory, locked.discovery, detail::ScanPass::kVerify, nullptr, checkpoint);
   if (!verified.has_value()) {
     return common::make_unexpected(with_context("reverify repaired WAL", verified.error()));
   }
@@ -107,9 +109,9 @@ namespace {
 
 [[nodiscard]] common::Result<WalRecoveryReport>
 preflight_and_replay(detail::LockedWalDirectory& locked, const WalRecoveryReport& verified,
-                     WalReplaySink& sink) {
+                     WalReplaySink& sink, const std::optional<WalReplayCheckpoint> checkpoint) {
   common::Result<WalRecoveryReport> preflight = detail::scan_discovered_wal(
-      locked.directory, locked.discovery, detail::ScanPass::kPreflight, &sink);
+      locked.directory, locked.discovery, detail::ScanPass::kPreflight, &sink, checkpoint);
   if (!preflight.has_value()) {
     return common::make_unexpected(preflight.error());
   }
@@ -119,7 +121,7 @@ preflight_and_replay(detail::LockedWalDirectory& locked, const WalRecoveryReport
   }
 
   common::Result<WalRecoveryReport> replay = detail::scan_discovered_wal(
-      locked.directory, locked.discovery, detail::ScanPass::kReplay, &sink);
+      locked.directory, locked.discovery, detail::ScanPass::kReplay, &sink, checkpoint);
   if (!replay.has_value()) {
     return common::make_unexpected(replay.error());
   }
@@ -167,7 +169,7 @@ common::Result<WalRecoveryReport> inspect_wal(const std::string_view directory_p
       verified->classification == WalScanClassification::kIncompleteFinalTail) {
     return verified;
   }
-  return preflight_and_replay(*locked, *verified, sink);
+  return preflight_and_replay(*locked, *verified, sink, std::nullopt);
 }
 
 common::Result<WalRecoveryReport>
@@ -175,23 +177,46 @@ recover_wal(const WalWriterConfig& config, const WalRecoveryOptions& options, Wa
   return detail::recover_wal_with(config, options, sink, io::detail::system_posix_syscalls());
 }
 
+common::Result<WalRecoveryReport> recover_wal_from_checkpoint(const WalWriterConfig& config,
+                                                              const WalRecoveryOptions& options,
+                                                              const WalReplayCheckpoint& checkpoint,
+                                                              WalReplaySink& sink) {
+  return detail::recover_wal_with(config, options, sink, io::detail::system_posix_syscalls(),
+                                  checkpoint);
+}
+
 namespace detail {
 
-common::Result<RecoveredWalState> recover_existing_for_writer(const WalWriterConfig& config,
-                                                              const WalRecoveryOptions& options,
-                                                              WalReplaySink& replay_sink,
-                                                              io::detail::PosixSyscalls& syscalls) {
+common::Result<RecoveredWalState>
+recover_existing_for_writer(const WalWriterConfig& config, const WalRecoveryOptions& options,
+                            WalReplaySink& replay_sink, io::detail::PosixSyscalls& syscalls,
+                            const std::optional<WalReplayCheckpoint> checkpoint) {
   const common::Status config_status = validate_writer_config(config);
   if (!config_status.is_ok()) {
     return common::make_unexpected(config_status);
   }
+  if (checkpoint.has_value()) {
+    const common::Status checkpoint_status = validate_replay_checkpoint(*checkpoint);
+    if (!checkpoint_status.is_ok()) {
+      return common::make_unexpected(checkpoint_status);
+    }
+  }
   common::Result<LockedWalDirectory> locked =
-      open_locked_wal_directory(config.directory_path, config.file_permissions, true, syscalls);
+      checkpoint.has_value() ? open_locked_wal_directory_for_checkpoint(
+                                   config.directory_path, config.file_permissions, true, syscalls)
+                             : open_locked_wal_directory(config.directory_path,
+                                                         config.file_permissions, true, syscalls);
   if (!locked.has_value()) {
     return common::make_unexpected(locked.error());
   }
-  common::Result<WalRecoveryReport> report =
-      scan_discovered_wal(locked->directory, locked->discovery);
+  if (checkpoint.has_value()) {
+    const common::Status checkpoint_status = prepare_discovery_for_checkpoint(*locked, *checkpoint);
+    if (!checkpoint_status.is_ok()) {
+      return common::make_unexpected(checkpoint_status);
+    }
+  }
+  common::Result<WalRecoveryReport> report = scan_discovered_wal(
+      locked->directory, locked->discovery, ScanPass::kVerify, nullptr, checkpoint);
   if (!report.has_value()) {
     return common::make_unexpected(report.error());
   }
@@ -201,7 +226,7 @@ common::Result<RecoveredWalState> recover_existing_for_writer(const WalWriterCon
           common::StatusCode::kOutOfRange,
           "WAL has an incomplete final tail; explicit repair authorization is required"});
     }
-    report = repair_tail(*locked, *report);
+    report = repair_tail(*locked, *report, checkpoint);
     if (!report.has_value()) {
       return common::make_unexpected(report.error());
     }
@@ -215,13 +240,14 @@ common::Result<RecoveredWalState> recover_existing_for_writer(const WalWriterCon
   const bool repaired = report->repaired;
   const std::uint64_t repair_original_size = report->repair_original_size;
   const std::uint64_t repair_new_size = report->repair_new_size;
-  common::Result<WalRecoveryReport> replayed = preflight_and_replay(*locked, *report, replay_sink);
+  common::Result<WalRecoveryReport> replayed =
+      preflight_and_replay(*locked, *report, replay_sink, checkpoint);
   if (!replayed.has_value()) {
     return common::make_unexpected(replayed.error());
   }
 
-  common::Result<WalRecoveryReport> final_verification =
-      scan_discovered_wal(locked->directory, locked->discovery);
+  common::Result<WalRecoveryReport> final_verification = scan_discovered_wal(
+      locked->directory, locked->discovery, ScanPass::kVerify, nullptr, checkpoint);
   if (!final_verification.has_value()) {
     return common::make_unexpected(
         with_context("verify WAL after replay", final_verification.error()));
@@ -291,12 +317,12 @@ common::Result<RecoveredWalState> recover_existing_for_writer(const WalWriterCon
                            .active_segment = std::move(active_segment)};
 }
 
-common::Result<WalRecoveryReport> recover_wal_with(const WalWriterConfig& config,
-                                                   const WalRecoveryOptions& options,
-                                                   WalReplaySink& replay_sink,
-                                                   io::detail::PosixSyscalls& syscalls) {
+common::Result<WalRecoveryReport>
+recover_wal_with(const WalWriterConfig& config, const WalRecoveryOptions& options,
+                 WalReplaySink& replay_sink, io::detail::PosixSyscalls& syscalls,
+                 const std::optional<WalReplayCheckpoint> checkpoint) {
   common::Result<RecoveredWalState> recovered =
-      recover_existing_for_writer(config, options, replay_sink, syscalls);
+      recover_existing_for_writer(config, options, replay_sink, syscalls, checkpoint);
   if (!recovered.has_value()) {
     return common::make_unexpected(recovered.error());
   }

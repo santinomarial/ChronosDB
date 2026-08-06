@@ -30,6 +30,13 @@ struct WalRecoveryOptions {
 inspect_wal_suffix(std::string_view directory_path, const WalReplayCheckpoint& checkpoint,
                    WalReplaySink& sink);
 
+// Performs writer-startup recovery from an externally durable checkpoint and closes the recovered
+// handles instead of returning a writer. Repair and temporary cleanup retain the ordinary recovery
+// ordering; final-segment repair is limited to the verified required suffix.
+[[nodiscard]] common::Result<WalRecoveryReport>
+recover_wal_from_checkpoint(const WalWriterConfig& config, const WalRecoveryOptions& options,
+                            const WalReplayCheckpoint& checkpoint, WalReplaySink& sink);
+
 // Performs writer-startup recovery without returning a writer: verify, optional explicit repair,
 // re-verify, semantic preflight, replay, and the WAL-directory namespace barrier.
 [[nodiscard]] common::Result<WalRecoveryReport>

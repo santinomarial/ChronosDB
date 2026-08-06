@@ -132,7 +132,9 @@ verification, explicit final-tail repair, deterministic replay interface, and ex
 reopen path are implemented. A record never crosses a segment. The writer holds the WAL-directory
 advisory lock, installs each segment through synchronized temporary file/rename/directory
 boundaries, and synchronizes the prior segment before activating its successor. Existing-history
-recovery preserves that lock and the recovered identity/sequence/offset. A bounded commit
+recovery preserves that lock and the recovered identity/sequence/offset. Manifest-checkpoint-aware
+recovery also permits a proven covered prefix to be absent, validates the complete required suffix,
+and reopens the writer at its exact global end. A bounded commit
 coordinator now accepts concurrent producers, transfers all physical writer calls to one worker,
 orders records by linearized admission, acknowledges `ASYNC` after complete write, and groups
 `LOCAL_SYNC` requests behind covering synchronization frontiers. A subprocess crash harness checks

@@ -14,6 +14,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 namespace chronos::io::detail {
 class PosixSyscalls;
@@ -45,6 +46,9 @@ public:
   [[nodiscard]] static common::Result<WalWriter> open_existing(const WalWriterConfig& config,
                                                                const WalRecoveryOptions& options,
                                                                WalReplaySink& replay_sink);
+  [[nodiscard]] static common::Result<WalWriter>
+  open_existing_from_checkpoint(const WalWriterConfig& config, const WalRecoveryOptions& options,
+                                const WalReplayCheckpoint& checkpoint, WalReplaySink& replay_sink);
 
   // Appends one structurally valid physical APPLICATION_ENTRY. This layer does not assign or
   // interpret application format/kind values. Success is the ASYNC write-path boundary only.
@@ -79,7 +83,8 @@ private:
                   io::detail::PosixSyscalls& syscalls);
   [[nodiscard]] static common::Result<WalWriter>
   open_existing_with(const WalWriterConfig& config, const WalRecoveryOptions& options,
-                     WalReplaySink& replay_sink, io::detail::PosixSyscalls& syscalls);
+                     WalReplaySink& replay_sink, io::detail::PosixSyscalls& syscalls,
+                     std::optional<WalReplayCheckpoint> checkpoint = std::nullopt);
   [[nodiscard]] static common::Result<WalWriter>
   from_recovered_state(const WalWriterConfig& config, detail::RecoveredWalState state);
 

@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace chronos::io::detail {
@@ -44,7 +45,13 @@ open_locked_wal_directory(std::string_view directory_path, std::uint16_t lock_pe
                           bool create_lock, io::detail::PosixSyscalls& syscalls);
 [[nodiscard]] common::Result<LockedWalDirectory>
 open_locked_wal_directory_for_checkpoint(std::string_view directory_path,
+                                         std::uint16_t lock_permissions, bool create_lock,
                                          io::detail::PosixSyscalls& syscalls);
+[[nodiscard]] common::Status validate_replay_checkpoint(const WalReplayCheckpoint& checkpoint);
+// Validates present covered headers and the required suffix, then narrows discovery to the
+// coordinate segment or its immediate successor.
+[[nodiscard]] common::Status
+prepare_discovery_for_checkpoint(LockedWalDirectory& locked, const WalReplayCheckpoint& checkpoint);
 [[nodiscard]] common::Result<WalRecoveryReport>
 scan_discovered_wal(io::PosixDirectory& directory, const WalDiscovery& discovery,
                     ScanPass pass = ScanPass::kVerify, WalReplaySink* sink = nullptr,

@@ -1,3 +1,4 @@
+#include "chronos/wal/wal_paths.hpp"
 #include "chronos/wal/wal_recovery.hpp"
 #include "io/posix_syscalls.hpp"
 #include "wal/wal_recovery_internal.hpp"
@@ -6,7 +7,9 @@
 #include <array>
 #include <cerrno>
 #include <cstddef>
+#include <filesystem>
 #include <gtest/gtest.h>
+#include <string>
 #include <vector>
 
 namespace chronos::wal {
@@ -134,6 +137,41 @@ TEST(WalRecoveryTest, StartupNamespaceSyncFailureNeverReturnsAUsableWriterState)
   test::CollectingReplaySink retry_sink;
   EXPECT_TRUE(
       recover_wal({.directory_path = temporary.path().string()}, {}, retry_sink).has_value());
+}
+
+TEST(WalRecoveryTest, CheckpointRecoveryCleansTemporariesAndReleasesWriterOwnership) {
+  test::TemporaryDirectory temporary{"chronos-wal-recovery-checkpoint-cleanup"};
+  ASSERT_TRUE(temporary.valid());
+  test::create_wal(temporary.path(),
+                   {.record_count = 3U, .target_segment_size = kSegmentHeaderSize + 64U});
+  ASSERT_TRUE(std::filesystem::remove(temporary.path() / "wal-00000000000000000001.cwal"));
+  const common::Result<std::string> temporary_name =
+      wal_temporary_segment_file_name(4U, test::make_wal_id());
+  ASSERT_TRUE(temporary_name.has_value());
+  test::write_file(temporary.path() / *temporary_name, EncodedSegmentHeader{});
+  test::CollectingReplaySink sink;
+
+  const common::Result<WalRecoveryReport> recovered =
+      recover_wal_from_checkpoint({.directory_path = temporary.path().string()}, {},
+                                  {.wal_id = test::make_wal_id(),
+                                   .record_sequence = 1U,
+                                   .segment_number = 1U,
+                                   .byte_offset = kSegmentHeaderSize + 64U},
+                                  sink);
+  ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
+  EXPECT_EQ(sink.replay_sequences, (std::vector<std::uint64_t>{2U, 3U}));
+  EXPECT_EQ(recovered->temporary_files_removed, 1U);
+  EXPECT_FALSE(std::filesystem::exists(temporary.path() / *temporary_name));
+
+  test::CollectingReplaySink repeat_sink;
+  EXPECT_TRUE(recover_wal_from_checkpoint({.directory_path = temporary.path().string()}, {},
+                                          {.wal_id = test::make_wal_id(),
+                                           .record_sequence = 1U,
+                                           .segment_number = 1U,
+                                           .byte_offset = kSegmentHeaderSize + 64U},
+                                          repeat_sink)
+                  .has_value());
+  EXPECT_EQ(repeat_sink.replay_sequences, sink.replay_sequences);
 }
 
 } // namespace

@@ -19,10 +19,14 @@ writing:
 - `inspect_wal_suffix(path, checkpoint, sink)` accepts an externally durable WAL identity, record
   sequence, segment, and exact record-end offset. It permits missing covered prefix segments,
   verifies the required suffix, and preflights/replays only records after the checkpoint.
+- `recover_wal_from_checkpoint(...)` adds authorized final-tail repair, recognized-temporary
+  cleanup, and startup synchronization to the same suffix proof, then closes all handles.
 - `recover_wal(config, options, sink)` performs writer-startup recovery and closes the recovered
   handles instead of returning a writer.
 - `WalWriter::open_existing(config, options, sink)` performs the same recovery and transfers the
   directory, lock, and active file into a writer positioned at the verified end.
+- `WalWriter::open_existing_from_checkpoint(...)` performs checkpoint recovery and transfers that
+  same ownership without requiring already reclaimed prefix segments to reappear.
 - `chronos-waldump` composes `inspect_wal` with a sink that accepts every structurally decoded
   physical type and prints metadata, not payload bytes.
 
@@ -119,10 +123,11 @@ directory. This startup barrier covers a surviving rename and any process-crash 
 completed repair before records can become acknowledgment-eligible. The recovered written and
 durable positions are both the verified physical end.
 
-`open_existing` preserves the existing WAL identity, final segment, record sequence, and physical
-offset. If a configured runtime rotation target is smaller than that already-valid final file, the
-next append rotates before writing; it never subtracts unchecked lengths from the existing end.
-Sequence exhaustion remains terminal.
+Both writer reopen paths preserve the existing WAL identity, final segment, global record sequence,
+and physical offset. Checkpoint reopening derives the next sequence from the verified required
+suffix, or from the checkpoint when it is exactly the active end. If a configured runtime rotation
+target is smaller than that already-valid final file, the next append rotates before writing; it
+never subtracts unchecked lengths from the existing end. Sequence exhaustion remains terminal.
 
 ## Failure behavior and idempotence
 
@@ -165,9 +170,11 @@ memory proportional to record count and would still need protection from out-of-
 current blocking, bounded-memory approach prioritizes a small auditable correctness boundary.
 
 Checkpoint suffix inspection is read-only and does not itself authorize deletion, repair, cleanup,
-or writer reopening. The higher-level manifest owner must prove and publish the checkpoint before
-requesting separately synchronized covered-segment reclamation. Recovery does not add preallocation,
-mmap, asynchronous I/O, compression, encryption, or speculative filesystem abstractions.
+or writer reopening. The explicit mutable recovery APIs do authorize repair/cleanup under the WAL
+lock but never delete a final segment. The higher-level manifest owner must prove and publish the
+checkpoint before requesting separately synchronized covered-segment reclamation. Recovery does not
+add preallocation, mmap, asynchronous I/O, compression, encryption, or speculative filesystem
+abstractions.
 
 ## Likely interview questions
 

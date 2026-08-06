@@ -16,8 +16,9 @@ public:
 
   [[nodiscard]] static common::Result<WalWriter>
   open_existing(const WalWriterConfig& config, const WalRecoveryOptions& options,
-                WalReplaySink& replay_sink, io::detail::PosixSyscalls& syscalls) {
-    return WalWriter::open_existing_with(config, options, replay_sink, syscalls);
+                WalReplaySink& replay_sink, io::detail::PosixSyscalls& syscalls,
+                std::optional<WalReplayCheckpoint> checkpoint = std::nullopt) {
+    return WalWriter::open_existing_with(config, options, replay_sink, syscalls, checkpoint);
   }
 
   static void set_sequence_state(WalWriter& writer, std::uint64_t next_record_sequence,

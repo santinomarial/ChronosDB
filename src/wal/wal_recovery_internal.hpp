@@ -5,6 +5,8 @@
 #include "chronos/wal/wal_recovery.hpp"
 #include "wal/wal_segment_internal.hpp"
 
+#include <optional>
+
 namespace chronos::wal::detail {
 
 struct RecoveredWalState {
@@ -16,11 +18,13 @@ struct RecoveredWalState {
 
 [[nodiscard]] common::Result<RecoveredWalState>
 recover_existing_for_writer(const WalWriterConfig& config, const WalRecoveryOptions& options,
-                            WalReplaySink& replay_sink, io::detail::PosixSyscalls& syscalls);
+                            WalReplaySink& replay_sink, io::detail::PosixSyscalls& syscalls,
+                            std::optional<WalReplayCheckpoint> checkpoint = std::nullopt);
 
 [[nodiscard]] common::Result<WalRecoveryReport>
 recover_wal_with(const WalWriterConfig& config, const WalRecoveryOptions& options,
-                 WalReplaySink& replay_sink, io::detail::PosixSyscalls& syscalls);
+                 WalReplaySink& replay_sink, io::detail::PosixSyscalls& syscalls,
+                 std::optional<WalReplayCheckpoint> checkpoint = std::nullopt);
 
 class WalRecoveryTestAccess {
 public:
