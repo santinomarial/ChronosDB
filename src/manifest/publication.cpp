@@ -582,6 +582,48 @@ public:
     }
   }
 
+  [[nodiscard]] common::Result<DatabaseStorageSnapshot>
+  publish_compaction_manifest(const DurableCompactionPublicationRequest& request) {
+    if (failed_.load(std::memory_order_acquire)) {
+      return common::make_unexpected(unavailable("database storage publisher is failed closed"));
+    }
+    if (request.selected_manifest == nullptr) {
+      return common::make_unexpected(invalid("durable compaction publication requires an owner"));
+    }
+    const std::shared_ptr<const DatabaseStoragePublication> current =
+        std::atomic_load_explicit(&publication_, std::memory_order_acquire);
+    auto fail = [&](common::Status status) -> common::Result<DatabaseStorageSnapshot> {
+      failed_.store(true, std::memory_order_release);
+      return common::make_unexpected(std::move(status));
+    };
+    try {
+      ManifestDecodeResult predecessor =
+          decode_manifest_v1_exact(current->manifest_->encoded_bytes());
+      ManifestDecodeResult next =
+          decode_manifest_v1_exact(request.selected_manifest->encoded_bytes());
+      if (!predecessor.has_value() || !next.has_value()) {
+        return fail(corruption("durable compaction publication Manifest no longer decodes"));
+      }
+      common::Status transition = validate_manifest_v1_compaction_transition(
+          *predecessor, *next, request.schema_bindings, request.replacement);
+      if (!transition.is_ok()) {
+        return fail(std::move(transition));
+      }
+      auto publication = std::make_shared<const DatabaseStoragePublication>(
+          request.selected_manifest, current->tablets_, current->retirements_,
+          current->visible_head_rows_);
+      if (hook_ != nullptr) {
+        hook_(hook_context_);
+      }
+      std::atomic_store_explicit(&publication_, publication, std::memory_order_release);
+      return DatabaseStorageSnapshot{std::move(publication)};
+    } catch (const std::bad_alloc&) {
+      return fail(exhausted("durable compaction publication allocation failed"));
+    } catch (const std::length_error&) {
+      return fail(exhausted("durable compaction publication exceeds limits"));
+    }
+  }
+
   [[nodiscard]] bool is_usable() const noexcept {
     return !failed_.load(std::memory_order_acquire);
   }
@@ -766,6 +808,14 @@ DatabaseStoragePublisher::publish_manifest(const DurableManifestPublicationReque
     return common::make_unexpected(unavailable("database storage publisher was moved from"));
   }
   return implementation_->publish_manifest(request);
+}
+
+common::Result<DatabaseStorageSnapshot> DatabaseStoragePublisher::publish_compaction_manifest(
+    const DurableCompactionPublicationRequest& request) {
+  if (implementation_ == nullptr) {
+    return common::make_unexpected(unavailable("database storage publisher was moved from"));
+  }
+  return implementation_->publish_compaction_manifest(request);
 }
 
 bool DatabaseStoragePublisher::is_usable() const noexcept {

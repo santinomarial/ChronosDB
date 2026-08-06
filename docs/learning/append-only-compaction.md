@@ -91,6 +91,16 @@ no-replace-rename/directory-sync sequence. A crash before the Manifest directory
 old generation; a crash after it may select only the complete replacement generation. Input finals
 are deliberately retained.
 
+`DatabaseStoragePublisher::publish_compaction_manifest()` is the separate in-memory authority. It
+exact-decodes the currently published and already-durable successor generations, repeats the exact
+compaction transition check against the retained schema lineages, copies the unchanged live-tablet
+epoch, and release-stores one new immutable aggregate publication. Acquire-loaded readers therefore
+observe the complete predecessor or complete successor. Each `DatabaseStorageSnapshot` owns its
+publication and selected `LoadedManifestGeneration`, so a held predecessor snapshot continues to
+expose the exact input descriptors and Manifest bytes after the publisher and storage owner are
+gone. The filesystem inputs are still retained because publication pins alone do not yet authorize
+unlink.
+
 ## Likely review and interview questions
 
 - Why are counts or one digest insufficient? They do not prove multiplicity, exact cells, system

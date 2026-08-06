@@ -76,6 +76,14 @@ struct DurableManifestPublicationRequest {
   std::span<const SealedHeadReplacement> replacements;
 };
 
+struct DurableCompactionPublicationRequest {
+  // This must be the exact next generation returned after the compaction Manifest crossed its
+  // directory-sync durability boundary.
+  std::shared_ptr<const LoadedManifestGeneration> selected_manifest;
+  std::span<const TabletSchemaBinding> schema_bindings;
+  ManifestCompactionReplacement replacement;
+};
+
 // Copyable owning result of one acquire load. Every returned descriptor, byte view, and head pin
 // remains valid for this object's lifetime. Readers must not combine fields from separate values.
 class DatabaseStorageSnapshot {
@@ -141,6 +149,12 @@ public:
   // Any failure after this method receives a durable successor fails this live owner closed.
   [[nodiscard]] common::Result<DatabaseStorageSnapshot>
   publish_manifest(const DurableManifestPublicationRequest& request);
+
+  // Atomically selects one already-durable append-only compaction generation. Live heads are
+  // unchanged; old snapshots retain their predecessor Manifest owner and exact input descriptors.
+  // Any validation/allocation failure after receiving a durable successor fails this owner closed.
+  [[nodiscard]] common::Result<DatabaseStorageSnapshot>
+  publish_compaction_manifest(const DurableCompactionPublicationRequest& request);
 
   [[nodiscard]] bool is_usable() const noexcept;
   [[nodiscard]] common::Status poison_status() const;

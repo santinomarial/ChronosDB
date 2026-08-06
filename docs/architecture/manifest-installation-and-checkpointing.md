@@ -273,8 +273,11 @@ boundary. Manifest installation retains add-only validation unless the caller su
 `ManifestCompactionReplacement`; with that authority, storage rereads the named final input and
 output files and repeats complete cell-level equivalence before creating the Manifest temporary.
 It then performs the unchanged readback, file-sync, no-replace rename, and Manifest-directory-sync
-sequence. No input final is removed by this operation. In-memory old/new publication and pin-aware
-final-file reclamation are separate Phase 7 boundaries.
+sequence. No input final is removed by this operation. After the directory sync, the database
+publisher exact-decodes both owned generations, repeats the authorized transition, copies unchanged
+live tablet/head pins, and release-publishes the successor. Acquire readers see only the complete
+predecessor or successor, and held predecessor snapshots retain their exact Manifest owner and input
+descriptors. Pin-aware final-file reclamation remains a separate Phase 7 boundary.
 
 Normal service remains unavailable while the storage owner performs:
 

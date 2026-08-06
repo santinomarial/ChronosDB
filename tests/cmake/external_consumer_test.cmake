@@ -300,6 +300,12 @@ int main() {
           std::span<const chronos::manifest::DatabaseStorageTabletInput>);
   const CreateStoragePublisherFunction create_storage_publisher =
       &chronos::manifest::DatabaseStoragePublisher::create;
+  using PublishCompactionFunction =
+      chronos::common::Result<chronos::manifest::DatabaseStorageSnapshot> (
+          chronos::manifest::DatabaseStoragePublisher::*)(
+          const chronos::manifest::DurableCompactionPublicationRequest&);
+  const PublishCompactionFunction publish_compaction =
+      &chronos::manifest::DatabaseStoragePublisher::publish_compaction_manifest;
   using CreateFlushCoordinatorFunction =
       chronos::common::Result<chronos::manifest::SealedHeadFlushCoordinator> (*)(
           std::shared_ptr<chronos::ingest::SealedHeadFlushQueue>,
@@ -340,7 +346,8 @@ int main() {
                  install_manifest != nullptr && manifest_metrics != nullptr &&
                  load_selected_manifest != nullptr && flush_sealed_head != nullptr &&
                  build_manifest != nullptr && build_checkpoint != nullptr &&
-                 create_storage_publisher != nullptr && create_flush_coordinator != nullptr &&
+                 create_storage_publisher != nullptr && publish_compaction != nullptr &&
+                 create_flush_coordinator != nullptr &&
                  recover_manifest_columnar != nullptr &&
                  stored_page.has_value() && stored_page->bytes().size() == 1U &&
                  plain_page.has_value() && plain_page->bytes().size() == 1U &&

@@ -3,6 +3,7 @@
 #include "chronos/common/uuid.hpp"
 #include "chronos/ingest/retry_directory.hpp"
 #include "chronos/manifest/codec.hpp"
+#include "chronos/manifest/compaction.hpp"
 #include "chronos/manifest/generation_builder.hpp"
 #include "chronos/manifest/naming.hpp"
 #include "chronos/manifest/publication.hpp"
@@ -379,6 +380,129 @@ void pause_before_publication(void* context) noexcept {
   hook->release.wait();
 }
 
+TEST(DatabaseStoragePublicationTest, CompactionPublishesOneEpochAndRetainsOldSnapshotInputs) {
+  std::optional<DatabaseStorageSnapshot> old;
+  std::optional<DatabaseStorageSnapshot> next;
+  std::optional<PartDescriptor> input_descriptor;
+  std::optional<PartDescriptor> output_descriptor;
+  {
+    DurableFixture fixture;
+    DatabaseStoragePublisher publisher = fixture.publisher();
+    ASSERT_TRUE(publisher.publish_manifest(fixture.request()).has_value());
+    old = publisher.snapshot().value();
+
+    const std::array input_images{CompactionPartImage{
+        .part_id = fixture.flushed->descriptor.part_id,
+        .bytes = fixture.flushed->encoded_part.bytes(),
+    }};
+    common::Result<EncodedCompactionPart> merged =
+        merge_append_only_cseg_v1({.inputs = input_images,
+                                   .schema = std::cref(*fixture.tablet.schema_value),
+                                   .tablet_id = fixture.tablet.latest.tablet_id(),
+                                   .wal_id = wal_id(),
+                                   .output_part_id = id<cseg::PartId>(10U)});
+    ASSERT_TRUE(merged.has_value()) << merged.error().to_string();
+    const DecodedManifestView predecessor =
+        decode_manifest_v1_exact(fixture.generation_two_bytes->bytes()).value();
+    const std::array bindings{TabletSchemaBinding{.tablet_id = fixture.tablet.latest.tablet_id(),
+                                                  .lineage = std::cref(fixture.lineage)}};
+    common::Result<EncodedManifest> candidate = build_manifest_v1_for_append_only_compaction(
+        {.predecessor = predecessor,
+         .inputs = input_images,
+         .output = std::cref(*merged),
+         .schema = std::cref(*fixture.tablet.schema_value),
+         .schema_bindings = bindings,
+         .equivalence_limits = {},
+         .part_validation_limits = {}});
+    ASSERT_TRUE(candidate.has_value()) << candidate.error().to_string();
+    ASSERT_TRUE(fixture.storage
+                    ->install_part({.encoded_part = std::cref(merged->encoded_part),
+                                    .descriptor = merged->descriptor,
+                                    .wal_id = merged->wal_id,
+                                    .schema = std::cref(*fixture.tablet.schema_value),
+                                    .nonce = id<DatabaseId>(0xc0U).uuid(),
+                                    .validation_limits = {}})
+                    .has_value());
+    const std::array input_ids{fixture.flushed->descriptor.part_id};
+    const std::array output_ids{merged->descriptor.part_id};
+    const ManifestCompactionReplacement replacement{
+        .tablet_id = fixture.tablet.latest.tablet_id(),
+        .input_part_ids = input_ids,
+        .output_part_ids = output_ids,
+    };
+    ASSERT_TRUE(fixture.storage
+                    ->install_manifest({.encoded_manifest = std::cref(*candidate),
+                                        .schema_bindings = bindings,
+                                        .nonce = id<DatabaseId>(0xd0U).uuid(),
+                                        .decode_limits = {},
+                                        .part_validation_limits = {},
+                                        .compaction_replacement = &replacement,
+                                        .compaction_equivalence_limits = {}})
+                    .has_value());
+    auto generation_three = std::make_shared<const LoadedManifestGeneration>(
+        fixture.storage
+            ->load_selected_manifest({.expected_database_id = fixture.database_id,
+                                      .expected_wal_id = wal_id(),
+                                      .schema_bindings = bindings,
+                                      .decode_limits = {},
+                                      .part_validation_limits = {}})
+            .value());
+    const DurableCompactionPublicationRequest publication_request{
+        .selected_manifest = generation_three,
+        .schema_bindings = bindings,
+        .replacement = replacement,
+    };
+    PauseHook hook;
+    DatabaseStoragePublisher atomic_publisher =
+        detail::DatabaseStoragePublisherTestAccess::create(fixture.generation_two, {},
+                                                           &pause_before_publication, &hook)
+            .value();
+    std::optional<DatabaseStorageSnapshot> atomically_published;
+    std::thread writer([&] {
+      atomically_published =
+          atomic_publisher.publish_compaction_manifest(publication_request).value();
+    });
+    hook.entered.wait();
+    const DatabaseStorageSnapshot during = atomic_publisher.snapshot().value();
+    EXPECT_EQ(during.generation(), 2U);
+    ASSERT_EQ(during.parts().size(), 1U);
+    EXPECT_EQ(during.parts().front(), fixture.flushed->descriptor);
+    hook.release.count_down();
+    writer.join();
+    ASSERT_TRUE(atomically_published.has_value());
+    EXPECT_EQ(atomically_published->generation(), 3U);
+    ASSERT_EQ(atomically_published->parts().size(), 1U);
+    EXPECT_EQ(atomically_published->parts().front(), merged->descriptor);
+    EXPECT_EQ(during.generation(), 2U);
+
+    next = publisher.publish_compaction_manifest(publication_request).value();
+    input_descriptor = fixture.flushed->descriptor;
+    output_descriptor = merged->descriptor;
+
+    EXPECT_TRUE(std::filesystem::exists(fixture.directory.path() / kPartsDirectoryName /
+                                        part_file_name(input_descriptor->part_id)));
+    EXPECT_TRUE(std::filesystem::exists(fixture.directory.path() / kPartsDirectoryName /
+                                        part_file_name(output_descriptor->part_id)));
+  }
+
+  ASSERT_TRUE(old.has_value());
+  ASSERT_TRUE(next.has_value());
+  EXPECT_EQ(old->generation(), 2U);
+  ASSERT_EQ(old->parts().size(), 1U);
+  EXPECT_EQ(old->parts().front(), *input_descriptor);
+  EXPECT_EQ(old->visible_head_row_count(), 1U);
+  EXPECT_EQ(next->generation(), 3U);
+  ASSERT_EQ(next->parts().size(), 1U);
+  EXPECT_EQ(next->parts().front(), *output_descriptor);
+  EXPECT_EQ(next->visible_head_row_count(), 1U);
+  ASSERT_NE(old->find_tablet(id<schema::TabletId>(3U))->active_head(), nullptr);
+  ASSERT_NE(next->find_tablet(id<schema::TabletId>(3U))->active_head(), nullptr);
+  EXPECT_EQ(old->find_tablet(id<schema::TabletId>(3U))->active_head()->row_count(), 1U);
+  EXPECT_EQ(next->find_tablet(id<schema::TabletId>(3U))->active_head()->row_count(), 1U);
+  EXPECT_TRUE(decode_manifest_v1_exact(old->manifest_bytes()).has_value());
+  EXPECT_TRUE(decode_manifest_v1_exact(next->manifest_bytes()).has_value());
+}
+
 TEST(DatabaseStoragePublicationTest, ReadersSeeOnlyOldOrNewCompleteEpochAtReleaseStore) {
   const DurableFixture fixture;
   PauseHook hook;
@@ -457,6 +581,25 @@ TEST(DatabaseStoragePublicationTest, HostileReplacementFailsClosedWithoutPartial
                                  .replacement_part_id = fixture.flushed->descriptor.part_id};
   const auto failed = publisher.publish_manifest(
       {.selected_manifest = fixture.generation_two, .replacements = {&wrong, 1U}});
+  ASSERT_FALSE(failed.has_value());
+  EXPECT_EQ(failed.error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_FALSE(publisher.is_usable());
+  EXPECT_EQ(publisher.snapshot().error().code(), common::StatusCode::kUnavailable);
+}
+
+TEST(DatabaseStoragePublicationTest, HostileCompactionSuccessorFailsClosedWithoutPublication) {
+  const DurableFixture fixture;
+  DatabaseStoragePublisher publisher = fixture.publisher();
+  const std::array bindings{TabletSchemaBinding{.tablet_id = fixture.tablet.latest.tablet_id(),
+                                                .lineage = std::cref(fixture.lineage)}};
+  const std::array input_ids{id<cseg::PartId>(0xeeU)};
+  const std::array output_ids{fixture.flushed->descriptor.part_id};
+  const auto failed = publisher.publish_compaction_manifest(
+      {.selected_manifest = fixture.generation_two,
+       .schema_bindings = bindings,
+       .replacement = {.tablet_id = fixture.tablet.latest.tablet_id(),
+                       .input_part_ids = input_ids,
+                       .output_part_ids = output_ids}});
   ASSERT_FALSE(failed.has_value());
   EXPECT_EQ(failed.error().code(), common::StatusCode::kInvalidArgument);
   EXPECT_FALSE(publisher.is_usable());
