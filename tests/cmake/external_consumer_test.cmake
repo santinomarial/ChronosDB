@@ -93,6 +93,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/query/snapshot.hpp>
 #include <chronos/query/statement_binder.hpp>
 #include <chronos/query/value.hpp>
+#include <chronos/query/vector_chunk.hpp>
 #include <chronos/manifest/types.hpp>
 #include <chronos/manifest/validation.hpp>
 #include <chronos/wal/application.hpp>
@@ -246,6 +247,8 @@ int main() {
   const ParseInsertFunction parse_insert = &chronos::query::parse_sql_v1_insert;
   const auto query_catalog = chronos::query::QueryCatalogSnapshot::create(1U, {});
   const auto query_scalar = chronos::query::ScalarValue::float64(1.0);
+  const auto vector_chunk = chronos::query::VectorChunk::create(
+      {}, chronos::query::VectorSelection::all(1U).value());
   using BindSelectFunction = chronos::query::SqlResult<chronos::query::BoundSqlSelect> (*)(
       chronos::query::ParsedSqlSelect,
       std::shared_ptr<const chronos::query::QueryCatalogSnapshot>,
@@ -444,6 +447,7 @@ int main() {
                  parse_create != nullptr && parse_insert != nullptr &&
                  query_catalog.has_value() && query_catalog->tables().empty() &&
                  query_scalar.has_value() && !query_scalar->is_null() &&
+                 vector_chunk.has_value() && vector_chunk->selected_row_count() == 1U &&
                  chronos::query::kMaximumSqlV1Sources == 64U && aggregate_query != nullptr &&
                  bind_select != nullptr && bind_create != nullptr && bind_insert != nullptr &&
                  materialize_insert != nullptr &&

@@ -1,6 +1,7 @@
 # Roadmap and Phase Gates
 
-ChronosDB has implemented correctness-first subsystem slices through the Phase 8 scalar SQL oracle.
+ChronosDB has implemented correctness-first subsystem slices through the Phase 8 scalar SQL oracle
+and the first Phase 9 bounded vector-chunk foundation.
 That statement does not declare every Phase 1–8 exit gate complete: each section below records its
 remaining implementation, integration, measurement, or platform evidence. Phase 1A/1B provide the
 build/tooling and portable binary foundations but the broader Phase 1 utility surface remains
@@ -346,6 +347,14 @@ No phase passes because its code merely compiles. A phase passes only when its a
 - **Measurement exit gate:** track parse/bind/reference execution baselines and memory limits to detect pathologies; scalar speed is not a product performance target.
 
 ## Phase 9 — Vectorized execution and parallel scheduling
+
+- **Implementation status:** ADR 0020 and the first implementation increment provide move-only
+  identity-free canonical physical vectors, explicit strictly increasing selection vectors,
+  caller-bounded vector chunks, exact logical/retained buffer accounting, selected-cell access,
+  deterministic property tests, fuzzing, microbenchmarks, and installed-consumer coverage. This is
+  a data substrate only: vector expressions/operators, physical planning, query-wide memory
+  reservation, cancellation, scheduling, spill, and scalar differential plan execution remain
+  unimplemented.
 
 - **Scope:** bounded vectors, vectorized scans/expressions/aggregates/joins, physical planning, memory accounting, cancellation, parallel scheduling, and spill for explicitly supported operators.
 - **Explicit non-scope:** distributed fragments, GPU novelty, unbounded query memory, or optimizer rules lacking semantic/differential validation.

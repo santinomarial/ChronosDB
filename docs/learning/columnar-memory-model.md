@@ -62,13 +62,17 @@ from nonzero catalog identities. FLOAT32/FLOAT64 accept all bit patterns. Empty 
 values and nulls remain distinct through validity.
 
 A view allocates nothing on successful validation and does not own lifetime. The caller must keep
-all buffers alive and immutable. `OwnedColumnVector::create` validates supplied `std::vector<byte>`
-buffers before moving them into an immutable owner. `view()` borrows that owner, so moving or
-destroying the owner invalidates outstanding views and byte-valued cells.
+all buffers alive and immutable. `OwnedPhysicalColumn::create` validates supplied
+`std::vector<byte>` buffers before moving them into an immutable identity-free owner. Phase 9 query
+chunks use this owner for computed columns without inventing a durable `ColumnId`.
+`OwnedColumnVector` composes the same physical owner with its real schema column identity.
+`view()` borrows its owner, so moving or destroying the owner invalidates outstanding views and
+byte-valued cells.
 
-Vector and batch owners are move-only. This makes expensive ownership transfer explicit, prevents
-an unaccounted copy from acquiring a different allocation capacity, and encourages queues/readers
-to retain one owner through `shared_ptr<const OwnedColumnarBatch>` when shared lifetime is needed.
+Physical-column, identified-vector, and batch owners are move-only. This makes expensive ownership
+transfer explicit, prevents an unaccounted copy from acquiring a different allocation capacity,
+and encourages queues/readers to retain one owner through `shared_ptr<const OwnedColumnarBatch>`
+when shared lifetime is needed.
 
 ## Row inspection
 

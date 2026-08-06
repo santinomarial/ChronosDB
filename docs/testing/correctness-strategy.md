@@ -67,8 +67,10 @@
 > ambiguous/type/grouping failures, exact decimal properties, NULL/NaN ordering, aggregate
 > reference comparisons, system-time/LATEST/ASOF execution, deterministic random small-database
 > temporal-join models, CREATE TABLE/INSERT validation, stable EXPLAIN goldens, measured ANALYZE
-> counters, installation checks, and sanitizer coverage. Vector-plan differential and distributed
-> query harnesses remain planned for their roadmap phases.
+> counters, installation checks, and sanitizer coverage. The first Phase 9 vector-chunk foundation
+> adds identity-free canonical owners, explicit-selection unit/property/fuzz coverage, retained-byte
+> bounds, checked traversal benchmarks, and installed-consumer checks. Vector-plan differential and
+> distributed query harnesses remain planned for their roadmap phases.
 
 ## Test types
 

@@ -137,5 +137,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [SQL v1 scalar reference engine](learning/sql-v1-reference-engine.md): implemented bounded lexer,
   AST, schema-stable binding, exact scalar semantics, temporal joins, aggregates, DDL/INSERT
   materialization, EXPLAIN, ownership, failure, fuzzing, and measurement boundaries.
+- [Vector chunk foundation](learning/vector-chunk-foundation.md): implemented identity-free
+  canonical physical owners, explicit order-preserving selections, checked chunk bounds, ownership,
+  failure, fuzzing, and measurement boundaries for the first Phase 9 increment.
 
 Future format, protocol, subsystem, operations, and learning documents should be linked here when they are added by their corresponding roadmap phase.

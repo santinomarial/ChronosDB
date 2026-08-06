@@ -335,6 +335,7 @@ add_library(
   src/query/snapshot.cpp
   src/query/statement_binder.cpp
   src/query/value.cpp
+  src/query/vector_chunk.cpp
 )
 add_library(chronos::query ALIAS chronos_query)
 set_target_properties(chronos_query PROPERTIES EXPORT_NAME query CXX_EXTENSIONS OFF)
@@ -750,6 +751,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/statement_binder_test.cpp
     tests/query/value_header_self_contained.cpp
     tests/query/value_test.cpp
+    tests/query/vector_chunk_header_self_contained.cpp
+    tests/query/vector_chunk_test.cpp
   )
   set_target_properties(chronos_query_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_query_tests PRIVATE cxx_std_23)
@@ -943,7 +946,11 @@ if(CHRONOS_BUILD_BENCHMARKS)
   chronos_enable_sanitizers(chronos_manifest_benchmarks)
   chronos_enable_static_analysis(chronos_manifest_benchmarks)
 
-  add_executable(chronos_query_benchmarks benchmarks/query/lexer_benchmark.cpp)
+  add_executable(
+    chronos_query_benchmarks
+    benchmarks/query/lexer_benchmark.cpp
+    benchmarks/query/vector_chunk_benchmark.cpp
+  )
   set_target_properties(chronos_query_benchmarks PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_query_benchmarks PRIVATE cxx_std_23)
   target_link_libraries(chronos_query_benchmarks PRIVATE chronos::query benchmark::benchmark_main)
@@ -1102,6 +1109,16 @@ if(CHRONOS_BUILD_FUZZERS)
   chronos_set_project_warnings(chronos_sql_binder_fuzz)
   chronos_enable_sanitizers(chronos_sql_binder_fuzz)
   chronos_enable_static_analysis(chronos_sql_binder_fuzz)
+
+  add_executable(chronos_vector_chunk_fuzz tests/fuzz/vector_chunk_fuzz.cpp)
+  set_target_properties(chronos_vector_chunk_fuzz PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_vector_chunk_fuzz PRIVATE cxx_std_23)
+  target_link_libraries(chronos_vector_chunk_fuzz PRIVATE chronos::query)
+  target_compile_options(chronos_vector_chunk_fuzz PRIVATE -fsanitize=fuzzer)
+  target_link_options(chronos_vector_chunk_fuzz PRIVATE -fsanitize=fuzzer)
+  chronos_set_project_warnings(chronos_vector_chunk_fuzz)
+  chronos_enable_sanitizers(chronos_vector_chunk_fuzz)
+  chronos_enable_static_analysis(chronos_vector_chunk_fuzz)
 endif()
 
 chronos_configure_installation()

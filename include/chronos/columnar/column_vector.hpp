@@ -129,6 +129,7 @@ private:
   common::ByteView values_;
 
   friend class ColumnVectorView;
+  friend class OwnedPhysicalColumn;
 };
 
 // A non-owning immutable view over one complete canonical column vector. Construction validates all
@@ -195,6 +196,40 @@ struct ColumnVectorBuffers {
   std::vector<std::byte> values;
 };
 
+// Owns one immutable identity-free physical vector. Query intermediates and decoded storage pages
+// need the canonical physical representation without fabricating a durable ColumnId. Accessors
+// expose only immutable spans; view() borrows this object's storage.
+class OwnedPhysicalColumn {
+public:
+  OwnedPhysicalColumn() = delete;
+  OwnedPhysicalColumn(const OwnedPhysicalColumn&) = delete;
+  OwnedPhysicalColumn& operator=(const OwnedPhysicalColumn&) = delete;
+  OwnedPhysicalColumn(OwnedPhysicalColumn&&) noexcept = default;
+  OwnedPhysicalColumn& operator=(OwnedPhysicalColumn&&) noexcept = default;
+
+  [[nodiscard]] static common::Result<OwnedPhysicalColumn> create(PhysicalColumnMetadata metadata,
+                                                                  ColumnVectorBuffers buffers);
+
+  [[nodiscard]] PhysicalColumnView view() const noexcept;
+  [[nodiscard]] const schema::LogicalType& type() const noexcept;
+  [[nodiscard]] bool nullable() const noexcept;
+  [[nodiscard]] std::uint32_t row_count() const noexcept;
+  [[nodiscard]] std::uint32_t null_count() const noexcept;
+  [[nodiscard]] std::size_t buffer_bytes() const noexcept;
+  [[nodiscard]] std::size_t retained_buffer_bytes() const noexcept;
+  [[nodiscard]] common::Result<bool> is_null(std::uint32_t row) const;
+  [[nodiscard]] common::Result<ColumnCellView> cell(std::uint32_t row) const;
+
+private:
+  OwnedPhysicalColumn(PhysicalColumnMetadata metadata, ColumnVectorBuffers buffers) noexcept;
+
+  schema::LogicalType type_;
+  bool nullable_;
+  std::uint32_t row_count_;
+  std::uint32_t null_count_;
+  ColumnVectorBuffers buffers_;
+};
+
 // Owns immutable canonical buffers. Accessors expose only const spans; view() borrows this object.
 class OwnedColumnVector {
 public:
@@ -219,14 +254,10 @@ public:
   [[nodiscard]] common::Result<ColumnCellView> cell(std::uint32_t row) const;
 
 private:
-  OwnedColumnVector(ColumnVectorMetadata metadata, ColumnVectorBuffers buffers) noexcept;
+  OwnedColumnVector(schema::ColumnId column_id, OwnedPhysicalColumn physical) noexcept;
 
   schema::ColumnId column_id_;
-  schema::LogicalType type_;
-  bool nullable_;
-  std::uint32_t row_count_;
-  std::uint32_t null_count_;
-  ColumnVectorBuffers buffers_;
+  OwnedPhysicalColumn physical_;
 };
 
 } // namespace chronos::columnar

@@ -59,6 +59,12 @@ if(NOT EXISTS "${installed_columnar_codec_header}")
   message(FATAL_ERROR "staging install omitted ${installed_columnar_codec_header}")
 endif()
 
+set(installed_vector_chunk_header
+    "${install_prefix}/${CHRONOS_TEST_INSTALL_INCLUDEDIR}/chronos/query/vector_chunk.hpp")
+if(NOT EXISTS "${installed_vector_chunk_header}")
+  message(FATAL_ERROR "staging install omitted ${installed_vector_chunk_header}")
+endif()
+
 set(installed_cseg_layout_header
     "${install_prefix}/${CHRONOS_TEST_INSTALL_INCLUDEDIR}/chronos/cseg/layout.hpp")
 if(NOT EXISTS "${installed_cseg_layout_header}")

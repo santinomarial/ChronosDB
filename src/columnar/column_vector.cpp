@@ -351,37 +351,95 @@ common::Result<ColumnCellView> ColumnVectorView::cell(const std::uint32_t row) c
   return physical_.cell(row);
 }
 
-OwnedColumnVector::OwnedColumnVector(const ColumnVectorMetadata metadata,
-                                     ColumnVectorBuffers buffers) noexcept
-    : column_id_(metadata.column_id), type_(metadata.type), nullable_(metadata.nullable),
-      row_count_(metadata.row_count), null_count_(metadata.null_count),
-      buffers_(std::move(buffers)) {}
+OwnedPhysicalColumn::OwnedPhysicalColumn(const PhysicalColumnMetadata metadata,
+                                         ColumnVectorBuffers buffers) noexcept
+    : type_(metadata.type), nullable_(metadata.nullable), row_count_(metadata.row_count),
+      null_count_(metadata.null_count), buffers_(std::move(buffers)) {}
 
-common::Result<OwnedColumnVector> OwnedColumnVector::create(const ColumnVectorMetadata metadata,
-                                                            ColumnVectorBuffers buffers) {
+common::Result<OwnedPhysicalColumn>
+OwnedPhysicalColumn::create(const PhysicalColumnMetadata metadata, ColumnVectorBuffers buffers) {
   const common::Status retained = validate_retained_accounting(buffers);
   if (!retained.is_ok()) {
     return common::make_unexpected(retained);
   }
-  const common::Result<ColumnVectorView> validated =
-      ColumnVectorView::create(metadata, ColumnVectorBufferView{.validity = buffers.validity,
-                                                                .offsets = buffers.offsets,
-                                                                .values = buffers.values});
+  const common::Result<PhysicalColumnView> validated =
+      PhysicalColumnView::create(metadata, ColumnVectorBufferView{.validity = buffers.validity,
+                                                                  .offsets = buffers.offsets,
+                                                                  .values = buffers.values});
   if (!validated.has_value()) {
     return common::make_unexpected(validated.error());
   }
-  return OwnedColumnVector{metadata, std::move(buffers)};
+  return OwnedPhysicalColumn{metadata, std::move(buffers)};
+}
+
+PhysicalColumnView OwnedPhysicalColumn::view() const noexcept {
+  return PhysicalColumnView{
+      PhysicalColumnMetadata{
+          .type = type_, .nullable = nullable_, .row_count = row_count_, .null_count = null_count_},
+      ColumnVectorBufferView{
+          .validity = buffers_.validity, .offsets = buffers_.offsets, .values = buffers_.values}};
+}
+
+const schema::LogicalType& OwnedPhysicalColumn::type() const noexcept {
+  return type_;
+}
+
+bool OwnedPhysicalColumn::nullable() const noexcept {
+  return nullable_;
+}
+
+std::uint32_t OwnedPhysicalColumn::row_count() const noexcept {
+  return row_count_;
+}
+
+std::uint32_t OwnedPhysicalColumn::null_count() const noexcept {
+  return null_count_;
+}
+
+std::size_t OwnedPhysicalColumn::buffer_bytes() const noexcept {
+  return view().buffer_bytes();
+}
+
+std::size_t OwnedPhysicalColumn::retained_buffer_bytes() const noexcept {
+  return buffers_.validity.capacity() + buffers_.offsets.capacity() + buffers_.values.capacity();
+}
+
+common::Result<bool> OwnedPhysicalColumn::is_null(const std::uint32_t row) const {
+  return view().is_null(row);
+}
+
+common::Result<ColumnCellView> OwnedPhysicalColumn::cell(const std::uint32_t row) const {
+  return view().cell(row);
+}
+
+OwnedColumnVector::OwnedColumnVector(schema::ColumnId column_id,
+                                     OwnedPhysicalColumn physical) noexcept
+    : column_id_(column_id), physical_(std::move(physical)) {}
+
+common::Result<OwnedColumnVector> OwnedColumnVector::create(const ColumnVectorMetadata metadata,
+                                                            ColumnVectorBuffers buffers) {
+  common::Result<OwnedPhysicalColumn> physical =
+      OwnedPhysicalColumn::create({.type = metadata.type,
+                                   .nullable = metadata.nullable,
+                                   .row_count = metadata.row_count,
+                                   .null_count = metadata.null_count},
+                                  std::move(buffers));
+  if (!physical.has_value()) {
+    return common::make_unexpected(physical.error());
+  }
+  return OwnedColumnVector{metadata.column_id, std::move(*physical)};
 }
 
 ColumnVectorView OwnedColumnVector::view() const noexcept {
+  const PhysicalColumnView physical = physical_.view();
   return ColumnVectorView{ColumnVectorMetadata{.column_id = column_id_,
-                                               .type = type_,
-                                               .nullable = nullable_,
-                                               .row_count = row_count_,
-                                               .null_count = null_count_},
-                          ColumnVectorBufferView{.validity = buffers_.validity,
-                                                 .offsets = buffers_.offsets,
-                                                 .values = buffers_.values}};
+                                               .type = physical.type(),
+                                               .nullable = physical.nullable(),
+                                               .row_count = physical.row_count(),
+                                               .null_count = physical.null_count()},
+                          ColumnVectorBufferView{.validity = physical.validity(),
+                                                 .offsets = physical.offsets(),
+                                                 .values = physical.values()}};
 }
 
 const schema::ColumnId& OwnedColumnVector::column_id() const noexcept {
@@ -389,35 +447,35 @@ const schema::ColumnId& OwnedColumnVector::column_id() const noexcept {
 }
 
 const schema::LogicalType& OwnedColumnVector::type() const noexcept {
-  return type_;
+  return physical_.type();
 }
 
 bool OwnedColumnVector::nullable() const noexcept {
-  return nullable_;
+  return physical_.nullable();
 }
 
 std::uint32_t OwnedColumnVector::row_count() const noexcept {
-  return row_count_;
+  return physical_.row_count();
 }
 
 std::uint32_t OwnedColumnVector::null_count() const noexcept {
-  return null_count_;
+  return physical_.null_count();
 }
 
 std::size_t OwnedColumnVector::buffer_bytes() const noexcept {
-  return view().buffer_bytes();
+  return physical_.buffer_bytes();
 }
 
 std::size_t OwnedColumnVector::retained_buffer_bytes() const noexcept {
-  return buffers_.validity.capacity() + buffers_.offsets.capacity() + buffers_.values.capacity();
+  return physical_.retained_buffer_bytes();
 }
 
 common::Result<bool> OwnedColumnVector::is_null(const std::uint32_t row) const {
-  return view().is_null(row);
+  return physical_.is_null(row);
 }
 
 common::Result<ColumnCellView> OwnedColumnVector::cell(const std::uint32_t row) const {
-  return view().cell(row);
+  return physical_.cell(row);
 }
 
 } // namespace chronos::columnar
