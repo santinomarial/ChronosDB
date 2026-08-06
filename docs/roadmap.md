@@ -238,7 +238,9 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > coordinator now composes queue acquisition, deterministic conversion, part and Manifest
 > installation, restart-style durable-generation resume, aggregate replacement, TabletState
 > retirement, and receipt-gated completion with fail-closed post-Manifest handling and metrics.
-> The integrated crash-matrix evidence remains unimplemented.
+> A subprocess SIGKILL matrix now stops after every part/Manifest write, file sync, rename, and
+> directory sync, then proves recognized-temporary cleanup, orphan retention, complete old-or-new
+> selection, and byte-identical repeated recovery. Broader Phase 6 measurement evidence remains.
 
 - **Scope:** manifest generations/version edits; atomic durable part installation; sealed-head flush; checkpoint/log coverage; startup reconciliation; safe temporary-file handling.
 - **Explicit non-scope:** compaction, delta parts, distributed metadata, object storage, and aggressive garbage collection beyond proven safe ownership.

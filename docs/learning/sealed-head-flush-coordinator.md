@@ -3,7 +3,8 @@
 > **Status: implemented Phase 6 composition.** `SealedHeadFlushCoordinator` connects the bounded
 > flush queue to sealed-head encoding, immutable part installation, Manifest generation building
 > and installation, aggregate database publication, TabletState retirement, and receipt-gated
-> queue completion. The integrated syscall crash matrix remains separate evidence work.
+> queue completion. A subprocess SIGKILL/reopen matrix covers every part and Manifest filesystem
+> transition.
 
 ## Purpose and boundary
 
@@ -92,8 +93,11 @@ component metrics; callers should observe them together when diagnosing backpres
 
 Integration tests cover the complete part-to-publication path, empty polling, a generation-builder
 failure that leaves an orphan while restoring queue work, and restart-style resume after Manifest
-installation but before aggregate publication. Header self-containment and installed external
-consumer compilation protect the public API.
+installation but before aggregate publication. A subprocess matrix stops the real storage protocol
+after each part/Manifest write, file sync, rename, and directory sync, sends `SIGKILL`, then opens a
+new storage owner, cleans recognized temporaries, validates old-or-new selection, and repeats
+selection byte-for-byte. Header self-containment and installed external-consumer compilation protect
+the public API.
 
 - Why is an orphan part safe? No selected Manifest references it, and final files are immutable.
 - Why reload after Manifest installation? Publication must retain the exact bytes selected by the

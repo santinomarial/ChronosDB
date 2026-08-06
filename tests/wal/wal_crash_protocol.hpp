@@ -21,7 +21,11 @@
 #include <utility>
 #include <vector>
 
-#ifdef CHRONOS_WAL_CRASH_CHILD_PATH
+#if defined(CHRONOS_WAL_CRASH_CHILD_PATH) && defined(CHRONOS_TEST_CRASH_CHILD_PATH)
+#error "Only one crash-child executable path may be configured"
+#endif
+
+#if defined(CHRONOS_WAL_CRASH_CHILD_PATH) || defined(CHRONOS_TEST_CRASH_CHILD_PATH)
 #include <csignal>
 #include <fcntl.h>
 #include <poll.h>
@@ -121,7 +125,7 @@ struct CrashEvent {
   return value;
 }
 
-#ifdef CHRONOS_WAL_CRASH_CHILD_PATH
+#if defined(CHRONOS_WAL_CRASH_CHILD_PATH) || defined(CHRONOS_TEST_CRASH_CHILD_PATH)
 
 struct CrashChildOptions {
   std::filesystem::path directory;
@@ -200,7 +204,11 @@ public:
 
     std::vector<std::string> arguments;
     arguments.reserve(19U);
+#ifdef CHRONOS_TEST_CRASH_CHILD_PATH
+    arguments.emplace_back(CHRONOS_TEST_CRASH_CHILD_PATH);
+#else
     arguments.emplace_back(CHRONOS_WAL_CRASH_CHILD_PATH);
+#endif
     append_argument(arguments, "--directory", options.directory.string());
     append_argument(arguments, "--mode", options.reopen ? "reopen" : "create");
     append_argument(arguments, "--target-segment-size",
@@ -460,7 +468,7 @@ private:
   std::vector<CrashEvent> buffered_events_;
 };
 
-#endif // CHRONOS_WAL_CRASH_CHILD_PATH
+#endif // defined(CHRONOS_WAL_CRASH_CHILD_PATH) || defined(CHRONOS_TEST_CRASH_CHILD_PATH)
 
 } // namespace chronos::wal::test
 

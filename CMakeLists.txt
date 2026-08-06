@@ -613,6 +613,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/manifest/format_test.cpp
     tests/manifest/generation_builder_header_self_contained.cpp
     tests/manifest/generation_builder_test.cpp
+    tests/manifest/manifest_flush_crash_matrix_test.cpp
     tests/manifest/layout_header_self_contained.cpp
     tests/manifest/layout_test.cpp
     tests/manifest/naming_header_self_contained.cpp
@@ -639,6 +640,23 @@ if(CHRONOS_BUILD_TESTS)
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests" "${CMAKE_CURRENT_SOURCE_DIR}/src"
   )
   target_link_libraries(chronos_manifest_tests PRIVATE chronos::manifest GTest::gtest_main)
+  add_executable(chronos_manifest_flush_crash_child
+                 tests/manifest/manifest_flush_crash_child.cpp)
+  set_target_properties(chronos_manifest_flush_crash_child PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_manifest_flush_crash_child PRIVATE cxx_std_23)
+  target_include_directories(
+    chronos_manifest_flush_crash_child
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+  )
+  target_link_libraries(chronos_manifest_flush_crash_child PRIVATE chronos::manifest)
+  chronos_set_project_warnings(chronos_manifest_flush_crash_child)
+  chronos_enable_sanitizers(chronos_manifest_flush_crash_child)
+  chronos_enable_static_analysis(chronos_manifest_flush_crash_child)
+  target_compile_definitions(
+    chronos_manifest_tests
+    PRIVATE CHRONOS_TEST_CRASH_CHILD_PATH="$<TARGET_FILE:chronos_manifest_flush_crash_child>"
+  )
+  add_dependencies(chronos_manifest_tests chronos_manifest_flush_crash_child)
   chronos_set_project_warnings(chronos_manifest_tests)
   chronos_enable_sanitizers(chronos_manifest_tests)
   chronos_enable_static_analysis(chronos_manifest_tests)

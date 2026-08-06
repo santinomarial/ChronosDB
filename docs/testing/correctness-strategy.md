@@ -47,8 +47,10 @@
 > conversion now add golden/property/corruption, filesystem fault, sanitizer, installation,
 > external-consumer, and benchmark evidence. Bounded flush scheduling, aggregate Manifest/head
 > publication, and receipt-authorized generation retirement add deterministic interleaving,
-> hostile-identity, lifetime, and sanitizer coverage. Retry retention and routing/admission remain
-> unimplemented; the end-to-end Phase 6 coordinator crash matrix is still pending.
+> hostile-identity, lifetime, and sanitizer coverage. A subprocess SIGKILL matrix now stops after
+> every part/Manifest write, file sync, rename, and directory sync, then proves repeated recovery
+> selects one complete generation and cleans only recognized temporaries. Retry retention and
+> routing/admission remain unimplemented.
 > Query and distributed harnesses also remain planned for their roadmap phases.
 
 ## Test types
