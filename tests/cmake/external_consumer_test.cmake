@@ -105,6 +105,14 @@ int main() {
       const chronos::wal::WalReplayCheckpoint&, chronos::wal::WalReplaySink&);
   const OpenWalCheckpointFunction open_wal_checkpoint =
       &chronos::wal::WalWriter::open_existing_from_checkpoint;
+  using ReclaimWalFunction = chronos::common::Result<chronos::wal::WalSegmentReclamationReport> (
+      chronos::wal::WalWriter::*)(const chronos::wal::WalReplayCheckpoint&);
+  const ReclaimWalFunction reclaim_wal =
+      &chronos::wal::WalWriter::reclaim_checkpointed_segments;
+  using WalReclamationMetricsFunction = chronos::wal::WalSegmentReclamationMetrics (
+      chronos::wal::WalWriter::*)() const noexcept;
+  const WalReclamationMetricsFunction wal_reclamation_metrics =
+      &chronos::wal::WalWriter::reclamation_metrics;
   using RegisterSchemaFunction = chronos::common::Status (chronos::ingest::TabletState::*)(
       std::shared_ptr<const chronos::schema::TableSchema>, chronos::head::MutableHeadCapacity);
   const RegisterSchemaFunction register_schema = &chronos::ingest::TabletState::register_schema;
@@ -220,6 +228,7 @@ int main() {
       &chronos::manifest::ManifestStorage::load_selected_manifest;
   return execute != nullptr && recover != nullptr && inspect_wal_suffix != nullptr &&
                  recover_wal_checkpoint != nullptr && open_wal_checkpoint != nullptr &&
+                 reclaim_wal != nullptr && wal_reclamation_metrics != nullptr &&
                  register_schema != nullptr &&
                  limits.max_columns == 4096U &&
                  head_capacity.row_capacity == 4U &&

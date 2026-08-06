@@ -22,6 +22,27 @@ class PosixSyscalls;
 
 namespace chronos::wal {
 
+struct WalSegmentReclamationReport {
+  WalReplayCheckpoint checkpoint;
+  std::uint64_t removed_segment_count{};
+  std::uint64_t removed_physical_bytes{};
+  std::uint64_t directory_sync_count{};
+
+  friend bool operator==(const WalSegmentReclamationReport&,
+                         const WalSegmentReclamationReport&) = default;
+};
+
+struct WalSegmentReclamationMetrics {
+  std::uint64_t attempts{};
+  std::uint64_t failures{};
+  std::uint64_t removed_segment_count{};
+  std::uint64_t removed_physical_bytes{};
+  std::uint64_t directory_sync_count{};
+
+  friend bool operator==(const WalSegmentReclamationMetrics&,
+                         const WalSegmentReclamationMetrics&) = default;
+};
+
 namespace detail {
 class WalWriterTestAccess;
 struct RecoveredWalState;
@@ -59,6 +80,13 @@ public:
   // operation. A failure permanently poisons the writer.
   [[nodiscard]] common::Result<PhysicalWalPosition> synchronize();
 
+  // Removes only fully checkpoint-covered closed segments after validating the complete current
+  // namespace and required suffix. The caller must supply a checkpoint from an already durable
+  // selected manifest. The active highest segment is never removed. Any namespace mutation
+  // failure poisons the writer; successful removals are followed by one directory sync.
+  [[nodiscard]] common::Result<WalSegmentReclamationReport>
+  reclaim_checkpointed_segments(const WalReplayCheckpoint& checkpoint);
+
   [[nodiscard]] bool is_open() const noexcept;
   [[nodiscard]] bool is_failed() const noexcept;
   [[nodiscard]] common::Status failure_status() const;
@@ -68,6 +96,7 @@ public:
   [[nodiscard]] PhysicalWalPosition durable_position() const noexcept;
   [[nodiscard]] std::uint64_t written_record_sequence() const noexcept;
   [[nodiscard]] std::uint64_t durable_record_sequence() const noexcept;
+  [[nodiscard]] WalSegmentReclamationMetrics reclamation_metrics() const noexcept;
   [[nodiscard]] common::Result<std::uint64_t> next_record_sequence() const;
 
   // close() does not add an implicit synchronization boundary. It invalidates every owned handle

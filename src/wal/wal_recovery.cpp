@@ -210,7 +210,8 @@ recover_existing_for_writer(const WalWriterConfig& config, const WalRecoveryOpti
     return common::make_unexpected(locked.error());
   }
   if (checkpoint.has_value()) {
-    const common::Status checkpoint_status = prepare_discovery_for_checkpoint(*locked, *checkpoint);
+    const common::Status checkpoint_status =
+        prepare_discovery_for_checkpoint(locked->directory, locked->discovery, *checkpoint);
     if (!checkpoint_status.is_ok()) {
       return common::make_unexpected(checkpoint_status);
     }

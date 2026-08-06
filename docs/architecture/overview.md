@@ -134,7 +134,9 @@ advisory lock, installs each segment through synchronized temporary file/rename/
 boundaries, and synchronizes the prior segment before activating its successor. Existing-history
 recovery preserves that lock and the recovered identity/sequence/offset. Manifest-checkpoint-aware
 recovery also permits a proven covered prefix to be absent, validates the complete required suffix,
-and reopens the writer at its exact global end. A bounded commit
+and reopens the writer at its exact global end. The live writer can separately revalidate and remove
+only completely covered closed segments, followed by a WAL-directory sync; it never removes its
+active highest segment. A bounded commit
 coordinator now accepts concurrent producers, transfers all physical writer calls to one worker,
 orders records by linearized admission, acknowledges `ASYNC` after complete write, and groups
 `LOCAL_SYNC` requests behind covering synchronization frontiers. A subprocess crash harness checks

@@ -34,6 +34,9 @@ struct LockedWalDirectory {
   WalDiscovery discovery;
 };
 
+[[nodiscard]] common::Result<WalDiscovery> discover_wal_directory(io::PosixDirectory& directory,
+                                                                  bool require_complete_prefix);
+
 enum class ScanPass : std::uint8_t {
   kVerify,
   kPreflight,
@@ -51,7 +54,8 @@ open_locked_wal_directory_for_checkpoint(std::string_view directory_path,
 // Validates present covered headers and the required suffix, then narrows discovery to the
 // coordinate segment or its immediate successor.
 [[nodiscard]] common::Status
-prepare_discovery_for_checkpoint(LockedWalDirectory& locked, const WalReplayCheckpoint& checkpoint);
+prepare_discovery_for_checkpoint(io::PosixDirectory& directory, WalDiscovery& discovery,
+                                 const WalReplayCheckpoint& checkpoint);
 [[nodiscard]] common::Result<WalRecoveryReport>
 scan_discovered_wal(io::PosixDirectory& directory, const WalDiscovery& discovery,
                     ScanPass pass = ScanPass::kVerify, WalReplaySink* sink = nullptr,

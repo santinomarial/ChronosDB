@@ -27,6 +27,9 @@ writing:
   directory, lock, and active file into a writer positioned at the verified end.
 - `WalWriter::open_existing_from_checkpoint(...)` performs checkpoint recovery and transfers that
   same ownership without requiring already reclaimed prefix segments to reappear.
+- `WalWriter::reclaim_checkpointed_segments(checkpoint)` revalidates the live namespace and exact
+  suffix, fully scans every candidate closed segment, removes only the covered increasing prefix,
+  and synchronizes the directory once. The active highest segment is never removed.
 - `chronos-waldump` composes `inspect_wal` with a sink that accepts every structurally decoded
   physical type and prints metadata, not payload bytes.
 
@@ -171,10 +174,12 @@ current blocking, bounded-memory approach prioritizes a small auditable correctn
 
 Checkpoint suffix inspection is read-only and does not itself authorize deletion, repair, cleanup,
 or writer reopening. The explicit mutable recovery APIs do authorize repair/cleanup under the WAL
-lock but never delete a final segment. The higher-level manifest owner must prove and publish the
-checkpoint before requesting separately synchronized covered-segment reclamation. Recovery does not
-add preallocation, mmap, asynchronous I/O, compression, encryption, or speculative filesystem
-abstractions.
+lock but never delete a final segment. Reclamation is a separate explicit writer operation whose
+checkpoint must come from an already durable selected manifest. It validates all candidates before
+the first unlink, advances removal metrics only after directory sync, and poisons the writer on a
+mutation failure. A crash may retain any covered subset; repeating recovery and reclamation
+converges. Recovery does not add preallocation, mmap, asynchronous I/O, compression, encryption, or
+speculative filesystem abstractions.
 
 ## Likely interview questions
 

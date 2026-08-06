@@ -5,6 +5,7 @@
 #include "chronos/wal/wal_paths.hpp"
 #include "io/posix_syscalls.hpp"
 #include "wal/wal_recovery_internal.hpp"
+#include "wal/wal_scan_internal.hpp"
 #include "wal/wal_segment_internal.hpp"
 #include "wal/wal_writer_config_internal.hpp"
 #include "wal/wal_writer_internal.hpp"
@@ -15,6 +16,7 @@
 #include <limits>
 #include <memory>
 #include <new>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -155,6 +157,59 @@ validate_new_directory_contents(const std::vector<io::DirectoryEntry>& entries) 
   return validate_new_directory_contents(*entries);
 }
 
+[[nodiscard]] common::Status corruption(std::string message) {
+  return common::Status{common::StatusCode::kCorruption, std::move(message)};
+}
+
+[[nodiscard]] common::Result<WalRecoveryReport>
+validate_closed_segment_for_reclamation(io::PosixDirectory& directory,
+                                        const detail::DiscoveredWalSegment& segment) {
+  detail::WalDiscovery isolated{.segments = {segment}};
+  std::optional<WalReplayCheckpoint> predecessor;
+  if (segment.number != kFirstSegmentNumber) {
+    common::Result<io::PosixFile> file =
+        directory.open_regular_file(segment.file_name, io::FileOpenMode::kReadOnly);
+    if (!file.has_value()) {
+      return common::make_unexpected(
+          with_context("open closed WAL segment for reclamation", file.error()));
+    }
+    EncodedSegmentHeader encoded{};
+    const common::Result<std::size_t> count = file->read_at(0U, encoded);
+    if (!count.has_value()) {
+      return common::make_unexpected(
+          with_context("read closed WAL segment header for reclamation", count.error()));
+    }
+    if (*count != encoded.size()) {
+      return common::make_unexpected(
+          corruption("closed WAL segment has an incomplete header during reclamation"));
+    }
+    const common::Result<SegmentHeader> header = decode_segment_header(encoded);
+    if (!header.has_value()) {
+      return common::make_unexpected(
+          with_context("decode closed WAL segment header for reclamation", header.error()));
+    }
+    if (header->first_record_sequence == 0U) {
+      return common::make_unexpected(
+          corruption("closed WAL segment begins with record sequence zero"));
+    }
+    predecessor = WalReplayCheckpoint{.wal_id = header->wal_id,
+                                      .record_sequence = header->first_record_sequence - 1U,
+                                      .segment_number = segment.number - 1U,
+                                      .byte_offset = kSegmentHeaderSize};
+  }
+  common::Result<WalRecoveryReport> report = detail::scan_discovered_wal(
+      directory, isolated, detail::ScanPass::kVerify, nullptr, predecessor);
+  if (!report.has_value()) {
+    return common::make_unexpected(report.error());
+  }
+  if (report->classification != WalScanClassification::kClean || report->record_count == 0U ||
+      report->valid_end.segment_number != segment.number) {
+    return common::make_unexpected(
+        corruption("closed WAL segment is empty or incomplete during reclamation"));
+  }
+  return report;
+}
+
 } // namespace
 
 class WalWriter::Impl {
@@ -281,6 +336,7 @@ public:
   std::uint64_t written_record_sequence_{};
   std::uint64_t durable_record_sequence_{};
   bool sequence_exhausted_{false};
+  WalSegmentReclamationMetrics reclamation_metrics_;
   common::Status failure_;
 };
 
@@ -481,6 +537,147 @@ common::Result<PhysicalWalPosition> WalWriter::synchronize() {
   return implementation_->durable_position_;
 }
 
+common::Result<WalSegmentReclamationReport>
+WalWriter::reclaim_checkpointed_segments(const WalReplayCheckpoint& checkpoint) {
+  if (implementation_ == nullptr || !implementation_->active_segment_.file.is_open()) {
+    return common::make_unexpected(invalid_writer("reclaim_checkpointed_segments"));
+  }
+  if (!implementation_->failure_.is_ok()) {
+    return common::make_unexpected(implementation_->failure_);
+  }
+  ++implementation_->reclamation_metrics_.attempts;
+  const auto fail = [this](common::Status status,
+                           const bool poison) -> common::Result<WalSegmentReclamationReport> {
+    ++implementation_->reclamation_metrics_.failures;
+    if (poison) {
+      status = implementation_->poison(std::move(status));
+    }
+    return common::make_unexpected(std::move(status));
+  };
+
+  common::Status status = detail::validate_replay_checkpoint(checkpoint);
+  if (!status.is_ok()) {
+    return fail(std::move(status), false);
+  }
+  if (checkpoint.wal_id != implementation_->active_segment_.metadata.header.wal_id ||
+      checkpoint.record_sequence > implementation_->durable_record_sequence_) {
+    return fail(common::Status{common::StatusCode::kInvalidArgument,
+                               "WAL reclamation checkpoint is not covered by this durable writer"},
+                false);
+  }
+
+  common::Result<detail::WalDiscovery> discovered =
+      detail::discover_wal_directory(implementation_->directory_, false);
+  if (!discovered.has_value()) {
+    return fail(discovered.error(), true);
+  }
+  if (discovered->segments.empty() ||
+      discovered->segments.back().number !=
+          implementation_->active_segment_.metadata.header.segment_number ||
+      discovered->segments.back().file_name !=
+          implementation_->active_segment_.metadata.file_name) {
+    return fail(corruption("active WAL segment is not the highest installed final segment"), true);
+  }
+
+  std::optional<detail::WalDiscovery> checkpoint_view;
+  try {
+    checkpoint_view.emplace(*discovered);
+  } catch (const std::bad_alloc&) {
+    return fail(common::Status{common::StatusCode::kResourceExhausted,
+                               "cannot allocate WAL checkpoint validation state"},
+                false);
+  }
+  status = detail::prepare_discovery_for_checkpoint(implementation_->directory_, *checkpoint_view,
+                                                    checkpoint);
+  if (!status.is_ok()) {
+    return fail(std::move(status), true);
+  }
+  common::Result<WalRecoveryReport> required =
+      detail::scan_discovered_wal(implementation_->directory_, *checkpoint_view,
+                                  detail::ScanPass::kVerify, nullptr, checkpoint);
+  if (!required.has_value()) {
+    return fail(required.error(), true);
+  }
+  if (required->classification != WalScanClassification::kClean ||
+      required->wal_id != implementation_->active_segment_.metadata.header.wal_id ||
+      required->valid_end != implementation_->written_position_ ||
+      required->last_record_sequence != implementation_->written_record_sequence_) {
+    return fail(corruption("WAL namespace changed or disagrees with the live writer"), true);
+  }
+
+  struct RemovalCandidate {
+    std::string file_name;
+  };
+  std::vector<RemovalCandidate> candidates;
+  std::uint64_t removed_bytes = 0U;
+  bool retained_closed_segment_seen = false;
+  try {
+    for (const detail::DiscoveredWalSegment& segment : discovered->segments) {
+      if (segment.number >= implementation_->active_segment_.metadata.header.segment_number) {
+        break;
+      }
+      const common::Result<WalRecoveryReport> validated =
+          validate_closed_segment_for_reclamation(implementation_->directory_, segment);
+      if (!validated.has_value()) {
+        return fail(validated.error(), true);
+      }
+      if (validated->wal_id != checkpoint.wal_id) {
+        return fail(corruption("closed WAL segment identity disagrees with checkpoint"), true);
+      }
+      if (validated->last_record_sequence <= checkpoint.record_sequence) {
+        if (retained_closed_segment_seen) {
+          return fail(corruption("checkpoint-covered WAL segments do not form a prefix"), true);
+        }
+        if (validated->physical_bytes > std::numeric_limits<std::uint64_t>::max() - removed_bytes) {
+          return fail(common::Status{common::StatusCode::kResourceExhausted,
+                                     "reclaimed WAL byte count exceeds uint64"},
+                      false);
+        }
+        removed_bytes += validated->physical_bytes;
+        candidates.push_back(RemovalCandidate{.file_name = segment.file_name});
+      } else {
+        retained_closed_segment_seen = true;
+      }
+    }
+  } catch (const std::bad_alloc&) {
+    return fail(common::Status{common::StatusCode::kResourceExhausted,
+                               "cannot allocate WAL reclamation candidate state"},
+                false);
+  }
+
+  WalSegmentReclamationReport report{.checkpoint = checkpoint};
+  if (candidates.empty()) {
+    return report;
+  }
+  if (removed_bytes > std::numeric_limits<std::uint64_t>::max() -
+                          implementation_->reclamation_metrics_.removed_physical_bytes ||
+      candidates.size() > std::numeric_limits<std::uint64_t>::max() -
+                              implementation_->reclamation_metrics_.removed_segment_count) {
+    return fail(common::Status{common::StatusCode::kResourceExhausted,
+                               "cumulative WAL reclamation metrics exceed uint64"},
+                false);
+  }
+  for (const RemovalCandidate& candidate : candidates) {
+    status = implementation_->directory_.remove_file(candidate.file_name);
+    if (!status.is_ok()) {
+      return fail(with_context("remove checkpoint-covered WAL segment", status), true);
+    }
+  }
+  status = implementation_->directory_.sync();
+  if (!status.is_ok()) {
+    return fail(with_context("synchronize WAL directory after checkpoint reclamation", status),
+                true);
+  }
+
+  report.removed_segment_count = static_cast<std::uint64_t>(candidates.size());
+  report.removed_physical_bytes = removed_bytes;
+  report.directory_sync_count = 1U;
+  implementation_->reclamation_metrics_.removed_segment_count += report.removed_segment_count;
+  implementation_->reclamation_metrics_.removed_physical_bytes += report.removed_physical_bytes;
+  ++implementation_->reclamation_metrics_.directory_sync_count;
+  return report;
+}
+
 bool WalWriter::is_open() const noexcept {
   return implementation_ != nullptr && implementation_->active_segment_.file.is_open() &&
          implementation_->lock_.is_held() && implementation_->directory_.is_open();
@@ -520,6 +717,11 @@ std::uint64_t WalWriter::written_record_sequence() const noexcept {
 
 std::uint64_t WalWriter::durable_record_sequence() const noexcept {
   return implementation_ == nullptr ? 0U : implementation_->durable_record_sequence_;
+}
+
+WalSegmentReclamationMetrics WalWriter::reclamation_metrics() const noexcept {
+  return implementation_ == nullptr ? WalSegmentReclamationMetrics{}
+                                    : implementation_->reclamation_metrics_;
 }
 
 common::Result<std::uint64_t> WalWriter::next_record_sequence() const {

@@ -208,7 +208,9 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > covered headers and the exact coordinate, tolerates only covered prefix gaps, and preflights and
 > replays the complete required suffix without changing WAL v1. Mutable recovery can apply the same
 > proof for authorized tail repair, temporary cleanup, startup barriers, and exact writer reopening.
-> Flush construction/publication, crash-matrix evidence, and checkpoint reclamation remain
+> The live writer now fully validates and synchronously removes only checkpoint-covered closed
+> segments, preserves the active segment, poisons on cleanup failure, and exposes durability-boundary
+> metrics. Flush construction/publication and the integrated crash-matrix evidence remain
 > unimplemented.
 
 - **Scope:** manifest generations/version edits; atomic durable part installation; sealed-head flush; checkpoint/log coverage; startup reconciliation; safe temporary-file handling.

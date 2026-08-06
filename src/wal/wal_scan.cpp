@@ -219,6 +219,11 @@ validate_covered_headers(io::PosixDirectory& directory,
 
 namespace detail {
 
+common::Result<WalDiscovery> discover_wal_directory(io::PosixDirectory& directory,
+                                                    const bool require_complete_prefix) {
+  return discover_wal(directory, require_complete_prefix);
+}
+
 common::Status validate_replay_checkpoint(const WalReplayCheckpoint& checkpoint) {
   if (!checkpoint.wal_id.is_valid() || checkpoint.segment_number == 0U ||
       checkpoint.byte_offset < kSegmentHeaderSize || checkpoint.byte_offset > kSegmentSizeLimit) {
@@ -248,7 +253,7 @@ common::Result<LockedWalDirectory> open_locked_wal_directory(const std::string_v
   if (!lock.has_value()) {
     return common::make_unexpected(with_context("acquire WAL writer lock", lock.error()));
   }
-  common::Result<WalDiscovery> discovery = discover_wal(*directory, true);
+  common::Result<WalDiscovery> discovery = discover_wal_directory(*directory, true);
   if (!discovery.has_value()) {
     return common::make_unexpected(discovery.error());
   }
@@ -271,7 +276,7 @@ common::Result<LockedWalDirectory> open_locked_wal_directory_for_checkpoint(
   if (!lock.has_value()) {
     return common::make_unexpected(with_context("acquire WAL writer lock", lock.error()));
   }
-  common::Result<WalDiscovery> discovery = discover_wal(*directory, false);
+  common::Result<WalDiscovery> discovery = discover_wal_directory(*directory, false);
   if (!discovery.has_value()) {
     return common::make_unexpected(discovery.error());
   }
@@ -280,38 +285,37 @@ common::Result<LockedWalDirectory> open_locked_wal_directory_for_checkpoint(
                             .discovery = std::move(*discovery)};
 }
 
-common::Status prepare_discovery_for_checkpoint(LockedWalDirectory& locked,
+common::Status prepare_discovery_for_checkpoint(io::PosixDirectory& directory,
+                                                WalDiscovery& discovery,
                                                 const WalReplayCheckpoint& checkpoint) {
   common::Status status = validate_replay_checkpoint(checkpoint);
   if (!status.is_ok()) {
     return status;
   }
   const auto first_required =
-      std::ranges::lower_bound(locked.discovery.segments, checkpoint.segment_number, {},
+      std::ranges::lower_bound(discovery.segments, checkpoint.segment_number, {},
                                [](const DiscoveredWalSegment& segment) { return segment.number; });
   const std::size_t required_index =
-      static_cast<std::size_t>(first_required - locked.discovery.segments.begin());
-  if (first_required == locked.discovery.segments.end() ||
+      static_cast<std::size_t>(first_required - discovery.segments.begin());
+  if (first_required == discovery.segments.end() ||
       (first_required->number != checkpoint.segment_number &&
        (checkpoint.segment_number == std::numeric_limits<std::uint64_t>::max() ||
         first_required->number != checkpoint.segment_number + 1U))) {
     return corruption("WAL checkpoint coordinate segment or immediate successor is missing");
   }
   status = validate_covered_headers(
-      locked.directory,
-      std::span<const DiscoveredWalSegment>{locked.discovery.segments}.first(required_index),
+      directory, std::span<const DiscoveredWalSegment>{discovery.segments}.first(required_index),
       checkpoint);
   if (!status.is_ok()) {
     return status;
   }
-  for (std::size_t index = required_index + 1U; index < locked.discovery.segments.size(); ++index) {
-    if (locked.discovery.segments[index - 1U].number == std::numeric_limits<std::uint64_t>::max() ||
-        locked.discovery.segments[index].number !=
-            locked.discovery.segments[index - 1U].number + 1U) {
+  for (std::size_t index = required_index + 1U; index < discovery.segments.size(); ++index) {
+    if (discovery.segments[index - 1U].number == std::numeric_limits<std::uint64_t>::max() ||
+        discovery.segments[index].number != discovery.segments[index - 1U].number + 1U) {
       return corruption("required WAL suffix contains a segment gap");
     }
   }
-  locked.discovery.segments.erase(locked.discovery.segments.begin(), first_required);
+  discovery.segments.erase(discovery.segments.begin(), first_required);
   return common::Status::ok();
 }
 
@@ -607,7 +611,8 @@ common::Result<WalRecoveryReport> inspect_wal_suffix(const std::string_view dire
   if (!locked.has_value()) {
     return common::make_unexpected(locked.error());
   }
-  status = detail::prepare_discovery_for_checkpoint(*locked, checkpoint);
+  status =
+      detail::prepare_discovery_for_checkpoint(locked->directory, locked->discovery, checkpoint);
   if (!status.is_ok()) {
     return common::make_unexpected(status);
   }

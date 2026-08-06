@@ -6,8 +6,9 @@
 > terminal write/sync failure behavior, locked discovery, verification, explicit repair,
 > sink-directed semantic preflight/replay, startup barriers, reopening, bounded multi-producer
 > admission, single-worker append ordering, `ASYNC`/`LOCAL_SYNC` completion, group commit, and
-> coordinator metrics, checkpoint-aware suffix preflight/replay, and checkpoint-driven writer
-> reopening are implemented. A deterministic subprocess harness reconciles
+> coordinator metrics, checkpoint-aware suffix preflight/replay, checkpoint-driven writer
+> reopening, and synchronized closed-segment reclamation are implemented. A deterministic
+> subprocess harness reconciles
 > parent-received completions with strict recovery after process termination. The first
 > application-kind codec is specified but unimplemented; server-level acknowledgment transport is
 > not implemented. This document defines those boundaries without repeating the format tables.
@@ -414,7 +415,6 @@ user data. Diagnostics report identities, lengths, checksums, and bounded contex
 ## Deferred work
 
 Deployment tuning and the server default for the implemented group-commit size/delay policy,
-checkpoint-driven old-segment removal and complete CSEG/manifest recovery integration, encryption,
-compression, direct I/O,
+complete CSEG/manifest recovery integration, encryption, compression, direct I/O,
 memory-mapped writing, `io_uring`, replication, and broader filesystem qualification remain future
 work. None may weaken the lifecycle or acknowledgment boundaries silently.
