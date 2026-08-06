@@ -87,6 +87,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/query/parser.hpp>
 #include <chronos/query/catalog.hpp>
 #include <chronos/query/binder.hpp>
+#include <chronos/query/evaluator.hpp>
 #include <chronos/query/value.hpp>
 #include <chronos/manifest/types.hpp>
 #include <chronos/manifest/validation.hpp>
@@ -240,6 +241,11 @@ int main() {
       std::shared_ptr<const chronos::query::QueryCatalogSnapshot>,
       chronos::query::SqlBinderLimits);
   const BindSelectFunction bind_select = &chronos::query::bind_sql_v1_select;
+  using EvaluateExpressionFunction = chronos::query::SqlResult<chronos::query::ScalarValue> (*)(
+      const chronos::query::BoundSqlSelect&, const chronos::query::SqlExpression&,
+      const chronos::query::ScalarEvaluationContext&);
+  const EvaluateExpressionFunction evaluate_expression =
+      &chronos::query::evaluate_sql_v1_expression;
   const auto manifest_name = chronos::manifest::manifest_file_name(1U);
   using DecodeManifestFunction = chronos::manifest::ManifestDecodeResult (*)(
       chronos::common::ByteView, chronos::manifest::ManifestDecodeLimits);
@@ -394,6 +400,7 @@ int main() {
                  query_catalog.has_value() && query_catalog->tables().empty() &&
                  query_scalar.has_value() && !query_scalar->is_null() &&
                  bind_select != nullptr &&
+                 evaluate_expression != nullptr &&
                  manifest_name.has_value() &&
                  *manifest_name == "manifest-00000000000000000001.cman" &&
                  decode_manifest != nullptr && validate_manifest_transition != nullptr &&

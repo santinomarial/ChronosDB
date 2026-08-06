@@ -146,6 +146,7 @@ TEST(SqlBinderTest, EnforcesV1ImplicitConversionAndPredicateRules) {
   EXPECT_EQ(bind("SELECT price FROM trades WHERE price").error().code(),
             SqlDiagnosticCode::kTypeMismatch);
   EXPECT_TRUE(bind("SELECT quantity + 1 AS total FROM trades WHERE price IS NULL").has_value());
+  EXPECT_EQ(bind("SELECT -sequence FROM trades").error().code(), SqlDiagnosticCode::kTypeMismatch);
 }
 
 TEST(SqlBinderTest, BindsAggregatesAndRejectsNestedOrUntypedOutputs) {

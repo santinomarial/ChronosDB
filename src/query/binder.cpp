@@ -367,6 +367,11 @@ private:
           fail(SqlDiagnosticCode::kTypeMismatch, expression.span(),
                "Unary numeric operator requires numeric operand");
         }
+        if (expression.operation() == SqlOperator::kNegative &&
+            unsigned_integer(operand.type->kind())) {
+          fail(SqlDiagnosticCode::kTypeMismatch, expression.span(),
+               "Unary negation of an unsigned value requires an explicit signed CAST");
+        }
         inferred = operand;
       }
       break;

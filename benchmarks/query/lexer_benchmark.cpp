@@ -1,8 +1,10 @@
 #include "chronos/common/uuid.hpp"
 #include "chronos/query/binder.hpp"
 #include "chronos/query/catalog.hpp"
+#include "chronos/query/evaluator.hpp"
 #include "chronos/query/lexer.hpp"
 #include "chronos/query/parser.hpp"
+#include "chronos/query/value.hpp"
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/logical_type.hpp"
 #include "chronos/schema/table_schema.hpp"
@@ -144,9 +146,39 @@ void parse_and_bind_statement(benchmark::State& state) {
                           static_cast<std::int64_t>(sql.size()));
 }
 
+void evaluate_scalar_expression(benchmark::State& state) {
+  const std::shared_ptr<const QueryCatalogSnapshot> catalog = benchmark_catalog();
+  ParsedSqlSelect syntax =
+      parse_sql_v1_select("SELECT abs(value) + CAST(1 AS FLOAT64) AS adjusted FROM metrics")
+          .value();
+  BoundSqlSelect plan = bind_sql_v1_select(std::move(syntax), catalog).value();
+  const std::vector<ScalarValue> row{
+      ScalarValue::signed_value(
+          schema::LogicalType::create(schema::LogicalTypeKind::kTimestampNs).value(),
+          1'700'000'000'000'000'000LL)
+          .value(),
+      ScalarValue::text(schema::LogicalType::create(schema::LogicalTypeKind::kSymbol).value(),
+                        "tenant")
+          .value(),
+      ScalarValue::text(schema::LogicalType::create(schema::LogicalTypeKind::kSymbol).value(),
+                        "cpu")
+          .value(),
+      ScalarValue::float64(-41.5).value(),
+  };
+  const ScalarSourceRow source{row};
+  const ScalarEvaluationContext context{.sources = {&source, 1U}};
+  for (auto _ : state) {
+    static_cast<void>(_);
+    SqlResult<ScalarValue> result =
+        evaluate_sql_v1_expression(plan, *plan.syntax().items()[0].expression(), context);
+    benchmark::DoNotOptimize(result);
+  }
+}
+
 BENCHMARK(tokenize_statement)->DenseRange(0, 2);
 BENCHMARK(parse_statement)->DenseRange(0, 2);
 BENCHMARK(parse_and_bind_statement)->DenseRange(0, 2);
+BENCHMARK(evaluate_scalar_expression);
 
 } // namespace
 } // namespace chronos::query

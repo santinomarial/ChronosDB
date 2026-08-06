@@ -325,6 +325,7 @@ add_library(
   src/query/binder.cpp
   src/query/catalog.cpp
   src/query/diagnostic.cpp
+  src/query/evaluator.cpp
   src/query/lexer.cpp
   src/query/literal.cpp
   src/query/parser.cpp
@@ -720,6 +721,8 @@ if(CHRONOS_BUILD_TESTS)
   add_executable(
     chronos_query_tests
     tests/query/diagnostic_header_self_contained.cpp
+    tests/query/evaluator_header_self_contained.cpp
+    tests/query/evaluator_test.cpp
     tests/query/ast_header_self_contained.cpp
     tests/query/binder_header_self_contained.cpp
     tests/query/binder_test.cpp
