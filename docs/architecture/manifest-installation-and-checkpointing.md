@@ -1,7 +1,8 @@
 # Manifest Installation and Checkpointing
 
-> **Status: accepted Phase 6 design; sealed-head conversion, filesystem installation, checkpointed
-> WAL reopen/reclamation, and manifest-selection primitives implemented.** This document defines ownership,
+> **Status: accepted Phase 6 design; sealed-head conversion, filesystem installation, read-only
+> checkpoint coverage proof, checkpointed WAL reopen/reclamation, and manifest-selection primitives
+> implemented.** This document defines ownership,
 > durable ordering, recovery, and publication around the normative
 > [Manifest v1 bytes](../formats/manifest-v1.md). It refines
 > [ADR 0017](../adr/0017-manifest-generations-installation-and-checkpoints.md), the

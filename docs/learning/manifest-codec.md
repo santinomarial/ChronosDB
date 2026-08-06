@@ -29,7 +29,9 @@ The public headers are:
 - `chronos/manifest/sealed_head_flush.hpp`: deterministic sealed-head conversion and its exact
   descriptor/WAL identity result;
 - `chronos/manifest/generation_builder.hpp`: checked pure construction of the next generation for
-  one sealed-head part and its retry outcomes; and
+  one sealed-head part and its retry outcomes;
+- `chronos/manifest/checkpoint_builder.hpp`: read-only proof of the longest globally consecutive
+  WAL prefix represented by one checked candidate; and
 - `chronos/manifest/storage.hpp`: locked, directory-anchored immutable part and generation
   installation, strict namespace scanning, and temporary cleanup.
 
@@ -70,6 +72,18 @@ pages, rejects missing/extra/disagreeing retry outcomes and boundary overlap, re
 tablets/parts/retries, then canonically inserts the new state. It exact-decodes its own bytes and
 runs the add-only transition validator before returning. The reclaim checkpoint is copied exactly;
 only a later WAL-coverage proof may advance it.
+
+`build_manifest_v1_checkpointed_generation()` accepts the predecessor, that still-uncheckpointed
+candidate, exact schema lineages, every referenced CSEG image, and a WAL directory. It first repeats
+the add-only transition and full part validation. It then uses the WAL suffix scanner's two-pass
+integrity/preflight contract before comparing each claimed command with its protected retry outcome
+and exact CSEG system and user cells. First-applied records require ordinals `0..N-1` exactly once;
+an exact retry duplicate requires no rows. Per-tablet boundaries may be ahead of a missing record on
+another tablet, but the returned global coordinate stops permanently at that first gap. The result
+owns a newly encoded candidate with only the proven coordinate changed; no WAL, file, publication,
+or input object is mutated.
+The function takes no lock: the database owner must invoke it while its serialized WAL owner
+prevents append, rotation, repair, or reclamation and while referenced images remain immutable.
 
 ## Canonical model validation
 
@@ -162,9 +176,10 @@ logically unchanged in the successor tablet range, and every protected retry out
 exactly unchanged. New tablets, parts, and retries are allowed; removal, replacement, pruning, and
 schema regression are rejected in Phase 6.
 
-The transition validator does not claim that a part file exists or that a checkpoint crosses only
-covered WAL commands. The separate referenced-part validator proves the supplied CSEG images; WAL
-coverage still requires WAL bytes and remains installation-layer work.
+The transition validator alone does not claim that a part file exists or that a checkpoint crosses
+only covered WAL commands. The separate referenced-part validator proves supplied CSEG images, and
+the checkpoint builder completes the read-only WAL/content proof. Durable manifest installation and
+publication remain separate operations.
 
 ## Complexity and allocation
 
@@ -185,6 +200,13 @@ Sealed-head generation building uses `O(rows + retained parts + retained retries
 storage. It validates and decodes the new CSEG, sorts represented record sequences, reconstructs
 tablet-grouped part ranges and identity-sorted retries, and emits one exact full-generation image.
 This intentionally favors an auditable transition over avoiding a second bounded CSEG pass.
+
+Checkpoint proof uses `O(total referenced rows + parts + tablets)` index storage. It fully validates
+and decodes referenced CSEG metadata, sorts row identities once, scans the required WAL suffix twice
+through the existing integrity-first recovery API, and decodes user pages only for groups that must
+match a first-applied command. Its worst-case work is linear in WAL/CSEG bytes plus row-index sorting;
+the extra pass prevents any replay-side observation before the entire physical suffix and every
+application kind have been accepted.
 
 `ManifestStorage::open_existing()` opens the database root and its exact `parts/` and `manifest/`
 children without following final-component symlinks, then acquires the already-existing
@@ -266,6 +288,15 @@ an independently computed complete-generation CRC fixture, and a real part-then-
 installation followed by recovery selection. Its benchmark measures complete compressed-part
 validation, hidden-sequence summarization, canonical edit construction, encoding, self-decoding,
 and transition validation at 1,024 and 65,536 rows.
+
+The checkpoint-builder suite covers exact user/system row agreement, independently fingerprinted
+output, retry-digest disagreement, absent tablet boundaries, incomplete tails, unsupported kinds,
+global multi-tablet gaps, exact duplicates with zero extra rows, and deterministic generated values.
+It also installs/selects the returned generation through `ManifestStorage` and proves that recovery
+from the selected physical coordinate replays no already-covered record.
+Its filesystem-backed microbenchmark measures complete referenced-part validation, WAL discovery and
+two-pass scanning, command decoding, exact row comparison, and final manifest encoding at 1,024 and
+65,536 rows.
 
 ## Tradeoffs and extension rules
 

@@ -221,7 +221,12 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > all predecessor state and the reclaim checkpoint, inserts the new tablet/part/retries canonically,
 > and self-validates the encoded add-only transition. Golden/property/hostile tests include the real
 > part-then-manifest installation and recovery-selection path, with builder microbenchmarks and
-> installed-consumer coverage. Flush scheduling, WAL-authorized checkpoint advancement, atomic
+> installed-consumer coverage. A read-only checkpoint builder now revalidates the candidate and all
+> referenced parts, integrity/preflight scans the WAL suffix, proves exact first-applied user/system
+> rows and protected retry outcomes, recognizes zero-row exact duplicates, and advances only the
+> longest globally consecutive covered prefix. Hostile multi-tablet-gap, truncation, unsupported,
+> digest/content/boundary, deterministic-property, benchmark, sanitizer, and installed-consumer
+> coverage exercise that boundary. Flush scheduling, atomic
 > manifest publication, generation retirement, and the integrated crash-matrix evidence remain
 > unimplemented.
 

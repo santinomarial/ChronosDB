@@ -280,6 +280,7 @@ chronos_enable_static_analysis(chronos_ingest)
 
 add_library(
   chronos_manifest
+  src/manifest/checkpoint_builder.cpp
   src/manifest/codec.cpp
   src/manifest/generation_builder.cpp
   src/manifest/layout.cpp
@@ -597,6 +598,8 @@ if(CHRONOS_BUILD_TESTS)
 
   add_executable(
     chronos_manifest_tests
+    tests/manifest/checkpoint_builder_header_self_contained.cpp
+    tests/manifest/checkpoint_builder_test.cpp
     tests/manifest/codec_corruption_test.cpp
     tests/manifest/codec_header_self_contained.cpp
     tests/manifest/codec_property_test.cpp
