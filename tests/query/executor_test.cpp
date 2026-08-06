@@ -308,5 +308,82 @@ TEST(ScalarExecutorPropertyTest, GroupedCountSumAndAverageMatchDeterministicRefe
   }
 }
 
+TEST(ScalarExecutorPropertyTest, LatestAndAsofMatchDeterministicSmallDatabaseModel) {
+  const Fixtures data = fixtures();
+  BoundSqlSelect plan =
+      bind("SELECT t.symbol, t.ts, q.ts AS quote_ts FROM trades AS t LATEST BY (symbol) ON t.ts "
+           "ASOF LEFT JOIN quotes AS q ON t.symbol = q.symbol AND q.ts <= t.ts ORDER BY t.symbol",
+           data);
+  struct ModelRow {
+    std::size_t symbol{};
+    std::int64_t timestamp{};
+    std::uint64_t sequence{};
+  };
+  std::uint64_t random = 0x6a09e667f3bcc909ULL;
+  const auto next = [&random]() {
+    random = random * 6'364'136'223'846'793'005ULL + 1'442'695'040'888'963'407ULL;
+    return random;
+  };
+  constexpr std::array<std::string_view, 3> kSymbols{"A", "B", "C"};
+  for (std::size_t trial = 0U; trial < 40U; ++trial) {
+    std::vector<ModelRow> trade_model;
+    std::vector<ModelRow> quote_model;
+    std::vector<ScalarInputRow> trades;
+    std::vector<ScalarInputRow> quotes;
+    const std::size_t trade_count = 1U + static_cast<std::size_t>(next() % 24U);
+    const std::size_t quote_count = static_cast<std::size_t>(next() % 32U);
+    for (std::size_t index = 0U; index < trade_count; ++index) {
+      const ModelRow row{.symbol = static_cast<std::size_t>(next() % kSymbols.size()),
+                         .timestamp = static_cast<std::int64_t>(next() % 20U),
+                         .sequence = index + 1U};
+      trade_model.push_back(row);
+      trades.push_back(
+          input_row(row.timestamp, kSymbols[row.symbol], static_cast<double>(index), row.sequence));
+    }
+    for (std::size_t index = 0U; index < quote_count; ++index) {
+      const ModelRow row{.symbol = static_cast<std::size_t>(next() % kSymbols.size()),
+                         .timestamp = static_cast<std::int64_t>(next() % 20U),
+                         .sequence = trade_count + index + 1U};
+      quote_model.push_back(row);
+      quotes.push_back(
+          input_row(row.timestamp, kSymbols[row.symbol], static_cast<double>(index), row.sequence));
+    }
+
+    TestProvider snapshots = provider(data, std::move(trades), std::move(quotes));
+    const auto result = execute_sql_v1_select(plan, snapshots);
+    ASSERT_TRUE(result.has_value()) << "trial " << trial;
+    std::size_t output = 0U;
+    for (std::size_t symbol = 0U; symbol < kSymbols.size(); ++symbol) {
+      const ModelRow* latest = nullptr;
+      for (const ModelRow& candidate : trade_model) {
+        if (candidate.symbol == symbol &&
+            (latest == nullptr || candidate.timestamp > latest->timestamp ||
+             (candidate.timestamp == latest->timestamp && candidate.sequence > latest->sequence))) {
+          latest = std::addressof(candidate);
+        }
+      }
+      if (latest == nullptr)
+        continue;
+      ASSERT_LT(output, result->rows().size());
+      EXPECT_EQ(std::get<std::string>(result->rows()[output][0].storage()), kSymbols[symbol]);
+      EXPECT_EQ(std::get<std::int64_t>(result->rows()[output][1].storage()), latest->timestamp);
+      const ModelRow* quote = nullptr;
+      for (const ModelRow& candidate : quote_model) {
+        if (candidate.symbol == symbol && candidate.timestamp <= latest->timestamp &&
+            (quote == nullptr || candidate.timestamp > quote->timestamp ||
+             (candidate.timestamp == quote->timestamp && candidate.sequence > quote->sequence))) {
+          quote = std::addressof(candidate);
+        }
+      }
+      if (quote == nullptr)
+        EXPECT_TRUE(result->rows()[output][2].is_null());
+      else
+        EXPECT_EQ(std::get<std::int64_t>(result->rows()[output][2].storage()), quote->timestamp);
+      ++output;
+    }
+    EXPECT_EQ(result->rows().size(), output);
+  }
+}
+
 } // namespace
 } // namespace chronos::query

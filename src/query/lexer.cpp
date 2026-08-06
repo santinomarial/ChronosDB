@@ -141,7 +141,7 @@ static_assert(std::ranges::is_sorted(kKeywords, {}, &KeywordEntry::text));
 
 template <typename Value>
 [[nodiscard]] Value* optional_pointer(std::optional<Value>& value) noexcept {
-  return value.has_value() ? std::addressof(value.value()) : nullptr;
+  return value.has_value() ? std::addressof(*value) : nullptr;
 }
 
 } // namespace

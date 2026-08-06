@@ -88,7 +88,7 @@ struct BindingFailure {
 
 template <typename Value>
 [[nodiscard]] const Value* optional_pointer(const std::optional<Value>& value) noexcept {
-  return value.has_value() ? std::addressof(value.value()) : nullptr;
+  return value.has_value() ? std::addressof(*value) : nullptr;
 }
 
 } // namespace

@@ -75,7 +75,7 @@ template <typename Value> [[nodiscard]] const Value* stored(const ScalarValue& v
   const auto& logical_type = value.type();
   if (!logical_type.has_value())
     return nullptr;
-  return std::addressof(logical_type.value());
+  return std::addressof(*logical_type);
 }
 
 [[nodiscard]] std::optional<std::int64_t> checked_add(const std::int64_t left,

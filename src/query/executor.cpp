@@ -387,7 +387,12 @@ private:
     std::vector<ProjectedRow> projected;
     projected.reserve(rows.size());
     for (const JoinedRow& row : rows) {
-      ProjectedRow output{.input = row};
+      ProjectedRow output{.values = {},
+                          .order_values = {},
+                          .aggregate_values = {},
+                          .group_key = {},
+                          .input = row,
+                          .aggregated = false};
       output.values.reserve(plan_.outputs().size());
       for (const BoundOutputColumn& column : plan_.outputs()) {
         const SourceSpan* expression_span = optional_pointer(column.expression_span);
@@ -637,7 +642,12 @@ private:
       JoinedRow empty;
       empty.sources.resize(plan_.sources().size(), nullptr);
       const JoinedRow& representative = group.rows.empty() ? empty : *group.rows.front();
-      ProjectedRow output{.group_key = group.key, .input = representative, .aggregated = true};
+      ProjectedRow output{.values = {},
+                          .order_values = {},
+                          .aggregate_values = {},
+                          .group_key = group.key,
+                          .input = representative,
+                          .aggregated = true};
       output.aggregate_values.reserve(aggregate_expressions_.size());
       for (const SqlExpression* aggregate : aggregate_expressions_)
         output.aggregate_values.push_back(evaluate_aggregate(*aggregate, group.rows));

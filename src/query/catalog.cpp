@@ -29,7 +29,7 @@ namespace {
   };
   if (!start(value.front()))
     return false;
-  return std::ranges::all_of(value.substr(1U), continuation);
+  return std::ranges::all_of(value.begin() + 1, value.end(), continuation);
 }
 
 } // namespace

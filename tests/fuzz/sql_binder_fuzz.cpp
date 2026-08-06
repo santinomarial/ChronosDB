@@ -2,6 +2,7 @@
 #include "chronos/query/binder.hpp"
 #include "chronos/query/catalog.hpp"
 #include "chronos/query/parser.hpp"
+#include "chronos/query/statement_binder.hpp"
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/logical_type.hpp"
 #include "chronos/schema/table_schema.hpp"
@@ -62,6 +63,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
   // libFuzzer exposes bytes; string_view is the parser's non-owning byte interface.
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
   const std::string_view sql{reinterpret_cast<const char*>(data), size};
+  static const std::shared_ptr<const chronos::query::QueryCatalogSnapshot> kCatalog = catalog();
   chronos::query::SqlResult<chronos::query::ParsedSqlSelect> parsed =
       chronos::query::parse_sql_v1_select(sql, {.lexer = {.maximum_input_bytes = 4096U,
                                                           .maximum_tokens = 2048U,
@@ -70,13 +72,38 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
                                                 .maximum_expression_depth = 64U,
                                                 .maximum_list_elements = 512U});
   if (parsed.has_value()) {
-    static const std::shared_ptr<const chronos::query::QueryCatalogSnapshot> kCatalog = catalog();
     const auto bound = chronos::query::bind_sql_v1_select(std::move(*parsed), kCatalog,
                                                           {.maximum_sources = 8U,
                                                            .maximum_bound_expressions = 4096U,
                                                            .maximum_output_columns = 512U});
     if (bound.has_value())
       static_cast<void>(bound->outputs().size());
+  }
+  auto create =
+      chronos::query::parse_sql_v1_create_table(sql, {.lexer = {.maximum_input_bytes = 4096U,
+                                                                .maximum_tokens = 2048U,
+                                                                .maximum_token_bytes = 4096U},
+                                                      .maximum_ast_nodes = 2048U,
+                                                      .maximum_expression_depth = 64U,
+                                                      .maximum_list_elements = 512U});
+  if (create.has_value()) {
+    const auto bound = chronos::query::bind_sql_v1_create_table(std::move(*create), kCatalog);
+    if (bound.has_value())
+      static_cast<void>(bound->policy().partition_interval_ns);
+  }
+  auto insert = chronos::query::parse_sql_v1_insert(sql, {.lexer = {.maximum_input_bytes = 4096U,
+                                                                    .maximum_tokens = 2048U,
+                                                                    .maximum_token_bytes = 4096U},
+                                                          .maximum_ast_nodes = 2048U,
+                                                          .maximum_expression_depth = 64U,
+                                                          .maximum_list_elements = 512U});
+  if (insert.has_value()) {
+    const auto bound = chronos::query::bind_sql_v1_insert(
+        std::move(*insert), kCatalog, {.maximum_rows = 512U, .maximum_values = 2048U});
+    if (bound.has_value()) {
+      const auto materialized = chronos::query::materialize_sql_v1_insert_rows(*bound);
+      static_cast<void>(materialized.has_value());
+    }
   }
   return 0;
 }

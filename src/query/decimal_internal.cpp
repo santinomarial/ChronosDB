@@ -91,7 +91,7 @@ void subtract(BigUnsigned& left, const BigUnsigned& right) noexcept {
     std::uint32_t carry = 0U;
     for (std::uint32_t& limb : value.limbs) {
       const std::uint32_t next = limb >> 31U;
-      limb = static_cast<std::uint32_t>((limb << 1U) | carry);
+      limb = (limb << 1U) | carry;
       carry = next;
     }
     if (overflow)

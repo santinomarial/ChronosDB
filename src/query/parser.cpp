@@ -774,7 +774,7 @@ private:
 
   [[nodiscard]] schema::LogicalType parse_type() {
     const SqlToken& token = current();
-    schema::LogicalTypeKind kind{};
+    schema::LogicalTypeKind kind = schema::LogicalTypeKind::kBool;
     if (match(SqlKeyword::kBool))
       kind = schema::LogicalTypeKind::kBool;
     else if (match(SqlKeyword::kInt8))

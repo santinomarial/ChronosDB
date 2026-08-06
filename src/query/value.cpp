@@ -164,7 +164,7 @@ template <typename Float> [[nodiscard]] int compare_float(const Float left, cons
   const std::optional<schema::LogicalType>& logical_type = value.type();
   if (!logical_type.has_value())
     return nullptr;
-  return std::addressof(logical_type.value());
+  return std::addressof(*logical_type);
 }
 
 [[nodiscard]] bool compatible_types(const schema::LogicalType& left,
