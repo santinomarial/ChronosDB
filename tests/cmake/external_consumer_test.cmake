@@ -87,6 +87,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/query/parser.hpp>
 #include <chronos/query/catalog.hpp>
 #include <chronos/query/binder.hpp>
+#include <chronos/query/value.hpp>
 #include <chronos/manifest/types.hpp>
 #include <chronos/manifest/validation.hpp>
 #include <chronos/wal/application.hpp>
@@ -233,6 +234,7 @@ int main() {
       chronos::query::parse_sql_timestamp_ns_literal("1970-01-01 00:00:00.000000001Z");
   const auto sql_select = chronos::query::parse_sql_v1_select("SELECT * FROM metrics");
   const auto query_catalog = chronos::query::QueryCatalogSnapshot::create(1U, {});
+  const auto query_scalar = chronos::query::ScalarValue::float64(1.0);
   using BindSelectFunction = chronos::query::SqlResult<chronos::query::BoundSqlSelect> (*)(
       chronos::query::ParsedSqlSelect,
       std::shared_ptr<const chronos::query::QueryCatalogSnapshot>,
@@ -390,6 +392,7 @@ int main() {
                  sql_timestamp.has_value() && *sql_timestamp == 1 &&
                  sql_select.has_value() && sql_select->items().size() == 1U &&
                  query_catalog.has_value() && query_catalog->tables().empty() &&
+                 query_scalar.has_value() && !query_scalar->is_null() &&
                  bind_select != nullptr &&
                  manifest_name.has_value() &&
                  *manifest_name == "manifest-00000000000000000001.cman" &&

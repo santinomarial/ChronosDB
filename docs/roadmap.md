@@ -313,8 +313,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
   applies the v1 implicit-conversion and aggregate/grouping rules, expands stars deterministically,
   and records typed expression, projection, and ORDER BY alias bindings without executor-side name
   resolution. Canonical literal parsing now validates exact UTC nanoseconds, Gregorian dates,
-  bounded nanosecond intervals, numeric ranges, and lowercase canonical UUIDs during binding.
-  CREATE TABLE and INSERT parsing, ASOF/LATEST relational plans, and scalar execution remain
+  bounded nanosecond intervals, numeric ranges, and lowercase canonical UUIDs during binding. The
+  scalar oracle now has an owned all-logical-type value model, checked copying from canonical
+  physical cells, SQL NULL/NaN equality, and deterministic total ordering. CREATE TABLE and INSERT
+  parsing, ASOF/LATEST relational plans, expression evaluation, and relational execution remain
   unimplemented.
 
 - **Scope:** specify a typed analytical SQL subset; custom lexer/parser; catalog binding; scalar expression/relational reference execution; event-time and system-time query syntax required by initial workloads.

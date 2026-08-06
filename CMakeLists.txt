@@ -328,6 +328,7 @@ add_library(
   src/query/lexer.cpp
   src/query/literal.cpp
   src/query/parser.cpp
+  src/query/value.cpp
 )
 add_library(chronos::query ALIAS chronos_query)
 set_target_properties(chronos_query PROPERTIES EXPORT_NAME query CXX_EXTENSIONS OFF)
@@ -338,7 +339,7 @@ target_include_directories(
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
 )
-target_link_libraries(chronos_query PUBLIC chronos::common chronos::schema)
+target_link_libraries(chronos_query PUBLIC chronos::columnar chronos::common chronos::schema)
 chronos_set_project_warnings(chronos_query)
 chronos_enable_sanitizers(chronos_query)
 chronos_enable_static_analysis(chronos_query)
@@ -730,6 +731,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/literal_test.cpp
     tests/query/parser_header_self_contained.cpp
     tests/query/parser_test.cpp
+    tests/query/value_header_self_contained.cpp
+    tests/query/value_test.cpp
   )
   set_target_properties(chronos_query_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_query_tests PRIVATE cxx_std_23)
