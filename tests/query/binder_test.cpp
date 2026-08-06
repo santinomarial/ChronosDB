@@ -29,7 +29,7 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
 
 template <typename Value>
 [[nodiscard]] const Value* optional_pointer(const std::optional<Value>& value) noexcept {
-  return value.has_value() ? std::addressof(value.value()) : nullptr;
+  return value.has_value() ? std::addressof(*value) : nullptr;
 }
 
 struct TestColumn {

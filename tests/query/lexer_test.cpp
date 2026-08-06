@@ -97,6 +97,8 @@ TEST(SqlLexerTest, EnforcesInputTokenAndTokenByteLimitsBeforeUnboundedGrowth) {
 }
 
 TEST(SqlLexerPropertyTest, DeterministicGeneratedByteStringsNeverLoseTerminalState) {
+  // A fixed seed makes failures exactly reproducible across audit runs.
+  // NOLINTNEXTLINE(bugprone-random-generator-seed)
   std::mt19937_64 random{0x514c5f4c45584552ULL};
   for (std::size_t iteration = 0U; iteration < 5'000U; ++iteration) {
     std::string sql;

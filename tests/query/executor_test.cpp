@@ -43,6 +43,7 @@ struct TestColumn {
 [[nodiscard]] std::shared_ptr<const schema::TableSchema>
 make_schema(const std::uint8_t seed, const std::span<const TestColumn> definitions) {
   std::vector<schema::ColumnDefinition> columns;
+  columns.reserve(definitions.size());
   for (std::size_t ordinal = 0U; ordinal < definitions.size(); ++ordinal) {
     columns.push_back(schema::ColumnDefinition::create(
                           id<schema::ColumnId>(static_cast<std::uint8_t>(seed + ordinal + 2U)),
