@@ -602,6 +602,10 @@ if(CHRONOS_BUILD_BENCHMARKS)
   add_executable(
     chronos_head_benchmarks
     benchmarks/head/mutable_head_benchmark.cpp
+    benchmarks/support/counting_allocator.cpp
+  )
+  target_include_directories(
+    chronos_head_benchmarks PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks"
   )
   set_target_properties(chronos_head_benchmarks PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_head_benchmarks PRIVATE cxx_std_23)

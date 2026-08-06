@@ -146,12 +146,18 @@ under AddressSanitizer and UndefinedBehaviorSanitizer. `chronos_head_benchmarks`
 - isolated sealing of a fully published generation.
 
 Publish and scan cases expose logical bytes and retained head bytes as benchmark counters so the
-memory ratio is visible beside throughput rather than inferred from allocator internals.
+memory ratio is visible beside throughput rather than inferred from allocator internals. A global
+`new`/`new[]` counter linked only into this benchmark executable is armed around one untimed probe
+of the exact reported operation. It reports allocation calls and requested bytes for preparation
+plus publication, snapshot acquisition, scan, and seal without counting paused head construction or
+adding instrumentation to timed iterations. The current snapshot, scan, and seal probes observe
+zero regular allocations; the counters remain evidence fields rather than frozen performance
+guarantees.
 
 The measurements are local microbenchmarks, not an end-to-end ingestion claim. Later Phase 4
-evidence must still add allocator-call counts, cache profiles, concurrent reader contention, flush
-handoff cost, and the wider workload matrix around the implemented tablet generation switching,
-retry integration, and ordered replay.
+evidence must still add cache profiles, concurrent reader contention, flush handoff cost, and the
+wider workload matrix around the implemented tablet generation switching, retry integration, and
+ordered replay.
 
 ## Tradeoffs and likely review questions
 

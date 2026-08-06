@@ -1,6 +1,7 @@
 #include "chronos/head/mutable_head.hpp"
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/logical_type.hpp"
+#include "support/counting_allocator.hpp"
 
 #include <benchmark/benchmark.h>
 #include <cstddef>
@@ -144,12 +145,24 @@ make_head(const Fixture& fixture) {
   return chronos::head::HeadCommitPosition{.wal_id = wal_id, .record_sequence = 1U};
 }
 
+[[nodiscard]] chronos::benchmark_support::AllocationCounts
+measure_publish_allocations(const Fixture& fixture) {
+  chronos::head::MutableHead target = make_head(fixture).value();
+  chronos::benchmark_support::ScopedAllocationCounting counting;
+  auto prepared = target.prepare_append(fixture.batch).value();
+  static_cast<void>(prepared.mark_wal_started());
+  static_cast<void>(prepared.publish(commit_position()));
+  return counting.stop();
+}
+
 void benchmark_publish(benchmark::State& state) {
   const auto rows = static_cast<std::uint32_t>(state.range(0));
   const auto string_bytes = static_cast<std::uint32_t>(state.range(1));
   const Fixture fixture =
       make_fixture(FixtureShape{.rows = rows, .string_bytes_per_row = string_bytes});
   const chronos::head::MutableHeadMetrics memory = make_head(fixture)->metrics();
+  const chronos::benchmark_support::AllocationCounts allocations =
+      measure_publish_allocations(fixture);
   for ([[maybe_unused]] auto iteration : state) {
     state.PauseTiming();
     auto created = make_head(fixture);
@@ -191,6 +204,8 @@ void benchmark_publish(benchmark::State& state) {
                           static_cast<std::int64_t>(fixture.batch->buffer_bytes()));
   state.counters["logical_batch_bytes"] = static_cast<double>(fixture.batch->buffer_bytes());
   state.counters["retained_head_bytes"] = static_cast<double>(memory.retained_storage_bytes);
+  state.counters["allocs_per_publish"] = static_cast<double>(allocations.allocations);
+  state.counters["allocated_bytes_per_publish"] = static_cast<double>(allocations.allocated_bytes);
   state.SetLabel(
       "prepare, materialize, and release-publish; arena allocation and WAL I/O excluded");
 }
@@ -208,6 +223,12 @@ void benchmark_snapshot(benchmark::State& state) {
   }
   const auto published = prepared.publish(commit_position()).value();
   benchmark::DoNotOptimize(published.row_count());
+  chronos::benchmark_support::ScopedAllocationCounting counting;
+  auto allocation_snapshot = target.snapshot().value();
+  for (std::size_t ordinal = 0U; ordinal < allocation_snapshot.column_count(); ++ordinal) {
+    benchmark::DoNotOptimize(allocation_snapshot.column(ordinal).value().row_count());
+  }
+  const chronos::benchmark_support::AllocationCounts allocations = counting.stop();
 
   for ([[maybe_unused]] auto iteration : state) {
     auto snapshot = target.snapshot();
@@ -227,6 +248,8 @@ void benchmark_snapshot(benchmark::State& state) {
     }
   }
   state.SetItemsProcessed(state.iterations());
+  state.counters["allocs_per_snapshot"] = static_cast<double>(allocations.allocations);
+  state.counters["allocated_bytes_per_snapshot"] = static_cast<double>(allocations.allocated_bytes);
   state.SetLabel("acquire one publication and construct all borrowed column views");
 }
 
@@ -250,7 +273,7 @@ void benchmark_scan(benchmark::State& state) {
     expected += std::to_integer<std::uint8_t>(value);
   }
 
-  for ([[maybe_unused]] auto iteration : state) {
+  const auto scan_checksum = [&] {
     std::uint64_t checksum = 0U;
     for (const std::byte value : timestamps.fixed_values()) {
       checksum += std::to_integer<std::uint8_t>(value);
@@ -262,6 +285,18 @@ void benchmark_scan(benchmark::State& state) {
     for (const std::byte value : strings.variable_values()) {
       checksum += std::to_integer<std::uint8_t>(value);
     }
+    return checksum;
+  };
+  chronos::benchmark_support::ScopedAllocationCounting counting;
+  const std::uint64_t allocation_probe = scan_checksum();
+  const chronos::benchmark_support::AllocationCounts allocations = counting.stop();
+  if (allocation_probe != expected) {
+    state.SkipWithError("allocation probe scan produced an unexpected checksum");
+    return;
+  }
+
+  for ([[maybe_unused]] auto iteration : state) {
+    std::uint64_t checksum = scan_checksum();
     if (checksum != expected) {
       state.SkipWithError("borrowed mutable-head scan produced an unexpected checksum");
       return;
@@ -276,12 +311,22 @@ void benchmark_scan(benchmark::State& state) {
   state.SetBytesProcessed(state.iterations() * static_cast<std::int64_t>(scanned_bytes));
   state.counters["retained_head_bytes"] =
       static_cast<double>(target.metrics().retained_storage_bytes);
+  state.counters["allocs_per_scan"] = static_cast<double>(allocations.allocations);
+  state.counters["allocated_bytes_per_scan"] = static_cast<double>(allocations.allocated_bytes);
   state.SetLabel("scan fixed, variable-offset, variable-value, and Boolean head storage");
 }
 
 void benchmark_seal(benchmark::State& state) {
   const auto rows = static_cast<std::uint32_t>(state.range(0));
   const Fixture fixture = make_fixture(FixtureShape{.rows = rows, .string_bytes_per_row = 8U});
+  auto allocation_target = make_head(fixture).value();
+  auto allocation_prepared = allocation_target.prepare_append(fixture.batch).value();
+  static_cast<void>(allocation_prepared.mark_wal_started());
+  static_cast<void>(allocation_prepared.publish(commit_position()));
+  chronos::benchmark_support::ScopedAllocationCounting counting;
+  auto allocation_sealed = allocation_target.seal().value();
+  const chronos::benchmark_support::AllocationCounts allocations = counting.stop();
+  benchmark::DoNotOptimize(allocation_sealed.row_count());
   for ([[maybe_unused]] auto iteration : state) {
     state.PauseTiming();
     auto target = make_head(fixture).value();
@@ -301,6 +346,8 @@ void benchmark_seal(benchmark::State& state) {
     benchmark::ClobberMemory();
   }
   state.SetItemsProcessed(state.iterations());
+  state.counters["allocs_per_seal"] = static_cast<double>(allocations.allocations);
+  state.counters["allocated_bytes_per_seal"] = static_cast<double>(allocations.allocated_bytes);
   state.SetLabel("seal one published generation and acquire its owning boundary");
 }
 
