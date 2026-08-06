@@ -3,11 +3,13 @@
 #include "chronos/common/uuid.hpp"
 #include "chronos/ingest/retry_directory.hpp"
 #include "chronos/manifest/codec.hpp"
+#include "chronos/manifest/compaction_coordinator.hpp"
 #include "chronos/manifest/naming.hpp"
 #include "chronos/manifest/publication.hpp"
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/logical_type.hpp"
 #include "chronos/schema/table_schema.hpp"
+#include "manifest/manifest_flush_crash_fixture.hpp"
 
 #include <array>
 #include <benchmark/benchmark.h>
@@ -19,6 +21,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <system_error>
 #include <type_traits>
@@ -212,6 +215,92 @@ private:
   std::unique_ptr<ingest::TabletSnapshot> latest_;
 };
 
+void write_file(const std::filesystem::path& path, const common::ByteView bytes) {
+  std::ofstream output{path, std::ios::binary};
+  // std::ofstream has no std::byte overload.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  output.write(reinterpret_cast<const char*>(bytes.data()),
+               static_cast<std::streamsize>(bytes.size()));
+}
+
+class ReclamationBenchmarkFixture {
+public:
+  ReclamationBenchmarkFixture() {
+    const std::filesystem::path root{directory_.path()};
+    std::filesystem::create_directory(root / kPartsDirectoryName);
+    std::filesystem::create_directory(root / kManifestDirectoryName);
+    write_file(root / kManifestDirectoryName / std::string{kManifestLockFileName}, {});
+    write_file(root / kPartsDirectoryName / part_file_name(fixture_.part_id),
+               fixture_.encoded.bytes());
+    write_file(root / kManifestDirectoryName / *manifest_file_name(1U),
+               fixture_.manifest(1U).bytes());
+    write_file(root / kManifestDirectoryName / *manifest_file_name(2U),
+               fixture_.manifest(2U).bytes());
+    storage_ = std::make_unique<ManifestStorage>(
+        ManifestStorage::open_existing({.database_root = directory_.path()}).value());
+    const auto bindings = fixture_.bindings();
+    predecessor_ = std::make_shared<const LoadedManifestGeneration>(
+        storage_
+            ->load_selected_manifest({.expected_database_id = fixture_.database_id,
+                                      .expected_wal_id = fixture_.wal_id,
+                                      .schema_bindings = bindings,
+                                      .decode_limits = {},
+                                      .part_validation_limits = {}})
+            .value());
+    publisher_ = std::make_unique<DatabaseStoragePublisher>(
+        DatabaseStoragePublisher::create(predecessor_, {}).value());
+    predecessor_snapshot_.emplace(publisher_->snapshot().value());
+    AppendOnlyCompactionCoordinator coordinator =
+        AppendOnlyCompactionCoordinator::create(*storage_, *publisher_).value();
+    const std::array inputs{fixture_.part_id};
+    const common::Result<AppendOnlyCompactionCompletion> completed =
+        coordinator.compact({.tablet_id = fixture_.tablet_id,
+                             .input_part_ids = inputs,
+                             .output_part_id = test::crash_id<cseg::PartId>(9U),
+                             .part_nonce = test::crash_nonce(0xc0U),
+                             .manifest_nonce = test::crash_nonce(0xd0U),
+                             .compression = cseg::PageCompression::kZstd,
+                             .schema_bindings = bindings,
+                             .manifest_decode_limits = {},
+                             .part_validation_limits = {},
+                             .compaction_limits = {}});
+    if (!completed.has_value()) {
+      throw std::runtime_error{completed.error().to_string()};
+    }
+    retirements_ = publisher_->drain_retired_part_sets().value();
+    current_ = std::make_shared<const LoadedManifestGeneration>(
+        storage_
+            ->load_selected_manifest({.expected_database_id = fixture_.database_id,
+                                      .expected_wal_id = fixture_.wal_id,
+                                      .schema_bindings = bindings,
+                                      .decode_limits = {},
+                                      .part_validation_limits = {}})
+            .value());
+  }
+
+  [[nodiscard]] PartReclamationReport reclaim() {
+    return storage_
+        ->reclaim_retired_parts({.selected_manifest = std::cref(*current_),
+                                 .retirement = std::cref(retirements_.front()),
+                                 .decode_limits = {}})
+        .value();
+  }
+
+  void release_predecessor() {
+    predecessor_snapshot_.reset();
+  }
+
+private:
+  BenchmarkDirectory directory_;
+  test::ManifestFlushCrashFixture fixture_;
+  std::unique_ptr<ManifestStorage> storage_;
+  std::shared_ptr<const LoadedManifestGeneration> predecessor_;
+  std::unique_ptr<DatabaseStoragePublisher> publisher_;
+  std::optional<DatabaseStorageSnapshot> predecessor_snapshot_;
+  std::vector<RetiredPartSet> retirements_;
+  std::shared_ptr<const LoadedManifestGeneration> current_;
+};
+
 void snapshot_acquire(benchmark::State& state) {
   const PublicationFixture fixture;
   DatabaseStoragePublisher publisher = fixture.publisher(fixture.latest());
@@ -235,8 +324,34 @@ void tablet_refresh(benchmark::State& state) {
   state.SetItemsProcessed(state.iterations() * 3);
 }
 
+void pinned_retirement_check(benchmark::State& state) {
+  ReclamationBenchmarkFixture fixture;
+  for (auto _ : state) {
+    static_cast<void>(_);
+    PartReclamationReport report = fixture.reclaim();
+    benchmark::DoNotOptimize(report.outcome);
+  }
+  state.counters["candidates"] = 1.0;
+  state.SetItemsProcessed(state.iterations());
+}
+
+void idempotent_reclamation_verification(benchmark::State& state) {
+  ReclamationBenchmarkFixture fixture;
+  fixture.release_predecessor();
+  benchmark::DoNotOptimize(fixture.reclaim());
+  for (auto _ : state) {
+    static_cast<void>(_);
+    PartReclamationReport report = fixture.reclaim();
+    benchmark::DoNotOptimize(report.already_absent_parts);
+  }
+  state.counters["candidates"] = 1.0;
+  state.SetItemsProcessed(state.iterations());
+}
+
 BENCHMARK(snapshot_acquire);
 BENCHMARK(tablet_refresh);
+BENCHMARK(pinned_retirement_check);
+BENCHMARK(idempotent_reclamation_verification);
 
 } // namespace
 } // namespace chronos::manifest

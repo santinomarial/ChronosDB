@@ -100,3 +100,8 @@ without I/O while the predecessor is pinned; after pins expire it rescans, exact
 selected Manifest bytes, proves every candidate unreferenced, unlinks exact final names, and syncs
 the parts directory once. Repeating an already-completed record is successful and counts absent
 parts. Unlink-prefix or directory-sync uncertainty poisons the owner for restart recovery.
+The publication benchmark separately measures a pinned one-candidate check, which must perform no
+filesystem I/O, and repeated idempotent verification after deletion, which includes namespace
+classification and exact current-Manifest reread. Fixture construction, compaction, and the first
+unlink are outside both timed loops; these are local mechanism measurements, not product latency
+claims.
