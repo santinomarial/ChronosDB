@@ -258,6 +258,10 @@ int main() {
           std::unique_ptr<chronos::query::PhysicalOperator>, std::vector<std::size_t>);
   const CreateColumnSubsetFunction create_column_subset =
       &chronos::query::ColumnSubsetOperator::create;
+  using CreateLimitFunction =
+      chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
+          std::unique_ptr<chronos::query::PhysicalOperator>, std::uint64_t);
+  const CreateLimitFunction create_limit = &chronos::query::LimitOperator::create;
   const auto vector_chunk = chronos::query::VectorChunk::create(
       {}, chronos::query::VectorSelection::all(1U).value());
   using BindSelectFunction = chronos::query::SqlResult<chronos::query::BoundSqlSelect> (*)(
@@ -462,6 +466,7 @@ int main() {
                  query_resources->available_memory_bytes() == 1'024U &&
                  physical_end.kind() == chronos::query::PhysicalOperatorStepKind::kEnd &&
                  create_column_subset != nullptr &&
+                 create_limit != nullptr &&
                  vector_chunk.has_value() && vector_chunk->selected_row_count() == 1U &&
                  chronos::query::kMaximumSqlV1Sources == 64U && aggregate_query != nullptr &&
                  bind_select != nullptr && bind_create != nullptr && bind_insert != nullptr &&

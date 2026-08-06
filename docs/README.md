@@ -145,7 +145,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   failure, race testing, and measurement boundaries for the second Phase 9 increment.
 - [Physical operator foundation](learning/physical-operator-foundation.md): implemented accounted
   chunk ownership, explicit pull/end/error lifecycle, allocation-free SQL Boolean filtering,
-  allocation-free stable column-subset projection, scalar-differential and deterministic projection
-  properties, cancellation, fuzzing, and measurement boundaries.
+  allocation-free stable column-subset projection and global LIMIT, scalar-differential and
+  deterministic projection/prefix properties, cancellation, early release, fuzzing, and measurement
+  boundaries.
 
 Future format, protocol, subsystem, operations, and learning documents should be linked here when they are added by their corresponding roadmap phase.

@@ -361,9 +361,12 @@ No phase passes because its code merely compiles. A phase passes only when its a
   The fourth increment adds allocation-free stable column-subset projection, zero-column
   cardinality preservation, bounded projection plans, deterministic cell-preservation properties,
   hostile/fuzz coverage, a projection microbenchmark, and installed-consumer linkage. These remain
-  substrates and two operators only: typed vector expressions and output builders, storage scans,
-  physical planning, complete allocation charging, scheduling, spill, and scalar differential plan
-  execution are unimplemented.
+  substrates rather than a plan engine. The fifth increment adds allocation-free UINT64 global
+  LIMIT across arbitrary and empty chunk boundaries, partial-prefix output, eager release of
+  unpulled upstream credit, scalar-prefix properties, fuzzing, a batched truncation benchmark, and
+  installed-consumer linkage. Typed vector expressions and output builders, storage scans, physical
+  planning, complete allocation charging, scheduling, spill, and scalar differential plan execution
+  are unimplemented.
 
 - **Scope:** bounded vectors, vectorized scans/expressions/aggregates/joins, physical planning, memory accounting, cancellation, parallel scheduling, and spill for explicitly supported operators.
 - **Explicit non-scope:** distributed fragments, GPU novelty, unbounded query memory, or optimizer rules lacking semantic/differential validation.

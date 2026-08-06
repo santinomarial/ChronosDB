@@ -66,12 +66,14 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
   if (valid.has_value()) {
     auto filtered = chronos::query::VectorChunk::where_true(std::move(*valid), 0U);
     if (filtered.has_value()) {
+      auto limited = chronos::query::VectorChunk::take_first(
+          std::move(*filtered), size == 0U ? 0U : static_cast<std::size_t>(data[size - 1U]));
       const std::array<std::size_t, 2> ordinals{
           size == 0U ? 0U : static_cast<std::size_t>(data[0] % 3U),
           size < 2U ? 0U : static_cast<std::size_t>(data[1] % 3U)};
       const std::size_t ordinal_count = size == 0U ? 0U : size % (ordinals.size() + 1U);
       auto projected = chronos::query::VectorChunk::project_columns(
-          std::move(*filtered), std::span<const std::size_t>{ordinals}.first(ordinal_count));
+          std::move(limited), std::span<const std::size_t>{ordinals}.first(ordinal_count));
       if (!projected.has_value() || projected->columns().empty() ||
           projected->selected_row_count() == 0U) {
         return 0;

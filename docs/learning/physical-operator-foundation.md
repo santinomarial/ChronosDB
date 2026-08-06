@@ -4,8 +4,8 @@
 
 The physical pipeline foundation connects bounded vectors to query-wide memory and cancellation.
 It defines one owning pull step and implements allocation-free Boolean filtering plus stable
-column-subset projection. It does not lower a bound SQL plan or read ChronosDB storage, so the
-Phase 8 scalar executor remains the only complete SQL execution path.
+column-subset projection and global LIMIT. It does not lower a bound SQL plan or read ChronosDB
+storage, so the Phase 8 scalar executor remains the only complete SQL execution path.
 
 ## Public interfaces
 
@@ -14,7 +14,8 @@ Phase 8 scalar executor remains the only complete SQL execution path.
 - `AccountedVectorChunk`, a move-only `VectorChunk` plus its live memory credit;
 - `PhysicalOperatorStep`, a move-only tagged owner containing a chunk or explicit end;
 - `PhysicalOperator`, the thread-affine `next(resources)` interface; and
-- `BooleanFilterOperator` and `ColumnSubsetOperator`, uniquely owned unary pipeline stages.
+- `BooleanFilterOperator`, `ColumnSubsetOperator`, and `LimitOperator`, uniquely owned unary
+  pipeline stages.
 
 Factories and pulls return `common::Result`. Bad configuration or accounting is
 `INVALID_ARGUMENT`, bad predicate or projection ordinals are `OUT_OF_RANGE`, memory or bounded-plan
@@ -82,6 +83,20 @@ buffers. That credit may conservatively exceed the remaining buffers and is retu
 shrinking it could improve utilization but requires a separately specified resize/transfer
 contract. This first stage keeps the original finite credit and never undercounts.
 
+## Global LIMIT semantics
+
+`VectorSelection::take_first` stable-truncates selected ordinals with no allocation. It preserves
+physical rows and retained selection capacity, updates identity state exactly, and treats a maximum
+larger than the current selection as a no-op. The chunk and accounted wrappers update logical bytes
+and carry the original reservation.
+
+`LimitOperator` stores the SQL v1 unsigned 64-bit limit and subtracts selected rows across chunk
+boundaries. Empty selected chunks remain progress, are forwarded unchanged, and consume none of the
+remaining limit. A partial final chunk keeps its selected prefix. LIMIT zero is immediately ended
+without pulling its child. When the limit is reached exactly or partially, the operator destroys
+its uniquely owned upstream pipeline before returning the final chunk; this releases every future
+buffered chunk and reservation without misclassifying normal LIMIT completion as cancellation.
+
 ## Pull, backpressure, failure, and cancellation
 
 One pull asks the child for at most one step and returns at most one step. There is no hidden queue,
@@ -92,6 +107,10 @@ Every unary pull checks cancellation before touching its child. A child error or
 error requests cancellation and returns the original status. This lets sibling contexts stop at
 their next poll. No callbacks run and no other owner is reclaimed. If a pipeline already ended,
 later cancellation does not turn its completed end into an error.
+
+Normal LIMIT completion does not request cancellation: it is a successful local end. Unique child
+ownership is what permits eager upstream destruction. A future parallel scheduler will need an
+explicit normal-stop signal for already running sibling tasks rather than treating it as failure.
 
 ## Concurrency and memory ordering
 
@@ -105,9 +124,9 @@ complete task/pipeline owner and acquire it before invoking `next` on another th
 An accounted-wrapper construction and operator step are `O(1)` excluding their transformation.
 Boolean filtering is `O(S)` for `S` selected rows. Column-subset validation and compaction are
 `O(P + C)` for `P` projected and `C` removed columns. Both use `O(1)` additional memory. A virtual
-call occurs once per chunk. Factory allocation or an oversized retained projection plan is
-`RESOURCE_EXHAUSTED`; validation failures release the input chunk and reservation without durable
-or external effects.
+call and LIMIT truncation are `O(1)` per chunk. Factory allocation or an oversized retained
+projection plan is `RESOURCE_EXHAUSTED`; validation failures release the input chunk and reservation
+without durable or external effects.
 
 ## Verification and measurement
 
@@ -115,13 +134,17 @@ Unit tests cover ownership, credit coverage/release, explicit end, sticky comple
 hostile predicate configuration, projection bounds/order/range, zero-column output, and buffer
 release. Deterministic properties compare filtering against scalar SQL truth across varied chunk
 boundaries and verify projected rows and NULL/Boolean cells for all 256 eight-row selection masks.
-Fuzzing drives both compaction operations with valid and hostile ordinals under sanitizers.
+LIMIT tests cover zero, empty progress, partial and exact boundaries, UINT64 maxima, early future
+credit release, failure, and cross-query ownership. A deterministic property compares every limit
+around a fixed multi-chunk input with the scalar prefix. Fuzzing drives filtering, truncation, and
+projection with valid and hostile ordinals under sanitizers.
 
 `chronos_query_benchmarks` measures selection construction plus filtering at 64, 1,024, and 4,096
 rows with TRUE densities of 100%, 25%, and 6.25%. It also isolates ownership compaction and release
 for 1, 8, and 64 input columns at 1,024 and 4,096 rows; input construction is paused and therefore
-excluded. These measurements do not claim end-to-end query speed or justify fusion, branch
-specialization, or physical materialization.
+excluded. Batched selection-truncation measurements cover dense and sparse inputs, zero, partial,
+and no-op limits with setup and destruction paused. These measurements do not claim end-to-end query
+speed or justify fusion, branch specialization, or physical materialization.
 
 ## Tradeoffs and next steps
 
@@ -149,6 +172,13 @@ need a separately specified resize/transfer contract; it is not required for saf
 **Why require increasing projection ordinals?** This stage models scan/projection pushdown and can
 therefore move existing owners in place. Duplicate or reordered SQL outputs require explicit new
 output positions and belong in the typed builder.
+
+**Why forward empty chunks through LIMIT?** They record completed upstream input but consume no
+result cardinality. Treating an empty chunk as end would lose later rows.
+
+**Why destroy the child when LIMIT is satisfied?** A sequential uniquely owned pipeline has no more
+demand. Destruction is the normal ownership operation that releases unpulled buffered chunks and
+their credit; cancellation is reserved for errors or caller stop.
 
 **Why virtual dispatch?** It gives the first composable operator boundary at one call per chunk.
 Profiles must justify devirtualization or fusion later.

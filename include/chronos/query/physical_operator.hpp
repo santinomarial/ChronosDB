@@ -33,6 +33,8 @@ public:
   where_true(AccountedVectorChunk input, std::size_t predicate_column);
   [[nodiscard]] static common::Result<AccountedVectorChunk>
   project_columns(AccountedVectorChunk input, std::span<const std::size_t> column_ordinals);
+  [[nodiscard]] static AccountedVectorChunk take_first(AccountedVectorChunk input,
+                                                       std::size_t maximum_selected_rows);
 
   [[nodiscard]] const VectorChunk& chunk() const noexcept;
   [[nodiscard]] std::size_t charged_memory_bytes() const noexcept;
@@ -125,6 +127,24 @@ private:
 
   std::unique_ptr<PhysicalOperator> input_;
   std::vector<std::size_t> column_ordinals_;
+  bool ended_{};
+};
+
+// Applies one global SQL LIMIT across chunk boundaries. Reaching the limit destroys the uniquely
+// owned upstream pipeline immediately so buffered chunks release their reservations.
+class LimitOperator final : public PhysicalOperator {
+public:
+  [[nodiscard]] static common::Result<std::unique_ptr<PhysicalOperator>>
+  create(std::unique_ptr<PhysicalOperator> input, std::uint64_t maximum_rows);
+
+  [[nodiscard]] common::Result<PhysicalOperatorStep>
+  next(const QueryResourceContext& resources) override;
+
+private:
+  LimitOperator(std::unique_ptr<PhysicalOperator> input, std::uint64_t maximum_rows) noexcept;
+
+  std::unique_ptr<PhysicalOperator> input_;
+  std::uint64_t remaining_rows_;
   bool ended_{};
 };
 

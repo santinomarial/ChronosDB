@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
+#include <limits>
 #include <memory>
 #include <span>
 #include <utility>
@@ -62,6 +63,17 @@ int64_column(const std::span<const std::int64_t> values) {
               .null_count = 0U},
              std::move(buffers))
       .value();
+}
+
+[[nodiscard]] std::int64_t selected_int64(const VectorChunk& chunk,
+                                          const std::size_t selected_row) {
+  const auto bytes =
+      chunk.cell({.column_ordinal = 0U, .selected_row = selected_row}).value().bytes().value();
+  std::uint64_t bits = 0U;
+  for (std::size_t byte = 0U; byte < bytes.size(); ++byte) {
+    bits |= static_cast<std::uint64_t>(std::to_integer<std::uint8_t>(bytes[byte])) << (byte * 8U);
+  }
+  return std::bit_cast<std::int64_t>(bits);
 }
 
 [[nodiscard]] AccountedVectorChunk accounted_chunk(const QueryResourceContext& resources,
@@ -127,6 +139,23 @@ TEST(VectorSelectionFilterTest, ValidatesPredicateTypeAndPhysicalShape) {
   const auto predicate = bool_column(std::vector<std::int8_t>{1});
   EXPECT_EQ(VectorSelection::where_true(VectorSelection::all(2U).value(), predicate).error().code(),
             common::StatusCode::kInvalidArgument);
+}
+
+TEST(VectorSelectionLimitTest, StableTruncationReusesCapacityAndMaintainsIdentityExactly) {
+  VectorSelection sparse = VectorSelection::from_indices(5U, {0U, 2U, 4U}).value();
+  const std::size_t retained = sparse.retained_buffer_bytes();
+  sparse = VectorSelection::take_first(std::move(sparse), 2U);
+  const std::vector<std::uint32_t> expected{0U, 2U};
+  EXPECT_TRUE(std::ranges::equal(sparse.indices(), expected));
+  EXPECT_EQ(sparse.buffer_bytes(), 2U * sizeof(std::uint32_t));
+  EXPECT_EQ(sparse.retained_buffer_bytes(), retained);
+  EXPECT_FALSE(sparse.is_identity());
+
+  VectorSelection identity = VectorSelection::take_first(VectorSelection::all(3U).value(), 3U);
+  EXPECT_TRUE(identity.is_identity());
+  identity = VectorSelection::take_first(std::move(identity), 2U);
+  EXPECT_FALSE(identity.is_identity());
+  EXPECT_EQ(VectorSelection::take_first(std::move(identity), 99U).selected_row_count(), 2U);
 }
 
 TEST(AccountedVectorChunkTest, RequiresLiveCreditCoveringRetainedBuffers) {
@@ -456,6 +485,124 @@ TEST(ColumnSubsetOperatorPropertyTest, PreservesSelectedRowsAndBooleanCellsForEv
         EXPECT_EQ(cell->boolean().value(), expected_value > 0);
       }
     }
+  }
+}
+
+TEST(LimitOperatorTest, ZeroLimitReleasesUpstreamCreditWithoutPullingAndEndsSticky) {
+  const auto resources = QueryResourceContext::create(4'096U).value();
+  std::vector<AccountedVectorChunk> chunks;
+  chunks.push_back(accounted_chunk(resources, std::vector<std::int64_t>{1, 2},
+                                   std::vector<std::int8_t>{1, 1}, {0U, 1U}));
+  chunks.push_back(accounted_chunk(resources, std::vector<std::int64_t>{3, 4},
+                                   std::vector<std::int8_t>{1, 1}, {0U, 1U}));
+  EXPECT_EQ(resources.reserved_memory_bytes(), 2'048U);
+  auto limit = LimitOperator::create(std::make_unique<ChunkSource>(std::move(chunks)), 0U).value();
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  EXPECT_EQ(limit->next(resources)->kind(), PhysicalOperatorStepKind::kEnd);
+  EXPECT_TRUE(resources.request_cancel());
+  EXPECT_EQ(limit->next(resources)->kind(), PhysicalOperatorStepKind::kEnd);
+}
+
+TEST(LimitOperatorTest, PreservesEmptyProgressAndReleasesFutureChunksAtAPartialBoundary) {
+  const auto resources = QueryResourceContext::create(8'192U).value();
+  std::vector<AccountedVectorChunk> chunks;
+  chunks.push_back(accounted_chunk(resources, std::vector<std::int64_t>{10, 11, 12},
+                                   std::vector<std::int8_t>{1, 1, 1}, {0U, 2U}));
+  chunks.push_back(accounted_chunk(resources, std::vector<std::int64_t>{13, 14},
+                                   std::vector<std::int8_t>{1, 1}, {}));
+  chunks.push_back(accounted_chunk(resources, std::vector<std::int64_t>{20, 21, 22},
+                                   std::vector<std::int8_t>{1, 1, 1}, {0U, 1U, 2U}));
+  chunks.push_back(accounted_chunk(resources, std::vector<std::int64_t>{30, 31},
+                                   std::vector<std::int8_t>{1, 1}, {0U, 1U}));
+  auto limit = LimitOperator::create(std::make_unique<ChunkSource>(std::move(chunks)), 3U).value();
+
+  {
+    auto first = limit->next(resources);
+    ASSERT_TRUE(first.has_value());
+    ASSERT_NE(first->chunk(), nullptr);
+    EXPECT_EQ(first->chunk()->chunk().selected_row_count(), 2U);
+    EXPECT_EQ(first->chunk()->charged_memory_bytes(), 1'024U);
+  }
+  EXPECT_EQ(resources.reserved_memory_bytes(), 3'072U);
+
+  {
+    auto empty = limit->next(resources);
+    ASSERT_TRUE(empty.has_value());
+    ASSERT_NE(empty->chunk(), nullptr);
+    EXPECT_EQ(empty->chunk()->chunk().selected_row_count(), 0U);
+  }
+  EXPECT_EQ(resources.reserved_memory_bytes(), 2'048U);
+
+  {
+    auto final = limit->next(resources);
+    ASSERT_TRUE(final.has_value());
+    ASSERT_NE(final->chunk(), nullptr);
+    const std::vector<std::uint32_t> expected{0U};
+    EXPECT_TRUE(std::ranges::equal(final->chunk()->chunk().selection().indices(), expected));
+    EXPECT_EQ(final->chunk()->charged_memory_bytes(), 1'024U);
+    EXPECT_EQ(resources.reserved_memory_bytes(), 1'024U);
+  }
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  EXPECT_EQ(limit->next(resources)->kind(), PhysicalOperatorStepKind::kEnd);
+}
+
+TEST(LimitOperatorTest, ValidatesInputAndPropagatesFailureWithCancellation) {
+  EXPECT_EQ(LimitOperator::create({}, 1U).error().code(), common::StatusCode::kInvalidArgument);
+  const auto resources = QueryResourceContext::create(1U).value();
+  auto limit = LimitOperator::create(std::make_unique<FailingSource>(), 1U).value();
+  const auto failed = limit->next(resources);
+  ASSERT_FALSE(failed.has_value());
+  EXPECT_EQ(failed.error().code(), common::StatusCode::kInternal);
+  EXPECT_TRUE(resources.is_cancelled());
+}
+
+TEST(LimitOperatorTest, RejectsAChunkChargedToAnotherQuery) {
+  const auto owner = QueryResourceContext::create(4'096U).value();
+  const auto impostor = QueryResourceContext::create(4'096U).value();
+  std::vector<AccountedVectorChunk> chunks;
+  chunks.push_back(accounted_chunk(owner, std::vector<std::int64_t>{1, 2},
+                                   std::vector<std::int8_t>{1, 1}, {0U, 1U}));
+  auto limit = LimitOperator::create(std::make_unique<ChunkSource>(std::move(chunks)), 1U).value();
+  const auto failed = limit->next(impostor);
+  ASSERT_FALSE(failed.has_value());
+  EXPECT_EQ(failed.error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_TRUE(impostor.is_cancelled());
+  EXPECT_EQ(owner.reserved_memory_bytes(), 0U);
+}
+
+TEST(LimitOperatorPropertyTest, MatchesScalarPrefixAcrossEveryDeterministicChunkBoundary) {
+  const std::vector<std::int64_t> expected_values{10, 12, 20, 21, 23};
+  constexpr std::array<std::uint64_t, 9> kLimits{
+      0U, 1U, 2U, 3U, 4U, 5U, 6U, 7U, std::numeric_limits<std::uint64_t>::max()};
+  for (const std::uint64_t maximum_rows : kLimits) {
+    const auto resources = QueryResourceContext::create(8'192U).value();
+    std::vector<AccountedVectorChunk> chunks;
+    chunks.push_back(accounted_chunk(resources, std::vector<std::int64_t>{10, 11, 12},
+                                     std::vector<std::int8_t>{1, 1, 1}, {0U, 2U}));
+    chunks.push_back(
+        accounted_chunk(resources, std::vector<std::int64_t>{13}, std::vector<std::int8_t>{1}, {}));
+    chunks.push_back(accounted_chunk(resources, std::vector<std::int64_t>{20, 21},
+                                     std::vector<std::int8_t>{1, 1}, {0U, 1U}));
+    chunks.push_back(accounted_chunk(resources, std::vector<std::int64_t>{22, 23},
+                                     std::vector<std::int8_t>{1, 1}, {1U}));
+    auto limit =
+        LimitOperator::create(std::make_unique<ChunkSource>(std::move(chunks)), maximum_rows)
+            .value();
+
+    std::vector<std::int64_t> actual;
+    for (;;) {
+      auto step = limit->next(resources);
+      ASSERT_TRUE(step.has_value());
+      if (step->kind() == PhysicalOperatorStepKind::kEnd)
+        break;
+      ASSERT_NE(step->chunk(), nullptr);
+      for (std::size_t row = 0U; row < step->chunk()->chunk().selected_row_count(); ++row)
+        actual.push_back(selected_int64(step->chunk()->chunk(), row));
+    }
+    const std::size_t expected_count = static_cast<std::size_t>(
+        std::min(maximum_rows, static_cast<std::uint64_t>(expected_values.size())));
+    EXPECT_TRUE(std::ranges::equal(actual, std::span{expected_values}.first(expected_count)));
+    EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
   }
 }
 

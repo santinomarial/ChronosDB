@@ -23,6 +23,12 @@ struct ProjectionShape {
   std::size_t columns;
 };
 
+struct LimitShape {
+  std::uint32_t rows;
+  std::uint32_t selection_stride;
+  std::size_t maximum_selected_rows;
+};
+
 [[nodiscard]] columnar::OwnedPhysicalColumn make_column(const std::uint32_t rows) {
   columnar::ColumnVectorBuffers buffers;
   buffers.values.resize(static_cast<std::size_t>(rows) * sizeof(std::int64_t));
@@ -165,6 +171,38 @@ void project_column_subset(benchmark::State& state) {
   state.counters["physical_rows"] = static_cast<double>(shape.rows);
 }
 
+void truncate_selection_limit(benchmark::State& state) {
+  constexpr std::size_t kSelectionsPerIteration = 256U;
+  const LimitShape shape{.rows = static_cast<std::uint32_t>(state.range(0)),
+                         .selection_stride = static_cast<std::uint32_t>(state.range(1)),
+                         .maximum_selected_rows = static_cast<std::size_t>(state.range(2))};
+  const std::vector<std::uint32_t> source = selection_indices(shape.rows, shape.selection_stride);
+  for (auto _ : state) {
+    static_cast<void>(_);
+    state.PauseTiming();
+    {
+      std::vector<VectorSelection> selections;
+      selections.reserve(kSelectionsPerIteration);
+      for (std::size_t index = 0U; index < kSelectionsPerIteration; ++index)
+        selections.push_back(VectorSelection::from_indices(shape.rows, source).value());
+      state.ResumeTiming();
+      for (VectorSelection& selection : selections) {
+        selection = VectorSelection::take_first(std::move(selection), shape.maximum_selected_rows);
+      }
+      benchmark::DoNotOptimize(selections);
+      state.PauseTiming();
+    }
+    state.ResumeTiming();
+  }
+  const std::size_t kept =
+      shape.maximum_selected_rows < source.size() ? shape.maximum_selected_rows : source.size();
+  state.SetItemsProcessed(static_cast<std::int64_t>(state.iterations()) *
+                          static_cast<std::int64_t>(kSelectionsPerIteration));
+  state.counters["input_selected_rows"] = static_cast<double>(source.size());
+  state.counters["output_selected_rows"] = static_cast<double>(kept);
+  state.counters["physical_rows"] = static_cast<double>(shape.rows);
+}
+
 BENCHMARK(build_selection)
     ->Args({64, 1})
     ->Args({1'024, 1})
@@ -202,6 +240,13 @@ BENCHMARK(project_column_subset)
     ->Args({4'096, 1})
     ->Args({4'096, 8})
     ->Args({4'096, 64});
+BENCHMARK(truncate_selection_limit)
+    ->Args({1'024, 1, 0})
+    ->Args({1'024, 1, 32})
+    ->Args({1'024, 1, 1'024})
+    ->Args({4'096, 4, 0})
+    ->Args({4'096, 4, 32})
+    ->Args({4'096, 4, 1'024});
 
 } // namespace
 } // namespace chronos::query

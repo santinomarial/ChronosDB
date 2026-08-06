@@ -138,6 +138,15 @@ VectorSelection::where_true(VectorSelection selection,
   return selection;
 }
 
+VectorSelection VectorSelection::take_first(VectorSelection selection,
+                                            const std::size_t maximum_selected_rows) {
+  if (maximum_selected_rows < selection.indices_.size())
+    selection.indices_.resize(maximum_selected_rows);
+  selection.identity_ =
+      selection.identity_ && selection.indices_.size() == selection.physical_row_count_;
+  return selection;
+}
+
 VectorChunk::VectorChunk(std::vector<columnar::OwnedPhysicalColumn> columns,
                          VectorSelection selection, const Accounting accounting) noexcept
     : columns_(std::move(columns)), selection_(std::move(selection)),
@@ -298,6 +307,15 @@ VectorChunk::project_columns(VectorChunk chunk,
     chunk.columns_.pop_back();
   chunk.buffer_bytes_ = buffer_bytes;
   chunk.retained_buffer_bytes_ = retained_buffer_bytes;
+  return chunk;
+}
+
+VectorChunk VectorChunk::take_first(VectorChunk chunk, const std::size_t maximum_selected_rows) {
+  const std::size_t previous_selection_bytes = chunk.selection_.buffer_bytes();
+  chunk.selection_ =
+      VectorSelection::take_first(std::move(chunk.selection_), maximum_selected_rows);
+  chunk.buffer_bytes_ -= previous_selection_bytes;
+  chunk.buffer_bytes_ += chunk.selection_.buffer_bytes();
   return chunk;
 }
 

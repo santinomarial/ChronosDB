@@ -77,6 +77,9 @@
 > Stable column-subset projection adds bounded/order/range failures, zero-column cardinality,
 > exhaustive eight-row selection-mask cell preservation, hostile fuzz inputs, ownership-release
 > measurement, and installed-consumer linkage.
+> Global LIMIT adds zero/exact/partial/oversized boundaries, empty-chunk progress, eager unpulled
+> credit release, deterministic scalar-prefix comparison, truncation fuzzing, batched measurement,
+> and installed-consumer linkage.
 > Vector-plan differential and distributed query harnesses remain planned for their roadmap phases.
 
 ## Test types

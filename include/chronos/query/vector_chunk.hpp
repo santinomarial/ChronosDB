@@ -41,6 +41,10 @@ public:
   // are removed according to SQL WHERE semantics. The existing index allocation is reused.
   [[nodiscard]] static common::Result<VectorSelection>
   where_true(VectorSelection selection, const columnar::OwnedPhysicalColumn& predicate);
+  // Stable truncation used by LIMIT. Retained capacity is unchanged and an oversized maximum is a
+  // no-op.
+  [[nodiscard]] static VectorSelection take_first(VectorSelection selection,
+                                                  std::size_t maximum_selected_rows);
 
 private:
   VectorSelection(std::uint32_t physical_row_count, std::vector<std::uint32_t> indices,
@@ -96,6 +100,7 @@ public:
   // cardinality for operators such as COUNT(*); duplicate or reordered outputs require a builder.
   [[nodiscard]] static common::Result<VectorChunk>
   project_columns(VectorChunk chunk, std::span<const std::size_t> column_ordinals);
+  [[nodiscard]] static VectorChunk take_first(VectorChunk chunk, std::size_t maximum_selected_rows);
 
 private:
   struct Accounting {

@@ -57,6 +57,12 @@ AccountedVectorChunk::project_columns(AccountedVectorChunk input,
   return AccountedVectorChunk{std::move(*projected), std::move(input.reservation_)};
 }
 
+AccountedVectorChunk AccountedVectorChunk::take_first(AccountedVectorChunk input,
+                                                      const std::size_t maximum_selected_rows) {
+  input.chunk_ = VectorChunk::take_first(std::move(input.chunk_), maximum_selected_rows);
+  return input;
+}
+
 const VectorChunk& AccountedVectorChunk::chunk() const noexcept {
   return chunk_;
 }
@@ -212,6 +218,70 @@ ColumnSubsetOperator::next(const QueryResourceContext& resources) {
     return common::make_unexpected(projected.error());
   }
   return PhysicalOperatorStep::chunk(std::move(*projected));
+}
+
+LimitOperator::LimitOperator(std::unique_ptr<PhysicalOperator> input,
+                             const std::uint64_t maximum_rows) noexcept
+    : input_(std::move(input)), remaining_rows_(maximum_rows), ended_(maximum_rows == 0U) {
+  if (ended_)
+    input_.reset();
+}
+
+common::Result<std::unique_ptr<PhysicalOperator>>
+LimitOperator::create(std::unique_ptr<PhysicalOperator> input, const std::uint64_t maximum_rows) {
+  if (input == nullptr)
+    return common::make_unexpected(invalid("limit input operator must be non-null"));
+  try {
+    return std::unique_ptr<PhysicalOperator>{new LimitOperator{std::move(input), maximum_rows}};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted, "limit operator allocation failed"});
+  }
+}
+
+common::Result<PhysicalOperatorStep> LimitOperator::next(const QueryResourceContext& resources) {
+  if (ended_)
+    return PhysicalOperatorStep::end();
+  const common::Result<void> active = resources.check_cancelled();
+  if (!active.has_value())
+    return common::make_unexpected(active.error());
+  common::Result<PhysicalOperatorStep> input = input_->next(resources);
+  if (!input.has_value()) {
+    static_cast<void>(resources.request_cancel());
+    return common::make_unexpected(input.error());
+  }
+  if (input->kind() == PhysicalOperatorStepKind::kEnd) {
+    ended_ = true;
+    input_.reset();
+    return PhysicalOperatorStep::end();
+  }
+  common::Result<AccountedVectorChunk> chunk = std::move(*input).take_chunk();
+  if (!chunk.has_value()) {
+    static_cast<void>(resources.request_cancel());
+    return common::make_unexpected(chunk.error());
+  }
+  if (!chunk->belongs_to(resources)) {
+    static_cast<void>(resources.request_cancel());
+    return common::make_unexpected(
+        invalid("physical operator received a chunk charged to another query"));
+  }
+
+  const std::uint64_t selected_rows =
+      static_cast<std::uint64_t>(chunk->chunk().selected_row_count());
+  if (selected_rows > remaining_rows_) {
+    AccountedVectorChunk limited = AccountedVectorChunk::take_first(
+        std::move(*chunk), static_cast<std::size_t>(remaining_rows_));
+    remaining_rows_ = 0U;
+    ended_ = true;
+    input_.reset();
+    return PhysicalOperatorStep::chunk(std::move(limited));
+  }
+  remaining_rows_ -= selected_rows;
+  if (remaining_rows_ == 0U) {
+    ended_ = true;
+    input_.reset();
+  }
+  return PhysicalOperatorStep::chunk(std::move(*chunk));
 }
 
 } // namespace chronos::query
