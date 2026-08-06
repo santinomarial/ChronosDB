@@ -167,7 +167,8 @@ writer adds deterministic installation ordering, append failure, sync failure, a
 coverage. Discovery, physical scan, corruption classification, explicit repair, preflight/replay,
 reopen, and inspector suites are implemented. The subprocess harness implements process-kill image
 recovery and acknowledgment reconciliation across initial/successor installation, append,
-synchronization, grouped completion, repair, reopen, corruption, and locking. Power-cut execution,
+synchronization, grouped completion, repair, reopen, corruption, locking, every covered-prefix WAL
+unlink, and the reclamation directory-sync boundary. Power-cut execution,
 filesystem/device qualification, and crashing recovery inside every one of its own synchronization
 steps remain future evidence.
 

@@ -29,6 +29,12 @@
 namespace chronos::wal::test {
 namespace {
 
+enum class ChildMode : std::uint8_t {
+  kCreate,
+  kReopen,
+  kReclaim,
+};
+
 class AcceptingReplaySink final : public WalReplaySink {
 public:
   [[nodiscard]] common::Status preflight(const WalReplayRecord&) override {
@@ -54,7 +60,7 @@ private:
 
 struct ChildConfig {
   std::string directory;
-  bool reopen{false};
+  ChildMode mode{ChildMode::kCreate};
   std::uint64_t target_segment_size{kSegmentSizeLimit};
   std::size_t maximum_sync_batch_requests{64U};
   std::size_t maximum_sync_batch_encoded_bytes{kMaximumRecordLength};
@@ -87,9 +93,11 @@ template <typename Integer>
       config.directory = value;
     } else if (key == "--mode") {
       if (value == "create") {
-        config.reopen = false;
+        config.mode = ChildMode::kCreate;
       } else if (value == "reopen") {
-        config.reopen = true;
+        config.mode = ChildMode::kReopen;
+      } else if (value == "reclaim") {
+        config.mode = ChildMode::kReclaim;
       } else {
         return std::nullopt;
       }
@@ -202,8 +210,12 @@ public:
   int fsync(const int descriptor) override {
     const int result = delegate_.fsync(descriptor);
     if (result == 0) {
-      observe(descriptor == directory_descriptor_ ? kAfterSegmentDirectorySync
-                                                  : kAfterSegmentFileSync);
+      if (reclamation_started_ && descriptor == directory_descriptor_) {
+        observe(kAfterReclamationDirectorySync);
+      } else {
+        observe(descriptor == directory_descriptor_ ? kAfterSegmentDirectorySync
+                                                    : kAfterSegmentFileSync);
+      }
     }
     return result;
   }
@@ -226,11 +238,19 @@ public:
   }
 
   int unlink_at(const int directory_descriptor, const char* const name) override {
-    return delegate_.unlink_at(directory_descriptor, name);
+    const int result = delegate_.unlink_at(directory_descriptor, name);
+    if (result == 0 && reclamation_started_) {
+      observe(kAfterReclamationRemove);
+    }
+    return result;
   }
 
   int close(const int descriptor) override {
     return delegate_.close(descriptor);
+  }
+
+  void begin_reclamation() noexcept {
+    reclamation_started_ = true;
   }
 
 private:
@@ -254,6 +274,7 @@ private:
   Config config_;
   int directory_descriptor_{-1};
   bool short_record_write_used_{false};
+  bool reclamation_started_{false};
   std::unordered_map<std::string, std::uint64_t> occurrences_;
 };
 
@@ -307,7 +328,7 @@ int main(const int argc, char** const argv) {
     common::Result<WalWriter> writer = common::make_unexpected(
         common::Status{common::StatusCode::kInternal, "writer startup was not attempted"});
     AcceptingReplaySink replay_sink;
-    if (child_config->reopen) {
+    if (child_config->mode != ChildMode::kCreate) {
       writer = chronos::wal::detail::WalWriterTestAccess::open_existing(
           writer_config, WalRecoveryOptions{}, replay_sink, syscalls);
     } else {
@@ -317,6 +338,44 @@ int main(const int argc, char** const argv) {
     }
     if (!writer.has_value()) {
       return report_start_failure(protocol, writer.error());
+    }
+
+    if (child_config->mode == ChildMode::kReclaim) {
+      if (!protocol.send("READY")) {
+        return 3;
+      }
+      std::string command;
+      if (!std::getline(std::cin, command)) {
+        return 4;
+      }
+      std::istringstream input{command};
+      std::string operation;
+      std::uint64_t record_sequence = 0U;
+      std::uint64_t segment_number = 0U;
+      std::uint64_t byte_offset = 0U;
+      std::string extra;
+      if (!(input >> operation >> record_sequence >> segment_number >> byte_offset) ||
+          operation != "RECLAIM" || (input >> extra)) {
+        static_cast<void>(protocol.send("ERROR 0 reclaim-command"));
+        return 5;
+      }
+      syscalls.begin_reclamation();
+      const common::Result<WalSegmentReclamationReport> reclaimed =
+          writer->reclaim_checkpointed_segments({.wal_id = writer->wal_id(),
+                                                 .record_sequence = record_sequence,
+                                                 .segment_number = segment_number,
+                                                 .byte_offset = byte_offset});
+      if (!reclaimed.has_value()) {
+        static_cast<void>(protocol.send("ERROR " +
+                                        std::to_string(static_cast<int>(reclaimed.error().code())) +
+                                        " reclamation"));
+        return 6;
+      }
+      static_cast<void>(protocol.send("RECLAIMED " +
+                                      std::to_string(reclaimed->removed_segment_count) + " " +
+                                      std::to_string(reclaimed->removed_physical_bytes) + " " +
+                                      std::to_string(reclaimed->directory_sync_count)));
+      return writer->close().is_ok() ? 0 : 7;
     }
 
     const WalCommitCoordinatorConfig coordinator_config{

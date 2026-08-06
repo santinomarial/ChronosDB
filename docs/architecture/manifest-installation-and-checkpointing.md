@@ -291,6 +291,12 @@ Recognized temporary cleanup never promotes content. A cleanup sync failure prev
 if logical state was otherwise valid. Orphan final parts are observable in the recovery report and
 remain untouched.
 
+The process-crash reclamation matrix stops after each successful covered-segment unlink and after
+the final WAL-directory sync. Every possible surviving covered-prefix subset reopens from the same
+durable Manifest checkpoint, replays the exact required suffix, and converges under repeated
+cleanup. This is process-termination evidence; platform/device power-loss qualification remains a
+separate measurement gate.
+
 ## Failure classification and observability
 
 The implementation keeps these outcomes distinct:

@@ -246,7 +246,9 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > composition now selects/validates durable state, derives those seeds, cleans recognized
 > temporaries, and returns one aggregate publication while retaining Manifest-before-WAL lock
 > ownership. Its explicit startup policy can revalidate and synchronously remove only closed WAL
-> segments covered by the selected checkpoint, converging when cleanup is repeated. Persistent
+> segments covered by the selected checkpoint, converging when cleanup is repeated. The process
+> crash matrix now kills after every covered-prefix unlink and the following WAL-directory sync,
+> then proves every surviving namespace subset reopens and converges. Persistent
 > catalog reconstruction and service activation remain. An installed
 > reproducible flush harness now
 > preserves real CSEG/Manifest/WAL images and raw samples while measuring durable flush throughput,

@@ -511,6 +511,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/wal/wal_recovery_idempotence_test.cpp
     tests/wal/wal_recovery_test.cpp
     tests/wal/wal_reclamation_test.cpp
+    tests/wal/wal_reclamation_crash_test.cpp
     tests/wal/wal_reopen_test.cpp
     tests/wal/wal_replay_sink_header_self_contained.cpp
     tests/wal/wal_replay_test.cpp

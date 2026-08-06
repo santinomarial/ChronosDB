@@ -106,6 +106,8 @@ The matrix uses these boundaries:
 | `after_record_write` | Complete physical record write |
 | `after_short_record_write` | Configured real prefix write of a record; the production full-write loop has not resumed |
 | `after_data_sync` | Successful active-file data synchronization before the call returns to the coordinator |
+| `after_reclamation_remove` | One checkpoint-covered closed segment unlink; occurrence selects the removed-prefix length |
+| `after_reclamation_directory_sync` | WAL-directory synchronization after every covered candidate was removed |
 
 Occurrence numbers disambiguate startup synchronization from later successor installation. The
 short-write failpoint forwards only the configured prefix to the real backend and then blocks inside
@@ -139,6 +141,8 @@ The current deterministic matrix covers:
 - graceful drain and abrupt process termination;
 - strict scan and recovery after middle/header/payload/trailer corruption and a segment gap;
 - explicit incomplete-final-tail repair and repeated convergent recovery;
+- every present/absent subset created by crashing after each checkpoint-covered prefix unlink,
+  plus the post-directory-sync boundary, followed by exact suffix reopen and convergent cleanup;
 - exact sequence continuation after ordinary recovery and after repair; and
 - cross-process lock exclusion and release.
 
@@ -163,7 +167,7 @@ arrive.
 The focused local reproduction command is:
 
 ```bash
-build/debug/chronos_wal_tests --gtest_filter='*WalCrash*:*WalProcessLock*:*WalRecoveryIdempotence*:*WalCorruptionMatrix*'
+build/debug/chronos_wal_tests --gtest_filter='*WalCrash*:*WalReclamationCrash*:*WalProcessLock*:*WalRecoveryIdempotence*:*WalCorruptionMatrix*'
 ```
 
 The suites are also discovered by CTest and run in the ordinary compiler and sanitizer matrices.

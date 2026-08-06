@@ -50,6 +50,9 @@ inline constexpr std::string_view kAfterSegmentDirectorySync = "after_segment_di
 inline constexpr std::string_view kAfterRecordWrite = "after_record_write";
 inline constexpr std::string_view kAfterShortRecordWrite = "after_short_record_write";
 inline constexpr std::string_view kAfterDataSync = "after_data_sync";
+inline constexpr std::string_view kAfterReclamationRemove = "after_reclamation_remove";
+inline constexpr std::string_view kAfterReclamationDirectorySync =
+    "after_reclamation_directory_sync";
 
 [[nodiscard]] inline std::vector<std::byte> make_crash_payload(const std::uint64_t request_id) {
   std::vector<std::byte> payload(kCrashPayloadSize);
@@ -130,6 +133,7 @@ struct CrashEvent {
 struct CrashChildOptions {
   std::filesystem::path directory;
   bool reopen{false};
+  bool reclaim{false};
   std::uint64_t target_segment_size{kSegmentSizeLimit};
   std::size_t maximum_sync_batch_requests{64U};
   std::size_t maximum_sync_batch_encoded_bytes{kMaximumRecordLength};
@@ -167,6 +171,11 @@ public:
     if (options.directory.empty()) {
       return common::make_unexpected(common::Status{common::StatusCode::kInvalidArgument,
                                                     "crash child requires a WAL directory"});
+    }
+    if (options.reopen && options.reclaim) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kInvalidArgument,
+                         "crash child cannot request reopen and reclamation modes together"});
     }
     std::array<int, 2> commands{-1, -1};
     std::array<int, 2> events{-1, -1};
@@ -210,7 +219,8 @@ public:
     arguments.emplace_back(CHRONOS_WAL_CRASH_CHILD_PATH);
 #endif
     append_argument(arguments, "--directory", options.directory.string());
-    append_argument(arguments, "--mode", options.reopen ? "reopen" : "create");
+    append_argument(arguments, "--mode",
+                    options.reclaim ? "reclaim" : (options.reopen ? "reopen" : "create"));
     append_argument(arguments, "--target-segment-size",
                     std::to_string(options.target_segment_size));
     append_argument(arguments, "--max-batch-requests",
