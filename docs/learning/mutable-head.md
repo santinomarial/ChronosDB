@@ -138,14 +138,20 @@ install/export tests link `chronos::head` from a staged package.
 The deterministic concurrency test runs under ThreadSanitizer, while the ordinary suite also runs
 under AddressSanitizer and UndefinedBehaviorSanitizer. `chronos_head_benchmarks` measures:
 
-- preparation plus materialization plus release publication by batch size, excluding generation
-  arena construction and WAL I/O; and
-- acquire snapshot plus construction of all borrowed column views.
+- preparation plus materialization plus release publication by batch size and zero-, 8-, and
+  64-byte string values, excluding generation arena construction and WAL I/O;
+- acquire snapshot plus construction of all borrowed column views;
+- checked scans across fixed values, variable offsets and values, and Boolean storage for the same
+  row-count and string-width matrix; and
+- isolated sealing of a fully published generation.
+
+Publish and scan cases expose logical bytes and retained head bytes as benchmark counters so the
+memory ratio is visible beside throughput rather than inferred from allocator internals.
 
 The measurements are local microbenchmarks, not an end-to-end ingestion claim. Later Phase 4
-evidence must add seal/handoff cost, scan throughput, memory overhead including allocator effects,
-reader contention, and the wider workload matrix around the implemented tablet generation
-switching, retry integration, and ordered replay.
+evidence must still add allocator-call counts, cache profiles, concurrent reader contention, flush
+handoff cost, and the wider workload matrix around the implemented tablet generation switching,
+retry integration, and ordered replay.
 
 ## Tradeoffs and likely review questions
 

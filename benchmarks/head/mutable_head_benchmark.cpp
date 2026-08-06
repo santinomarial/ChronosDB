@@ -36,13 +36,20 @@ struct Fixture {
   std::size_t variable_bytes;
 };
 
-[[nodiscard]] Fixture make_fixture(const std::uint32_t rows) {
+struct FixtureShape {
+  std::uint32_t rows;
+  std::uint32_t string_bytes_per_row;
+};
+
+[[nodiscard]] Fixture make_fixture(const FixtureShape shape) {
   using chronos::columnar::ColumnVectorBuffers;
   using chronos::columnar::ColumnVectorMetadata;
   using chronos::columnar::OwnedColumnVector;
   using chronos::schema::ColumnDefinition;
   using chronos::schema::ColumnId;
   using chronos::schema::LogicalTypeKind;
+  const std::uint32_t rows = shape.rows;
+  const std::uint32_t string_bytes_per_row = shape.string_bytes_per_row;
 
   const ColumnId timestamp_id = id<ColumnId>(1U);
   const ColumnId string_id = id<ColumnId>(2U);
@@ -84,10 +91,10 @@ struct Fixture {
   std::vector<std::byte> offsets;
   std::vector<std::byte> strings;
   offsets.reserve((static_cast<std::size_t>(rows) + 1U) * sizeof(std::uint32_t));
-  strings.reserve(static_cast<std::size_t>(rows) * 8U);
+  strings.reserve(static_cast<std::size_t>(rows) * string_bytes_per_row);
   append_u32(offsets, 0U);
   for (std::uint32_t row = 0U; row < rows; ++row) {
-    for (std::uint32_t index = 0U; index < 8U; ++index) {
+    for (std::uint32_t index = 0U; index < string_bytes_per_row; ++index) {
       strings.push_back(static_cast<std::byte>('a' + ((row + index) % 26U)));
     }
     append_u32(offsets, static_cast<std::uint32_t>(strings.size()));
@@ -139,7 +146,10 @@ make_head(const Fixture& fixture) {
 
 void benchmark_publish(benchmark::State& state) {
   const auto rows = static_cast<std::uint32_t>(state.range(0));
-  const Fixture fixture = make_fixture(rows);
+  const auto string_bytes = static_cast<std::uint32_t>(state.range(1));
+  const Fixture fixture =
+      make_fixture(FixtureShape{.rows = rows, .string_bytes_per_row = string_bytes});
+  const chronos::head::MutableHeadMetrics memory = make_head(fixture)->metrics();
   for ([[maybe_unused]] auto iteration : state) {
     state.PauseTiming();
     auto created = make_head(fixture);
@@ -179,13 +189,15 @@ void benchmark_publish(benchmark::State& state) {
   state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(rows));
   state.SetBytesProcessed(state.iterations() *
                           static_cast<std::int64_t>(fixture.batch->buffer_bytes()));
+  state.counters["logical_batch_bytes"] = static_cast<double>(fixture.batch->buffer_bytes());
+  state.counters["retained_head_bytes"] = static_cast<double>(memory.retained_storage_bytes);
   state.SetLabel(
       "prepare, materialize, and release-publish; arena allocation and WAL I/O excluded");
 }
 
 void benchmark_snapshot(benchmark::State& state) {
   const auto rows = static_cast<std::uint32_t>(state.range(0));
-  const Fixture fixture = make_fixture(rows);
+  const Fixture fixture = make_fixture(FixtureShape{.rows = rows, .string_bytes_per_row = 8U});
   chronos::head::MutableHead target = make_head(fixture).value();
   auto prepared = target.prepare_append(fixture.batch).value();
   const chronos::common::Status started = prepared.mark_wal_started();
@@ -218,10 +230,106 @@ void benchmark_snapshot(benchmark::State& state) {
   state.SetLabel("acquire one publication and construct all borrowed column views");
 }
 
+void benchmark_scan(benchmark::State& state) {
+  const auto rows = static_cast<std::uint32_t>(state.range(0));
+  const auto string_bytes = static_cast<std::uint32_t>(state.range(1));
+  const Fixture fixture =
+      make_fixture(FixtureShape{.rows = rows, .string_bytes_per_row = string_bytes});
+  chronos::head::MutableHead target = make_head(fixture).value();
+  auto prepared = target.prepare_append(fixture.batch).value();
+  if (!prepared.mark_wal_started().is_ok()) {
+    state.SkipWithError("failed to cross the benchmark WAL boundary");
+    return;
+  }
+  const auto snapshot = prepared.publish(commit_position()).value();
+  const auto timestamps = snapshot.column(0U).value();
+  const auto strings = snapshot.column(1U).value();
+  const auto booleans = snapshot.column(2U).value();
+  std::uint64_t expected = static_cast<std::uint64_t>(fixture.variable_bytes) + ((rows + 1U) / 2U);
+  for (const std::byte value : strings.variable_values()) {
+    expected += std::to_integer<std::uint8_t>(value);
+  }
+
+  for ([[maybe_unused]] auto iteration : state) {
+    std::uint64_t checksum = 0U;
+    for (const std::byte value : timestamps.fixed_values()) {
+      checksum += std::to_integer<std::uint8_t>(value);
+    }
+    for (std::uint32_t row = 0U; row < rows; ++row) {
+      checksum += strings.variable_offsets()[row + 1U] - strings.variable_offsets()[row];
+      checksum += booleans.boolean_values()[row];
+    }
+    for (const std::byte value : strings.variable_values()) {
+      checksum += std::to_integer<std::uint8_t>(value);
+    }
+    if (checksum != expected) {
+      state.SkipWithError("borrowed mutable-head scan produced an unexpected checksum");
+      return;
+    }
+    benchmark::DoNotOptimize(checksum);
+  }
+  const std::size_t scanned_bytes = timestamps.fixed_values().size() +
+                                    strings.variable_values().size() +
+                                    (static_cast<std::size_t>(rows) * 2U * sizeof(std::uint32_t)) +
+                                    booleans.boolean_values().size();
+  state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(rows));
+  state.SetBytesProcessed(state.iterations() * static_cast<std::int64_t>(scanned_bytes));
+  state.counters["retained_head_bytes"] =
+      static_cast<double>(target.metrics().retained_storage_bytes);
+  state.SetLabel("scan fixed, variable-offset, variable-value, and Boolean head storage");
+}
+
+void benchmark_seal(benchmark::State& state) {
+  const auto rows = static_cast<std::uint32_t>(state.range(0));
+  const Fixture fixture = make_fixture(FixtureShape{.rows = rows, .string_bytes_per_row = 8U});
+  for ([[maybe_unused]] auto iteration : state) {
+    state.PauseTiming();
+    auto target = make_head(fixture).value();
+    auto prepared = target.prepare_append(fixture.batch).value();
+    if (!prepared.mark_wal_started().is_ok() || !prepared.publish(commit_position()).has_value()) {
+      state.SkipWithError("failed to publish the benchmark generation");
+      return;
+    }
+    state.ResumeTiming();
+
+    auto sealed = target.seal();
+    if (!sealed.has_value() || sealed->row_count() != rows) {
+      state.SkipWithError("mutable-head seal did not preserve the published boundary");
+      return;
+    }
+    benchmark::DoNotOptimize(sealed->row_count());
+    benchmark::ClobberMemory();
+  }
+  state.SetItemsProcessed(state.iterations());
+  state.SetLabel("seal one published generation and acquire its owning boundary");
+}
+
 // Google Benchmark intentionally registers functions during static initialization.
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
-BENCHMARK(benchmark_publish)->Arg(64)->Arg(1024)->Arg(65536);
+BENCHMARK(benchmark_publish)
+    ->Args({64, 0})
+    ->Args({64, 8})
+    ->Args({64, 64})
+    ->Args({1024, 0})
+    ->Args({1024, 8})
+    ->Args({1024, 64})
+    ->Args({65536, 0})
+    ->Args({65536, 8})
+    ->Args({65536, 64});
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 BENCHMARK(benchmark_snapshot)->Arg(64)->Arg(1024)->Arg(65536);
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+BENCHMARK(benchmark_scan)
+    ->Args({64, 0})
+    ->Args({64, 8})
+    ->Args({64, 64})
+    ->Args({1024, 0})
+    ->Args({1024, 8})
+    ->Args({1024, 64})
+    ->Args({65536, 0})
+    ->Args({65536, 8})
+    ->Args({65536, 64});
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+BENCHMARK(benchmark_seal)->Arg(64)->Arg(1024)->Arg(65536);
 
 } // namespace

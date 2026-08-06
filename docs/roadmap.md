@@ -125,8 +125,11 @@ No phase passes because its code merely compiles. A phase passes only when its a
   APPEND_ROWS logical-key uniqueness with exhaustive typed, replay, property, and benchmark
   evidence. Deterministic allocation-failure sweeps cover retry reservation, mutable-head and tablet
   preparation, deduplication work, and rotation rollback, while the expected post-WAL in-memory
-  publication path observes zero allocations. Retry retention, routing/admission, flush handoff,
-  and the wider end-to-end Phase 4 benchmark matrix remain unimplemented.
+  publication path observes zero allocations. Mutable-head microbenchmarks now cover publication,
+  checked borrowed scans, sealing, retained-memory counters, and zero-/8-/64-byte string values
+  across 64, 1,024, and 65,536 rows. Retry retention, routing/admission, flush handoff, allocation
+  counts/cache profiles/reader-contention measurement, and the wider end-to-end Phase 4 benchmark
+  matrix remain unimplemented.
 
 - **Scope:** typed immutable input batches; null/variable-width representation; append-only tablet heads; sealing; single shard-worker ownership; stable reader boundaries; idempotent ordered replay into heads.
 - **Explicit non-scope:** durable columnar parts, SQL execution, secondary indexes, general lock-free containers, live subscriptions, and a universal allocator.
