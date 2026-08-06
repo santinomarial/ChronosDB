@@ -226,9 +226,12 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > rows and protected retry outcomes, recognizes zero-row exact duplicates, and advances only the
 > longest globally consecutive covered prefix. Hostile multi-tablet-gap, truncation, unsupported,
 > digest/content/boundary, deterministic-property, benchmark, sanitizer, and installed-consumer
-> coverage exercise that boundary. Flush scheduling, atomic
-> manifest publication, generation retirement, and the integrated crash-matrix evidence remain
-> unimplemented.
+> coverage exercise that boundary. One aggregate release/acquire publication owner now retains the
+> exact selected Manifest and live head pins, refreshes monotonic tablet epochs, and substitutes
+> exact newly selected parts for their covered sealed heads with deterministic interleaving,
+> lifetime, hostile, sanitizer, benchmark, and installed-consumer evidence. Flush scheduling,
+> TabletState handoff retirement, the end-to-end flush coordinator, and integrated crash-matrix
+> evidence remain unimplemented.
 
 - **Scope:** manifest generations/version edits; atomic durable part installation; sealed-head flush; checkpoint/log coverage; startup reconciliation; safe temporary-file handling.
 - **Explicit non-scope:** compaction, delta parts, distributed metadata, object storage, and aggressive garbage collection beyond proven safe ownership.

@@ -71,6 +71,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/manifest/layout.hpp>
 #include <chronos/manifest/naming.hpp>
 #include <chronos/manifest/part_validation.hpp>
+#include <chronos/manifest/publication.hpp>
 #include <chronos/manifest/sealed_head_flush.hpp>
 #include <chronos/manifest/storage.hpp>
 #include <chronos/manifest/types.hpp>
@@ -243,6 +244,12 @@ int main() {
           const chronos::manifest::ManifestCheckpointBuildInput&);
   const BuildCheckpointFunction build_checkpoint =
       &chronos::manifest::build_manifest_v1_checkpointed_generation;
+  using CreateStoragePublisherFunction =
+      chronos::common::Result<chronos::manifest::DatabaseStoragePublisher> (*)(
+          std::shared_ptr<const chronos::manifest::LoadedManifestGeneration>,
+          std::span<const chronos::manifest::DatabaseStorageTabletInput>);
+  const CreateStoragePublisherFunction create_storage_publisher =
+      &chronos::manifest::DatabaseStoragePublisher::create;
   return execute != nullptr && recover != nullptr && inspect_wal_suffix != nullptr &&
                  recover_wal_checkpoint != nullptr && open_wal_checkpoint != nullptr &&
                  reclaim_wal != nullptr && wal_reclamation_metrics != nullptr &&
@@ -265,6 +272,7 @@ int main() {
                  install_manifest != nullptr && manifest_metrics != nullptr &&
                  load_selected_manifest != nullptr && flush_sealed_head != nullptr &&
                  build_manifest != nullptr && build_checkpoint != nullptr &&
+                 create_storage_publisher != nullptr &&
                  stored_page.has_value() && stored_page->bytes().size() == 1U &&
                  plain_page.has_value() && plain_page->bytes().size() == 1U &&
                  encoded_cseg_page.has_value() && encoded_cseg_page->bytes().size() == 1U &&

@@ -1,8 +1,8 @@
 # Manifest Installation and Checkpointing
 
 > **Status: accepted Phase 6 design; sealed-head conversion, filesystem installation, read-only
-> checkpoint coverage proof, checkpointed WAL reopen/reclamation, and manifest-selection primitives
-> implemented.** This document defines ownership,
+> checkpoint coverage proof, checkpointed WAL reopen/reclamation, manifest selection, and atomic
+> database storage publication implemented.** This document defines ownership,
 > durable ordering, recovery, and publication around the normative
 > [Manifest v1 bytes](../formats/manifest-v1.md). It refines
 > [ADR 0017](../adr/0017-manifest-generations-installation-and-checkpoints.md), the
@@ -190,9 +190,14 @@ parts; observing the new pointer yields the replacement part and remaining/new h
 new descriptor initialization and durable-boundary success precede the release store, no reader can
 observe both logical copies or neither. Owning pointers keep the selected memory/files valid.
 
-The implementation must state the exact atomic object and run deterministic publication
-interleavings plus TSan. A collection of independently loaded head and manifest pointers does not
-satisfy this contract.
+`DatabaseStoragePublisher` uses one atomically loaded/stored
+`shared_ptr<const DatabaseStoragePublication>` as that exact object. Tablet refresh and durable
+Manifest replacement both initialize a complete immutable descriptor before its release store.
+The latter verifies the exact new part/head identity, schema, row count, WAL extrema, event-time
+extrema, and remaining-head durable boundary before removing a sealed-head pin. Deterministic
+publication-hook tests pause immediately before the store, and sanitizer runs retain old snapshots
+while readers acquire the old or new complete epoch. A collection of independently loaded head and
+manifest pointers does not satisfy this contract.
 
 ## Checkpoint and WAL reclamation
 

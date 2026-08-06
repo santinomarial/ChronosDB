@@ -7,7 +7,9 @@ It turns one canonical full manifest model into the exact bytes frozen by
 [Manifest v1](../formats/manifest-v1.md), and safely turns an untrusted byte prefix back into a
 borrowed immutable view.
 
-This layer does not publish query state or schedule flushes. Its naming
+The codec layer does not publish query state or schedule flushes. The same library now also owns the
+separate aggregate database storage publication described in
+[Database storage publication](database-storage-publication.md). Its naming
 helpers format and parse exact final and temporary basenames without touching a directory, while
 its referenced-part validator accepts already-read CSEG images. The storage owner now provides the
 durable-installation primitives: immutable CSEG and manifest-generation installation plus locked
@@ -318,6 +320,5 @@ Likely review questions are:
 - Why does the encoder reject unsorted input instead of sorting? Sorting would silently change
   descriptor relationships and hide builder bugs; canonical state construction is a separate
   responsibility.
-- What remains before Phase 6 is complete? WAL coverage authorization for checkpoint advancement,
-  atomic head-to-part publication and retirement, flush scheduling, and integrated crash-matrix
-  evidence.
+- What remains before Phase 6 is complete? Flush scheduling, TabletState handoff retirement, the
+  end-to-end flush coordinator, and integrated crash-matrix evidence.

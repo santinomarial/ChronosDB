@@ -131,6 +131,7 @@ public:
   LoadedManifestGeneration& operator=(LoadedManifestGeneration&&) noexcept;
 
   [[nodiscard]] std::uint64_t generation() const noexcept;
+  [[nodiscard]] std::uint64_t previous_generation() const noexcept;
   [[nodiscard]] const DatabaseId& database_id() const noexcept;
   [[nodiscard]] const wal::WalId& wal_id() const noexcept;
   [[nodiscard]] const WalCheckpoint& reclaim_checkpoint() const noexcept;

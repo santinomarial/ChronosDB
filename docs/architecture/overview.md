@@ -186,10 +186,11 @@ for nullable successor-schema tails. Complete read-only inspection validates str
 schema-independent row semantics and returns an owned value-free report; `chronos-csegdump`
 exposes that path without mutating the candidate file.
 
-Parts will be written to temporary identities, fully validated, and made durable according to the
+Parts are written to temporary identities, fully validated, and made durable according to the
 accepted [installation protocol](manifest-installation-and-checkpointing.md), then atomically
 referenced by a Manifest v1 generation. After installation they are never changed in place.
-Implementation remains pending; compaction and installed-file reclamation remain deferred.
+Sealed-head conversion, part/Manifest installation, and atomic database storage publication are
+implemented; compaction and installed-file reclamation remain deferred.
 
 ### Manifest, flush, and checkpointing
 
@@ -200,7 +201,10 @@ outcomes, and one global WAL reclaim coordinate. It can refer only to completely
 parts. A flush converts a sealed head into one or more new CSEG parts, durably installs them, and
 publishes a manifest generation before a checkpoint allows covered WAL history to be reclaimed.
 Crashes at any step recover to either the old complete state or the new complete state, and retry is
-idempotent. This state machine is specified but not implemented.
+idempotent. The codecs, conversion/build/proof primitives, filesystem installation/recovery,
+checkpoint-aware WAL lifecycle, and one-pointer head-to-part publication are implemented. Bounded
+flush scheduling, TabletState handoff retirement, the end-to-end coordinator, and integrated crash
+matrix remain pending.
 
 A checkpoint records the manifest generation and committed log coverage needed for recovery. It is not permission to delete data still reachable by an active reader, subscription, backup, or other declared retention owner.
 

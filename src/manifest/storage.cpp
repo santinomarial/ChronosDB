@@ -160,6 +160,10 @@ std::uint64_t LoadedManifestGeneration::generation() const noexcept {
   return implementation_->decoded_.generation();
 }
 
+std::uint64_t LoadedManifestGeneration::previous_generation() const noexcept {
+  return implementation_->decoded_.previous_generation();
+}
+
 const DatabaseId& LoadedManifestGeneration::database_id() const noexcept {
   return implementation_->decoded_.database_id();
 }

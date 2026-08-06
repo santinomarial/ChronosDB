@@ -286,6 +286,7 @@ add_library(
   src/manifest/layout.cpp
   src/manifest/naming.cpp
   src/manifest/part_validation.cpp
+  src/manifest/publication.cpp
   src/manifest/sealed_head_flush.cpp
   src/manifest/storage.cpp
   src/manifest/validation.cpp
@@ -614,6 +615,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/manifest/naming_test.cpp
     tests/manifest/part_validation_header_self_contained.cpp
     tests/manifest/part_validation_test.cpp
+    tests/manifest/publication_header_self_contained.cpp
+    tests/manifest/publication_test.cpp
     tests/manifest/sealed_head_flush_header_self_contained.cpp
     tests/manifest/sealed_head_flush_test.cpp
     tests/manifest/storage_header_self_contained.cpp
@@ -793,6 +796,7 @@ if(CHRONOS_BUILD_BENCHMARKS)
   add_executable(
     chronos_manifest_benchmarks
     benchmarks/manifest/codec_benchmark.cpp
+    benchmarks/manifest/publication_benchmark.cpp
     benchmarks/manifest/sealed_head_flush_benchmark.cpp
   )
   target_include_directories(
