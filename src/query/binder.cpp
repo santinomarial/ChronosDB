@@ -46,6 +46,23 @@ struct BindingFailure {
          kind == schema::LogicalTypeKind::kDecimal;
 }
 
+[[nodiscard]] bool text(const schema::LogicalTypeKind kind) noexcept {
+  return kind == schema::LogicalTypeKind::kString || kind == schema::LogicalTypeKind::kSymbol;
+}
+
+[[nodiscard]] bool temporal(const schema::LogicalTypeKind kind) noexcept {
+  return kind == schema::LogicalTypeKind::kDate || kind == schema::LogicalTypeKind::kTimestampNs;
+}
+
+[[nodiscard]] bool cast_allowed(const std::optional<schema::LogicalType>& source,
+                                const schema::LogicalType& target) noexcept {
+  if (!source.has_value() || *source == target)
+    return true;
+  return (numeric(source->kind()) && numeric(target.kind())) ||
+         (text(source->kind()) && text(target.kind())) ||
+         (temporal(source->kind()) && temporal(target.kind()));
+}
+
 [[nodiscard]] std::uint16_t integer_rank(const schema::LogicalTypeKind kind) noexcept {
   switch (kind) {
   case schema::LogicalTypeKind::kInt8:
@@ -392,6 +409,13 @@ private:
       break;
     case SqlExpressionKind::kCast: {
       const Inferred operand = bind_expression(expression.children().front());
+      const schema::LogicalType* target = optional_pointer(expression.cast_type());
+      if (target == nullptr)
+        fail(SqlDiagnosticCode::kTypeMismatch, expression.span(), "CAST has no target type");
+      if (!cast_allowed(operand.type, *target)) {
+        fail(SqlDiagnosticCode::kTypeMismatch, expression.span(),
+             "CAST conversion is not supported in SQL v1");
+      }
       inferred = {.type = expression.cast_type(),
                   .nullable = operand.nullable,
                   .contains_aggregate = operand.contains_aggregate};

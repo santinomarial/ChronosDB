@@ -183,6 +183,14 @@ TEST(SqlBinderTest, EnforcesV1ImplicitConversionAndPredicateRules) {
             SqlDiagnosticCode::kTypeMismatch);
   EXPECT_TRUE(bind("SELECT quantity + 1 AS total FROM trades WHERE price IS NULL").has_value());
   EXPECT_EQ(bind("SELECT -sequence FROM trades").error().code(), SqlDiagnosticCode::kTypeMismatch);
+  EXPECT_TRUE(bind("SELECT CAST(quantity AS DECIMAL(20,2)) AS d FROM trades").has_value());
+  EXPECT_TRUE(bind("SELECT CAST(DATE '1970-01-01' AS TIMESTAMP_NS) AS ts FROM trades").has_value());
+  EXPECT_EQ(bind("SELECT CAST(TRUE AS INT64) AS bad FROM trades").error().code(),
+            SqlDiagnosticCode::kTypeMismatch);
+  EXPECT_EQ(bind("SELECT CAST(X'00' AS STRING) AS bad FROM trades").error().code(),
+            SqlDiagnosticCode::kTypeMismatch);
+  EXPECT_EQ(bind("SELECT CAST(ts AS INT64) AS bad FROM trades").error().code(),
+            SqlDiagnosticCode::kTypeMismatch);
 }
 
 TEST(SqlBinderTest, BindsAggregatesAndRejectsNestedOrUntypedOutputs) {
