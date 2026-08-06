@@ -178,6 +178,16 @@ logically unchanged in the successor tablet range, and every protected retry out
 exactly unchanged. New tablets, parts, and retries are allowed; removal, replacement, pruning, and
 schema regression are rejected in Phase 6.
 
+`validate_manifest_v1_compaction_transition()` is the separate Phase 7 authority for one
+append-only replacement. Its borrowed request names nonempty, strictly sorted input and output
+identity sets for exactly one tablet. The validator requires an exact generation advance while
+database, WAL, checkpoint, tablet durable/schema state, retry state, and all unrelated parts remain
+unchanged. It removes exactly the authorized inputs, admits exactly fresh authorized outputs, keeps
+every retained descriptor identical, and requires all selected inputs and outputs to use one schema.
+This structural check deliberately does not infer row equivalence from descriptor counts or extrema:
+the caller must independently compare every decoded input/output row and install the proven output
+files before constructing or installing the replacement Manifest.
+
 The transition validator alone does not claim that a part file exists or that a checkpoint crosses
 only covered WAL commands. The separate referenced-part validator proves supplied CSEG images, and
 the checkpoint builder completes the read-only WAL/content proof. Durable manifest installation and
@@ -191,6 +201,10 @@ Both own one descriptor-vector allocation per nonempty descriptor category; enco
 owns the exact byte image. Referenced-part validation is `O(total CSEG bytes + rows)` and repeats
 bounded system-page decoding after complete CSEG validation to recompute manifest-specific WAL and
 record-sequence facts.
+
+The compaction transition validator is allocation-free. It scans retry/tablet descriptors, uses
+binary searches inside the target tablet's identity-sorted part range, and checks each output's
+freshness against the predecessor's globally tablet-grouped part array.
 
 Sealed-head conversion uses `O(rows)` row-index/sort workspace plus
 `O(columns + granules + pages)` metadata and page owners. Its deterministic stable merge sort is

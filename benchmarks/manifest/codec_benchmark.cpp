@@ -166,6 +166,59 @@ void benchmark_transition(benchmark::State& state) {
   state.counters["retries"] = static_cast<double>(model.retries.size());
 }
 
+void benchmark_compaction_transition(benchmark::State& state) {
+  const BenchmarkManifest predecessor_model{static_cast<std::size_t>(state.range(0))};
+  BenchmarkManifest next_model = predecessor_model;
+  constexpr std::size_t removed_count = 32U;
+  std::vector<cseg::PartId> input_ids;
+  input_ids.reserve(removed_count);
+  for (std::size_t index = 0U; index < removed_count; ++index) {
+    input_ids.push_back(predecessor_model.parts[index].part_id);
+  }
+  next_model.parts.erase(next_model.parts.begin(), next_model.parts.begin() + removed_count);
+  next_model.parts.push_back(PartDescriptor{
+      .part_id = id<cseg::PartId>(1'000U),
+      .table_id = next_model.table_id,
+      .tablet_id = next_model.tablet_id,
+      .schema_id = next_model.schema_id,
+      .schema_version = schema::SchemaVersion::initial(),
+      .file_length = 32'768U,
+      .row_count = removed_count,
+      .minimum_record_sequence = 1U,
+      .maximum_record_sequence = removed_count,
+      .minimum_event_time = 0,
+      .maximum_event_time = static_cast<std::int64_t>(removed_count - 1U),
+  });
+  next_model.tablets.front().part_count = next_model.parts.size();
+  const std::array output_ids{next_model.parts.back().part_id};
+  const EncodedManifest predecessor_bytes =
+      encode_manifest_v1(predecessor_model.input(41U)).value();
+  const EncodedManifest next_bytes = encode_manifest_v1(next_model.input(42U)).value();
+  const DecodedManifestView predecessor =
+      decode_manifest_v1_exact(predecessor_bytes.bytes()).value();
+  const DecodedManifestView next = decode_manifest_v1_exact(next_bytes.bytes()).value();
+  const schema::SchemaLineage lineage = predecessor_model.lineage();
+  const std::array bindings{
+      TabletSchemaBinding{.tablet_id = predecessor_model.tablet_id, .lineage = std::cref(lineage)}};
+  const ManifestCompactionReplacement replacement{
+      .tablet_id = predecessor_model.tablet_id,
+      .input_part_ids = input_ids,
+      .output_part_ids = output_ids,
+  };
+  for (auto _ : state) {
+    (void)_;
+    common::Status validation =
+        validate_manifest_v1_compaction_transition(predecessor, next, bindings, replacement);
+    benchmark::DoNotOptimize(validation);
+  }
+  state.SetItemsProcessed(static_cast<std::int64_t>(state.iterations()) *
+                          static_cast<std::int64_t>(predecessor_model.retries.size() +
+                                                    predecessor_model.parts.size() +
+                                                    next_model.parts.size()));
+  state.counters["retries"] = static_cast<double>(predecessor_model.retries.size());
+  state.SetLabel("64 predecessor parts; 32-to-1 replacement; structural proof only");
+}
+
 void benchmark_referenced_part_validation(benchmark::State& state) {
   const cseg::EncodedCsegPart part = cseg::test::make_valid_part(cseg::PageCompression::kZstd);
   const schema::TableId table_id = cseg_id<schema::TableId>(2U);
@@ -247,6 +300,7 @@ void benchmark_referenced_part_validation(benchmark::State& state) {
 BENCHMARK(benchmark_encode)->Arg(16)->Arg(1'024)->Arg(4'096);
 BENCHMARK(benchmark_decode)->Arg(16)->Arg(1'024)->Arg(4'096);
 BENCHMARK(benchmark_transition)->Arg(16)->Arg(1'024)->Arg(4'096);
+BENCHMARK(benchmark_compaction_transition)->Arg(16)->Arg(1'024)->Arg(4'096);
 BENCHMARK(benchmark_referenced_part_validation);
 
 } // namespace

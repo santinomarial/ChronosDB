@@ -268,8 +268,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > **Status: first compaction decision accepted.** ADR 0018 freezes the initial append-only boundary:
 > unchanged CSEG v1 rows, deterministic complete-tuple merge, independent full-row equivalence,
 > fresh output identities, Manifest v1 atomic replacement, and conservative retention of inputs.
-> Transition, merge, installation/publication, pin-aware reclamation, index, and benchmark evidence
-> remain to be implemented.
+> A separate allocation-free Manifest transition validator now enforces the exact one-tablet
+> replacement authorization while preserving checkpoint, tablet, retry, and unrelated-part state.
+> Merge, equivalence, installation/publication, pin-aware reclamation, index, and end-to-end
+> benchmark evidence remain to be implemented.
 
 - **Scope:** zone maps, sparse indexes, optional scoped secondary indexes; delta parts for late/out-of-order versions; selection and merge policy; atomic compaction installation; safe reclamation.
 - **Explicit non-scope:** indexes required for correctness, arbitrary in-place updates, distributed compaction, object tiering, and undocumented history loss.

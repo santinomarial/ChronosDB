@@ -72,6 +72,66 @@ struct DecodedPair {
   DecodedManifestView next;
 };
 
+struct PartShape {
+  std::uint8_t identity;
+  std::uint64_t row_count;
+  std::uint64_t minimum_sequence;
+  std::uint64_t maximum_sequence;
+};
+
+[[nodiscard]] PartDescriptor make_part(const test::ManifestFixture& fixture,
+                                       const PartShape shape) {
+  return PartDescriptor{
+      .part_id = test::make_id<cseg::PartId>(shape.identity),
+      .table_id = fixture.tablets.front().table_id,
+      .tablet_id = fixture.tablets.front().tablet_id,
+      .schema_id = fixture.tablets.front().recovery_schema_id,
+      .schema_version = fixture.tablets.front().recovery_schema_version,
+      .file_length = 1'208U + (static_cast<std::uint64_t>(shape.identity) * 8U),
+      .row_count = shape.row_count,
+      .minimum_record_sequence = shape.minimum_sequence,
+      .maximum_record_sequence = shape.maximum_sequence,
+      .minimum_event_time = static_cast<std::int64_t>(shape.minimum_sequence),
+      .maximum_event_time = static_cast<std::int64_t>(shape.maximum_sequence),
+  };
+}
+
+struct CompactionPair {
+  test::ManifestFixture predecessor_fixture;
+  test::ManifestFixture next_fixture;
+  std::vector<cseg::PartId> input_ids;
+  std::vector<cseg::PartId> output_ids;
+};
+
+[[nodiscard]] CompactionPair make_compaction_pair() {
+  CompactionPair pair;
+  pair.predecessor_fixture.parts = {
+      make_part(
+          pair.predecessor_fixture,
+          {.identity = 0x61U, .row_count = 2U, .minimum_sequence = 1U, .maximum_sequence = 2U}),
+      make_part(
+          pair.predecessor_fixture,
+          {.identity = 0x62U, .row_count = 3U, .minimum_sequence = 3U, .maximum_sequence = 5U}),
+      make_part(
+          pair.predecessor_fixture,
+          {.identity = 0x63U, .row_count = 4U, .minimum_sequence = 6U, .maximum_sequence = 9U}),
+  };
+  pair.predecessor_fixture.tablets.front().part_count = 3U;
+  pair.predecessor_fixture.tablets.front().durable_row_count = 9U;
+  pair.next_fixture = pair.predecessor_fixture;
+  pair.next_fixture.parts = {
+      pair.predecessor_fixture.parts.back(),
+      make_part(
+          pair.next_fixture,
+          {.identity = 0xa1U, .row_count = 5U, .minimum_sequence = 1U, .maximum_sequence = 5U}),
+  };
+  pair.next_fixture.tablets.front().part_count = 2U;
+  pair.input_ids = {pair.predecessor_fixture.parts[0].part_id,
+                    pair.predecessor_fixture.parts[1].part_id};
+  pair.output_ids = {pair.next_fixture.parts[1].part_id};
+  return pair;
+}
+
 [[nodiscard]] DecodedPair decode_pair(const ManifestEncodeInput& predecessor,
                                       const ManifestEncodeInput& next) {
   EncodedManifest predecessor_bytes = encode_manifest_v1(predecessor).value();
@@ -224,6 +284,158 @@ TEST(ManifestTransitionTest, RejectsSchemaRegressionAndStorageIdentityChange) {
   DecodedPair identity = decode_pair(old_fixture.input(2U), new_fixture.input(3U));
   EXPECT_EQ(validate_manifest_v1_transition(identity.predecessor, identity.next, bindings).code(),
             common::StatusCode::kInvalidArgument);
+}
+
+TEST(ManifestCompactionTransitionTest, AcceptsOneExactAppendOnlyReplacement) {
+  const CompactionPair fixture = make_compaction_pair();
+  const LineageFixture schemas{fixture.predecessor_fixture};
+  const schema::SchemaLineage lineage = schemas.lineage();
+  const DecodedPair pair =
+      decode_pair(fixture.predecessor_fixture.input(2U), fixture.next_fixture.input(3U));
+  const std::array bindings{
+      TabletSchemaBinding{.tablet_id = fixture.predecessor_fixture.tablets.front().tablet_id,
+                          .lineage = std::cref(lineage)}};
+  const ManifestCompactionReplacement replacement{
+      .tablet_id = fixture.predecessor_fixture.tablets.front().tablet_id,
+      .input_part_ids = fixture.input_ids,
+      .output_part_ids = fixture.output_ids,
+  };
+
+  EXPECT_TRUE(
+      validate_manifest_v1_compaction_transition(pair.predecessor, pair.next, bindings, replacement)
+          .is_ok());
+  EXPECT_EQ(validate_manifest_v1_transition(pair.predecessor, pair.next, bindings).code(),
+            common::StatusCode::kInvalidArgument);
+}
+
+TEST(ManifestCompactionTransitionTest, RejectsNonCanonicalOrInexactAuthorization) {
+  const CompactionPair fixture = make_compaction_pair();
+  const LineageFixture schemas{fixture.predecessor_fixture};
+  const schema::SchemaLineage lineage = schemas.lineage();
+  const DecodedPair pair =
+      decode_pair(fixture.predecessor_fixture.input(2U), fixture.next_fixture.input(3U));
+  const std::array bindings{
+      TabletSchemaBinding{.tablet_id = fixture.predecessor_fixture.tablets.front().tablet_id,
+                          .lineage = std::cref(lineage)}};
+  const std::array duplicate_inputs{fixture.input_ids.front(), fixture.input_ids.front()};
+  const std::array reversed_inputs{fixture.input_ids.back(), fixture.input_ids.front()};
+  const std::array missing_output{test::make_id<cseg::PartId>(0xa2U)};
+
+  for (const std::span<const cseg::PartId> bad_inputs :
+       std::array<std::span<const cseg::PartId>, 3U>{{{}, duplicate_inputs, reversed_inputs}}) {
+    const ManifestCompactionReplacement replacement{
+        .tablet_id = fixture.predecessor_fixture.tablets.front().tablet_id,
+        .input_part_ids = bad_inputs,
+        .output_part_ids = fixture.output_ids,
+    };
+    EXPECT_EQ(validate_manifest_v1_compaction_transition(pair.predecessor, pair.next, bindings,
+                                                         replacement)
+                  .code(),
+              common::StatusCode::kInvalidArgument);
+  }
+  const ManifestCompactionReplacement missing{
+      .tablet_id = fixture.predecessor_fixture.tablets.front().tablet_id,
+      .input_part_ids = fixture.input_ids,
+      .output_part_ids = missing_output,
+  };
+  EXPECT_EQ(
+      validate_manifest_v1_compaction_transition(pair.predecessor, pair.next, bindings, missing)
+          .code(),
+      common::StatusCode::kInvalidArgument);
+}
+
+TEST(ManifestCompactionTransitionTest, RejectsUnauthorizedPartAndMetadataChanges) {
+  const CompactionPair fixture = make_compaction_pair();
+  const LineageFixture schemas{fixture.predecessor_fixture};
+  const schema::SchemaLineage lineage = schemas.lineage();
+  const std::array bindings{
+      TabletSchemaBinding{.tablet_id = fixture.predecessor_fixture.tablets.front().tablet_id,
+                          .lineage = std::cref(lineage)}};
+
+  test::ManifestFixture changed_part = fixture.next_fixture;
+  changed_part.parts.front().file_length += 8U;
+  DecodedPair pair = decode_pair(fixture.predecessor_fixture.input(2U), changed_part.input(3U));
+  ManifestCompactionReplacement replacement{
+      .tablet_id = fixture.predecessor_fixture.tablets.front().tablet_id,
+      .input_part_ids = fixture.input_ids,
+      .output_part_ids = fixture.output_ids,
+  };
+  EXPECT_EQ(
+      validate_manifest_v1_compaction_transition(pair.predecessor, pair.next, bindings, replacement)
+          .code(),
+      common::StatusCode::kInvalidArgument);
+
+  test::ManifestFixture changed_state = fixture.next_fixture;
+  ++changed_state.tablets.front().durable_record_sequence;
+  pair = decode_pair(fixture.predecessor_fixture.input(2U), changed_state.input(3U));
+  EXPECT_EQ(
+      validate_manifest_v1_compaction_transition(pair.predecessor, pair.next, bindings, replacement)
+          .code(),
+      common::StatusCode::kInvalidArgument);
+
+  ManifestEncodeInput next_input = fixture.next_fixture.input(3U);
+  next_input.reclaim_checkpoint.byte_offset += 8U;
+  pair = decode_pair(fixture.predecessor_fixture.input(2U), next_input);
+  EXPECT_EQ(
+      validate_manifest_v1_compaction_transition(pair.predecessor, pair.next, bindings, replacement)
+          .code(),
+      common::StatusCode::kInvalidArgument);
+
+  test::ManifestFixture changed_retry = fixture.next_fixture;
+  changed_retry.retries.clear();
+  pair = decode_pair(fixture.predecessor_fixture.input(2U), changed_retry.input(3U));
+  EXPECT_EQ(
+      validate_manifest_v1_compaction_transition(pair.predecessor, pair.next, bindings, replacement)
+          .code(),
+      common::StatusCode::kInvalidArgument);
+}
+
+TEST(ManifestCompactionTransitionTest, DeterministicReplacementPropertyMatrix) {
+  for (std::uint8_t part_count = 2U; part_count <= 32U; ++part_count) {
+    test::ManifestFixture predecessor;
+    predecessor.parts.clear();
+    for (std::uint8_t index = 0U; index < part_count; ++index) {
+      predecessor.parts.push_back(
+          make_part(predecessor, {.identity = static_cast<std::uint8_t>(index + 1U),
+                                  .row_count = 1U,
+                                  .minimum_sequence = index + 1U,
+                                  .maximum_sequence = index + 1U}));
+    }
+    predecessor.tablets.front().part_count = part_count;
+    predecessor.tablets.front().durable_row_count = part_count;
+    predecessor.tablets.front().durable_record_sequence = 64U;
+
+    test::ManifestFixture next = predecessor;
+    const std::size_t removed_count = part_count / 2U;
+    std::vector<cseg::PartId> inputs;
+    inputs.reserve(removed_count);
+    for (std::size_t index = 0U; index < removed_count; ++index) {
+      inputs.push_back(predecessor.parts[index].part_id);
+    }
+    next.parts.erase(next.parts.begin(),
+                     next.parts.begin() + static_cast<std::ptrdiff_t>(removed_count));
+    next.parts.push_back(make_part(next, {.identity = 0xe0U,
+                                          .row_count = removed_count,
+                                          .minimum_sequence = 1U,
+                                          .maximum_sequence = removed_count}));
+    next.tablets.front().part_count = next.parts.size();
+    const std::array outputs{next.parts.back().part_id};
+
+    const LineageFixture schemas{predecessor};
+    const schema::SchemaLineage lineage = schemas.lineage();
+    const DecodedPair pair = decode_pair(predecessor.input(20U), next.input(21U));
+    const std::array bindings{TabletSchemaBinding{
+        .tablet_id = predecessor.tablets.front().tablet_id, .lineage = std::cref(lineage)}};
+    const ManifestCompactionReplacement replacement{
+        .tablet_id = predecessor.tablets.front().tablet_id,
+        .input_part_ids = inputs,
+        .output_part_ids = outputs,
+    };
+    ASSERT_TRUE(validate_manifest_v1_compaction_transition(pair.predecessor, pair.next, bindings,
+                                                           replacement)
+                    .is_ok())
+        << "part_count=" << static_cast<unsigned>(part_count);
+  }
 }
 
 } // namespace

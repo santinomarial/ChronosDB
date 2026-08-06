@@ -286,8 +286,12 @@ compares it with selected generation `N`:
 - retry descriptors are a superset because pruning is not yet defined; and
 - every new/retained part and retry descriptor satisfies the new tablet boundary.
 
-Part removal/replacement belongs to compaction and requires the later Phase 7 transition validator;
-the v1 byte format can describe the resulting full snapshot, but Phase 6 APIs reject such edits.
+The separate `validate_manifest_v1_compaction_transition()` API authorizes one explicit append-only
+Phase 7 replacement. Its nonempty input/output identity sets are strictly sorted; outputs are fresh;
+database, WAL, checkpoint, tablet boundary/schema, retry state, unrelated parts, and retained parts
+remain exact. All selected inputs and outputs use one schema. This structural authorization is not
+the independent full-row input/output equivalence proof and cannot infer equivalence from counts,
+extrema, or descriptor agreement. The Phase 6 API continues to reject all replacements.
 
 ## WAL suffix recovery and reclamation
 

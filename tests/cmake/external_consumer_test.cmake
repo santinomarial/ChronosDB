@@ -222,6 +222,12 @@ int main() {
       std::span<const chronos::manifest::TabletSchemaBinding>);
   const ValidateManifestTransitionFunction validate_manifest_transition =
       &chronos::manifest::validate_manifest_v1_transition;
+  using ValidateManifestCompactionTransitionFunction = chronos::common::Status (*)(
+      const chronos::manifest::DecodedManifestView&, const chronos::manifest::DecodedManifestView&,
+      std::span<const chronos::manifest::TabletSchemaBinding>,
+      const chronos::manifest::ManifestCompactionReplacement&);
+  const ValidateManifestCompactionTransitionFunction validate_manifest_compaction_transition =
+      &chronos::manifest::validate_manifest_v1_compaction_transition;
   using ValidateReferencedPartsFunction = chronos::common::Status (*)(
       const chronos::manifest::DecodedManifestView&,
       std::span<const chronos::manifest::TabletSchemaBinding>,
@@ -306,6 +312,7 @@ int main() {
                  manifest_name.has_value() &&
                  *manifest_name == "manifest-00000000000000000001.cman" &&
                  decode_manifest != nullptr && validate_manifest_transition != nullptr &&
+                 validate_manifest_compaction_transition != nullptr &&
                  validate_referenced_parts != nullptr &&
                  open_manifest_storage != nullptr &&
                  scan_manifest_namespace != nullptr &&
