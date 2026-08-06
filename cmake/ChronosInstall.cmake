@@ -9,6 +9,7 @@ function(chronos_configure_installation)
       chronos_common
       chronos_schema
       chronos_columnar
+      chronos_cseg
       chronos_io
       chronos_wal
       chronos_head

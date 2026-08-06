@@ -149,6 +149,22 @@ chronos_set_project_warnings(chronos_columnar)
 chronos_enable_sanitizers(chronos_columnar)
 chronos_enable_static_analysis(chronos_columnar)
 
+add_library(chronos_cseg src/cseg/layout.cpp)
+add_library(chronos::cseg ALIAS chronos_cseg)
+set_target_properties(chronos_cseg PROPERTIES EXPORT_NAME cseg)
+set_target_properties(chronos_cseg PROPERTIES CXX_EXTENSIONS OFF)
+target_compile_features(chronos_cseg PUBLIC cxx_std_23)
+target_include_directories(
+  chronos_cseg
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+)
+target_link_libraries(chronos_cseg PUBLIC chronos::common)
+chronos_set_project_warnings(chronos_cseg)
+chronos_enable_sanitizers(chronos_cseg)
+chronos_enable_static_analysis(chronos_cseg)
+
 if(NOT CMAKE_SYSTEM_NAME MATCHES "^(Linux|Darwin)$")
   message(FATAL_ERROR "chronos_io currently supports only Linux and macOS")
 endif()
@@ -344,6 +360,23 @@ if(CHRONOS_BUILD_TESTS)
   chronos_enable_sanitizers(chronos_columnar_tests)
   chronos_enable_static_analysis(chronos_columnar_tests)
   gtest_discover_tests(chronos_columnar_tests DISCOVERY_TIMEOUT 30)
+
+  add_executable(
+    chronos_cseg_tests
+    tests/cseg/format_header_self_contained.cpp
+    tests/cseg/format_test.cpp
+    tests/cseg/layout_header_self_contained.cpp
+    tests/cseg/layout_test.cpp
+    tests/cseg/types_header_self_contained.cpp
+    tests/cseg/types_test.cpp
+  )
+  set_target_properties(chronos_cseg_tests PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_cseg_tests PRIVATE cxx_std_23)
+  target_link_libraries(chronos_cseg_tests PRIVATE chronos::cseg GTest::gtest_main)
+  chronos_set_project_warnings(chronos_cseg_tests)
+  chronos_enable_sanitizers(chronos_cseg_tests)
+  chronos_enable_static_analysis(chronos_cseg_tests)
+  gtest_discover_tests(chronos_cseg_tests DISCOVERY_TIMEOUT 30)
 
   add_executable(
     chronos_io_tests

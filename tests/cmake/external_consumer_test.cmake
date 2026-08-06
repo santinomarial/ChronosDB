@@ -21,7 +21,7 @@ cmake_minimum_required(VERSION 3.25)
 project(ChronosIngestConsumer LANGUAGES CXX)
 find_package(ChronosDB 0.1 CONFIG REQUIRED)
 add_executable(consumer main.cpp)
-target_link_libraries(consumer PRIVATE chronos::head chronos::ingest)
+target_link_libraries(consumer PRIVATE chronos::cseg chronos::head chronos::ingest)
 target_compile_features(consumer PRIVATE cxx_std_23)
 set(consumer_sanitizers "")
 if(CHRONOS_TEST_ENABLE_ASAN)
@@ -44,6 +44,9 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/columnar/columnar_batch_codec.hpp>
 #include <chronos/columnar/columnar_batch_format.hpp>
 #include <chronos/columnar/column_vector.hpp>
+#include <chronos/cseg/format.hpp>
+#include <chronos/cseg/layout.hpp>
+#include <chronos/cseg/types.hpp>
 #include <chronos/head/mutable_head.hpp>
 #include <chronos/ingest/columnar_append.hpp>
 #include <chronos/ingest/columnar_append_executor.hpp>
@@ -56,6 +59,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/wal/application.hpp>
 
 #include <array>
+#include <cstdint>
 #include <memory>
 
 int main() {
@@ -73,6 +77,10 @@ int main() {
   const RegisterSchemaFunction register_schema = &chronos::ingest::TabletState::register_schema;
   static_assert(chronos::columnar::bitmap_size(9U) == 2U);
   static_assert(chronos::columnar::format::kBatchHeaderLength == 96U);
+  static_assert(chronos::cseg::format::kFileHeaderLength == 256U);
+  const std::array<std::uint64_t, 5> page_lengths{8U, 8U, 8U, 8U, 8U};
+  const auto cseg_layout = chronos::cseg::plan_cseg_v1_layout(
+      {.user_column_count = 1U, .granule_count = 1U}, page_lengths);
   chronos::columnar::ColumnarBatchLimits limits;
   std::array<std::byte, 0> empty{};
   const auto decoded = chronos::columnar::decode_columnar_batch_v1_exact(empty);
@@ -94,6 +102,7 @@ int main() {
                  tablet_config.maximum_sealed_generations == 2U && digest.has_value() &&
                  retry_directory.has_value() &&
                  retry_directory->metrics().maximum_entries == 8U && !decoded.has_value() &&
+                 cseg_layout.has_value() && cseg_layout->total_length == 1'248U &&
                  decoded.error().kind() ==
                      chronos::columnar::ColumnarBatchDecodeErrorKind::kIncomplete
              ? 0

@@ -46,6 +46,12 @@ if(NOT EXISTS "${installed_columnar_codec_header}")
   message(FATAL_ERROR "staging install omitted ${installed_columnar_codec_header}")
 endif()
 
+set(installed_cseg_layout_header
+    "${install_prefix}/${CHRONOS_TEST_INSTALL_INCLUDEDIR}/chronos/cseg/layout.hpp")
+if(NOT EXISTS "${installed_cseg_layout_header}")
+  message(FATAL_ERROR "staging install omitted ${installed_cseg_layout_header}")
+endif()
+
 set(installed_ingest_header
     "${install_prefix}/${CHRONOS_TEST_INSTALL_INCLUDEDIR}/chronos/ingest/columnar_append.hpp")
 if(NOT EXISTS "${installed_ingest_header}")
@@ -85,6 +91,11 @@ endif()
 string(FIND "${installed_targets_contents}" "chronos::columnar" columnar_target_offset)
 if(columnar_target_offset EQUAL -1)
   message(FATAL_ERROR "installed CMake package omitted chronos::columnar")
+endif()
+
+string(FIND "${installed_targets_contents}" "chronos::cseg" cseg_target_offset)
+if(cseg_target_offset EQUAL -1)
+  message(FATAL_ERROR "installed CMake package omitted chronos::cseg")
 endif()
 
 string(FIND "${installed_targets_contents}" "chronos::ingest" ingest_target_offset)

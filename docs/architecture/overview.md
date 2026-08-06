@@ -165,8 +165,9 @@ In the distributed phase, each tablet's authoritative ordering is its committed 
 CSEG is the accepted public contract for versioned, immutable, sorted, compressed columnar parts.
 The [CSEG v1 specification](../formats/cseg-v1.md) fixes one schema/tablet-bound file, canonical
 granules, schema and system columns, independently checksummed PLAIN pages, bounded raw/Zstandard
-storage, metadata integrity, physical row ordering, and compatibility behavior. The codec, reader,
-writer, validator, and inspector remain pending.
+storage, metadata integrity, physical row ordering, and compatibility behavior. The `chronos_cseg`
+target now exposes the authoritative constants, nominal part identity, and allocation-free checked
+metadata/page layout planner. The codec, reader, writer, validator, and inspector remain pending.
 
 Parts will be written to temporary identities, fully validated and made durable according to the
 future installation protocol, then atomically referenced by a manifest version edit. After
