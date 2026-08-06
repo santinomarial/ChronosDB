@@ -113,6 +113,12 @@ if(NOT EXISTS "${installed_cseg_projected_reader_header}")
   message(FATAL_ERROR "staging install omitted ${installed_cseg_projected_reader_header}")
 endif()
 
+set(installed_cseg_pruning_header
+    "${install_prefix}/${CHRONOS_TEST_INSTALL_INCLUDEDIR}/chronos/cseg/pruning.hpp")
+if(NOT EXISTS "${installed_cseg_pruning_header}")
+  message(FATAL_ERROR "staging install omitted ${installed_cseg_pruning_header}")
+endif()
+
 set(installed_ingest_header
     "${install_prefix}/${CHRONOS_TEST_INSTALL_INCLUDEDIR}/chronos/ingest/columnar_append.hpp")
 if(NOT EXISTS "${installed_ingest_header}")

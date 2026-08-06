@@ -1,4 +1,5 @@
 #include "chronos/cseg/metadata_codec.hpp"
+#include "chronos/cseg/pruning.hpp"
 
 #include <benchmark/benchmark.h>
 #include <cstddef>
@@ -135,10 +136,38 @@ void benchmark_decode(benchmark::State& state) {
   state.SetLabel("header/metadata CRCs plus complete structural directory validation; local only");
 }
 
+void benchmark_event_time_pruning(benchmark::State& state) {
+  const auto granules = static_cast<std::uint32_t>(state.range(0));
+  const Fixture fixture{granules};
+  const auto encoded = chronos::cseg::encode_cseg_v1_metadata(fixture.input()).value();
+  const auto decoded = chronos::cseg::decode_cseg_v1_metadata_exact(encoded.bytes()).value();
+  const std::int64_t lower = static_cast<std::int64_t>(granules / 3U);
+  const chronos::cseg::EventTimePredicate predicate{
+      .lower = chronos::cseg::EventTimeBound{.value = lower, .inclusive = true},
+      .upper = chronos::cseg::EventTimeBound{
+          .value = lower + static_cast<std::int64_t>(granules / 8U), .inclusive = false}};
+  std::size_t selected = 0U;
+  for ([[maybe_unused]] auto iteration : state) {
+    auto plan = chronos::cseg::plan_cseg_v1_event_time_pruning(decoded, predicate);
+    if (!plan.has_value()) {
+      const std::string message = plan.error().to_string();
+      state.SkipWithError(message);
+      return;
+    }
+    selected = plan->selected_granules().size();
+    benchmark::DoNotOptimize(plan->selected_granules().data());
+  }
+  state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(granules));
+  state.counters["selected_granules"] = static_cast<double>(selected);
+  state.SetLabel("authenticated metadata already decoded; owned conservative ordinal plan");
+}
+
 // Google Benchmark registers functions during static initialization.
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 BENCHMARK(benchmark_encode)->Arg(1)->Arg(64)->Arg(4096);
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 BENCHMARK(benchmark_decode)->Arg(1)->Arg(64)->Arg(4096);
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+BENCHMARK(benchmark_event_time_pruning)->Arg(64)->Arg(4096)->Arg(65'536);
 
 } // namespace

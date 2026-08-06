@@ -160,6 +160,7 @@ add_library(
   src/cseg/page_codec.cpp
   src/cseg/plain_page.cpp
   src/cseg/projected_reader.cpp
+  src/cseg/pruning.cpp
   src/cseg/sort_order_internal.cpp
   src/cseg/system_rows_internal.cpp
   src/cseg/validator.cpp
@@ -455,6 +456,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/cseg/plain_page_test.cpp
     tests/cseg/projected_reader_header_self_contained.cpp
     tests/cseg/projected_reader_test.cpp
+    tests/cseg/pruning_header_self_contained.cpp
+    tests/cseg/pruning_test.cpp
     tests/cseg/types_header_self_contained.cpp
     tests/cseg/types_test.cpp
     tests/cseg/validator_header_self_contained.cpp

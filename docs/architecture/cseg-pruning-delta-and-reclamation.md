@@ -77,3 +77,11 @@ Benchmarks must publish distributions and correctness gates, not product claims.
 include part/granule counts, overlap, lateness, predicate selectivity, fan-in, pin hold time, and
 compression. Required outputs include pruning effectiveness, decoded bytes, compaction debt,
 temporary/durable amplification, and reclaim delay.
+
+The implemented first slice is `plan_cseg_v1_event_time_pruning()`. It returns an owned immutable
+list of selected granule ordinals plus checked selected/skipped row counters, rejects a configured
+granule limit before allocation, treats reversed or open-equal query bounds as an empty predicate,
+and performs no endpoint arithmetic. Deterministic property tests compare it with an independent
+integer oracle and require the plan to contain every possible oracle match; conservative false
+positives remain legal. The CSEG benchmark measures 64, 4,096, and 65,536 authenticated granule
+entries with declared selectivity and excludes metadata decoding from the timed loop.

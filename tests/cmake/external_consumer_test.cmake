@@ -53,6 +53,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/cseg/page_codec.hpp>
 #include <chronos/cseg/plain_page.hpp>
 #include <chronos/cseg/projected_reader.hpp>
+#include <chronos/cseg/pruning.hpp>
 #include <chronos/cseg/types.hpp>
 #include <chronos/cseg/validator.hpp>
 #include <chronos/head/mutable_head.hpp>
@@ -92,6 +93,11 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <string_view>
 
 int main() {
+  using EventTimeMatchFunction = chronos::common::Result<bool> (*)(
+      std::int64_t, std::int64_t,
+      const std::optional<chronos::cseg::EventTimePredicate>&);
+  const EventTimeMatchFunction event_time_match =
+      &chronos::cseg::cseg_event_time_range_may_match;
   using ExecuteFunction = chronos::common::Result<chronos::ingest::ColumnarAppendExecutionResult> (*)(
       const chronos::ingest::ColumnarAppendExecutionInput&, chronos::ingest::RetryDirectory&,
       chronos::ingest::TabletState&, chronos::wal::WalCommitCoordinator&);
@@ -332,8 +338,8 @@ int main() {
           chronos::manifest::ManifestColumnarStartupConfig);
   const RecoverManifestColumnarFunction recover_manifest_columnar =
       &chronos::manifest::recover_manifest_columnar_database;
-  return execute != nullptr && recover != nullptr && reclaim_recovered_wal != nullptr &&
-                 inspect_wal_suffix != nullptr &&
+  return event_time_match != nullptr && execute != nullptr && recover != nullptr &&
+                 reclaim_recovered_wal != nullptr && inspect_wal_suffix != nullptr &&
                  recover_wal_checkpoint != nullptr && open_wal_checkpoint != nullptr &&
                  reclaim_wal != nullptr && wal_reclamation_metrics != nullptr &&
                  register_schema != nullptr && retire_sealed_generation != nullptr &&
