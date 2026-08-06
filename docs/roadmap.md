@@ -319,8 +319,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
   evaluator uses only bound identities and implements three-valued predicates, checked signed and
   unsigned arithmetic, IEEE floating behavior, explicit numeric/temporal casts, IN/BETWEEN,
   COALESCE, ABS, ASCII case mapping, epoch-aligned time buckets, aliases, and aggregate overrides.
-  Decimal arithmetic/casts, CREATE TABLE and INSERT parsing, ASOF/LATEST relational plans, and
-  relational execution remain unimplemented.
+  Its dependency-free exact decimal path uses checked widened intermediates for arithmetic,
+  rescaling, division, remainder, unary operations, and explicit integer/IEEE conversions. CREATE
+  TABLE and INSERT parsing, ASOF/LATEST relational plans, and relational execution remain
+  unimplemented.
 
 - **Scope:** specify a typed analytical SQL subset; custom lexer/parser; catalog binding; scalar expression/relational reference execution; event-time and system-time query syntax required by initial workloads.
 - **Explicit non-scope:** full SQL compliance, vectorization, cost-based optimization, distributed SQL, unsupported mutation syntax, and streaming syntax beyond contracts scheduled later.

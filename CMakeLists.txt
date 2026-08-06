@@ -324,6 +324,7 @@ add_library(
   src/query/ast.cpp
   src/query/binder.cpp
   src/query/catalog.cpp
+  src/query/decimal_internal.cpp
   src/query/diagnostic.cpp
   src/query/evaluator.cpp
   src/query/lexer.cpp
@@ -339,6 +340,7 @@ target_include_directories(
   PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+  PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
 target_link_libraries(chronos_query PUBLIC chronos::columnar chronos::common chronos::schema)
 chronos_set_project_warnings(chronos_query)

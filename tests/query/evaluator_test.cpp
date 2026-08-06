@@ -9,6 +9,7 @@
 #include "chronos/schema/table_schema.hpp"
 
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -89,6 +90,19 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
                                               ScalarSourceRow& source) {
   source = ScalarSourceRow{values};
   return ScalarEvaluationContext{.sources = {&source, 1U}};
+}
+
+[[nodiscard]] std::int64_t small_decimal_coefficient(const ScalarValue& value) {
+  const auto* decimal = std::get_if<Decimal128Value>(&value.storage());
+  EXPECT_NE(decimal, nullptr);
+  if (decimal == nullptr)
+    return 0;
+  std::uint64_t bits = 0U;
+  for (std::size_t index = 0U; index < sizeof(bits); ++index) {
+    bits |= static_cast<std::uint64_t>(std::to_integer<std::uint8_t>(decimal->coefficient[index]))
+            << (index * 8U);
+  }
+  return std::bit_cast<std::int64_t>(bits);
 }
 
 TEST(ScalarEvaluatorTest, EvaluatesBoundColumnsArithmeticAndScalarFunctions) {
@@ -218,6 +232,47 @@ TEST(ScalarEvaluatorTest, EvaluatesCastsAliasesAndAggregateOverrides) {
   EXPECT_EQ(*std::get_if<std::int64_t>(&cast_value->storage()), 7);
 }
 
+TEST(ScalarEvaluatorTest, EvaluatesExactDecimalArithmeticRescalingAndCasts) {
+  BoundSqlSelect plan = bind("SELECT "
+                             "CAST(7 AS DECIMAL(6,2)) / CAST(2 AS DECIMAL(6,2)) AS quotient, "
+                             "CAST(15 AS DECIMAL(6,1)) * CAST(2 AS DECIMAL(6,1)) AS product, "
+                             "CAST(7 AS DECIMAL(6,2)) % CAST(2 AS DECIMAL(6,2)) AS remainder, "
+                             "abs(-CAST(12 AS DECIMAL(6,2))) AS magnitude, "
+                             "CAST(CAST(123 AS DECIMAL(6,2)) AS DECIMAL(4,1)) AS rescaled, "
+                             "CAST(CAST(1.5 AS FLOAT64) AS DECIMAL(4,2)) AS exact_float, "
+                             "CAST(CAST(-3.99 AS DECIMAL(4,2)) AS INT8) AS integral "
+                             "FROM t");
+  const std::vector<ScalarValue> values = row();
+  ScalarSourceRow source{{}};
+  const ScalarEvaluationContext input = context(values, source);
+  std::vector<ScalarValue> results;
+  for (const SqlSelectItem& item : plan.syntax().items()) {
+    auto result = evaluate_sql_v1_expression(plan, *item.expression(), input);
+    ASSERT_TRUE(result.has_value()) << result.error().status().message();
+    results.push_back(std::move(*result));
+  }
+  EXPECT_EQ(small_decimal_coefficient(results[0]), 350);
+  EXPECT_EQ(small_decimal_coefficient(results[1]), 300);
+  EXPECT_EQ(small_decimal_coefficient(results[2]), 100);
+  EXPECT_EQ(small_decimal_coefficient(results[3]), 1'200);
+  EXPECT_EQ(small_decimal_coefficient(results[4]), 1'230);
+  EXPECT_EQ(small_decimal_coefficient(results[5]), 150);
+  EXPECT_EQ(*std::get_if<std::int64_t>(&results[6].storage()), -3);
+
+  BoundSqlSelect overflow = bind("SELECT CAST(1000 AS DECIMAL(3,0)) AS value FROM t");
+  const auto failed =
+      evaluate_sql_v1_expression(overflow, *overflow.syntax().items()[0].expression(), input);
+  ASSERT_FALSE(failed.has_value());
+  EXPECT_EQ(failed.error().status().code(), common::StatusCode::kOutOfRange);
+
+  BoundSqlSelect divide_by_zero =
+      bind("SELECT CAST(1 AS DECIMAL(3,0)) / CAST(0 AS DECIMAL(3,0)) AS value FROM t");
+  const auto divided = evaluate_sql_v1_expression(
+      divide_by_zero, *divide_by_zero.syntax().items()[0].expression(), input);
+  ASSERT_FALSE(divided.has_value());
+  EXPECT_EQ(divided.error().status().code(), common::StatusCode::kInvalidArgument);
+}
+
 TEST(ScalarEvaluatorPropertyTest, CheckedAdditionMatchesWideReferenceWithinDomain) {
   BoundSqlSelect plan = bind("SELECT i + 10 AS value FROM t");
   std::vector<ScalarValue> values = row();
@@ -230,6 +285,56 @@ TEST(ScalarEvaluatorPropertyTest, CheckedAdditionMatchesWideReferenceWithinDomai
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(*std::get_if<std::int64_t>(&result->storage()), value + 10);
   }
+}
+
+TEST(ScalarEvaluatorPropertyTest, DecimalArithmeticMatchesScaledIntegerReference) {
+  BoundSqlSelect plan =
+      bind("SELECT "
+           "CAST(i AS DECIMAL(18,3)) + CAST(7 AS DECIMAL(18,3)) AS added, "
+           "CAST(i AS DECIMAL(18,3)) * CAST(3 AS DECIMAL(18,3)) AS multiplied, "
+           "CAST(i AS DECIMAL(18,3)) / CAST(7 AS DECIMAL(18,3)) AS divided, "
+           "CAST(i AS DECIMAL(18,3)) % CAST(7 AS DECIMAL(18,3)) AS remainder FROM t");
+  std::vector<ScalarValue> values = row();
+  ScalarSourceRow source{{}};
+  for (std::int64_t value = -100'000; value <= 100'000; value += 977) {
+    values[1] = ScalarValue::signed_value(type(schema::LogicalTypeKind::kInt64), value).value();
+    const ScalarEvaluationContext input = context(values, source);
+    std::array<std::int64_t, 4> coefficients{};
+    for (std::size_t index = 0U; index < coefficients.size(); ++index) {
+      const auto result =
+          evaluate_sql_v1_expression(plan, *plan.syntax().items()[index].expression(), input);
+      ASSERT_TRUE(result.has_value());
+      coefficients[index] = small_decimal_coefficient(*result);
+    }
+    EXPECT_EQ(coefficients[0], (value + 7) * 1'000);
+    EXPECT_EQ(coefficients[1], value * 3 * 1'000);
+    EXPECT_EQ(coefficients[2], value * 1'000 / 7);
+    EXPECT_EQ(coefficients[3], value % 7 * 1'000);
+  }
+}
+
+TEST(ScalarEvaluatorTest, HandlesDecimalThirtyEightDigitIntermediatesAndOverflow) {
+  BoundSqlSelect exact =
+      bind("SELECT CAST((CAST(9000000000000000000 AS DECIMAL(38,0)) * "
+           "CAST(9000000000000000000 AS DECIMAL(38,0))) / "
+           "CAST(9000000000000000000 AS DECIMAL(38,0)) AS INT64) AS value FROM t");
+  const std::vector<ScalarValue> values = row();
+  ScalarSourceRow source{{}};
+  const ScalarEvaluationContext input = context(values, source);
+  const auto exact_result =
+      evaluate_sql_v1_expression(exact, *exact.syntax().items()[0].expression(), input);
+  ASSERT_TRUE(exact_result.has_value());
+  EXPECT_EQ(*std::get_if<std::int64_t>(&exact_result->storage()), 9'000'000'000'000'000'000LL);
+
+  BoundSqlSelect overflow = bind("SELECT "
+                                 "CAST(9000000000000000000 AS DECIMAL(38,0)) * "
+                                 "CAST(9000000000000000000 AS DECIMAL(38,0)) + "
+                                 "CAST(9000000000000000000 AS DECIMAL(38,0)) * "
+                                 "CAST(9000000000000000000 AS DECIMAL(38,0)) AS value FROM t");
+  const auto overflow_result =
+      evaluate_sql_v1_expression(overflow, *overflow.syntax().items()[0].expression(), input);
+  ASSERT_FALSE(overflow_result.has_value());
+  EXPECT_EQ(overflow_result.error().status().code(), common::StatusCode::kOutOfRange);
 }
 
 } // namespace

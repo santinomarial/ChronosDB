@@ -4,6 +4,7 @@
 #include "chronos/query/literal.hpp"
 #include "chronos/schema/logical_type.hpp"
 #include "chronos/schema/utf8.hpp"
+#include "query/decimal_internal.hpp"
 
 #include <algorithm>
 #include <array>
@@ -297,10 +298,37 @@ private:
     if (*source == target)
       return operand;
 
+    if (target.is_decimal()) {
+      common::Result<Decimal128Value> converted = common::make_unexpected(
+          common::Status{common::StatusCode::kInvalidArgument,
+                         "CAST to DECIMAL does not support the operand type"});
+      if (const auto* signed_value = stored<std::int64_t>(operand); signed_value != nullptr)
+        converted = detail::decimal_from_signed(*signed_value, target);
+      else if (const auto* unsigned_value = stored<std::uint64_t>(operand);
+               unsigned_value != nullptr)
+        converted = detail::decimal_from_unsigned(*unsigned_value, target);
+      else if (const auto* float_value = stored<float>(operand); float_value != nullptr)
+        converted = detail::decimal_from_float(*float_value, target);
+      else if (const auto* double_value = stored<double>(operand); double_value != nullptr)
+        converted = detail::decimal_from_double(*double_value, target);
+      else if (const auto* decimal_value = stored<Decimal128Value>(operand);
+               decimal_value != nullptr)
+        converted = detail::rescale_decimal(*decimal_value, *source, target);
+      if (!converted.has_value())
+        fail(expression.span(), converted.error().code(), converted.error().message());
+      return ScalarValue::decimal(target, *converted).value();
+    }
+
     if (signed_integer(target.kind()) || target.kind() == schema::LogicalTypeKind::kTimestampNs ||
         target.kind() == schema::LogicalTypeKind::kDate) {
       std::int64_t value = 0;
-      if (const auto* signed_value = stored<std::int64_t>(operand); signed_value != nullptr)
+      if (const auto* decimal_value = stored<Decimal128Value>(operand); decimal_value != nullptr) {
+        const common::Result<std::int64_t> converted =
+            detail::decimal_to_signed(*decimal_value, *source);
+        if (!converted.has_value())
+          fail(expression.span(), converted.error().code(), converted.error().message());
+        value = *converted;
+      } else if (const auto* signed_value = stored<std::int64_t>(operand); signed_value != nullptr)
         value = *signed_value;
       else if (const auto* unsigned_value = stored<std::uint64_t>(operand);
                unsigned_value != nullptr &&
@@ -336,7 +364,14 @@ private:
     }
     if (unsigned_integer(target.kind())) {
       std::uint64_t value = 0U;
-      if (const auto* unsigned_value = stored<std::uint64_t>(operand); unsigned_value != nullptr)
+      if (const auto* decimal_value = stored<Decimal128Value>(operand); decimal_value != nullptr) {
+        const common::Result<std::uint64_t> converted =
+            detail::decimal_to_unsigned(*decimal_value, *source);
+        if (!converted.has_value())
+          fail(expression.span(), converted.error().code(), converted.error().message());
+        value = *converted;
+      } else if (const auto* unsigned_value = stored<std::uint64_t>(operand);
+                 unsigned_value != nullptr)
         value = *unsigned_value;
       else if (const auto* signed_value = stored<std::int64_t>(operand);
                signed_value != nullptr && *signed_value >= 0)
@@ -356,7 +391,18 @@ private:
     }
     if (floating(target.kind())) {
       double value = 0.0;
-      if (const auto* signed_value = stored<std::int64_t>(operand); signed_value != nullptr)
+      if (const auto* decimal_value = stored<Decimal128Value>(operand); decimal_value != nullptr) {
+        if (target.kind() == schema::LogicalTypeKind::kFloat32) {
+          const common::Result<float> converted = detail::decimal_to_float(*decimal_value, *source);
+          if (!converted.has_value())
+            fail(expression.span(), converted.error().code(), converted.error().message());
+          return ScalarValue::float32(*converted).value();
+        }
+        const common::Result<double> converted = detail::decimal_to_double(*decimal_value, *source);
+        if (!converted.has_value())
+          fail(expression.span(), converted.error().code(), converted.error().message());
+        value = *converted;
+      } else if (const auto* signed_value = stored<std::int64_t>(operand); signed_value != nullptr)
         value = static_cast<double>(*signed_value);
       else if (const auto* unsigned_value = stored<std::uint64_t>(operand);
                unsigned_value != nullptr)
@@ -402,6 +448,12 @@ private:
       return ScalarValue::float32(-*value).value();
     if (const auto* value = stored<double>(operand); value != nullptr)
       return ScalarValue::float64(-*value).value();
+    if (const auto* value = stored<Decimal128Value>(operand); value != nullptr) {
+      const common::Result<Decimal128Value> negated = detail::negate_decimal(*value, type);
+      if (!negated.has_value())
+        fail(expression.span(), negated.error().code(), negated.error().message());
+      return ScalarValue::decimal(type, *negated).value();
+    }
     fail(expression.span(), common::StatusCode::kInvalidArgument,
          "Unary negation is unsupported for this numeric type");
   }
@@ -607,8 +659,40 @@ private:
       }
       return ScalarValue::float64(value).value();
     }
-    fail(expression.span(), common::StatusCode::kInvalidArgument,
-         "DECIMAL arithmetic is not yet supported by the scalar evaluator");
+    if (const auto* lhs = stored<Decimal128Value>(left); lhs != nullptr) {
+      const auto* rhs = stored<Decimal128Value>(right);
+      if (rhs == nullptr)
+        fail(expression.span(), common::StatusCode::kInternal,
+             "DECIMAL arithmetic storage mismatch");
+      detail::DecimalOperation operation = detail::DecimalOperation::kAdd;
+      switch (expression.operation()) {
+      case SqlOperator::kAdd:
+        operation = detail::DecimalOperation::kAdd;
+        break;
+      case SqlOperator::kSubtract:
+        operation = detail::DecimalOperation::kSubtract;
+        break;
+      case SqlOperator::kMultiply:
+        operation = detail::DecimalOperation::kMultiply;
+        break;
+      case SqlOperator::kDivide:
+        operation = detail::DecimalOperation::kDivide;
+        break;
+      case SqlOperator::kRemainder:
+        operation = detail::DecimalOperation::kRemainder;
+        break;
+      default:
+        fail(expression.span(), common::StatusCode::kInternal,
+             "Unknown DECIMAL arithmetic operation");
+      }
+      const common::Result<Decimal128Value> value =
+          detail::evaluate_decimal(operation, *lhs, *rhs, result);
+      if (!value.has_value())
+        fail(expression.span(), value.error().code(), value.error().message());
+      return ScalarValue::decimal(result, *value).value();
+    }
+    fail(expression.span(), common::StatusCode::kInternal,
+         "Bound numeric expression has unsupported storage");
   }
 
   [[nodiscard]] ScalarValue between(const SqlExpression& expression, const std::size_t depth) {
@@ -693,8 +777,15 @@ private:
         return ScalarValue::float32(std::fabs(*float_value)).value();
       if (const auto* double_value = stored<double>(value); double_value != nullptr)
         return ScalarValue::float64(std::fabs(*double_value)).value();
-      fail(expression.span(), common::StatusCode::kInvalidArgument,
-           "ABS does not yet support DECIMAL");
+      if (const auto* decimal_value = stored<Decimal128Value>(value); decimal_value != nullptr) {
+        const common::Result<Decimal128Value> absolute =
+            detail::absolute_decimal(*decimal_value, result_type(expression));
+        if (!absolute.has_value())
+          fail(expression.span(), absolute.error().code(), absolute.error().message());
+        return ScalarValue::decimal(result_type(expression), *absolute).value();
+      }
+      fail(expression.span(), common::StatusCode::kInternal,
+           "ABS input has unsupported numeric storage");
     }
     if (expression.text() == "lower" || expression.text() == "upper") {
       ScalarValue value = evaluate(expression.children().front(), depth + 1U);
