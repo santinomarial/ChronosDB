@@ -152,13 +152,13 @@ execute_columnar_append(const ColumnarAppendExecutionInput& input, RetryDirector
   if (!retry_started.is_ok()) {
     static_cast<void>(prepared->mark_wal_started());
     static_cast<void>(tablet.fail_closed());
-    static_cast<void>(completion->wait());
+    [[maybe_unused]] const common::Result<wal::WalCommitResult> drained = completion->wait();
     return common::make_unexpected(retry_started);
   }
   common::Status tablet_started = prepared->mark_wal_started();
   if (!tablet_started.is_ok()) {
     static_cast<void>(tablet.fail_closed());
-    static_cast<void>(completion->wait());
+    [[maybe_unused]] const common::Result<wal::WalCommitResult> drained = completion->wait();
     return common::make_unexpected(tablet_started);
   }
 
@@ -193,7 +193,7 @@ execute_columnar_append(const ColumnarAppendExecutionInput& input, RetryDirector
   return ColumnarAppendExecutionResult{.kind = ColumnarAppendExecutionKind::kApplied,
                                        .outcome = std::move(*committed),
                                        .requested_durability = input.durability,
-                                       .wal_commit = std::move(*wal_result)};
+                                       .wal_commit = *wal_result};
 }
 
 } // namespace chronos::ingest
