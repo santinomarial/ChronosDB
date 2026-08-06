@@ -547,6 +547,111 @@ TEST(TabletStateConcurrencyTest, InnerHeadPublicationRemainsHiddenUntilOuterPubl
   EXPECT_EQ(new_epoch.applied_position().value_or(head::HeadCommitPosition{}), position(1U));
 }
 
+class RetirementPublicationGate {
+public:
+  static void pause(void* context) noexcept {
+    auto* const gate = static_cast<RetirementPublicationGate*>(context);
+    if (!gate->armed_.load(std::memory_order_acquire)) {
+      return;
+    }
+    gate->reached_.store(true, std::memory_order_release);
+    while (!gate->released_.load(std::memory_order_acquire)) {
+      std::this_thread::yield();
+    }
+  }
+
+  void arm() noexcept {
+    armed_.store(true, std::memory_order_release);
+  }
+  [[nodiscard]] bool wait_until_reached() const noexcept {
+    for (std::size_t attempt = 0U; attempt < 100'000U; ++attempt) {
+      if (reached_.load(std::memory_order_acquire)) {
+        return true;
+      }
+      std::this_thread::yield();
+    }
+    return false;
+  }
+  void release() noexcept {
+    released_.store(true, std::memory_order_release);
+  }
+
+private:
+  std::atomic<bool> armed_{false};
+  std::atomic<bool> reached_{false};
+  std::atomic<bool> released_{false};
+};
+
+TEST(TabletStateConcurrencyTest, AuthorizedRetirementPublishesOneCompleteOuterEpoch) {
+  RetirementPublicationGate gate;
+  TabletState target = detail::TabletStateTestAccess::create(
+                           columnar::test::batch_schema(), tablet_id(), config(2U, 2U, 1U, 8U),
+                           &RetirementPublicationGate::pause, &gate)
+                           .value();
+  const auto input = batch();
+  PreparedTabletAppend first = prepare(target, 1U, input);
+  static_cast<void>(publish(first, 1U));
+  PreparedTabletAppend second = prepare(target, 2U, input);
+  static_cast<void>(publish(second, 2U));
+  const TabletSnapshot before = target.snapshot().value();
+  ASSERT_EQ(before.sealed_generations().size(), 1U);
+  const auto receipt = detail::TabletStateTestAccess::retirement_receipt(
+      before.table_id(), before.tablet_id(),
+      before.sealed_generations().front().schema_ptr()->schema_id(),
+      before.sealed_generations().front().schema_ptr()->version(),
+      before.sealed_generations().front().generation(),
+      before.sealed_generations().front().row_count(), wal_id(), 1U, 1U);
+
+  gate.arm();
+  std::atomic<bool> failed{false};
+  std::jthread writer{[&] {
+    if (!target.retire_sealed_generation(receipt).has_value()) {
+      failed.store(true, std::memory_order_release);
+      gate.release();
+    }
+  }};
+  ASSERT_TRUE(gate.wait_until_reached());
+  const TabletSnapshot during = target.snapshot().value();
+  EXPECT_EQ(during.sealed_generations().size(), 1U);
+  EXPECT_EQ(during.visible_row_count(), 4U);
+  gate.release();
+  writer.join();
+
+  EXPECT_FALSE(failed.load(std::memory_order_acquire));
+  const TabletSnapshot after = target.snapshot().value();
+  EXPECT_TRUE(after.sealed_generations().empty());
+  EXPECT_EQ(after.visible_row_count(), 2U);
+  EXPECT_EQ(after.retry_entry_count(), 2U);
+  EXPECT_EQ(during.sealed_generations().size(), 1U);
+  EXPECT_EQ(during.visible_row_count(), 4U);
+}
+
+TEST(TabletStateTest, RetirementReceiptMustMatchExactSealedIdentityAndWalBounds) {
+  TabletState target = tablet(config(2U, 2U, 1U, 8U));
+  const auto input = batch();
+  PreparedTabletAppend first = prepare(target, 1U, input);
+  static_cast<void>(publish(first, 1U));
+  PreparedTabletAppend second = prepare(target, 2U, input);
+  static_cast<void>(publish(second, 2U));
+  const TabletSnapshot before = target.snapshot().value();
+  ASSERT_EQ(before.sealed_generations().size(), 1U);
+  const head::HeadSnapshot& sealed = before.sealed_generations().front();
+
+  const auto wrong_bounds = detail::TabletStateTestAccess::retirement_receipt(
+      before.table_id(), before.tablet_id(), sealed.schema_ptr()->schema_id(),
+      sealed.schema_ptr()->version(), sealed.generation(), sealed.row_count(), wal_id(), 2U, 2U);
+  EXPECT_EQ(target.retire_sealed_generation(wrong_bounds).error().code(),
+            common::StatusCode::kInvalidArgument);
+  const auto active_generation = detail::TabletStateTestAccess::retirement_receipt(
+      before.table_id(), before.tablet_id(), before.active_generation().schema_ptr()->schema_id(),
+      before.active_generation().schema_ptr()->version(), before.active_generation().generation(),
+      before.active_generation().row_count(), wal_id(), 2U, 2U);
+  EXPECT_EQ(target.retire_sealed_generation(active_generation).error().code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(target.snapshot()->sealed_generations().size(), 1U);
+  EXPECT_EQ(target.snapshot()->visible_row_count(), 4U);
+}
+
 TEST(TabletStateConcurrencyTest, AcquireReadersObserveOnlyCompleteOuterEpochs) {
   constexpr std::size_t kReaders = 4U;
   constexpr std::uint64_t kBatches = 48U;

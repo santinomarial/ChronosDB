@@ -320,5 +320,5 @@ Likely review questions are:
 - Why does the encoder reject unsorted input instead of sorting? Sorting would silently change
   descriptor relationships and hide builder bugs; canonical state construction is a separate
   responsibility.
-- What remains before Phase 6 is complete? Flush scheduling, TabletState handoff retirement, the
-  end-to-end flush coordinator, and integrated crash-matrix evidence.
+- What remains before Phase 6 is complete? Flush scheduling, the end-to-end flush coordinator, and
+  integrated crash-matrix evidence.

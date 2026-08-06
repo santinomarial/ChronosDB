@@ -14,12 +14,73 @@
 #include <optional>
 #include <span>
 
+namespace chronos::manifest::detail {
+class DatabaseStoragePublisherImpl;
+}
+
 namespace chronos::ingest {
+
+namespace detail {
+class TabletStateTestAccess;
+}
+
+// Non-forgeable proof that one exact sealed generation has been removed from a successfully
+// release-published database storage epoch and replaced by durable Manifest-selected state.
+// Copies may be consumed repeatedly; retirement is idempotent.
+class SealedGenerationRetirementReceipt {
+public:
+  SealedGenerationRetirementReceipt() = delete;
+  SealedGenerationRetirementReceipt(const SealedGenerationRetirementReceipt&) noexcept = default;
+  SealedGenerationRetirementReceipt&
+  operator=(const SealedGenerationRetirementReceipt&) noexcept = default;
+  SealedGenerationRetirementReceipt(SealedGenerationRetirementReceipt&&) noexcept = default;
+  SealedGenerationRetirementReceipt&
+  operator=(SealedGenerationRetirementReceipt&&) noexcept = default;
+  ~SealedGenerationRetirementReceipt() = default;
+
+  [[nodiscard]] const schema::TableId& table_id() const noexcept;
+  [[nodiscard]] const schema::TabletId& tablet_id() const noexcept;
+  [[nodiscard]] const schema::SchemaId& schema_id() const noexcept;
+  [[nodiscard]] schema::SchemaVersion schema_version() const noexcept;
+  [[nodiscard]] std::uint64_t head_generation() const noexcept;
+  [[nodiscard]] std::uint32_t row_count() const noexcept;
+  [[nodiscard]] const wal::WalId& wal_id() const noexcept;
+  [[nodiscard]] std::uint64_t minimum_record_sequence() const noexcept;
+  [[nodiscard]] std::uint64_t maximum_record_sequence() const noexcept;
+
+private:
+  struct Fields {
+    schema::TableId table_id;
+    schema::TabletId tablet_id;
+    schema::SchemaId schema_id;
+    schema::SchemaVersion schema_version;
+    std::uint64_t head_generation;
+    std::uint32_t row_count;
+    wal::WalId wal_id;
+    std::uint64_t minimum_record_sequence;
+    std::uint64_t maximum_record_sequence;
+  };
+
+  explicit SealedGenerationRetirementReceipt(Fields fields) noexcept;
+
+  schema::TableId table_id_;
+  schema::TabletId tablet_id_;
+  schema::SchemaId schema_id_;
+  schema::SchemaVersion schema_version_;
+  std::uint64_t head_generation_{};
+  std::uint32_t row_count_{};
+  wal::WalId wal_id_;
+  std::uint64_t minimum_record_sequence_{};
+  std::uint64_t maximum_record_sequence_{};
+
+  friend class chronos::manifest::detail::DatabaseStoragePublisherImpl;
+  friend class detail::TabletStateTestAccess;
+};
 
 struct TabletStateConfig {
   head::MutableHeadCapacity head_capacity;
 
-  // Sealed generations remain query-visible because flush handoff is not implemented yet.
+  // Sealed generations remain owned until an authorized post-Manifest-publication retirement.
   // All bounds must be nonzero; reaching one rejects registration or append before WAL.
   std::size_t maximum_schema_versions{1U};
   std::size_t maximum_sealed_generations{};
@@ -42,7 +103,6 @@ struct TabletStateMetrics {
 namespace detail {
 class TabletPublication;
 class TabletStateCore;
-class TabletStateTestAccess;
 } // namespace detail
 
 // One owning acquire-observed tablet epoch. The active boundary, sealed-generation set, applied
@@ -155,6 +215,12 @@ public:
                           const ColumnarAppendMutationIdentity& mutation,
                           const std::shared_ptr<const ColumnarAppendRetryOutcome>& outcome,
                           head::HeadCommitPosition position);
+
+  // Removes exactly one sealed generation only after aggregate database publication issued this
+  // receipt. Repeated consumption succeeds without another publication. This is a shard-writer
+  // operation and cannot overlap a prepared append.
+  [[nodiscard]] common::Result<TabletSnapshot>
+  retire_sealed_generation(const SealedGenerationRetirementReceipt& receipt);
 
   [[nodiscard]] common::Result<TabletSnapshot> snapshot() const;
   [[nodiscard]] TabletStateMetrics metrics() const;

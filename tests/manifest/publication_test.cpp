@@ -139,7 +139,7 @@ struct PublishedTabletFixture {
                   schema_value, id<schema::TabletId>(3U),
                   {.head_capacity = {.row_capacity = 2U, .variable_value_bytes = {0U}},
                    .maximum_schema_versions = 1U,
-                   .maximum_sealed_generations = 4U,
+                   .maximum_sealed_generations = 1U,
                    .maximum_retry_entries = 8U})
                   .value()) {
     const std::array first_values{std::int64_t{-5}, std::int64_t{10}};
@@ -356,6 +356,11 @@ TEST(DatabaseStoragePublicationTest, AtomicallySubstitutesDurablePartForExactSea
   ASSERT_NE(next->find_tablet(id<schema::TabletId>(3U))->active_head(), nullptr);
   EXPECT_EQ(next->find_tablet(id<schema::TabletId>(3U))->active_head()->row_count(), 1U);
   EXPECT_EQ(next->visible_head_row_count(), 1U);
+  ASSERT_EQ(next->retirement_receipts().size(), 1U);
+  EXPECT_EQ(next->retirement_receipts().front().head_generation(), 1U);
+  EXPECT_EQ(next->retirement_receipts().front().row_count(), 2U);
+  EXPECT_EQ(next->retirement_receipts().front().minimum_record_sequence(), 7U);
+  EXPECT_EQ(next->retirement_receipts().front().maximum_record_sequence(), 7U);
   EXPECT_EQ(old->manifest_bytes().size(), old_manifest_size);
   const auto old_cell =
       old->find_tablet(id<schema::TabletId>(3U))->sealed_heads().front().cell({0U, 0U});
@@ -389,6 +394,7 @@ TEST(DatabaseStoragePublicationTest, ReadersSeeOnlyOldOrNewCompleteEpochAtReleas
   const DatabaseStorageSnapshot during = publisher.snapshot().value();
   EXPECT_EQ(during.generation(), 1U);
   EXPECT_TRUE(during.parts().empty());
+  EXPECT_TRUE(during.retirement_receipts().empty());
   EXPECT_EQ(during.find_tablet(fixture.tablet.latest.tablet_id())->sealed_heads().size(), 1U);
   hook.release.count_down();
   writer.join();
@@ -396,9 +402,51 @@ TEST(DatabaseStoragePublicationTest, ReadersSeeOnlyOldOrNewCompleteEpochAtReleas
   ASSERT_TRUE(published.has_value());
   EXPECT_EQ(published->generation(), 2U);
   EXPECT_EQ(published->parts().size(), 1U);
+  EXPECT_EQ(published->retirement_receipts().size(), 1U);
   EXPECT_TRUE(published->find_tablet(fixture.tablet.latest.tablet_id())->sealed_heads().empty());
   EXPECT_EQ(during.generation(), 1U);
   EXPECT_EQ(during.find_tablet(fixture.tablet.latest.tablet_id())->sealed_heads().size(), 1U);
+}
+
+TEST(DatabaseStoragePublicationTest, ReceiptRetiresTabletHeadIdempotentlyAndReleasesBackpressure) {
+  DurableFixture fixture;
+  DatabaseStoragePublisher publisher = fixture.publisher();
+  const ingest::TabletSnapshot before_retirement = fixture.tablet.state.snapshot().value();
+
+  const std::array third_values{std::int64_t{30}, std::int64_t{40}};
+  const ingest::RetryIdentity third_identity{.client_id = id<ingest::ClientId>(0x31U),
+                                             .client_batch_id = id<ingest::ClientBatchId>(0x32U)};
+  const ingest::ColumnarAppendMutationIdentity third_mutation{
+      .table_id = fixture.tablet.schema_value->table_id(),
+      .tablet_id = fixture.tablet.latest.tablet_id(),
+      .request_digest = digest(0x33U)};
+  EXPECT_EQ(fixture.tablet.state
+                .prepare_append(third_identity, third_mutation,
+                                batch(fixture.tablet.schema_value, third_values))
+                .error()
+                .code(),
+            common::StatusCode::kResourceExhausted);
+
+  const DatabaseStorageSnapshot database = publisher.publish_manifest(fixture.request()).value();
+  ASSERT_EQ(database.retirement_receipts().size(), 1U);
+  const ingest::TabletSnapshot retired =
+      fixture.tablet.state.retire_sealed_generation(database.retirement_receipts().front()).value();
+  EXPECT_TRUE(retired.sealed_generations().empty());
+  EXPECT_EQ(retired.visible_row_count(), 1U);
+  EXPECT_EQ(fixture.tablet.state.metrics().sealed_generations, 0U);
+  EXPECT_EQ(fixture.tablet.state.metrics().visible_rows, 1U);
+  ASSERT_EQ(before_retirement.sealed_generations().size(), 1U);
+  EXPECT_EQ(before_retirement.visible_row_count(), 3U);
+
+  const ingest::TabletSnapshot repeated =
+      fixture.tablet.state.retire_sealed_generation(database.retirement_receipts().front()).value();
+  EXPECT_TRUE(repeated.sealed_generations().empty());
+  ingest::PreparedTabletAppend unblocked =
+      fixture.tablet.state
+          .prepare_append(third_identity, third_mutation,
+                          batch(fixture.tablet.schema_value, third_values))
+          .value();
+  EXPECT_TRUE(unblocked.cancel_before_wal().is_ok());
 }
 
 TEST(DatabaseStoragePublicationTest, HostileReplacementFailsClosedWithoutPartialPublication) {

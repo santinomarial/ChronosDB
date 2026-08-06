@@ -120,6 +120,12 @@ int main() {
   using RegisterSchemaFunction = chronos::common::Status (chronos::ingest::TabletState::*)(
       std::shared_ptr<const chronos::schema::TableSchema>, chronos::head::MutableHeadCapacity);
   const RegisterSchemaFunction register_schema = &chronos::ingest::TabletState::register_schema;
+  using RetireSealedGenerationFunction =
+      chronos::common::Result<chronos::ingest::TabletSnapshot> (
+          chronos::ingest::TabletState::*)(
+          const chronos::ingest::SealedGenerationRetirementReceipt&);
+  const RetireSealedGenerationFunction retire_sealed_generation =
+      &chronos::ingest::TabletState::retire_sealed_generation;
   static_assert(chronos::columnar::bitmap_size(9U) == 2U);
   static_assert(chronos::columnar::format::kBatchHeaderLength == 96U);
   static_assert(chronos::cseg::format::kFileHeaderLength == 256U);
@@ -253,7 +259,7 @@ int main() {
   return execute != nullptr && recover != nullptr && inspect_wal_suffix != nullptr &&
                  recover_wal_checkpoint != nullptr && open_wal_checkpoint != nullptr &&
                  reclaim_wal != nullptr && wal_reclamation_metrics != nullptr &&
-                 register_schema != nullptr &&
+                 register_schema != nullptr && retire_sealed_generation != nullptr &&
                  limits.max_columns == 4096U &&
                  head_capacity.row_capacity == 4U &&
                  tablet_config.maximum_schema_versions == 2U &&

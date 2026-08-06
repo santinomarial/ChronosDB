@@ -229,9 +229,11 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > coverage exercise that boundary. One aggregate release/acquire publication owner now retains the
 > exact selected Manifest and live head pins, refreshes monotonic tablet epochs, and substitutes
 > exact newly selected parts for their covered sealed heads with deterministic interleaving,
-> lifetime, hostile, sanitizer, benchmark, and installed-consumer evidence. Flush scheduling,
-> TabletState handoff retirement, the end-to-end flush coordinator, and integrated crash-matrix
-> evidence remain unimplemented.
+> lifetime, hostile, sanitizer, benchmark, and installed-consumer evidence. Successful replacement
+> now issues a non-forgeable exact receipt; idempotent TabletState consumption release-publishes a
+> smaller sealed set and releases its rotation backpressure while old snapshots retain their pins.
+> Flush scheduling, the end-to-end flush coordinator, and integrated crash-matrix evidence remain
+> unimplemented.
 
 - **Scope:** manifest generations/version edits; atomic durable part installation; sealed-head flush; checkpoint/log coverage; startup reconciliation; safe temporary-file handling.
 - **Explicit non-scope:** compaction, delta parts, distributed metadata, object storage, and aggressive garbage collection beyond proven safe ownership.

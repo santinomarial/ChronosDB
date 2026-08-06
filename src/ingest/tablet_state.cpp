@@ -3,8 +3,10 @@
 #include "chronos/schema/schema_lineage.hpp"
 #include "deduplication_key.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <exception>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <new>
@@ -114,6 +116,8 @@ public:
                           const ColumnarAppendMutationIdentity& mutation,
                           const std::shared_ptr<const ColumnarAppendRetryOutcome>& outcome,
                           head::HeadCommitPosition position);
+  [[nodiscard]] common::Result<TabletSnapshot>
+  retire_sealed_generation(const SealedGenerationRetirementReceipt& receipt);
   void abandon(std::uint64_t token) noexcept;
 
   [[nodiscard]] common::Result<TabletSnapshot> snapshot();
@@ -633,6 +637,90 @@ common::Result<TabletSnapshot> detail::TabletStateCore::advance_recovered_retry(
   }
 }
 
+common::Result<TabletSnapshot> detail::TabletStateCore::retire_sealed_generation(
+    const SealedGenerationRetirementReceipt& receipt) {
+  if (failed_.load(std::memory_order_acquire)) {
+    return common::make_unexpected(
+        unavailable("tablet state cannot retire a sealed generation after failure"));
+  }
+  if (append_active_) {
+    return common::make_unexpected(
+        unavailable("tablet state cannot retire a sealed generation during a prepared append"));
+  }
+  if (receipt.table_id() != schemas_.front().schema->table_id() ||
+      receipt.tablet_id() != tablet_id_) {
+    return common::make_unexpected(
+        invalid("sealed-generation retirement receipt names a different tablet"));
+  }
+
+  const std::shared_ptr<const TabletPublication> current =
+      std::atomic_load_explicit(&publication_, std::memory_order_acquire);
+  const auto found =
+      std::ranges::find_if(*current->sealed_generations_, [&](const head::HeadSnapshot& candidate) {
+        return candidate.generation() == receipt.head_generation();
+      });
+  std::shared_ptr<TabletStateCore> self = weak_from_this().lock();
+  if (self == nullptr) {
+    return common::make_unexpected(internal("tablet state lost its owning reference"));
+  }
+  if (found == current->sealed_generations_->end()) {
+    if (receipt.head_generation() >= current->active_generation_.generation()) {
+      return common::make_unexpected(
+          invalid("sealed-generation retirement receipt does not name a past generation"));
+    }
+    return TabletSnapshot{std::move(self), current};
+  }
+  if (found->schema_ptr()->schema_id() != receipt.schema_id() ||
+      found->schema_ptr()->version() != receipt.schema_version() ||
+      found->row_count() != receipt.row_count() || !found->is_sealed() ||
+      receipt.minimum_record_sequence() == 0U ||
+      receipt.maximum_record_sequence() < receipt.minimum_record_sequence()) {
+    return common::make_unexpected(
+        invalid("sealed-generation retirement receipt disagrees with the retained head"));
+  }
+  std::uint64_t minimum_sequence = std::numeric_limits<std::uint64_t>::max();
+  std::uint64_t maximum_sequence = 0U;
+  for (std::uint32_t row = 0U; row < found->row_count(); ++row) {
+    const common::Result<head::HeadRowMetadata> metadata = found->row_metadata(row);
+    if (!metadata.has_value()) {
+      return common::make_unexpected(metadata.error());
+    }
+    if (metadata->commit_position.wal_id != receipt.wal_id()) {
+      return common::make_unexpected(
+          invalid("sealed-generation retirement receipt belongs to a different WAL history"));
+    }
+    minimum_sequence = std::min(minimum_sequence, metadata->commit_position.record_sequence);
+    maximum_sequence = std::max(maximum_sequence, metadata->commit_position.record_sequence);
+  }
+  if (minimum_sequence != receipt.minimum_record_sequence() ||
+      maximum_sequence != receipt.maximum_record_sequence()) {
+    return common::make_unexpected(
+        invalid("sealed-generation retirement receipt record bounds disagree with the head"));
+  }
+
+  try {
+    auto sealed = std::make_shared<GenerationSet>(*current->sealed_generations_);
+    const std::size_t index =
+        static_cast<std::size_t>(std::distance(current->sealed_generations_->begin(), found));
+    sealed->erase(sealed->begin() + static_cast<std::ptrdiff_t>(index));
+    std::shared_ptr<const GenerationSet> sealed_const = std::move(sealed);
+    auto next = std::make_shared<const TabletPublication>(
+        current->applied_position_, std::move(sealed_const), current->active_generation_,
+        current->retries_);
+    if (publication_hook_ != nullptr) {
+      publication_hook_(publication_hook_context_);
+    }
+    std::atomic_store_explicit(&publication_, next, std::memory_order_release);
+    return TabletSnapshot{std::move(self), std::move(next)};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        exhausted("sealed-generation retirement publication could not allocate its outer epoch"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("sealed-generation retirement publication exceeds container limits"));
+  }
+}
+
 void detail::TabletStateCore::abandon(const std::uint64_t token) noexcept {
   if (!append_active_ || active_token_ != token) {
     return;
@@ -681,6 +769,49 @@ TabletSnapshot::TabletSnapshot(
     std::shared_ptr<detail::TabletStateCore> state,
     std::shared_ptr<const detail::TabletPublication> publication) noexcept
     : state_(std::move(state)), publication_(std::move(publication)) {}
+
+SealedGenerationRetirementReceipt::SealedGenerationRetirementReceipt(Fields fields) noexcept
+    : table_id_(fields.table_id), tablet_id_(fields.tablet_id), schema_id_(fields.schema_id),
+      schema_version_(fields.schema_version), head_generation_(fields.head_generation),
+      row_count_(fields.row_count), wal_id_(fields.wal_id),
+      minimum_record_sequence_(fields.minimum_record_sequence),
+      maximum_record_sequence_(fields.maximum_record_sequence) {}
+
+const schema::TableId& SealedGenerationRetirementReceipt::table_id() const noexcept {
+  return table_id_;
+}
+
+const schema::TabletId& SealedGenerationRetirementReceipt::tablet_id() const noexcept {
+  return tablet_id_;
+}
+
+const schema::SchemaId& SealedGenerationRetirementReceipt::schema_id() const noexcept {
+  return schema_id_;
+}
+
+schema::SchemaVersion SealedGenerationRetirementReceipt::schema_version() const noexcept {
+  return schema_version_;
+}
+
+std::uint64_t SealedGenerationRetirementReceipt::head_generation() const noexcept {
+  return head_generation_;
+}
+
+std::uint32_t SealedGenerationRetirementReceipt::row_count() const noexcept {
+  return row_count_;
+}
+
+const wal::WalId& SealedGenerationRetirementReceipt::wal_id() const noexcept {
+  return wal_id_;
+}
+
+std::uint64_t SealedGenerationRetirementReceipt::minimum_record_sequence() const noexcept {
+  return minimum_record_sequence_;
+}
+
+std::uint64_t SealedGenerationRetirementReceipt::maximum_record_sequence() const noexcept {
+  return maximum_record_sequence_;
+}
 
 const schema::TableId& TabletSnapshot::table_id() const noexcept {
   return publication_->active_generation_.table_id();
@@ -867,6 +998,14 @@ common::Result<TabletSnapshot> TabletState::snapshot() const {
     return common::make_unexpected(invalid("tablet state is invalid"));
   }
   return state_->snapshot();
+}
+
+common::Result<TabletSnapshot>
+TabletState::retire_sealed_generation(const SealedGenerationRetirementReceipt& receipt) {
+  if (state_ == nullptr) {
+    return common::make_unexpected(unavailable("tablet state was moved from"));
+  }
+  return state_->retire_sealed_generation(receipt);
 }
 
 TabletStateMetrics TabletState::metrics() const {

@@ -21,7 +21,9 @@ part deletion. Its durable input is an owning `LoadedManifestGeneration` returne
 - `publish_tablet_snapshot`, which refreshes one complete monotonic tablet epoch without changing
   durable state; and
 - `publish_manifest`, which selects exactly the next durable generation and retires explicitly
-  matched sealed heads from new snapshots.
+  matched sealed heads from new snapshots; and
+- non-forgeable `SealedGenerationRetirementReceipt` values issued by that successful aggregate
+  publication and consumed idempotently by the shard-owned `TabletState`.
 
 The internal immutable `DatabaseStoragePublication` owns a shared selected Manifest generation and
 copies of every exact `HeadSnapshot`. Manifest descriptors and encoded bytes borrow the retained
@@ -82,7 +84,10 @@ delete names.
 Tests cover tablet rotation, stale-epoch rejection, exact part substitution, old-snapshot lifetime,
 a writer paused immediately before the release store, hostile replacement identity, fail-closed
 behavior, and prevention of durable-row reintroduction. The same focused cases run under
-ASan/UBSan and TSan. The external-consumer test compiles the installed public API.
+ASan/UBSan and TSan. Receipt integration additionally proves that pre-publication backpressure
+remains, post-publication retirement releases it, repeated consumption is harmless, and a paused
+tablet retirement exposes only the complete old or new outer epoch. The external-consumer test
+compiles the installed public API.
 
 `chronos_manifest_benchmarks` measures the acquire-load snapshot hot path and complete tablet-epoch
 descriptor construction/refresh. Fixture creation and filesystem setup occur outside timed loops.
@@ -98,5 +103,5 @@ Results are local microbenchmarks, not a production latency claim.
   recoverable truth, so silently continuing an older live view would create two authorities.
 - Why are old heads not immediately freed? Readers may still own the prior database epoch; shared
   ownership delays reclamation until its last snapshot is released.
-- What remains? A bounded flush queue, TabletState sealed-generation handoff retirement, an
-  end-to-end durable flush coordinator, and the crash/fault matrix around the complete sequence.
+- What remains? A bounded flush queue, an end-to-end durable flush coordinator, and the crash/fault
+  matrix around the complete sequence.

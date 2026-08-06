@@ -121,8 +121,8 @@ copy_tablet(const ingest::TabletSnapshot& snapshot, const LoadedManifestGenerati
         corruption("Manifest and live tablet epochs disagree on table identity"));
   }
   const std::uint64_t durable_sequence = durable == nullptr ? 0U : durable->durable_record_sequence;
-  if (snapshot.applied_position().has_value() &&
-      snapshot.applied_position()->wal_id != manifest.wal_id()) {
+  const std::optional<head::HeadCommitPosition> applied_position = snapshot.applied_position();
+  if (applied_position.has_value() && applied_position->wal_id != manifest.wal_id()) {
     return common::make_unexpected(invalid("live tablet epoch belongs to a different WAL history"));
   }
 
@@ -171,7 +171,7 @@ copy_tablet(const ingest::TabletSnapshot& snapshot, const LoadedManifestGenerati
   }
   active.push_back(active_head);
   return detail::PublishedTabletStorageBuilder::make(snapshot.table_id(), snapshot.tablet_id(),
-                                                     snapshot.applied_position(), std::move(sealed),
+                                                     applied_position, std::move(sealed),
                                                      std::move(active), visible_rows);
 }
 
@@ -204,10 +204,11 @@ copy_tablet(const ingest::TabletSnapshot& snapshot, const LoadedManifestGenerati
   if (previous.table_id() != next.table_id() || previous.tablet_id() != next.tablet_id()) {
     return invalid("tablet publication changes table or tablet identity");
   }
-  if (previous.applied_position().has_value()) {
-    if (!next.applied_position().has_value() ||
-        next.applied_position()->wal_id != previous.applied_position()->wal_id ||
-        next.applied_position()->record_sequence < previous.applied_position()->record_sequence) {
+  const std::optional<head::HeadCommitPosition> previous_position = previous.applied_position();
+  const std::optional<head::HeadCommitPosition> next_position = next.applied_position();
+  if (previous_position.has_value()) {
+    if (!next_position.has_value() || next_position->wal_id != previous_position->wal_id ||
+        next_position->record_sequence < previous_position->record_sequence) {
       return invalid("tablet publication regresses its applied WAL position");
     }
   }
@@ -345,12 +346,14 @@ class DatabaseStoragePublication {
 public:
   DatabaseStoragePublication(std::shared_ptr<const LoadedManifestGeneration> manifest,
                              std::vector<PublishedTabletStorage> tablets,
+                             std::vector<ingest::SealedGenerationRetirementReceipt> retirements,
                              const std::size_t visible_head_rows) noexcept
       : manifest_(std::move(manifest)), tablets_(std::move(tablets)),
-        visible_head_rows_(visible_head_rows) {}
+        retirements_(std::move(retirements)), visible_head_rows_(visible_head_rows) {}
 
   std::shared_ptr<const LoadedManifestGeneration> manifest_;
   std::vector<PublishedTabletStorage> tablets_;
+  std::vector<ingest::SealedGenerationRetirementReceipt> retirements_;
   std::size_t visible_head_rows_{};
 };
 
@@ -400,7 +403,7 @@ public:
         }
       }
       auto next = std::make_shared<const DatabaseStoragePublication>(
-          current->manifest_, std::move(tablets), visible_rows);
+          current->manifest_, std::move(tablets), current->retirements_, visible_rows);
       if (hook_ != nullptr) {
         hook_(hook_context_);
       }
@@ -449,6 +452,8 @@ public:
       std::vector<PublishedTabletStorage> tablets = current->tablets_;
       std::vector<cseg::PartId> matched_new_parts;
       matched_new_parts.reserve(request.replacements.size());
+      std::vector<ingest::SealedGenerationRetirementReceipt> retirement_receipts;
+      retirement_receipts.reserve(request.replacements.size());
       for (const SealedHeadReplacement& replacement : request.replacements) {
         auto tablet = std::ranges::lower_bound(tablets, replacement.tablet_id, {},
                                                &PublishedTabletStorage::tablet_id);
@@ -486,6 +491,17 @@ public:
             part->maximum_event_time != bounds->maximum_event_time) {
           return fail(corruption("replacement part bounds disagree with its sealed head"));
         }
+        retirement_receipts.push_back(ingest::SealedGenerationRetirementReceipt{
+            ingest::SealedGenerationRetirementReceipt::Fields{
+                .table_id = sealed->table_id(),
+                .tablet_id = sealed->tablet_id(),
+                .schema_id = sealed->schema_ptr()->schema_id(),
+                .schema_version = sealed->schema_ptr()->version(),
+                .head_generation = sealed->generation(),
+                .row_count = sealed->row_count(),
+                .wal_id = current->manifest_->wal_id(),
+                .minimum_record_sequence = bounds->minimum_sequence,
+                .maximum_record_sequence = bounds->maximum_sequence}});
         matched_new_parts.push_back(part->part_id);
         tablet->visible_head_rows_ -= sealed->row_count();
         tablet->sealed_heads_.erase(sealed);
@@ -551,7 +567,8 @@ public:
         }
       }
       auto next = std::make_shared<const DatabaseStoragePublication>(
-          request.selected_manifest, std::move(tablets), visible_rows);
+          request.selected_manifest, std::move(tablets), std::move(retirement_receipts),
+          visible_rows);
       if (hook_ != nullptr) {
         hook_(hook_context_);
       }
@@ -651,6 +668,11 @@ std::span<const PublishedTabletStorage> DatabaseStorageSnapshot::tablets() const
   return publication_->tablets_;
 }
 
+std::span<const ingest::SealedGenerationRetirementReceipt>
+DatabaseStorageSnapshot::retirement_receipts() const noexcept {
+  return publication_->retirements_;
+}
+
 const PublishedTabletStorage*
 DatabaseStorageSnapshot::find_tablet(const schema::TabletId& tablet_id) const noexcept {
   const auto found = std::ranges::lower_bound(publication_->tablets_, tablet_id, {},
@@ -710,7 +732,8 @@ common::Result<DatabaseStoragePublisher> DatabaseStoragePublisher::create_with_p
       }
     }
     auto publication = std::make_shared<const detail::DatabaseStoragePublication>(
-        std::move(selected_manifest), std::move(copied), visible_rows);
+        std::move(selected_manifest), std::move(copied),
+        std::vector<ingest::SealedGenerationRetirementReceipt>{}, visible_rows);
     auto implementation = std::make_unique<detail::DatabaseStoragePublisherImpl>(
         std::move(publication), hook, hook_context);
     return DatabaseStoragePublisher{std::move(implementation)};

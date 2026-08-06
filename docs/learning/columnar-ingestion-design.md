@@ -14,7 +14,8 @@
 > [columnar append execution](columnar-append-execution.md), and fresh-state replay in
 > [columnar append recovery](columnar-append-recovery.md). Pure sealed-head-to-CSEG conversion is
 > documented in [Manifest v1 codec](manifest-codec.md). Retry pruning, routing/admission, flush
-> scheduling/publication, and generation retirement remain pending. The
+> scheduling and the end-to-end durable flush coordinator remain pending. Atomic database
+> head-to-part publication and receipt-authorized TabletState retirement are implemented. The
 > normative sources are
 > [columnar batch v1](../formats/columnar-batch-v1.md),
 > [columnar ingestion](../architecture/columnar-ingestion.md),

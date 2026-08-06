@@ -199,6 +199,14 @@ publication-hook tests pause immediately before the store, and sanitizer runs re
 while readers acquire the old or new complete epoch. A collection of independently loaded head and
 manifest pointers does not satisfy this contract.
 
+The new database epoch exposes a non-forgeable `SealedGenerationRetirementReceipt` for each exact
+replacement. Only after that epoch is release-published may the shard writer pass the receipt to
+`TabletState`. Tablet retirement verifies tablet, schema, generation, row count, WAL identity, and
+record-sequence bounds, then release-publishes an outer tablet epoch without the sealed pin.
+Repeated receipt consumption is idempotent. This second publication releases bounded mutable-state
+backpressure; it is not the query visibility boundary, which already occurred at the aggregate
+database pointer.
+
 ## Checkpoint and WAL reclamation
 
 Checkpoint advancement is a manifest state transition. Its global reclaim coordinate is the end of

@@ -5,3 +5,4 @@
 static_assert(!std::is_copy_constructible_v<chronos::manifest::DatabaseStoragePublisher>);
 static_assert(std::is_nothrow_move_constructible_v<chronos::manifest::DatabaseStoragePublisher>);
 static_assert(std::is_copy_constructible_v<chronos::manifest::DatabaseStorageSnapshot>);
+static_assert(!std::is_default_constructible_v<chronos::ingest::SealedGenerationRetirementReceipt>);

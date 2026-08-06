@@ -5,8 +5,9 @@
 > single-writer tablet
 > publication boundary. `execute_columnar_append` now composes it with live WAL submission and the
 > global retry directory. Bounded direct-successor registration and activation are implemented;
-> durable catalog ownership, retry pruning, routing, flush handoff, CSEG, and transport
-> acknowledgment remain outside this primitive.
+> receipt-authorized post-Manifest sealed-generation retirement is also implemented. Durable
+> catalog ownership, retry pruning, routing, flush scheduling, and transport acknowledgment remain
+> outside this primitive.
 
 ## Purpose and boundary
 
@@ -106,6 +107,14 @@ Atomic shared-pointer operations are not claimed to be lock-free. They are the e
 synchronization primitive used today. Replacing them requires benchmark evidence and an equally
 explicit reclamation proof.
 
+After aggregate database publication replaces a sealed head with its exact durable part,
+`TabletState::retire_sealed_generation` consumes the publisher's non-forgeable receipt. It validates
+the retained head's tablet/schema/generation/row/WAL bounds, copies the sealed set without that
+entry, and performs another release store of the outer tablet pointer. This later store releases
+rotation backpressure; query visibility already changed at the one database publication. Old tablet
+snapshots retain the old sealed pin. Repeated receipt consumption returns the current epoch without
+publishing again.
+
 ## Failure behavior
 
 Expected validation, capacity, generation allocation, retry-map allocation, and descriptor
@@ -142,6 +151,8 @@ For `R` incoming rows, `V` visible rows, `K` logical-key columns, `C` total colu
 - normal preparation is `O(R log R × K + R × V × K + C + T)` because incoming keys are sorted,
   visible generations are scanned, and the correctness-first immutable retry map is copied;
 - publication is `O(C × R + B)` for head materialization plus constant outer descriptor updates;
+- sealed-generation retirement is `O(G + R)` for the generation-set copy and exact WAL-bound
+  validation;
 - snapshot acquisition is `O(1)` plus reference-count operations;
 - retry lookup is `O(log T)`;
 - visible-row counting is `O(G)`; and
@@ -164,7 +175,9 @@ ancestor snapshots, empty-ancestor elision, first-time ancestor rejection, exact
 retry advancement, oversized-batch rejection, schema/sealed/retry backpressure,
 duplicate/conflicting identities, post-WAL fail-closed position validation, a controlled
 inner/outer publication pause, and concurrent readers accepting only complete epochs. The public
-header compiles alone and the installed external consumer checks the registration method signature.
+header compiles alone and the installed external consumer checks the registration and retirement
+method signatures. Receipt tests cover hostile bounds, idempotency, backpressure release, old
+snapshot lifetime, and a controlled retirement publication pause.
 
 The isolated allocation-failure suite fails each mutable-head and tablet preparation allocation in
 turn, including deduplication work vectors and generation rotation. Every failure reports

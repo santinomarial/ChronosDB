@@ -96,6 +96,8 @@ public:
   [[nodiscard]] std::span<const PartDescriptor> parts() const noexcept;
   [[nodiscard]] std::span<const RetryDescriptor> retries() const noexcept;
   [[nodiscard]] std::span<const PublishedTabletStorage> tablets() const noexcept;
+  [[nodiscard]] std::span<const ingest::SealedGenerationRetirementReceipt>
+  retirement_receipts() const noexcept;
   [[nodiscard]] const PublishedTabletStorage*
   find_tablet(const schema::TabletId& tablet_id) const noexcept;
   [[nodiscard]] std::size_t visible_head_row_count() const noexcept;
