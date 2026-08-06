@@ -203,8 +203,8 @@ publishes a manifest generation before a checkpoint allows covered WAL history t
 Crashes at any step recover to either the old complete state or the new complete state, and retry is
 idempotent. The codecs, conversion/build/proof primitives, filesystem installation/recovery,
 checkpoint-aware WAL lifecycle, bounded sealed-head scheduling, receipt-authorized TabletState
-retirement, and one-pointer head-to-part publication are implemented. The end-to-end coordinator
-and integrated crash matrix remain pending.
+retirement, one-pointer head-to-part publication, and the end-to-end single-part durable flush
+coordinator are implemented. The integrated syscall crash matrix remains pending.
 
 A checkpoint records the manifest generation and committed log coverage needed for recovery. It is not permission to delete data still reachable by an active reader, subscription, backup, or other declared retention owner.
 

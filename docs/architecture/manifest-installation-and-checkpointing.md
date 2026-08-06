@@ -2,7 +2,8 @@
 
 > **Status: accepted Phase 6 design; sealed-head conversion, filesystem installation, read-only
 > checkpoint coverage proof, checkpointed WAL reopen/reclamation, manifest selection, bounded
-> sealed-head scheduling, and atomic database storage publication implemented.** This document
+> sealed-head scheduling, atomic database storage publication, and the end-to-end single-part
+> flush coordinator implemented.** This document
 > defines ownership,
 > durable ordering, recovery, and publication around the normative
 > [Manifest v1 bytes](../formats/manifest-v1.md). It refines

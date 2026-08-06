@@ -125,5 +125,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Database storage publication](learning/database-storage-publication.md): implemented aggregate
   Manifest/head ownership, monotonic tablet refresh, atomic head-to-part replacement, snapshot
   lifetime, fail-closed behavior, and memory-ordering evidence.
+- [Durable sealed-head flush coordination](learning/sealed-head-flush-coordinator.md): implemented
+  queue-to-CSEG-to-Manifest orchestration, durable-resume handling, exact retirement, ownership,
+  failure boundaries, and observability.
 
 Future format, protocol, subsystem, operations, and learning documents should be linked here when they are added by their corresponding roadmap phase.

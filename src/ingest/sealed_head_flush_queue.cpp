@@ -153,7 +153,7 @@ public:
     return common::Status::ok();
   }
 
-  [[nodiscard]] common::Status retry(const std::uint64_t sequence) noexcept {
+  [[nodiscard]] common::Status retry(const std::uint64_t sequence) {
     std::scoped_lock lock{mutex_};
     QueueSlot* target = find_sequence(sequence);
     if (target == nullptr || target->phase != SlotPhase::kInFlight) {
@@ -164,6 +164,24 @@ public:
     ++ready_;
     ++retries_;
     return common::Status::ok();
+  }
+
+  void retry_noexcept(const std::uint64_t sequence) noexcept {
+    try {
+      std::scoped_lock lock{mutex_};
+      QueueSlot* target = find_sequence(sequence);
+      if (target == nullptr || target->phase != SlotPhase::kInFlight) {
+        return;
+      }
+      target->phase = SlotPhase::kReady;
+      --in_flight_;
+      ++ready_;
+      ++retries_;
+    } catch (...) {
+      // Destruction cannot report a platform mutex failure. The shared queue retains the pin and
+      // fails capacity-closed rather than allowing an exception to escape a noexcept destructor.
+      return;
+    }
   }
 
   [[nodiscard]] SealedHeadFlushQueueMetrics metrics() const noexcept {
@@ -363,7 +381,7 @@ common::Status SealedHeadFlushWork::release_for_retry() {
 
 void SealedHeadFlushWork::release_for_retry_noexcept() noexcept {
   if (is_valid()) {
-    static_cast<void>(state_->retry(sequence_));
+    state_->retry_noexcept(sequence_);
     state_.reset();
     snapshot_.reset();
   }

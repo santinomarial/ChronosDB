@@ -98,6 +98,5 @@ production latency claims.
 - Why does work destruction retry? RAII makes every early return preserve scheduling ownership.
 - Why require a retirement receipt to complete? It prevents an encoder or I/O failure from freeing
   the only queue slot that schedules a still-visible sealed generation.
-- What remains? The durable coordinator that composes encoding, part installation, Manifest
-  building/installation, aggregate publication, TabletState retirement, and receipt-gated queue
-  completion, plus its integrated filesystem crash/fault matrix.
+- What remains? The durable coordinator now composes encoding, installation, publication,
+  retirement, and completion; its integrated filesystem crash/fault matrix remains.

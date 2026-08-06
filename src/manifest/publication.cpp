@@ -537,9 +537,10 @@ public:
             replaced_rows = *next_rows;
           }
         }
-        if (replaced_rows != 0U &&
-            (next == nullptr || !common::checked_add(previous_rows, replaced_rows).has_value() ||
-             next->durable_row_count != *common::checked_add(previous_rows, replaced_rows))) {
+        const std::optional<std::uint64_t> expected_rows =
+            common::checked_add(previous_rows, replaced_rows);
+        if (replaced_rows != 0U && (next == nullptr || !expected_rows.has_value() ||
+                                    next->durable_row_count != *expected_rows)) {
           return fail(corruption("replacement rows disagree with the new tablet durable count"));
         }
         const std::uint64_t durable_sequence = next == nullptr ? 0U : next->durable_record_sequence;

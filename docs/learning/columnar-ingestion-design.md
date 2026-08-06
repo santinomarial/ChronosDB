@@ -13,8 +13,8 @@
 > [tablet publication](tablet-publication.md). Their blocking composition is documented in
 > [columnar append execution](columnar-append-execution.md), and fresh-state replay in
 > [columnar append recovery](columnar-append-recovery.md). Pure sealed-head-to-CSEG conversion is
-> documented in [Manifest v1 codec](manifest-codec.md). Retry pruning, routing/admission, flush
-> scheduling is implemented; the end-to-end durable flush coordinator remains pending. Atomic
+> documented in [Manifest v1 codec](manifest-codec.md). Flush scheduling and the end-to-end durable
+> single-part coordinator are implemented; retry pruning and routing/admission remain pending. Atomic
 > database head-to-part publication and receipt-authorized TabletState/queue retirement are
 > implemented. The
 > normative sources are

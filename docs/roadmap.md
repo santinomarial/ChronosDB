@@ -234,8 +234,11 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > smaller sealed set and releases its rotation backpressure while old snapshots retain their pins.
 > A fixed-capacity MPSC/single-consumer handoff now reserves before topology mutation, owns exact
 > immutable pins, preserves reservation order and retry age, rejects rotation before WAL when full,
-> and releases capacity only for an exact post-publication receipt. The end-to-end flush coordinator
-> and integrated crash-matrix evidence remain unimplemented.
+> and releases capacity only for an exact post-publication receipt. A single-threaded durable flush
+> coordinator now composes queue acquisition, deterministic conversion, part and Manifest
+> installation, restart-style durable-generation resume, aggregate replacement, TabletState
+> retirement, and receipt-gated completion with fail-closed post-Manifest handling and metrics.
+> The integrated crash-matrix evidence remains unimplemented.
 
 - **Scope:** manifest generations/version edits; atomic durable part installation; sealed-head flush; checkpoint/log coverage; startup reconciliation; safe temporary-file handling.
 - **Explicit non-scope:** compaction, delta parts, distributed metadata, object storage, and aggressive garbage collection beyond proven safe ownership.
