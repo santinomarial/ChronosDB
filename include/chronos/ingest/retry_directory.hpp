@@ -151,10 +151,12 @@ public:
   RetryDirectory(RetryDirectory&&) noexcept;
   RetryDirectory& operator=(RetryDirectory&&) noexcept;
 
+  // Allocation failure reports kResourceExhausted rather than escaping through this API.
   [[nodiscard]] static common::Result<RetryDirectory> create(RetryDirectoryConfig config);
 
-  // An absent key reserves capacity or returns kResourceExhausted without changing state. Existing
-  // keys return immediately as in-flight, matching committed, or conflicting.
+  // An absent key reserves capacity or returns kResourceExhausted without changing state, including
+  // when either the map node or owner handle cannot be allocated. Existing keys return immediately
+  // as in-flight, matching committed, or conflicting.
   [[nodiscard]] common::Result<RetryDecision>
   try_reserve(const RetryIdentity& identity, const ColumnarAppendMutationIdentity& mutation);
 

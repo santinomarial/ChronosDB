@@ -166,6 +166,12 @@ duplicate/conflicting identities, post-WAL fail-closed position validation, a co
 inner/outer publication pause, and concurrent readers accepting only complete epochs. The public
 header compiles alone and the installed external consumer checks the registration method signature.
 
+The isolated allocation-failure suite fails each mutable-head and tablet preparation allocation in
+turn, including deduplication work vectors and generation rotation. Every failure reports
+`RESOURCE_EXHAUSTED`, preserves the prior complete rows/position/retry epoch, and leaves the owner
+reusable. Arming the same allocator across expected post-WAL head/tablet publication and global
+retry commit observes zero allocations.
+
 The tests run in the ordinary, AddressSanitizer/UndefinedBehaviorSanitizer, and applicable
 ThreadSanitizer configurations. `chronos_ingest_benchmarks` separately measures first publication,
 outer snapshot acquisition, topology-only capacity rotation, registered schema transition, and

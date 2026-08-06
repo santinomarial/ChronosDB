@@ -5,6 +5,8 @@
 #include <limits>
 #include <map>
 #include <mutex>
+#include <new>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -27,6 +29,10 @@ namespace {
 [[nodiscard]] common::Status reservation_tokens_exhausted() {
   return common::Status{common::StatusCode::kResourceExhausted,
                         "retry identity directory exhausted its reservation token space"};
+}
+
+[[nodiscard]] common::Status allocation_exhausted(std::string message) {
+  return common::Status{common::StatusCode::kResourceExhausted, std::move(message)};
 }
 
 enum class EntryState : std::uint8_t {
@@ -369,7 +375,15 @@ common::Result<RetryDirectory> RetryDirectory::create(const RetryDirectoryConfig
     return common::make_unexpected(
         invalid_argument("retry identity directory requires a nonzero entry bound"));
   }
-  return RetryDirectory{std::make_unique<Impl>(config.maximum_entries)};
+  try {
+    return RetryDirectory{std::make_unique<Impl>(config.maximum_entries)};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        allocation_exhausted("retry identity directory allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        allocation_exhausted("retry identity directory configuration exceeds container limits"));
+  }
 }
 
 common::Result<RetryDecision>
@@ -378,7 +392,15 @@ RetryDirectory::try_reserve(const RetryIdentity& identity,
   if (implementation_ == nullptr) {
     return common::make_unexpected(invalid_argument("retry directory is invalid"));
   }
-  return implementation_->state_->try_reserve(identity, mutation);
+  try {
+    return implementation_->state_->try_reserve(identity, mutation);
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        allocation_exhausted("retry identity reservation allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        allocation_exhausted("retry identity reservation exceeds container limits"));
+  }
 }
 
 RetryDirectoryMetrics RetryDirectory::metrics() const {

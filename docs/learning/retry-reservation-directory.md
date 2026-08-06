@@ -85,11 +85,12 @@ yet. Reaching the bound returns `kResourceExhausted` without changing state. It 
 not allocator overhead or the memory retained by outcome objects.
 
 An absent-to-reserved transition allocates a map node and reservation handle. If handle allocation
-throws, the just-inserted map entry is erased before the exception escapes, so an attempt that
-never received ownership cannot strand an identity. State changes after WAL start modify an
-existing entry and assign one shared pointer; they do not add a map node. The eventual ingestion
-coordinator must still reserve tablet/head/publication resources before WAL admission as required
-by the architecture.
+throws, the just-inserted map entry is erased before the public boundary converts the failure to
+`RESOURCE_EXHAUSTED`, so an attempt that never received ownership cannot strand an identity.
+Directory construction and map-node failure use the same explicit classification. State changes
+after WAL start modify an existing entry and assign one shared pointer; they do not add a map node.
+The eventual ingestion coordinator must still reserve tablet/head/publication resources before WAL
+admission as required by the architecture.
 
 Invalid outcome pointers, mismatched mutation identities, zero commit positions, zero row counts,
 and invalid or stale handles fail without changing the owned entry. A dropped WAL-started handle is
@@ -117,7 +118,9 @@ scope, and reservation lifetime. A seeded operation generator compares thousands
 with an independent reference state machine. A concurrent start barrier proves that one of many
 contenders owns the absent-to-in-flight transition while all others observe in-flight. TSan is the
 required local evidence for the shared-state boundary; ASan/UBSan cover lifetime and undefined
-behavior. Installation testing compiles the public header through the exported `chronos::ingest`
+behavior. A separate test-only allocator fails directory construction, map-node allocation, and
+reservation-handle allocation in turn and proves `RESOURCE_EXHAUSTED` plus complete rollback.
+Installation testing compiles the public header through the exported `chronos::ingest`
 target.
 
 ## Deferred integration

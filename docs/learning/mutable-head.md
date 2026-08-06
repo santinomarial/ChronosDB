@@ -130,8 +130,10 @@ snapshot reference-count owners.
 preparation, cancellation, post-WAL fail-closed abandonment, complete publication, hidden identity,
 stable old snapshots, nonrewritten variable boundaries, sealing, lifetime pinning, every frozen
 logical type and nullable shape, controlled snapshot acquisition after each column and hidden
-metadata write, and concurrent readers that accept only complete batch boundaries. The public
-header is compiled alone; install/export tests link `chronos::head` from a staged package.
+metadata write, and concurrent readers that accept only complete batch boundaries. The isolated
+allocation-failure suite additionally fails every preparation allocation in turn and proves the
+generation remains empty, reusable, and not failed. The public header is compiled alone;
+install/export tests link `chronos::head` from a staged package.
 
 The deterministic concurrency test runs under ThreadSanitizer, while the ordinary suite also runs
 under AddressSanitizer and UndefinedBehaviorSanitizer. `chronos_head_benchmarks` measures:
@@ -141,9 +143,9 @@ under AddressSanitizer and UndefinedBehaviorSanitizer. `chronos_head_benchmarks`
 - acquire snapshot plus construction of all borrowed column views.
 
 The measurements are local microbenchmarks, not an end-to-end ingestion claim. Later Phase 4
-evidence must add allocation failpoints, tablet generation switching, seal/handoff cost, scan
-throughput, memory overhead including allocator effects, reader contention, retry integration, and
-ordered replay.
+evidence must add seal/handoff cost, scan throughput, memory overhead including allocator effects,
+reader contention, and the wider workload matrix around the implemented tablet generation
+switching, retry integration, and ordered replay.
 
 ## Tradeoffs and likely review questions
 

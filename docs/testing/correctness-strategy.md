@@ -40,8 +40,10 @@
 > conflict/schema-regression/unknown-target/incomplete/unsupported classification, and continued
 > live sequence assignment. Tablet admission additionally checks every frozen logical-key type,
 > IEEE signed-zero/NaN equality, generated key sets, visible-generation conflicts, and replay
-> conflict classification. Retry retention, routing/admission, flush handoff, and allocation
-> failpoints remain unimplemented.
+> conflict classification. A test-only allocator now forces each retry-directory, mutable-head,
+> tablet preparation, deduplication, and rotation allocation to fail in turn, and verifies the
+> expected post-WAL in-memory path is allocation-free. Retry retention, routing/admission, and
+> flush handoff remain unimplemented.
 > Query and distributed harnesses also remain planned for their roadmap phases.
 
 ## Test types

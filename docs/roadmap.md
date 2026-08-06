@@ -123,8 +123,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
   classification, installation/external-consumer coverage, and unique/retry-heavy recovery
   microbenchmarks. Tablet preparation additionally enforces intra-batch and visible-generation
   APPEND_ROWS logical-key uniqueness with exhaustive typed, replay, property, and benchmark
-  evidence. Retry retention, routing/admission, flush handoff, allocation failpoints, and the wider
-  end-to-end Phase 4 benchmark matrix remain unimplemented.
+  evidence. Deterministic allocation-failure sweeps cover retry reservation, mutable-head and tablet
+  preparation, deduplication work, and rotation rollback, while the expected post-WAL in-memory
+  publication path observes zero allocations. Retry retention, routing/admission, flush handoff,
+  and the wider end-to-end Phase 4 benchmark matrix remain unimplemented.
 
 - **Scope:** typed immutable input batches; null/variable-width representation; append-only tablet heads; sealing; single shard-worker ownership; stable reader boundaries; idempotent ordered replay into heads.
 - **Explicit non-scope:** durable columnar parts, SQL execution, secondary indexes, general lock-free containers, live subscriptions, and a universal allocator.
