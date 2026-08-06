@@ -48,6 +48,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/ingest/columnar_append.hpp>
 #include <chronos/ingest/columnar_append_executor.hpp>
 #include <chronos/ingest/columnar_append_format.hpp>
+#include <chronos/ingest/columnar_append_recovery.hpp>
 #include <chronos/ingest/identity.hpp>
 #include <chronos/ingest/retry_directory.hpp>
 #include <chronos/ingest/sha256.hpp>
@@ -61,6 +62,11 @@ int main() {
       const chronos::ingest::ColumnarAppendExecutionInput&, chronos::ingest::RetryDirectory&,
       chronos::ingest::TabletState&, chronos::wal::WalCommitCoordinator&);
   const ExecuteFunction execute = &chronos::ingest::execute_columnar_append;
+  using RecoverFunction =
+      chronos::common::Result<chronos::ingest::RecoveredColumnarAppendState> (*)(
+          const chronos::wal::WalWriterConfig&, const chronos::wal::WalRecoveryOptions&,
+          chronos::ingest::ColumnarAppendRecoveryConfig);
+  const RecoverFunction recover = &chronos::ingest::recover_columnar_append_wal;
   static_assert(chronos::columnar::bitmap_size(9U) == 2U);
   static_assert(chronos::columnar::format::kBatchHeaderLength == 96U);
   chronos::columnar::ColumnarBatchLimits limits;
@@ -76,7 +82,8 @@ int main() {
       .maximum_sealed_generations = 2U,
       .maximum_retry_entries = 8U};
   static_assert(chronos::ingest::columnar_append_v1::kCommandHeaderLength == 160U);
-  return execute != nullptr && limits.max_columns == 4096U && head_capacity.row_capacity == 4U &&
+  return execute != nullptr && recover != nullptr && limits.max_columns == 4096U &&
+                 head_capacity.row_capacity == 4U &&
                  tablet_config.maximum_sealed_generations == 2U && digest.has_value() &&
                  retry_directory.has_value() &&
                  retry_directory->metrics().maximum_entries == 8U && !decoded.has_value() &&

@@ -138,10 +138,11 @@ public:
   // Recovery-only position advance for a matching duplicate command. The supplied outcome must be
   // the exact object already present in this tablet's retry table. No rows or retry entries are
   // added; one new outer epoch publishes only the later verified WAL position.
-  [[nodiscard]] common::Result<TabletSnapshot> advance_recovered_retry(
-      const RetryIdentity& retry_identity, const ColumnarAppendMutationIdentity& mutation,
-      const std::shared_ptr<const ColumnarAppendRetryOutcome>& outcome,
-      head::HeadCommitPosition position);
+  [[nodiscard]] common::Result<TabletSnapshot>
+  advance_recovered_retry(const RetryIdentity& retry_identity,
+                          const ColumnarAppendMutationIdentity& mutation,
+                          const std::shared_ptr<const ColumnarAppendRetryOutcome>& outcome,
+                          head::HeadCommitPosition position);
 
   [[nodiscard]] common::Result<TabletSnapshot> snapshot() const;
   [[nodiscard]] TabletStateMetrics metrics() const;

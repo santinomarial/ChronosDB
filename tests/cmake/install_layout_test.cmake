@@ -51,6 +51,11 @@ set(installed_ingest_header
 if(NOT EXISTS "${installed_ingest_header}")
   message(FATAL_ERROR "staging install omitted ${installed_ingest_header}")
 endif()
+set(installed_ingest_recovery_header
+    "${install_prefix}/${CHRONOS_TEST_INSTALL_INCLUDEDIR}/chronos/ingest/columnar_append_recovery.hpp")
+if(NOT EXISTS "${installed_ingest_recovery_header}")
+  message(FATAL_ERROR "staging install omitted ${installed_ingest_recovery_header}")
+endif()
 
 set(installed_head_header
     "${install_prefix}/${CHRONOS_TEST_INSTALL_INCLUDEDIR}/chronos/head/mutable_head.hpp")
