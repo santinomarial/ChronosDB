@@ -46,6 +46,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/columnar/column_vector.hpp>
 #include <chronos/cseg/compression.hpp>
 #include <chronos/cseg/format.hpp>
+#include <chronos/cseg/inspection.hpp>
 #include <chronos/cseg/layout.hpp>
 #include <chronos/cseg/metadata_codec.hpp>
 #include <chronos/cseg/part_codec.hpp>
@@ -123,6 +124,9 @@ int main() {
       const chronos::cseg::DecodedCsegPartView&, chronos::cseg::CsegValidationLimits);
   const ValidateCsegPartFunction validate_cseg_part =
       &chronos::cseg::validate_cseg_v1_part_contents;
+  using InspectCsegPartFunction = chronos::cseg::CsegInspectionResult (*)(
+      chronos::common::ByteView, chronos::cseg::CsegInspectionLimits);
+  const InspectCsegPartFunction inspect_cseg_part = &chronos::cseg::inspect_cseg_v1_part;
   using OpenProjectedReaderFunction = chronos::cseg::CsegProjectedReaderOpenResult (*)(
       chronos::common::ByteView, const chronos::schema::SchemaLineage&,
       chronos::schema::SchemaId, const chronos::schema::TabletId&,
@@ -159,6 +163,7 @@ int main() {
                  cseg_part.error().kind() ==
                      chronos::cseg::CsegPartDecodeErrorKind::kIncomplete &&
                  validate_cseg_part != nullptr &&
+                 inspect_cseg_part != nullptr &&
                  open_projected_reader != nullptr &&
                  !cseg_metadata.has_value() &&
                  cseg_metadata.error().kind() ==

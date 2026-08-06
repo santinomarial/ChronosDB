@@ -42,7 +42,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   structural decoding validate every stored page and alignment byte; bounded full validation adds
   system-row semantics, event-time extrema, global physical ordering, and exact schema binding.
   Metadata-authenticated projected granule reads independently validate requested user pages plus
-  every system page and synthesize nullable successor-schema tails.
+  every system page and synthesize nullable successor-schema tails. Complete read-only inspection
+  validates all schema-independent semantics and reports owned value-free metadata.
 - [Production dependencies](dependencies/README.md): maintained external-library boundaries,
   version sources, licenses, and update/security ownership.
 
@@ -108,5 +109,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Columnar append recovery](learning/columnar-append-recovery.md): implemented retained-lineage
   whole-WAL preflight/replay into fresh schema-bound tablet and retry state, ancestor duplicate
   handling, failure isolation, deterministic reopen, and continued writer ownership.
+- [CSEG v1 storage](learning/cseg-storage.md): implemented layout, compression, metadata/page/part
+  codecs, layered validation, projected reads, inspection, ownership, failure, and measurement
+  contracts.
 
 Future format, protocol, subsystem, operations, and learning documents should be linked here when they are added by their corresponding roadmap phase.

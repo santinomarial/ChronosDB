@@ -1,5 +1,6 @@
 #include "chronos/columnar/column_vector.hpp"
 #include "chronos/common/uuid.hpp"
+#include "chronos/cseg/inspection.hpp"
 #include "chronos/cseg/part_codec.hpp"
 #include "chronos/cseg/projected_reader.hpp"
 #include "chronos/cseg/validator.hpp"
@@ -241,6 +242,25 @@ void benchmark_part_validate(benchmark::State& state) {
   state.SetLabel("system semantics + extrema + strict global ordering; local only");
 }
 
+void benchmark_part_inspection(benchmark::State& state) {
+  const auto rows = static_cast<std::uint32_t>(state.range(0));
+  const auto policy = state.range(1) == 0 ? chronos::cseg::PageCompression::kNone
+                                          : chronos::cseg::PageCompression::kZstd;
+  const Fixture fixture{rows, policy};
+  for ([[maybe_unused]] auto iteration : state) {
+    auto report = chronos::cseg::inspect_cseg_v1_part(fixture.encoded.bytes());
+    if (!report.has_value()) {
+      const std::string message = report.error().status().to_string();
+      state.SkipWithError(message);
+      return;
+    }
+    benchmark::DoNotOptimize(report->pages.data());
+  }
+  state.SetItemsProcessed(state.iterations() * rows);
+  state.SetBytesProcessed(state.iterations() * static_cast<std::int64_t>(fixture.encoded.size()));
+  state.SetLabel("exact decode + full semantic validation + owned descriptor report; local only");
+}
+
 void benchmark_projected_read(benchmark::State& state) {
   const auto rows = static_cast<std::uint32_t>(state.range(0));
   const auto policy = state.range(1) == 0 ? chronos::cseg::PageCompression::kNone
@@ -285,6 +305,8 @@ BENCHMARK(benchmark_part_encode)->ArgsProduct({{64, 1024, 65536}, {0, 1}});
 BENCHMARK(benchmark_part_decode)->ArgsProduct({{64, 1024, 65536}, {0, 1}});
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 BENCHMARK(benchmark_part_validate)->ArgsProduct({{64, 1024, 65536}, {0, 1}});
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+BENCHMARK(benchmark_part_inspection)->ArgsProduct({{64, 1024, 65536}, {0, 1}});
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 BENCHMARK(benchmark_projected_read)->ArgsProduct({{64, 1024, 65536}, {0, 1}, {0, 1}});
 

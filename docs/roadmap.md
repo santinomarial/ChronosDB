@@ -167,7 +167,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > edge cases, and exact schema/tablet binding with hostile/property/sanitizer evidence.
 > Metadata-authenticated projected granule reading now validates only requested user pages plus all
 > system pages, supports nullable-tail lineage projection, and has hostile/property/fuzz/benchmark
-> and installed-consumer coverage. The inspector and learning documentation remain unimplemented.
+> and installed-consumer coverage. Complete read-only inspection, deterministic descriptor-only CLI
+> output, hostile/subprocess tests, installation/external-consumer coverage, and the CSEG learning
+> document now complete the required Phase 5 implementation artifacts. Phase-gate evidence remains
+> subject to the declared CI platform and benchmark methodology rather than this status summary.
 
 - **Scope:** specify and implement immutable sorted CSEG parts, granules, checksummed column pages, metadata, supported encodings/compressors, safe readers/writers, and inspection tooling.
 - **Explicit non-scope:** manifests, flush orchestration, compaction, remote objects, format v2 speculation, and indexes beyond metadata required by v1.

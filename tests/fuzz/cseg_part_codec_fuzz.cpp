@@ -3,6 +3,7 @@
 #include "chronos/common/crc32c.hpp"
 #include "chronos/common/uuid.hpp"
 #include "chronos/cseg/format.hpp"
+#include "chronos/cseg/inspection.hpp"
 #include "chronos/cseg/part_codec.hpp"
 #include "chronos/cseg/projected_reader.hpp"
 #include "chronos/cseg/validator.hpp"
@@ -144,6 +145,7 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
 }
 
 void exercise(const chronos::common::ByteView bytes) {
+  [[maybe_unused]] const auto inspection = chronos::cseg::inspect_cseg_v1_part(bytes);
   const auto prefix = chronos::cseg::decode_cseg_v1_part_prefix(bytes);
   if (prefix.has_value()) {
     if (prefix->encoded_part().size() > bytes.size() ||

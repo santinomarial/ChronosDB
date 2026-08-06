@@ -153,6 +153,7 @@ chronos_enable_static_analysis(chronos_columnar)
 add_library(
   chronos_cseg
   src/cseg/compression.cpp
+  src/cseg/inspection.cpp
   src/cseg/layout.cpp
   src/cseg/metadata_codec.cpp
   src/cseg/part_codec.cpp
@@ -292,6 +293,14 @@ chronos_set_project_warnings(chronos-waldump)
 chronos_enable_sanitizers(chronos-waldump)
 chronos_enable_static_analysis(chronos-waldump)
 
+add_executable(chronos-csegdump tools/chronos-csegdump/main.cpp)
+set_target_properties(chronos-csegdump PROPERTIES CXX_EXTENSIONS OFF)
+target_compile_features(chronos-csegdump PRIVATE cxx_std_23)
+target_link_libraries(chronos-csegdump PRIVATE chronos::cseg)
+chronos_set_project_warnings(chronos-csegdump)
+chronos_enable_sanitizers(chronos-csegdump)
+chronos_enable_static_analysis(chronos-csegdump)
+
 add_executable(chronos-walbench tools/chronos-walbench/main.cpp)
 set_target_properties(chronos-walbench PROPERTIES CXX_EXTENSIONS OFF)
 target_compile_features(chronos-walbench PRIVATE cxx_std_23)
@@ -379,10 +388,13 @@ if(CHRONOS_BUILD_TESTS)
 
   add_executable(
     chronos_cseg_tests
+    tests/cseg/csegdump_test.cpp
     tests/cseg/compression_header_self_contained.cpp
     tests/cseg/compression_test.cpp
     tests/cseg/format_header_self_contained.cpp
     tests/cseg/format_test.cpp
+    tests/cseg/inspection_header_self_contained.cpp
+    tests/cseg/inspection_test.cpp
     tests/cseg/layout_header_self_contained.cpp
     tests/cseg/layout_test.cpp
     tests/cseg/metadata_codec_header_self_contained.cpp
@@ -405,6 +417,11 @@ if(CHRONOS_BUILD_TESTS)
   target_link_libraries(
     chronos_cseg_tests PRIVATE chronos::cseg GTest::gtest_main zstd::libzstd
   )
+  target_compile_definitions(
+    chronos_cseg_tests
+    PRIVATE CHRONOS_CSEGDUMP_PATH="$<TARGET_FILE:chronos-csegdump>"
+  )
+  add_dependencies(chronos_cseg_tests chronos-csegdump)
   chronos_set_project_warnings(chronos_cseg_tests)
   chronos_enable_sanitizers(chronos_cseg_tests)
   chronos_enable_static_analysis(chronos_cseg_tests)

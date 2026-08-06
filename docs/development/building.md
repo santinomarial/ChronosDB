@@ -108,9 +108,21 @@ It exits `0` for a clean WAL, `3` for an incomplete but potentially repairable f
 verification or lock failure, and `2` for invalid command-line use. It never repairs or creates a
 missing `LOCK` file.
 
+The read-only CSEG inspector validates exactly one complete CSEG v1 candidate in memory, including
+all schema-independent system-row, extrema, and ordering semantics. It prints metadata and storage
+accounting without row values and never modifies the input:
+
+```sh
+build/dev/chronos-csegdump [--max-bytes N] [--descriptors] <path-to-cseg-file>
+```
+
+It exits `0` for valid bytes, `3` for an incomplete prefix, `4` for a recognized but unsupported
+durable value, `1` for corruption, resource-limit, or I/O failure, and `2` for invalid command-line
+use. Catalog schema binding requires the separate schema-aware library API.
+
 Install to a staging prefix with `cmake --install build/release --prefix <directory>`. This installs
-`chronosctl`, `chronos-waldump`, `chronos-walbench`, the common, schema, POSIX I/O, and WAL libraries
-and public headers, and a CMake package exporting `chronos::common`, `chronos::schema`,
+`chronosctl`, `chronos-csegdump`, `chronos-waldump`, `chronos-walbench`, the common, schema, POSIX
+I/O, and WAL libraries and public headers, and a CMake package exporting `chronos::common`, `chronos::schema`,
 `chronos::cseg`, `chronos::io`, and `chronos::wal` among the implemented library targets.
 
 ## Sanitizers

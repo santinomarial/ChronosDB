@@ -178,7 +178,9 @@ The bounded full validator checks system-row values, recomputes event-time extre
 all-type physical ordering across granules, and composes exact schema/tablet binding. The projected
 reader authenticates metadata once, then independently validates only requested user pages plus
 the four mandatory system pages for each granule; lineage projection synthesizes canonical NULLs
-for nullable successor-schema tails. The inspector remains pending.
+for nullable successor-schema tails. Complete read-only inspection validates structural and all
+schema-independent row semantics and returns an owned value-free report; `chronos-csegdump`
+exposes that path without mutating the candidate file.
 
 Parts will be written to temporary identities, fully validated and made durable according to the
 future installation protocol, then atomically referenced by a manifest version edit. After

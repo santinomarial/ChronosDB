@@ -6,8 +6,8 @@
 > canonical metadata
 > directory plus standalone PLAIN/stored-page codecs are implemented together with canonical owned
 > file composition and borrowed prefix/exact structural decoding. Bounded complete semantic and
-> schema-binding validation plus schema-aware projected granule reading are also implemented; the
-> inspector remains pending.
+> schema-binding validation plus schema-aware projected granule reading and complete read-only
+> inspection are also implemented.
 > [ADR 0016](../adr/0016-cseg-v1-layout-integrity-and-compression.md)
 > accepts the layout, integrity, ordering, and compression decisions. Manifests, installation,
 > flush orchestration, compaction, and reclamation are separate Phase 6 and Phase 7 contracts.

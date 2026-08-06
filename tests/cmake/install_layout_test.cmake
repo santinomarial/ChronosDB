@@ -20,7 +20,7 @@ if(NOT DEFINED CHRONOS_TEST_INSTALL_LIBDIR)
   message(FATAL_ERROR "CHRONOS_TEST_INSTALL_LIBDIR is required")
 endif()
 
-foreach(tool IN ITEMS chronosctl chronos-waldump chronos-walbench)
+foreach(tool IN ITEMS chronosctl chronos-csegdump chronos-waldump chronos-walbench)
   set(installed_tool
       "${install_prefix}/${CHRONOS_TEST_INSTALL_BINDIR}/${tool}${CHRONOS_TEST_EXECUTABLE_SUFFIX}")
   if(NOT EXISTS "${installed_tool}")
@@ -50,6 +50,12 @@ set(installed_cseg_layout_header
     "${install_prefix}/${CHRONOS_TEST_INSTALL_INCLUDEDIR}/chronos/cseg/layout.hpp")
 if(NOT EXISTS "${installed_cseg_layout_header}")
   message(FATAL_ERROR "staging install omitted ${installed_cseg_layout_header}")
+endif()
+
+set(installed_cseg_inspection_header
+    "${install_prefix}/${CHRONOS_TEST_INSTALL_INCLUDEDIR}/chronos/cseg/inspection.hpp")
+if(NOT EXISTS "${installed_cseg_inspection_header}")
+  message(FATAL_ERROR "staging install omitted ${installed_cseg_inspection_header}")
 endif()
 
 set(installed_cseg_compression_header
