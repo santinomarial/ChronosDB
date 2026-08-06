@@ -134,6 +134,12 @@ set(installed_manifest_validation_header
 if(NOT EXISTS "${installed_manifest_validation_header}")
   message(FATAL_ERROR "staging install omitted ${installed_manifest_validation_header}")
 endif()
+set(installed_manifest_compaction_equivalence_header
+    "${install_prefix}/${CHRONOS_TEST_INSTALL_INCLUDEDIR}/chronos/manifest/compaction_equivalence.hpp")
+if(NOT EXISTS "${installed_manifest_compaction_equivalence_header}")
+  message(FATAL_ERROR
+          "staging install omitted ${installed_manifest_compaction_equivalence_header}")
+endif()
 set(installed_manifest_naming_header
     "${install_prefix}/${CHRONOS_TEST_INSTALL_INCLUDEDIR}/chronos/manifest/naming.hpp")
 if(NOT EXISTS "${installed_manifest_naming_header}")

@@ -283,6 +283,7 @@ add_library(
   chronos_manifest
   src/manifest/checkpoint_builder.cpp
   src/manifest/codec.cpp
+  src/manifest/compaction_equivalence.cpp
   src/manifest/generation_builder.cpp
   src/manifest/layout.cpp
   src/manifest/naming.cpp
@@ -619,6 +620,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/manifest/codec_header_self_contained.cpp
     tests/manifest/codec_property_test.cpp
     tests/manifest/codec_test.cpp
+    tests/manifest/compaction_equivalence_header_self_contained.cpp
+    tests/manifest/compaction_equivalence_test.cpp
     tests/manifest/format_header_self_contained.cpp
     tests/manifest/format_test.cpp
     tests/manifest/generation_builder_header_self_contained.cpp
@@ -840,6 +843,7 @@ if(CHRONOS_BUILD_BENCHMARKS)
 
   add_executable(
     chronos_manifest_benchmarks
+    benchmarks/manifest/compaction_equivalence_benchmark.cpp
     benchmarks/manifest/codec_benchmark.cpp
     benchmarks/manifest/publication_benchmark.cpp
     benchmarks/manifest/sealed_head_flush_benchmark.cpp

@@ -126,6 +126,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   contracts.
 - [Manifest v1 codec](learning/manifest-codec.md): implemented nominal values, checked layout,
   canonical owned encoding, borrowed decoding, trust ladder, failure classes, and evidence boundary.
+- [Append-only CSEG compaction](learning/append-only-compaction.md): accepted replacement boundary,
+  structural Manifest authority, and implemented bounded full-row equivalence oracle.
 - [Database storage publication](learning/database-storage-publication.md): implemented aggregate
   Manifest/head ownership, monotonic tablet refresh, atomic head-to-part replacement, snapshot
   lifetime, fail-closed behavior, and memory-ordering evidence.

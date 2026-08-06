@@ -270,7 +270,9 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > fresh output identities, Manifest v1 atomic replacement, and conservative retention of inputs.
 > A separate allocation-free Manifest transition validator now enforces the exact one-tablet
 > replacement authorization while preserving checkpoint, tablet, retry, and unrelated-part state.
-> Merge, equivalence, installation/publication, pin-aware reclamation, index, and end-to-end
+> An independent bounded streaming oracle now fully validates both CSEG sets, rejects duplicate
+> cross-part physical tuples, and compares every user/system cell without trusting hashes or
+> metadata totals. Merge, installation/publication, pin-aware reclamation, index, and end-to-end
 > benchmark evidence remain to be implemented.
 
 - **Scope:** zone maps, sparse indexes, optional scoped secondary indexes; delta parts for late/out-of-order versions; selection and merge policy; atomic compaction installation; safe reclamation.
