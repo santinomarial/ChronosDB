@@ -21,8 +21,9 @@ The public headers are:
 - `chronos/manifest/naming.hpp`: canonical final/temporary basename formatting and strict parsing;
 - `chronos/manifest/layout.hpp`: allocation-free canonical layout planning;
 - `chronos/manifest/codec.hpp`: owned encoding, borrowed decoding, limits, and error classes;
-- `chronos/manifest/validation.hpp`: exact catalog binding and add-only generation transitions; and
-- `chronos/manifest/part_validation.hpp`: installed CSEG image-to-descriptor validation.
+- `chronos/manifest/validation.hpp`: exact catalog binding and add-only generation transitions;
+- `chronos/manifest/part_validation.hpp`: installed CSEG image-to-descriptor validation; and
+- `chronos/manifest/storage.hpp`: locked, directory-anchored immutable part installation.
 
 Referenced-part validation borrows exact file images supplied in descriptor order. It validates
 the catalog lineage first, then requires the canonical identity-derived filename and exact length,
@@ -148,6 +149,18 @@ Both own one descriptor-vector allocation per nonempty descriptor category; enco
 owns the exact byte image. Referenced-part validation is `O(total CSEG bytes + rows)` and repeats
 bounded system-page decoding after complete CSEG validation to recompute manifest-specific WAL and
 record-sequence facts.
+
+`ManifestStorage::open_existing()` opens the database root and its exact `parts/` and `manifest/`
+children without following final-component symlinks, then acquires the already-existing
+`manifest/LOCK`. The move-only owner holds all descriptors and the lock for its lifetime and is
+single-writer rather than internally synchronized.
+
+`install_part()` rejects invalid input before filesystem mutation. It exclusively creates the
+recognized temporary name, writes all bytes, verifies size, reads back and repeats full validation,
+syncs and closes the file, renames without replacement, and syncs `parts/`. A failure before rename
+leaves only the candidate temporary. A directory-sync failure after rename poisons the live owner
+because the final namespace's crash outcome is uncertain; recovery must reconcile it. Successful
+file/directory sync and installed-byte counters advance only at their completed boundaries.
 
 The current one-GiB format maximum is not a recommended operating size. Runtime limits let an
 owner enforce a smaller memory budget before allocation. Retry admission and manifest generation

@@ -195,7 +195,9 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > implemented. Exact final/temporary basename formatting and parsing are implemented with
 > property, installation, and external-consumer coverage. Installed CSEG images now have complete
 > in-memory filename, length, header, content, schema, WAL-identity, and record-extrema binding.
-> Filesystem owners, flush, recovery, crash evidence,
+> A locked, descriptor-relative filesystem owner now installs immutable CSEG parts with exact
+> prevalidation/readback, file-sync, no-replace rename, directory-sync, poisoning, and metrics.
+> Manifest generation installation, flush, recovery, crash evidence,
 > and observability remain unimplemented.
 
 - **Scope:** manifest generations/version edits; atomic durable part installation; sealed-head flush; checkpoint/log coverage; startup reconciliation; safe temporary-file handling.

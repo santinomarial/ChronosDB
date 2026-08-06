@@ -26,6 +26,14 @@ struct ReferencedPartValidationLimits {
   cseg::CsegValidationLimits contents;
 };
 
+// Validates one supplied image against one descriptor, WAL identity, and exact physical schema.
+// This is the shared pre-install/readback primitive used by the filesystem owner and by complete
+// manifest referenced-part validation.
+[[nodiscard]] common::Status
+validate_manifest_v1_part_image(const PartDescriptor& descriptor, const wal::WalId& wal_id,
+                                const schema::TableSchema& schema, const ReferencedPartImage& image,
+                                ReferencedPartValidationLimits limits = {});
+
 // Completes the in-memory referenced-part trust boundary. It first validates exact schema lineage
 // bindings, then for every descriptor checks the canonical filename, exact file length, complete
 // CSEG integrity/content/schema validation, duplicate header metadata, manifest WAL identity on

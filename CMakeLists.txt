@@ -283,6 +283,7 @@ add_library(
   src/manifest/layout.cpp
   src/manifest/naming.cpp
   src/manifest/part_validation.cpp
+  src/manifest/storage.cpp
   src/manifest/validation.cpp
 )
 add_library(chronos::manifest ALIAS chronos_manifest)
@@ -294,10 +295,12 @@ target_include_directories(
   PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+  PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
 target_link_libraries(
   chronos_manifest
   PUBLIC chronos::cseg chronos::ingest chronos::schema chronos::wal
+  PRIVATE chronos::io
 )
 chronos_set_project_warnings(chronos_manifest)
 chronos_enable_sanitizers(chronos_manifest)
@@ -602,6 +605,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/manifest/naming_test.cpp
     tests/manifest/part_validation_header_self_contained.cpp
     tests/manifest/part_validation_test.cpp
+    tests/manifest/storage_header_self_contained.cpp
+    tests/manifest/storage_test.cpp
     tests/manifest/types_header_self_contained.cpp
     tests/manifest/types_test.cpp
     tests/manifest/validation_header_self_contained.cpp
@@ -609,7 +614,10 @@ if(CHRONOS_BUILD_TESTS)
   )
   set_target_properties(chronos_manifest_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_manifest_tests PRIVATE cxx_std_23)
-  target_include_directories(chronos_manifest_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+  target_include_directories(
+    chronos_manifest_tests
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests" "${CMAKE_CURRENT_SOURCE_DIR}/src"
+  )
   target_link_libraries(chronos_manifest_tests PRIVATE chronos::manifest GTest::gtest_main)
   chronos_set_project_warnings(chronos_manifest_tests)
   chronos_enable_sanitizers(chronos_manifest_tests)

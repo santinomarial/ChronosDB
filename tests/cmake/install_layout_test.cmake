@@ -131,6 +131,11 @@ set(installed_manifest_part_validation_header
 if(NOT EXISTS "${installed_manifest_part_validation_header}")
   message(FATAL_ERROR "staging install omitted ${installed_manifest_part_validation_header}")
 endif()
+set(installed_manifest_storage_header
+    "${install_prefix}/${CHRONOS_TEST_INSTALL_INCLUDEDIR}/chronos/manifest/storage.hpp")
+if(NOT EXISTS "${installed_manifest_storage_header}")
+  message(FATAL_ERROR "staging install omitted ${installed_manifest_storage_header}")
+endif()
 set(installed_ingest_recovery_header
     "${install_prefix}/${CHRONOS_TEST_INSTALL_INCLUDEDIR}/chronos/ingest/columnar_append_recovery.hpp")
 if(NOT EXISTS "${installed_ingest_recovery_header}")

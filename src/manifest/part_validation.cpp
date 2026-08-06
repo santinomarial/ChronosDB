@@ -133,6 +133,42 @@ struct RecordSummary {
 
 } // namespace
 
+common::Status validate_manifest_v1_part_image(const PartDescriptor& descriptor,
+                                               const wal::WalId& wal_id,
+                                               const schema::TableSchema& schema_value,
+                                               const ReferencedPartImage& image,
+                                               const ReferencedPartValidationLimits limits) {
+  const common::Result<cseg::PartId> named_part = parse_part_file_name(image.file_name);
+  if (!named_part.has_value() || *named_part != descriptor.part_id) {
+    return corruption("Installed CSEG filename disagrees with its manifest descriptor");
+  }
+  if (image.bytes.size() != descriptor.file_length) {
+    return corruption("Installed CSEG length disagrees with its manifest descriptor");
+  }
+
+  cseg::CsegPartDecodeResult decoded = cseg::decode_cseg_v1_part_exact(image.bytes, limits.decode);
+  if (!decoded.has_value()) {
+    return decode_failure(decoded.error());
+  }
+  if (!metadata_agrees(descriptor, decoded->metadata())) {
+    return corruption("Installed CSEG header disagrees with its manifest descriptor");
+  }
+  common::Status part_status =
+      cseg::validate_cseg_v1_part(*decoded, schema_value, descriptor.tablet_id, limits.contents);
+  if (!part_status.is_ok()) {
+    return part_status;
+  }
+  const common::Result<RecordSummary> records = summarize_records(*decoded, wal_id);
+  if (!records.has_value()) {
+    return records.error();
+  }
+  if (records->minimum != descriptor.minimum_record_sequence ||
+      records->maximum != descriptor.maximum_record_sequence) {
+    return corruption("CSEG record-sequence extrema disagree with its manifest descriptor");
+  }
+  return common::Status::ok();
+}
+
 common::Status
 validate_manifest_v1_referenced_parts(const DecodedManifestView& manifest,
                                       const std::span<const TabletSchemaBinding> bindings,
@@ -149,23 +185,6 @@ validate_manifest_v1_referenced_parts(const DecodedManifestView& manifest,
   for (std::size_t index = 0U; index < manifest.parts().size(); ++index) {
     const PartDescriptor& descriptor = manifest.parts()[index];
     const ReferencedPartImage& image = images[index];
-    const common::Result<cseg::PartId> named_part = parse_part_file_name(image.file_name);
-    if (!named_part.has_value() || *named_part != descriptor.part_id) {
-      return corruption("Installed CSEG filename disagrees with its manifest descriptor");
-    }
-    if (image.bytes.size() != descriptor.file_length) {
-      return corruption("Installed CSEG length disagrees with its manifest descriptor");
-    }
-
-    cseg::CsegPartDecodeResult decoded =
-        cseg::decode_cseg_v1_part_exact(image.bytes, limits.decode);
-    if (!decoded.has_value()) {
-      return decode_failure(decoded.error());
-    }
-    if (!metadata_agrees(descriptor, decoded->metadata())) {
-      return corruption("Installed CSEG header disagrees with its manifest descriptor");
-    }
-
     const TabletSchemaBinding* schema_binding = find_binding(bindings, descriptor.tablet_id);
     if (schema_binding == nullptr) {
       return status(common::StatusCode::kInternal,
@@ -177,19 +196,10 @@ validate_manifest_v1_referenced_parts(const DecodedManifestView& manifest,
       return status(common::StatusCode::kInternal,
                     "Validated manifest part schema became inaccessible");
     }
-    common::Status part_status =
-        cseg::validate_cseg_v1_part(*decoded, *schema_value, descriptor.tablet_id, limits.contents);
+    common::Status part_status = validate_manifest_v1_part_image(descriptor, manifest.wal_id(),
+                                                                 *schema_value, image, limits);
     if (!part_status.is_ok()) {
       return part_status;
-    }
-
-    const common::Result<RecordSummary> records = summarize_records(*decoded, manifest.wal_id());
-    if (!records.has_value()) {
-      return records.error();
-    }
-    if (records->minimum != descriptor.minimum_record_sequence ||
-        records->maximum != descriptor.maximum_record_sequence) {
-      return corruption("CSEG record-sequence extrema disagree with its manifest descriptor");
     }
   }
   return common::Status::ok();
