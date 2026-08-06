@@ -3,6 +3,7 @@
 #include "chronos/common/status.hpp"
 #include "chronos/query/evaluator.hpp"
 #include "chronos/query/literal.hpp"
+#include "query/decimal_internal.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -33,7 +34,10 @@ struct JoinedRow {
 struct ProjectedRow {
   std::vector<ScalarValue> values;
   std::vector<ScalarValue> order_values;
+  std::vector<ScalarValue> aggregate_values;
+  std::vector<ScalarValue> group_key;
   JoinedRow input;
+  bool aggregated{};
 };
 
 template <typename Value>
@@ -127,7 +131,8 @@ public:
       std::vector<JoinedRow> rows = latest_rows();
       apply_asof_joins(rows);
       apply_where(rows);
-      std::vector<ProjectedRow> projected = project(rows);
+      std::vector<ProjectedRow> projected =
+          aggregate_query() ? aggregate_project(rows) : project(rows);
       apply_order(projected);
       apply_limit(projected);
       std::vector<std::vector<ScalarValue>> output;
@@ -167,11 +172,11 @@ private:
       fail(plan_.syntax().span(), common::StatusCode::kNotSupported,
            "This scalar execution entry point accepts SELECT only");
     }
-    if (!plan_.syntax().group_by().empty() ||
-        std::ranges::any_of(plan_.outputs(), &BoundOutputColumn::contains_aggregate)) {
-      fail(plan_.syntax().span(), common::StatusCode::kNotSupported,
-           "Aggregate scalar execution is not available in this executor slice");
-    }
+  }
+
+  [[nodiscard]] bool aggregate_query() const noexcept {
+    return !plan_.syntax().group_by().empty() ||
+           std::ranges::any_of(plan_.outputs(), &BoundOutputColumn::contains_aggregate);
   }
 
   void resolve_snapshots() {
@@ -219,8 +224,9 @@ private:
     return key;
   }
 
-  [[nodiscard]] ScalarEvaluationContext context(const JoinedRow& row,
-                                                const std::span<const ScalarValue> outputs = {}) {
+  [[nodiscard]] ScalarEvaluationContext
+  context(const JoinedRow& row, const std::span<const ScalarValue> outputs = {},
+          const std::span<const ScalarExpressionOverride> overrides = {}) {
     context_rows_.clear();
     context_rows_.reserve(row.sources.size());
     for (std::size_t source = 0U; source < row.sources.size(); ++source) {
@@ -229,13 +235,16 @@ private:
                                                   ? std::span<const ScalarValue>{null_rows_[source]}
                                                   : std::span<const ScalarValue>{input->columns}});
     }
-    return ScalarEvaluationContext{.sources = context_rows_, .projected_outputs = outputs};
+    return ScalarEvaluationContext{
+        .sources = context_rows_, .projected_outputs = outputs, .overrides = overrides};
   }
 
-  [[nodiscard]] ScalarValue evaluate(const SqlExpression& expression, const JoinedRow& row,
-                                     const std::span<const ScalarValue> outputs = {}) {
+  [[nodiscard]] ScalarValue
+  evaluate(const SqlExpression& expression, const JoinedRow& row,
+           const std::span<const ScalarValue> outputs = {},
+           const std::span<const ScalarExpressionOverride> overrides = {}) {
     SqlResult<ScalarValue> value =
-        evaluate_sql_v1_expression(plan_, expression, context(row, outputs));
+        evaluate_sql_v1_expression(plan_, expression, context(row, outputs, overrides));
     if (!value.has_value())
       throw ExecutionFailure{value.error()};
     return std::move(*value);
@@ -392,6 +401,244 @@ private:
     return projected;
   }
 
+  [[nodiscard]] static bool aggregate_function(const SqlExpression& expression) noexcept {
+    if (expression.kind() != SqlExpressionKind::kFunction)
+      return false;
+    const std::string& name = expression.text();
+    return name == "count" || name == "sum" || name == "avg" || name == "min" || name == "max" ||
+           name == "var_pop" || name == "var_samp";
+  }
+
+  void collect_aggregates(const SqlExpression& expression) {
+    if (aggregate_function(expression)) {
+      const auto found = std::ranges::find_if(aggregate_expressions_, [&](const auto* candidate) {
+        return candidate->span() == expression.span();
+      });
+      if (found == aggregate_expressions_.end())
+        aggregate_expressions_.push_back(std::addressof(expression));
+      return;
+    }
+    for (const SqlExpression& child : expression.children())
+      collect_aggregates(child);
+  }
+
+  [[nodiscard]] const schema::LogicalType& expression_type(const SqlExpression& expression) const {
+    const BoundExpressionInfo* information = plan_.find_expression(expression.span());
+    if (information == nullptr || !information->type.has_value())
+      fail(expression.span(), common::StatusCode::kInternal,
+           "Aggregate expression has no bound result type");
+    return information->type.value();
+  }
+
+  [[nodiscard]] static double numeric_double(const ScalarValue& value, const SourceSpan span) {
+    if (const auto* signed_value = std::get_if<std::int64_t>(&value.storage());
+        signed_value != nullptr)
+      return static_cast<double>(*signed_value);
+    if (const auto* unsigned_value = std::get_if<std::uint64_t>(&value.storage());
+        unsigned_value != nullptr)
+      return static_cast<double>(*unsigned_value);
+    if (const auto* float_value = std::get_if<float>(&value.storage()); float_value != nullptr)
+      return static_cast<double>(*float_value);
+    if (const auto* double_value = std::get_if<double>(&value.storage()); double_value != nullptr)
+      return *double_value;
+    if (const auto* decimal_value = std::get_if<Decimal128Value>(&value.storage());
+        decimal_value != nullptr) {
+      const schema::LogicalType* value_type = optional_pointer(value.type());
+      if (value_type == nullptr)
+        fail(span, common::StatusCode::kInternal, "DECIMAL aggregate input is untyped");
+      const common::Result<double> converted =
+          detail::decimal_to_double(*decimal_value, *value_type);
+      if (!converted.has_value())
+        fail(span, converted.error().code(), converted.error().message());
+      return *converted;
+    }
+    fail(span, common::StatusCode::kInternal, "Aggregate numeric input has invalid storage");
+  }
+
+  [[nodiscard]] ScalarValue exact_sum(const SqlExpression& aggregate,
+                                      const std::vector<ScalarValue>& values) const {
+    const schema::LogicalType& result_type = expression_type(aggregate);
+    if (result_type.kind() == schema::LogicalTypeKind::kFloat32) {
+      float sum = 0.0F;
+      for (const ScalarValue& value : values)
+        sum += *std::get_if<float>(&value.storage());
+      return ScalarValue::float32(sum).value();
+    }
+    if (result_type.kind() == schema::LogicalTypeKind::kFloat64) {
+      double sum = 0.0;
+      for (const ScalarValue& value : values)
+        sum += *std::get_if<double>(&value.storage());
+      return ScalarValue::float64(sum).value();
+    }
+    detail::ExactNumericAccumulator accumulator;
+    for (const ScalarValue& value : values) {
+      common::Result<void> added;
+      if (const auto* signed_value = std::get_if<std::int64_t>(&value.storage());
+          signed_value != nullptr) {
+        added = accumulator.add_signed(*signed_value);
+      } else if (const auto* unsigned_value = std::get_if<std::uint64_t>(&value.storage());
+                 unsigned_value != nullptr) {
+        added = accumulator.add_unsigned(*unsigned_value);
+      } else {
+        const auto* decimal_value = std::get_if<Decimal128Value>(&value.storage());
+        if (decimal_value == nullptr)
+          fail(aggregate.span(), common::StatusCode::kInternal,
+               "Exact aggregate input has invalid storage");
+        added = accumulator.add_decimal(*decimal_value);
+      }
+      if (!added.has_value())
+        fail(aggregate.span(), added.error().code(), added.error().message());
+    }
+    if (result_type.is_decimal()) {
+      const common::Result<Decimal128Value> result = accumulator.decimal_result(result_type);
+      if (!result.has_value())
+        fail(aggregate.span(), result.error().code(), result.error().message());
+      return ScalarValue::decimal(result_type, *result).value();
+    }
+    if (result_type.kind() >= schema::LogicalTypeKind::kInt8 &&
+        result_type.kind() <= schema::LogicalTypeKind::kInt64) {
+      const common::Result<std::int64_t> result = accumulator.signed_result();
+      if (!result.has_value())
+        fail(aggregate.span(), result.error().code(), result.error().message());
+      const common::Result<ScalarValue> scalar = ScalarValue::signed_value(result_type, *result);
+      if (!scalar.has_value())
+        fail(aggregate.span(), scalar.error().code(), scalar.error().message());
+      return *scalar;
+    }
+    const common::Result<std::uint64_t> result = accumulator.unsigned_result();
+    if (!result.has_value())
+      fail(aggregate.span(), result.error().code(), result.error().message());
+    const common::Result<ScalarValue> scalar = ScalarValue::unsigned_value(result_type, *result);
+    if (!scalar.has_value())
+      fail(aggregate.span(), scalar.error().code(), scalar.error().message());
+    return *scalar;
+  }
+
+  [[nodiscard]] ScalarValue evaluate_aggregate(const SqlExpression& aggregate,
+                                               const std::span<const JoinedRow* const> rows) {
+    if (aggregate.text() == "count") {
+      std::int64_t count = 0;
+      const bool star = aggregate.children().front().kind() == SqlExpressionKind::kStar;
+      for (const JoinedRow* row : rows) {
+        if (star || !evaluate(aggregate.children().front(), *row).is_null())
+          ++count;
+      }
+      return ScalarValue::signed_value(expression_type(aggregate), count).value();
+    }
+    std::vector<ScalarValue> values;
+    values.reserve(rows.size());
+    for (const JoinedRow* row : rows) {
+      ScalarValue value = evaluate(aggregate.children().front(), *row);
+      if (!value.is_null())
+        values.push_back(std::move(value));
+    }
+    if (values.empty())
+      return ScalarValue::null(expression_type(aggregate));
+    if (aggregate.text() == "sum")
+      return exact_sum(aggregate, values);
+    if (aggregate.text() == "min" || aggregate.text() == "max") {
+      ScalarValue result = values.front();
+      for (std::size_t index = 1U; index < values.size(); ++index) {
+        const int comparison =
+            compare_values(values[index], result, ScalarNullPlacement::kLast, aggregate.span());
+        if ((aggregate.text() == "min" && comparison < 0) ||
+            (aggregate.text() == "max" && comparison > 0))
+          result = values[index];
+      }
+      return result;
+    }
+    if (aggregate.text() == "avg") {
+      double sum = 0.0;
+      for (const ScalarValue& value : values)
+        sum += numeric_double(value, aggregate.span());
+      return ScalarValue::float64(sum / static_cast<double>(values.size())).value();
+    }
+    double mean = 0.0;
+    double squared_distance = 0.0;
+    std::size_t count = 0U;
+    for (const ScalarValue& value : values) {
+      ++count;
+      const double number = numeric_double(value, aggregate.span());
+      const double delta = number - mean;
+      mean += delta / static_cast<double>(count);
+      squared_distance += delta * (number - mean);
+    }
+    if (aggregate.text() == "var_samp" && count < 2U)
+      return ScalarValue::null(expression_type(aggregate));
+    const std::size_t divisor = aggregate.text() == "var_samp" ? count - 1U : count;
+    return ScalarValue::float64(squared_distance / static_cast<double>(divisor)).value();
+  }
+
+  struct Group {
+    std::vector<ScalarValue> key;
+    std::vector<const JoinedRow*> rows;
+  };
+
+  [[nodiscard]] std::vector<Group> group_rows(const std::vector<JoinedRow>& rows) {
+    std::vector<Group> groups;
+    if (plan_.syntax().group_by().empty()) {
+      Group group;
+      group.rows.reserve(rows.size());
+      for (const JoinedRow& row : rows)
+        group.rows.push_back(std::addressof(row));
+      groups.push_back(std::move(group));
+      return groups;
+    }
+    for (const JoinedRow& row : rows) {
+      std::vector<ScalarValue> key;
+      key.reserve(plan_.syntax().group_by().size());
+      for (const SqlExpression& expression : plan_.syntax().group_by())
+        key.push_back(evaluate(expression, row));
+      auto group = std::ranges::find_if(groups, [&](const Group& candidate) {
+        return keys_equal(candidate.key, key, plan_.syntax().span());
+      });
+      if (group == groups.end()) {
+        if (groups.size() >= limits_.maximum_groups)
+          fail(plan_.syntax().span(), common::StatusCode::kResourceExhausted,
+               "Scalar aggregate group count exceeds the limit");
+        groups.push_back(Group{.key = std::move(key), .rows = {std::addressof(row)}});
+      } else {
+        group->rows.push_back(std::addressof(row));
+      }
+    }
+    return groups;
+  }
+
+  [[nodiscard]] std::vector<ProjectedRow> aggregate_project(const std::vector<JoinedRow>& rows) {
+    aggregate_expressions_.clear();
+    for (const SqlSelectItem& item : plan_.syntax().items())
+      collect_aggregates(*item.expression());
+    for (const SqlOrderItem& order : plan_.syntax().order_by())
+      collect_aggregates(order.expression);
+    std::vector<Group> groups = group_rows(rows);
+    if (groups.size() > limits_.maximum_output_rows)
+      fail(plan_.syntax().span(), common::StatusCode::kResourceExhausted,
+           "Scalar aggregate output exceeds the row limit");
+    std::vector<ProjectedRow> projected;
+    projected.reserve(groups.size());
+    for (Group& group : groups) {
+      JoinedRow empty;
+      empty.sources.resize(plan_.sources().size(), nullptr);
+      const JoinedRow& representative = group.rows.empty() ? empty : *group.rows.front();
+      ProjectedRow output{.group_key = group.key, .input = representative, .aggregated = true};
+      output.aggregate_values.reserve(aggregate_expressions_.size());
+      for (const SqlExpression* aggregate : aggregate_expressions_)
+        output.aggregate_values.push_back(evaluate_aggregate(*aggregate, group.rows));
+      std::vector<ScalarExpressionOverride> overrides;
+      overrides.reserve(aggregate_expressions_.size());
+      for (std::size_t index = 0U; index < aggregate_expressions_.size(); ++index) {
+        overrides.push_back(
+            ScalarExpressionOverride{.expression_span = aggregate_expressions_[index]->span(),
+                                     .value = std::addressof(output.aggregate_values[index])});
+      }
+      output.values.reserve(plan_.outputs().size());
+      for (const SqlSelectItem& item : plan_.syntax().items())
+        output.values.push_back(evaluate(*item.expression(), representative, {}, overrides));
+      projected.push_back(std::move(output));
+    }
+    return projected;
+  }
+
   [[nodiscard]] int compare_logical_identity(const JoinedRow& left, const JoinedRow& right,
                                              const SourceSpan span) {
     for (std::size_t source = 0U; source < left.sources.size(); ++source) {
@@ -436,9 +683,18 @@ private:
     if (plan_.syntax().order_by().empty())
       return;
     for (ProjectedRow& row : rows) {
+      std::vector<ScalarExpressionOverride> overrides;
+      if (row.aggregated) {
+        overrides.reserve(aggregate_expressions_.size());
+        for (std::size_t index = 0U; index < aggregate_expressions_.size(); ++index) {
+          overrides.push_back(
+              ScalarExpressionOverride{.expression_span = aggregate_expressions_[index]->span(),
+                                       .value = std::addressof(row.aggregate_values[index])});
+        }
+      }
       row.order_values.reserve(plan_.syntax().order_by().size());
       for (const SqlOrderItem& order : plan_.syntax().order_by())
-        row.order_values.push_back(evaluate(order.expression, row.input, row.values));
+        row.order_values.push_back(evaluate(order.expression, row.input, row.values, overrides));
     }
     std::ranges::sort(rows, [&](const ProjectedRow& left, const ProjectedRow& right) {
       for (std::size_t index = 0U; index < plan_.syntax().order_by().size(); ++index) {
@@ -459,6 +715,15 @@ private:
         if (comparison != 0)
           return comparison < 0;
       }
+      if (left.aggregated) {
+        for (std::size_t index = 0U; index < left.group_key.size(); ++index) {
+          const int comparison = compare_values(left.group_key[index], right.group_key[index],
+                                                ScalarNullPlacement::kLast, plan_.syntax().span());
+          if (comparison != 0)
+            return comparison < 0;
+        }
+        return false;
+      }
       return compare_logical_identity(left.input, right.input, plan_.syntax().span()) < 0;
     });
   }
@@ -477,6 +742,7 @@ private:
   std::vector<std::shared_ptr<const ScalarTableSnapshot>> snapshots_;
   std::vector<std::vector<ScalarValue>> null_rows_;
   std::vector<ScalarSourceRow> context_rows_;
+  std::vector<const SqlExpression*> aggregate_expressions_;
 };
 
 } // namespace

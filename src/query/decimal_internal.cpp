@@ -324,7 +324,78 @@ template <typename Float>
   return result;
 }
 
+[[nodiscard]] SignedMagnitude accumulator_value(const ExactNumericAccumulator& accumulator) {
+  return SignedMagnitude{.magnitude = BigUnsigned{.limbs = accumulator.magnitude},
+                         .negative = accumulator.negative};
+}
+
+[[nodiscard]] common::Result<void> add_to_accumulator(ExactNumericAccumulator& accumulator,
+                                                      const SignedMagnitude& addend) {
+  SignedMagnitude current = accumulator_value(accumulator);
+  if (current.negative == addend.negative) {
+    if (!add(current.magnitude, addend.magnitude))
+      return common::make_unexpected(out_of_range("exact numeric accumulator overflows"));
+  } else {
+    current = signed_add(current, addend);
+  }
+  current.negative = current.negative && !zero(current.magnitude);
+  accumulator.magnitude = current.magnitude.limbs;
+  accumulator.negative = current.negative;
+  return {};
+}
+
 } // namespace
+
+common::Result<void> ExactNumericAccumulator::add_signed(const std::int64_t value) {
+  const std::uint64_t magnitude_value =
+      value < 0 ? static_cast<std::uint64_t>(-(value + 1)) + 1U : static_cast<std::uint64_t>(value);
+  SignedMagnitude addend = from_unsigned(magnitude_value);
+  addend.negative = value < 0;
+  return add_to_accumulator(*this, addend);
+}
+
+common::Result<void> ExactNumericAccumulator::add_unsigned(const std::uint64_t value) {
+  return add_to_accumulator(*this, from_unsigned(value));
+}
+
+common::Result<void> ExactNumericAccumulator::add_decimal(const Decimal128Value& value) {
+  return add_to_accumulator(*this, decode(value));
+}
+
+common::Result<std::int64_t> ExactNumericAccumulator::signed_result() const {
+  const SignedMagnitude value = accumulator_value(*this);
+  for (std::size_t index = 2U; index < value.magnitude.limbs.size(); ++index) {
+    if (value.magnitude.limbs[index] != 0U)
+      return common::make_unexpected(out_of_range("exact sum is outside signed range"));
+  }
+  const std::uint64_t magnitude_value =
+      value.magnitude.limbs[0] | (static_cast<std::uint64_t>(value.magnitude.limbs[1]) << 32U);
+  constexpr std::uint64_t kMinimumMagnitude = std::uint64_t{1U} << 63U;
+  if ((!value.negative &&
+       magnitude_value > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) ||
+      (value.negative && magnitude_value > kMinimumMagnitude))
+    return common::make_unexpected(out_of_range("exact sum is outside signed range"));
+  if (value.negative && magnitude_value == kMinimumMagnitude)
+    return std::numeric_limits<std::int64_t>::min();
+  const std::int64_t signed_magnitude = static_cast<std::int64_t>(magnitude_value);
+  return value.negative ? -signed_magnitude : signed_magnitude;
+}
+
+common::Result<std::uint64_t> ExactNumericAccumulator::unsigned_result() const {
+  const SignedMagnitude value = accumulator_value(*this);
+  if (value.negative)
+    return common::make_unexpected(out_of_range("exact sum is outside unsigned range"));
+  for (std::size_t index = 2U; index < value.magnitude.limbs.size(); ++index) {
+    if (value.magnitude.limbs[index] != 0U)
+      return common::make_unexpected(out_of_range("exact sum is outside unsigned range"));
+  }
+  return value.magnitude.limbs[0] | (static_cast<std::uint64_t>(value.magnitude.limbs[1]) << 32U);
+}
+
+common::Result<Decimal128Value>
+ExactNumericAccumulator::decimal_result(const schema::LogicalType& type) const {
+  return encode(accumulator_value(*this), type);
+}
 
 common::Result<Decimal128Value> evaluate_decimal(const DecimalOperation operation,
                                                  const Decimal128Value& left,

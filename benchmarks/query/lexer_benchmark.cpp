@@ -2,8 +2,10 @@
 #include "chronos/query/binder.hpp"
 #include "chronos/query/catalog.hpp"
 #include "chronos/query/evaluator.hpp"
+#include "chronos/query/executor.hpp"
 #include "chronos/query/lexer.hpp"
 #include "chronos/query/parser.hpp"
+#include "chronos/query/snapshot.hpp"
 #include "chronos/query/value.hpp"
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/logical_type.hpp"
@@ -192,11 +194,77 @@ void evaluate_decimal_expression(benchmark::State& state) {
   }
 }
 
+class BenchmarkSnapshotProvider final : public ScalarSnapshotProvider {
+public:
+  explicit BenchmarkSnapshotProvider(std::shared_ptr<const ScalarTableSnapshot> snapshot)
+      : snapshot_(std::move(snapshot)) {}
+
+  [[nodiscard]] common::Result<std::shared_ptr<const ScalarTableSnapshot>>
+  resolve(const std::shared_ptr<const schema::TableSchema>&,
+          std::optional<std::int64_t>) const override {
+    return snapshot_;
+  }
+
+private:
+  std::shared_ptr<const ScalarTableSnapshot> snapshot_;
+};
+
+void execute_scalar_grouped_query(benchmark::State& state) {
+  const std::shared_ptr<const QueryCatalogSnapshot> catalog = benchmark_catalog();
+  ParsedSqlSelect syntax =
+      parse_sql_v1_select("SELECT metric, count(*) AS n, avg(value) AS mean FROM metrics "
+                          "WHERE value >= CAST(0 AS FLOAT64) GROUP BY metric ORDER BY metric")
+          .value();
+  BoundSqlSelect plan = bind_sql_v1_select(std::move(syntax), catalog).value();
+  std::vector<ScalarInputRow> rows;
+  rows.reserve(256U);
+  common::Uuid::Bytes wal_bytes{};
+  wal_bytes.front() = std::byte{1U};
+  for (std::size_t index = 0U; index < 256U; ++index) {
+    rows.push_back(ScalarInputRow{
+        .columns =
+            {
+                ScalarValue::signed_value(
+                    schema::LogicalType::create(schema::LogicalTypeKind::kTimestampNs).value(),
+                    static_cast<std::int64_t>(index))
+                    .value(),
+                ScalarValue::text(
+                    schema::LogicalType::create(schema::LogicalTypeKind::kSymbol).value(), "tenant")
+                    .value(),
+                ScalarValue::text(
+                    schema::LogicalType::create(schema::LogicalTypeKind::kSymbol).value(),
+                    index % 2U == 0U ? "cpu" : "memory")
+                    .value(),
+                ScalarValue::float64(static_cast<double>(index)).value(),
+            },
+        .generated_logical_identity =
+            {
+                std::byte{static_cast<std::uint8_t>(index)},
+            },
+        .wal_id = common::Uuid{wal_bytes},
+        .record_sequence = index + 1U,
+        .system_commit_position = index + 1U,
+        .row_ordinal = 0U,
+    });
+  }
+  auto snapshot = std::make_shared<const ScalarTableSnapshot>(
+      ScalarTableSnapshot::create(plan.sources().front().schema_ptr(), 256U, std::move(rows))
+          .value());
+  const BenchmarkSnapshotProvider provider{std::move(snapshot)};
+  for (auto _ : state) {
+    static_cast<void>(_);
+    SqlResult<ScalarQueryResult> result = execute_sql_v1_select(plan, provider);
+    benchmark::DoNotOptimize(result);
+  }
+  state.SetItemsProcessed(static_cast<std::int64_t>(state.iterations()) * 256);
+}
+
 BENCHMARK(tokenize_statement)->DenseRange(0, 2);
 BENCHMARK(parse_statement)->DenseRange(0, 2);
 BENCHMARK(parse_and_bind_statement)->DenseRange(0, 2);
 BENCHMARK(evaluate_scalar_expression);
 BENCHMARK(evaluate_decimal_expression);
+BENCHMARK(execute_scalar_grouped_query);
 
 } // namespace
 } // namespace chronos::query

@@ -5,6 +5,7 @@
 #include "chronos/query/value.hpp"
 #include "chronos/schema/logical_type.hpp"
 
+#include <array>
 #include <cstdint>
 
 namespace chronos::query::detail {
@@ -15,6 +16,19 @@ enum class DecimalOperation : std::uint8_t {
   kMultiply,
   kDivide,
   kRemainder,
+};
+
+struct ExactNumericAccumulator {
+  std::array<std::uint32_t, 8> magnitude{};
+  bool negative{};
+
+  [[nodiscard]] common::Result<void> add_signed(std::int64_t value);
+  [[nodiscard]] common::Result<void> add_unsigned(std::uint64_t value);
+  [[nodiscard]] common::Result<void> add_decimal(const Decimal128Value& value);
+  [[nodiscard]] common::Result<std::int64_t> signed_result() const;
+  [[nodiscard]] common::Result<std::uint64_t> unsigned_result() const;
+  [[nodiscard]] common::Result<Decimal128Value>
+  decimal_result(const schema::LogicalType& type) const;
 };
 
 [[nodiscard]] common::Result<Decimal128Value>

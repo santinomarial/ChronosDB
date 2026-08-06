@@ -74,7 +74,7 @@ struct Fixtures {
   static constexpr std::array<TestColumn, 3> kTrades{{
       {"ts", schema::LogicalTypeKind::kTimestampNs, false},
       {"symbol", schema::LogicalTypeKind::kSymbol, false},
-      {"price", schema::LogicalTypeKind::kFloat64, false},
+      {"price", schema::LogicalTypeKind::kFloat64, true},
   }};
   static constexpr std::array<TestColumn, 3> kQuotes{{
       {"ts", schema::LogicalTypeKind::kTimestampNs, false},
@@ -145,9 +145,9 @@ private:
 [[nodiscard]] TestProvider provider(const Fixtures& data, std::vector<ScalarInputRow> trades,
                                     std::vector<ScalarInputRow> quotes) {
   auto trade_snapshot = std::make_shared<const ScalarTableSnapshot>(
-      ScalarTableSnapshot::create(data.trades, 100U, std::move(trades)).value());
+      ScalarTableSnapshot::create(data.trades, 1'000'000U, std::move(trades)).value());
   auto quote_snapshot = std::make_shared<const ScalarTableSnapshot>(
-      ScalarTableSnapshot::create(data.quotes, 100U, std::move(quotes)).value());
+      ScalarTableSnapshot::create(data.quotes, 1'000'000U, std::move(quotes)).value());
   return TestProvider{std::move(trade_snapshot), std::move(quote_snapshot)};
 }
 
@@ -198,6 +198,114 @@ TEST(ScalarExecutorTest, UsesStableVersionTieBreakersAndEnforcesLimits) {
                                               .maximum_groups = 1U});
   ASSERT_FALSE(limited.has_value());
   EXPECT_EQ(limited.error().status().code(), common::StatusCode::kResourceExhausted);
+}
+
+TEST(ScalarExecutorTest, ExecutesGroupedAggregatesNullRulesAndStableOrdering) {
+  const Fixtures data = fixtures();
+  BoundSqlSelect plan =
+      bind("SELECT symbol, count(*) AS n, count(price) AS present, sum(price) AS total, "
+           "avg(price) AS mean, min(price) AS low, max(price) AS high, "
+           "var_pop(price) AS population, var_samp(price) AS sample "
+           "FROM trades GROUP BY symbol ORDER BY symbol",
+           data);
+  ScalarInputRow null_price = input_row(3, "B", 0.0, 3U);
+  null_price.columns[2] = ScalarValue::null(type(schema::LogicalTypeKind::kFloat64));
+  TestProvider snapshots = provider(
+      data, {input_row(1, "A", 1.0, 1U), input_row(2, "A", 3.0, 2U), std::move(null_price)}, {});
+  const auto result = execute_sql_v1_select(plan, snapshots);
+  ASSERT_TRUE(result.has_value()) << result.error().status().to_string();
+  ASSERT_EQ(result->rows().size(), 2U);
+  const auto& first = result->rows()[0];
+  EXPECT_EQ(*std::get_if<std::string>(&first[0].storage()), "A");
+  EXPECT_EQ(*std::get_if<std::int64_t>(&first[1].storage()), 2);
+  EXPECT_EQ(*std::get_if<std::int64_t>(&first[2].storage()), 2);
+  EXPECT_DOUBLE_EQ(*std::get_if<double>(&first[3].storage()), 4.0);
+  EXPECT_DOUBLE_EQ(*std::get_if<double>(&first[4].storage()), 2.0);
+  EXPECT_DOUBLE_EQ(*std::get_if<double>(&first[5].storage()), 1.0);
+  EXPECT_DOUBLE_EQ(*std::get_if<double>(&first[6].storage()), 3.0);
+  EXPECT_DOUBLE_EQ(*std::get_if<double>(&first[7].storage()), 1.0);
+  EXPECT_DOUBLE_EQ(*std::get_if<double>(&first[8].storage()), 2.0);
+  const auto& second = result->rows()[1];
+  EXPECT_EQ(*std::get_if<std::string>(&second[0].storage()), "B");
+  EXPECT_EQ(*std::get_if<std::int64_t>(&second[1].storage()), 1);
+  EXPECT_EQ(*std::get_if<std::int64_t>(&second[2].storage()), 0);
+  for (std::size_t index = 3U; index < second.size(); ++index)
+    EXPECT_TRUE(second[index].is_null());
+}
+
+TEST(ScalarExecutorTest, ImplementsEmptyAggregatesAndExactWidenedIntegerSum) {
+  const Fixtures data = fixtures();
+  BoundSqlSelect empty_plan = bind("SELECT count(*) AS n, sum(price) AS total FROM trades", data);
+  TestProvider empty_snapshots = provider(data, {}, {});
+  const auto empty = execute_sql_v1_select(empty_plan, empty_snapshots);
+  ASSERT_TRUE(empty.has_value());
+  ASSERT_EQ(empty->rows().size(), 1U);
+  EXPECT_EQ(*std::get_if<std::int64_t>(&empty->rows()[0][0].storage()), 0);
+  EXPECT_TRUE(empty->rows()[0][1].is_null());
+
+  BoundSqlSelect sum_plan = bind("SELECT sum(CAST(price AS INT64)) AS total FROM trades", data);
+  TestProvider cancelling = provider(data,
+                                     {input_row(1, "A", 9.0e18, 1U), input_row(2, "B", 9.0e18, 2U),
+                                      input_row(3, "C", -9.0e18, 3U)},
+                                     {});
+  const auto exact = execute_sql_v1_select(sum_plan, cancelling);
+  ASSERT_TRUE(exact.has_value()) << exact.error().status().to_string();
+  EXPECT_EQ(*std::get_if<std::int64_t>(&exact->rows()[0][0].storage()),
+            9'000'000'000'000'000'000LL);
+
+  TestProvider overflowing =
+      provider(data, {input_row(1, "A", 9.0e18, 1U), input_row(2, "B", 9.0e18, 2U)}, {});
+  const auto overflow = execute_sql_v1_select(sum_plan, overflowing);
+  ASSERT_FALSE(overflow.has_value());
+  EXPECT_EQ(overflow.error().status().code(), common::StatusCode::kOutOfRange);
+
+  BoundSqlSelect decimal_sum_plan =
+      bind("SELECT CAST(sum(CAST(price AS DECIMAL(38,0))) AS FLOAT64) AS total FROM trades", data);
+  TestProvider decimal_cancelling =
+      provider(data,
+               {input_row(1, "A", 9.0e37, 1U), input_row(2, "B", 9.0e37, 2U),
+                input_row(3, "C", -9.0e37, 3U)},
+               {});
+  EXPECT_TRUE(execute_sql_v1_select(decimal_sum_plan, decimal_cancelling).has_value());
+  TestProvider decimal_overflowing =
+      provider(data, {input_row(1, "A", 9.0e37, 1U), input_row(2, "B", 9.0e37, 2U)}, {});
+  const auto decimal_overflow = execute_sql_v1_select(decimal_sum_plan, decimal_overflowing);
+  ASSERT_FALSE(decimal_overflow.has_value());
+  EXPECT_EQ(decimal_overflow.error().status().code(), common::StatusCode::kOutOfRange);
+}
+
+TEST(ScalarExecutorPropertyTest, GroupedCountSumAndAverageMatchDeterministicReference) {
+  const Fixtures data = fixtures();
+  BoundSqlSelect plan =
+      bind("SELECT symbol, count(price) AS n, sum(price) AS total, avg(price) AS mean "
+           "FROM trades GROUP BY symbol ORDER BY symbol",
+           data);
+  std::vector<ScalarInputRow> rows;
+  std::array<std::int64_t, 2> counts{};
+  std::array<double, 2> sums{};
+  for (std::size_t index = 0U; index < 200U; ++index) {
+    const std::size_t group = index % 2U;
+    const double value = static_cast<double>(static_cast<std::int64_t>(index % 17U) - 8);
+    ScalarInputRow generated =
+        input_row(static_cast<std::int64_t>(index), group == 0U ? "A" : "B", value, index + 1U);
+    if (index % 11U == 0U) {
+      generated.columns[2] = ScalarValue::null(type(schema::LogicalTypeKind::kFloat64));
+    } else {
+      ++counts[group];
+      sums[group] += value;
+    }
+    rows.push_back(std::move(generated));
+  }
+  TestProvider snapshots = provider(data, std::move(rows), {});
+  const auto result = execute_sql_v1_select(plan, snapshots);
+  ASSERT_TRUE(result.has_value());
+  ASSERT_EQ(result->rows().size(), 2U);
+  for (std::size_t group = 0U; group < 2U; ++group) {
+    EXPECT_EQ(*std::get_if<std::int64_t>(&result->rows()[group][1].storage()), counts[group]);
+    EXPECT_DOUBLE_EQ(*std::get_if<double>(&result->rows()[group][2].storage()), sums[group]);
+    EXPECT_DOUBLE_EQ(*std::get_if<double>(&result->rows()[group][3].storage()),
+                     sums[group] / static_cast<double>(counts[group]));
+  }
 }
 
 } // namespace
