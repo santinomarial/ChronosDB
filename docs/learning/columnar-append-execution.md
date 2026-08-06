@@ -112,6 +112,11 @@ canonical encoding, retry coordination, the real host-filesystem WAL write, `fda
 `LOCAL_SYNC`, and tablet publication. Results are local microbenchmarks, not device-qualified
 durability or database throughput claims.
 
+The same executable measures steady matching retries for 64, 1,024, and 65,536 rows after one real
+first apply establishes the immutable outcome. Each timed retry still performs canonical encoding,
+SHA-256 digesting, and directory lookup, while correctness guards require the matching-retry kind,
+the exact original outcome pointer, and no second `WalCommitResult`.
+
 ## Verification
 
 The executor integration suite covers:

@@ -210,10 +210,91 @@ void benchmark_execute_local_sync(benchmark::State& state) {
                  "lifecycle excluded");
 }
 
+void benchmark_matching_retry(benchmark::State& state) {
+  const auto rows = static_cast<std::uint32_t>(state.range(0));
+  const ExecutorFixture fixture = make_fixture(rows);
+  auto directory = TemporaryWalDirectory::create();
+  if (!directory.has_value()) {
+    state.SkipWithError("could not create a temporary WAL directory");
+    return;
+  }
+  auto writer = chronos::wal::WalWriter::create_new({.directory_path = directory->path().string()});
+  if (!writer.has_value()) {
+    const std::string message = writer.error().to_string();
+    state.SkipWithError(message);
+    return;
+  }
+  auto started = chronos::wal::WalCommitCoordinator::start(
+      std::move(*writer), {.maximum_sync_batch_delay = std::chrono::microseconds{0}});
+  if (!started.has_value()) {
+    const std::string message = started.error().to_string();
+    state.SkipWithError(message);
+    return;
+  }
+  chronos::wal::WalCommitCoordinator coordinator = std::move(*started);
+  auto retry_directory = chronos::ingest::RetryDirectory::create({.maximum_entries = 1U});
+  auto tablet = chronos::ingest::TabletState::create(
+      fixture.batch->schema_ptr(), fixture.tablet_id,
+      {.head_capacity = {.row_capacity = rows, .variable_value_bytes = {0U}},
+       .maximum_sealed_generations = 1U,
+       .maximum_retry_entries = 1U});
+  if (!retry_directory.has_value() || !tablet.has_value()) {
+    static_cast<void>(coordinator.shutdown());
+    state.SkipWithError("could not create bounded executor state");
+    return;
+  }
+  const chronos::ingest::ColumnarAppendExecutionInput input{
+      .client_id = request_id<chronos::ingest::ClientId>(16U),
+      .client_batch_id = request_id<chronos::ingest::ClientBatchId>(32U),
+      .batch = fixture.batch,
+      .durability = chronos::wal::WalDurabilityMode::kAsync};
+  auto applied =
+      chronos::ingest::execute_columnar_append(input, *retry_directory, *tablet, coordinator);
+  if (!applied.has_value() ||
+      applied->kind != chronos::ingest::ColumnarAppendExecutionKind::kApplied ||
+      !applied->wal_commit.has_value()) {
+    static_cast<void>(coordinator.shutdown());
+    state.SkipWithError("could not establish the benchmark's committed retry state");
+    return;
+  }
+  const auto* const expected_outcome = applied->outcome.get();
+
+  for ([[maybe_unused]] auto iteration : state) {
+    auto retry =
+        chronos::ingest::execute_columnar_append(input, *retry_directory, *tablet, coordinator);
+    if (!retry.has_value() ||
+        retry->kind != chronos::ingest::ColumnarAppendExecutionKind::kMatchingRetry ||
+        retry->wal_commit.has_value() || retry->outcome.get() != expected_outcome) {
+      state.SkipWithError("matching retry changed outcome identity or submitted WAL work");
+      break;
+    }
+    benchmark::DoNotOptimize(retry->outcome.get());
+    benchmark::ClobberMemory();
+  }
+  const auto final_snapshot = tablet->snapshot();
+  if (!final_snapshot.has_value() || final_snapshot->visible_row_count() != rows ||
+      final_snapshot->retry_entry_count() != 1U ||
+      retry_directory->metrics().committed_entries != 1U) {
+    state.SkipWithError("matching retries changed tablet rows or retry cardinality");
+  }
+  const chronos::common::Status shutdown = coordinator.shutdown();
+  if (!shutdown.is_ok()) {
+    const std::string message = shutdown.to_string();
+    state.SkipWithError(message);
+    return;
+  }
+  state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(rows));
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<std::int64_t>(fixture.encoded_batch_bytes));
+  state.SetLabel("re-encode and digest one matching committed retry; no WAL or tablet mutation");
+}
+
 // Google Benchmark registers functions during static initialization.
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 BENCHMARK(benchmark_execute_async)->Arg(64)->Arg(1024)->UseRealTime();
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 BENCHMARK(benchmark_execute_local_sync)->Arg(64)->Arg(1024)->UseRealTime();
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+BENCHMARK(benchmark_matching_retry)->Arg(64)->Arg(1024)->Arg(65536);
 
 } // namespace

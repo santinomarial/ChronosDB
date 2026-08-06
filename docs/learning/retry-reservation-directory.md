@@ -106,9 +106,11 @@ states. Current entry count is explicitly bounded, and no throughput claim is ma
 
 There is no standalone microbenchmark for this unit because it introduced no performance
 optimization or format hot path. The single-tablet executor microbenchmark keeps digest, WAL,
-publication, and durability work enabled, but the wider Phase 4 matrix must still cover lookup
-contention, allocation count, retained memory, and retry-hit mix. Evidence from that workload can
-justify a partitioned or hash-based implementation later.
+publication, and durability work enabled for first attempts. A separate steady matching-retry case
+re-encodes and re-digests 64-, 1,024-, and 65,536-row batches against one pre-established committed
+identity while asserting exact outcome-pointer reuse and the absence of a second WAL result. The
+wider Phase 4 matrix must still cover lookup contention, retained memory, and mixed first-attempt
+ratios. Evidence from that workload can justify a partitioned or hash-based implementation later.
 
 ## Verification strategy
 

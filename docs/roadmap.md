@@ -130,8 +130,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
   across 64, 1,024, and 65,536 rows. Benchmark-only scoped instrumentation reports regular
   allocation calls and requested bytes without including paused arena construction. Coordinated
   1-/2-/4-reader cases scan the same pinned buffers at the two larger row counts and two string
-  widths. Retry retention, routing/admission, flush handoff, hardware cache profiles, and the wider
-  end-to-end Phase 4 benchmark matrix remain unimplemented.
+  widths. The executor matrix additionally covers correctness-guarded steady matching retries at
+  64, 1,024, and 65,536 rows without a second WAL result. Retry retention, routing/admission, flush
+  handoff, hardware cache profiles, mixed retry ratios, and the wider end-to-end Phase 4 benchmark
+  matrix remain unimplemented.
 
 - **Scope:** typed immutable input batches; null/variable-width representation; append-only tablet heads; sealing; single shard-worker ownership; stable reader boundaries; idempotent ordered replay into heads.
 - **Explicit non-scope:** durable columnar parts, SQL execution, secondary indexes, general lock-free containers, live subscriptions, and a universal allocator.
