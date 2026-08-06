@@ -62,8 +62,9 @@ the owner.
 
 These counters deliberately exclude object layout, `std::vector` control blocks, allocator
 metadata, operator hash tables, snapshot pins, and scheduler queues. They are a local admission
-check, not a total query-memory promise. The future memory manager must reserve before allocation
-and charge all those additional domains.
+check, not a total query-memory promise. `QueryResourceContext` now provides a query-wide credit
+boundary, but each future operator must reserve before allocation and conservatively charge all
+those additional domains.
 
 The default 2,048-row and 32 MiB limits are conservative starting values. Callers and differential
 tests can force any finite smaller or larger limits. SQL results and errors must not depend on how
@@ -99,9 +100,11 @@ The representation prioritizes one obvious correctness path. Explicit dense indi
 checked cell access is not a specialized arithmetic kernel; and immutable exact buffers require
 future output builders to construct a new owner. Those costs are visible and benchmarkable.
 
-The next Phase 9 boundary should define query-wide memory reservation and cooperative cancellation
-before introducing parallel operator scheduling. Physical operator and plan contracts can then
-state who owns chunks, reservations, snapshot pins, task completion, and failures.
+Query-wide memory reservation and cooperative cancellation are now defined by
+[ADR 0021](../adr/0021-query-resource-accounting-and-cooperative-cancellation.md) and the
+[resource-control guide](query-resource-control.md). The next Phase 9 boundary can define physical
+operator and task contracts that state who owns chunks, reservations, snapshot pins, task
+completion, and failures.
 
 ## Likely review questions
 

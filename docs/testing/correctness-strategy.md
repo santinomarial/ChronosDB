@@ -69,8 +69,10 @@
 > temporal-join models, CREATE TABLE/INSERT validation, stable EXPLAIN goldens, measured ANALYZE
 > counters, installation checks, and sanitizer coverage. The first Phase 9 vector-chunk foundation
 > adds identity-free canonical owners, explicit-selection unit/property/fuzz coverage, retained-byte
-> bounds, checked traversal benchmarks, and installed-consumer checks. Vector-plan differential and
-> distributed query harnesses remain planned for their roadmap phases.
+> bounds, checked traversal benchmarks, and installed-consumer checks. The query resource context
+> adds exact RAII accounting, a fixed-seed reservation model, concurrent saturation/cancellation
+> tests under ThreadSanitizer, resource microbenchmarks, and consumer checks. Vector-plan
+> differential and distributed query harnesses remain planned for their roadmap phases.
 
 ## Test types
 

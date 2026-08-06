@@ -65,6 +65,12 @@ if(NOT EXISTS "${installed_vector_chunk_header}")
   message(FATAL_ERROR "staging install omitted ${installed_vector_chunk_header}")
 endif()
 
+set(installed_query_resource_header
+    "${install_prefix}/${CHRONOS_TEST_INSTALL_INCLUDEDIR}/chronos/query/resource_context.hpp")
+if(NOT EXISTS "${installed_query_resource_header}")
+  message(FATAL_ERROR "staging install omitted ${installed_query_resource_header}")
+endif()
+
 set(installed_cseg_layout_header
     "${install_prefix}/${CHRONOS_TEST_INSTALL_INCLUDEDIR}/chronos/cseg/layout.hpp")
 if(NOT EXISTS "${installed_cseg_layout_header}")

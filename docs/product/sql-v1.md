@@ -3,8 +3,8 @@
 > **Status: implemented as the Phase 8 bounded scalar reference engine.** The custom lexer,
 > parser, schema-version-stable binder, CREATE TABLE/INSERT statement binding, scalar SELECT
 > execution, and EXPLAIN paths are implemented. `SUBSCRIBE` is parsed and bound but remains a Phase
-> 11 execution concern; Phase 9 has only its bounded vector-chunk substrate and the vectorized
-> product engine is not implemented. SQL v1 is
+> 11 execution concern; Phase 9 has only its bounded vector-chunk and query-resource-control
+> substrates, and the vectorized product engine is not implemented. SQL v1 is
 > deliberately smaller than the SQL standard. Unsupported syntax must produce a clear bind or
 > parse error; it must not be accepted with different semantics.
 

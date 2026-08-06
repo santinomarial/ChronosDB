@@ -332,6 +332,7 @@ add_library(
   src/query/lexer.cpp
   src/query/literal.cpp
   src/query/parser.cpp
+  src/query/resource_context.cpp
   src/query/snapshot.cpp
   src/query/statement_binder.cpp
   src/query/value.cpp
@@ -745,6 +746,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/literal_test.cpp
     tests/query/parser_header_self_contained.cpp
     tests/query/parser_test.cpp
+    tests/query/resource_context_header_self_contained.cpp
+    tests/query/resource_context_test.cpp
     tests/query/snapshot_header_self_contained.cpp
     tests/query/snapshot_test.cpp
     tests/query/statement_binder_header_self_contained.cpp
@@ -756,7 +759,10 @@ if(CHRONOS_BUILD_TESTS)
   )
   set_target_properties(chronos_query_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_query_tests PRIVATE cxx_std_23)
-  target_link_libraries(chronos_query_tests PRIVATE chronos::query GTest::gtest_main)
+  target_link_libraries(
+    chronos_query_tests
+    PRIVATE chronos::query GTest::gtest_main Threads::Threads
+  )
   chronos_set_project_warnings(chronos_query_tests)
   chronos_enable_sanitizers(chronos_query_tests)
   chronos_enable_static_analysis(chronos_query_tests)
@@ -949,6 +955,7 @@ if(CHRONOS_BUILD_BENCHMARKS)
   add_executable(
     chronos_query_benchmarks
     benchmarks/query/lexer_benchmark.cpp
+    benchmarks/query/resource_context_benchmark.cpp
     benchmarks/query/vector_chunk_benchmark.cpp
   )
   set_target_properties(chronos_query_benchmarks PROPERTIES CXX_EXTENSIONS OFF)

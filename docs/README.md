@@ -140,5 +140,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Vector chunk foundation](learning/vector-chunk-foundation.md): implemented identity-free
   canonical physical owners, explicit order-preserving selections, checked chunk bounds, ownership,
   failure, fuzzing, and measurement boundaries for the first Phase 9 increment.
+- [Query resource control](learning/query-resource-control.md): implemented query-wide memory
+  reservations, cooperative cancellation, concurrency and memory-ordering arguments, ownership,
+  failure, race testing, and measurement boundaries for the second Phase 9 increment.
 
 Future format, protocol, subsystem, operations, and learning documents should be linked here when they are added by their corresponding roadmap phase.

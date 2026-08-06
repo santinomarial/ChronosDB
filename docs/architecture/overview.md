@@ -221,9 +221,9 @@ Zone maps and sparse indexes are part metadata used to prune granules/pages with
 
 ## Query engine
 
-ChronosDB plans a custom parser, binder, optimizer, and execution engine under [ADR 0008](../adr/0008-custom-sql-and-vectorized-execution.md). Binding assigns stable catalog identities and types; optimization must preserve SQL null, decimal, temporal, and system-time semantics; physical execution processes bounded column vectors rather than allocating per row. The scalar reference engine and differential tests provide an oracle for vectorized operators. The first Phase 9 substrate now provides identity-free canonical physical owners, explicit order-preserving selections, and caller-bounded immutable chunks under [ADR 0020](../adr/0020-bounded-vector-chunk-representation.md); it does not yet execute a bound plan.
+ChronosDB plans a custom parser, binder, optimizer, and execution engine under [ADR 0008](../adr/0008-custom-sql-and-vectorized-execution.md). Binding assigns stable catalog identities and types; optimization must preserve SQL null, decimal, temporal, and system-time semantics; physical execution processes bounded column vectors rather than allocating per row. The scalar reference engine and differential tests provide an oracle for vectorized operators. The first Phase 9 substrates provide identity-free canonical physical owners, explicit order-preserving selections, caller-bounded immutable chunks under [ADR 0020](../adr/0020-bounded-vector-chunk-representation.md), and one shared query-wide memory/cancellation state under [ADR 0021](../adr/0021-query-resource-accounting-and-cooperative-cancellation.md); they do not yet execute a bound plan.
 
-Parallel scheduling, spilling, memory accounting, adaptive behavior, join algorithms, and the precise supported SQL surface are deferred. Query resource use must eventually be admitted and bounded; cancellation must release snapshot pins and memory safely.
+Parallel scheduling, spilling, complete operator charge coverage, adaptive behavior, join algorithms, and the precise supported SQL surface are deferred. Implemented reservations provide the admission invariant, but future operators must reserve every retained allocation and release snapshot pins and memory by cooperative cancellation unwinding.
 
 ## Networking
 
