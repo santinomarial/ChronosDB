@@ -5,14 +5,17 @@
 #include "chronos/common/status.hpp"
 #include "chronos/common/uuid.hpp"
 #include "chronos/cseg/part_codec.hpp"
+#include "chronos/manifest/codec.hpp"
 #include "chronos/manifest/part_validation.hpp"
 #include "chronos/manifest/types.hpp"
+#include "chronos/manifest/validation.hpp"
 #include "chronos/schema/table_schema.hpp"
 #include "chronos/wal/types.hpp"
 
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -61,6 +64,36 @@ struct PartInstallationMetrics {
   friend bool operator==(const PartInstallationMetrics&, const PartInstallationMetrics&) = default;
 };
 
+struct ManifestInstallRequest {
+  std::reference_wrapper<const EncodedManifest> encoded_manifest;
+  std::span<const TabletSchemaBinding> schema_bindings;
+  common::Uuid nonce;
+  ManifestDecodeLimits decode_limits;
+  ReferencedPartValidationLimits part_validation_limits;
+};
+
+struct InstalledManifest {
+  std::string file_name;
+  std::uint64_t generation{};
+  WalCheckpoint reclaim_checkpoint;
+  std::uint64_t tablet_count{};
+  std::uint64_t part_count{};
+  std::uint64_t retry_count{};
+};
+
+struct ManifestInstallationMetrics {
+  std::uint64_t attempts{};
+  std::uint64_t failures{};
+  std::uint64_t installed_generations{};
+  std::uint64_t installed_bytes{};
+  std::uint64_t referenced_parts_validated{};
+  std::uint64_t file_syncs{};
+  std::uint64_t directory_syncs{};
+
+  friend bool operator==(const ManifestInstallationMetrics&,
+                         const ManifestInstallationMetrics&) = default;
+};
+
 struct ManifestNamespaceSnapshot {
   std::vector<std::uint64_t> generations;
   std::vector<cseg::PartId> final_parts;
@@ -97,6 +130,13 @@ public:
   // directory sync poisons this owner; restart/recovery must resolve the durable namespace.
   [[nodiscard]] common::Result<InstalledPart> install_part(const PartInstallRequest& request);
 
+  // Installs exactly the next generation after the current highest final name. The selected
+  // predecessor, candidate transition, catalog binding, and every referenced final CSEG image are
+  // revalidated before mutation. Exact readback precedes file sync and a no-replace rename;
+  // failure after rename but before directory sync poisons this owner.
+  [[nodiscard]] common::Result<InstalledManifest>
+  install_manifest(const ManifestInstallRequest& request);
+
   // Classifies both locked directories without following symlinks. Final manifest generations
   // must be nonempty and consecutive from one; every other entry must be an exact regular final or
   // recognized temporary name (plus manifest/LOCK). Final parts may be unreferenced orphans.
@@ -109,6 +149,7 @@ public:
   [[nodiscard]] bool is_usable() const noexcept;
   [[nodiscard]] common::Status poison_status() const;
   [[nodiscard]] PartInstallationMetrics metrics() const noexcept;
+  [[nodiscard]] ManifestInstallationMetrics manifest_metrics() const noexcept;
 
 private:
   class Impl;

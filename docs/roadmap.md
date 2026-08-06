@@ -199,8 +199,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > prevalidation/readback, file-sync, no-replace rename, directory-sync, poisoning, and metrics.
 > It also strictly reconciles both locked namespaces, rejects malformed/nonregular entries and
 > generation gaps, retains orphan finals, and durably removes only recognized temporaries.
-> Manifest generation installation, flush, recovery, crash evidence, and observability remain
-> unimplemented.
+> Exact next-generation installation now revalidates the selected predecessor, add-only/catalog
+> transition, and every referenced final CSEG before canonical readback, file sync, no-replace
+> rename, directory sync, and durability-boundary metrics. Flush construction/publication,
+> manifest-aware recovery, crash-matrix evidence, and checkpoint reclamation remain unimplemented.
 
 - **Scope:** manifest generations/version edits; atomic durable part installation; sealed-head flush; checkpoint/log coverage; startup reconciliation; safe temporary-file handling.
 - **Explicit non-scope:** compaction, delta parts, distributed metadata, object storage, and aggressive garbage collection beyond proven safe ownership.

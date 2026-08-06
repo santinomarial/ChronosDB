@@ -5,6 +5,7 @@
 #include "chronos/manifest/naming.hpp"
 #include "io/posix_syscalls.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -35,6 +36,88 @@ namespace {
   return common::Status{cause.code(), std::move(message)};
 }
 
+struct FileReadRequest {
+  std::string_view name;
+  std::uint64_t maximum_length{};
+  std::optional<std::uint64_t> exact_length;
+  std::string_view description;
+};
+
+[[nodiscard]] common::Result<std::vector<std::byte>>
+read_final_file(const io::PosixDirectory& directory, const FileReadRequest& request) {
+  common::Result<io::PosixFile> file =
+      directory.open_regular_file(request.name, io::FileOpenMode::kReadOnly);
+  if (!file.has_value()) {
+    if (file.error().code() == common::StatusCode::kNotFound) {
+      return common::make_unexpected(
+          corruption(std::string{request.description}.append(" is missing")));
+    }
+    return common::make_unexpected(
+        with_context(std::string{"open "}.append(request.description), file.error()));
+  }
+  const common::Result<std::uint64_t> size = file->size();
+  if (!size.has_value()) {
+    return common::make_unexpected(with_context(
+        std::string{"read "}.append(request.description).append(" size"), size.error()));
+  }
+  if (request.exact_length.has_value() && *size != *request.exact_length) {
+    return common::make_unexpected(
+        corruption(std::string{request.description}.append(" has an unexpected length")));
+  }
+  if (*size > request.maximum_length ||
+      *size > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kResourceExhausted,
+        std::string{request.description}.append(" exceeds the configured read limit")});
+  }
+  std::vector<std::byte> image;
+  try {
+    image.resize(static_cast<std::size_t>(*size));
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kResourceExhausted,
+        std::string{"Cannot allocate "}.append(request.description).append(" readback")});
+  }
+  const common::Result<std::size_t> read = file->read_at(0U, image);
+  if (!read.has_value()) {
+    return common::make_unexpected(
+        with_context(std::string{"read "}.append(request.description), read.error()));
+  }
+  if (*read != image.size()) {
+    return common::make_unexpected(
+        corruption(std::string{request.description}.append(" ended before its exact file size")));
+  }
+  common::Status close = file->close();
+  if (!close.is_ok()) {
+    return common::make_unexpected(
+        with_context(std::string{"close "}.append(request.description), close));
+  }
+  return image;
+}
+
+[[nodiscard]] common::Status manifest_decode_failure(const ManifestDecodeError& error,
+                                                     const std::string_view description) {
+  if (error.kind() == ManifestDecodeErrorKind::kIncomplete) {
+    return corruption(std::string{description}.append(" is incomplete"));
+  }
+  return with_context(std::string{"decode "}.append(description), error.status());
+}
+
+[[nodiscard]] const TabletSchemaBinding*
+find_binding(const std::span<const TabletSchemaBinding> bindings,
+             const schema::TabletId& tablet_id) noexcept {
+  const auto found =
+      std::ranges::lower_bound(bindings, tablet_id, {}, [](const TabletSchemaBinding& binding) {
+        return binding.tablet_id;
+      });
+  return found != bindings.end() && found->tablet_id == tablet_id ? &*found : nullptr;
+}
+
+void saturating_add(std::uint64_t& target, const std::uint64_t value) noexcept {
+  const std::uint64_t maximum = std::numeric_limits<std::uint64_t>::max();
+  target = target > maximum - value ? maximum : target + value;
+}
+
 [[nodiscard]] common::Status validate_config(const ManifestStorageConfig& config) {
   if (config.database_root.empty() || config.database_root.find('\0') != std::string::npos) {
     return invalid("Manifest storage database root must be a nonempty path without NUL");
@@ -59,6 +142,11 @@ public:
     return common::make_unexpected(std::move(failure));
   }
 
+  [[nodiscard]] common::Result<InstalledManifest> fail_manifest(common::Status failure) {
+    ++manifest_metrics_.failures;
+    return common::make_unexpected(std::move(failure));
+  }
+
   io::PosixDirectory root_;
   io::PosixDirectory parts_;
   io::PosixDirectory manifests_;
@@ -67,6 +155,7 @@ public:
   bool poisoned_{false};
   common::Status poison_status_;
   PartInstallationMetrics metrics_;
+  ManifestInstallationMetrics manifest_metrics_;
 };
 
 ManifestStorage::ManifestStorage(std::unique_ptr<Impl> implementation) noexcept
@@ -215,6 +304,195 @@ common::Result<InstalledPart> ManifestStorage::install_part(const PartInstallReq
   return InstalledPart{.file_name = final_name, .descriptor = request.descriptor};
 }
 
+common::Result<InstalledManifest>
+ManifestStorage::install_manifest(const ManifestInstallRequest& request) {
+  if (!implementation_) {
+    return common::make_unexpected(invalid("Manifest storage owner was moved from"));
+  }
+  Impl& implementation = *implementation_;
+  ++implementation.manifest_metrics_.attempts;
+  if (implementation.poisoned_) {
+    std::string message{"Manifest storage owner is poisoned: "};
+    message.append(implementation.poison_status_.message());
+    return implementation.fail_manifest(
+        common::Status{common::StatusCode::kUnavailable, std::move(message)});
+  }
+  if (request.nonce.is_nil()) {
+    return implementation.fail_manifest(invalid("Manifest installation nonce must be nonzero"));
+  }
+
+  const EncodedManifest& encoded = request.encoded_manifest.get();
+  ManifestDecodeResult candidate = decode_manifest_v1_exact(encoded.bytes(), request.decode_limits);
+  if (!candidate.has_value()) {
+    return implementation.fail_manifest(
+        manifest_decode_failure(candidate.error(), "candidate Manifest generation"));
+  }
+  common::Result<ManifestNamespaceSnapshot> snapshot = scan_namespace();
+  if (!snapshot.has_value()) {
+    return implementation.fail_manifest(snapshot.error());
+  }
+  const std::uint64_t predecessor_generation = snapshot->generations.back();
+  const common::Result<std::string> predecessor_name = manifest_file_name(predecessor_generation);
+  if (!predecessor_name.has_value()) {
+    return implementation.fail_manifest(common::Status{
+        common::StatusCode::kInternal, "Selected Manifest generation cannot be formatted"});
+  }
+  common::Result<std::vector<std::byte>> predecessor_bytes = read_final_file(
+      implementation.manifests_, {.name = *predecessor_name,
+                                  .maximum_length = request.decode_limits.max_file_length,
+                                  .exact_length = std::nullopt,
+                                  .description = "selected final Manifest generation"});
+  if (!predecessor_bytes.has_value()) {
+    return implementation.fail_manifest(predecessor_bytes.error());
+  }
+  ManifestDecodeResult predecessor =
+      decode_manifest_v1_exact(*predecessor_bytes, request.decode_limits);
+  if (!predecessor.has_value()) {
+    return implementation.fail_manifest(
+        manifest_decode_failure(predecessor.error(), "selected final Manifest generation"));
+  }
+  if (predecessor->generation() != predecessor_generation) {
+    return implementation.fail_manifest(
+        corruption("Selected final Manifest filename disagrees with its encoded generation"));
+  }
+
+  common::Status validation =
+      validate_manifest_v1_transition(*predecessor, *candidate, request.schema_bindings);
+  if (!validation.is_ok()) {
+    return implementation.fail_manifest(
+        with_context("validate Manifest generation transition", validation));
+  }
+  for (const PartDescriptor& descriptor : candidate->parts()) {
+    if (!std::ranges::binary_search(snapshot->final_parts, descriptor.part_id)) {
+      return implementation.fail_manifest(
+          corruption("Manifest candidate references a missing final CSEG part"));
+    }
+    const TabletSchemaBinding* binding =
+        find_binding(request.schema_bindings, descriptor.tablet_id);
+    if (binding == nullptr) {
+      return implementation.fail_manifest(common::Status{
+          common::StatusCode::kInternal, "Validated Manifest schema binding became inaccessible"});
+    }
+    const std::shared_ptr<const schema::TableSchema> schema_value =
+        binding->lineage.get().find(descriptor.schema_id);
+    if (!schema_value) {
+      return implementation.fail_manifest(common::Status{
+          common::StatusCode::kInternal, "Validated Manifest part schema became inaccessible"});
+    }
+    const std::string file_name = part_file_name(descriptor.part_id);
+    common::Result<std::vector<std::byte>> part_bytes =
+        read_final_file(implementation.parts_,
+                        {.name = file_name,
+                         .maximum_length = request.part_validation_limits.decode.max_file_length,
+                         .exact_length = descriptor.file_length,
+                         .description = "referenced final CSEG part"});
+    if (!part_bytes.has_value()) {
+      return implementation.fail_manifest(part_bytes.error());
+    }
+    validation = validate_manifest_v1_part_image(descriptor, candidate->wal_id(), *schema_value,
+                                                 {.file_name = file_name, .bytes = *part_bytes},
+                                                 request.part_validation_limits);
+    if (!validation.is_ok()) {
+      return implementation.fail_manifest(
+          with_context("validate referenced final CSEG part", validation));
+    }
+    saturating_add(implementation.manifest_metrics_.referenced_parts_validated, 1U);
+  }
+
+  const common::Result<std::string> final_name = manifest_file_name(candidate->generation());
+  const common::Result<std::string> temporary_name =
+      temporary_manifest_file_name(candidate->generation(), request.nonce);
+  if (!final_name.has_value() || !temporary_name.has_value()) {
+    return implementation.fail_manifest(common::Status{
+        common::StatusCode::kInternal, "Validated Manifest generation names cannot be formatted"});
+  }
+  common::Result<io::PosixFile> temporary = implementation.manifests_.create_exclusive_regular_file(
+      *temporary_name, implementation.file_permissions_);
+  if (!temporary.has_value()) {
+    return implementation.fail_manifest(
+        with_context("create temporary Manifest generation", temporary.error()));
+  }
+  common::Status operation = temporary->write_all_at(0U, encoded.bytes());
+  if (!operation.is_ok()) {
+    return implementation.fail_manifest(
+        with_context("write temporary Manifest generation", operation));
+  }
+  const common::Result<std::uint64_t> temporary_size = temporary->size();
+  if (!temporary_size.has_value()) {
+    return implementation.fail_manifest(
+        with_context("read temporary Manifest generation size", temporary_size.error()));
+  }
+  if (*temporary_size != encoded.size()) {
+    return implementation.fail_manifest(
+        common::Status{common::StatusCode::kIoError,
+                       "Temporary Manifest generation size changed after complete write"});
+  }
+  std::vector<std::byte> readback;
+  try {
+    readback.resize(encoded.size());
+  } catch (const std::bad_alloc&) {
+    return implementation.fail_manifest(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "Cannot allocate Manifest generation installation readback"});
+  }
+  const common::Result<std::size_t> read = temporary->read_at(0U, readback);
+  if (!read.has_value()) {
+    return implementation.fail_manifest(
+        with_context("read back temporary Manifest generation", read.error()));
+  }
+  if (*read != readback.size()) {
+    return implementation.fail_manifest(
+        common::Status{common::StatusCode::kIoError,
+                       "Temporary Manifest generation readback ended before exact file size"});
+  }
+  ManifestDecodeResult decoded_readback = decode_manifest_v1_exact(readback, request.decode_limits);
+  if (!decoded_readback.has_value()) {
+    return implementation.fail_manifest(
+        manifest_decode_failure(decoded_readback.error(), "temporary Manifest generation"));
+  }
+  if (!std::ranges::equal(readback, encoded.bytes())) {
+    return implementation.fail_manifest(
+        corruption("Temporary Manifest generation readback differs from candidate bytes"));
+  }
+
+  operation = temporary->sync_all();
+  if (!operation.is_ok()) {
+    return implementation.fail_manifest(
+        with_context("synchronize temporary Manifest generation", operation));
+  }
+  ++implementation.manifest_metrics_.file_syncs;
+  operation = temporary->close();
+  if (!operation.is_ok()) {
+    return implementation.fail_manifest(
+        with_context("close synchronized temporary Manifest generation", operation));
+  }
+  operation = implementation.manifests_.rename_no_replace(
+      {.old_name = *temporary_name, .new_name = *final_name});
+  if (!operation.is_ok()) {
+    return implementation.fail_manifest(
+        with_context("install Manifest generation final name", operation));
+  }
+  operation = implementation.manifests_.sync();
+  if (!operation.is_ok()) {
+    implementation.poisoned_ = true;
+    implementation.poison_status_ =
+        with_context("synchronize Manifest directory after generation install", operation);
+    return implementation.fail_manifest(implementation.poison_status_);
+  }
+  ++implementation.manifest_metrics_.directory_syncs;
+  ++implementation.manifest_metrics_.installed_generations;
+  saturating_add(implementation.manifest_metrics_.installed_bytes,
+                 static_cast<std::uint64_t>(encoded.size()));
+  return InstalledManifest{
+      .file_name = *final_name,
+      .generation = candidate->generation(),
+      .reclaim_checkpoint = candidate->reclaim_checkpoint(),
+      .tablet_count = static_cast<std::uint64_t>(candidate->tablets().size()),
+      .part_count = static_cast<std::uint64_t>(candidate->parts().size()),
+      .retry_count = static_cast<std::uint64_t>(candidate->retries().size()),
+  };
+}
+
 common::Result<ManifestNamespaceSnapshot> ManifestStorage::scan_namespace() const {
   if (!implementation_) {
     return common::make_unexpected(invalid("Manifest storage owner was moved from"));
@@ -357,6 +635,10 @@ common::Status ManifestStorage::poison_status() const {
 
 PartInstallationMetrics ManifestStorage::metrics() const noexcept {
   return implementation_ ? implementation_->metrics_ : PartInstallationMetrics{};
+}
+
+ManifestInstallationMetrics ManifestStorage::manifest_metrics() const noexcept {
+  return implementation_ ? implementation_->manifest_metrics_ : ManifestInstallationMetrics{};
 }
 
 } // namespace chronos::manifest

@@ -24,7 +24,8 @@ The public headers are:
 - `chronos/manifest/codec.hpp`: owned encoding, borrowed decoding, limits, and error classes;
 - `chronos/manifest/validation.hpp`: exact catalog binding and add-only generation transitions;
 - `chronos/manifest/part_validation.hpp`: installed CSEG image-to-descriptor validation; and
-- `chronos/manifest/storage.hpp`: locked, directory-anchored immutable part installation.
+- `chronos/manifest/storage.hpp`: locked, directory-anchored immutable part and generation
+  installation, strict namespace scanning, and temporary cleanup.
 
 Referenced-part validation borrows exact file images supplied in descriptor order. It validates
 the catalog lineage first, then requires the canonical identity-derived filename and exact length,
@@ -175,6 +176,20 @@ never removes a final generation or part. A failed directory sync poisons the li
 subsequent operation cannot safely assume which removals survived a crash. Repeating successful
 cleanup is idempotent and performs no unnecessary sync.
 
+`install_manifest()` accepts one already-owned canonical candidate and selects the current
+predecessor from the highest consecutive final name. Before creating a temporary, it exact-decodes
+that predecessor without fallback, validates the add-only transition and retained catalog binding,
+and reopens and fully validates every referenced final CSEG against its descriptor and schema. It
+then exclusively creates the recognized generation temporary, writes and exact-readback decodes
+the same bytes, compares the readback byte-for-byte, synchronizes and closes the file, renames
+without replacement, and synchronizes `manifest/`.
+
+The final directory sync is the generation durability boundary. A pre-rename failure leaves at
+most a recognized temporary and keeps the owner usable. A failed directory sync after rename
+poisons the live owner because restart must select the durable namespace truth. Installation
+metrics distinguish attempted/failed work, referenced-part validations, file and directory syncs,
+and generations/bytes that crossed the complete durability boundary.
+
 The current one-GiB format maximum is not a recommended operating size. Runtime limits let an
 owner enforce a smaller memory budget before allocation. Retry admission and manifest generation
 policy will establish practical bounds in later Phase 6 work.
@@ -216,5 +231,5 @@ Likely review questions are:
 - Why does the encoder reject unsorted input instead of sorting? Sorting would silently change
   descriptor relationships and hide builder bugs; canonical state construction is a separate
   responsibility.
-- What remains before manifests are durable? Exact installed-CSEG content and WAL-coverage
-  validation, filesystem installation, atomic publication, crash recovery, and WAL reclamation.
+- What remains before Phase 6 is complete? WAL-prefix coverage construction, atomic head-to-part
+  publication, startup recovery, crash-matrix evidence, and checkpoint-driven WAL reclamation.
