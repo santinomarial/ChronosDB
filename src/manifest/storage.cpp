@@ -130,6 +130,76 @@ void saturating_add(std::uint64_t& target, const std::uint64_t value) noexcept {
 
 } // namespace
 
+class LoadedManifestGeneration::Impl {
+public:
+  Impl(std::vector<std::byte> encoded_bytes, DecodedManifestView decoded,
+       std::vector<cseg::PartId> orphan_parts, std::vector<std::string> temporary_parts,
+       std::vector<std::string> temporary_manifests) noexcept
+      : encoded_bytes_(std::move(encoded_bytes)), decoded_(std::move(decoded)),
+        orphan_parts_(std::move(orphan_parts)), temporary_parts_(std::move(temporary_parts)),
+        temporary_manifests_(std::move(temporary_manifests)) {}
+
+  // The decoded view borrows this allocation. Vector move transfers its element references, and
+  // member order ensures the view is destroyed before the owning bytes.
+  std::vector<std::byte> encoded_bytes_;
+  DecodedManifestView decoded_;
+  std::vector<cseg::PartId> orphan_parts_;
+  std::vector<std::string> temporary_parts_;
+  std::vector<std::string> temporary_manifests_;
+};
+
+LoadedManifestGeneration::LoadedManifestGeneration(std::unique_ptr<Impl> implementation) noexcept
+    : implementation_(std::move(implementation)) {}
+
+LoadedManifestGeneration::~LoadedManifestGeneration() = default;
+LoadedManifestGeneration::LoadedManifestGeneration(LoadedManifestGeneration&&) noexcept = default;
+LoadedManifestGeneration&
+LoadedManifestGeneration::operator=(LoadedManifestGeneration&&) noexcept = default;
+
+std::uint64_t LoadedManifestGeneration::generation() const noexcept {
+  return implementation_->decoded_.generation();
+}
+
+const DatabaseId& LoadedManifestGeneration::database_id() const noexcept {
+  return implementation_->decoded_.database_id();
+}
+
+const wal::WalId& LoadedManifestGeneration::wal_id() const noexcept {
+  return implementation_->decoded_.wal_id();
+}
+
+const WalCheckpoint& LoadedManifestGeneration::reclaim_checkpoint() const noexcept {
+  return implementation_->decoded_.reclaim_checkpoint();
+}
+
+std::span<const TabletDescriptor> LoadedManifestGeneration::tablets() const noexcept {
+  return implementation_->decoded_.tablets();
+}
+
+std::span<const PartDescriptor> LoadedManifestGeneration::parts() const noexcept {
+  return implementation_->decoded_.parts();
+}
+
+std::span<const RetryDescriptor> LoadedManifestGeneration::retries() const noexcept {
+  return implementation_->decoded_.retries();
+}
+
+common::ByteView LoadedManifestGeneration::encoded_bytes() const noexcept {
+  return implementation_->encoded_bytes_;
+}
+
+std::span<const cseg::PartId> LoadedManifestGeneration::orphan_parts() const noexcept {
+  return implementation_->orphan_parts_;
+}
+
+std::span<const std::string> LoadedManifestGeneration::temporary_parts() const noexcept {
+  return implementation_->temporary_parts_;
+}
+
+std::span<const std::string> LoadedManifestGeneration::temporary_manifests() const noexcept {
+  return implementation_->temporary_manifests_;
+}
+
 class ManifestStorage::Impl {
 public:
   Impl(io::PosixDirectory root, io::PosixDirectory parts, io::PosixDirectory manifests,
@@ -622,6 +692,106 @@ common::Result<TemporaryCleanupReport> ManifestStorage::cleanup_temporaries() {
     ++report.directory_syncs;
   }
   return report;
+}
+
+common::Result<LoadedManifestGeneration>
+ManifestStorage::load_selected_manifest(const ManifestLoadRequest& request) const {
+  common::Result<ManifestNamespaceSnapshot> snapshot = scan_namespace();
+  if (!snapshot.has_value()) {
+    return common::make_unexpected(snapshot.error());
+  }
+  const std::uint64_t selected_generation = snapshot->generations.back();
+  const common::Result<std::string> selected_name = manifest_file_name(selected_generation);
+  if (!selected_name.has_value()) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kInternal, "Selected Manifest generation cannot be formatted"});
+  }
+  common::Result<std::vector<std::byte>> encoded = read_final_file(
+      implementation_->manifests_, {.name = *selected_name,
+                                    .maximum_length = request.decode_limits.max_file_length,
+                                    .exact_length = std::nullopt,
+                                    .description = "selected final Manifest generation"});
+  if (!encoded.has_value()) {
+    return common::make_unexpected(encoded.error());
+  }
+  ManifestDecodeResult decoded = decode_manifest_v1_exact(*encoded, request.decode_limits);
+  if (!decoded.has_value()) {
+    return common::make_unexpected(
+        manifest_decode_failure(decoded.error(), "selected final Manifest generation"));
+  }
+  if (decoded->generation() != selected_generation) {
+    return common::make_unexpected(
+        corruption("Selected final Manifest filename disagrees with its encoded generation"));
+  }
+  if (decoded->database_id() != request.expected_database_id ||
+      decoded->wal_id() != request.expected_wal_id) {
+    return common::make_unexpected(
+        invalid("Selected Manifest database or WAL identity does not match recovery context"));
+  }
+  common::Status validation =
+      validate_manifest_v1_schema_binding(*decoded, request.schema_bindings);
+  if (!validation.is_ok()) {
+    return common::make_unexpected(
+        with_context("bind selected Manifest to retained catalog", validation));
+  }
+
+  for (const PartDescriptor& descriptor : decoded->parts()) {
+    if (!std::ranges::binary_search(snapshot->final_parts, descriptor.part_id)) {
+      return common::make_unexpected(
+          corruption("Selected Manifest references a missing final CSEG part"));
+    }
+    const TabletSchemaBinding* binding =
+        find_binding(request.schema_bindings, descriptor.tablet_id);
+    if (binding == nullptr) {
+      return common::make_unexpected(common::Status{
+          common::StatusCode::kInternal, "Validated Manifest schema binding became inaccessible"});
+    }
+    const std::shared_ptr<const schema::TableSchema> schema_value =
+        binding->lineage.get().find(descriptor.schema_id);
+    if (!schema_value) {
+      return common::make_unexpected(common::Status{
+          common::StatusCode::kInternal, "Validated Manifest part schema became inaccessible"});
+    }
+    const std::string file_name = part_file_name(descriptor.part_id);
+    common::Result<std::vector<std::byte>> part_bytes =
+        read_final_file(implementation_->parts_,
+                        {.name = file_name,
+                         .maximum_length = request.part_validation_limits.decode.max_file_length,
+                         .exact_length = descriptor.file_length,
+                         .description = "referenced final CSEG part"});
+    if (!part_bytes.has_value()) {
+      return common::make_unexpected(part_bytes.error());
+    }
+    validation = validate_manifest_v1_part_image(descriptor, decoded->wal_id(), *schema_value,
+                                                 {.file_name = file_name, .bytes = *part_bytes},
+                                                 request.part_validation_limits);
+    if (!validation.is_ok()) {
+      return common::make_unexpected(
+          with_context("validate referenced final CSEG part", validation));
+    }
+  }
+
+  try {
+    std::vector<cseg::PartId> referenced_parts;
+    referenced_parts.reserve(decoded->parts().size());
+    for (const PartDescriptor& descriptor : decoded->parts()) {
+      referenced_parts.push_back(descriptor.part_id);
+    }
+    std::ranges::sort(referenced_parts);
+    std::vector<cseg::PartId> orphan_parts;
+    orphan_parts.reserve(snapshot->final_parts.size());
+    for (const cseg::PartId& part_id : snapshot->final_parts) {
+      if (!std::ranges::binary_search(referenced_parts, part_id)) {
+        orphan_parts.push_back(part_id);
+      }
+    }
+    return LoadedManifestGeneration{std::make_unique<LoadedManifestGeneration::Impl>(
+        std::move(*encoded), std::move(*decoded), std::move(orphan_parts),
+        std::move(snapshot->temporary_parts), std::move(snapshot->temporary_manifests))};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                  "Cannot allocate loaded Manifest generation"});
+  }
 }
 
 bool ManifestStorage::is_usable() const noexcept {

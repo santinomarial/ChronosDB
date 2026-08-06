@@ -190,6 +190,14 @@ poisons the live owner because restart must select the durable namespace truth. 
 metrics distinguish attempted/failed work, referenced-part validations, file and directory syncs,
 and generations/bytes that crossed the complete durability boundary.
 
+`load_selected_manifest()` is the read-only recovery-side trust boundary. It selects only the
+highest consecutive final name, exact-decodes it without fallback, checks the configured database
+and WAL identities, binds the retained catalog, and reopens and validates every referenced final
+CSEG. Success returns a move-only owner of the exact manifest bytes and parsed descriptor arrays,
+plus sorted unreferenced final-part identities and recognized temporary names from the same locked
+scan. Those orphan and temporary entries are observations, not trusted data or cleanup authority;
+the call performs no mutation, WAL replay, or publication.
+
 The current one-GiB format maximum is not a recommended operating size. Runtime limits let an
 owner enforce a smaller memory budget before allocation. Retry admission and manifest generation
 policy will establish practical bounds in later Phase 6 work.
@@ -231,5 +239,6 @@ Likely review questions are:
 - Why does the encoder reject unsorted input instead of sorting? Sorting would silently change
   descriptor relationships and hide builder bugs; canonical state construction is a separate
   responsibility.
-- What remains before Phase 6 is complete? WAL-prefix coverage construction, atomic head-to-part
-  publication, startup recovery, crash-matrix evidence, and checkpoint-driven WAL reclamation.
+- What remains before Phase 6 is complete? WAL-prefix coverage construction and suffix preflight,
+  state restoration/replay, atomic head-to-part publication, crash-matrix evidence, and
+  checkpoint-driven WAL reclamation.

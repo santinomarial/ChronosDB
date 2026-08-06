@@ -10,6 +10,7 @@
 #include "cseg/cseg_test_fixture.hpp"
 #include "manifest/storage_internal.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -439,6 +440,97 @@ TEST(ManifestStorageTest, InstallsExactNextManifestAfterRevalidatingReferencedPa
   const common::Result<ManifestNamespaceSnapshot> snapshot = owner.scan_namespace();
   ASSERT_TRUE(snapshot.has_value());
   EXPECT_EQ(snapshot->generations, (std::vector<std::uint64_t>{1U, 2U}));
+}
+
+TEST(ManifestStorageTest, LoadsOwnedHighestManifestAndReportsOrphansAndTemporaries) {
+  TemporaryDirectory temporary;
+  ASSERT_TRUE(temporary.valid());
+  establish_layout(temporary.path());
+  const PartFixture fixture;
+  const EncodedManifest selected = fixture.manifest(1U);
+  const cseg::PartId orphan_id = id<cseg::PartId>(9U);
+  const common::Uuid nonce = PartFixture::make_nonce(0xd0U);
+  const std::string temporary_part = temporary_part_file_name(orphan_id, nonce);
+  const std::string temporary_manifest = *temporary_manifest_file_name(2U, nonce);
+  create_entry(temporary.path(),
+               std::filesystem::path{kManifestDirectoryName} / *manifest_file_name(1U),
+               selected.bytes());
+  create_entry(temporary.path(),
+               std::filesystem::path{kManifestDirectoryName} / temporary_manifest);
+  create_entry(temporary.path(),
+               std::filesystem::path{kPartsDirectoryName} / part_file_name(fixture.part_id),
+               fixture.encoded.bytes());
+  create_entry(temporary.path(),
+               std::filesystem::path{kPartsDirectoryName} / part_file_name(orphan_id));
+  create_entry(temporary.path(), std::filesystem::path{kPartsDirectoryName} / temporary_part);
+  ManifestStorage owner =
+      ManifestStorage::open_existing({.database_root = temporary.path().string()}).value();
+  const auto bindings = fixture.bindings();
+
+  common::Result<LoadedManifestGeneration> loaded =
+      owner.load_selected_manifest({.expected_database_id = fixture.database_id,
+                                    .expected_wal_id = fixture.wal_id,
+                                    .schema_bindings = bindings,
+                                    .decode_limits = {},
+                                    .part_validation_limits = {}});
+  ASSERT_TRUE(loaded.has_value()) << loaded.error().to_string();
+  EXPECT_EQ(loaded->generation(), 1U);
+  EXPECT_EQ(loaded->database_id(), fixture.database_id);
+  EXPECT_EQ(loaded->wal_id(), fixture.wal_id);
+  EXPECT_EQ(loaded->tablets().size(), 1U);
+  ASSERT_EQ(loaded->parts().size(), 1U);
+  EXPECT_EQ(loaded->parts().front(), fixture.descriptor);
+  EXPECT_TRUE(std::equal(loaded->encoded_bytes().begin(), loaded->encoded_bytes().end(),
+                         selected.bytes().begin(), selected.bytes().end()));
+  EXPECT_NE(loaded->encoded_bytes().data(), selected.bytes().data());
+  ASSERT_EQ(loaded->orphan_parts().size(), 1U);
+  EXPECT_EQ(loaded->orphan_parts().front(), orphan_id);
+  ASSERT_EQ(loaded->temporary_parts().size(), 1U);
+  EXPECT_EQ(loaded->temporary_parts().front(), temporary_part);
+  ASSERT_EQ(loaded->temporary_manifests().size(), 1U);
+  EXPECT_EQ(loaded->temporary_manifests().front(), temporary_manifest);
+  EXPECT_TRUE(std::filesystem::exists(temporary.path() / kPartsDirectoryName / temporary_part));
+  EXPECT_TRUE(
+      std::filesystem::exists(temporary.path() / kManifestDirectoryName / temporary_manifest));
+
+  LoadedManifestGeneration moved = std::move(*loaded);
+  EXPECT_EQ(moved.generation(), 1U);
+  EXPECT_TRUE(std::equal(moved.encoded_bytes().begin(), moved.encoded_bytes().end(),
+                         selected.bytes().begin(), selected.bytes().end()));
+}
+
+TEST(ManifestStorageTest, LoadedManifestRequiresExactRecoveryIdentityAndReferencedParts) {
+  TemporaryDirectory temporary;
+  ASSERT_TRUE(temporary.valid());
+  establish_layout(temporary.path());
+  const PartFixture fixture;
+  const EncodedManifest selected = fixture.manifest(1U);
+  create_entry(temporary.path(),
+               std::filesystem::path{kManifestDirectoryName} / *manifest_file_name(1U),
+               selected.bytes());
+  ManifestStorage owner =
+      ManifestStorage::open_existing({.database_root = temporary.path().string()}).value();
+  const auto bindings = fixture.bindings();
+
+  EXPECT_EQ(owner
+                .load_selected_manifest({.expected_database_id = id<DatabaseId>(7U),
+                                         .expected_wal_id = fixture.wal_id,
+                                         .schema_bindings = bindings,
+                                         .decode_limits = {},
+                                         .part_validation_limits = {}})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(owner
+                .load_selected_manifest({.expected_database_id = fixture.database_id,
+                                         .expected_wal_id = fixture.wal_id,
+                                         .schema_bindings = bindings,
+                                         .decode_limits = {},
+                                         .part_validation_limits = {}})
+                .error()
+                .code(),
+            common::StatusCode::kCorruption);
+  EXPECT_TRUE(owner.is_usable());
 }
 
 TEST(ManifestStorageTest, RejectsStaleTransitionAndMissingPartBeforeManifestMutation) {

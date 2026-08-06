@@ -196,6 +196,12 @@ int main() {
       chronos::manifest::ManifestStorage::*)() const noexcept;
   const ManifestMetricsFunction manifest_metrics =
       &chronos::manifest::ManifestStorage::manifest_metrics;
+  using LoadSelectedManifestFunction =
+      chronos::common::Result<chronos::manifest::LoadedManifestGeneration> (
+          chronos::manifest::ManifestStorage::*)(
+          const chronos::manifest::ManifestLoadRequest&) const;
+  const LoadSelectedManifestFunction load_selected_manifest =
+      &chronos::manifest::ManifestStorage::load_selected_manifest;
   return execute != nullptr && recover != nullptr && register_schema != nullptr &&
                  limits.max_columns == 4096U &&
                  head_capacity.row_capacity == 4U &&
@@ -213,6 +219,7 @@ int main() {
                  scan_manifest_namespace != nullptr &&
                  cleanup_manifest_temporaries != nullptr &&
                  install_manifest != nullptr && manifest_metrics != nullptr &&
+                 load_selected_manifest != nullptr &&
                  stored_page.has_value() && stored_page->bytes().size() == 1U &&
                  plain_page.has_value() && plain_page->bytes().size() == 1U &&
                  encoded_cseg_page.has_value() && encoded_cseg_page->bytes().size() == 1U &&

@@ -202,7 +202,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > Exact next-generation installation now revalidates the selected predecessor, add-only/catalog
 > transition, and every referenced final CSEG before canonical readback, file sync, no-replace
 > rename, directory sync, and durability-boundary metrics. Flush construction/publication,
-> manifest-aware recovery, crash-matrix evidence, and checkpoint reclamation remain unimplemented.
+> Read-only recovery selection now owns and validates only the highest generation, exact
+> database/WAL/catalog context, every referenced final CSEG, and reports orphan/temporary entries
+> without mutation. Flush construction/publication, WAL-suffix replay, crash-matrix evidence, and
+> checkpoint reclamation remain unimplemented.
 
 - **Scope:** manifest generations/version edits; atomic durable part installation; sealed-head flush; checkpoint/log coverage; startup reconciliation; safe temporary-file handling.
 - **Explicit non-scope:** compaction, delta parts, distributed metadata, object storage, and aggressive garbage collection beyond proven safe ownership.

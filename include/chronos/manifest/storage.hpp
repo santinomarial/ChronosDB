@@ -109,6 +109,48 @@ struct TemporaryCleanupReport {
   friend bool operator==(const TemporaryCleanupReport&, const TemporaryCleanupReport&) = default;
 };
 
+struct ManifestLoadRequest {
+  DatabaseId expected_database_id;
+  wal::WalId expected_wal_id;
+  std::span<const TabletSchemaBinding> schema_bindings;
+  ManifestDecodeLimits decode_limits;
+  ReferencedPartValidationLimits part_validation_limits;
+};
+
+// Owns the exact selected Manifest bytes and parsed descriptor state. Returned spans and byte views
+// remain valid until this move-only owner is destroyed or moved from. Orphan and temporary names
+// are observations from the same locked namespace scan; no cleanup or publication is performed.
+class LoadedManifestGeneration {
+public:
+  LoadedManifestGeneration() = delete;
+  ~LoadedManifestGeneration();
+
+  LoadedManifestGeneration(const LoadedManifestGeneration&) = delete;
+  LoadedManifestGeneration& operator=(const LoadedManifestGeneration&) = delete;
+  LoadedManifestGeneration(LoadedManifestGeneration&&) noexcept;
+  LoadedManifestGeneration& operator=(LoadedManifestGeneration&&) noexcept;
+
+  [[nodiscard]] std::uint64_t generation() const noexcept;
+  [[nodiscard]] const DatabaseId& database_id() const noexcept;
+  [[nodiscard]] const wal::WalId& wal_id() const noexcept;
+  [[nodiscard]] const WalCheckpoint& reclaim_checkpoint() const noexcept;
+  [[nodiscard]] std::span<const TabletDescriptor> tablets() const noexcept;
+  [[nodiscard]] std::span<const PartDescriptor> parts() const noexcept;
+  [[nodiscard]] std::span<const RetryDescriptor> retries() const noexcept;
+  [[nodiscard]] common::ByteView encoded_bytes() const noexcept;
+  [[nodiscard]] std::span<const cseg::PartId> orphan_parts() const noexcept;
+  [[nodiscard]] std::span<const std::string> temporary_parts() const noexcept;
+  [[nodiscard]] std::span<const std::string> temporary_manifests() const noexcept;
+
+private:
+  class Impl;
+  explicit LoadedManifestGeneration(std::unique_ptr<Impl> implementation) noexcept;
+
+  std::unique_ptr<Impl> implementation_;
+
+  friend class ManifestStorage;
+};
+
 // A move-only, single-threaded owner of the existing database root, parts directory, manifest
 // directory, and manifest writer lock. open_existing() never creates missing directories or LOCK.
 // The deployment must prevent out-of-band mutation while the lock is held.
@@ -145,6 +187,12 @@ public:
   // Re-scans first, removes only recognized temporaries, and synchronizes each changed directory.
   // It never promotes a candidate or removes a final part/generation.
   [[nodiscard]] common::Result<TemporaryCleanupReport> cleanup_temporaries();
+
+  // Selects only the highest consecutive final generation, exact-decodes it without fallback,
+  // binds configured identities/catalog state, validates every referenced final CSEG, and returns
+  // an owned unpublished result. Recognized temporaries and unreferenced finals are only reported.
+  [[nodiscard]] common::Result<LoadedManifestGeneration>
+  load_selected_manifest(const ManifestLoadRequest& request) const;
 
   [[nodiscard]] bool is_usable() const noexcept;
   [[nodiscard]] common::Status poison_status() const;
