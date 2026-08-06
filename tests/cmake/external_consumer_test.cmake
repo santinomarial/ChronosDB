@@ -68,6 +68,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/manifest/codec.hpp>
 #include <chronos/manifest/layout.hpp>
 #include <chronos/manifest/naming.hpp>
+#include <chronos/manifest/part_validation.hpp>
 #include <chronos/manifest/types.hpp>
 #include <chronos/manifest/validation.hpp>
 #include <chronos/wal/application.hpp>
@@ -165,6 +166,13 @@ int main() {
       std::span<const chronos::manifest::TabletSchemaBinding>);
   const ValidateManifestTransitionFunction validate_manifest_transition =
       &chronos::manifest::validate_manifest_v1_transition;
+  using ValidateReferencedPartsFunction = chronos::common::Status (*)(
+      const chronos::manifest::DecodedManifestView&,
+      std::span<const chronos::manifest::TabletSchemaBinding>,
+      std::span<const chronos::manifest::ReferencedPartImage>,
+      chronos::manifest::ReferencedPartValidationLimits);
+  const ValidateReferencedPartsFunction validate_referenced_parts =
+      &chronos::manifest::validate_manifest_v1_referenced_parts;
   return execute != nullptr && recover != nullptr && register_schema != nullptr &&
                  limits.max_columns == 4096U &&
                  head_capacity.row_capacity == 4U &&
@@ -177,6 +185,7 @@ int main() {
                  manifest_name.has_value() &&
                  *manifest_name == "manifest-00000000000000000001.cman" &&
                  decode_manifest != nullptr && validate_manifest_transition != nullptr &&
+                 validate_referenced_parts != nullptr &&
                  stored_page.has_value() && stored_page->bytes().size() == 1U &&
                  plain_page.has_value() && plain_page->bytes().size() == 1U &&
                  encoded_cseg_page.has_value() && encoded_cseg_page->bytes().size() == 1U &&

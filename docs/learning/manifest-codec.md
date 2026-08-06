@@ -7,9 +7,10 @@ It turns one canonical full manifest model into the exact bytes frozen by
 [Manifest v1](../formats/manifest-v1.md), and safely turns an untrusted byte prefix back into a
 borrowed immutable view.
 
-This layer does not open files, validate an installed CSEG, prove WAL coverage, publish query
-state, or delete WAL segments. Its naming helpers format and parse exact final and temporary
-basenames without touching a directory. Durable installation and recovery remain separate.
+This layer does not open files, prove WAL coverage, publish query state, or delete WAL segments.
+Its naming helpers format and parse exact final and temporary basenames without touching a
+directory, while its referenced-part validator accepts already-read CSEG images. Durable
+installation and recovery remain separate.
 
 ## Public interfaces
 
@@ -18,9 +19,16 @@ The public headers are:
 - `chronos/manifest/format.hpp`: frozen sizes, limits, field offsets, and magic;
 - `chronos/manifest/types.hpp`: the nominal `DatabaseId`, checkpoint, and descriptor values;
 - `chronos/manifest/naming.hpp`: canonical final/temporary basename formatting and strict parsing;
-- `chronos/manifest/layout.hpp`: allocation-free canonical layout planning; and
-- `chronos/manifest/codec.hpp`: owned encoding, borrowed decoding, limits, and error classes; and
-- `chronos/manifest/validation.hpp`: exact catalog binding and add-only generation transitions.
+- `chronos/manifest/layout.hpp`: allocation-free canonical layout planning;
+- `chronos/manifest/codec.hpp`: owned encoding, borrowed decoding, limits, and error classes;
+- `chronos/manifest/validation.hpp`: exact catalog binding and add-only generation transitions; and
+- `chronos/manifest/part_validation.hpp`: installed CSEG image-to-descriptor validation.
+
+Referenced-part validation borrows exact file images supplied in descriptor order. It validates
+the catalog lineage first, then requires the canonical identity-derived filename and exact length,
+decodes and fully validates each CSEG, binds its physical schema, compares every duplicated header
+field, requires every system WAL identity to equal the manifest WAL, and recomputes the record
+sequence extrema. It performs no filesystem operations and retains no image bytes.
 
 `plan_manifest_v1_layout()` accepts only the three descriptor counts. It checks each registry bound,
 performs multiplication/addition with checked arithmetic, and returns all section offsets plus the
@@ -128,16 +136,18 @@ logically unchanged in the successor tablet range, and every protected retry out
 exactly unchanged. New tablets, parts, and retries are allowed; removal, replacement, pruning, and
 schema regression are rejected in Phase 6.
 
-Neither validator claims that a part file exists or that a checkpoint crosses only covered WAL
-commands. Those proofs require installed CSEG and WAL bytes and remain installation-layer work.
+The transition validator does not claim that a part file exists or that a checkpoint crosses only
+covered WAL commands. The separate referenced-part validator proves the supplied CSEG images; WAL
+coverage still requires WAL bytes and remains installation-layer work.
 
 ## Complexity and allocation
 
 Layout planning is `O(1)` and allocation-free. Encoding and decoding are `O(total bytes + parts log
 parts)` because CRC32C scans the image and global `PartId` uniqueness uses a sorted temporary copy.
 Both own one descriptor-vector allocation per nonempty descriptor category; encoding additionally
-owns the exact byte image. There is no per-row work because manifests summarize already installed
-parts and retry outcomes.
+owns the exact byte image. Referenced-part validation is `O(total CSEG bytes + rows)` and repeats
+bounded system-page decoding after complete CSEG validation to recompute manifest-specific WAL and
+record-sequence facts.
 
 The current one-GiB format maximum is not a recommended operating size. Runtime limits let an
 owner enforce a smaller memory budget before allocation. Retry admission and manifest generation
@@ -154,7 +164,9 @@ by the external-consumer test.
 The libFuzzer entry exercises arbitrary input plus structured mutation/truncation of a populated
 canonical generation. ASan/UBSan and TSan builds run the deterministic suite. The microbenchmarks
 measure full canonical encoding, full exact decoding, and add-only transition validation at
-increasing retained-retry counts and report processed bytes/items plus descriptor scale. Benchmark
+increasing retained-retry counts and report processed bytes/items plus descriptor scale. A
+referenced-part case measures full compressed CSEG validation through manifest-specific WAL and
+record-extrema binding. Benchmark
 results are evidence only when captured under the repository benchmark contract; no performance
 number is claimed by this document.
 

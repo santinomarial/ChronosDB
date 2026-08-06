@@ -282,6 +282,7 @@ add_library(
   src/manifest/codec.cpp
   src/manifest/layout.cpp
   src/manifest/naming.cpp
+  src/manifest/part_validation.cpp
   src/manifest/validation.cpp
 )
 add_library(chronos::manifest ALIAS chronos_manifest)
@@ -599,6 +600,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/manifest/layout_test.cpp
     tests/manifest/naming_header_self_contained.cpp
     tests/manifest/naming_test.cpp
+    tests/manifest/part_validation_header_self_contained.cpp
+    tests/manifest/part_validation_test.cpp
     tests/manifest/types_header_self_contained.cpp
     tests/manifest/types_test.cpp
     tests/manifest/validation_header_self_contained.cpp
@@ -769,6 +772,9 @@ if(CHRONOS_BUILD_BENCHMARKS)
   chronos_enable_static_analysis(chronos_head_benchmarks)
 
   add_executable(chronos_manifest_benchmarks benchmarks/manifest/codec_benchmark.cpp)
+  target_include_directories(
+    chronos_manifest_benchmarks PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+  )
   set_target_properties(chronos_manifest_benchmarks PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_manifest_benchmarks PRIVATE cxx_std_23)
   target_link_libraries(

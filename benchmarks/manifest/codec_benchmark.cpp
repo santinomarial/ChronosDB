@@ -1,8 +1,11 @@
 #include "chronos/manifest/codec.hpp"
+#include "chronos/manifest/naming.hpp"
+#include "chronos/manifest/part_validation.hpp"
 #include "chronos/manifest/validation.hpp"
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/logical_type.hpp"
 #include "chronos/schema/table_schema.hpp"
+#include "cseg/cseg_test_fixture.hpp"
 
 #include <array>
 #include <benchmark/benchmark.h>
@@ -23,6 +26,12 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint64_t v
     bytes[bytes.size() - 1U - index] =
         static_cast<std::byte>(static_cast<std::uint8_t>(value >> (index * 8U)));
   }
+  return Identifier::from_bytes(bytes).value();
+}
+
+template <typename Identifier> [[nodiscard]] Identifier cseg_id(const std::uint8_t value) {
+  common::Uuid::Bytes bytes{};
+  bytes.front() = std::byte{value};
   return Identifier::from_bytes(bytes).value();
 }
 
@@ -157,9 +166,88 @@ void benchmark_transition(benchmark::State& state) {
   state.counters["retries"] = static_cast<double>(model.retries.size());
 }
 
+void benchmark_referenced_part_validation(benchmark::State& state) {
+  const cseg::EncodedCsegPart part = cseg::test::make_valid_part(cseg::PageCompression::kZstd);
+  const schema::TableId table_id = cseg_id<schema::TableId>(2U);
+  const schema::TabletId tablet_id = cseg_id<schema::TabletId>(3U);
+  const schema::SchemaId schema_id = cseg_id<schema::SchemaId>(4U);
+  const schema::ColumnId event_id = cseg_id<schema::ColumnId>(5U);
+  std::vector<schema::ColumnDefinition> columns;
+  columns.push_back(schema::ColumnDefinition::create(
+                        event_id, "event_time",
+                        schema::LogicalType::create(schema::LogicalTypeKind::kTimestampNs).value(),
+                        false)
+                        .value());
+  schema::SchemaLineage lineage =
+      schema::SchemaLineage::create(
+          schema::TableSchema::create(table_id, schema_id, schema::SchemaVersion::initial(),
+                                      std::nullopt, std::move(columns),
+                                      {.event_time_column = event_id,
+                                       .physical_ordering_key = {event_id},
+                                       .partition_columns = {event_id},
+                                       .shard_key = {event_id},
+                                       .deduplication_key = {}})
+              .value())
+          .value();
+  wal::WalId wal_id{};
+  wal_id.bytes.front() = std::byte{0x70U};
+  const std::array tablets{TabletDescriptor{
+      .table_id = table_id,
+      .tablet_id = tablet_id,
+      .recovery_schema_id = schema_id,
+      .recovery_schema_version = schema::SchemaVersion::initial(),
+      .durable_record_sequence = 7U,
+      .first_part_index = 0U,
+      .part_count = 1U,
+      .durable_row_count = 2U,
+  }};
+  const cseg::PartId part_id = cseg_id<cseg::PartId>(1U);
+  const std::array parts{PartDescriptor{
+      .part_id = part_id,
+      .table_id = table_id,
+      .tablet_id = tablet_id,
+      .schema_id = schema_id,
+      .schema_version = schema::SchemaVersion::initial(),
+      .file_length = part.size(),
+      .row_count = 2U,
+      .minimum_record_sequence = 7U,
+      .maximum_record_sequence = 7U,
+      .minimum_event_time = -5,
+      .maximum_event_time = 10,
+  }};
+  const EncodedManifest manifest_bytes =
+      encode_manifest_v1({
+                             .generation = 1U,
+                             .database_id = id<DatabaseId>(1U),
+                             .wal_id = wal_id,
+                             .reclaim_checkpoint = {.record_sequence = 0U,
+                                                    .segment_number = 1U,
+                                                    .byte_offset = 64U},
+                             .tablets = tablets,
+                             .parts = parts,
+                             .retries = {},
+                         })
+          .value();
+  const DecodedManifestView manifest = decode_manifest_v1_exact(manifest_bytes.bytes()).value();
+  const std::array bindings{
+      TabletSchemaBinding{.tablet_id = tablet_id, .lineage = std::cref(lineage)}};
+  const std::string name = part_file_name(part_id);
+  const std::array images{ReferencedPartImage{.file_name = name, .bytes = part.bytes()}};
+
+  for (auto _ : state) {
+    (void)_;
+    common::Status validation = validate_manifest_v1_referenced_parts(manifest, bindings, images);
+    benchmark::DoNotOptimize(validation);
+  }
+  state.SetItemsProcessed(state.iterations() * 2);
+  state.SetBytesProcessed(state.iterations() * static_cast<std::int64_t>(part.size()));
+  state.SetLabel("exact CSEG decode/content/schema plus manifest WAL/extrema binding; local only");
+}
+
 BENCHMARK(benchmark_encode)->Arg(16)->Arg(1'024)->Arg(4'096);
 BENCHMARK(benchmark_decode)->Arg(16)->Arg(1'024)->Arg(4'096);
 BENCHMARK(benchmark_transition)->Arg(16)->Arg(1'024)->Arg(4'096);
+BENCHMARK(benchmark_referenced_part_validation);
 
 } // namespace
 } // namespace chronos::manifest

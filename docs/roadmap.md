@@ -193,8 +193,9 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > pure owned-encode/borrowed-decode Manifest v1 codec with hostile/property/fuzz/benchmark evidence.
 > Exact retained-catalog binding and the Phase 6 add-only generation-transition validator are also
 > implemented. Exact final/temporary basename formatting and parsing are implemented with
-> property, installation, and external-consumer coverage. Installed-CSEG content binding,
-> filesystem owners, flush, recovery, crash evidence,
+> property, installation, and external-consumer coverage. Installed CSEG images now have complete
+> in-memory filename, length, header, content, schema, WAL-identity, and record-extrema binding.
+> Filesystem owners, flush, recovery, crash evidence,
 > and observability remain unimplemented.
 
 - **Scope:** manifest generations/version edits; atomic durable part installation; sealed-head flush; checkpoint/log coverage; startup reconciliation; safe temporary-file handling.
