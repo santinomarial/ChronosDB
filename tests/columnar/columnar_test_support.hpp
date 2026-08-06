@@ -99,6 +99,54 @@ fixed_vector(const std::uint16_t column_id, const schema::LogicalType logical_ty
   return columns;
 }
 
+[[nodiscard]] inline std::shared_ptr<const schema::TableSchema> successor_batch_schema() {
+  const std::shared_ptr<const schema::TableSchema> predecessor = batch_schema();
+  std::vector<schema::ColumnDefinition> columns{predecessor->columns().begin(),
+                                                predecessor->columns().end()};
+  columns[1] = schema::ColumnDefinition::create(id<schema::ColumnId>(2), "label",
+                                                type(schema::LogicalTypeKind::kString), true)
+                   .value();
+  columns.push_back(schema::ColumnDefinition::create(id<schema::ColumnId>(4), "payload",
+                                                     type(schema::LogicalTypeKind::kBinary), true)
+                        .value());
+  schema::TableSchemaRoles roles{
+      .event_time_column = predecessor->event_time_column(),
+      .physical_ordering_key =
+          std::vector<schema::ColumnId>{predecessor->physical_ordering_key().begin(),
+                                        predecessor->physical_ordering_key().end()},
+      .partition_columns = std::vector<schema::ColumnId>{predecessor->partition_columns().begin(),
+                                                         predecessor->partition_columns().end()},
+      .shard_key = std::vector<schema::ColumnId>{predecessor->shard_key().begin(),
+                                                 predecessor->shard_key().end()},
+      .deduplication_key = std::vector<schema::ColumnId>{predecessor->deduplication_key().begin(),
+                                                         predecessor->deduplication_key().end()},
+  };
+  return std::make_shared<const schema::TableSchema>(
+      schema::TableSchema::create(predecessor->table_id(), id<schema::SchemaId>(52),
+                                  schema::SchemaVersion::from_value(2U).value(),
+                                  predecessor->schema_id(), std::move(columns), std::move(roles))
+          .value());
+}
+
+[[nodiscard]] inline std::vector<OwnedColumnVector> successor_batch_columns() {
+  std::vector<OwnedColumnVector> columns = batch_columns();
+  std::vector<std::byte> offsets;
+  append_u32(offsets, 0U);
+  append_u32(offsets, 1U);
+  append_u32(offsets, 1U);
+  columns.push_back(
+      OwnedColumnVector::create(ColumnVectorMetadata{.column_id = id<schema::ColumnId>(4),
+                                                     .type = type(schema::LogicalTypeKind::kBinary),
+                                                     .nullable = true,
+                                                     .row_count = 2U,
+                                                     .null_count = 1U},
+                                ColumnVectorBuffers{.validity = {std::byte{0x01}},
+                                                    .offsets = std::move(offsets),
+                                                    .values = {std::byte{'y'}}})
+          .value());
+  return columns;
+}
+
 } // namespace chronos::columnar::test
 
 #endif // CHRONOS_TESTS_COLUMNAR_COLUMNAR_TEST_SUPPORT_HPP_

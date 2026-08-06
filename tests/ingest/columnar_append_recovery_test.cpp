@@ -39,6 +39,13 @@ batch(const std::byte timestamp_tail = std::byte{0U}) {
       columnar::OwnedColumnarBatch::create(std::move(schema), std::move(columns)).value());
 }
 
+[[nodiscard]] std::shared_ptr<const columnar::OwnedColumnarBatch> successor_batch() {
+  return std::make_shared<const columnar::OwnedColumnarBatch>(
+      columnar::OwnedColumnarBatch::create(columnar::test::successor_batch_schema(),
+                                           columnar::test::successor_batch_columns())
+          .value());
+}
+
 [[nodiscard]] wal::EncodedApplicationPayload
 command(const std::uint8_t seed, const schema::TabletId target,
         const std::shared_ptr<const columnar::OwnedColumnarBatch>& input_batch) {
@@ -52,22 +59,34 @@ command(const std::uint8_t seed, const schema::TabletId target,
       .value();
 }
 
-[[nodiscard]] TabletStateConfig tablet_config() {
+[[nodiscard]] TabletStateConfig tablet_config(const std::size_t schema_versions = 1U) {
   return TabletStateConfig{
       .head_capacity =
           head::MutableHeadCapacity{.row_capacity = 8U, .variable_value_bytes = {0U, 8U, 0U}},
+      .maximum_schema_versions = schema_versions,
       .maximum_sealed_generations = 4U,
       .maximum_retry_entries = 8U,
   };
 }
 
 [[nodiscard]] ColumnarAppendRecoveryConfig
-recovery_config(const std::vector<schema::TabletId>& tablet_ids) {
+recovery_config(const std::vector<schema::TabletId>& tablet_ids,
+                const bool retain_successor = false) {
   std::vector<ColumnarRecoveryTabletConfig> tablets;
   tablets.reserve(tablet_ids.size());
   for (const schema::TabletId& target : tablet_ids) {
-    tablets.push_back(ColumnarRecoveryTabletConfig{
-        .schema = columnar::test::batch_schema(), .tablet_id = target, .state = tablet_config()});
+    std::vector<ColumnarRecoverySuccessorSchemaConfig> successors;
+    if (retain_successor) {
+      successors.push_back(ColumnarRecoverySuccessorSchemaConfig{
+          .schema = columnar::test::successor_batch_schema(),
+          .head_capacity = head::MutableHeadCapacity{.row_capacity = 8U,
+                                                     .variable_value_bytes = {0U, 8U, 0U, 8U}}});
+    }
+    tablets.push_back(
+        ColumnarRecoveryTabletConfig{.schema = columnar::test::batch_schema(),
+                                     .tablet_id = target,
+                                     .state = tablet_config(retain_successor ? 2U : 1U),
+                                     .successors = std::move(successors)});
   }
   return ColumnarAppendRecoveryConfig{.retry_directory = {.maximum_entries = 16U},
                                       .tablets = std::move(tablets),
@@ -191,6 +210,89 @@ TEST(ColumnarAppendRecoveryTest, RebuildsFreshStateDeterministicallyAndContinues
   EXPECT_EQ(continued_commit.append.record_sequence, 4U);
   EXPECT_EQ(second->tablet(first_tablet)->snapshot()->visible_row_count(), 4U);
   EXPECT_TRUE(coordinator.shutdown().is_ok());
+}
+
+TEST(ColumnarAppendRecoveryTest, ReplaysRegisteredSchemaSwitchAndAllowsAnExactAncestorRetryNoOp) {
+  wal::test::TemporaryDirectory directory{"chronos-columnar-recovery-schema-switch"};
+  ASSERT_TRUE(directory.valid());
+  const wal::WalWriterConfig writer_config{.directory_path = directory.path().string()};
+  const schema::TabletId target = tablet_id(70U);
+  common::Result<wal::WalWriter> created = wal::WalWriter::create_new(writer_config);
+  ASSERT_TRUE(created.has_value()) << created.error().to_string();
+  wal::WalWriter writer = std::move(*created);
+  const auto ancestor = batch();
+  const auto successor = successor_batch();
+  const wal::EncodedApplicationPayload first = command(1U, target, ancestor);
+  const wal::EncodedApplicationPayload second = command(2U, target, successor);
+  ASSERT_TRUE(writer.append_application_entry(first.bytes()).has_value());
+  ASSERT_TRUE(writer.append_application_entry(second.bytes()).has_value());
+  ASSERT_TRUE(writer.append_application_entry(first.bytes()).has_value());
+  ASSERT_TRUE(writer.synchronize().has_value());
+  ASSERT_TRUE(writer.close().is_ok());
+
+  common::Result<RecoveredColumnarAppendState> recovered =
+      recover_columnar_append_wal(writer_config, {}, recovery_config({target}, true));
+  ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
+  const TabletSnapshot snapshot = recovered->tablet(target)->snapshot().value();
+  ASSERT_EQ(snapshot.sealed_generations().size(), 1U);
+  EXPECT_EQ(snapshot.sealed_generations()[0].schema_ptr()->version().value(), 1U);
+  EXPECT_EQ(snapshot.sealed_generations()[0].row_count(), 2U);
+  EXPECT_EQ(snapshot.schema_ptr()->version().value(), 2U);
+  EXPECT_EQ(snapshot.active_generation().column_count(), 4U);
+  EXPECT_EQ(snapshot.active_generation().row_count(), 2U);
+  EXPECT_EQ(snapshot.visible_row_count(), 4U);
+  EXPECT_EQ(snapshot.retry_entry_count(), 2U);
+  ASSERT_TRUE(snapshot.applied_position().has_value());
+  EXPECT_EQ(snapshot.applied_position().value_or(head::HeadCommitPosition{}).record_sequence, 3U);
+  ASSERT_TRUE(snapshot.active_generation().applied_position().has_value());
+  EXPECT_EQ(snapshot.active_generation()
+                .applied_position()
+                .value_or(head::HeadCommitPosition{})
+                .record_sequence,
+            2U);
+  const auto original = snapshot.retry_outcome(retry_identity(1U));
+  ASSERT_NE(original, nullptr);
+  EXPECT_EQ(original->record_sequence, 1U);
+  EXPECT_TRUE(recovered->release_writer()->close().is_ok());
+}
+
+TEST(ColumnarAppendRecoveryTest, RejectsAFirstTimeAncestorAppendAfterSchemaActivation) {
+  wal::test::TemporaryDirectory directory{"chronos-columnar-recovery-schema-regression"};
+  ASSERT_TRUE(directory.valid());
+  const wal::WalWriterConfig writer_config{.directory_path = directory.path().string()};
+  const schema::TabletId target = tablet_id(70U);
+  common::Result<wal::WalWriter> created = wal::WalWriter::create_new(writer_config);
+  ASSERT_TRUE(created.has_value()) << created.error().to_string();
+  wal::WalWriter writer = std::move(*created);
+  const wal::EncodedApplicationPayload successor = command(1U, target, successor_batch());
+  const wal::EncodedApplicationPayload ancestor = command(2U, target, batch());
+  ASSERT_TRUE(writer.append_application_entry(successor.bytes()).has_value());
+  ASSERT_TRUE(writer.append_application_entry(ancestor.bytes()).has_value());
+  ASSERT_TRUE(writer.synchronize().has_value());
+  ASSERT_TRUE(writer.close().is_ok());
+
+  const auto recovered =
+      recover_columnar_append_wal(writer_config, {}, recovery_config({target}, true));
+  ASSERT_FALSE(recovered.has_value());
+  EXPECT_EQ(recovered.error().code(), common::StatusCode::kCorruption);
+}
+
+TEST(ColumnarAppendRecoveryTest, PreflightRequiresEveryReferencedRetainedSchema) {
+  wal::test::TemporaryDirectory directory{"chronos-columnar-recovery-missing-schema"};
+  ASSERT_TRUE(directory.valid());
+  const wal::WalWriterConfig writer_config{.directory_path = directory.path().string()};
+  const schema::TabletId target = tablet_id(70U);
+  common::Result<wal::WalWriter> created = wal::WalWriter::create_new(writer_config);
+  ASSERT_TRUE(created.has_value()) << created.error().to_string();
+  wal::WalWriter writer = std::move(*created);
+  const wal::EncodedApplicationPayload successor = command(1U, target, successor_batch());
+  ASSERT_TRUE(writer.append_application_entry(successor.bytes()).has_value());
+  ASSERT_TRUE(writer.synchronize().has_value());
+  ASSERT_TRUE(writer.close().is_ok());
+
+  const auto recovered = recover_columnar_append_wal(writer_config, {}, recovery_config({target}));
+  ASSERT_FALSE(recovered.has_value());
+  EXPECT_EQ(recovered.error().code(), common::StatusCode::kNotFound);
 }
 
 TEST(ColumnarAppendRecoveryTest, RejectsConflictingIdentityRepeatablyWithoutReturningPartialState) {

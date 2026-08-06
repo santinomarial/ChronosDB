@@ -10,11 +10,13 @@
 > backpressure, and joint rows/retry/applied-position publication. The blocking single-tablet
 > `execute_columnar_append` path now composes canonical encoding, global retry reservation, bounded
 > WAL admission, the requested `ASYNC` or `LOCAL_SYNC` completion, tablet publication, and exact
-> outcome-pointer commit. Fixed-schema `recover_columnar_append_wal` now verifies and preflights a
-> complete existing WAL, rebuilds fresh tablet and global retry state in sequence order, handles
-> exact duplicate commands without adding rows, and returns the locked writer at the exact next
-> sequence only after the complete recovery succeeds. Catalog/routing admission, per-row
-> deduplication, retry pruning, schema switching, and flush handoff remain unimplemented. This
+> outcome-pointer commit. `TabletState` now accepts a bounded registered linear schema lineage and
+> seals the active generation before the first successor append. `recover_columnar_append_wal` now
+> verifies and preflights a complete existing WAL, resolves every command against the supplied
+> retained lineage, rebuilds fresh tablet and global retry state in sequence order, permits exact
+> ancestor-schema retry no-ops, and returns the locked writer at the exact next sequence only after
+> the complete recovery succeeds. Catalog/routing admission, per-row deduplication, retry pruning,
+> and flush handoff remain unimplemented. This
 > document
 > fixes the logical state-machine and WAL command contracts for Phase 4; the physical
 > [WAL v1](../formats/wal-v1.md) framing and application envelope remain unchanged.
@@ -191,9 +193,9 @@ The current `chronos::ingest::RetryDirectory` is that correctness-first process-
 uses one mutex, requires an explicit entry bound, returns in-flight immediately instead of waiting,
 removes abandoned reservations only before their owner marks WAL I/O started, and stores the exact
 immutable outcome pointer supplied after publication. `execute_columnar_append` connects it to one
-already-routed `TabletState` and the WAL coordinator. Fixed-schema recovery reconstructs a fresh
-instance through those same reservation/commit transitions. It intentionally has no pruning API or
-retention policy yet. See the
+already-routed `TabletState` and the WAL coordinator. Retained-lineage recovery reconstructs a
+fresh instance through those same reservation/commit transitions. It intentionally has no pruning
+API or retention policy yet. See the
 [retry reservation directory guide](../learning/retry-reservation-directory.md).
 
 ## APPEND_ROWS semantics
@@ -246,14 +248,18 @@ it cannot change visible rows or commit boundaries. Reopening the WAL continues 
 global sequence already determined by physical recovery; head state never assigns WAL sequence.
 
 The implemented `recover_columnar_append_wal` boundary realizes this contract for a caller-supplied
-fixed schema per configured tablet. Its owner and replay sink stay private until physical recovery,
-whole-log semantic preflight, ordered application, active-segment synchronization, and the startup
-directory barrier all succeed. A first command copies the borrowed decoded physical vectors into
-an owned immutable batch before tablet publication. A matching duplicate reuses the exact original
-outcome pointer, adds no rows or retry entries, and advances only the tablet's outer applied
-position. Any replay failure destroys the entire fresh owner. The returned move-only state owns the
-reconstructed global directory and tablets plus a once-releasable locked `WalWriter`, allowing live
-coordination to continue at the recovered next sequence.
+retained linear schema lineage per configured tablet. Each direct successor and its bounded empty
+generation capacity are registered before WAL opening. Whole-log preflight resolves every command
+to one retained immutable schema; replay lets the first-time successor command rotate the tablet
+and rejects a first-time ancestor regression. Its owner and replay sink stay private until physical
+recovery, whole-log semantic preflight, ordered application, active-segment synchronization, and
+the startup directory barrier all succeed. A first command copies the borrowed decoded physical
+vectors into an owned immutable batch before tablet publication. A matching duplicate, including
+one under a retained ancestor schema, reuses the exact original outcome pointer, adds no rows or
+retry entries, and advances only the tablet's outer applied position. Any replay failure destroys
+the entire fresh owner. The returned move-only state owns the reconstructed global directory and
+tablets plus a once-releasable locked `WalWriter`, allowing live coordination to continue at the
+recovered next sequence.
 
 Catalog schemas referenced by retained WAL must be recoverably available before preflight. This
 document does not invent a catalog file or schema command. Until catalog persistence exists, tests

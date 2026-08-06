@@ -20,16 +20,19 @@ struct TabletStateConfig {
   head::MutableHeadCapacity head_capacity;
 
   // Sealed generations remain query-visible because flush handoff is not implemented yet.
-  // Both bounds must be nonzero; reaching either one rejects a new append before WAL.
+  // All bounds must be nonzero; reaching one rejects registration or append before WAL.
+  std::size_t maximum_schema_versions{1U};
   std::size_t maximum_sealed_generations{};
   std::size_t maximum_retry_entries{};
 };
 
 struct TabletStateMetrics {
+  std::size_t maximum_schema_versions{};
   std::size_t maximum_sealed_generations{};
   std::size_t sealed_generations{};
   std::size_t maximum_retry_entries{};
   std::size_t retry_entries{};
+  std::uint64_t active_schema_version{};
   std::uint64_t active_generation{};
   std::uint32_t active_rows{};
   std::size_t visible_rows{};
@@ -110,9 +113,10 @@ private:
   friend class detail::TabletStateCore;
 };
 
-// One schema-bound tablet's bounded in-memory publication owner. Exactly one shard writer calls
-// prepare/mark/publish/cancel; readers may acquire and scan snapshots concurrently. WAL I/O,
-// global retry reservation, routing, schema admission, replay, and flush handoff are external.
+// One tablet's bounded in-memory publication owner. Every generation is schema-bound. Exactly one
+// shard writer registers accepted direct successors and calls prepare/mark/publish/cancel; readers
+// may acquire and scan snapshots concurrently. WAL I/O, global retry reservation, routing, active
+// schema admission, replay, and flush handoff are external.
 class TabletState {
 public:
   TabletState() = delete;
@@ -126,6 +130,14 @@ public:
   [[nodiscard]] static common::Result<TabletState>
   create(std::shared_ptr<const schema::TableSchema> schema, schema::TabletId tablet_id,
          TabletStateConfig config);
+
+  // Registers one accepted direct v1 successor and records its empty-generation capacity. This is
+  // a bounded pre-WAL catalog handoff: it validates the lineage now but does not activate the
+  // schema or publish a tablet epoch. Head-specific capacity validation occurs when the first
+  // append prepares that generation, still before WAL admission. That append seals the active
+  // ancestor and activates the successor. Registered lineages cannot branch or skip versions.
+  [[nodiscard]] common::Status register_schema(std::shared_ptr<const schema::TableSchema> successor,
+                                               head::MutableHeadCapacity head_capacity);
 
   // Validates the tablet/mutation/schema identity, enforces all local bounds, rotates when the
   // whole batch fits only an empty generation, and allocates the complete outer descriptor and

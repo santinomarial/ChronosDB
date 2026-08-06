@@ -115,9 +115,10 @@ validity/Boolean storage, stable fixed/variable arenas, an immutable publication
 snapshots. The `chronos_ingest` tablet owner adds bounded whole-batch rotation and one owning outer
 publication for the active/sealed generation snapshots, applied position, and tablet retry table.
 The blocking single-tablet append executor composes those publications with the global retry
-directory and WAL coordinator. Fixed-schema recovery reconstructs fresh publications and retry
-state before exposing the reopened writer. Schema switching, routing/admission, retry retention,
-and flush handoff remain future integration.
+directory and WAL coordinator. Bounded registered schema successors rotate generations without
+mixing shapes, and retained-lineage recovery reconstructs fresh publications and retry state before
+exposing the reopened writer. Routing/admission, retry retention, and flush handoff remain future
+integration.
 [ADR 0005](../adr/0005-columnar-heads-and-immutable-cseg-parts.md) fixes the head/part storage model.
 
 When a head reaches a policy threshold, the owner seals it. A sealed head accepts no more rows, remains readable by active snapshots, and becomes flush input. New writes continue in a new mutable generation so durable I/O does not stop the shard.
@@ -141,18 +142,19 @@ in-memory codec are implemented according to the
 [accepted command contract](columnar-ingestion.md#columnar-append-command-v1). An already-routed
 single-tablet execution path now submits that payload, waits for the exact requested durability
 boundary, publishes rows/position/retry state, and commits the global retry pointer. Recovery
-application is implemented for a caller-supplied fixed schema per tablet: it preflights the whole
-WAL, replays fresh rows/retry outcomes/applied positions, rejects conflicts, and exposes state plus
-the reopened writer only after full success. Routing/admission, schema switching, retry retention,
-and transport acknowledgment remain unimplemented.
+application is implemented for a caller-supplied retained linear schema lineage per tablet: it
+preflights the whole WAL, replays schema-bound generations/rows/retry outcomes/applied positions,
+rejects conflicts and first-time schema regression, and exposes state plus the reopened writer only
+after full success. Routing/admission, retry retention, and transport acknowledgment remain
+unimplemented.
 
 The [WAL recovery state machine](wal-recovery.md) verifies the complete physical history before
 semantic preflight or replay. It can explicitly truncate only a narrowly defined incomplete suffix
 of the highest active segment; bad checksums, discontinuities, and middle-of-log damage fail closed.
 WAL v1 establishes physical order before durable CSEG installation covers operations. The columnar
 logical mutation payload has an independent byte codec, a live in-memory application path, and a
-fixed-schema fresh-state recovery path. Catalog reconstruction and mixed-schema replay remain
-outside that path.
+retained-lineage fresh-state recovery path. Durable catalog reconstruction remains outside that
+path.
 Deployment tuning of the implemented
 group-commit limits, checkpoints, and old-segment removal remain future work.
 

@@ -56,6 +56,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/wal/application.hpp>
 
 #include <array>
+#include <memory>
 
 int main() {
   using ExecuteFunction = chronos::common::Result<chronos::ingest::ColumnarAppendExecutionResult> (*)(
@@ -67,6 +68,9 @@ int main() {
           const chronos::wal::WalWriterConfig&, const chronos::wal::WalRecoveryOptions&,
           chronos::ingest::ColumnarAppendRecoveryConfig);
   const RecoverFunction recover = &chronos::ingest::recover_columnar_append_wal;
+  using RegisterSchemaFunction = chronos::common::Status (chronos::ingest::TabletState::*)(
+      std::shared_ptr<const chronos::schema::TableSchema>, chronos::head::MutableHeadCapacity);
+  const RegisterSchemaFunction register_schema = &chronos::ingest::TabletState::register_schema;
   static_assert(chronos::columnar::bitmap_size(9U) == 2U);
   static_assert(chronos::columnar::format::kBatchHeaderLength == 96U);
   chronos::columnar::ColumnarBatchLimits limits;
@@ -79,11 +83,14 @@ int main() {
                                                         .variable_value_bytes = {}};
   const chronos::ingest::TabletStateConfig tablet_config{
       .head_capacity = head_capacity,
+      .maximum_schema_versions = 2U,
       .maximum_sealed_generations = 2U,
       .maximum_retry_entries = 8U};
   static_assert(chronos::ingest::columnar_append_v1::kCommandHeaderLength == 160U);
-  return execute != nullptr && recover != nullptr && limits.max_columns == 4096U &&
+  return execute != nullptr && recover != nullptr && register_schema != nullptr &&
+                 limits.max_columns == 4096U &&
                  head_capacity.row_capacity == 4U &&
+                 tablet_config.maximum_schema_versions == 2U &&
                  tablet_config.maximum_sealed_generations == 2U && digest.has_value() &&
                  retry_directory.has_value() &&
                  retry_directory->metrics().maximum_entries == 8U && !decoded.has_value() &&

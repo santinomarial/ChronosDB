@@ -43,7 +43,8 @@ struct ColumnarAppendExecutionResult {
 // mutation blocks for the WAL coordinator completion, publishes tablet state, and commits the exact
 // outcome into the global retry directory before returning success. A matching retry performs no
 // WAL or tablet mutation. This function performs no routing, authorization, event-time policy,
-// per-row deduplication, schema activation, replay, or transport acknowledgment.
+// per-row deduplication, active-schema admission, replay, or transport acknowledgment. Tablet
+// preparation may activate the next schema already registered by the caller.
 [[nodiscard]] common::Result<ColumnarAppendExecutionResult>
 execute_columnar_append(const ColumnarAppendExecutionInput& input, RetryDirectory& retry_directory,
                         TabletState& tablet, wal::WalCommitCoordinator& wal_coordinator);

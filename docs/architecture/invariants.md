@@ -78,9 +78,10 @@ Running recovery repeatedly over unchanged durable bytes yields the same durable
 WAL v1 recovery concretizes the first part of this obligation: physical verification and optional
 tail repair complete before replay, repair is synchronized and repeatable, and replay does not
 publish state until whole-log semantic preflight succeeds.
-Fixed-schema columnar recovery adds executable logical evidence: repeated recovery of the same WAL
-reconstructs identical visible row counts, retry outcomes, and tablet positions; an exact duplicate
-adds no rows while advancing the processed position; a conflict discards the entire fresh state.
+Retained-lineage columnar recovery adds executable logical evidence: repeated recovery of the same
+WAL reconstructs identical schema-bound generations, visible row counts, retry outcomes, and tablet
+positions; an exact ancestor duplicate adds no rows while advancing the processed position; schema
+regression or retry conflict discards the entire fresh state.
 
 ## 9. Idempotent batch retry does not duplicate logical input
 

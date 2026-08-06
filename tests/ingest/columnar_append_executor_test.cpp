@@ -45,12 +45,20 @@ batch(const std::byte timestamp_tail = std::byte{0U}) {
       columnar::OwnedColumnarBatch::create(std::move(schema), std::move(columns)).value());
 }
 
-[[nodiscard]] TabletState tablet() {
+[[nodiscard]] std::shared_ptr<const columnar::OwnedColumnarBatch> successor_batch() {
+  return std::make_shared<const columnar::OwnedColumnarBatch>(
+      columnar::OwnedColumnarBatch::create(columnar::test::successor_batch_schema(),
+                                           columnar::test::successor_batch_columns())
+          .value());
+}
+
+[[nodiscard]] TabletState tablet(const std::size_t schema_versions = 1U) {
   return TabletState::create(
              columnar::test::batch_schema(), tablet_id(),
              TabletStateConfig{.head_capacity =
                                    head::MutableHeadCapacity{.row_capacity = 8U,
                                                              .variable_value_bytes = {0U, 8U, 0U}},
+                               .maximum_schema_versions = schema_versions,
                                .maximum_sealed_generations = 2U,
                                .maximum_retry_entries = 8U})
       .value();
@@ -65,6 +73,49 @@ execution_input(const std::uint8_t seed,
                                       .client_batch_id = identity.client_batch_id,
                                       .batch = std::move(input_batch),
                                       .durability = durability};
+}
+
+TEST(ColumnarAppendExecutorTest, AppliesRegisteredSuccessorAndRetainsAncestorRetryOutcome) {
+  wal::test::TemporaryDirectory wal_directory{"chronos-ingest-executor-schema-switch"};
+  ASSERT_TRUE(wal_directory.valid());
+  auto writer = wal::WalWriter::create_new({.directory_path = wal_directory.path().string()});
+  ASSERT_TRUE(writer.has_value()) << writer.error().to_string();
+  auto started = wal::WalCommitCoordinator::start(
+      std::move(*writer), {.maximum_sync_batch_delay = std::chrono::microseconds{0}});
+  ASSERT_TRUE(started.has_value()) << started.error().to_string();
+  wal::WalCommitCoordinator coordinator = std::move(*started);
+  RetryDirectory retry_directory = RetryDirectory::create({.maximum_entries = 8U}).value();
+  TabletState target = tablet(2U);
+  const auto ancestor = batch();
+  const auto successor = successor_batch();
+  ASSERT_TRUE(
+      target
+          .register_schema(successor->schema_ptr(),
+                           head::MutableHeadCapacity{.row_capacity = 8U,
+                                                     .variable_value_bytes = {0U, 8U, 0U, 8U}})
+          .is_ok());
+
+  const auto first =
+      execute_columnar_append(execution_input(1U, ancestor), retry_directory, target, coordinator);
+  ASSERT_TRUE(first.has_value()) << first.error().to_string();
+  const auto second =
+      execute_columnar_append(execution_input(2U, successor), retry_directory, target, coordinator);
+  ASSERT_TRUE(second.has_value()) << second.error().to_string();
+  const TabletSnapshot switched = target.snapshot().value();
+  ASSERT_EQ(switched.sealed_generations().size(), 1U);
+  EXPECT_EQ(switched.sealed_generations()[0].schema_ptr()->version().value(), 1U);
+  EXPECT_EQ(switched.schema_ptr()->version().value(), 2U);
+  EXPECT_EQ(switched.visible_row_count(), 4U);
+
+  const auto retry =
+      execute_columnar_append(execution_input(1U, ancestor), retry_directory, target, coordinator);
+  ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+  EXPECT_EQ(retry->kind, ColumnarAppendExecutionKind::kMatchingRetry);
+  EXPECT_EQ(retry->outcome.get(), first->outcome.get());
+  EXPECT_FALSE(retry->wal_commit.has_value());
+  EXPECT_EQ(coordinator.metrics().appended_requests, 2U);
+  EXPECT_EQ(target.snapshot()->visible_row_count(), 4U);
+  EXPECT_TRUE(coordinator.shutdown().is_ok());
 }
 
 class DecodingReplaySink final : public wal::WalReplaySink {

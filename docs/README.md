@@ -95,8 +95,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Columnar append execution](learning/columnar-append-execution.md): implemented blocking
   single-tablet composition of canonical bytes, global retry reservation, bounded WAL durability,
   batch-atomic tablet publication, exact outcome commit, and fail-closed ownership.
-- [Columnar append recovery](learning/columnar-append-recovery.md): implemented fixed-schema
-  whole-WAL preflight/replay into fresh tablet and retry state, duplicate handling, failure
-  isolation, deterministic reopen, and continued writer ownership.
+- [Columnar append recovery](learning/columnar-append-recovery.md): implemented retained-lineage
+  whole-WAL preflight/replay into fresh schema-bound tablet and retry state, ancestor duplicate
+  handling, failure isolation, deterministic reopen, and continued writer ownership.
 
 Future format, protocol, subsystem, operations, and learning documents should be linked here when they are added by their corresponding roadmap phase.

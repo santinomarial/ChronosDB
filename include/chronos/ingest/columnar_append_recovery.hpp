@@ -17,13 +17,21 @@
 
 namespace chronos::ingest {
 
-// One retained fixed schema and its fresh in-memory tablet-state limits. A recovery configuration
-// contains exactly one entry per tablet referenced by the WAL history being opened. Schema-version
-// transitions and catalog reconstruction are deliberately outside this phase.
+struct ColumnarRecoverySuccessorSchemaConfig {
+  std::shared_ptr<const schema::TableSchema> schema;
+  head::MutableHeadCapacity head_capacity;
+};
+
+// One retained linear schema lineage and its fresh in-memory tablet-state limits. schema is the
+// earliest version that retained WAL may append; successors are direct v1 transitions in ascending
+// order and carry the capacity for a new generation of that shape. A recovery configuration
+// contains exactly one entry per tablet referenced by the WAL history being opened. Durable catalog
+// reconstruction remains outside this boundary, so the caller must supply the exact lineage.
 struct ColumnarRecoveryTabletConfig {
   std::shared_ptr<const schema::TableSchema> schema;
   schema::TabletId tablet_id;
   TabletStateConfig state;
+  std::vector<ColumnarRecoverySuccessorSchemaConfig> successors;
 };
 
 struct ColumnarAppendRecoveryConfig {

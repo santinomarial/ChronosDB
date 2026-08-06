@@ -11,6 +11,7 @@
 #include <latch>
 #include <limits>
 #include <memory>
+#include <string>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -61,13 +62,54 @@ batch(std::shared_ptr<const schema::TableSchema> schema = columnar::test::batch_
           .value());
 }
 
+[[nodiscard]] std::shared_ptr<const columnar::OwnedColumnarBatch> successor_batch() {
+  return std::make_shared<const columnar::OwnedColumnarBatch>(
+      columnar::OwnedColumnarBatch::create(columnar::test::successor_batch_schema(),
+                                           columnar::test::successor_batch_columns())
+          .value());
+}
+
+[[nodiscard]] head::MutableHeadCapacity successor_capacity(const std::uint32_t rows = 4U) {
+  return head::MutableHeadCapacity{.row_capacity = rows, .variable_value_bytes = {0U, 2U, 0U, 2U}};
+}
+
+[[nodiscard]] std::shared_ptr<const schema::TableSchema>
+renamed_successor(const std::shared_ptr<const schema::TableSchema>& predecessor,
+                  const std::uint16_t schema_seed, std::string name) {
+  std::vector<schema::ColumnDefinition> columns{predecessor->columns().begin(),
+                                                predecessor->columns().end()};
+  columns[1] = schema::ColumnDefinition::create(columns[1].id(), std::move(name), columns[1].type(),
+                                                columns[1].nullable())
+                   .value();
+  schema::TableSchemaRoles roles{
+      .event_time_column = predecessor->event_time_column(),
+      .physical_ordering_key =
+          std::vector<schema::ColumnId>{predecessor->physical_ordering_key().begin(),
+                                        predecessor->physical_ordering_key().end()},
+      .partition_columns = std::vector<schema::ColumnId>{predecessor->partition_columns().begin(),
+                                                         predecessor->partition_columns().end()},
+      .shard_key = std::vector<schema::ColumnId>{predecessor->shard_key().begin(),
+                                                 predecessor->shard_key().end()},
+      .deduplication_key = std::vector<schema::ColumnId>{predecessor->deduplication_key().begin(),
+                                                         predecessor->deduplication_key().end()},
+  };
+  return std::make_shared<const schema::TableSchema>(
+      schema::TableSchema::create(predecessor->table_id(),
+                                  columnar::test::id<schema::SchemaId>(schema_seed),
+                                  predecessor->version().next().value(), predecessor->schema_id(),
+                                  std::move(columns), std::move(roles))
+          .value());
+}
+
 [[nodiscard]] TabletStateConfig config(const std::uint32_t rows = 4U,
                                        const std::size_t string_bytes = 2U,
                                        const std::size_t sealed = 2U,
-                                       const std::size_t retries = 8U) {
+                                       const std::size_t retries = 8U,
+                                       const std::size_t schema_versions = 1U) {
   return TabletStateConfig{
       .head_capacity = head::MutableHeadCapacity{.row_capacity = rows,
                                                  .variable_value_bytes = {0U, string_bytes, 0U}},
+      .maximum_schema_versions = schema_versions,
       .maximum_sealed_generations = sealed,
       .maximum_retry_entries = retries};
 }
@@ -96,6 +138,10 @@ TEST(TabletStateTest, RequiresExplicitBoundsAndStartsAtOneExactEmptyEpoch) {
   const auto schema = columnar::test::batch_schema();
   EXPECT_EQ(TabletState::create(nullptr, tablet_id(), config()).error().code(),
             common::StatusCode::kInvalidArgument);
+  TabletStateConfig zero_schemas = config();
+  zero_schemas.maximum_schema_versions = 0U;
+  EXPECT_EQ(TabletState::create(schema, tablet_id(), zero_schemas).error().code(),
+            common::StatusCode::kInvalidArgument);
   TabletStateConfig zero_sealed = config();
   zero_sealed.maximum_sealed_generations = 0U;
   EXPECT_EQ(TabletState::create(schema, tablet_id(), zero_sealed).error().code(),
@@ -119,11 +165,159 @@ TEST(TabletStateTest, RequiresExplicitBoundsAndStartsAtOneExactEmptyEpoch) {
   EXPECT_EQ(empty.retry_outcome(retry_identity(1U)), nullptr);
 
   const TabletStateMetrics metrics = target.metrics();
+  EXPECT_EQ(metrics.maximum_schema_versions, 1U);
   EXPECT_EQ(metrics.maximum_sealed_generations, 2U);
   EXPECT_EQ(metrics.maximum_retry_entries, 8U);
   EXPECT_EQ(metrics.active_generation, 1U);
+  EXPECT_EQ(metrics.active_schema_version, 1U);
   EXPECT_EQ(metrics.visible_rows, 0U);
   EXPECT_FALSE(metrics.failed);
+}
+
+TEST(TabletStateTest, SwitchesOnlyAcrossRegisteredSuccessorsAndPinsAncestorSnapshots) {
+  const auto initial_schema = columnar::test::batch_schema();
+  const auto next_schema = columnar::test::successor_batch_schema();
+  TabletState target =
+      TabletState::create(initial_schema, tablet_id(), config(4U, 2U, 2U, 8U, 2U)).value();
+  EXPECT_TRUE(target.register_schema(next_schema, successor_capacity()).is_ok());
+
+  const auto initial_batch = batch(initial_schema);
+  PreparedTabletAppend first_prepared = prepare(target, 1U, initial_batch);
+  const TabletAppendResult first = publish(first_prepared, 1U);
+  const TabletSnapshot ancestor_epoch = first.snapshot;
+
+  const auto next_batch = successor_batch();
+  PreparedTabletAppend second_prepared = prepare(target, 2U, next_batch);
+  const TabletAppendResult second = publish(second_prepared, 2U);
+  ASSERT_EQ(second.snapshot.sealed_generations().size(), 1U);
+  EXPECT_EQ(second.snapshot.sealed_generations()[0].schema_ptr().get(), initial_schema.get());
+  EXPECT_EQ(second.snapshot.sealed_generations()[0].row_count(), 2U);
+  EXPECT_EQ(second.snapshot.schema_ptr().get(), next_schema.get());
+  EXPECT_EQ(second.snapshot.active_generation().row_count(), 2U);
+  EXPECT_EQ(second.snapshot.active_generation().column_count(), 4U);
+  EXPECT_EQ(second.snapshot.visible_row_count(), 4U);
+  EXPECT_EQ(second.snapshot.retry_entry_count(), 2U);
+  EXPECT_EQ(target.metrics().active_schema_version, 2U);
+
+  EXPECT_EQ(ancestor_epoch.schema_ptr().get(), initial_schema.get());
+  EXPECT_TRUE(ancestor_epoch.sealed_generations().empty());
+  EXPECT_EQ(ancestor_epoch.visible_row_count(), 2U);
+  EXPECT_EQ(target.prepare_append(retry_identity(3U), mutation(3U), initial_batch).error().code(),
+            common::StatusCode::kInvalidArgument);
+
+  const auto advanced =
+      target.advance_recovered_retry(retry_identity(1U), mutation(1U), first.outcome, position(3U));
+  ASSERT_TRUE(advanced.has_value()) << advanced.error().to_string();
+  EXPECT_EQ(advanced->applied_position().value_or(head::HeadCommitPosition{}).record_sequence, 3U);
+  EXPECT_EQ(advanced->schema_ptr().get(), next_schema.get());
+  EXPECT_EQ(advanced->visible_row_count(), 4U);
+  EXPECT_EQ(advanced->retry_outcome(retry_identity(1U)).get(), first.outcome.get());
+}
+
+TEST(TabletStateTest, BoundsAndValidatesRegisteredSchemaLineageBeforeWal) {
+  const auto successor = columnar::test::successor_batch_schema();
+  TabletState bounded = tablet();
+  EXPECT_EQ(bounded.register_schema(successor, successor_capacity()).code(),
+            common::StatusCode::kResourceExhausted);
+
+  TabletState target =
+      TabletState::create(columnar::test::batch_schema(), tablet_id(), config(4U, 2U, 2U, 8U, 2U))
+          .value();
+  EXPECT_EQ(target.register_schema(nullptr, successor_capacity()).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(target.register_schema(columnar::test::batch_schema(), successor_capacity()).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_TRUE(target.register_schema(successor, successor_capacity()).is_ok());
+  EXPECT_EQ(target.register_schema(successor, successor_capacity()).code(),
+            common::StatusCode::kResourceExhausted);
+}
+
+TEST(TabletStateTest, EmptyAncestorIsSealedButNotRetainedDuringSchemaActivation) {
+  const auto successor = successor_batch();
+  TabletState target =
+      TabletState::create(columnar::test::batch_schema(), tablet_id(), config(4U, 2U, 1U, 8U, 2U))
+          .value();
+  ASSERT_TRUE(target.register_schema(successor->schema_ptr(), successor_capacity()).is_ok());
+  auto prepared = target.prepare_append(retry_identity(1U), mutation(1U), successor);
+  ASSERT_TRUE(prepared.has_value()) << prepared.error().to_string();
+
+  const TabletSnapshot activated = target.snapshot().value();
+  EXPECT_EQ(activated.schema_ptr()->version().value(), 2U);
+  EXPECT_EQ(activated.active_generation().generation(), 2U);
+  EXPECT_EQ(activated.active_generation().row_count(), 0U);
+  EXPECT_TRUE(activated.sealed_generations().empty());
+  EXPECT_TRUE(prepared->cancel_before_wal().is_ok());
+  EXPECT_EQ(target.snapshot()->schema_ptr()->version().value(), 2U);
+  EXPECT_TRUE(target.snapshot()->sealed_generations().empty());
+}
+
+TEST(TabletStateTest, AdvancesAcrossRegisteredVersionsThatHaveNoRows) {
+  const auto initial = columnar::test::batch_schema();
+  const auto second = columnar::test::successor_batch_schema();
+  const auto third = renamed_successor(second, 53U, "label_v3");
+  const auto third_batch = std::make_shared<const columnar::OwnedColumnarBatch>(
+      columnar::OwnedColumnarBatch::create(third, columnar::test::successor_batch_columns())
+          .value());
+  TabletState target =
+      TabletState::create(initial, tablet_id(), config(4U, 2U, 1U, 8U, 3U)).value();
+  ASSERT_TRUE(target.register_schema(second, successor_capacity()).is_ok());
+  ASSERT_TRUE(target.register_schema(third, successor_capacity()).is_ok());
+
+  PreparedTabletAppend prepared = prepare(target, 1U, third_batch);
+  const TabletAppendResult published = publish(prepared, 1U);
+  EXPECT_EQ(published.snapshot.schema_ptr().get(), third.get());
+  EXPECT_EQ(published.snapshot.active_generation().generation(), 2U);
+  EXPECT_TRUE(published.snapshot.sealed_generations().empty());
+  EXPECT_EQ(published.snapshot.visible_row_count(), 2U);
+}
+
+TEST(TabletStatePropertyTest, GeneratedLinearRenamesPreserveEveryPublishedGeneration) {
+  constexpr std::size_t kSchemaCount = 4U;
+  std::vector<std::shared_ptr<const schema::TableSchema>> schemas;
+  schemas.push_back(columnar::test::batch_schema());
+  for (std::size_t index = 1U; index < kSchemaCount; ++index) {
+    schemas.push_back(renamed_successor(schemas.back(), static_cast<std::uint16_t>(60U + index),
+                                        "tag_v" + std::to_string(index)));
+  }
+
+  TabletState target =
+      TabletState::create(schemas.front(), tablet_id(), config(4U, 2U, 4U, 8U, kSchemaCount))
+          .value();
+  for (std::size_t index = 1U; index < schemas.size(); ++index) {
+    ASSERT_TRUE(target
+                    .register_schema(schemas[index],
+                                     head::MutableHeadCapacity{
+                                         .row_capacity = 4U, .variable_value_bytes = {0U, 2U, 0U}})
+                    .is_ok());
+  }
+
+  std::vector<TabletSnapshot> epochs;
+  std::shared_ptr<const ColumnarAppendRetryOutcome> first_outcome;
+  for (std::size_t index = 0U; index < schemas.size(); ++index) {
+    const auto input = batch(schemas[index]);
+    PreparedTabletAppend prepared = prepare(target, static_cast<std::uint8_t>(index + 1U), input);
+    TabletAppendResult result = publish(prepared, index + 1U);
+    if (index == 0U) {
+      first_outcome = result.outcome;
+    }
+    epochs.push_back(result.snapshot);
+    EXPECT_EQ(result.snapshot.schema_ptr().get(), schemas[index].get());
+    EXPECT_EQ(result.snapshot.sealed_generations().size(), index);
+    EXPECT_EQ(result.snapshot.visible_row_count(), (index + 1U) * 2U);
+    EXPECT_EQ(result.snapshot.retry_entry_count(), index + 1U);
+  }
+
+  ASSERT_NE(first_outcome, nullptr);
+  for (std::size_t index = 0U; index < epochs.size(); ++index) {
+    EXPECT_EQ(epochs[index].schema_ptr().get(), schemas[index].get());
+    EXPECT_EQ(epochs[index].visible_row_count(), (index + 1U) * 2U);
+  }
+  const auto advanced =
+      target.advance_recovered_retry(retry_identity(1U), mutation(1U), first_outcome, position(5U));
+  ASSERT_TRUE(advanced.has_value()) << advanced.error().to_string();
+  EXPECT_EQ(advanced->schema_ptr().get(), schemas.back().get());
+  EXPECT_EQ(advanced->visible_row_count(), schemas.size() * 2U);
+  EXPECT_EQ(advanced->applied_position().value_or(head::HeadCommitPosition{}).record_sequence, 5U);
 }
 
 TEST(TabletStateTest, PreparesWithoutVisibilityAndCancelsBeforeWal) {

@@ -1,10 +1,12 @@
 # Tablet Publication
 
 > **Status: bounded live tablet owner implemented.** `chronos_ingest::TabletState` composes the
-> mutable-head generation and retry-outcome primitives into one schema-bound, single-writer tablet
+> mutable-head generation and retry-outcome primitives into one generation-schema-bound,
+> single-writer tablet
 > publication boundary. `execute_columnar_append` now composes it with live WAL submission and the
-> global retry directory. Recovery/replay, retry pruning, active-schema changes, routing, flush
-> handoff, CSEG, and transport acknowledgment remain outside this primitive.
+> global retry directory. Bounded direct-successor registration and activation are implemented;
+> durable catalog ownership, retry pruning, routing, flush handoff, CSEG, and transport
+> acknowledgment remain outside this primitive.
 
 ## Purpose and boundary
 
@@ -24,10 +26,17 @@ returned outcome pointer into the global directory.
 
 ## Public interfaces and ownership
 
-`TabletState::create` binds one immutable schema and tablet identity. Its configuration includes a
-fixed mutable-head capacity, a maximum retained sealed-generation count, and a maximum tablet retry
-entry count. Both ownership bounds are explicit and nonzero because flush and retry-pruning policy
-do not exist yet.
+`TabletState::create` binds one immutable starting schema and tablet identity. Its configuration
+includes the starting mutable-head capacity plus maximum registered-schema, retained
+sealed-generation, and tablet retry-entry counts. Every ownership bound is explicit and nonzero
+because durable catalog, flush, and retry-pruning policy do not exist yet.
+
+`register_schema` is a shard-writer catalog handoff before WAL work. It accepts one immutable direct
+v1 successor and records the capacity for an empty generation of that shape. Registration is
+bounded, preserves linear parent/version order and lineage-wide identity/name rules, and publishes
+no tablet epoch. Head-specific capacity validation occurs when the first append prepares that
+generation, still before WAL admission. Registration does not decide catalog activation; the
+caller must still admit only the active ingest schema.
 
 `prepare_append` is a shard-writer operation. It verifies table/tablet/schema agreement, rejects a
 published retry identity reuse, checks the retry bound, and asks the active generation whether the
@@ -63,9 +72,13 @@ configured bound, preparation returns `RESOURCE_EXHAUSTED` before WAL. Sealed ge
 query-visible and pinned because no flush/install path exists. The implementation never silently
 drops one to make room.
 
-The current implementation keeps one schema for the tablet lifetime. Schema activation must later
-reuse the sealing path but also needs catalog admission and replay rules, so it is not inferred from
-a mismatching input batch.
+A batch under the next registered direct successor forces the same rotation even when the active
+ancestor still has capacity. The ancestor is sealed; a nonempty ancestor is retained in the visible
+generation set, while an empty ancestor is closed but not retained. The descendant generation uses
+its registered per-column capacity. A first-time batch may advance across registered intermediate
+versions that received no rows, but cannot return to an ancestor. Exact ancestor retries are
+resolved before tablet preparation and therefore remain valid no-row outcomes. Registration
+supplies physical lineage knowledge, not active-schema catalog admission.
 
 ## Exact publication and memory-order proof
 
@@ -110,7 +123,8 @@ Status classification is deliberately narrow:
 - identity/schema/configuration errors and conflicting retry reuse are `INVALID_ARGUMENT`;
 - a matching already-published retry identity is `ALREADY_EXISTS` so the caller can use its earlier
   lookup outcome rather than append;
-- row, byte, retry, sealed-generation, token, or allocation bounds are `RESOURCE_EXHAUSTED`;
+- row, byte, schema-version, retry, sealed-generation, token, or allocation bounds are
+  `RESOURCE_EXHAUSTED`;
 - an outstanding append or failed state is `UNAVAILABLE`; and
 - impossible ownership/publication inconsistencies are `INTERNAL` and fail closed after WAL.
 
@@ -121,14 +135,16 @@ response eligibility boundary.
 
 ## Complexity and tradeoffs
 
-For `R` rows, `C` columns, `B` value bytes, `T` retained retry entries, and `G` sealed generations:
+For `R` rows, `C` columns, `B` value bytes, `S` registered schemas, `T` retained retry entries, and
+`G` sealed generations:
 
 - normal preparation is `O(C + T)` because the correctness-first immutable retry map is copied;
 - publication is `O(C × R + B)` for head materialization plus constant outer descriptor updates;
 - snapshot acquisition is `O(1)` plus reference-count operations;
 - retry lookup is `O(log T)`;
 - visible-row counting is `O(G)`; and
-- rotation adds `O(configured head capacity + G)` initialization/copy work before WAL.
+- rotation adds `O(configured head capacity + G)` initialization/copy work before WAL; and
+- successor registration validates `O(S × C)` retained lineage metadata before storing it.
 
 Memory is bounded by configured active/sealed head capacities, `T` retry entries, `O(C)` prepared
 head metadata, and immutable descriptors retained by live snapshots. Copying the retry map on every
@@ -139,14 +155,17 @@ chunked table, or shard-owned arena needs allocation and benchmark evidence befo
 
 `chronos_ingest_tests` covers invalid bounds, the exact empty epoch, invisible preparation,
 pre-WAL cancellation, joint rows/position/retry publication, exact pointer handoff to the global
-retry directory, whole-batch rotation, stable old snapshots, oversized-batch rejection, sealed and
-retry backpressure, duplicate/conflicting identities, post-WAL fail-closed position validation, a
-controlled inner/outer publication pause, and concurrent readers accepting only complete epochs.
-The public header compiles alone and the installed external consumer includes its configuration.
+retry directory, whole-batch rotation, registered rename/tail-add successor activation, stable
+ancestor snapshots, empty-ancestor elision, first-time ancestor rejection, exact recovered ancestor
+retry advancement, oversized-batch rejection, schema/sealed/retry backpressure,
+duplicate/conflicting identities, post-WAL fail-closed position validation, a controlled
+inner/outer publication pause, and concurrent readers accepting only complete epochs. The public
+header compiles alone and the installed external consumer checks the registration method signature.
 
 The tests run in the ordinary, AddressSanitizer/UndefinedBehaviorSanitizer, and applicable
 ThreadSanitizer configurations. `chronos_ingest_benchmarks` separately measures first publication,
-outer snapshot acquisition, and topology-only rotation across declared batch sizes. A separate
+outer snapshot acquisition, topology-only capacity rotation, and registered schema transition
+across declared batch sizes. A separate
 single-tablet execution benchmark retains canonical encoding, global retry reservation, real WAL
 write or `fdatasync`, and tablet publication while excluding per-iteration WAL setup. All are local
 microbenchmarks; routing, catalog admission, transport, and recovery remain excluded.

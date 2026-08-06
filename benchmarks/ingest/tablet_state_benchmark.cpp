@@ -30,6 +30,7 @@ template <typename Identifier> [[nodiscard]] Identifier request_id(const std::ui
 
 struct TabletFixture {
   std::shared_ptr<const chronos::columnar::OwnedColumnarBatch> batch;
+  std::shared_ptr<const chronos::columnar::OwnedColumnarBatch> successor_batch;
   chronos::schema::TabletId tablet_id;
 };
 
@@ -50,21 +51,41 @@ struct TabletFixture {
           id<chronos::schema::TableId>(80U), id<chronos::schema::SchemaId>(81U),
           chronos::schema::SchemaVersion::initial(), std::nullopt, std::move(definitions), roles)
           .value());
-  std::vector<chronos::columnar::OwnedColumnVector> columns;
-  columns.push_back(chronos::columnar::OwnedColumnVector::create(
-                        chronos::columnar::ColumnVectorMetadata{.column_id = timestamp_id,
-                                                                .type = timestamp,
-                                                                .nullable = false,
-                                                                .row_count = rows,
-                                                                .null_count = 0U},
-                        chronos::columnar::ColumnVectorBuffers{
-                            .validity = {},
-                            .offsets = {},
-                            .values = std::vector<std::byte>(static_cast<std::size_t>(rows) * 8U)})
-                        .value());
+  const auto make_columns = [&] {
+    std::vector<chronos::columnar::OwnedColumnVector> columns;
+    columns.push_back(
+        chronos::columnar::OwnedColumnVector::create(
+            chronos::columnar::ColumnVectorMetadata{.column_id = timestamp_id,
+                                                    .type = timestamp,
+                                                    .nullable = false,
+                                                    .row_count = rows,
+                                                    .null_count = 0U},
+            chronos::columnar::ColumnVectorBuffers{
+                .validity = {},
+                .offsets = {},
+                .values = std::vector<std::byte>(static_cast<std::size_t>(rows) * 8U)})
+            .value());
+    return columns;
+  };
   auto batch = std::make_shared<const chronos::columnar::OwnedColumnarBatch>(
-      chronos::columnar::OwnedColumnarBatch::create(std::move(schema), std::move(columns)).value());
-  return TabletFixture{.batch = std::move(batch), .tablet_id = id<chronos::schema::TabletId>(82U)};
+      chronos::columnar::OwnedColumnarBatch::create(schema, make_columns()).value());
+
+  std::vector<chronos::schema::ColumnDefinition> successor_definitions;
+  successor_definitions.push_back(
+      chronos::schema::ColumnDefinition::create(timestamp_id, "event_time", timestamp, false)
+          .value());
+  auto successor_schema = std::make_shared<const chronos::schema::TableSchema>(
+      chronos::schema::TableSchema::create(schema->table_id(), id<chronos::schema::SchemaId>(83U),
+                                           chronos::schema::SchemaVersion::from_value(2U).value(),
+                                           schema->schema_id(), std::move(successor_definitions),
+                                           roles)
+          .value());
+  auto successor_batch = std::make_shared<const chronos::columnar::OwnedColumnarBatch>(
+      chronos::columnar::OwnedColumnarBatch::create(std::move(successor_schema), make_columns())
+          .value());
+  return TabletFixture{.batch = std::move(batch),
+                       .successor_batch = std::move(successor_batch),
+                       .tablet_id = id<chronos::schema::TabletId>(82U)};
 }
 
 [[nodiscard]] chronos::ingest::RetryIdentity retry_identity(const std::uint8_t seed) {
@@ -97,6 +118,7 @@ make_tablet(const TabletFixture& fixture, const std::uint32_t row_capacity) {
       chronos::ingest::TabletStateConfig{
           .head_capacity = chronos::head::MutableHeadCapacity{.row_capacity = row_capacity,
                                                               .variable_value_bytes = {0U}},
+          .maximum_schema_versions = 2U,
           .maximum_sealed_generations = 1U,
           .maximum_retry_entries = 2U});
 }
@@ -216,6 +238,54 @@ void benchmark_tablet_rotation(benchmark::State& state) {
   state.SetLabel("seal, allocate next bounded generation, and publish topology-only epoch");
 }
 
+void benchmark_tablet_schema_switch(benchmark::State& state) {
+  const auto rows = static_cast<std::uint32_t>(state.range(0));
+  const TabletFixture fixture = make_fixture(rows);
+  for ([[maybe_unused]] auto iteration : state) {
+    state.PauseTiming();
+    auto created = make_tablet(fixture, rows);
+    if (!created.has_value()) {
+      const std::string message = created.error().to_string();
+      state.SkipWithError(message);
+      return;
+    }
+    std::optional<chronos::ingest::TabletState> tablet{std::move(*created)};
+    chronos::common::Status registered = tablet->register_schema(
+        fixture.successor_batch->schema_ptr(),
+        chronos::head::MutableHeadCapacity{.row_capacity = rows, .variable_value_bytes = {0U}});
+    if (!registered.is_ok() || !publish_first(*tablet, fixture, state)) {
+      if (!registered.is_ok()) {
+        const std::string message = registered.to_string();
+        state.SkipWithError(message);
+      }
+      return;
+    }
+    state.ResumeTiming();
+
+    auto prepared =
+        tablet->prepare_append(retry_identity(2U), mutation(fixture, 2U), fixture.successor_batch);
+    if (!prepared.has_value()) {
+      const std::string message = prepared.error().to_string();
+      state.SkipWithError(message);
+      return;
+    }
+    chronos::common::Status cancelled = prepared->cancel_before_wal();
+    if (!cancelled.is_ok()) {
+      const std::string message = cancelled.to_string();
+      state.SkipWithError(message);
+      return;
+    }
+    benchmark::DoNotOptimize(tablet->snapshot()->schema_ptr().get());
+    benchmark::ClobberMemory();
+
+    state.PauseTiming();
+    tablet.reset();
+    state.ResumeTiming();
+  }
+  state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(rows));
+  state.SetLabel("seal ancestor, allocate registered successor generation, and publish topology");
+}
+
 // Google Benchmark registers functions during static initialization.
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 BENCHMARK(benchmark_tablet_publish)->Arg(64)->Arg(1024)->Arg(65536);
@@ -223,5 +293,7 @@ BENCHMARK(benchmark_tablet_publish)->Arg(64)->Arg(1024)->Arg(65536);
 BENCHMARK(benchmark_tablet_snapshot)->Arg(64)->Arg(1024)->Arg(65536);
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 BENCHMARK(benchmark_tablet_rotation)->Arg(64)->Arg(1024)->Arg(65536);
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+BENCHMARK(benchmark_tablet_schema_switch)->Arg(64)->Arg(1024)->Arg(65536);
 
 } // namespace

@@ -101,7 +101,7 @@ own_batch(const columnar::DecodedColumnarBatchView& decoded,
 class RecoveredColumnarAppendState::Impl {
 public:
   struct TabletEntry {
-    std::shared_ptr<const schema::TableSchema> schema;
+    std::vector<std::shared_ptr<const schema::TableSchema>> schemas;
     schema::TabletId tablet_id;
     TabletState state;
   };
@@ -175,17 +175,35 @@ public:
     return std::move(*decoded);
   }
 
-  [[nodiscard]] common::Status validate_target(const DecodedColumnarAppendView& command) const {
+  [[nodiscard]] common::Result<std::shared_ptr<const schema::TableSchema>>
+  resolve_schema(const DecodedColumnarAppendView& command) const {
     const TabletEntry* const target = find_tablet(command.tablet_id());
     if (target == nullptr) {
-      return not_found("COLUMNAR_APPEND references an unconfigured recovery tablet");
+      return common::make_unexpected(
+          not_found("COLUMNAR_APPEND references an unconfigured recovery tablet"));
     }
-    const common::Status schema_status = validate_columnar_append_schema(command, *target->schema);
+    if (target->schemas.empty()) {
+      return common::make_unexpected(
+          internal("configured recovery tablet lost its schema lineage"));
+    }
+    if (command.table_id() != target->schemas.front()->table_id()) {
+      return common::make_unexpected(
+          corruption("COLUMNAR_APPEND table identity does not match its recovery tablet"));
+    }
+    const auto found = std::find_if(
+        target->schemas.begin(), target->schemas.end(),
+        [&command](const auto& retained) { return retained->schema_id() == command.schema_id(); });
+    if (found == target->schemas.end()) {
+      return common::make_unexpected(
+          not_found("COLUMNAR_APPEND schema is absent from the retained recovery lineage"));
+    }
+    const common::Status schema_status = validate_columnar_append_schema(command, **found);
     if (!schema_status.is_ok()) {
-      return corruption("COLUMNAR_APPEND does not match its retained recovery schema: " +
-                        schema_status.message());
+      return common::make_unexpected(
+          corruption("COLUMNAR_APPEND does not match its retained recovery schema: " +
+                     schema_status.message()));
     }
-    return common::Status::ok();
+    return *found;
   }
 
   [[nodiscard]] common::Status preflight(const wal::WalReplayRecord& record) const {
@@ -193,7 +211,8 @@ public:
     if (!command.has_value()) {
       return command.error();
     }
-    return validate_target(*command);
+    common::Result<std::shared_ptr<const schema::TableSchema>> retained = resolve_schema(*command);
+    return retained.has_value() ? common::Status::ok() : retained.error();
   }
 
   [[nodiscard]] common::Status replay(const wal::WalReplayRecord& record) {
@@ -201,9 +220,10 @@ public:
     if (!command.has_value()) {
       return command.error();
     }
-    common::Status target_status = validate_target(*command);
-    if (!target_status.is_ok()) {
-      return target_status;
+    common::Result<std::shared_ptr<const schema::TableSchema>> retained_schema =
+        resolve_schema(*command);
+    if (!retained_schema.has_value()) {
+      return retained_schema.error();
     }
     TabletEntry* const target = find_tablet(command->tablet_id());
     if (target == nullptr) {
@@ -248,7 +268,7 @@ public:
     }
     RetryReservation reservation = std::move(*decision->reservation());
     common::Result<std::shared_ptr<const columnar::OwnedColumnarBatch>> batch =
-        own_batch(command->batch(), target->schema, decode_limits_);
+        own_batch(command->batch(), std::move(*retained_schema), decode_limits_);
     if (!batch.has_value()) {
       return batch.error();
     }
@@ -379,8 +399,19 @@ recover_columnar_append_wal(const wal::WalWriterConfig& writer_config,
       if (!state.has_value()) {
         return common::make_unexpected(state.error());
       }
+      std::vector<std::shared_ptr<const schema::TableSchema>> schemas;
+      schemas.reserve(configured.successors.size() + 1U);
+      schemas.push_back(configured.schema);
+      for (ColumnarRecoverySuccessorSchemaConfig& successor : configured.successors) {
+        common::Status registered =
+            state->register_schema(successor.schema, std::move(successor.head_capacity));
+        if (!registered.is_ok()) {
+          return common::make_unexpected(std::move(registered));
+        }
+        schemas.push_back(std::move(successor.schema));
+      }
       tablets.push_back(RecoveredColumnarAppendState::Impl::TabletEntry{
-          .schema = std::move(configured.schema),
+          .schemas = std::move(schemas),
           .tablet_id = configured.tablet_id,
           .state = std::move(*state),
       });

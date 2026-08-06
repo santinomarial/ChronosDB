@@ -1,5 +1,7 @@
 #include "chronos/ingest/tablet_state.hpp"
 
+#include "chronos/schema/schema_lineage.hpp"
+
 #include <atomic>
 #include <exception>
 #include <limits>
@@ -7,6 +9,7 @@
 #include <new>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -41,6 +44,13 @@ enum class PreparedPhase : std::uint8_t {
 using RetryTable = std::map<RetryIdentity, std::shared_ptr<const ColumnarAppendRetryOutcome>>;
 using GenerationSet = std::vector<head::HeadSnapshot>;
 
+struct RegisteredSchema {
+  std::shared_ptr<const schema::TableSchema> schema;
+  head::MutableHeadCapacity capacity;
+};
+
+static_assert(std::is_nothrow_move_assignable_v<schema::SchemaLineage>);
+
 } // namespace
 
 namespace detail {
@@ -61,7 +71,8 @@ public:
 };
 
 struct TabletStateCoreConfig {
-  std::shared_ptr<const schema::TableSchema> schema;
+  schema::SchemaLineage lineage;
+  std::vector<RegisteredSchema> schemas;
   schema::TabletId tablet_id;
   TabletStateConfig limits;
   std::unique_ptr<head::MutableHead> active_head;
@@ -73,8 +84,9 @@ struct TabletStateCoreConfig {
 class TabletStateCore : public std::enable_shared_from_this<TabletStateCore> {
 public:
   explicit TabletStateCore(TabletStateCoreConfig config) noexcept
-      : schema_(std::move(config.schema)), tablet_id_(config.tablet_id),
-        limits_(std::move(config.limits)), active_head_(std::move(config.active_head)),
+      : lineage_(std::move(config.lineage)), schemas_(std::move(config.schemas)),
+        tablet_id_(config.tablet_id), limits_(std::move(config.limits)),
+        active_head_(std::move(config.active_head)),
         publication_(std::move(config.initial_publication)),
         publication_hook_(config.publication_hook),
         publication_hook_context_(config.publication_hook_context) {}
@@ -82,6 +94,8 @@ public:
   [[nodiscard]] common::Result<PreparedTabletAppend>
   prepare(const RetryIdentity& retry_identity, const ColumnarAppendMutationIdentity& mutation,
           std::shared_ptr<const columnar::OwnedColumnarBatch> batch);
+  [[nodiscard]] common::Status register_schema(std::shared_ptr<const schema::TableSchema> successor,
+                                               head::MutableHeadCapacity capacity);
   [[nodiscard]] bool wal_started(std::uint64_t token) const noexcept;
   [[nodiscard]] common::Status mark_wal_started(std::uint64_t token,
                                                 head::PreparedHeadAppend& head_append);
@@ -108,11 +122,15 @@ public:
 private:
   [[nodiscard]] static common::Status validate_position(const head::HeadCommitPosition& position,
                                                         const TabletPublication& base);
-  [[nodiscard]] common::Status
+  [[nodiscard]] common::Result<std::size_t>
   validate_request(const ColumnarAppendMutationIdentity& mutation,
                    const std::shared_ptr<const columnar::OwnedColumnarBatch>& batch) const;
+  [[nodiscard]] std::optional<std::size_t>
+  find_schema_index(const schema::TableSchema& candidate) const noexcept;
 
-  std::shared_ptr<const schema::TableSchema> schema_;
+  schema::SchemaLineage lineage_;
+  std::vector<RegisteredSchema> schemas_;
+  std::size_t active_schema_index_{0U};
   schema::TabletId tablet_id_;
   TabletStateConfig limits_;
   std::unique_ptr<head::MutableHead> active_head_;
@@ -211,28 +229,82 @@ private:
   std::shared_ptr<const ColumnarAppendRetryOutcome> outcome_;
 };
 
-common::Status detail::TabletStateCore::validate_request(
+std::optional<std::size_t>
+detail::TabletStateCore::find_schema_index(const schema::TableSchema& candidate) const noexcept {
+  for (std::size_t index = 0U; index < schemas_.size(); ++index) {
+    if (*schemas_[index].schema == candidate) {
+      return index;
+    }
+  }
+  return std::nullopt;
+}
+
+common::Result<std::size_t> detail::TabletStateCore::validate_request(
     const ColumnarAppendMutationIdentity& mutation,
     const std::shared_ptr<const columnar::OwnedColumnarBatch>& batch) const {
   if (failed_.load(std::memory_order_acquire)) {
-    return unavailable("tablet state is failed and requires fresh recovery");
+    return common::make_unexpected(
+        unavailable("tablet state is failed and requires fresh recovery"));
   }
   if (append_active_) {
-    return unavailable("tablet state already has a prepared append");
+    return common::make_unexpected(unavailable("tablet state already has a prepared append"));
   }
   if (batch == nullptr) {
-    return invalid("tablet append requires an owning batch pointer");
+    return common::make_unexpected(invalid("tablet append requires an owning batch pointer"));
   }
   if (batch->row_count() == 0U) {
-    return invalid("tablet append requires at least one row");
+    return common::make_unexpected(invalid("tablet append requires at least one row"));
   }
-  if (mutation.table_id != schema_->table_id() || mutation.tablet_id != tablet_id_) {
-    return invalid("tablet append mutation identity does not match the bound tablet");
+  if (mutation.table_id != schemas_.front().schema->table_id() ||
+      mutation.tablet_id != tablet_id_) {
+    return common::make_unexpected(
+        invalid("tablet append mutation identity does not match the bound tablet"));
   }
-  if (batch->schema() != *schema_) {
-    return invalid("tablet append batch does not match the bound schema");
+  const std::optional<std::size_t> schema_index = find_schema_index(batch->schema());
+  if (!schema_index.has_value()) {
+    return common::make_unexpected(
+        invalid("tablet append batch schema is not registered for this tablet"));
   }
-  return common::Status::ok();
+  if (*schema_index < active_schema_index_) {
+    return common::make_unexpected(
+        invalid("new tablet append cannot return to an ancestor schema"));
+  }
+  return *schema_index;
+}
+
+common::Status
+detail::TabletStateCore::register_schema(std::shared_ptr<const schema::TableSchema> successor,
+                                         head::MutableHeadCapacity capacity) {
+  if (failed_.load(std::memory_order_acquire)) {
+    return unavailable("tablet state cannot register a schema after failure");
+  }
+  if (append_active_) {
+    return unavailable("tablet state cannot register a schema during a prepared append");
+  }
+  if (successor == nullptr) {
+    return invalid("tablet schema registration requires an owning schema pointer");
+  }
+  if (schemas_.size() >= limits_.maximum_schema_versions) {
+    return exhausted("tablet schema registry reached its configured version bound");
+  }
+
+  try {
+    schema::SchemaLineage next_lineage = lineage_;
+    common::Status lineage_status = next_lineage.append(*successor);
+    if (!lineage_status.is_ok()) {
+      return lineage_status;
+    }
+    schemas_.push_back(
+        RegisteredSchema{.schema = std::move(successor), .capacity = std::move(capacity)});
+    // The non-throwing assignment commits the authoritative validation state only after the
+    // caller-owned schema and capacity have been stored successfully.
+    lineage_ = std::move(next_lineage);
+    return common::Status::ok();
+  } catch (const std::bad_alloc&) {
+    return exhausted("tablet schema registration allocation failed");
+  } catch (const std::length_error&) {
+    return exhausted("tablet schema registration exceeds container limits");
+  }
 }
 
 common::Status detail::TabletStateCore::validate_position(const head::HeadCommitPosition& position,
@@ -253,9 +325,9 @@ common::Result<PreparedTabletAppend>
 detail::TabletStateCore::prepare(const RetryIdentity& retry_identity,
                                  const ColumnarAppendMutationIdentity& mutation,
                                  std::shared_ptr<const columnar::OwnedColumnarBatch> batch) {
-  const common::Status request_status = validate_request(mutation, batch);
-  if (!request_status.is_ok()) {
-    return common::make_unexpected(request_status);
+  const common::Result<std::size_t> requested_schema_index = validate_request(mutation, batch);
+  if (!requested_schema_index.has_value()) {
+    return common::make_unexpected(requested_schema_index.error());
   }
   if (next_token_ == std::numeric_limits<std::uint64_t>::max()) {
     return common::make_unexpected(exhausted("tablet state exhausted its append token space"));
@@ -284,16 +356,25 @@ detail::TabletStateCore::prepare(const RetryIdentity& retry_identity,
     std::shared_ptr<TabletPublication> topology_mutable;
     std::shared_ptr<const TabletPublication> topology;
 
-    const common::Status active_fit = active_head_->check_append(*batch);
-    if (!active_fit.is_ok()) {
-      if (active_fit.code() != common::StatusCode::kResourceExhausted) {
-        return common::make_unexpected(active_fit);
+    const bool schema_switch = *requested_schema_index != active_schema_index_;
+    bool rotate = schema_switch;
+    if (!schema_switch) {
+      const common::Status active_fit = active_head_->check_append(*batch);
+      if (!active_fit.is_ok()) {
+        if (active_fit.code() != common::StatusCode::kResourceExhausted) {
+          return common::make_unexpected(active_fit);
+        }
+        if (current->active_generation_.row_count() == 0U) {
+          return common::make_unexpected(
+              exhausted("tablet append does not fit an empty mutable-head generation"));
+        }
+        rotate = true;
       }
-      if (current->active_generation_.row_count() == 0U) {
-        return common::make_unexpected(
-            exhausted("tablet append does not fit an empty mutable-head generation"));
-      }
-      if (current->sealed_generations_->size() >= limits_.maximum_sealed_generations) {
+    }
+    if (rotate) {
+      const bool retain_active = current->active_generation_.row_count() != 0U;
+      if (retain_active &&
+          current->sealed_generations_->size() >= limits_.maximum_sealed_generations) {
         return common::make_unexpected(
             exhausted("tablet sealed-generation retention bound prevents rotation"));
       }
@@ -301,10 +382,10 @@ detail::TabletStateCore::prepare(const RetryIdentity& retry_identity,
         return common::make_unexpected(
             exhausted("tablet exhausted its mutable-head generation number space"));
       }
-
-      auto created = head::MutableHead::create(schema_, tablet_id_,
+      const RegisteredSchema& destination_schema = schemas_[*requested_schema_index];
+      auto created = head::MutableHead::create(destination_schema.schema, tablet_id_,
                                                current->active_generation_.generation() + 1U,
-                                               limits_.head_capacity);
+                                               destination_schema.capacity);
       if (!created.has_value()) {
         return common::make_unexpected(created.error());
       }
@@ -319,7 +400,9 @@ detail::TabletStateCore::prepare(const RetryIdentity& retry_identity,
       }
 
       auto sealed = std::make_shared<GenerationSet>(*current->sealed_generations_);
-      sealed->push_back(current->active_generation_);
+      if (retain_active) {
+        sealed->push_back(current->active_generation_);
+      }
       std::shared_ptr<const GenerationSet> sealed_const = sealed;
       common::Result<head::HeadSnapshot> rotated_snapshot = rotated_head->snapshot();
       if (!rotated_snapshot.has_value()) {
@@ -381,6 +464,7 @@ detail::TabletStateCore::prepare(const RetryIdentity& retry_identity,
       }
       std::atomic_store_explicit(&publication_, topology, std::memory_order_release);
       active_head_ = std::move(rotated_head);
+      active_schema_index_ = *requested_schema_index;
     }
 
     ++next_token_;
@@ -511,8 +595,8 @@ common::Result<TabletSnapshot> detail::TabletStateCore::advance_recovered_retry(
     return common::make_unexpected(
         unavailable("tablet state cannot advance recovered retry during a prepared append"));
   }
-  if (mutation.table_id != schema_->table_id() || mutation.tablet_id != tablet_id_ ||
-      outcome == nullptr || outcome->mutation != mutation) {
+  if (mutation.table_id != schemas_.front().schema->table_id() ||
+      mutation.tablet_id != tablet_id_ || outcome == nullptr || outcome->mutation != mutation) {
     return common::make_unexpected(
         invalid("recovered retry does not match the bound tablet mutation"));
   }
@@ -569,10 +653,13 @@ TabletStateMetrics detail::TabletStateCore::metrics() const noexcept {
   for (const head::HeadSnapshot& sealed : *current->sealed_generations_) {
     visible_rows += sealed.row_count();
   }
-  return TabletStateMetrics{.maximum_sealed_generations = limits_.maximum_sealed_generations,
+  return TabletStateMetrics{.maximum_schema_versions = limits_.maximum_schema_versions,
+                            .maximum_sealed_generations = limits_.maximum_sealed_generations,
                             .sealed_generations = current->sealed_generations_->size(),
                             .maximum_retry_entries = limits_.maximum_retry_entries,
                             .retry_entries = current->retries_->size(),
+                            .active_schema_version =
+                                current->active_generation_.schema_ptr()->version().value(),
                             .active_generation = current->active_generation_.generation(),
                             .active_rows = current->active_generation_.row_count(),
                             .visible_rows = visible_rows,
@@ -696,9 +783,10 @@ common::Result<TabletState> TabletState::create_with_publication_hook(
   if (schema == nullptr) {
     return common::make_unexpected(invalid("tablet state requires an owning schema pointer"));
   }
-  if (config.maximum_sealed_generations == 0U || config.maximum_retry_entries == 0U) {
+  if (config.maximum_schema_versions == 0U || config.maximum_sealed_generations == 0U ||
+      config.maximum_retry_entries == 0U) {
     return common::make_unexpected(
-        invalid("tablet sealed-generation and retry-entry bounds must be nonzero"));
+        invalid("tablet schema, sealed-generation, and retry-entry bounds must be nonzero"));
   }
 
   auto created_head = head::MutableHead::create(schema, tablet_id, 1U, config.head_capacity);
@@ -706,6 +794,10 @@ common::Result<TabletState> TabletState::create_with_publication_hook(
     return common::make_unexpected(created_head.error());
   }
   try {
+    common::Result<schema::SchemaLineage> lineage = schema::SchemaLineage::create(*schema);
+    if (!lineage.has_value()) {
+      return common::make_unexpected(lineage.error());
+    }
     auto active_head = std::make_unique<head::MutableHead>(std::move(*created_head));
     auto sealed = std::make_shared<const GenerationSet>();
     auto retries = std::make_shared<const RetryTable>();
@@ -715,8 +807,12 @@ common::Result<TabletState> TabletState::create_with_publication_hook(
     }
     auto initial = std::make_shared<const detail::TabletPublication>(
         std::nullopt, std::move(sealed), std::move(*active_snapshot), std::move(retries));
+    std::vector<RegisteredSchema> schemas;
+    schemas.push_back(
+        RegisteredSchema{.schema = std::move(schema), .capacity = config.head_capacity});
     auto state = std::make_shared<detail::TabletStateCore>(
-        detail::TabletStateCoreConfig{.schema = std::move(schema),
+        detail::TabletStateCoreConfig{.lineage = std::move(*lineage),
+                                      .schemas = std::move(schemas),
                                       .tablet_id = tablet_id,
                                       .limits = std::move(config),
                                       .active_head = std::move(active_head),
@@ -730,6 +826,14 @@ common::Result<TabletState> TabletState::create_with_publication_hook(
     return common::make_unexpected(
         exhausted("tablet state configuration exceeds container limits"));
   }
+}
+
+common::Status TabletState::register_schema(std::shared_ptr<const schema::TableSchema> successor,
+                                            head::MutableHeadCapacity head_capacity) {
+  if (state_ == nullptr) {
+    return invalid("tablet state is invalid");
+  }
+  return state_->register_schema(std::move(successor), std::move(head_capacity));
 }
 
 common::Result<PreparedTabletAppend>
