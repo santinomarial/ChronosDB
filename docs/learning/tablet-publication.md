@@ -39,10 +39,10 @@ generation, still before WAL admission. Registration does not decide catalog act
 caller must still admit only the active ingest schema.
 
 `prepare_append` is a shard-writer operation. It verifies table/tablet/schema agreement, rejects a
-published retry identity reuse, checks the retry bound, and asks the active generation whether the
-whole batch fits. It then allocates the head publication, immutable retry table copy, outcome,
-outer descriptor, and move-only `PreparedTabletAppend`. No row or retry outcome becomes logically
-visible.
+published retry identity reuse, checks the retry bound, validates APPEND_ROWS logical-key
+uniqueness against the batch and all visible generations, and asks the active generation whether
+the whole batch fits. It then allocates the head publication, immutable retry table copy, outcome,
+outer descriptor, and move-only `PreparedTabletAppend`. No row or retry outcome becomes logically visible.
 
 The handle sequence is:
 
@@ -121,6 +121,7 @@ discarded only when the failed state is replaced during future recovery.
 Status classification is deliberately narrow:
 
 - identity/schema/configuration errors and conflicting retry reuse are `INVALID_ARGUMENT`;
+- intra-batch or visible-row logical-key conflicts are `INVALID_ARGUMENT`;
 - a matching already-published retry identity is `ALREADY_EXISTS` so the caller can use its earlier
   lookup outcome rather than append;
 - row, byte, schema-version, retry, sealed-generation, token, or allocation bounds are
@@ -135,10 +136,11 @@ response eligibility boundary.
 
 ## Complexity and tradeoffs
 
-For `R` rows, `C` columns, `B` value bytes, `S` registered schemas, `T` retained retry entries, and
-`G` sealed generations:
+For `R` incoming rows, `V` visible rows, `K` logical-key columns, `C` total columns, `B` value bytes,
+`S` registered schemas, `T` retained retry entries, and `G` sealed generations:
 
-- normal preparation is `O(C + T)` because the correctness-first immutable retry map is copied;
+- normal preparation is `O(R log R × K + R × V × K + C + T)` because incoming keys are sorted,
+  visible generations are scanned, and the correctness-first immutable retry map is copied;
 - publication is `O(C × R + B)` for head materialization plus constant outer descriptor updates;
 - snapshot acquisition is `O(1)` plus reference-count operations;
 - retry lookup is `O(log T)`;
@@ -146,8 +148,9 @@ For `R` rows, `C` columns, `B` value bytes, `S` registered schemas, `T` retained
 - rotation adds `O(configured head capacity + G)` initialization/copy work before WAL; and
 - successor registration validates `O(S × C)` retained lineage metadata before storing it.
 
-Memory is bounded by configured active/sealed head capacities, `T` retry entries, `O(C)` prepared
-head metadata, and immutable descriptors retained by live snapshots. Copying the retry map on every
+Memory is bounded by configured active/sealed head capacities, `T` retry entries, two contiguous
+`O(R)` row-ordinal work vectors, `O(C)` prepared head metadata, and immutable descriptors retained
+by live snapshots. There is no per-row owning allocation. Copying the retry map on every
 append is intentionally simple and auditable, not a final throughput choice. A persistent map,
 chunked table, or shard-owned arena needs allocation and benchmark evidence before replacing it.
 
@@ -155,7 +158,8 @@ chunked table, or shard-owned arena needs allocation and benchmark evidence befo
 
 `chronos_ingest_tests` covers invalid bounds, the exact empty epoch, invisible preparation,
 pre-WAL cancellation, joint rows/position/retry publication, exact pointer handoff to the global
-retry directory, whole-batch rotation, registered rename/tail-add successor activation, stable
+retry directory, every frozen logical-key type, signed-zero/NaN equality, deterministic generated
+key sets, active/sealed logical conflicts, whole-batch rotation, registered rename/tail-add successor activation, stable
 ancestor snapshots, empty-ancestor elision, first-time ancestor rejection, exact recovered ancestor
 retry advancement, oversized-batch rejection, schema/sealed/retry backpressure,
 duplicate/conflicting identities, post-WAL fail-closed position validation, a controlled
@@ -164,8 +168,8 @@ header compiles alone and the installed external consumer checks the registratio
 
 The tests run in the ordinary, AddressSanitizer/UndefinedBehaviorSanitizer, and applicable
 ThreadSanitizer configurations. `chronos_ingest_benchmarks` separately measures first publication,
-outer snapshot acquisition, topology-only capacity rotation, and registered schema transition
-across declared batch sizes. A separate
+outer snapshot acquisition, topology-only capacity rotation, registered schema transition, and
+unique/conflicting logical-key admission across declared batch sizes. A separate
 single-tablet execution benchmark retains canonical encoding, global retry reservation, real WAL
 write or `fdatasync`, and tablet publication while excluding per-iteration WAL setup. All are local
 microbenchmarks; routing, catalog admission, transport, and recovery remain excluded.

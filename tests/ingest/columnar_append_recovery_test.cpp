@@ -46,6 +46,29 @@ batch(const std::byte timestamp_tail = std::byte{0U}) {
           .value());
 }
 
+[[nodiscard]] std::shared_ptr<const schema::TableSchema> deduplication_schema() {
+  const std::shared_ptr<const schema::TableSchema> base = columnar::test::batch_schema();
+  std::vector<schema::ColumnDefinition> columns{base->columns().begin(), base->columns().end()};
+  return std::make_shared<const schema::TableSchema>(
+      schema::TableSchema::create(
+          columnar::test::id<schema::TableId>(90U), columnar::test::id<schema::SchemaId>(91U),
+          schema::SchemaVersion::initial(), std::nullopt, std::move(columns),
+          schema::TableSchemaRoles{
+              .event_time_column = columnar::test::id<schema::ColumnId>(1U),
+              .physical_ordering_key = {columnar::test::id<schema::ColumnId>(1U)},
+              .partition_columns = {columnar::test::id<schema::ColumnId>(1U)},
+              .shard_key = {columnar::test::id<schema::ColumnId>(1U)},
+              .deduplication_key = {columnar::test::id<schema::ColumnId>(1U),
+                                    columnar::test::id<schema::ColumnId>(3U)}})
+          .value());
+}
+
+[[nodiscard]] std::shared_ptr<const columnar::OwnedColumnarBatch> deduplication_batch() {
+  return std::make_shared<const columnar::OwnedColumnarBatch>(
+      columnar::OwnedColumnarBatch::create(deduplication_schema(), columnar::test::batch_columns())
+          .value());
+}
+
 [[nodiscard]] wal::EncodedApplicationPayload
 command(const std::uint8_t seed, const schema::TabletId target,
         const std::shared_ptr<const columnar::OwnedColumnarBatch>& input_batch) {
@@ -293,6 +316,57 @@ TEST(ColumnarAppendRecoveryTest, PreflightRequiresEveryReferencedRetainedSchema)
   const auto recovered = recover_columnar_append_wal(writer_config, {}, recovery_config({target}));
   ASSERT_FALSE(recovered.has_value());
   EXPECT_EQ(recovered.error().code(), common::StatusCode::kNotFound);
+}
+
+TEST(ColumnarAppendRecoveryTest, ExactRetryPrecedesRowDedupButNewIdentityConflictIsCorruption) {
+  const schema::TabletId target = tablet_id(70U);
+  const auto input = deduplication_batch();
+  const auto recovery = [&target, &input](const wal::test::TemporaryDirectory& directory,
+                                          const bool matching_retry) {
+    const wal::WalWriterConfig writer_config{.directory_path = directory.path().string()};
+    common::Result<wal::WalWriter> created = wal::WalWriter::create_new(writer_config);
+    if (!created.has_value()) {
+      return common::Result<RecoveredColumnarAppendState>{common::make_unexpected(created.error())};
+    }
+    wal::WalWriter writer = std::move(*created);
+    const wal::EncodedApplicationPayload first = command(1U, target, input);
+    const wal::EncodedApplicationPayload second = command(matching_retry ? 1U : 2U, target, input);
+    if (!writer.append_application_entry(first.bytes()).has_value() ||
+        !writer.append_application_entry(second.bytes()).has_value() ||
+        !writer.synchronize().has_value() || !writer.close().is_ok()) {
+      return common::Result<RecoveredColumnarAppendState>{common::make_unexpected(common::Status{
+          common::StatusCode::kIoError, "deduplication recovery history write failed"})};
+    }
+    ColumnarAppendRecoveryConfig config{
+        .retry_directory = {.maximum_entries = 4U},
+        .tablets = {ColumnarRecoveryTabletConfig{
+            .schema = input->schema_ptr(),
+            .tablet_id = target,
+            .state =
+                TabletStateConfig{.head_capacity =
+                                      head::MutableHeadCapacity{
+                                          .row_capacity = 8U, .variable_value_bytes = {0U, 8U, 0U}},
+                                  .maximum_schema_versions = 1U,
+                                  .maximum_sealed_generations = 2U,
+                                  .maximum_retry_entries = 4U},
+            .successors = {}}},
+        .decode_limits = {}};
+    return recover_columnar_append_wal(writer_config, {}, std::move(config));
+  };
+
+  wal::test::TemporaryDirectory matching_directory{"chronos-columnar-recovery-dedup-retry"};
+  ASSERT_TRUE(matching_directory.valid());
+  auto matching = recovery(matching_directory, true);
+  ASSERT_TRUE(matching.has_value()) << matching.error().to_string();
+  EXPECT_EQ(matching->tablet(target)->snapshot()->visible_row_count(), 2U);
+  EXPECT_EQ(matching->tablet(target)->snapshot()->retry_entry_count(), 1U);
+  EXPECT_TRUE(matching->release_writer()->close().is_ok());
+
+  wal::test::TemporaryDirectory conflict_directory{"chronos-columnar-recovery-dedup-conflict"};
+  ASSERT_TRUE(conflict_directory.valid());
+  const auto conflict = recovery(conflict_directory, false);
+  ASSERT_FALSE(conflict.has_value());
+  EXPECT_EQ(conflict.error().code(), common::StatusCode::kCorruption);
 }
 
 TEST(ColumnarAppendRecoveryTest, RejectsConflictingIdentityRepeatablyWithoutReturningPartialState) {

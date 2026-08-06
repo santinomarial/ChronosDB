@@ -2,9 +2,9 @@
 
 > **Status: retained-lineage fresh-state recovery implemented.**
 > `chronos::ingest::recover_columnar_append_wal` connects the accepted WAL recovery passes to the
-> `COLUMNAR_APPEND` codec, immutable batches, retry directory, and tablet publications. Catalog
-> persistence, routing reconstruction, retry pruning, CSEG/manifest/checkpoint state, and
-> multi-kind application dispatch remain outside this boundary.
+> `COLUMNAR_APPEND` codec, immutable batches, retry directory, and tablet publications, including
+> APPEND_ROWS logical-key conflict enforcement. Catalog persistence, routing reconstruction, retry
+> pruning, CSEG/manifest/checkpoint state, and multi-kind application dispatch remain outside this boundary.
 
 ## Purpose and public boundary
 
@@ -122,6 +122,8 @@ The focused suite uses real WAL files to prove:
 - the duplicate advances only the outer tablet position and retains the exact original outcome;
 - a direct schema successor seals the ancestor generation and publishes rows under its own shape;
 - an exact ancestor-schema retry after activation remains a no-row position advance;
+- a new retry identity targeting an existing logical row is corruption while an exact request retry
+  remains a no-row position advance;
 - a first-time ancestor regression is corruption and an absent retained schema is `NOT_FOUND`;
 - global and tablet retry tables share that outcome pointer;
 - repeating recovery from unchanged bytes reconstructs the same rows, retry counts, and positions;

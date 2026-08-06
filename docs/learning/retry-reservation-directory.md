@@ -124,8 +124,9 @@ target.
 
 The directory alone does not provide exactly-once ingestion. The live executor now composes bounded
 head capacity, WAL coordinator submission, batch-atomic tablet publication, and post-WAL failure
-ownership for one already-routed tablet. Remaining Phase 4 work includes schema/routing admission,
-per-row deduplication checks, fresh-state replay, retention and pruning, and crash reconciliation.
+ownership for one already-routed tablet. Tablet preparation now enforces APPEND_ROWS logical-key
+conflicts and retained-lineage recovery rebuilds fresh state. Remaining Phase 4 work includes
+routing/admission, retention and pruning, and checkpoint-aware crash reconciliation.
 In particular, startup must reconstruct committed retry entries in global WAL order before
 publishing recovered database state.
 

@@ -1,6 +1,7 @@
 #include "chronos/ingest/tablet_state.hpp"
 
 #include "chronos/schema/schema_lineage.hpp"
+#include "deduplication_key.hpp"
 
 #include <atomic>
 #include <exception>
@@ -351,6 +352,11 @@ detail::TabletStateCore::prepare(const RetryIdentity& retry_identity,
   }
 
   try {
+    common::Status deduplication = validate_append_deduplication(
+        *batch, *current->sealed_generations_, current->active_generation_);
+    if (!deduplication.is_ok()) {
+      return common::make_unexpected(std::move(deduplication));
+    }
     std::unique_ptr<head::MutableHead> rotated_head;
     std::shared_ptr<const TabletPublication> base = current;
     std::shared_ptr<TabletPublication> topology_mutable;

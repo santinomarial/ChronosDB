@@ -220,6 +220,7 @@ add_library(
   src/ingest/columnar_append.cpp
   src/ingest/columnar_append_executor.cpp
   src/ingest/columnar_append_recovery.cpp
+  src/ingest/deduplication_key.cpp
   src/ingest/retry_directory.cpp
   src/ingest/sha256.cpp
   src/ingest/tablet_state.cpp
@@ -438,6 +439,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/ingest/columnar_append_recovery_test.cpp
     tests/ingest/columnar_append_property_test.cpp
     tests/ingest/columnar_append_test.cpp
+    tests/ingest/deduplication_key_test.cpp
     tests/ingest/identity_header_self_contained.cpp
     tests/ingest/identity_test.cpp
     tests/ingest/retry_directory_header_self_contained.cpp

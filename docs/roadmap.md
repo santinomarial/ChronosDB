@@ -121,8 +121,9 @@ No phase passes because its code merely compiles. A phase passes only when its a
   schema-bound generation switching, exact ancestor retry no-ops, conflict failure, deterministic
   repeat recovery, and continued writer sequencing. It has real-WAL integration, hostile semantic
   classification, installation/external-consumer coverage, and unique/retry-heavy recovery
-  microbenchmarks. Retry retention, routing/admission, per-row deduplication, flush handoff,
-  allocation failpoints, and the wider
+  microbenchmarks. Tablet preparation additionally enforces intra-batch and visible-generation
+  APPEND_ROWS logical-key uniqueness with exhaustive typed, replay, property, and benchmark
+  evidence. Retry retention, routing/admission, flush handoff, allocation failpoints, and the wider
   end-to-end Phase 4 benchmark matrix remain unimplemented.
 
 - **Scope:** typed immutable input batches; null/variable-width representation; append-only tablet heads; sealing; single shard-worker ownership; stable reader boundaries; idempotent ordered replay into heads.

@@ -3,8 +3,8 @@
 > **Status: blocking live single-tablet execution implemented.**
 > `chronos::ingest::execute_columnar_append` composes the immutable batch and command codecs, the
 > database-wide process-local retry directory, one already-routed tablet state, and the bounded WAL
-> commit coordinator. Registered successor generations are supported, while catalog and routing
-> admission, per-row deduplication, retention, transport acknowledgment, and multi-tablet
+> commit coordinator. Registered successor generations and APPEND_ROWS logical-key conflict checks
+> are supported, while catalog and routing admission, retention, transport acknowledgment, and multi-tablet
 > coordination remain outside this API.
 
 ## Purpose and public boundary
@@ -132,9 +132,10 @@ address through `chronos::ingest`, and the same tests run in ordinary and saniti
 ## Deferred integration
 
 This API assumes that its batch was already authorized and routed to exactly one tablet. It does not
-enforce event-time admission, active ingest schema selection, per-row deduplication-key uniqueness,
-or shard scheduling. Tablet state verifies only that a first-time batch uses the current or next
-registered direct successor; it does not decide which registered version the catalog has activated.
+enforce event-time admission, active ingest schema selection, or shard scheduling. Tablet
+preparation rejects duplicate logical keys within the batch and conflicts against every visible
+active or sealed generation before WAL; it still does not decide which registered schema version
+the catalog has activated.
 The separate retained-lineage
 [columnar append recovery](columnar-append-recovery.md) owner can rebuild a fresh replacement from
 the WAL; this live call still does not initiate recovery itself. Retry wait policy,

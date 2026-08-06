@@ -15,8 +15,9 @@
 > verifies and preflights a complete existing WAL, resolves every command against the supplied
 > retained lineage, rebuilds fresh tablet and global retry state in sequence order, permits exact
 > ancestor-schema retry no-ops, and returns the locked writer at the exact next sequence only after
-> the complete recovery succeeds. Catalog/routing admission, per-row deduplication, retry pruning,
-> and flush handoff remain unimplemented. This
+> the complete recovery succeeds. Tablet preparation now rejects intra-batch logical-key duplicates
+> and conflicts against every visible generation before WAL. Catalog/routing admission, retry
+> pruning, and flush handoff remain unimplemented. This
 > document
 > fixes the logical state-machine and WAL command contracts for Phase 4; the physical
 > [WAL v1](../formats/wal-v1.md) framing and application envelope remain unchanged.
@@ -209,6 +210,15 @@ For a table with a deduplication key, no two rows in one batch may have the same
 it is the matching request-level retry. Replacement and tombstone intent require future explicit
 mutation kinds. For a table without a deduplication key, the derived row-version identity is also
 the row's logical identity.
+
+`TabletState` implements that `APPEND_ROWS` check before capacity reservation or WAL admission. It
+sorts one contiguous vector of incoming row ordinals to find intra-batch duplicates without
+per-row owning allocation, then compares the unique incoming keys against active and retained
+sealed generations. Key columns retain ordinals and types across the accepted schema lineage.
+Non-floating values use their canonical typed bytes; floating equality follows the accepted IEEE
+rule, so signed zeros are equal while every NaN remains unequal, including the same payload. The
+current cross-generation scan is correctness-first; a persistent index requires benchmark and
+snapshot/publication evidence before replacing it.
 
 Request idempotency and table deduplication are separate checks: the former protects a whole client
 batch from retransmission; the latter defines row-version relationships.
