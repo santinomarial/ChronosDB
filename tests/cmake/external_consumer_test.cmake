@@ -67,6 +67,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/manifest/format.hpp>
 #include <chronos/manifest/codec.hpp>
 #include <chronos/manifest/layout.hpp>
+#include <chronos/manifest/naming.hpp>
 #include <chronos/manifest/types.hpp>
 #include <chronos/manifest/validation.hpp>
 #include <chronos/wal/application.hpp>
@@ -155,6 +156,7 @@ int main() {
   static_assert(chronos::ingest::columnar_append_v1::kCommandHeaderLength == 160U);
   static_assert(chronos::manifest::format::kFileHeaderLength == 256U);
   const auto manifest_layout = chronos::manifest::plan_manifest_v1_layout({});
+  const auto manifest_name = chronos::manifest::manifest_file_name(1U);
   using DecodeManifestFunction = chronos::manifest::ManifestDecodeResult (*)(
       chronos::common::ByteView, chronos::manifest::ManifestDecodeLimits);
   const DecodeManifestFunction decode_manifest = &chronos::manifest::decode_manifest_v1_exact;
@@ -172,6 +174,8 @@ int main() {
                  retry_directory->metrics().maximum_entries == 8U && !decoded.has_value() &&
                  cseg_layout.has_value() && cseg_layout->total_length == 1'248U &&
                  manifest_layout.has_value() && manifest_layout->total_length == 264U &&
+                 manifest_name.has_value() &&
+                 *manifest_name == "manifest-00000000000000000001.cman" &&
                  decode_manifest != nullptr && validate_manifest_transition != nullptr &&
                  stored_page.has_value() && stored_page->bytes().size() == 1U &&
                  plain_page.has_value() && plain_page->bytes().size() == 1U &&

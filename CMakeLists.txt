@@ -281,6 +281,7 @@ add_library(
   chronos_manifest
   src/manifest/codec.cpp
   src/manifest/layout.cpp
+  src/manifest/naming.cpp
   src/manifest/validation.cpp
 )
 add_library(chronos::manifest ALIAS chronos_manifest)
@@ -596,6 +597,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/manifest/format_test.cpp
     tests/manifest/layout_header_self_contained.cpp
     tests/manifest/layout_test.cpp
+    tests/manifest/naming_header_self_contained.cpp
+    tests/manifest/naming_test.cpp
     tests/manifest/types_header_self_contained.cpp
     tests/manifest/types_test.cpp
     tests/manifest/validation_header_self_contained.cpp

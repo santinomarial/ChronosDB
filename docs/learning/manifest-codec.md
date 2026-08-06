@@ -7,11 +7,9 @@ It turns one canonical full manifest model into the exact bytes frozen by
 [Manifest v1](../formats/manifest-v1.md), and safely turns an untrusted byte prefix back into a
 borrowed immutable view.
 
-This layer does not open files, interpret directory names, validate an installed CSEG, consult a
-schema catalog, compare two generations, prove WAL coverage, publish query state, or delete WAL
-segments. Those operations need durable context and belong to the later installation/recovery
-layers. Keeping them out of the codec makes byte validation independently reusable by installers,
-recovery, inspection tools, fuzzers, and tests.
+This layer does not open files, validate an installed CSEG, prove WAL coverage, publish query
+state, or delete WAL segments. Its naming helpers format and parse exact final and temporary
+basenames without touching a directory. Durable installation and recovery remain separate.
 
 ## Public interfaces
 
@@ -19,6 +17,7 @@ The public headers are:
 
 - `chronos/manifest/format.hpp`: frozen sizes, limits, field offsets, and magic;
 - `chronos/manifest/types.hpp`: the nominal `DatabaseId`, checkpoint, and descriptor values;
+- `chronos/manifest/naming.hpp`: canonical final/temporary basename formatting and strict parsing;
 - `chronos/manifest/layout.hpp`: allocation-free canonical layout planning; and
 - `chronos/manifest/codec.hpp`: owned encoding, borrowed decoding, limits, and error classes; and
 - `chronos/manifest/validation.hpp`: exact catalog binding and add-only generation transitions.
