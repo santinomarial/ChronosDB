@@ -15,6 +15,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace chronos::io::detail {
 class PosixSyscalls;
@@ -60,6 +61,21 @@ struct PartInstallationMetrics {
   friend bool operator==(const PartInstallationMetrics&, const PartInstallationMetrics&) = default;
 };
 
+struct ManifestNamespaceSnapshot {
+  std::vector<std::uint64_t> generations;
+  std::vector<cseg::PartId> final_parts;
+  std::vector<std::string> temporary_parts;
+  std::vector<std::string> temporary_manifests;
+};
+
+struct TemporaryCleanupReport {
+  std::uint64_t removed_parts{};
+  std::uint64_t removed_manifests{};
+  std::uint64_t directory_syncs{};
+
+  friend bool operator==(const TemporaryCleanupReport&, const TemporaryCleanupReport&) = default;
+};
+
 // A move-only, single-threaded owner of the existing database root, parts directory, manifest
 // directory, and manifest writer lock. open_existing() never creates missing directories or LOCK.
 // The deployment must prevent out-of-band mutation while the lock is held.
@@ -80,6 +96,15 @@ public:
   // validated before file sync. A final name is never replaced. Failure after rename but before
   // directory sync poisons this owner; restart/recovery must resolve the durable namespace.
   [[nodiscard]] common::Result<InstalledPart> install_part(const PartInstallRequest& request);
+
+  // Classifies both locked directories without following symlinks. Final manifest generations
+  // must be nonempty and consecutive from one; every other entry must be an exact regular final or
+  // recognized temporary name (plus manifest/LOCK). Final parts may be unreferenced orphans.
+  [[nodiscard]] common::Result<ManifestNamespaceSnapshot> scan_namespace() const;
+
+  // Re-scans first, removes only recognized temporaries, and synchronizes each changed directory.
+  // It never promotes a candidate or removes a final part/generation.
+  [[nodiscard]] common::Result<TemporaryCleanupReport> cleanup_temporaries();
 
   [[nodiscard]] bool is_usable() const noexcept;
   [[nodiscard]] common::Status poison_status() const;

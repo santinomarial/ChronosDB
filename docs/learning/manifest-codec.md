@@ -7,10 +7,11 @@ It turns one canonical full manifest model into the exact bytes frozen by
 [Manifest v1](../formats/manifest-v1.md), and safely turns an untrusted byte prefix back into a
 borrowed immutable view.
 
-This layer does not open files, prove WAL coverage, publish query state, or delete WAL segments.
-Its naming helpers format and parse exact final and temporary basenames without touching a
-directory, while its referenced-part validator accepts already-read CSEG images. Durable
-installation and recovery remain separate.
+This layer does not prove WAL coverage, publish query state, or delete WAL segments. Its naming
+helpers format and parse exact final and temporary basenames without touching a directory, while
+its referenced-part validator accepts already-read CSEG images. The storage owner now provides the
+first durable-installation primitives: immutable CSEG installation plus locked namespace scanning
+and temporary cleanup. Manifest-generation installation and recovery remain separate.
 
 ## Public interfaces
 
@@ -161,6 +162,18 @@ syncs and closes the file, renames without replacement, and syncs `parts/`. A fa
 leaves only the candidate temporary. A directory-sync failure after rename poisons the live owner
 because the final namespace's crash outcome is uncertain; recovery must reconcile it. Successful
 file/directory sync and installed-byte counters advance only at their completed boundaries.
+
+`scan_namespace()` classifies a sorted snapshot of both locked directories without following
+symlinks. It accepts only regular files with exact final or recognized temporary names, plus the
+regular `manifest/LOCK`, and requires final manifest generations to be nonempty and consecutive
+from one. Final CSEG parts need not yet be referenced: an interrupted flush may legitimately leave
+an immutable orphan, which later recovery must retain until ownership is proven.
+
+`cleanup_temporaries()` first performs that complete scan, then removes only recognized temporary
+files and synchronizes each directory whose entries changed. It never promotes a candidate and
+never removes a final generation or part. A failed directory sync poisons the live owner because a
+subsequent operation cannot safely assume which removals survived a crash. Repeating successful
+cleanup is idempotent and performs no unnecessary sync.
 
 The current one-GiB format maximum is not a recommended operating size. Runtime limits let an
 owner enforce a smaller memory budget before allocation. Retry admission and manifest generation

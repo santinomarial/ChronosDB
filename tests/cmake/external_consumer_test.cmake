@@ -178,6 +178,16 @@ int main() {
       const chronos::manifest::ManifestStorageConfig&);
   const OpenManifestStorageFunction open_manifest_storage =
       &chronos::manifest::ManifestStorage::open_existing;
+  using ScanManifestNamespaceFunction =
+      chronos::common::Result<chronos::manifest::ManifestNamespaceSnapshot> (
+          chronos::manifest::ManifestStorage::*)() const;
+  const ScanManifestNamespaceFunction scan_manifest_namespace =
+      &chronos::manifest::ManifestStorage::scan_namespace;
+  using CleanupManifestTemporariesFunction =
+      chronos::common::Result<chronos::manifest::TemporaryCleanupReport> (
+          chronos::manifest::ManifestStorage::*)();
+  const CleanupManifestTemporariesFunction cleanup_manifest_temporaries =
+      &chronos::manifest::ManifestStorage::cleanup_temporaries;
   return execute != nullptr && recover != nullptr && register_schema != nullptr &&
                  limits.max_columns == 4096U &&
                  head_capacity.row_capacity == 4U &&
@@ -192,6 +202,8 @@ int main() {
                  decode_manifest != nullptr && validate_manifest_transition != nullptr &&
                  validate_referenced_parts != nullptr &&
                  open_manifest_storage != nullptr &&
+                 scan_manifest_namespace != nullptr &&
+                 cleanup_manifest_temporaries != nullptr &&
                  stored_page.has_value() && stored_page->bytes().size() == 1U &&
                  plain_page.has_value() && plain_page->bytes().size() == 1U &&
                  encoded_cseg_page.has_value() && encoded_cseg_page->bytes().size() == 1U &&

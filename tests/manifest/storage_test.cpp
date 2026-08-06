@@ -138,6 +138,23 @@ void establish_layout(const std::filesystem::path& path, const bool create_lock 
   }
 }
 
+// Both paths are intrinsic to this descriptor-relative test helper.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+void create_empty_entry(const std::filesystem::path& root_path,
+                        const std::filesystem::path& relative_path) {
+  common::Result<io::PosixDirectory> root = io::PosixDirectory::open(root_path.string());
+  ASSERT_TRUE(root.has_value()) << root.error().to_string();
+  const std::string directory = relative_path.parent_path().string();
+  const std::string name = relative_path.filename().string();
+  common::Result<io::PosixDirectory> child = root->open_directory(directory);
+  ASSERT_TRUE(child.has_value()) << child.error().to_string();
+  common::Result<io::PosixFile> file = child->create_exclusive_regular_file(name);
+  ASSERT_TRUE(file.has_value()) << file.error().to_string();
+  ASSERT_TRUE(file->sync_all().is_ok());
+  ASSERT_TRUE(file->close().is_ok());
+  ASSERT_TRUE(child->sync().is_ok());
+}
+
 struct PartFixture {
   cseg::EncodedCsegPart encoded{cseg::test::make_valid_part(cseg::PageCompression::kZstd)};
   schema::TableId table_id{id<schema::TableId>(2U)};
@@ -326,6 +343,134 @@ TEST(ManifestStorageTest, DirectorySyncFailurePoisonsOwnerAfterFinalRename) {
   const common::Uuid retry_nonce = PartFixture::make_nonce(0xa2U);
   EXPECT_EQ(owner.install_part(fixture.request(retry_nonce)).error().code(),
             common::StatusCode::kUnavailable);
+}
+
+TEST(ManifestStorageTest, ScansExactConsecutiveNamespaceAndRetainsFinalParts) {
+  TemporaryDirectory temporary;
+  ASSERT_TRUE(temporary.valid());
+  establish_layout(temporary.path());
+  const cseg::PartId part_id = id<cseg::PartId>(1U);
+  const common::Uuid nonce = PartFixture::make_nonce(0xb0U);
+  create_empty_entry(temporary.path(),
+                     std::filesystem::path{kManifestDirectoryName} / *manifest_file_name(1U));
+  create_empty_entry(temporary.path(),
+                     std::filesystem::path{kManifestDirectoryName} / *manifest_file_name(2U));
+  create_empty_entry(temporary.path(), std::filesystem::path{kManifestDirectoryName} /
+                                           *temporary_manifest_file_name(3U, nonce));
+  create_empty_entry(temporary.path(),
+                     std::filesystem::path{kPartsDirectoryName} / part_file_name(part_id));
+  create_empty_entry(temporary.path(), std::filesystem::path{kPartsDirectoryName} /
+                                           temporary_part_file_name(part_id, nonce));
+  ManifestStorage owner =
+      ManifestStorage::open_existing({.database_root = temporary.path().string()}).value();
+
+  const common::Result<ManifestNamespaceSnapshot> snapshot = owner.scan_namespace();
+  ASSERT_TRUE(snapshot.has_value()) << snapshot.error().to_string();
+  EXPECT_EQ(snapshot->generations, (std::vector<std::uint64_t>{1U, 2U}));
+  EXPECT_EQ(snapshot->final_parts, (std::vector<cseg::PartId>{part_id}));
+  EXPECT_EQ(snapshot->temporary_parts,
+            (std::vector<std::string>{temporary_part_file_name(part_id, nonce)}));
+  EXPECT_EQ(snapshot->temporary_manifests,
+            (std::vector<std::string>{*temporary_manifest_file_name(3U, nonce)}));
+}
+
+TEST(ManifestStorageTest, RejectsGapsMalformedNamesAndNonregularEntries) {
+  TemporaryDirectory gap;
+  ASSERT_TRUE(gap.valid());
+  establish_layout(gap.path());
+  create_empty_entry(gap.path(),
+                     std::filesystem::path{kManifestDirectoryName} / *manifest_file_name(1U));
+  create_empty_entry(gap.path(),
+                     std::filesystem::path{kManifestDirectoryName} / *manifest_file_name(3U));
+  ManifestStorage gap_owner =
+      ManifestStorage::open_existing({.database_root = gap.path().string()}).value();
+  EXPECT_EQ(gap_owner.scan_namespace().error().code(), common::StatusCode::kCorruption);
+
+  TemporaryDirectory malformed;
+  ASSERT_TRUE(malformed.valid());
+  establish_layout(malformed.path());
+  create_empty_entry(malformed.path(),
+                     std::filesystem::path{kManifestDirectoryName} / *manifest_file_name(1U));
+  create_empty_entry(malformed.path(), std::filesystem::path{kPartsDirectoryName} / "unrelated");
+  ManifestStorage malformed_owner =
+      ManifestStorage::open_existing({.database_root = malformed.path().string()}).value();
+  EXPECT_EQ(malformed_owner.scan_namespace().error().code(), common::StatusCode::kCorruption);
+
+  TemporaryDirectory symlinked;
+  ASSERT_TRUE(symlinked.valid());
+  establish_layout(symlinked.path());
+  create_empty_entry(symlinked.path(),
+                     std::filesystem::path{kManifestDirectoryName} / *manifest_file_name(1U));
+  std::error_code symlink_error;
+  std::filesystem::create_symlink(
+      symlinked.path() / kManifestDirectoryName / std::string{kManifestLockFileName},
+      symlinked.path() / kPartsDirectoryName / part_file_name(id<cseg::PartId>(2U)), symlink_error);
+  ASSERT_FALSE(symlink_error);
+  ManifestStorage symlink_owner =
+      ManifestStorage::open_existing({.database_root = symlinked.path().string()}).value();
+  EXPECT_EQ(symlink_owner.scan_namespace().error().code(), common::StatusCode::kCorruption);
+}
+
+TEST(ManifestStorageTest, CleansOnlyRecognizedTemporariesAndSynchronizesChangedDirectories) {
+  TemporaryDirectory temporary;
+  ASSERT_TRUE(temporary.valid());
+  establish_layout(temporary.path());
+  const cseg::PartId part_id = id<cseg::PartId>(1U);
+  const common::Uuid nonce = PartFixture::make_nonce(0xb1U);
+  const std::string final_part = part_file_name(part_id);
+  const std::string temporary_part = temporary_part_file_name(part_id, nonce);
+  const std::string temporary_manifest = *temporary_manifest_file_name(2U, nonce);
+  create_empty_entry(temporary.path(),
+                     std::filesystem::path{kManifestDirectoryName} / *manifest_file_name(1U));
+  create_empty_entry(temporary.path(),
+                     std::filesystem::path{kManifestDirectoryName} / temporary_manifest);
+  create_empty_entry(temporary.path(), std::filesystem::path{kPartsDirectoryName} / final_part);
+  create_empty_entry(temporary.path(), std::filesystem::path{kPartsDirectoryName} / temporary_part);
+  ManifestStorage owner =
+      ManifestStorage::open_existing({.database_root = temporary.path().string()}).value();
+
+  const common::Result<TemporaryCleanupReport> report = owner.cleanup_temporaries();
+  ASSERT_TRUE(report.has_value()) << report.error().to_string();
+  EXPECT_EQ(*report, (TemporaryCleanupReport{
+                         .removed_parts = 1U, .removed_manifests = 1U, .directory_syncs = 2U}));
+  EXPECT_TRUE(std::filesystem::exists(temporary.path() / kPartsDirectoryName / final_part));
+  EXPECT_FALSE(std::filesystem::exists(temporary.path() / kPartsDirectoryName / temporary_part));
+  EXPECT_TRUE(
+      std::filesystem::exists(temporary.path() / kManifestDirectoryName / *manifest_file_name(1U)));
+  EXPECT_FALSE(
+      std::filesystem::exists(temporary.path() / kManifestDirectoryName / temporary_manifest));
+  const common::Result<TemporaryCleanupReport> repeated = owner.cleanup_temporaries();
+  ASSERT_TRUE(repeated.has_value());
+  EXPECT_EQ(*repeated, TemporaryCleanupReport{});
+}
+
+TEST(ManifestStorageTest, CleanupDirectorySyncFailurePoisonsOwnerWithoutPromotingCandidates) {
+  TemporaryDirectory temporary;
+  ASSERT_TRUE(temporary.valid());
+  establish_layout(temporary.path());
+  const cseg::PartId part_id = id<cseg::PartId>(1U);
+  const common::Uuid nonce = PartFixture::make_nonce(0xb2U);
+  const std::string temporary_part = temporary_part_file_name(part_id, nonce);
+  const std::string temporary_manifest = *temporary_manifest_file_name(2U, nonce);
+  create_empty_entry(temporary.path(),
+                     std::filesystem::path{kManifestDirectoryName} / *manifest_file_name(1U));
+  create_empty_entry(temporary.path(),
+                     std::filesystem::path{kManifestDirectoryName} / temporary_manifest);
+  create_empty_entry(temporary.path(), std::filesystem::path{kPartsDirectoryName} / temporary_part);
+  FailingFsyncSyscalls syscalls{1U};
+  ManifestStorage owner = detail::ManifestStorageTestAccess::open_existing(
+                              {.database_root = temporary.path().string()}, syscalls)
+                              .value();
+
+  const common::Result<TemporaryCleanupReport> cleanup = owner.cleanup_temporaries();
+  ASSERT_FALSE(cleanup.has_value());
+  EXPECT_EQ(cleanup.error().code(), common::StatusCode::kIoError);
+  EXPECT_FALSE(owner.is_usable());
+  EXPECT_EQ(owner.poison_status().code(), common::StatusCode::kIoError);
+  EXPECT_FALSE(std::filesystem::exists(temporary.path() / kPartsDirectoryName / temporary_part));
+  EXPECT_TRUE(
+      std::filesystem::exists(temporary.path() / kManifestDirectoryName / temporary_manifest));
+  EXPECT_EQ(owner.scan_namespace().error().code(), common::StatusCode::kUnavailable);
 }
 
 } // namespace

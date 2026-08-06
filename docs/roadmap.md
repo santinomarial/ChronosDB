@@ -197,8 +197,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > in-memory filename, length, header, content, schema, WAL-identity, and record-extrema binding.
 > A locked, descriptor-relative filesystem owner now installs immutable CSEG parts with exact
 > prevalidation/readback, file-sync, no-replace rename, directory-sync, poisoning, and metrics.
-> Manifest generation installation, flush, recovery, crash evidence,
-> and observability remain unimplemented.
+> It also strictly reconciles both locked namespaces, rejects malformed/nonregular entries and
+> generation gaps, retains orphan finals, and durably removes only recognized temporaries.
+> Manifest generation installation, flush, recovery, crash evidence, and observability remain
+> unimplemented.
 
 - **Scope:** manifest generations/version edits; atomic durable part installation; sealed-head flush; checkpoint/log coverage; startup reconciliation; safe temporary-file handling.
 - **Explicit non-scope:** compaction, delta parts, distributed metadata, object storage, and aggressive garbage collection beyond proven safe ownership.

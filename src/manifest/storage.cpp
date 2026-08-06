@@ -1,5 +1,6 @@
 #include "chronos/manifest/storage.hpp"
 
+#include "chronos/common/checked_math.hpp"
 #include "chronos/io/posix_io.hpp"
 #include "chronos/manifest/naming.hpp"
 #include "io/posix_syscalls.hpp"
@@ -9,6 +10,7 @@
 #include <limits>
 #include <memory>
 #include <new>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -19,6 +21,10 @@ namespace {
 
 [[nodiscard]] common::Status invalid(const std::string_view message) {
   return common::Status{common::StatusCode::kInvalidArgument, std::string{message}};
+}
+
+[[nodiscard]] common::Status corruption(const std::string_view message) {
+  return common::Status{common::StatusCode::kCorruption, std::string{message}};
 }
 
 [[nodiscard]] common::Status with_context(const std::string_view context,
@@ -207,6 +213,137 @@ common::Result<InstalledPart> ManifestStorage::install_part(const PartInstallReq
           ? maximum
           : implementation.metrics_.installed_bytes + request.descriptor.file_length;
   return InstalledPart{.file_name = final_name, .descriptor = request.descriptor};
+}
+
+common::Result<ManifestNamespaceSnapshot> ManifestStorage::scan_namespace() const {
+  if (!implementation_) {
+    return common::make_unexpected(invalid("Manifest storage owner was moved from"));
+  }
+  if (implementation_->poisoned_) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kUnavailable, "Manifest storage owner is poisoned"});
+  }
+  const common::Result<std::vector<io::DirectoryEntry>> part_entries =
+      implementation_->parts_.list_entries();
+  if (!part_entries.has_value()) {
+    return common::make_unexpected(
+        with_context("list Manifest parts directory", part_entries.error()));
+  }
+  const common::Result<std::vector<io::DirectoryEntry>> manifest_entries =
+      implementation_->manifests_.list_entries();
+  if (!manifest_entries.has_value()) {
+    return common::make_unexpected(
+        with_context("list Manifest generation directory", manifest_entries.error()));
+  }
+
+  ManifestNamespaceSnapshot snapshot;
+  try {
+    for (const io::DirectoryEntry& entry : *part_entries) {
+      if (entry.type != io::DirectoryEntryType::kRegularFile) {
+        return common::make_unexpected(
+            corruption("Manifest parts directory contains a non-regular entry"));
+      }
+      const common::Result<cseg::PartId> final = parse_part_file_name(entry.name);
+      if (final.has_value()) {
+        snapshot.final_parts.push_back(*final);
+        continue;
+      }
+      if (parse_temporary_part_file_name(entry.name).has_value()) {
+        snapshot.temporary_parts.push_back(entry.name);
+        continue;
+      }
+      return common::make_unexpected(
+          corruption("Manifest parts directory contains an unrelated or malformed entry"));
+    }
+
+    bool saw_lock = false;
+    for (const io::DirectoryEntry& entry : *manifest_entries) {
+      if (entry.name == kManifestLockFileName) {
+        if (entry.type != io::DirectoryEntryType::kRegularFile) {
+          return common::make_unexpected(corruption("Manifest LOCK is not a regular file"));
+        }
+        saw_lock = true;
+        continue;
+      }
+      if (entry.type != io::DirectoryEntryType::kRegularFile) {
+        return common::make_unexpected(
+            corruption("Manifest generation directory contains a non-regular entry"));
+      }
+      const common::Result<std::uint64_t> generation = parse_manifest_file_name(entry.name);
+      if (generation.has_value()) {
+        snapshot.generations.push_back(*generation);
+        continue;
+      }
+      if (parse_temporary_manifest_file_name(entry.name).has_value()) {
+        snapshot.temporary_manifests.push_back(entry.name);
+        continue;
+      }
+      return common::make_unexpected(
+          corruption("Manifest generation directory contains an unrelated or malformed entry"));
+    }
+    if (!saw_lock) {
+      return common::make_unexpected(corruption("Manifest generation directory is missing LOCK"));
+    }
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                  "Cannot allocate Manifest namespace snapshot"});
+  }
+
+  if (snapshot.generations.empty() || snapshot.generations.front() != 1U) {
+    return common::make_unexpected(
+        corruption("Manifest final generations must begin at generation one"));
+  }
+  for (std::size_t index = 1U; index < snapshot.generations.size(); ++index) {
+    const std::optional<std::uint64_t> expected =
+        common::checked_add(snapshot.generations[index - 1U], std::uint64_t{1U});
+    if (!expected.has_value() || snapshot.generations[index] != *expected) {
+      return common::make_unexpected(corruption("Manifest final generations are not consecutive"));
+    }
+  }
+  return snapshot;
+}
+
+common::Result<TemporaryCleanupReport> ManifestStorage::cleanup_temporaries() {
+  common::Result<ManifestNamespaceSnapshot> snapshot = scan_namespace();
+  if (!snapshot.has_value()) {
+    return common::make_unexpected(snapshot.error());
+  }
+  TemporaryCleanupReport report;
+  for (const std::string& name : snapshot->temporary_parts) {
+    common::Status removal = implementation_->parts_.remove_file(name);
+    if (!removal.is_ok()) {
+      return common::make_unexpected(with_context("remove temporary CSEG part", removal));
+    }
+    ++report.removed_parts;
+  }
+  if (report.removed_parts != 0U) {
+    common::Status sync = implementation_->parts_.sync();
+    if (!sync.is_ok()) {
+      implementation_->poisoned_ = true;
+      implementation_->poison_status_ =
+          with_context("synchronize parts directory after temporary cleanup", sync);
+      return common::make_unexpected(implementation_->poison_status_);
+    }
+    ++report.directory_syncs;
+  }
+  for (const std::string& name : snapshot->temporary_manifests) {
+    common::Status removal = implementation_->manifests_.remove_file(name);
+    if (!removal.is_ok()) {
+      return common::make_unexpected(with_context("remove temporary Manifest generation", removal));
+    }
+    ++report.removed_manifests;
+  }
+  if (report.removed_manifests != 0U) {
+    common::Status sync = implementation_->manifests_.sync();
+    if (!sync.is_ok()) {
+      implementation_->poisoned_ = true;
+      implementation_->poison_status_ =
+          with_context("synchronize Manifest directory after temporary cleanup", sync);
+      return common::make_unexpected(implementation_->poison_status_);
+    }
+    ++report.directory_syncs;
+  }
+  return report;
 }
 
 bool ManifestStorage::is_usable() const noexcept {
