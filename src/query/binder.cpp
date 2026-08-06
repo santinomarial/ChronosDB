@@ -1,13 +1,12 @@
 #include "chronos/query/binder.hpp"
 
 #include "chronos/common/status.hpp"
+#include "chronos/query/literal.hpp"
 
 #include <algorithm>
-#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <memory>
 #include <new>
 #include <optional>
@@ -153,6 +152,11 @@ public:
                                              "SQL binder requires a catalog and nonzero limits"));
     }
     try {
+      if (syntax_.system_time().has_value() &&
+          !parse_sql_timestamp_ns_literal(syntax_.system_time().value()).has_value()) {
+        fail(SqlDiagnosticCode::kInvalidLiteral, syntax_.span(),
+             "FOR SYSTEM_TIME contains an invalid TIMESTAMP literal");
+      }
       add_source(syntax_.source());
       for (const SqlAsofJoin& join : syntax_.asof_joins())
         add_source(join.source);
@@ -396,29 +400,43 @@ private:
     case SqlLiteralKind::kBoolean:
       return {.type = type(schema::LogicalTypeKind::kBool), .nullable = false};
     case SqlLiteralKind::kInteger: {
-      std::uint64_t value = 0U;
-      const auto parsed = std::from_chars(
-          expression.text().data(), expression.text().data() + expression.text().size(), value);
-      if (parsed.ec != std::errc{} ||
-          value > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+      if (!parse_sql_integer_literal(expression.text()).has_value()) {
         fail(SqlDiagnosticCode::kInvalidNumber, expression.span(),
              "Integer literal exceeds the default INT64 range");
       }
       return {.type = type(schema::LogicalTypeKind::kInt64), .nullable = false};
     }
-    case SqlLiteralKind::kFloat:
+    case SqlLiteralKind::kFloat: {
+      if (!parse_sql_float_literal(expression.text()).has_value()) {
+        fail(SqlDiagnosticCode::kInvalidNumber, expression.span(),
+             "Floating literal is invalid or exceeds FLOAT64");
+      }
       return {.type = type(schema::LogicalTypeKind::kFloat64), .nullable = false};
+    }
     case SqlLiteralKind::kString:
       return {.type = type(schema::LogicalTypeKind::kString), .nullable = false};
     case SqlLiteralKind::kBinary:
       return {.type = type(schema::LogicalTypeKind::kBinary), .nullable = false};
     case SqlLiteralKind::kTimestamp:
+      if (!parse_sql_timestamp_ns_literal(expression.text()).has_value()) {
+        fail(SqlDiagnosticCode::kInvalidLiteral, expression.span(),
+             "TIMESTAMP literal is invalid or outside the nanosecond range");
+      }
       return {.type = type(schema::LogicalTypeKind::kTimestampNs), .nullable = false};
     case SqlLiteralKind::kDate:
+      if (!parse_sql_date_literal(expression.text()).has_value()) {
+        fail(SqlDiagnosticCode::kInvalidLiteral, expression.span(), "DATE literal is invalid");
+      }
       return {.type = type(schema::LogicalTypeKind::kDate), .nullable = false};
     case SqlLiteralKind::kInterval:
+      if (!parse_sql_interval_ns_literal(expression.text()).has_value()) {
+        fail(SqlDiagnosticCode::kInvalidLiteral, expression.span(), "INTERVAL literal is invalid");
+      }
       return {.type = type(schema::LogicalTypeKind::kInt64), .nullable = false};
     case SqlLiteralKind::kUuid:
+      if (!parse_sql_uuid_literal(expression.text()).has_value()) {
+        fail(SqlDiagnosticCode::kInvalidLiteral, expression.span(), "UUID literal is invalid");
+      }
       return {.type = type(schema::LogicalTypeKind::kUuid), .nullable = false};
     }
     fail(SqlDiagnosticCode::kTypeMismatch, expression.span(), "Unknown SQL literal kind");

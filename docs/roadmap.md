@@ -312,8 +312,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
   lineage changes. The SELECT binder pins that snapshot, resolves exact table/column identities,
   applies the v1 implicit-conversion and aggregate/grouping rules, expands stars deterministically,
   and records typed expression, projection, and ORDER BY alias bindings without executor-side name
-  resolution. CREATE TABLE and INSERT parsing, ASOF/LATEST relational plans, typed literal value
-  validation, and scalar execution remain unimplemented.
+  resolution. Canonical literal parsing now validates exact UTC nanoseconds, Gregorian dates,
+  bounded nanosecond intervals, numeric ranges, and lowercase canonical UUIDs during binding.
+  CREATE TABLE and INSERT parsing, ASOF/LATEST relational plans, and scalar execution remain
+  unimplemented.
 
 - **Scope:** specify a typed analytical SQL subset; custom lexer/parser; catalog binding; scalar expression/relational reference execution; event-time and system-time query syntax required by initial workloads.
 - **Explicit non-scope:** full SQL compliance, vectorization, cost-based optimization, distributed SQL, unsupported mutation syntax, and streaming syntax beyond contracts scheduled later.

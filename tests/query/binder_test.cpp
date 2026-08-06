@@ -195,5 +195,24 @@ TEST(SqlBinderTest, EnforcesResourceAndOutputIdentityLimits) {
             SqlDiagnosticCode::kResourceLimit);
 }
 
+TEST(SqlBinderTest, RejectsSemanticallyInvalidTypedLiterals) {
+  EXPECT_EQ(bind("SELECT TIMESTAMP '2026-02-29 00:00:00Z' AS bad FROM trades").error().code(),
+            SqlDiagnosticCode::kInvalidLiteral);
+  EXPECT_EQ(bind("SELECT DATE '2025-02-29' AS bad FROM trades").error().code(),
+            SqlDiagnosticCode::kInvalidLiteral);
+  EXPECT_EQ(bind("SELECT INTERVAL '1 fortnight' AS bad FROM trades").error().code(),
+            SqlDiagnosticCode::kInvalidLiteral);
+  EXPECT_EQ(
+      bind("SELECT UUID '00112233-4455-6677-8899-AABBCCDDEEFF' AS bad FROM trades").error().code(),
+      SqlDiagnosticCode::kInvalidLiteral);
+  EXPECT_EQ(bind("SELECT 1e9999 AS bad FROM trades").error().code(),
+            SqlDiagnosticCode::kInvalidNumber);
+  EXPECT_EQ(bind("SELECT * FROM trades FOR SYSTEM_TIME AS OF TIMESTAMP "
+                 "'2262-04-11 23:47:16.854775808Z'")
+                .error()
+                .code(),
+            SqlDiagnosticCode::kInvalidLiteral);
+}
+
 } // namespace
 } // namespace chronos::query

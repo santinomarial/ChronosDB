@@ -26,6 +26,7 @@ enum class SqlDiagnosticCode : std::uint8_t {
   kTypeMismatch,
   kDuplicateOutputName,
   kExecutionFailure,
+  kInvalidLiteral,
 };
 
 struct SourceLocation {

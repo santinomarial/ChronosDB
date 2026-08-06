@@ -83,6 +83,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/manifest/startup_recovery.hpp>
 #include <chronos/manifest/storage.hpp>
 #include <chronos/query/lexer.hpp>
+#include <chronos/query/literal.hpp>
 #include <chronos/query/parser.hpp>
 #include <chronos/query/catalog.hpp>
 #include <chronos/query/binder.hpp>
@@ -228,6 +229,8 @@ int main() {
   static_assert(chronos::manifest::format::kFileHeaderLength == 256U);
   const auto manifest_layout = chronos::manifest::plan_manifest_v1_layout({});
   const auto sql_tokens = chronos::query::tokenize_sql_v1("SELECT * FROM metrics");
+  const auto sql_timestamp =
+      chronos::query::parse_sql_timestamp_ns_literal("1970-01-01 00:00:00.000000001Z");
   const auto sql_select = chronos::query::parse_sql_v1_select("SELECT * FROM metrics");
   const auto query_catalog = chronos::query::QueryCatalogSnapshot::create(1U, {});
   using BindSelectFunction = chronos::query::SqlResult<chronos::query::BoundSqlSelect> (*)(
@@ -384,6 +387,7 @@ int main() {
                  cseg_layout.has_value() && cseg_layout->total_length == 1'248U &&
                  manifest_layout.has_value() && manifest_layout->total_length == 264U &&
                  sql_tokens.has_value() && sql_tokens->tokens().size() == 5U &&
+                 sql_timestamp.has_value() && *sql_timestamp == 1 &&
                  sql_select.has_value() && sql_select->items().size() == 1U &&
                  query_catalog.has_value() && query_catalog->tables().empty() &&
                  bind_select != nullptr &&

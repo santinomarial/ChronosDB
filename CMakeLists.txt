@@ -326,6 +326,7 @@ add_library(
   src/query/catalog.cpp
   src/query/diagnostic.cpp
   src/query/lexer.cpp
+  src/query/literal.cpp
   src/query/parser.cpp
 )
 add_library(chronos::query ALIAS chronos_query)
@@ -725,6 +726,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/catalog_test.cpp
     tests/query/lexer_header_self_contained.cpp
     tests/query/lexer_test.cpp
+    tests/query/literal_header_self_contained.cpp
+    tests/query/literal_test.cpp
     tests/query/parser_header_self_contained.cpp
     tests/query/parser_test.cpp
   )
