@@ -1,0 +1,164 @@
+# Manifest v1 Codec
+
+## Purpose and boundary
+
+The `chronos_manifest` library implements the pure in-memory foundation for Phase 6 durable state.
+It turns one canonical full manifest model into the exact bytes frozen by
+[Manifest v1](../formats/manifest-v1.md), and safely turns an untrusted byte prefix back into a
+borrowed immutable view.
+
+This layer does not open files, interpret directory names, validate an installed CSEG, consult a
+schema catalog, compare two generations, prove WAL coverage, publish query state, or delete WAL
+segments. Those operations need durable context and belong to the later installation/recovery
+layers. Keeping them out of the codec makes byte validation independently reusable by installers,
+recovery, inspection tools, fuzzers, and tests.
+
+## Public interfaces
+
+The public headers are:
+
+- `chronos/manifest/format.hpp`: frozen sizes, limits, field offsets, and magic;
+- `chronos/manifest/types.hpp`: the nominal `DatabaseId`, checkpoint, and descriptor values;
+- `chronos/manifest/layout.hpp`: allocation-free canonical layout planning; and
+- `chronos/manifest/codec.hpp`: owned encoding, borrowed decoding, limits, and error classes.
+
+`plan_manifest_v1_layout()` accepts only the three descriptor counts. It checks each registry bound,
+performs multiplication/addition with checked arithmetic, and returns all section offsets plus the
+exact total length. Callers never supply or choose offsets.
+
+`encode_manifest_v1()` accepts a nonzero generation, identities, reclaim checkpoint, and spans of
+tablet, part, and retry descriptors. The spans are borrowed only for the call. Success returns a
+move-only `EncodedManifest` that owns exactly one complete generation and no enclosing filesystem
+or WAL framing.
+
+`decode_manifest_v1_prefix()` accepts the first complete generation in a larger byte span and
+returns its consumed borrowed bytes. `decode_manifest_v1_exact()` additionally rejects a suffix.
+Both return `DecodedManifestView`, which borrows the immutable encoded generation while owning the
+parsed descriptor vectors. Therefore the source bytes must outlive the view and every copy or span
+obtained from it.
+
+## Canonical model validation
+
+Encoding does not sort or repair input. It rejects a model unless:
+
+- tablet descriptors are strictly ordered by durable `TabletId` bytes;
+- tablet part ranges are consecutive, nonoverlapping, in bounds, and cover the global part array;
+- parts are strictly ordered within their tablet and `PartId` is globally unique;
+- duplicate table/tablet fields bind to the owning tablet;
+- part lengths, row counts, record-sequence extrema, and event-time extrema are valid;
+- each tablet row count is the checked sum of its part rows;
+- retries are strictly ordered by `(ClientId, ClientBatchId)`;
+- each retry binds to an existing tablet, its table, the manifest WAL identity, a covered record
+  sequence, and a nonzero applied row count; and
+- the empty and nonempty WAL checkpoint shapes obey the frozen WAL v1 boundaries.
+
+These checks establish schema-independent physical consistency. They do not prove that a CSEG file
+with the named identity and length exists or that its header/content matches the descriptor. They
+also cannot prove that a nonempty physical WAL coordinate is the end of the named record without
+the WAL bytes. Installation and recovery must perform those second-stage checks.
+
+## Encoding flow
+
+The encoder validates the model before allocation, plans the exact layout, allocates one zero-filled
+vector, and writes fields individually in little-endian order. It derives `previous_generation`, all
+counts, offsets, total length, flags, and reserved bytes; callers cannot inject alternative durable
+representations.
+
+The zero-filled allocation is intentional: every reserved byte and the four trailer-padding bytes
+are canonical zero without relying on native struct layout. Identifier bytes are copied in their
+existing UUID network order. Signed event times are serialized as their exact two's-complement bit
+pattern.
+
+Finally the encoder writes:
+
+1. the header CRC32C over bytes `[0, 248)`; then
+2. the file CRC32C over every byte before the final four-byte checksum.
+
+The returned allocation is the authoritative object; no pointer into an input span is retained.
+
+## Decode trust ladder
+
+The decoder deliberately increases trust in stages:
+
+1. validate caller limits and require/compare the eight-byte magic;
+2. require the entire 256-byte header;
+3. validate the header CRC before using counts, offsets, or total length;
+4. classify version and required flags, then require zero reserved fields;
+5. recompute the canonical layout from bounded counts and compare every stored offset/length;
+6. apply configured resource limits before descriptor allocation;
+7. require the exact complete prefix and validate trailer padding plus full-file CRC;
+8. parse nominal identities and descriptors; and
+9. run the same cross-descriptor model validation used by the encoder.
+
+This sequence prevents hostile length fields from causing an unbounded allocation or invalid
+subspan before their integrity and format bounds are established. Loads are bytewise; unaligned
+input is safe and native structs are never reinterpreted.
+
+## Failure behavior
+
+Decode failures remain distinct:
+
+- `kIncomplete`: a valid short prefix, with the minimum currently known required size;
+- `kCorruption`: bad magic/checksum/reserved bytes, zero identities, noncanonical layout, or
+  contradictory descriptor state;
+- `kUnsupported`: checksum-valid future major/minor or required flag semantics; and
+- `kResourceLimit`: valid-format bounds that exceed caller policy, or invalid caller limits.
+
+Before header integrity, incomplete input can request only eight or 256 bytes. After the header CRC
+and canonical layout validate, incomplete reports the exact generation length. Installed final
+files are never accepted as incomplete by the future filesystem owner; that layer will translate a
+short final file into durable corruption.
+
+Encoding returns ordinary `Status` failures. Invalid canonical input is `kInvalidArgument`, while
+an unrepresentable combined layout is `kResourceExhausted`. Expected validation failures do not
+produce partial encoded output.
+
+## Complexity and allocation
+
+Layout planning is `O(1)` and allocation-free. Encoding and decoding are `O(total bytes + parts log
+parts)` because CRC32C scans the image and global `PartId` uniqueness uses a sorted temporary copy.
+Both own one descriptor-vector allocation per nonempty descriptor category; encoding additionally
+owns the exact byte image. There is no per-row work because manifests summarize already installed
+parts and retry outcomes.
+
+The current one-GiB format maximum is not a recommended operating size. Runtime limits let an
+owner enforce a smaller memory budget before allocation. Retry admission and manifest generation
+policy will establish practical bounds in later Phase 6 work.
+
+## Evidence and measurement
+
+The codec tests include an empty-generation golden constructed independently from the specification,
+populated round trips, every truncation boundary, checksum-valid semantic corruption, configured
+limits, deterministic generated models, and every single-bit mutation. Public headers compile as
+self-contained translation units. The installed CMake target and headers are compiled and executed
+by the external-consumer test.
+
+The libFuzzer entry exercises arbitrary input plus structured mutation/truncation of a populated
+canonical generation. ASan/UBSan and TSan builds run the deterministic suite. The microbenchmarks
+measure full canonical encoding and full exact decoding at increasing retained-retry counts and
+report processed bytes plus descriptor scale. Benchmark results are evidence only when captured
+under the repository benchmark contract; no performance number is claimed by this document.
+
+## Tradeoffs and extension rules
+
+Owning parsed descriptor vectors costs memory but keeps the public view simple and avoids repeated
+unaligned byte decoding. Borrowing the large original image avoids a second full-file copy. A future
+measured need could add descriptor iterators, but it must retain the same validation-before-access
+guarantee.
+
+Full immutable generations make encoding proportional to all retained state. This is accepted for
+Phase 6 correctness. A future version-edit log or compacted manifest scheme needs a separate durable
+contract and cannot change Manifest v1 bytes or selection rules.
+
+Likely review questions are:
+
+- Why is the header CRC checked before the file CRC? It safely bounds the location and size needed
+  to find the complete checksum.
+- Why does decoding still own vectors? The returned byte image is borrowed, but parsed nominal
+  values are aligned ordinary C++ objects with safe access and stable spans.
+- Why does the encoder reject unsorted input instead of sorting? Sorting would silently change
+  descriptor relationships and hide builder bugs; canonical state construction is a separate
+  responsibility.
+- What remains before manifests are durable? Exact installed-CSEG/catalog binding, transition and
+  WAL-coverage validation, filesystem installation, atomic publication, crash recovery, and WAL
+  reclamation.

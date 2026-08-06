@@ -1,6 +1,6 @@
 # ChronosDB Manifest v1
 
-> **Status: accepted specification; implementation pending.** This document is the normative
+> **Status: accepted specification; in-memory codec implemented.** This document is the normative
 > byte-level and directory contract for one single-node Manifest v1 generation, installed CSEG
 > part names, and the checkpoint coordinate used to recover a WAL suffix. The crash ordering and
 > ownership model are specified in

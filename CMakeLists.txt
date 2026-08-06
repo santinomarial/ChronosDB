@@ -277,7 +277,7 @@ chronos_set_project_warnings(chronos_ingest)
 chronos_enable_sanitizers(chronos_ingest)
 chronos_enable_static_analysis(chronos_ingest)
 
-add_library(chronos_manifest src/manifest/layout.cpp)
+add_library(chronos_manifest src/manifest/codec.cpp src/manifest/layout.cpp)
 add_library(chronos::manifest ALIAS chronos_manifest)
 set_target_properties(chronos_manifest PROPERTIES EXPORT_NAME manifest)
 set_target_properties(chronos_manifest PROPERTIES CXX_EXTENSIONS OFF)
@@ -583,6 +583,10 @@ if(CHRONOS_BUILD_TESTS)
 
   add_executable(
     chronos_manifest_tests
+    tests/manifest/codec_corruption_test.cpp
+    tests/manifest/codec_header_self_contained.cpp
+    tests/manifest/codec_property_test.cpp
+    tests/manifest/codec_test.cpp
     tests/manifest/format_header_self_contained.cpp
     tests/manifest/format_test.cpp
     tests/manifest/layout_header_self_contained.cpp
@@ -592,6 +596,7 @@ if(CHRONOS_BUILD_TESTS)
   )
   set_target_properties(chronos_manifest_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_manifest_tests PRIVATE cxx_std_23)
+  target_include_directories(chronos_manifest_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
   target_link_libraries(chronos_manifest_tests PRIVATE chronos::manifest GTest::gtest_main)
   chronos_set_project_warnings(chronos_manifest_tests)
   chronos_enable_sanitizers(chronos_manifest_tests)
@@ -752,6 +757,16 @@ if(CHRONOS_BUILD_BENCHMARKS)
   chronos_set_project_warnings(chronos_head_benchmarks)
   chronos_enable_sanitizers(chronos_head_benchmarks)
   chronos_enable_static_analysis(chronos_head_benchmarks)
+
+  add_executable(chronos_manifest_benchmarks benchmarks/manifest/codec_benchmark.cpp)
+  set_target_properties(chronos_manifest_benchmarks PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_manifest_benchmarks PRIVATE cxx_std_23)
+  target_link_libraries(
+    chronos_manifest_benchmarks PRIVATE chronos::manifest benchmark::benchmark_main
+  )
+  chronos_set_project_warnings(chronos_manifest_benchmarks)
+  chronos_enable_sanitizers(chronos_manifest_benchmarks)
+  chronos_enable_static_analysis(chronos_manifest_benchmarks)
 endif()
 
 if(CHRONOS_BUILD_FUZZERS)
@@ -861,6 +876,19 @@ if(CHRONOS_BUILD_FUZZERS)
   chronos_set_project_warnings(chronos_cseg_part_codec_fuzz)
   chronos_enable_sanitizers(chronos_cseg_part_codec_fuzz)
   chronos_enable_static_analysis(chronos_cseg_part_codec_fuzz)
+
+  add_executable(chronos_manifest_codec_fuzz tests/fuzz/manifest_codec_fuzz.cpp)
+  set_target_properties(chronos_manifest_codec_fuzz PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_manifest_codec_fuzz PRIVATE cxx_std_23)
+  target_include_directories(
+    chronos_manifest_codec_fuzz PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+  )
+  target_link_libraries(chronos_manifest_codec_fuzz PRIVATE chronos::manifest)
+  target_compile_options(chronos_manifest_codec_fuzz PRIVATE -fsanitize=fuzzer)
+  target_link_options(chronos_manifest_codec_fuzz PRIVATE -fsanitize=fuzzer)
+  chronos_set_project_warnings(chronos_manifest_codec_fuzz)
+  chronos_enable_sanitizers(chronos_manifest_codec_fuzz)
+  chronos_enable_static_analysis(chronos_manifest_codec_fuzz)
 endif()
 
 chronos_configure_installation()
