@@ -21,7 +21,7 @@ cmake_minimum_required(VERSION 3.25)
 project(ChronosIngestConsumer LANGUAGES CXX)
 find_package(ChronosDB 0.1 CONFIG REQUIRED)
 add_executable(consumer main.cpp)
-target_link_libraries(consumer PRIVATE chronos::cseg chronos::head chronos::ingest chronos::manifest)
+target_link_libraries(consumer PRIVATE chronos::cseg chronos::head chronos::ingest chronos::manifest chronos::query)
 target_compile_features(consumer PRIVATE cxx_std_23)
 set(consumer_sanitizers "")
 if(CHRONOS_TEST_ENABLE_ASAN)
@@ -82,6 +82,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/manifest/sealed_head_flush_coordinator.hpp>
 #include <chronos/manifest/startup_recovery.hpp>
 #include <chronos/manifest/storage.hpp>
+#include <chronos/query/lexer.hpp>
 #include <chronos/manifest/types.hpp>
 #include <chronos/manifest/validation.hpp>
 #include <chronos/wal/application.hpp>
@@ -223,6 +224,7 @@ int main() {
   static_assert(chronos::ingest::columnar_append_v1::kCommandHeaderLength == 160U);
   static_assert(chronos::manifest::format::kFileHeaderLength == 256U);
   const auto manifest_layout = chronos::manifest::plan_manifest_v1_layout({});
+  const auto sql_tokens = chronos::query::tokenize_sql_v1("SELECT * FROM metrics");
   const auto manifest_name = chronos::manifest::manifest_file_name(1U);
   using DecodeManifestFunction = chronos::manifest::ManifestDecodeResult (*)(
       chronos::common::ByteView, chronos::manifest::ManifestDecodeLimits);
@@ -371,6 +373,7 @@ int main() {
                  retry_directory->metrics().maximum_entries == 8U && !decoded.has_value() &&
                  cseg_layout.has_value() && cseg_layout->total_length == 1'248U &&
                  manifest_layout.has_value() && manifest_layout->total_length == 264U &&
+                 sql_tokens.has_value() && sql_tokens->tokens().size() == 5U &&
                  manifest_name.has_value() &&
                  *manifest_name == "manifest-00000000000000000001.cman" &&
                  decode_manifest != nullptr && validate_manifest_transition != nullptr &&

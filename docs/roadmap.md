@@ -301,6 +301,12 @@ No phase passes because its code merely compiles. A phase passes only when its a
 
 ## Phase 8 — SQL parser, binder, and scalar reference engine
 
+- **Implementation status:** the focused `chronos_query` target and bounded SQL v1 lexer are now
+  under implementation. The lexer owns normalized token text and exact byte/line/column spans,
+  handles the specified quoting, comments, binary/numeric forms, operators, identifier folding,
+  and reserved words, and reports stable lexical diagnostic codes under explicit input/token
+  limits. The parser, binder, plans, catalog snapshot, and scalar executor remain unimplemented.
+
 - **Scope:** specify a typed analytical SQL subset; custom lexer/parser; catalog binding; scalar expression/relational reference execution; event-time and system-time query syntax required by initial workloads.
 - **Explicit non-scope:** full SQL compliance, vectorization, cost-based optimization, distributed SQL, unsupported mutation syntax, and streaming syntax beyond contracts scheduled later.
 - **Required artifacts:** grammar and semantic specification; type/null/decimal/temporal rules; AST and bound-plan interfaces; scalar engine; diagnostic catalog; golden and differential tests; learning document.

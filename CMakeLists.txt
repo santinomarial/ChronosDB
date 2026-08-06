@@ -319,6 +319,21 @@ chronos_set_project_warnings(chronos_manifest)
 chronos_enable_sanitizers(chronos_manifest)
 chronos_enable_static_analysis(chronos_manifest)
 
+add_library(chronos_query src/query/diagnostic.cpp src/query/lexer.cpp)
+add_library(chronos::query ALIAS chronos_query)
+set_target_properties(chronos_query PROPERTIES EXPORT_NAME query CXX_EXTENSIONS OFF)
+target_compile_features(chronos_query PUBLIC cxx_std_23)
+target_include_directories(
+  chronos_query
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+)
+target_link_libraries(chronos_query PUBLIC chronos::common chronos::schema)
+chronos_set_project_warnings(chronos_query)
+chronos_enable_sanitizers(chronos_query)
+chronos_enable_static_analysis(chronos_query)
+
 add_executable(chronosctl tools/chronosctl/main.cpp)
 set_target_properties(chronosctl PROPERTIES CXX_EXTENSIONS OFF)
 target_compile_features(chronosctl PRIVATE cxx_std_23)
@@ -693,6 +708,20 @@ if(CHRONOS_BUILD_TESTS)
   gtest_discover_tests(chronos_manifest_tests DISCOVERY_TIMEOUT 30)
 
   add_executable(
+    chronos_query_tests
+    tests/query/diagnostic_header_self_contained.cpp
+    tests/query/lexer_header_self_contained.cpp
+    tests/query/lexer_test.cpp
+  )
+  set_target_properties(chronos_query_tests PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_query_tests PRIVATE cxx_std_23)
+  target_link_libraries(chronos_query_tests PRIVATE chronos::query GTest::gtest_main)
+  chronos_set_project_warnings(chronos_query_tests)
+  chronos_enable_sanitizers(chronos_query_tests)
+  chronos_enable_static_analysis(chronos_query_tests)
+  gtest_discover_tests(chronos_query_tests DISCOVERY_TIMEOUT 30)
+
+  add_executable(
     chronos_head_tests
     tests/head/mutable_head_header_self_contained.cpp
     tests/head/mutable_head_test.cpp
@@ -875,6 +904,14 @@ if(CHRONOS_BUILD_BENCHMARKS)
   chronos_set_project_warnings(chronos_manifest_benchmarks)
   chronos_enable_sanitizers(chronos_manifest_benchmarks)
   chronos_enable_static_analysis(chronos_manifest_benchmarks)
+
+  add_executable(chronos_query_benchmarks benchmarks/query/lexer_benchmark.cpp)
+  set_target_properties(chronos_query_benchmarks PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_query_benchmarks PRIVATE cxx_std_23)
+  target_link_libraries(chronos_query_benchmarks PRIVATE chronos::query benchmark::benchmark_main)
+  chronos_set_project_warnings(chronos_query_benchmarks)
+  chronos_enable_sanitizers(chronos_query_benchmarks)
+  chronos_enable_static_analysis(chronos_query_benchmarks)
 endif()
 
 if(CHRONOS_BUILD_FUZZERS)
@@ -997,6 +1034,16 @@ if(CHRONOS_BUILD_FUZZERS)
   chronos_set_project_warnings(chronos_manifest_codec_fuzz)
   chronos_enable_sanitizers(chronos_manifest_codec_fuzz)
   chronos_enable_static_analysis(chronos_manifest_codec_fuzz)
+
+  add_executable(chronos_sql_lexer_fuzz tests/fuzz/sql_lexer_fuzz.cpp)
+  set_target_properties(chronos_sql_lexer_fuzz PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_sql_lexer_fuzz PRIVATE cxx_std_23)
+  target_link_libraries(chronos_sql_lexer_fuzz PRIVATE chronos::query)
+  target_compile_options(chronos_sql_lexer_fuzz PRIVATE -fsanitize=fuzzer)
+  target_link_options(chronos_sql_lexer_fuzz PRIVATE -fsanitize=fuzzer)
+  chronos_set_project_warnings(chronos_sql_lexer_fuzz)
+  chronos_enable_sanitizers(chronos_sql_lexer_fuzz)
+  chronos_enable_static_analysis(chronos_sql_lexer_fuzz)
 endif()
 
 chronos_configure_installation()

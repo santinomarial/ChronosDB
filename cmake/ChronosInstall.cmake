@@ -15,6 +15,7 @@ function(chronos_configure_installation)
       chronos_head
       chronos_ingest
       chronos_manifest
+      chronos_query
       chronosctl
       chronos-csegdump
       chronos-flushbench
