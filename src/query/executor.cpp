@@ -138,7 +138,7 @@ public:
       if (metrics_ != nullptr)
         metrics_->rows_after_where = rows.size();
       std::vector<ProjectedRow> projected =
-          aggregate_query() ? aggregate_project(rows) : project(rows);
+          plan_.aggregate_query() ? aggregate_project(rows) : project(rows);
       apply_order(projected);
       apply_limit(projected);
       std::vector<std::vector<ScalarValue>> output;
@@ -183,11 +183,6 @@ private:
       fail(plan_.syntax().span(), common::StatusCode::kNotSupported,
            "This scalar execution entry point accepts SELECT only");
     }
-  }
-
-  [[nodiscard]] bool aggregate_query() const noexcept {
-    return !plan_.syntax().group_by().empty() ||
-           std::ranges::any_of(plan_.outputs(), &BoundOutputColumn::contains_aggregate);
   }
 
   void resolve_snapshots() {

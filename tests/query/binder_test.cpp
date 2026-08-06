@@ -158,6 +158,23 @@ TEST(SqlBinderTest, RecordsExecutableLatestAndAsofShapes) {
             SqlDiagnosticCode::kTypeMismatch);
 }
 
+TEST(SqlBinderTest, RejectsForwardAsofReferencesAndAllowsPriorJoinSources) {
+  const SqlResult<BoundSqlSelect> prior =
+      bind("SELECT t.symbol FROM trades AS t "
+           "ASOF JOIN quotes AS q ON t.symbol = q.symbol AND q.ts <= t.ts "
+           "ASOF JOIN quotes AS r ON q.symbol = r.symbol AND r.ts <= q.ts");
+  ASSERT_TRUE(prior.has_value()) << prior.error().status().to_string();
+  ASSERT_EQ(prior->asof_joins().size(), 2U);
+  EXPECT_EQ(prior->asof_joins()[1].right_source_ordinal, 2U);
+
+  const SqlResult<BoundSqlSelect> forward =
+      bind("SELECT t.symbol FROM trades AS t "
+           "ASOF JOIN quotes AS q ON r.symbol = q.symbol AND q.ts <= r.ts "
+           "ASOF JOIN quotes AS r ON t.symbol = r.symbol AND r.ts <= t.ts");
+  ASSERT_FALSE(forward.has_value());
+  EXPECT_EQ(forward.error().code(), SqlDiagnosticCode::kTypeMismatch);
+}
+
 TEST(SqlBinderTest, ExpandsStarsWithStableUniqueNames) {
   SqlResult<BoundSqlSelect> one = bind("SELECT * FROM trades");
   ASSERT_TRUE(one.has_value()) << one.error().status().to_string();
@@ -230,6 +247,19 @@ TEST(SqlBinderTest, ResolvesOrderByAliasesButNotWhereOrGroupByAliases) {
             SqlDiagnosticCode::kUnknownColumn);
 }
 
+TEST(SqlBinderTest, TreatsOrderOnlyAggregatesAsAggregateQueries) {
+  const SqlResult<BoundSqlSelect> aggregate = bind("SELECT 1 AS one FROM trades ORDER BY count(*)");
+  ASSERT_TRUE(aggregate.has_value()) << aggregate.error().status().to_string();
+  EXPECT_TRUE(aggregate->aggregate_query());
+  const BoundExpressionInfo* order =
+      aggregate->find_expression(aggregate->syntax().order_by().front().expression.span());
+  ASSERT_NE(order, nullptr);
+  EXPECT_TRUE(order->contains_aggregate);
+
+  EXPECT_EQ(bind("SELECT symbol FROM trades ORDER BY count(*)").error().code(),
+            SqlDiagnosticCode::kTypeMismatch);
+}
+
 TEST(SqlBinderTest, EnforcesResourceAndOutputIdentityLimits) {
   EXPECT_EQ(bind("SELECT symbol AS x, price AS x FROM trades").error().code(),
             SqlDiagnosticCode::kDuplicateOutputName);
@@ -238,9 +268,41 @@ TEST(SqlBinderTest, EnforcesResourceAndOutputIdentityLimits) {
                 .error()
                 .code(),
             SqlDiagnosticCode::kResourceLimit);
+  ParsedSqlSelect excessive_sources = parse_sql_v1_select("SELECT * FROM trades").value();
+  EXPECT_EQ(bind_sql_v1_select(std::move(excessive_sources), make_catalog(),
+                               {.maximum_sources = kMaximumSqlV1Sources + 1U})
+                .error()
+                .code(),
+            SqlDiagnosticCode::kResourceLimit);
+}
+
+TEST(SqlBinderTest, EnforcesTheExactSixtyFourSourceMaskBoundary) {
+  std::string at_limit{"SELECT t.symbol FROM trades AS t"};
+  for (std::size_t ordinal = 1U; ordinal < kMaximumSqlV1Sources; ++ordinal) {
+    const std::string alias = "q" + std::to_string(ordinal);
+    at_limit.append(" ASOF JOIN quotes AS ");
+    at_limit.append(alias);
+    at_limit.append(" ON t.symbol = ");
+    at_limit.append(alias);
+    at_limit.append(".symbol AND ");
+    at_limit.append(alias);
+    at_limit.append(".ts <= t.ts");
+  }
+  const SqlResult<BoundSqlSelect> maximum = bind(std::string_view{at_limit});
+  ASSERT_TRUE(maximum.has_value()) << maximum.error().status().to_string();
+  EXPECT_EQ(maximum->sources().size(), kMaximumSqlV1Sources);
+
+  at_limit.append(" ASOF JOIN quotes AS overflow ON t.symbol = overflow.symbol AND "
+                  "overflow.ts <= t.ts");
+  const SqlResult<BoundSqlSelect> excessive = bind(std::string_view{at_limit});
+  ASSERT_FALSE(excessive.has_value());
+  EXPECT_EQ(excessive.error().code(), SqlDiagnosticCode::kResourceLimit);
 }
 
 TEST(SqlBinderTest, RejectsSemanticallyInvalidTypedLiterals) {
+  EXPECT_TRUE(bind("SELECT * FROM trades FOR SYSTEM_TIME AS OF TIMESTAMP "
+                   "'1677-09-21 00:12:43.145224192Z'")
+                  .has_value());
   EXPECT_EQ(bind("SELECT TIMESTAMP '2026-02-29 00:00:00Z' AS bad FROM trades").error().code(),
             SqlDiagnosticCode::kInvalidLiteral);
   EXPECT_EQ(bind("SELECT DATE '2025-02-29' AS bad FROM trades").error().code(),

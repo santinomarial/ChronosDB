@@ -4,11 +4,9 @@
 #include "chronos/query/literal.hpp"
 #include "chronos/schema/logical_type.hpp"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <new>
-#include <ranges>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -60,11 +58,6 @@ void append_type(std::string& output, const schema::LogicalType type) {
   return "unknown";
 }
 
-[[nodiscard]] bool aggregate_query(const BoundSqlSelect& plan) noexcept {
-  return !plan.syntax().group_by().empty() ||
-         std::ranges::any_of(plan.outputs(), &BoundOutputColumn::contains_aggregate);
-}
-
 void append_operators(std::string& output, const BoundSqlSelect& plan) {
   output.append("physical.operators=scan");
   if (plan.latest_by().has_value())
@@ -73,7 +66,7 @@ void append_operators(std::string& output, const BoundSqlSelect& plan) {
     output.append(",asof_join");
   if (plan.syntax().where() != nullptr)
     output.append(",filter");
-  if (aggregate_query(plan))
+  if (plan.aggregate_query())
     output.append(",aggregate");
   output.append(",project");
   if (!plan.syntax().order_by().empty())
@@ -136,7 +129,7 @@ SqlResult<std::string> explain_sql_v1_select(const BoundSqlSelect& plan) {
     output.append("\nlogical.filter=");
     output.push_back(plan.syntax().where() == nullptr ? '0' : '1');
     output.append("\nlogical.aggregate=");
-    output.push_back(aggregate_query(plan) ? '1' : '0');
+    output.push_back(plan.aggregate_query() ? '1' : '0');
     output.append("\nlogical.group_keys=");
     output.append(std::to_string(plan.syntax().group_by().size()));
     output.append("\nlogical.outputs=");

@@ -194,14 +194,27 @@ common::Result<std::int64_t> parse_sql_timestamp_ns_literal(const std::string_vi
       static_cast<std::int64_t>(hour) * 3'600 + static_cast<std::int64_t>(minute) * 60 + second;
   const std::int64_t seconds_since_epoch = seconds_from_days + seconds_of_day;
   constexpr std::int64_t kNanosecondsPerSecond = 1'000'000'000;
-  if (seconds_since_epoch > std::numeric_limits<std::int64_t>::max() / kNanosecondsPerSecond ||
-      seconds_since_epoch < std::numeric_limits<std::int64_t>::min() / kNanosecondsPerSecond) {
+  constexpr std::int64_t kMaximumWholeSeconds =
+      std::numeric_limits<std::int64_t>::max() / kNanosecondsPerSecond;
+  constexpr std::int64_t kMaximumFractionalNanoseconds =
+      std::numeric_limits<std::int64_t>::max() % kNanosecondsPerSecond;
+  constexpr std::int64_t kMinimumFloorSeconds =
+      std::numeric_limits<std::int64_t>::min() / kNanosecondsPerSecond - 1;
+  constexpr std::int64_t kMinimumFractionalNanoseconds =
+      kNanosecondsPerSecond + std::numeric_limits<std::int64_t>::min() % kNanosecondsPerSecond;
+  if (seconds_since_epoch > kMaximumWholeSeconds ||
+      (seconds_since_epoch == kMaximumWholeSeconds &&
+       fractional_ns > kMaximumFractionalNanoseconds) ||
+      seconds_since_epoch < kMinimumFloorSeconds ||
+      (seconds_since_epoch == kMinimumFloorSeconds &&
+       fractional_ns < kMinimumFractionalNanoseconds)) {
     return common::make_unexpected(out_of_range("TIMESTAMP literal exceeds INT64 nanoseconds"));
+  }
+  if (seconds_since_epoch == kMinimumFloorSeconds) {
+    return std::numeric_limits<std::int64_t>::min() +
+           (fractional_ns - kMinimumFractionalNanoseconds);
   }
   const std::int64_t whole_ns = seconds_since_epoch * kNanosecondsPerSecond;
-  if (whole_ns >= 0 && fractional_ns > std::numeric_limits<std::int64_t>::max() - whole_ns) {
-    return common::make_unexpected(out_of_range("TIMESTAMP literal exceeds INT64 nanoseconds"));
-  }
   return whole_ns + fractional_ns;
 }
 

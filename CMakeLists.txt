@@ -807,7 +807,7 @@ if(CHRONOS_BUILD_TESTS)
   )
 
   add_test(
-    NAME ExternalConsumerTest.InstalledIngestTarget
+    NAME ExternalConsumerTest.InstalledPublicTargets
     COMMAND
       "${CMAKE_COMMAND}"
       "-DCHRONOS_TEST_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"

@@ -279,6 +279,8 @@ int main() {
       const chronos::query::BoundSqlSelect&, const chronos::query::ScalarSnapshotProvider&,
       chronos::query::ScalarQueryLimits);
   const ExecuteSelectFunction execute_select = &chronos::query::execute_sql_v1_select;
+  using AggregateQueryFunction = bool (chronos::query::BoundSqlSelect::*)() const noexcept;
+  const AggregateQueryFunction aggregate_query = &chronos::query::BoundSqlSelect::aggregate_query;
   using ExplainFunction = chronos::query::SqlResult<std::string> (*)(
       const chronos::query::BoundSqlSelect&);
   const ExplainFunction explain_select = &chronos::query::explain_sql_v1_select;
@@ -442,6 +444,7 @@ int main() {
                  parse_create != nullptr && parse_insert != nullptr &&
                  query_catalog.has_value() && query_catalog->tables().empty() &&
                  query_scalar.has_value() && !query_scalar->is_null() &&
+                 chronos::query::kMaximumSqlV1Sources == 64U && aggregate_query != nullptr &&
                  bind_select != nullptr && bind_create != nullptr && bind_insert != nullptr &&
                  materialize_insert != nullptr &&
                  evaluate_expression != nullptr &&

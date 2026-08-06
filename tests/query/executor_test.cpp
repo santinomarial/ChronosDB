@@ -30,6 +30,11 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
   return Identifier::from_bytes(bytes).value();
 }
 
+template <typename Value>
+[[nodiscard]] const Value* optional_pointer(const std::optional<Value>& value) noexcept {
+  return value.has_value() ? std::addressof(*value) : nullptr;
+}
+
 [[nodiscard]] schema::LogicalType type(const schema::LogicalTypeKind kind) {
   return schema::LogicalType::create(kind).value();
 }
@@ -273,6 +278,23 @@ TEST(ScalarExecutorTest, ImplementsEmptyAggregatesAndExactWidenedIntegerSum) {
   const auto decimal_overflow = execute_sql_v1_select(decimal_sum_plan, decimal_overflowing);
   ASSERT_FALSE(decimal_overflow.has_value());
   EXPECT_EQ(decimal_overflow.error().status().code(), common::StatusCode::kOutOfRange);
+}
+
+TEST(ScalarExecutorTest, ExecutesAnAggregateUsedOnlyForOrdering) {
+  const Fixtures data = fixtures();
+  BoundSqlSelect plan = bind("SELECT 1 AS one FROM trades ORDER BY count(*)", data);
+  ASSERT_TRUE(plan.aggregate_query());
+  TestProvider snapshots =
+      provider(data, {input_row(1, "A", 1.0, 1U), input_row(2, "B", 2.0, 2U)}, {});
+
+  const SqlResult<ScalarQueryResult> result = execute_sql_v1_select(plan, snapshots);
+  ASSERT_TRUE(result.has_value()) << result.error().status().to_string();
+  ASSERT_EQ(result->rows().size(), 1U);
+  ASSERT_EQ(result->rows().front().size(), 1U);
+  const schema::LogicalType* result_type = optional_pointer(result->rows().front().front().type());
+  ASSERT_NE(result_type, nullptr);
+  EXPECT_EQ(result_type->kind(), schema::LogicalTypeKind::kInt64);
+  EXPECT_EQ(std::get<std::int64_t>(result->rows().front().front().storage()), 1);
 }
 
 TEST(ScalarExecutorPropertyTest, GroupedCountSumAndAverageMatchDeterministicReference) {

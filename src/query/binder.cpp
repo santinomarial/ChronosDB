@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <new>
 #include <optional>
@@ -20,6 +21,8 @@
 
 namespace chronos::query {
 namespace {
+
+static_assert(std::numeric_limits<std::uint64_t>::digits == kMaximumSqlV1Sources);
 
 [[nodiscard]] bool same_span(const SourceSpan& left, const SourceSpan& right) noexcept {
   return left == right;
@@ -108,15 +111,18 @@ const std::shared_ptr<const schema::TableSchema>& BoundSqlSource::schema_ptr() c
   return schema_;
 }
 
-BoundSqlSelect::BoundSqlSelect(
-    ParsedSqlSelect syntax, std::shared_ptr<const QueryCatalogSnapshot> catalog,
-    std::vector<BoundSqlSource> sources, std::vector<BoundColumnReference> column_references,
-    std::vector<BoundExpressionInfo> expressions, std::vector<BoundOutputColumn> outputs,
-    std::optional<BoundLatestBy> latest_by, std::vector<BoundAsofJoin> asof_joins) noexcept
+BoundSqlSelect::BoundSqlSelect(ParsedSqlSelect syntax,
+                               std::shared_ptr<const QueryCatalogSnapshot> catalog,
+                               std::vector<BoundSqlSource> sources,
+                               std::vector<BoundColumnReference> column_references,
+                               std::vector<BoundExpressionInfo> expressions,
+                               std::vector<BoundOutputColumn> outputs, const bool aggregate_query,
+                               std::optional<BoundLatestBy> latest_by,
+                               std::vector<BoundAsofJoin> asof_joins) noexcept
     : syntax_(std::move(syntax)), catalog_(std::move(catalog)), sources_(std::move(sources)),
       column_references_(std::move(column_references)), expressions_(std::move(expressions)),
-      outputs_(std::move(outputs)), latest_by_(std::move(latest_by)),
-      asof_joins_(std::move(asof_joins)) {}
+      outputs_(std::move(outputs)), aggregate_query_(aggregate_query),
+      latest_by_(std::move(latest_by)), asof_joins_(std::move(asof_joins)) {}
 
 const ParsedSqlSelect& BoundSqlSelect::syntax() const noexcept {
   return syntax_;
@@ -135,6 +141,9 @@ std::span<const BoundExpressionInfo> BoundSqlSelect::expressions() const noexcep
 }
 std::span<const BoundOutputColumn> BoundSqlSelect::outputs() const noexcept {
   return outputs_;
+}
+bool BoundSqlSelect::aggregate_query() const noexcept {
+  return aggregate_query_;
 }
 const std::optional<BoundLatestBy>& BoundSqlSelect::latest_by() const noexcept {
   return latest_by_;
@@ -169,10 +178,12 @@ public:
 
   [[nodiscard]] SqlResult<BoundSqlSelect> run() {
     if (catalog_ == nullptr || limits_.maximum_sources == 0U ||
-        limits_.maximum_bound_expressions == 0U || limits_.maximum_output_columns == 0U) {
+        limits_.maximum_sources > kMaximumSqlV1Sources || limits_.maximum_bound_expressions == 0U ||
+        limits_.maximum_output_columns == 0U) {
       return std::unexpected(make_diagnostic(SqlDiagnosticCode::kResourceLimit, syntax_.span(),
                                              common::StatusCode::kInvalidArgument,
-                                             "SQL binder requires a catalog and nonzero limits"));
+                                             "SQL binder requires a catalog, nonzero limits, and "
+                                             "maximum_sources no greater than 64"));
     }
     try {
       if (syntax_.system_time().has_value() &&
@@ -229,12 +240,13 @@ public:
       }
       bind_outputs();
       validate_unique_output_names();
-      validate_grouping();
       bind_order_by();
+      const bool aggregate_query = validate_grouping();
       return BoundSqlSelect{std::move(syntax_),      std::move(catalog_),
                             std::move(sources_),     std::move(column_references_),
                             std::move(expressions_), std::move(outputs_),
-                            std::move(latest_by_),   std::move(asof_joins_)};
+                            aggregate_query,         std::move(latest_by_),
+                            std::move(asof_joins_)};
     } catch (BindingFailure& failure) {
       return std::unexpected(std::move(failure.diagnostic));
     } catch (const std::bad_alloc&) {
@@ -871,12 +883,13 @@ private:
     const SqlExpression& left = expression.children()[0];
     const SqlExpression& right = expression.children()[1];
     const std::uint64_t right_bit = std::uint64_t{1U} << right_source;
+    const std::uint64_t prior_mask = right_bit - 1U;
     const std::uint64_t left_mask = source_mask(left);
     const std::uint64_t right_mask = source_mask(right);
     const bool left_is_right = left_mask == right_bit;
     const bool right_is_right = right_mask == right_bit;
-    const bool left_is_prior = left_mask != 0U && (left_mask & right_bit) == 0U;
-    const bool right_is_prior = right_mask != 0U && (right_mask & right_bit) == 0U;
+    const bool left_is_prior = left_mask != 0U && (left_mask & ~prior_mask) == 0U;
+    const bool right_is_prior = right_mask != 0U && (right_mask & ~prior_mask) == 0U;
     if (expression.operation() == SqlOperator::kEqual &&
         ((left_is_right && right_is_prior) || (right_is_right && left_is_prior))) {
       ++equality_count;
@@ -970,12 +983,18 @@ private:
       validate_grouped_expression(child);
   }
 
-  void validate_grouping() const {
+  [[nodiscard]] bool validate_grouping() const {
+    const bool order_contains_aggregate =
+        std::ranges::any_of(syntax_.order_by(), [&](const SqlOrderItem& item) {
+          const BoundExpressionInfo* information = recorded_expression(item.expression.span());
+          return information != nullptr && information->contains_aggregate;
+        });
     const bool aggregate_query =
         !syntax_.group_by().empty() ||
-        std::ranges::any_of(outputs_, &BoundOutputColumn::contains_aggregate);
+        std::ranges::any_of(outputs_, &BoundOutputColumn::contains_aggregate) ||
+        order_contains_aggregate;
     if (!aggregate_query)
-      return;
+      return false;
     for (const SqlSelectItem& item : syntax_.items()) {
       if (item.kind() != SqlSelectItemKind::kExpression) {
         fail(SqlDiagnosticCode::kTypeMismatch, item.span(),
@@ -983,6 +1002,16 @@ private:
       }
       validate_grouped_expression(*item.expression());
     }
+    for (const SqlOrderItem& item : syntax_.order_by()) {
+      const BoundExpressionInfo* information = recorded_expression(item.expression.span());
+      if (information == nullptr) {
+        fail(SqlDiagnosticCode::kTypeMismatch, item.expression.span(),
+             "ORDER BY expression has no bound information");
+      }
+      if (!information->output_ordinal.has_value())
+        validate_grouped_expression(item.expression);
+    }
+    return true;
   }
 
   void bind_order_by() {
@@ -1014,11 +1043,6 @@ private:
         fail(SqlDiagnosticCode::kTypeMismatch, item.expression.span(),
              "ORDER BY expression has no type");
       }
-      const bool aggregate_query =
-          !syntax_.group_by().empty() ||
-          std::ranges::any_of(outputs_, &BoundOutputColumn::contains_aggregate);
-      if (aggregate_query)
-        validate_grouped_expression(item.expression);
     }
   }
 

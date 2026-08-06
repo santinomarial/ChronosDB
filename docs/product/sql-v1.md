@@ -11,7 +11,11 @@ The canonical types and table clauses are defined in the [data model](data-model
 
 ## Lexical conventions
 
-- Unquoted identifiers match `[A-Za-z_][A-Za-z0-9_]*`, are folded to lowercase, and cannot use a reserved keyword.
+- Unquoted identifiers match `[A-Za-z_][A-Za-z0-9_]*` and are folded to lowercase. Reserved
+  keywords cannot be used unquoted. The type-name keywords `BINARY`, `BOOL`, `DATE`, `DECIMAL`,
+  `FLOAT32`, `FLOAT64`, `INT8`, `INT16`, `INT32`, `INT64`, `STRING`, `SYMBOL`, `TIMESTAMP_NS`,
+  `UINT8`, `UINT16`, `UINT32`, `UINT64`, and `UUID` are contextual rather than reserved and remain
+  valid unquoted identifiers where the grammar expects an identifier.
 - Double-quoted identifiers preserve case; embedded `"` is written `""`.
 - String literals use single quotes and double an embedded quote: `'can''t'`.
 - Decimal integer and floating literals are accepted; `_`, hexadecimal numbers, and locale-specific separators are not v1.
@@ -35,7 +39,7 @@ From lowest to highest precedence:
 7. unary `+`, unary `-`
 8. literals, column references, function calls, `CAST`, and parenthesized expressions
 
-V1 scalar expressions include typed literals, qualified/unqualified column references, arithmetic, comparisons, Boolean operators, `IS NULL`, inclusive `BETWEEN`, finite literal/expression `IN` lists, `CAST(expr AS type)`, `COALESCE`, `ABS`, `LOWER`, `UPPER`, and `time_bucket(interval, timestamp)`. Implicit conversion is limited to lossless widening within signed integers, within unsigned integers, and `FLOAT32` to `FLOAT64`; signed/unsigned, decimal/float, string/symbol, and timestamp/date crossings require `CAST` unless a later coercion specification says otherwise.
+V1 scalar expressions include typed literals, qualified/unqualified column references, arithmetic, comparisons, Boolean operators, `IS NULL`, inclusive `BETWEEN`, finite literal/expression `IN` lists, `CAST(expr AS type)`, `COALESCE`, `ABS`, `LOWER`, `UPPER`, and `time_bucket(interval, timestamp)`. Implicit conversion is limited to lossless widening within signed integers, within unsigned integers, and `FLOAT32` to `FLOAT64`; signed/unsigned, decimal/float, string/symbol, and timestamp/date crossings require `CAST` unless a later coercion specification says otherwise. `COALESCE` materializes its first non-NULL value at the bound common type rather than retaining a narrower argument type.
 
 Required aggregates are `COUNT(*)`, `COUNT(expr)`, `SUM`, `AVG`, `MIN`, `MAX`, `VAR_POP`, and `VAR_SAMP`. Aggregate inputs may be filtered only through `WHERE` in v1; `FILTER`, ordered aggregates, and distinct aggregates are post-v1.
 
@@ -53,7 +57,10 @@ V1 analytical features include:
 
 - `time_bucket(interval, ts)`, whose buckets are half-open `[start, start + interval)` aligned to Unix epoch UTC;
 - `LATEST BY (keys) ON timestamp_expr`, which selects one current-visible row per key tuple by greatest timestamp, breaking ties by physical ordering key and then stable row-version identity;
-- `ASOF [LEFT] JOIN`, which for each left row selects the right row with matching equality keys and greatest right timestamp not greater than the left timestamp; a tie uses the right physical ordering key then row-version identity;
+- `ASOF [LEFT] JOIN`, whose `ON` expression may reference only the source being joined and sources
+  introduced before it, and which for each left row selects the right row with matching equality
+  keys and greatest right timestamp not greater than the left timestamp; a tie uses the right
+  physical ordering key then row-version identity;
 - `FOR SYSTEM_TIME AS OF TIMESTAMP ...`, which resolves to the greatest single-node committed position whose recorded system timestamp is not later than the literal, then runs normal snapshot visibility at that position; and
 - `SUBSCRIBE SELECT`, whose eligible query subset and delivery records are governed by [live-query semantics](live-query-semantics.md).
 
@@ -108,6 +115,8 @@ primary         = literal | column_ref | function_call | cast | "(" expression "
 - **Equal sort keys:** `ORDER BY` breaks ties by stable logical row identity, then system commit position and row ordinal. These hidden tie-breakers affect presentation only and must survive compaction. An aggregate result tie uses its encoded group key.
 - **Unordered results:** without `ORDER BY`, a result is a multiset; row order may change with plan, parallelism, flush, or compaction and is not testable API behavior.
 - **Empty aggregates:** `COUNT` returns zero. `SUM`, `AVG`, `MIN`, `MAX`, `VAR_POP`, and `VAR_SAMP` return NULL; grouped queries with no groups return no rows.
+- **Aggregate ordering:** an aggregate expression used only by `ORDER BY` still makes the statement
+  an aggregate query. Projected and ordering expressions must then satisfy the same grouping rules.
 - **Aliases:** v1 requires `AS`. A select alias is visible to `ORDER BY`, not to `WHERE` or `GROUP BY`. Table aliases replace the original qualifier within the query.
 - **Duplicate names:** an unqualified ambiguous reference is a bind error. Explicit select items must have unique output names; joins using `*` qualify colliding names as `alias.column`, otherwise binding fails if no unique qualifier exists.
 - **ASOF and LATEST determinism:** their key, time, and tie-break expressions must be bound and deterministic; volatile functions are not part of v1.

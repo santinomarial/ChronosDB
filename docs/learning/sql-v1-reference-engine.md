@@ -33,7 +33,8 @@ The public headers under `include/chronos/query/` are self-contained and install
 - `catalog.hpp` creates an immutable, generation-tagged mapping from canonical table names to
   `shared_ptr<const TableSchema>`. A bound plan retains this snapshot.
 - `binder.hpp` resolves SELECT sources, columns, types, aliases, aggregate/grouping rules, LATEST,
-  and ASOF shapes. Execution never performs name lookup.
+  and ASOF shapes. Execution never performs name lookup. The source limit is hard-capped at 64
+  because the bounded plan represents referenced sources with one checked 64-bit mask.
 - `literal.hpp` parses normalized timestamp, date, interval, integer, floating, and UUID payloads.
 - `value.hpp` owns every SQL v1 scalar representation and implements SQL equality plus deterministic
   total ordering.
@@ -125,14 +126,16 @@ Binding performs all name resolution before execution:
 Implicit conversion is only lossless widening inside signed integers, inside unsigned integers, and
 FLOAT32 to FLOAT64. Signed/unsigned, decimal/float, text/symbol, and date/timestamp crossings require
 an explicit CAST. Untyped NULL is accepted only where context supplies a target, such as CAST,
-COALESCE, comparison, or INSERT assignment. The binder rejects unsupported functions, nested
+COALESCE, comparison, or INSERT assignment. COALESCE materializes the chosen non-NULL argument at
+the bound common type. The binder rejects unsupported functions, nested
 aggregates, aggregate/non-grouped column mixtures, and untyped result columns.
 
 LATEST keys resolve to primary-source schema ordinals, and its timestamp expression must be a
 deterministic primary-source TIMESTAMP_NS expression. ASOF accepts a conjunction containing at least
 one cross-source equality key and exactly one right timestamp not greater than a prior-source
-timestamp. The bound plan records the right source and right timestamp span so the executor does not
-rediscover temporal-join meaning.
+timestamp. Each ASOF condition may reference only that right source and sources introduced before
+it; later join aliases are rejected during binding. The bound plan records the right source and
+right timestamp span so the executor does not rediscover temporal-join meaning.
 
 CREATE TABLE binding requires a unique declared column set; a non-null TIMESTAMP_NS event column;
 known, duplicate-free role lists; event time in physical ordering and partitioning; non-null shard
@@ -175,7 +178,8 @@ The scalar executor favors auditability over asymptotic performance:
 3. For each ASOF join, scan the right snapshot for every current left row, evaluate the bound
    condition, and retain the greatest eligible right timestamp with the same tie-breakers.
 4. Apply WHERE using three-valued predicates.
-5. Either project rows or form typed groups and evaluate aggregates.
+5. Either project rows or form typed groups and evaluate aggregates. An aggregate appearing only in
+   ORDER BY still selects the aggregate path and applies grouping validation to projected values.
 6. Evaluate ORDER BY keys and sort with stable hidden logical/version tie-breakers.
 7. Apply LIMIT and move values into an owned result.
 

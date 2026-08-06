@@ -1,0 +1,1 @@
+SELECT coalesce(CAST(NULL AS INT8), CAST(7 AS INT8), CAST(9 AS INT64)) AS widened FROM t

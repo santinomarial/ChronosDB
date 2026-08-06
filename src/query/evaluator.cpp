@@ -755,7 +755,7 @@ private:
       for (const SqlExpression& child : expression.children()) {
         ScalarValue value = evaluate(child, depth + 1U);
         if (!value.is_null())
-          return value;
+          return cast(expression, value);
       }
       return typed_null(expression);
     }

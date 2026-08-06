@@ -151,6 +151,15 @@ TEST(SqlExplainTest, ExecutesAnalyzeOnceAndReportsMeasuredOperatorCounters) {
             common::StatusCode::kNotSupported);
 }
 
+TEST(SqlExplainTest, ReportsAnAggregateUsedOnlyByOrderBy) {
+  const ExplainFixtures data = fixtures();
+  BoundSqlSelect plan = bind("EXPLAIN SELECT 1 AS one FROM t ORDER BY count(*)", data);
+  const SqlResult<std::string> explained = explain_sql_v1_select(plan);
+  ASSERT_TRUE(explained.has_value()) << explained.error().status().to_string();
+  EXPECT_NE(explained->find("logical.aggregate=1\n"), std::string::npos);
+  EXPECT_NE(explained->find("physical.operators=scan,aggregate,project,sort\n"), std::string::npos);
+}
+
 TEST(SqlExplainTest, RejectsUnsupportedModeAndWrongAnalyzeEntryPoint) {
   const ExplainFixtures data = fixtures();
   BoundSqlSelect subscribe = bind("SUBSCRIBE SELECT value FROM t", data);

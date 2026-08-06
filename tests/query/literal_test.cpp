@@ -15,6 +15,10 @@ TEST(SqlLiteralTest, ParsesExactUtcNanosecondsAndCalendarBoundaries) {
   EXPECT_EQ(parse_sql_timestamp_ns_literal("1969-12-31 23:59:59.999999999Z").value(), -1);
   EXPECT_EQ(parse_sql_timestamp_ns_literal("2000-02-29 12:34:56.123Z").value(),
             951'827'696'123'000'000LL);
+  EXPECT_EQ(parse_sql_timestamp_ns_literal("1677-09-21 00:12:43.145224192Z").value(),
+            std::numeric_limits<std::int64_t>::min());
+  EXPECT_EQ(parse_sql_timestamp_ns_literal("1677-09-21 00:12:43.145224193Z").value(),
+            std::numeric_limits<std::int64_t>::min() + 1);
   EXPECT_EQ(parse_sql_timestamp_ns_literal("2262-04-11 23:47:16.854775807Z").value(),
             std::numeric_limits<std::int64_t>::max());
 
@@ -24,6 +28,8 @@ TEST(SqlLiteralTest, ParsesExactUtcNanosecondsAndCalendarBoundaries) {
            "2024-02-29 24:00:00Z",
            "2024-02-29 00:00:60Z",
            "2024-02-29 00:00:00.1234567890Z",
+           "1677-09-21 00:12:43.145224191Z",
+           "1677-09-21 00:12:42.999999999Z",
            "2262-04-11 23:47:16.854775808Z",
            "2024-02-29 00:00:00+00:00",
        }) {

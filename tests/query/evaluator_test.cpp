@@ -30,6 +30,11 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
   return Identifier::from_bytes(bytes).value();
 }
 
+template <typename Value>
+[[nodiscard]] const Value* optional_pointer(const std::optional<Value>& value) noexcept {
+  return value.has_value() ? std::addressof(*value) : nullptr;
+}
+
 [[nodiscard]] schema::LogicalType type(const schema::LogicalTypeKind kind) {
   return schema::LogicalType::create(kind).value();
 }
@@ -127,6 +132,43 @@ TEST(ScalarEvaluatorTest, EvaluatesBoundColumnsArithmeticAndScalarFunctions) {
   EXPECT_EQ(*std::get_if<std::int64_t>(&magnitude->storage()), 7);
   EXPECT_EQ(*std::get_if<std::string>(&folded->storage()), "abc");
   EXPECT_EQ(*std::get_if<std::int64_t>(&bucket->storage()), -120'000'000'000LL);
+}
+
+TEST(ScalarEvaluatorTest, MaterializesCoalesceValuesAtTheBoundCommonType) {
+  BoundSqlSelect plan =
+      bind("SELECT coalesce(CAST(NULL AS INT8), CAST(7 AS INT8), CAST(9 AS INT64)) AS i, "
+           "coalesce(CAST(7 AS UINT8), CAST(9 AS UINT64)) AS u, "
+           "coalesce(CAST(NULL AS FLOAT32), CAST(1.25 AS FLOAT32), CAST(2 AS FLOAT64)) AS f, "
+           "coalesce(CAST(NULL AS INT8), CAST(NULL AS INT64)) AS n FROM t");
+
+  const SqlResult<ScalarValue> integer =
+      evaluate_sql_v1_expression(plan, *plan.syntax().items()[0].expression());
+  const SqlResult<ScalarValue> unsigned_value =
+      evaluate_sql_v1_expression(plan, *plan.syntax().items()[1].expression());
+  const SqlResult<ScalarValue> floating_value =
+      evaluate_sql_v1_expression(plan, *plan.syntax().items()[2].expression());
+  const SqlResult<ScalarValue> null_value =
+      evaluate_sql_v1_expression(plan, *plan.syntax().items()[3].expression());
+  ASSERT_TRUE(integer.has_value()) << integer.error().status().to_string();
+  ASSERT_TRUE(unsigned_value.has_value()) << unsigned_value.error().status().to_string();
+  ASSERT_TRUE(floating_value.has_value()) << floating_value.error().status().to_string();
+  ASSERT_TRUE(null_value.has_value()) << null_value.error().status().to_string();
+  const schema::LogicalType* integer_type = optional_pointer(integer->type());
+  const schema::LogicalType* unsigned_type = optional_pointer(unsigned_value->type());
+  const schema::LogicalType* floating_type = optional_pointer(floating_value->type());
+  const schema::LogicalType* null_type = optional_pointer(null_value->type());
+  ASSERT_NE(integer_type, nullptr);
+  ASSERT_NE(unsigned_type, nullptr);
+  ASSERT_NE(floating_type, nullptr);
+  ASSERT_NE(null_type, nullptr);
+  EXPECT_EQ(integer_type->kind(), schema::LogicalTypeKind::kInt64);
+  EXPECT_EQ(unsigned_type->kind(), schema::LogicalTypeKind::kUInt64);
+  EXPECT_EQ(floating_type->kind(), schema::LogicalTypeKind::kFloat64);
+  EXPECT_EQ(null_type->kind(), schema::LogicalTypeKind::kInt64);
+  EXPECT_EQ(std::get<std::int64_t>(integer->storage()), 7);
+  EXPECT_EQ(std::get<std::uint64_t>(unsigned_value->storage()), 7U);
+  EXPECT_DOUBLE_EQ(std::get<double>(floating_value->storage()), 1.25);
+  EXPECT_TRUE(null_value->is_null());
 }
 
 TEST(ScalarEvaluatorTest, ImplementsThreeValuedPredicatesBetweenAndIn) {

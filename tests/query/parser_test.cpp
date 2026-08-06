@@ -101,6 +101,20 @@ TEST(SqlParserTest, ParsesNullInAndEveryCastTypeWithoutImplicitSemantics) {
   EXPECT_EQ(parsed->where()->children()[1].operation(), SqlOperator::kNotIn);
 }
 
+TEST(SqlParserTest, DistinguishesContextualTypeKeywordsFromReservedKeywords) {
+  const SqlResult<ParsedSqlSelect> contextual =
+      parse_sql_v1_select("SELECT symbol FROM symbol AS string");
+  ASSERT_TRUE(contextual.has_value()) << contextual.error().status().to_string();
+  EXPECT_EQ(contextual->items().front().expression()->name().front().text(), "symbol");
+  EXPECT_EQ(contextual->source().table.text(), "symbol");
+  const SqlIdentifier* alias = optional_pointer(contextual->source().alias);
+  ASSERT_NE(alias, nullptr);
+  EXPECT_EQ(alias->text(), "string");
+
+  EXPECT_FALSE(parse_sql_v1_select("SELECT select FROM t").has_value());
+  EXPECT_TRUE(parse_sql_v1_select("SELECT \"select\" FROM \"from\"").has_value());
+}
+
 TEST(SqlParserTest, ParsesCanonicalCreateTableAndInsertStatements) {
   const SqlResult<ParsedSqlCreateTable> create = parse_sql_v1_create_table(
       "CREATE TABLE trades (ts TIMESTAMP_NS NOT NULL, symbol SYMBOL NOT NULL, "

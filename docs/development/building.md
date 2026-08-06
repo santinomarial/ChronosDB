@@ -122,8 +122,8 @@ use. Catalog schema binding requires the separate schema-aware library API.
 Install to a staging prefix with `cmake --install build/release --prefix <directory>`. This installs
 the operator and benchmark tools, all public headers, the implemented common, schema, columnar,
 CSEG, POSIX I/O, WAL, head, ingest, Manifest, and query libraries, and a CMake package exporting their
-`chronos::` targets. The test suite builds an external project against the installed
-`chronos::ingest` surface.
+`chronos::` targets. The test suite builds and runs an external project against every installed
+public target, including the SQL query surface.
 
 ## Sanitizers
 
