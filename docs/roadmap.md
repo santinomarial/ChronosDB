@@ -133,8 +133,11 @@ No phase passes because its code merely compiles. A phase passes only when its a
   widths. The executor matrix additionally covers correctness-guarded steady matching retries at
   64, 1,024, and 65,536 rows without a second WAL result, plus real-WAL 50/50 and 10/90
   first-attempt/retry operation ratios at 64 and 1,024 rows. Retry retention, routing/admission,
-  flush handoff, hardware cache profiles, larger retry-population contention/retained-memory
-  measurement, and the wider end-to-end Phase 4 benchmark matrix remain unimplemented.
+  and flush handoff remain unimplemented. Dedicated retry-directory cases cover matching lookup at
+  64, 4,096, and 65,536 committed entries plus 1-/2-/4-thread contention on the two larger
+  populations, with construction allocation-call/requested-byte counters. Hardware cache profiles,
+  true retained allocator/RSS measurement, and the wider end-to-end Phase 4 benchmark matrix remain
+  unimplemented.
 
 - **Scope:** typed immutable input batches; null/variable-width representation; append-only tablet heads; sealing; single shard-worker ownership; stable reader boundaries; idempotent ordered replay into heads.
 - **Explicit non-scope:** durable columnar parts, SQL execution, secondary indexes, general lock-free containers, live subscriptions, and a universal allocator.

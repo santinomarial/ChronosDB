@@ -110,9 +110,15 @@ publication, and durability work enabled for first attempts. A separate steady m
 re-encodes and re-digests 64-, 1,024-, and 65,536-row batches against one pre-established committed
 identity while asserting exact outcome-pointer reuse and the absence of a second WAL result. The
 executor also measures 50/50 and 10/90 first-attempt/retry operation ratios at 64 and 1,024 rows,
-with one real first apply per timed cycle. The wider Phase 4 matrix must still cover lookup
-contention and retained memory across larger identity populations. Evidence from that workload can
-justify a partitioned or hash-based implementation later.
+with one real first apply per timed cycle.
+
+A dedicated retry-directory benchmark constructs 64-, 4,096-, and 65,536-entry committed
+populations, cycles deterministic matching lookups, and checks that cardinality never changes.
+Shared 4,096- and 65,536-entry cases run 1, 2, and 4 threads against the same mutex-protected
+directory. Benchmark-only instrumentation reports the number of regular allocation calls and total
+requested bytes during population construction. That total includes transient reservation handles
+and is deliberately not labeled retained memory or allocator/RSS overhead. Those measurements are
+local evidence for the current `std::map`, not a justification to replace it from one machine.
 
 ## Verification strategy
 

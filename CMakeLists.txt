@@ -588,7 +588,12 @@ if(CHRONOS_BUILD_BENCHMARKS)
     benchmarks/ingest/columnar_append_benchmark.cpp
     benchmarks/ingest/columnar_append_executor_benchmark.cpp
     benchmarks/ingest/columnar_append_recovery_benchmark.cpp
+    benchmarks/ingest/retry_directory_benchmark.cpp
     benchmarks/ingest/tablet_state_benchmark.cpp
+    benchmarks/support/counting_allocator.cpp
+  )
+  target_include_directories(
+    chronos_ingest_benchmarks PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks"
   )
   set_target_properties(chronos_ingest_benchmarks PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_ingest_benchmarks PRIVATE cxx_std_23)
