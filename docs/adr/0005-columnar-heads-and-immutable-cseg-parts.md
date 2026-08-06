@@ -58,6 +58,11 @@ This decision directly enforces invariants [2, 3, 6, 7, 10, 11, 13, 14, and 16](
 
 The CSEG byte layout, page/granule sizes, checksum and compression algorithms, per-type encodings, exact sort keys, partition duration, reorder horizon, head representation, secondary index types, compaction policy, and garbage-collection protocol are deferred.
 
+**Retrospective note (2026-08-06):** [ADR 0016](0016-cseg-v1-layout-integrity-and-compression.md)
+and the [CSEG v1 specification](../formats/cseg-v1.md) resolve the v1 byte layout, page/granule
+bounds, checksums, baseline encoding, compressor, and physical sort order. The other policies above
+remain deferred to their roadmap phases.
+
 ## Migration or reversal implications
 
 CSEG versions and manifest compatibility rules must permit explicit upgrade or rejection once data exists. Changing the storage model after v1 would require converters or dual readers and a superseding ADR. Adding an evidence-backed optional index or Parquet export does not reverse the primary-store decision.

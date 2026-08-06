@@ -3,8 +3,9 @@
 > **Status: specified; logical schema foundation implemented.** This document defines the logical
 > contract. Logical type and schema identity/evolution rules are frozen by
 > [ADR 0014](../adr/0014-logical-types-schema-identity-and-evolution.md), and ingestion bytes are
-> frozen by [columnar-batch v1](../formats/columnar-batch-v1.md). CSEG and catalog encodings remain
-> deferred to their roadmap phases and [accepted ADRs](../adr/README.md). The `chronos_schema`
+> frozen by [columnar-batch v1](../formats/columnar-batch-v1.md). The
+> [CSEG v1](../formats/cseg-v1.md) part encoding is now frozen; catalog encoding remains deferred to
+> its roadmap phase and [accepted ADRs](../adr/README.md). The `chronos_schema`
 > target implements the in-memory identity/type/schema/lineage subset; table storage remains absent.
 
 ## Core table concepts
@@ -34,7 +35,8 @@ the tablet, client-batch identity, digest, outcome, operation kind, and mutation
 the logical per-tablet commit position and replay this data model. WAL record sequence is not event
 time, receive time, or a complete row-version identity by itself.
 
-The illustrative DDL clauses below are part of the planned [SQL v1](sql-v1.md) contract. Exact catalog storage and CSEG encodings remain deferred.
+The illustrative DDL clauses below are part of the planned [SQL v1](sql-v1.md) contract. Exact
+catalog storage remains deferred.
 
 ## Initial logical types
 
@@ -195,7 +197,7 @@ The reorder stage and delta builder must be query-visible through a stable snaps
 ## Deferred parameters
 
 Catalog encoding, generated-identity representation, correction/tombstone write syntax, default
-retention and lateness, system timestamp assignment, CSEG type encodings, collation, partition
+retention and lateness, system timestamp assignment, additional CSEG encodings, collation, partition
 evolution, tablet hashing, and cross-tablet temporal coordination remain deferred. The initial WAL
 application body and ingest dictionary scope are fixed by
 [ADR 0015](../adr/0015-columnar-batch-v1-and-wal-append-command.md) and

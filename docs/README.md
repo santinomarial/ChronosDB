@@ -33,6 +33,9 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Columnar batch v1](formats/columnar-batch-v1.md): accepted self-describing immutable batch bytes,
   logical type registry, integrity coverage, and canonical validation rules; the standalone
   in-memory codec is implemented independently of WAL framing.
+- [CSEG v1](formats/cseg-v1.md): accepted immutable sorted part layout, schema and system columns,
+  granules, independently checked pages, compression, ordering, and compatibility rules;
+  implementation is pending.
 - [Production dependencies](dependencies/README.md): maintained external-library boundaries,
   version sources, licenses, and update/security ownership.
 

@@ -148,6 +148,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
 
 ## Phase 5 — CSEG v1
 
+> **Current status:** the normative v1 byte contract and format decision are accepted. The codec,
+> fixtures, reader/writer/validator, inspector, fuzzing, package install/export coverage, learning
+> document, and measurements remain unimplemented.
+
 - **Scope:** specify and implement immutable sorted CSEG parts, granules, checksummed column pages, metadata, supported encodings/compressors, safe readers/writers, and inspection tooling.
 - **Explicit non-scope:** manifests, flush orchestration, compaction, remote objects, format v2 speculation, and indexes beyond metadata required by v1.
 - **Required artifacts:** normative CSEG v1 specification; format ADRs; golden/corrupt fixtures; reader, writer, validator, and inspector; compatibility policy; fuzz targets; learning document.

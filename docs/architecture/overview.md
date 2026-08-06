@@ -162,9 +162,16 @@ In the distributed phase, each tablet's authoritative ordering is its committed 
 
 ### CSEG parts
 
-CSEG is the planned public contract for versioned, immutable, sorted, compressed columnar parts. A part organizes rows into granules and independently checksummed column pages, with metadata sufficient for safe bounds validation and selective decoding. Fixed-width fields define byte order and encoding explicitly; native C++ object layouts are never serialized.
+CSEG is the accepted public contract for versioned, immutable, sorted, compressed columnar parts.
+The [CSEG v1 specification](../formats/cseg-v1.md) fixes one schema/tablet-bound file, canonical
+granules, schema and system columns, independently checksummed PLAIN pages, bounded raw/Zstandard
+storage, metadata integrity, physical row ordering, and compatibility behavior. The codec, reader,
+writer, validator, and inspector remain pending.
 
-Parts are written to temporary identities, fully validated and made durable according to the installation protocol, then atomically referenced by a manifest version edit. After installation they are never changed in place. The exact file decomposition, codecs, sort key, encodings, footer layout, and compatibility policy are deferred to the CSEG v1 specification and ADRs.
+Parts will be written to temporary identities, fully validated and made durable according to the
+future installation protocol, then atomically referenced by a manifest version edit. After
+installation they are never changed in place. Temporary naming, filesystem installation, manifest
+edits, flush, compaction, and reclamation remain deferred.
 
 ### Manifest, flush, and checkpointing
 
@@ -217,7 +224,7 @@ The following are accepted project constraints:
 Deferred design areas include the server durability default and production tuning of the bounded
 group-commit parameters; WAL application
 record kinds and checkpoint/reclamation integration; row identities and correction syntax; CSEG
-layout and codecs; head memory layout and publication ordering; manifest and garbage-collection
+codec implementation and additional encodings; manifest and garbage-collection
 protocol; SQL grammar and type system; optimizer rules; subscription result/change model; watermark
 finalization; scheduler and memory limits; authentication/TLS integration; Raft protocol details;
 multi-Raft log layout; distributed snapshot coordination; and object-tier policy. The WAL v1

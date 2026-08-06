@@ -50,3 +50,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0013](0013-wal-v1-format-and-recovery.md) | WAL v1 format and recovery | accepted |
 | [0014](0014-logical-types-schema-identity-and-evolution.md) | Logical types, schema identity, and evolution | accepted |
 | [0015](0015-columnar-batch-v1-and-wal-append-command.md) | Columnar batch v1 and WAL append command | accepted |
+| [0016](0016-cseg-v1-layout-integrity-and-compression.md) | CSEG v1 layout, integrity, and compression | accepted |

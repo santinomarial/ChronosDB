@@ -106,6 +106,11 @@ property-style, sanitizer, and fuzz-target coverage. Locked physical verificatio
 classification, explicit final-tail repair, ordered replay, and a process-kill crash-image matrix
 have deterministic tests. Physical power-loss and storage-stack qualification remain required.
 
+The accepted [CSEG v1 format](../formats/cseg-v1.md) satisfies the part-format design obligation:
+an early fixed-header CRC protects lengths used to find a complete metadata CRC, every page's
+interpretation and stored checksum are metadata-covered, and stored bytes are verified before
+bounded decompression. Codec and corruption-test evidence remains pending Phase 5 implementation.
+
 ## 11. Referenced storage is not reclaimed
 
 A file or memory region cannot be reclaimed, unmapped, overwritten, or reused while any active reader can reference it.
@@ -138,8 +143,12 @@ Every durable file/record and network frame carries or inherits an unambiguous f
 - **How it could be violated:** inferring layout from file size, dumping native structs, reinterpreting an old field, accepting unknown required flags, or changing semantics without changing the version/feature negotiation.
 - **Eventual tests:** maintain golden fixtures for every released version; test supported upgrade/downgrade matrices, unknown versions and flags, byte order, mixed-version connections, and corrupted version headers.
 
-WAL physical format 1.0 now has an immutable compatibility and rejection policy. Logical application
-kinds remain unavailable until their independently versioned payload specifications are accepted.
+WAL physical format 1.0 now has an immutable compatibility and rejection policy. Application format
+1, kind 2 (`COLUMNAR_APPEND`) has its independently versioned accepted payload specification; other
+logical kinds remain unavailable until accepted.
+
+CSEG format 1.0 now has an immutable compatibility prefix, registries, limits, and rejection policy.
+Its implementation and executable mixed-version evidence remain pending Phase 5.
 
 ## 15. Slow subscribers cannot block ingestion indefinitely
 

@@ -22,8 +22,12 @@ These definitions are normative vocabulary for architecture documents. Detailed 
 - **Reactor:** An event-loop worker that handles nonblocking network I/O and passes decoded immutable batches through bounded queues; it does not mutate tablet state directly.
 - **Mutable head:** An append-only, in-memory columnar structure containing recent committed rows or row versions for a tablet.
 - **Sealed head:** A mutable head closed to further appends and held stable while it is flushed or read.
-- **CSEG:** ChronosDB's planned versioned, immutable, sorted, compressed columnar on-disk format.
-- **Part:** An immutable CSEG file or atomic set of files representing a sorted tablet data range and installed through the manifest.
+- **CSEG:** ChronosDB's versioned, immutable, sorted, compressed columnar on-disk format; the v1
+  bytes are specified in [CSEG v1](formats/cseg-v1.md).
+- **CSEG part identity (`PartId`):** A stable nonzero opaque 128-bit identity for one immutable CSEG
+  file. Re-encoding or replacement creates a new identity.
+- **Part:** One immutable CSEG file representing a sorted tablet data range and installed through
+  the manifest.
 - **Granule:** A contiguous logical row range within a part and the unit addressed by sparse index entries.
 - **Page:** A bounded encoded block of one column within a part, independently integrity-checked and suitable for selective decoding.
 - **Manifest:** The authoritative, versioned description of installed parts and associated durable storage state for a tablet or database generation.
