@@ -254,6 +254,16 @@ int main() {
       chronos::query::ParsedSqlCreateTable,
       std::shared_ptr<const chronos::query::QueryCatalogSnapshot>);
   const BindCreateFunction bind_create = &chronos::query::bind_sql_v1_create_table;
+  using BindInsertFunction = chronos::query::SqlResult<chronos::query::BoundSqlInsert> (*)(
+      chronos::query::ParsedSqlInsert,
+      const std::shared_ptr<const chronos::query::QueryCatalogSnapshot>&,
+      chronos::query::SqlInsertBinderLimits);
+  const BindInsertFunction bind_insert = &chronos::query::bind_sql_v1_insert;
+  using MaterializeInsertFunction =
+      chronos::query::SqlResult<chronos::query::MaterializedSqlInsert> (*)(
+          const chronos::query::BoundSqlInsert&);
+  const MaterializeInsertFunction materialize_insert =
+      &chronos::query::materialize_sql_v1_insert_rows;
   using EvaluateExpressionFunction = chronos::query::SqlResult<chronos::query::ScalarValue> (*)(
       const chronos::query::BoundSqlSelect&, const chronos::query::SqlExpression&,
       const chronos::query::ScalarEvaluationContext&);
@@ -422,7 +432,8 @@ int main() {
                  parse_create != nullptr && parse_insert != nullptr &&
                  query_catalog.has_value() && query_catalog->tables().empty() &&
                  query_scalar.has_value() && !query_scalar->is_null() &&
-                 bind_select != nullptr && bind_create != nullptr &&
+                 bind_select != nullptr && bind_create != nullptr && bind_insert != nullptr &&
+                 materialize_insert != nullptr &&
                  evaluate_expression != nullptr &&
                  create_scalar_snapshot != nullptr &&
                  execute_select != nullptr &&

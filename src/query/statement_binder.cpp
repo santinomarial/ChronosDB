@@ -1,6 +1,7 @@
 #include "chronos/query/statement_binder.hpp"
 
 #include "chronos/common/status.hpp"
+#include "chronos/query/evaluator.hpp"
 #include "chronos/query/literal.hpp"
 #include "chronos/schema/column_definition.hpp"
 
@@ -125,6 +126,59 @@ role_ids(const std::span<const schema::ColumnId> identities,
   for (const std::size_t ordinal : ordinals)
     result.push_back(identities[ordinal]);
   return result;
+}
+
+[[nodiscard]] bool signed_integer(const schema::LogicalTypeKind kind) noexcept {
+  return kind >= schema::LogicalTypeKind::kInt8 && kind <= schema::LogicalTypeKind::kInt64;
+}
+
+[[nodiscard]] bool unsigned_integer(const schema::LogicalTypeKind kind) noexcept {
+  return kind >= schema::LogicalTypeKind::kUInt8 && kind <= schema::LogicalTypeKind::kUInt64;
+}
+
+[[nodiscard]] std::uint16_t integer_width(const schema::LogicalTypeKind kind) noexcept {
+  switch (kind) {
+  case schema::LogicalTypeKind::kInt8:
+  case schema::LogicalTypeKind::kUInt8:
+    return 8U;
+  case schema::LogicalTypeKind::kInt16:
+  case schema::LogicalTypeKind::kUInt16:
+    return 16U;
+  case schema::LogicalTypeKind::kInt32:
+  case schema::LogicalTypeKind::kUInt32:
+    return 32U;
+  case schema::LogicalTypeKind::kInt64:
+  case schema::LogicalTypeKind::kUInt64:
+    return 64U;
+  default:
+    return 0U;
+  }
+}
+
+[[nodiscard]] bool lossless_assignment(const std::optional<schema::LogicalType>& source,
+                                       const schema::LogicalType target) noexcept {
+  if (!source.has_value() || *source == target)
+    return true;
+  if (signed_integer(source->kind()) && signed_integer(target.kind()))
+    return integer_width(source->kind()) <= integer_width(target.kind());
+  if (unsigned_integer(source->kind()) && unsigned_integer(target.kind()))
+    return integer_width(source->kind()) <= integer_width(target.kind());
+  return source->kind() == schema::LogicalTypeKind::kFloat32 &&
+         target.kind() == schema::LogicalTypeKind::kFloat64;
+}
+
+[[nodiscard]] bool forbidden_insert_expression(const SqlExpression& expression) noexcept {
+  if (expression.kind() == SqlExpressionKind::kColumn ||
+      expression.kind() == SqlExpressionKind::kStar)
+    return true;
+  if (expression.kind() == SqlExpressionKind::kFunction) {
+    const std::string& name = expression.text();
+    if (name == "count" || name == "sum" || name == "avg" || name == "min" || name == "max" ||
+        name == "var_pop" || name == "var_samp") {
+      return true;
+    }
+  }
+  return std::ranges::any_of(expression.children(), forbidden_insert_expression);
 }
 
 } // namespace
@@ -303,6 +357,230 @@ materialize_sql_v1_table_schema(const BoundSqlCreateTable& statement,
     return std::unexpected(diagnostic(SqlDiagnosticCode::kResourceLimit, syntax.span(),
                                       common::StatusCode::kResourceExhausted,
                                       "CREATE TABLE materialization exceeds container limits"));
+  }
+}
+
+BoundSqlInsert::BoundSqlInsert(ParsedSqlInsert syntax,
+                               std::shared_ptr<const schema::TableSchema> schema,
+                               std::vector<std::size_t> target_column_ordinals,
+                               BoundSqlSelect expression_plan) noexcept
+    : syntax_(std::move(syntax)), schema_(std::move(schema)),
+      target_column_ordinals_(std::move(target_column_ordinals)),
+      expression_plan_(std::move(expression_plan)) {}
+
+const ParsedSqlInsert& BoundSqlInsert::syntax() const noexcept {
+  return syntax_;
+}
+const std::shared_ptr<const schema::TableSchema>& BoundSqlInsert::schema_ptr() const noexcept {
+  return schema_;
+}
+std::span<const std::size_t> BoundSqlInsert::target_column_ordinals() const noexcept {
+  return target_column_ordinals_;
+}
+
+MaterializedSqlInsert::MaterializedSqlInsert(std::shared_ptr<const schema::TableSchema> schema,
+                                             std::vector<std::vector<ScalarValue>> rows) noexcept
+    : schema_(std::move(schema)), rows_(std::move(rows)) {}
+
+const std::shared_ptr<const schema::TableSchema>&
+MaterializedSqlInsert::schema_ptr() const noexcept {
+  return schema_;
+}
+std::span<const std::vector<ScalarValue>> MaterializedSqlInsert::rows() const noexcept {
+  return rows_;
+}
+
+namespace detail {
+
+class SqlStatementBinder {
+public:
+  [[nodiscard]] static SqlResult<BoundSqlInsert>
+  bind_insert(ParsedSqlInsert syntax, const std::shared_ptr<const QueryCatalogSnapshot>& catalog,
+              const SqlInsertBinderLimits limits) {
+    if (catalog == nullptr || limits.maximum_rows == 0U || limits.maximum_values == 0U) {
+      return std::unexpected(invalid(SqlDiagnosticCode::kResourceLimit, syntax.span(),
+                                     "INSERT binding requires a catalog and nonzero limits"));
+    }
+    const QueryCatalogTable* table = catalog->find(syntax.table());
+    if (table == nullptr) {
+      return std::unexpected(invalid(SqlDiagnosticCode::kUnknownTable, syntax.table().span(),
+                                     "INSERT target table does not exist in the catalog snapshot"));
+    }
+    if (syntax.rows().size() > limits.maximum_rows) {
+      return std::unexpected(diagnostic(SqlDiagnosticCode::kResourceLimit, syntax.span(),
+                                        common::StatusCode::kResourceExhausted,
+                                        "INSERT row count exceeds the limit"));
+    }
+    try {
+      std::vector<std::size_t> targets;
+      if (syntax.columns().empty()) {
+        targets.resize(table->schema().columns().size());
+        for (std::size_t ordinal = 0U; ordinal < targets.size(); ++ordinal)
+          targets[ordinal] = ordinal;
+      } else {
+        targets.reserve(syntax.columns().size());
+        for (const SqlIdentifier& name : syntax.columns()) {
+          const schema::ColumnDefinition* column = table->schema().find_column(name.text());
+          if (column == nullptr) {
+            return std::unexpected(invalid(SqlDiagnosticCode::kUnknownColumn, name.span(),
+                                           "INSERT target names an unknown column"));
+          }
+          const std::optional<std::size_t> ordinal = table->schema().column_ordinal(column->id());
+          if (!ordinal.has_value()) {
+            return std::unexpected(invalid(SqlDiagnosticCode::kUnknownColumn, name.span(),
+                                           "INSERT target column has no schema ordinal"));
+          }
+          if (std::ranges::find(targets, *ordinal) != targets.end()) {
+            return std::unexpected(invalid(SqlDiagnosticCode::kDuplicateOutputName, name.span(),
+                                           "INSERT target column list repeats a column"));
+          }
+          targets.push_back(*ordinal);
+        }
+      }
+      for (std::size_t ordinal = 0U; ordinal < table->schema().columns().size(); ++ordinal) {
+        if (!table->schema().columns()[ordinal].nullable() &&
+            std::ranges::find(targets, ordinal) == targets.end()) {
+          return std::unexpected(invalid(SqlDiagnosticCode::kTypeMismatch, syntax.span(),
+                                         "INSERT omits a non-null column without a default"));
+        }
+      }
+
+      std::size_t value_count = 0U;
+      for (const std::vector<SqlExpression>& row : syntax.rows()) {
+        if (row.size() != targets.size()) {
+          return std::unexpected(invalid(SqlDiagnosticCode::kTypeMismatch, syntax.span(),
+                                         "INSERT row width does not match its target column list"));
+        }
+        if (row.size() > limits.maximum_values - value_count) {
+          return std::unexpected(diagnostic(SqlDiagnosticCode::kResourceLimit, syntax.span(),
+                                            common::StatusCode::kResourceExhausted,
+                                            "INSERT value count exceeds the limit"));
+        }
+        value_count += row.size();
+      }
+
+      std::vector<SqlSelectItem> items;
+      items.reserve(value_count);
+      std::size_t flat = 0U;
+      for (const std::vector<SqlExpression>& row : syntax.rows()) {
+        for (std::size_t column = 0U; column < row.size(); ++column) {
+          const SqlExpression& value = row[column];
+          if (forbidden_insert_expression(value)) {
+            return std::unexpected(invalid(
+                SqlDiagnosticCode::kTypeMismatch, value.span(),
+                "INSERT VALUES expressions cannot reference columns, stars, or aggregates"));
+          }
+          const schema::LogicalType target_type = table->schema().columns()[targets[column]].type();
+          const SourceSpan synthetic{.begin = {.byte_offset = syntax.span().byte_length + flat + 1U,
+                                               .line = 1U,
+                                               .column = 1U},
+                                     .byte_length = 0U};
+          std::vector<SqlExpression> child;
+          child.push_back(value);
+          SqlExpression cast{
+              SqlExpressionKind::kCast, SqlLiteralKind::kNull, SqlOperator::kNone, {}, {},
+              std::move(child),         target_type,           synthetic};
+          SqlIdentifier alias{"insert_value_" + std::to_string(flat), false, synthetic};
+          items.push_back(SqlSelectItem{SqlSelectItemKind::kExpression,
+                                        std::vector<SqlExpression>{std::move(cast)}, std::nullopt,
+                                        std::move(alias), synthetic});
+          ++flat;
+        }
+      }
+      ParsedSqlSelect expression_syntax{SqlSelectMode::kSelect,
+                                        std::move(items),
+                                        SqlSource{.table = syntax.table(), .alias = std::nullopt},
+                                        std::nullopt,
+                                        std::nullopt,
+                                        {},
+                                        {},
+                                        {},
+                                        {},
+                                        std::nullopt,
+                                        syntax.span()};
+      SqlResult<BoundSqlSelect> plan =
+          bind_sql_v1_select(std::move(expression_syntax), catalog,
+                             {.maximum_sources = 1U,
+                              .maximum_bound_expressions = 262'144U,
+                              .maximum_output_columns = limits.maximum_values});
+      if (!plan.has_value())
+        return std::unexpected(plan.error());
+
+      flat = 0U;
+      for (std::size_t row = 0U; row < syntax.rows().size(); ++row) {
+        for (std::size_t column = 0U; column < syntax.rows()[row].size(); ++column) {
+          const SqlExpression* wrapper = plan->syntax().items()[flat].expression();
+          const SqlExpression& operand = wrapper->children().front();
+          const BoundExpressionInfo* information = plan->find_expression(operand.span());
+          const schema::LogicalType target_type = table->schema().columns()[targets[column]].type();
+          if (information == nullptr || !lossless_assignment(information->type, target_type)) {
+            return std::unexpected(
+                invalid(SqlDiagnosticCode::kTypeMismatch, syntax.rows()[row][column].span(),
+                        "INSERT value requires an explicit SQL v1 conversion to its target type"));
+          }
+          ++flat;
+        }
+      }
+      return BoundSqlInsert{std::move(syntax), table->schema_ptr(), std::move(targets),
+                            std::move(*plan)};
+    } catch (const std::bad_alloc&) {
+      return std::unexpected(diagnostic(SqlDiagnosticCode::kResourceLimit, syntax.span(),
+                                        common::StatusCode::kResourceExhausted,
+                                        "INSERT binding allocation failed"));
+    } catch (const std::length_error&) {
+      return std::unexpected(diagnostic(SqlDiagnosticCode::kResourceLimit, syntax.span(),
+                                        common::StatusCode::kResourceExhausted,
+                                        "INSERT binding exceeds container limits"));
+    }
+  }
+};
+
+} // namespace detail
+
+SqlResult<BoundSqlInsert>
+bind_sql_v1_insert(ParsedSqlInsert syntax,
+                   const std::shared_ptr<const QueryCatalogSnapshot>& catalog,
+                   const SqlInsertBinderLimits limits) {
+  return detail::SqlStatementBinder::bind_insert(std::move(syntax), catalog, limits);
+}
+
+SqlResult<MaterializedSqlInsert> materialize_sql_v1_insert_rows(const BoundSqlInsert& statement) {
+  try {
+    std::vector<std::vector<ScalarValue>> rows;
+    rows.reserve(statement.syntax().rows().size());
+    std::size_t flat = 0U;
+    for (std::size_t row = 0U; row < statement.syntax().rows().size(); ++row) {
+      std::vector<ScalarValue> values;
+      values.reserve(statement.schema_ptr()->columns().size());
+      for (const schema::ColumnDefinition& column : statement.schema_ptr()->columns())
+        values.push_back(ScalarValue::null(column.type()));
+      for (std::size_t column = 0U; column < statement.target_column_ordinals().size(); ++column) {
+        const SqlExpression* expression =
+            statement.expression_plan_.syntax().items()[flat].expression();
+        SqlResult<ScalarValue> value =
+            evaluate_sql_v1_expression(statement.expression_plan_, *expression);
+        if (!value.has_value())
+          return std::unexpected(value.error());
+        const std::size_t ordinal = statement.target_column_ordinals()[column];
+        if (value->is_null() && !statement.schema_ptr()->columns()[ordinal].nullable()) {
+          return std::unexpected(invalid(SqlDiagnosticCode::kTypeMismatch,
+                                         statement.syntax().rows()[row][column].span(),
+                                         "INSERT evaluated NULL for a non-null column"));
+        }
+        values[ordinal] = std::move(*value);
+        ++flat;
+      }
+      rows.push_back(std::move(values));
+    }
+    return MaterializedSqlInsert{statement.schema_ptr(), std::move(rows)};
+  } catch (const std::bad_alloc&) {
+    return std::unexpected(diagnostic(SqlDiagnosticCode::kResourceLimit, statement.syntax().span(),
+                                      common::StatusCode::kResourceExhausted,
+                                      "INSERT materialization allocation failed"));
+  } catch (const std::length_error&) {
+    return std::unexpected(diagnostic(SqlDiagnosticCode::kResourceLimit, statement.syntax().span(),
+                                      common::StatusCode::kResourceExhausted,
+                                      "INSERT materialization exceeds container limits"));
   }
 }
 

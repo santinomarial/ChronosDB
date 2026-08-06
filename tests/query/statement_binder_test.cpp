@@ -2,7 +2,10 @@
 #include "chronos/query/catalog.hpp"
 #include "chronos/query/parser.hpp"
 #include "chronos/query/statement_binder.hpp"
+#include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/identity.hpp"
+#include "chronos/schema/logical_type.hpp"
+#include "chronos/schema/table_schema.hpp"
 
 #include <algorithm>
 #include <array>
@@ -10,7 +13,11 @@
 #include <cstdint>
 #include <gtest/gtest.h>
 #include <memory>
+#include <optional>
+#include <string>
 #include <string_view>
+#include <variant>
+#include <vector>
 
 namespace chronos::query {
 namespace {
@@ -21,8 +28,45 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
   return Identifier::from_bytes(bytes).value();
 }
 
+template <typename Value>
+[[nodiscard]] const Value* optional_pointer(const std::optional<Value>& value) noexcept {
+  return value.has_value() ? std::addressof(*value) : nullptr;
+}
+
 [[nodiscard]] std::shared_ptr<const QueryCatalogSnapshot> empty_catalog() {
   QueryCatalogSnapshot catalog = QueryCatalogSnapshot::create(9U, {}).value();
+  return std::make_shared<const QueryCatalogSnapshot>(std::move(catalog));
+}
+
+[[nodiscard]] std::shared_ptr<const QueryCatalogSnapshot> insert_catalog() {
+  std::vector<schema::ColumnDefinition> columns;
+  for (const auto& [name, kind, nullable] : {
+           std::tuple{std::string_view{"ts"}, schema::LogicalTypeKind::kTimestampNs, false},
+           std::tuple{std::string_view{"symbol"}, schema::LogicalTypeKind::kSymbol, false},
+           std::tuple{std::string_view{"quantity"}, schema::LogicalTypeKind::kInt64, false},
+           std::tuple{std::string_view{"price"}, schema::LogicalTypeKind::kFloat64, true},
+           std::tuple{std::string_view{"note"}, schema::LogicalTypeKind::kString, true},
+       }) {
+    columns.push_back(schema::ColumnDefinition::create(
+                          id<schema::ColumnId>(static_cast<std::uint8_t>(columns.size() + 3U)),
+                          std::string{name}, schema::LogicalType::create(kind).value(), nullable)
+                          .value());
+  }
+  const schema::ColumnId event_time = columns[0].id();
+  const schema::ColumnId symbol = columns[1].id();
+  auto table = std::make_shared<const schema::TableSchema>(
+      schema::TableSchema::create(id<schema::TableId>(1U), id<schema::SchemaId>(2U),
+                                  schema::SchemaVersion::initial(), std::nullopt,
+                                  std::move(columns),
+                                  {.event_time_column = event_time,
+                                   .physical_ordering_key = {event_time},
+                                   .partition_columns = {event_time},
+                                   .shard_key = {symbol},
+                                   .deduplication_key = {symbol}})
+          .value());
+  const std::array inputs{
+      QueryCatalogTableInput{.name = "trades", .quoted = false, .schema = std::move(table)}};
+  QueryCatalogSnapshot catalog = QueryCatalogSnapshot::create(10U, inputs).value();
   return std::make_shared<const QueryCatalogSnapshot>(std::move(catalog));
 }
 
@@ -31,6 +75,14 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
   if (!parsed.has_value())
     return std::unexpected(parsed.error());
   return bind_sql_v1_create_table(std::move(*parsed), empty_catalog());
+}
+
+[[nodiscard]] SqlResult<BoundSqlInsert> bind_insert(const std::string_view sql,
+                                                    const SqlInsertBinderLimits limits = {}) {
+  SqlResult<ParsedSqlInsert> parsed = parse_sql_v1_insert(sql);
+  if (!parsed.has_value())
+    return std::unexpected(parsed.error());
+  return bind_sql_v1_insert(std::move(*parsed), insert_catalog(), limits);
 }
 
 constexpr std::string_view kCreate =
@@ -105,6 +157,84 @@ TEST(SqlStatementBinderTest, RequiresExactIdentityCountDuringMaterialization) {
   const std::array ids{id<schema::ColumnId>(3U)};
   EXPECT_EQ(materialize_sql_v1_table_schema(*bound, id<schema::TableId>(1U),
                                             id<schema::SchemaId>(2U), ids)
+                .error()
+                .code(),
+            SqlDiagnosticCode::kResourceLimit);
+}
+
+TEST(SqlStatementBinderTest, BindsAndMaterializesConstantInsertRowsInSchemaOrder) {
+  SqlResult<BoundSqlInsert> bound =
+      bind_insert("INSERT INTO trades (ts, symbol, quantity) VALUES "
+                  "(TIMESTAMP '1970-01-01 00:00:00.000000001Z', CAST('A' AS SYMBOL), 40 + 2), "
+                  "(TIMESTAMP '1970-01-01 00:00:00.000000002Z', CAST(UPPER('b') AS SYMBOL), 7)");
+  ASSERT_TRUE(bound.has_value()) << bound.error().status().to_string();
+  EXPECT_TRUE(
+      std::ranges::equal(bound->target_column_ordinals(), std::array<std::size_t, 3>{0U, 1U, 2U}));
+  EXPECT_EQ(bound->schema_ptr()->schema_id(), id<schema::SchemaId>(2U));
+
+  SqlResult<MaterializedSqlInsert> materialized = materialize_sql_v1_insert_rows(*bound);
+  ASSERT_TRUE(materialized.has_value()) << materialized.error().status().to_string();
+  ASSERT_EQ(materialized->rows().size(), 2U);
+  ASSERT_EQ(materialized->rows()[0].size(), 5U);
+  EXPECT_EQ(std::get<std::int64_t>(materialized->rows()[0][0].storage()), 1);
+  EXPECT_EQ(std::get<std::string>(materialized->rows()[0][1].storage()), "A");
+  EXPECT_EQ(std::get<std::int64_t>(materialized->rows()[0][2].storage()), 42);
+  EXPECT_TRUE(materialized->rows()[0][3].is_null());
+  const schema::LogicalType* price_type = optional_pointer(materialized->rows()[0][3].type());
+  ASSERT_NE(price_type, nullptr);
+  EXPECT_EQ(price_type->kind(), schema::LogicalTypeKind::kFloat64);
+  EXPECT_TRUE(materialized->rows()[0][4].is_null());
+  EXPECT_EQ(std::get<std::string>(materialized->rows()[1][1].storage()), "B");
+}
+
+TEST(SqlStatementBinderTest, RejectsInvalidInsertTargetsAssignmentsAndExpressions) {
+  EXPECT_EQ(bind_insert("INSERT INTO missing VALUES (1)").error().code(),
+            SqlDiagnosticCode::kUnknownTable);
+  EXPECT_EQ(bind_insert("INSERT INTO trades (ts, ts, symbol, quantity) VALUES "
+                        "(TIMESTAMP '1970-01-01 00:00:00Z', "
+                        "TIMESTAMP '1970-01-01 00:00:00Z', CAST('A' AS SYMBOL), 1)")
+                .error()
+                .code(),
+            SqlDiagnosticCode::kDuplicateOutputName);
+  EXPECT_EQ(bind_insert("INSERT INTO trades (ts, symbol) VALUES "
+                        "(TIMESTAMP '1970-01-01 00:00:00Z', CAST('A' AS SYMBOL))")
+                .error()
+                .code(),
+            SqlDiagnosticCode::kTypeMismatch);
+  EXPECT_EQ(bind_insert("INSERT INTO trades (ts, symbol, quantity) VALUES "
+                        "(TIMESTAMP '1970-01-01 00:00:00Z', 'A', 1)")
+                .error()
+                .code(),
+            SqlDiagnosticCode::kTypeMismatch);
+  EXPECT_EQ(bind_insert("INSERT INTO trades (ts, symbol, quantity) VALUES "
+                        "(TIMESTAMP '1970-01-01 00:00:00Z', CAST('A' AS SYMBOL), quantity)")
+                .error()
+                .code(),
+            SqlDiagnosticCode::kTypeMismatch);
+  EXPECT_EQ(bind_insert("INSERT INTO trades (ts, symbol, quantity) VALUES "
+                        "(TIMESTAMP '1970-01-01 00:00:00Z', CAST('A' AS SYMBOL), count(*))")
+                .error()
+                .code(),
+            SqlDiagnosticCode::kTypeMismatch);
+}
+
+TEST(SqlStatementBinderTest, RejectsMaterializedNullAndEnforcesInsertLimits) {
+  SqlResult<BoundSqlInsert> null_value =
+      bind_insert("INSERT INTO trades (ts, symbol, quantity) VALUES "
+                  "(TIMESTAMP '1970-01-01 00:00:00Z', CAST('A' AS SYMBOL), NULL)");
+  ASSERT_TRUE(null_value.has_value()) << null_value.error().status().to_string();
+  EXPECT_EQ(materialize_sql_v1_insert_rows(*null_value).error().code(),
+            SqlDiagnosticCode::kTypeMismatch);
+
+  EXPECT_EQ(bind_insert("INSERT INTO trades VALUES (TIMESTAMP '1970-01-01 00:00:00Z', "
+                        "CAST('A' AS SYMBOL), 1, CAST(1 AS FLOAT64), 'x')",
+                        {.maximum_rows = 1U, .maximum_values = 4U})
+                .error()
+                .code(),
+            SqlDiagnosticCode::kResourceLimit);
+  EXPECT_EQ(bind_insert("INSERT INTO trades VALUES (TIMESTAMP '1970-01-01 00:00:00Z', "
+                        "CAST('A' AS SYMBOL), 1, CAST(1 AS FLOAT64), 'x')",
+                        {.maximum_rows = 0U, .maximum_values = 5U})
                 .error()
                 .code(),
             SqlDiagnosticCode::kResourceLimit);

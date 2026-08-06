@@ -14,7 +14,8 @@ namespace chronos::query {
 
 namespace detail {
 class SqlParser;
-}
+class SqlStatementBinder;
+} // namespace detail
 
 class SqlIdentifier {
 public:
@@ -30,6 +31,7 @@ private:
   SourceSpan span_;
 
   friend class detail::SqlParser;
+  friend class detail::SqlStatementBinder;
 };
 
 enum class SqlLiteralKind : std::uint8_t {
@@ -113,6 +115,7 @@ private:
   SourceSpan span_;
 
   friend class detail::SqlParser;
+  friend class detail::SqlStatementBinder;
 };
 
 enum class SqlSelectItemKind : std::uint8_t {
@@ -141,6 +144,7 @@ private:
   SourceSpan span_;
 
   friend class detail::SqlParser;
+  friend class detail::SqlStatementBinder;
 };
 
 struct SqlSource {
@@ -216,6 +220,7 @@ private:
   SourceSpan span_;
 
   friend class detail::SqlParser;
+  friend class detail::SqlStatementBinder;
 };
 
 struct SqlColumnDeclaration {
