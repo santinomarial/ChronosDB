@@ -43,7 +43,9 @@
 > conflict classification. A test-only allocator now forces each retry-directory, mutable-head,
 > tablet preparation, deduplication, and rotation allocation to fail in turn, and verifies the
 > expected post-WAL in-memory path is allocation-free. Retry retention, routing/admission, and
-> flush handoff remain unimplemented.
+> flush handoff remain unimplemented. Manifest v1 and the Phase 6 installation/checkpoint crash
+> state machine are accepted specifications; none of their codec, filesystem, recovery, or
+> failpoint evidence exists yet.
 > Query and distributed harnesses also remain planned for their roadmap phases.
 
 ## Test types

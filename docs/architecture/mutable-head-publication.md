@@ -8,10 +8,11 @@
 > global directory, and bounded direct-successor registration. The first append under a registered
 > successor seals the ancestor and publishes a new schema-bound generation. WAL replay rebuilds
 > mixed-schema publications into an owner returned only after complete recovery, including
-> position-only outer publication for matching ancestor-schema duplicates. Retry pruning,
-> catalog/routing admission, and flush handoff remain unimplemented. This document
-> refines [ADR 0005](../adr/0005-columnar-heads-and-immutable-cseg-parts.md) for Phase 4 without
-> specifying CSEG bytes or flush installation.
+> position-only outer publication for matching ancestor-schema duplicates. The Phase 6 flush
+> handoff and atomic head-to-manifest replacement are now specified but unimplemented. Retry
+> pruning and catalog/routing admission also remain unimplemented. This document refines
+> [ADR 0005](../adr/0005-columnar-heads-and-immutable-cseg-parts.md) for Phase 4; CSEG and
+> installation bytes are defined by their accepted format specifications.
 
 ## State and ownership
 

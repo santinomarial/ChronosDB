@@ -86,9 +86,12 @@ exactly 20 ASCII decimal digits with leading zeroes. `N` is in `1..1844674407370
 spaces, extra digits, and alternate digit characters are invalid. The number in the filename MUST
 equal the `segment_number` in its header.
 
-Because checkpoint-driven removal is not part of WAL v1, an existing WAL history MUST begin at
-segment 1 and contain every consecutive segment number through the highest final name. A gap,
-duplicate numeric identity, or sequence beginning above 1 is corruption.
+Without an external accepted checkpoint context, an existing WAL history MUST begin at segment 1
+and contain every consecutive segment number through the highest final name. A gap, duplicate
+numeric identity, or sequence beginning above 1 is corruption. The accepted
+[Manifest v1](manifest-v1.md) checkpoint can later authorize a manifest-aware opener to begin at an
+exact covered segment/offset or its immediate successor after synchronized prefix removal; this
+changes no WAL v1 byte or within-suffix continuity rule and is not yet implemented.
 
 ### Temporary segment names
 
@@ -351,6 +354,8 @@ file, rename, directory-sync, prior-segment sync, acknowledgment, and repair sta
 - Golden fixtures for the empty first segment, boundary-size records, multi-segment continuity, each
   assigned application envelope, and corrupt/truncated variants are required with implementation.
 
-WAL compression, encryption, direct I/O, memory-mapped writing, `io_uring`, checkpoint records, and
-checkpoint-driven segment removal are not WAL v1 features. Adding any of them requires a later
-specification and, when durable bytes or guarantees change, a new ADR/format version.
+WAL compression, encryption, direct I/O, memory-mapped writing, `io_uring`, and checkpoint records
+are not WAL v1 features. Checkpoint-driven segment removal is specified externally by
+[Manifest v1](manifest-v1.md) and
+[ADR 0017](../adr/0017-manifest-generations-installation-and-checkpoints.md); its implementation
+remains pending and does not change WAL physical framing.

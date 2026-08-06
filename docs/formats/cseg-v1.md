@@ -9,8 +9,9 @@
 > schema-binding validation plus schema-aware projected granule reading and complete read-only
 > inspection are also implemented.
 > [ADR 0016](../adr/0016-cseg-v1-layout-integrity-and-compression.md)
-> accepts the layout, integrity, ordering, and compression decisions. Manifests, installation,
-> flush orchestration, compaction, and reclamation are separate Phase 6 and Phase 7 contracts.
+> accepts the layout, integrity, ordering, and compression decisions. Manifest v1 and installation
+> ordering are accepted but not implemented; flush orchestration, compaction, and reclamation are
+> separate Phase 6 and Phase 7 work.
 
 ## Scope and normative language
 

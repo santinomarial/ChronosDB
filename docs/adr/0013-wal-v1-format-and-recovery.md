@@ -167,6 +167,11 @@ device remediation, production filesystem qualification beyond the stated Linux 
 encryption, compression, direct I/O, memory-mapped writing, `io_uring`, and `QUORUM_SYNC` replica
 persistence remain deferred.
 
+**Retrospective note (2026-08-06):**
+[ADR 0017](0017-manifest-generations-installation-and-checkpoints.md) and
+[Manifest v1](../formats/manifest-v1.md) resolve the external single-node checkpoint context and
+safe prefix-removal ordering without changing WAL v1 bytes. Implementation remains Phase 6 work.
+
 ## Migration or reversal implications
 
 Format 1.0 bytes and assigned meanings are immutable once written. A future physical format requires

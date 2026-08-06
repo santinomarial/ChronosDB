@@ -109,7 +109,10 @@ have deterministic tests. Physical power-loss and storage-stack qualification re
 The accepted [CSEG v1 format](../formats/cseg-v1.md) satisfies the part-format design obligation:
 an early fixed-header CRC protects lengths used to find a complete metadata CRC, every page's
 interpretation and stored checksum are metadata-covered, and stored bytes are verified before
-bounded decompression. Codec and corruption-test evidence remains pending Phase 5 implementation.
+bounded decompression. Its codecs, hostile tests, fuzzing, sanitizers, inspection, installation, and
+external-consumer evidence are implemented. The accepted
+[Manifest v1](../formats/manifest-v1.md) defines version/integrity coverage for the next durable
+authority; its implementation evidence remains pending Phase 6.
 
 ## 11. Referenced storage is not reclaimed
 
@@ -148,7 +151,9 @@ WAL physical format 1.0 now has an immutable compatibility and rejection policy.
 logical kinds remain unavailable until accepted.
 
 CSEG format 1.0 now has an immutable compatibility prefix, registries, limits, and rejection policy.
-Its implementation and executable mixed-version evidence remain pending Phase 5.
+Its implementation and executable mixed-version evidence exist. Manifest format 1.0 now has an
+accepted immutable compatibility prefix, descriptor registry, limits, selection rule, and rejection
+policy; implementation remains pending Phase 6.
 
 ## 15. Slow subscribers cannot block ingestion indefinitely
 

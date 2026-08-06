@@ -17,7 +17,9 @@ exist. Coordinator metrics and a deterministic process-kill crash-image harness 
 application-kind codec, a bounded process-local retry reservation directory, a bounded live tablet
 publication owner, their blocking single-tablet WAL execution path, and retained-lineage
 fresh-state WAL application/reopen path exist. Retry pruning, routing/admission, and the
-server-wide operational metrics/export path do not exist yet.
+server-wide operational metrics/export path do not exist yet. Phase 6 now has accepted Manifest v1
+bytes plus part-installation, head-replacement, checkpoint, and recovery ordering; its implementation
+does not exist yet.
 Work should proceed in order unless an accepted ADR explains why a limited dependency must move
 earlier.
 
@@ -180,6 +182,14 @@ No phase passes because its code merely compiles. A phase passes only when its a
 - **Measurement exit gate:** report size, encode/decode throughput, selective-read cost, allocations, and compression tradeoffs on declared datasets without choosing defaults solely from one workload.
 
 ## Phase 6 — Manifest, flush, and checkpointing
+
+> **Current status:** [Manifest v1](formats/manifest-v1.md),
+> [ADR 0017](adr/0017-manifest-generations-installation-and-checkpoints.md), and the
+> [installation/recovery architecture](architecture/manifest-installation-and-checkpointing.md) are
+> accepted. They freeze immutable full-generation bytes and names, per-tablet/retry recovery state,
+> independently durable part/manifest installation, atomic head replacement, and checkpoint-aware
+> WAL suffix/reclamation ordering. Codecs, filesystem owners, flush, recovery, crash evidence,
+> observability, benchmarks, and learning documentation remain unimplemented.
 
 - **Scope:** manifest generations/version edits; atomic durable part installation; sealed-head flush; checkpoint/log coverage; startup reconciliation; safe temporary-file handling.
 - **Explicit non-scope:** compaction, delta parts, distributed metadata, object storage, and aggressive garbage collection beyond proven safe ownership.

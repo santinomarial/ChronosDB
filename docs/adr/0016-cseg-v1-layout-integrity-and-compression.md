@@ -164,6 +164,11 @@ boundary tests pass.
 - A commit/version identity suitable for Raft-created parts is owned by the distributed roadmap
   phase and cannot reinterpret the v1 WAL system columns.
 
+**Retrospective note (2026-08-06):**
+[ADR 0017](0017-manifest-generations-installation-and-checkpoints.md) and
+[Manifest v1](../formats/manifest-v1.md) now resolve Phase 6 durable names, part/manifest installation
+ordering, checkpoint state, and temporary recovery. Their implementation remains pending.
+
 ## References
 
 - [CSEG v1 specification](../formats/cseg-v1.md)

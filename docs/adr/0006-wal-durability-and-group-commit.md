@@ -62,6 +62,12 @@ This decision is the primary policy for invariants [1, 4, 8, 9, 10, 14, and 18](
 
 Record fields, checksum algorithm, segment size/naming, synchronization syscall sequence, directory-sync requirements, default mode, group-commit delay/size policy, error retry policy, batch-identity scope/retention, checkpoint format, and `QUORUM_SYNC` replica persistence details remain deferred.
 
+**Retrospective note (2026-08-06):** [ADR 0013](0013-wal-v1-format-and-recovery.md) resolves WAL
+v1 framing, naming, synchronization, and recovery, while
+[ADR 0017](0017-manifest-generations-installation-and-checkpoints.md) resolves the first
+single-node manifest/checkpoint format and external WAL-prefix coverage protocol. The server
+default, retry pruning/horizon, and distributed persistence decisions remain deferred.
+
 ## Migration or reversal implications
 
 The mode names and meanings become protocol contracts once exposed. Tightening a guarantee can be compatible; weakening one requires a new mode/version rather than reinterpretation. WAL format changes require versioned readers or an offline migration. Existing synchronized data must never be relabeled asynchronous during upgrade.

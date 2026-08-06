@@ -156,7 +156,7 @@ logical mutation payload has an independent byte codec, a live in-memory applica
 retained-lineage fresh-state recovery path. Durable catalog reconstruction remains outside that
 path.
 Deployment tuning of the implemented
-group-commit limits, checkpoints, and old-segment removal remain future work.
+group-commit limits plus implementation of checkpoints and old-segment removal remain future work.
 
 In the distributed phase, each tablet's authoritative ordering is its committed Raft log. Many logical Raft groups will share a multiplexed physical log while preserving per-group ordering, durability, fairness, reclamation safety, and recovery identity. Reusing the single-node record codec may be desirable but is not yet decided.
 
@@ -182,14 +182,21 @@ for nullable successor-schema tails. Complete read-only inspection validates str
 schema-independent row semantics and returns an owned value-free report; `chronos-csegdump`
 exposes that path without mutating the candidate file.
 
-Parts will be written to temporary identities, fully validated and made durable according to the
-future installation protocol, then atomically referenced by a manifest version edit. After
-installation they are never changed in place. Temporary naming, filesystem installation, manifest
-edits, flush, compaction, and reclamation remain deferred.
+Parts will be written to temporary identities, fully validated, and made durable according to the
+accepted [installation protocol](manifest-installation-and-checkpointing.md), then atomically
+referenced by a Manifest v1 generation. After installation they are never changed in place.
+Implementation remains pending; compaction and installed-file reclamation remain deferred.
 
 ### Manifest, flush, and checkpointing
 
-The manifest is the authoritative versioned inventory of installed parts and relevant recovery metadata. It can refer only to completely installed durable parts. A flush converts a sealed head into one or more new CSEG parts, durably installs them, and applies a manifest version edit before a checkpoint allows covered WAL history to be reclaimed. Crashes at any step must recover to either the old complete state or the new complete state, and retry must be idempotent.
+The manifest is the authoritative versioned inventory of installed parts and relevant recovery
+metadata. The accepted [Manifest v1 specification](../formats/manifest-v1.md) uses immutable
+database-wide full generations with per-tablet schema/application boundaries, protected retry
+outcomes, and one global WAL reclaim coordinate. It can refer only to completely installed durable
+parts. A flush converts a sealed head into one or more new CSEG parts, durably installs them, and
+publishes a manifest generation before a checkpoint allows covered WAL history to be reclaimed.
+Crashes at any step recover to either the old complete state or the new complete state, and retry is
+idempotent. This state machine is specified but not implemented.
 
 A checkpoint records the manifest generation and committed log coverage needed for recovery. It is not permission to delete data still reachable by an active reader, subscription, backup, or other declared retention owner.
 
@@ -236,13 +243,13 @@ The following are accepted project constraints:
 - historical-to-live handoff is anchored to deterministic committed positions.
 
 Deferred design areas include the server durability default and production tuning of the bounded
-group-commit parameters; WAL application
-record kinds and checkpoint/reclamation integration; row identities and correction syntax; CSEG
-codec implementation and additional encodings; manifest and garbage-collection
-protocol; SQL grammar and type system; optimizer rules; subscription result/change model; watermark
+group-commit parameters; additional WAL application record kinds; row identities and correction
+syntax; additional CSEG encodings; manifest-generation and installed-part garbage collection; SQL
+grammar and type system; optimizer rules; subscription result/change model; watermark
 finalization; scheduler and memory limits; authentication/TLS integration; Raft protocol details;
 multi-Raft log layout; distributed snapshot coordination; and object-tier policy. The WAL v1
-physical bytes, synchronization ordering, and recovery-tail classification are no longer deferred.
+physical bytes, synchronization ordering, recovery-tail classification, CSEG v1 codecs, and
+Manifest v1/checkpoint installation design are no longer deferred.
 Each remaining area becomes accepted only through its phase artifacts, validation evidence, and any
 required ADR.
 

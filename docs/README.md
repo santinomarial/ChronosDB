@@ -21,6 +21,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   retry interaction, ordered replay, and failure ownership.
 - [Mutable-head publication](architecture/mutable-head-publication.md): single-writer ownership,
   batch-atomic visibility, snapshot pins, sealing, and future flush handoff.
+- [Manifest installation and checkpointing](architecture/manifest-installation-and-checkpointing.md):
+  accepted Phase 6 part/manifest durability ordering, head replacement, recovery, and WAL coverage.
 - [Non-goals](architecture/non-goals.md): deliberately excluded or deferred scope.
 - [Glossary](glossary.md): canonical terminology.
 
@@ -44,6 +46,9 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   Metadata-authenticated projected granule reads independently validate requested user pages plus
   every system page and synthesize nullable successor-schema tails. Complete read-only inspection
   validates all schema-independent semantics and reports owned value-free metadata.
+- [Manifest v1](formats/manifest-v1.md): accepted immutable database-wide generation bytes,
+  installed-name grammar, tablet/part/retry recovery state, and checkpoint-aware WAL suffix contract;
+  implementation is pending.
 - [Production dependencies](dependencies/README.md): maintained external-library boundaries,
   version sources, licenses, and update/security ownership.
 

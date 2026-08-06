@@ -12,6 +12,8 @@ These definitions are normative vocabulary for architecture documents. Detailed 
 - **Column identity (`ColumnId`):** A stable nonzero opaque 128-bit identity preserved across an allowed rename.
 - **Schema identity (`SchemaId`):** A stable nonzero opaque 128-bit identity for one immutable schema version in a table's linear lineage.
 - **Tablet identity (`TabletId`):** A stable nonzero opaque 128-bit identity for one tablet, independent of its current owner or placement.
+- **Database identity (`DatabaseId`):** A stable nonzero opaque 128-bit identity for one local
+  database storage history, independent of its filesystem path.
 - **Client identity (`ClientId`):** A stable nonzero opaque 128-bit identity naming one ingest client; together with a client-batch identity it scopes retry identity.
 - **Client-batch identity (`ClientBatchId`):** A nonzero opaque 128-bit identity assigned by a client to one logical batch and interpreted only together with that client identity.
 - **Columnar batch:** One immutable, schema-shaped, self-describing set of user-column values for a single table schema; the v1 bytes are specified in [columnar-batch v1](formats/columnar-batch-v1.md).
@@ -30,8 +32,12 @@ These definitions are normative vocabulary for architecture documents. Detailed 
   the manifest.
 - **Granule:** A contiguous logical row range within a part and the unit addressed by sparse index entries.
 - **Page:** A bounded encoded block of one column within a part, independently integrity-checked and suitable for selective decoding.
-- **Manifest:** The authoritative, versioned description of installed parts and associated durable storage state for a tablet or database generation.
-- **Version edit:** An atomic logical change to manifest state, such as adding newly installed parts and removing superseded parts.
+- **Manifest:** The authoritative, versioned description of installed parts and associated durable
+  storage/recovery state. [Manifest v1](formats/manifest-v1.md) stores one immutable database-wide
+  full generation.
+- **Version edit:** An atomic logical change between manifest states. Phase 6 persists the result as
+  a complete immutable generation; later compaction may add outputs and remove superseded inputs in
+  one edit.
 - **WAL:** The segmented write-ahead log that orders accepted application entries and records them before acknowledgment. Persistence is promised only at the named mode's boundary; `ASYNC` is not durable.
 - **WAL identity:** The nonzero opaque 128-bit `wal_id` shared by all segments in one WAL history. A record sequence is unambiguous only with this history identity.
 - **WAL segment:** One consecutively numbered `.cwal` file with a synchronized versioned header and a contiguous sequence of complete physical records. Only the highest segment is active; all predecessors are immutable.
@@ -39,7 +45,9 @@ These definitions are normative vocabulary for architecture documents. Detailed 
 - **Sync frontier:** The active segment number, covered end offset, and final covered record sequence captured for one WAL data-synchronization attempt. A successful group sync can release `LOCAL_SYNC` requests covered in that segment, never later appends or offsets from another file.
 - **Incomplete final tail:** The only repairable WAL truncation class: after every preceding byte verifies, the highest segment ends with fewer than one complete header or with a valid header whose declared valid record extends beyond EOF.
 - **Recovery-tail repair:** Explicit locked truncation of an incomplete final tail to the last verified record boundary, followed by segment and directory synchronization and full re-verification. It is never applied to corruption.
-- **Checkpoint:** A durable recovery boundary that identifies state already represented by installed parts and the earliest log position still needed.
+- **Checkpoint:** A durable manifest recovery boundary that identifies tablet/retry state already
+  represented by installed parts and a global WAL coordinate through which the log is no longer the
+  only recoverable copy.
 - **Compaction:** A background transformation of immutable input parts into new immutable parts while preserving exactly the same visible logical rows under the applicable snapshot rules.
 - **Delta part:** An immutable part containing late, out-of-order, corrected, or otherwise non-base data pending or surviving merge with primary sorted parts.
 - **Watermark:** A per-stream or derived event-time assertion that events earlier than a position are not expected, subject to the stated lateness policy; it is not a system-time commit boundary.
