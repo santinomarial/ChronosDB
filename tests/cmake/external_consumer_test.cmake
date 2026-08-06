@@ -47,6 +47,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/cseg/compression.hpp>
 #include <chronos/cseg/format.hpp>
 #include <chronos/cseg/layout.hpp>
+#include <chronos/cseg/metadata_codec.hpp>
 #include <chronos/cseg/types.hpp>
 #include <chronos/head/mutable_head.hpp>
 #include <chronos/ingest/columnar_append.hpp>
@@ -85,6 +86,7 @@ int main() {
   const std::array<std::byte, 1> page{std::byte{0x41}};
   const auto stored_page =
       chronos::cseg::compress_cseg_page_v1(page, chronos::cseg::PageCompression::kNone);
+  const auto cseg_metadata = chronos::cseg::decode_cseg_v1_metadata_prefix({});
   chronos::columnar::ColumnarBatchLimits limits;
   std::array<std::byte, 0> empty{};
   const auto decoded = chronos::columnar::decode_columnar_batch_v1_exact(empty);
@@ -108,6 +110,9 @@ int main() {
                  retry_directory->metrics().maximum_entries == 8U && !decoded.has_value() &&
                  cseg_layout.has_value() && cseg_layout->total_length == 1'248U &&
                  stored_page.has_value() && stored_page->bytes().size() == 1U &&
+                 !cseg_metadata.has_value() &&
+                 cseg_metadata.error().kind() ==
+                     chronos::cseg::CsegMetadataDecodeErrorKind::kIncomplete &&
                  decoded.error().kind() ==
                      chronos::columnar::ColumnarBatchDecodeErrorKind::kIncomplete
              ? 0

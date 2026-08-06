@@ -150,7 +150,12 @@ chronos_set_project_warnings(chronos_columnar)
 chronos_enable_sanitizers(chronos_columnar)
 chronos_enable_static_analysis(chronos_columnar)
 
-add_library(chronos_cseg src/cseg/compression.cpp src/cseg/layout.cpp)
+add_library(
+  chronos_cseg
+  src/cseg/compression.cpp
+  src/cseg/layout.cpp
+  src/cseg/metadata_codec.cpp
+)
 add_library(chronos::cseg ALIAS chronos_cseg)
 set_target_properties(chronos_cseg PROPERTIES EXPORT_NAME cseg)
 set_target_properties(chronos_cseg PROPERTIES CXX_EXTENSIONS OFF)
@@ -161,7 +166,7 @@ target_include_directories(
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
 )
-target_link_libraries(chronos_cseg PUBLIC chronos::common PRIVATE zstd::libzstd)
+target_link_libraries(chronos_cseg PUBLIC chronos::common chronos::schema PRIVATE zstd::libzstd)
 chronos_set_project_warnings(chronos_cseg)
 chronos_enable_sanitizers(chronos_cseg)
 chronos_enable_static_analysis(chronos_cseg)
@@ -370,6 +375,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/cseg/format_test.cpp
     tests/cseg/layout_header_self_contained.cpp
     tests/cseg/layout_test.cpp
+    tests/cseg/metadata_codec_header_self_contained.cpp
+    tests/cseg/metadata_codec_test.cpp
     tests/cseg/types_header_self_contained.cpp
     tests/cseg/types_test.cpp
   )
@@ -621,6 +628,14 @@ if(CHRONOS_BUILD_BENCHMARKS)
   chronos_enable_sanitizers(chronos_columnar_benchmarks)
   chronos_enable_static_analysis(chronos_columnar_benchmarks)
 
+  add_executable(chronos_cseg_benchmarks benchmarks/cseg/metadata_codec_benchmark.cpp)
+  set_target_properties(chronos_cseg_benchmarks PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_cseg_benchmarks PRIVATE cxx_std_23)
+  target_link_libraries(chronos_cseg_benchmarks PRIVATE chronos::cseg benchmark::benchmark_main)
+  chronos_set_project_warnings(chronos_cseg_benchmarks)
+  chronos_enable_sanitizers(chronos_cseg_benchmarks)
+  chronos_enable_static_analysis(chronos_cseg_benchmarks)
+
   add_executable(
     chronos_ingest_benchmarks
     benchmarks/ingest/columnar_append_benchmark.cpp
@@ -727,6 +742,16 @@ if(CHRONOS_BUILD_FUZZERS)
   chronos_set_project_warnings(chronos_columnar_append_fuzz)
   chronos_enable_sanitizers(chronos_columnar_append_fuzz)
   chronos_enable_static_analysis(chronos_columnar_append_fuzz)
+
+  add_executable(chronos_cseg_metadata_codec_fuzz tests/fuzz/cseg_metadata_codec_fuzz.cpp)
+  set_target_properties(chronos_cseg_metadata_codec_fuzz PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_cseg_metadata_codec_fuzz PRIVATE cxx_std_23)
+  target_link_libraries(chronos_cseg_metadata_codec_fuzz PRIVATE chronos::cseg)
+  target_compile_options(chronos_cseg_metadata_codec_fuzz PRIVATE -fsanitize=fuzzer)
+  target_link_options(chronos_cseg_metadata_codec_fuzz PRIVATE -fsanitize=fuzzer)
+  chronos_set_project_warnings(chronos_cseg_metadata_codec_fuzz)
+  chronos_enable_sanitizers(chronos_cseg_metadata_codec_fuzz)
+  chronos_enable_static_analysis(chronos_cseg_metadata_codec_fuzz)
 endif()
 
 chronos_configure_installation()

@@ -166,9 +166,10 @@ CSEG is the accepted public contract for versioned, immutable, sorted, compresse
 The [CSEG v1 specification](../formats/cseg-v1.md) fixes one schema/tablet-bound file, canonical
 granules, schema and system columns, independently checksummed PLAIN pages, bounded raw/Zstandard
 storage, metadata integrity, physical row ordering, and compatibility behavior. The `chronos_cseg`
-target now exposes the authoritative constants, nominal part identity, and allocation-free checked
-metadata/page layout planner plus bounded raw/Zstandard page compression. The complete part codec,
-reader, writer, validator, and inspector remain pending.
+target now exposes the authoritative constants, nominal part identity, allocation-free checked
+metadata/page layout planner, bounded raw/Zstandard page compression, and a checksummed borrowed
+metadata-directory codec with exact schema binding. Page-value decoding, complete part writing and
+validation, readers, and the inspector remain pending.
 
 Parts will be written to temporary identities, fully validated and made durable according to the
 future installation protocol, then atomically referenced by a manifest version edit. After
