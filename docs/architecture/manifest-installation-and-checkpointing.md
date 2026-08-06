@@ -264,6 +264,18 @@ retains Manifest storage, WAL/tablet/retry state, and the database publisher in 
 Catalog persistence, application-kind dispatch, and server service activation remain outside this
 boundary. WAL removal is conservative and disabled unless the caller explicitly enables it.
 
+## Phase 7 append-only compaction extension
+
+The accepted append-only compaction path reuses both installation protocols without changing their
+durability boundaries. A pure builder first repeats full input/output CSEG equivalence and emits one
+exact next-generation full Manifest snapshot. The output crosses the ordinary part directory-sync
+boundary. Manifest installation retains add-only validation unless the caller supplies one explicit
+`ManifestCompactionReplacement`; with that authority, storage rereads the named final input and
+output files and repeats complete cell-level equivalence before creating the Manifest temporary.
+It then performs the unchanged readback, file-sync, no-replace rename, and Manifest-directory-sync
+sequence. No input final is removed by this operation. In-memory old/new publication and pin-aware
+final-file reclamation are separate Phase 7 boundaries.
+
 Normal service remains unavailable while the storage owner performs:
 
 1. open the durable database, `parts/`, and `manifest/` directories and acquire `manifest/LOCK`;

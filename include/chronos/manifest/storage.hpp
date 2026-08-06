@@ -6,6 +6,7 @@
 #include "chronos/common/uuid.hpp"
 #include "chronos/cseg/part_codec.hpp"
 #include "chronos/manifest/codec.hpp"
+#include "chronos/manifest/compaction_equivalence.hpp"
 #include "chronos/manifest/part_validation.hpp"
 #include "chronos/manifest/types.hpp"
 #include "chronos/manifest/validation.hpp"
@@ -70,6 +71,11 @@ struct ManifestInstallRequest {
   common::Uuid nonce;
   ManifestDecodeLimits decode_limits;
   ReferencedPartValidationLimits part_validation_limits;
+  // Null retains the Phase 6 add-only authority. A non-null replacement selects the Phase 7
+  // compaction transition and causes storage to reread and independently prove exact on-disk
+  // input/output equivalence before any Manifest candidate is created.
+  const ManifestCompactionReplacement* compaction_replacement{};
+  CompactionEquivalenceLimits compaction_equivalence_limits;
 };
 
 struct InstalledManifest {

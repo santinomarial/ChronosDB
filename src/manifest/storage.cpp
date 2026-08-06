@@ -12,6 +12,7 @@
 #include <memory>
 #include <new>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -111,6 +112,92 @@ find_binding(const std::span<const TabletSchemaBinding> bindings,
         return binding.tablet_id;
       });
   return found != bindings.end() && found->tablet_id == tablet_id ? &*found : nullptr;
+}
+
+[[nodiscard]] const PartDescriptor* find_part(const DecodedManifestView& manifest,
+                                              const cseg::PartId& part_id) noexcept {
+  const auto found = std::ranges::find(manifest.parts(), part_id, &PartDescriptor::part_id);
+  return found == manifest.parts().end() ? nullptr : &*found;
+}
+
+struct OwnedCompactionImage {
+  cseg::PartId part_id;
+  std::vector<std::byte> bytes;
+};
+
+[[nodiscard]] common::Status validate_on_disk_compaction_equivalence(
+    const io::PosixDirectory& parts_directory,
+    const DecodedManifestView& predecessor, // NOLINT(bugprone-easily-swappable-parameters)
+    const DecodedManifestView& candidate,
+    const std::span<const TabletSchemaBinding> schema_bindings,
+    const ManifestCompactionReplacement& replacement, const CompactionEquivalenceLimits limits) {
+  const PartDescriptor* first_input = find_part(predecessor, replacement.input_part_ids.front());
+  const TabletSchemaBinding* binding = nullptr;
+  if (first_input != nullptr) {
+    binding = find_binding(schema_bindings, first_input->tablet_id);
+  }
+  const std::shared_ptr<const schema::TableSchema> schema_value =
+      binding == nullptr || first_input == nullptr
+          ? nullptr
+          : binding->lineage.get().find(first_input->schema_id);
+  if (first_input == nullptr || schema_value == nullptr) {
+    return corruption("Validated compaction input schema became inaccessible");
+  }
+
+  try {
+    std::vector<OwnedCompactionImage> input_owners;
+    std::vector<OwnedCompactionImage> output_owners;
+    input_owners.reserve(replacement.input_part_ids.size());
+    output_owners.reserve(replacement.output_part_ids.size());
+    for (const cseg::PartId& part_id : replacement.input_part_ids) {
+      const PartDescriptor* descriptor = find_part(predecessor, part_id);
+      if (descriptor == nullptr) {
+        return corruption("Validated compaction input descriptor became inaccessible");
+      }
+      common::Result<std::vector<std::byte>> bytes =
+          read_final_file(parts_directory, {.name = part_file_name(part_id),
+                                            .maximum_length = limits.decode.max_file_length,
+                                            .exact_length = descriptor->file_length,
+                                            .description = "compaction input CSEG part"});
+      if (!bytes.has_value()) {
+        return bytes.error();
+      }
+      input_owners.push_back({.part_id = part_id, .bytes = std::move(*bytes)});
+    }
+    for (const cseg::PartId& part_id : replacement.output_part_ids) {
+      const PartDescriptor* descriptor = find_part(candidate, part_id);
+      if (descriptor == nullptr) {
+        return corruption("Validated compaction output descriptor became inaccessible");
+      }
+      common::Result<std::vector<std::byte>> bytes =
+          read_final_file(parts_directory, {.name = part_file_name(part_id),
+                                            .maximum_length = limits.decode.max_file_length,
+                                            .exact_length = descriptor->file_length,
+                                            .description = "compaction output CSEG part"});
+      if (!bytes.has_value()) {
+        return bytes.error();
+      }
+      output_owners.push_back({.part_id = part_id, .bytes = std::move(*bytes)});
+    }
+    std::vector<CompactionPartImage> inputs;
+    std::vector<CompactionPartImage> outputs;
+    inputs.reserve(input_owners.size());
+    outputs.reserve(output_owners.size());
+    for (const OwnedCompactionImage& owner : input_owners) {
+      inputs.push_back({.part_id = owner.part_id, .bytes = owner.bytes});
+    }
+    for (const OwnedCompactionImage& owner : output_owners) {
+      outputs.push_back({.part_id = owner.part_id, .bytes = owner.bytes});
+    }
+    return validate_append_only_cseg_v1_equivalence(
+        inputs, outputs, *schema_value, replacement.tablet_id, predecessor.wal_id(), limits);
+  } catch (const std::bad_alloc&) {
+    return common::Status{common::StatusCode::kResourceExhausted,
+                          "Cannot allocate on-disk compaction equivalence state"};
+  } catch (const std::length_error&) {
+    return common::Status{common::StatusCode::kResourceExhausted,
+                          "On-disk compaction equivalence state exceeds container limits"};
+  }
 }
 
 void saturating_add(std::uint64_t& target, const std::uint64_t value) noexcept {
@@ -431,10 +518,22 @@ ManifestStorage::install_manifest(const ManifestInstallRequest& request) {
   }
 
   common::Status validation =
-      validate_manifest_v1_transition(*predecessor, *candidate, request.schema_bindings);
+      request.compaction_replacement == nullptr
+          ? validate_manifest_v1_transition(*predecessor, *candidate, request.schema_bindings)
+          : validate_manifest_v1_compaction_transition(
+                *predecessor, *candidate, request.schema_bindings, *request.compaction_replacement);
   if (!validation.is_ok()) {
     return implementation.fail_manifest(
         with_context("validate Manifest generation transition", validation));
+  }
+  if (request.compaction_replacement != nullptr) {
+    validation = validate_on_disk_compaction_equivalence(
+        implementation.parts_, *predecessor, *candidate, request.schema_bindings,
+        *request.compaction_replacement, request.compaction_equivalence_limits);
+    if (!validation.is_ok()) {
+      return implementation.fail_manifest(
+          with_context("prove on-disk CSEG compaction equivalence", validation));
+    }
   }
   for (const PartDescriptor& descriptor : candidate->parts()) {
     if (!std::ranges::binary_search(snapshot->final_parts, descriptor.part_id)) {

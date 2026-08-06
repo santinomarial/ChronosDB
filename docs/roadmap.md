@@ -274,8 +274,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > cross-part physical tuples, and compares every user/system cell without trusting hashes or
 > metadata totals. The bounded reference merger independently stable-sorts validated row references,
 > emits one canonical fresh CSEG v1 part, and requires that oracle to accept its owned output before
-> returning. Installation/publication, pin-aware reclamation, indexes, and full workload benchmark
-> evidence remain to be implemented.
+> returning. The compaction-specific Manifest builder and storage authority now install the fresh
+> output first, reread both final sets for another complete equivalence proof, and reuse the existing
+> atomic Manifest directory-sync boundary while retaining every input final. In-memory publication,
+> pin-aware reclamation, indexes, and full workload benchmark evidence remain to be implemented.
 
 - **Scope:** zone maps, sparse indexes, optional scoped secondary indexes; delta parts for late/out-of-order versions; selection and merge policy; atomic compaction installation; safe reclamation.
 - **Explicit non-scope:** indexes required for correctness, arbitrary in-place updates, distributed compaction, object tiering, and undocumented history loss.

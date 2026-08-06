@@ -5,8 +5,11 @@
 #include "chronos/cseg/compression.hpp"
 #include "chronos/cseg/format.hpp"
 #include "chronos/cseg/part_codec.hpp"
+#include "chronos/manifest/codec.hpp"
 #include "chronos/manifest/compaction_equivalence.hpp"
+#include "chronos/manifest/part_validation.hpp"
 #include "chronos/manifest/types.hpp"
+#include "chronos/manifest/validation.hpp"
 #include "chronos/schema/identity.hpp"
 #include "chronos/schema/table_schema.hpp"
 #include "chronos/wal/types.hpp"
@@ -49,6 +52,16 @@ struct EncodedCompactionPart {
   EncodedCompactionPart& operator=(EncodedCompactionPart&&) noexcept = default;
 };
 
+struct AppendOnlyCompactionManifestBuildInput {
+  std::reference_wrapper<const DecodedManifestView> predecessor;
+  std::span<const CompactionPartImage> inputs;
+  std::reference_wrapper<const EncodedCompactionPart> output;
+  std::reference_wrapper<const schema::TableSchema> schema;
+  std::span<const TabletSchemaBinding> schema_bindings;
+  CompactionEquivalenceLimits equivalence_limits;
+  ReferencedPartValidationLimits part_validation_limits;
+};
+
 // Reference append-only merger for one nonempty, strictly PartId-sorted input set and one fresh
 // output identity. It fully validates and schema/WAL-binds every input, stably merges by the frozen
 // CSEG physical tuple, rejects duplicate tuples, emits one canonical CSEG v1 part, and runs the
@@ -56,6 +69,13 @@ struct EncodedCompactionPart {
 // Manifest, publication, or reclamation operation.
 [[nodiscard]] common::Result<EncodedCompactionPart>
 merge_append_only_cseg_v1(const AppendOnlyCompactionRequest& request);
+
+// Builds one exact next-generation Manifest snapshot only after independently revalidating the
+// supplied input/output images and their complete append-only row equivalence. The predecessor's
+// tablet, checkpoint, and retry state are preserved; exactly the input identities are replaced by
+// the one fresh output descriptor. No filesystem or publication operation is performed.
+[[nodiscard]] common::Result<EncodedManifest>
+build_manifest_v1_for_append_only_compaction(const AppendOnlyCompactionManifestBuildInput& input);
 
 } // namespace chronos::manifest
 

@@ -4,8 +4,10 @@
 #include "chronos/cseg/part_codec.hpp"
 #include "chronos/cseg/validator.hpp"
 #include "chronos/manifest/compaction.hpp"
+#include "chronos/manifest/validation.hpp"
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/logical_type.hpp"
+#include "chronos/schema/schema_lineage.hpp"
 #include "chronos/schema/table_schema.hpp"
 #include "cseg/cseg_test_fixture.hpp"
 
@@ -144,6 +146,23 @@ struct Inputs {
                 {.part_id = identifier<cseg::PartId>(0x20U), .bytes = second.bytes()}}} {}
 };
 
+[[nodiscard]] PartDescriptor
+descriptor(const Fixture& fixture, const cseg::PartId& part_id, const cseg::EncodedCsegPart& part,
+           const std::uint64_t minimum_sequence, const std::uint64_t maximum_sequence,
+           const std::int64_t minimum_event, const std::int64_t maximum_event) {
+  return {.part_id = part_id,
+          .table_id = fixture.table_id,
+          .tablet_id = fixture.tablet_id,
+          .schema_id = fixture.schema_id,
+          .schema_version = schema::SchemaVersion::initial(),
+          .file_length = part.size(),
+          .row_count = 2U,
+          .minimum_record_sequence = minimum_sequence,
+          .maximum_record_sequence = maximum_sequence,
+          .minimum_event_time = minimum_event,
+          .maximum_event_time = maximum_event};
+}
+
 TEST(AppendOnlyCompactionTest, DeterministicallyMergesInterleavedPartsAndProvesOutput) {
   const Fixture fixture;
   const Inputs inputs{fixture};
@@ -221,6 +240,84 @@ TEST(AppendOnlyCompactionTest, RejectsDuplicateTupleFreshnessCorruptionAndLimits
   };
   request.inputs = corrupt_images;
   EXPECT_EQ(merge_append_only_cseg_v1(request).error().code(), common::StatusCode::kCorruption);
+}
+
+TEST(AppendOnlyCompactionTest, BuildsExactReplacementManifestOnlyAfterFullEquivalence) {
+  const Fixture fixture;
+  const Inputs inputs{fixture};
+  const std::array predecessor_parts{
+      descriptor(fixture, inputs.images[0].part_id, inputs.first, 7U, 9U, -10, 10),
+      descriptor(fixture, inputs.images[1].part_id, inputs.second, 8U, 10U, 0, 20),
+  };
+  const std::array tablets{
+      TabletDescriptor{.table_id = fixture.table_id,
+                       .tablet_id = fixture.tablet_id,
+                       .recovery_schema_id = fixture.schema_id,
+                       .recovery_schema_version = schema::SchemaVersion::initial(),
+                       .durable_record_sequence = 10U,
+                       .first_part_index = 0U,
+                       .part_count = predecessor_parts.size(),
+                       .durable_row_count = 4U}};
+  const EncodedManifest predecessor_bytes =
+      encode_manifest_v1(
+          {.generation = 1U,
+           .database_id = identifier<DatabaseId>(0x90U),
+           .wal_id = fixture.wal_id,
+           .reclaim_checkpoint = {.record_sequence = 6U, .segment_number = 1U, .byte_offset = 128U},
+           .tablets = tablets,
+           .parts = predecessor_parts,
+           .retries = {}})
+          .value();
+  const DecodedManifestView predecessor =
+      decode_manifest_v1_exact(predecessor_bytes.bytes()).value();
+  const schema::SchemaLineage lineage = schema::SchemaLineage::create(fixture.schema).value();
+  const std::array bindings{
+      TabletSchemaBinding{.tablet_id = fixture.tablet_id, .lineage = std::cref(lineage)}};
+  const AppendOnlyCompactionRequest merge_request{
+      .inputs = inputs.images,
+      .schema = std::cref(fixture.schema),
+      .tablet_id = fixture.tablet_id,
+      .wal_id = fixture.wal_id,
+      .output_part_id = identifier<cseg::PartId>(0x80U),
+  };
+  const common::Result<EncodedCompactionPart> merged = merge_append_only_cseg_v1(merge_request);
+  ASSERT_TRUE(merged.has_value());
+  const common::Result<EncodedManifest> successor =
+      build_manifest_v1_for_append_only_compaction({.predecessor = predecessor,
+                                                    .inputs = inputs.images,
+                                                    .output = std::cref(*merged),
+                                                    .schema = std::cref(fixture.schema),
+                                                    .schema_bindings = bindings,
+                                                    .equivalence_limits = {},
+                                                    .part_validation_limits = {}});
+  ASSERT_TRUE(successor.has_value()) << successor.error().to_string();
+  const ManifestDecodeResult decoded = decode_manifest_v1_exact(successor->bytes());
+  ASSERT_TRUE(decoded.has_value());
+  EXPECT_EQ(decoded->generation(), 2U);
+  EXPECT_EQ(decoded->reclaim_checkpoint(), predecessor.reclaim_checkpoint());
+  ASSERT_EQ(decoded->parts().size(), 1U);
+  EXPECT_EQ(decoded->parts().front(), merged->descriptor);
+  ASSERT_EQ(decoded->tablets().size(), 1U);
+  EXPECT_EQ(decoded->tablets().front().durable_record_sequence, 10U);
+  EXPECT_EQ(decoded->tablets().front().durable_row_count, 4U);
+  const std::array input_ids{inputs.images[0].part_id, inputs.images[1].part_id};
+  const std::array output_ids{merged->descriptor.part_id};
+  EXPECT_TRUE(validate_manifest_v1_compaction_transition(predecessor, *decoded, bindings,
+                                                         {.tablet_id = fixture.tablet_id,
+                                                          .input_part_ids = input_ids,
+                                                          .output_part_ids = output_ids})
+                  .is_ok());
+
+  EXPECT_EQ(build_manifest_v1_for_append_only_compaction({.predecessor = predecessor,
+                                                          .inputs = inputs.images,
+                                                          .output = std::cref(*merged),
+                                                          .schema = std::cref(fixture.schema),
+                                                          .schema_bindings = {},
+                                                          .equivalence_limits = {},
+                                                          .part_validation_limits = {}})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
 }
 
 } // namespace

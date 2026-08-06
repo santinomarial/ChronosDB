@@ -241,6 +241,10 @@ int main() {
       const chronos::manifest::AppendOnlyCompactionRequest&);
   const MergeCompactionFunction merge_compaction =
       &chronos::manifest::merge_append_only_cseg_v1;
+  using BuildCompactionManifestFunction = chronos::common::Result<chronos::manifest::EncodedManifest> (*)(
+      const chronos::manifest::AppendOnlyCompactionManifestBuildInput&);
+  const BuildCompactionManifestFunction build_compaction_manifest =
+      &chronos::manifest::build_manifest_v1_for_append_only_compaction;
   using ValidateReferencedPartsFunction = chronos::common::Status (*)(
       const chronos::manifest::DecodedManifestView&,
       std::span<const chronos::manifest::TabletSchemaBinding>,
@@ -328,6 +332,7 @@ int main() {
                  validate_manifest_compaction_transition != nullptr &&
                  validate_compaction_equivalence != nullptr &&
                  merge_compaction != nullptr &&
+                 build_compaction_manifest != nullptr &&
                  validate_referenced_parts != nullptr &&
                  open_manifest_storage != nullptr &&
                  scan_manifest_namespace != nullptr &&

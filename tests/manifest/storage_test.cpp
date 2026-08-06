@@ -1,6 +1,7 @@
 #include "chronos/common/status.hpp"
 #include "chronos/common/uuid.hpp"
 #include "chronos/io/posix_io.hpp"
+#include "chronos/manifest/compaction.hpp"
 #include "chronos/manifest/naming.hpp"
 #include "chronos/manifest/storage.hpp"
 #include "chronos/schema/column_definition.hpp"
@@ -440,6 +441,83 @@ TEST(ManifestStorageTest, InstallsExactNextManifestAfterRevalidatingReferencedPa
   const common::Result<ManifestNamespaceSnapshot> snapshot = owner.scan_namespace();
   ASSERT_TRUE(snapshot.has_value());
   EXPECT_EQ(snapshot->generations, (std::vector<std::uint64_t>{1U, 2U}));
+}
+
+TEST(ManifestStorageTest, CompactionAuthorityReprovesDiskImagesBeforeAtomicReplacement) {
+  TemporaryDirectory temporary;
+  ASSERT_TRUE(temporary.valid());
+  establish_layout(temporary.path());
+  const PartFixture fixture;
+  const EncodedManifest predecessor_bytes = fixture.manifest(1U);
+  create_entry(temporary.path(),
+               std::filesystem::path{kManifestDirectoryName} / *manifest_file_name(1U),
+               predecessor_bytes.bytes());
+  create_entry(temporary.path(),
+               std::filesystem::path{kPartsDirectoryName} / part_file_name(fixture.part_id),
+               fixture.encoded.bytes());
+  ManifestStorage owner =
+      ManifestStorage::open_existing({.database_root = temporary.path().string()}).value();
+  const std::array input_images{
+      CompactionPartImage{.part_id = fixture.part_id, .bytes = fixture.encoded.bytes()}};
+  common::Result<EncodedCompactionPart> merged =
+      merge_append_only_cseg_v1({.inputs = input_images,
+                                 .schema = std::cref(fixture.schema_value),
+                                 .tablet_id = fixture.tablet_id,
+                                 .wal_id = fixture.wal_id,
+                                 .output_part_id = id<cseg::PartId>(9U)});
+  ASSERT_TRUE(merged.has_value()) << merged.error().to_string();
+  const auto bindings = fixture.bindings();
+  const DecodedManifestView predecessor =
+      decode_manifest_v1_exact(predecessor_bytes.bytes()).value();
+  common::Result<EncodedManifest> candidate =
+      build_manifest_v1_for_append_only_compaction({.predecessor = predecessor,
+                                                    .inputs = input_images,
+                                                    .output = std::cref(*merged),
+                                                    .schema = std::cref(fixture.schema_value),
+                                                    .schema_bindings = bindings,
+                                                    .equivalence_limits = {},
+                                                    .part_validation_limits = {}});
+  ASSERT_TRUE(candidate.has_value()) << candidate.error().to_string();
+  ASSERT_TRUE(owner
+                  .install_part({.encoded_part = std::cref(merged->encoded_part),
+                                 .descriptor = merged->descriptor,
+                                 .wal_id = merged->wal_id,
+                                 .schema = std::cref(fixture.schema_value),
+                                 .nonce = PartFixture::make_nonce(0xd0U),
+                                 .validation_limits = {}})
+                  .has_value());
+
+  EXPECT_EQ(owner
+                .install_manifest({.encoded_manifest = std::cref(*candidate),
+                                   .schema_bindings = bindings,
+                                   .nonce = PartFixture::make_nonce(0xd1U),
+                                   .decode_limits = {},
+                                   .part_validation_limits = {}})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  const std::array input_ids{fixture.part_id};
+  const std::array output_ids{merged->descriptor.part_id};
+  const ManifestCompactionReplacement replacement{
+      .tablet_id = fixture.tablet_id, .input_part_ids = input_ids, .output_part_ids = output_ids};
+  const common::Result<InstalledManifest> installed =
+      owner.install_manifest({.encoded_manifest = std::cref(*candidate),
+                              .schema_bindings = bindings,
+                              .nonce = PartFixture::make_nonce(0xd2U),
+                              .decode_limits = {},
+                              .part_validation_limits = {},
+                              .compaction_replacement = &replacement,
+                              .compaction_equivalence_limits = {}});
+  ASSERT_TRUE(installed.has_value()) << installed.error().to_string();
+  EXPECT_EQ(installed->generation, 2U);
+  EXPECT_EQ(installed->part_count, 1U);
+  EXPECT_TRUE(std::filesystem::exists(temporary.path() / kPartsDirectoryName /
+                                      part_file_name(fixture.part_id)));
+  EXPECT_TRUE(std::filesystem::exists(temporary.path() / kPartsDirectoryName /
+                                      part_file_name(merged->descriptor.part_id)));
+  EXPECT_EQ(owner.manifest_metrics().attempts, 2U);
+  EXPECT_EQ(owner.manifest_metrics().failures, 1U);
+  EXPECT_EQ(owner.manifest_metrics().installed_generations, 1U);
 }
 
 TEST(ManifestStorageTest, LoadsOwnedHighestManifestAndReportsOrphansAndTemporaries) {

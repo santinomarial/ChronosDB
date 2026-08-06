@@ -16,6 +16,8 @@ The implemented foundation has two deliberately separate authorities:
   same complete append-only rows.
 - `merge_append_only_cseg_v1()` is the bounded reference output builder. It produces one fresh owned
   CSEG v1 part, but does not install files, publish a generation, or authorize deletion.
+- `build_manifest_v1_for_append_only_compaction()` independently repeats full-row equivalence and
+  builds the exact next full Manifest generation around one proven output.
 
 ## Public interface and ownership
 
@@ -79,6 +81,15 @@ merger may be faster, but it must remain differentially identical to this path. 
 durable install ordering, publication, crash testing, and pin-aware reclamation remain later Phase 7
 tasks and cannot bypass this oracle. The current builder intentionally returns one output part;
 requests that exceed its explicit row/page/file bounds require a later measured partitioning policy.
+
+The existing `ManifestStorage::install_part()` installs that output through the ordinary immutable
+part boundary. `install_manifest()` retains add-only authority by default; a caller must explicitly
+provide the exact `ManifestCompactionReplacement` to select removal authority. In that mode storage
+rereads every named input and output from final files, independently repeats complete equivalence,
+revalidates every referenced part, and only then begins the existing Manifest write/readback/fsync/
+no-replace-rename/directory-sync sequence. A crash before the Manifest directory sync selects the
+old generation; a crash after it may select only the complete replacement generation. Input finals
+are deliberately retained.
 
 ## Likely review and interview questions
 

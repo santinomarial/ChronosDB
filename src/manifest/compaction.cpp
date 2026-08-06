@@ -5,6 +5,7 @@
 #include "chronos/common/status.hpp"
 #include "chronos/cseg/page_codec.hpp"
 #include "chronos/cseg/validator.hpp"
+#include "chronos/manifest/naming.hpp"
 #include "cseg/sort_order_internal.hpp"
 
 #include <algorithm>
@@ -409,6 +410,25 @@ required_bytes(const std::span<const LoadedPart> parts, const RowRef row,
   return value->bytes();
 }
 
+[[nodiscard]] const TabletDescriptor* find_tablet(const DecodedManifestView& manifest,
+                                                  const schema::TabletId& tablet_id) noexcept {
+  const auto found =
+      std::ranges::lower_bound(manifest.tablets(), tablet_id, {}, &TabletDescriptor::tablet_id);
+  return found != manifest.tablets().end() && found->tablet_id == tablet_id ? &*found : nullptr;
+}
+
+[[nodiscard]] const PartDescriptor* find_part(const DecodedManifestView& manifest,
+                                              const cseg::PartId& part_id) noexcept {
+  const auto found = std::ranges::find(manifest.parts(), part_id, &PartDescriptor::part_id);
+  return found == manifest.parts().end() ? nullptr : &*found;
+}
+
+[[nodiscard]] bool contains_input(const std::span<const CompactionPartImage> inputs,
+                                  const cseg::PartId& part_id) noexcept {
+  const auto found = std::ranges::lower_bound(inputs, part_id, {}, &CompactionPartImage::part_id);
+  return found != inputs.end() && found->part_id == part_id;
+}
+
 } // namespace
 
 common::Result<EncodedCompactionPart>
@@ -640,6 +660,144 @@ merge_append_only_cseg_v1(const AppendOnlyCompactionRequest& request) {
     return common::make_unexpected(exhausted("CSEG compaction allocation failed"));
   } catch (const std::length_error&) {
     return common::make_unexpected(exhausted("CSEG compaction allocation length is unsupported"));
+  }
+}
+
+common::Result<EncodedManifest>
+build_manifest_v1_for_append_only_compaction(const AppendOnlyCompactionManifestBuildInput& input) {
+  try {
+    const DecodedManifestView& predecessor = input.predecessor.get();
+    const EncodedCompactionPart& output = input.output.get();
+    const schema::TableSchema& schema = input.schema.get();
+    if (input.inputs.empty() || output.wal_id != predecessor.wal_id() ||
+        output.descriptor.table_id != schema.table_id() ||
+        output.descriptor.schema_id != schema.schema_id() ||
+        output.descriptor.schema_version != schema.version()) {
+      return common::make_unexpected(
+          invalid("Manifest compaction input, WAL, or schema context is invalid"));
+    }
+
+    const std::array output_image{CompactionPartImage{.part_id = output.descriptor.part_id,
+                                                      .bytes = output.encoded_part.bytes()}};
+    common::Status validation = validate_append_only_cseg_v1_equivalence(
+        input.inputs, output_image, schema, output.descriptor.tablet_id, predecessor.wal_id(),
+        input.equivalence_limits);
+    if (!validation.is_ok()) {
+      return common::make_unexpected(std::move(validation));
+    }
+    const std::string output_name = part_file_name(output.descriptor.part_id);
+    validation = validate_manifest_v1_part_image(
+        output.descriptor, predecessor.wal_id(), schema,
+        {.file_name = output_name, .bytes = output.encoded_part.bytes()},
+        input.part_validation_limits);
+    if (!validation.is_ok()) {
+      return common::make_unexpected(std::move(validation));
+    }
+
+    const TabletDescriptor* target = find_tablet(predecessor, output.descriptor.tablet_id);
+    if (target == nullptr || target->table_id != output.descriptor.table_id ||
+        find_part(predecessor, output.descriptor.part_id) != nullptr) {
+      return common::make_unexpected(
+          invalid("Manifest compaction target is absent or output identity is not fresh"));
+    }
+    std::uint64_t input_rows = 0U;
+    for (std::size_t index = 0U; index < input.inputs.size(); ++index) {
+      if ((index != 0U && !(input.inputs[index - 1U].part_id < input.inputs[index].part_id)) ||
+          !contains_input(input.inputs, input.inputs[index].part_id)) {
+        return common::make_unexpected(
+            invalid("Manifest compaction inputs are not strictly identity sorted"));
+      }
+      const PartDescriptor* descriptor = find_part(predecessor, input.inputs[index].part_id);
+      if (descriptor == nullptr || descriptor->tablet_id != target->tablet_id ||
+          descriptor->schema_id != output.descriptor.schema_id ||
+          descriptor->schema_version != output.descriptor.schema_version) {
+        return common::make_unexpected(
+            invalid("Manifest compaction input is absent from the exact target schema"));
+      }
+      const std::optional<std::uint64_t> next_rows =
+          common::checked_add(input_rows, descriptor->row_count);
+      if (!next_rows.has_value()) {
+        return common::make_unexpected(exhausted("Manifest compaction input row count overflows"));
+      }
+      input_rows = *next_rows;
+    }
+    if (input_rows != output.descriptor.row_count) {
+      return common::make_unexpected(
+          invalid("Manifest compaction output row count disagrees with its inputs"));
+    }
+
+    const std::optional<std::uint64_t> generation =
+        common::checked_add(predecessor.generation(), std::uint64_t{1U});
+    if (!generation.has_value()) {
+      return common::make_unexpected(exhausted("Manifest compaction generation overflows"));
+    }
+    std::vector<TabletDescriptor> tablets(predecessor.tablets().begin(),
+                                          predecessor.tablets().end());
+    std::vector<PartDescriptor> parts;
+    const std::optional<std::size_t> retained_count =
+        common::checked_add(predecessor.parts().size() - input.inputs.size(), std::size_t{1U});
+    if (!retained_count.has_value()) {
+      return common::make_unexpected(exhausted("Manifest compaction part count overflows"));
+    }
+    parts.reserve(*retained_count);
+    for (TabletDescriptor& tablet : tablets) {
+      const std::size_t first = static_cast<std::size_t>(tablet.first_part_index);
+      const std::span<const PartDescriptor> old_parts =
+          predecessor.parts().subspan(first, static_cast<std::size_t>(tablet.part_count));
+      tablet.first_part_index = parts.size();
+      if (tablet.tablet_id == target->tablet_id) {
+        for (const PartDescriptor& descriptor : old_parts) {
+          if (!contains_input(input.inputs, descriptor.part_id)) {
+            parts.push_back(descriptor);
+          }
+        }
+        parts.push_back(output.descriptor);
+        std::ranges::sort(
+            std::span{parts}.subspan(static_cast<std::size_t>(tablet.first_part_index)), {},
+            &PartDescriptor::part_id);
+      } else {
+        parts.insert(parts.end(), old_parts.begin(), old_parts.end());
+      }
+      tablet.part_count = parts.size() - static_cast<std::size_t>(tablet.first_part_index);
+    }
+
+    common::Result<EncodedManifest> encoded = encode_manifest_v1({
+        .generation = *generation,
+        .database_id = predecessor.database_id(),
+        .wal_id = predecessor.wal_id(),
+        .reclaim_checkpoint = predecessor.reclaim_checkpoint(),
+        .tablets = tablets,
+        .parts = parts,
+        .retries = predecessor.retries(),
+    });
+    if (!encoded.has_value()) {
+      return common::make_unexpected(encoded.error());
+    }
+    ManifestDecodeResult decoded = decode_manifest_v1_exact(encoded->bytes());
+    if (!decoded.has_value()) {
+      return common::make_unexpected(
+          corruption("Generated compaction Manifest no longer decodes exactly"));
+    }
+    std::vector<cseg::PartId> input_ids;
+    input_ids.reserve(input.inputs.size());
+    for (const CompactionPartImage& image : input.inputs) {
+      input_ids.push_back(image.part_id);
+    }
+    const std::array output_ids{output.descriptor.part_id};
+    validation =
+        validate_manifest_v1_compaction_transition(predecessor, *decoded, input.schema_bindings,
+                                                   {.tablet_id = target->tablet_id,
+                                                    .input_part_ids = input_ids,
+                                                    .output_part_ids = output_ids});
+    if (!validation.is_ok()) {
+      return common::make_unexpected(std::move(validation));
+    }
+    return encoded;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("Manifest compaction generation allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("Manifest compaction generation exceeds container limits"));
   }
 }
 
