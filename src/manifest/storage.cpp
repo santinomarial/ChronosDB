@@ -319,6 +319,11 @@ public:
     return common::make_unexpected(std::move(failure));
   }
 
+  [[nodiscard]] common::Result<PartReclamationReport> fail_reclamation(common::Status failure) {
+    ++reclamation_metrics_.failures;
+    return common::make_unexpected(std::move(failure));
+  }
+
   io::PosixDirectory root_;
   io::PosixDirectory parts_;
   io::PosixDirectory manifests_;
@@ -328,6 +333,7 @@ public:
   common::Status poison_status_;
   PartInstallationMetrics metrics_;
   ManifestInstallationMetrics manifest_metrics_;
+  PartReclamationMetrics reclamation_metrics_;
 };
 
 ManifestStorage::ManifestStorage(std::unique_ptr<Impl> implementation) noexcept
@@ -808,6 +814,123 @@ common::Result<TemporaryCleanupReport> ManifestStorage::cleanup_temporaries() {
   return report;
 }
 
+common::Result<PartReclamationReport>
+ManifestStorage::reclaim_retired_parts(const PartReclamationRequest& request) {
+  if (!implementation_) {
+    return common::make_unexpected(invalid("Manifest storage owner was moved from"));
+  }
+  Impl& implementation = *implementation_;
+  ++implementation.reclamation_metrics_.attempts;
+  if (implementation.poisoned_) {
+    return implementation.fail_reclamation(
+        common::Status{common::StatusCode::kUnavailable, "Manifest storage owner is poisoned"});
+  }
+
+  const RetiredPartSet& retirement = request.retirement.get();
+  PartReclamationReport report{
+      .outcome = PartReclamationOutcome::kPending,
+      .predecessor_generation = retirement.predecessor_generation(),
+      .candidate_parts = static_cast<std::uint64_t>(retirement.parts().size()),
+  };
+  if (retirement.parts().empty()) {
+    return implementation.fail_reclamation(invalid("Part retirement set is empty"));
+  }
+  if (retirement.is_pinned()) {
+    saturating_add(implementation.reclamation_metrics_.pending, 1U);
+    return report;
+  }
+
+  const LoadedManifestGeneration& selected = request.selected_manifest.get();
+  if (retirement.predecessor_generation() >= selected.generation()) {
+    return implementation.fail_reclamation(
+        invalid("Part retirement predecessor is not older than the selected Manifest"));
+  }
+  for (std::size_t index = 0U; index < retirement.parts().size(); ++index) {
+    const RetiredPartFile& candidate = retirement.parts()[index];
+    if (candidate.file_length == 0U ||
+        (index != 0U && !(retirement.parts()[index - 1U].part_id < candidate.part_id))) {
+      return implementation.fail_reclamation(
+          invalid("Part retirement files are not nonempty and strictly sorted"));
+    }
+  }
+
+  common::Result<ManifestNamespaceSnapshot> snapshot = scan_namespace();
+  if (!snapshot.has_value()) {
+    return implementation.fail_reclamation(snapshot.error());
+  }
+  if (snapshot->generations.back() != selected.generation()) {
+    return implementation.fail_reclamation(
+        invalid("Part reclamation Manifest owner is no longer selected"));
+  }
+  const common::Result<std::string> selected_name = manifest_file_name(selected.generation());
+  if (!selected_name.has_value()) {
+    return implementation.fail_reclamation(common::Status{
+        common::StatusCode::kInternal, "Selected Manifest generation cannot be formatted"});
+  }
+  common::Result<std::vector<std::byte>> current_bytes =
+      read_final_file(implementation.manifests_,
+                      {.name = *selected_name,
+                       .maximum_length = request.decode_limits.max_file_length,
+                       .exact_length = static_cast<std::uint64_t>(selected.encoded_bytes().size()),
+                       .description = "current final Manifest generation"});
+  if (!current_bytes.has_value()) {
+    return implementation.fail_reclamation(current_bytes.error());
+  }
+  if (!std::ranges::equal(*current_bytes, selected.encoded_bytes())) {
+    return implementation.fail_reclamation(
+        corruption("Current final Manifest bytes disagree with the supplied owner"));
+  }
+
+  for (const RetiredPartFile& candidate : retirement.parts()) {
+    if (std::ranges::find(selected.parts(), candidate.part_id, &PartDescriptor::part_id) !=
+        selected.parts().end()) {
+      return implementation.fail_reclamation(
+          corruption("Current Manifest still references a retired part candidate"));
+    }
+  }
+
+  bool unlinked = false;
+  for (const RetiredPartFile& candidate : retirement.parts()) {
+    const bool present =
+        std::ranges::find(snapshot->final_parts, candidate.part_id) != snapshot->final_parts.end();
+    if (!present) {
+      ++report.already_absent_parts;
+      continue;
+    }
+    const common::Status removal =
+        implementation.parts_.remove_file(part_file_name(candidate.part_id));
+    if (!removal.is_ok()) {
+      if (unlinked) {
+        implementation.poisoned_ = true;
+        implementation.poison_status_ =
+            with_context("remove retired CSEG part after a prior unlink", removal);
+        return implementation.fail_reclamation(implementation.poison_status_);
+      }
+      return implementation.fail_reclamation(with_context("remove retired CSEG part", removal));
+    }
+    unlinked = true;
+    ++report.removed_parts;
+    saturating_add(report.removed_bytes, candidate.file_length);
+  }
+  if (unlinked) {
+    const common::Status sync = implementation.parts_.sync();
+    if (!sync.is_ok()) {
+      implementation.poisoned_ = true;
+      implementation.poison_status_ =
+          with_context("synchronize parts directory after reclamation", sync);
+      return implementation.fail_reclamation(implementation.poison_status_);
+    }
+    report.directory_syncs = 1U;
+  }
+  report.outcome = PartReclamationOutcome::kReclaimed;
+  saturating_add(implementation.reclamation_metrics_.reclaimed_parts, report.removed_parts);
+  saturating_add(implementation.reclamation_metrics_.reclaimed_bytes, report.removed_bytes);
+  saturating_add(implementation.reclamation_metrics_.already_absent_parts,
+                 report.already_absent_parts);
+  saturating_add(implementation.reclamation_metrics_.directory_syncs, report.directory_syncs);
+  return report;
+}
+
 common::Result<LoadedManifestGeneration>
 ManifestStorage::load_selected_manifest(const ManifestLoadRequest& request) const {
   common::Result<ManifestNamespaceSnapshot> snapshot = scan_namespace();
@@ -987,6 +1110,10 @@ PartInstallationMetrics ManifestStorage::metrics() const noexcept {
 
 ManifestInstallationMetrics ManifestStorage::manifest_metrics() const noexcept {
   return implementation_ ? implementation_->manifest_metrics_ : ManifestInstallationMetrics{};
+}
+
+PartReclamationMetrics ManifestStorage::reclamation_metrics() const noexcept {
+  return implementation_ ? implementation_->reclamation_metrics_ : PartReclamationMetrics{};
 }
 
 } // namespace chronos::manifest

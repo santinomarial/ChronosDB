@@ -609,13 +609,28 @@ public:
       if (!transition.is_ok()) {
         return fail(std::move(transition));
       }
+      std::vector<RetiredPartFile> retired_parts;
+      retired_parts.reserve(request.replacement.input_part_ids.size());
+      for (const cseg::PartId& part_id : request.replacement.input_part_ids) {
+        const PartDescriptor* descriptor = find_part(*current->manifest_, part_id);
+        if (descriptor == nullptr) {
+          return fail(common::Status{common::StatusCode::kInternal,
+                                     "Validated compaction input became inaccessible"});
+        }
+        retired_parts.push_back(
+            RetiredPartFile{.part_id = part_id, .file_length = descriptor->file_length});
+      }
+      retired_part_sets_.reserve(retired_part_sets_.size() + 1U);
       auto publication = std::make_shared<const DatabaseStoragePublication>(
           request.selected_manifest, current->tablets_, current->retirements_,
           current->visible_head_rows_);
+      RetiredPartSet retirement{current->manifest_->generation(), std::move(retired_parts),
+                                current};
       if (hook_ != nullptr) {
         hook_(hook_context_);
       }
       std::atomic_store_explicit(&publication_, publication, std::memory_order_release);
+      retired_part_sets_.push_back(std::move(retirement));
       return DatabaseStorageSnapshot{std::move(publication)};
     } catch (const std::bad_alloc&) {
       return fail(exhausted("durable compaction publication allocation failed"));
@@ -628,14 +643,50 @@ public:
     return !failed_.load(std::memory_order_acquire);
   }
 
+  [[nodiscard]] common::Result<std::vector<RetiredPartSet>> drain_retired_part_sets() {
+    if (failed_.load(std::memory_order_acquire)) {
+      return common::make_unexpected(unavailable("database storage publisher is failed closed"));
+    }
+    std::vector<RetiredPartSet> drained;
+    drained.swap(retired_part_sets_);
+    return drained;
+  }
+
 private:
   std::shared_ptr<const DatabaseStoragePublication> publication_;
   std::atomic<bool> failed_{false};
+  std::vector<RetiredPartSet> retired_part_sets_;
   void (*hook_)(void*) noexcept {};
   void* hook_context_{};
 };
 
 } // namespace detail
+
+DatabaseStorageRetentionToken::DatabaseStorageRetentionToken(
+    std::shared_ptr<const detail::DatabaseStoragePublication> publication) noexcept
+    : publication_(std::move(publication)) {}
+
+std::uint64_t DatabaseStorageRetentionToken::generation() const noexcept {
+  return publication_->manifest_->generation();
+}
+
+RetiredPartSet::RetiredPartSet(
+    const std::uint64_t predecessor_generation, std::vector<RetiredPartFile> parts,
+    std::weak_ptr<const detail::DatabaseStoragePublication> predecessor) noexcept
+    : predecessor_generation_(predecessor_generation), parts_(std::move(parts)),
+      predecessor_(std::move(predecessor)) {}
+
+std::uint64_t RetiredPartSet::predecessor_generation() const noexcept {
+  return predecessor_generation_;
+}
+
+std::span<const RetiredPartFile> RetiredPartSet::parts() const noexcept {
+  return parts_;
+}
+
+bool RetiredPartSet::is_pinned() const noexcept {
+  return !predecessor_.expired();
+}
 
 PublishedTabletStorage::PublishedTabletStorage(
     schema::TableId table_id, schema::TabletId tablet_id,
@@ -728,6 +779,10 @@ std::size_t DatabaseStorageSnapshot::visible_head_row_count() const noexcept {
   return publication_->visible_head_rows_;
 }
 
+DatabaseStorageRetentionToken DatabaseStorageSnapshot::retention_token() const noexcept {
+  return DatabaseStorageRetentionToken{publication_};
+}
+
 DatabaseStoragePublisher::DatabaseStoragePublisher(
     std::unique_ptr<detail::DatabaseStoragePublisherImpl> implementation) noexcept
     : implementation_(std::move(implementation)) {}
@@ -816,6 +871,13 @@ common::Result<DatabaseStorageSnapshot> DatabaseStoragePublisher::publish_compac
     return common::make_unexpected(unavailable("database storage publisher was moved from"));
   }
   return implementation_->publish_compaction_manifest(request);
+}
+
+common::Result<std::vector<RetiredPartSet>> DatabaseStoragePublisher::drain_retired_part_sets() {
+  if (implementation_ == nullptr) {
+    return common::make_unexpected(unavailable("database storage publisher was moved from"));
+  }
+  return implementation_->drain_retired_part_sets();
 }
 
 bool DatabaseStoragePublisher::is_usable() const noexcept {

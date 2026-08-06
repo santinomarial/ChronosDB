@@ -479,27 +479,79 @@ TEST(DatabaseStoragePublicationTest, CompactionPublishesOneEpochAndRetainsOldSna
     input_descriptor = fixture.flushed->descriptor;
     output_descriptor = merged->descriptor;
 
-    EXPECT_TRUE(std::filesystem::exists(fixture.directory.path() / kPartsDirectoryName /
-                                        part_file_name(input_descriptor->part_id)));
+    common::Result<std::vector<RetiredPartSet>> retired = publisher.drain_retired_part_sets();
+    ASSERT_TRUE(retired.has_value());
+    ASSERT_EQ(retired->size(), 1U);
+    RetiredPartSet retirement = std::move(retired->front());
+    EXPECT_EQ(retirement.predecessor_generation(), 2U);
+    ASSERT_EQ(retirement.parts().size(), 1U);
+    EXPECT_EQ(retirement.parts().front().part_id, input_descriptor->part_id);
+    EXPECT_EQ(retirement.parts().front().file_length, input_descriptor->file_length);
+    EXPECT_TRUE(retirement.is_pinned());
+    EXPECT_TRUE(publisher.drain_retired_part_sets()->empty());
+
+    const PartReclamationReport pending =
+        fixture.storage
+            ->reclaim_retired_parts({.selected_manifest = std::cref(*generation_three),
+                                     .retirement = std::cref(retirement),
+                                     .decode_limits = {}})
+            .value();
+    EXPECT_EQ(pending.outcome, PartReclamationOutcome::kPending);
+    EXPECT_EQ(pending.removed_parts, 0U);
+
+    ASSERT_TRUE(old.has_value());
+    EXPECT_EQ(old->generation(), 2U);
+    ASSERT_EQ(old->parts().size(), 1U);
+    EXPECT_EQ(old->parts().front(), *input_descriptor);
+    EXPECT_EQ(old->visible_head_row_count(), 1U);
+    ASSERT_NE(old->find_tablet(id<schema::TabletId>(3U))->active_head(), nullptr);
+    EXPECT_EQ(old->find_tablet(id<schema::TabletId>(3U))->active_head()->row_count(), 1U);
+    EXPECT_TRUE(decode_manifest_v1_exact(old->manifest_bytes()).has_value());
+    std::optional<DatabaseStorageRetentionToken> token{old->retention_token()};
+    EXPECT_EQ(token->generation(), 2U);
+    old.reset();
+    EXPECT_TRUE(retirement.is_pinned());
+    token.reset();
+    EXPECT_FALSE(retirement.is_pinned());
+
+    const PartReclamationReport reclaimed =
+        fixture.storage
+            ->reclaim_retired_parts({.selected_manifest = std::cref(*generation_three),
+                                     .retirement = std::cref(retirement),
+                                     .decode_limits = {}})
+            .value();
+    EXPECT_EQ(reclaimed.outcome, PartReclamationOutcome::kReclaimed);
+    EXPECT_EQ(reclaimed.removed_parts, 1U);
+    EXPECT_EQ(reclaimed.removed_bytes, input_descriptor->file_length);
+    EXPECT_EQ(reclaimed.directory_syncs, 1U);
+    EXPECT_FALSE(std::filesystem::exists(fixture.directory.path() / kPartsDirectoryName /
+                                         part_file_name(input_descriptor->part_id)));
+
+    const PartReclamationReport repeated =
+        fixture.storage
+            ->reclaim_retired_parts({.selected_manifest = std::cref(*generation_three),
+                                     .retirement = std::cref(retirement),
+                                     .decode_limits = {}})
+            .value();
+    EXPECT_EQ(repeated.outcome, PartReclamationOutcome::kReclaimed);
+    EXPECT_EQ(repeated.removed_parts, 0U);
+    EXPECT_EQ(repeated.already_absent_parts, 1U);
+    EXPECT_EQ(repeated.directory_syncs, 0U);
+    EXPECT_EQ(fixture.storage->reclamation_metrics().attempts, 3U);
+    EXPECT_EQ(fixture.storage->reclamation_metrics().pending, 1U);
+    EXPECT_EQ(fixture.storage->reclamation_metrics().reclaimed_parts, 1U);
+
     EXPECT_TRUE(std::filesystem::exists(fixture.directory.path() / kPartsDirectoryName /
                                         part_file_name(output_descriptor->part_id)));
   }
 
-  ASSERT_TRUE(old.has_value());
   ASSERT_TRUE(next.has_value());
-  EXPECT_EQ(old->generation(), 2U);
-  ASSERT_EQ(old->parts().size(), 1U);
-  EXPECT_EQ(old->parts().front(), *input_descriptor);
-  EXPECT_EQ(old->visible_head_row_count(), 1U);
   EXPECT_EQ(next->generation(), 3U);
   ASSERT_EQ(next->parts().size(), 1U);
   EXPECT_EQ(next->parts().front(), *output_descriptor);
   EXPECT_EQ(next->visible_head_row_count(), 1U);
-  ASSERT_NE(old->find_tablet(id<schema::TabletId>(3U))->active_head(), nullptr);
   ASSERT_NE(next->find_tablet(id<schema::TabletId>(3U))->active_head(), nullptr);
-  EXPECT_EQ(old->find_tablet(id<schema::TabletId>(3U))->active_head()->row_count(), 1U);
   EXPECT_EQ(next->find_tablet(id<schema::TabletId>(3U))->active_head()->row_count(), 1U);
-  EXPECT_TRUE(decode_manifest_v1_exact(old->manifest_bytes()).has_value());
   EXPECT_TRUE(decode_manifest_v1_exact(next->manifest_bytes()).has_value());
 }
 

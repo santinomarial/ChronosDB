@@ -274,6 +274,12 @@ int main() {
           chronos::manifest::ManifestStorage::*)();
   const CleanupManifestTemporariesFunction cleanup_manifest_temporaries =
       &chronos::manifest::ManifestStorage::cleanup_temporaries;
+  using ReclaimRetiredPartsFunction =
+      chronos::common::Result<chronos::manifest::PartReclamationReport> (
+          chronos::manifest::ManifestStorage::*)(
+          const chronos::manifest::PartReclamationRequest&);
+  const ReclaimRetiredPartsFunction reclaim_retired_parts =
+      &chronos::manifest::ManifestStorage::reclaim_retired_parts;
   using InstallManifestFunction = chronos::common::Result<chronos::manifest::InstalledManifest> (
       chronos::manifest::ManifestStorage::*)(const chronos::manifest::ManifestInstallRequest&);
   const InstallManifestFunction install_manifest =
@@ -323,6 +329,11 @@ int main() {
           const chronos::manifest::DurableCompactionPublicationRequest&);
   const PublishCompactionFunction publish_compaction =
       &chronos::manifest::DatabaseStoragePublisher::publish_compaction_manifest;
+  using DrainRetiredPartsFunction =
+      chronos::common::Result<std::vector<chronos::manifest::RetiredPartSet>> (
+          chronos::manifest::DatabaseStoragePublisher::*)();
+  const DrainRetiredPartsFunction drain_retired_parts =
+      &chronos::manifest::DatabaseStoragePublisher::drain_retired_part_sets;
   using CreateCompactionCoordinatorFunction =
       chronos::common::Result<chronos::manifest::AppendOnlyCompactionCoordinator> (*)(
           chronos::manifest::ManifestStorage&, chronos::manifest::DatabaseStoragePublisher&);
@@ -371,11 +382,13 @@ int main() {
                  open_manifest_storage != nullptr &&
                  scan_manifest_namespace != nullptr &&
                  cleanup_manifest_temporaries != nullptr &&
+                 reclaim_retired_parts != nullptr &&
                  install_manifest != nullptr && manifest_metrics != nullptr &&
                  load_selected_manifest != nullptr && load_selected_part_images != nullptr &&
                  flush_sealed_head != nullptr &&
                  build_manifest != nullptr && build_checkpoint != nullptr &&
                  create_storage_publisher != nullptr && publish_compaction != nullptr &&
+                 drain_retired_parts != nullptr &&
                  create_compaction_coordinator != nullptr &&
                  plan_compaction != nullptr &&
                  create_flush_coordinator != nullptr &&

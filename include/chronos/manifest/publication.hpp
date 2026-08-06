@@ -7,6 +7,7 @@
 #include "chronos/cseg/types.hpp"
 #include "chronos/head/mutable_head.hpp"
 #include "chronos/ingest/tablet_state.hpp"
+#include "chronos/manifest/retirement.hpp"
 #include "chronos/manifest/storage.hpp"
 #include "chronos/manifest/types.hpp"
 #include "chronos/schema/identity.hpp"
@@ -109,6 +110,7 @@ public:
   [[nodiscard]] const PublishedTabletStorage*
   find_tablet(const schema::TabletId& tablet_id) const noexcept;
   [[nodiscard]] std::size_t visible_head_row_count() const noexcept;
+  [[nodiscard]] DatabaseStorageRetentionToken retention_token() const noexcept;
 
 private:
   explicit DatabaseStorageSnapshot(
@@ -155,6 +157,10 @@ public:
   // Any validation/allocation failure after receiving a durable successor fails this owner closed.
   [[nodiscard]] common::Result<DatabaseStorageSnapshot>
   publish_compaction_manifest(const DurableCompactionPublicationRequest& request);
+
+  // Moves out every retirement proof issued since the previous drain, in publication order.
+  // An undrained proof retains no predecessor and therefore cannot itself delay reclamation.
+  [[nodiscard]] common::Result<std::vector<RetiredPartSet>> drain_retired_part_sets();
 
   [[nodiscard]] bool is_usable() const noexcept;
   [[nodiscard]] common::Status poison_status() const;

@@ -91,3 +91,12 @@ benchmark uses one tablet/schema with every eighth arrival shifted four event ra
 records selected fan-in at 128, 4,096, and 65,536 input descriptors. It times validation,
 classification, grouping, overlap selection, checked accounting, and owned-plan construction; it
 does not execute or claim compaction throughput.
+
+Compaction publication now issues move-only retirement records containing the exact predecessor
+generation and removed part identities and lengths. A snapshot can produce a copyable explicit
+retention token for consumers that need file lifetime without the rest of the query view. The
+publisher queues records until the single writer drains them. `ManifestStorage` returns `pending`
+without I/O while the predecessor is pinned; after pins expire it rescans, exact-compares the
+selected Manifest bytes, proves every candidate unreferenced, unlinks exact final names, and syncs
+the parts directory once. Repeating an already-completed record is successful and counts absent
+parts. Unlink-prefix or directory-sync uncertainty poisons the owner for restart recovery.

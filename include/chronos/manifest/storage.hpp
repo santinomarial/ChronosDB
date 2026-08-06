@@ -8,6 +8,7 @@
 #include "chronos/manifest/codec.hpp"
 #include "chronos/manifest/compaction_equivalence.hpp"
 #include "chronos/manifest/part_validation.hpp"
+#include "chronos/manifest/retirement.hpp"
 #include "chronos/manifest/types.hpp"
 #include "chronos/manifest/validation.hpp"
 #include "chronos/schema/table_schema.hpp"
@@ -26,6 +27,8 @@ class PosixSyscalls;
 }
 
 namespace chronos::manifest {
+
+class LoadedManifestGeneration;
 
 namespace detail {
 class ManifestStorageTestAccess;
@@ -113,6 +116,41 @@ struct TemporaryCleanupReport {
   std::uint64_t directory_syncs{};
 
   friend bool operator==(const TemporaryCleanupReport&, const TemporaryCleanupReport&) = default;
+};
+
+enum class PartReclamationOutcome : std::uint8_t {
+  kPending,
+  kReclaimed,
+};
+
+struct PartReclamationRequest {
+  std::reference_wrapper<const LoadedManifestGeneration> selected_manifest;
+  std::reference_wrapper<const RetiredPartSet> retirement;
+  ManifestDecodeLimits decode_limits;
+};
+
+struct PartReclamationReport {
+  PartReclamationOutcome outcome{PartReclamationOutcome::kPending};
+  std::uint64_t predecessor_generation{};
+  std::uint64_t candidate_parts{};
+  std::uint64_t removed_parts{};
+  std::uint64_t removed_bytes{};
+  std::uint64_t already_absent_parts{};
+  std::uint64_t directory_syncs{};
+
+  friend bool operator==(const PartReclamationReport&, const PartReclamationReport&) = default;
+};
+
+struct PartReclamationMetrics {
+  std::uint64_t attempts{};
+  std::uint64_t pending{};
+  std::uint64_t failures{};
+  std::uint64_t reclaimed_parts{};
+  std::uint64_t reclaimed_bytes{};
+  std::uint64_t already_absent_parts{};
+  std::uint64_t directory_syncs{};
+
+  friend bool operator==(const PartReclamationMetrics&, const PartReclamationMetrics&) = default;
 };
 
 struct ManifestLoadRequest {
@@ -215,6 +253,12 @@ public:
   // It never promotes a candidate or removes a final part/generation.
   [[nodiscard]] common::Result<TemporaryCleanupReport> cleanup_temporaries();
 
+  // Reclaims only compaction inputs whose exact predecessor publication no longer has a reader.
+  // The current selected owner is reread and exact-compared before any unlink. A failure after
+  // the first unlink poisons this storage owner until restart.
+  [[nodiscard]] common::Result<PartReclamationReport>
+  reclaim_retired_parts(const PartReclamationRequest& request);
+
   // Selects only the highest consecutive final generation, exact-decodes it without fallback,
   // binds configured identities/catalog state, validates every referenced final CSEG, and returns
   // an owned unpublished result. Recognized temporaries and unreferenced finals are only reported.
@@ -233,6 +277,7 @@ public:
   [[nodiscard]] common::Status poison_status() const;
   [[nodiscard]] PartInstallationMetrics metrics() const noexcept;
   [[nodiscard]] ManifestInstallationMetrics manifest_metrics() const noexcept;
+  [[nodiscard]] PartReclamationMetrics reclamation_metrics() const noexcept;
 
 private:
   class Impl;

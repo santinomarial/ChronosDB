@@ -648,6 +648,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/manifest/part_validation_test.cpp
     tests/manifest/publication_header_self_contained.cpp
     tests/manifest/publication_test.cpp
+    tests/manifest/retirement_header_self_contained.cpp
     tests/manifest/sealed_head_flush_header_self_contained.cpp
     tests/manifest/sealed_head_flush_test.cpp
     tests/manifest/sealed_head_flush_coordinator_header_self_contained.cpp
