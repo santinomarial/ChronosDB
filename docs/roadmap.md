@@ -334,7 +334,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
   durations, and materializes an initial `TableSchema` only from caller-allocated durable
   identities. INSERT binding pins the target schema, resolves explicit columns to schema ordinals,
   enforces lossless assignment and non-null/default rules under row/value limits, and materializes
-  source-free constant expressions into complete schema-ordinal scalar rows.
+  source-free constant expressions into complete schema-ordinal scalar rows. EXPLAIN now emits a
+  versioned stable logical/scalar-physical plan description without snapshot access, while EXPLAIN
+  ANALYZE executes once and reports measured scalar operator-work counters with the underlying
+  result.
 
 - **Scope:** specify a typed analytical SQL subset; custom lexer/parser; catalog binding; scalar expression/relational reference execution; event-time and system-time query syntax required by initial workloads.
 - **Explicit non-scope:** full SQL compliance, vectorization, cost-based optimization, distributed SQL, unsupported mutation syntax, and streaming syntax beyond contracts scheduled later.

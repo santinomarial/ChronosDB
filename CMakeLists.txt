@@ -328,6 +328,7 @@ add_library(
   src/query/diagnostic.cpp
   src/query/evaluator.cpp
   src/query/executor.cpp
+  src/query/explain.cpp
   src/query/lexer.cpp
   src/query/literal.cpp
   src/query/parser.cpp
@@ -730,6 +731,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/evaluator_test.cpp
     tests/query/executor_header_self_contained.cpp
     tests/query/executor_test.cpp
+    tests/query/explain_header_self_contained.cpp
+    tests/query/explain_test.cpp
     tests/query/ast_header_self_contained.cpp
     tests/query/binder_header_self_contained.cpp
     tests/query/binder_test.cpp

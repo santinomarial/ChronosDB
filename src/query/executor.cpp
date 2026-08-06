@@ -42,7 +42,7 @@ struct ProjectedRow {
 
 template <typename Value>
 [[nodiscard]] const Value* optional_pointer(const std::optional<Value>& value) noexcept {
-  return value.has_value() ? std::addressof(value.value()) : nullptr;
+  return value.has_value() ? std::addressof(*value) : nullptr;
 }
 
 [[nodiscard]] SqlDiagnostic diagnostic(const SourceSpan span, const common::StatusCode status,
@@ -121,16 +121,22 @@ template <typename Value>
 class Executor {
 public:
   Executor(const BoundSqlSelect& plan, const ScalarSnapshotProvider& provider,
-           const ScalarQueryLimits limits) noexcept
-      : plan_(plan), provider_(provider), limits_(limits) {}
+           const ScalarQueryLimits limits, ScalarQueryMetrics* metrics,
+           const bool allow_explain_analyze) noexcept
+      : plan_(plan), provider_(provider), limits_(limits), metrics_(metrics),
+        allow_explain_analyze_(allow_explain_analyze) {}
 
   [[nodiscard]] SqlResult<ScalarQueryResult> run() {
     try {
       validate_limits_and_mode();
       resolve_snapshots();
       std::vector<JoinedRow> rows = latest_rows();
+      if (metrics_ != nullptr)
+        metrics_->rows_after_latest = rows.size();
       apply_asof_joins(rows);
       apply_where(rows);
+      if (metrics_ != nullptr)
+        metrics_->rows_after_where = rows.size();
       std::vector<ProjectedRow> projected =
           aggregate_query() ? aggregate_project(rows) : project(rows);
       apply_order(projected);
@@ -139,6 +145,8 @@ public:
       output.reserve(projected.size());
       for (ProjectedRow& row : projected)
         output.push_back(std::move(row.values));
+      if (metrics_ != nullptr)
+        metrics_->output_rows = output.size();
       std::vector<ScalarResultColumn> columns;
       columns.reserve(plan_.outputs().size());
       for (const BoundOutputColumn& column : plan_.outputs()) {
@@ -168,7 +176,10 @@ private:
       fail(plan_.syntax().span(), common::StatusCode::kInvalidArgument,
            "Scalar query limits must be nonzero");
     }
-    if (plan_.syntax().mode() != SqlSelectMode::kSelect) {
+    const bool accepted =
+        plan_.syntax().mode() == SqlSelectMode::kSelect ||
+        (allow_explain_analyze_ && plan_.syntax().mode() == SqlSelectMode::kExplainAnalyze);
+    if (!accepted) {
       fail(plan_.syntax().span(), common::StatusCode::kNotSupported,
            "This scalar execution entry point accepts SELECT only");
     }
@@ -204,6 +215,8 @@ private:
         fail(plan_.syntax().span(), common::StatusCode::kResourceExhausted,
              "Scalar query source row count exceeds the limit");
       snapshots_.push_back(std::move(*resolved));
+      if (metrics_ != nullptr)
+        metrics_->source_rows += snapshots_.back()->rows().size();
     }
     null_rows_.resize(plan_.sources().size());
     for (std::size_t source = 0U; source < null_rows_.size(); ++source) {
@@ -327,6 +340,8 @@ private:
         const ScalarInputRow* winner = nullptr;
         std::optional<ScalarValue> winner_time;
         for (const ScalarInputRow& candidate : snapshots_[bound.right_source_ordinal]->rows()) {
+          if (metrics_ != nullptr)
+            ++metrics_->asof_candidate_comparisons;
           JoinedRow combined = left;
           combined.sources.push_back(std::addressof(candidate));
           if (predicate(syntax.condition, combined) != SqlTruthValue::kTrue)
@@ -375,11 +390,11 @@ private:
       ProjectedRow output{.input = row};
       output.values.reserve(plan_.outputs().size());
       for (const BoundOutputColumn& column : plan_.outputs()) {
-        if (column.expression_span.has_value()) {
+        const SourceSpan* expression_span = optional_pointer(column.expression_span);
+        if (expression_span != nullptr) {
           const SqlExpression* expression = nullptr;
           for (const SqlSelectItem& item : plan_.syntax().items()) {
-            if (item.expression() != nullptr &&
-                item.expression()->span() == *column.expression_span)
+            if (item.expression() != nullptr && item.expression()->span() == *expression_span)
               expression = item.expression();
           }
           if (expression == nullptr)
@@ -611,6 +626,8 @@ private:
     for (const SqlOrderItem& order : plan_.syntax().order_by())
       collect_aggregates(order.expression);
     std::vector<Group> groups = group_rows(rows);
+    if (metrics_ != nullptr)
+      metrics_->groups = groups.size();
     if (groups.size() > limits_.maximum_output_rows)
       fail(plan_.syntax().span(), common::StatusCode::kResourceExhausted,
            "Scalar aggregate output exceeds the row limit");
@@ -743,6 +760,8 @@ private:
   std::vector<std::vector<ScalarValue>> null_rows_;
   std::vector<ScalarSourceRow> context_rows_;
   std::vector<const SqlExpression*> aggregate_expressions_;
+  ScalarQueryMetrics* metrics_{};
+  bool allow_explain_analyze_{};
 };
 
 } // namespace
@@ -762,7 +781,18 @@ std::span<const std::vector<ScalarValue>> ScalarQueryResult::rows() const noexce
 SqlResult<ScalarQueryResult> execute_sql_v1_select(const BoundSqlSelect& plan,
                                                    const ScalarSnapshotProvider& provider,
                                                    const ScalarQueryLimits limits) {
-  return Executor{plan, provider, limits}.run();
+  return Executor{plan, provider, limits, nullptr, false}.run();
+}
+
+SqlResult<ScalarQueryExecution>
+execute_sql_v1_select_measured(const BoundSqlSelect& plan, const ScalarSnapshotProvider& provider,
+                               const ScalarQueryLimits limits) {
+  ScalarQueryMetrics metrics;
+  SqlResult<ScalarQueryResult> result =
+      Executor{plan, provider, limits, std::addressof(metrics), true}.run();
+  if (!result.has_value())
+    return std::unexpected(result.error());
+  return ScalarQueryExecution{.result = std::move(*result), .metrics = metrics};
 }
 
 } // namespace chronos::query
