@@ -138,6 +138,10 @@ public:
   [[nodiscard]] common::Result<TabletSnapshot> snapshot() const;
   [[nodiscard]] TabletStateMetrics metrics() const;
 
+  // Idempotently prevents later mutations while preserving the latest complete publication.
+  // The shard owner uses this after an unexpected failure in post-publication coordination.
+  [[nodiscard]] common::Status fail_closed();
+
 private:
   using PublicationHook = void (*)(void*) noexcept;
 

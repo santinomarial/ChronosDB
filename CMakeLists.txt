@@ -218,6 +218,7 @@ chronos_enable_static_analysis(chronos_head)
 add_library(
   chronos_ingest
   src/ingest/columnar_append.cpp
+  src/ingest/columnar_append_executor.cpp
   src/ingest/retry_directory.cpp
   src/ingest/sha256.cpp
   src/ingest/tablet_state.cpp
@@ -428,6 +429,7 @@ if(CHRONOS_BUILD_TESTS)
   add_executable(
     chronos_ingest_tests
     tests/ingest/columnar_append_corruption_test.cpp
+    tests/ingest/columnar_append_executor_header_self_contained.cpp
     tests/ingest/columnar_append_format_header_self_contained.cpp
     tests/ingest/columnar_append_header_self_contained.cpp
     tests/ingest/columnar_append_property_test.cpp

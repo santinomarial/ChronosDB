@@ -98,6 +98,7 @@ public:
 
   [[nodiscard]] common::Result<TabletSnapshot> snapshot();
   [[nodiscard]] TabletStateMetrics metrics() const noexcept;
+  [[nodiscard]] common::Status fail_closed() noexcept;
 
 private:
   [[nodiscard]] static common::Status validate_position(const head::HeadCommitPosition& position,
@@ -529,6 +530,11 @@ TabletStateMetrics detail::TabletStateCore::metrics() const noexcept {
                             .failed = failed_.load(std::memory_order_acquire)};
 }
 
+common::Status detail::TabletStateCore::fail_closed() noexcept {
+  failed_.store(true, std::memory_order_release);
+  return common::Status::ok();
+}
+
 TabletSnapshot::TabletSnapshot(
     std::shared_ptr<detail::TabletStateCore> state,
     std::shared_ptr<const detail::TabletPublication> publication) noexcept
@@ -699,6 +705,13 @@ TabletStateMetrics TabletState::metrics() const {
     return {};
   }
   return state_->metrics();
+}
+
+common::Status TabletState::fail_closed() {
+  if (state_ == nullptr) {
+    return invalid("tablet state is invalid");
+  }
+  return state_->fail_closed();
 }
 
 } // namespace chronos::ingest
