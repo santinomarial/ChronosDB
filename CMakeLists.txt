@@ -322,6 +322,7 @@ chronos_enable_static_analysis(chronos_manifest)
 add_library(
   chronos_query
   src/query/ast.cpp
+  src/query/catalog.cpp
   src/query/diagnostic.cpp
   src/query/lexer.cpp
   src/query/parser.cpp
@@ -717,6 +718,8 @@ if(CHRONOS_BUILD_TESTS)
     chronos_query_tests
     tests/query/diagnostic_header_self_contained.cpp
     tests/query/ast_header_self_contained.cpp
+    tests/query/catalog_header_self_contained.cpp
+    tests/query/catalog_test.cpp
     tests/query/lexer_header_self_contained.cpp
     tests/query/lexer_test.cpp
     tests/query/parser_header_self_contained.cpp
