@@ -104,6 +104,36 @@ jobs:
           path: build/${{ matrix.preset }}/Testing/Temporary/LastTest.log
           if-no-files-found: ignore
 
+  fuzz-smoke:
+    runs-on: ubuntu-24.04
+    env:
+      CC: clang-18
+      CXX: clang++-18
+      CXXFLAGS: -stdlib=libc++
+      FUZZ_RUNS: 1000
+      FUZZ_SEED: 424242
+      FUZZ_MAX_LEN: 4096
+      FUZZ_ENTROPIC: 0
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Install pinned fuzz toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clang-18 libc++-dev libc++abi-dev libssl-dev libzstd-dev
+      - name: Configure fuzz targets
+        run: cmake --preset fuzz
+      - name: Build fuzz targets
+        run: cmake --build --preset fuzz
+      - name: Run deterministic corpus-backed fuzz smoke
+        run: scripts/fuzz-smoke.sh build/fuzz
+      - name: Upload fuzz artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: fuzz-smoke-artifacts
+          path: build/fuzz/artifacts
+          if-no-files-found: ignore
+
   format:
     runs-on: ubuntu-24.04
     env:
@@ -130,6 +160,10 @@ jobs:
       - name: Install clang-tidy
         run: |
           sudo apt-get update
-          sudo apt-get install --yes clang-tidy libc++-dev libc++abi-dev libssl-dev libzstd-dev
+          sudo apt-get install --yes clang-tidy-18 libc++-dev libc++abi-dev libssl-dev libzstd-dev
+      - name: Report clang-tidy version
+        run: clang-tidy-18 --version
       - name: Configure and run clang-tidy
+        env:
+          CLANG_TIDY: clang-tidy-18
         run: scripts/lint.sh debug

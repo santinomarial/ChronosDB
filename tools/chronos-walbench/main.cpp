@@ -981,8 +981,8 @@ private:
          << ",\"maximum_sync_batch_bytes\":" << options.maximum_sync_batch_bytes
          << ",\"maximum_sync_delay_us\":" << options.maximum_sync_delay.count()
          << ",\"replication\":\"single-node\",\"read_consistency\":\"not applicable\","
-            "\"flush_compaction_checkpoint_reclamation\":\"not implemented and not "
-            "benchmarked\"},\n"
+            "\"flush_compaction_checkpoint_reclamation\":\"outside this physical WAL "
+            "benchmark and not benchmarked\"},\n"
          << R"(  "build": {"semantic_version":)" << quoted(version.semantic_version)
          << ",\"build_type\":" << quoted(version.build_type)
          << ",\"compiler\":" << quoted(version.compiler)

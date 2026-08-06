@@ -240,7 +240,8 @@ void print_report(const chronos::cseg::CsegInspectionReport& report, const bool 
   }
   const chronos::cseg::CsegInspectionResult report = chronos::cseg::inspect_cseg_v1_part(
       *bytes, {.decode = {.max_file_length = options->maximum_input_bytes,
-                          .max_metadata_length = options->maximum_input_bytes}});
+                          .max_metadata_length = options->maximum_input_bytes},
+               .validation = {}});
   if (!report.has_value()) {
     std::cerr << report.error().status().to_string();
     if (report.error().kind() == chronos::cseg::CsegInspectionErrorKind::kIncomplete) {

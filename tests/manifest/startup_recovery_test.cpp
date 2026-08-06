@@ -538,11 +538,12 @@ TEST(ManifestColumnarStartupRecoveryTest,
     EXPECT_EQ(recovered->report().part_count, 1U);
     EXPECT_EQ(recovered->report().retry_count, 1U);
     ASSERT_TRUE(recovered->report().wal_reclamation.has_value());
-    EXPECT_EQ(recovered->report().wal_reclamation->checkpoint.record_sequence, 1U);
-    EXPECT_EQ(recovered->report().wal_reclamation->removed_segment_count, attempt == 0U ? 1U : 0U);
-    EXPECT_EQ(recovered->report().wal_reclamation->removed_physical_bytes,
-              attempt == 0U ? original_segment.size() : 0U);
-    EXPECT_EQ(recovered->report().wal_reclamation->directory_sync_count, attempt == 0U ? 1U : 0U);
+    const wal::WalSegmentReclamationReport reclamation =
+        recovered->report().wal_reclamation.value_or(wal::WalSegmentReclamationReport{});
+    EXPECT_EQ(reclamation.checkpoint.record_sequence, 1U);
+    EXPECT_EQ(reclamation.removed_segment_count, attempt == 0U ? 1U : 0U);
+    EXPECT_EQ(reclamation.removed_physical_bytes, attempt == 0U ? original_segment.size() : 0U);
+    EXPECT_EQ(reclamation.directory_sync_count, attempt == 0U ? 1U : 0U);
     EXPECT_FALSE(std::filesystem::exists(first_segment));
     const common::Result<DatabaseStorageSnapshot> database = recovered->snapshot();
     ASSERT_TRUE(database.has_value());

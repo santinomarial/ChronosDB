@@ -6,6 +6,7 @@
 #include <benchmark/benchmark.h>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -152,7 +153,10 @@ measure_publish_allocations(const Fixture& fixture) {
   chronos::benchmark_support::ScopedAllocationCounting counting;
   auto prepared = target.prepare_append(fixture.batch).value();
   static_cast<void>(prepared.mark_wal_started());
-  static_cast<void>(prepared.publish(commit_position()));
+  const auto published = prepared.publish(commit_position());
+  if (!published.has_value()) {
+    std::terminate();
+  }
   return counting.stop();
 }
 
@@ -254,6 +258,8 @@ void benchmark_snapshot(benchmark::State& state) {
   state.SetLabel("acquire one publication and construct all borrowed column views");
 }
 
+// The three schema-positioned columns have intentionally different physical interpretations below.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 [[nodiscard]] std::uint64_t scan_checksum(const chronos::head::HeadColumnView& timestamps,
                                           const chronos::head::HeadColumnView& strings,
                                           const chronos::head::HeadColumnView& booleans) {
@@ -406,7 +412,10 @@ void benchmark_seal(benchmark::State& state) {
   auto allocation_target = make_head(fixture).value();
   auto allocation_prepared = allocation_target.prepare_append(fixture.batch).value();
   static_cast<void>(allocation_prepared.mark_wal_started());
-  static_cast<void>(allocation_prepared.publish(commit_position()));
+  const auto allocation_published = allocation_prepared.publish(commit_position());
+  if (!allocation_published.has_value()) {
+    std::terminate();
+  }
   chronos::benchmark_support::ScopedAllocationCounting counting;
   auto allocation_sealed = allocation_target.seal().value();
   const chronos::benchmark_support::AllocationCounts allocations = counting.stop();

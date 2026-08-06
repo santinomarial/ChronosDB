@@ -470,9 +470,10 @@ TEST(DatabaseStoragePublicationTest, CompactionPublishesOneEpochAndRetainsOldSna
     hook.release.count_down();
     writer.join();
     ASSERT_TRUE(atomically_published.has_value());
-    EXPECT_EQ(atomically_published->generation(), 3U);
-    ASSERT_EQ(atomically_published->parts().size(), 1U);
-    EXPECT_EQ(atomically_published->parts().front(), merged->descriptor);
+    const DatabaseStorageSnapshot published_snapshot = atomically_published.value_or(during);
+    EXPECT_EQ(published_snapshot.generation(), 3U);
+    ASSERT_EQ(published_snapshot.parts().size(), 1U);
+    EXPECT_EQ(published_snapshot.parts().front(), merged->descriptor);
     EXPECT_EQ(during.generation(), 2U);
 
     next = publisher.publish_compaction_manifest(publication_request).value();
@@ -576,10 +577,12 @@ TEST(DatabaseStoragePublicationTest, ReadersSeeOnlyOldOrNewCompleteEpochAtReleas
   writer.join();
 
   ASSERT_TRUE(published.has_value());
-  EXPECT_EQ(published->generation(), 2U);
-  EXPECT_EQ(published->parts().size(), 1U);
-  EXPECT_EQ(published->retirement_receipts().size(), 1U);
-  EXPECT_TRUE(published->find_tablet(fixture.tablet.latest.tablet_id())->sealed_heads().empty());
+  const DatabaseStorageSnapshot published_snapshot = published.value_or(during);
+  EXPECT_EQ(published_snapshot.generation(), 2U);
+  EXPECT_EQ(published_snapshot.parts().size(), 1U);
+  EXPECT_EQ(published_snapshot.retirement_receipts().size(), 1U);
+  EXPECT_TRUE(
+      published_snapshot.find_tablet(fixture.tablet.latest.tablet_id())->sealed_heads().empty());
   EXPECT_EQ(during.generation(), 1U);
   EXPECT_EQ(during.find_tablet(fixture.tablet.latest.tablet_id())->sealed_heads().size(), 1U);
 }

@@ -65,12 +65,12 @@ public:
     std::error_code ignored;
     std::filesystem::remove_all(path_, ignored);
   }
-  [[nodiscard]] const std::string& path() const noexcept {
+  [[nodiscard]] const std::filesystem::path& path() const noexcept {
     return path_;
   }
 
 private:
-  std::string path_;
+  std::filesystem::path path_;
 };
 
 [[nodiscard]] std::shared_ptr<const schema::TableSchema> make_schema() {
@@ -130,11 +130,9 @@ mutation(const std::shared_ptr<const schema::TableSchema>& schema_value, const s
 class PublicationFixture {
 public:
   PublicationFixture() : schema_value_(make_schema()) {
-    std::filesystem::create_directory(std::filesystem::path{directory_.path()} /
-                                      kPartsDirectoryName);
-    std::filesystem::create_directory(std::filesystem::path{directory_.path()} /
-                                      kManifestDirectoryName);
-    std::ofstream lock{std::filesystem::path{directory_.path()} / kManifestDirectoryName /
+    std::filesystem::create_directory(directory_.path() / kPartsDirectoryName);
+    std::filesystem::create_directory(directory_.path() / kManifestDirectoryName);
+    std::ofstream lock{directory_.path() / kManifestDirectoryName /
                        std::string{kManifestLockFileName}};
     lock.close();
     const EncodedManifest encoded =
@@ -148,8 +146,7 @@ public:
                             .parts = {},
                             .retries = {}})
             .value();
-    std::ofstream output{std::filesystem::path{directory_.path()} / kManifestDirectoryName /
-                             *manifest_file_name(1U),
+    std::ofstream output{directory_.path() / kManifestDirectoryName / *manifest_file_name(1U),
                          std::ios::binary};
     // std::ofstream has no std::byte overload.
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
@@ -157,7 +154,7 @@ public:
                  static_cast<std::streamsize>(encoded.size()));
     output.close();
     ManifestStorage storage =
-        ManifestStorage::open_existing({.database_root = directory_.path()}).value();
+        ManifestStorage::open_existing({.database_root = directory_.path().string()}).value();
     manifest_ = std::make_shared<const LoadedManifestGeneration>(
         storage
             .load_selected_manifest({.expected_database_id = id<DatabaseId>(6U),
@@ -226,7 +223,7 @@ void write_file(const std::filesystem::path& path, const common::ByteView bytes)
 class ReclamationBenchmarkFixture {
 public:
   ReclamationBenchmarkFixture() {
-    const std::filesystem::path root{directory_.path()};
+    const std::filesystem::path& root = directory_.path();
     std::filesystem::create_directory(root / kPartsDirectoryName);
     std::filesystem::create_directory(root / kManifestDirectoryName);
     write_file(root / kManifestDirectoryName / std::string{kManifestLockFileName}, {});
@@ -237,7 +234,7 @@ public:
     write_file(root / kManifestDirectoryName / *manifest_file_name(2U),
                fixture_.manifest(2U).bytes());
     storage_ = std::make_unique<ManifestStorage>(
-        ManifestStorage::open_existing({.database_root = directory_.path()}).value());
+        ManifestStorage::open_existing({.database_root = directory_.path().string()}).value());
     const auto bindings = fixture_.bindings();
     predecessor_ = std::make_shared<const LoadedManifestGeneration>(
         storage_

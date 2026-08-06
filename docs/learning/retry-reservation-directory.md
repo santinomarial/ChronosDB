@@ -2,8 +2,9 @@
 
 > **Status: implemented process-local primitive.** The directory implements live, database-wide
 > reservation and committed-outcome lookup for `COLUMNAR_APPEND`. The blocking single-tablet
-> executor connects it to WAL submission and tablet publication. Recovery, routing/admission, and
-> an idempotency-retention policy remain unimplemented.
+> executor connects it to WAL submission and tablet publication. Retained-lineage recovery rebuilds
+> committed outcomes into fresh replacement state; routing/admission and an idempotency-retention
+> policy remain unimplemented.
 
 ## Purpose and public interface
 

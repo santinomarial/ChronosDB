@@ -33,6 +33,8 @@ namespace {
   return !predicate.lower->inclusive || !predicate.upper->inclusive;
 }
 
+// The ordered minimum/maximum pair mirrors an authenticated closed range at every call site.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 [[nodiscard]] bool range_is_disjoint(const std::int64_t minimum_event_time,
                                      const std::int64_t maximum_event_time,
                                      const EventTimePredicate& predicate) noexcept {
@@ -51,6 +53,8 @@ namespace {
 
 } // namespace
 
+// These counters are produced together by the single planner builder immediately below.
+// NOLINTBEGIN(bugprone-easily-swappable-parameters)
 CsegEventTimePruningPlan::CsegEventTimePruningPlan(PartId part_id,
                                                    std::vector<std::uint32_t> selected_granules,
                                                    const std::uint64_t selected_rows,
@@ -59,6 +63,7 @@ CsegEventTimePruningPlan::CsegEventTimePruningPlan(PartId part_id,
     : part_id_(part_id), selected_granules_(std::move(selected_granules)),
       selected_rows_(selected_rows), skipped_rows_(skipped_rows),
       skipped_granules_(skipped_granules) {}
+// NOLINTEND(bugprone-easily-swappable-parameters)
 
 const PartId& CsegEventTimePruningPlan::part_id() const noexcept {
   return part_id_;

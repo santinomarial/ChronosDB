@@ -118,20 +118,23 @@ sort_cell(const columnar::PhysicalColumnView& column_value, const std::uint32_t 
     return common::make_unexpected(cell.error());
   }
   if (cell->is_null()) {
-    return cseg::detail::SortCellView{.is_null = true};
+    return cseg::detail::SortCellView{
+        .is_null = true, .is_boolean = false, .boolean = false, .bytes = {}};
   }
   if (column_value.type().kind() == schema::LogicalTypeKind::kBool) {
     const common::Result<bool> value = cell->boolean();
     if (!value.has_value()) {
       return common::make_unexpected(value.error());
     }
-    return cseg::detail::SortCellView{.is_boolean = true, .boolean = *value};
+    return cseg::detail::SortCellView{
+        .is_null = false, .is_boolean = true, .boolean = *value, .bytes = {}};
   }
   const common::Result<common::ByteView> bytes = cell->bytes();
   if (!bytes.has_value()) {
     return common::make_unexpected(bytes.error());
   }
-  return cseg::detail::SortCellView{.bytes = *bytes};
+  return cseg::detail::SortCellView{
+      .is_null = false, .is_boolean = false, .boolean = false, .bytes = *bytes};
 }
 
 struct Ordering {
@@ -731,6 +734,7 @@ build_manifest_v1_for_append_only_compaction(const AppendOnlyCompactionManifestB
     if (!generation.has_value()) {
       return common::make_unexpected(exhausted("Manifest compaction generation overflows"));
     }
+    const std::uint64_t successor_generation = generation.value_or(0U);
     std::vector<TabletDescriptor> tablets(predecessor.tablets().begin(),
                                           predecessor.tablets().end());
     std::vector<PartDescriptor> parts;
@@ -762,7 +766,7 @@ build_manifest_v1_for_append_only_compaction(const AppendOnlyCompactionManifestB
     }
 
     common::Result<EncodedManifest> encoded = encode_manifest_v1({
-        .generation = *generation,
+        .generation = successor_generation,
         .database_id = predecessor.database_id(),
         .wal_id = predecessor.wal_id(),
         .reclaim_checkpoint = predecessor.reclaim_checkpoint(),

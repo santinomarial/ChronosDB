@@ -185,7 +185,10 @@ detail::RetryDirectoryState::try_reserve(const RetryIdentity& identity,
 
   const std::uint64_t token = next_reservation_token_;
   ++next_reservation_token_;
-  entries_.emplace(identity, RetryEntry{.mutation = mutation, .reservation_token = token});
+  entries_.emplace(identity, RetryEntry{.mutation = mutation,
+                                        .reservation_token = token,
+                                        .state = EntryState::kPreWal,
+                                        .committed_outcome = nullptr});
   std::unique_ptr<RetryReservation::Impl> reservation;
   try {
     reservation = std::make_unique<RetryReservation::Impl>(shared_from_this(), identity, token);

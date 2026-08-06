@@ -396,18 +396,20 @@ std::size_t RecoveredColumnarAppendState::tablet_count() const noexcept {
 common::Result<wal::WalSegmentReclamationReport>
 RecoveredColumnarAppendState::reclaim_checkpointed_segments(
     const wal::WalReplayCheckpoint& checkpoint) {
-  if (!implementation_->writer_.has_value()) {
+  std::optional<wal::WalWriter>& writer = implementation_->writer_;
+  if (!writer.has_value()) {
     return common::make_unexpected(invalid("recovered WAL writer has already been released"));
   }
-  return implementation_->writer_->reclaim_checkpointed_segments(checkpoint);
+  return writer->reclaim_checkpointed_segments(checkpoint);
 }
 
 common::Result<wal::WalWriter> RecoveredColumnarAppendState::release_writer() {
-  if (!implementation_->writer_.has_value()) {
+  std::optional<wal::WalWriter>& retained_writer = implementation_->writer_;
+  if (!retained_writer.has_value()) {
     return common::make_unexpected(invalid("recovered WAL writer has already been released"));
   }
-  wal::WalWriter writer = std::move(*implementation_->writer_);
-  implementation_->writer_.reset();
+  wal::WalWriter writer = std::move(*retained_writer);
+  retained_writer.reset();
   return writer;
 }
 

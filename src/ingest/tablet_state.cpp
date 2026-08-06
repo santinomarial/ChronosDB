@@ -639,8 +639,9 @@ common::Result<TabletSnapshot> detail::TabletStateCore::advance_recovered_retry(
     return common::make_unexpected(
         invalid("recovered retry outcome is not the tablet's exact published object"));
   }
-  if (position.wal_id.is_valid() && current->applied_position_.has_value() &&
-      recovery_skip_through_ != 0U && position.wal_id == current->applied_position_->wal_id &&
+  const std::optional<head::HeadCommitPosition> applied_position = current->applied_position_;
+  if (position.wal_id.is_valid() && applied_position.has_value() && recovery_skip_through_ != 0U &&
+      position.wal_id == applied_position->wal_id &&
       position.record_sequence >= outcome->record_sequence &&
       position.record_sequence <= recovery_skip_through_) {
     std::shared_ptr<TabletStateCore> self = weak_from_this().lock();

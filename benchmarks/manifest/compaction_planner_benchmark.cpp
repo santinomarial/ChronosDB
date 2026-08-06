@@ -57,8 +57,11 @@ void benchmark_compaction_planning(benchmark::State& state) {
       state.SkipWithError(message);
       return;
     }
-    selected = (**plan).input_part_ids().size();
-    benchmark::DoNotOptimize((**plan).input_part_ids().data());
+    // The guard above validates both the Result and its successful no-plan alternative.
+    const PlannedAppendOnlyCompaction& selected_plan =
+        **plan; // NOLINT(bugprone-unchecked-optional-access)
+    selected = selected_plan.input_part_ids().size();
+    benchmark::DoNotOptimize(selected_plan.input_part_ids().data());
   }
   state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(count));
   state.counters["selected_parts"] = static_cast<double>(selected);

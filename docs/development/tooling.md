@@ -30,8 +30,10 @@ scripts/lint.sh debug
 ```
 
 This reconfigures the selected build with `CHRONOS_ENABLE_CLANG_TIDY=ON`, so subsequent builds of
-that directory continue to run tidy. Set `CLANG_TIDY` to select a nonstandard executable. LLVM
-clang-tidy 17+ is the supported compatibility baseline.
+that directory continue to run tidy. Static analysis is pinned to clang-tidy 18.x because enabled
+checks and diagnostics change between LLVM majors. The script searches the versioned executable and
+the standard Homebrew `llvm@18` paths. Set `CLANG_TIDY` only to select another 18.x location; both the
+script and CMake reject any other major. CI installs and reports `clang-tidy-18` explicitly.
 
 The normal full local sequence is:
 
@@ -61,5 +63,6 @@ Clang/libc++, and macOS with AppleClang/libc++. Ubuntu 24.04's default Clang/lib
 not expose C++23 `std::expected`, so every Linux Clang job installs and selects libc++ explicitly.
 Every normal compiler-matrix job treats warnings in ChronosDB targets as errors. Separate Linux
 Clang/libc++ jobs run ASan+UBSan and TSan. Independent jobs verify clang-format, immutable workflow
-action pins, and clang-tidy. Test logs are uploaded when a test job fails. Benchmarks do not gate
-shared CI because trustworthy performance comparisons require a controlled environment.
+action pins, pinned clang-tidy 18, and deterministic corpus-backed smoke runs for every libFuzzer
+target. Test logs and fuzz crash artifacts are uploaded on failure. Benchmarks do not gate shared CI
+because trustworthy performance comparisons require a controlled environment.

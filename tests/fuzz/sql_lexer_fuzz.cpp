@@ -5,6 +5,8 @@
 #include <string_view>
 
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_t size) {
+  // libFuzzer exposes bytes; string_view is the lexer's non-owning byte interface.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
   const std::string_view sql{reinterpret_cast<const char*>(data), size};
   const chronos::query::SqlResult<chronos::query::SqlTokenStream> result =
       chronos::query::tokenize_sql_v1(sql);

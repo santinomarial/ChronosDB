@@ -28,7 +28,7 @@ struct CompactionEquivalenceLimits {
   std::size_t max_parts_per_side{1'024U};
   std::uint64_t max_rows_per_side{cseg::format::kMaximumRowCount};
   // Bounds the sum of every active input/output cursor's largest uncompressed granule.
-  std::uint64_t max_resident_page_bytes{512U * 1'024U * 1'024U};
+  std::uint64_t max_resident_page_bytes{512ULL * 1'024ULL * 1'024ULL};
 };
 
 // Independently proves exact append-only row equivalence between two nonempty, strictly

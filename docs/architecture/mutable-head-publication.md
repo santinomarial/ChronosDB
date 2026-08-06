@@ -10,8 +10,8 @@
 > mixed-schema publications into an owner returned only after complete recovery, including
 > position-only outer publication for matching ancestor-schema duplicates. The bounded Phase 6
 > flush handoff, atomic head-to-manifest replacement, and receipt-authorized retirement are
-> implemented. The end-to-end durable flush coordinator, retry pruning, and catalog/routing
-> admission remain unimplemented. This document refines
+> implemented. The end-to-end durable flush coordinator and its filesystem crash matrix are also
+> implemented. Retry pruning and catalog/routing admission remain unimplemented. This document refines
 > [ADR 0005](../adr/0005-columnar-heads-and-immutable-cseg-parts.md) for Phase 4; CSEG and
 > installation bytes are defined by their accepted format specifications.
 

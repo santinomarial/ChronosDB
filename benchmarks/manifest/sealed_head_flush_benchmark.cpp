@@ -208,7 +208,7 @@ public:
     std::filesystem::remove_all(path_, ignored);
   }
 
-  [[nodiscard]] const std::string& path() const noexcept {
+  [[nodiscard]] const std::filesystem::path& path() const noexcept {
     return path_;
   }
   [[nodiscard]] bool valid() const noexcept {
@@ -216,7 +216,7 @@ public:
   }
 
 private:
-  std::string path_;
+  std::filesystem::path path_;
 };
 
 class FixedWalIdGenerator final : public wal::WalLogIdGenerator {
@@ -274,7 +274,7 @@ void checkpoint_builder_benchmark(benchmark::State& state) {
   wal_id.bytes.front() = std::byte{5U};
   FixedWalIdGenerator generator{wal_id};
   wal::WalWriter writer =
-      wal::WalWriter::create_new({.directory_path = directory.path()}, generator).value();
+      wal::WalWriter::create_new({.directory_path = directory.path().string()}, generator).value();
   const wal::WalAppendResult appended =
       writer.append_application_entry(application.bytes()).value();
   if (!writer.synchronize().has_value() || !writer.close().is_ok()) {
@@ -329,7 +329,7 @@ void checkpoint_builder_benchmark(benchmark::State& state) {
   for (auto _ : state) {
     static_cast<void>(_);
     const auto checkpointed =
-        build_manifest_v1_checkpointed_generation({.wal_directory = directory.path(),
+        build_manifest_v1_checkpointed_generation({.wal_directory = directory.path().string(),
                                                    .predecessor = predecessor,
                                                    .candidate = candidate,
                                                    .schema_bindings = bindings,

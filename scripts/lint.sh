@@ -8,9 +8,32 @@ if (($# > 0)); then
   shift
 fi
 
-clang_tidy="${CLANG_TIDY:-clang-tidy}"
-if ! command -v "${clang_tidy}" >/dev/null 2>&1; then
-  echo "error: ${clang_tidy} was not found; set CLANG_TIDY to a compatible executable" >&2
+supported_major=18
+
+if [[ -n "${CLANG_TIDY:-}" ]]; then
+  candidates=("${CLANG_TIDY}")
+else
+  candidates=(
+    clang-tidy-18
+    /opt/homebrew/opt/llvm@18/bin/clang-tidy
+    /usr/local/opt/llvm@18/bin/clang-tidy
+  )
+fi
+
+clang_tidy=""
+for candidate in "${candidates[@]}"; do
+  if command -v "${candidate}" >/dev/null 2>&1; then
+    clang_tidy="$(command -v "${candidate}")"
+    break
+  fi
+done
+if [[ -z "${clang_tidy}" ]]; then
+  echo "error: clang-tidy ${supported_major} was not found; install it or set CLANG_TIDY" >&2
+  exit 1
+fi
+version="$("${clang_tidy}" --version)"
+if [[ ! "${version}" =~ version[[:space:]]+${supported_major}\. ]]; then
+  echo "error: ChronosDB requires clang-tidy ${supported_major}.x, found: ${version}" >&2
   exit 1
 fi
 

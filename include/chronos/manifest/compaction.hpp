@@ -23,8 +23,8 @@ namespace chronos::manifest {
 
 struct AppendOnlyCompactionLimits {
   CompactionEquivalenceLimits equivalence;
-  std::uint64_t max_rows{16U * 1'024U * 1'024U};
-  std::uint64_t max_materialized_page_bytes{512U * 1'024U * 1'024U};
+  std::uint64_t max_rows{16ULL * 1'024ULL * 1'024ULL};
+  std::uint64_t max_materialized_page_bytes{512ULL * 1'024ULL * 1'024ULL};
 };
 
 struct AppendOnlyCompactionRequest {

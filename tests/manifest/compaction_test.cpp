@@ -229,7 +229,7 @@ TEST(AppendOnlyCompactionTest, RejectsDuplicateTupleFreshnessCorruptionAndLimits
                           .bytes = duplicate_second.bytes()},
   };
   request.inputs = duplicate_images;
-  request.limits.max_materialized_page_bytes = 512U * 1'024U * 1'024U;
+  request.limits.max_materialized_page_bytes = 512ULL * 1'024ULL * 1'024ULL;
   EXPECT_EQ(merge_append_only_cseg_v1(request).error().code(), common::StatusCode::kCorruption);
 
   std::vector<std::byte> corrupt(inputs.first.bytes().begin(), inputs.first.bytes().end());

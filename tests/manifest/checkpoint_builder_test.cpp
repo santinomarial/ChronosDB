@@ -150,6 +150,10 @@ fixture_batch(const std::shared_ptr<const schema::TableSchema>& schema, const Fi
       columnar::OwnedColumnarBatch::create(schema, columnar::test::batch_columns()).value());
 }
 
+// Every optional below is populated in construction order before it is exposed. Keeping the
+// encoded owners optional lets the fixture build the borrowed views without requiring fake
+// default objects.
+// NOLINTBEGIN(bugprone-unchecked-optional-access)
 class Fixture {
 public:
   explicit Fixture(const FixtureInput& input)
@@ -335,6 +339,7 @@ private:
   mutable std::string image_file_name_;
   mutable std::optional<ReferencedPartImage> image_;
 };
+// NOLINTEND(bugprone-unchecked-optional-access)
 
 TEST(ManifestCheckpointBuilderTest, ProvesExactRowsAndAdvancesToThePhysicalRecordEnd) {
   const std::array<std::int64_t, 3> values{30, -4, 20};
@@ -490,7 +495,8 @@ TEST(ManifestCheckpointBuilderTest, ExactRetryDuplicateAdvancesWithoutDuplicateC
   const auto built = build_manifest_v1_checkpointed_generation(fixture.input());
   ASSERT_TRUE(built.has_value()) << built.error().to_string();
   EXPECT_EQ(built->reclaim_checkpoint.record_sequence, 2U);
-  EXPECT_EQ(built->reclaim_checkpoint.byte_offset, fixture.final_append()->record_end.byte_offset);
+  EXPECT_EQ(built->reclaim_checkpoint.byte_offset,
+            fixture.final_append().value_or(wal::WalAppendResult{}).record_end.byte_offset);
   EXPECT_EQ(built->newly_checkpointed_records, 2U);
   EXPECT_EQ(built->validated_applied_rows, values.size());
 }

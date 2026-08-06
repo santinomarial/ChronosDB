@@ -111,8 +111,10 @@ an early fixed-header CRC protects lengths used to find a complete metadata CRC,
 interpretation and stored checksum are metadata-covered, and stored bytes are verified before
 bounded decompression. Its codecs, hostile tests, fuzzing, sanitizers, inspection, installation, and
 external-consumer evidence are implemented. The accepted
-[Manifest v1](../formats/manifest-v1.md) defines version/integrity coverage for the next durable
-authority; its implementation evidence remains pending Phase 6.
+[Manifest v1](../formats/manifest-v1.md) defines version/integrity coverage for the durable catalog
+authority. Its codec, installation, recovery selection, flush/checkpoint, publication, process-crash,
+and external-consumer evidence are implemented; platform/device power-loss qualification remains a
+separate measurement obligation.
 
 ## 11. Referenced storage is not reclaimed
 
@@ -151,9 +153,9 @@ WAL physical format 1.0 now has an immutable compatibility and rejection policy.
 logical kinds remain unavailable until accepted.
 
 CSEG format 1.0 now has an immutable compatibility prefix, registries, limits, and rejection policy.
-Its implementation and executable mixed-version evidence exist. Manifest format 1.0 now has an
-accepted immutable compatibility prefix, descriptor registry, limits, selection rule, and rejection
-policy; implementation remains pending Phase 6.
+Its implementation and executable mixed-version evidence exist. Manifest format 1.0 has an accepted
+immutable compatibility prefix, descriptor registry, limits, selection rule, rejection policy, and
+implemented codec/installation/recovery evidence.
 
 ## 15. Slow subscribers cannot block ingestion indefinitely
 

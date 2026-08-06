@@ -521,7 +521,7 @@ TEST(TabletStateConcurrencyTest, InnerHeadPublicationRemainsHiddenUntilOuterPubl
                                             &OuterPublicationGate::pause, &gate)
           .value();
   std::atomic<bool> failed{false};
-  std::jthread writer{[&] {
+  std::thread writer{[&] {
     auto prepared = target.prepare_append(retry_identity(1U), mutation(1U), input);
     if (!prepared.has_value() || !prepared->mark_wal_started().is_ok() ||
         !prepared->publish(position(1U)).has_value()) {
@@ -530,7 +530,12 @@ TEST(TabletStateConcurrencyTest, InnerHeadPublicationRemainsHiddenUntilOuterPubl
     }
   }};
 
-  ASSERT_TRUE(gate.wait_until_reached());
+  if (!gate.wait_until_reached()) {
+    gate.release();
+    writer.join();
+    FAIL() << "writer did not reach the outer-publication gate";
+    return;
+  }
   const TabletSnapshot old_epoch = target.snapshot().value();
   EXPECT_FALSE(old_epoch.applied_position().has_value());
   EXPECT_EQ(old_epoch.visible_row_count(), 0U);
@@ -604,13 +609,18 @@ TEST(TabletStateConcurrencyTest, AuthorizedRetirementPublishesOneCompleteOuterEp
 
   gate.arm();
   std::atomic<bool> failed{false};
-  std::jthread writer{[&] {
+  std::thread writer{[&] {
     if (!target.retire_sealed_generation(receipt).has_value()) {
       failed.store(true, std::memory_order_release);
       gate.release();
     }
   }};
-  ASSERT_TRUE(gate.wait_until_reached());
+  if (!gate.wait_until_reached()) {
+    gate.release();
+    writer.join();
+    FAIL() << "writer did not reach the retirement-publication gate";
+    return;
+  }
   const TabletSnapshot during = target.snapshot().value();
   EXPECT_EQ(during.sealed_generations().size(), 1U);
   EXPECT_EQ(during.visible_row_count(), 4U);
@@ -662,7 +672,7 @@ TEST(TabletStateConcurrencyTest, AcquireReadersObserveOnlyCompleteOuterEpochs) {
   std::atomic<bool> done{false};
   std::atomic<std::size_t> failures{0U};
   std::atomic<std::size_t> observations{0U};
-  std::vector<std::jthread> readers;
+  std::vector<std::thread> readers;
   readers.reserve(kReaders);
   for (std::size_t index = 0U; index < kReaders; ++index) {
     static_cast<void>(index);
@@ -692,7 +702,9 @@ TEST(TabletStateConcurrencyTest, AcquireReadersObserveOnlyCompleteOuterEpochs) {
     static_cast<void>(publish(prepared, sequence));
   }
   done.store(true, std::memory_order_release);
-  readers.clear();
+  for (auto& reader : readers) {
+    reader.join();
+  }
 
   EXPECT_EQ(failures.load(), 0U);
   EXPECT_GT(observations.load(), 0U);

@@ -164,7 +164,7 @@ validate_new_directory_contents(const std::vector<io::DirectoryEntry>& entries) 
 [[nodiscard]] common::Result<WalRecoveryReport>
 validate_closed_segment_for_reclamation(io::PosixDirectory& directory,
                                         const detail::DiscoveredWalSegment& segment) {
-  detail::WalDiscovery isolated{.segments = {segment}};
+  detail::WalDiscovery isolated{.segments = {segment}, .temporary_file_names = {}};
   std::optional<WalReplayCheckpoint> predecessor;
   if (segment.number != kFirstSegmentNumber) {
     common::Result<io::PosixFile> file =

@@ -104,12 +104,13 @@ SealedHeadFlushCoordinator::try_flush_one(ingest::TabletState& tablet,
     saturating_add(metrics_.failures, 1U);
     return common::make_unexpected(acquired.error());
   }
-  if (!acquired->has_value()) {
+  std::optional<ingest::SealedHeadFlushWork> acquired_work = std::move(acquired).value();
+  if (!acquired_work.has_value()) {
     saturating_add(metrics_.empty_polls, 1U);
     return std::optional<SealedHeadFlushCompletion>{};
   }
 
-  ingest::SealedHeadFlushWork work = std::move(**acquired);
+  ingest::SealedHeadFlushWork work = std::move(acquired_work).value();
   const head::HeadSnapshot* const sealed = work.snapshot();
   if (sealed == nullptr) {
     saturating_add(metrics_.failures, 1U);
@@ -253,7 +254,9 @@ SealedHeadFlushCoordinator::try_flush_one(ingest::TabletState& tablet,
                                       .schema_bindings = operation.schema_bindings,
                                       .nonce = operation.manifest_nonce,
                                       .decode_limits = operation.manifest_decode_limits,
-                                      .part_validation_limits = operation.part_validation_limits});
+                                      .part_validation_limits = operation.part_validation_limits,
+                                      .compaction_replacement = nullptr,
+                                      .compaction_equivalence_limits = {}});
       if (!installed_manifest.has_value()) {
         return fail(
             with_context("install sealed-head Manifest successor", installed_manifest.error()));

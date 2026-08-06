@@ -41,6 +41,12 @@ struct PlannerFixture {
   schema::SchemaId schema_id{identifier<schema::SchemaId>(0x40U)};
 };
 
+[[nodiscard]] const PlannedAppendOnlyCompaction&
+required_plan(const common::Result<std::optional<PlannedAppendOnlyCompaction>>& planned) {
+  // Callers assert both layers immediately before this test-only fixture accessor.
+  return **planned; // NOLINT(bugprone-unchecked-optional-access)
+}
+
 TEST(AppendOnlyCompactionPlannerTest, RebuildsLatePartRolesInArrivalOrder) {
   const PlannerFixture fixture;
   const std::array parts{fixture.part(1U, 10U, 100, 200), fixture.part(2U, 20U, 210, 300),
@@ -56,7 +62,7 @@ TEST(AppendOnlyCompactionPlannerTest, RebuildsLatePartRolesInArrivalOrder) {
   const auto planned = plan_append_only_compaction(parts);
   ASSERT_TRUE(planned.has_value());
   ASSERT_TRUE(planned->has_value());
-  const PlannedAppendOnlyCompaction& plan = **planned;
+  const PlannedAppendOnlyCompaction& plan = required_plan(planned);
   EXPECT_EQ(plan.table_id(), fixture.table_id);
   EXPECT_EQ(plan.tablet_id(), fixture.tablet_id);
   EXPECT_EQ(plan.schema_id(), fixture.schema_id);
@@ -79,7 +85,7 @@ TEST(AppendOnlyCompactionPlannerTest, PlansTouchingBaseRangesWithoutInventingDel
   const auto planned = plan_append_only_compaction(parts);
   ASSERT_TRUE(planned.has_value());
   ASSERT_TRUE(planned->has_value());
-  EXPECT_EQ((**planned).delta_input_parts(), 0U);
+  EXPECT_EQ(required_plan(planned).delta_input_parts(), 0U);
 }
 
 TEST(AppendOnlyCompactionPlannerTest, SeparatesIdentityGroupsAndHonorsResourceLimits) {
@@ -90,9 +96,9 @@ TEST(AppendOnlyCompactionPlannerTest, SeparatesIdentityGroupsAndHonorsResourceLi
   const auto planned = plan_append_only_compaction(parts);
   ASSERT_TRUE(planned.has_value());
   ASSERT_TRUE(planned->has_value());
-  EXPECT_EQ((**planned).tablet_id(), fixture.tablet_id);
+  EXPECT_EQ(required_plan(planned).tablet_id(), fixture.tablet_id);
   EXPECT_TRUE(
-      std::ranges::equal((**planned).input_part_ids(),
+      std::ranges::equal(required_plan(planned).input_part_ids(),
                          std::array{identifier<cseg::PartId>(2U), identifier<cseg::PartId>(3U)}));
 
   const auto bytes_limited = plan_append_only_compaction(

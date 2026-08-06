@@ -76,11 +76,12 @@ tuples, corrupt bytes, and generated repartitionings. The microbenchmark measure
 inputs against one output at declared row counts and includes full decode, validation, and direct
 cell proof; it makes no production throughput claim.
 
-The repeated validation, full materialization, and linear fan-in oracle selection are expensive by design. A future heap-based
-merger may be faster, but it must remain differentially identical to this path. Output construction,
-durable install ordering, publication, crash testing, and pin-aware reclamation remain later Phase 7
-tasks and cannot bypass this oracle. The current builder intentionally returns one output part;
-requests that exceed its explicit row/page/file bounds require a later measured partitioning policy.
+The repeated validation, full materialization, and linear fan-in oracle selection are expensive by
+design. A future heap-based merger may be faster, but it must remain differentially identical to this
+path. Output construction, durable install ordering, publication, crash testing, and pin-aware
+reclamation are implemented below and cannot bypass this oracle. The current builder intentionally
+returns one output part; requests that exceed its explicit row/page/file bounds require a later
+measured partitioning policy.
 
 The existing `ManifestStorage::install_part()` installs that output through the ordinary immutable
 part boundary. `install_manifest()` retains add-only authority by default; a caller must explicitly

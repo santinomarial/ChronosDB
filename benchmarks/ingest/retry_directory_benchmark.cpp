@@ -12,6 +12,8 @@
 namespace {
 
 template <typename Identifier>
+// Value and domain deliberately construct one nominal test identity without a production generator.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 [[nodiscard]] Identifier nominal_id(const std::uint64_t value, const std::uint8_t domain) {
   chronos::common::Uuid::Bytes bytes{};
   bytes.front() = static_cast<std::byte>(domain);

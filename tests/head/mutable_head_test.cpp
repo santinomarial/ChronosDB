@@ -511,7 +511,7 @@ TEST(MutableHeadConcurrencyTest, ControlledInterleavingsKeepEveryUnpublishedStag
           &MaterializationGate::pause, &gate)
           .value();
   std::atomic<bool> writer_failed{false};
-  std::jthread writer{[&] {
+  std::thread writer{[&] {
     auto prepared = target.prepare_append(input);
     if (!prepared.has_value() || !prepared->mark_wal_started().is_ok() ||
         !prepared->publish(position(1U)).has_value()) {
@@ -553,7 +553,7 @@ TEST(MutableHeadConcurrencyTest, AcquireSnapshotsObserveOnlyCompleteBatchBoundar
   std::atomic<bool> done{false};
   std::atomic<std::size_t> failures{0U};
   std::atomic<std::size_t> observations{0U};
-  std::vector<std::jthread> readers;
+  std::vector<std::thread> readers;
   readers.reserve(kReaders);
   for (std::size_t index = 0U; index < kReaders; ++index) {
     static_cast<void>(index);
@@ -592,7 +592,9 @@ TEST(MutableHeadConcurrencyTest, AcquireSnapshotsObserveOnlyCompleteBatchBoundar
     static_cast<void>(publish(prepared, sequence));
   }
   done.store(true, std::memory_order_release);
-  readers.clear();
+  for (auto& reader : readers) {
+    reader.join();
+  }
 
   EXPECT_EQ(failures.load(), 0U);
   EXPECT_GT(observations.load(), 0U);

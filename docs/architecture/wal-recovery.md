@@ -10,8 +10,9 @@
 > reopening, and synchronized closed-segment reclamation are implemented. A deterministic
 > subprocess harness reconciles
 > parent-received completions with strict recovery after process termination. The first
-> application-kind codec is specified but unimplemented; server-level acknowledgment transport is
-> not implemented. This document defines those boundaries without repeating the format tables.
+> application-kind codec and its single-tablet execution/recovery composition are implemented;
+> server-level acknowledgment transport is not implemented. This document defines those boundaries
+> without repeating the format tables.
 
 ## Safety goals and scope
 

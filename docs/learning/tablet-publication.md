@@ -30,7 +30,8 @@ returned outcome pointer into the global directory.
 `TabletState::create` binds one immutable starting schema and tablet identity. Its configuration
 includes the starting mutable-head capacity plus maximum registered-schema, retained
 sealed-generation, and tablet retry-entry counts. Every ownership bound is explicit and nonzero
-because durable catalog, flush, and retry-pruning policy do not exist yet.
+because catalog activation and retry-pruning policy remain external, while the implemented durable
+flush path still requires finite pre-WAL backpressure.
 
 `register_schema` is a shard-writer catalog handoff before WAL work. It accepts one immutable direct
 v1 successor and records the capacity for an empty generation of that shape. Registration is

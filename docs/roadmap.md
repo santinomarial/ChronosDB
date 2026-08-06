@@ -1,25 +1,21 @@
 # Roadmap and Phase Gates
 
-ChronosDB has established the initial Phase 0 architecture baseline and has begun Phase 1. Phase 1A,
-the build and tooling foundation, and Phase 1B, the portable binary foundations, are implemented.
-Local verification is recorded per change; the Linux compiler/CI matrix remains the reference for
-portable support and is not implied by a macOS-only local run. This status does not mean that the
-complete Phase 1 gates have passed. Unimplemented portions of Phase 1 and all later phases remain
-planned work, not implemented functionality or delivery commitments. Phase 4 has accepted design
-artifacts plus schema, canonical immutable in-memory columnar foundations, the standalone Columnar
-Batch v1 codec, and the pure in-memory `COLUMNAR_APPEND` command/digest codec. The Phase 2–3
-[WAL v1 format](formats/wal-v1.md), [recovery design](architecture/wal-recovery.md), and
-[ADR 0013](adr/0013-wal-v1-format-and-recovery.md) are accepted design artifacts. The pure in-memory
-WAL physical codec, fixtures, tests, fuzz target, minimal blocking POSIX file/directory primitives,
-the segmented writer, bounded commit coordinator, locked discovery and verification, explicit
-final-tail repair, replay-sink passes, existing-history reopen path, and read-only inspector now
-exist. Coordinator metrics and a deterministic process-kill crash-image harness exist. The first
-application-kind codec, a bounded process-local retry reservation directory, a bounded live tablet
-publication owner, their blocking single-tablet WAL execution path, and retained-lineage
-fresh-state WAL application/reopen path exist. Retry pruning, routing/admission, and the
-server-wide operational metrics/export path do not exist yet. Phase 6 now has accepted Manifest v1
-bytes plus part-installation, head-replacement, checkpoint, and recovery ordering; its implementation
-does not exist yet.
+ChronosDB has implemented correctness-first subsystem slices through the Phase 8 scalar SQL oracle.
+That statement does not declare every Phase 1–8 exit gate complete: each section below records its
+remaining implementation, integration, measurement, or platform evidence. Phase 1A/1B provide the
+build/tooling and portable binary foundations but the broader Phase 1 utility surface remains
+partial. Phases 2–3 provide the accepted WAL v1 codec, segmented writer, bounded commit coordinator,
+locked recovery/reopen path, inspector, crash harness, and checkpoint-aware reclamation. Phase 4
+provides schemas, canonical columnar ingestion bytes, bounded mutable heads/tablet publication, and
+the single-tablet execution/recovery path. Phase 5 provides the complete CSEG v1 in-memory and
+inspection surface. Phase 6 provides Manifest v1 installation, flush/checkpoint coordination,
+aggregate publication, startup recovery, and WAL-prefix reclamation around a caller-supplied retained
+catalog. Phase 7 provides the accepted append-only pruning, delta-planning, compaction, publication,
+and pin-aware part-reclamation boundary. Phase 8 provides the pure in-memory parser, binder, and
+scalar reference engine behind an abstract snapshot provider; it is not a production storage adapter
+or vector engine. Local verification is recorded per change, while the declared Linux compiler/CI
+matrix remains the portability reference and reviewed hardware/device campaigns remain separate
+evidence.
 Work should proceed in order unless an accepted ADR explains why a limited dependency must move
 earlier.
 
@@ -248,9 +244,8 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > ownership. Its explicit startup policy can revalidate and synchronously remove only closed WAL
 > segments covered by the selected checkpoint, converging when cleanup is repeated. The process
 > crash matrix now kills after every covered-prefix unlink and the following WAL-directory sync,
-> then proves every surviving namespace subset reopens and converges. Persistent
-> catalog reconstruction and service activation remain. An installed
-> reproducible flush harness now
+> then proves every surviving namespace subset reopens and converges. Persistent catalog
+> reconstruction and service activation remain. An installed reproducible flush harness now
 > preserves real CSEG/Manifest/WAL images and raw samples while measuring durable flush throughput,
 > concurrent publication interference, Manifest growth, repeated startup/WAL replay, sync
 > amplification, and temporary/durable space amplification under an executable correctness gate.
@@ -282,15 +277,16 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > single-threaded coordinator now composes authoritative input reread, merge, both durable installs,
 > reload, publication, and exact durable-successor resumption. A subprocess SIGKILL matrix covers
 > every output/Manifest write, readback, sync, rename, directory sync, and publication boundary and
-> proves equivalent old-or-new recovery with conservative input retention. Pruning/planning,
-> pin-aware reclamation, and full workload benchmark evidence remain to be implemented.
+> proves equivalent old-or-new recovery with conservative input retention.
 > ADR 0019 now accepts the remaining correctness boundary: authenticated CSEG event-time zone maps
 > and granule sparse entries with scan fallback, rebuildable base/delta planning hints, deterministic
-> bounded selection, and exact predecessor-pin-gated final-part reclamation. Its implementation and
-> evidence remain to be completed; the owned event-time part/granule pruning plan and deterministic
-> no-false-negative property oracle are now implemented, along with rebuildable base/delta
-> classification and deterministic resource-bounded overlap selection. Durable secondary sidecars
-> and old-Manifest floors stay deferred.
+> bounded selection, and exact predecessor-pin-gated final-part reclamation. The owned event-time
+> part/granule pruning plan, deterministic no-false-negative oracle, rebuildable base/delta
+> classification, resource-bounded overlap selection, move-only retirement records, weak-pin gate,
+> namespace revalidation, idempotent unlink/directory-sync path, controlled pin tests, process-crash
+> matrix, and focused benchmarks are implemented. Durable secondary sidecars and old-Manifest floors
+> stay deferred. Full workload benchmark campaigns and reviewed performance evidence remain before
+> declaring the Phase 7 measurement gate complete.
 
 - **Scope:** zone maps, sparse indexes, optional scoped secondary indexes; delta parts for late/out-of-order versions; selection and merge policy; atomic compaction installation; safe reclamation.
 - **Explicit non-scope:** indexes required for correctness, arbitrary in-place updates, distributed compaction, object tiering, and undocumented history loss.

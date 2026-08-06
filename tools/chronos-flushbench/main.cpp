@@ -1396,7 +1396,7 @@ void write_latency_object(std::ostringstream& output, const std::vector<std::uin
          << "  \"database\":{\"replication\":\"single-node\",\"durability\":\"part and "
             "Manifest file sync plus directory sync; WAL fixture synchronized before flush\","
             "\"query_workload\":\"closed-loop aggregate snapshot acquisition only\","
-            "\"flush_workers\":1,\"compaction\":\"disabled and not implemented\","
+            "\"flush_workers\":1,\"compaction\":\"disabled in this flush-only benchmark\","
             "\"checkpoint\":\"empty-prefix coordinate; recovery replays complete retained WAL\","
             "\"cache_state\":\"uncontrolled host cache; warmup count declared\"},\n"
          << R"(  "build":{"semantic_version":)" << quoted(version.semantic_version)

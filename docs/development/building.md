@@ -1,15 +1,13 @@
 # Building ChronosDB
 
-ChronosDB's implemented code currently consists of the Phase 1A build/version foundation, the Phase
-1B portable common binary primitives, the logical schema/model foundation, the pure in-memory WAL
-v1 physical codec, the minimal blocking
-POSIX file/directory layer, the segmented WAL writer, locked physical recovery/reopen path, and the
-bounded commit coordinator, subprocess crash harness, read-only `chronos-waldump` inspector, and
-correctness-gated `chronos-walbench` measurement tool. Application-kind codecs and other engine
-components described elsewhere remain planned. The reference production platform is
-Linux x86-64; the common, WAL codec, POSIX I/O, writer, recovery, and inspection targets support
-Linux and modern macOS, including Apple silicon. macOS correctness support is not a power-loss
-durability claim.
+ChronosDB currently implements the Phase 1 foundations; WAL v1 codec, segmented writer, recovery,
+operator and benchmark tools; logical schemas and columnar ingestion; bounded mutable heads; CSEG
+v1; Manifest installation, flush/checkpoint, publication and recovery; append-only compaction,
+pruning and reclamation; and the Phase 8 pure in-memory SQL scalar oracle. Persistent catalog/service
+activation, production query-to-storage adaptation, networking, replication, and later roadmap
+phases remain unimplemented. The reference production platform is Linux x86-64; implemented portable
+and POSIX targets also support modern macOS, including Apple silicon. macOS correctness support is
+not a power-loss durability claim.
 
 ## Prerequisites
 
@@ -20,7 +18,7 @@ durability claim.
 - Git, so CMake can fetch pinned test dependencies and optionally record revision metadata
 - OpenSSL 3 and Zstandard 1.5.5 or newer production development packages
 - Python only as required by CMake/GoogleTest test discovery
-- clang-format 18 exactly, plus clang-tidy from a reasonably current LLVM release (17+ supported)
+- clang-format 18 and clang-tidy 18 exactly
 
 The first test or benchmark configuration needs network access to fetch its pinned dependency.
 Subsequent configurations reuse CMake's build-tree dependency checkout. No dependency source is
@@ -29,7 +27,8 @@ vendored into this repository.
 ## Linux setup
 
 On Ubuntu 24.04, install the distribution packages for `cmake`, `ninja-build`, `g++`, `clang`,
-`libc++-dev`, `libc++abi-dev`, `libssl-dev`, `libzstd-dev`, `clang-format-18`, and `clang-tidy`. GCC and Clang are both
+`libc++-dev`, `libc++abi-dev`, `libssl-dev`, `libzstd-dev`, `clang-format-18`, and
+`clang-tidy-18`. GCC and Clang are both
 CI-supported. Ubuntu's Clang 18 defaults to libstdc++ 13, but that compiler/library pairing does not
 expose the required C++23 `std::expected`; the supported Clang pairing uses libc++. Select the
 compiler and standard library before the first configure:
@@ -54,11 +53,11 @@ brew install cmake ninja llvm llvm@18 openssl@3 zstd
 
 Homebrew's versioned LLVM tools may not be on `PATH`. `scripts/format.sh` searches the standard
 `llvm@18` prefix; otherwise set `CLANG_FORMAT=$(brew --prefix llvm@18)/bin/clang-format`. Set
-`CLANG_TIDY` separately to the chosen current LLVM tidy executable. AppleClang builds the portable
-common and WAL targets plus the macOS POSIX I/O backend. The backend uses `fsync` where Linux uses
-`fdatasync`; this does not advertise a macOS power-loss envelope. Future server, direct-I/O, and
-reactor components may require Linux and will be guarded by explicit platform checks rather than
-weakened portable interfaces.
+`CLANG_TIDY=$(brew --prefix llvm@18)/bin/clang-tidy` when the versioned executable is not on `PATH`.
+AppleClang builds the implemented portable targets plus the macOS POSIX I/O backend. The backend uses
+`fsync` where Linux uses `fdatasync`; this does not advertise a macOS power-loss envelope. Future
+server, direct-I/O, and reactor components may require Linux and will be guarded by explicit platform
+checks rather than weakened portable interfaces.
 
 ## Configure, build, and test
 
@@ -121,9 +120,10 @@ durable value, `1` for corruption, resource-limit, or I/O failure, and `2` for i
 use. Catalog schema binding requires the separate schema-aware library API.
 
 Install to a staging prefix with `cmake --install build/release --prefix <directory>`. This installs
-`chronosctl`, `chronos-csegdump`, `chronos-waldump`, `chronos-walbench`, the common, schema, POSIX
-I/O, and WAL libraries and public headers, and a CMake package exporting `chronos::common`, `chronos::schema`,
-`chronos::cseg`, `chronos::io`, and `chronos::wal` among the implemented library targets.
+the operator and benchmark tools, all public headers, the implemented common, schema, columnar,
+CSEG, POSIX I/O, WAL, head, ingest, Manifest, and query libraries, and a CMake package exporting their
+`chronos::` targets. The test suite builds an external project against the installed
+`chronos::ingest` surface.
 
 ## Sanitizers
 
@@ -172,23 +172,25 @@ database performance claim.
 
 ## Fuzz targets
 
-The fuzz preset is optional and requires Clang with a linkable libFuzzer runtime. It builds the
-ByteReader operation-sequence and WAL physical-codec targets with ASan and UBSan while leaving
-ordinary tests out of that build tree:
+The fuzz preset is optional and requires Clang with a linkable libFuzzer runtime. It builds all
+current common, WAL, columnar, ingest, CSEG, Manifest, and SQL decoder/parser targets with ASan and
+UBSan while leaving ordinary tests out of that build tree. The deterministic smoke script copies the
+checked-in binary and SQL seed corpora to temporary writable directories, runs every target with a
+fixed seed, and retains crash artifacts under the build tree:
 
 ```sh
 cmake --preset fuzz
 cmake --build --preset fuzz
-build/fuzz/chronos_byte_reader_fuzz -runs=10000 -max_len=4096
-build/fuzz/chronos_wal_codec_fuzz -runs=10000 -max_len=16777216
-build/fuzz/chronos_cseg_metadata_codec_fuzz -runs=10000 -max_len=8388608
-build/fuzz/chronos_cseg_plain_page_fuzz -runs=10000 -max_len=1048576
-build/fuzz/chronos_cseg_page_codec_fuzz -runs=10000 -max_len=1048576
-build/fuzz/chronos_cseg_part_codec_fuzz -runs=10000 -max_len=2097152
-build/fuzz/chronos_sql_lexer_fuzz -runs=10000 -max_len=4096
-build/fuzz/chronos_sql_parser_fuzz -runs=10000 -max_len=4096
-build/fuzz/chronos_sql_binder_fuzz -runs=10000 -max_len=4096
+FUZZ_RUNS=10000 FUZZ_SEED=424242 FUZZ_MAX_LEN=4096 scripts/fuzz-smoke.sh build/fuzz
 ```
+
+The smoke defaults to `-entropic=0` for reproducible behavior across the pinned CI runtime and newer
+local libFuzzer releases; this changes scheduling, not sanitizer coverage or decoder assertions. Set
+`FUZZ_ENTROPIC=1` for longer exploratory campaigns on a qualified runtime. Durable-format harnesses
+also execute structurally valid in-memory fixtures before applying input-directed mutations, so an
+empty or syntax-heavy corpus cannot prevent success-path coverage. CI runs 1,000 iterations per
+target as a bounded regression smoke. Longer corpus-growing campaigns remain separate evidence and
+must retain their exact settings and artifacts.
 
 Apple's Command Line Tools compiler may omit the libFuzzer runtime even when it accepts Clang
 sanitizer flags. Configuration detects that case and fails with a direct diagnostic. On a Homebrew
@@ -208,8 +210,8 @@ a leak whose stack enters ChronosDB code, and do not describe a smoke run as a f
 
 - `Could not find Ninja`: install Ninja and rerun configure.
 - a FetchContent clone fails: confirm Git/network access, then rerun the same configure command.
-- `clang-tidy was not found`: install it or set `CLANG_TIDY` to its executable before running the
-  lint script.
+- `clang-tidy 18 was not found`: install it or set `CLANG_TIDY` to the exact 18.x executable before
+  running the lint script.
 - `std::expected` is unavailable: select a standard library that implements the required C++23 API
   and use a fresh build tree; Ubuntu 24.04 Clang uses the libc++ command shown above.
 - stale compiler or option results: remove only the affected `build/<preset>` directory and

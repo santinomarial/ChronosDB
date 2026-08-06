@@ -103,5 +103,6 @@ Results are local microbenchmarks, not a production latency claim.
   recoverable truth, so silently continuing an older live view would create two authorities.
 - Why are old heads not immediately freed? Readers may still own the prior database epoch; shared
   ownership delays reclamation until its last snapshot is released.
-- What remains? The end-to-end coordinator is implemented; the crash/fault matrix around the
-  complete filesystem/publication sequence remains.
+- What remains? The end-to-end coordinator and filesystem/publication crash matrix are implemented.
+  Persistent catalog reconstruction, service activation, and reviewed device campaigns remain
+  outside this in-memory publication primitive.

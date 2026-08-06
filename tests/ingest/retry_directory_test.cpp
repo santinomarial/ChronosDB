@@ -363,7 +363,7 @@ TEST(RetryDirectoryConcurrencyTest, ExactlyOneConcurrentContenderOwnsTheReservat
   std::atomic<std::size_t> reserved{0U};
   std::atomic<std::size_t> in_flight{0U};
   std::atomic<std::size_t> failures{0U};
-  std::vector<std::jthread> threads;
+  std::vector<std::thread> threads;
   threads.reserve(kContenders);
   for (std::size_t index = 0U; index < kContenders; ++index) {
     static_cast<void>(index);
@@ -392,7 +392,9 @@ TEST(RetryDirectoryConcurrencyTest, ExactlyOneConcurrentContenderOwnsTheReservat
       }
     });
   }
-  threads.clear();
+  for (auto& thread : threads) {
+    thread.join();
+  }
 
   EXPECT_EQ(reserved.load(), 1U);
   EXPECT_EQ(in_flight.load(), kContenders - 1U);

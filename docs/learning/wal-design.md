@@ -5,7 +5,7 @@
 > [WAL recovery](../architecture/wal-recovery.md). The in-memory codec, blocking POSIX operations,
 > exclusive writer, locked verification, explicit repair, replay passes, existing-history reopen
 > path, bounded durability coordinator, and subprocess crash/recovery harness exist. The first
-> application-kind semantics are specified but unimplemented. This learning
+> application-kind codec and single-tablet execution/recovery path are implemented. This learning
 > document explains the reasoning and should not substitute for either specification; implementation
 > details are in [WAL recovery implementation](wal-recovery.md).
 

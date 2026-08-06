@@ -177,6 +177,8 @@ make_plan(const std::span<const PartDescriptor> parts,
 
 } // namespace
 
+// The private builder passes this validated accounting tuple as one canonical unit.
+// NOLINTBEGIN(bugprone-easily-swappable-parameters)
 PlannedAppendOnlyCompaction::PlannedAppendOnlyCompaction(
     schema::TableId table_id, schema::TabletId tablet_id, schema::SchemaId schema_id,
     const schema::SchemaVersion schema_version, std::vector<cseg::PartId> input_part_ids,
@@ -187,6 +189,7 @@ PlannedAppendOnlyCompaction::PlannedAppendOnlyCompaction(
       schema_version_(schema_version), input_part_ids_(std::move(input_part_ids)),
       input_bytes_(input_bytes), input_rows_(input_rows), minimum_event_time_(minimum_event_time),
       maximum_event_time_(maximum_event_time), delta_input_parts_(delta_input_parts) {}
+// NOLINTEND(bugprone-easily-swappable-parameters)
 
 const schema::TableId& PlannedAppendOnlyCompaction::table_id() const noexcept {
   return table_id_;

@@ -144,6 +144,14 @@ validation errors, terminal append/sync propagation, graceful draining shutdown,
 conservation. ThreadSanitizer remains required evidence for this shared-state boundary where the
 host toolchain supports it.
 
+All current libFuzzer targets share a deterministic CI smoke runner and checked-in seed corpora. The
+runner copies seeds to temporary writable directories, fixes run count, PRNG seed, maximum input
+length, timeout, and entropic scheduling, and retains crash artifacts without modifying the source
+corpus. Durable-format harnesses additionally execute a structurally valid fixture on every callback
+before input-directed mutation. This guarantees basic success/corruption-path reachability but does
+not turn a 1,000-run CI smoke into a sustained fuzz campaign; longer campaigns must record compiler,
+sanitizers, corpus identity, flags, duration, and artifacts.
+
 ### WAL v1 implementation gate
 
 The WAL implementation phases must introduce named suites covering:

@@ -104,6 +104,12 @@ struct PruningFixture {
     decoded = std::make_optional(decode_cseg_v1_metadata_exact(encoded->bytes()).value());
   }
 
+  [[nodiscard]] const DecodedCsegMetadataView& metadata() const {
+    // Construction above establishes both owners before any test can observe the fixture.
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+    return decoded.value();
+  }
+
   PartId part_id{identifier<PartId>(1U)};
   std::vector<CsegColumnDescriptor> columns;
   std::array<CsegGranuleDescriptor, 3> granules;
@@ -112,6 +118,8 @@ struct PruningFixture {
   std::optional<DecodedCsegMetadataView> decoded;
 };
 
+// The independent oracle deliberately accepts the ordered closed range as two scalar endpoints.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 [[nodiscard]] bool reference_match(const std::int64_t minimum, const std::int64_t maximum,
                                    const EventTimePredicate& predicate) {
   for (std::int64_t value = minimum; value <= maximum; ++value) {
@@ -128,7 +136,8 @@ struct PruningFixture {
 
 TEST(CsegEventTimePruningTest, UnboundedAndHalfOpenPredicatesProduceExactOwnedPlans) {
   const PruningFixture fixture;
-  common::Result<CsegEventTimePruningPlan> all = plan_cseg_v1_event_time_pruning(*fixture.decoded);
+  common::Result<CsegEventTimePruningPlan> all =
+      plan_cseg_v1_event_time_pruning(fixture.metadata());
   ASSERT_TRUE(all.has_value());
   EXPECT_EQ(all->part_id(), fixture.part_id);
   EXPECT_TRUE(
@@ -139,7 +148,7 @@ TEST(CsegEventTimePruningTest, UnboundedAndHalfOpenPredicatesProduceExactOwnedPl
   const EventTimePredicate middle{.lower = EventTimeBound{.value = 0, .inclusive = true},
                                   .upper = EventTimeBound{.value = 10, .inclusive = false}};
   common::Result<CsegEventTimePruningPlan> pruned =
-      plan_cseg_v1_event_time_pruning(*fixture.decoded, middle);
+      plan_cseg_v1_event_time_pruning(fixture.metadata(), middle);
   ASSERT_TRUE(pruned.has_value());
   EXPECT_TRUE(std::ranges::equal(pruned->selected_granules(), std::array<std::uint32_t, 1>{1U}));
   EXPECT_EQ(pruned->selected_rows(), 2U);
@@ -163,7 +172,7 @@ TEST(CsegEventTimePruningTest, OpenClosedAndEmptyBoundaryCasesNeverOverflow) {
   };
   const std::array expected_counts{1U, 0U, 0U, 3U};
   for (std::size_t index = 0U; index < predicates.size(); ++index) {
-    const auto plan = plan_cseg_v1_event_time_pruning(*fixture.decoded, predicates[index]);
+    const auto plan = plan_cseg_v1_event_time_pruning(fixture.metadata(), predicates[index]);
     ASSERT_TRUE(plan.has_value());
     EXPECT_EQ(plan->selected_granules().size(), expected_counts[index]);
   }
@@ -175,7 +184,7 @@ TEST(CsegEventTimePruningTest, OpenClosedAndEmptyBoundaryCasesNeverOverflow) {
 TEST(CsegEventTimePruningTest, EnforcesConfiguredGranuleLimitBeforeAllocation) {
   const PruningFixture fixture;
   const auto result =
-      plan_cseg_v1_event_time_pruning(*fixture.decoded, std::nullopt, {.max_granules = 2U});
+      plan_cseg_v1_event_time_pruning(fixture.metadata(), std::nullopt, {.max_granules = 2U});
   ASSERT_FALSE(result.has_value());
   EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted);
 }
@@ -197,9 +206,9 @@ TEST(CsegEventTimePruningPropertyTest,
       predicate.upper =
           EventTimeBound{.value = endpoint(generator), .inclusive = inclusive(generator)};
     }
-    const auto plan = plan_cseg_v1_event_time_pruning(*fixture.decoded, predicate);
+    const auto plan = plan_cseg_v1_event_time_pruning(fixture.metadata(), predicate);
     ASSERT_TRUE(plan.has_value());
-    const auto repeated = plan_cseg_v1_event_time_pruning(*fixture.decoded, predicate);
+    const auto repeated = plan_cseg_v1_event_time_pruning(fixture.metadata(), predicate);
     ASSERT_TRUE(repeated.has_value());
     EXPECT_TRUE(std::ranges::equal(plan->selected_granules(), repeated->selected_granules()));
     std::vector<std::uint32_t> expected;

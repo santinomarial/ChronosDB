@@ -135,13 +135,14 @@ void store_little_endian(std::vector<std::byte>& bytes, const std::size_t offset
     store_little_endian(events.values, row * sizeof(std::int64_t), rows[row].event_time);
     if (rows[row].value_bits.has_value()) {
       set_bit(values.validity, row);
-      store_little_endian(values.values, row * sizeof(std::uint64_t), *rows[row].value_bits);
+      store_little_endian(values.values, row * sizeof(std::uint64_t),
+                          rows[row].value_bits.value_or(0U));
     } else {
       ++value_nulls;
     }
     if (rows[row].payload.has_value()) {
       set_bit(payloads.validity, row);
-      const std::string& payload = *rows[row].payload;
+      const std::string payload = rows[row].payload.value_or(std::string{});
       for (const char byte : payload) {
         payloads.values.push_back(static_cast<std::byte>(static_cast<unsigned char>(byte)));
       }
@@ -368,6 +369,7 @@ TEST(CompactionEquivalenceTest, DeterministicPartitionPropertyMatrix) {
   const Fixture fixture;
   for (std::uint32_t seed = 1U; seed <= 32U; ++seed) {
     std::vector<Row> rows;
+    rows.reserve(12U);
     for (std::uint32_t row = 0U; row < 12U; ++row) {
       rows.push_back(
           {.event_time = static_cast<std::int64_t>(row * 3U + seed),

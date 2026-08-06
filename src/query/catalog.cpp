@@ -83,7 +83,7 @@ QueryCatalogSnapshot::create(const std::uint64_t generation,
     std::ranges::sort(copied, [](const QueryCatalogTable& left, const QueryCatalogTable& right) {
       if (left.name() != right.name())
         return left.name() < right.name();
-      return left.quoted() < right.quoted();
+      return !left.quoted() && right.quoted();
     });
     for (std::size_t index = 1U; index < copied.size(); ++index) {
       if (copied[index - 1U].name() == copied[index].name() &&

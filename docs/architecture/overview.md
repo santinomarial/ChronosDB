@@ -158,9 +158,10 @@ semantic preflight or replay. It can explicitly truncate only a narrowly defined
 of the highest active segment; bad checksums, discontinuities, and middle-of-log damage fail closed.
 WAL v1 establishes physical order before durable CSEG installation covers operations. The columnar
 logical mutation payload has an independent byte codec, a live in-memory application path, and a
-retained-lineage fresh-state recovery path with a durable-prefix seed boundary. Durable catalog
-reconstruction and the Manifest-to-seed startup owner remain outside that path. Deployment tuning
-of the implemented group-commit limits remains future work.
+retained-lineage fresh-state recovery path with a durable-prefix seed boundary. The Manifest-to-seed
+startup owner is implemented around a caller-supplied retained catalog; durable catalog
+reconstruction remains outside that path. Deployment tuning of the implemented group-commit limits
+remains future work.
 
 In the distributed phase, each tablet's authoritative ordering is its committed Raft log. Many logical Raft groups will share a multiplexed physical log while preserving per-group ordering, durability, fairness, reclamation safety, and recovery identity. Reusing the single-node record codec may be desirable but is not yet decided.
 

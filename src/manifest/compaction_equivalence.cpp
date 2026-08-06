@@ -6,6 +6,7 @@
 #include "cseg/sort_order_internal.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <new>
@@ -55,20 +56,23 @@ sort_cell(const columnar::PhysicalColumnView& column, const std::uint32_t row) {
     return common::make_unexpected(cell.error());
   }
   if (cell->is_null()) {
-    return cseg::detail::SortCellView{.is_null = true};
+    return cseg::detail::SortCellView{
+        .is_null = true, .is_boolean = false, .boolean = false, .bytes = {}};
   }
   if (column.type().kind() == schema::LogicalTypeKind::kBool) {
     const common::Result<bool> value = cell->boolean();
     if (!value.has_value()) {
       return common::make_unexpected(value.error());
     }
-    return cseg::detail::SortCellView{.is_boolean = true, .boolean = *value};
+    return cseg::detail::SortCellView{
+        .is_null = false, .is_boolean = true, .boolean = *value, .bytes = {}};
   }
   const common::Result<common::ByteView> bytes = cell->bytes();
   if (!bytes.has_value()) {
     return common::make_unexpected(bytes.error());
   }
-  return cseg::detail::SortCellView{.bytes = *bytes};
+  return cseg::detail::SortCellView{
+      .is_null = false, .is_boolean = false, .boolean = false, .bytes = *bytes};
 }
 
 class PartCursor {
@@ -159,9 +163,8 @@ struct Ordering {
       return compared;
     }
   }
-  constexpr schema::LogicalTypeKind kKinds[]{schema::LogicalTypeKind::kUuid,
-                                             schema::LogicalTypeKind::kUInt64,
-                                             schema::LogicalTypeKind::kUInt32};
+  constexpr std::array kKinds{schema::LogicalTypeKind::kUuid, schema::LogicalTypeKind::kUInt64,
+                              schema::LogicalTypeKind::kUInt32};
   for (std::size_t system = 0U; system < std::size(kKinds); ++system) {
     const common::Result<int> compared =
         compare_column(left, right, ordering.system_start + system, kKinds[system]);
