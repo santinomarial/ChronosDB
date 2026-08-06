@@ -202,6 +202,7 @@ int main() {
       .maximum_schema_versions = 2U,
       .maximum_sealed_generations = 2U,
       .maximum_retry_entries = 8U};
+  const std::optional<chronos::ingest::ColumnarRecoveryTabletSeed> durable_recovery_seed;
   static_assert(chronos::ingest::columnar_append_v1::kCommandHeaderLength == 160U);
   static_assert(chronos::manifest::format::kFileHeaderLength == 256U);
   const auto manifest_layout = chronos::manifest::plan_manifest_v1_layout({});
@@ -283,6 +284,7 @@ int main() {
                  limits.max_columns == 4096U &&
                  head_capacity.row_capacity == 4U &&
                  tablet_config.maximum_schema_versions == 2U &&
+                 !durable_recovery_seed.has_value() &&
                  tablet_config.maximum_sealed_generations == 2U && digest.has_value() &&
                  retry_directory.has_value() &&
                  retry_directory->metrics().maximum_entries == 8U && !decoded.has_value() &&

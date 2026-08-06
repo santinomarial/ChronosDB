@@ -1,10 +1,11 @@
 # Columnar Append Recovery
 
-> **Status: retained-lineage fresh-state recovery implemented.**
+> **Status: retained-lineage whole-history and durable-prefix recovery implemented.**
 > `chronos::ingest::recover_columnar_append_wal` connects the accepted WAL recovery passes to the
 > `COLUMNAR_APPEND` codec, immutable batches, retry directory, and tablet publications, including
 > APPEND_ROWS logical-key conflict enforcement. Catalog persistence, routing reconstruction, retry
-> pruning, CSEG/manifest/checkpoint state, and multi-kind application dispatch remain outside this boundary.
+> pruning, Manifest selection/publication, and multi-kind application dispatch remain outside this
+> boundary.
 
 ## Purpose and public boundary
 
@@ -15,7 +16,9 @@ verified prefix as a database. The caller supplies:
 - one retained linear schema lineage, per-version head capacities, and bounded `TabletStateConfig`
   for every configured tablet;
 - one database-wide retry-directory bound; and
-- command and embedded-batch decode limits.
+- command and embedded-batch decode limits; and, optionally,
+- one externally durable global WAL checkpoint plus exact per-tablet recovery schema, durable
+  boundary, and protected retry outcomes derived from a selected Manifest.
 
 Success returns a move-only `RecoveredColumnarAppendState`. It owns the reconstructed global retry
 directory, every configured tablet, and the locked `WalWriter` reopened at the exact next global
@@ -30,21 +33,31 @@ retained schema fails with `NOT_FOUND`; a known schema whose immutable definitio
 the command or embedded batch is corruption. An empty or duplicate tablet configuration, invalid
 lineage, invalid limits, or invalid bounded state is a caller configuration error.
 
-## Whole-history ordering
+## Whole-history and checkpoint-suffix ordering
 
-The implementation delegates physical authority to `WalWriter::open_existing`:
+The implementation delegates physical authority to `WalWriter::open_existing`, or to
+`open_existing_from_checkpoint` when the durable prefix is supplied:
 
 1. lock and discover the WAL directory;
 2. verify the complete physical history;
 3. optionally repair only the accepted incomplete final-tail case and reverify;
-4. run semantic preflight over every verified record;
-5. replay every record in increasing global sequence;
+4. run semantic preflight over every required record;
+5. replay every required record in increasing global sequence;
 6. synchronize the active segment and WAL-directory startup barrier; and
 7. construct the live writer at the recovered identity, offset, and next sequence.
 
 The recovery state, replay sink, and writer remain private local ownership through all seven steps.
 If any callback or startup barrier fails, destructors discard every fresh retry entry, tablet row,
 head generation, publication epoch, and lock. Only the completed owner crosses the API boundary.
+
+Before checkpoint suffix replay, recovery creates the global retry directory and every tablet in
+fresh unpublished memory. It validates the complete retained schema lineage, activates the exact
+Manifest recovery schema with an empty generation, installs one shared immutable outcome object in
+both the global directory and tablet retry table, and sets the tablet durable position. A suffix
+command through that tablet boundary is legal only when it matches one of those outcomes exactly;
+it adds no row and does not regress the restored position. A later command follows ordinary replay
+semantics. This is the logical bridge needed by Manifest startup, but it does not itself open a
+Manifest or publish CSEG parts.
 
 Preflight decodes the already integrity-verified WAL record through
 `decode_columnar_append_v1_record`, which still checks application format/kind, exact payload
@@ -80,6 +93,12 @@ a new outer tablet epoch whose applied position names the later duplicate record
 schema, row boundary, and last row-producing position remain unchanged. A different digest,
 impossible in-flight state, inconsistent outcome, non-increasing tablet position, or first-time
 return to an ancestor schema is corruption and fails the complete recovery.
+
+Checkpoint recovery makes one narrow exception to ordinary position advancement: an exact seeded
+retry observed at or below the restored tablet durable boundary is a verified covered no-op. The
+original outcome sequence cannot be later than the observed record. Any unseeded first occurrence
+inside that boundary eventually fails the position check as corruption instead of recreating rows
+already represented by CSEG.
 
 ## Failure classification and bounds
 
@@ -119,6 +138,11 @@ microbenchmarks rather than cold-device startup claims.
 The focused suite uses real WAL files to prove:
 
 - two tablets replay in global order while an exact duplicate adds no rows;
+- a selected recovery schema and protected retry prefix restore deterministically, covered suffix
+  commands add no rows, an uncovered successor command materializes once, and the writer continues
+  at the exact next sequence;
+- an unprotected command inside a tablet durable boundary is corruption, while missing checkpoint,
+  unknown recovery schema, and repeated seed identity are caller configuration errors;
 - the duplicate advances only the outer tablet position and retains the exact original outcome;
 - a direct schema successor seals the ancestor generation and publishes rows under its own shape;
 - an exact ancestor-schema retry after activation remains a no-row position advance;
@@ -141,10 +165,10 @@ the recovery integration adds state-machine and real-file evidence rather than a
 ## Deferred integration and review questions
 
 This owner handles only `COLUMNAR_APPEND` application records and caller-supplied linear schema
-lineages. A future database recovery coordinator must provide durable catalog/tablet-map
-reconstruction, dispatch multiple application kinds, reconcile CSEG/checkpoint coverage, and
-publish a database-wide catalog/root atomically. Retry retention and pruning must remain coupled to
-checkpoint and idempotency-horizon policy.
+lineages. A future database recovery coordinator must select the Manifest, convert its descriptors
+to these exact seeds, provide durable catalog/tablet-map reconstruction, dispatch multiple
+application kinds, and publish the CSEG/head database root atomically. Retry retention and pruning
+must remain coupled to checkpoint and idempotency-horizon policy.
 
 Likely review questions include:
 

@@ -147,9 +147,10 @@ in-memory codec are implemented according to the
 single-tablet execution path now submits that payload, waits for the exact requested durability
 boundary, publishes rows/position/retry state, and commits the global retry pointer. Recovery
 application is implemented for a caller-supplied retained linear schema lineage per tablet: it
-preflights the whole WAL, replays schema-bound generations/rows/retry outcomes/applied positions,
-rejects conflicts and first-time schema regression, and exposes state plus the reopened writer only
-after full success. Routing/admission, retry retention, and transport acknowledgment remain
+preflights either the whole WAL or a Manifest-checkpoint suffix, restores exact durable tablet/retry
+state, replays schema-bound uncovered rows and covered no-ops, rejects conflicts and first-time
+schema regression, and exposes state plus the reopened writer only after full success.
+Routing/admission, retry retention, and transport acknowledgment remain
 unimplemented.
 
 The [WAL recovery state machine](wal-recovery.md) verifies the complete physical history before
@@ -157,10 +158,9 @@ semantic preflight or replay. It can explicitly truncate only a narrowly defined
 of the highest active segment; bad checksums, discontinuities, and middle-of-log damage fail closed.
 WAL v1 establishes physical order before durable CSEG installation covers operations. The columnar
 logical mutation payload has an independent byte codec, a live in-memory application path, and a
-retained-lineage fresh-state recovery path. Durable catalog reconstruction remains outside that
-path.
-Deployment tuning of the implemented
-group-commit limits plus implementation of checkpoints and old-segment removal remain future work.
+retained-lineage fresh-state recovery path with a durable-prefix seed boundary. Durable catalog
+reconstruction and the Manifest-to-seed startup owner remain outside that path. Deployment tuning
+of the implemented group-commit limits remains future work.
 
 In the distributed phase, each tablet's authoritative ordering is its committed Raft log. Many logical Raft groups will share a multiplexed physical log while preserving per-group ordering, durability, fairness, reclamation safety, and recovery identity. Reusing the single-node record codec may be desirable but is not yet decided.
 

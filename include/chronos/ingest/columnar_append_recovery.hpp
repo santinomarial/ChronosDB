@@ -13,6 +13,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace chronos::ingest {
@@ -20,6 +21,23 @@ namespace chronos::ingest {
 struct ColumnarRecoverySuccessorSchemaConfig {
   std::shared_ptr<const schema::TableSchema> schema;
   head::MutableHeadCapacity head_capacity;
+};
+
+// One exact retry outcome already protected by the selected durable prefix. Recovery installs one
+// shared immutable outcome into the global directory and its owning tablet before suffix replay.
+struct ColumnarRecoveryRetrySeed {
+  RetryIdentity identity;
+  ColumnarAppendRetryOutcome outcome;
+};
+
+// One tablet boundary represented by durable parts and retry descriptors. The recovery schema must
+// identify one schema in the configured retained lineage. Commands at or below this boundary may
+// replay only as exact matching retry no-ops; later first-time commands populate mutable heads.
+struct ColumnarRecoveryTabletSeed {
+  schema::SchemaId recovery_schema_id;
+  schema::SchemaVersion recovery_schema_version;
+  std::uint64_t durable_record_sequence{};
+  std::vector<ColumnarRecoveryRetrySeed> retries;
 };
 
 // One retained linear schema lineage and its fresh in-memory tablet-state limits. schema is the
@@ -32,12 +50,17 @@ struct ColumnarRecoveryTabletConfig {
   schema::TabletId tablet_id;
   TabletStateConfig state;
   std::vector<ColumnarRecoverySuccessorSchemaConfig> successors;
+  std::optional<ColumnarRecoveryTabletSeed> durable_seed;
 };
 
 struct ColumnarAppendRecoveryConfig {
   RetryDirectoryConfig retry_directory;
   std::vector<ColumnarRecoveryTabletConfig> tablets;
   ColumnarAppendDecodeLimits decode_limits;
+  // When present, physical recovery verifies and replays only the suffix after this externally
+  // durable global boundary. Tablet durable boundaries may be later and are verified as matching
+  // no-ops while the suffix catches up.
+  std::optional<wal::WalReplayCheckpoint> checkpoint;
 };
 
 // Owns one completely recovered, unpublished-before-success in-memory state and the exclusively
@@ -73,8 +96,9 @@ private:
                               ColumnarAppendRecoveryConfig);
 };
 
-// Opens an existing WAL and reconstructs fresh in-memory COLUMNAR_APPEND state. The implementation
-// first verifies and preflights the complete history, then replays it serially. Any failure
+// Opens an existing WAL and reconstructs fresh in-memory COLUMNAR_APPEND state. With no checkpoint
+// it verifies and replays the complete history. With a checkpoint it first restores the configured
+// durable tablet/retry prefix, then verifies and replays only the required suffix. Any failure
 // discards every partial tablet/retry publication and returns no state or writer.
 [[nodiscard]] common::Result<RecoveredColumnarAppendState>
 recover_columnar_append_wal(const wal::WalWriterConfig& writer_config,

@@ -15,10 +15,13 @@
 > verifies and preflights a complete existing WAL, resolves every command against the supplied
 > retained lineage, rebuilds fresh tablet and global retry state in sequence order, permits exact
 > ancestor-schema retry no-ops, and returns the locked writer at the exact next sequence only after
-> the complete recovery succeeds. Tablet preparation now rejects intra-batch logical-key duplicates
+> the complete recovery succeeds. The same boundary now accepts an externally durable Manifest
+> checkpoint plus exact per-tablet schema/boundary/retry seeds, restores those immutable outcomes,
+> verifies covered suffix commands as no-ops, and materializes only records beyond each tablet's
+> durable boundary. Tablet preparation now rejects intra-batch logical-key duplicates
 > and conflicts against every visible generation before WAL. Bounded flush scheduling, aggregate
-> Manifest/head publication, and receipt-authorized retirement are implemented. Catalog/routing
-> admission, retry pruning, and the end-to-end durable flush coordinator remain unimplemented. A
+> Manifest/head publication, receipt-authorized retirement, and the end-to-end durable flush
+> coordinator are implemented. Catalog/routing admission and retry pruning remain unimplemented. A
 > sealed generation can now be deterministically sorted, materialized, fully validated, and durably
 > installed as one CSEG. This
 > document
@@ -254,22 +257,31 @@ must follow the accepted parent lineage. The first command under a successor sea
 head; a later first-time command under an ancestor is invalid. A same-digest retry no-op may refer to
 its retained old schema because it adds no rows and returns the already published outcome.
 
-Whole-log recovery always starts from a fresh/resettable target under the current WAL replay API.
-Repeating recovery from the same bytes produces the same logical rows, identities, outcomes, and
-applied positions. Physical head packing may depend on an explicitly supplied capacity policy, but
-it cannot change visible rows or commit boundaries. Reopening the WAL continues at the exact next
-global sequence already determined by physical recovery; head state never assigns WAL sequence.
+Recovery always starts from a fresh/resettable target. Without a checkpoint it reconstructs the
+whole history. With an externally durable global checkpoint it first restores the exact protected
+retry outcomes, per-tablet durable boundary, and active recovery schema supplied from the selected
+Manifest. Required suffix records at or below a tablet's later durable boundary must resolve to
+those exact retry outcomes and add no rows; an absent or conflicting protected outcome is
+corruption. Records later than the tablet boundary use normal first-apply or retry semantics.
+Repeating recovery from the same durable inputs produces the same logical rows, identities,
+outcomes, and applied positions. Physical head packing may depend on an explicitly supplied
+capacity policy, but it cannot change visible rows or commit boundaries. Reopening the WAL
+continues at the exact next global sequence already determined by physical recovery; head state
+never assigns WAL sequence.
 
 The implemented `recover_columnar_append_wal` boundary realizes this contract for a caller-supplied
 retained linear schema lineage per configured tablet. Each direct successor and its bounded empty
-generation capacity are registered before WAL opening. Whole-log preflight resolves every command
+generation capacity are registered before WAL opening. Preflight resolves every required command
 to one retained immutable schema; replay lets the first-time successor command rotate the tablet
-and rejects a first-time ancestor regression. Its owner and replay sink stay private until physical
-recovery, whole-log semantic preflight, ordered application, active-segment synchronization, and
-the startup directory barrier all succeed. A first command copies the borrowed decoded physical
+and rejects a first-time ancestor regression. For checkpoint recovery, prefix restoration activates
+the selected recovery schema with one empty mutable generation while retaining ancestor definitions
+for exact protected retry validation. Its owner and replay sink stay private until physical
+recovery, whole-suffix semantic preflight, ordered application, active-segment synchronization, and
+the startup directory barrier all succeed. A first uncovered command copies the borrowed decoded physical
 vectors into an owned immutable batch before tablet publication. A matching duplicate, including
 one under a retained ancestor schema, reuses the exact original outcome pointer, adds no rows or
-retry entries, and advances only the tablet's outer applied position. Any replay failure destroys
+retry entries, and advances only the tablet's outer applied position after its durable boundary.
+Matching commands through that boundary leave the restored position unchanged. Any replay failure destroys
 the entire fresh owner. The returned move-only state owns the reconstructed global directory and
 tablets plus a once-releasable locked `WalWriter`, allowing live coordination to continue at the
 recovered next sequence.

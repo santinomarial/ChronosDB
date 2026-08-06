@@ -38,7 +38,10 @@
 > real-WAL whole-history preflight/replay, schema-bound generation switching, first-apply plus
 > ancestor duplicate-no-op behavior, exact outcome-pointer reconstruction, repeatability,
 > conflict/schema-regression/unknown-target/incomplete/unsupported classification, and continued
-> live sequence assignment. Tablet admission additionally checks every frozen logical-key type,
+> live sequence assignment. Its checkpoint mode additionally seeds exact durable retry/tablet
+> state, activates the selected recovery schema, skips only protected commands through the tablet
+> boundary, rejects an unprotected covered command, repeats deterministically, and continues at the
+> verified suffix end. Tablet admission additionally checks every frozen logical-key type,
 > IEEE signed-zero/NaN equality, generated key sets, visible-generation conflicts, and replay
 > conflict classification. A test-only allocator now forces each retry-directory, mutable-head,
 > tablet preparation, deduplication, and rotation allocation to fail in turn, and verifies the

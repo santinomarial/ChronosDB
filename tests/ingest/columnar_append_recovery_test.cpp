@@ -82,6 +82,23 @@ command(const std::uint8_t seed, const schema::TabletId target,
       .value();
 }
 
+[[nodiscard]] ColumnarRecoveryRetrySeed retry_seed(const wal::EncodedApplicationPayload& payload,
+                                                   const wal::WalId& wal_id,
+                                                   const std::uint64_t record_sequence) {
+  const ColumnarAppendDecodeResult decoded = decode_columnar_append_v1_exact(payload.bytes());
+  EXPECT_TRUE(decoded.has_value());
+  return ColumnarRecoveryRetrySeed{
+      .identity = RetryIdentity{.client_id = decoded->client_id(),
+                                .client_batch_id = decoded->client_batch_id()},
+      .outcome = ColumnarAppendRetryOutcome{
+          .mutation = ColumnarAppendMutationIdentity{.table_id = decoded->table_id(),
+                                                     .tablet_id = decoded->tablet_id(),
+                                                     .request_digest = decoded->request_digest()},
+          .wal_id = wal_id,
+          .record_sequence = record_sequence,
+          .applied_row_count = decoded->row_count()}};
+}
+
 [[nodiscard]] TabletStateConfig tablet_config(const std::size_t schema_versions = 1U) {
   return TabletStateConfig{
       .head_capacity =
@@ -277,6 +294,182 @@ TEST(ColumnarAppendRecoveryTest, ReplaysRegisteredSchemaSwitchAndAllowsAnExactAn
   ASSERT_NE(original, nullptr);
   EXPECT_EQ(original->record_sequence, 1U);
   EXPECT_TRUE(recovered->release_writer()->close().is_ok());
+}
+
+TEST(ColumnarAppendRecoveryTest,
+     RestoresManifestPrefixSkipsCoveredCommandsAndAppliesOnlyTheUncoveredSuffix) {
+  wal::test::TemporaryDirectory directory{"chronos-columnar-recovery-durable-prefix"};
+  ASSERT_TRUE(directory.valid());
+  const wal::WalWriterConfig writer_config{.directory_path = directory.path().string()};
+  const schema::TabletId target = tablet_id(70U);
+  common::Result<wal::WalWriter> created = wal::WalWriter::create_new(writer_config);
+  ASSERT_TRUE(created.has_value()) << created.error().to_string();
+  wal::WalWriter writer = std::move(*created);
+  const wal::WalId wal_id = writer.wal_id();
+  const wal::EncodedApplicationPayload ancestor = command(1U, target, batch());
+  const wal::EncodedApplicationPayload successor = command(2U, target, successor_batch());
+  const wal::EncodedApplicationPayload next = command(3U, target, successor_batch());
+  const common::Result<wal::WalAppendResult> first =
+      writer.append_application_entry(ancestor.bytes());
+  ASSERT_TRUE(first.has_value()) << first.error().to_string();
+  ASSERT_TRUE(writer.append_application_entry(successor.bytes()).has_value());
+  ASSERT_TRUE(writer.append_application_entry(ancestor.bytes()).has_value());
+  ASSERT_TRUE(writer.append_application_entry(next.bytes()).has_value());
+  ASSERT_TRUE(writer.synchronize().has_value());
+  ASSERT_TRUE(writer.close().is_ok());
+
+  const wal::WalReplayCheckpoint checkpoint{.wal_id = wal_id,
+                                            .record_sequence = 1U,
+                                            .segment_number = first->record_end.segment_number,
+                                            .byte_offset = first->record_end.byte_offset};
+  const auto make_config = [&]() {
+    ColumnarAppendRecoveryConfig config = recovery_config({target}, true);
+    config.checkpoint = checkpoint;
+    config.tablets.front().durable_seed = ColumnarRecoveryTabletSeed{
+        .recovery_schema_id = successor_batch()->schema().schema_id(),
+        .recovery_schema_version = successor_batch()->schema().version(),
+        .durable_record_sequence = 2U,
+        .retries = {retry_seed(ancestor, wal_id, 1U), retry_seed(successor, wal_id, 2U)}};
+    return config;
+  };
+
+  for (std::size_t attempt = 0U; attempt < 2U; ++attempt) {
+    common::Result<RecoveredColumnarAppendState> recovered =
+        recover_columnar_append_wal(writer_config, {}, make_config());
+    ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
+    const TabletSnapshot snapshot = recovered->tablet(target)->snapshot().value();
+    EXPECT_EQ(snapshot.schema_ptr()->schema_id(), successor_batch()->schema().schema_id());
+    EXPECT_EQ(snapshot.visible_row_count(), 2U);
+    EXPECT_EQ(snapshot.sealed_generations().size(), 0U);
+    EXPECT_EQ(snapshot.retry_entry_count(), 3U);
+    ASSERT_TRUE(snapshot.applied_position().has_value());
+    const head::HeadCommitPosition applied_position =
+        snapshot.applied_position().value_or(head::HeadCommitPosition{});
+    ASSERT_TRUE(snapshot.active_generation().applied_position().has_value());
+    const head::HeadCommitPosition active_position =
+        snapshot.active_generation().applied_position().value_or(head::HeadCommitPosition{});
+    EXPECT_EQ(applied_position.record_sequence, 4U);
+    EXPECT_EQ(active_position.record_sequence, 4U);
+    EXPECT_EQ(recovered->retry_directory().metrics().committed_entries, 3U);
+    EXPECT_EQ(snapshot.retry_outcome(retry_identity(1U))->record_sequence, 1U);
+    EXPECT_EQ(snapshot.retry_outcome(retry_identity(2U))->record_sequence, 2U);
+
+    common::Result<wal::WalWriter> reopened = recovered->release_writer();
+    ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+    EXPECT_EQ(reopened->next_record_sequence().value(), 5U);
+    EXPECT_TRUE(reopened->close().is_ok());
+  }
+}
+
+TEST(ColumnarAppendRecoveryTest, RejectsAnUnprotectedCommandInsideATabletDurableBoundary) {
+  wal::test::TemporaryDirectory directory{"chronos-columnar-recovery-missing-durable-retry"};
+  ASSERT_TRUE(directory.valid());
+  const wal::WalWriterConfig writer_config{.directory_path = directory.path().string()};
+  const schema::TabletId target = tablet_id(70U);
+  common::Result<wal::WalWriter> created = wal::WalWriter::create_new(writer_config);
+  ASSERT_TRUE(created.has_value()) << created.error().to_string();
+  wal::WalWriter writer = std::move(*created);
+  const wal::WalId wal_id = writer.wal_id();
+  const wal::EncodedApplicationPayload first_command = command(1U, target, batch());
+  const wal::EncodedApplicationPayload second_command = command(2U, target, successor_batch());
+  const common::Result<wal::WalAppendResult> first =
+      writer.append_application_entry(first_command.bytes());
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(writer.append_application_entry(second_command.bytes()).has_value());
+  ASSERT_TRUE(writer.synchronize().has_value());
+  ASSERT_TRUE(writer.close().is_ok());
+
+  ColumnarAppendRecoveryConfig config = recovery_config({target}, true);
+  config.checkpoint = wal::WalReplayCheckpoint{.wal_id = wal_id,
+                                               .record_sequence = 1U,
+                                               .segment_number = first->record_end.segment_number,
+                                               .byte_offset = first->record_end.byte_offset};
+  config.tablets.front().durable_seed =
+      ColumnarRecoveryTabletSeed{.recovery_schema_id = successor_batch()->schema().schema_id(),
+                                 .recovery_schema_version = successor_batch()->schema().version(),
+                                 .durable_record_sequence = 2U,
+                                 .retries = {retry_seed(first_command, wal_id, 1U)}};
+
+  const common::Result<RecoveredColumnarAppendState> recovered =
+      recover_columnar_append_wal(writer_config, {}, std::move(config));
+  ASSERT_FALSE(recovered.has_value());
+  EXPECT_EQ(recovered.error().code(), common::StatusCode::kCorruption);
+}
+
+TEST(ColumnarAppendRecoveryTest, RejectsMalformedDurableSeedsBeforeReturningState) {
+  wal::test::TemporaryDirectory directory{"chronos-columnar-recovery-invalid-durable-seed"};
+  ASSERT_TRUE(directory.valid());
+  const wal::WalWriterConfig writer_config{.directory_path = directory.path().string()};
+  const schema::TabletId target = tablet_id(70U);
+  common::Result<wal::WalWriter> created = wal::WalWriter::create_new(writer_config);
+  ASSERT_TRUE(created.has_value()) << created.error().to_string();
+  wal::WalWriter writer = std::move(*created);
+  const wal::WalId wal_id = writer.wal_id();
+  const wal::EncodedApplicationPayload payload = command(1U, target, batch());
+  const common::Result<wal::WalAppendResult> appended =
+      writer.append_application_entry(payload.bytes());
+  ASSERT_TRUE(appended.has_value());
+  ASSERT_TRUE(writer.synchronize().has_value());
+  ASSERT_TRUE(writer.close().is_ok());
+
+  ColumnarAppendRecoveryConfig missing_checkpoint = recovery_config({target});
+  missing_checkpoint.tablets.front().durable_seed =
+      ColumnarRecoveryTabletSeed{.recovery_schema_id = batch()->schema().schema_id(),
+                                 .recovery_schema_version = batch()->schema().version(),
+                                 .durable_record_sequence = 1U,
+                                 .retries = {retry_seed(payload, wal_id, 1U)}};
+  common::Result<RecoveredColumnarAppendState> rejected =
+      recover_columnar_append_wal(writer_config, {}, std::move(missing_checkpoint));
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kInvalidArgument);
+
+  ColumnarAppendRecoveryConfig unknown_schema = recovery_config({target});
+  unknown_schema.checkpoint =
+      wal::WalReplayCheckpoint{.wal_id = wal_id,
+                               .record_sequence = 1U,
+                               .segment_number = appended->record_end.segment_number,
+                               .byte_offset = appended->record_end.byte_offset};
+  unknown_schema.tablets.front().durable_seed =
+      ColumnarRecoveryTabletSeed{.recovery_schema_id = columnar::test::id<schema::SchemaId>(250U),
+                                 .recovery_schema_version = batch()->schema().version(),
+                                 .durable_record_sequence = 1U,
+                                 .retries = {retry_seed(payload, wal_id, 1U)}};
+  rejected = recover_columnar_append_wal(writer_config, {}, std::move(unknown_schema));
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kInvalidArgument);
+
+  ColumnarAppendRecoveryConfig repeated_retry = recovery_config({target});
+  repeated_retry.checkpoint =
+      wal::WalReplayCheckpoint{.wal_id = wal_id,
+                               .record_sequence = 1U,
+                               .segment_number = appended->record_end.segment_number,
+                               .byte_offset = appended->record_end.byte_offset};
+  const ColumnarRecoveryRetrySeed seed = retry_seed(payload, wal_id, 1U);
+  repeated_retry.tablets.front().durable_seed =
+      ColumnarRecoveryTabletSeed{.recovery_schema_id = batch()->schema().schema_id(),
+                                 .recovery_schema_version = batch()->schema().version(),
+                                 .durable_record_sequence = 1U,
+                                 .retries = {seed, seed}};
+  rejected = recover_columnar_append_wal(writer_config, {}, std::move(repeated_retry));
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kInvalidArgument);
+
+  ColumnarAppendRecoveryConfig missing_required_suffix = recovery_config({target});
+  missing_required_suffix.checkpoint =
+      wal::WalReplayCheckpoint{.wal_id = wal_id,
+                               .record_sequence = 1U,
+                               .segment_number = appended->record_end.segment_number,
+                               .byte_offset = appended->record_end.byte_offset};
+  ColumnarRecoveryRetrySeed missing = retry_seed(payload, wal_id, 1U);
+  missing.outcome.record_sequence = 2U;
+  missing_required_suffix.tablets.front().durable_seed =
+      ColumnarRecoveryTabletSeed{.recovery_schema_id = batch()->schema().schema_id(),
+                                 .recovery_schema_version = batch()->schema().version(),
+                                 .durable_record_sequence = 2U,
+                                 .retries = {missing}};
+  rejected = recover_columnar_append_wal(writer_config, {}, std::move(missing_required_suffix));
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kCorruption);
 }
 
 TEST(ColumnarAppendRecoveryTest, RejectsAFirstTimeAncestorAppendAfterSchemaActivation) {

@@ -23,8 +23,9 @@ namespace chronos::ingest {
 class SealedHeadFlushQueue;
 
 namespace detail {
+class ColumnarRecoveryStateBuilder;
 class TabletStateTestAccess;
-}
+} // namespace detail
 
 // Non-forgeable proof that one exact sealed generation has been removed from a successfully
 // release-published database storage epoch and replaced by durable Manifest-selected state.
@@ -243,9 +244,14 @@ private:
   create_with_publication_hook(std::shared_ptr<const schema::TableSchema> schema,
                                schema::TabletId tablet_id, TabletStateConfig config,
                                PublicationHook hook, void* hook_context);
+  [[nodiscard]] common::Status seed_recovered_prefix(
+      schema::SchemaId recovery_schema_id, schema::SchemaVersion recovery_schema_version,
+      head::HeadCommitPosition durable_position, std::span<const RetryIdentity> identities,
+      std::span<const std::shared_ptr<const ColumnarAppendRetryOutcome>> outcomes);
 
   std::shared_ptr<detail::TabletStateCore> state_;
 
+  friend class detail::ColumnarRecoveryStateBuilder;
   friend class detail::TabletStateTestAccess;
 };
 

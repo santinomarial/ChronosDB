@@ -118,6 +118,10 @@ public:
                           const ColumnarAppendMutationIdentity& mutation,
                           const std::shared_ptr<const ColumnarAppendRetryOutcome>& outcome,
                           head::HeadCommitPosition position);
+  [[nodiscard]] common::Status seed_recovered_prefix(
+      schema::SchemaId recovery_schema_id, schema::SchemaVersion recovery_schema_version,
+      head::HeadCommitPosition durable_position, std::span<const RetryIdentity> identities,
+      std::span<const std::shared_ptr<const ColumnarAppendRetryOutcome>> outcomes);
   [[nodiscard]] common::Result<TabletSnapshot>
   retire_sealed_generation(const SealedGenerationRetirementReceipt& receipt);
   void abandon(std::uint64_t token) noexcept;
@@ -149,6 +153,7 @@ private:
   std::uint64_t active_token_{};
   PreparedPhase active_phase_{PreparedPhase::kPreWal};
   std::uint64_t next_token_{1U};
+  std::uint64_t recovery_skip_through_{};
   std::atomic<bool> failed_{false};
 };
 
@@ -634,6 +639,16 @@ common::Result<TabletSnapshot> detail::TabletStateCore::advance_recovered_retry(
     return common::make_unexpected(
         invalid("recovered retry outcome is not the tablet's exact published object"));
   }
+  if (position.wal_id.is_valid() && current->applied_position_.has_value() &&
+      recovery_skip_through_ != 0U && position.wal_id == current->applied_position_->wal_id &&
+      position.record_sequence >= outcome->record_sequence &&
+      position.record_sequence <= recovery_skip_through_) {
+    std::shared_ptr<TabletStateCore> self = weak_from_this().lock();
+    if (self == nullptr) {
+      return common::make_unexpected(internal("tablet state lost its owning reference"));
+    }
+    return TabletSnapshot{std::move(self), current};
+  }
   const common::Status position_status = validate_position(position, *current);
   if (!position_status.is_ok()) {
     return common::make_unexpected(position_status);
@@ -651,6 +666,84 @@ common::Result<TabletSnapshot> detail::TabletStateCore::advance_recovered_retry(
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(
         exhausted("recovered retry position publication could not allocate its outer epoch"));
+  }
+}
+
+common::Status detail::TabletStateCore::seed_recovered_prefix(
+    const schema::SchemaId recovery_schema_id, const schema::SchemaVersion recovery_schema_version,
+    const head::HeadCommitPosition durable_position,
+    const std::span<const RetryIdentity> identities,
+    const std::span<const std::shared_ptr<const ColumnarAppendRetryOutcome>> outcomes) {
+  if (failed_.load(std::memory_order_acquire) || append_active_) {
+    return unavailable("tablet durable prefix requires fresh unpublished state");
+  }
+  if (!durable_position.wal_id.is_valid() || durable_position.record_sequence == 0U) {
+    return invalid("tablet durable prefix requires a nonzero WAL boundary");
+  }
+  if (identities.size() != outcomes.size()) {
+    return invalid("tablet durable prefix retry identities and outcomes disagree in count");
+  }
+  if (identities.size() > limits_.maximum_retry_entries) {
+    return exhausted("tablet durable prefix exceeds the configured retry-entry bound");
+  }
+
+  const std::shared_ptr<const TabletPublication> current =
+      std::atomic_load_explicit(&publication_, std::memory_order_acquire);
+  if (current->applied_position_.has_value() || !current->retries_->empty() ||
+      !current->sealed_generations_->empty() || current->active_generation_.row_count() != 0U) {
+    return invalid("tablet durable prefix can be restored only once into empty state");
+  }
+
+  try {
+    const auto recovered_schema =
+        std::find_if(schemas_.begin(), schemas_.end(), [&](const RegisteredSchema& retained) {
+          return retained.schema->schema_id() == recovery_schema_id &&
+                 retained.schema->version() == recovery_schema_version;
+        });
+    if (recovered_schema == schemas_.end()) {
+      return invalid("tablet durable recovery schema is absent from its registered lineage");
+    }
+    const std::size_t recovered_schema_index =
+        static_cast<std::size_t>(std::distance(schemas_.begin(), recovered_schema));
+    auto recovered_head = head::MutableHead::create(recovered_schema->schema, tablet_id_, 1U,
+                                                    recovered_schema->capacity);
+    if (!recovered_head.has_value()) {
+      return recovered_head.error();
+    }
+    auto active_head = std::make_unique<head::MutableHead>(std::move(*recovered_head));
+    common::Result<head::HeadSnapshot> active_snapshot = active_head->snapshot();
+    if (!active_snapshot.has_value()) {
+      return active_snapshot.error();
+    }
+    auto retries = std::make_shared<RetryTable>();
+    for (std::size_t index = 0U; index < identities.size(); ++index) {
+      const std::shared_ptr<const ColumnarAppendRetryOutcome>& outcome = outcomes[index];
+      if (outcome == nullptr || outcome->mutation.table_id != schemas_.front().schema->table_id() ||
+          outcome->mutation.tablet_id != tablet_id_ || outcome->wal_id != durable_position.wal_id ||
+          outcome->record_sequence == 0U ||
+          outcome->record_sequence > durable_position.record_sequence ||
+          outcome->applied_row_count == 0U) {
+        return invalid("tablet durable prefix contains an invalid retry outcome");
+      }
+      const auto [entry, inserted] = retries->emplace(identities[index], outcome);
+      static_cast<void>(entry);
+      if (!inserted) {
+        return invalid("tablet durable prefix repeats a retry identity");
+      }
+    }
+    std::shared_ptr<const RetryTable> retries_const = retries;
+    auto next = std::make_shared<const TabletPublication>(
+        durable_position, current->sealed_generations_, std::move(*active_snapshot),
+        std::move(retries_const));
+    std::atomic_store_explicit(&publication_, next, std::memory_order_release);
+    active_head_ = std::move(active_head);
+    active_schema_index_ = recovered_schema_index;
+    recovery_skip_through_ = durable_position.record_sequence;
+    return common::Status::ok();
+  } catch (const std::bad_alloc&) {
+    return exhausted("tablet durable prefix allocation failed");
+  } catch (const std::length_error&) {
+    return exhausted("tablet durable prefix exceeds container limits");
   }
 }
 
@@ -1008,6 +1101,18 @@ common::Result<TabletSnapshot> TabletState::advance_recovered_retry(
     return common::make_unexpected(invalid("tablet state is invalid"));
   }
   return state_->advance_recovered_retry(retry_identity, mutation, outcome, position);
+}
+
+common::Status TabletState::seed_recovered_prefix(
+    const schema::SchemaId recovery_schema_id, const schema::SchemaVersion recovery_schema_version,
+    const head::HeadCommitPosition durable_position,
+    const std::span<const RetryIdentity> identities,
+    const std::span<const std::shared_ptr<const ColumnarAppendRetryOutcome>> outcomes) {
+  if (state_ == nullptr) {
+    return invalid("tablet state is invalid");
+  }
+  return state_->seed_recovered_prefix(recovery_schema_id, recovery_schema_version,
+                                       durable_position, identities, outcomes);
 }
 
 common::Result<TabletSnapshot> TabletState::snapshot() const {
