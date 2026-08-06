@@ -98,6 +98,12 @@ int main() {
           const chronos::wal::WalWriterConfig&, const chronos::wal::WalRecoveryOptions&,
           chronos::ingest::ColumnarAppendRecoveryConfig);
   const RecoverFunction recover = &chronos::ingest::recover_columnar_append_wal;
+  using ReclaimRecoveredWalFunction =
+      chronos::common::Result<chronos::wal::WalSegmentReclamationReport> (
+          chronos::ingest::RecoveredColumnarAppendState::*)(
+          const chronos::wal::WalReplayCheckpoint&);
+  const ReclaimRecoveredWalFunction reclaim_recovered_wal =
+      &chronos::ingest::RecoveredColumnarAppendState::reclaim_checkpointed_segments;
   using InspectWalSuffixFunction = chronos::common::Result<chronos::wal::WalRecoveryReport> (*)(
       std::string_view, const chronos::wal::WalReplayCheckpoint&,
       chronos::wal::WalReplaySink&);
@@ -282,7 +288,8 @@ int main() {
           chronos::manifest::ManifestColumnarStartupConfig);
   const RecoverManifestColumnarFunction recover_manifest_columnar =
       &chronos::manifest::recover_manifest_columnar_database;
-  return execute != nullptr && recover != nullptr && inspect_wal_suffix != nullptr &&
+  return execute != nullptr && recover != nullptr && reclaim_recovered_wal != nullptr &&
+                 inspect_wal_suffix != nullptr &&
                  recover_wal_checkpoint != nullptr && open_wal_checkpoint != nullptr &&
                  reclaim_wal != nullptr && wal_reclamation_metrics != nullptr &&
                  register_schema != nullptr && retire_sealed_generation != nullptr &&

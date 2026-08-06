@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 namespace chronos::manifest {
 
@@ -19,6 +20,9 @@ struct ManifestColumnarStartupConfig {
   ManifestLoadRequest manifest_load;
   wal::WalWriterConfig wal_writer;
   wal::WalRecoveryOptions wal_recovery;
+  // Disabled by default. When enabled, startup revalidates and synchronously removes only closed
+  // WAL segments covered by the selected durable Manifest checkpoint before publishing state.
+  bool reclaim_checkpointed_wal_segments{false};
   // The caller supplies the complete retained catalog/tablet configuration but no checkpoint or
   // durable seeds. Recovery derives those fields only from the selected validated Manifest.
   ingest::ColumnarAppendRecoveryConfig columnar_recovery;
@@ -32,6 +36,8 @@ struct ManifestColumnarStartupReport {
   std::size_t retry_count{};
   std::size_t orphan_part_count{};
   TemporaryCleanupReport temporary_cleanup;
+  // Disengaged when cleanup was disabled; engaged even when no segment remained to remove.
+  std::optional<wal::WalSegmentReclamationReport> wal_reclamation;
 
   friend bool operator==(const ManifestColumnarStartupReport&,
                          const ManifestColumnarStartupReport&) = default;

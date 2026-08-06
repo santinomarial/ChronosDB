@@ -1,6 +1,7 @@
 #include "chronos/columnar/column_vector.hpp"
 #include "chronos/columnar/columnar_batch.hpp"
 #include "chronos/ingest/columnar_append.hpp"
+#include "chronos/manifest/checkpoint_builder.hpp"
 #include "chronos/manifest/codec.hpp"
 #include "chronos/manifest/generation_builder.hpp"
 #include "chronos/manifest/naming.hpp"
@@ -10,6 +11,7 @@
 #include "chronos/schema/logical_type.hpp"
 #include "chronos/schema/schema_lineage.hpp"
 #include "chronos/schema/table_schema.hpp"
+#include "chronos/wal/codec.hpp"
 
 #include <array>
 #include <bit>
@@ -80,6 +82,20 @@ void write_bytes(const std::filesystem::path& path, const common::ByteView bytes
   output.write(reinterpret_cast<const char*>(bytes.data()),
                static_cast<std::streamsize>(bytes.size()));
   ASSERT_TRUE(output.good());
+}
+
+[[nodiscard]] std::vector<std::byte> read_bytes(const std::filesystem::path& path) {
+  std::ifstream input{path, std::ios::binary | std::ios::ate};
+  const std::streamsize size = input.tellg();
+  if (!input.good() || size < 0) {
+    return {};
+  }
+  std::vector<std::byte> bytes(static_cast<std::size_t>(size));
+  input.seekg(0);
+  // std::ifstream has no std::byte overload.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  input.read(reinterpret_cast<char*>(bytes.data()), size);
+  return input.good() ? bytes : std::vector<std::byte>{};
 }
 
 template <typename Integer> void append_le(std::vector<std::byte>& bytes, const Integer value) {
@@ -225,6 +241,7 @@ TEST(ManifestColumnarStartupRecoveryTest,
     EXPECT_EQ(recovered->report().tablet_count, 0U);
     EXPECT_EQ(recovered->report().temporary_cleanup.removed_parts, 1U);
     EXPECT_EQ(recovered->report().temporary_cleanup.removed_manifests, 1U);
+    EXPECT_FALSE(recovered->report().wal_reclamation.has_value());
     EXPECT_FALSE(
         std::filesystem::exists(parts / temporary_part_file_name(temporary_part_id, nonce(9U))));
     EXPECT_FALSE(
@@ -256,6 +273,7 @@ TEST(ManifestColumnarStartupRecoveryTest,
   ASSERT_TRUE(repeated.has_value()) << repeated.error().to_string();
   EXPECT_EQ(repeated->report().temporary_cleanup.removed_parts, 0U);
   EXPECT_EQ(repeated->report().temporary_cleanup.removed_manifests, 0U);
+  EXPECT_FALSE(repeated->report().wal_reclamation.has_value());
   EXPECT_EQ(repeated->snapshot()->visible_head_row_count(), 2U);
   EXPECT_TRUE(repeated->release_writer()->close().is_ok());
 }
@@ -291,13 +309,26 @@ TEST(ManifestColumnarStartupRecoveryTest,
   ASSERT_TRUE(decoded_durable.has_value());
   ASSERT_TRUE(decoded_uncovered.has_value());
 
-  const wal::WalWriterConfig writer_config{.directory_path = wal_path.string()};
+  const common::Result<wal::RecordLayout> durable_record_layout =
+      wal::calculate_record_layout(durable_command.bytes().size());
+  ASSERT_TRUE(durable_record_layout.has_value());
+  ASSERT_LE(uncovered_command.bytes().size(), durable_command.bytes().size());
+  const wal::WalWriterConfig writer_config{
+      .directory_path = wal_path.string(),
+      .target_segment_size = wal::kSegmentHeaderSize + durable_record_layout->total_length,
+      .maximum_application_payload = durable_command.bytes().size()};
   common::Result<wal::WalWriter> created = wal::WalWriter::create_new(writer_config);
   ASSERT_TRUE(created.has_value()) << created.error().to_string();
   wal::WalWriter writer = std::move(*created);
   const wal::WalId wal_id = writer.wal_id();
-  ASSERT_TRUE(writer.append_application_entry(durable_command.bytes()).has_value());
-  ASSERT_TRUE(writer.append_application_entry(uncovered_command.bytes()).has_value());
+  const common::Result<wal::WalAppendResult> durable_append =
+      writer.append_application_entry(durable_command.bytes());
+  ASSERT_TRUE(durable_append.has_value());
+  const common::Result<wal::WalAppendResult> uncovered_append =
+      writer.append_application_entry(uncovered_command.bytes());
+  ASSERT_TRUE(uncovered_append.has_value());
+  EXPECT_EQ(durable_append->record_end.segment_number, 1U);
+  EXPECT_EQ(uncovered_append->record_end.segment_number, 2U);
   ASSERT_TRUE(writer.synchronize().has_value());
   ASSERT_TRUE(writer.close().is_ok());
 
@@ -372,6 +403,34 @@ TEST(ManifestColumnarStartupRecoveryTest,
                                          .schema_bindings = bindings,
                                          .part_validation_limits = {}})
           .value();
+  const DecodedManifestView generation_two_view =
+      decode_manifest_v1_exact(generation_two.bytes()).value();
+  const EncodedManifest generation_three_candidate =
+      encode_manifest_v1({.generation = 3U,
+                          .database_id = generation_two_view.database_id(),
+                          .wal_id = generation_two_view.wal_id(),
+                          .reclaim_checkpoint = generation_two_view.reclaim_checkpoint(),
+                          .tablets = generation_two_view.tablets(),
+                          .parts = generation_two_view.parts(),
+                          .retries = generation_two_view.retries()})
+          .value();
+  const DecodedManifestView generation_three_view =
+      decode_manifest_v1_exact(generation_three_candidate.bytes()).value();
+  const std::string installed_part_name = part_file_name(part_id);
+  const std::array referenced_parts{ReferencedPartImage{
+      .file_name = installed_part_name, .bytes = encoded_part.encoded_part.bytes()}};
+  const common::Result<CheckpointedManifestGeneration> checkpointed =
+      build_manifest_v1_checkpointed_generation({.wal_directory = wal_path.string(),
+                                                 .predecessor = std::cref(generation_two_view),
+                                                 .candidate = std::cref(generation_three_view),
+                                                 .schema_bindings = bindings,
+                                                 .referenced_parts = referenced_parts,
+                                                 .command_decode_limits = {},
+                                                 .part_validation_limits = {}});
+  ASSERT_TRUE(checkpointed.has_value()) << checkpointed.error().to_string();
+  EXPECT_EQ(checkpointed->reclaim_checkpoint.record_sequence, 1U);
+  EXPECT_EQ(checkpointed->reclaim_checkpoint.segment_number, 1U);
+  EXPECT_EQ(checkpointed->reclaim_checkpoint.byte_offset, durable_append->record_end.byte_offset);
   {
     ManifestStorage storage =
         ManifestStorage::open_existing({.database_root = directory.path().string()}).value();
@@ -392,7 +451,7 @@ TEST(ManifestColumnarStartupRecoveryTest,
                     .has_value());
   }
 
-  const auto make_config = [&]() {
+  const auto make_config = [&](const bool reclaim_wal = false) {
     return ManifestColumnarStartupConfig{
         .manifest_storage = {.database_root = directory.path().string()},
         .manifest_load = {.expected_database_id = database_id,
@@ -402,6 +461,7 @@ TEST(ManifestColumnarStartupRecoveryTest,
                           .part_validation_limits = {}},
         .wal_writer = writer_config,
         .wal_recovery = {},
+        .reclaim_checkpointed_wal_segments = reclaim_wal,
         .columnar_recovery = {
             .retry_directory = {.maximum_entries = 8U},
             .tablets = {ingest::ColumnarRecoveryTabletConfig{
@@ -431,17 +491,62 @@ TEST(ManifestColumnarStartupRecoveryTest,
   ASSERT_FALSE(rejected.has_value());
   EXPECT_EQ(rejected.error().code(), common::StatusCode::kNotFound);
 
+  const std::filesystem::path first_segment = wal_path / "wal-00000000000000000001.cwal";
+  ASSERT_TRUE(std::filesystem::is_regular_file(first_segment));
+  {
+    common::Result<RecoveredManifestColumnarState> retained =
+        recover_manifest_columnar_database(make_config());
+    ASSERT_TRUE(retained.has_value()) << retained.error().to_string();
+    EXPECT_EQ(retained->report().selected_generation, 2U);
+    EXPECT_FALSE(retained->report().wal_reclamation.has_value());
+    EXPECT_EQ(retained->snapshot()->visible_head_row_count(), 1U);
+    EXPECT_EQ(retained->retry_directory().metrics().committed_entries, 2U);
+    EXPECT_TRUE(std::filesystem::exists(first_segment));
+    EXPECT_TRUE(retained->release_writer()->close().is_ok());
+  }
+
+  {
+    ManifestStorage storage =
+        ManifestStorage::open_existing({.database_root = directory.path().string()}).value();
+    ASSERT_TRUE(
+        storage
+            .install_manifest({.encoded_manifest = std::cref(checkpointed->encoded_manifest),
+                               .schema_bindings = bindings,
+                               .nonce = nonce(43U),
+                               .decode_limits = {},
+                               .part_validation_limits = {}})
+            .has_value());
+  }
+
+  const std::vector<std::byte> original_segment = read_bytes(first_segment);
+  ASSERT_FALSE(original_segment.empty());
+  std::vector<std::byte> corrupt_segment = original_segment;
+  corrupt_segment.back() ^= std::byte{0x01U};
+  write_bytes(first_segment, corrupt_segment);
+  rejected = recover_manifest_columnar_database(make_config(true));
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kCorruption);
+  EXPECT_TRUE(std::filesystem::exists(first_segment));
+  write_bytes(first_segment, original_segment);
+
   for (std::size_t attempt = 0U; attempt < 2U; ++attempt) {
     common::Result<RecoveredManifestColumnarState> recovered =
-        recover_manifest_columnar_database(make_config());
+        recover_manifest_columnar_database(make_config(true));
     ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
-    EXPECT_EQ(recovered->report().selected_generation, 2U);
+    EXPECT_EQ(recovered->report().selected_generation, 3U);
     EXPECT_EQ(recovered->report().tablet_count, 1U);
     EXPECT_EQ(recovered->report().part_count, 1U);
     EXPECT_EQ(recovered->report().retry_count, 1U);
+    ASSERT_TRUE(recovered->report().wal_reclamation.has_value());
+    EXPECT_EQ(recovered->report().wal_reclamation->checkpoint.record_sequence, 1U);
+    EXPECT_EQ(recovered->report().wal_reclamation->removed_segment_count, attempt == 0U ? 1U : 0U);
+    EXPECT_EQ(recovered->report().wal_reclamation->removed_physical_bytes,
+              attempt == 0U ? original_segment.size() : 0U);
+    EXPECT_EQ(recovered->report().wal_reclamation->directory_sync_count, attempt == 0U ? 1U : 0U);
+    EXPECT_FALSE(std::filesystem::exists(first_segment));
     const common::Result<DatabaseStorageSnapshot> database = recovered->snapshot();
     ASSERT_TRUE(database.has_value());
-    EXPECT_EQ(database->generation(), 2U);
+    EXPECT_EQ(database->generation(), 3U);
     ASSERT_EQ(database->durable_tablets().size(), 1U);
     EXPECT_EQ(database->durable_tablets().front().durable_row_count, 2U);
     EXPECT_EQ(database->parts().front().part_id, part_id);

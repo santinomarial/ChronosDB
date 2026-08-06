@@ -57,10 +57,11 @@
 > A separate installed flush-harness smoke test requires exact durable generation/part/retry state,
 > bounded raw foreground samples, byte-identical repeated Manifest selection, and exact repeated WAL
 > suffix replay before marking its measurement artifacts valid.
-> The Manifest columnar startup integration now uses real generation-1 and generation-2 database
+> The Manifest columnar startup integration now uses real generation-1 through generation-3 database
 > images to prove lock exclusion, part/retry restoration, covered no-op verification, uncovered row
 > replay, recognized-temporary cleanup, aggregate publication, exact reopen sequence, invalid caller
-> seed rejection, missing-tablet failure, and logical convergence across repeated opens.
+> seed rejection, missing-tablet failure, disabled-by-default WAL retention, corruption-before-
+> deletion failure, exact covered-segment cleanup, and logical convergence across repeated opens.
 > Query and distributed harnesses also remain planned for their roadmap phases.
 
 ## Test types

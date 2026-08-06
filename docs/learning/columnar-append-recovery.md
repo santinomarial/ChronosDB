@@ -22,9 +22,11 @@ verified prefix as a database. The caller supplies:
 
 Success returns a move-only `RecoveredColumnarAppendState`. It owns the reconstructed global retry
 directory, every configured tablet, and the locked `WalWriter` reopened at the exact next global
-record sequence. Tablet pointers remain stable for the owner's lifetime. `release_writer()` moves
-the writer out exactly once so a live `WalCommitCoordinator` can take ownership without discarding
-the recovered tablets or retry outcomes.
+record sequence. Tablet pointers remain stable for the owner's lifetime.
+`reclaim_checkpointed_segments()` forwards an externally durable checkpoint to that still-owned
+writer for higher-level Manifest cleanup. `release_writer()` moves the writer out exactly once so a
+live `WalCommitCoordinator` can take ownership without discarding the recovered tablets or retry
+outcomes; reclamation through this owner is invalid after release.
 
 This API is intentionally not a catalog. The first schema config is the earliest version that
 retained WAL may append. Each successor must be a direct accepted v1 transition and carries the
@@ -158,7 +160,8 @@ The focused suite uses real WAL files to prove:
 - an unknown application kind remains unsupported.
 
 The public header is self-contained, the target installs and exports through `chronos::ingest`, and
-the external-consumer check takes the recovery function address from the installed package.
+the external-consumer check takes the recovery and recovered-writer reclamation function addresses
+from the installed package.
 Existing command/batch hostile-byte fuzzers exercise the pure decoders used by both recovery passes;
 the recovery integration adds state-machine and real-file evidence rather than a second byte parser.
 

@@ -216,6 +216,13 @@ TEST(ColumnarAppendRecoveryTest, RebuildsFreshStateDeterministicallyAndContinues
   common::Result<wal::WalWriter> first_writer = first->release_writer();
   ASSERT_TRUE(first_writer.has_value()) << first_writer.error().to_string();
   EXPECT_FALSE(first->release_writer().has_value());
+  const common::Result<wal::WalSegmentReclamationReport> no_writer_reclamation =
+      first->reclaim_checkpointed_segments({.wal_id = expected_wal_id,
+                                            .record_sequence = 0U,
+                                            .segment_number = wal::kFirstSegmentNumber,
+                                            .byte_offset = wal::kSegmentHeaderSize});
+  ASSERT_FALSE(no_writer_reclamation.has_value());
+  EXPECT_EQ(no_writer_reclamation.error().code(), common::StatusCode::kInvalidArgument);
   EXPECT_TRUE(first_writer->close().is_ok());
 
   common::Result<RecoveredColumnarAppendState> second = recover_columnar_append_wal(

@@ -258,10 +258,11 @@ assigned `COLUMNAR_APPEND` application kind and caller-supplied retained catalog
 `manifest/LOCK` before opening the WAL, converts only the selected validated Manifest descriptors
 to exact ingest recovery seeds, requires every seeded retry original and tablet boundary after the
 global checkpoint to occur in the verified suffix, cleans recognized part/Manifest temporaries,
-and creates one unpublished-until-return aggregate storage epoch. The returned move-only owner
+optionally revalidates and removes checkpoint-covered closed WAL segments, and creates one
+unpublished-until-return aggregate storage epoch. The returned move-only owner
 retains Manifest storage, WAL/tablet/retry state, and the database publisher in destruction order.
-Catalog persistence, application-kind dispatch, automatic covered-WAL reclamation, and server
-service activation remain outside this boundary.
+Catalog persistence, application-kind dispatch, and server service activation remain outside this
+boundary. WAL removal is conservative and disabled unless the caller explicitly enables it.
 
 Normal service remains unavailable while the storage owner performs:
 

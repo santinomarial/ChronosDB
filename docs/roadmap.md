@@ -245,7 +245,9 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > only uncovered rows, and reopen at the verified global end; the owning Manifest startup
 > composition now selects/validates durable state, derives those seeds, cleans recognized
 > temporaries, and returns one aggregate publication while retaining Manifest-before-WAL lock
-> ownership. Persistent catalog reconstruction and service activation remain. An installed
+> ownership. Its explicit startup policy can revalidate and synchronously remove only closed WAL
+> segments covered by the selected checkpoint, converging when cleanup is repeated. Persistent
+> catalog reconstruction and service activation remain. An installed
 > reproducible flush harness now
 > preserves real CSEG/Manifest/WAL images and raw samples while measuring durable flush throughput,
 > concurrent publication interference, Manifest growth, repeated startup/WAL replay, sync

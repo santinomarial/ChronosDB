@@ -2,8 +2,9 @@
 
 > **Status: caller-catalog single-kind startup composition implemented.**
 > `chronos::manifest::recover_manifest_columnar_database` connects selected Manifest/CSEG recovery,
-> durable-prefix columnar WAL replay, temporary cleanup, and aggregate database publication. It does
-> not persist a catalog, start services, dispatch future application kinds, or reclaim WAL files.
+> durable-prefix columnar WAL replay, temporary cleanup, optional covered-WAL reclamation, and
+> aggregate database publication. It does not persist a catalog, start services, or dispatch future
+> application kinds.
 
 ## Purpose and boundary
 
@@ -18,7 +19,8 @@ The returned owner holds:
 - `ManifestStorage` and `manifest/LOCK`;
 - fresh tablet and global retry state plus the locked reopened `WalWriter`;
 - one `DatabaseStoragePublisher` containing the selected parts and uncovered mutable heads; and
-- a report with selected counts, checkpoint, orphan count, and exact temporary cleanup work.
+- a report with selected counts, checkpoint, orphan count, exact temporary cleanup work, and an
+  optional exact WAL-reclamation result.
 
 Members are declared so ordinary destruction drops the aggregate publication, then the WAL-bearing
 state, then Manifest storage. If the writer is released to a live coordinator, that coordinator must
@@ -38,8 +40,11 @@ The implementation performs one fail-closed sequence:
    restore covered no-ops plus uncovered rows into fresh unpublished state;
 6. require every seeded retry original and tablet boundary after the global checkpoint to have been
    observed in that suffix;
-7. remove only recognized part/Manifest temporaries and synchronize changed directories; and
-8. copy the fresh tablet snapshots into one aggregate Manifest/part/head publication and return the
+7. remove only recognized part/Manifest temporaries and synchronize changed directories;
+8. when explicitly enabled, ask the still-owned recovered writer to revalidate the live namespace,
+   remove only closed segments covered by the selected checkpoint, and synchronize the WAL
+   directory; and
+9. copy the fresh tablet snapshots into one aggregate Manifest/part/head publication and return the
    complete owner.
 
 Any error destroys the reopened writer and partial in-memory state before releasing Manifest
@@ -76,12 +81,14 @@ retry, head, decoder, and Manifest/CSEG limits.
 
 Real filesystem tests cover an empty generation with complete WAL replay and temporary cleanup, and
 a generation-2 image with one installed CSEG part, one protected retry, one covered no-op, and one
-uncovered append. Both repeat from unchanged bytes, return the exact next WAL sequence, and compare
-durable and mutable row/retry counts. Hostile tests reject nested lock acquisition, caller durable
-overrides, and a selected Manifest tablet absent from the recovery registry. Existing storage and
-WAL suites cover corruption, missing parts, sync faults, tail repair, and crash transitions below
-this composition.
+uncovered append. A checkpointed generation 3 over that same state then proves disabled cleanup
+retains its covered closed segment, corrupted covered bytes fail before deletion, enabled cleanup
+reports exact work, and a repeated open converges with zero work. Every image returns the exact next
+WAL sequence and compares durable and mutable row/retry counts. Hostile tests also reject nested
+lock acquisition, caller durable overrides, and a selected Manifest tablet absent from the recovery
+registry. Existing storage and WAL suites cover missing parts, sync faults, tail repair, and crash
+transitions below this composition.
 
 Remaining work includes durable catalog/tablet-map reconstruction, multi-kind application dispatch,
-service activation, optional covered-WAL cleanup policy, crash injection inside this composition's
-cleanup/recovery ordering, and future query-state reconstruction.
+service activation, crash injection inside this composition's cleanup/recovery ordering, and future
+query-state reconstruction.

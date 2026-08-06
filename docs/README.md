@@ -119,7 +119,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   handling, failure isolation, deterministic reopen, and continued writer ownership.
 - [Manifest columnar startup recovery](learning/manifest-startup-recovery.md): implemented
   caller-catalog selected-state validation, Manifest-derived durable-prefix recovery, temporary
-  cleanup, aggregate publication, and owning startup lifetime.
+  cleanup, optional checkpoint-covered WAL reclamation, aggregate publication, and owning startup
+  lifetime.
 - [CSEG v1 storage](learning/cseg-storage.md): implemented layout, compression, metadata/page/part
   codecs, layered validation, projected reads, inspection, ownership, failure, and measurement
   contracts.

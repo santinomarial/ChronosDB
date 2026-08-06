@@ -210,6 +210,20 @@ recover_manifest_columnar_database(ManifestColumnarStartupConfig config) {
       return common::make_unexpected(cleanup.error());
     }
 
+    std::optional<wal::WalSegmentReclamationReport> wal_reclamation;
+    if (config.reclaim_checkpointed_wal_segments) {
+      const WalCheckpoint& durable = selected->reclaim_checkpoint();
+      common::Result<wal::WalSegmentReclamationReport> reclaimed =
+          columnar->reclaim_checkpointed_segments({.wal_id = selected->wal_id(),
+                                                   .record_sequence = durable.record_sequence,
+                                                   .segment_number = durable.segment_number,
+                                                   .byte_offset = durable.byte_offset});
+      if (!reclaimed.has_value()) {
+        return common::make_unexpected(reclaimed.error());
+      }
+      wal_reclamation = *reclaimed;
+    }
+
     std::vector<ingest::TabletSnapshot> snapshots;
     snapshots.reserve(columnar->tablet_count());
     for (const schema::TabletId& tablet_id : configured_tablets) {
@@ -240,7 +254,8 @@ recover_manifest_columnar_database(ManifestColumnarStartupConfig config) {
                                          .part_count = selected->parts().size(),
                                          .retry_count = selected->retries().size(),
                                          .orphan_part_count = selected->orphan_parts().size(),
-                                         .temporary_cleanup = *cleanup};
+                                         .temporary_cleanup = *cleanup,
+                                         .wal_reclamation = wal_reclamation};
     auto implementation = std::make_unique<RecoveredManifestColumnarState::Impl>(
         std::move(*storage), std::move(*columnar), std::move(*publisher), report);
     return RecoveredManifestColumnarState{std::move(implementation)};

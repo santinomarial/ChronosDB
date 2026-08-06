@@ -83,6 +83,11 @@ public:
   [[nodiscard]] const TabletState* tablet(const schema::TabletId& tablet_id) const noexcept;
   [[nodiscard]] std::size_t tablet_count() const noexcept;
 
+  // Revalidates and removes only closed segments covered by an externally durable checkpoint.
+  // The recovered writer must still be owned by this state. This does not change tablet/retry
+  // publication and is intended for a higher-level durable Manifest recovery owner.
+  [[nodiscard]] common::Result<wal::WalSegmentReclamationReport>
+  reclaim_checkpointed_segments(const wal::WalReplayCheckpoint& checkpoint);
   [[nodiscard]] common::Result<wal::WalWriter> release_writer();
 
 private:

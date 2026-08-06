@@ -393,6 +393,15 @@ std::size_t RecoveredColumnarAppendState::tablet_count() const noexcept {
   return implementation_->tablets_.size();
 }
 
+common::Result<wal::WalSegmentReclamationReport>
+RecoveredColumnarAppendState::reclaim_checkpointed_segments(
+    const wal::WalReplayCheckpoint& checkpoint) {
+  if (!implementation_->writer_.has_value()) {
+    return common::make_unexpected(invalid("recovered WAL writer has already been released"));
+  }
+  return implementation_->writer_->reclaim_checkpointed_segments(checkpoint);
+}
+
 common::Result<wal::WalWriter> RecoveredColumnarAppendState::release_writer() {
   if (!implementation_->writer_.has_value()) {
     return common::make_unexpected(invalid("recovered WAL writer has already been released"));
