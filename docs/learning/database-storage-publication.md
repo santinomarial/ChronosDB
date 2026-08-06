@@ -103,5 +103,5 @@ Results are local microbenchmarks, not a production latency claim.
   recoverable truth, so silently continuing an older live view would create two authorities.
 - Why are old heads not immediately freed? Readers may still own the prior database epoch; shared
   ownership delays reclamation until its last snapshot is released.
-- What remains? A bounded flush queue, an end-to-end durable flush coordinator, and the crash/fault
-  matrix around the complete sequence.
+- What remains? The end-to-end durable flush coordinator and the crash/fault matrix around the
+  complete sequence.

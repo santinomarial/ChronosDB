@@ -134,9 +134,9 @@ No phase passes because its code merely compiles. A phase passes only when its a
   1-/2-/4-reader cases scan the same pinned buffers at the two larger row counts and two string
   widths. The executor matrix additionally covers correctness-guarded steady matching retries at
   64, 1,024, and 65,536 rows without a second WAL result, plus real-WAL 50/50 and 10/90
-  first-attempt/retry operation ratios at 64 and 1,024 rows. Retry retention, routing/admission,
-  while flush scheduling/publication remain unimplemented. Dedicated retry-directory cases cover
-  matching lookup at
+  first-attempt/retry operation ratios at 64 and 1,024 rows. Retry retention and routing/admission
+  remain unimplemented; bounded flush scheduling/publication is now implemented in Phase 6.
+  Dedicated retry-directory cases cover matching lookup at
   64, 4,096, and 65,536 committed entries plus 1-/2-/4-thread contention on the two larger
   populations, with construction allocation-call/requested-byte counters. Hardware cache profiles,
   true retained allocator/RSS measurement, and the wider end-to-end Phase 4 benchmark matrix remain
@@ -232,8 +232,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > lifetime, hostile, sanitizer, benchmark, and installed-consumer evidence. Successful replacement
 > now issues a non-forgeable exact receipt; idempotent TabletState consumption release-publishes a
 > smaller sealed set and releases its rotation backpressure while old snapshots retain their pins.
-> Flush scheduling, the end-to-end flush coordinator, and integrated crash-matrix evidence remain
-> unimplemented.
+> A fixed-capacity MPSC/single-consumer handoff now reserves before topology mutation, owns exact
+> immutable pins, preserves reservation order and retry age, rejects rotation before WAL when full,
+> and releases capacity only for an exact post-publication receipt. The end-to-end flush coordinator
+> and integrated crash-matrix evidence remain unimplemented.
 
 - **Scope:** manifest generations/version edits; atomic durable part installation; sealed-head flush; checkpoint/log coverage; startup reconciliation; safe temporary-file handling.
 - **Explicit non-scope:** compaction, delta parts, distributed metadata, object storage, and aggressive garbage collection beyond proven safe ownership.

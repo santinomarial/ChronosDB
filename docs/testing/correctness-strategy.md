@@ -45,9 +45,10 @@
 > expected post-WAL in-memory path is allocation-free. Manifest/CSEG installation, selected-state
 > recovery, checkpoint-aware WAL replay/reopen/reclamation, and deterministic sealed-head-to-CSEG
 > conversion now add golden/property/corruption, filesystem fault, sanitizer, installation,
-> external-consumer, and benchmark evidence. Retry retention, routing/admission, flush scheduling,
-> manifest publication, and generation retirement remain unimplemented; the integrated Phase 6
-> publication crash matrix is still pending.
+> external-consumer, and benchmark evidence. Bounded flush scheduling, aggregate Manifest/head
+> publication, and receipt-authorized generation retirement add deterministic interleaving,
+> hostile-identity, lifetime, and sanitizer coverage. Retry retention and routing/admission remain
+> unimplemented; the end-to-end Phase 6 coordinator crash matrix is still pending.
 > Query and distributed harnesses also remain planned for their roadmap phases.
 
 ## Test types

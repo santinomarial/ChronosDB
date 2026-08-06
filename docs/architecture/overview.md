@@ -202,9 +202,9 @@ parts. A flush converts a sealed head into one or more new CSEG parts, durably i
 publishes a manifest generation before a checkpoint allows covered WAL history to be reclaimed.
 Crashes at any step recover to either the old complete state or the new complete state, and retry is
 idempotent. The codecs, conversion/build/proof primitives, filesystem installation/recovery,
-checkpoint-aware WAL lifecycle, and one-pointer head-to-part publication are implemented. Bounded
-flush scheduling, TabletState handoff retirement, the end-to-end coordinator, and integrated crash
-matrix remain pending.
+checkpoint-aware WAL lifecycle, bounded sealed-head scheduling, receipt-authorized TabletState
+retirement, and one-pointer head-to-part publication are implemented. The end-to-end coordinator
+and integrated crash matrix remain pending.
 
 A checkpoint records the manifest generation and committed log coverage needed for recovery. It is not permission to delete data still reachable by an active reader, subscription, backup, or other declared retention owner.
 

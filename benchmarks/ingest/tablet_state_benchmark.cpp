@@ -1,3 +1,4 @@
+#include "chronos/ingest/sealed_head_flush_queue.hpp"
 #include "chronos/ingest/tablet_state.hpp"
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/logical_type.hpp"
@@ -119,7 +120,8 @@ mutation(const TabletFixture& fixture, const std::uint8_t digest_seed) {
 }
 
 [[nodiscard]] chronos::common::Result<chronos::ingest::TabletState>
-make_tablet(const TabletFixture& fixture, const std::uint32_t row_capacity) {
+make_tablet(const TabletFixture& fixture, const std::uint32_t row_capacity,
+            std::shared_ptr<chronos::ingest::SealedHeadFlushQueue> flush_queue = nullptr) {
   return chronos::ingest::TabletState::create(
       fixture.batch->schema_ptr(), fixture.tablet_id,
       chronos::ingest::TabletStateConfig{
@@ -127,7 +129,16 @@ make_tablet(const TabletFixture& fixture, const std::uint32_t row_capacity) {
                                                               .variable_value_bytes = {0U}},
           .maximum_schema_versions = 2U,
           .maximum_sealed_generations = 1U,
-          .maximum_retry_entries = 2U});
+          .maximum_retry_entries = 2U,
+          .flush_queue = std::move(flush_queue)});
+}
+
+[[nodiscard]] chronos::ingest::SealedHeadFlushWork take_flush_work(
+    chronos::common::Result<std::optional<chronos::ingest::SealedHeadFlushWork>> result) {
+  auto work = std::move(result).value();
+  // Benchmark setup checks readiness and deliberately fails by exception if that invariant breaks.
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+  return std::move(work).value();
 }
 
 [[nodiscard]] bool publish_first(chronos::ingest::TabletState& tablet, const TabletFixture& fixture,
@@ -243,6 +254,88 @@ void benchmark_tablet_rotation(benchmark::State& state) {
   }
   state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(rows));
   state.SetLabel("seal, allocate next bounded generation, and publish topology-only epoch");
+}
+
+void benchmark_tablet_rotation_with_flush_handoff(benchmark::State& state) {
+  const auto rows = static_cast<std::uint32_t>(state.range(0));
+  const TabletFixture fixture = make_fixture(rows);
+  for ([[maybe_unused]] auto iteration : state) {
+    state.PauseTiming();
+    auto queue = chronos::ingest::SealedHeadFlushQueue::create({.capacity = 1U}).value();
+    auto created = make_tablet(fixture, rows, queue);
+    if (!created.has_value()) {
+      const std::string message = created.error().to_string();
+      state.SkipWithError(message);
+      return;
+    }
+    std::optional<chronos::ingest::TabletState> tablet{std::move(*created)};
+    if (!publish_first(*tablet, fixture, state)) {
+      return;
+    }
+    state.ResumeTiming();
+
+    auto prepared =
+        tablet->prepare_append(retry_identity(2U), mutation(fixture, 2U), fixture.batch);
+    if (!prepared.has_value()) {
+      const std::string message = prepared.error().to_string();
+      state.SkipWithError(message);
+      return;
+    }
+    chronos::common::Status cancelled = prepared->cancel_before_wal();
+    auto acquired = queue->try_acquire();
+    if (!cancelled.is_ok() || !acquired.has_value() || !acquired->has_value()) {
+      state.SkipWithError("flush handoff rotation or acquisition failed");
+      return;
+    }
+    chronos::ingest::SealedHeadFlushWork work = take_flush_work(std::move(acquired));
+    chronos::common::Status released = work.release_for_retry();
+    if (!released.is_ok()) {
+      const std::string message = released.to_string();
+      state.SkipWithError(message);
+      return;
+    }
+    benchmark::ClobberMemory();
+
+    state.PauseTiming();
+    tablet.reset();
+    queue.reset();
+    state.ResumeTiming();
+  }
+  state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(rows));
+  state.SetLabel("reserve, seal, publish topology, hand off, acquire, and retry one queue slot");
+}
+
+void benchmark_flush_queue_acquire_retry(benchmark::State& state) {
+  const auto rows = static_cast<std::uint32_t>(state.range(0));
+  const TabletFixture fixture = make_fixture(rows);
+  auto queue = chronos::ingest::SealedHeadFlushQueue::create({.capacity = 1U}).value();
+  chronos::ingest::TabletState tablet = make_tablet(fixture, rows, queue).value();
+  if (!publish_first(tablet, fixture, state)) {
+    return;
+  }
+  auto prepared = tablet.prepare_append(retry_identity(2U), mutation(fixture, 2U), fixture.batch);
+  if (!prepared.has_value() || !prepared->cancel_before_wal().is_ok()) {
+    state.SkipWithError("could not prepare the benchmark flush queue");
+    return;
+  }
+
+  for ([[maybe_unused]] auto iteration : state) {
+    auto acquired = queue->try_acquire();
+    if (!acquired.has_value() || !acquired->has_value()) {
+      state.SkipWithError("flush queue did not return its ready item");
+      return;
+    }
+    chronos::ingest::SealedHeadFlushWork work = take_flush_work(std::move(acquired));
+    benchmark::DoNotOptimize(work.snapshot());
+    const chronos::common::Status released = work.release_for_retry();
+    if (!released.is_ok()) {
+      const std::string message = released.to_string();
+      state.SkipWithError(message);
+      return;
+    }
+  }
+  state.SetItemsProcessed(state.iterations());
+  state.SetLabel("single-consumer mutex acquire and retry-safe lease release");
 }
 
 void benchmark_tablet_schema_switch(benchmark::State& state) {
@@ -373,6 +466,10 @@ BENCHMARK(benchmark_tablet_publish)->Arg(64)->Arg(1024)->Arg(65536);
 BENCHMARK(benchmark_tablet_snapshot)->Arg(64)->Arg(1024)->Arg(65536);
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 BENCHMARK(benchmark_tablet_rotation)->Arg(64)->Arg(1024)->Arg(65536);
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+BENCHMARK(benchmark_tablet_rotation_with_flush_handoff)->Arg(64)->Arg(1024)->Arg(65536);
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+BENCHMARK(benchmark_flush_queue_acquire_retry)->Arg(64)->Arg(1024)->Arg(65536);
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 BENCHMARK(benchmark_tablet_schema_switch)->Arg(64)->Arg(1024)->Arg(65536);
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)

@@ -20,6 +20,8 @@ class DatabaseStoragePublisherImpl;
 
 namespace chronos::ingest {
 
+class SealedHeadFlushQueue;
+
 namespace detail {
 class TabletStateTestAccess;
 }
@@ -85,6 +87,9 @@ struct TabletStateConfig {
   std::size_t maximum_schema_versions{1U};
   std::size_t maximum_sealed_generations{};
   std::size_t maximum_retry_entries{};
+  // When present, every nonempty rotation reserves this queue before changing tablet topology and
+  // publishes the exact sealed pin after the new topology becomes visible.
+  std::shared_ptr<SealedHeadFlushQueue> flush_queue;
 };
 
 struct TabletStateMetrics {
@@ -176,7 +181,8 @@ private:
 // One tablet's bounded in-memory publication owner. Every generation is schema-bound. Exactly one
 // shard writer registers accepted direct successors and calls prepare/mark/publish/cancel; readers
 // may acquire and scan snapshots concurrently. WAL I/O, global retry reservation, routing, active
-// schema admission, replay, and flush handoff are external.
+// schema admission and replay are external. An optional configured flush queue receives every
+// nonempty sealed generation through a capacity reservation made before WAL admission.
 class TabletState {
 public:
   TabletState() = delete;

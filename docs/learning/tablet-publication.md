@@ -5,9 +5,9 @@
 > single-writer tablet
 > publication boundary. `execute_columnar_append` now composes it with live WAL submission and the
 > global retry directory. Bounded direct-successor registration and activation are implemented;
-> receipt-authorized post-Manifest sealed-generation retirement is also implemented. Durable
-> catalog ownership, retry pruning, routing, flush scheduling, and transport acknowledgment remain
-> outside this primitive.
+> bounded pre-WAL flush scheduling and receipt-authorized post-Manifest sealed-generation
+> retirement are also implemented. Durable catalog ownership, retry pruning, routing, the durable
+> flush coordinator, and transport acknowledgment remain outside this primitive.
 
 ## Purpose and boundary
 
@@ -114,6 +114,12 @@ entry, and performs another release store of the outer tablet pointer. This late
 rotation backpressure; query visibility already changed at the one database publication. Old tablet
 snapshots retain the old sealed pin. Repeated receipt consumption returns the current epoch without
 publishing again.
+
+When `TabletStateConfig::flush_queue` is present, a nonempty rotation first reserves one fixed queue
+slot. Capacity exhaustion returns `ResourceExhausted` before sealing, topology publication, or WAL
+admission. After all fallible rotation preparation completes, the shard seals and stages the exact
+pin, release-publishes the new tablet topology, then makes the reservation ready. A failure after
+reservation but before publication cancels the reservation and restores its capacity.
 
 ## Failure behavior
 

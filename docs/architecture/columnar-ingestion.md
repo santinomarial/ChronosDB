@@ -16,10 +16,11 @@
 > retained lineage, rebuilds fresh tablet and global retry state in sequence order, permits exact
 > ancestor-schema retry no-ops, and returns the locked writer at the exact next sequence only after
 > the complete recovery succeeds. Tablet preparation now rejects intra-batch logical-key duplicates
-> and conflicts against every visible generation before WAL. Catalog/routing admission, retry
-> pruning, flush scheduling, and manifest publication remain unimplemented. A sealed generation can
-> now be deterministically sorted, materialized, fully validated, and durably installed as one CSEG;
-> this pure conversion does not itself publish or retire the generation. This
+> and conflicts against every visible generation before WAL. Bounded flush scheduling, aggregate
+> Manifest/head publication, and receipt-authorized retirement are implemented. Catalog/routing
+> admission, retry pruning, and the end-to-end durable flush coordinator remain unimplemented. A
+> sealed generation can now be deterministically sorted, materialized, fully validated, and durably
+> installed as one CSEG. This
 > document
 > fixes the logical state-machine and WAL command contracts for Phase 4; the physical
 > [WAL v1](../formats/wal-v1.md) framing and application envelope remain unchanged.
@@ -30,7 +31,7 @@ The ingestion unit is one immutable, schema-shaped
 [columnar-batch v1](../formats/columnar-batch-v1.md) targeting one tablet. The owning shard worker
 serializes validation, retry lookup, WAL admission, logical application, publication, and sealing.
 This design covers original row appends only. It does not implement network framing, catalog
-persistence, corrections, tombstones, cross-tablet atomicity, flush scheduling/publication,
+persistence, corrections, tombstones, cross-tablet atomicity, the durable flush coordinator,
 replication, or SQL execution.
 
 ## Identities and positions

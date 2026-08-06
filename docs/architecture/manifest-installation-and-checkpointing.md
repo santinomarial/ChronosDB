@@ -1,8 +1,9 @@
 # Manifest Installation and Checkpointing
 
 > **Status: accepted Phase 6 design; sealed-head conversion, filesystem installation, read-only
-> checkpoint coverage proof, checkpointed WAL reopen/reclamation, manifest selection, and atomic
-> database storage publication implemented.** This document defines ownership,
+> checkpoint coverage proof, checkpointed WAL reopen/reclamation, manifest selection, bounded
+> sealed-head scheduling, and atomic database storage publication implemented.** This document
+> defines ownership,
 > durable ordering, recovery, and publication around the normative
 > [Manifest v1 bytes](../formats/manifest-v1.md). It refines
 > [ADR 0017](../adr/0017-manifest-generations-installation-and-checkpoints.md), the
@@ -46,6 +47,15 @@ Shard workers remain the only mutable-tablet writers. A sealed `HeadSnapshot` is
 copyable, so the shard transfers an owning pin through a bounded flush queue. The storage worker may
 sort, encode, and perform blocking I/O without accessing live head boundaries. Backpressure occurs
 before a new WAL admission if the sealed-generation or flush queue bound is full.
+
+`SealedHeadFlushQueue` implements that handoff as a fixed-capacity MPSC/single-consumer queue. A
+shard first reserves one slot without changing topology. It stages the exact sealed pin, publishes
+the new outer tablet epoch with release ordering, and only then makes the slot ready under the queue
+mutex. Reservations have monotonically increasing sequence numbers; a later ready producer cannot
+overtake an earlier unfinished reservation. One move-only consumer lease is allowed at a time.
+Dropping or explicitly retrying the lease preserves its original enqueue age and position. Capacity
+is released only when `complete` validates the exact non-forgeable replacement receipt issued by
+aggregate database publication.
 
 Readers acquire an immutable database snapshot descriptor through one release/acquire publication.
 That descriptor owns the selected manifest generation, installed-part handles/identities, and exact
@@ -205,7 +215,8 @@ replacement. Only after that epoch is release-published may the shard writer pas
 record-sequence bounds, then release-publishes an outer tablet epoch without the sealed pin.
 Repeated receipt consumption is idempotent. This second publication releases bounded mutable-state
 backpressure; it is not the query visibility boundary, which already occurred at the aggregate
-database pointer.
+database pointer. The same receipt authorizes removal of the completed item from the flush queue;
+hostile tablet/schema/generation/row/WAL bounds leave the item in flight and retryable.
 
 ## Checkpoint and WAL reclamation
 

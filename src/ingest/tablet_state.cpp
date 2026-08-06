@@ -1,7 +1,9 @@
 #include "chronos/ingest/tablet_state.hpp"
 
+#include "chronos/ingest/sealed_head_flush_queue.hpp"
 #include "chronos/schema/schema_lineage.hpp"
 #include "deduplication_key.hpp"
+#include "sealed_head_flush_queue_internal.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -365,6 +367,7 @@ detail::TabletStateCore::prepare(const RetryIdentity& retry_identity,
     std::shared_ptr<const TabletPublication> base = current;
     std::shared_ptr<TabletPublication> topology_mutable;
     std::shared_ptr<const TabletPublication> topology;
+    std::optional<detail::SealedHeadFlushReservation> flush_reservation;
 
     const bool schema_switch = *requested_schema_index != active_schema_index_;
     bool rotate = schema_switch;
@@ -391,6 +394,14 @@ detail::TabletStateCore::prepare(const RetryIdentity& retry_identity,
       if (current->active_generation_.generation() == std::numeric_limits<std::uint64_t>::max()) {
         return common::make_unexpected(
             exhausted("tablet exhausted its mutable-head generation number space"));
+      }
+      if (retain_active && limits_.flush_queue != nullptr) {
+        common::Result<detail::SealedHeadFlushReservation> reserved =
+            limits_.flush_queue->reserve();
+        if (!reserved.has_value()) {
+          return common::make_unexpected(reserved.error());
+        }
+        flush_reservation.emplace(std::move(*reserved));
       }
       const RegisteredSchema& destination_schema = schemas_[*requested_schema_index];
       auto created = head::MutableHead::create(destination_schema.schema, tablet_id_,
@@ -460,7 +471,7 @@ detail::TabletStateCore::prepare(const RetryIdentity& retry_identity,
         std::move(next), retry_identity, std::move(outcome_mutable), std::move(outcome));
 
     if (rotated_head != nullptr) {
-      const common::Result<head::HeadSnapshot> sealed_snapshot = active_head_->seal();
+      common::Result<head::HeadSnapshot> sealed_snapshot = active_head_->seal();
       if (!sealed_snapshot.has_value()) {
         failed_.store(true, std::memory_order_release);
         return common::make_unexpected(sealed_snapshot.error());
@@ -472,9 +483,15 @@ detail::TabletStateCore::prepare(const RetryIdentity& retry_identity,
         return common::make_unexpected(
             internal("tablet rotation sealed an unexpected generation boundary"));
       }
+      if (flush_reservation.has_value()) {
+        flush_reservation->stage(std::move(*sealed_snapshot));
+      }
       std::atomic_store_explicit(&publication_, topology, std::memory_order_release);
       active_head_ = std::move(rotated_head);
       active_schema_index_ = *requested_schema_index;
+      if (flush_reservation.has_value()) {
+        flush_reservation->publish();
+      }
     }
 
     ++next_token_;

@@ -62,6 +62,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/ingest/columnar_append_recovery.hpp>
 #include <chronos/ingest/identity.hpp>
 #include <chronos/ingest/retry_directory.hpp>
+#include <chronos/ingest/sealed_head_flush_queue.hpp>
 #include <chronos/ingest/sha256.hpp>
 #include <chronos/ingest/tablet_state.hpp>
 #include <chronos/manifest/format.hpp>
@@ -81,6 +82,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string_view>
 
@@ -126,6 +128,16 @@ int main() {
           const chronos::ingest::SealedGenerationRetirementReceipt&);
   const RetireSealedGenerationFunction retire_sealed_generation =
       &chronos::ingest::TabletState::retire_sealed_generation;
+  using CreateFlushQueueFunction =
+      chronos::common::Result<std::shared_ptr<chronos::ingest::SealedHeadFlushQueue>> (*)(
+          chronos::ingest::SealedHeadFlushQueueConfig);
+  const CreateFlushQueueFunction create_flush_queue =
+      &chronos::ingest::SealedHeadFlushQueue::create;
+  using AcquireFlushWorkFunction =
+      chronos::common::Result<std::optional<chronos::ingest::SealedHeadFlushWork>> (
+          chronos::ingest::SealedHeadFlushQueue::*)();
+  const AcquireFlushWorkFunction acquire_flush_work =
+      &chronos::ingest::SealedHeadFlushQueue::try_acquire;
   static_assert(chronos::columnar::bitmap_size(9U) == 2U);
   static_assert(chronos::columnar::format::kBatchHeaderLength == 96U);
   static_assert(chronos::cseg::format::kFileHeaderLength == 256U);
@@ -260,6 +272,7 @@ int main() {
                  recover_wal_checkpoint != nullptr && open_wal_checkpoint != nullptr &&
                  reclaim_wal != nullptr && wal_reclamation_metrics != nullptr &&
                  register_schema != nullptr && retire_sealed_generation != nullptr &&
+                 create_flush_queue != nullptr && acquire_flush_work != nullptr &&
                  limits.max_columns == 4096U &&
                  head_capacity.row_capacity == 4U &&
                  tablet_config.maximum_schema_versions == 2U &&

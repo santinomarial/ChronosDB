@@ -8,9 +8,10 @@
 > global directory, and bounded direct-successor registration. The first append under a registered
 > successor seals the ancestor and publishes a new schema-bound generation. WAL replay rebuilds
 > mixed-schema publications into an owner returned only after complete recovery, including
-> position-only outer publication for matching ancestor-schema duplicates. The Phase 6 flush
-> handoff and atomic head-to-manifest replacement are now specified but unimplemented. Retry
-> pruning and catalog/routing admission also remain unimplemented. This document refines
+> position-only outer publication for matching ancestor-schema duplicates. The bounded Phase 6
+> flush handoff, atomic head-to-manifest replacement, and receipt-authorized retirement are
+> implemented. The end-to-end durable flush coordinator, retry pruning, and catalog/routing
+> admission remain unimplemented. This document refines
 > [ADR 0005](../adr/0005-columnar-heads-and-immutable-cseg-parts.md) for Phase 4; CSEG and
 > installation bytes are defined by their accepted format specifications.
 
@@ -126,8 +127,8 @@ it is never divided after admission. The owner performs these steps in order:
 1. close the active generation to reservation;
 2. freeze its exact published row and byte boundaries and mark it sealed;
 3. retain it in the tablet's visible generation set;
-4. transfer an owning immutable reference and coverage metadata to the future bounded flush
-   pipeline, or retain it locally when no flush implementation exists;
+4. transfer an owning immutable reference through the configured bounded flush queue, or retain it
+   locally when no queue is configured;
 5. create a new mutable generation; and
 6. release-publish a tablet descriptor that names the sealed generation and new active generation.
 

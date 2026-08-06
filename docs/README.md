@@ -108,6 +108,9 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Tablet publication](learning/tablet-publication.md): implemented bounded generation rotation,
   joint rows/position/retry publication, owning tablet snapshots, retry-outcome handoff,
   backpressure, memory ordering, and measurement boundary.
+- [Sealed-head flush scheduling](learning/sealed-head-flush-scheduling.md): implemented bounded
+  shard-to-storage reservations, immutable pin ownership, retry-safe consumer leases, receipt-gated
+  completion, queue observability, and synchronization proof.
 - [Columnar append execution](learning/columnar-append-execution.md): implemented blocking
   single-tablet composition of canonical bytes, global retry reservation, bounded WAL durability,
   batch-atomic tablet publication, exact outcome commit, and fail-closed ownership.
