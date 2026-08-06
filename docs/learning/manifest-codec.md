@@ -12,7 +12,8 @@ helpers format and parse exact final and temporary basenames without touching a 
 its referenced-part validator accepts already-read CSEG images. The storage owner now provides the
 durable-installation primitives: immutable CSEG and manifest-generation installation plus locked
 namespace scanning, temporary cleanup, and recovery selection. It also provides the pure boundary
-that converts one pinned nonempty sealed head into one exact, install-ready CSEG image.
+that converts one pinned nonempty sealed head into one exact, install-ready CSEG image, then builds
+the checked next canonical manifest generation around that image and its retry outcomes.
 
 ## Public interfaces
 
@@ -24,9 +25,11 @@ The public headers are:
 - `chronos/manifest/layout.hpp`: allocation-free canonical layout planning;
 - `chronos/manifest/codec.hpp`: owned encoding, borrowed decoding, limits, and error classes;
 - `chronos/manifest/validation.hpp`: exact catalog binding and add-only generation transitions;
-- `chronos/manifest/part_validation.hpp`: installed CSEG image-to-descriptor validation; and
+- `chronos/manifest/part_validation.hpp`: installed CSEG image-to-descriptor validation;
 - `chronos/manifest/sealed_head_flush.hpp`: deterministic sealed-head conversion and its exact
-  descriptor/WAL identity result; and
+  descriptor/WAL identity result;
+- `chronos/manifest/generation_builder.hpp`: checked pure construction of the next generation for
+  one sealed-head part and its retry outcomes; and
 - `chronos/manifest/storage.hpp`: locked, directory-anchored immutable part and generation
   installation, strict namespace scanning, and temporary cleanup.
 
@@ -59,6 +62,14 @@ materializes every user and hidden system page. The result owns exact immutable 
 carries the exact `PartDescriptor` and WAL identity required by `install_part()`. The encoder exact
 decodes and fully schema/content validates its own output before returning it. It never mutates,
 unseals, publishes, or releases the source generation.
+
+`build_manifest_v1_for_sealed_head()` accepts that immutable result, the currently selected decoded
+generation, exact retained schema bindings, and one retry descriptor per WAL record represented in
+the part. It fully revalidates the CSEG bytes, derives record-sequence row counts from the hidden
+pages, rejects missing/extra/disagreeing retry outcomes and boundary overlap, retains all old
+tablets/parts/retries, then canonically inserts the new state. It exact-decodes its own bytes and
+runs the add-only transition validator before returning. The reclaim checkpoint is copied exactly;
+only a later WAL-coverage proof may advance it.
 
 ## Canonical model validation
 
@@ -170,6 +181,11 @@ Sealed-head conversion uses `O(rows)` row-index/sort workspace plus
 bytes. It allocates the complete encoded CSEG before returning because durable installation
 requires one immutable exact image.
 
+Sealed-head generation building uses `O(rows + retained parts + retained retries)` temporary
+storage. It validates and decodes the new CSEG, sorts represented record sequences, reconstructs
+tablet-grouped part ranges and identity-sorted retries, and emits one exact full-generation image.
+This intentionally favors an auditable transition over avoiding a second bounded CSEG pass.
+
 `ManifestStorage::open_existing()` opens the database root and its exact `parts/` and `manifest/`
 children without following final-component symlinks, then acquires the already-existing
 `manifest/LOCK`. The move-only owner holds all descriptors and the lock for its lifetime and is
@@ -244,6 +260,13 @@ and direct durable installation without descriptor translation. Flush microbench
 1,024-row and 65,536-row conversion for raw and Zstandard policies and report rows and encoded bytes
 processed.
 
+The generation-builder suite covers exact retry-to-CSEG row agreement, WAL/schema/boundary and
+duplicate-identity rejection, canonical retention/insertion, deterministic generated identities,
+an independently computed complete-generation CRC fixture, and a real part-then-manifest durable
+installation followed by recovery selection. Its benchmark measures complete compressed-part
+validation, hidden-sequence summarization, canonical edit construction, encoding, self-decoding,
+and transition validation at 1,024 and 65,536 rows.
+
 ## Tradeoffs and extension rules
 
 Owning parsed descriptor vectors costs memory but keeps the public view simple and avoids repeated
@@ -264,6 +287,6 @@ Likely review questions are:
 - Why does the encoder reject unsorted input instead of sorting? Sorting would silently change
   descriptor relationships and hide builder bugs; canonical state construction is a separate
   responsibility.
-- What remains before Phase 6 is complete? WAL-prefix coverage construction and suffix preflight,
-  state restoration/replay, atomic head-to-part publication, crash-matrix evidence, and
-  checkpoint-driven WAL reclamation.
+- What remains before Phase 6 is complete? WAL coverage authorization for checkpoint advancement,
+  atomic head-to-part publication and retirement, flush scheduling, and integrated crash-matrix
+  evidence.

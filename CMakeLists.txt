@@ -281,6 +281,7 @@ chronos_enable_static_analysis(chronos_ingest)
 add_library(
   chronos_manifest
   src/manifest/codec.cpp
+  src/manifest/generation_builder.cpp
   src/manifest/layout.cpp
   src/manifest/naming.cpp
   src/manifest/part_validation.cpp
@@ -602,6 +603,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/manifest/codec_test.cpp
     tests/manifest/format_header_self_contained.cpp
     tests/manifest/format_test.cpp
+    tests/manifest/generation_builder_header_self_contained.cpp
+    tests/manifest/generation_builder_test.cpp
     tests/manifest/layout_header_self_contained.cpp
     tests/manifest/layout_test.cpp
     tests/manifest/naming_header_self_contained.cpp

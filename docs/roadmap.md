@@ -216,8 +216,14 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > every user/system page, exact-decodes and fully validates its output, and returns an install-ready
 > descriptor, WAL identity, and immutable image. Its deterministic/golden/boundary tests include the
 > real durable part-installation path, and flush-specific raw/Zstandard benchmarks are registered.
-> Flush scheduling, manifest publication, generation retirement, and the integrated crash-matrix
-> evidence remain unimplemented.
+> A pure checked generation builder now validates that image against the retained schema, derives
+> exact per-record row counts from CSEG system pages, requires matching retry outcomes, preserves
+> all predecessor state and the reclaim checkpoint, inserts the new tablet/part/retries canonically,
+> and self-validates the encoded add-only transition. Golden/property/hostile tests include the real
+> part-then-manifest installation and recovery-selection path, with builder microbenchmarks and
+> installed-consumer coverage. Flush scheduling, WAL-authorized checkpoint advancement, atomic
+> manifest publication, generation retirement, and the integrated crash-matrix evidence remain
+> unimplemented.
 
 - **Scope:** manifest generations/version edits; atomic durable part installation; sealed-head flush; checkpoint/log coverage; startup reconciliation; safe temporary-file handling.
 - **Explicit non-scope:** compaction, delta parts, distributed metadata, object storage, and aggressive garbage collection beyond proven safe ownership.

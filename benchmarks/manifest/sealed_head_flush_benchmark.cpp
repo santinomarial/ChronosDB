@@ -2,11 +2,14 @@
 #include "chronos/columnar/columnar_batch.hpp"
 #include "chronos/common/uuid.hpp"
 #include "chronos/head/mutable_head.hpp"
+#include "chronos/manifest/generation_builder.hpp"
 #include "chronos/manifest/sealed_head_flush.hpp"
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/logical_type.hpp"
+#include "chronos/schema/schema_lineage.hpp"
 #include "chronos/schema/table_schema.hpp"
 
+#include <array>
 #include <benchmark/benchmark.h>
 #include <bit>
 #include <cstddef>
@@ -115,6 +118,70 @@ void flush_zstd(benchmark::State& state) {
 
 BENCHMARK(flush_raw)->Arg(1'024)->Arg(65'536);
 BENCHMARK(flush_zstd)->Arg(1'024)->Arg(65'536);
+
+void generation_builder_benchmark(benchmark::State& state) {
+  const std::uint32_t rows = static_cast<std::uint32_t>(state.range(0));
+  const head::HeadSnapshot snapshot = sealed_snapshot(rows);
+  const auto flushed = encode_sealed_head_v1({.snapshot = snapshot,
+                                              .part_id = id<cseg::PartId>(6U),
+                                              .compression = cseg::PageCompression::kZstd});
+  if (!flushed.has_value()) {
+    state.SkipWithError(flushed.error().to_string());
+    return;
+  }
+  const schema::SchemaLineage lineage =
+      schema::SchemaLineage::create(*snapshot.schema_ptr()).value();
+  wal::WalId wal_id{};
+  wal_id.bytes.front() = std::byte{5U};
+  const EncodedManifest predecessor_bytes =
+      encode_manifest_v1(
+          {.generation = 1U,
+           .database_id = id<DatabaseId>(7U),
+           .wal_id = wal_id,
+           .reclaim_checkpoint = {.record_sequence = 0U, .segment_number = 1U, .byte_offset = 64U},
+           .tablets = {},
+           .parts = {},
+           .retries = {}})
+          .value();
+  const DecodedManifestView predecessor =
+      decode_manifest_v1_exact(predecessor_bytes.bytes()).value();
+  ingest::Sha256Digest::Bytes digest_bytes{};
+  digest_bytes.front() = std::byte{8U};
+  const std::array retries{RetryDescriptor{
+      .client_id = id<ingest::ClientId>(9U),
+      .client_batch_id = id<ingest::ClientBatchId>(10U),
+      .table_id = snapshot.table_id(),
+      .tablet_id = snapshot.tablet_id(),
+      .request_digest = ingest::Sha256Digest{digest_bytes},
+      .wal_id = wal_id,
+      .record_sequence = 1U,
+      .applied_row_count = rows,
+  }};
+  const std::array bindings{
+      TabletSchemaBinding{.tablet_id = snapshot.tablet_id(), .lineage = std::cref(lineage)}};
+  std::uint64_t encoded_bytes = 0U;
+  for (auto _ : state) {
+    static_cast<void>(_);
+    const auto encoded = build_manifest_v1_for_sealed_head({
+        .predecessor = predecessor,
+        .sealed_part = *flushed,
+        .new_retries = retries,
+        .schema_bindings = bindings,
+        .part_validation_limits = {},
+    });
+    if (!encoded.has_value()) {
+      state.SkipWithError(encoded.error().to_string());
+      break;
+    }
+    encoded_bytes = encoded->size();
+    benchmark::DoNotOptimize(encoded->bytes().data());
+    benchmark::ClobberMemory();
+  }
+  state.SetItemsProcessed(state.iterations() * rows);
+  state.SetBytesProcessed(state.iterations() * static_cast<std::int64_t>(encoded_bytes));
+}
+
+BENCHMARK(generation_builder_benchmark)->Arg(1'024)->Arg(65'536);
 
 } // namespace
 } // namespace chronos::manifest
