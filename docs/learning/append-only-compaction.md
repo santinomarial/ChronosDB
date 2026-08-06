@@ -112,6 +112,15 @@ identity if an orphan output was installed); an unexpected failure once a succes
 fails the coordinator closed for restart recovery. Saturating metrics distinguish attempts,
 failures, resumptions, input parts, rows, and output bytes.
 
+The subprocess crash matrix runs that complete coordinator against real directories and sends
+`SIGKILL` after the output write, readback, file sync, rename, and directory sync; after the
+Manifest write, readback, file sync, rename, and directory sync; and after aggregate publication.
+Every restart removes only recognized temporaries, retains all immutable final inputs, selects
+exactly generation 2 or 3, validates every selected CSEG, independently proves the replacement
+rows equivalent when generation 3 won, and then repeats recovery byte-for-byte. A final output
+that crossed its rename before the Manifest did is reported as an orphan, never promoted by
+guessing.
+
 ## Likely review and interview questions
 
 - Why are counts or one digest insufficient? They do not prove multiplicity, exact cells, system

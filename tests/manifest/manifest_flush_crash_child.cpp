@@ -1,16 +1,20 @@
+#include "chronos/manifest/compaction_coordinator.hpp"
 #include "chronos/manifest/naming.hpp"
+#include "chronos/manifest/publication.hpp"
 #include "chronos/manifest/storage.hpp"
 #include "io/posix_syscalls.hpp"
 #include "manifest/manifest_flush_crash_fixture.hpp"
 #include "manifest/manifest_flush_crash_protocol.hpp"
 #include "manifest/storage_internal.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -25,6 +29,7 @@ namespace {
 struct ChildConfig {
   std::string directory;
   std::string pause_after;
+  bool compaction{false};
 };
 
 [[nodiscard]] ChildConfig parse_arguments(const int count, char** const values) {
@@ -35,6 +40,8 @@ struct ChildConfig {
       config.directory = values[index + 1];
     } else if (key == "--pause-after") {
       config.pause_after = values[index + 1];
+    } else if (key == "--operation") {
+      config.compaction = std::string_view{values[index + 1]} == "compaction";
     }
   }
   return config;
@@ -64,7 +71,17 @@ public:
     return delegate_.mkdir_at(request);
   }
   ssize_t pread(const io::detail::ReadAtRequest& request) override {
-    return delegate_.pread(request);
+    const ssize_t result = delegate_.pread(request);
+    if (result >= 0 && static_cast<std::size_t>(result) == request.size) {
+      if (writes_ == 1U && !part_readback_observed_) {
+        part_readback_observed_ = true;
+        observe(kAfterPartReadback);
+      } else if (writes_ == 2U && !manifest_readback_observed_) {
+        manifest_readback_observed_ = true;
+        observe(kAfterManifestReadback);
+      }
+    }
+    return result;
   }
   ssize_t pwrite(const io::detail::WriteAtRequest& request) override {
     const ssize_t result = delegate_.pwrite(request);
@@ -128,6 +145,10 @@ public:
     return delegate_.close(descriptor);
   }
 
+  void observe_publication() const {
+    observe(kAfterPublication);
+  }
+
 private:
   void observe(const std::string_view point) const {
     if (point != pause_after_) {
@@ -144,26 +165,16 @@ private:
   std::uint64_t writes_{};
   std::uint64_t syncs_{};
   std::uint64_t renames_{};
+  bool part_readback_observed_{false};
+  bool manifest_readback_observed_{false};
 };
 
-[[nodiscard]] int run(const ChildConfig& config) {
-  if (config.directory.empty() || config.pause_after.empty()) {
-    return 2;
-  }
-  const std::filesystem::path root{config.directory};
-  std::error_code error;
-  if (!std::filesystem::create_directory(root / kPartsDirectoryName, error) || error) {
-    return 3;
-  }
-  if (!std::filesystem::create_directory(root / kManifestDirectoryName, error) || error) {
-    return 4;
-  }
-  write_bytes(root / kManifestDirectoryName / std::string{kManifestLockFileName}, {});
+[[nodiscard]] int run_flush(const ChildConfig& config, const std::filesystem::path& root,
+                            ObservingSyscalls& syscalls) {
   const ManifestFlushCrashFixture fixture;
   const EncodedManifest predecessor = fixture.manifest(1U);
   write_bytes(root / kManifestDirectoryName / *manifest_file_name(1U), predecessor.bytes());
 
-  ObservingSyscalls syscalls{io::detail::system_posix_syscalls(), config.pause_after};
   common::Result<ManifestStorage> opened = detail::ManifestStorageTestAccess::open_existing(
       {.database_root = config.directory}, syscalls);
   if (!opened.has_value()) {
@@ -189,6 +200,80 @@ private:
                                 .decode_limits = {},
                                 .part_validation_limits = {}});
   return manifest.has_value() ? 0 : 7;
+}
+
+[[nodiscard]] int run_compaction(const ChildConfig& config, const std::filesystem::path& root,
+                                 ObservingSyscalls& syscalls) {
+  const ManifestFlushCrashFixture fixture;
+  const EncodedManifest predecessor = fixture.manifest(2U);
+  write_bytes(root / kPartsDirectoryName / part_file_name(fixture.part_id),
+              fixture.encoded.bytes());
+  write_bytes(root / kManifestDirectoryName / *manifest_file_name(1U),
+              fixture.manifest(1U).bytes());
+  write_bytes(root / kManifestDirectoryName / *manifest_file_name(2U), predecessor.bytes());
+
+  common::Result<ManifestStorage> opened = detail::ManifestStorageTestAccess::open_existing(
+      {.database_root = config.directory}, syscalls);
+  if (!opened.has_value()) {
+    return 8;
+  }
+  ManifestStorage storage = std::move(*opened);
+  const auto bindings = fixture.bindings();
+  common::Result<LoadedManifestGeneration> loaded =
+      storage.load_selected_manifest({.expected_database_id = fixture.database_id,
+                                      .expected_wal_id = fixture.wal_id,
+                                      .schema_bindings = bindings,
+                                      .decode_limits = {},
+                                      .part_validation_limits = {}});
+  if (!loaded.has_value()) {
+    return 9;
+  }
+  auto selected = std::make_shared<const LoadedManifestGeneration>(std::move(*loaded));
+  common::Result<DatabaseStoragePublisher> publisher =
+      DatabaseStoragePublisher::create(selected, {});
+  if (!publisher.has_value()) {
+    return 10;
+  }
+  common::Result<AppendOnlyCompactionCoordinator> coordinator =
+      AppendOnlyCompactionCoordinator::create(storage, *publisher);
+  if (!coordinator.has_value()) {
+    return 11;
+  }
+  const std::array inputs{fixture.part_id};
+  const common::Result<AppendOnlyCompactionCompletion> completed =
+      coordinator->compact({.tablet_id = fixture.tablet_id,
+                            .input_part_ids = inputs,
+                            .output_part_id = crash_id<cseg::PartId>(9U),
+                            .part_nonce = crash_nonce(0xc0U),
+                            .manifest_nonce = crash_nonce(0xd0U),
+                            .compression = cseg::PageCompression::kZstd,
+                            .schema_bindings = bindings,
+                            .manifest_decode_limits = {},
+                            .part_validation_limits = {},
+                            .compaction_limits = {}});
+  if (!completed.has_value()) {
+    return 12;
+  }
+  syscalls.observe_publication();
+  return completed->manifest_generation == 3U ? 0 : 13;
+}
+
+[[nodiscard]] int run(const ChildConfig& config) {
+  if (config.directory.empty() || config.pause_after.empty()) {
+    return 2;
+  }
+  const std::filesystem::path root{config.directory};
+  std::error_code error;
+  if (!std::filesystem::create_directory(root / kPartsDirectoryName, error) || error) {
+    return 3;
+  }
+  if (!std::filesystem::create_directory(root / kManifestDirectoryName, error) || error) {
+    return 4;
+  }
+  write_bytes(root / kManifestDirectoryName / std::string{kManifestLockFileName}, {});
+  ObservingSyscalls syscalls{io::detail::system_posix_syscalls(), config.pause_after};
+  return config.compaction ? run_compaction(config, root, syscalls)
+                           : run_flush(config, root, syscalls);
 }
 
 } // namespace

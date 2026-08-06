@@ -286,6 +286,12 @@ compaction generation ahead of the in-memory publication, it resumes at publicat
 post-durability mismatch fails closed for startup recovery; pre-Manifest failures retain the old
 selected generation and never authorize input deletion.
 
+The compaction process-crash matrix covers both installation protocols plus publication. Killing
+after every write/readback/sync/rename boundary recovers only the complete predecessor or complete
+successor, preserves superseded input finals, classifies an installed-but-unreferenced output as an
+orphan, removes only recognized temporaries, and converges to identical selected bytes on a second
+restart.
+
 Normal service remains unavailable while the storage owner performs:
 
 1. open the durable database, `parts/`, and `manifest/` directories and acquire `manifest/LOCK`;

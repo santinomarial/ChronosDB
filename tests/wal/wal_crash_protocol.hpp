@@ -134,6 +134,7 @@ struct CrashChildOptions {
   std::filesystem::path directory;
   bool reopen{false};
   bool reclaim{false};
+  bool compaction{false};
   std::uint64_t target_segment_size{kSegmentSizeLimit};
   std::size_t maximum_sync_batch_requests{64U};
   std::size_t maximum_sync_batch_encoded_bytes{kMaximumRecordLength};
@@ -212,7 +213,7 @@ public:
     }
 
     std::vector<std::string> arguments;
-    arguments.reserve(19U);
+    arguments.reserve(21U);
 #ifdef CHRONOS_TEST_CRASH_CHILD_PATH
     arguments.emplace_back(CHRONOS_TEST_CRASH_CHILD_PATH);
 #else
@@ -221,6 +222,9 @@ public:
     append_argument(arguments, "--directory", options.directory.string());
     append_argument(arguments, "--mode",
                     options.reclaim ? "reclaim" : (options.reopen ? "reopen" : "create"));
+    if (options.compaction) {
+      append_argument(arguments, "--operation", "compaction");
+    }
     append_argument(arguments, "--target-segment-size",
                     std::to_string(options.target_segment_size));
     append_argument(arguments, "--max-batch-requests",

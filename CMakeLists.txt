@@ -626,6 +626,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/manifest/compaction_test.cpp
     tests/manifest/compaction_coordinator_header_self_contained.cpp
     tests/manifest/compaction_coordinator_test.cpp
+    tests/manifest/compaction_crash_matrix_test.cpp
     tests/manifest/compaction_equivalence_header_self_contained.cpp
     tests/manifest/compaction_equivalence_test.cpp
     tests/manifest/format_header_self_contained.cpp
