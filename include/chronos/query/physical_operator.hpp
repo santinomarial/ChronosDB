@@ -9,8 +9,12 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
+#include <vector>
 
 namespace chronos::query {
+
+inline constexpr std::size_t kMaximumColumnSubsetWidth = kDefaultVectorChunkColumnLimit;
 
 // Couples retained chunk ownership to query-wide byte credit. The charge may conservatively exceed
 // the chunk's local retained-buffer count, but it may never be smaller.
@@ -27,6 +31,8 @@ public:
          const QueryResourceContext& resources);
   [[nodiscard]] static common::Result<AccountedVectorChunk>
   where_true(AccountedVectorChunk input, std::size_t predicate_column);
+  [[nodiscard]] static common::Result<AccountedVectorChunk>
+  project_columns(AccountedVectorChunk input, std::span<const std::size_t> column_ordinals);
 
   [[nodiscard]] const VectorChunk& chunk() const noexcept;
   [[nodiscard]] std::size_t charged_memory_bytes() const noexcept;
@@ -100,6 +106,25 @@ private:
 
   std::unique_ptr<PhysicalOperator> input_;
   std::size_t predicate_column_;
+  bool ended_{};
+};
+
+// Stable projection pushdown for an ordered unique subset of input columns. Computed, duplicated,
+// or reordered SQL outputs require the later typed expression/output builder.
+class ColumnSubsetOperator final : public PhysicalOperator {
+public:
+  [[nodiscard]] static common::Result<std::unique_ptr<PhysicalOperator>>
+  create(std::unique_ptr<PhysicalOperator> input, std::vector<std::size_t> column_ordinals);
+
+  [[nodiscard]] common::Result<PhysicalOperatorStep>
+  next(const QueryResourceContext& resources) override;
+
+private:
+  ColumnSubsetOperator(std::unique_ptr<PhysicalOperator> input,
+                       std::vector<std::size_t> column_ordinals) noexcept;
+
+  std::unique_ptr<PhysicalOperator> input_;
+  std::vector<std::size_t> column_ordinals_;
   bool ended_{};
 };
 

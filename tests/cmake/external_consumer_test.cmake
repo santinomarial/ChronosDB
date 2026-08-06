@@ -101,11 +101,13 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/wal/application.hpp>
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <span>
 #include <string_view>
+#include <vector>
 
 int main() {
   using EventTimeMatchFunction = chronos::common::Result<bool> (*)(
@@ -251,6 +253,11 @@ int main() {
   const auto query_scalar = chronos::query::ScalarValue::float64(1.0);
   const auto query_resources = chronos::query::QueryResourceContext::create(1'024U);
   const auto physical_end = chronos::query::PhysicalOperatorStep::end();
+  using CreateColumnSubsetFunction =
+      chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
+          std::unique_ptr<chronos::query::PhysicalOperator>, std::vector<std::size_t>);
+  const CreateColumnSubsetFunction create_column_subset =
+      &chronos::query::ColumnSubsetOperator::create;
   const auto vector_chunk = chronos::query::VectorChunk::create(
       {}, chronos::query::VectorSelection::all(1U).value());
   using BindSelectFunction = chronos::query::SqlResult<chronos::query::BoundSqlSelect> (*)(
@@ -454,6 +461,7 @@ int main() {
                  query_resources.has_value() &&
                  query_resources->available_memory_bytes() == 1'024U &&
                  physical_end.kind() == chronos::query::PhysicalOperatorStepKind::kEnd &&
+                 create_column_subset != nullptr &&
                  vector_chunk.has_value() && vector_chunk->selected_row_count() == 1U &&
                  chronos::query::kMaximumSqlV1Sources == 64U && aggregate_query != nullptr &&
                  bind_select != nullptr && bind_create != nullptr && bind_insert != nullptr &&

@@ -12,6 +12,7 @@
 namespace chronos::query {
 
 inline constexpr std::uint32_t kDefaultVectorChunkRowLimit = 2'048U;
+inline constexpr std::size_t kDefaultVectorChunkColumnLimit = 4'096U;
 inline constexpr std::size_t kDefaultVectorChunkMemoryLimit = std::size_t{32U} * 1024U * 1024U;
 
 // One order-preserving selection over a nonempty physical row domain. Selected row ordinals are
@@ -54,7 +55,7 @@ private:
 // Retained bytes include vector capacities, preventing spare allocation from evading admission.
 struct VectorChunkLimits {
   std::uint32_t maximum_rows{kDefaultVectorChunkRowLimit};
-  std::size_t maximum_columns{4'096U};
+  std::size_t maximum_columns{kDefaultVectorChunkColumnLimit};
   std::size_t maximum_buffer_bytes{kDefaultVectorChunkMemoryLimit};
   std::size_t maximum_retained_buffer_bytes{kDefaultVectorChunkMemoryLimit};
 };
@@ -91,6 +92,10 @@ public:
   // Consumes a chunk and replaces its selection with the allocation-free SQL Boolean filter.
   [[nodiscard]] static common::Result<VectorChunk> where_true(VectorChunk chunk,
                                                               std::size_t predicate_column);
+  // Stable-compacts an ordered unique subset without allocating. An empty subset preserves row
+  // cardinality for operators such as COUNT(*); duplicate or reordered outputs require a builder.
+  [[nodiscard]] static common::Result<VectorChunk>
+  project_columns(VectorChunk chunk, std::span<const std::size_t> column_ordinals);
 
 private:
   struct Accounting {

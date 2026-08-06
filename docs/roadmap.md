@@ -358,9 +358,12 @@ No phase passes because its code merely compiles. A phase passes only when its a
   coverage. ADR 0022 and the third increment add accounted chunk ownership, explicit pull/chunk/end
   steps, stable end and empty-chunk semantics, allocation-free SQL Boolean selection, failure-driven
   sibling cancellation, scalar-truth differential properties, fuzzing, and compaction benchmarks.
-  These are substrates and one operator only: general vector expressions/operators, storage scans,
+  The fourth increment adds allocation-free stable column-subset projection, zero-column
+  cardinality preservation, bounded projection plans, deterministic cell-preservation properties,
+  hostile/fuzz coverage, a projection microbenchmark, and installed-consumer linkage. These remain
+  substrates and two operators only: typed vector expressions and output builders, storage scans,
   physical planning, complete allocation charging, scheduling, spill, and scalar differential plan
-  execution remain unimplemented.
+  execution are unimplemented.
 
 - **Scope:** bounded vectors, vectorized scans/expressions/aggregates/joins, physical planning, memory accounting, cancellation, parallel scheduling, and spill for explicitly supported operators.
 - **Explicit non-scope:** distributed fragments, GPU novelty, unbounded query memory, or optimizer rules lacking semantic/differential validation.

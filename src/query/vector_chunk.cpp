@@ -262,4 +262,43 @@ common::Result<VectorChunk> VectorChunk::where_true(VectorChunk chunk,
   return chunk;
 }
 
+common::Result<VectorChunk>
+VectorChunk::project_columns(VectorChunk chunk,
+                             const std::span<const std::size_t> column_ordinals) {
+  for (std::size_t output = 0U; output < column_ordinals.size(); ++output) {
+    if (column_ordinals[output] >= chunk.columns_.size()) {
+      return common::make_unexpected(common::Status{common::StatusCode::kOutOfRange,
+                                                    "vector projection column is out of range"});
+    }
+    if (output > 0U && column_ordinals[output - 1U] >= column_ordinals[output]) {
+      return common::make_unexpected(
+          invalid("vector projection columns must be unique and strictly increasing"));
+    }
+  }
+
+  std::size_t buffer_bytes = chunk.selection_.buffer_bytes();
+  std::size_t retained_buffer_bytes = chunk.selection_.retained_buffer_bytes();
+  for (const std::size_t ordinal : column_ordinals) {
+    const columnar::OwnedPhysicalColumn& column = chunk.columns_[ordinal];
+    const auto next_buffer = common::checked_add(buffer_bytes, column.buffer_bytes());
+    const auto next_retained =
+        common::checked_add(retained_buffer_bytes, column.retained_buffer_bytes());
+    if (!next_buffer.has_value() || !next_retained.has_value()) {
+      return common::make_unexpected(exhausted("vector projection buffer accounting overflowed"));
+    }
+    buffer_bytes = *next_buffer;
+    retained_buffer_bytes = *next_retained;
+  }
+
+  for (std::size_t output = 0U; output < column_ordinals.size(); ++output) {
+    if (output != column_ordinals[output])
+      chunk.columns_[output] = std::move(chunk.columns_[column_ordinals[output]]);
+  }
+  while (chunk.columns_.size() > column_ordinals.size())
+    chunk.columns_.pop_back();
+  chunk.buffer_bytes_ = buffer_bytes;
+  chunk.retained_buffer_bytes_ = retained_buffer_bytes;
+  return chunk;
+}
+
 } // namespace chronos::query

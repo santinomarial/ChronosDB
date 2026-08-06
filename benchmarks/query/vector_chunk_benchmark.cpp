@@ -18,6 +18,11 @@ struct PredicateShape {
   std::uint32_t true_stride;
 };
 
+struct ProjectionShape {
+  std::uint32_t rows;
+  std::size_t columns;
+};
+
 [[nodiscard]] columnar::OwnedPhysicalColumn make_column(const std::uint32_t rows) {
   columnar::ColumnVectorBuffers buffers;
   buffers.values.resize(static_cast<std::size_t>(rows) * sizeof(std::int64_t));
@@ -127,6 +132,39 @@ void compact_selection_where_true(benchmark::State& state) {
   state.counters["true_density"] = 1.0 / static_cast<double>(true_stride);
 }
 
+void project_column_subset(benchmark::State& state) {
+  const ProjectionShape shape{.rows = static_cast<std::uint32_t>(state.range(0)),
+                              .columns = static_cast<std::size_t>(state.range(1))};
+  std::vector<std::size_t> ordinals;
+  ordinals.reserve((shape.columns + 1U) / 2U);
+  for (std::size_t ordinal = 0U; ordinal < shape.columns; ordinal += 2U)
+    ordinals.push_back(ordinal);
+
+  for (auto _ : state) {
+    static_cast<void>(_);
+    state.PauseTiming();
+    std::vector<columnar::OwnedPhysicalColumn> columns;
+    columns.reserve(shape.columns);
+    for (std::size_t column = 0U; column < shape.columns; ++column)
+      columns.push_back(make_predicate({.rows = shape.rows, .true_stride = 2U}));
+    VectorChunk chunk =
+        VectorChunk::create(std::move(columns), VectorSelection::all(shape.rows).value(),
+                            {.maximum_rows = shape.rows,
+                             .maximum_columns = shape.columns,
+                             .maximum_buffer_bytes = kBenchmarkChunkMemoryLimit,
+                             .maximum_retained_buffer_bytes = kBenchmarkChunkMemoryLimit})
+            .value();
+    state.ResumeTiming();
+    auto projected = VectorChunk::project_columns(std::move(chunk), ordinals);
+    benchmark::DoNotOptimize(projected);
+  }
+  state.SetItemsProcessed(static_cast<std::int64_t>(state.iterations()) *
+                          static_cast<std::int64_t>(shape.columns));
+  state.counters["input_columns"] = static_cast<double>(shape.columns);
+  state.counters["output_columns"] = static_cast<double>(ordinals.size());
+  state.counters["physical_rows"] = static_cast<double>(shape.rows);
+}
+
 BENCHMARK(build_selection)
     ->Args({64, 1})
     ->Args({1'024, 1})
@@ -157,6 +195,13 @@ BENCHMARK(compact_selection_where_true)
     ->Args({64, 16})
     ->Args({1'024, 16})
     ->Args({4'096, 16});
+BENCHMARK(project_column_subset)
+    ->Args({1'024, 1})
+    ->Args({1'024, 8})
+    ->Args({1'024, 64})
+    ->Args({4'096, 1})
+    ->Args({4'096, 8})
+    ->Args({4'096, 64});
 
 } // namespace
 } // namespace chronos::query

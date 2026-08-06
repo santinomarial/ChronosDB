@@ -165,6 +165,63 @@ TEST(AccountedVectorChunkTest, RejectsCreditOwnedByAnotherQuery) {
   EXPECT_EQ(owner.reserved_memory_bytes(), 0U);
 }
 
+TEST(VectorChunkProjectionTest, StableCompactsColumnsAndPreservesRowsSelectionAndCredit) {
+  const auto resources = QueryResourceContext::create(4'096U).value();
+  AccountedVectorChunk input = accounted_chunk(resources, std::vector<std::int64_t>{10, 20, 30, 40},
+                                               std::vector<std::int8_t>{1, 0, -1, 1}, {0U, 2U, 3U});
+  const std::size_t original_retained = input.chunk().retained_buffer_bytes();
+  const std::array<std::size_t, 1> predicate_only{1U};
+  auto projected = AccountedVectorChunk::project_columns(std::move(input), predicate_only);
+  ASSERT_TRUE(projected.has_value());
+  ASSERT_EQ(projected->chunk().columns().size(), 1U);
+  EXPECT_EQ(projected->chunk().columns()[0].type().code(),
+            type(schema::LogicalTypeKind::kBool).code());
+  EXPECT_EQ(projected->chunk().physical_row_count(), 4U);
+  const std::vector<std::uint32_t> expected_selection{0U, 2U, 3U};
+  EXPECT_TRUE(std::ranges::equal(projected->chunk().selection().indices(), expected_selection));
+  EXPECT_EQ(projected->chunk().buffer_bytes(), projected->chunk().selection().buffer_bytes() +
+                                                   projected->chunk().columns()[0].buffer_bytes());
+  EXPECT_EQ(projected->chunk().retained_buffer_bytes(),
+            projected->chunk().selection().retained_buffer_bytes() +
+                projected->chunk().columns()[0].retained_buffer_bytes());
+  EXPECT_LT(projected->chunk().retained_buffer_bytes(), original_retained);
+  EXPECT_EQ(projected->charged_memory_bytes(), 1'024U);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 1'024U);
+
+  auto zero_columns = AccountedVectorChunk::project_columns(std::move(*projected), {});
+  ASSERT_TRUE(zero_columns.has_value());
+  EXPECT_TRUE(zero_columns->chunk().columns().empty());
+  EXPECT_EQ(zero_columns->chunk().physical_row_count(), 4U);
+  EXPECT_TRUE(std::ranges::equal(zero_columns->chunk().selection().indices(), expected_selection));
+  EXPECT_EQ(zero_columns->chunk().buffer_bytes(), zero_columns->chunk().selection().buffer_bytes());
+  EXPECT_EQ(zero_columns->chunk().retained_buffer_bytes(),
+            zero_columns->chunk().selection().retained_buffer_bytes());
+  EXPECT_EQ(zero_columns->charged_memory_bytes(), 1'024U);
+}
+
+TEST(VectorChunkProjectionTest, RejectsDuplicateReorderedAndOutOfRangeOrdinals) {
+  const auto resources = QueryResourceContext::create(4'096U).value();
+  const auto make_input = [&resources] {
+    return accounted_chunk(resources, std::vector<std::int64_t>{1, 2},
+                           std::vector<std::int8_t>{0, 1}, {0U, 1U});
+  };
+
+  const std::array<std::size_t, 2> duplicate{0U, 0U};
+  EXPECT_EQ(AccountedVectorChunk::project_columns(make_input(), duplicate).error().code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+
+  const std::array<std::size_t, 2> reordered{1U, 0U};
+  EXPECT_EQ(AccountedVectorChunk::project_columns(make_input(), reordered).error().code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+
+  const std::array<std::size_t, 1> out_of_range{2U};
+  EXPECT_EQ(AccountedVectorChunk::project_columns(make_input(), out_of_range).error().code(),
+            common::StatusCode::kOutOfRange);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
 TEST(PhysicalOperatorStepTest, EndIsExplicitAndHasNoChunk) {
   PhysicalOperatorStep end = PhysicalOperatorStep::end();
   EXPECT_EQ(end.kind(), PhysicalOperatorStepKind::kEnd);
@@ -284,6 +341,122 @@ TEST(BooleanFilterOperatorPropertyTest, MatchesScalarWhereTruthAcrossDeterminist
     EXPECT_TRUE(std::ranges::equal(step->chunk()->chunk().selection().indices(), rows));
   }
   EXPECT_EQ(filter->next(resources)->kind(), PhysicalOperatorStepKind::kEnd);
+}
+
+TEST(ColumnSubsetOperatorTest, ProjectsOneChunkWithoutChangingItsChargeAndEndsSticky) {
+  const auto resources = QueryResourceContext::create(4'096U).value();
+  std::vector<AccountedVectorChunk> chunks;
+  chunks.push_back(accounted_chunk(resources, std::vector<std::int64_t>{10, 20, 30, 40},
+                                   std::vector<std::int8_t>{1, 0, -1, 1}, {0U, 2U, 3U}));
+  auto projection =
+      ColumnSubsetOperator::create(std::make_unique<ChunkSource>(std::move(chunks)), {0U});
+  ASSERT_TRUE(projection.has_value());
+  {
+    auto step = (*projection)->next(resources);
+    ASSERT_TRUE(step.has_value());
+    ASSERT_NE(step->chunk(), nullptr);
+    ASSERT_EQ(step->chunk()->chunk().columns().size(), 1U);
+    EXPECT_EQ(step->chunk()->chunk().columns()[0].type().code(),
+              type(schema::LogicalTypeKind::kInt64).code());
+    const std::vector<std::uint32_t> expected{0U, 2U, 3U};
+    EXPECT_TRUE(std::ranges::equal(step->chunk()->chunk().selection().indices(), expected));
+    EXPECT_EQ(step->chunk()->charged_memory_bytes(), 1'024U);
+  }
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  EXPECT_EQ((*projection)->next(resources)->kind(), PhysicalOperatorStepKind::kEnd);
+  EXPECT_TRUE(resources.request_cancel());
+  EXPECT_EQ((*projection)->next(resources)->kind(), PhysicalOperatorStepKind::kEnd);
+}
+
+TEST(ColumnSubsetOperatorTest, ValidatesBoundedStableProjectionConfiguration) {
+  const auto empty_source = [] {
+    return std::make_unique<ChunkSource>(std::vector<AccountedVectorChunk>{});
+  };
+  EXPECT_EQ(ColumnSubsetOperator::create({}, {}).error().code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(ColumnSubsetOperator::create(empty_source(), {0U, 0U}).error().code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(ColumnSubsetOperator::create(empty_source(), {1U, 0U}).error().code(),
+            common::StatusCode::kInvalidArgument);
+
+  std::vector<std::size_t> too_wide(kMaximumColumnSubsetWidth + 1U);
+  for (std::size_t ordinal = 0U; ordinal < too_wide.size(); ++ordinal)
+    too_wide[ordinal] = ordinal;
+  EXPECT_EQ(ColumnSubsetOperator::create(empty_source(), std::move(too_wide)).error().code(),
+            common::StatusCode::kResourceExhausted);
+  EXPECT_TRUE(ColumnSubsetOperator::create(empty_source(), {}).has_value());
+}
+
+TEST(ColumnSubsetOperatorTest, InvalidInputOrdinalCancelsAndReleasesTheChunk) {
+  const auto resources = QueryResourceContext::create(4'096U).value();
+  std::vector<AccountedVectorChunk> chunks;
+  chunks.push_back(accounted_chunk(resources, std::vector<std::int64_t>{1, 2},
+                                   std::vector<std::int8_t>{1, 1}, {0U, 1U}));
+  auto projection =
+      ColumnSubsetOperator::create(std::make_unique<ChunkSource>(std::move(chunks)), {2U}).value();
+  const auto failed = projection->next(resources);
+  ASSERT_FALSE(failed.has_value());
+  EXPECT_EQ(failed.error().code(), common::StatusCode::kOutOfRange);
+  EXPECT_TRUE(resources.is_cancelled());
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
+TEST(ColumnSubsetOperatorTest, PropagatesChildFailureAndRequestsSiblingCancellation) {
+  const auto resources = QueryResourceContext::create(1U).value();
+  auto projection =
+      ColumnSubsetOperator::create(std::make_unique<FailingSource>(), std::vector<std::size_t>{})
+          .value();
+  const auto failed = projection->next(resources);
+  ASSERT_FALSE(failed.has_value());
+  EXPECT_EQ(failed.error().code(), common::StatusCode::kInternal);
+  EXPECT_TRUE(resources.is_cancelled());
+  EXPECT_EQ(projection->next(resources).error().code(), common::StatusCode::kCancelled);
+}
+
+TEST(ColumnSubsetOperatorTest, RejectsAChunkChargedToAnotherQuery) {
+  const auto owner = QueryResourceContext::create(4'096U).value();
+  const auto impostor = QueryResourceContext::create(4'096U).value();
+  std::vector<AccountedVectorChunk> chunks;
+  chunks.push_back(accounted_chunk(owner, std::vector<std::int64_t>{1, 2},
+                                   std::vector<std::int8_t>{1, 1}, {0U, 1U}));
+  auto projection =
+      ColumnSubsetOperator::create(std::make_unique<ChunkSource>(std::move(chunks)), {0U}).value();
+  const auto failed = projection->next(impostor);
+  ASSERT_FALSE(failed.has_value());
+  EXPECT_EQ(failed.error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_TRUE(impostor.is_cancelled());
+  EXPECT_EQ(owner.reserved_memory_bytes(), 0U);
+}
+
+TEST(ColumnSubsetOperatorPropertyTest, PreservesSelectedRowsAndBooleanCellsForEveryEightRowMask) {
+  const auto resources = QueryResourceContext::create(4'096U).value();
+  const std::vector<std::int64_t> values{0, 1, 2, 3, 4, 5, 6, 7};
+  const std::vector<std::int8_t> predicates{-1, 0, 1, 1, 0, -1, 1, 0};
+  for (std::uint32_t mask = 0U; mask < 256U; ++mask) {
+    std::vector<std::uint32_t> selected;
+    for (std::uint32_t row = 0U; row < 8U; ++row) {
+      if ((mask & (1U << row)) != 0U)
+        selected.push_back(row);
+    }
+    const std::vector<std::uint32_t> expected = selected;
+    auto projected = AccountedVectorChunk::project_columns(
+        accounted_chunk(resources, values, predicates, std::move(selected)),
+        std::array<std::size_t, 1>{1U});
+    ASSERT_TRUE(projected.has_value());
+    ASSERT_EQ(projected->chunk().columns().size(), 1U);
+    EXPECT_TRUE(std::ranges::equal(projected->chunk().selection().indices(), expected));
+    for (std::size_t selected_row = 0U; selected_row < expected.size(); ++selected_row) {
+      const auto cell =
+          projected->chunk().cell({.column_ordinal = 0U, .selected_row = selected_row});
+      ASSERT_TRUE(cell.has_value());
+      const std::int8_t expected_value = predicates[expected[selected_row]];
+      if (expected_value < 0) {
+        EXPECT_TRUE(cell->is_null());
+      } else {
+        EXPECT_EQ(cell->boolean().value(), expected_value > 0);
+      }
+    }
+  }
 }
 
 } // namespace

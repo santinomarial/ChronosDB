@@ -47,6 +47,16 @@ AccountedVectorChunk::where_true(AccountedVectorChunk input, const std::size_t p
   return AccountedVectorChunk{std::move(*filtered), std::move(input.reservation_)};
 }
 
+common::Result<AccountedVectorChunk>
+AccountedVectorChunk::project_columns(AccountedVectorChunk input,
+                                      const std::span<const std::size_t> column_ordinals) {
+  common::Result<VectorChunk> projected =
+      VectorChunk::project_columns(std::move(input.chunk_), column_ordinals);
+  if (!projected.has_value())
+    return common::make_unexpected(projected.error());
+  return AccountedVectorChunk{std::move(*projected), std::move(input.reservation_)};
+}
+
 const VectorChunk& AccountedVectorChunk::chunk() const noexcept {
   return chunk_;
 }
@@ -139,6 +149,69 @@ BooleanFilterOperator::next(const QueryResourceContext& resources) {
     return common::make_unexpected(filtered.error());
   }
   return PhysicalOperatorStep::chunk(std::move(*filtered));
+}
+
+ColumnSubsetOperator::ColumnSubsetOperator(std::unique_ptr<PhysicalOperator> input,
+                                           std::vector<std::size_t> column_ordinals) noexcept
+    : input_(std::move(input)), column_ordinals_(std::move(column_ordinals)) {}
+
+common::Result<std::unique_ptr<PhysicalOperator>>
+ColumnSubsetOperator::create(std::unique_ptr<PhysicalOperator> input,
+                             std::vector<std::size_t> column_ordinals) {
+  if (input == nullptr)
+    return common::make_unexpected(invalid("column subset input operator must be non-null"));
+  if (column_ordinals.size() > kMaximumColumnSubsetWidth) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kResourceExhausted, "column subset width exceeds the supported limit"});
+  }
+  for (std::size_t index = 1U; index < column_ordinals.size(); ++index) {
+    if (column_ordinals[index - 1U] >= column_ordinals[index]) {
+      return common::make_unexpected(
+          invalid("column subset ordinals must be unique and strictly increasing"));
+    }
+  }
+  try {
+    return std::unique_ptr<PhysicalOperator>{
+        new ColumnSubsetOperator{std::move(input), std::move(column_ordinals)}};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                  "column subset operator allocation failed"});
+  }
+}
+
+common::Result<PhysicalOperatorStep>
+ColumnSubsetOperator::next(const QueryResourceContext& resources) {
+  if (ended_)
+    return PhysicalOperatorStep::end();
+  const common::Result<void> active = resources.check_cancelled();
+  if (!active.has_value())
+    return common::make_unexpected(active.error());
+  common::Result<PhysicalOperatorStep> input = input_->next(resources);
+  if (!input.has_value()) {
+    static_cast<void>(resources.request_cancel());
+    return common::make_unexpected(input.error());
+  }
+  if (input->kind() == PhysicalOperatorStepKind::kEnd) {
+    ended_ = true;
+    return PhysicalOperatorStep::end();
+  }
+  common::Result<AccountedVectorChunk> chunk = std::move(*input).take_chunk();
+  if (!chunk.has_value()) {
+    static_cast<void>(resources.request_cancel());
+    return common::make_unexpected(chunk.error());
+  }
+  if (!chunk->belongs_to(resources)) {
+    static_cast<void>(resources.request_cancel());
+    return common::make_unexpected(
+        invalid("physical operator received a chunk charged to another query"));
+  }
+  common::Result<AccountedVectorChunk> projected =
+      AccountedVectorChunk::project_columns(std::move(*chunk), column_ordinals_);
+  if (!projected.has_value()) {
+    static_cast<void>(resources.request_cancel());
+    return common::make_unexpected(projected.error());
+  }
+  return PhysicalOperatorStep::chunk(std::move(*projected));
 }
 
 } // namespace chronos::query

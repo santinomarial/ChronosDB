@@ -74,6 +74,9 @@
 > tests under ThreadSanitizer, resource microbenchmarks, and consumer checks. The first physical
 > operator adds accounted-lifetime, end/error/cancellation, hostile predicate, fixed-seed
 > chunk-boundary scalar-truth differential, fuzz, and selection-compaction benchmark coverage.
+> Stable column-subset projection adds bounded/order/range failures, zero-column cardinality,
+> exhaustive eight-row selection-mask cell preservation, hostile fuzz inputs, ownership-release
+> measurement, and installed-consumer linkage.
 > Vector-plan differential and distributed query harnesses remain planned for their roadmap phases.
 
 ## Test types
