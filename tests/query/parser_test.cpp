@@ -3,10 +3,17 @@
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
+#include <memory>
+#include <optional>
 #include <string>
 
 namespace chronos::query {
 namespace {
+
+template <typename Value>
+[[nodiscard]] const Value* optional_pointer(const std::optional<Value>& value) noexcept {
+  return value.has_value() ? std::addressof(value.value()) : nullptr;
+}
 
 TEST(SqlParserTest, ParsesCompleteAnalyticalSelectIntoOwnedGoldenShape) {
   constexpr std::string_view sql =
@@ -25,16 +32,23 @@ TEST(SqlParserTest, ParsesCompleteAnalyticalSelectIntoOwnedGoldenShape) {
   EXPECT_EQ(parsed->items()[0].expression()->kind(), SqlExpressionKind::kColumn);
   ASSERT_EQ(parsed->items()[0].expression()->name().size(), 2U);
   EXPECT_EQ(parsed->items()[0].expression()->name()[0].text(), "t");
-  EXPECT_EQ(parsed->items()[0].alias()->text(), "symbol");
+  const SqlIdentifier* output_alias = optional_pointer(parsed->items()[0].alias());
+  ASSERT_NE(output_alias, nullptr);
+  EXPECT_EQ(output_alias->text(), "symbol");
   EXPECT_EQ(parsed->items()[1].expression()->kind(), SqlExpressionKind::kFunction);
   EXPECT_EQ(parsed->items()[1].expression()->text(), "count");
   ASSERT_EQ(parsed->items()[1].expression()->children().size(), 1U);
   EXPECT_EQ(parsed->items()[1].expression()->children().front().kind(), SqlExpressionKind::kStar);
   EXPECT_EQ(parsed->source().table.text(), "trades");
-  EXPECT_EQ(parsed->source().alias->text(), "t");
-  EXPECT_EQ(*parsed->system_time(), "2026-08-06 12:00:00Z");
-  ASSERT_TRUE(parsed->latest_by().has_value());
-  EXPECT_EQ(parsed->latest_by()->keys.size(), 2U);
+  const SqlIdentifier* source_alias = optional_pointer(parsed->source().alias);
+  const std::string* system_time = optional_pointer(parsed->system_time());
+  const SqlLatestBy* latest = optional_pointer(parsed->latest_by());
+  ASSERT_NE(source_alias, nullptr);
+  ASSERT_NE(system_time, nullptr);
+  ASSERT_NE(latest, nullptr);
+  EXPECT_EQ(source_alias->text(), "t");
+  EXPECT_EQ(*system_time, "2026-08-06 12:00:00Z");
+  EXPECT_EQ(latest->keys.size(), 2U);
   ASSERT_EQ(parsed->asof_joins().size(), 1U);
   EXPECT_TRUE(parsed->asof_joins().front().left);
   EXPECT_EQ(parsed->asof_joins().front().source.table.text(), "quotes");
@@ -44,7 +58,9 @@ TEST(SqlParserTest, ParsesCompleteAnalyticalSelectIntoOwnedGoldenShape) {
   ASSERT_EQ(parsed->order_by().size(), 1U);
   EXPECT_EQ(parsed->order_by().front().direction, SqlOrderDirection::kDescending);
   EXPECT_EQ(parsed->order_by().front().null_order, SqlNullOrder::kLast);
-  EXPECT_EQ(*parsed->limit(), 1000U);
+  const std::uint64_t* limit = optional_pointer(parsed->limit());
+  ASSERT_NE(limit, nullptr);
+  EXPECT_EQ(*limit, 1000U);
   EXPECT_EQ(parsed->span().begin.byte_offset, 0U);
   EXPECT_EQ(parsed->span().byte_length, sql.size());
 }
@@ -71,12 +87,82 @@ TEST(SqlParserTest, ParsesNullInAndEveryCastTypeWithoutImplicitSemantics) {
                           "WHERE v IS NOT NULL AND v NOT IN (1, 2, 3)");
   ASSERT_TRUE(parsed.has_value()) << parsed.error().status().to_string();
   ASSERT_TRUE(parsed->items()[0].expression()->cast_type().has_value());
-  EXPECT_EQ(parsed->items()[0].expression()->cast_type()->parameter_0(), 38U);
-  EXPECT_EQ(parsed->items()[0].expression()->cast_type()->parameter_1(), 18U);
-  EXPECT_EQ(parsed->items()[1].expression()->cast_type()->kind(), schema::LogicalTypeKind::kUInt64);
+  const schema::LogicalType* decimal_type =
+      optional_pointer(parsed->items()[0].expression()->cast_type());
+  const schema::LogicalType* unsigned_type =
+      optional_pointer(parsed->items()[1].expression()->cast_type());
+  ASSERT_NE(decimal_type, nullptr);
+  ASSERT_NE(unsigned_type, nullptr);
+  EXPECT_EQ(decimal_type->parameter_0(), 38U);
+  EXPECT_EQ(decimal_type->parameter_1(), 18U);
+  EXPECT_EQ(unsigned_type->kind(), schema::LogicalTypeKind::kUInt64);
   ASSERT_EQ(parsed->where()->children().size(), 2U);
   EXPECT_EQ(parsed->where()->children()[0].operation(), SqlOperator::kIsNotNull);
   EXPECT_EQ(parsed->where()->children()[1].operation(), SqlOperator::kNotIn);
+}
+
+TEST(SqlParserTest, ParsesCanonicalCreateTableAndInsertStatements) {
+  const SqlResult<ParsedSqlCreateTable> create = parse_sql_v1_create_table(
+      "CREATE TABLE trades (ts TIMESTAMP_NS NOT NULL, symbol SYMBOL NOT NULL, "
+      "price DECIMAL(20,8)) EVENT TIME ts ORDER KEY (symbol, ts) "
+      "PARTITION BY time_bucket(INTERVAL '1 day', ts) SHARD KEY (symbol) "
+      "DEDUP KEY (symbol, ts) RETENTION INTERVAL '10 days' "
+      "SYSTEM HISTORY RETENTION INTERVAL '2 days' ALLOWED LATENESS INTERVAL '5 seconds';");
+  ASSERT_TRUE(create.has_value()) << create.error().status().to_string();
+  EXPECT_EQ(create->table().text(), "trades");
+  ASSERT_EQ(create->columns().size(), 3U);
+  EXPECT_FALSE(create->columns()[0].nullable);
+  EXPECT_TRUE(create->columns()[2].nullable);
+  EXPECT_EQ(create->columns()[2].type.parameter_0(), 20U);
+  EXPECT_EQ(create->event_time().text(), "ts");
+  EXPECT_EQ(create->ordering_key().size(), 2U);
+  EXPECT_EQ(create->partition_expression().text(), "time_bucket");
+  EXPECT_EQ(create->shard_key().size(), 1U);
+  EXPECT_EQ(create->deduplication_key().size(), 2U);
+  EXPECT_EQ(create->retention_interval(), "10 days");
+  EXPECT_EQ(create->system_history_retention_interval(), "2 days");
+  EXPECT_EQ(create->allowed_lateness_interval(), "5 seconds");
+
+  const SqlResult<ParsedSqlInsert> insert = parse_sql_v1_insert(
+      "INSERT INTO trades (ts, symbol, price) VALUES "
+      "(TIMESTAMP '2026-08-06 12:00:00Z', CAST('A' AS SYMBOL), CAST(1 AS DECIMAL(20,8))), "
+      "(TIMESTAMP '2026-08-06 12:00:01Z', CAST('B' AS SYMBOL), NULL);");
+  ASSERT_TRUE(insert.has_value()) << insert.error().status().to_string();
+  EXPECT_EQ(insert->table().text(), "trades");
+  EXPECT_EQ(insert->columns().size(), 3U);
+  ASSERT_EQ(insert->rows().size(), 2U);
+  EXPECT_EQ(insert->rows()[0].size(), 3U);
+  EXPECT_EQ(insert->rows()[0][0].literal_kind(), SqlLiteralKind::kTimestamp);
+  EXPECT_EQ(insert->rows()[1][2].literal_kind(), SqlLiteralKind::kNull);
+}
+
+TEST(SqlParserTest, RejectsMalformedCreateTableAndInsertStatements) {
+  for (const std::string_view sql : {
+           "CREATE TABLE t (ts TIMESTAMP_NS) EVENT TIME ts ORDER KEY (ts)",
+           "CREATE TABLE t () EVENT TIME ts ORDER KEY (ts) PARTITION BY ts SHARD KEY (ts) "
+           "RETENTION INTERVAL '1 day' SYSTEM HISTORY RETENTION INTERVAL '1 day' "
+           "ALLOWED LATENESS INTERVAL '1 second'",
+           "CREATE TABLE t (ts TIMESTAMP_NS) EVENT TIME ts ORDER KEY () PARTITION BY ts "
+           "SHARD KEY (ts) RETENTION INTERVAL '1 day' SYSTEM HISTORY RETENTION INTERVAL "
+           "'1 day' ALLOWED LATENESS INTERVAL '1 second'",
+       }) {
+    SCOPED_TRACE(sql);
+    EXPECT_FALSE(parse_sql_v1_create_table(sql).has_value());
+  }
+  for (const std::string_view sql : {
+           "INSERT trades VALUES (1)",
+           "INSERT INTO t VALUES",
+           "INSERT INTO t VALUES ()",
+           "INSERT INTO t (a,) VALUES (1)",
+           "INSERT INTO t VALUES (1),",
+       }) {
+    SCOPED_TRACE(sql);
+    EXPECT_FALSE(parse_sql_v1_insert(sql).has_value());
+  }
+  EXPECT_EQ(parse_sql_v1_insert("INSERT INTO t VALUES (1), (2)", {.maximum_list_elements = 1U})
+                .error()
+                .code(),
+            SqlDiagnosticCode::kResourceLimit);
 }
 
 TEST(SqlParserTest, RejectsClauseOrderMissingSyntaxAndUnsupportedStatementsDeterministically) {

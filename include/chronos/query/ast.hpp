@@ -218,6 +218,80 @@ private:
   friend class detail::SqlParser;
 };
 
+struct SqlColumnDeclaration {
+  SqlIdentifier name;
+  schema::LogicalType type;
+  bool nullable{true};
+};
+
+class ParsedSqlCreateTable {
+public:
+  ParsedSqlCreateTable() = delete;
+  ParsedSqlCreateTable(const ParsedSqlCreateTable&) = delete;
+  ParsedSqlCreateTable& operator=(const ParsedSqlCreateTable&) = delete;
+  ParsedSqlCreateTable(ParsedSqlCreateTable&&) noexcept = default;
+  ParsedSqlCreateTable& operator=(ParsedSqlCreateTable&&) noexcept = default;
+
+  [[nodiscard]] const SqlIdentifier& table() const noexcept;
+  [[nodiscard]] std::span<const SqlColumnDeclaration> columns() const noexcept;
+  [[nodiscard]] const SqlIdentifier& event_time() const noexcept;
+  [[nodiscard]] std::span<const SqlIdentifier> ordering_key() const noexcept;
+  [[nodiscard]] const SqlExpression& partition_expression() const noexcept;
+  [[nodiscard]] std::span<const SqlIdentifier> shard_key() const noexcept;
+  [[nodiscard]] std::span<const SqlIdentifier> deduplication_key() const noexcept;
+  [[nodiscard]] const std::string& retention_interval() const noexcept;
+  [[nodiscard]] const std::string& system_history_retention_interval() const noexcept;
+  [[nodiscard]] const std::string& allowed_lateness_interval() const noexcept;
+  [[nodiscard]] const SourceSpan& span() const noexcept;
+
+private:
+  ParsedSqlCreateTable(SqlIdentifier table, std::vector<SqlColumnDeclaration> columns,
+                       SqlIdentifier event_time, std::vector<SqlIdentifier> ordering_key,
+                       SqlExpression partition_expression, std::vector<SqlIdentifier> shard_key,
+                       std::vector<SqlIdentifier> deduplication_key, std::string retention_interval,
+                       std::string system_history_retention_interval,
+                       std::string allowed_lateness_interval, SourceSpan span) noexcept;
+
+  SqlIdentifier table_;
+  std::vector<SqlColumnDeclaration> columns_;
+  SqlIdentifier event_time_;
+  std::vector<SqlIdentifier> ordering_key_;
+  SqlExpression partition_expression_;
+  std::vector<SqlIdentifier> shard_key_;
+  std::vector<SqlIdentifier> deduplication_key_;
+  std::string retention_interval_;
+  std::string system_history_retention_interval_;
+  std::string allowed_lateness_interval_;
+  SourceSpan span_;
+
+  friend class detail::SqlParser;
+};
+
+class ParsedSqlInsert {
+public:
+  ParsedSqlInsert() = delete;
+  ParsedSqlInsert(const ParsedSqlInsert&) = delete;
+  ParsedSqlInsert& operator=(const ParsedSqlInsert&) = delete;
+  ParsedSqlInsert(ParsedSqlInsert&&) noexcept = default;
+  ParsedSqlInsert& operator=(ParsedSqlInsert&&) noexcept = default;
+
+  [[nodiscard]] const SqlIdentifier& table() const noexcept;
+  [[nodiscard]] std::span<const SqlIdentifier> columns() const noexcept;
+  [[nodiscard]] std::span<const std::vector<SqlExpression>> rows() const noexcept;
+  [[nodiscard]] const SourceSpan& span() const noexcept;
+
+private:
+  ParsedSqlInsert(SqlIdentifier table, std::vector<SqlIdentifier> columns,
+                  std::vector<std::vector<SqlExpression>> rows, SourceSpan span) noexcept;
+
+  SqlIdentifier table_;
+  std::vector<SqlIdentifier> columns_;
+  std::vector<std::vector<SqlExpression>> rows_;
+  SourceSpan span_;
+
+  friend class detail::SqlParser;
+};
+
 } // namespace chronos::query
 
 #endif // CHRONOS_QUERY_AST_HPP_

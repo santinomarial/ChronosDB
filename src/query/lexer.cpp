@@ -6,6 +6,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <new>
 #include <optional>
 #include <stdexcept>
@@ -63,6 +64,7 @@ constexpr std::array kKeywords{
     KeywordEntry{"join", SqlKeyword::kJoin},
     KeywordEntry{"key", SqlKeyword::kKey},
     KeywordEntry{"last", SqlKeyword::kLast},
+    KeywordEntry{"lateness", SqlKeyword::kLateness},
     KeywordEntry{"latest", SqlKeyword::kLatest},
     KeywordEntry{"left", SqlKeyword::kLeft},
     KeywordEntry{"limit", SqlKeyword::kLimit},
@@ -132,8 +134,14 @@ static_assert(std::ranges::is_sorted(kKeywords, {}, &KeywordEntry::text));
 }
 
 [[nodiscard]] SqlKeyword keyword_for(const std::string_view text) noexcept {
-  const auto found = std::ranges::lower_bound(kKeywords, text, {}, &KeywordEntry::text);
+  const KeywordEntry* const found =
+      std::ranges::lower_bound(kKeywords, text, {}, &KeywordEntry::text);
   return found != kKeywords.end() && found->text == text ? found->keyword : SqlKeyword::kNone;
+}
+
+template <typename Value>
+[[nodiscard]] Value* optional_pointer(std::optional<Value>& value) noexcept {
+  return value.has_value() ? std::addressof(value.value()) : nullptr;
 }
 
 } // namespace
@@ -159,7 +167,7 @@ public:
       while (offset_ < input_.size()) {
         if (skip_space_or_comment()) {
           if (diagnostic_.has_value()) {
-            return std::unexpected(std::move(*diagnostic_));
+            return diagnostic_failure();
           }
           continue;
         }
@@ -167,22 +175,22 @@ public:
         const char current = input_[offset_];
         if ((current == 'x' || current == 'X') && peek(1U) == '\'') {
           if (!binary_literal(begin)) {
-            return std::unexpected(std::move(*diagnostic_));
+            return diagnostic_failure();
           }
         } else if (identifier_start(current)) {
           identifier(begin);
         } else if (current == '"') {
           if (!quoted(begin, '"', SqlTokenKind::kQuotedIdentifier,
                       SqlDiagnosticCode::kUnterminatedQuotedIdentifier)) {
-            return std::unexpected(std::move(*diagnostic_));
+            return diagnostic_failure();
           }
         } else if (current == '\'') {
           if (!quoted(begin, '\'', SqlTokenKind::kString, SqlDiagnosticCode::kUnterminatedString)) {
-            return std::unexpected(std::move(*diagnostic_));
+            return diagnostic_failure();
           }
         } else if (ascii_digit(current)) {
           if (!number(begin)) {
-            return std::unexpected(std::move(*diagnostic_));
+            return diagnostic_failure();
           }
         } else if (!punctuation(begin)) {
           return failure(SqlDiagnosticCode::kInvalidByte, begin, 1U,
@@ -211,6 +219,14 @@ public:
   }
 
 private:
+  [[nodiscard]] SqlResult<SqlTokenStream> diagnostic_failure() {
+    SqlDiagnostic* value = optional_pointer(diagnostic_);
+    if (value == nullptr) {
+      return failure(SqlDiagnosticCode::kInvalidByte, location_, 0U, common::StatusCode::kInternal,
+                     "SQL lexer lost its diagnostic");
+    }
+    return std::unexpected(std::move(*value));
+  }
   [[nodiscard]] char peek(const std::size_t distance) const noexcept {
     return offset_ + distance < input_.size() ? input_[offset_ + distance] : '\0';
   }
@@ -475,9 +491,11 @@ private:
                  SourceSpan{.begin = begin, .byte_length = offset_ - begin.byte_offset}});
   }
 
-  [[nodiscard]] SqlResult<SqlTokenStream>
-  failure(const SqlDiagnosticCode code, const SourceLocation begin, const std::size_t length,
-          const common::StatusCode status_code, std::string message) const {
+  [[nodiscard]] SqlResult<SqlTokenStream> static failure(const SqlDiagnosticCode code,
+                                                         const SourceLocation begin,
+                                                         const std::size_t length,
+                                                         const common::StatusCode status_code,
+                                                         std::string message) {
     return std::unexpected(SqlDiagnostic{code, SourceSpan{.begin = begin, .byte_length = length},
                                          common::Status{status_code, std::move(message)}});
   }

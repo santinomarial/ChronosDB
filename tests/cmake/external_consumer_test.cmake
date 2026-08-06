@@ -236,6 +236,12 @@ int main() {
   const auto sql_timestamp =
       chronos::query::parse_sql_timestamp_ns_literal("1970-01-01 00:00:00.000000001Z");
   const auto sql_select = chronos::query::parse_sql_v1_select("SELECT * FROM metrics");
+  using ParseCreateFunction = chronos::query::SqlResult<chronos::query::ParsedSqlCreateTable> (*)(
+      std::string_view, chronos::query::SqlParserLimits);
+  using ParseInsertFunction = chronos::query::SqlResult<chronos::query::ParsedSqlInsert> (*)(
+      std::string_view, chronos::query::SqlParserLimits);
+  const ParseCreateFunction parse_create = &chronos::query::parse_sql_v1_create_table;
+  const ParseInsertFunction parse_insert = &chronos::query::parse_sql_v1_insert;
   const auto query_catalog = chronos::query::QueryCatalogSnapshot::create(1U, {});
   const auto query_scalar = chronos::query::ScalarValue::float64(1.0);
   using BindSelectFunction = chronos::query::SqlResult<chronos::query::BoundSqlSelect> (*)(
@@ -408,6 +414,7 @@ int main() {
                  sql_tokens.has_value() && sql_tokens->tokens().size() == 5U &&
                  sql_timestamp.has_value() && *sql_timestamp == 1 &&
                  sql_select.has_value() && sql_select->items().size() == 1U &&
+                 parse_create != nullptr && parse_insert != nullptr &&
                  query_catalog.has_value() && query_catalog->tables().empty() &&
                  query_scalar.has_value() && !query_scalar->is_null() &&
                  bind_select != nullptr &&

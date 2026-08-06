@@ -84,6 +84,7 @@ enum class SqlKeyword : std::uint8_t {
   kIs,
   kJoin,
   kKey,
+  kLateness,
   kLatest,
   kLeft,
   kLimit,

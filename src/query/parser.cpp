@@ -9,6 +9,7 @@
 #include <limits>
 #include <new>
 #include <optional>
+#include <ranges>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -117,10 +118,11 @@ public:
         do {
           check_list(order_by.size(), current().span(), "ORDER BY item count exceeds the limit");
           SqlExpression expression = parse_expression();
-          const SqlOrderDirection direction =
-              match(SqlKeyword::kDesc) ? SqlOrderDirection::kDescending
-                                       : (match(SqlKeyword::kAsc) ? SqlOrderDirection::kAscending
-                                                                  : SqlOrderDirection::kAscending);
+          SqlOrderDirection direction = SqlOrderDirection::kAscending;
+          if (match(SqlKeyword::kDesc))
+            direction = SqlOrderDirection::kDescending;
+          else
+            static_cast<void>(match(SqlKeyword::kAsc));
           SqlNullOrder null_order = SqlNullOrder::kDefault;
           if (match(SqlKeyword::kNulls)) {
             if (match(SqlKeyword::kFirst)) {
@@ -183,7 +185,130 @@ public:
     }
   }
 
+  [[nodiscard]] SqlResult<ParsedSqlCreateTable> run_create_table() {
+    if (!valid_limits())
+      return invalid_limits<ParsedSqlCreateTable>();
+    try {
+      const SourceLocation begin = current().span().begin;
+      require(SqlKeyword::kCreate, "Expected CREATE TABLE statement");
+      require(SqlKeyword::kTable, "CREATE must be followed by TABLE");
+      SqlIdentifier table = parse_identifier("CREATE TABLE requires a table name");
+      require(SqlTokenKind::kLeftParen, "CREATE TABLE column list requires '('");
+      std::vector<SqlColumnDeclaration> columns;
+      do {
+        check_list(columns.size(), current().span(), "CREATE TABLE column count exceeds the limit");
+        SqlIdentifier name = parse_identifier("Column declaration requires a name");
+        schema::LogicalType type = parse_type();
+        bool nullable = true;
+        if (match(SqlKeyword::kNot)) {
+          require(SqlKeyword::kNull, "Column NOT must be followed by NULL");
+          nullable = false;
+        }
+        columns.push_back(
+            SqlColumnDeclaration{.name = std::move(name), .type = type, .nullable = nullable});
+      } while (match(SqlTokenKind::kComma));
+      require(SqlTokenKind::kRightParen, "CREATE TABLE column list is missing ')'");
+      require(SqlKeyword::kEvent, "CREATE TABLE requires EVENT TIME");
+      require(SqlKeyword::kTime, "EVENT must be followed by TIME");
+      SqlIdentifier event_time = parse_identifier("EVENT TIME requires a column");
+      require(SqlKeyword::kOrder, "CREATE TABLE requires ORDER KEY");
+      require(SqlKeyword::kKey, "ORDER must be followed by KEY");
+      std::vector<SqlIdentifier> ordering_key = parse_identifier_list("ORDER KEY");
+      require(SqlKeyword::kPartition, "CREATE TABLE requires PARTITION BY");
+      require(SqlKeyword::kBy, "PARTITION must be followed by BY");
+      SqlExpression partition = parse_expression();
+      require(SqlKeyword::kShard, "CREATE TABLE requires SHARD KEY");
+      require(SqlKeyword::kKey, "SHARD must be followed by KEY");
+      std::vector<SqlIdentifier> shard_key = parse_identifier_list("SHARD KEY");
+      std::vector<SqlIdentifier> deduplication_key;
+      if (match(SqlKeyword::kDedup)) {
+        require(SqlKeyword::kKey, "DEDUP must be followed by KEY");
+        deduplication_key = parse_identifier_list("DEDUP KEY");
+      }
+      require(SqlKeyword::kRetention, "CREATE TABLE requires RETENTION");
+      std::string retention = parse_interval("RETENTION");
+      require(SqlKeyword::kSystem, "CREATE TABLE requires SYSTEM HISTORY RETENTION");
+      require(SqlKeyword::kHistory, "SYSTEM must be followed by HISTORY");
+      require(SqlKeyword::kRetention, "SYSTEM HISTORY must be followed by RETENTION");
+      std::string history = parse_interval("SYSTEM HISTORY RETENTION");
+      require(SqlKeyword::kAllowed, "CREATE TABLE requires ALLOWED LATENESS");
+      require(SqlKeyword::kLateness, "ALLOWED must be followed by LATENESS");
+      std::string lateness = parse_interval("ALLOWED LATENESS");
+      const SqlToken& end = finish_statement("CREATE TABLE");
+      return ParsedSqlCreateTable{std::move(table),
+                                  std::move(columns),
+                                  std::move(event_time),
+                                  std::move(ordering_key),
+                                  std::move(partition),
+                                  std::move(shard_key),
+                                  std::move(deduplication_key),
+                                  std::move(retention),
+                                  std::move(history),
+                                  std::move(lateness),
+                                  span_between(begin, end.span())};
+    } catch (ParseFailure& failure) {
+      return std::unexpected(std::move(failure.diagnostic));
+    } catch (const std::bad_alloc&) {
+      return allocation_failure<ParsedSqlCreateTable>("CREATE TABLE parsing allocation failed");
+    } catch (const std::length_error&) {
+      return allocation_failure<ParsedSqlCreateTable>("CREATE TABLE AST exceeds container limits");
+    }
+  }
+
+  [[nodiscard]] SqlResult<ParsedSqlInsert> run_insert() {
+    if (!valid_limits())
+      return invalid_limits<ParsedSqlInsert>();
+    try {
+      const SourceLocation begin = current().span().begin;
+      require(SqlKeyword::kInsert, "Expected INSERT statement");
+      require(SqlKeyword::kInto, "INSERT must be followed by INTO");
+      SqlIdentifier table = parse_identifier("INSERT INTO requires a table name");
+      std::vector<SqlIdentifier> columns;
+      if (check(SqlTokenKind::kLeftParen))
+        columns = parse_identifier_list("INSERT column list");
+      require(SqlKeyword::kValues, "INSERT requires VALUES");
+      std::vector<std::vector<SqlExpression>> rows;
+      do {
+        check_list(rows.size(), current().span(), "INSERT row count exceeds the limit");
+        require(SqlTokenKind::kLeftParen, "INSERT row requires '('");
+        std::vector<SqlExpression> row;
+        do {
+          check_list(row.size(), current().span(), "INSERT row value count exceeds the limit");
+          row.push_back(parse_expression());
+        } while (match(SqlTokenKind::kComma));
+        require(SqlTokenKind::kRightParen, "INSERT row is missing ')'");
+        rows.push_back(std::move(row));
+      } while (match(SqlTokenKind::kComma));
+      const SqlToken& end = finish_statement("INSERT");
+      return ParsedSqlInsert{std::move(table), std::move(columns), std::move(rows),
+                             span_between(begin, end.span())};
+    } catch (ParseFailure& failure) {
+      return std::unexpected(std::move(failure.diagnostic));
+    } catch (const std::bad_alloc&) {
+      return allocation_failure<ParsedSqlInsert>("INSERT parsing allocation failed");
+    } catch (const std::length_error&) {
+      return allocation_failure<ParsedSqlInsert>("INSERT AST exceeds container limits");
+    }
+  }
+
 private:
+  [[nodiscard]] bool valid_limits() const noexcept {
+    return limits_.maximum_ast_nodes != 0U && limits_.maximum_expression_depth != 0U &&
+           limits_.maximum_list_elements != 0U;
+  }
+
+  template <typename Statement> [[nodiscard]] SqlResult<Statement> invalid_limits() const {
+    return std::unexpected(diagnostic(SqlDiagnosticCode::kResourceLimit, current().span(),
+                                      common::StatusCode::kInvalidArgument,
+                                      "SQL parser limits must be nonzero"));
+  }
+
+  template <typename Statement>
+  [[nodiscard]] SqlResult<Statement> allocation_failure(const std::string_view message) const {
+    return std::unexpected(diagnostic(SqlDiagnosticCode::kResourceLimit, current().span(),
+                                      common::StatusCode::kResourceExhausted, message));
+  }
+
   class ExpressionRecursionGuard {
   public:
     explicit ExpressionRecursionGuard(SqlParser& parser) noexcept : parser_(parser) {
@@ -219,7 +344,7 @@ private:
            tokens_.tokens()[index].keyword() == keyword;
   }
 
-  [[nodiscard]] bool contextual_identifier(const SqlToken& token) const noexcept {
+  [[nodiscard]] static bool contextual_identifier(const SqlToken& token) noexcept {
     if (token.kind() != SqlTokenKind::kKeyword)
       return false;
     switch (token.keyword()) {
@@ -273,14 +398,14 @@ private:
     return tokens_.tokens()[position_++];
   }
 
-  [[noreturn]] void fail(const SqlDiagnosticCode code, const SourceSpan span,
-                         const std::string_view message) const {
+  [[noreturn]] static void fail(const SqlDiagnosticCode code, const SourceSpan span,
+                                const std::string_view message) {
     throw ParseFailure{diagnostic(code, span, common::StatusCode::kInvalidArgument, message)};
   }
 
-  [[nodiscard]] SqlDiagnostic diagnostic(const SqlDiagnosticCode code, const SourceSpan span,
-                                         const common::StatusCode status_code,
-                                         const std::string_view message) const {
+  [[nodiscard]] static SqlDiagnostic diagnostic(const SqlDiagnosticCode code, const SourceSpan span,
+                                                const common::StatusCode status_code,
+                                                const std::string_view message) {
     return SqlDiagnostic{code, span, common::Status{status_code, std::string{message}}};
   }
 
@@ -307,6 +432,33 @@ private:
     account(token.span());
     return SqlIdentifier{token.text(), token.kind() == SqlTokenKind::kQuotedIdentifier,
                          token.span()};
+  }
+
+  [[nodiscard]] std::vector<SqlIdentifier> parse_identifier_list(const std::string_view clause) {
+    require(SqlTokenKind::kLeftParen, "Key/column list requires '('");
+    std::vector<SqlIdentifier> identifiers;
+    do {
+      check_list(identifiers.size(), current().span(), "Identifier list exceeds the limit");
+      identifiers.push_back(parse_identifier(clause));
+    } while (match(SqlTokenKind::kComma));
+    require(SqlTokenKind::kRightParen, "Key/column list is missing ')'");
+    return identifiers;
+  }
+
+  [[nodiscard]] std::string parse_interval(const std::string_view clause) {
+    require(SqlKeyword::kInterval, "Policy duration requires INTERVAL");
+    const SqlToken& value = require(SqlTokenKind::kString, clause);
+    account(value.span());
+    return value.text();
+  }
+
+  [[nodiscard]] const SqlToken& finish_statement(const std::string_view statement) {
+    if (match(SqlTokenKind::kSemicolon) && current().kind() == SqlTokenKind::kSemicolon)
+      fail(SqlDiagnosticCode::kUnexpectedToken, current().span(),
+           "SQL statement has more than one terminator");
+    const SqlToken& end = require(SqlTokenKind::kEnd, statement);
+    account(end.span());
+    return end;
   }
 
   [[nodiscard]] SqlSource parse_source() {
@@ -389,8 +541,8 @@ private:
       operators.push_back(previous().span().begin);
     }
     SqlExpression expression = parse_comparison();
-    for (auto iterator = operators.rbegin(); iterator != operators.rend(); ++iterator) {
-      expression = make_unary(SqlOperator::kNot, *iterator, std::move(expression));
+    for (const SourceLocation location : std::views::reverse(operators)) {
+      expression = make_unary(SqlOperator::kNot, location, std::move(expression));
     }
     return expression;
   }
@@ -521,8 +673,8 @@ private:
       operators.emplace_back(operation, previous().span().begin);
     }
     SqlExpression expression = parse_primary();
-    for (auto iterator = operators.rbegin(); iterator != operators.rend(); ++iterator) {
-      expression = make_unary(iterator->first, iterator->second, std::move(expression));
+    for (const auto& [operation, location] : std::views::reverse(operators)) {
+      expression = make_unary(operation, location, std::move(expression));
     }
     return expression;
   }
@@ -571,8 +723,7 @@ private:
       schema::LogicalType type = parse_type();
       const SqlToken& end = require(SqlTokenKind::kRightParen, "CAST is missing ')'");
       return make_expression(SqlExpressionKind::kCast, SqlLiteralKind::kNull, SqlOperator::kNone,
-                             {}, {}, std::move(children), std::move(type),
-                             span_between(begin, end.span()));
+                             {}, {}, std::move(children), type, span_between(begin, end.span()));
     }
     if (match(SqlTokenKind::kLeftParen)) {
       SqlExpression expression = parse_expression();
@@ -725,14 +876,9 @@ private:
       fail(SqlDiagnosticCode::kResourceLimit, span, "SQL expression depth exceeds the limit");
     }
     account(span);
-    return SqlExpression{kind,
-                         literal_kind,
-                         operation,
-                         std::move(text),
-                         std::move(name),
-                         std::move(children),
-                         std::move(cast_type),
-                         span};
+    return SqlExpression{
+        kind,      literal_kind, operation, std::move(text), std::move(name), std::move(children),
+        cast_type, span};
   }
 
   [[nodiscard]] std::size_t expression_depth(const SqlExpression& expression) const noexcept {
@@ -759,6 +905,22 @@ SqlResult<ParsedSqlSelect> parse_sql_v1_select(const std::string_view sql,
     return std::unexpected(tokens.error());
   }
   return detail::SqlParser{std::move(*tokens), limits}.run();
+}
+
+SqlResult<ParsedSqlCreateTable> parse_sql_v1_create_table(const std::string_view sql,
+                                                          const SqlParserLimits limits) {
+  SqlResult<SqlTokenStream> tokens = tokenize_sql_v1(sql, limits.lexer);
+  if (!tokens.has_value())
+    return std::unexpected(tokens.error());
+  return detail::SqlParser{std::move(*tokens), limits}.run_create_table();
+}
+
+SqlResult<ParsedSqlInsert> parse_sql_v1_insert(const std::string_view sql,
+                                               const SqlParserLimits limits) {
+  SqlResult<SqlTokenStream> tokens = tokenize_sql_v1(sql, limits.lexer);
+  if (!tokens.has_value())
+    return std::unexpected(tokens.error());
+  return detail::SqlParser{std::move(*tokens), limits}.run_insert();
 }
 
 } // namespace chronos::query

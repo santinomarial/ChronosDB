@@ -23,8 +23,7 @@ SqlExpression::SqlExpression(const SqlExpressionKind kind, const SqlLiteralKind 
                              std::optional<schema::LogicalType> cast_type,
                              const SourceSpan span) noexcept
     : kind_(kind), literal_kind_(literal_kind), operation_(operation), text_(std::move(text)),
-      name_(std::move(name)), children_(std::move(children)), cast_type_(std::move(cast_type)),
-      span_(span) {}
+      name_(std::move(name)), children_(std::move(children)), cast_type_(cast_type), span_(span) {}
 
 SqlExpressionKind SqlExpression::kind() const noexcept {
   return kind_;
@@ -117,6 +116,72 @@ const std::optional<std::uint64_t>& ParsedSqlSelect::limit() const noexcept {
   return limit_;
 }
 const SourceSpan& ParsedSqlSelect::span() const noexcept {
+  return span_;
+}
+
+ParsedSqlCreateTable::ParsedSqlCreateTable(
+    SqlIdentifier table, std::vector<SqlColumnDeclaration> columns, SqlIdentifier event_time,
+    std::vector<SqlIdentifier> ordering_key, SqlExpression partition_expression,
+    std::vector<SqlIdentifier> shard_key, std::vector<SqlIdentifier> deduplication_key,
+    std::string retention_interval, std::string system_history_retention_interval,
+    std::string allowed_lateness_interval, const SourceSpan span) noexcept
+    : table_(std::move(table)), columns_(std::move(columns)), event_time_(std::move(event_time)),
+      ordering_key_(std::move(ordering_key)),
+      partition_expression_(std::move(partition_expression)), shard_key_(std::move(shard_key)),
+      deduplication_key_(std::move(deduplication_key)),
+      retention_interval_(std::move(retention_interval)),
+      system_history_retention_interval_(std::move(system_history_retention_interval)),
+      allowed_lateness_interval_(std::move(allowed_lateness_interval)), span_(span) {}
+
+const SqlIdentifier& ParsedSqlCreateTable::table() const noexcept {
+  return table_;
+}
+std::span<const SqlColumnDeclaration> ParsedSqlCreateTable::columns() const noexcept {
+  return columns_;
+}
+const SqlIdentifier& ParsedSqlCreateTable::event_time() const noexcept {
+  return event_time_;
+}
+std::span<const SqlIdentifier> ParsedSqlCreateTable::ordering_key() const noexcept {
+  return ordering_key_;
+}
+const SqlExpression& ParsedSqlCreateTable::partition_expression() const noexcept {
+  return partition_expression_;
+}
+std::span<const SqlIdentifier> ParsedSqlCreateTable::shard_key() const noexcept {
+  return shard_key_;
+}
+std::span<const SqlIdentifier> ParsedSqlCreateTable::deduplication_key() const noexcept {
+  return deduplication_key_;
+}
+const std::string& ParsedSqlCreateTable::retention_interval() const noexcept {
+  return retention_interval_;
+}
+const std::string& ParsedSqlCreateTable::system_history_retention_interval() const noexcept {
+  return system_history_retention_interval_;
+}
+const std::string& ParsedSqlCreateTable::allowed_lateness_interval() const noexcept {
+  return allowed_lateness_interval_;
+}
+const SourceSpan& ParsedSqlCreateTable::span() const noexcept {
+  return span_;
+}
+
+ParsedSqlInsert::ParsedSqlInsert(SqlIdentifier table, std::vector<SqlIdentifier> columns,
+                                 std::vector<std::vector<SqlExpression>> rows,
+                                 const SourceSpan span) noexcept
+    : table_(std::move(table)), columns_(std::move(columns)), rows_(std::move(rows)), span_(span) {}
+
+const SqlIdentifier& ParsedSqlInsert::table() const noexcept {
+  return table_;
+}
+std::span<const SqlIdentifier> ParsedSqlInsert::columns() const noexcept {
+  return columns_;
+}
+std::span<const std::vector<SqlExpression>> ParsedSqlInsert::rows() const noexcept {
+  return rows_;
+}
+const SourceSpan& ParsedSqlInsert::span() const noexcept {
   return span_;
 }
 

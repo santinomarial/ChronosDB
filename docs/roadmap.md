@@ -328,7 +328,9 @@ No phase passes because its code merely compiles. A phase passes only when its a
   oracle now executes system-time snapshot resolution, LATEST, ASOF/ASOF LEFT, WHERE, projection,
   deterministic ORDER BY tie-breaking, and LIMIT. Grouped and global COUNT, exact widened SUM,
   AVG, MIN/MAX, and population/sample variance implement the frozen NULL, NaN, empty-input, and
-  final-overflow rules. CREATE TABLE/INSERT parsing remains unimplemented.
+  final-overflow rules. The bounded owned statement AST/parser now covers the canonical CREATE
+  TABLE policy clauses and finite multi-row INSERT VALUES surface; DDL/INSERT semantic binding and
+  INSERT materialization remain unimplemented.
 
 - **Scope:** specify a typed analytical SQL subset; custom lexer/parser; catalog binding; scalar expression/relational reference execution; event-time and system-time query syntax required by initial workloads.
 - **Explicit non-scope:** full SQL compliance, vectorization, cost-based optimization, distributed SQL, unsupported mutation syntax, and streaming syntax beyond contracts scheduled later.

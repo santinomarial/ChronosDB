@@ -18,6 +18,10 @@ struct SqlParserLimits {
 
 [[nodiscard]] SqlResult<ParsedSqlSelect> parse_sql_v1_select(std::string_view sql,
                                                              SqlParserLimits limits = {});
+[[nodiscard]] SqlResult<ParsedSqlCreateTable>
+parse_sql_v1_create_table(std::string_view sql, SqlParserLimits limits = {});
+[[nodiscard]] SqlResult<ParsedSqlInsert> parse_sql_v1_insert(std::string_view sql,
+                                                             SqlParserLimits limits = {});
 
 } // namespace chronos::query
 
