@@ -291,6 +291,17 @@ std::span<const std::string> LoadedManifestGeneration::temporary_manifests() con
   return implementation_->temporary_manifests_;
 }
 
+LoadedPartImage::LoadedPartImage(PartDescriptor descriptor, std::vector<std::byte> bytes) noexcept
+    : descriptor_(descriptor), bytes_(std::move(bytes)) {}
+
+const PartDescriptor& LoadedPartImage::descriptor() const noexcept {
+  return descriptor_;
+}
+
+common::ByteView LoadedPartImage::bytes() const noexcept {
+  return bytes_;
+}
+
 class ManifestStorage::Impl {
 public:
   Impl(io::PosixDirectory root, io::PosixDirectory parts, io::PosixDirectory manifests,
@@ -894,6 +905,70 @@ ManifestStorage::load_selected_manifest(const ManifestLoadRequest& request) cons
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
                                                   "Cannot allocate loaded Manifest generation"});
+  }
+}
+
+common::Result<std::vector<LoadedPartImage>> ManifestStorage::load_selected_part_images(
+    const LoadedManifestGeneration& selected, const std::span<const cseg::PartId> part_ids,
+    const std::span<const TabletSchemaBinding> schema_bindings,
+    const ReferencedPartValidationLimits limits) const {
+  if (part_ids.empty()) {
+    return common::make_unexpected(invalid("Selected part-image request is empty"));
+  }
+  for (std::size_t index = 1U; index < part_ids.size(); ++index) {
+    if (!(part_ids[index - 1U] < part_ids[index])) {
+      return common::make_unexpected(
+          invalid("Selected part-image identities are not strictly sorted"));
+    }
+  }
+  common::Result<ManifestNamespaceSnapshot> snapshot = scan_namespace();
+  if (!snapshot.has_value()) {
+    return common::make_unexpected(snapshot.error());
+  }
+  if (snapshot->generations.back() != selected.generation()) {
+    return common::make_unexpected(
+        invalid("Part-image generation is no longer the selected Manifest"));
+  }
+  try {
+    std::vector<LoadedPartImage> images;
+    images.reserve(part_ids.size());
+    for (const cseg::PartId& part_id : part_ids) {
+      const auto descriptor =
+          std::ranges::find(selected.parts(), part_id, &PartDescriptor::part_id);
+      if (descriptor == selected.parts().end()) {
+        return common::make_unexpected(
+            invalid("Selected part-image identity is not referenced by its Manifest"));
+      }
+      const TabletSchemaBinding* binding = find_binding(schema_bindings, descriptor->tablet_id);
+      const std::shared_ptr<const schema::TableSchema> schema_value =
+          binding == nullptr ? nullptr : binding->lineage.get().find(descriptor->schema_id);
+      if (schema_value == nullptr) {
+        return common::make_unexpected(invalid("Selected part image has no exact schema binding"));
+      }
+      const std::string file_name = part_file_name(part_id);
+      common::Result<std::vector<std::byte>> bytes = read_final_file(
+          implementation_->parts_, {.name = file_name,
+                                    .maximum_length = limits.decode.max_file_length,
+                                    .exact_length = descriptor->file_length,
+                                    .description = "selected final CSEG part image"});
+      if (!bytes.has_value()) {
+        return common::make_unexpected(bytes.error());
+      }
+      common::Status validation =
+          validate_manifest_v1_part_image(*descriptor, selected.wal_id(), *schema_value,
+                                          {.file_name = file_name, .bytes = *bytes}, limits);
+      if (!validation.is_ok()) {
+        return common::make_unexpected(std::move(validation));
+      }
+      images.push_back(LoadedPartImage{*descriptor, std::move(*bytes)});
+    }
+    return images;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                  "Cannot allocate selected part images"});
+  } catch (const std::length_error&) {
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                  "Selected part images exceed container limits"});
   }
 }
 

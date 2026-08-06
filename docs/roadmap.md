@@ -278,8 +278,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > output first, reread both final sets for another complete equivalence proof, and reuse the existing
 > atomic Manifest directory-sync boundary while retaining every input final. A separate release/
 > acquire publication path selects the complete durable replacement without changing live heads;
-> held predecessor snapshots retain their exact Manifest bytes and input descriptors. Pin-aware
-> reclamation, indexes, and full workload benchmark evidence remain to be implemented.
+> held predecessor snapshots retain their exact Manifest bytes and input descriptors. The
+> single-threaded coordinator now composes authoritative input reread, merge, both durable installs,
+> reload, publication, and exact durable-successor resumption. Pin-aware reclamation, indexes, and
+> full workload benchmark evidence remain to be implemented.
 
 - **Scope:** zone maps, sparse indexes, optional scoped secondary indexes; delta parts for late/out-of-order versions; selection and merge policy; atomic compaction installation; safe reclamation.
 - **Explicit non-scope:** indexes required for correctness, arbitrary in-place updates, distributed compaction, object tiering, and undocumented history loss.

@@ -101,6 +101,17 @@ expose the exact input descriptors and Manifest bytes after the publisher and st
 gone. The filesystem inputs are still retained because publication pins alone do not yet authorize
 unlink.
 
+`AppendOnlyCompactionCoordinator` is the single-threaded storage-owner composition. Given an exact
+sorted input identity set and caller-generated fresh output/nonces, it rereads owned validated input
+images from the currently selected Manifest, resolves their exact retained schema, runs the
+reference merger, installs the output, builds and installs the replacement generation, reloads it,
+and calls the compaction publisher. If storage is exactly one generation ahead of publication and
+that generation validates as this same replacement, it resumes publication without reinstalling.
+A failure before Manifest durability leaves the coordinator retryable (the caller must use a fresh
+identity if an orphan output was installed); an unexpected failure once a successor is durable
+fails the coordinator closed for restart recovery. Saturating metrics distinguish attempts,
+failures, resumptions, input parts, rows, and output bytes.
+
 ## Likely review and interview questions
 
 - Why are counts or one digest insufficient? They do not prove multiplicity, exact cells, system

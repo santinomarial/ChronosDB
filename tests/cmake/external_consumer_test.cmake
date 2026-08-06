@@ -69,6 +69,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/manifest/checkpoint_builder.hpp>
 #include <chronos/manifest/codec.hpp>
 #include <chronos/manifest/compaction.hpp>
+#include <chronos/manifest/compaction_coordinator.hpp>
 #include <chronos/manifest/compaction_equivalence.hpp>
 #include <chronos/manifest/generation_builder.hpp>
 #include <chronos/manifest/layout.hpp>
@@ -280,6 +281,15 @@ int main() {
           const chronos::manifest::ManifestLoadRequest&) const;
   const LoadSelectedManifestFunction load_selected_manifest =
       &chronos::manifest::ManifestStorage::load_selected_manifest;
+  using LoadSelectedPartImagesFunction =
+      chronos::common::Result<std::vector<chronos::manifest::LoadedPartImage>> (
+          chronos::manifest::ManifestStorage::*)(
+          const chronos::manifest::LoadedManifestGeneration&,
+          std::span<const chronos::cseg::PartId>,
+          std::span<const chronos::manifest::TabletSchemaBinding>,
+          chronos::manifest::ReferencedPartValidationLimits) const;
+  const LoadSelectedPartImagesFunction load_selected_part_images =
+      &chronos::manifest::ManifestStorage::load_selected_part_images;
   using FlushSealedHeadFunction =
       chronos::common::Result<chronos::manifest::EncodedSealedHeadPart> (*)(
           const chronos::manifest::SealedHeadFlushRequest&);
@@ -306,6 +316,11 @@ int main() {
           const chronos::manifest::DurableCompactionPublicationRequest&);
   const PublishCompactionFunction publish_compaction =
       &chronos::manifest::DatabaseStoragePublisher::publish_compaction_manifest;
+  using CreateCompactionCoordinatorFunction =
+      chronos::common::Result<chronos::manifest::AppendOnlyCompactionCoordinator> (*)(
+          chronos::manifest::ManifestStorage&, chronos::manifest::DatabaseStoragePublisher&);
+  const CreateCompactionCoordinatorFunction create_compaction_coordinator =
+      &chronos::manifest::AppendOnlyCompactionCoordinator::create;
   using CreateFlushCoordinatorFunction =
       chronos::common::Result<chronos::manifest::SealedHeadFlushCoordinator> (*)(
           std::shared_ptr<chronos::ingest::SealedHeadFlushQueue>,
@@ -344,9 +359,11 @@ int main() {
                  scan_manifest_namespace != nullptr &&
                  cleanup_manifest_temporaries != nullptr &&
                  install_manifest != nullptr && manifest_metrics != nullptr &&
-                 load_selected_manifest != nullptr && flush_sealed_head != nullptr &&
+                 load_selected_manifest != nullptr && load_selected_part_images != nullptr &&
+                 flush_sealed_head != nullptr &&
                  build_manifest != nullptr && build_checkpoint != nullptr &&
                  create_storage_publisher != nullptr && publish_compaction != nullptr &&
+                 create_compaction_coordinator != nullptr &&
                  create_flush_coordinator != nullptr &&
                  recover_manifest_columnar != nullptr &&
                  stored_page.has_value() && stored_page->bytes().size() == 1U &&

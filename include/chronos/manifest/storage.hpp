@@ -123,6 +123,26 @@ struct ManifestLoadRequest {
   ReferencedPartValidationLimits part_validation_limits;
 };
 
+class LoadedPartImage {
+public:
+  LoadedPartImage() = delete;
+  LoadedPartImage(const LoadedPartImage&) = delete;
+  LoadedPartImage& operator=(const LoadedPartImage&) = delete;
+  LoadedPartImage(LoadedPartImage&&) noexcept = default;
+  LoadedPartImage& operator=(LoadedPartImage&&) noexcept = default;
+
+  [[nodiscard]] const PartDescriptor& descriptor() const noexcept;
+  [[nodiscard]] common::ByteView bytes() const noexcept;
+
+private:
+  LoadedPartImage(PartDescriptor descriptor, std::vector<std::byte> bytes) noexcept;
+
+  PartDescriptor descriptor_;
+  std::vector<std::byte> bytes_;
+
+  friend class ManifestStorage;
+};
+
 // Owns the exact selected Manifest bytes and parsed descriptor state. Returned spans and byte views
 // remain valid until this move-only owner is destroyed or moved from. Orphan and temporary names
 // are observations from the same locked namespace scan; no cleanup or publication is performed.
@@ -200,6 +220,14 @@ public:
   // an owned unpublished result. Recognized temporaries and unreferenced finals are only reported.
   [[nodiscard]] common::Result<LoadedManifestGeneration>
   load_selected_manifest(const ManifestLoadRequest& request) const;
+
+  // Rereads exact strictly sorted part identities from the currently selected generation and
+  // returns owning validated images. The supplied generation must still be the namespace maximum.
+  [[nodiscard]] common::Result<std::vector<LoadedPartImage>>
+  load_selected_part_images(const LoadedManifestGeneration& selected,
+                            std::span<const cseg::PartId> part_ids,
+                            std::span<const TabletSchemaBinding> schema_bindings,
+                            ReferencedPartValidationLimits limits) const;
 
   [[nodiscard]] bool is_usable() const noexcept;
   [[nodiscard]] common::Status poison_status() const;

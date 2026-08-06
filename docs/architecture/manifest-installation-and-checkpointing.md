@@ -279,6 +279,13 @@ live tablet/head pins, and release-publishes the successor. Acquire readers see 
 predecessor or successor, and held predecessor snapshots retain their exact Manifest owner and input
 descriptors. Pin-aware final-file reclamation remains a separate Phase 7 boundary.
 
+The single-threaded append-only compaction coordinator composes these boundaries under the existing
+Manifest lock. It rereads the selected final inputs, installs one proven output, installs and
+reloads the exact replacement generation, then publishes. If the namespace is exactly one valid
+compaction generation ahead of the in-memory publication, it resumes at publication only. Any other
+post-durability mismatch fails closed for startup recovery; pre-Manifest failures retain the old
+selected generation and never authorize input deletion.
+
 Normal service remains unavailable while the storage owner performs:
 
 1. open the durable database, `parts/`, and `manifest/` directories and acquire `manifest/LOCK`;
