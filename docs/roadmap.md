@@ -282,8 +282,12 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > single-threaded coordinator now composes authoritative input reread, merge, both durable installs,
 > reload, publication, and exact durable-successor resumption. A subprocess SIGKILL matrix covers
 > every output/Manifest write, readback, sync, rename, directory sync, and publication boundary and
-> proves equivalent old-or-new recovery with conservative input retention. Pin-aware reclamation,
-> indexes, and full workload benchmark evidence remain to be implemented.
+> proves equivalent old-or-new recovery with conservative input retention. Pruning/planning,
+> pin-aware reclamation, and full workload benchmark evidence remain to be implemented.
+> ADR 0019 now accepts the remaining correctness boundary: authenticated CSEG event-time zone maps
+> and granule sparse entries with scan fallback, rebuildable base/delta planning hints, deterministic
+> bounded selection, and exact predecessor-pin-gated final-part reclamation. Its implementation and
+> evidence remain to be completed; durable secondary sidecars and old-Manifest floors stay deferred.
 
 - **Scope:** zone maps, sparse indexes, optional scoped secondary indexes; delta parts for late/out-of-order versions; selection and merge policy; atomic compaction installation; safe reclamation.
 - **Explicit non-scope:** indexes required for correctness, arbitrary in-place updates, distributed compaction, object tiering, and undocumented history loss.
