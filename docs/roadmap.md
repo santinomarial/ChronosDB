@@ -265,6 +265,12 @@ No phase passes because its code merely compiles. A phase passes only when its a
 
 ## Phase 7 — Sparse indexes, out-of-order delta parts, and compaction
 
+> **Status: first compaction decision accepted.** ADR 0018 freezes the initial append-only boundary:
+> unchanged CSEG v1 rows, deterministic complete-tuple merge, independent full-row equivalence,
+> fresh output identities, Manifest v1 atomic replacement, and conservative retention of inputs.
+> Transition, merge, installation/publication, pin-aware reclamation, index, and benchmark evidence
+> remain to be implemented.
+
 - **Scope:** zone maps, sparse indexes, optional scoped secondary indexes; delta parts for late/out-of-order versions; selection and merge policy; atomic compaction installation; safe reclamation.
 - **Explicit non-scope:** indexes required for correctness, arbitrary in-place updates, distributed compaction, object tiering, and undocumented history loss.
 - **Required artifacts:** index and delta specifications; compaction/version-resolution ADRs; planner/executor; reference merger; retention and reclamation contract; learning document.
