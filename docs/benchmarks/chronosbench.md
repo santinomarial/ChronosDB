@@ -1,6 +1,9 @@
 # ChronosBench Workload Suite
 
-> **Status: planned, not implemented.** ChronosBench is the future reproducible workload suite. It must emit the complete [benchmark manifest](benchmark-contract.md) and validate results before reporting speed.
+> **Status: planned as a complete suite.** Focused WAL and Manifest-flush harnesses implement
+> physical subsets of scenarios 2, 14, and 16, but not the end-to-end product workloads below.
+> ChronosBench must emit the complete [benchmark manifest](benchmark-contract.md) and validate
+> results before reporting speed.
 
 ## Dataset profiles
 

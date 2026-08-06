@@ -1,9 +1,10 @@
 # Benchmark Publication Contract
 
-> **Status: contract implemented by the focused WAL harness; no result is published here.** The
-> [WAL benchmark harness](wal-benchmarks.md) emits reviewable local WAL measurement artifacts. The
-> broader ChronosDB engine and ChronosBench suite remain unimplemented. This contract governs every
-> measurement under [ADR 0012](../adr/0012-correctness-testing-and-performance-evidence.md).
+> **Status: contract implemented by focused WAL and Manifest-flush harnesses; no result is published
+> here.** The [WAL](wal-benchmarks.md) and [flush](flush-benchmarks.md) harnesses emit reviewable
+> local measurement artifacts. The broader ChronosBench suite remains unimplemented. This contract
+> governs every measurement under
+> [ADR 0012](../adr/0012-correctness-testing-and-performance-evidence.md).
 
 ## Required run manifest
 

@@ -345,6 +345,14 @@ chronos_set_project_warnings(chronos-walbench)
 chronos_enable_sanitizers(chronos-walbench)
 chronos_enable_static_analysis(chronos-walbench)
 
+add_executable(chronos-flushbench tools/chronos-flushbench/main.cpp)
+set_target_properties(chronos-flushbench PROPERTIES CXX_EXTENSIONS OFF)
+target_compile_features(chronos-flushbench PRIVATE cxx_std_23)
+target_link_libraries(chronos-flushbench PRIVATE chronos::manifest Threads::Threads)
+chronos_set_project_warnings(chronos-flushbench)
+chronos_enable_sanitizers(chronos-flushbench)
+chronos_enable_static_analysis(chronos-flushbench)
+
 if(CHRONOS_BUILD_TESTS)
   enable_testing()
   chronos_fetch_googletest()
@@ -698,6 +706,15 @@ if(CHRONOS_BUILD_TESTS)
       "-DCHRONOS_WALBENCH=$<TARGET_FILE:chronos-walbench>"
       "-DCHRONOS_TEST_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/walbench_smoke_test.cmake"
+  )
+
+  add_test(
+    NAME FlushBenchmarkSmokeTest.ArtifactsAndRecovery
+    COMMAND
+      "${CMAKE_COMMAND}"
+      "-DCHRONOS_FLUSHBENCH=$<TARGET_FILE:chronos-flushbench>"
+      "-DCHRONOS_TEST_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/flushbench_smoke_test.cmake"
   )
 
   add_test(

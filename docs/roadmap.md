@@ -240,7 +240,11 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > retirement, and receipt-gated completion with fail-closed post-Manifest handling and metrics.
 > A subprocess SIGKILL matrix now stops after every part/Manifest write, file sync, rename, and
 > directory sync, then proves recognized-temporary cleanup, orphan retention, complete old-or-new
-> selection, and byte-identical repeated recovery. Broader Phase 6 measurement evidence remains.
+> selection, and byte-identical repeated recovery. An installed reproducible flush harness now
+> preserves real CSEG/Manifest/WAL images and raw samples while measuring durable flush throughput,
+> concurrent publication interference, Manifest growth, repeated startup/WAL replay, sync
+> amplification, and temporary/durable space amplification under an executable correctness gate.
+> Reviewed platform/device campaigns remain before declaring the measurement gate complete.
 
 - **Scope:** manifest generations/version edits; atomic durable part installation; sealed-head flush; checkpoint/log coverage; startup reconciliation; safe temporary-file handling.
 - **Explicit non-scope:** compaction, delta parts, distributed metadata, object storage, and aggressive garbage collection beyond proven safe ownership.

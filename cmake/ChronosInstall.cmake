@@ -17,6 +17,7 @@ function(chronos_configure_installation)
       chronos_manifest
       chronosctl
       chronos-csegdump
+      chronos-flushbench
       chronos-waldump
       chronos-walbench
     EXPORT ChronosTargets

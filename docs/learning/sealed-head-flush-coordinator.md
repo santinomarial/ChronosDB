@@ -99,6 +99,15 @@ new storage owner, cleans recognized temporaries, validates old-or-new selection
 selection byte-for-byte. Header self-containment and installed external-consumer compilation protect
 the public API.
 
+`chronos-flushbench` supplies controlled mixed-path measurement without weakening correctness. It
+drives the production coordinator through successive generations while equivalent reader threads
+acquire the aggregate publication before and during flush. Each repetition retains raw latency
+samples plus the real CSEG, Manifest, and synchronized WAL image; first and repeated recovery must
+select identical Manifest bytes and replay exact command/row counts before the run becomes valid.
+The harness reports file/directory sync counts, immutable Manifest growth, and exact candidate/final
+byte ratios. Results become evidence only when the release wrapper and benchmark publication
+contract artifacts are retained and independently reviewed.
+
 - Why is an orphan part safe? No selected Manifest references it, and final files are immutable.
 - Why reload after Manifest installation? Publication must retain the exact bytes selected by the
   durable namespace, not merely trust the pre-write candidate object.

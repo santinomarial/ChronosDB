@@ -51,6 +51,9 @@
 > every part/Manifest write, file sync, rename, and directory sync, then proves repeated recovery
 > selects one complete generation and cleans only recognized temporaries. Retry retention and
 > routing/admission remain unimplemented.
+> A separate installed flush-harness smoke test requires exact durable generation/part/retry state,
+> bounded raw foreground samples, byte-identical repeated Manifest selection, and exact repeated WAL
+> suffix replay before marking its measurement artifacts valid.
 > Query and distributed harnesses also remain planned for their roadmap phases.
 
 ## Test types
