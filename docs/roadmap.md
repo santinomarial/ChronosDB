@@ -288,8 +288,9 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > and granule sparse entries with scan fallback, rebuildable base/delta planning hints, deterministic
 > bounded selection, and exact predecessor-pin-gated final-part reclamation. Its implementation and
 > evidence remain to be completed; the owned event-time part/granule pruning plan and deterministic
-> no-false-negative property oracle are now implemented. Durable secondary sidecars and
-> old-Manifest floors stay deferred.
+> no-false-negative property oracle are now implemented, along with rebuildable base/delta
+> classification and deterministic resource-bounded overlap selection. Durable secondary sidecars
+> and old-Manifest floors stay deferred.
 
 - **Scope:** zone maps, sparse indexes, optional scoped secondary indexes; delta parts for late/out-of-order versions; selection and merge policy; atomic compaction installation; safe reclamation.
 - **Explicit non-scope:** indexes required for correctness, arbitrary in-place updates, distributed compaction, object tiering, and undocumented history loss.

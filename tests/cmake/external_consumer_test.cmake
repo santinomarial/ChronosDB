@@ -72,6 +72,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/manifest/compaction.hpp>
 #include <chronos/manifest/compaction_coordinator.hpp>
 #include <chronos/manifest/compaction_equivalence.hpp>
+#include <chronos/manifest/compaction_planner.hpp>
 #include <chronos/manifest/generation_builder.hpp>
 #include <chronos/manifest/layout.hpp>
 #include <chronos/manifest/naming.hpp>
@@ -327,6 +328,12 @@ int main() {
           chronos::manifest::ManifestStorage&, chronos::manifest::DatabaseStoragePublisher&);
   const CreateCompactionCoordinatorFunction create_compaction_coordinator =
       &chronos::manifest::AppendOnlyCompactionCoordinator::create;
+  using PlanCompactionFunction =
+      chronos::common::Result<std::optional<chronos::manifest::PlannedAppendOnlyCompaction>> (*)(
+          std::span<const chronos::manifest::PartDescriptor>,
+          chronos::manifest::AppendOnlyCompactionPlannerLimits);
+  const PlanCompactionFunction plan_compaction =
+      &chronos::manifest::plan_append_only_compaction;
   using CreateFlushCoordinatorFunction =
       chronos::common::Result<chronos::manifest::SealedHeadFlushCoordinator> (*)(
           std::shared_ptr<chronos::ingest::SealedHeadFlushQueue>,
@@ -370,6 +377,7 @@ int main() {
                  build_manifest != nullptr && build_checkpoint != nullptr &&
                  create_storage_publisher != nullptr && publish_compaction != nullptr &&
                  create_compaction_coordinator != nullptr &&
+                 plan_compaction != nullptr &&
                  create_flush_coordinator != nullptr &&
                  recover_manifest_columnar != nullptr &&
                  stored_page.has_value() && stored_page->bytes().size() == 1U &&

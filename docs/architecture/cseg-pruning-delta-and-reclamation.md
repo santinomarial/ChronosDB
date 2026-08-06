@@ -85,3 +85,9 @@ and performs no endpoint arithmetic. Deterministic property tests compare it wit
 integer oracle and require the plan to contain every possible oracle match; conservative false
 positives remain legal. The CSEG benchmark measures 64, 4,096, and 65,536 authenticated granule
 entries with declared selectivity and excludes metadata decoding from the timed loop.
+
+The rebuildable classifier and deterministic bounded selector are also implemented. Their
+benchmark uses one tablet/schema with every eighth arrival shifted four event ranges late and
+records selected fan-in at 128, 4,096, and 65,536 input descriptors. It times validation,
+classification, grouping, overlap selection, checked accounting, and owned-plan construction; it
+does not execute or claim compaction throughput.

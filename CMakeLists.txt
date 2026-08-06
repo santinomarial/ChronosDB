@@ -287,6 +287,7 @@ add_library(
   src/manifest/compaction.cpp
   src/manifest/compaction_coordinator.cpp
   src/manifest/compaction_equivalence.cpp
+  src/manifest/compaction_planner.cpp
   src/manifest/generation_builder.cpp
   src/manifest/layout.cpp
   src/manifest/naming.cpp
@@ -632,6 +633,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/manifest/compaction_crash_matrix_test.cpp
     tests/manifest/compaction_equivalence_header_self_contained.cpp
     tests/manifest/compaction_equivalence_test.cpp
+    tests/manifest/compaction_planner_header_self_contained.cpp
+    tests/manifest/compaction_planner_test.cpp
     tests/manifest/format_header_self_contained.cpp
     tests/manifest/format_test.cpp
     tests/manifest/generation_builder_header_self_contained.cpp
@@ -854,6 +857,7 @@ if(CHRONOS_BUILD_BENCHMARKS)
   add_executable(
     chronos_manifest_benchmarks
     benchmarks/manifest/compaction_equivalence_benchmark.cpp
+    benchmarks/manifest/compaction_planner_benchmark.cpp
     benchmarks/manifest/codec_benchmark.cpp
     benchmarks/manifest/publication_benchmark.cpp
     benchmarks/manifest/sealed_head_flush_benchmark.cpp

@@ -121,6 +121,22 @@ rows equivalent when generation 3 won, and then repeats recovery byte-for-byte. 
 that crossed its rename before the Manifest did is reported as an orphan, never promoted by
 guessing.
 
+## Rebuildable delta roles and candidate planning
+
+`classify_append_only_parts()` reconstructs one role per immutable descriptor without adding a
+durable flag. Within each exact table/tablet/schema group it orders arrivals by maximum record
+sequence and PartId, advances the greatest event-time maximum, and labels a later part `DELTA`
+only when its minimum falls behind that frontier. The label changes scoring and metrics, never row
+visibility or recovery.
+
+`plan_append_only_compaction()` validates descriptor shape and identity uniqueness under a part
+limit, then prefers the earliest delta plus directly overlapping neighbors. If none qualifies, it
+uses the first closed-range overlap component, including touching ranges. Fan-in, aggregate input
+bytes, and rows are checked and bounded; the returned owned PartIds are strictly sorted for the
+coordinator. A successful empty optional means there is no worthwhile bounded candidate, not an
+error and never permission to omit a part from scans. Generated property tests require repeated
+plans to be identical, group-exact, sorted, and within every configured limit.
+
 ## Likely review and interview questions
 
 - Why are counts or one digest insufficient? They do not prove multiplicity, exact cells, system
