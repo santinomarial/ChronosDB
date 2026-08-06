@@ -1,6 +1,7 @@
 #include "chronos/columnar/column_vector.hpp"
 #include "chronos/common/uuid.hpp"
 #include "chronos/cseg/part_codec.hpp"
+#include "chronos/cseg/validator.hpp"
 #include "chronos/schema/identity.hpp"
 #include "chronos/schema/logical_type.hpp"
 
@@ -193,10 +194,38 @@ void benchmark_part_decode(benchmark::State& state) {
   state.SetLabel("metadata CRC + all page CRC/decompression/PLAIN + padding; local only");
 }
 
+void benchmark_part_validate(benchmark::State& state) {
+  const auto rows = static_cast<std::uint32_t>(state.range(0));
+  const auto policy = state.range(1) == 0 ? chronos::cseg::PageCompression::kNone
+                                          : chronos::cseg::PageCompression::kZstd;
+  const Fixture fixture{rows, policy};
+  const auto decoded = chronos::cseg::decode_cseg_v1_part_exact(fixture.encoded.bytes());
+  if (!decoded.has_value()) {
+    const std::string message = decoded.error().status().to_string();
+    state.SkipWithError(message);
+    return;
+  }
+  for ([[maybe_unused]] auto iteration : state) {
+    const chronos::common::Status validated =
+        chronos::cseg::validate_cseg_v1_part_contents(*decoded);
+    if (!validated.is_ok()) {
+      const std::string message = validated.to_string();
+      state.SkipWithError(message);
+      return;
+    }
+    benchmark::ClobberMemory();
+  }
+  state.SetItemsProcessed(state.iterations() * rows);
+  state.SetBytesProcessed(state.iterations() * static_cast<std::int64_t>(fixture.encoded.size()));
+  state.SetLabel("system semantics + extrema + strict global ordering; local only");
+}
+
 // Google Benchmark registers functions during static initialization.
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 BENCHMARK(benchmark_part_encode)->ArgsProduct({{64, 1024, 65536}, {0, 1}});
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 BENCHMARK(benchmark_part_decode)->ArgsProduct({{64, 1024, 65536}, {0, 1}});
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+BENCHMARK(benchmark_part_validate)->ArgsProduct({{64, 1024, 65536}, {0, 1}});
 
 } // namespace

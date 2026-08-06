@@ -5,8 +5,8 @@
 > definition of one immutable CSEG v1 part. Bounded raw/Zstandard page compression and the
 > canonical metadata
 > directory plus standalone PLAIN/stored-page codecs are implemented together with canonical owned
-> file composition and borrowed prefix/exact structural decoding. Complete semantic validation
-> remains pending.
+> file composition and borrowed prefix/exact structural decoding. Bounded complete semantic and
+> schema-binding validation is also implemented; projected reading remains pending.
 > [ADR 0016](../adr/0016-cseg-v1-layout-integrity-and-compression.md)
 > accepts the layout, integrity, ordering, and compression decisions. Manifests, installation,
 > flush orchestration, compaction, and reclamation are separate Phase 6 and Phase 7 contracts.
@@ -301,6 +301,16 @@ payload, and following zero padding before returning a borrowed part view. Exact
 rejects trailing bytes. This stage deliberately does not claim complete-part acceptance: catalog
 binding, system-row semantics, event-time recomputation, and global physical ordering are the
 separate validation stages required below.
+
+The complete validator operates only on a structurally decoded part. It requires an explicit
+working-memory ceiling, checks the aggregate uncompressed ordering/system pages for each granule
+before semantic decompression, and retains only those pages plus one copied boundary row. It
+rejects zero WAL identities and record sequences, distinguishes zero from unknown nonzero
+operation codes, recomputes exact granule and header event-time extrema, and requires every
+adjacent complete sort tuple to increase strictly across page and granule boundaries. Its
+schema-bound entry point first applies the exact catalog binding below. Consequently successful
+full validation implies every page was physically checked by structural decoding and every value
+needed for v1 semantic acceptance was checked by the second stage.
 
 System pages use the same PLAIN rules. `WAL_ID` slots contain nonzero 16-byte UUID network-order
 values. `RECORD_SEQUENCE` values are positive. `ROW_ORDINAL` is zero-based within its source WAL

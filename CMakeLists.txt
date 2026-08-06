@@ -158,6 +158,7 @@ add_library(
   src/cseg/part_codec.cpp
   src/cseg/page_codec.cpp
   src/cseg/plain_page.cpp
+  src/cseg/validator.cpp
 )
 add_library(chronos::cseg ALIAS chronos_cseg)
 set_target_properties(chronos_cseg PROPERTIES EXPORT_NAME cseg)
@@ -392,6 +393,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/cseg/plain_page_test.cpp
     tests/cseg/types_header_self_contained.cpp
     tests/cseg/types_test.cpp
+    tests/cseg/validator_header_self_contained.cpp
+    tests/cseg/validator_test.cpp
   )
   set_target_properties(chronos_cseg_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_cseg_tests PRIVATE cxx_std_23)

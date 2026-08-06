@@ -1,7 +1,10 @@
 #include "chronos/columnar/column_vector.hpp"
 #include "chronos/common/bytes.hpp"
+#include "chronos/common/crc32c.hpp"
 #include "chronos/common/uuid.hpp"
+#include "chronos/cseg/format.hpp"
 #include "chronos/cseg/part_codec.hpp"
+#include "chronos/cseg/validator.hpp"
 #include "chronos/schema/identity.hpp"
 #include "chronos/schema/logical_type.hpp"
 
@@ -126,9 +129,52 @@ void exercise(const chronos::common::ByteView bytes) {
     }
   }
   const auto exact = chronos::cseg::decode_cseg_v1_part_exact(bytes);
-  if (exact.has_value() && exact->encoded_part().size() != bytes.size()) {
+  if (exact.has_value()) {
+    if (exact->encoded_part().size() != bytes.size()) {
+      std::abort();
+    }
+    static_cast<void>(chronos::cseg::validate_cseg_v1_part_contents(*exact));
+  }
+}
+
+void store_u32(std::vector<std::byte>& bytes, const std::size_t offset, const std::uint32_t value) {
+  for (std::size_t index = 0U; index < sizeof(value); ++index) {
+    bytes[offset + index] = std::byte{static_cast<std::uint8_t>(value >> (index * 8U))};
+  }
+}
+
+void exercise_authenticated_semantics(std::vector<std::byte> bytes, const std::uint8_t* data,
+                                      const std::size_t size) {
+  const auto canonical = chronos::cseg::decode_cseg_v1_part_exact(bytes);
+  if (!canonical.has_value()) {
     std::abort();
   }
+  const std::size_t page_index = size == 0U ? 0U : static_cast<std::size_t>(data[0]) % 5U;
+  const chronos::cseg::CsegPageDescriptor& page = canonical->metadata().pages()[page_index];
+  const std::size_t in_page =
+      size < 2U ? 0U : static_cast<std::size_t>(data[1]) % page.stored_length;
+  bytes[static_cast<std::size_t>(page.page_offset) + in_page] ^=
+      std::byte{size < 3U ? std::uint8_t{1U} : static_cast<std::uint8_t>(data[2] | 1U)};
+
+  constexpr std::size_t first_page_descriptor =
+      chronos::cseg::format::kFileHeaderLength +
+      5U * chronos::cseg::format::kColumnDescriptorLength +
+      chronos::cseg::format::kGranuleDescriptorLength;
+  const std::size_t descriptor =
+      first_page_descriptor + page_index * chronos::cseg::format::kPageDescriptorLength;
+  const chronos::common::ByteView stored = chronos::common::ByteView{bytes}.subspan(
+      static_cast<std::size_t>(page.page_offset), static_cast<std::size_t>(page.stored_length));
+  store_u32(bytes, descriptor + chronos::cseg::format::kPageCrc32cOffset,
+            chronos::common::crc32c(stored));
+  const std::size_t metadata_crc = canonical->metadata().encoded_metadata().size() -
+                                   chronos::cseg::format::kMetadataCrc32cLength;
+  store_u32(bytes, metadata_crc,
+            chronos::common::crc32c(chronos::common::ByteView{bytes}.first(metadata_crc)));
+  const auto decoded = chronos::cseg::decode_cseg_v1_part_exact(bytes);
+  if (!decoded.has_value()) {
+    std::abort();
+  }
+  static_cast<void>(chronos::cseg::validate_cseg_v1_part_contents(*decoded));
 }
 
 } // namespace
@@ -146,5 +192,6 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
         std::byte{size > 1U ? static_cast<std::uint8_t>(data[1] | 1U) : std::uint8_t{1U}};
   }
   exercise(mutated);
+  exercise_authenticated_semantics(canonical, data, size);
   return 0;
 }

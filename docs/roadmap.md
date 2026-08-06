@@ -162,8 +162,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > corruption/property tests, fuzzing, microbenchmarks, and installed-consumer coverage. Canonical
 > owned part composition and borrowed prefix/exact structural decoding now validate every page and
 > alignment byte, with complete-file golden/corruption/property tests, fuzzing, microbenchmarks,
-> and installed-consumer coverage. System/event-time/order full validation, projected reading, the
-> inspector, and learning documentation remain unimplemented.
+> and installed-consumer coverage. Bounded full validation now covers system-row semantics, exact
+> event-time extrema, strict cross-granule ordering for every logical type including null/IEEE
+> edge cases, and exact schema/tablet binding with hostile/property/sanitizer evidence. Projected
+> reading, the inspector, and learning documentation remain unimplemented.
 
 - **Scope:** specify and implement immutable sorted CSEG parts, granules, checksummed column pages, metadata, supported encodings/compressors, safe readers/writers, and inspection tooling.
 - **Explicit non-scope:** manifests, flush orchestration, compaction, remote objects, format v2 speculation, and indexes beyond metadata required by v1.
