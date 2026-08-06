@@ -196,6 +196,9 @@ public:
   [[nodiscard]] std::uint64_t generation() const noexcept {
     return generation_;
   }
+  [[nodiscard]] bool is_sealed() const noexcept {
+    return sealed_.load(std::memory_order_acquire);
+  }
   [[nodiscard]] std::size_t column_count() const noexcept {
     return columns_.size();
   }
@@ -746,6 +749,10 @@ const std::shared_ptr<const schema::TableSchema>& HeadSnapshot::schema_ptr() con
 
 std::uint64_t HeadSnapshot::generation() const noexcept {
   return state_->generation();
+}
+
+bool HeadSnapshot::is_sealed() const noexcept {
+  return state_->is_sealed();
 }
 
 std::uint32_t HeadSnapshot::row_count() const noexcept {

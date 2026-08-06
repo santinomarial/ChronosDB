@@ -69,6 +69,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/manifest/layout.hpp>
 #include <chronos/manifest/naming.hpp>
 #include <chronos/manifest/part_validation.hpp>
+#include <chronos/manifest/sealed_head_flush.hpp>
 #include <chronos/manifest/storage.hpp>
 #include <chronos/manifest/types.hpp>
 #include <chronos/manifest/validation.hpp>
@@ -226,6 +227,10 @@ int main() {
           const chronos::manifest::ManifestLoadRequest&) const;
   const LoadSelectedManifestFunction load_selected_manifest =
       &chronos::manifest::ManifestStorage::load_selected_manifest;
+  using FlushSealedHeadFunction =
+      chronos::common::Result<chronos::manifest::EncodedSealedHeadPart> (*)(
+          const chronos::manifest::SealedHeadFlushRequest&);
+  const FlushSealedHeadFunction flush_sealed_head = &chronos::manifest::encode_sealed_head_v1;
   return execute != nullptr && recover != nullptr && inspect_wal_suffix != nullptr &&
                  recover_wal_checkpoint != nullptr && open_wal_checkpoint != nullptr &&
                  reclaim_wal != nullptr && wal_reclamation_metrics != nullptr &&
@@ -246,7 +251,7 @@ int main() {
                  scan_manifest_namespace != nullptr &&
                  cleanup_manifest_temporaries != nullptr &&
                  install_manifest != nullptr && manifest_metrics != nullptr &&
-                 load_selected_manifest != nullptr &&
+                 load_selected_manifest != nullptr && flush_sealed_head != nullptr &&
                  stored_page.has_value() && stored_page->bytes().size() == 1U &&
                  plain_page.has_value() && plain_page->bytes().size() == 1U &&
                  encoded_cseg_page.has_value() && encoded_cseg_page->bytes().size() == 1U &&

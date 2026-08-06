@@ -331,8 +331,11 @@ TEST(MutableHeadTest, SealingIsIdempotentPinsStorageAndRejectsNewAppends) {
   {
     MutableHead target = head();
     PreparedHeadAppend prepared = prepare(target, input);
-    static_cast<void>(publish(prepared));
+    HeadSnapshot published = publish(prepared);
+    EXPECT_FALSE(published.is_sealed());
     sealed.emplace(target.seal().value());
+    EXPECT_TRUE(published.is_sealed());
+    EXPECT_TRUE(sealed->is_sealed());
     EXPECT_TRUE(target.metrics().sealed);
     EXPECT_EQ(target.seal()->row_count(), 2U);
     EXPECT_EQ(target.prepare_append(input).error().code(), common::StatusCode::kUnavailable);

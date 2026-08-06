@@ -7,11 +7,12 @@ It turns one canonical full manifest model into the exact bytes frozen by
 [Manifest v1](../formats/manifest-v1.md), and safely turns an untrusted byte prefix back into a
 borrowed immutable view.
 
-This layer does not prove WAL coverage, publish query state, or delete WAL segments. Its naming
+This layer does not publish query state or schedule flushes. Its naming
 helpers format and parse exact final and temporary basenames without touching a directory, while
 its referenced-part validator accepts already-read CSEG images. The storage owner now provides the
-first durable-installation primitives: immutable CSEG installation plus locked namespace scanning
-and temporary cleanup. Manifest-generation installation and recovery remain separate.
+durable-installation primitives: immutable CSEG and manifest-generation installation plus locked
+namespace scanning, temporary cleanup, and recovery selection. It also provides the pure boundary
+that converts one pinned nonempty sealed head into one exact, install-ready CSEG image.
 
 ## Public interfaces
 
@@ -24,6 +25,8 @@ The public headers are:
 - `chronos/manifest/codec.hpp`: owned encoding, borrowed decoding, limits, and error classes;
 - `chronos/manifest/validation.hpp`: exact catalog binding and add-only generation transitions;
 - `chronos/manifest/part_validation.hpp`: installed CSEG image-to-descriptor validation; and
+- `chronos/manifest/sealed_head_flush.hpp`: deterministic sealed-head conversion and its exact
+  descriptor/WAL identity result; and
 - `chronos/manifest/storage.hpp`: locked, directory-anchored immutable part and generation
   installation, strict namespace scanning, and temporary cleanup.
 
@@ -47,6 +50,15 @@ returns its consumed borrowed bytes. `decode_manifest_v1_exact()` additionally r
 Both return `DecodedManifestView`, which borrows the immutable encoded generation while owning the
 parsed descriptor vectors. Therefore the source bytes must outlive the view and every copy or span
 obtained from it.
+
+`encode_sealed_head_v1()` accepts a pinned sealed snapshot, new `PartId`, and explicit page
+compression policy. It preflights the generation's single WAL identity and sequence bounds, sorts
+row indices by the schema physical ordering key followed by `(wal_id, record_sequence,
+row_ordinal)`, chooses the longest canonical granules within the frozen row/page limits, and
+materializes every user and hidden system page. The result owns exact immutable CSEG bytes and
+carries the exact `PartDescriptor` and WAL identity required by `install_part()`. The encoder exact
+decodes and fully schema/content validates its own output before returning it. It never mutates,
+unseals, publishes, or releases the source generation.
 
 ## Canonical model validation
 
@@ -152,6 +164,12 @@ owns the exact byte image. Referenced-part validation is `O(total CSEG bytes + r
 bounded system-page decoding after complete CSEG validation to recompute manifest-specific WAL and
 record-sequence facts.
 
+Sealed-head conversion uses `O(rows)` row-index/sort workspace plus
+`O(columns + granules + pages)` metadata and page owners. Its deterministic stable merge sort is
+`O(rows log rows * key columns)`; page planning and materialization are linear in logical input
+bytes. It allocates the complete encoded CSEG before returning because durable installation
+requires one immutable exact image.
+
 `ManifestStorage::open_existing()` opens the database root and its exact `parts/` and `manifest/`
 children without following final-component symlinks, then acquires the already-existing
 `manifest/LOCK`. The move-only owner holds all descriptors and the lock for its lifetime and is
@@ -218,6 +236,13 @@ referenced-part case measures full compressed CSEG validation through manifest-s
 record-extrema binding. Benchmark
 results are evidence only when captured under the repository benchmark contract; no performance
 number is claimed by this document.
+
+The sealed-head suite covers active/empty rejection, canonical ordering and hidden identities,
+nullable variable and packed Boolean materialization, raw/Zstandard determinism, the 65,536-row
+granule boundary, deterministic generated heads, an independently fingerprinted complete fixture,
+and direct durable installation without descriptor translation. Flush microbenchmarks measure
+1,024-row and 65,536-row conversion for raw and Zstandard policies and report rows and encoded bytes
+processed.
 
 ## Tradeoffs and extension rules
 

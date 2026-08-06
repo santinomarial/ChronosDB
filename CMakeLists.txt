@@ -160,6 +160,7 @@ add_library(
   src/cseg/page_codec.cpp
   src/cseg/plain_page.cpp
   src/cseg/projected_reader.cpp
+  src/cseg/sort_order_internal.cpp
   src/cseg/system_rows_internal.cpp
   src/cseg/validator.cpp
 )
@@ -283,6 +284,7 @@ add_library(
   src/manifest/layout.cpp
   src/manifest/naming.cpp
   src/manifest/part_validation.cpp
+  src/manifest/sealed_head_flush.cpp
   src/manifest/storage.cpp
   src/manifest/validation.cpp
 )
@@ -299,7 +301,7 @@ target_include_directories(
 )
 target_link_libraries(
   chronos_manifest
-  PUBLIC chronos::cseg chronos::ingest chronos::schema chronos::wal
+  PUBLIC chronos::cseg chronos::head chronos::ingest chronos::schema chronos::wal
   PRIVATE chronos::io
 )
 chronos_set_project_warnings(chronos_manifest)
@@ -606,6 +608,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/manifest/naming_test.cpp
     tests/manifest/part_validation_header_self_contained.cpp
     tests/manifest/part_validation_test.cpp
+    tests/manifest/sealed_head_flush_header_self_contained.cpp
+    tests/manifest/sealed_head_flush_test.cpp
     tests/manifest/storage_header_self_contained.cpp
     tests/manifest/storage_test.cpp
     tests/manifest/types_header_self_contained.cpp
@@ -780,7 +784,11 @@ if(CHRONOS_BUILD_BENCHMARKS)
   chronos_enable_sanitizers(chronos_head_benchmarks)
   chronos_enable_static_analysis(chronos_head_benchmarks)
 
-  add_executable(chronos_manifest_benchmarks benchmarks/manifest/codec_benchmark.cpp)
+  add_executable(
+    chronos_manifest_benchmarks
+    benchmarks/manifest/codec_benchmark.cpp
+    benchmarks/manifest/sealed_head_flush_benchmark.cpp
+  )
   target_include_directories(
     chronos_manifest_benchmarks PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests"
   )

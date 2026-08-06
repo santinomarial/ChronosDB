@@ -190,6 +190,9 @@ public:
   [[nodiscard]] const schema::TabletId& tablet_id() const noexcept;
   [[nodiscard]] const std::shared_ptr<const schema::TableSchema>& schema_ptr() const noexcept;
   [[nodiscard]] std::uint64_t generation() const noexcept;
+  // True once this pinned generation has been sealed. Sealing is monotonic for the generation;
+  // the acquire load pairs with the shard writer's release store.
+  [[nodiscard]] bool is_sealed() const noexcept;
   [[nodiscard]] std::uint32_t row_count() const noexcept;
   [[nodiscard]] std::size_t column_count() const noexcept;
   [[nodiscard]] const std::optional<HeadCommitPosition>& applied_position() const noexcept;

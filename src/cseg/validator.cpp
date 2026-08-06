@@ -4,11 +4,11 @@
 #include "chronos/common/checked_math.hpp"
 #include "chronos/common/result.hpp"
 #include "chronos/schema/logical_type.hpp"
+#include "sort_order_internal.hpp"
 #include "system_rows_internal.hpp"
 
 #include <algorithm>
 #include <bit>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -30,17 +30,7 @@ namespace {
   return status(common::StatusCode::kCorruption, message);
 }
 
-struct SortCell {
-  bool is_null{};
-  bool is_boolean{};
-  bool boolean{};
-  common::ByteView bytes;
-};
-
-struct BytePair {
-  common::ByteView left;
-  common::ByteView right;
-};
+using SortCell = detail::SortCellView;
 
 struct BoundaryCaptureInput {
   std::uint32_t row_count;
@@ -93,142 +83,6 @@ template <typename Unsigned>
   return value;
 }
 
-[[nodiscard]] int compare_bytes(const common::ByteView left,
-                                const common::ByteView right) noexcept {
-  const std::size_t common_size = std::min(left.size(), right.size());
-  for (std::size_t index = 0U; index < common_size; ++index) {
-    const std::uint8_t left_byte = std::to_integer<std::uint8_t>(left[index]);
-    const std::uint8_t right_byte = std::to_integer<std::uint8_t>(right[index]);
-    if (left_byte != right_byte) {
-      return left_byte < right_byte ? -1 : 1;
-    }
-  }
-  if (left.size() == right.size()) {
-    return 0;
-  }
-  return left.size() < right.size() ? -1 : 1;
-}
-
-template <typename Unsigned>
-[[nodiscard]] common::Result<int> compare_unsigned(const BytePair values) {
-  const common::Result<Unsigned> lhs = load_little_endian<Unsigned>(values.left);
-  const common::Result<Unsigned> rhs = load_little_endian<Unsigned>(values.right);
-  if (!lhs.has_value()) {
-    return common::make_unexpected(lhs.error());
-  }
-  if (!rhs.has_value()) {
-    return common::make_unexpected(rhs.error());
-  }
-  return *lhs == *rhs ? 0 : (*lhs < *rhs ? -1 : 1);
-}
-
-template <typename Signed, typename Unsigned>
-[[nodiscard]] common::Result<int> compare_signed(const BytePair values) {
-  const common::Result<Unsigned> lhs_bits = load_little_endian<Unsigned>(values.left);
-  const common::Result<Unsigned> rhs_bits = load_little_endian<Unsigned>(values.right);
-  if (!lhs_bits.has_value()) {
-    return common::make_unexpected(lhs_bits.error());
-  }
-  if (!rhs_bits.has_value()) {
-    return common::make_unexpected(rhs_bits.error());
-  }
-  const Signed lhs = std::bit_cast<Signed>(*lhs_bits);
-  const Signed rhs = std::bit_cast<Signed>(*rhs_bits);
-  return lhs == rhs ? 0 : (lhs < rhs ? -1 : 1);
-}
-
-template <typename Float, typename Unsigned>
-[[nodiscard]] common::Result<int> compare_floating(const BytePair values) {
-  const common::Result<Unsigned> lhs_bits = load_little_endian<Unsigned>(values.left);
-  const common::Result<Unsigned> rhs_bits = load_little_endian<Unsigned>(values.right);
-  if (!lhs_bits.has_value()) {
-    return common::make_unexpected(lhs_bits.error());
-  }
-  if (!rhs_bits.has_value()) {
-    return common::make_unexpected(rhs_bits.error());
-  }
-  const Float lhs = std::bit_cast<Float>(*lhs_bits);
-  const Float rhs = std::bit_cast<Float>(*rhs_bits);
-  const bool lhs_nan = std::isnan(lhs);
-  const bool rhs_nan = std::isnan(rhs);
-  if (lhs_nan || rhs_nan) {
-    return lhs_nan == rhs_nan ? 0 : (lhs_nan ? 1 : -1);
-  }
-  return lhs == rhs ? 0 : (lhs < rhs ? -1 : 1);
-}
-
-[[nodiscard]] common::Result<int> compare_decimal(const BytePair values) {
-  const common::ByteView left = values.left;
-  const common::ByteView right = values.right;
-  if (left.size() != 16U || right.size() != 16U) {
-    return common::make_unexpected(corruption("CSEG DECIMAL sort cell has an invalid width"));
-  }
-  const bool left_negative = (std::to_integer<std::uint8_t>(left.back()) & 0x80U) != 0U;
-  const bool right_negative = (std::to_integer<std::uint8_t>(right.back()) & 0x80U) != 0U;
-  if (left_negative != right_negative) {
-    return left_negative ? -1 : 1;
-  }
-  for (std::size_t index = left.size(); index > 0U; --index) {
-    const std::uint8_t lhs = std::to_integer<std::uint8_t>(left[index - 1U]);
-    const std::uint8_t rhs = std::to_integer<std::uint8_t>(right[index - 1U]);
-    if (lhs != rhs) {
-      return lhs < rhs ? -1 : 1;
-    }
-  }
-  return 0;
-}
-
-[[nodiscard]] common::Result<int> compare_cells(const schema::LogicalTypeKind kind,
-                                                const SortCell left, const SortCell right) {
-  if (left.is_null || right.is_null) {
-    return left.is_null == right.is_null ? 0 : (left.is_null ? 1 : -1);
-  }
-  if (kind == schema::LogicalTypeKind::kBool) {
-    if (!left.is_boolean || !right.is_boolean) {
-      return common::make_unexpected(corruption("CSEG BOOL sort cell kind is invalid"));
-    }
-    return left.boolean == right.boolean ? 0 : (left.boolean ? 1 : -1);
-  }
-  if (left.is_boolean || right.is_boolean) {
-    return common::make_unexpected(corruption("CSEG non-BOOL sort cell kind is invalid"));
-  }
-  using schema::LogicalTypeKind;
-  switch (kind) {
-  case LogicalTypeKind::kInt8:
-    return compare_signed<std::int8_t, std::uint8_t>({left.bytes, right.bytes});
-  case LogicalTypeKind::kInt16:
-    return compare_signed<std::int16_t, std::uint16_t>({left.bytes, right.bytes});
-  case LogicalTypeKind::kInt32:
-  case LogicalTypeKind::kDate:
-    return compare_signed<std::int32_t, std::uint32_t>({left.bytes, right.bytes});
-  case LogicalTypeKind::kInt64:
-  case LogicalTypeKind::kTimestampNs:
-    return compare_signed<std::int64_t, std::uint64_t>({left.bytes, right.bytes});
-  case LogicalTypeKind::kUInt8:
-    return compare_unsigned<std::uint8_t>({left.bytes, right.bytes});
-  case LogicalTypeKind::kUInt16:
-    return compare_unsigned<std::uint16_t>({left.bytes, right.bytes});
-  case LogicalTypeKind::kUInt32:
-    return compare_unsigned<std::uint32_t>({left.bytes, right.bytes});
-  case LogicalTypeKind::kUInt64:
-    return compare_unsigned<std::uint64_t>({left.bytes, right.bytes});
-  case LogicalTypeKind::kFloat32:
-    return compare_floating<float, std::uint32_t>({left.bytes, right.bytes});
-  case LogicalTypeKind::kFloat64:
-    return compare_floating<double, std::uint64_t>({left.bytes, right.bytes});
-  case LogicalTypeKind::kDecimal:
-    return compare_decimal({left.bytes, right.bytes});
-  case LogicalTypeKind::kSymbol:
-  case LogicalTypeKind::kString:
-  case LogicalTypeKind::kBinary:
-  case LogicalTypeKind::kUuid:
-    return compare_bytes(left.bytes, right.bytes);
-  case LogicalTypeKind::kBool:
-    break;
-  }
-  return common::make_unexpected(corruption("CSEG sort logical type is invalid"));
-}
-
 [[nodiscard]] common::Result<int>
 compare_rows(const std::span<const DecodedCsegPage> key_pages,
              const std::span<const CsegColumnDescriptor> key_columns, const std::uint32_t left_row,
@@ -243,7 +97,7 @@ compare_rows(const std::span<const DecodedCsegPage> key_pages,
       return common::make_unexpected(right.error());
     }
     const common::Result<int> compared =
-        compare_cells(key_columns[index].logical_type.kind(), *left, *right);
+        detail::compare_sort_cells(key_columns[index].logical_type.kind(), *left, *right);
     if (!compared.has_value() || *compared != 0) {
       return compared;
     }
@@ -260,8 +114,8 @@ compare_boundary(const std::span<const OwnedSortCell> left,
     if (!right.has_value()) {
       return common::make_unexpected(right.error());
     }
-    const common::Result<int> compared =
-        compare_cells(key_columns[index].logical_type.kind(), left[index].view(), *right);
+    const common::Result<int> compared = detail::compare_sort_cells(
+        key_columns[index].logical_type.kind(), left[index].view(), *right);
     if (!compared.has_value() || *compared != 0) {
       return compared;
     }

@@ -42,10 +42,12 @@
 > IEEE signed-zero/NaN equality, generated key sets, visible-generation conflicts, and replay
 > conflict classification. A test-only allocator now forces each retry-directory, mutable-head,
 > tablet preparation, deduplication, and rotation allocation to fail in turn, and verifies the
-> expected post-WAL in-memory path is allocation-free. Retry retention, routing/admission, and
-> flush handoff remain unimplemented. Manifest v1 and the Phase 6 installation/checkpoint crash
-> state machine are accepted specifications; none of their codec, filesystem, recovery, or
-> failpoint evidence exists yet.
+> expected post-WAL in-memory path is allocation-free. Manifest/CSEG installation, selected-state
+> recovery, checkpoint-aware WAL replay/reopen/reclamation, and deterministic sealed-head-to-CSEG
+> conversion now add golden/property/corruption, filesystem fault, sanitizer, installation,
+> external-consumer, and benchmark evidence. Retry retention, routing/admission, flush scheduling,
+> manifest publication, and generation retirement remain unimplemented; the integrated Phase 6
+> publication crash matrix is still pending.
 > Query and distributed harnesses also remain planned for their roadmap phases.
 
 ## Test types

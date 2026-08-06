@@ -12,8 +12,9 @@
 > primitive in [mutable-head generation](mutable-head.md), and the tablet-wide boundary in
 > [tablet publication](tablet-publication.md). Their blocking composition is documented in
 > [columnar append execution](columnar-append-execution.md), and fresh-state replay in
-> [columnar append recovery](columnar-append-recovery.md). Retry pruning, routing/admission, and
-> flush handoff remain pending. The
+> [columnar append recovery](columnar-append-recovery.md). Pure sealed-head-to-CSEG conversion is
+> documented in [Manifest v1 codec](manifest-codec.md). Retry pruning, routing/admission, flush
+> scheduling/publication, and generation retirement remain pending. The
 > normative sources are
 > [columnar batch v1](../formats/columnar-batch-v1.md),
 > [columnar ingestion](../architecture/columnar-ingestion.md),
