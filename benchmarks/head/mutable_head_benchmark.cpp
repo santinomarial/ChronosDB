@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <utility>
@@ -253,6 +254,31 @@ void benchmark_snapshot(benchmark::State& state) {
   state.SetLabel("acquire one publication and construct all borrowed column views");
 }
 
+[[nodiscard]] std::uint64_t scan_checksum(const chronos::head::HeadColumnView& timestamps,
+                                          const chronos::head::HeadColumnView& strings,
+                                          const chronos::head::HeadColumnView& booleans) {
+  std::uint64_t checksum = 0U;
+  for (const std::byte value : timestamps.fixed_values()) {
+    checksum += std::to_integer<std::uint8_t>(value);
+  }
+  for (std::uint32_t row = 0U; row < timestamps.row_count(); ++row) {
+    checksum += strings.variable_offsets()[row + 1U] - strings.variable_offsets()[row];
+    checksum += booleans.boolean_values()[row];
+  }
+  for (const std::byte value : strings.variable_values()) {
+    checksum += std::to_integer<std::uint8_t>(value);
+  }
+  return checksum;
+}
+
+[[nodiscard]] std::size_t scanned_bytes(const chronos::head::HeadColumnView& timestamps,
+                                        const chronos::head::HeadColumnView& strings,
+                                        const chronos::head::HeadColumnView& booleans) {
+  return timestamps.fixed_values().size() + strings.variable_values().size() +
+         (static_cast<std::size_t>(timestamps.row_count()) * 2U * sizeof(std::uint32_t)) +
+         booleans.boolean_values().size();
+}
+
 void benchmark_scan(benchmark::State& state) {
   const auto rows = static_cast<std::uint32_t>(state.range(0));
   const auto string_bytes = static_cast<std::uint32_t>(state.range(1));
@@ -273,22 +299,8 @@ void benchmark_scan(benchmark::State& state) {
     expected += std::to_integer<std::uint8_t>(value);
   }
 
-  const auto scan_checksum = [&] {
-    std::uint64_t checksum = 0U;
-    for (const std::byte value : timestamps.fixed_values()) {
-      checksum += std::to_integer<std::uint8_t>(value);
-    }
-    for (std::uint32_t row = 0U; row < rows; ++row) {
-      checksum += strings.variable_offsets()[row + 1U] - strings.variable_offsets()[row];
-      checksum += booleans.boolean_values()[row];
-    }
-    for (const std::byte value : strings.variable_values()) {
-      checksum += std::to_integer<std::uint8_t>(value);
-    }
-    return checksum;
-  };
   chronos::benchmark_support::ScopedAllocationCounting counting;
-  const std::uint64_t allocation_probe = scan_checksum();
+  const std::uint64_t allocation_probe = scan_checksum(timestamps, strings, booleans);
   const chronos::benchmark_support::AllocationCounts allocations = counting.stop();
   if (allocation_probe != expected) {
     state.SkipWithError("allocation probe scan produced an unexpected checksum");
@@ -296,24 +308,96 @@ void benchmark_scan(benchmark::State& state) {
   }
 
   for ([[maybe_unused]] auto iteration : state) {
-    std::uint64_t checksum = scan_checksum();
+    std::uint64_t checksum = scan_checksum(timestamps, strings, booleans);
     if (checksum != expected) {
       state.SkipWithError("borrowed mutable-head scan produced an unexpected checksum");
       return;
     }
     benchmark::DoNotOptimize(checksum);
   }
-  const std::size_t scanned_bytes = timestamps.fixed_values().size() +
-                                    strings.variable_values().size() +
-                                    (static_cast<std::size_t>(rows) * 2U * sizeof(std::uint32_t)) +
-                                    booleans.boolean_values().size();
+  const std::size_t bytes = scanned_bytes(timestamps, strings, booleans);
   state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(rows));
-  state.SetBytesProcessed(state.iterations() * static_cast<std::int64_t>(scanned_bytes));
+  state.SetBytesProcessed(state.iterations() * static_cast<std::int64_t>(bytes));
   state.counters["retained_head_bytes"] =
       static_cast<double>(target.metrics().retained_storage_bytes);
   state.counters["allocs_per_scan"] = static_cast<double>(allocations.allocations);
   state.counters["allocated_bytes_per_scan"] = static_cast<double>(allocations.allocated_bytes);
   state.SetLabel("scan fixed, variable-offset, variable-value, and Boolean head storage");
+}
+
+struct SharedScanFixture {
+  std::mutex mutex;
+  std::shared_ptr<const chronos::head::HeadSnapshot> snapshot;
+  std::size_t users{};
+  std::uint64_t expected{};
+  std::size_t bytes{};
+};
+
+SharedScanFixture shared_scan_fixture;
+
+struct SharedScanLease {
+  std::shared_ptr<const chronos::head::HeadSnapshot> snapshot;
+  chronos::head::HeadColumnView timestamps;
+  chronos::head::HeadColumnView strings;
+  chronos::head::HeadColumnView booleans;
+  std::uint64_t expected;
+  std::size_t bytes;
+};
+
+[[nodiscard]] SharedScanLease acquire_shared_scan(const FixtureShape shape) {
+  std::lock_guard lock{shared_scan_fixture.mutex};
+  if (shared_scan_fixture.users == 0U) {
+    const Fixture fixture = make_fixture(shape);
+    chronos::head::MutableHead target = make_head(fixture).value();
+    auto prepared = target.prepare_append(fixture.batch).value();
+    static_cast<void>(prepared.mark_wal_started());
+    auto published = prepared.publish(commit_position()).value();
+    shared_scan_fixture.snapshot =
+        std::make_shared<const chronos::head::HeadSnapshot>(std::move(published));
+    const auto timestamps = shared_scan_fixture.snapshot->column(0U).value();
+    const auto strings = shared_scan_fixture.snapshot->column(1U).value();
+    const auto booleans = shared_scan_fixture.snapshot->column(2U).value();
+    shared_scan_fixture.expected = scan_checksum(timestamps, strings, booleans);
+    shared_scan_fixture.bytes = scanned_bytes(timestamps, strings, booleans);
+  }
+  ++shared_scan_fixture.users;
+  return SharedScanLease{.snapshot = shared_scan_fixture.snapshot,
+                         .timestamps = shared_scan_fixture.snapshot->column(0U).value(),
+                         .strings = shared_scan_fixture.snapshot->column(1U).value(),
+                         .booleans = shared_scan_fixture.snapshot->column(2U).value(),
+                         .expected = shared_scan_fixture.expected,
+                         .bytes = shared_scan_fixture.bytes};
+}
+
+void release_shared_scan() {
+  std::lock_guard lock{shared_scan_fixture.mutex};
+  --shared_scan_fixture.users;
+  if (shared_scan_fixture.users == 0U) {
+    shared_scan_fixture.snapshot.reset();
+  }
+}
+
+void benchmark_concurrent_scan(benchmark::State& state) {
+  const auto rows = static_cast<std::uint32_t>(state.range(0));
+  const auto string_bytes = static_cast<std::uint32_t>(state.range(1));
+  const SharedScanLease lease =
+      acquire_shared_scan(FixtureShape{.rows = rows, .string_bytes_per_row = string_bytes});
+  bool valid = true;
+  for ([[maybe_unused]] auto iteration : state) {
+    std::uint64_t checksum = scan_checksum(lease.timestamps, lease.strings, lease.booleans);
+    if (checksum != lease.expected) {
+      valid = false;
+      break;
+    }
+    benchmark::DoNotOptimize(checksum);
+  }
+  if (!valid) {
+    state.SkipWithError("concurrent borrowed scan produced an unexpected checksum");
+  }
+  state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(rows));
+  state.SetBytesProcessed(state.iterations() * static_cast<std::int64_t>(lease.bytes));
+  state.SetLabel("concurrent readers scan the same immutable published head buffers");
+  release_shared_scan();
 }
 
 void benchmark_seal(benchmark::State& state) {
@@ -378,5 +462,14 @@ BENCHMARK(benchmark_scan)
     ->Args({65536, 64});
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 BENCHMARK(benchmark_seal)->Arg(64)->Arg(1024)->Arg(65536);
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+BENCHMARK(benchmark_concurrent_scan)
+    ->Args({1024, 8})
+    ->Args({1024, 64})
+    ->Args({65536, 8})
+    ->Args({65536, 64})
+    ->Threads(1)
+    ->Threads(2)
+    ->Threads(4);
 
 } // namespace

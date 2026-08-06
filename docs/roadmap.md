@@ -128,9 +128,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
   publication path observes zero allocations. Mutable-head microbenchmarks now cover publication,
   checked borrowed scans, sealing, retained-memory counters, and zero-/8-/64-byte string values
   across 64, 1,024, and 65,536 rows. Benchmark-only scoped instrumentation reports regular
-  allocation calls and requested bytes without including paused arena construction. Retry
-  retention, routing/admission, flush handoff, cache profiles/reader-contention measurement, and the
-  wider end-to-end Phase 4 benchmark matrix remain unimplemented.
+  allocation calls and requested bytes without including paused arena construction. Coordinated
+  1-/2-/4-reader cases scan the same pinned buffers at the two larger row counts and two string
+  widths. Retry retention, routing/admission, flush handoff, hardware cache profiles, and the wider
+  end-to-end Phase 4 benchmark matrix remain unimplemented.
 
 - **Scope:** typed immutable input batches; null/variable-width representation; append-only tablet heads; sealing; single shard-worker ownership; stable reader boundaries; idempotent ordered replay into heads.
 - **Explicit non-scope:** durable columnar parts, SQL execution, secondary indexes, general lock-free containers, live subscriptions, and a universal allocator.

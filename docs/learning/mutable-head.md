@@ -143,7 +143,9 @@ under AddressSanitizer and UndefinedBehaviorSanitizer. `chronos_head_benchmarks`
 - acquire snapshot plus construction of all borrowed column views;
 - checked scans across fixed values, variable offsets and values, and Boolean storage for the same
   row-count and string-width matrix; and
-- isolated sealing of a fully published generation.
+- isolated sealing of a fully published generation; and
+- correctness-checked 1-, 2-, and 4-reader scans over the same immutable published buffers at
+  1,024 and 65,536 rows with 8- and 64-byte strings.
 
 Publish and scan cases expose logical bytes and retained head bytes as benchmark counters so the
 memory ratio is visible beside throughput rather than inferred from allocator internals. A global
@@ -155,9 +157,8 @@ zero regular allocations; the counters remain evidence fields rather than frozen
 guarantees.
 
 The measurements are local microbenchmarks, not an end-to-end ingestion claim. Later Phase 4
-evidence must still add cache profiles, concurrent reader contention, flush handoff cost, and the
-wider workload matrix around the implemented tablet generation switching, retry integration, and
-ordered replay.
+evidence must still add hardware cache profiles, flush handoff cost, and the wider workload matrix
+around the implemented tablet generation switching, retry integration, and ordered replay.
 
 ## Tradeoffs and likely review questions
 
