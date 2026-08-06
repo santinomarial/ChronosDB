@@ -170,8 +170,9 @@ target now exposes the authoritative constants, nominal part identity, allocatio
 metadata/page layout planner, bounded raw/Zstandard page compression, and a checksummed borrowed
 metadata-directory codec with exact schema binding. An identity-free physical-column view shares
 the Columnar Batch v1 canonical buffer validator with deterministic PLAIN payload encoding and
-borrowed schema-independent decoding. Page CRC/decompression composition, complete part writing
-and validation, readers, and the inspector remain pending.
+borrowed schema-independent decoding. The composed page codec computes and verifies stored-byte
+CRC32C before bounded compression-provider entry, borrows raw pages, and owns decompressed pages.
+Complete part writing and validation, readers, and the inspector remain pending.
 
 Parts will be written to temporary identities, fully validated and made durable according to the
 future installation protocol, then atomically referenced by a manifest version edit. After

@@ -157,9 +157,11 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > microbenchmarks, and package install/export coverage. The shared identity-free physical-column
 > validator plus deterministic PLAIN payload encoding and borrowed schema-independent decoding add
 > all-type/property/corruption tests, decoder fuzzing, encode/decode microbenchmarks, and installed-
-> consumer coverage. Page CRC/decompression composition, the complete part codec and golden/corrupt
-> part fixtures, reader/writer/validator, inspector, and learning documentation remain
-> unimplemented.
+> consumer coverage. Stored-page composition now adds deterministic descriptor-ready encoding,
+> CRC-before-provider decoding, allocation-free raw views, owned bounded Zstandard output, golden/
+> corruption/property tests, fuzzing, microbenchmarks, and installed-consumer coverage. The complete
+> part codec and golden/corrupt part fixtures, reader/writer/full validator, inspector, and learning
+> documentation remain unimplemented.
 
 - **Scope:** specify and implement immutable sorted CSEG parts, granules, checksummed column pages, metadata, supported encodings/compressors, safe readers/writers, and inspection tooling.
 - **Explicit non-scope:** manifests, flush orchestration, compaction, remote objects, format v2 speculation, and indexes beyond metadata required by v1.

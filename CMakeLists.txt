@@ -155,6 +155,7 @@ add_library(
   src/cseg/compression.cpp
   src/cseg/layout.cpp
   src/cseg/metadata_codec.cpp
+  src/cseg/page_codec.cpp
   src/cseg/plain_page.cpp
 )
 add_library(chronos::cseg ALIAS chronos_cseg)
@@ -382,6 +383,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/cseg/layout_test.cpp
     tests/cseg/metadata_codec_header_self_contained.cpp
     tests/cseg/metadata_codec_test.cpp
+    tests/cseg/page_codec_header_self_contained.cpp
+    tests/cseg/page_codec_test.cpp
     tests/cseg/plain_page_header_self_contained.cpp
     tests/cseg/plain_page_test.cpp
     tests/cseg/types_header_self_contained.cpp
@@ -638,6 +641,7 @@ if(CHRONOS_BUILD_BENCHMARKS)
   add_executable(
     chronos_cseg_benchmarks
     benchmarks/cseg/metadata_codec_benchmark.cpp
+    benchmarks/cseg/page_codec_benchmark.cpp
     benchmarks/cseg/plain_page_benchmark.cpp
   )
   set_target_properties(chronos_cseg_benchmarks PROPERTIES CXX_EXTENSIONS OFF)
@@ -773,6 +777,16 @@ if(CHRONOS_BUILD_FUZZERS)
   chronos_set_project_warnings(chronos_cseg_plain_page_fuzz)
   chronos_enable_sanitizers(chronos_cseg_plain_page_fuzz)
   chronos_enable_static_analysis(chronos_cseg_plain_page_fuzz)
+
+  add_executable(chronos_cseg_page_codec_fuzz tests/fuzz/cseg_page_codec_fuzz.cpp)
+  set_target_properties(chronos_cseg_page_codec_fuzz PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_cseg_page_codec_fuzz PRIVATE cxx_std_23)
+  target_link_libraries(chronos_cseg_page_codec_fuzz PRIVATE chronos::cseg)
+  target_compile_options(chronos_cseg_page_codec_fuzz PRIVATE -fsanitize=fuzzer)
+  target_link_options(chronos_cseg_page_codec_fuzz PRIVATE -fsanitize=fuzzer)
+  chronos_set_project_warnings(chronos_cseg_page_codec_fuzz)
+  chronos_enable_sanitizers(chronos_cseg_page_codec_fuzz)
+  chronos_enable_static_analysis(chronos_cseg_page_codec_fuzz)
 endif()
 
 chronos_configure_installation()

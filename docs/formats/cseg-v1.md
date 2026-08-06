@@ -1,10 +1,10 @@
 # ChronosDB CSEG v1
 
-> **Status: accepted specification; constants, identity, layout, compression, metadata, and PLAIN
-> payload codecs implemented.** This document is the normative byte-level definition of one
+> **Status: accepted specification; constants, identity, layout, compression, metadata, PLAIN, and
+> stored-page codecs implemented.** This document is the normative byte-level definition of one
 > immutable CSEG v1 part. Bounded raw/Zstandard page compression and the canonical metadata
-> directory plus standalone PLAIN payload codecs are implemented; page framing and the complete-
-> part codec remain pending.
+> directory plus standalone PLAIN/stored-page codecs are implemented; complete-part composition
+> remains pending.
 > [ADR 0016](../adr/0016-cseg-v1-layout-integrity-and-compression.md)
 > accepts the layout, integrity, ordering, and compression decisions. Manifests, installation,
 > flush orchestration, compaction, and reclamation are separate Phase 6 and Phase 7 contracts.
@@ -281,6 +281,15 @@ reader must establish descriptor integrity, verify the stored-page CRC, and deco
 calling it. Physical validation is shared with Columnar Batch v1 so null counts, packed-bit
 cleanliness, offsets, UTF-8, decimal bounds, and zeroed null slots cannot drift between formats.
 The payload owner must outlive the decoded view and all cell views obtained from it.
+
+The composed stored-page codec deterministically feeds that payload through the explicit raw or
+Zstandard policy, computes the descriptor CRC32C over exactly the final stored bytes, and exposes
+the complete descriptor metadata other than ordinals and the layout-derived file offset. Its
+decoder verifies assigned compression and fixed lengths, then stored-byte CRC32C, then bounded
+canonical decompression, and only then PLAIN physical interpretation. Raw results borrow their
+stored input without allocation; Zstandard results own their bounded output, whose physical view
+remains stable across moves. Thus the raw input owner must outlive a raw decoded page, while a
+compressed decoded page is self-contained.
 
 System pages use the same PLAIN rules. `WAL_ID` slots contain nonzero 16-byte UUID network-order
 values. `RECORD_SEQUENCE` values are positive. `ROW_ORDINAL` is zero-based within its source WAL

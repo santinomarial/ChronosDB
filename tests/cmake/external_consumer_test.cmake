@@ -48,6 +48,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/cseg/format.hpp>
 #include <chronos/cseg/layout.hpp>
 #include <chronos/cseg/metadata_codec.hpp>
+#include <chronos/cseg/page_codec.hpp>
 #include <chronos/cseg/plain_page.hpp>
 #include <chronos/cseg/types.hpp>
 #include <chronos/head/mutable_head.hpp>
@@ -101,6 +102,16 @@ int main() {
                               ? chronos::cseg::encode_cseg_v1_plain_page(*physical)
                               : chronos::common::Result<chronos::cseg::EncodedCsegPlainPage>{
                                     chronos::common::make_unexpected(physical.error())};
+  const auto encoded_cseg_page =
+      physical.has_value()
+          ? chronos::cseg::encode_cseg_v1_page(*physical,
+                                               chronos::cseg::PageCompression::kNone)
+          : chronos::common::Result<chronos::cseg::EncodedCsegPage>{
+                chronos::common::make_unexpected(physical.error())};
+  using DecodeCsegPageFunction = chronos::common::Result<chronos::cseg::DecodedCsegPage> (*)(
+      chronos::common::ByteView, const chronos::cseg::CsegColumnDescriptor&,
+      const chronos::cseg::CsegPageDescriptor&);
+  const DecodeCsegPageFunction decode_cseg_page = &chronos::cseg::decode_cseg_v1_page;
   chronos::columnar::ColumnarBatchLimits limits;
   std::array<std::byte, 0> empty{};
   const auto decoded = chronos::columnar::decode_columnar_batch_v1_exact(empty);
@@ -125,6 +136,8 @@ int main() {
                  cseg_layout.has_value() && cseg_layout->total_length == 1'248U &&
                  stored_page.has_value() && stored_page->bytes().size() == 1U &&
                  plain_page.has_value() && plain_page->bytes().size() == 1U &&
+                 encoded_cseg_page.has_value() && encoded_cseg_page->bytes().size() == 1U &&
+                 decode_cseg_page != nullptr &&
                  !cseg_metadata.has_value() &&
                  cseg_metadata.error().kind() ==
                      chronos::cseg::CsegMetadataDecodeErrorKind::kIncomplete &&
