@@ -17,7 +17,7 @@ namespace detail {
 class SqlLexer;
 }
 
-enum class SqlTokenKind : std::uint16_t {
+enum class SqlTokenKind : std::uint8_t {
   kEnd = 0U,
   kIdentifier,
   kQuotedIdentifier,
@@ -44,7 +44,7 @@ enum class SqlTokenKind : std::uint16_t {
   kKeyword,
 };
 
-enum class SqlKeyword : std::uint16_t {
+enum class SqlKeyword : std::uint8_t {
   kNone = 0U,
   kAll,
   kAllowed,

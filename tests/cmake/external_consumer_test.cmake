@@ -85,6 +85,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/query/lexer.hpp>
 #include <chronos/query/parser.hpp>
 #include <chronos/query/catalog.hpp>
+#include <chronos/query/binder.hpp>
 #include <chronos/manifest/types.hpp>
 #include <chronos/manifest/validation.hpp>
 #include <chronos/wal/application.hpp>
@@ -229,6 +230,11 @@ int main() {
   const auto sql_tokens = chronos::query::tokenize_sql_v1("SELECT * FROM metrics");
   const auto sql_select = chronos::query::parse_sql_v1_select("SELECT * FROM metrics");
   const auto query_catalog = chronos::query::QueryCatalogSnapshot::create(1U, {});
+  using BindSelectFunction = chronos::query::SqlResult<chronos::query::BoundSqlSelect> (*)(
+      chronos::query::ParsedSqlSelect,
+      std::shared_ptr<const chronos::query::QueryCatalogSnapshot>,
+      chronos::query::SqlBinderLimits);
+  const BindSelectFunction bind_select = &chronos::query::bind_sql_v1_select;
   const auto manifest_name = chronos::manifest::manifest_file_name(1U);
   using DecodeManifestFunction = chronos::manifest::ManifestDecodeResult (*)(
       chronos::common::ByteView, chronos::manifest::ManifestDecodeLimits);
@@ -380,6 +386,7 @@ int main() {
                  sql_tokens.has_value() && sql_tokens->tokens().size() == 5U &&
                  sql_select.has_value() && sql_select->items().size() == 1U &&
                  query_catalog.has_value() && query_catalog->tables().empty() &&
+                 bind_select != nullptr &&
                  manifest_name.has_value() &&
                  *manifest_name == "manifest-00000000000000000001.cman" &&
                  decode_manifest != nullptr && validate_manifest_transition != nullptr &&

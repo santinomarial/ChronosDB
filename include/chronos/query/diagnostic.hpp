@@ -10,7 +10,7 @@
 
 namespace chronos::query {
 
-enum class SqlDiagnosticCode : std::uint16_t {
+enum class SqlDiagnosticCode : std::uint8_t {
   kInvalidByte = 1U,
   kUnterminatedQuotedIdentifier,
   kUnterminatedString,

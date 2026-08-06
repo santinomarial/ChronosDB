@@ -309,8 +309,11 @@ No phase passes because its code merely compiles. A phase passes only when its a
   expression precedence, typed literal/CAST shapes, system-time, LATEST BY, ASOF joins, grouping,
   ordering, limits, EXPLAIN, and SUBSCRIBE syntax. An immutable catalog snapshot now retains exact
   schema versions, canonical quoted/unquoted table identities, and a generation across live
-  lineage changes. CREATE TABLE and INSERT parsing, expression/relational binding, plans, and
-  scalar execution remain unimplemented.
+  lineage changes. The SELECT binder pins that snapshot, resolves exact table/column identities,
+  applies the v1 implicit-conversion and aggregate/grouping rules, expands stars deterministically,
+  and records typed expression, projection, and ORDER BY alias bindings without executor-side name
+  resolution. CREATE TABLE and INSERT parsing, ASOF/LATEST relational plans, typed literal value
+  validation, and scalar execution remain unimplemented.
 
 - **Scope:** specify a typed analytical SQL subset; custom lexer/parser; catalog binding; scalar expression/relational reference execution; event-time and system-time query syntax required by initial workloads.
 - **Explicit non-scope:** full SQL compliance, vectorization, cost-based optimization, distributed SQL, unsupported mutation syntax, and streaming syntax beyond contracts scheduled later.

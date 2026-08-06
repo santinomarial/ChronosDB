@@ -322,6 +322,7 @@ chronos_enable_static_analysis(chronos_manifest)
 add_library(
   chronos_query
   src/query/ast.cpp
+  src/query/binder.cpp
   src/query/catalog.cpp
   src/query/diagnostic.cpp
   src/query/lexer.cpp
@@ -718,6 +719,8 @@ if(CHRONOS_BUILD_TESTS)
     chronos_query_tests
     tests/query/diagnostic_header_self_contained.cpp
     tests/query/ast_header_self_contained.cpp
+    tests/query/binder_header_self_contained.cpp
+    tests/query/binder_test.cpp
     tests/query/catalog_header_self_contained.cpp
     tests/query/catalog_test.cpp
     tests/query/lexer_header_self_contained.cpp
@@ -1066,6 +1069,16 @@ if(CHRONOS_BUILD_FUZZERS)
   chronos_set_project_warnings(chronos_sql_parser_fuzz)
   chronos_enable_sanitizers(chronos_sql_parser_fuzz)
   chronos_enable_static_analysis(chronos_sql_parser_fuzz)
+
+  add_executable(chronos_sql_binder_fuzz tests/fuzz/sql_binder_fuzz.cpp)
+  set_target_properties(chronos_sql_binder_fuzz PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_sql_binder_fuzz PRIVATE cxx_std_23)
+  target_link_libraries(chronos_sql_binder_fuzz PRIVATE chronos::query)
+  target_compile_options(chronos_sql_binder_fuzz PRIVATE -fsanitize=fuzzer)
+  target_link_options(chronos_sql_binder_fuzz PRIVATE -fsanitize=fuzzer)
+  chronos_set_project_warnings(chronos_sql_binder_fuzz)
+  chronos_enable_sanitizers(chronos_sql_binder_fuzz)
+  chronos_enable_static_analysis(chronos_sql_binder_fuzz)
 endif()
 
 chronos_configure_installation()
