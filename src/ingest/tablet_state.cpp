@@ -745,7 +745,7 @@ TabletState::prepare_append(const RetryIdentity& retry_identity,
 common::Result<TabletSnapshot>
 TabletState::advance_recovered_retry(const RetryIdentity& retry_identity,
                                      const ColumnarAppendMutationIdentity& mutation,
-                                     std::shared_ptr<const ColumnarAppendRetryOutcome> outcome,
+                                     const std::shared_ptr<const ColumnarAppendRetryOutcome>& outcome,
                                      const head::HeadCommitPosition position) {
   if (state_ == nullptr) {
     return common::make_unexpected(invalid("tablet state is invalid"));

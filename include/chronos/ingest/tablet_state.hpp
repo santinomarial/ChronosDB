@@ -140,7 +140,8 @@ public:
   // added; one new outer epoch publishes only the later verified WAL position.
   [[nodiscard]] common::Result<TabletSnapshot> advance_recovered_retry(
       const RetryIdentity& retry_identity, const ColumnarAppendMutationIdentity& mutation,
-      std::shared_ptr<const ColumnarAppendRetryOutcome> outcome, head::HeadCommitPosition position);
+      const std::shared_ptr<const ColumnarAppendRetryOutcome>& outcome,
+      head::HeadCommitPosition position);
 
   [[nodiscard]] common::Result<TabletSnapshot> snapshot() const;
   [[nodiscard]] TabletStateMetrics metrics() const;
