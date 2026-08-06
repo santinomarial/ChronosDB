@@ -1,9 +1,10 @@
 # ChronosDB CSEG v1
 
-> **Status: accepted specification; constants, identity, layout, compression, and metadata codec
-> implemented.** This document is the normative byte-level definition of one
+> **Status: accepted specification; constants, identity, layout, compression, metadata, and PLAIN
+> payload codecs implemented.** This document is the normative byte-level definition of one
 > immutable CSEG v1 part. Bounded raw/Zstandard page compression and the canonical metadata
-> directory codec are implemented; page-value and complete-part codecs remain pending.
+> directory plus standalone PLAIN payload codecs are implemented; page framing and the complete-
+> part codec remain pending.
 > [ADR 0016](../adr/0016-cseg-v1-layout-integrity-and-compression.md)
 > accepts the layout, integrity, ordering, and compression decisions. Manifests, installation,
 > flush orchestration, compaction, and reclamation are separate Phase 6 and Phase 7 contracts.
@@ -272,6 +273,14 @@ standalone slice for its granule:
 
 Unlike Columnar Batch v1, an all-empty variable page still has nonempty offsets, so every CSEG page
 has a nonzero uncompressed and stored representation.
+
+The implemented in-memory PLAIN codec owns exactly the canonical encoded payload and decodes an
+already checksum-verified, decompressed payload into a borrowed identity-free physical-column
+view. It deliberately does not infer a schema identity or verify the page CRC: the complete-part
+reader must establish descriptor integrity, verify the stored-page CRC, and decompress before
+calling it. Physical validation is shared with Columnar Batch v1 so null counts, packed-bit
+cleanliness, offsets, UTF-8, decimal bounds, and zeroed null slots cannot drift between formats.
+The payload owner must outlive the decoded view and all cell views obtained from it.
 
 System pages use the same PLAIN rules. `WAL_ID` slots contain nonzero 16-byte UUID network-order
 values. `RECORD_SEQUENCE` values are positive. `ROW_ORDINAL` is zero-based within its source WAL

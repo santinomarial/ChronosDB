@@ -168,8 +168,10 @@ granules, schema and system columns, independently checksummed PLAIN pages, boun
 storage, metadata integrity, physical row ordering, and compatibility behavior. The `chronos_cseg`
 target now exposes the authoritative constants, nominal part identity, allocation-free checked
 metadata/page layout planner, bounded raw/Zstandard page compression, and a checksummed borrowed
-metadata-directory codec with exact schema binding. Page-value decoding, complete part writing and
-validation, readers, and the inspector remain pending.
+metadata-directory codec with exact schema binding. An identity-free physical-column view shares
+the Columnar Batch v1 canonical buffer validator with deterministic PLAIN payload encoding and
+borrowed schema-independent decoding. Page CRC/decompression composition, complete part writing
+and validation, readers, and the inspector remain pending.
 
 Parts will be written to temporary identities, fully validated and made durable according to the
 future installation protocol, then atomically referenced by a manifest version edit. After

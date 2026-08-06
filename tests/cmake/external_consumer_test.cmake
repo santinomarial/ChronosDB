@@ -48,6 +48,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/cseg/format.hpp>
 #include <chronos/cseg/layout.hpp>
 #include <chronos/cseg/metadata_codec.hpp>
+#include <chronos/cseg/plain_page.hpp>
 #include <chronos/cseg/types.hpp>
 #include <chronos/head/mutable_head.hpp>
 #include <chronos/ingest/columnar_append.hpp>
@@ -87,6 +88,19 @@ int main() {
   const auto stored_page =
       chronos::cseg::compress_cseg_page_v1(page, chronos::cseg::PageCompression::kNone);
   const auto cseg_metadata = chronos::cseg::decode_cseg_v1_metadata_prefix({});
+  const std::array<std::byte, 1> bool_values{std::byte{1U}};
+  const auto physical = chronos::columnar::PhysicalColumnView::create(
+      {.type = chronos::schema::LogicalType::create(
+                   chronos::schema::LogicalTypeKind::kBool)
+                   .value(),
+       .nullable = false,
+       .row_count = 1U,
+       .null_count = 0U},
+      {.validity = {}, .offsets = {}, .values = bool_values});
+  const auto plain_page = physical.has_value()
+                              ? chronos::cseg::encode_cseg_v1_plain_page(*physical)
+                              : chronos::common::Result<chronos::cseg::EncodedCsegPlainPage>{
+                                    chronos::common::make_unexpected(physical.error())};
   chronos::columnar::ColumnarBatchLimits limits;
   std::array<std::byte, 0> empty{};
   const auto decoded = chronos::columnar::decode_columnar_batch_v1_exact(empty);
@@ -110,6 +124,7 @@ int main() {
                  retry_directory->metrics().maximum_entries == 8U && !decoded.has_value() &&
                  cseg_layout.has_value() && cseg_layout->total_length == 1'248U &&
                  stored_page.has_value() && stored_page->bytes().size() == 1U &&
+                 plain_page.has_value() && plain_page->bytes().size() == 1U &&
                  !cseg_metadata.has_value() &&
                  cseg_metadata.error().kind() ==
                      chronos::cseg::CsegMetadataDecodeErrorKind::kIncomplete &&

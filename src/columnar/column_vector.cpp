@@ -138,7 +138,7 @@ namespace {
   return false;
 }
 
-[[nodiscard]] common::Status validate_validity(const ColumnVectorMetadata metadata,
+[[nodiscard]] common::Status validate_validity(const PhysicalColumnMetadata metadata,
                                                const ColumnVectorBufferView buffers) {
   if (!metadata.nullable) {
     if (!buffers.validity.empty() || metadata.null_count != 0U) {
@@ -166,7 +166,7 @@ namespace {
   return common::Status::ok();
 }
 
-[[nodiscard]] common::Status validate_variable(const ColumnVectorMetadata metadata,
+[[nodiscard]] common::Status validate_variable(const PhysicalColumnMetadata metadata,
                                                const ColumnVectorBufferView buffers) {
   const auto offset_count =
       common::checked_add<std::size_t>(static_cast<std::size_t>(metadata.row_count), 1U);
@@ -211,7 +211,7 @@ namespace {
   return common::Status::ok();
 }
 
-[[nodiscard]] common::Status validate_fixed(const ColumnVectorMetadata metadata,
+[[nodiscard]] common::Status validate_fixed(const PhysicalColumnMetadata metadata,
                                             const ColumnVectorBufferView buffers) {
   if (!buffers.offsets.empty()) {
     return invalid("fixed-width column must not have offsets");
@@ -269,10 +269,11 @@ common::Result<common::ByteView> ColumnCellView::bytes() const {
   return bytes_;
 }
 
-common::Result<ColumnVectorView> ColumnVectorView::create(const ColumnVectorMetadata metadata,
-                                                          const ColumnVectorBufferView buffers) {
+common::Result<PhysicalColumnView>
+PhysicalColumnView::create(const PhysicalColumnMetadata metadata,
+                           const ColumnVectorBufferView buffers) {
   if (metadata.row_count == 0U) {
-    return common::make_unexpected(invalid("column vector row count must be nonzero"));
+    return common::make_unexpected(invalid("physical column row count must be nonzero"));
   }
   common::Status status = validate_buffer_accounting(buffers);
   if (!status.is_ok()) {
@@ -287,14 +288,14 @@ common::Result<ColumnVectorView> ColumnVectorView::create(const ColumnVectorMeta
   if (!status.is_ok()) {
     return common::make_unexpected(std::move(status));
   }
-  return ColumnVectorView{metadata, buffers};
+  return PhysicalColumnView{metadata, buffers};
 }
 
-std::size_t ColumnVectorView::buffer_bytes() const noexcept {
+std::size_t PhysicalColumnView::buffer_bytes() const noexcept {
   return validity_.size() + offsets_.size() + values_.size();
 }
 
-common::Result<bool> ColumnVectorView::is_null(const std::uint32_t row) const {
+common::Result<bool> PhysicalColumnView::is_null(const std::uint32_t row) const {
   if (row >= row_count_) {
     return common::make_unexpected(
         common::Status{common::StatusCode::kOutOfRange, "column row is out of range"});
@@ -302,7 +303,7 @@ common::Result<bool> ColumnVectorView::is_null(const std::uint32_t row) const {
   return nullable_ && !bit_at(validity_, row);
 }
 
-common::Result<ColumnCellView> ColumnVectorView::cell(const std::uint32_t row) const {
+common::Result<ColumnCellView> PhysicalColumnView::cell(const std::uint32_t row) const {
   const common::Result<bool> null = is_null(row);
   if (!null.has_value()) {
     return common::make_unexpected(null.error());
@@ -322,6 +323,32 @@ common::Result<ColumnCellView> ColumnVectorView::cell(const std::uint32_t row) c
   }
   const std::size_t width = fixed_width(type_.kind());
   return ColumnCellView::bytes(values_.subspan(static_cast<std::size_t>(row) * width, width));
+}
+
+common::Result<ColumnVectorView> ColumnVectorView::create(const ColumnVectorMetadata metadata,
+                                                          const ColumnVectorBufferView buffers) {
+  const common::Result<PhysicalColumnView> physical =
+      PhysicalColumnView::create({.type = metadata.type,
+                                  .nullable = metadata.nullable,
+                                  .row_count = metadata.row_count,
+                                  .null_count = metadata.null_count},
+                                 buffers);
+  if (!physical.has_value()) {
+    return common::make_unexpected(physical.error());
+  }
+  return ColumnVectorView{metadata, buffers};
+}
+
+std::size_t ColumnVectorView::buffer_bytes() const noexcept {
+  return physical_.buffer_bytes();
+}
+
+common::Result<bool> ColumnVectorView::is_null(const std::uint32_t row) const {
+  return physical_.is_null(row);
+}
+
+common::Result<ColumnCellView> ColumnVectorView::cell(const std::uint32_t row) const {
+  return physical_.cell(row);
 }
 
 OwnedColumnVector::OwnedColumnVector(const ColumnVectorMetadata metadata,
