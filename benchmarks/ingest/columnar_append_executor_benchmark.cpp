@@ -289,6 +289,103 @@ void benchmark_matching_retry(benchmark::State& state) {
   state.SetLabel("re-encode and digest one matching committed retry; no WAL or tablet mutation");
 }
 
+void benchmark_mixed_retry_ratio(benchmark::State& state) {
+  const auto rows = static_cast<std::uint32_t>(state.range(0));
+  const auto retries_per_first = static_cast<std::uint32_t>(state.range(1));
+  const std::uint64_t operations_per_cycle = static_cast<std::uint64_t>(retries_per_first) + 1U;
+  const ExecutorFixture fixture = make_fixture(rows);
+  for ([[maybe_unused]] auto iteration : state) {
+    state.PauseTiming();
+    {
+      auto directory = TemporaryWalDirectory::create();
+      if (!directory.has_value()) {
+        state.SkipWithError("could not create a temporary WAL directory");
+        return;
+      }
+      auto writer =
+          chronos::wal::WalWriter::create_new({.directory_path = directory->path().string()});
+      if (!writer.has_value()) {
+        const std::string message = writer.error().to_string();
+        state.SkipWithError(message);
+        return;
+      }
+      auto started = chronos::wal::WalCommitCoordinator::start(
+          std::move(*writer), {.maximum_sync_batch_delay = std::chrono::microseconds{0}});
+      if (!started.has_value()) {
+        const std::string message = started.error().to_string();
+        state.SkipWithError(message);
+        return;
+      }
+      chronos::wal::WalCommitCoordinator coordinator = std::move(*started);
+      auto retry_directory = chronos::ingest::RetryDirectory::create({.maximum_entries = 1U});
+      auto tablet = chronos::ingest::TabletState::create(
+          fixture.batch->schema_ptr(), fixture.tablet_id,
+          {.head_capacity = {.row_capacity = rows, .variable_value_bytes = {0U}},
+           .maximum_sealed_generations = 1U,
+           .maximum_retry_entries = 1U});
+      if (!retry_directory.has_value() || !tablet.has_value()) {
+        static_cast<void>(coordinator.shutdown());
+        state.SkipWithError("could not create bounded executor state");
+        return;
+      }
+      const chronos::ingest::ColumnarAppendExecutionInput input{
+          .client_id = request_id<chronos::ingest::ClientId>(16U),
+          .client_batch_id = request_id<chronos::ingest::ClientBatchId>(32U),
+          .batch = fixture.batch,
+          .durability = chronos::wal::WalDurabilityMode::kAsync};
+      state.ResumeTiming();
+
+      const chronos::ingest::ColumnarAppendRetryOutcome* expected_outcome = nullptr;
+      bool valid = true;
+      for (std::uint32_t operation = 0U; operation <= retries_per_first; ++operation) {
+        auto result =
+            chronos::ingest::execute_columnar_append(input, *retry_directory, *tablet, coordinator);
+        const auto expected_kind =
+            operation == 0U ? chronos::ingest::ColumnarAppendExecutionKind::kApplied
+                            : chronos::ingest::ColumnarAppendExecutionKind::kMatchingRetry;
+        if (!result.has_value() || result->outcome == nullptr || result->kind != expected_kind ||
+            result->wal_commit.has_value() != (operation == 0U) ||
+            (operation != 0U && result->outcome.get() != expected_outcome)) {
+          valid = false;
+          break;
+        }
+        if (operation == 0U) {
+          expected_outcome = result->outcome.get();
+        }
+        benchmark::DoNotOptimize(result->outcome.get());
+      }
+      benchmark::ClobberMemory();
+
+      state.PauseTiming();
+      const auto final_snapshot = tablet->snapshot();
+      if (!final_snapshot.has_value() || final_snapshot->visible_row_count() != rows ||
+          final_snapshot->retry_entry_count() != 1U ||
+          retry_directory->metrics().committed_entries != 1U) {
+        valid = false;
+      }
+      const chronos::common::Status shutdown = coordinator.shutdown();
+      if (!valid) {
+        state.SkipWithError("mixed retry cycle violated WAL, outcome, row, or retry invariants");
+        return;
+      }
+      if (!shutdown.is_ok()) {
+        const std::string message = shutdown.to_string();
+        state.SkipWithError(message);
+        return;
+      }
+    }
+    state.ResumeTiming();
+  }
+  const std::uint64_t processed_rows = static_cast<std::uint64_t>(state.iterations()) *
+                                       static_cast<std::uint64_t>(rows) * operations_per_cycle;
+  const std::uint64_t processed_bytes = static_cast<std::uint64_t>(state.iterations()) *
+                                        fixture.encoded_batch_bytes * operations_per_cycle;
+  state.SetItemsProcessed(static_cast<std::int64_t>(processed_rows));
+  state.SetBytesProcessed(static_cast<std::int64_t>(processed_bytes));
+  state.counters["first_attempt_percent"] = 100.0 / static_cast<double>(operations_per_cycle);
+  state.SetLabel("one real ASYNC first apply followed by the declared matching-retry count");
+}
+
 // Google Benchmark registers functions during static initialization.
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 BENCHMARK(benchmark_execute_async)->Arg(64)->Arg(1024)->UseRealTime();
@@ -296,5 +393,12 @@ BENCHMARK(benchmark_execute_async)->Arg(64)->Arg(1024)->UseRealTime();
 BENCHMARK(benchmark_execute_local_sync)->Arg(64)->Arg(1024)->UseRealTime();
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 BENCHMARK(benchmark_matching_retry)->Arg(64)->Arg(1024)->Arg(65536);
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+BENCHMARK(benchmark_mixed_retry_ratio)
+    ->Args({64, 1})
+    ->Args({64, 9})
+    ->Args({1024, 1})
+    ->Args({1024, 9})
+    ->UseRealTime();
 
 } // namespace

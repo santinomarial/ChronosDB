@@ -117,6 +117,12 @@ first apply establishes the immutable outcome. Each timed retry still performs c
 SHA-256 digesting, and directory lookup, while correctness guards require the matching-retry kind,
 the exact original outcome pointer, and no second `WalCommitResult`.
 
+Mixed cases time one real `ASYNC` first apply followed by either one or nine matching retries,
+representing 50/50 and 10/90 first-attempt/retry operation ratios at 64 and 1,024 rows. Every cycle
+checks the one WAL-bearing applied result, retry-side absence of `WalCommitResult`, exact outcome
+pointer reuse, one visible batch, and one committed global/tablet retry entry. Reported item counts
+are batch-row equivalents encoded and checked, not newly applied rows.
+
 ## Verification
 
 The executor integration suite covers:

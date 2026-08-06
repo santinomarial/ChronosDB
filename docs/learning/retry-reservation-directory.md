@@ -109,8 +109,10 @@ optimization or format hot path. The single-tablet executor microbenchmark keeps
 publication, and durability work enabled for first attempts. A separate steady matching-retry case
 re-encodes and re-digests 64-, 1,024-, and 65,536-row batches against one pre-established committed
 identity while asserting exact outcome-pointer reuse and the absence of a second WAL result. The
-wider Phase 4 matrix must still cover lookup contention, retained memory, and mixed first-attempt
-ratios. Evidence from that workload can justify a partitioned or hash-based implementation later.
+executor also measures 50/50 and 10/90 first-attempt/retry operation ratios at 64 and 1,024 rows,
+with one real first apply per timed cycle. The wider Phase 4 matrix must still cover lookup
+contention and retained memory across larger identity populations. Evidence from that workload can
+justify a partitioned or hash-based implementation later.
 
 ## Verification strategy
 

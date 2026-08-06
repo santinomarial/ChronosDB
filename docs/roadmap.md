@@ -131,9 +131,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
   allocation calls and requested bytes without including paused arena construction. Coordinated
   1-/2-/4-reader cases scan the same pinned buffers at the two larger row counts and two string
   widths. The executor matrix additionally covers correctness-guarded steady matching retries at
-  64, 1,024, and 65,536 rows without a second WAL result. Retry retention, routing/admission, flush
-  handoff, hardware cache profiles, mixed retry ratios, and the wider end-to-end Phase 4 benchmark
-  matrix remain unimplemented.
+  64, 1,024, and 65,536 rows without a second WAL result, plus real-WAL 50/50 and 10/90
+  first-attempt/retry operation ratios at 64 and 1,024 rows. Retry retention, routing/admission,
+  flush handoff, hardware cache profiles, larger retry-population contention/retained-memory
+  measurement, and the wider end-to-end Phase 4 benchmark matrix remain unimplemented.
 
 - **Scope:** typed immutable input batches; null/variable-width representation; append-only tablet heads; sealing; single shard-worker ownership; stable reader boundaries; idempotent ordered replay into heads.
 - **Explicit non-scope:** durable columnar parts, SQL execution, secondary indexes, general lock-free containers, live subscriptions, and a universal allocator.
