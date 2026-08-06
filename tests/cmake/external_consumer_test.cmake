@@ -90,6 +90,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/query/evaluator.hpp>
 #include <chronos/query/executor.hpp>
 #include <chronos/query/snapshot.hpp>
+#include <chronos/query/statement_binder.hpp>
 #include <chronos/query/value.hpp>
 #include <chronos/manifest/types.hpp>
 #include <chronos/manifest/validation.hpp>
@@ -249,6 +250,10 @@ int main() {
       std::shared_ptr<const chronos::query::QueryCatalogSnapshot>,
       chronos::query::SqlBinderLimits);
   const BindSelectFunction bind_select = &chronos::query::bind_sql_v1_select;
+  using BindCreateFunction = chronos::query::SqlResult<chronos::query::BoundSqlCreateTable> (*)(
+      chronos::query::ParsedSqlCreateTable,
+      std::shared_ptr<const chronos::query::QueryCatalogSnapshot>);
+  const BindCreateFunction bind_create = &chronos::query::bind_sql_v1_create_table;
   using EvaluateExpressionFunction = chronos::query::SqlResult<chronos::query::ScalarValue> (*)(
       const chronos::query::BoundSqlSelect&, const chronos::query::SqlExpression&,
       const chronos::query::ScalarEvaluationContext&);
@@ -417,7 +422,7 @@ int main() {
                  parse_create != nullptr && parse_insert != nullptr &&
                  query_catalog.has_value() && query_catalog->tables().empty() &&
                  query_scalar.has_value() && !query_scalar->is_null() &&
-                 bind_select != nullptr &&
+                 bind_select != nullptr && bind_create != nullptr &&
                  evaluate_expression != nullptr &&
                  create_scalar_snapshot != nullptr &&
                  execute_select != nullptr &&

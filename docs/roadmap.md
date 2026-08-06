@@ -320,8 +320,8 @@ No phase passes because its code merely compiles. A phase passes only when its a
   unsigned arithmetic, IEEE floating behavior, explicit numeric/temporal casts, IN/BETWEEN,
   COALESCE, ABS, ASCII case mapping, epoch-aligned time buckets, aliases, and aggregate overrides.
   Its dependency-free exact decimal path uses checked widened intermediates for arithmetic,
-  rescaling, division, remainder, unary operations, and explicit integer/IEEE conversions. CREATE
-  TABLE and INSERT parsing and relational execution remain unimplemented. Bound LATEST/ASOF plans
+  rescaling, division, remainder, unary operations, and explicit integer/IEEE conversions. Bound
+  LATEST/ASOF plans
   now carry exact key/source/time identities and reject non-canonical temporal-join conditions. An
   immutable scalar snapshot/provider boundary validates exact schemas, logical/version identities,
   commit boundaries, types, and nullability before relational execution. The bounded relational
@@ -329,8 +329,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
   deterministic ORDER BY tie-breaking, and LIMIT. Grouped and global COUNT, exact widened SUM,
   AVG, MIN/MAX, and population/sample variance implement the frozen NULL, NaN, empty-input, and
   final-overflow rules. The bounded owned statement AST/parser now covers the canonical CREATE
-  TABLE policy clauses and finite multi-row INSERT VALUES surface; DDL/INSERT semantic binding and
-  INSERT materialization remain unimplemented.
+  TABLE policy clauses and finite multi-row INSERT VALUES surface. CREATE TABLE binding rejects
+  invalid role, key, partition, nullability, and interval relationships, retains normalized policy
+  durations, and materializes an initial `TableSchema` only from caller-allocated durable
+  identities. INSERT semantic binding and materialization remain unimplemented.
 
 - **Scope:** specify a typed analytical SQL subset; custom lexer/parser; catalog binding; scalar expression/relational reference execution; event-time and system-time query syntax required by initial workloads.
 - **Explicit non-scope:** full SQL compliance, vectorization, cost-based optimization, distributed SQL, unsupported mutation syntax, and streaming syntax beyond contracts scheduled later.
