@@ -21,6 +21,12 @@ struct OpenAtRequest {
   mode_t permissions;
 };
 
+struct MkdirAtRequest {
+  int directory_descriptor;
+  const char* name;
+  mode_t permissions;
+};
+
 struct ReadAtRequest {
   int descriptor;
   void* destination;
@@ -56,6 +62,7 @@ public:
 
   virtual int open_directory(const char* path, int flags) = 0;
   virtual int open_at(const OpenAtRequest& request) = 0;
+  virtual int mkdir_at(const MkdirAtRequest& request) = 0;
   virtual ssize_t pread(const ReadAtRequest& request) = 0;
   virtual ssize_t pwrite(const WriteAtRequest& request) = 0;
   virtual int fstat(int descriptor, struct stat* metadata) = 0;

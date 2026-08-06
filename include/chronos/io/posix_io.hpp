@@ -137,6 +137,13 @@ public:
   [[nodiscard]] static common::Result<PosixDirectory> open(std::string_view path);
   [[nodiscard]] bool is_open() const noexcept;
 
+  // Child-directory operations are descriptor-relative and never follow a final-component
+  // symlink. Creation is exclusive; callers synchronize this directory after establishing a
+  // durable child name.
+  [[nodiscard]] common::Status create_exclusive_directory(std::string_view name,
+                                                          std::uint16_t permissions = 0700U) const;
+  [[nodiscard]] common::Result<PosixDirectory> open_directory(std::string_view name) const;
+
   [[nodiscard]] common::Result<PosixFile> open_regular_file(std::string_view name,
                                                             FileOpenMode mode) const;
   [[nodiscard]] common::Result<PosixFile>

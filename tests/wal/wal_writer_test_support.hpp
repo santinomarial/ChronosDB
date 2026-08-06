@@ -54,6 +54,11 @@ public:
     return integer_result(outcome);
   }
 
+  int mkdir_at(const io::detail::MkdirAtRequest& request) override {
+    events.emplace_back(std::string{"mkdir_at:"} + request.name);
+    return integer_result(pop_or(mkdir_outcomes, 0));
+  }
+
   ssize_t pread(const io::detail::ReadAtRequest& request) override {
     events.emplace_back("pread:" + std::to_string(request.descriptor));
     return signed_result(pop_or(pread_outcomes, 0));
@@ -144,6 +149,7 @@ public:
 
   std::deque<SyscallOutcome> open_directory_outcomes;
   std::deque<SyscallOutcome> open_at_outcomes;
+  std::deque<SyscallOutcome> mkdir_outcomes;
   std::deque<SyscallOutcome> pread_outcomes;
   std::deque<SyscallOutcome> pwrite_outcomes;
   std::deque<SyscallOutcome> fstat_outcomes;

@@ -156,6 +156,10 @@ public:
     return descriptor;
   }
 
+  int mkdir_at(const io::detail::MkdirAtRequest& request) override {
+    return delegate_.mkdir_at(request);
+  }
+
   ssize_t pread(const io::detail::ReadAtRequest& request) override {
     return delegate_.pread(request);
   }

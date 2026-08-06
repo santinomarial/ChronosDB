@@ -55,6 +55,13 @@ public:
     return integer_result(pop_or(open_at_outcomes, next_descriptor++));
   }
 
+  int mkdir_at(const detail::MkdirAtRequest& request) override {
+    mkdir_directories.push_back(request.directory_descriptor);
+    mkdir_names.emplace_back(request.name);
+    mkdir_permissions.push_back(request.permissions);
+    return integer_result(pop_or(mkdir_outcomes, 0));
+  }
+
   ssize_t pread(const detail::ReadAtRequest& request) override {
     pread_descriptors.push_back(request.descriptor);
     pread_sizes.push_back(request.size);
@@ -147,6 +154,7 @@ public:
 
   std::deque<Outcome> open_directory_outcomes;
   std::deque<Outcome> open_at_outcomes;
+  std::deque<Outcome> mkdir_outcomes;
   std::deque<Outcome> pread_outcomes;
   std::deque<Outcome> pwrite_outcomes;
   std::deque<Outcome> fstat_outcomes;
@@ -167,6 +175,9 @@ public:
   std::vector<std::string> open_at_names;
   std::vector<int> open_at_flags;
   std::vector<mode_t> open_at_permissions;
+  std::vector<int> mkdir_directories;
+  std::vector<std::string> mkdir_names;
+  std::vector<mode_t> mkdir_permissions;
   std::vector<int> pread_descriptors;
   std::vector<std::size_t> pread_sizes;
   std::vector<off_t> pread_offsets;
@@ -465,6 +476,38 @@ TEST(PosixDirectoryInjectedTest, ValidatesRegularFilesAndMapsLockContention) {
   EXPECT_NE(contention.error().message().find("another process"), std::string::npos);
 }
 
+TEST(PosixDirectoryInjectedTest, CreatesAndOpensChildDirectoriesRelativeWithoutFollowingNames) {
+  ScriptedSyscalls syscalls;
+  PosixDirectory directory = detail::PosixHandleFactory::directory(10, syscalls);
+  syscalls.mkdir_outcomes = {{-1, EINTR}, {0, 0}, {-1, EEXIST}};
+
+  EXPECT_TRUE(directory.create_exclusive_directory("parts", 0750U).is_ok());
+  EXPECT_EQ(syscalls.mkdir_directories, (std::vector<int>{10, 10}));
+  EXPECT_EQ(syscalls.mkdir_names, (std::vector<std::string>{"parts", "parts"}));
+  EXPECT_EQ(syscalls.mkdir_permissions.back(), static_cast<mode_t>(0750));
+  EXPECT_EQ(directory.create_exclusive_directory("parts").code(),
+            common::StatusCode::kAlreadyExists);
+  EXPECT_EQ(directory.create_exclusive_directory("../parts").code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(directory.create_exclusive_directory("manifest", 01000U).code(),
+            common::StatusCode::kInvalidArgument);
+
+  syscalls.metadata_mode = S_IFDIR | 0700;
+  syscalls.open_at_outcomes = {{-1, EINTR}, {20, 0}};
+  const common::Result<PosixDirectory> child = directory.open_directory("parts");
+  ASSERT_TRUE(child.has_value()) << child.error().to_string();
+  EXPECT_EQ(syscalls.open_at_directories, (std::vector<int>{10, 10}));
+  EXPECT_NE(syscalls.open_at_flags.back() & O_DIRECTORY, 0);
+  EXPECT_NE(syscalls.open_at_flags.back() & O_NOFOLLOW, 0);
+  EXPECT_EQ(directory.open_directory("nested/path").error().code(),
+            common::StatusCode::kInvalidArgument);
+
+  syscalls.metadata_mode = S_IFREG | 0600;
+  syscalls.open_at_outcomes = {{21, 0}};
+  EXPECT_EQ(directory.open_directory("not-a-directory").error().code(),
+            common::StatusCode::kInvalidArgument);
+}
+
 TEST(PosixHandleTest, DefaultClosedHandlesRejectOperationsWithoutCallingSyscalls) {
   PosixFile file;
   std::array<std::byte, 1> byte{};
@@ -481,6 +524,9 @@ TEST(PosixHandleTest, DefaultClosedHandlesRejectOperationsWithoutCallingSyscalls
             common::StatusCode::kInvalidArgument);
   EXPECT_EQ(directory.create_exclusive_regular_file("entry").error().code(),
             common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(directory.create_exclusive_directory("child").code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(directory.open_directory("child").error().code(), common::StatusCode::kInvalidArgument);
   EXPECT_EQ(directory.acquire_exclusive_lock("LOCK").error().code(),
             common::StatusCode::kInvalidArgument);
   EXPECT_EQ(directory.acquire_existing_exclusive_lock("LOCK").error().code(),
@@ -592,6 +638,25 @@ TEST(PosixIoIntegrationTest, PerformsDurableDirectoryRelativeFileLifecycle) {
   const common::Result<std::vector<DirectoryEntry>> repeated = directory->list_entries();
   ASSERT_TRUE(repeated.has_value()) << repeated.error().to_string();
   EXPECT_EQ(repeated->size(), entries->size());
+}
+
+TEST(PosixIoIntegrationTest, CreatesAndOpensChildDirectoryWithoutFollowingSymlink) {
+  TemporaryDirectory temporary;
+  ASSERT_TRUE(temporary.valid());
+  common::Result<PosixDirectory> root = PosixDirectory::open(temporary.path().string());
+  ASSERT_TRUE(root.has_value()) << root.error().to_string();
+
+  ASSERT_TRUE(root->create_exclusive_directory("parts", 0700U).is_ok());
+  EXPECT_EQ(root->create_exclusive_directory("parts").code(), common::StatusCode::kAlreadyExists);
+  common::Result<PosixDirectory> parts = root->open_directory("parts");
+  ASSERT_TRUE(parts.has_value()) << parts.error().to_string();
+  EXPECT_TRUE(parts->create_exclusive_regular_file("part.tmp").has_value());
+
+  const std::filesystem::path link = temporary.path() / "parts-link";
+  std::error_code link_error;
+  std::filesystem::create_directory_symlink(temporary.path() / "parts", link, link_error);
+  ASSERT_FALSE(link_error);
+  EXPECT_FALSE(root->open_directory("parts-link").has_value());
 }
 
 TEST(PosixIoIntegrationTest, HoldsTheAdvisoryLockAgainstAnotherProcess) {

@@ -337,6 +337,10 @@ public:
     return ::openat(request.directory_descriptor, request.name, request.flags, request.permissions);
   }
 
+  int mkdir_at(const MkdirAtRequest& request) noexcept override {
+    return ::mkdirat(request.directory_descriptor, request.name, request.permissions);
+  }
+
   ssize_t pread(const ReadAtRequest& request) noexcept override {
     return ::pread(request.descriptor, request.destination, request.size, request.offset);
   }
@@ -801,6 +805,61 @@ common::Result<PosixDirectory> PosixDirectory::open_with(const std::string_view 
 
 bool PosixDirectory::is_open() const noexcept {
   return descriptor_ != kInvalidDescriptor;
+}
+
+common::Status PosixDirectory::create_exclusive_directory(const std::string_view name,
+                                                          const std::uint16_t permissions) const {
+  if (!is_open()) {
+    return closed_handle("create_exclusive_directory");
+  }
+  common::Status name_status = validate_entry_name(name);
+  if (!name_status.is_ok()) {
+    return name_status;
+  }
+  common::Status permission_status = validate_permissions(permissions);
+  if (!permission_status.is_ok()) {
+    return permission_status;
+  }
+  const std::string owned_name{name};
+  int result = 0;
+  do {
+    result = syscalls_->mkdir_at(detail::MkdirAtRequest{
+        .directory_descriptor = descriptor_,
+        .name = owned_name.c_str(),
+        .permissions = static_cast<mode_t>(permissions),
+    });
+  } while (result == -1 && errno == EINTR);
+  return result == 0 ? common::Status::ok() : errno_status("mkdirat exclusive directory", errno);
+}
+
+common::Result<PosixDirectory> PosixDirectory::open_directory(const std::string_view name) const {
+  if (!is_open()) {
+    return common::make_unexpected(closed_handle("open_directory"));
+  }
+  const common::Status name_status = validate_entry_name(name);
+  if (!name_status.is_ok()) {
+    return common::make_unexpected(name_status);
+  }
+  const std::string owned_name{name};
+  constexpr int kFlags = O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW;
+  int descriptor = kInvalidDescriptor;
+  do {
+    descriptor = syscalls_->open_at(detail::OpenAtRequest{
+        .directory_descriptor = descriptor_,
+        .name = owned_name.c_str(),
+        .flags = kFlags,
+        .permissions = 0,
+    });
+  } while (descriptor == kInvalidDescriptor && errno == EINTR);
+  if (descriptor == kInvalidDescriptor) {
+    return common::make_unexpected(errno_status("openat child directory", errno));
+  }
+  const common::Status validation = validate_directory(*syscalls_, descriptor);
+  if (!validation.is_ok()) {
+    close_after_failed_open(*syscalls_, descriptor);
+    return common::make_unexpected(validation);
+  }
+  return PosixDirectory{descriptor, *syscalls_};
 }
 
 common::Result<PosixFile> PosixDirectory::open_regular_file(const std::string_view name,

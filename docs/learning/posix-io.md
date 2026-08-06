@@ -18,6 +18,7 @@ mechanisms already required by the accepted WAL design:
 - explicit-offset regular-file reads and complete writes;
 - file size inspection and non-growing truncation;
 - data and full-file synchronization;
+- directory-relative exclusive child creation and no-follow child opening;
 - directory-relative regular-file open and exclusive creation;
 - owning directory-entry snapshots with no-follow type classification;
 - directory-relative removal of a previously classified non-directory entry;
@@ -78,8 +79,9 @@ logical writer.
 The directory object opens its final path component with `O_DIRECTORY`, `O_CLOEXEC`, and
 `O_NOFOLLOW`, then verifies the descriptor with `fstat`. Entry operations accept only a nonempty
 basename: empty names, `.`, `..`, embedded NUL bytes, and `/` are rejected. They use `openat` against
-the owned directory descriptor and verify opened entries are regular files. This avoids ambient
-working-directory races and final-component symlink traversal.
+the owned directory descriptor and verify the expected entry type. Child directories use
+`mkdirat` for exclusive creation and `openat` with `O_DIRECTORY | O_NOFOLLOW`; regular files also
+use `O_NOFOLLOW`. This avoids ambient working-directory races and final-component symlink traversal.
 
 Exclusive creation uses `O_CREAT | O_EXCL | O_NOFOLLOW`; it never opens or truncates a colliding
 name. Permissions are limited to the ordinary `0777` permission bits and remain subject to the
@@ -151,8 +153,9 @@ not installed as a public filesystem interface.
 
 Separate integration tests use the host filesystem to exercise exclusive creation, explicit-offset
 overwrite/read, size, synchronization, non-growing truncation, no-replace rename, symlink rejection,
-directory sync, and cross-process advisory-lock contention. These tests prove syscall integration on
-the running host, not crash persistence or filesystem qualification.
+descriptor-relative child-directory creation/open, directory sync, and cross-process advisory-lock
+contention. These tests prove syscall integration on the running host, not crash persistence or
+filesystem qualification.
 
 ## Complexity and tradeoffs
 
