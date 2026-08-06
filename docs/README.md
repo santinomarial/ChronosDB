@@ -36,7 +36,7 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [CSEG v1](formats/cseg-v1.md): accepted immutable sorted part layout, schema and system columns,
   granules, independently checked pages, compression, ordering, and compatibility rules;
   authoritative constants, nominal part identity, and checked canonical layout planning are
-  implemented.
+  implemented together with bounded raw/Zstandard page compression.
 - [Production dependencies](dependencies/README.md): maintained external-library boundaries,
   version sources, licenses, and update/security ownership.
 

@@ -84,8 +84,11 @@ Build system, package-resolution mechanism, initial test/benchmark frameworks, c
 
 OpenSSL 3 is the first production dependency, narrowly used through EVP as the maintained SHA-256
 provider for `chronos_ingest`; its required dependency record is under `docs/dependencies/`.
-Permitted libraries otherwise remain options, not commitments. Replacing a commodity dependency
-requires compatibility tests and, when it affects stored/wire bytes, versioned migration.
+Zstandard 1.5.5 or newer is the second, narrowly used as the maintained CSEG v1 page-compression
+provider under [ADR 0016](0016-cseg-v1-layout-integrity-and-compression.md); its dependency record
+is maintained beside OpenSSL's. Permitted libraries otherwise remain options, not commitments.
+Replacing a commodity dependency requires compatibility tests and, when it affects stored/wire
+bytes, versioned migration.
 Reclassifying a core subsystem for external implementation reverses this policy and requires a
 superseding ADR.
 

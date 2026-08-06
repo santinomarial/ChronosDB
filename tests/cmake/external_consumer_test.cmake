@@ -44,6 +44,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/columnar/columnar_batch_codec.hpp>
 #include <chronos/columnar/columnar_batch_format.hpp>
 #include <chronos/columnar/column_vector.hpp>
+#include <chronos/cseg/compression.hpp>
 #include <chronos/cseg/format.hpp>
 #include <chronos/cseg/layout.hpp>
 #include <chronos/cseg/types.hpp>
@@ -81,6 +82,9 @@ int main() {
   const std::array<std::uint64_t, 5> page_lengths{8U, 8U, 8U, 8U, 8U};
   const auto cseg_layout = chronos::cseg::plan_cseg_v1_layout(
       {.user_column_count = 1U, .granule_count = 1U}, page_lengths);
+  const std::array<std::byte, 1> page{std::byte{0x41}};
+  const auto stored_page =
+      chronos::cseg::compress_cseg_page_v1(page, chronos::cseg::PageCompression::kNone);
   chronos::columnar::ColumnarBatchLimits limits;
   std::array<std::byte, 0> empty{};
   const auto decoded = chronos::columnar::decode_columnar_batch_v1_exact(empty);
@@ -103,6 +107,7 @@ int main() {
                  retry_directory.has_value() &&
                  retry_directory->metrics().maximum_entries == 8U && !decoded.has_value() &&
                  cseg_layout.has_value() && cseg_layout->total_length == 1'248U &&
+                 stored_page.has_value() && stored_page->bytes().size() == 1U &&
                  decoded.error().kind() ==
                      chronos::columnar::ColumnarBatchDecodeErrorKind::kIncomplete
              ? 0

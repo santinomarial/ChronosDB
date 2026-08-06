@@ -151,7 +151,8 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > **Current status:** the normative v1 byte contract and format decision are accepted. The focused
 > `chronos_cseg` target now provides authoritative constants, nominal `PartId`, allocation-free
 > checked metadata/page layout planning, boundary/property tests, self-contained public headers,
-> and package install/export coverage. The codec, fixtures, reader/writer/validator, inspector,
+> bounded deterministic raw/Zstandard page compression with hostile frame/limit tests, and package
+> install/export coverage. The full part codec, fixtures, reader/writer/validator, inspector,
 > fuzzing, learning document, and measurements remain unimplemented.
 
 - **Scope:** specify and implement immutable sorted CSEG parts, granules, checksummed column pages, metadata, supported encodings/compressors, safe readers/writers, and inspection tooling.

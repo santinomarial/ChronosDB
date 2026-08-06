@@ -44,6 +44,7 @@ endfunction()
 chronos_validate_standard_library()
 find_package(Threads REQUIRED)
 find_package(OpenSSL 3.0...<4.0 REQUIRED COMPONENTS Crypto)
+find_package(zstd 1.5.5...<2.0 CONFIG REQUIRED)
 
 set(CHRONOS_BUILD_TYPE "${CMAKE_BUILD_TYPE}")
 if(CHRONOS_BUILD_TYPE STREQUAL "")
@@ -149,7 +150,7 @@ chronos_set_project_warnings(chronos_columnar)
 chronos_enable_sanitizers(chronos_columnar)
 chronos_enable_static_analysis(chronos_columnar)
 
-add_library(chronos_cseg src/cseg/layout.cpp)
+add_library(chronos_cseg src/cseg/compression.cpp src/cseg/layout.cpp)
 add_library(chronos::cseg ALIAS chronos_cseg)
 set_target_properties(chronos_cseg PROPERTIES EXPORT_NAME cseg)
 set_target_properties(chronos_cseg PROPERTIES CXX_EXTENSIONS OFF)
@@ -160,7 +161,7 @@ target_include_directories(
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
 )
-target_link_libraries(chronos_cseg PUBLIC chronos::common)
+target_link_libraries(chronos_cseg PUBLIC chronos::common PRIVATE zstd::libzstd)
 chronos_set_project_warnings(chronos_cseg)
 chronos_enable_sanitizers(chronos_cseg)
 chronos_enable_static_analysis(chronos_cseg)
@@ -363,6 +364,8 @@ if(CHRONOS_BUILD_TESTS)
 
   add_executable(
     chronos_cseg_tests
+    tests/cseg/compression_header_self_contained.cpp
+    tests/cseg/compression_test.cpp
     tests/cseg/format_header_self_contained.cpp
     tests/cseg/format_test.cpp
     tests/cseg/layout_header_self_contained.cpp
@@ -372,7 +375,9 @@ if(CHRONOS_BUILD_TESTS)
   )
   set_target_properties(chronos_cseg_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_cseg_tests PRIVATE cxx_std_23)
-  target_link_libraries(chronos_cseg_tests PRIVATE chronos::cseg GTest::gtest_main)
+  target_link_libraries(
+    chronos_cseg_tests PRIVATE chronos::cseg GTest::gtest_main zstd::libzstd
+  )
   chronos_set_project_warnings(chronos_cseg_tests)
   chronos_enable_sanitizers(chronos_cseg_tests)
   chronos_enable_static_analysis(chronos_cseg_tests)

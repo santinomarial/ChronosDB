@@ -2,7 +2,8 @@
 
 > **Status: accepted specification; format constants, nominal part identity, and checked canonical
 > layout planning implemented.** This document is the normative byte-level definition of one
-> immutable CSEG v1 part. The byte codec, compression provider, and readers remain pending.
+> immutable CSEG v1 part. Bounded raw/Zstandard page compression is implemented; the complete part
+> byte codec and readers remain pending.
 > [ADR 0016](../adr/0016-cseg-v1-layout-integrity-and-compression.md)
 > accepts the layout, integrity, ordering, and compression decisions. Manifests, installation,
 > flush orchestration, compaction, and reclamation are separate Phase 6 and Phase 7 contracts.

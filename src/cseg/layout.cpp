@@ -18,6 +18,8 @@ namespace {
   return common::Status{common::StatusCode::kResourceExhausted, std::string{message}};
 }
 
+// Offset, count, and element length are the conventional table-layout inputs.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 [[nodiscard]] common::Result<std::uint64_t> checked_table_end(const std::uint64_t offset,
                                                               const std::uint64_t count,
                                                               const std::uint64_t element_length,

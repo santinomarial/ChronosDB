@@ -18,6 +18,7 @@ durability claim.
 - a C++23 compiler and standard library that provide `std::expected`: GCC 13+, Clang 17+ paired
   with a capable libc++/libstdc++, or a current AppleClang
 - Git, so CMake can fetch pinned test dependencies and optionally record revision metadata
+- OpenSSL 3 and Zstandard 1.5.5 or newer production development packages
 - Python only as required by CMake/GoogleTest test discovery
 - clang-format 18 exactly, plus clang-tidy from a reasonably current LLVM release (17+ supported)
 
@@ -28,7 +29,7 @@ vendored into this repository.
 ## Linux setup
 
 On Ubuntu 24.04, install the distribution packages for `cmake`, `ninja-build`, `g++`, `clang`,
-`libc++-dev`, `libc++abi-dev`, `clang-format-18`, and `clang-tidy`. GCC and Clang are both
+`libc++-dev`, `libc++abi-dev`, `libssl-dev`, `libzstd-dev`, `clang-format-18`, and `clang-tidy`. GCC and Clang are both
 CI-supported. Ubuntu's Clang 18 defaults to libstdc++ 13, but that compiler/library pairing does not
 expose the required C++23 `std::expected`; the supported Clang pairing uses libc++. Select the
 compiler and standard library before the first configure:
@@ -48,7 +49,7 @@ Install Xcode Command Line Tools and CMake/Ninja. Homebrew users can run:
 
 ```sh
 xcode-select --install
-brew install cmake ninja llvm llvm@18
+brew install cmake ninja llvm llvm@18 openssl@3 zstd
 ```
 
 Homebrew's versioned LLVM tools may not be on `PATH`. `scripts/format.sh` searches the standard
@@ -110,7 +111,7 @@ missing `LOCK` file.
 Install to a staging prefix with `cmake --install build/release --prefix <directory>`. This installs
 `chronosctl`, `chronos-waldump`, `chronos-walbench`, the common, schema, POSIX I/O, and WAL libraries
 and public headers, and a CMake package exporting `chronos::common`, `chronos::schema`,
-`chronos::io`, and `chronos::wal`.
+`chronos::cseg`, `chronos::io`, and `chronos::wal` among the implemented library targets.
 
 ## Sanitizers
 

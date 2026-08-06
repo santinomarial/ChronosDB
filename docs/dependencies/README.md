@@ -6,3 +6,4 @@ policy, and rejected alternatives. Test-only dependencies remain governed by the
 CMake dependency configuration.
 
 - [OpenSSL](openssl.md) — SHA-256 provider for the in-memory ingest command layer.
+- [Zstandard](zstd.md) — bounded general-purpose compression provider for CSEG v1 pages.

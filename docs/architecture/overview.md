@@ -167,7 +167,8 @@ The [CSEG v1 specification](../formats/cseg-v1.md) fixes one schema/tablet-bound
 granules, schema and system columns, independently checksummed PLAIN pages, bounded raw/Zstandard
 storage, metadata integrity, physical row ordering, and compatibility behavior. The `chronos_cseg`
 target now exposes the authoritative constants, nominal part identity, and allocation-free checked
-metadata/page layout planner. The codec, reader, writer, validator, and inspector remain pending.
+metadata/page layout planner plus bounded raw/Zstandard page compression. The complete part codec,
+reader, writer, validator, and inspector remain pending.
 
 Parts will be written to temporary identities, fully validated and made durable according to the
 future installation protocol, then atomically referenced by a manifest version edit. After

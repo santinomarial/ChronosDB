@@ -136,10 +136,12 @@ TEST(CsegLayoutPropertyTest, DescriptorArithmeticMatchesAnIndependentSmallGrid) 
       const std::uint64_t pages = stored * granules;
       EXPECT_EQ(layout->stored_column_count, stored);
       EXPECT_EQ(layout->page_count, pages);
-      EXPECT_EQ(layout->granules_offset, 256U + 96U * stored);
-      EXPECT_EQ(layout->pages_offset, 256U + 96U * stored + 64U * granules);
-      EXPECT_EQ(layout->metadata_trailer_offset,
-                256U + 96U * stored + 64U * granules + 80U * pages);
+      EXPECT_EQ(layout->granules_offset, 256ULL + 96ULL * stored);
+      EXPECT_EQ(layout->pages_offset,
+                256ULL + 96ULL * stored + 64ULL * static_cast<std::uint64_t>(granules));
+      EXPECT_EQ(layout->metadata_trailer_offset, 256ULL + 96ULL * stored +
+                                                     64ULL * static_cast<std::uint64_t>(granules) +
+                                                     80ULL * pages);
       EXPECT_EQ(layout->metadata_length, layout->metadata_trailer_offset + 8U);
     }
   }

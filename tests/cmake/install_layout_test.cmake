@@ -52,6 +52,12 @@ if(NOT EXISTS "${installed_cseg_layout_header}")
   message(FATAL_ERROR "staging install omitted ${installed_cseg_layout_header}")
 endif()
 
+set(installed_cseg_compression_header
+    "${install_prefix}/${CHRONOS_TEST_INSTALL_INCLUDEDIR}/chronos/cseg/compression.hpp")
+if(NOT EXISTS "${installed_cseg_compression_header}")
+  message(FATAL_ERROR "staging install omitted ${installed_cseg_compression_header}")
+endif()
+
 set(installed_ingest_header
     "${install_prefix}/${CHRONOS_TEST_INSTALL_INCLUDEDIR}/chronos/ingest/columnar_append.hpp")
 if(NOT EXISTS "${installed_ingest_header}")
