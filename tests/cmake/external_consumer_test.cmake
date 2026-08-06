@@ -48,6 +48,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/cseg/format.hpp>
 #include <chronos/cseg/layout.hpp>
 #include <chronos/cseg/metadata_codec.hpp>
+#include <chronos/cseg/part_codec.hpp>
 #include <chronos/cseg/page_codec.hpp>
 #include <chronos/cseg/plain_page.hpp>
 #include <chronos/cseg/types.hpp>
@@ -112,6 +113,10 @@ int main() {
       chronos::common::ByteView, const chronos::cseg::CsegColumnDescriptor&,
       const chronos::cseg::CsegPageDescriptor&);
   const DecodeCsegPageFunction decode_cseg_page = &chronos::cseg::decode_cseg_v1_page;
+  using DecodeCsegPartFunction = chronos::cseg::CsegPartDecodeResult (*)(
+      chronos::common::ByteView, chronos::cseg::CsegMetadataDecodeLimits);
+  const DecodeCsegPartFunction decode_cseg_part = &chronos::cseg::decode_cseg_v1_part_prefix;
+  const auto cseg_part = decode_cseg_part({}, {});
   chronos::columnar::ColumnarBatchLimits limits;
   std::array<std::byte, 0> empty{};
   const auto decoded = chronos::columnar::decode_columnar_batch_v1_exact(empty);
@@ -138,6 +143,9 @@ int main() {
                  plain_page.has_value() && plain_page->bytes().size() == 1U &&
                  encoded_cseg_page.has_value() && encoded_cseg_page->bytes().size() == 1U &&
                  decode_cseg_page != nullptr &&
+                 !cseg_part.has_value() &&
+                 cseg_part.error().kind() ==
+                     chronos::cseg::CsegPartDecodeErrorKind::kIncomplete &&
                  !cseg_metadata.has_value() &&
                  cseg_metadata.error().kind() ==
                      chronos::cseg::CsegMetadataDecodeErrorKind::kIncomplete &&

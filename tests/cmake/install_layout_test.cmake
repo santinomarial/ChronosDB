@@ -76,6 +76,12 @@ if(NOT EXISTS "${installed_cseg_page_codec_header}")
   message(FATAL_ERROR "staging install omitted ${installed_cseg_page_codec_header}")
 endif()
 
+set(installed_cseg_part_codec_header
+    "${install_prefix}/${CHRONOS_TEST_INSTALL_INCLUDEDIR}/chronos/cseg/part_codec.hpp")
+if(NOT EXISTS "${installed_cseg_part_codec_header}")
+  message(FATAL_ERROR "staging install omitted ${installed_cseg_part_codec_header}")
+endif()
+
 set(installed_ingest_header
     "${install_prefix}/${CHRONOS_TEST_INSTALL_INCLUDEDIR}/chronos/ingest/columnar_append.hpp")
 if(NOT EXISTS "${installed_ingest_header}")

@@ -159,9 +159,11 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > all-type/property/corruption tests, decoder fuzzing, encode/decode microbenchmarks, and installed-
 > consumer coverage. Stored-page composition now adds deterministic descriptor-ready encoding,
 > CRC-before-provider decoding, allocation-free raw views, owned bounded Zstandard output, golden/
-> corruption/property tests, fuzzing, microbenchmarks, and installed-consumer coverage. The complete
-> part codec and golden/corrupt part fixtures, reader/writer/full validator, inspector, and learning
-> documentation remain unimplemented.
+> corruption/property tests, fuzzing, microbenchmarks, and installed-consumer coverage. Canonical
+> owned part composition and borrowed prefix/exact structural decoding now validate every page and
+> alignment byte, with complete-file golden/corruption/property tests, fuzzing, microbenchmarks,
+> and installed-consumer coverage. System/event-time/order full validation, projected reading, the
+> inspector, and learning documentation remain unimplemented.
 
 - **Scope:** specify and implement immutable sorted CSEG parts, granules, checksummed column pages, metadata, supported encodings/compressors, safe readers/writers, and inspection tooling.
 - **Explicit non-scope:** manifests, flush orchestration, compaction, remote objects, format v2 speculation, and indexes beyond metadata required by v1.

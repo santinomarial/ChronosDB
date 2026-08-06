@@ -1,9 +1,11 @@
 # ChronosDB CSEG v1
 
-> **Status: accepted specification; constants, identity, layout, compression, metadata, PLAIN, and
-> stored-page codecs implemented.** This document is the normative byte-level definition of one
-> immutable CSEG v1 part. Bounded raw/Zstandard page compression and the canonical metadata
-> directory plus standalone PLAIN/stored-page codecs are implemented; complete-part composition
+> **Status: accepted specification; constants, identity, layout, compression, metadata, PLAIN,
+> stored-page, and structural part codecs implemented.** This document is the normative byte-level
+> definition of one immutable CSEG v1 part. Bounded raw/Zstandard page compression and the
+> canonical metadata
+> directory plus standalone PLAIN/stored-page codecs are implemented together with canonical owned
+> file composition and borrowed prefix/exact structural decoding. Complete semantic validation
 > remains pending.
 > [ADR 0016](../adr/0016-cseg-v1-layout-integrity-and-compression.md)
 > accepts the layout, integrity, ordering, and compression decisions. Manifests, installation,
@@ -290,6 +292,15 @@ canonical decompression, and only then PLAIN physical interpretation. Raw result
 stored input without allocation; Zstandard results own their bounded output, whose physical view
 remains stable across moves. Thus the raw input owner must outlive a raw decoded page, while a
 compressed decoded page is self-contained.
+
+The structural part codec composes the authenticated metadata prefix and descriptor-ready stored
+pages into one exact owned file image, inserting only the required zero alignment. Prefix decoding
+first completes metadata authentication and directory validation, waits for exactly the declared
+file prefix, and then validates every stored-page CRC, bounded decompression, complete PLAIN
+payload, and following zero padding before returning a borrowed part view. Exact decoding also
+rejects trailing bytes. This stage deliberately does not claim complete-part acceptance: catalog
+binding, system-row semantics, event-time recomputation, and global physical ordering are the
+separate validation stages required below.
 
 System pages use the same PLAIN rules. `WAL_ID` slots contain nonzero 16-byte UUID network-order
 values. `RECORD_SEQUENCE` values are positive. `ROW_ORDINAL` is zero-based within its source WAL

@@ -38,7 +38,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   authoritative constants, nominal part identity, and checked canonical layout planning are
   implemented together with bounded raw/Zstandard page compression and the canonical metadata
   directory codec plus deterministic PLAIN payload encoding, stored-page CRC composition, and
-  borrowed/owned physical decoding.
+  borrowed/owned physical decoding. Canonical owned part composition and borrowed prefix/exact
+  structural decoding validate every stored page and alignment byte.
 - [Production dependencies](dependencies/README.md): maintained external-library boundaries,
   version sources, licenses, and update/security ownership.
 

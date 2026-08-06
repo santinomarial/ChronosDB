@@ -172,7 +172,10 @@ metadata-directory codec with exact schema binding. An identity-free physical-co
 the Columnar Batch v1 canonical buffer validator with deterministic PLAIN payload encoding and
 borrowed schema-independent decoding. The composed page codec computes and verifies stored-byte
 CRC32C before bounded compression-provider entry, borrows raw pages, and owns decompressed pages.
-Complete part writing and validation, readers, and the inspector remain pending.
+The part codec now owns exact canonical file images and provides prefix/exact borrowed structural
+decoding that validates all page CRCs, bounded decompression, PLAIN payloads, and zero alignment.
+System-row semantics, event-time recomputation, global ordering, reader projection, and the
+inspector remain pending.
 
 Parts will be written to temporary identities, fully validated and made durable according to the
 future installation protocol, then atomically referenced by a manifest version edit. After
