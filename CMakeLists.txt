@@ -566,6 +566,7 @@ if(CHRONOS_BUILD_BENCHMARKS)
     chronos_ingest_benchmarks
     benchmarks/ingest/columnar_append_benchmark.cpp
     benchmarks/ingest/columnar_append_executor_benchmark.cpp
+    benchmarks/ingest/columnar_append_recovery_benchmark.cpp
     benchmarks/ingest/tablet_state_benchmark.cpp
   )
   set_target_properties(chronos_ingest_benchmarks PROPERTIES CXX_EXTENSIONS OFF)
