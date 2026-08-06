@@ -15,9 +15,9 @@ the segmented writer, bounded commit coordinator, locked discovery and verificat
 final-tail repair, replay-sink passes, existing-history reopen path, and read-only inspector now
 exist. Coordinator metrics and a deterministic process-kill crash-image harness exist. The first
 application-kind codec, a bounded process-local retry reservation directory, a bounded live tablet
-publication owner, and their blocking single-tablet WAL execution path exist. Recovered state,
-replay/application, retry pruning, routing/admission, and the server-wide operational metrics/export
-path do not exist yet.
+publication owner, their blocking single-tablet WAL execution path, and fixed-schema fresh-state
+WAL application/reopen path exist. Retry pruning, schema switching, routing/admission, and the
+server-wide operational metrics/export path do not exist yet.
 Work should proceed in order unless an accepted ADR explains why a limited dependency must move
 earlier.
 
@@ -82,8 +82,8 @@ No phase passes because its code merely compiles. A phase passes only when its a
   metric snapshots are implemented with deterministic tests. The subprocess crash harness exercises
   real host files across installation, append/sync, grouped acknowledgment, rotation, corruption,
   repair, reopen, and locking. The first application-kind byte semantics and an already-routed live
-  single-tablet submission/publication path are implemented. Recovery application and the
-  server-wide operational metrics/export path do not exist.
+  single-tablet submission/publication path are implemented. Fixed-schema recovery application for
+  that first kind is implemented. The server-wide operational metrics/export path does not exist.
 - **Scope:** implement WAL v1 segment lifecycle, append/grouping, explicitly named durability modes,
   acknowledgment boundaries, rotation, torn-tail handling, ordered replay, and idempotent
   single-node recovery.
@@ -115,10 +115,13 @@ No phase passes because its code merely compiles. A phase passes only when its a
   composes canonical command encoding, global retry reservation, bounded WAL admission, exact
   durability completion, tablet publication, and global outcome commit; integration tests cover
   both durability modes, retry outcomes, admission backpressure, and accepted-WAL failure, and a
-  real-filesystem microbenchmark keeps the full execution work enabled. Recovered state, retry
-  retention, ordered replay, routing/admission, per-row deduplication, schema switching, flush
-  handoff, allocation failpoints, and the wider end-to-end Phase 4 benchmark matrix remain
-  unimplemented.
+  real-filesystem microbenchmark keeps the full execution work enabled. The fixed-schema recovery
+  owner composes whole-WAL preflight/replay with fresh global retry and tablet state, exact duplicate
+  no-ops, conflict failure, deterministic repeat recovery, and continued writer sequencing. It has
+  real-WAL integration, hostile semantic classification, installation/external-consumer coverage,
+  and unique/retry-heavy recovery microbenchmarks. Retry retention, mixed-schema replay,
+  routing/admission, per-row deduplication, flush handoff, allocation failpoints, and the wider
+  end-to-end Phase 4 benchmark matrix remain unimplemented.
 
 - **Scope:** typed immutable input batches; null/variable-width representation; append-only tablet heads; sealing; single shard-worker ownership; stable reader boundaries; idempotent ordered replay into heads.
 - **Explicit non-scope:** durable columnar parts, SQL execution, secondary indexes, general lock-free containers, live subscriptions, and a universal allocator.

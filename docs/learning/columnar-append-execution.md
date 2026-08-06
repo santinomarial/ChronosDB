@@ -125,9 +125,11 @@ address through `chronos::ingest`, and the same tests run in ordinary and saniti
 
 This API assumes that its batch was already authorized and routed to exactly one tablet. It does not
 enforce event-time admission, active ingest schema selection, per-row deduplication-key uniqueness,
-or shard scheduling. It cannot recover the failed-closed state because there is no semantic replay
-sink yet. Retry wait policy, retention/pruning, crash reconciliation, transport response fields,
-and operational metrics aggregation also remain future work.
+or shard scheduling. The separate fixed-schema
+[columnar append recovery](columnar-append-recovery.md) owner can rebuild a fresh replacement from
+the WAL; this live call still does not initiate recovery itself. Retry wait policy,
+retention/pruning, catalog reconstruction, transport response fields, and operational metrics
+aggregation also remain future work.
 
 Likely review questions include:
 

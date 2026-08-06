@@ -5,8 +5,10 @@
 > release/acquire publication, stable owning snapshots, hidden row identities, and idempotent
 > sealing. `chronos_ingest` now provides a bounded schema-bound tablet owner, generation rotation,
 > one outer rows/position/retry/generation-set publication, and exact retry-outcome handoff to the
-> global directory. WAL orchestration/replay, recovered state, retry pruning, schema switching, and
-> flush handoff remain unimplemented. This document
+> global directory. Fixed-schema WAL replay now rebuilds those publications into an owner that is
+> returned only after complete recovery, including position-only outer publication for matching
+> duplicate commands. Retry pruning, schema switching, catalog/routing admission, and flush handoff
+> remain unimplemented. This document
 > refines [ADR 0005](../adr/0005-columnar-heads-and-immutable-cseg-parts.md) for Phase 4 without
 > specifying CSEG bytes or flush installation.
 

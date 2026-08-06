@@ -34,9 +34,11 @@
 > publication, and concurrent outer-epoch readers. The single-tablet executor adds real-WAL tests
 > for ordered `ASYNC` and `LOCAL_SYNC` publication and exact matching retries, plus deterministic
 > in-flight rejection, WAL admission rollback, invalid durability, and accepted-WAL I/O failure
-> that leaves both identity and tablet failed closed. Recovered state, retry retention, ordered
-> replay, routing/admission, schema switching, flush handoff, and allocation failpoints remain
-> unimplemented.
+> that leaves both identity and tablet failed closed. Fixed-schema columnar recovery adds real-WAL
+> whole-history preflight/replay, first-apply plus duplicate-no-op behavior, exact outcome-pointer
+> reconstruction, repeatability, conflict/unknown-target/incomplete/unsupported classification,
+> and continued live sequence assignment. Retry retention, routing/admission, schema switching,
+> flush handoff, and allocation failpoints remain unimplemented.
 > Query and distributed harnesses also remain planned for their roadmap phases.
 
 ## Test types
