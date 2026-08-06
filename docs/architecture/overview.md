@@ -206,6 +206,9 @@ checkpoint-aware WAL lifecycle, bounded sealed-head scheduling, receipt-authoriz
 retirement, one-pointer head-to-part publication, and the end-to-end single-part durable flush
 coordinator are implemented. Subprocess crash/reopen coverage now exercises every part and Manifest
 write, file-sync, rename, and directory-sync boundary and proves repeated old-or-new selection.
+Caller-catalog startup now composes selected Manifest/part validation, exact durable retry/tablet
+seeding, required WAL suffix replay/reopen, recognized temporary cleanup, and one aggregate
+Manifest/head publication behind a move-only lock-owning boundary.
 
 A checkpoint records the manifest generation and committed log coverage needed for recovery. It is not permission to delete data still reachable by an active reader, subscription, backup, or other declared retention owner.
 

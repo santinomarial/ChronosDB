@@ -243,7 +243,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > selection, and byte-identical repeated recovery. Columnar WAL recovery can now restore exact
 > Manifest-derived tablet/retry/schema boundaries, verify covered suffix commands as no-ops, apply
 > only uncovered rows, and reopen at the verified global end; the owning Manifest startup
-> composition remains. An installed reproducible flush harness now
+> composition now selects/validates durable state, derives those seeds, cleans recognized
+> temporaries, and returns one aggregate publication while retaining Manifest-before-WAL lock
+> ownership. Persistent catalog reconstruction and service activation remain. An installed
+> reproducible flush harness now
 > preserves real CSEG/Manifest/WAL images and raw samples while measuring durable flush throughput,
 > concurrent publication interference, Manifest growth, repeated startup/WAL replay, sync
 > amplification, and temporary/durable space amplification under an executable correctness gate.

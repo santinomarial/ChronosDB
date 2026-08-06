@@ -3,7 +3,8 @@
 > **Status: accepted Phase 6 design; sealed-head conversion, filesystem installation, read-only
 > checkpoint coverage proof, checkpointed WAL reopen/reclamation, manifest selection, bounded
 > sealed-head scheduling, atomic database storage publication, and the end-to-end single-part
-> flush coordinator and filesystem crash matrix implemented.** This document
+> flush coordinator, filesystem crash matrix, and caller-catalog columnar startup composition
+> implemented.** This document
 > defines ownership,
 > durable ordering, recovery, and publication around the normative
 > [Manifest v1 bytes](../formats/manifest-v1.md). It refines
@@ -251,6 +252,16 @@ No CSEG part or manifest-generation deletion is included. A checkpoint does not 
 reader, backup, subscription, or future replication pin.
 
 ## Startup recovery
+
+The implemented `recover_manifest_columnar_database` owner composes this sequence for the currently
+assigned `COLUMNAR_APPEND` application kind and caller-supplied retained catalog. It holds
+`manifest/LOCK` before opening the WAL, converts only the selected validated Manifest descriptors
+to exact ingest recovery seeds, requires every seeded retry original and tablet boundary after the
+global checkpoint to occur in the verified suffix, cleans recognized part/Manifest temporaries,
+and creates one unpublished-until-return aggregate storage epoch. The returned move-only owner
+retains Manifest storage, WAL/tablet/retry state, and the database publisher in destruction order.
+Catalog persistence, application-kind dispatch, automatic covered-WAL reclamation, and server
+service activation remain outside this boundary.
 
 Normal service remains unavailable while the storage owner performs:
 

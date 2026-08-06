@@ -290,6 +290,7 @@ add_library(
   src/manifest/publication.cpp
   src/manifest/sealed_head_flush.cpp
   src/manifest/sealed_head_flush_coordinator.cpp
+  src/manifest/startup_recovery.cpp
   src/manifest/storage.cpp
   src/manifest/validation.cpp
 )
@@ -634,6 +635,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/manifest/sealed_head_flush_test.cpp
     tests/manifest/sealed_head_flush_coordinator_header_self_contained.cpp
     tests/manifest/sealed_head_flush_coordinator_test.cpp
+    tests/manifest/startup_recovery_header_self_contained.cpp
+    tests/manifest/startup_recovery_test.cpp
     tests/manifest/storage_header_self_contained.cpp
     tests/manifest/storage_test.cpp
     tests/manifest/types_header_self_contained.cpp
