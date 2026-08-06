@@ -164,8 +164,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > alignment byte, with complete-file golden/corruption/property tests, fuzzing, microbenchmarks,
 > and installed-consumer coverage. Bounded full validation now covers system-row semantics, exact
 > event-time extrema, strict cross-granule ordering for every logical type including null/IEEE
-> edge cases, and exact schema/tablet binding with hostile/property/sanitizer evidence. Projected
-> reading, the inspector, and learning documentation remain unimplemented.
+> edge cases, and exact schema/tablet binding with hostile/property/sanitizer evidence.
+> Metadata-authenticated projected granule reading now validates only requested user pages plus all
+> system pages, supports nullable-tail lineage projection, and has hostile/property/fuzz/benchmark
+> and installed-consumer coverage. The inspector and learning documentation remain unimplemented.
 
 - **Scope:** specify and implement immutable sorted CSEG parts, granules, checksummed column pages, metadata, supported encodings/compressors, safe readers/writers, and inspection tooling.
 - **Explicit non-scope:** manifests, flush orchestration, compaction, remote objects, format v2 speculation, and indexes beyond metadata required by v1.

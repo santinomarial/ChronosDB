@@ -4,6 +4,7 @@
 #include "chronos/common/checked_math.hpp"
 #include "chronos/common/result.hpp"
 #include "chronos/schema/logical_type.hpp"
+#include "system_rows_internal.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -39,11 +40,6 @@ struct SortCell {
 struct BytePair {
   common::ByteView left;
   common::ByteView right;
-};
-
-struct SystemValidationInput {
-  std::uint32_t ordering_count;
-  std::uint32_t row_count;
 };
 
 struct BoundaryCaptureInput {
@@ -328,41 +324,6 @@ event_time_value(const columnar::PhysicalColumnView& event_time, const std::uint
   return std::bit_cast<std::int64_t>(*bits);
 }
 
-[[nodiscard]] common::Status validate_system_rows(const std::span<const DecodedCsegPage> key_pages,
-                                                  const DecodedCsegPage& operation,
-                                                  const SystemValidationInput input) {
-  const columnar::PhysicalColumnView& wal_id = key_pages[input.ordering_count].physical();
-  const columnar::PhysicalColumnView& record_sequence =
-      key_pages[input.ordering_count + 1U].physical();
-  for (std::uint32_t row = 0U; row < input.row_count; ++row) {
-    const common::Result<SortCell> wal = sort_cell(wal_id, row);
-    const common::Result<SortCell> sequence = sort_cell(record_sequence, row);
-    const common::Result<SortCell> op = sort_cell(operation.physical(), row);
-    if (!wal.has_value() || !sequence.has_value() || !op.has_value()) {
-      return corruption("validated CSEG system cell is inaccessible");
-    }
-    if (std::ranges::all_of(wal->bytes,
-                            [](const std::byte value) { return value == std::byte{0}; })) {
-      return corruption("CSEG WAL_ID system value is zero");
-    }
-    const common::Result<std::uint64_t> sequence_value =
-        load_little_endian<std::uint64_t>(sequence->bytes);
-    if (!sequence_value.has_value() || *sequence_value == 0U) {
-      return corruption("CSEG RECORD_SEQUENCE system value is zero or malformed");
-    }
-    const common::Result<std::uint8_t> operation_value =
-        load_little_endian<std::uint8_t>(op->bytes);
-    if (!operation_value.has_value() || *operation_value == 0U) {
-      return corruption("CSEG OPERATION system value zero is invalid");
-    }
-    if (*operation_value != format::kAppendRowsOperation) {
-      return status(common::StatusCode::kNotSupported,
-                    "CSEG OPERATION system value is unsupported");
-    }
-  }
-  return common::Status::ok();
-}
-
 } // namespace
 
 common::Status validate_cseg_v1_part_contents(const DecodedCsegPartView& part,
@@ -439,9 +400,13 @@ common::Status validate_cseg_v1_part_contents(const DecodedCsegPartView& part,
       return corruption("structurally validated CSEG operation page no longer decodes");
     }
 
-    common::Status system = validate_system_rows(
-        key_pages, *operation,
-        {.ordering_count = metadata.ordering_column_count(), .row_count = granule.row_count});
+    const std::size_t system_start = metadata.ordering_column_count();
+    common::Status system = detail::validate_cseg_v1_system_rows(
+        {.wal_id = key_pages[system_start].physical(),
+         .record_sequence = key_pages[system_start + 1U].physical(),
+         .row_ordinal = key_pages[system_start + 2U].physical(),
+         .operation = operation->physical()},
+        granule.row_count);
     if (!system.is_ok()) {
       return system;
     }

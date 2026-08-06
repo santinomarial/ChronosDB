@@ -1,10 +1,15 @@
 #include "chronos/columnar/column_vector.hpp"
 #include "chronos/common/uuid.hpp"
 #include "chronos/cseg/part_codec.hpp"
+#include "chronos/cseg/projected_reader.hpp"
 #include "chronos/cseg/validator.hpp"
+#include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/identity.hpp"
 #include "chronos/schema/logical_type.hpp"
+#include "chronos/schema/schema_lineage.hpp"
+#include "chronos/schema/table_schema.hpp"
 
+#include <array>
 #include <benchmark/benchmark.h>
 #include <bit>
 #include <cstddef>
@@ -69,6 +74,22 @@ struct Fixture {
             .columns = columns,
             .granules = granules,
             .pages = pages};
+  }
+
+  [[nodiscard]] chronos::schema::TableSchema schema_value() const {
+    std::vector<chronos::schema::ColumnDefinition> definitions;
+    definitions.push_back(chronos::schema::ColumnDefinition::create(
+                              id<chronos::schema::ColumnId>(5U), "event_time", timestamp, false)
+                              .value());
+    return chronos::schema::TableSchema::create(
+               table_id, schema_id, chronos::schema::SchemaVersion::initial(), std::nullopt,
+               std::move(definitions),
+               {.event_time_column = id<chronos::schema::ColumnId>(5U),
+                .physical_ordering_key = {id<chronos::schema::ColumnId>(5U)},
+                .partition_columns = {id<chronos::schema::ColumnId>(5U)},
+                .shard_key = {id<chronos::schema::ColumnId>(5U)},
+                .deduplication_key = {}})
+        .value();
   }
 
 private:
@@ -220,6 +241,43 @@ void benchmark_part_validate(benchmark::State& state) {
   state.SetLabel("system semantics + extrema + strict global ordering; local only");
 }
 
+void benchmark_projected_read(benchmark::State& state) {
+  const auto rows = static_cast<std::uint32_t>(state.range(0));
+  const auto policy = state.range(1) == 0 ? chronos::cseg::PageCompression::kNone
+                                          : chronos::cseg::PageCompression::kZstd;
+  const Fixture fixture{rows, policy};
+  chronos::schema::SchemaLineage lineage =
+      chronos::schema::SchemaLineage::create(fixture.schema_value()).value();
+  const auto reader = chronos::cseg::open_cseg_v1_projected_reader_exact(
+      fixture.encoded.bytes(), lineage, fixture.schema_id, fixture.tablet_id);
+  if (!reader.has_value()) {
+    const std::string message = reader.error().status().to_string();
+    state.SkipWithError(message);
+    return;
+  }
+  const std::array<std::uint32_t, 1> event_time{0U};
+  const std::span<const std::uint32_t> projection =
+      std::span<const std::uint32_t>{event_time}.first(static_cast<std::size_t>(state.range(2)));
+  for ([[maybe_unused]] auto iteration : state) {
+    auto granule = reader->read_granule(0U, projection);
+    if (!granule.has_value()) {
+      const std::string message = granule.error().to_string();
+      state.SkipWithError(message);
+      return;
+    }
+    benchmark::DoNotOptimize(granule->operation().values().data());
+  }
+  std::uint64_t stored_bytes = 0U;
+  for (std::size_t page = projection.empty() ? 1U : 0U; page < 5U; ++page) {
+    stored_bytes += reader->metadata().pages()[page].stored_length;
+  }
+  state.SetItemsProcessed(state.iterations() * rows);
+  state.SetBytesProcessed(state.iterations() * static_cast<std::int64_t>(stored_bytes));
+  state.SetLabel(projection.empty()
+                     ? "system-only projected granule; metadata pre-opened; local only"
+                     : "one user + system pages; metadata pre-opened; local only");
+}
+
 // Google Benchmark registers functions during static initialization.
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 BENCHMARK(benchmark_part_encode)->ArgsProduct({{64, 1024, 65536}, {0, 1}});
@@ -227,5 +285,7 @@ BENCHMARK(benchmark_part_encode)->ArgsProduct({{64, 1024, 65536}, {0, 1}});
 BENCHMARK(benchmark_part_decode)->ArgsProduct({{64, 1024, 65536}, {0, 1}});
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 BENCHMARK(benchmark_part_validate)->ArgsProduct({{64, 1024, 65536}, {0, 1}});
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+BENCHMARK(benchmark_projected_read)->ArgsProduct({{64, 1024, 65536}, {0, 1}, {0, 1}});
 
 } // namespace

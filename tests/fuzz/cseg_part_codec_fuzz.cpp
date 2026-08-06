@@ -4,9 +4,13 @@
 #include "chronos/common/uuid.hpp"
 #include "chronos/cseg/format.hpp"
 #include "chronos/cseg/part_codec.hpp"
+#include "chronos/cseg/projected_reader.hpp"
 #include "chronos/cseg/validator.hpp"
+#include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/identity.hpp"
 #include "chronos/schema/logical_type.hpp"
+#include "chronos/schema/schema_lineage.hpp"
+#include "chronos/schema/table_schema.hpp"
 
 #include <array>
 #include <cstddef>
@@ -114,6 +118,31 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
   return {encoded.bytes().begin(), encoded.bytes().end()};
 }
 
+[[nodiscard]] const chronos::schema::SchemaLineage& canonical_lineage() {
+  using namespace chronos;
+  // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+  static const schema::SchemaLineage lineage = [] {
+    std::vector<schema::ColumnDefinition> columns;
+    columns.push_back(
+        schema::ColumnDefinition::create(
+            id<schema::ColumnId>(5U), "event_time",
+            schema::LogicalType::create(schema::LogicalTypeKind::kTimestampNs).value(), false)
+            .value());
+    schema::TableSchema table =
+        schema::TableSchema::create(id<schema::TableId>(2U), id<schema::SchemaId>(4U),
+                                    schema::SchemaVersion::initial(), std::nullopt,
+                                    std::move(columns),
+                                    {.event_time_column = id<schema::ColumnId>(5U),
+                                     .physical_ordering_key = {id<schema::ColumnId>(5U)},
+                                     .partition_columns = {id<schema::ColumnId>(5U)},
+                                     .shard_key = {id<schema::ColumnId>(5U)},
+                                     .deduplication_key = {}})
+            .value();
+    return schema::SchemaLineage::create(std::move(table)).value();
+  }();
+  return lineage;
+}
+
 void exercise(const chronos::common::ByteView bytes) {
   const auto prefix = chronos::cseg::decode_cseg_v1_part_prefix(bytes);
   if (prefix.has_value()) {
@@ -134,6 +163,14 @@ void exercise(const chronos::common::ByteView bytes) {
       std::abort();
     }
     static_cast<void>(chronos::cseg::validate_cseg_v1_part_contents(*exact));
+  }
+  const auto projected = chronos::cseg::open_cseg_v1_projected_reader_prefix(
+      bytes, canonical_lineage(), id<chronos::schema::SchemaId>(4U),
+      id<chronos::schema::TabletId>(3U));
+  if (projected.has_value()) {
+    const std::array<std::uint32_t, 1> selection{0U};
+    [[maybe_unused]] const auto selected = projected->read_granule(0U, selection);
+    [[maybe_unused]] const auto system_only = projected->read_granule(0U, {});
   }
 }
 
@@ -175,6 +212,13 @@ void exercise_authenticated_semantics(std::vector<std::byte> bytes, const std::u
     std::abort();
   }
   static_cast<void>(chronos::cseg::validate_cseg_v1_part_contents(*decoded));
+  const auto projected = chronos::cseg::open_cseg_v1_projected_reader_exact(
+      bytes, canonical_lineage(), id<chronos::schema::SchemaId>(4U),
+      id<chronos::schema::TabletId>(3U));
+  if (!projected.has_value()) {
+    std::abort();
+  }
+  [[maybe_unused]] const auto system_only = projected->read_granule(0U, {});
 }
 
 } // namespace

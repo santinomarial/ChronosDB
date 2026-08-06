@@ -158,6 +158,8 @@ add_library(
   src/cseg/part_codec.cpp
   src/cseg/page_codec.cpp
   src/cseg/plain_page.cpp
+  src/cseg/projected_reader.cpp
+  src/cseg/system_rows_internal.cpp
   src/cseg/validator.cpp
 )
 add_library(chronos::cseg ALIAS chronos_cseg)
@@ -391,6 +393,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/cseg/page_codec_test.cpp
     tests/cseg/plain_page_header_self_contained.cpp
     tests/cseg/plain_page_test.cpp
+    tests/cseg/projected_reader_header_self_contained.cpp
+    tests/cseg/projected_reader_test.cpp
     tests/cseg/types_header_self_contained.cpp
     tests/cseg/types_test.cpp
     tests/cseg/validator_header_self_contained.cpp

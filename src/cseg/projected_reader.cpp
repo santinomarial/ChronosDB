@@ -1,0 +1,474 @@
+#include "chronos/cseg/projected_reader.hpp"
+
+#include "chronos/common/checked_math.hpp"
+#include "system_rows_internal.hpp"
+
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <limits>
+#include <memory>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+namespace chronos::cseg {
+namespace {
+
+[[nodiscard]] common::Status status(const common::StatusCode code, const std::string_view message) {
+  return common::Status{code, std::string{message}};
+}
+
+[[nodiscard]] common::Status invalid(const std::string_view message) {
+  return status(common::StatusCode::kInvalidArgument, message);
+}
+
+[[nodiscard]] common::Status corruption(const std::string_view message) {
+  return status(common::StatusCode::kCorruption, message);
+}
+
+[[nodiscard]] CsegProjectedReaderOpenError open_error(const CsegMetadataDecodeError& error) {
+  using OpenKind = CsegProjectedReaderOpenErrorKind;
+  OpenKind kind = OpenKind::kCorruption;
+  switch (error.kind()) {
+  case CsegMetadataDecodeErrorKind::kIncomplete:
+    kind = OpenKind::kIncomplete;
+    break;
+  case CsegMetadataDecodeErrorKind::kCorruption:
+    kind = OpenKind::kCorruption;
+    break;
+  case CsegMetadataDecodeErrorKind::kUnsupported:
+    kind = OpenKind::kUnsupported;
+    break;
+  case CsegMetadataDecodeErrorKind::kResourceLimit:
+    kind = OpenKind::kResourceLimit;
+    break;
+  }
+  return {kind, error.status(), error.required_size()};
+}
+
+[[nodiscard]] CsegProjectedReaderOpenError incomplete(const std::uint64_t required_size) {
+  return {
+      CsegProjectedReaderOpenErrorKind::kIncomplete,
+      status(common::StatusCode::kOutOfRange, "CSEG projected-reader part prefix is incomplete"),
+      required_size};
+}
+
+[[nodiscard]] CsegProjectedReaderOpenError invalid_open(const common::Status& error) {
+  const CsegProjectedReaderOpenErrorKind kind =
+      error.code() == common::StatusCode::kNotFound
+          ? CsegProjectedReaderOpenErrorKind::kNotFound
+          : CsegProjectedReaderOpenErrorKind::kInvalidArgument;
+  return {kind, error};
+}
+
+[[nodiscard]] bool all_zero(const common::ByteView bytes) noexcept {
+  return std::ranges::all_of(bytes, [](const std::byte value) { return value == std::byte{0}; });
+}
+
+[[nodiscard]] std::size_t fixed_width(const schema::LogicalTypeKind kind) noexcept {
+  using schema::LogicalTypeKind;
+  switch (kind) {
+  case LogicalTypeKind::kInt8:
+  case LogicalTypeKind::kUInt8:
+    return 1U;
+  case LogicalTypeKind::kInt16:
+  case LogicalTypeKind::kUInt16:
+    return 2U;
+  case LogicalTypeKind::kInt32:
+  case LogicalTypeKind::kUInt32:
+  case LogicalTypeKind::kFloat32:
+  case LogicalTypeKind::kDate:
+    return 4U;
+  case LogicalTypeKind::kInt64:
+  case LogicalTypeKind::kUInt64:
+  case LogicalTypeKind::kFloat64:
+  case LogicalTypeKind::kTimestampNs:
+    return 8U;
+  case LogicalTypeKind::kDecimal:
+  case LogicalTypeKind::kUuid:
+    return 16U;
+  case LogicalTypeKind::kBool:
+  case LogicalTypeKind::kSymbol:
+  case LogicalTypeKind::kString:
+  case LogicalTypeKind::kBinary:
+    return 0U;
+  }
+  return 0U;
+}
+
+[[nodiscard]] common::Result<std::uint64_t> null_column_bytes(const schema::LogicalType& type,
+                                                              const std::uint32_t row_count) {
+  const std::uint64_t validity = columnar::bitmap_size(row_count);
+  std::uint64_t second_buffer = 0U;
+  if (type.is_variable_width()) {
+    const std::optional<std::uint64_t> offset_count =
+        common::checked_add<std::uint64_t>(row_count, 1U);
+    if (!offset_count.has_value()) {
+      return common::make_unexpected(status(common::StatusCode::kResourceExhausted,
+                                            "CSEG synthesized offset count overflows"));
+    }
+    const std::optional<std::uint64_t> offset_bytes =
+        common::checked_multiply(*offset_count, static_cast<std::uint64_t>(sizeof(std::uint32_t)));
+    if (!offset_bytes.has_value()) {
+      return common::make_unexpected(
+          status(common::StatusCode::kResourceExhausted, "CSEG synthesized offset bytes overflow"));
+    }
+    second_buffer = *offset_bytes;
+  } else if (type.kind() == schema::LogicalTypeKind::kBool) {
+    second_buffer = validity;
+  } else {
+    const std::optional<std::uint64_t> value_bytes =
+        common::checked_multiply(static_cast<std::uint64_t>(row_count),
+                                 static_cast<std::uint64_t>(fixed_width(type.kind())));
+    if (!value_bytes.has_value()) {
+      return common::make_unexpected(status(common::StatusCode::kResourceExhausted,
+                                            "CSEG synthesized fixed-width bytes overflow"));
+    }
+    second_buffer = *value_bytes;
+  }
+  const std::optional<std::uint64_t> total = common::checked_add(validity, second_buffer);
+  if (!total.has_value()) {
+    return common::make_unexpected(status(common::StatusCode::kResourceExhausted,
+                                          "CSEG synthesized column byte accounting overflows"));
+  }
+  return *total;
+}
+
+[[nodiscard]] common::Result<columnar::OwnedColumnVector>
+synthesize_null_column(const schema::ColumnDefinition& definition, const std::uint32_t row_count) {
+  if (!definition.nullable()) {
+    return common::make_unexpected(
+        status(common::StatusCode::kInternal,
+               "CSEG schema projection attempted to synthesize a non-nullable column"));
+  }
+  columnar::ColumnVectorBuffers buffers;
+  buffers.validity.resize(columnar::bitmap_size(row_count), std::byte{0});
+  if (definition.type().is_variable_width()) {
+    buffers.offsets.resize((static_cast<std::size_t>(row_count) + 1U) * sizeof(std::uint32_t),
+                           std::byte{0});
+  } else if (definition.type().kind() == schema::LogicalTypeKind::kBool) {
+    buffers.values.resize(columnar::bitmap_size(row_count), std::byte{0});
+  } else {
+    buffers.values.resize(
+        static_cast<std::size_t>(row_count) * fixed_width(definition.type().kind()), std::byte{0});
+  }
+  return columnar::OwnedColumnVector::create({.column_id = definition.id(),
+                                              .type = definition.type(),
+                                              .nullable = true,
+                                              .row_count = row_count,
+                                              .null_count = row_count},
+                                             std::move(buffers));
+}
+
+struct ProjectionStorageRef {
+  schema::ColumnId column_id;
+  bool synthesized;
+  std::size_t storage_index;
+};
+
+struct ByteAccountingInput {
+  std::uint64_t amount;
+  std::uint64_t limit;
+};
+
+[[nodiscard]] common::Status add_bytes(std::uint64_t& total, const ByteAccountingInput input) {
+  const std::optional<std::uint64_t> next = common::checked_add(total, input.amount);
+  if (!next.has_value() || *next > input.limit) {
+    return status(common::StatusCode::kResourceExhausted,
+                  "CSEG projected read exceeds its decoded-buffer limit");
+  }
+  total = *next;
+  return common::Status::ok();
+}
+
+} // namespace
+
+CsegProjectedReaderOpenError::CsegProjectedReaderOpenError(
+    const CsegProjectedReaderOpenErrorKind kind, common::Status status_value,
+    const std::uint64_t required_size) noexcept
+    : kind_(kind), status_(std::move(status_value)), required_size_(required_size) {}
+
+CsegProjectedColumnView::CsegProjectedColumnView(
+    const schema::ColumnId column_id, const columnar::PhysicalColumnView physical) noexcept
+    : column_id_(column_id), physical_(physical) {}
+
+ProjectedCsegGranule::ProjectedCsegGranule(
+    const std::size_t granule_ordinal, const CsegGranuleDescriptor& descriptor,
+    std::shared_ptr<const schema::TableSchema> schema_value,
+    std::vector<DecodedCsegPage> decoded_pages,
+    std::vector<columnar::OwnedColumnVector> synthesized_columns,
+    std::vector<CsegProjectedColumnView> columns, const std::size_t system_page_start) noexcept
+    : granule_ordinal_(granule_ordinal), first_row_(descriptor.first_row),
+      row_count_(descriptor.row_count), schema_(std::move(schema_value)),
+      decoded_pages_(std::move(decoded_pages)),
+      synthesized_columns_(std::move(synthesized_columns)), columns_(std::move(columns)),
+      system_page_start_(system_page_start) {}
+
+const CsegProjectedColumnView*
+ProjectedCsegGranule::column(const std::size_t ordinal) const noexcept {
+  return ordinal < columns_.size() ? &columns_[ordinal] : nullptr;
+}
+
+const columnar::PhysicalColumnView& ProjectedCsegGranule::wal_id() const noexcept {
+  return decoded_pages_[system_page_start_].physical();
+}
+
+const columnar::PhysicalColumnView& ProjectedCsegGranule::record_sequence() const noexcept {
+  return decoded_pages_[system_page_start_ + 1U].physical();
+}
+
+const columnar::PhysicalColumnView& ProjectedCsegGranule::row_ordinal() const noexcept {
+  return decoded_pages_[system_page_start_ + 2U].physical();
+}
+
+const columnar::PhysicalColumnView& ProjectedCsegGranule::operation() const noexcept {
+  return decoded_pages_[system_page_start_ + 3U].physical();
+}
+
+CsegProjectedReaderView::CsegProjectedReaderView(
+    DecodedCsegMetadataView metadata, const common::ByteView encoded_part,
+    std::shared_ptr<const schema::TableSchema> source_schema,
+    std::shared_ptr<const schema::TableSchema> destination_schema,
+    schema::SchemaProjection projection, const CsegProjectedReaderLimits limits) noexcept
+    : metadata_(std::move(metadata)), encoded_part_(encoded_part),
+      source_schema_(std::move(source_schema)), destination_schema_(std::move(destination_schema)),
+      projection_(std::move(projection)), limits_(limits) {}
+
+common::Result<ProjectedCsegGranule> CsegProjectedReaderView::read_granule(
+    const std::size_t granule_ordinal,
+    const std::span<const std::uint32_t> destination_column_ordinals) const {
+  if (granule_ordinal >= metadata_.granules().size()) {
+    return common::make_unexpected(
+        status(common::StatusCode::kOutOfRange, "CSEG granule ordinal is outside the directory"));
+  }
+  if (destination_column_ordinals.size() > limits_.max_projected_columns) {
+    return common::make_unexpected(
+        status(common::StatusCode::kResourceExhausted,
+               "CSEG projected column count exceeds its configured limit"));
+  }
+
+  const CsegGranuleDescriptor& granule = metadata_.granules()[granule_ordinal];
+  std::vector<bool> seen(destination_schema_->columns().size(), false);
+  std::vector<ProjectionStorageRef> storage_refs;
+  storage_refs.reserve(destination_column_ordinals.size());
+  std::vector<std::size_t> source_page_indices;
+  source_page_indices.reserve(destination_column_ordinals.size());
+  std::vector<const schema::ColumnDefinition*> synthesized_definitions;
+  synthesized_definitions.reserve(destination_column_ordinals.size());
+  std::uint64_t decoded_bytes = 0U;
+
+  for (const std::uint32_t destination_ordinal : destination_column_ordinals) {
+    if (destination_ordinal >= projection_.entries().size()) {
+      return common::make_unexpected(
+          invalid("CSEG projection destination ordinal is outside the destination schema"));
+    }
+    if (seen[destination_ordinal]) {
+      return common::make_unexpected(
+          invalid("CSEG projection destination ordinals are not unique"));
+    }
+    seen[destination_ordinal] = true;
+    const schema::ProjectionEntry& entry = projection_.entries()[destination_ordinal];
+    const schema::ColumnDefinition& definition =
+        destination_schema_->columns()[destination_ordinal];
+    if (entry.ancestor_ordinal().has_value()) {
+      const std::size_t source_ordinal = *entry.ancestor_ordinal();
+      const std::size_t page_index =
+          static_cast<std::size_t>(granule.first_page_index) + source_ordinal;
+      common::Status accounting =
+          add_bytes(decoded_bytes, {.amount = metadata_.pages()[page_index].uncompressed_length,
+                                    .limit = limits_.max_decoded_buffer_bytes});
+      if (!accounting.is_ok()) {
+        return common::make_unexpected(std::move(accounting));
+      }
+      storage_refs.push_back({.column_id = definition.id(),
+                              .synthesized = false,
+                              .storage_index = source_page_indices.size()});
+      source_page_indices.push_back(page_index);
+    } else {
+      const common::Result<std::uint64_t> bytes =
+          null_column_bytes(definition.type(), granule.row_count);
+      if (!bytes.has_value()) {
+        return common::make_unexpected(bytes.error());
+      }
+      common::Status accounting =
+          add_bytes(decoded_bytes, {.amount = *bytes, .limit = limits_.max_decoded_buffer_bytes});
+      if (!accounting.is_ok()) {
+        return common::make_unexpected(std::move(accounting));
+      }
+      storage_refs.push_back({.column_id = definition.id(),
+                              .synthesized = true,
+                              .storage_index = synthesized_definitions.size()});
+      synthesized_definitions.push_back(&definition);
+    }
+  }
+
+  const std::size_t source_user_count = source_schema_->columns().size();
+  for (std::size_t system = 0U; system < format::kSystemColumnCount; ++system) {
+    const std::size_t page_index =
+        static_cast<std::size_t>(granule.first_page_index) + source_user_count + system;
+    common::Status accounting =
+        add_bytes(decoded_bytes, {.amount = metadata_.pages()[page_index].uncompressed_length,
+                                  .limit = limits_.max_decoded_buffer_bytes});
+    if (!accounting.is_ok()) {
+      return common::make_unexpected(std::move(accounting));
+    }
+  }
+
+  const auto decode_page = [this](const std::size_t page_index) -> common::Result<DecodedCsegPage> {
+    const CsegPageDescriptor& descriptor = metadata_.pages()[page_index];
+    const std::size_t offset = static_cast<std::size_t>(descriptor.page_offset);
+    const std::size_t stored_length = static_cast<std::size_t>(descriptor.stored_length);
+    const common::ByteView stored = encoded_part_.subspan(offset, stored_length);
+    common::Result<DecodedCsegPage> decoded = decode_cseg_v1_page(
+        stored, metadata_.columns()[descriptor.stored_column_ordinal], descriptor);
+    if (!decoded.has_value()) {
+      return decoded;
+    }
+    const std::size_t page_end = offset + stored_length;
+    const std::size_t next_offset =
+        page_index + 1U == metadata_.pages().size()
+            ? encoded_part_.size()
+            : static_cast<std::size_t>(metadata_.pages()[page_index + 1U].page_offset);
+    if (!all_zero(encoded_part_.subspan(page_end, next_offset - page_end))) {
+      return common::make_unexpected(
+          corruption("CSEG projected page alignment padding is nonzero"));
+    }
+    return decoded;
+  };
+
+  std::vector<DecodedCsegPage> decoded_pages;
+  decoded_pages.reserve(source_page_indices.size() + format::kSystemColumnCount);
+  for (const std::size_t page_index : source_page_indices) {
+    common::Result<DecodedCsegPage> page = decode_page(page_index);
+    if (!page.has_value()) {
+      return common::make_unexpected(page.error());
+    }
+    decoded_pages.push_back(std::move(*page));
+  }
+  const std::size_t system_page_start = decoded_pages.size();
+  for (std::size_t system = 0U; system < format::kSystemColumnCount; ++system) {
+    const std::size_t page_index =
+        static_cast<std::size_t>(granule.first_page_index) + source_user_count + system;
+    common::Result<DecodedCsegPage> page = decode_page(page_index);
+    if (!page.has_value()) {
+      return common::make_unexpected(page.error());
+    }
+    decoded_pages.push_back(std::move(*page));
+  }
+  common::Status system = detail::validate_cseg_v1_system_rows(
+      {.wal_id = decoded_pages[system_page_start].physical(),
+       .record_sequence = decoded_pages[system_page_start + 1U].physical(),
+       .row_ordinal = decoded_pages[system_page_start + 2U].physical(),
+       .operation = decoded_pages[system_page_start + 3U].physical()},
+      granule.row_count);
+  if (!system.is_ok()) {
+    return common::make_unexpected(std::move(system));
+  }
+
+  std::vector<columnar::OwnedColumnVector> synthesized_columns;
+  synthesized_columns.reserve(synthesized_definitions.size());
+  for (const schema::ColumnDefinition* definition : synthesized_definitions) {
+    common::Result<columnar::OwnedColumnVector> column =
+        synthesize_null_column(*definition, granule.row_count);
+    if (!column.has_value()) {
+      return common::make_unexpected(column.error());
+    }
+    synthesized_columns.push_back(std::move(*column));
+  }
+
+  std::vector<CsegProjectedColumnView> columns;
+  columns.reserve(storage_refs.size());
+  for (const ProjectionStorageRef& ref : storage_refs) {
+    if (ref.synthesized) {
+      const columnar::ColumnVectorView view = synthesized_columns[ref.storage_index].view();
+      columns.push_back(CsegProjectedColumnView{ref.column_id, view.physical()});
+    } else {
+      columns.push_back(
+          CsegProjectedColumnView{ref.column_id, decoded_pages[ref.storage_index].physical()});
+    }
+  }
+  return ProjectedCsegGranule{granule_ordinal,
+                              granule,
+                              destination_schema_,
+                              std::move(decoded_pages),
+                              std::move(synthesized_columns),
+                              std::move(columns),
+                              system_page_start};
+}
+
+CsegProjectedReaderOpenResult open_cseg_v1_projected_reader_prefix(
+    const common::ByteView bytes, const schema::SchemaLineage& lineage,
+    const schema::SchemaId destination_schema_id, const schema::TabletId& target_tablet,
+    const CsegProjectedReaderLimits limits) {
+  if (limits.max_decoded_buffer_bytes == 0U) {
+    return std::unexpected(CsegProjectedReaderOpenError{
+        CsegProjectedReaderOpenErrorKind::kInvalidArgument,
+        invalid("CSEG projected-reader decoded-buffer limit must be nonzero")});
+  }
+  CsegMetadataDecodeResult metadata = decode_cseg_v1_metadata_prefix(bytes, limits.metadata);
+  if (!metadata.has_value()) {
+    return std::unexpected(open_error(metadata.error()));
+  }
+  if (metadata->total_length() > std::numeric_limits<std::size_t>::max()) {
+    return std::unexpected(CsegProjectedReaderOpenError{
+        CsegProjectedReaderOpenErrorKind::kResourceLimit,
+        status(common::StatusCode::kResourceExhausted,
+               "CSEG projected-reader part does not fit this platform")});
+  }
+  const std::size_t total_length = static_cast<std::size_t>(metadata->total_length());
+  if (bytes.size() < total_length) {
+    return std::unexpected(incomplete(metadata->total_length()));
+  }
+
+  std::shared_ptr<const schema::TableSchema> source_schema = lineage.find(metadata->schema_id());
+  if (source_schema == nullptr) {
+    return std::unexpected(
+        CsegProjectedReaderOpenError{CsegProjectedReaderOpenErrorKind::kNotFound,
+                                     status(common::StatusCode::kNotFound,
+                                            "CSEG source schema is not retained in the lineage")});
+  }
+  common::Status binding =
+      validate_cseg_v1_metadata_schema(*metadata, *source_schema, target_tablet);
+  if (!binding.is_ok()) {
+    return std::unexpected(invalid_open(binding));
+  }
+  std::shared_ptr<const schema::TableSchema> destination_schema =
+      lineage.find(destination_schema_id);
+  if (destination_schema == nullptr) {
+    return std::unexpected(CsegProjectedReaderOpenError{
+        CsegProjectedReaderOpenErrorKind::kNotFound,
+        status(common::StatusCode::kNotFound,
+               "CSEG destination schema is not retained in the lineage")});
+  }
+  common::Result<schema::SchemaProjection> projection = lineage.projection(
+      {.ancestor_schema_id = metadata->schema_id(), .descendant_schema_id = destination_schema_id});
+  if (!projection.has_value()) {
+    return std::unexpected(invalid_open(projection.error()));
+  }
+  return CsegProjectedReaderView{std::move(*metadata),     bytes.first(total_length),
+                                 std::move(source_schema), std::move(destination_schema),
+                                 std::move(*projection),   limits};
+}
+
+CsegProjectedReaderOpenResult open_cseg_v1_projected_reader_exact(
+    const common::ByteView bytes, const schema::SchemaLineage& lineage,
+    const schema::SchemaId destination_schema_id, const schema::TabletId& target_tablet,
+    const CsegProjectedReaderLimits limits) {
+  CsegProjectedReaderOpenResult reader = open_cseg_v1_projected_reader_prefix(
+      bytes, lineage, destination_schema_id, target_tablet, limits);
+  if (!reader.has_value()) {
+    return reader;
+  }
+  if (reader->encoded_part().size() != bytes.size()) {
+    return std::unexpected(CsegProjectedReaderOpenError{
+        CsegProjectedReaderOpenErrorKind::kCorruption,
+        corruption("CSEG projected-reader exact open rejects trailing bytes")});
+  }
+  return reader;
+}
+
+} // namespace chronos::cseg

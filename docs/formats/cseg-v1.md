@@ -6,7 +6,8 @@
 > canonical metadata
 > directory plus standalone PLAIN/stored-page codecs are implemented together with canonical owned
 > file composition and borrowed prefix/exact structural decoding. Bounded complete semantic and
-> schema-binding validation is also implemented; projected reading remains pending.
+> schema-binding validation plus schema-aware projected granule reading are also implemented; the
+> inspector remains pending.
 > [ADR 0016](../adr/0016-cseg-v1-layout-integrity-and-compression.md)
 > accepts the layout, integrity, ordering, and compression decisions. Manifests, installation,
 > flush orchestration, compaction, and reclamation are separate Phase 6 and Phase 7 contracts.
@@ -390,6 +391,17 @@ not complete-part acceptance. A projected granule read always validates its four
 addition to requested user pages before exposing rows; it never skips operation or version
 semantics merely because the query did not project them.
 
+The in-memory projected reader borrows one complete immutable file image but touches only the
+authenticated metadata at open. Opening a prefix reports the exact complete-file requirement and
+exact opening rejects a suffix; neither operation reads, checksums, or decompresses page bodies.
+Each granule read accepts unique destination-schema user ordinals in caller order, applies an
+explicit aggregate decoded-buffer limit before page decoding or synthesized-buffer allocation,
+and validates each selected page CRC, bounded PLAIN decoding, and following zero alignment. The
+four system pages are always included and their nonzero identity/sequence and assigned operation
+semantics are checked before any projected row is exposed. Corruption in an unrelated user page
+does not block a projection that does not request that page; this selective result must never be
+used as installation or complete-part validation evidence.
+
 ## Schema binding
 
 Physical decoding is schema-independent. Before installation, replay coverage, or typed query use,
@@ -403,7 +415,10 @@ the caller resolves `(table_id, schema_id, schema_version)` and validates an exa
 
 Names are not stored and do not participate in binding. An allowed rename therefore preserves
 binding through `ColumnId`. A part never combines schema versions; nullable tail projection across
-versions belongs to the reader/catalog layer.
+versions belongs to the reader/catalog layer. The projected reader obtains the exact ancestor-to-
+descendant mapping from a validated `SchemaLineage`: existing ordinals borrow or own their decoded
+source page according to compression, while added nullable tail ordinals become canonical all-null
+physical vectors of the destination type. It performs no cast, default evaluation, or name lookup.
 
 ## Immutability, compatibility, and evidence
 

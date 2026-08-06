@@ -41,6 +41,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   borrowed/owned physical decoding. Canonical owned part composition and borrowed prefix/exact
   structural decoding validate every stored page and alignment byte; bounded full validation adds
   system-row semantics, event-time extrema, global physical ordering, and exact schema binding.
+  Metadata-authenticated projected granule reads independently validate requested user pages plus
+  every system page and synthesize nullable successor-schema tails.
 - [Production dependencies](dependencies/README.md): maintained external-library boundaries,
   version sources, licenses, and update/security ownership.
 

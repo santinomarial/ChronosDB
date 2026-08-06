@@ -175,8 +175,10 @@ CRC32C before bounded compression-provider entry, borrows raw pages, and owns de
 The part codec now owns exact canonical file images and provides prefix/exact borrowed structural
 decoding that validates all page CRCs, bounded decompression, PLAIN payloads, and zero alignment.
 The bounded full validator checks system-row values, recomputes event-time extrema, enforces exact
-all-type physical ordering across granules, and composes exact schema/tablet binding. Reader
-projection and the inspector remain pending.
+all-type physical ordering across granules, and composes exact schema/tablet binding. The projected
+reader authenticates metadata once, then independently validates only requested user pages plus
+the four mandatory system pages for each granule; lineage projection synthesizes canonical NULLs
+for nullable successor-schema tails. The inspector remains pending.
 
 Parts will be written to temporary identities, fully validated and made durable according to the
 future installation protocol, then atomically referenced by a manifest version edit. After
