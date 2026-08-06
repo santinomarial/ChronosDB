@@ -67,6 +67,18 @@ struct BoundOutputColumn {
   bool contains_aggregate{};
 };
 
+struct BoundLatestBy {
+  std::vector<std::size_t> key_column_ordinals;
+  SourceSpan timestamp_expression_span;
+};
+
+struct BoundAsofJoin {
+  std::size_t right_source_ordinal{};
+  bool left{};
+  SourceSpan right_timestamp_expression_span;
+  std::size_t equality_key_count{};
+};
+
 struct SqlBinderLimits {
   std::size_t maximum_sources{64U};
   std::size_t maximum_bound_expressions{262'144U};
@@ -89,6 +101,8 @@ public:
   [[nodiscard]] std::span<const BoundColumnReference> column_references() const noexcept;
   [[nodiscard]] std::span<const BoundExpressionInfo> expressions() const noexcept;
   [[nodiscard]] std::span<const BoundOutputColumn> outputs() const noexcept;
+  [[nodiscard]] const std::optional<BoundLatestBy>& latest_by() const noexcept;
+  [[nodiscard]] std::span<const BoundAsofJoin> asof_joins() const noexcept;
   [[nodiscard]] const BoundExpressionInfo* find_expression(const SourceSpan& span) const noexcept;
   [[nodiscard]] const BoundColumnReference*
   find_column_reference(const SourceSpan& span) const noexcept;
@@ -98,7 +112,8 @@ private:
                  std::vector<BoundSqlSource> sources,
                  std::vector<BoundColumnReference> column_references,
                  std::vector<BoundExpressionInfo> expressions,
-                 std::vector<BoundOutputColumn> outputs) noexcept;
+                 std::vector<BoundOutputColumn> outputs, std::optional<BoundLatestBy> latest_by,
+                 std::vector<BoundAsofJoin> asof_joins) noexcept;
 
   ParsedSqlSelect syntax_;
   std::shared_ptr<const QueryCatalogSnapshot> catalog_;
@@ -106,6 +121,8 @@ private:
   std::vector<BoundColumnReference> column_references_;
   std::vector<BoundExpressionInfo> expressions_;
   std::vector<BoundOutputColumn> outputs_;
+  std::optional<BoundLatestBy> latest_by_;
+  std::vector<BoundAsofJoin> asof_joins_;
 
   friend class detail::SqlBinder;
 };

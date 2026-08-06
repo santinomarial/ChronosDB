@@ -321,8 +321,8 @@ No phase passes because its code merely compiles. A phase passes only when its a
   COALESCE, ABS, ASCII case mapping, epoch-aligned time buckets, aliases, and aggregate overrides.
   Its dependency-free exact decimal path uses checked widened intermediates for arithmetic,
   rescaling, division, remainder, unary operations, and explicit integer/IEEE conversions. CREATE
-  TABLE and INSERT parsing, ASOF/LATEST relational plans, and relational execution remain
-  unimplemented.
+  TABLE and INSERT parsing and relational execution remain unimplemented. Bound LATEST/ASOF plans
+  now carry exact key/source/time identities and reject non-canonical temporal-join conditions.
 
 - **Scope:** specify a typed analytical SQL subset; custom lexer/parser; catalog binding; scalar expression/relational reference execution; event-time and system-time query syntax required by initial workloads.
 - **Explicit non-scope:** full SQL compliance, vectorization, cost-based optimization, distributed SQL, unsupported mutation syntax, and streaming syntax beyond contracts scheduled later.

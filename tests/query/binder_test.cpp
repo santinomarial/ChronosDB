@@ -27,6 +27,11 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
   return Identifier::from_bytes(bytes).value();
 }
 
+template <typename Value>
+[[nodiscard]] const Value* optional_pointer(const std::optional<Value>& value) noexcept {
+  return value.has_value() ? std::addressof(value.value()) : nullptr;
+}
+
 struct TestColumn {
   std::string_view name;
   schema::LogicalTypeKind kind;
@@ -115,11 +120,42 @@ TEST(SqlBinderTest, PinsCatalogAndResolvesExactColumnIdentitiesAndTypes) {
 TEST(SqlBinderTest, RejectsUnknownAndAmbiguousNamesDeterministically) {
   EXPECT_EQ(bind("SELECT * FROM missing").error().code(), SqlDiagnosticCode::kUnknownTable);
   EXPECT_EQ(bind("SELECT missing FROM trades").error().code(), SqlDiagnosticCode::kUnknownColumn);
-  EXPECT_EQ(
-      bind("SELECT symbol FROM trades AS t ASOF JOIN quotes AS q ON t.ts >= q.ts").error().code(),
-      SqlDiagnosticCode::kAmbiguousColumn);
+  EXPECT_EQ(bind("SELECT symbol FROM trades AS t ASOF JOIN quotes AS q ON t.symbol = q.symbol AND "
+                 "t.ts >= q.ts")
+                .error()
+                .code(),
+            SqlDiagnosticCode::kAmbiguousColumn);
   EXPECT_EQ(bind("SELECT trades.symbol FROM trades AS t").error().code(),
             SqlDiagnosticCode::kUnknownTable);
+}
+
+TEST(SqlBinderTest, RecordsExecutableLatestAndAsofShapes) {
+  SqlResult<BoundSqlSelect> bound =
+      bind("SELECT t.symbol, q.bid FROM trades AS t LATEST BY (symbol) ON t.ts "
+           "ASOF LEFT JOIN quotes AS q ON t.symbol = q.symbol AND t.ts >= q.ts");
+  ASSERT_TRUE(bound.has_value()) << bound.error().status().to_string();
+  const BoundLatestBy* latest = optional_pointer(bound->latest_by());
+  ASSERT_NE(latest, nullptr);
+  ASSERT_EQ(latest->key_column_ordinals.size(), 1U);
+  EXPECT_EQ(latest->key_column_ordinals[0], 1U);
+  ASSERT_EQ(bound->asof_joins().size(), 1U);
+  EXPECT_EQ(bound->asof_joins()[0].right_source_ordinal, 1U);
+  EXPECT_TRUE(bound->asof_joins()[0].left);
+  EXPECT_EQ(bound->asof_joins()[0].equality_key_count, 1U);
+
+  EXPECT_EQ(
+      bind("SELECT t.symbol FROM trades AS t ASOF JOIN quotes AS q ON q.ts <= t.ts").error().code(),
+      SqlDiagnosticCode::kTypeMismatch);
+  EXPECT_EQ(bind("SELECT t.symbol FROM trades AS t ASOF JOIN quotes AS q ON "
+                 "t.symbol = q.symbol AND q.bid <= t.price")
+                .error()
+                .code(),
+            SqlDiagnosticCode::kTypeMismatch);
+  EXPECT_EQ(bind("SELECT t.symbol FROM trades AS t ASOF JOIN quotes AS q ON "
+                 "t.symbol = q.symbol AND q.ts <= t.ts AND q.ts <= t.ts")
+                .error()
+                .code(),
+            SqlDiagnosticCode::kTypeMismatch);
 }
 
 TEST(SqlBinderTest, ExpandsStarsWithStableUniqueNames) {

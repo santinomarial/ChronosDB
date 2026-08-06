@@ -91,15 +91,15 @@ const std::shared_ptr<const schema::TableSchema>& BoundSqlSource::schema_ptr() c
   return schema_;
 }
 
-BoundSqlSelect::BoundSqlSelect(ParsedSqlSelect syntax,
-                               std::shared_ptr<const QueryCatalogSnapshot> catalog,
-                               std::vector<BoundSqlSource> sources,
-                               std::vector<BoundColumnReference> column_references,
-                               std::vector<BoundExpressionInfo> expressions,
-                               std::vector<BoundOutputColumn> outputs) noexcept
+BoundSqlSelect::BoundSqlSelect(
+    ParsedSqlSelect syntax, std::shared_ptr<const QueryCatalogSnapshot> catalog,
+    std::vector<BoundSqlSource> sources, std::vector<BoundColumnReference> column_references,
+    std::vector<BoundExpressionInfo> expressions, std::vector<BoundOutputColumn> outputs,
+    std::optional<BoundLatestBy> latest_by, std::vector<BoundAsofJoin> asof_joins) noexcept
     : syntax_(std::move(syntax)), catalog_(std::move(catalog)), sources_(std::move(sources)),
       column_references_(std::move(column_references)), expressions_(std::move(expressions)),
-      outputs_(std::move(outputs)) {}
+      outputs_(std::move(outputs)), latest_by_(std::move(latest_by)),
+      asof_joins_(std::move(asof_joins)) {}
 
 const ParsedSqlSelect& BoundSqlSelect::syntax() const noexcept {
   return syntax_;
@@ -118,6 +118,12 @@ std::span<const BoundExpressionInfo> BoundSqlSelect::expressions() const noexcep
 }
 std::span<const BoundOutputColumn> BoundSqlSelect::outputs() const noexcept {
   return outputs_;
+}
+const std::optional<BoundLatestBy>& BoundSqlSelect::latest_by() const noexcept {
+  return latest_by_;
+}
+std::span<const BoundAsofJoin> BoundSqlSelect::asof_joins() const noexcept {
+  return asof_joins_;
 }
 
 const BoundExpressionInfo* BoundSqlSelect::find_expression(const SourceSpan& span) const noexcept {
@@ -161,6 +167,7 @@ public:
       for (const SqlAsofJoin& join : syntax_.asof_joins())
         add_source(join.source);
 
+      std::size_t join_ordinal = 0U;
       for (const SqlAsofJoin& join : syntax_.asof_joins()) {
         const Inferred condition = bind_expression(join.condition);
         require_boolean(condition, join.condition.span(), "ASOF JOIN ON must be BOOL");
@@ -168,19 +175,25 @@ public:
           fail(SqlDiagnosticCode::kTypeMismatch, join.condition.span(),
                "ASOF JOIN ON cannot contain an aggregate");
         }
+        bind_asof_shape(join, join_ordinal + 1U);
+        ++join_ordinal;
       }
       if (syntax_.latest_by().has_value()) {
+        BoundLatestBy bound_latest;
         for (const SqlIdentifier& key : syntax_.latest_by()->keys) {
-          [[maybe_unused]] const BoundColumnReference& bound_key =
-              bind_column_name({&key, 1U}, key.span());
+          const BoundColumnReference& bound_key = bind_column_in_source(key, 0U);
+          bound_latest.key_column_ordinals.push_back(bound_key.column_ordinal);
         }
         const Inferred timestamp = bind_expression(syntax_.latest_by()->timestamp);
         if (!timestamp.type.has_value() ||
             timestamp.type->kind() != schema::LogicalTypeKind::kTimestampNs ||
-            timestamp.contains_aggregate) {
+            timestamp.contains_aggregate ||
+            source_mask(syntax_.latest_by()->timestamp) != std::uint64_t{1U}) {
           fail(SqlDiagnosticCode::kTypeMismatch, syntax_.latest_by()->timestamp.span(),
-               "LATEST BY ON requires a non-aggregate TIMESTAMP_NS expression");
+               "LATEST BY ON requires a primary-source TIMESTAMP_NS expression");
         }
+        bound_latest.timestamp_expression_span = syntax_.latest_by()->timestamp.span();
+        latest_by_ = std::move(bound_latest);
       }
       if (syntax_.where() != nullptr) {
         const Inferred predicate = bind_expression(*syntax_.where());
@@ -203,7 +216,8 @@ public:
       bind_order_by();
       return BoundSqlSelect{std::move(syntax_),      std::move(catalog_),
                             std::move(sources_),     std::move(column_references_),
-                            std::move(expressions_), std::move(outputs_)};
+                            std::move(expressions_), std::move(outputs_),
+                            std::move(latest_by_),   std::move(asof_joins_)};
     } catch (BindingFailure& failure) {
       return std::unexpected(std::move(failure.diagnostic));
     } catch (const std::bad_alloc&) {
@@ -318,6 +332,34 @@ private:
         .column_id = found_column->id(),
         .type = found_column->type(),
         .nullable = found_column->nullable(),
+    });
+    return column_references_.back();
+  }
+
+  [[nodiscard]] const BoundColumnReference& bind_column_in_source(const SqlIdentifier& identifier,
+                                                                  const std::size_t source) {
+    if (source >= sources_.size())
+      fail(SqlDiagnosticCode::kUnknownTable, identifier.span(), "SQL source does not exist");
+    const schema::ColumnDefinition* column =
+        sources_[source].schema_ptr()->find_column(identifier.text());
+    if (column == nullptr) {
+      fail(SqlDiagnosticCode::kUnknownColumn, identifier.span(),
+           "Column does not exist in the required SQL source");
+    }
+    const std::optional<std::size_t> ordinal =
+        sources_[source].schema_ptr()->column_ordinal(column->id());
+    if (!ordinal.has_value()) {
+      fail(SqlDiagnosticCode::kUnknownColumn, identifier.span(),
+           "Catalog column identity has no schema ordinal");
+    }
+    column_references_.push_back(BoundColumnReference{
+        .expression_span = identifier.span(),
+        .source_ordinal = source,
+        .column_ordinal = *ordinal,
+        .table_id = sources_[source].schema_ptr()->table_id(),
+        .column_id = column->id(),
+        .type = column->type(),
+        .nullable = column->nullable(),
     });
     return column_references_.back();
   }
@@ -770,6 +812,88 @@ private:
     return found == column_references_.end() ? nullptr : &*found;
   }
 
+  [[nodiscard]] const BoundExpressionInfo*
+  recorded_expression(const SourceSpan& span) const noexcept {
+    const auto found = std::ranges::find_if(expressions_, [&](const BoundExpressionInfo& value) {
+      return same_span(value.expression_span, span);
+    });
+    return found == expressions_.end() ? nullptr : &*found;
+  }
+
+  [[nodiscard]] std::uint64_t source_mask(const SqlExpression& expression) const noexcept {
+    if (expression.kind() == SqlExpressionKind::kColumn) {
+      const BoundColumnReference* reference = reference_for(expression);
+      return reference == nullptr ? 0U : std::uint64_t{1U} << reference->source_ordinal;
+    }
+    std::uint64_t mask = 0U;
+    for (const SqlExpression& child : expression.children())
+      mask |= source_mask(child);
+    return mask;
+  }
+
+  void inspect_asof_leaf(const SqlExpression& expression, const std::size_t right_source,
+                         std::size_t& equality_count,
+                         std::optional<SourceSpan>& right_timestamp) const {
+    if (expression.kind() == SqlExpressionKind::kBinary &&
+        expression.operation() == SqlOperator::kAnd) {
+      inspect_asof_leaf(expression.children()[0], right_source, equality_count, right_timestamp);
+      inspect_asof_leaf(expression.children()[1], right_source, equality_count, right_timestamp);
+      return;
+    }
+    if (expression.kind() != SqlExpressionKind::kBinary) {
+      fail(SqlDiagnosticCode::kTypeMismatch, expression.span(),
+           "ASOF JOIN ON supports only equality keys and one timestamp inequality");
+    }
+    const SqlExpression& left = expression.children()[0];
+    const SqlExpression& right = expression.children()[1];
+    const std::uint64_t right_bit = std::uint64_t{1U} << right_source;
+    const std::uint64_t left_mask = source_mask(left);
+    const std::uint64_t right_mask = source_mask(right);
+    const bool left_is_right = left_mask == right_bit;
+    const bool right_is_right = right_mask == right_bit;
+    const bool left_is_prior = left_mask != 0U && (left_mask & right_bit) == 0U;
+    const bool right_is_prior = right_mask != 0U && (right_mask & right_bit) == 0U;
+    if (expression.operation() == SqlOperator::kEqual &&
+        ((left_is_right && right_is_prior) || (right_is_right && left_is_prior))) {
+      ++equality_count;
+      return;
+    }
+    const bool canonical_time =
+        expression.operation() == SqlOperator::kLessEqual && left_is_right && right_is_prior;
+    const bool reversed_time =
+        expression.operation() == SqlOperator::kGreaterEqual && left_is_prior && right_is_right;
+    if ((!canonical_time && !reversed_time) || right_timestamp.has_value()) {
+      fail(SqlDiagnosticCode::kTypeMismatch, expression.span(),
+           "ASOF JOIN requires exactly one right timestamp not greater than a left timestamp");
+    }
+    const SqlExpression& right_time = canonical_time ? left : right;
+    const SqlExpression& left_time = canonical_time ? right : left;
+    const BoundExpressionInfo* right_info = recorded_expression(right_time.span());
+    const BoundExpressionInfo* left_info = recorded_expression(left_time.span());
+    if (right_info == nullptr || left_info == nullptr || !right_info->type.has_value() ||
+        !left_info->type.has_value() ||
+        right_info->type->kind() != schema::LogicalTypeKind::kTimestampNs ||
+        left_info->type->kind() != schema::LogicalTypeKind::kTimestampNs) {
+      fail(SqlDiagnosticCode::kTypeMismatch, expression.span(),
+           "ASOF JOIN timestamp inequality operands must be TIMESTAMP_NS");
+    }
+    right_timestamp = right_time.span();
+  }
+
+  void bind_asof_shape(const SqlAsofJoin& join, const std::size_t right_source) {
+    std::size_t equality_count = 0U;
+    std::optional<SourceSpan> right_timestamp;
+    inspect_asof_leaf(join.condition, right_source, equality_count, right_timestamp);
+    if (equality_count == 0U || !right_timestamp.has_value()) {
+      fail(SqlDiagnosticCode::kTypeMismatch, join.condition.span(),
+           "ASOF JOIN requires an equality key and timestamp inequality");
+    }
+    asof_joins_.push_back(BoundAsofJoin{.right_source_ordinal = right_source,
+                                        .left = join.left,
+                                        .right_timestamp_expression_span = *right_timestamp,
+                                        .equality_key_count = equality_count});
+  }
+
   [[nodiscard]] bool same_expression(const SqlExpression& left,
                                      const SqlExpression& right) const noexcept {
     if (left.kind() == SqlExpressionKind::kColumn && right.kind() == SqlExpressionKind::kColumn) {
@@ -881,6 +1005,8 @@ private:
   std::vector<BoundColumnReference> column_references_;
   std::vector<BoundExpressionInfo> expressions_;
   std::vector<BoundOutputColumn> outputs_;
+  std::optional<BoundLatestBy> latest_by_;
+  std::vector<BoundAsofJoin> asof_joins_;
 };
 
 } // namespace detail
