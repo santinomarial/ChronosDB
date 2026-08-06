@@ -50,16 +50,16 @@ batch(std::shared_ptr<const schema::TableSchema> schema = columnar::test::batch_
 }
 
 [[nodiscard]] PreparedHeadAppend
-prepare(MutableHead& target, const std::shared_ptr<const columnar::OwnedColumnarBatch>& input,
-        const std::uint64_t sequence) {
-  auto prepared = target.prepare_append(input, position(sequence));
+prepare(MutableHead& target, const std::shared_ptr<const columnar::OwnedColumnarBatch>& input) {
+  auto prepared = target.prepare_append(input);
   EXPECT_TRUE(prepared.has_value()) << prepared.error().to_string();
   return std::move(*prepared);
 }
 
-[[nodiscard]] HeadSnapshot publish(PreparedHeadAppend& prepared) {
+[[nodiscard]] HeadSnapshot publish(PreparedHeadAppend& prepared,
+                                   const std::uint64_t sequence = 1U) {
   EXPECT_TRUE(prepared.mark_wal_started().is_ok());
-  auto snapshot = prepared.publish();
+  auto snapshot = prepared.publish(position(sequence));
   EXPECT_TRUE(snapshot.has_value()) << snapshot.error().to_string();
   return std::move(*snapshot);
 }
@@ -131,27 +131,26 @@ TEST(MutableHeadTest, ValidatesConfigurationAndStartsAtOneExactEmptyPublication)
 TEST(MutableHeadTest, PreparationAllocatesAndReservesWithoutChangingVisibility) {
   MutableHead target = head(4U, 2U);
   const auto input = batch();
-  PreparedHeadAppend prepared = prepare(target, input, 1U);
+  PreparedHeadAppend prepared = prepare(target, input);
   EXPECT_TRUE(prepared.is_valid());
   EXPECT_FALSE(prepared.wal_started());
   EXPECT_EQ(target.snapshot()->row_count(), 0U);
-  EXPECT_EQ(target.prepare_append(input, position(2U)).error().code(),
-            common::StatusCode::kUnavailable);
-  EXPECT_EQ(prepared.publish().error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(target.prepare_append(input).error().code(), common::StatusCode::kUnavailable);
+  EXPECT_EQ(prepared.publish(position(1U)).error().code(), common::StatusCode::kInvalidArgument);
   EXPECT_EQ(target.snapshot()->row_count(), 0U);
   EXPECT_EQ(target.seal().error().code(), common::StatusCode::kUnavailable);
 
   EXPECT_TRUE(prepared.cancel_before_wal().is_ok());
   EXPECT_FALSE(prepared.is_valid());
   EXPECT_EQ(target.snapshot()->row_count(), 0U);
-  EXPECT_TRUE(target.prepare_append(input, position(1U)).has_value());
+  EXPECT_TRUE(target.prepare_append(input).has_value());
 }
 
 TEST(MutableHeadTest, PublishesTheCompleteBatchAndHiddenMetadataAtOneBoundary) {
   MutableHead target = head(4U, 2U);
   const auto input = batch();
-  PreparedHeadAppend prepared = prepare(target, input, 7U);
-  const HeadSnapshot published = publish(prepared);
+  PreparedHeadAppend prepared = prepare(target, input);
+  const HeadSnapshot published = publish(prepared, 7U);
   EXPECT_FALSE(prepared.is_valid());
   ASSERT_TRUE(published.applied_position().has_value());
   EXPECT_EQ(published.applied_position().value_or(HeadCommitPosition{}), position(7U));
@@ -206,17 +205,17 @@ TEST(MutableHeadTest, PublishesTheCompleteBatchAndHiddenMetadataAtOneBoundary) {
 TEST(MutableHeadTest, OldSnapshotsKeepExactBoundariesAndStableStorageAcrossLaterAppends) {
   MutableHead target = head(4U, 2U);
   const auto input = batch();
-  PreparedHeadAppend first_prepared = prepare(target, input, 1U);
+  PreparedHeadAppend first_prepared = prepare(target, input);
   const HeadSnapshot first = publish(first_prepared);
   const HeadColumnView first_timestamps = first.column(0U).value();
   const HeadColumnView first_strings = first.column(1U).value();
   const std::byte* const fixed_address = first_timestamps.fixed_values().data();
   const std::byte* const variable_address = first_strings.variable_values().data();
 
-  PreparedHeadAppend second_prepared = prepare(target, input, 3U);
+  PreparedHeadAppend second_prepared = prepare(target, input);
   EXPECT_EQ(first.row_count(), 2U);
   EXPECT_EQ(first_strings.variable_offsets().back(), 1U);
-  const HeadSnapshot second = publish(second_prepared);
+  const HeadSnapshot second = publish(second_prepared, 3U);
 
   EXPECT_EQ(first.row_count(), 2U);
   ASSERT_TRUE(first.applied_position().has_value());
@@ -238,26 +237,47 @@ TEST(MutableHeadTest, OldSnapshotsKeepExactBoundariesAndStableStorageAcrossLater
   EXPECT_EQ(second.row_metadata(2U)->row_ordinal, 0U);
   EXPECT_EQ(second.row_metadata(3U)->row_ordinal, 1U);
 
-  EXPECT_EQ(target.prepare_append(input, position(3U)).error().code(),
+  EXPECT_EQ(target.check_append(*input).code(), common::StatusCode::kResourceExhausted);
+}
+
+TEST(MutableHeadTest, BindsAndValidatesCommitPositionOnlyAfterWalStarts) {
+  const auto input = batch();
+  MutableHead nonadvancing = head(6U, 4U);
+  PreparedHeadAppend first = prepare(nonadvancing, input);
+  static_cast<void>(publish(first, 2U));
+  PreparedHeadAppend second = prepare(nonadvancing, input);
+  EXPECT_TRUE(second.mark_wal_started().is_ok());
+  EXPECT_EQ(second.publish(position(2U)).error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_TRUE(nonadvancing.metrics().failed);
+  EXPECT_EQ(nonadvancing.snapshot()->row_count(), 2U);
+
+  MutableHead different_history = head(6U, 4U);
+  PreparedHeadAppend history_first = prepare(different_history, input);
+  static_cast<void>(publish(history_first, 2U));
+  PreparedHeadAppend history_second = prepare(different_history, input);
+  EXPECT_TRUE(history_second.mark_wal_started().is_ok());
+  EXPECT_EQ(history_second.publish(position(3U, 2U)).error().code(),
             common::StatusCode::kInvalidArgument);
-  EXPECT_EQ(target.prepare_append(input, position(4U, 2U)).error().code(),
-            common::StatusCode::kInvalidArgument);
+  EXPECT_TRUE(different_history.metrics().failed);
+  EXPECT_EQ(different_history.snapshot()->row_count(), 2U);
 }
 
 TEST(MutableHeadTest, RejectsSchemaRowAndVariableCapacityBeforeWal) {
   const auto input = batch();
   MutableHead row_limited = head(3U, 8U);
-  PreparedHeadAppend first = prepare(row_limited, input, 1U);
+  PreparedHeadAppend first = prepare(row_limited, input);
   static_cast<void>(publish(first));
-  EXPECT_EQ(row_limited.prepare_append(input, position(2U)).error().code(),
+  EXPECT_EQ(row_limited.prepare_append(input).error().code(),
             common::StatusCode::kResourceExhausted);
+  EXPECT_EQ(row_limited.check_append(*input).code(), common::StatusCode::kResourceExhausted);
   EXPECT_EQ(row_limited.snapshot()->row_count(), 2U);
 
   MutableHead byte_limited = head(4U, 1U);
-  PreparedHeadAppend byte_first = prepare(byte_limited, input, 1U);
+  PreparedHeadAppend byte_first = prepare(byte_limited, input);
   static_cast<void>(publish(byte_first));
-  EXPECT_EQ(byte_limited.prepare_append(input, position(2U)).error().code(),
+  EXPECT_EQ(byte_limited.prepare_append(input).error().code(),
             common::StatusCode::kResourceExhausted);
+  EXPECT_EQ(byte_limited.check_append(*input).code(), common::StatusCode::kResourceExhausted);
   EXPECT_EQ(byte_limited.snapshot()->row_count(), 2U);
 
   const auto other_schema = std::make_shared<const schema::TableSchema>(
@@ -283,7 +303,7 @@ TEST(MutableHeadTest, RejectsSchemaRowAndVariableCapacityBeforeWal) {
   const auto other_batch = std::make_shared<const columnar::OwnedColumnarBatch>(
       columnar::OwnedColumnarBatch::create(other_schema, std::move(other_columns)).value());
   MutableHead target = head();
-  EXPECT_EQ(target.prepare_append(other_batch, position(1U)).error().code(),
+  EXPECT_EQ(target.prepare_append(other_batch).error().code(),
             common::StatusCode::kInvalidArgument);
   EXPECT_EQ(target.snapshot()->row_count(), 0U);
 }
@@ -292,7 +312,7 @@ TEST(MutableHeadTest, DroppedPostWalAppendFailsClosedWithoutPublishingPartialRow
   MutableHead target = head();
   const auto input = batch();
   {
-    PreparedHeadAppend prepared = prepare(target, input, 1U);
+    PreparedHeadAppend prepared = prepare(target, input);
     EXPECT_TRUE(prepared.mark_wal_started().is_ok());
     EXPECT_TRUE(prepared.wal_started());
     EXPECT_EQ(prepared.cancel_before_wal().code(), common::StatusCode::kInvalidArgument);
@@ -301,8 +321,7 @@ TEST(MutableHeadTest, DroppedPostWalAppendFailsClosedWithoutPublishingPartialRow
   EXPECT_TRUE(target.metrics().failed);
   EXPECT_EQ(target.metrics().published_rows, 0U);
   EXPECT_EQ(target.snapshot()->row_count(), 0U);
-  EXPECT_EQ(target.prepare_append(input, position(2U)).error().code(),
-            common::StatusCode::kUnavailable);
+  EXPECT_EQ(target.prepare_append(input).error().code(), common::StatusCode::kUnavailable);
   EXPECT_EQ(target.seal().error().code(), common::StatusCode::kUnavailable);
 }
 
@@ -311,13 +330,12 @@ TEST(MutableHeadTest, SealingIsIdempotentPinsStorageAndRejectsNewAppends) {
   const auto input = batch();
   {
     MutableHead target = head();
-    PreparedHeadAppend prepared = prepare(target, input, 1U);
+    PreparedHeadAppend prepared = prepare(target, input);
     static_cast<void>(publish(prepared));
     sealed.emplace(target.seal().value());
     EXPECT_TRUE(target.metrics().sealed);
     EXPECT_EQ(target.seal()->row_count(), 2U);
-    EXPECT_EQ(target.prepare_append(input, position(2U)).error().code(),
-              common::StatusCode::kUnavailable);
+    EXPECT_EQ(target.prepare_append(input).error().code(), common::StatusCode::kUnavailable);
   }
 
   ASSERT_TRUE(sealed.has_value());
@@ -426,7 +444,7 @@ TEST(MutableHeadPropertyTest, EveryFrozenLogicalTypeAndNullableShapeMaterializes
           schema, tablet_id(), 1U,
           MutableHeadCapacity{.row_capacity = kRows, .variable_value_bytes = variable_capacities})
           .value();
-  PreparedHeadAppend prepared = prepare(target, input, 1U);
+  PreparedHeadAppend prepared = prepare(target, input);
   const HeadSnapshot snapshot = publish(prepared);
 
   for (std::size_t ordinal = 0U; ordinal < input->columns().size(); ++ordinal) {
@@ -491,9 +509,9 @@ TEST(MutableHeadConcurrencyTest, ControlledInterleavingsKeepEveryUnpublishedStag
           .value();
   std::atomic<bool> writer_failed{false};
   std::jthread writer{[&] {
-    auto prepared = target.prepare_append(input, position(1U));
+    auto prepared = target.prepare_append(input);
     if (!prepared.has_value() || !prepared->mark_wal_started().is_ok() ||
-        !prepared->publish().has_value()) {
+        !prepared->publish(position(1U)).has_value()) {
       writer_failed.store(true, std::memory_order_release);
       gate.release(std::numeric_limits<std::size_t>::max());
     }
@@ -567,8 +585,8 @@ TEST(MutableHeadConcurrencyTest, AcquireSnapshotsObserveOnlyCompleteBatchBoundar
 
   start.arrive_and_wait();
   for (std::uint64_t sequence = 1U; sequence <= kBatches; ++sequence) {
-    PreparedHeadAppend prepared = prepare(target, input, sequence);
-    static_cast<void>(publish(prepared));
+    PreparedHeadAppend prepared = prepare(target, input);
+    static_cast<void>(publish(prepared, sequence));
   }
   done.store(true, std::memory_order_release);
   readers.clear();

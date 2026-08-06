@@ -151,7 +151,7 @@ void benchmark_publish(benchmark::State& state) {
     std::optional<chronos::head::MutableHead> target{std::move(created.value())};
     state.ResumeTiming();
 
-    auto prepared = target->prepare_append(fixture.batch, commit_position());
+    auto prepared = target->prepare_append(fixture.batch);
     if (!prepared.has_value()) {
       const std::string message = prepared.error().to_string();
       state.SkipWithError(message);
@@ -163,7 +163,7 @@ void benchmark_publish(benchmark::State& state) {
       state.SkipWithError(message);
       return;
     }
-    auto published = prepared->publish();
+    auto published = prepared->publish(commit_position());
     if (!published.has_value()) {
       const std::string message = published.error().to_string();
       state.SkipWithError(message);
@@ -187,14 +187,14 @@ void benchmark_snapshot(benchmark::State& state) {
   const auto rows = static_cast<std::uint32_t>(state.range(0));
   const Fixture fixture = make_fixture(rows);
   chronos::head::MutableHead target = make_head(fixture).value();
-  auto prepared = target.prepare_append(fixture.batch, commit_position()).value();
+  auto prepared = target.prepare_append(fixture.batch).value();
   const chronos::common::Status started = prepared.mark_wal_started();
   if (!started.is_ok()) {
     const std::string message = started.to_string();
     state.SkipWithError(message);
     return;
   }
-  const auto published = prepared.publish().value();
+  const auto published = prepared.publish(commit_position()).value();
   benchmark::DoNotOptimize(published.row_count());
 
   for ([[maybe_unused]] auto iteration : state) {

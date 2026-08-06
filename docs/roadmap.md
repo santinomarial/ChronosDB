@@ -14,9 +14,10 @@ WAL physical codec, fixtures, tests, fuzz target, minimal blocking POSIX file/di
 the segmented writer, bounded commit coordinator, locked discovery and verification, explicit
 final-tail repair, replay-sink passes, existing-history reopen path, and read-only inspector now
 exist. Coordinator metrics and a deterministic process-kill crash-image harness exist. The first
-application-kind codec and a bounded process-local retry reservation directory exist independently
-of WAL submission; recovered/tablet retry state, replay/application, and the server-wide
-operational metrics/export path do not exist yet.
+application-kind codec, a bounded process-local retry reservation directory, and a bounded live
+tablet publication owner exist independently of WAL submission; recovered state,
+replay/application, retry pruning, and the server-wide operational metrics/export path do not exist
+yet.
 Work should proceed in order unless an accepted ADR explains why a limited dependency must move
 earlier.
 
@@ -108,9 +109,11 @@ No phase passes because its code merely compiles. A phase passes only when its a
   directory adds deterministic model and concurrency tests. The `chronos_head` single-generation
   primitive adds fixed capacity, pre-WAL reservation, batch-atomic publication, owning snapshots,
   hidden row-version identity, sealing, concurrency/property tests, and focused microbenchmarks.
-  WAL submission orchestration, recovered/tablet retry state, retry retention, ordered replay,
-  tablet-wide generation switching/joint publication, allocation failpoints, and end-to-end Phase 4
-  benchmarks remain unimplemented.
+  The bounded tablet owner adds a live tablet retry table, whole-batch generation rotation,
+  sealed-generation backpressure, and one outer generation/rows/position/retry publication with
+  deterministic concurrency tests and focused microbenchmarks. WAL submission orchestration,
+  recovered state, retry retention, ordered replay, schema switching, flush handoff, allocation
+  failpoints, and end-to-end Phase 4 benchmarks remain unimplemented.
 
 - **Scope:** typed immutable input batches; null/variable-width representation; append-only tablet heads; sealing; single shard-worker ownership; stable reader boundaries; idempotent ordered replay into heads.
 - **Explicit non-scope:** durable columnar parts, SQL execution, secondary indexes, general lock-free containers, live subscriptions, and a universal allocator.

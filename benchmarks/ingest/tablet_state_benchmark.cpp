@@ -1,0 +1,227 @@
+#include "chronos/ingest/tablet_state.hpp"
+#include "chronos/schema/column_definition.hpp"
+#include "chronos/schema/logical_type.hpp"
+
+#include <benchmark/benchmark.h>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace {
+
+template <typename Identifier> [[nodiscard]] Identifier id(const std::uint16_t value) {
+  chronos::common::Uuid::Bytes bytes{};
+  bytes[14] = static_cast<std::byte>((value >> 8U) & 0xffU);
+  bytes[15] = static_cast<std::byte>(value & 0xffU);
+  return Identifier::from_bytes(bytes).value();
+}
+
+template <typename Identifier> [[nodiscard]] Identifier request_id(const std::uint8_t seed) {
+  chronos::common::Uuid::Bytes bytes{};
+  for (std::size_t index = 0U; index < bytes.size(); ++index) {
+    bytes[index] = static_cast<std::byte>(seed + index);
+  }
+  return Identifier::from_bytes(bytes).value();
+}
+
+struct TabletFixture {
+  std::shared_ptr<const chronos::columnar::OwnedColumnarBatch> batch;
+  chronos::schema::TabletId tablet_id;
+};
+
+[[nodiscard]] TabletFixture make_fixture(const std::uint32_t rows) {
+  const auto timestamp =
+      chronos::schema::LogicalType::create(chronos::schema::LogicalTypeKind::kTimestampNs).value();
+  const chronos::schema::ColumnId timestamp_id = id<chronos::schema::ColumnId>(1U);
+  std::vector<chronos::schema::ColumnDefinition> definitions;
+  definitions.push_back(
+      chronos::schema::ColumnDefinition::create(timestamp_id, "ts", timestamp, false).value());
+  const chronos::schema::TableSchemaRoles roles{.event_time_column = timestamp_id,
+                                                .physical_ordering_key = {timestamp_id},
+                                                .partition_columns = {timestamp_id},
+                                                .shard_key = {timestamp_id},
+                                                .deduplication_key = {}};
+  auto schema = std::make_shared<const chronos::schema::TableSchema>(
+      chronos::schema::TableSchema::create(
+          id<chronos::schema::TableId>(80U), id<chronos::schema::SchemaId>(81U),
+          chronos::schema::SchemaVersion::initial(), std::nullopt, std::move(definitions), roles)
+          .value());
+  std::vector<chronos::columnar::OwnedColumnVector> columns;
+  columns.push_back(chronos::columnar::OwnedColumnVector::create(
+                        chronos::columnar::ColumnVectorMetadata{.column_id = timestamp_id,
+                                                                .type = timestamp,
+                                                                .nullable = false,
+                                                                .row_count = rows,
+                                                                .null_count = 0U},
+                        chronos::columnar::ColumnVectorBuffers{
+                            .validity = {},
+                            .offsets = {},
+                            .values = std::vector<std::byte>(static_cast<std::size_t>(rows) * 8U)})
+                        .value());
+  auto batch = std::make_shared<const chronos::columnar::OwnedColumnarBatch>(
+      chronos::columnar::OwnedColumnarBatch::create(std::move(schema), std::move(columns)).value());
+  return TabletFixture{.batch = std::move(batch), .tablet_id = id<chronos::schema::TabletId>(82U)};
+}
+
+[[nodiscard]] chronos::ingest::RetryIdentity retry_identity(const std::uint8_t seed) {
+  return chronos::ingest::RetryIdentity{
+      .client_id = request_id<chronos::ingest::ClientId>(seed),
+      .client_batch_id =
+          request_id<chronos::ingest::ClientBatchId>(static_cast<std::uint8_t>(seed + 32U))};
+}
+
+[[nodiscard]] chronos::ingest::ColumnarAppendMutationIdentity
+mutation(const TabletFixture& fixture, const std::uint8_t digest_seed) {
+  chronos::ingest::Sha256Digest::Bytes digest{};
+  digest.back() = static_cast<std::byte>(digest_seed);
+  return chronos::ingest::ColumnarAppendMutationIdentity{
+      .table_id = fixture.batch->schema().table_id(),
+      .tablet_id = fixture.tablet_id,
+      .request_digest = chronos::ingest::Sha256Digest{digest}};
+}
+
+[[nodiscard]] chronos::head::HeadCommitPosition position(const std::uint64_t sequence) {
+  chronos::wal::WalId wal_id;
+  wal_id.bytes.back() = std::byte{1U};
+  return chronos::head::HeadCommitPosition{.wal_id = wal_id, .record_sequence = sequence};
+}
+
+[[nodiscard]] chronos::common::Result<chronos::ingest::TabletState>
+make_tablet(const TabletFixture& fixture, const std::uint32_t row_capacity) {
+  return chronos::ingest::TabletState::create(
+      fixture.batch->schema_ptr(), fixture.tablet_id,
+      chronos::ingest::TabletStateConfig{
+          .head_capacity = chronos::head::MutableHeadCapacity{.row_capacity = row_capacity,
+                                                              .variable_value_bytes = {0U}},
+          .maximum_sealed_generations = 1U,
+          .maximum_retry_entries = 2U});
+}
+
+[[nodiscard]] bool publish_first(chronos::ingest::TabletState& tablet, const TabletFixture& fixture,
+                                 benchmark::State& state) {
+  auto prepared = tablet.prepare_append(retry_identity(1U), mutation(fixture, 1U), fixture.batch);
+  if (!prepared.has_value()) {
+    const std::string message = prepared.error().to_string();
+    state.SkipWithError(message);
+    return false;
+  }
+  chronos::common::Status started = prepared->mark_wal_started();
+  if (!started.is_ok()) {
+    const std::string message = started.to_string();
+    state.SkipWithError(message);
+    return false;
+  }
+  auto published = prepared->publish(position(1U));
+  if (!published.has_value()) {
+    const std::string message = published.error().to_string();
+    state.SkipWithError(message);
+    return false;
+  }
+  benchmark::DoNotOptimize(published->outcome.get());
+  return true;
+}
+
+void benchmark_tablet_publish(benchmark::State& state) {
+  const auto rows = static_cast<std::uint32_t>(state.range(0));
+  const TabletFixture fixture = make_fixture(rows);
+  for ([[maybe_unused]] auto iteration : state) {
+    state.PauseTiming();
+    auto created = make_tablet(fixture, rows);
+    if (!created.has_value()) {
+      const std::string message = created.error().to_string();
+      state.SkipWithError(message);
+      return;
+    }
+    std::optional<chronos::ingest::TabletState> tablet{std::move(*created)};
+    state.ResumeTiming();
+
+    if (!publish_first(*tablet, fixture, state)) {
+      return;
+    }
+    benchmark::ClobberMemory();
+
+    state.PauseTiming();
+    tablet.reset();
+    state.ResumeTiming();
+  }
+  state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(rows));
+  state.SetBytesProcessed(state.iterations() *
+                          static_cast<std::int64_t>(fixture.batch->buffer_bytes()));
+  state.SetLabel("pre-WAL reservation, head materialization, retry entry, and outer publication");
+}
+
+void benchmark_tablet_snapshot(benchmark::State& state) {
+  const auto rows = static_cast<std::uint32_t>(state.range(0));
+  const TabletFixture fixture = make_fixture(rows);
+  chronos::ingest::TabletState tablet = make_tablet(fixture, rows).value();
+  if (!publish_first(tablet, fixture, state)) {
+    return;
+  }
+  for ([[maybe_unused]] auto iteration : state) {
+    auto snapshot = tablet.snapshot();
+    if (!snapshot.has_value()) {
+      const std::string message = snapshot.error().to_string();
+      state.SkipWithError(message);
+      return;
+    }
+    benchmark::DoNotOptimize(snapshot->active_generation().row_count());
+    benchmark::DoNotOptimize(snapshot->retry_entry_count());
+  }
+  state.SetItemsProcessed(state.iterations());
+  state.SetLabel("acquire one owning outer tablet epoch and inspect active/retry boundaries");
+}
+
+void benchmark_tablet_rotation(benchmark::State& state) {
+  const auto rows = static_cast<std::uint32_t>(state.range(0));
+  const TabletFixture fixture = make_fixture(rows);
+  for ([[maybe_unused]] auto iteration : state) {
+    state.PauseTiming();
+    auto created = make_tablet(fixture, rows);
+    if (!created.has_value()) {
+      const std::string message = created.error().to_string();
+      state.SkipWithError(message);
+      return;
+    }
+    std::optional<chronos::ingest::TabletState> tablet{std::move(*created)};
+    if (!publish_first(*tablet, fixture, state)) {
+      return;
+    }
+    state.ResumeTiming();
+
+    auto prepared =
+        tablet->prepare_append(retry_identity(2U), mutation(fixture, 2U), fixture.batch);
+    if (!prepared.has_value()) {
+      const std::string message = prepared.error().to_string();
+      state.SkipWithError(message);
+      return;
+    }
+    chronos::common::Status cancelled = prepared->cancel_before_wal();
+    if (!cancelled.is_ok()) {
+      const std::string message = cancelled.to_string();
+      state.SkipWithError(message);
+      return;
+    }
+    benchmark::DoNotOptimize(tablet->metrics().active_generation);
+    benchmark::ClobberMemory();
+
+    state.PauseTiming();
+    tablet.reset();
+    state.ResumeTiming();
+  }
+  state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(rows));
+  state.SetLabel("seal, allocate next bounded generation, and publish topology-only epoch");
+}
+
+// Google Benchmark registers functions during static initialization.
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+BENCHMARK(benchmark_tablet_publish)->Arg(64)->Arg(1024)->Arg(65536);
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+BENCHMARK(benchmark_tablet_snapshot)->Arg(64)->Arg(1024)->Arg(65536);
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+BENCHMARK(benchmark_tablet_rotation)->Arg(64)->Arg(1024)->Arg(65536);
+
+} // namespace

@@ -161,13 +161,14 @@ public:
         materialization_hook_context_(config.materialization_hook_context) {}
 
   [[nodiscard]] common::Result<PreparedHeadAppend>
-  prepare(std::shared_ptr<const columnar::OwnedColumnarBatch> batch,
-          const HeadCommitPosition& position);
+  prepare(std::shared_ptr<const columnar::OwnedColumnarBatch> batch);
+  [[nodiscard]] common::Status check_append(const columnar::OwnedColumnarBatch& batch) const;
   [[nodiscard]] bool wal_started(std::uint64_t token) const noexcept;
   [[nodiscard]] common::Status mark_wal_started(std::uint64_t token);
   [[nodiscard]] common::Result<HeadSnapshot>
   publish(std::uint64_t token, const columnar::OwnedColumnarBatch& batch,
-          const std::shared_ptr<const HeadPublication>& base,
+          HeadCommitPosition position, const std::shared_ptr<const HeadPublication>& base,
+          const std::shared_ptr<HeadPublication>& next_mutable,
           const std::shared_ptr<const HeadPublication>& next);
   [[nodiscard]] common::Status cancel_before_wal(std::uint64_t token);
   void abandon(std::uint64_t token) noexcept;
@@ -208,9 +209,10 @@ public:
 
 private:
   [[nodiscard]] common::Status
-  validate_append(const std::shared_ptr<const columnar::OwnedColumnarBatch>& batch,
-                  const HeadCommitPosition& position,
+  validate_append(const columnar::OwnedColumnarBatch& batch,
                   const std::shared_ptr<const HeadPublication>& current) const;
+  [[nodiscard]] static common::Status validate_position(const HeadCommitPosition& position,
+                                                        const HeadPublication& base);
   [[nodiscard]] common::Status validate_unpublished_boundaries(const HeadPublication& base) const;
   void materialize(const columnar::OwnedColumnarBatch& batch, MaterializationRange range) noexcept;
 
@@ -241,9 +243,10 @@ public:
   Impl(std::shared_ptr<detail::MutableHeadState> state,
        std::shared_ptr<const columnar::OwnedColumnarBatch> batch, const std::uint64_t token,
        std::shared_ptr<const detail::HeadPublication> base,
+       std::shared_ptr<detail::HeadPublication> next_mutable,
        std::shared_ptr<const detail::HeadPublication> next) noexcept
       : state_(std::move(state)), batch_(std::move(batch)), token_(token), base_(std::move(base)),
-        next_(std::move(next)) {}
+        next_mutable_(std::move(next_mutable)), next_(std::move(next)) {}
 
   ~Impl() {
     if (state_ != nullptr) {
@@ -265,15 +268,18 @@ public:
     return state_->mark_wal_started(token_);
   }
 
-  [[nodiscard]] common::Result<HeadSnapshot> publish() {
-    if (state_ == nullptr || batch_ == nullptr || base_ == nullptr || next_ == nullptr) {
+  [[nodiscard]] common::Result<HeadSnapshot> publish(const HeadCommitPosition position) {
+    if (state_ == nullptr || batch_ == nullptr || base_ == nullptr || next_mutable_ == nullptr ||
+        next_ == nullptr) {
       return common::make_unexpected(invalid("prepared mutable-head append is invalid"));
     }
-    common::Result<HeadSnapshot> published = state_->publish(token_, *batch_, base_, next_);
+    common::Result<HeadSnapshot> published =
+        state_->publish(token_, *batch_, position, base_, next_mutable_, next_);
     if (published.has_value()) {
       state_.reset();
       batch_.reset();
       base_.reset();
+      next_mutable_.reset();
       next_.reset();
     }
     return published;
@@ -288,6 +294,7 @@ public:
       state_.reset();
       batch_.reset();
       base_.reset();
+      next_mutable_.reset();
       next_.reset();
     }
     return status;
@@ -298,12 +305,12 @@ private:
   std::shared_ptr<const columnar::OwnedColumnarBatch> batch_;
   std::uint64_t token_;
   std::shared_ptr<const detail::HeadPublication> base_;
+  std::shared_ptr<detail::HeadPublication> next_mutable_;
   std::shared_ptr<const detail::HeadPublication> next_;
 };
 
 common::Status detail::MutableHeadState::validate_append(
-    const std::shared_ptr<const columnar::OwnedColumnarBatch>& batch,
-    const HeadCommitPosition& position,
+    const columnar::OwnedColumnarBatch& batch,
     const std::shared_ptr<const HeadPublication>& current) const {
   if (failed_.load(std::memory_order_acquire)) {
     return unavailable("mutable head is failed and requires fresh recovery");
@@ -314,34 +321,58 @@ common::Status detail::MutableHeadState::validate_append(
   if (append_active_) {
     return unavailable("mutable head already has a prepared append");
   }
-  if (batch == nullptr) {
-    return invalid("mutable-head append requires an owning batch pointer");
-  }
-  if (batch->schema() != *schema_) {
+  if (batch.schema() != *schema_) {
     return invalid("mutable-head append batch does not match the bound schema");
   }
-  if (!position.wal_id.is_valid() || position.record_sequence == 0U) {
-    return invalid("mutable-head append requires a nonzero WAL identity and record sequence");
-  }
-  if (current->applied_position_.has_value()) {
-    const HeadCommitPosition& applied = *current->applied_position_;
-    if (position.wal_id != applied.wal_id || position.record_sequence <= applied.record_sequence) {
-      return invalid("mutable-head append position must advance within one WAL history");
-    }
-  }
-  const auto end_row = common::checked_add<std::uint32_t>(current->row_count_, batch->row_count());
+  const auto end_row = common::checked_add<std::uint32_t>(current->row_count_, batch.row_count());
   if (!end_row.has_value() || *end_row > row_capacity_) {
     return exhausted("mutable-head append does not fit the remaining row capacity");
+  }
+  for (std::size_t ordinal = 0U; ordinal < columns_.size(); ++ordinal) {
+    const columnar::OwnedColumnVector* const source = batch.column(ordinal);
+    if (source == nullptr) {
+      return internal("validated batch lost a schema column");
+    }
+    if (!source->type().is_variable_width()) {
+      continue;
+    }
+    const auto next =
+        common::checked_add(current->variable_frontiers_[ordinal], source->view().values().size());
+    if (!next.has_value() || *next > columns_[ordinal].variable_values.size()) {
+      return exhausted("mutable-head append exceeds a variable-column byte capacity");
+    }
   }
   return common::Status::ok();
 }
 
+common::Status detail::MutableHeadState::validate_position(const HeadCommitPosition& position,
+                                                           const HeadPublication& base) {
+  if (!position.wal_id.is_valid() || position.record_sequence == 0U) {
+    return invalid("mutable-head append requires a nonzero WAL identity and record sequence");
+  }
+  if (base.applied_position_.has_value()) {
+    const HeadCommitPosition& applied = *base.applied_position_;
+    if (position.wal_id != applied.wal_id || position.record_sequence <= applied.record_sequence) {
+      return invalid("mutable-head append position must advance within one WAL history");
+    }
+  }
+  return common::Status::ok();
+}
+
+common::Status
+detail::MutableHeadState::check_append(const columnar::OwnedColumnarBatch& batch) const {
+  return validate_append(batch,
+                         std::atomic_load_explicit(&publication_, std::memory_order_acquire));
+}
+
 common::Result<PreparedHeadAppend>
-detail::MutableHeadState::prepare(std::shared_ptr<const columnar::OwnedColumnarBatch> batch,
-                                  const HeadCommitPosition& position) {
+detail::MutableHeadState::prepare(std::shared_ptr<const columnar::OwnedColumnarBatch> batch) {
   const std::shared_ptr<const HeadPublication> current =
       std::atomic_load_explicit(&publication_, std::memory_order_acquire);
-  const common::Status valid = validate_append(batch, position, current);
+  if (batch == nullptr) {
+    return common::make_unexpected(invalid("mutable-head append requires an owning batch pointer"));
+  }
+  const common::Status valid = validate_append(*batch, current);
   if (!valid.is_ok()) {
     return common::make_unexpected(valid);
   }
@@ -361,9 +392,8 @@ detail::MutableHeadState::prepare(std::shared_ptr<const columnar::OwnedColumnarB
       }
       const auto next =
           common::checked_add(next_frontiers[ordinal], source->view().values().size());
-      if (!next.has_value() || *next > columns_[ordinal].variable_values.size()) {
-        return common::make_unexpected(
-            exhausted("mutable-head append exceeds a variable-column byte capacity"));
+      if (!next.has_value()) {
+        return common::make_unexpected(internal("validated variable frontier overflowed"));
       }
       next_frontiers[ordinal] = *next;
     }
@@ -373,15 +403,17 @@ detail::MutableHeadState::prepare(std::shared_ptr<const columnar::OwnedColumnarB
     if (!end_row.has_value()) {
       return common::make_unexpected(internal("validated mutable-head row range overflowed"));
     }
-    auto next =
-        std::make_shared<const HeadPublication>(*end_row, position, std::move(next_frontiers));
+    auto next_mutable =
+        std::make_shared<HeadPublication>(*end_row, std::nullopt, std::move(next_frontiers));
+    std::shared_ptr<const HeadPublication> next = next_mutable;
     std::shared_ptr<MutableHeadState> self = weak_from_this().lock();
     if (self == nullptr) {
       return common::make_unexpected(internal("mutable-head generation lost its owning state"));
     }
     const std::uint64_t token = next_token_;
     auto implementation = std::make_unique<PreparedHeadAppend::Impl>(
-        std::move(self), std::move(batch), token, current, std::move(next));
+        std::move(self), std::move(batch), token, current, std::move(next_mutable),
+        std::move(next));
 
     ++next_token_;
     append_active_ = true;
@@ -480,11 +512,11 @@ void detail::MutableHeadState::materialize(const columnar::OwnedColumnarBatch& b
   }
 }
 
-common::Result<HeadSnapshot>
-detail::MutableHeadState::publish(const std::uint64_t token,
-                                  const columnar::OwnedColumnarBatch& batch,
-                                  const std::shared_ptr<const HeadPublication>& base,
-                                  const std::shared_ptr<const HeadPublication>& next) {
+common::Result<HeadSnapshot> detail::MutableHeadState::publish(
+    const std::uint64_t token, const columnar::OwnedColumnarBatch& batch,
+    const HeadCommitPosition position, const std::shared_ptr<const HeadPublication>& base,
+    const std::shared_ptr<HeadPublication>& next_mutable,
+    const std::shared_ptr<const HeadPublication>& next) {
   if (!append_active_ || active_token_ != token) {
     return common::make_unexpected(internal("prepared mutable-head append ownership was lost"));
   }
@@ -500,17 +532,23 @@ detail::MutableHeadState::publish(const std::uint64_t token,
     append_active_ = false;
     return common::make_unexpected(internal("mutable-head publication base changed unexpectedly"));
   }
+  const common::Status position_status = validate_position(position, *base);
+  if (!position_status.is_ok()) {
+    failed_.store(true, std::memory_order_release);
+    append_active_ = false;
+    return common::make_unexpected(position_status);
+  }
   const common::Status boundaries = validate_unpublished_boundaries(*base);
   if (!boundaries.is_ok()) {
     failed_.store(true, std::memory_order_release);
     append_active_ = false;
     return common::make_unexpected(boundaries);
   }
-  if (!next->applied_position_.has_value()) {
+  if (next.get() != next_mutable.get() || next_mutable->applied_position_.has_value()) {
     failed_.store(true, std::memory_order_release);
     append_active_ = false;
     return common::make_unexpected(
-        internal("mutable-head publication is missing its commit position"));
+        internal("mutable-head prepared publication state is inconsistent"));
   }
 
   std::shared_ptr<MutableHeadState> self = weak_from_this().lock();
@@ -519,8 +557,8 @@ detail::MutableHeadState::publish(const std::uint64_t token,
     append_active_ = false;
     return common::make_unexpected(internal("mutable-head generation lost its owning state"));
   }
-  materialize(batch,
-              MaterializationRange{.base = *base, .position = next->applied_position_.value()});
+  next_mutable->applied_position_ = position;
+  materialize(batch, MaterializationRange{.base = *base, .position = position});
   std::atomic_store_explicit(&publication_, next, std::memory_order_release);
   append_active_ = false;
   return HeadSnapshot{std::move(self), next};
@@ -766,11 +804,11 @@ common::Status PreparedHeadAppend::mark_wal_started() {
   return implementation_->mark_wal_started();
 }
 
-common::Result<HeadSnapshot> PreparedHeadAppend::publish() {
+common::Result<HeadSnapshot> PreparedHeadAppend::publish(const HeadCommitPosition position) {
   if (implementation_ == nullptr) {
     return common::make_unexpected(invalid("prepared mutable-head append is invalid"));
   }
-  common::Result<HeadSnapshot> published = implementation_->publish();
+  common::Result<HeadSnapshot> published = implementation_->publish(position);
   if (published.has_value()) {
     implementation_.reset();
   }
@@ -933,12 +971,18 @@ common::Result<MutableHead> MutableHead::create_with_materialization_hook(
 }
 
 common::Result<PreparedHeadAppend>
-MutableHead::prepare_append(std::shared_ptr<const columnar::OwnedColumnarBatch> batch,
-                            const HeadCommitPosition position) {
+MutableHead::prepare_append(std::shared_ptr<const columnar::OwnedColumnarBatch> batch) {
   if (state_ == nullptr) {
     return common::make_unexpected(invalid("mutable head is invalid"));
   }
-  return state_->prepare(std::move(batch), position);
+  return state_->prepare(std::move(batch));
+}
+
+common::Status MutableHead::check_append(const columnar::OwnedColumnarBatch& batch) const {
+  if (state_ == nullptr) {
+    return invalid("mutable head is invalid");
+  }
+  return state_->check_append(batch);
 }
 
 common::Result<HeadSnapshot> MutableHead::snapshot() const {

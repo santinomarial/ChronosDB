@@ -50,6 +50,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/ingest/identity.hpp>
 #include <chronos/ingest/retry_directory.hpp>
 #include <chronos/ingest/sha256.hpp>
+#include <chronos/ingest/tablet_state.hpp>
 #include <chronos/wal/application.hpp>
 
 #include <array>
@@ -65,8 +66,13 @@ int main() {
       chronos::ingest::RetryDirectoryConfig{.maximum_entries = 8U});
   const chronos::head::MutableHeadCapacity head_capacity{.row_capacity = 4U,
                                                         .variable_value_bytes = {}};
+  const chronos::ingest::TabletStateConfig tablet_config{
+      .head_capacity = head_capacity,
+      .maximum_sealed_generations = 2U,
+      .maximum_retry_entries = 8U};
   static_assert(chronos::ingest::columnar_append_v1::kCommandHeaderLength == 160U);
-  return limits.max_columns == 4096U && head_capacity.row_capacity == 4U && digest.has_value() &&
+  return limits.max_columns == 4096U && head_capacity.row_capacity == 4U &&
+                 tablet_config.maximum_sealed_generations == 2U && digest.has_value() &&
                  retry_directory.has_value() &&
                  retry_directory->metrics().maximum_entries == 8U && !decoded.has_value() &&
                  decoded.error().kind() ==

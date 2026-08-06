@@ -28,9 +28,12 @@
 > bounded mutable-head generation adds capacity/schema rejection before WAL, complete-batch
 > materialization, exact old/new snapshot boundaries, hidden row identity, seal/lifetime coverage,
 > every-logical-type property cases, controlled pauses after every materialized column and hidden
-> metadata, and concurrent acquire/release publication tests. WAL
-> submission orchestration, recovered/tablet retry state, retry retention, ordered replay,
-> tablet-wide publication/generation switching, and allocation failpoints remain unimplemented.
+> metadata, and concurrent acquire/release publication tests. The bounded tablet owner adds exact
+> rows/position/retry pointer publication, global-directory pointer handoff, whole-batch rotation,
+> sealed/retry backpressure, stable old epochs, a controlled pause between inner and outer
+> publication, and concurrent outer-epoch readers. WAL submission orchestration, recovered state,
+> retry retention, ordered replay, schema switching, flush handoff, and allocation failpoints remain
+> unimplemented.
 > Query and distributed harnesses also remain planned for their roadmap phases.
 
 ## Test types

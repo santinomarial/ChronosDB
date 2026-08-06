@@ -112,7 +112,9 @@ reference visible to readers. The accepted
 stable storage, batch-atomic release/acquire publication, snapshot pins, and sealing ownership.
 The implemented `chronos_head` boundary supplies one fixed-capacity generation with byte-per-row
 validity/Boolean storage, stable fixed/variable arenas, an immutable publication pointer, and owning
-snapshots. Tablet-wide generation-set publication and flush handoff remain future integration.
+snapshots. The `chronos_ingest` tablet owner adds bounded whole-batch rotation and one owning outer
+publication for the active/sealed generation snapshots, applied position, and tablet retry table.
+Recovered state, schema switching, replay, and flush handoff remain future integration.
 [ADR 0005](../adr/0005-columnar-heads-and-immutable-cseg-parts.md) fixes the head/part storage model.
 
 When a head reaches a policy threshold, the owner seals it. A sealed head accepts no more rows, remains readable by active snapshots, and becomes flush input. New writes continue in a new mutable generation so durable I/O does not stop the shard.

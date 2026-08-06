@@ -225,7 +225,9 @@ public:
   [[nodiscard]] bool is_valid() const noexcept;
   [[nodiscard]] bool wal_started() const;
   [[nodiscard]] common::Status mark_wal_started();
-  [[nodiscard]] common::Result<HeadSnapshot> publish();
+  // Binds the exact successful WAL append position and release-publishes the prepared range.
+  // Invalid or non-advancing positions after mark_wal_started() fail the generation closed.
+  [[nodiscard]] common::Result<HeadSnapshot> publish(HeadCommitPosition position);
   [[nodiscard]] common::Status cancel_before_wal();
 
 private:
@@ -255,10 +257,14 @@ public:
          std::uint64_t generation, MutableHeadCapacity capacity);
 
   // Performs every expected allocation and capacity check before returning ownership. It copies no
-  // user data and changes no published boundary. Only one prepared append may exist at a time.
+  // user data, does not require a not-yet-known WAL position, and changes no published boundary.
+  // Only one prepared append may exist at a time.
   [[nodiscard]] common::Result<PreparedHeadAppend>
-  prepare_append(std::shared_ptr<const columnar::OwnedColumnarBatch> batch,
-                 HeadCommitPosition position);
+  prepare_append(std::shared_ptr<const columnar::OwnedColumnarBatch> batch);
+
+  // Performs the same schema and remaining-capacity checks as prepare_append without allocating or
+  // reserving an append. This is a shard-writer operation used to decide whether to rotate first.
+  [[nodiscard]] common::Status check_append(const columnar::OwnedColumnarBatch& batch) const;
 
   [[nodiscard]] common::Result<HeadSnapshot> snapshot() const;
 

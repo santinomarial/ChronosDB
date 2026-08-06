@@ -89,5 +89,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Mutable-head generation](learning/mutable-head.md): implemented fixed-capacity generation,
   two-phase append ownership, batch-atomic release/acquire publication, owning snapshots, hidden row
   identity, failure behavior, sealing, and measurement boundary.
+- [Tablet publication](learning/tablet-publication.md): implemented bounded generation rotation,
+  joint rows/position/retry publication, owning tablet snapshots, retry-outcome handoff,
+  backpressure, memory ordering, and measurement boundary.
 
 Future format, protocol, subsystem, operations, and learning documents should be linked here when they are added by their corresponding roadmap phase.

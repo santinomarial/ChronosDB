@@ -14,7 +14,8 @@ that concurrent readers can scan. Its correctness boundary is one batch:
 > position. It never observes a partially copied column, row, offset, or hidden identity.
 
 The library is deliberately independent of WAL I/O. A caller supplies the successful WAL identity
-and record sequence and controls when a prepared append crosses the WAL boundary. The class does
+and record sequence only when publishing, after controlling when a prepared append crosses the WAL
+boundary. The class does
 not route rows, reserve client retry identities, submit records, acknowledge writes, select a new
 generation, or replay commands.
 
@@ -24,18 +25,20 @@ generation, or replay commands.
 row capacity, and one variable-value byte capacity per schema ordinal. Fixed-width and `BOOL`
 columns require a zero variable capacity.
 
-`prepare_append` takes shared ownership of one immutable batch and a `HeadCommitPosition`. It checks
-exact schema equality, monotonically increasing positions within one WAL identity, complete-batch
-row capacity, and each variable column's byte capacity. It also allocates the next immutable
-publication descriptor and move-only `PreparedHeadAppend` handle. It does not copy values or change
-reader visibility.
+`prepare_append` takes shared ownership of one immutable batch. It checks exact schema equality,
+complete-batch row capacity, and each variable column's byte capacity. It also allocates the next
+immutable publication descriptor and move-only `PreparedHeadAppend` handle. It neither needs the
+not-yet-known WAL position nor copies values or changes reader visibility. `check_append` performs
+the same schema and capacity checks without allocation or reservation so a tablet owner can decide
+whether rotation is required.
 
 The owner then uses the handle in this order:
 
 1. `mark_wal_started()` records that cancellation is no longer safe.
 2. The external integration obtains WAL success at its requested durability boundary.
-3. `publish()` copies into the reserved stable range, writes hidden metadata, and performs one
-   release publication.
+3. `publish(position)` validates that the successful position advances within one WAL history,
+   copies into the reserved stable range, writes hidden metadata, and performs one release
+   publication.
 
 A handle may be cancelled or dropped before step 1. Dropping it after step 1 fails the head closed,
 preserving the last complete publication. `snapshot()` acquire-loads one publication. `seal()`
@@ -93,7 +96,7 @@ and WAL record remain the durable source reconstructed during future replay.
 
 ## Failure behavior
 
-- invalid configuration, schema mismatch, invalid positions, and misuse return `INVALID_ARGUMENT`;
+- invalid configuration, schema mismatch, and pre-WAL misuse return `INVALID_ARGUMENT`;
 - row, variable-byte, or allocation bounds return `RESOURCE_EXHAUSTED`;
 - sealing, failure, and an outstanding preparation return `UNAVAILABLE` where retry may require
   owner action; and
@@ -101,9 +104,10 @@ and WAL record remain the durable source reconstructed during future replay.
   WAL work has started.
 
 Expected capacity and descriptor-allocation failure happens during preparation, before WAL. The
-successful post-WAL materialization path performs bounded copies into existing storage and does not
-allocate. An unexpected exception or abandoned handle after the WAL boundary leaves the last
-publication intact and prevents subsequent appends until fresh recovery.
+successful post-WAL materialization path binds and validates the returned position, performs bounded
+copies into existing storage, and does not allocate. An invalid/nonadvancing post-WAL position,
+unexpected failure, or abandoned handle after the WAL boundary leaves the last publication intact
+and prevents subsequent appends until fresh recovery.
 
 ## Complexity
 

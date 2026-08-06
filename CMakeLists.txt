@@ -220,6 +220,7 @@ add_library(
   src/ingest/columnar_append.cpp
   src/ingest/retry_directory.cpp
   src/ingest/sha256.cpp
+  src/ingest/tablet_state.cpp
 )
 add_library(chronos::ingest ALIAS chronos_ingest)
 set_target_properties(chronos_ingest PROPERTIES EXPORT_NAME ingest)
@@ -233,7 +234,7 @@ target_include_directories(
 )
 target_link_libraries(
   chronos_ingest
-  PUBLIC chronos::columnar chronos::wal
+  PUBLIC chronos::columnar chronos::head chronos::wal
   PRIVATE OpenSSL::Crypto
 )
 chronos_set_project_warnings(chronos_ingest)
@@ -437,10 +438,15 @@ if(CHRONOS_BUILD_TESTS)
     tests/ingest/retry_directory_test.cpp
     tests/ingest/sha256_header_self_contained.cpp
     tests/ingest/sha256_test.cpp
+    tests/ingest/tablet_state_header_self_contained.cpp
+    tests/ingest/tablet_state_test.cpp
   )
   set_target_properties(chronos_ingest_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_ingest_tests PRIVATE cxx_std_23)
-  target_include_directories(chronos_ingest_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+  target_include_directories(
+    chronos_ingest_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
+                                 "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+  )
   target_link_libraries(chronos_ingest_tests PRIVATE chronos::ingest GTest::gtest_main)
   chronos_set_project_warnings(chronos_ingest_tests)
   chronos_enable_sanitizers(chronos_ingest_tests)
@@ -553,6 +559,7 @@ if(CHRONOS_BUILD_BENCHMARKS)
   add_executable(
     chronos_ingest_benchmarks
     benchmarks/ingest/columnar_append_benchmark.cpp
+    benchmarks/ingest/tablet_state_benchmark.cpp
   )
   set_target_properties(chronos_ingest_benchmarks PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_ingest_benchmarks PRIVATE cxx_std_23)

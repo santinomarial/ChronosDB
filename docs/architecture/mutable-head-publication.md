@@ -1,10 +1,12 @@
 # Mutable-Head Publication and Snapshot Contract
 
-> **Status: accepted design, generation primitive partially implemented.** `chronos_head` now
+> **Status: accepted design, bounded in-memory publication implemented.** `chronos_head` now
 > provides one bounded schema-bound generation, pre-WAL append preparation, batch-atomic
 > release/acquire publication, stable owning snapshots, hidden row identities, and idempotent
-> sealing. The tablet-wide publication descriptor, generation-set switching, retry-state
-> linearization, WAL orchestration/replay, and flush handoff remain unimplemented. This document
+> sealing. `chronos_ingest` now provides a bounded schema-bound tablet owner, generation rotation,
+> one outer rows/position/retry/generation-set publication, and exact retry-outcome handoff to the
+> global directory. WAL orchestration/replay, recovered state, retry pruning, schema switching, and
+> flush handoff remain unimplemented. This document
 > refines [ADR 0005](../adr/0005-columnar-heads-and-immutable-cseg-parts.md) for Phase 4 without
 > specifying CSEG bytes or flush installation.
 
@@ -84,9 +86,11 @@ contract.
 The implemented single-generation boundary atomically release-stores an immutable
 `shared_ptr<const HeadPublication>` after materialization. `HeadSnapshot` acquire-loads and owns
 that same descriptor plus the generation state, so its row count, byte frontiers, applied position,
-and storage lifetime come from one epoch. Tablet-wide publication will require a distinct outer
-descriptor before rows, tablet retry state, sealed generations, and applied position can be claimed
-as one complete tablet transition.
+and storage lifetime come from one epoch. The tablet owner atomically release-stores a distinct
+`shared_ptr<const TabletPublication>` after inner-head publication and retry-outcome initialization.
+`TabletSnapshot` acquire-loads and owns that descriptor. Old outer descriptors retain exact old
+`HeadSnapshot` values rather than reacquiring the live generation, so the earlier inner publication
+cannot leak new rows before the outer store.
 
 ## Tablet snapshots
 

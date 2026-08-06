@@ -5,9 +5,11 @@
 > application-envelope codec, pure in-memory `COLUMNAR_APPEND` v1 command/digest codec, and bounded
 > process-local retry reservation directory exist. A bounded `chronos_head` generation now provides
 > pre-WAL capacity/descriptor preparation, batch-atomic materialization/publication, stable owning
-> snapshots, hidden row identity, and sealing. WAL submission orchestration, recovered/tablet retry
-> state, ordered replay, tablet-wide generation switching, and joint rows/retry-state publication
-> remain unimplemented. This document
+> snapshots, hidden row identity, and sealing. A bounded `chronos_ingest` tablet state now adds the
+> authoritative live tablet retry table, whole-batch generation switching, sealed-generation
+> backpressure, and joint rows/retry/applied-position publication. WAL submission orchestration,
+> recovered state, ordered replay, retry pruning, schema switching, and flush handoff remain
+> unimplemented. This document
 > fixes the logical state-machine and WAL command contracts for Phase 4; the physical
 > [WAL v1](../formats/wal-v1.md) framing and application envelope remain unchanged.
 
