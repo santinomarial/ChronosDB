@@ -50,6 +50,17 @@ struct PhysicalWalPosition {
   friend bool operator==(const PhysicalWalPosition&, const PhysicalWalPosition&) = default;
 };
 
+// External durable state uses this complete context to identify the verified WAL prefix already
+// represented elsewhere. It is an in-memory value and does not change WAL v1 bytes.
+struct WalReplayCheckpoint {
+  WalId wal_id;
+  std::uint64_t record_sequence{};
+  std::uint64_t segment_number{};
+  std::uint64_t byte_offset{};
+
+  friend bool operator==(const WalReplayCheckpoint&, const WalReplayCheckpoint&) = default;
+};
+
 struct SegmentHeader {
   WalId wal_id;
   std::uint64_t segment_number{};

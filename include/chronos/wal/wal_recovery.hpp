@@ -23,6 +23,13 @@ struct WalRecoveryOptions {
 [[nodiscard]] common::Result<WalRecoveryReport> inspect_wal(std::string_view directory_path,
                                                             WalReplaySink& sink);
 
+// Locked and read-only. Allows missing/gapped final segments wholly before checkpoint, validates
+// every present covered segment header, verifies the coordinate boundary and complete required
+// suffix, then preflights and replays only records after checkpoint. No temporary is removed.
+[[nodiscard]] common::Result<WalRecoveryReport>
+inspect_wal_suffix(std::string_view directory_path, const WalReplayCheckpoint& checkpoint,
+                   WalReplaySink& sink);
+
 // Performs writer-startup recovery without returning a writer: verify, optional explicit repair,
 // re-verify, semantic preflight, replay, and the WAL-directory namespace barrier.
 [[nodiscard]] common::Result<WalRecoveryReport>

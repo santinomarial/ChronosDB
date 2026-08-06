@@ -16,6 +16,9 @@ writing:
 - `inspect_wal(path, sink)` is also locked and read-only. For a clean history it performs whole-log
   preflight and then deterministic replay into the sink; an incomplete final tail is reported
   without callbacks.
+- `inspect_wal_suffix(path, checkpoint, sink)` accepts an externally durable WAL identity, record
+  sequence, segment, and exact record-end offset. It permits missing covered prefix segments,
+  verifies the required suffix, and preflights/replays only records after the checkpoint.
 - `recover_wal(config, options, sink)` performs writer-startup recovery and closes the recovered
   handles instead of returning a writer.
 - `WalWriter::open_existing(config, options, sink)` performs the same recovery and transfers the
@@ -34,7 +37,7 @@ require an existing regular `LOCK`; writer recovery may create it. This distinct
 inspection attempt from changing a missing-history directory. The lock remains held across all scan
 passes, repair, cleanup, replay, startup synchronization, and transfer into a reopened writer.
 
-Discovery snapshots and sorts directory entries. It accepts only:
+Discovery snapshots and sorts directory entries. Ordinary whole-history recovery accepts only:
 
 - one regular `LOCK`;
 - exact final segment names whose numeric sequence starts at 1 and has no gap; and
@@ -45,6 +48,12 @@ final segment fail closed. Temporary files are counted but never treated as hist
 recovery removes recognized temporaries only after the named WAL has verified (and any authorized
 repair has completed), tolerates an already absent entry, and synchronizes the directory after a
 cleanup batch. Read-only paths leave them untouched.
+
+Checkpoint inspection retains the same exact name/type policy but allows gaps wholly before the
+coordinate. Every present covered-prefix segment still has its size, header checksum, filename
+number, and WAL identity verified. The required suffix starts with either the coordinate segment or
+its immediate successor, remains consecutive through the active highest segment, and must use the
+checkpoint WAL identity. Missing required suffix state is corruption.
 
 ## Physical verification
 
@@ -85,6 +94,12 @@ Each later pass must produce the same verified history summary as the preceding 
 turns unexpected out-of-band changes into failure rather than allowing callbacks over a different
 history. The advisory lock excludes cooperating writers; deployment isolation is still required
 because POSIX advisory locks cannot stop an uncooperative process.
+
+For suffix inspection, a present coordinate segment is physically scanned from its header and the
+checkpoint must equal the exact end of its named record. If that segment was removed, its immediate
+successor header must declare `checkpoint.record_sequence + 1`. Physical verification still covers
+all required bytes, while sink callbacks are filtered to strictly later sequences. An incomplete
+active tail is reportable only after the checkpoint boundary has already been proved.
 
 `WalReplayRecord` owns decoded header and position values but borrows its payload only for the
 callback duration. `preflight` must not publish logical state. The implementation cannot roll back a
@@ -149,9 +164,10 @@ bytes and semantics have been accepted. Retaining an index could reduce rereads 
 memory proportional to record count and would still need protection from out-of-band mutation. The
 current blocking, bounded-memory approach prioritizes a small auditable correctness boundary.
 
-WAL v1 has no checkpoint deletion, so startup work grows with the entire retained history. Recovery
-does not add preallocation, mmap, asynchronous I/O, compression, encryption, or speculative
-filesystem abstractions.
+Checkpoint suffix inspection is read-only and does not itself authorize deletion, repair, cleanup,
+or writer reopening. The higher-level manifest owner must prove and publish the checkpoint before
+requesting separately synchronized covered-segment reclamation. Recovery does not add preallocation,
+mmap, asynchronous I/O, compression, encryption, or speculative filesystem abstractions.
 
 ## Likely interview questions
 

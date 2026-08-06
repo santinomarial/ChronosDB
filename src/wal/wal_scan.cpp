@@ -11,6 +11,8 @@
 #include <cstdint>
 #include <limits>
 #include <new>
+#include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -79,7 +81,8 @@ namespace {
                      is_lower_hex);
 }
 
-[[nodiscard]] common::Result<detail::WalDiscovery> discover_wal(io::PosixDirectory& directory) {
+[[nodiscard]] common::Result<detail::WalDiscovery>
+discover_wal(io::PosixDirectory& directory, const bool require_complete_prefix) {
   const common::Result<std::vector<io::DirectoryEntry>> entries = directory.list_entries();
   if (!entries.has_value()) {
     return common::make_unexpected(with_context("list WAL directory", entries.error()));
@@ -139,11 +142,13 @@ namespace {
   }
   std::sort(discovery.segments.begin(), discovery.segments.end(),
             [](const auto& left, const auto& right) { return left.number < right.number; });
-  for (std::size_t index = 0; index < discovery.segments.size(); ++index) {
-    const std::uint64_t expected = static_cast<std::uint64_t>(index) + 1U;
-    if (discovery.segments[index].number != expected) {
-      return common::make_unexpected(
-          corruption("WAL segment sequence has a gap or does not begin at 1"));
+  if (require_complete_prefix) {
+    for (std::size_t index = 0; index < discovery.segments.size(); ++index) {
+      const std::uint64_t expected = static_cast<std::uint64_t>(index) + 1U;
+      if (discovery.segments[index].number != expected) {
+        return common::make_unexpected(
+            corruption("WAL segment sequence has a gap or does not begin at 1"));
+      }
     }
   }
   return discovery;
@@ -173,6 +178,57 @@ namespace {
   return common::Status::ok();
 }
 
+[[nodiscard]] common::Status validate_checkpoint(const WalReplayCheckpoint& checkpoint) {
+  if (!checkpoint.wal_id.is_valid() || checkpoint.segment_number == 0U ||
+      checkpoint.byte_offset < kSegmentHeaderSize || checkpoint.byte_offset > kSegmentSizeLimit) {
+    return common::Status{common::StatusCode::kInvalidArgument,
+                          "WAL replay checkpoint has an invalid identity or physical coordinate"};
+  }
+  if (checkpoint.record_sequence == 0U && (checkpoint.segment_number != kFirstSegmentNumber ||
+                                           checkpoint.byte_offset != kSegmentHeaderSize)) {
+    return common::Status{common::StatusCode::kInvalidArgument,
+                          "empty WAL checkpoint must be segment 1 byte offset 64"};
+  }
+  return common::Status::ok();
+}
+
+[[nodiscard]] common::Status
+validate_covered_headers(io::PosixDirectory& directory,
+                         const std::span<const detail::DiscoveredWalSegment> segments,
+                         const WalReplayCheckpoint& checkpoint) {
+  for (const detail::DiscoveredWalSegment& discovered : segments) {
+    common::Result<io::PosixFile> file =
+        directory.open_regular_file(discovered.file_name, io::FileOpenMode::kReadOnly);
+    if (!file.has_value()) {
+      return with_context("open covered WAL segment " + discovered.file_name, file.error());
+    }
+    const common::Result<std::uint64_t> size = file->size();
+    if (!size.has_value()) {
+      return with_context("size covered WAL segment " + discovered.file_name, size.error());
+    }
+    if (*size < kSegmentHeaderSize) {
+      return corruption("covered WAL segment has an incomplete header: " + discovered.file_name);
+    }
+    common::Status status = validate_segment_size(*size);
+    if (!status.is_ok()) {
+      return with_context("validate covered WAL segment size", status);
+    }
+    EncodedSegmentHeader encoded{};
+    status = read_exact(*file, 0U, encoded, "read covered WAL segment header");
+    if (!status.is_ok()) {
+      return status;
+    }
+    const common::Result<SegmentHeader> header = decode_segment_header(encoded);
+    if (!header.has_value()) {
+      return with_context("decode covered WAL segment header", header.error());
+    }
+    if (header->segment_number != discovered.number || header->wal_id != checkpoint.wal_id) {
+      return corruption("covered WAL segment name or identity disagrees with checkpoint");
+    }
+  }
+  return common::Status::ok();
+}
+
 } // namespace
 
 namespace detail {
@@ -192,7 +248,7 @@ common::Result<LockedWalDirectory> open_locked_wal_directory(const std::string_v
   if (!lock.has_value()) {
     return common::make_unexpected(with_context("acquire WAL writer lock", lock.error()));
   }
-  common::Result<WalDiscovery> discovery = discover_wal(*directory);
+  common::Result<WalDiscovery> discovery = discover_wal(*directory, true);
   if (!discovery.has_value()) {
     return common::make_unexpected(discovery.error());
   }
@@ -201,10 +257,32 @@ common::Result<LockedWalDirectory> open_locked_wal_directory(const std::string_v
                             .discovery = std::move(*discovery)};
 }
 
-common::Result<WalRecoveryReport> scan_discovered_wal(io::PosixDirectory& directory,
-                                                      const WalDiscovery& discovery,
-                                                      const ScanPass pass,
-                                                      WalReplaySink* const sink) {
+common::Result<LockedWalDirectory>
+open_locked_wal_directory_for_checkpoint(const std::string_view directory_path,
+                                         io::detail::PosixSyscalls& syscalls) {
+  common::Result<io::PosixDirectory> directory =
+      io::detail::PosixHandleFactory::open_directory(directory_path, syscalls);
+  if (!directory.has_value()) {
+    return common::make_unexpected(with_context("open WAL directory", directory.error()));
+  }
+  common::Result<io::PosixAdvisoryLock> lock =
+      directory->acquire_existing_exclusive_lock(kWalLockFileName);
+  if (!lock.has_value()) {
+    return common::make_unexpected(with_context("acquire WAL writer lock", lock.error()));
+  }
+  common::Result<WalDiscovery> discovery = discover_wal(*directory, false);
+  if (!discovery.has_value()) {
+    return common::make_unexpected(discovery.error());
+  }
+  return LockedWalDirectory{.directory = std::move(*directory),
+                            .lock = std::move(*lock),
+                            .discovery = std::move(*discovery)};
+}
+
+common::Result<WalRecoveryReport>
+scan_discovered_wal(io::PosixDirectory& directory, const WalDiscovery& discovery,
+                    const ScanPass pass, WalReplaySink* const sink,
+                    const std::optional<WalReplayCheckpoint> checkpoint) {
   if ((pass == ScanPass::kPreflight || pass == ScanPass::kReplay) && sink == nullptr) {
     return common::make_unexpected(
         common::Status{common::StatusCode::kInternal, "WAL scan callback pass has no sink"});
@@ -214,6 +292,10 @@ common::Result<WalRecoveryReport> scan_discovered_wal(io::PosixDirectory& direct
   report.temporary_file_count = static_cast<std::uint64_t>(discovery.temporary_file_names.size());
   std::uint64_t expected_record_sequence = kFirstRecordSequence;
   bool have_wal_id = false;
+  bool checkpoint_boundary_seen = !checkpoint.has_value();
+  if (checkpoint.has_value()) {
+    report.last_record_sequence = checkpoint->record_sequence;
+  }
 
   try {
     for (std::size_t segment_index = 0; segment_index < discovery.segments.size();
@@ -260,10 +342,40 @@ common::Result<WalRecoveryReport> scan_discovered_wal(io::PosixDirectory& direct
             corruption("WAL segment filename/header number mismatch: " + discovered.file_name));
       }
       if (!have_wal_id) {
-        if (discovered.number != kFirstSegmentNumber ||
-            header->first_record_sequence != kFirstRecordSequence) {
-          return common::make_unexpected(
-              corruption("first WAL segment does not begin segment and record sequence 1"));
+        if (!checkpoint.has_value()) {
+          if (discovered.number != kFirstSegmentNumber ||
+              header->first_record_sequence != kFirstRecordSequence) {
+            return common::make_unexpected(
+                corruption("first WAL segment does not begin segment and record sequence 1"));
+          }
+        } else {
+          if (header->wal_id != checkpoint->wal_id) {
+            return common::make_unexpected(
+                corruption("required WAL suffix identity disagrees with checkpoint"));
+          }
+          if (discovered.number == checkpoint->segment_number) {
+            if (checkpoint->byte_offset < kSegmentHeaderSize || checkpoint->byte_offset > *size) {
+              return common::make_unexpected(
+                  corruption("WAL checkpoint offset is outside its coordinate segment"));
+            }
+            checkpoint_boundary_seen =
+                checkpoint->record_sequence == 0U && checkpoint->byte_offset == kSegmentHeaderSize;
+            if (checkpoint->record_sequence == 0U &&
+                header->first_record_sequence != kFirstRecordSequence) {
+              return common::make_unexpected(
+                  corruption("empty WAL checkpoint segment does not begin record sequence 1"));
+            }
+          } else {
+            if (checkpoint->segment_number == std::numeric_limits<std::uint64_t>::max() ||
+                discovered.number != checkpoint->segment_number + 1U ||
+                checkpoint->record_sequence == std::numeric_limits<std::uint64_t>::max() ||
+                header->first_record_sequence != checkpoint->record_sequence + 1U) {
+              return common::make_unexpected(
+                  corruption("WAL suffix does not begin immediately after checkpoint"));
+            }
+            checkpoint_boundary_seen = true;
+          }
+          expected_record_sequence = header->first_record_sequence;
         }
         report.wal_id = header->wal_id;
         have_wal_id = true;
@@ -283,6 +395,10 @@ common::Result<WalRecoveryReport> scan_discovered_wal(io::PosixDirectory& direct
           if (!is_final) {
             return common::make_unexpected(
                 corruption("incomplete record header appears in a non-final WAL segment"));
+          }
+          if (checkpoint.has_value() && !checkpoint_boundary_seen) {
+            return common::make_unexpected(
+                corruption("incomplete WAL tail occurs before the checkpoint boundary"));
           }
           report.classification = WalScanClassification::kIncompleteFinalTail;
           report.valid_end = PhysicalWalPosition{
@@ -317,6 +433,10 @@ common::Result<WalRecoveryReport> scan_discovered_wal(io::PosixDirectory& direct
             return common::make_unexpected(
                 corruption("incomplete record appears in a non-final WAL segment"));
           }
+          if (checkpoint.has_value() && !checkpoint_boundary_seen) {
+            return common::make_unexpected(
+                corruption("incomplete WAL record occurs before the checkpoint boundary"));
+          }
           report.classification = WalScanClassification::kIncompleteFinalTail;
           report.valid_end = PhysicalWalPosition{
               .wal_id = report.wal_id, .segment_number = discovered.number, .byte_offset = offset};
@@ -340,7 +460,22 @@ common::Result<WalRecoveryReport> scan_discovered_wal(io::PosixDirectory& direct
         offset += record_header->total_length;
         const PhysicalWalPosition record_end{
             .wal_id = report.wal_id, .segment_number = discovered.number, .byte_offset = offset};
-        if (pass != ScanPass::kVerify) {
+        if (checkpoint.has_value() && discovered.number == checkpoint->segment_number &&
+            record_header->record_sequence == checkpoint->record_sequence) {
+          if (offset != checkpoint->byte_offset) {
+            return common::make_unexpected(
+                corruption("WAL checkpoint does not equal its record end boundary"));
+          }
+          checkpoint_boundary_seen = true;
+        }
+        if (checkpoint.has_value() && !checkpoint_boundary_seen &&
+            offset >= checkpoint->byte_offset) {
+          return common::make_unexpected(
+              corruption("WAL checkpoint is not a complete record boundary"));
+        }
+        const bool after_checkpoint =
+            !checkpoint.has_value() || record_header->record_sequence > checkpoint->record_sequence;
+        if (pass != ScanPass::kVerify && after_checkpoint) {
           const WalReplayRecord callback_record{.header = decoded->header,
                                                 .record_start = record_start,
                                                 .record_end = record_end,
@@ -388,6 +523,10 @@ common::Result<WalRecoveryReport> scan_discovered_wal(io::PosixDirectory& direct
     return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
                                                   "cannot allocate bounded WAL record buffer"});
   }
+  if (!checkpoint_boundary_seen) {
+    return common::make_unexpected(
+        corruption("WAL checkpoint record boundary is absent from its coordinate segment"));
+  }
   return report;
 }
 
@@ -417,6 +556,77 @@ common::Result<WalRecoveryReport> scan_wal(const std::string_view directory_path
     return common::make_unexpected(locked.error());
   }
   return detail::scan_discovered_wal(locked->directory, locked->discovery);
+}
+
+common::Result<WalRecoveryReport> inspect_wal_suffix(const std::string_view directory_path,
+                                                     const WalReplayCheckpoint& checkpoint,
+                                                     WalReplaySink& sink) {
+  common::Status status = validate_checkpoint(checkpoint);
+  if (!status.is_ok()) {
+    return common::make_unexpected(status);
+  }
+  common::Result<detail::LockedWalDirectory> locked =
+      detail::open_locked_wal_directory_for_checkpoint(directory_path,
+                                                       io::detail::system_posix_syscalls());
+  if (!locked.has_value()) {
+    return common::make_unexpected(locked.error());
+  }
+  const auto first_required = std::ranges::lower_bound(
+      locked->discovery.segments, checkpoint.segment_number, {},
+      [](const detail::DiscoveredWalSegment& segment) { return segment.number; });
+  std::size_t required_index =
+      static_cast<std::size_t>(first_required - locked->discovery.segments.begin());
+  if (first_required == locked->discovery.segments.end() ||
+      (first_required->number != checkpoint.segment_number &&
+       (checkpoint.segment_number == std::numeric_limits<std::uint64_t>::max() ||
+        first_required->number != checkpoint.segment_number + 1U))) {
+    return common::make_unexpected(
+        corruption("WAL checkpoint coordinate segment or immediate successor is missing"));
+  }
+  status = validate_covered_headers(
+      locked->directory,
+      std::span<const detail::DiscoveredWalSegment>{locked->discovery.segments}.first(
+          required_index),
+      checkpoint);
+  if (!status.is_ok()) {
+    return common::make_unexpected(status);
+  }
+  for (std::size_t index = required_index + 1U; index < locked->discovery.segments.size();
+       ++index) {
+    if (locked->discovery.segments[index - 1U].number ==
+            std::numeric_limits<std::uint64_t>::max() ||
+        locked->discovery.segments[index].number !=
+            locked->discovery.segments[index - 1U].number + 1U) {
+      return common::make_unexpected(corruption("required WAL suffix contains a segment gap"));
+    }
+  }
+  locked->discovery.segments.erase(locked->discovery.segments.begin(), first_required);
+
+  common::Result<WalRecoveryReport> verified = detail::scan_discovered_wal(
+      locked->directory, locked->discovery, detail::ScanPass::kVerify, nullptr, checkpoint);
+  if (!verified.has_value() ||
+      verified->classification == WalScanClassification::kIncompleteFinalTail) {
+    return verified;
+  }
+  common::Result<WalRecoveryReport> preflight = detail::scan_discovered_wal(
+      locked->directory, locked->discovery, detail::ScanPass::kPreflight, &sink, checkpoint);
+  if (!preflight.has_value()) {
+    return common::make_unexpected(preflight.error());
+  }
+  status = detail::require_same_verified_history(*verified, *preflight);
+  if (!status.is_ok()) {
+    return common::make_unexpected(status);
+  }
+  common::Result<WalRecoveryReport> replay = detail::scan_discovered_wal(
+      locked->directory, locked->discovery, detail::ScanPass::kReplay, &sink, checkpoint);
+  if (!replay.has_value()) {
+    return common::make_unexpected(replay.error());
+  }
+  status = detail::require_same_verified_history(*verified, *replay);
+  if (!status.is_ok()) {
+    return common::make_unexpected(status);
+  }
+  return replay;
 }
 
 } // namespace chronos::wal

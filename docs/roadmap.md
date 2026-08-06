@@ -204,8 +204,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > rename, directory sync, and durability-boundary metrics. Flush construction/publication,
 > Read-only recovery selection now owns and validates only the highest generation, exact
 > database/WAL/catalog context, every referenced final CSEG, and reports orphan/temporary entries
-> without mutation. Flush construction/publication, WAL-suffix replay, crash-matrix evidence, and
-> checkpoint reclamation remain unimplemented.
+> without mutation. WAL recovery now accepts that external checkpoint context, verifies present
+> covered headers and the exact coordinate, tolerates only covered prefix gaps, and preflights and
+> replays the complete required suffix without changing WAL v1. Flush construction/publication,
+> writer reopening, crash-matrix evidence, and checkpoint reclamation remain unimplemented.
 
 - **Scope:** manifest generations/version edits; atomic durable part installation; sealed-head flush; checkpoint/log coverage; startup reconciliation; safe temporary-file handling.
 - **Explicit non-scope:** compaction, delta parts, distributed metadata, object storage, and aggressive garbage collection beyond proven safe ownership.

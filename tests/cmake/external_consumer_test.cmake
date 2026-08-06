@@ -78,6 +78,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <string_view>
 
 int main() {
   using ExecuteFunction = chronos::common::Result<chronos::ingest::ColumnarAppendExecutionResult> (*)(
@@ -89,6 +90,10 @@ int main() {
           const chronos::wal::WalWriterConfig&, const chronos::wal::WalRecoveryOptions&,
           chronos::ingest::ColumnarAppendRecoveryConfig);
   const RecoverFunction recover = &chronos::ingest::recover_columnar_append_wal;
+  using InspectWalSuffixFunction = chronos::common::Result<chronos::wal::WalRecoveryReport> (*)(
+      std::string_view, const chronos::wal::WalReplayCheckpoint&,
+      chronos::wal::WalReplaySink&);
+  const InspectWalSuffixFunction inspect_wal_suffix = &chronos::wal::inspect_wal_suffix;
   using RegisterSchemaFunction = chronos::common::Status (chronos::ingest::TabletState::*)(
       std::shared_ptr<const chronos::schema::TableSchema>, chronos::head::MutableHeadCapacity);
   const RegisterSchemaFunction register_schema = &chronos::ingest::TabletState::register_schema;
@@ -202,7 +207,8 @@ int main() {
           const chronos::manifest::ManifestLoadRequest&) const;
   const LoadSelectedManifestFunction load_selected_manifest =
       &chronos::manifest::ManifestStorage::load_selected_manifest;
-  return execute != nullptr && recover != nullptr && register_schema != nullptr &&
+  return execute != nullptr && recover != nullptr && inspect_wal_suffix != nullptr &&
+                 register_schema != nullptr &&
                  limits.max_columns == 4096U &&
                  head_capacity.row_capacity == 4U &&
                  tablet_config.maximum_schema_versions == 2U &&

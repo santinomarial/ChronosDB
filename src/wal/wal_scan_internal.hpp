@@ -7,6 +7,7 @@
 #include "chronos/wal/wal_replay_sink.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -41,9 +42,13 @@ enum class ScanPass : std::uint8_t {
 [[nodiscard]] common::Result<LockedWalDirectory>
 open_locked_wal_directory(std::string_view directory_path, std::uint16_t lock_permissions,
                           bool create_lock, io::detail::PosixSyscalls& syscalls);
+[[nodiscard]] common::Result<LockedWalDirectory>
+open_locked_wal_directory_for_checkpoint(std::string_view directory_path,
+                                         io::detail::PosixSyscalls& syscalls);
 [[nodiscard]] common::Result<WalRecoveryReport>
 scan_discovered_wal(io::PosixDirectory& directory, const WalDiscovery& discovery,
-                    ScanPass pass = ScanPass::kVerify, WalReplaySink* sink = nullptr);
+                    ScanPass pass = ScanPass::kVerify, WalReplaySink* sink = nullptr,
+                    std::optional<WalReplayCheckpoint> checkpoint = std::nullopt);
 [[nodiscard]] common::Status require_same_verified_history(const WalRecoveryReport& expected,
                                                            const WalRecoveryReport& observed);
 
