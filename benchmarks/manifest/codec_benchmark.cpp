@@ -1,9 +1,17 @@
 #include "chronos/manifest/codec.hpp"
+#include "chronos/manifest/validation.hpp"
+#include "chronos/schema/column_definition.hpp"
+#include "chronos/schema/logical_type.hpp"
+#include "chronos/schema/table_schema.hpp"
 
 #include <array>
 #include <benchmark/benchmark.h>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <optional>
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace chronos::manifest {
@@ -61,15 +69,35 @@ struct BenchmarkManifest {
     }
   }
 
-  [[nodiscard]] ManifestEncodeInput input() const {
+  [[nodiscard]] ManifestEncodeInput input(const std::uint64_t generation = 42U) const {
     return {
-        .generation = 42U,
+        .generation = generation,
         .database_id = database_id,
         .wal_id = wal_id,
         .reclaim_checkpoint = {.record_sequence = 1U, .segment_number = 1U, .byte_offset = 128U},
         .tablets = tablets,
         .parts = parts,
         .retries = retries};
+  }
+
+  [[nodiscard]] schema::SchemaLineage lineage() const {
+    const schema::ColumnId event_id = id<schema::ColumnId>(6U);
+    std::vector<schema::ColumnDefinition> columns;
+    columns.push_back(
+        schema::ColumnDefinition::create(
+            event_id, std::string{"event_time"},
+            schema::LogicalType::create(schema::LogicalTypeKind::kTimestampNs).value(), false)
+            .value());
+    schema::TableSchema table_schema =
+        schema::TableSchema::create(table_id, schema_id, schema::SchemaVersion::initial(),
+                                    std::nullopt, std::move(columns),
+                                    {.event_time_column = event_id,
+                                     .physical_ordering_key = {event_id},
+                                     .partition_columns = {event_id},
+                                     .shard_key = {event_id},
+                                     .deduplication_key = {}})
+            .value();
+    return schema::SchemaLineage::create(std::move(table_schema)).value();
   }
 
   DatabaseId database_id{id<DatabaseId>(1U)};
@@ -109,8 +137,29 @@ void benchmark_decode(benchmark::State& state) {
   state.counters["retries"] = static_cast<double>(model.retries.size());
 }
 
+void benchmark_transition(benchmark::State& state) {
+  const BenchmarkManifest model{static_cast<std::size_t>(state.range(0))};
+  const EncodedManifest predecessor_bytes = encode_manifest_v1(model.input(41U)).value();
+  const EncodedManifest next_bytes = encode_manifest_v1(model.input(42U)).value();
+  const DecodedManifestView predecessor =
+      decode_manifest_v1_exact(predecessor_bytes.bytes()).value();
+  const DecodedManifestView next = decode_manifest_v1_exact(next_bytes.bytes()).value();
+  const schema::SchemaLineage lineage = model.lineage();
+  const std::array bindings{
+      TabletSchemaBinding{.tablet_id = model.tablet_id, .lineage = std::cref(lineage)}};
+  for (auto _ : state) {
+    (void)_;
+    common::Status validation = validate_manifest_v1_transition(predecessor, next, bindings);
+    benchmark::DoNotOptimize(validation);
+  }
+  state.SetItemsProcessed(static_cast<std::int64_t>(state.iterations()) *
+                          static_cast<std::int64_t>(model.retries.size() + model.parts.size()));
+  state.counters["retries"] = static_cast<double>(model.retries.size());
+}
+
 BENCHMARK(benchmark_encode)->Arg(16)->Arg(1'024)->Arg(4'096);
 BENCHMARK(benchmark_decode)->Arg(16)->Arg(1'024)->Arg(4'096);
+BENCHMARK(benchmark_transition)->Arg(16)->Arg(1'024)->Arg(4'096);
 
 } // namespace
 } // namespace chronos::manifest

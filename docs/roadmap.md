@@ -191,8 +191,9 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > WAL suffix/reclamation ordering. The `chronos_manifest` target now provides the nominal database
 > identity, authoritative constants, descriptor value model, checked canonical layout planner, and
 > pure owned-encode/borrowed-decode Manifest v1 codec with hostile/property/fuzz/benchmark evidence.
-> State-transition/catalog binding, filesystem owners, flush, recovery, crash evidence, and
-> observability remain unimplemented.
+> Exact retained-catalog binding and the Phase 6 add-only generation-transition validator are also
+> implemented. Installed-CSEG content binding, filesystem owners, flush, recovery, crash evidence,
+> and observability remain unimplemented.
 
 - **Scope:** manifest generations/version edits; atomic durable part installation; sealed-head flush; checkpoint/log coverage; startup reconciliation; safe temporary-file handling.
 - **Explicit non-scope:** compaction, delta parts, distributed metadata, object storage, and aggressive garbage collection beyond proven safe ownership.

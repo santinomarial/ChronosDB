@@ -277,7 +277,12 @@ chronos_set_project_warnings(chronos_ingest)
 chronos_enable_sanitizers(chronos_ingest)
 chronos_enable_static_analysis(chronos_ingest)
 
-add_library(chronos_manifest src/manifest/codec.cpp src/manifest/layout.cpp)
+add_library(
+  chronos_manifest
+  src/manifest/codec.cpp
+  src/manifest/layout.cpp
+  src/manifest/validation.cpp
+)
 add_library(chronos::manifest ALIAS chronos_manifest)
 set_target_properties(chronos_manifest PROPERTIES EXPORT_NAME manifest)
 set_target_properties(chronos_manifest PROPERTIES CXX_EXTENSIONS OFF)
@@ -593,6 +598,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/manifest/layout_test.cpp
     tests/manifest/types_header_self_contained.cpp
     tests/manifest/types_test.cpp
+    tests/manifest/validation_header_self_contained.cpp
+    tests/manifest/validation_test.cpp
   )
   set_target_properties(chronos_manifest_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_manifest_tests PRIVATE cxx_std_23)

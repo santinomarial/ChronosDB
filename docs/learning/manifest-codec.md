@@ -20,7 +20,8 @@ The public headers are:
 - `chronos/manifest/format.hpp`: frozen sizes, limits, field offsets, and magic;
 - `chronos/manifest/types.hpp`: the nominal `DatabaseId`, checkpoint, and descriptor values;
 - `chronos/manifest/layout.hpp`: allocation-free canonical layout planning; and
-- `chronos/manifest/codec.hpp`: owned encoding, borrowed decoding, limits, and error classes.
+- `chronos/manifest/codec.hpp`: owned encoding, borrowed decoding, limits, and error classes; and
+- `chronos/manifest/validation.hpp`: exact catalog binding and add-only generation transitions.
 
 `plan_manifest_v1_layout()` accepts only the three descriptor counts. It checks each registry bound,
 performs multiplication/addition with checked arithmetic, and returns all section offsets plus the
@@ -113,6 +114,24 @@ Encoding returns ordinary `Status` failures. Invalid canonical input is `kInvali
 an unrepresentable combined layout is `kResourceExhausted`. Expected validation failures do not
 produce partial encoded output.
 
+## Catalog binding and generation transitions
+
+`validate_manifest_v1_schema_binding()` takes one sorted binding per tablet. It requires the
+lineage table identity and exact recovery/part schema identities and versions, then proves every
+part schema is an ancestor of the tablet recovery schema. Bindings borrow each `SchemaLineage` only
+for the call.
+
+`validate_manifest_v1_transition()` first binds both generations to the retained catalog, then
+requires unchanged database/WAL identities, an exact one-generation advance, monotonic logical and
+physical reclaim coordinates, retained tablets with nondecreasing durable boundaries, and
+ancestor-to-descendant recovery-schema movement. Every predecessor part must occur byte-for-byte
+logically unchanged in the successor tablet range, and every protected retry outcome must remain
+exactly unchanged. New tablets, parts, and retries are allowed; removal, replacement, pruning, and
+schema regression are rejected in Phase 6.
+
+Neither validator claims that a part file exists or that a checkpoint crosses only covered WAL
+commands. Those proofs require installed CSEG and WAL bytes and remain installation-layer work.
+
 ## Complexity and allocation
 
 Layout planning is `O(1)` and allocation-free. Encoding and decoding are `O(total bytes + parts log
@@ -135,9 +154,10 @@ by the external-consumer test.
 
 The libFuzzer entry exercises arbitrary input plus structured mutation/truncation of a populated
 canonical generation. ASan/UBSan and TSan builds run the deterministic suite. The microbenchmarks
-measure full canonical encoding and full exact decoding at increasing retained-retry counts and
-report processed bytes plus descriptor scale. Benchmark results are evidence only when captured
-under the repository benchmark contract; no performance number is claimed by this document.
+measure full canonical encoding, full exact decoding, and add-only transition validation at
+increasing retained-retry counts and report processed bytes/items plus descriptor scale. Benchmark
+results are evidence only when captured under the repository benchmark contract; no performance
+number is claimed by this document.
 
 ## Tradeoffs and extension rules
 
@@ -159,6 +179,5 @@ Likely review questions are:
 - Why does the encoder reject unsorted input instead of sorting? Sorting would silently change
   descriptor relationships and hide builder bugs; canonical state construction is a separate
   responsibility.
-- What remains before manifests are durable? Exact installed-CSEG/catalog binding, transition and
-  WAL-coverage validation, filesystem installation, atomic publication, crash recovery, and WAL
-  reclamation.
+- What remains before manifests are durable? Exact installed-CSEG content and WAL-coverage
+  validation, filesystem installation, atomic publication, crash recovery, and WAL reclamation.

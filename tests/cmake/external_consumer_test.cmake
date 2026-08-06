@@ -68,11 +68,13 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/manifest/codec.hpp>
 #include <chronos/manifest/layout.hpp>
 #include <chronos/manifest/types.hpp>
+#include <chronos/manifest/validation.hpp>
 #include <chronos/wal/application.hpp>
 
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <span>
 
 int main() {
   using ExecuteFunction = chronos::common::Result<chronos::ingest::ColumnarAppendExecutionResult> (*)(
@@ -156,6 +158,11 @@ int main() {
   using DecodeManifestFunction = chronos::manifest::ManifestDecodeResult (*)(
       chronos::common::ByteView, chronos::manifest::ManifestDecodeLimits);
   const DecodeManifestFunction decode_manifest = &chronos::manifest::decode_manifest_v1_exact;
+  using ValidateManifestTransitionFunction = chronos::common::Status (*)(
+      const chronos::manifest::DecodedManifestView&, const chronos::manifest::DecodedManifestView&,
+      std::span<const chronos::manifest::TabletSchemaBinding>);
+  const ValidateManifestTransitionFunction validate_manifest_transition =
+      &chronos::manifest::validate_manifest_v1_transition;
   return execute != nullptr && recover != nullptr && register_schema != nullptr &&
                  limits.max_columns == 4096U &&
                  head_capacity.row_capacity == 4U &&
@@ -165,7 +172,7 @@ int main() {
                  retry_directory->metrics().maximum_entries == 8U && !decoded.has_value() &&
                  cseg_layout.has_value() && cseg_layout->total_length == 1'248U &&
                  manifest_layout.has_value() && manifest_layout->total_length == 264U &&
-                 decode_manifest != nullptr &&
+                 decode_manifest != nullptr && validate_manifest_transition != nullptr &&
                  stored_page.has_value() && stored_page->bytes().size() == 1U &&
                  plain_page.has_value() && plain_page->bytes().size() == 1U &&
                  encoded_cseg_page.has_value() && encoded_cseg_page->bytes().size() == 1U &&
