@@ -88,6 +88,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/query/catalog.hpp>
 #include <chronos/query/binder.hpp>
 #include <chronos/query/evaluator.hpp>
+#include <chronos/query/snapshot.hpp>
 #include <chronos/query/value.hpp>
 #include <chronos/manifest/types.hpp>
 #include <chronos/manifest/validation.hpp>
@@ -246,6 +247,11 @@ int main() {
       const chronos::query::ScalarEvaluationContext&);
   const EvaluateExpressionFunction evaluate_expression =
       &chronos::query::evaluate_sql_v1_expression;
+  using CreateScalarSnapshotFunction = chronos::common::Result<chronos::query::ScalarTableSnapshot> (
+      *)(std::shared_ptr<const chronos::schema::TableSchema>, std::uint64_t,
+         std::vector<chronos::query::ScalarInputRow>);
+  const CreateScalarSnapshotFunction create_scalar_snapshot =
+      &chronos::query::ScalarTableSnapshot::create;
   const auto manifest_name = chronos::manifest::manifest_file_name(1U);
   using DecodeManifestFunction = chronos::manifest::ManifestDecodeResult (*)(
       chronos::common::ByteView, chronos::manifest::ManifestDecodeLimits);
@@ -401,6 +407,7 @@ int main() {
                  query_scalar.has_value() && !query_scalar->is_null() &&
                  bind_select != nullptr &&
                  evaluate_expression != nullptr &&
+                 create_scalar_snapshot != nullptr &&
                  manifest_name.has_value() &&
                  *manifest_name == "manifest-00000000000000000001.cman" &&
                  decode_manifest != nullptr && validate_manifest_transition != nullptr &&

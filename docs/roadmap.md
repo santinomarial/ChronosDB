@@ -322,7 +322,9 @@ No phase passes because its code merely compiles. A phase passes only when its a
   Its dependency-free exact decimal path uses checked widened intermediates for arithmetic,
   rescaling, division, remainder, unary operations, and explicit integer/IEEE conversions. CREATE
   TABLE and INSERT parsing and relational execution remain unimplemented. Bound LATEST/ASOF plans
-  now carry exact key/source/time identities and reject non-canonical temporal-join conditions.
+  now carry exact key/source/time identities and reject non-canonical temporal-join conditions. An
+  immutable scalar snapshot/provider boundary validates exact schemas, logical/version identities,
+  commit boundaries, types, and nullability before relational execution.
 
 - **Scope:** specify a typed analytical SQL subset; custom lexer/parser; catalog binding; scalar expression/relational reference execution; event-time and system-time query syntax required by initial workloads.
 - **Explicit non-scope:** full SQL compliance, vectorization, cost-based optimization, distributed SQL, unsupported mutation syntax, and streaming syntax beyond contracts scheduled later.
