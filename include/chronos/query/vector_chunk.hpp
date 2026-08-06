@@ -36,6 +36,11 @@ public:
   [[nodiscard]] std::size_t retained_buffer_bytes() const noexcept;
   [[nodiscard]] common::Result<std::uint32_t> physical_row(std::size_t selected_row) const;
 
+  // Consumes and compacts this selection to rows whose Boolean predicate is TRUE. FALSE and NULL
+  // are removed according to SQL WHERE semantics. The existing index allocation is reused.
+  [[nodiscard]] static common::Result<VectorSelection>
+  where_true(VectorSelection selection, const columnar::OwnedPhysicalColumn& predicate);
+
 private:
   VectorSelection(std::uint32_t physical_row_count, std::vector<std::uint32_t> indices,
                   bool identity) noexcept;
@@ -82,6 +87,10 @@ public:
   [[nodiscard]] common::Result<columnar::ColumnCellView> cell(SelectedVectorCell position) const;
   [[nodiscard]] std::size_t buffer_bytes() const noexcept;
   [[nodiscard]] std::size_t retained_buffer_bytes() const noexcept;
+
+  // Consumes a chunk and replaces its selection with the allocation-free SQL Boolean filter.
+  [[nodiscard]] static common::Result<VectorChunk> where_true(VectorChunk chunk,
+                                                              std::size_t predicate_column);
 
 private:
   struct Accounting {

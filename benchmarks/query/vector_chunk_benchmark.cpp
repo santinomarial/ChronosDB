@@ -13,6 +13,11 @@ namespace {
 
 constexpr std::size_t kBenchmarkChunkMemoryLimit = std::size_t{64U} * 1024U * 1024U;
 
+struct PredicateShape {
+  std::uint32_t rows;
+  std::uint32_t true_stride;
+};
+
 [[nodiscard]] columnar::OwnedPhysicalColumn make_column(const std::uint32_t rows) {
   columnar::ColumnVectorBuffers buffers;
   buffers.values.resize(static_cast<std::size_t>(rows) * sizeof(std::int64_t));
@@ -27,6 +32,22 @@ constexpr std::size_t kBenchmarkChunkMemoryLimit = std::size_t{64U} * 1024U * 10
              {.type = schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value(),
               .nullable = false,
               .row_count = rows,
+              .null_count = 0U},
+             std::move(buffers))
+      .value();
+}
+
+[[nodiscard]] columnar::OwnedPhysicalColumn make_predicate(const PredicateShape shape) {
+  columnar::ColumnVectorBuffers buffers;
+  buffers.values.resize(columnar::bitmap_size(shape.rows));
+  for (std::uint32_t row = 0U; row < shape.rows; ++row) {
+    if ((row % shape.true_stride) == 0U)
+      buffers.values[row / 8U] |= static_cast<std::byte>(1U << (row % 8U));
+  }
+  return columnar::OwnedPhysicalColumn::create(
+             {.type = schema::LogicalType::create(schema::LogicalTypeKind::kBool).value(),
+              .nullable = false,
+              .row_count = shape.rows,
               .null_count = 0U},
              std::move(buffers))
       .value();
@@ -88,6 +109,24 @@ void scan_selected_cells(benchmark::State& state) {
       static_cast<double>(chunk.selected_row_count()) / static_cast<double>(rows);
 }
 
+void compact_selection_where_true(benchmark::State& state) {
+  const auto rows = static_cast<std::uint32_t>(state.range(0));
+  const auto true_stride = static_cast<std::uint32_t>(state.range(1));
+  const columnar::OwnedPhysicalColumn predicate =
+      make_predicate({.rows = rows, .true_stride = true_stride});
+  const std::vector<std::uint32_t> source = selection_indices(rows, 1U);
+  for (auto _ : state) {
+    static_cast<void>(_);
+    VectorSelection selection = VectorSelection::from_indices(rows, source).value();
+    auto filtered = VectorSelection::where_true(std::move(selection), predicate);
+    benchmark::DoNotOptimize(filtered);
+  }
+  state.SetItemsProcessed(static_cast<std::int64_t>(state.iterations()) *
+                          static_cast<std::int64_t>(source.size()));
+  state.counters["physical_rows"] = static_cast<double>(rows);
+  state.counters["true_density"] = 1.0 / static_cast<double>(true_stride);
+}
+
 BENCHMARK(build_selection)
     ->Args({64, 1})
     ->Args({1'024, 1})
@@ -99,6 +138,16 @@ BENCHMARK(build_selection)
     ->Args({1'024, 16})
     ->Args({4'096, 16});
 BENCHMARK(scan_selected_cells)
+    ->Args({64, 1})
+    ->Args({1'024, 1})
+    ->Args({4'096, 1})
+    ->Args({64, 4})
+    ->Args({1'024, 4})
+    ->Args({4'096, 4})
+    ->Args({64, 16})
+    ->Args({1'024, 16})
+    ->Args({4'096, 16});
+BENCHMARK(compact_selection_where_true)
     ->Args({64, 1})
     ->Args({1'024, 1})
     ->Args({4'096, 1})

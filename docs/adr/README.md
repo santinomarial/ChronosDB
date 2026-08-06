@@ -56,3 +56,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0019](0019-rebuildable-pruning-delta-planning-and-part-reclamation.md) | Rebuildable pruning, delta planning, and part reclamation | accepted |
 | [0020](0020-bounded-vector-chunk-representation.md) | Bounded vector chunk representation | accepted |
 | [0021](0021-query-resource-accounting-and-cooperative-cancellation.md) | Query resource accounting and cooperative cancellation | accepted |
+| [0022](0022-pull-based-physical-operator-lifecycle.md) | Pull-based physical operator lifecycle | accepted |

@@ -2,6 +2,7 @@
 
 #include "chronos/common/checked_math.hpp"
 #include "chronos/common/status.hpp"
+#include "chronos/schema/logical_type.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -104,6 +105,37 @@ common::Result<std::uint32_t> VectorSelection::physical_row(const std::size_t se
         common::Status{common::StatusCode::kOutOfRange, "selected row is out of range"});
   }
   return indices_[selected_row];
+}
+
+common::Result<VectorSelection>
+VectorSelection::where_true(VectorSelection selection,
+                            const columnar::OwnedPhysicalColumn& predicate) {
+  if (predicate.type().kind() != schema::LogicalTypeKind::kBool) {
+    return common::make_unexpected(invalid("vector predicate column must have BOOL type"));
+  }
+  if (predicate.row_count() != selection.physical_row_count_) {
+    return common::make_unexpected(
+        invalid("vector predicate row count must match the selection physical row count"));
+  }
+
+  std::size_t output = 0U;
+  for (const std::uint32_t physical_row : selection.indices_) {
+    const common::Result<columnar::ColumnCellView> cell = predicate.cell(physical_row);
+    if (!cell.has_value())
+      return common::make_unexpected(cell.error());
+    if (cell->kind() == columnar::ColumnCellView::Kind::kNull)
+      continue;
+    const common::Result<bool> value = cell->boolean();
+    if (!value.has_value())
+      return common::make_unexpected(value.error());
+    if (*value) {
+      selection.indices_[output] = physical_row;
+      ++output;
+    }
+  }
+  selection.indices_.resize(output);
+  selection.identity_ = selection.identity_ && output == selection.physical_row_count_;
+  return selection;
 }
 
 VectorChunk::VectorChunk(std::vector<columnar::OwnedPhysicalColumn> columns,
@@ -210,6 +242,24 @@ std::size_t VectorChunk::buffer_bytes() const noexcept {
 
 std::size_t VectorChunk::retained_buffer_bytes() const noexcept {
   return retained_buffer_bytes_;
+}
+
+common::Result<VectorChunk> VectorChunk::where_true(VectorChunk chunk,
+                                                    const std::size_t predicate_column) {
+  const columnar::OwnedPhysicalColumn* predicate = chunk.column(predicate_column);
+  if (predicate == nullptr) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kOutOfRange, "vector predicate column is out of range"});
+  }
+  const std::size_t old_selection_bytes = chunk.selection_.buffer_bytes();
+  common::Result<VectorSelection> filtered =
+      VectorSelection::where_true(std::move(chunk.selection_), *predicate);
+  if (!filtered.has_value())
+    return common::make_unexpected(filtered.error());
+  chunk.selection_ = std::move(*filtered);
+  chunk.buffer_bytes_ -= old_selection_bytes;
+  chunk.buffer_bytes_ += chunk.selection_.buffer_bytes();
+  return chunk;
 }
 
 } // namespace chronos::query

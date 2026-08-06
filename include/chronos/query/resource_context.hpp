@@ -52,6 +52,7 @@ public:
   create(std::size_t maximum_memory_bytes);
 
   [[nodiscard]] common::Result<QueryMemoryReservation> reserve(std::size_t bytes) const;
+  [[nodiscard]] bool owns(const QueryMemoryReservation& reservation) const noexcept;
 
   // Returns true only for the call that first changes the shared state to cancelled.
   [[nodiscard]] bool request_cancel() const noexcept;

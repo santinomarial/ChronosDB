@@ -70,6 +70,9 @@ TEST(QueryResourceContextTest, SharedCopiesEnforceOneLimitWithoutOverflow) {
   const QueryResourceContext worker = context;
   auto exact = worker.reserve(64U);
   ASSERT_TRUE(exact.has_value());
+  EXPECT_TRUE(context.owns(*exact));
+  const auto unrelated = QueryResourceContext::create(64U).value();
+  EXPECT_FALSE(unrelated.owns(*exact));
   EXPECT_EQ(context.available_memory_bytes(), 0U);
   EXPECT_EQ(context.reserve(1U).error().code(), common::StatusCode::kResourceExhausted);
   EXPECT_EQ(context.reserve(std::numeric_limits<std::size_t>::max()).error().code(),

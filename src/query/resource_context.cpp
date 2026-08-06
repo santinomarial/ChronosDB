@@ -164,6 +164,10 @@ QueryResourceContext::reserve(const std::size_t bytes) const {
   return QueryMemoryReservation{state_, bytes};
 }
 
+bool QueryResourceContext::owns(const QueryMemoryReservation& reservation) const noexcept {
+  return reservation.state_ == state_;
+}
+
 bool QueryResourceContext::request_cancel() const noexcept {
   return state_->request_cancel();
 }

@@ -332,6 +332,7 @@ add_library(
   src/query/lexer.cpp
   src/query/literal.cpp
   src/query/parser.cpp
+  src/query/physical_operator.cpp
   src/query/resource_context.cpp
   src/query/snapshot.cpp
   src/query/statement_binder.cpp
@@ -746,6 +747,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/literal_test.cpp
     tests/query/parser_header_self_contained.cpp
     tests/query/parser_test.cpp
+    tests/query/physical_operator_header_self_contained.cpp
+    tests/query/physical_operator_test.cpp
     tests/query/resource_context_header_self_contained.cpp
     tests/query/resource_context_test.cpp
     tests/query/snapshot_header_self_contained.cpp

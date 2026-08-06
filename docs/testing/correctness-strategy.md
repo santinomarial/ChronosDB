@@ -71,8 +71,10 @@
 > adds identity-free canonical owners, explicit-selection unit/property/fuzz coverage, retained-byte
 > bounds, checked traversal benchmarks, and installed-consumer checks. The query resource context
 > adds exact RAII accounting, a fixed-seed reservation model, concurrent saturation/cancellation
-> tests under ThreadSanitizer, resource microbenchmarks, and consumer checks. Vector-plan
-> differential and distributed query harnesses remain planned for their roadmap phases.
+> tests under ThreadSanitizer, resource microbenchmarks, and consumer checks. The first physical
+> operator adds accounted-lifetime, end/error/cancellation, hostile predicate, fixed-seed
+> chunk-boundary scalar-truth differential, fuzz, and selection-compaction benchmark coverage.
+> Vector-plan differential and distributed query harnesses remain planned for their roadmap phases.
 
 ## Test types
 

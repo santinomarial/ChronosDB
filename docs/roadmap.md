@@ -1,7 +1,7 @@
 # Roadmap and Phase Gates
 
 ChronosDB has implemented correctness-first subsystem slices through the Phase 8 scalar SQL oracle
-and the first Phase 9 vector-chunk and query-resource-control foundations.
+and the first Phase 9 vector, resource-control, and physical-pipeline foundations.
 That statement does not declare every Phase 1–8 exit gate complete: each section below records its
 remaining implementation, integration, measurement, or platform evidence. Phase 1A/1B provide the
 build/tooling and portable binary foundations but the broader Phase 1 utility surface remains
@@ -355,9 +355,12 @@ No phase passes because its code merely compiles. A phase passes only when its a
   and the second increment add one shared query-wide byte budget, exact move-only RAII reservations,
   monotonic peak accounting, idempotent cooperative cancellation, an explicit relaxed-atomic memory
   ordering argument, deterministic concurrency/property tests, microbenchmarks, and consumer
-  coverage. These are substrates only: vector expressions/operators, physical planning, complete
-  allocation charging, scheduling, spill, and scalar differential plan execution remain
-  unimplemented.
+  coverage. ADR 0022 and the third increment add accounted chunk ownership, explicit pull/chunk/end
+  steps, stable end and empty-chunk semantics, allocation-free SQL Boolean selection, failure-driven
+  sibling cancellation, scalar-truth differential properties, fuzzing, and compaction benchmarks.
+  These are substrates and one operator only: general vector expressions/operators, storage scans,
+  physical planning, complete allocation charging, scheduling, spill, and scalar differential plan
+  execution remain unimplemented.
 
 - **Scope:** bounded vectors, vectorized scans/expressions/aggregates/joins, physical planning, memory accounting, cancellation, parallel scheduling, and spill for explicitly supported operators.
 - **Explicit non-scope:** distributed fragments, GPU novelty, unbounded query memory, or optimizer rules lacking semantic/differential validation.

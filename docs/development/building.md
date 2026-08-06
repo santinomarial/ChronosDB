@@ -4,11 +4,11 @@ ChronosDB currently implements the Phase 1 foundations; WAL v1 codec, segmented 
 operator and benchmark tools; logical schemas and columnar ingestion; bounded mutable heads; CSEG
 v1; Manifest installation, flush/checkpoint, publication and recovery; append-only compaction,
 pruning and reclamation; the Phase 8 pure in-memory SQL scalar oracle; and the first Phase 9 bounded
-vector-chunk and query-resource-control foundations. Persistent catalog/service activation,
-vectorized SQL operators and scheduling, networking, replication, and later roadmap phases remain
-unimplemented. The reference production platform is Linux x86-64; implemented portable and POSIX
-targets also support modern macOS, including Apple silicon. macOS correctness support is not a
-power-loss durability claim.
+vector-chunk, query-resource-control, and Boolean-filter pipeline foundations. Persistent
+catalog/service activation, vectorized plan execution and scheduling, networking, replication, and
+later roadmap phases remain unimplemented. The reference production platform is Linux x86-64;
+implemented portable and POSIX targets also support modern macOS, including Apple silicon. macOS
+correctness support is not a power-loss durability claim.
 
 ## Prerequisites
 

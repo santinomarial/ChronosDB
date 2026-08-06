@@ -20,6 +20,9 @@ schedule a task, spill data, or enforce a cancellation deadline.
 `RESOURCE_EXHAUSTED`. `check_cancelled()` and reservations attempted after observed cancellation
 return `CANCELLED`.
 
+`owns(reservation)` compares resource-state identity without changing credit. Accounted physical
+chunks use it to reject a reservation created by a different query context.
+
 ## Memory-admission invariant
 
 The shared current counter is always between zero and the configured maximum. Reservation uses a
@@ -94,10 +97,11 @@ establish query throughput, scheduler scalability, or a product latency claim.
 ## Tradeoffs and next steps
 
 One root budget is auditable but does not attribute bytes to individual operators or decide when to
-spill. Callback-free cancellation is ownership-safe but requires explicit poll coverage. The next
-Phase 9 boundary can define the physical operator/task protocol over `VectorChunk` and this context,
-including end-of-stream, backpressure, pin ownership, and failure propagation. Hierarchical accounts
-and spill credit should follow actual operator needs rather than precede them.
+spill. Callback-free cancellation is ownership-safe but requires explicit poll coverage. The
+[physical operator foundation](physical-operator-foundation.md) now couples chunk credit to a
+pull/end/error lifecycle and Boolean-filter cancellation. Snapshot pins, parallel task ownership,
+hierarchical accounts, and spill credit should follow actual operator needs rather than precede
+them.
 
 ## Likely review questions
 

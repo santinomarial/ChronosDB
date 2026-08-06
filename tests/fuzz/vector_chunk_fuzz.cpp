@@ -57,15 +57,18 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
   std::vector<chronos::columnar::OwnedPhysicalColumn> valid_columns;
   valid_columns.push_back(make_bool_column(rows, input));
   auto all = chronos::query::VectorSelection::all(rows).value();
-  const auto valid = chronos::query::VectorChunk::create(std::move(valid_columns), std::move(all),
-                                                         {.maximum_rows = 256U,
-                                                          .maximum_columns = 1U,
-                                                          .maximum_buffer_bytes = 4'096U,
-                                                          .maximum_retained_buffer_bytes = 4'096U});
+  auto valid = chronos::query::VectorChunk::create(std::move(valid_columns), std::move(all),
+                                                   {.maximum_rows = 256U,
+                                                    .maximum_columns = 1U,
+                                                    .maximum_buffer_bytes = 4'096U,
+                                                    .maximum_retained_buffer_bytes = 4'096U});
   if (valid.has_value()) {
-    const auto cell = valid->cell({.column_ordinal = 0U, .selected_row = rows - 1U});
-    if (cell.has_value())
-      static_cast<void>(cell->kind());
+    const auto filtered = chronos::query::VectorChunk::where_true(std::move(*valid), 0U);
+    if (filtered.has_value() && filtered->selected_row_count() > 0U) {
+      const auto cell = filtered->cell({.column_ordinal = 0U, .selected_row = 0U});
+      if (cell.has_value())
+        static_cast<void>(cell->kind());
+    }
   }
   return 0;
 }

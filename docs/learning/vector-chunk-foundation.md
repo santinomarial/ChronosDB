@@ -102,9 +102,10 @@ future output builders to construct a new owner. Those costs are visible and ben
 
 Query-wide memory reservation and cooperative cancellation are now defined by
 [ADR 0021](../adr/0021-query-resource-accounting-and-cooperative-cancellation.md) and the
-[resource-control guide](query-resource-control.md). The next Phase 9 boundary can define physical
-operator and task contracts that state who owns chunks, reservations, snapshot pins, task
-completion, and failures.
+[resource-control guide](query-resource-control.md). ADR 0022 and the
+[physical operator guide](physical-operator-foundation.md) now carry those reservations with chunks
+through an explicit pull/end/error lifecycle. Snapshot-pin ownership, typed output building, and
+parallel task scheduling remain later boundaries.
 
 ## Likely review questions
 
