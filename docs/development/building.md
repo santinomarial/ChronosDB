@@ -185,6 +185,9 @@ build/fuzz/chronos_cseg_metadata_codec_fuzz -runs=10000 -max_len=8388608
 build/fuzz/chronos_cseg_plain_page_fuzz -runs=10000 -max_len=1048576
 build/fuzz/chronos_cseg_page_codec_fuzz -runs=10000 -max_len=1048576
 build/fuzz/chronos_cseg_part_codec_fuzz -runs=10000 -max_len=2097152
+build/fuzz/chronos_sql_lexer_fuzz -runs=10000 -max_len=4096
+build/fuzz/chronos_sql_parser_fuzz -runs=10000 -max_len=4096
+build/fuzz/chronos_sql_binder_fuzz -runs=10000 -max_len=4096
 ```
 
 Apple's Command Line Tools compiler may omit the libFuzzer runtime even when it accepts Clang

@@ -6,6 +6,7 @@
 #include "chronos/query/lexer.hpp"
 #include "chronos/query/parser.hpp"
 #include "chronos/query/snapshot.hpp"
+#include "chronos/query/statement_binder.hpp"
 #include "chronos/query/value.hpp"
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/logical_type.hpp"
@@ -56,6 +57,7 @@ struct SchemaSeed {
 [[nodiscard]] std::shared_ptr<const schema::TableSchema>
 make_schema(const SchemaSeed seed, const std::span<const BenchmarkColumn> definitions) {
   std::vector<schema::ColumnDefinition> columns;
+  columns.reserve(definitions.size());
   for (std::size_t ordinal = 0U; ordinal < definitions.size(); ++ordinal) {
     columns.push_back(
         schema::ColumnDefinition::create(
@@ -259,12 +261,46 @@ void execute_scalar_grouped_query(benchmark::State& state) {
   state.SetItemsProcessed(static_cast<std::int64_t>(state.iterations()) * 256);
 }
 
+void bind_and_materialize_insert(benchmark::State& state) {
+  const std::shared_ptr<const QueryCatalogSnapshot> catalog = benchmark_catalog();
+  std::string sql = "INSERT INTO metrics VALUES ";
+  constexpr std::size_t kRows = 64U;
+  for (std::size_t row = 0U; row < kRows; ++row) {
+    if (row != 0U)
+      sql.append(", ");
+    sql.append("(TIMESTAMP '2026-08-01 00:00:00Z', CAST('tenant' AS SYMBOL), "
+               "CAST('cpu' AS SYMBOL), CAST(1 AS FLOAT64))");
+  }
+  for (auto _ : state) {
+    static_cast<void>(_);
+    SqlResult<ParsedSqlInsert> parsed = parse_sql_v1_insert(sql);
+    if (!parsed.has_value()) {
+      state.SkipWithError("benchmark INSERT did not parse");
+      break;
+    }
+    SqlResult<BoundSqlInsert> bound = bind_sql_v1_insert(std::move(*parsed), catalog);
+    if (!bound.has_value()) {
+      state.SkipWithError(bound.error().status().message());
+      break;
+    }
+    SqlResult<MaterializedSqlInsert> materialized = materialize_sql_v1_insert_rows(*bound);
+    if (!materialized.has_value()) {
+      state.SkipWithError(materialized.error().status().message());
+      break;
+    }
+    benchmark::DoNotOptimize(materialized->rows().data());
+  }
+  state.SetItemsProcessed(static_cast<std::int64_t>(state.iterations()) *
+                          static_cast<std::int64_t>(kRows));
+}
+
 BENCHMARK(tokenize_statement)->DenseRange(0, 2);
 BENCHMARK(parse_statement)->DenseRange(0, 2);
 BENCHMARK(parse_and_bind_statement)->DenseRange(0, 2);
 BENCHMARK(evaluate_scalar_expression);
 BENCHMARK(evaluate_decimal_expression);
 BENCHMARK(execute_scalar_grouped_query);
+BENCHMARK(bind_and_materialize_insert);
 
 } // namespace
 } // namespace chronos::query

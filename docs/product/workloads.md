@@ -1,6 +1,9 @@
 # Representative Workloads
 
-The canonical proposed schemas are in the [data-model contract](data-model.md), and query syntax follows [SQL v1](sql-v1.md). Neither is implemented. Cardinalities describe design envelopes, not benchmark claims or guaranteed limits.
+The canonical proposed schemas are in the [data-model contract](data-model.md), and query syntax
+follows [SQL v1](sql-v1.md). Their Phase 8 parser, binder, statement materializer, and scalar query
+oracle are implemented; production catalog mutation, storage scans, and vectorized execution are
+not. Cardinalities describe design envelopes, not benchmark claims or guaranteed limits.
 
 All tables designate one event-time column. System time is database-managed and distinct from fields such as `recv_ts`, which represent source or receive metadata.
 

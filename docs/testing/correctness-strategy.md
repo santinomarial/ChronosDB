@@ -62,7 +62,13 @@
 > replay, recognized-temporary cleanup, aggregate publication, exact reopen sequence, invalid caller
 > seed rejection, missing-tablet failure, disabled-by-default WAL retention, corruption-before-
 > deletion failure, exact covered-segment cleanup, and logical convergence across repeated opens.
-> Query and distributed harnesses also remain planned for their roadmap phases.
+> The Phase 8 SQL v1 reference engine adds bounded hostile-byte lexer/parser tests and fuzzers,
+> owned-AST grammar goldens, exact literal/calendar boundaries, schema-generation-stable binding,
+> ambiguous/type/grouping failures, exact decimal properties, NULL/NaN ordering, aggregate
+> reference comparisons, system-time/LATEST/ASOF execution, deterministic random small-database
+> temporal-join models, CREATE TABLE/INSERT validation, stable EXPLAIN goldens, measured ANALYZE
+> counters, installation checks, and sanitizer coverage. Vector-plan differential and distributed
+> query harnesses remain planned for their roadmap phases.
 
 ## Test types
 

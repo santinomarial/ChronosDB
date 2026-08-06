@@ -1,6 +1,11 @@
 # SQL v1 Contract
 
-> **Status: specified, not implemented.** SQL v1 is deliberately smaller than the SQL standard. Unsupported syntax must produce a clear bind or parse error; it must not be accepted with different semantics.
+> **Status: implemented as the Phase 8 bounded scalar reference engine.** The custom lexer,
+> parser, schema-version-stable binder, CREATE TABLE/INSERT statement binding, scalar SELECT
+> execution, and EXPLAIN paths are implemented. `SUBSCRIBE` is parsed and bound but remains a Phase
+> 11 execution concern; the Phase 9 vectorized product engine is not implemented. SQL v1 is
+> deliberately smaller than the SQL standard. Unsupported syntax must produce a clear bind or
+> parse error; it must not be accepted with different semantics.
 
 The canonical types and table clauses are defined in the [data model](data-model.md). The custom parser, binder, scalar reference engine, and vector engine follow [ADR 0008](../adr/0008-custom-sql-and-vectorized-execution.md).
 

@@ -134,5 +134,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Durable sealed-head flush coordination](learning/sealed-head-flush-coordinator.md): implemented
   queue-to-CSEG-to-Manifest orchestration, durable-resume handling, exact retirement, ownership,
   failure boundaries, and observability.
+- [SQL v1 scalar reference engine](learning/sql-v1-reference-engine.md): implemented bounded lexer,
+  AST, schema-stable binding, exact scalar semantics, temporal joins, aggregates, DDL/INSERT
+  materialization, EXPLAIN, ownership, failure, fuzzing, and measurement boundaries.
 
 Future format, protocol, subsystem, operations, and learning documents should be linked here when they are added by their corresponding roadmap phase.

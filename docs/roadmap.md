@@ -301,8 +301,8 @@ No phase passes because its code merely compiles. A phase passes only when its a
 
 ## Phase 8 — SQL parser, binder, and scalar reference engine
 
-- **Implementation status:** the focused `chronos_query` target and bounded SQL v1 lexer are now
-  under implementation. The lexer owns normalized token text and exact byte/line/column spans,
+- **Implementation status:** complete for Phase 8. The focused `chronos_query` target and bounded
+  SQL v1 lexer own normalized token text and exact byte/line/column spans,
   handles the specified quoting, comments, binary/numeric forms, operators, identifier folding,
   and reserved words, and reports stable lexical diagnostic codes under explicit input/token
   limits. The owned, bounded parser implements the complete read-only SELECT family, including
@@ -337,7 +337,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
   source-free constant expressions into complete schema-ordinal scalar rows. EXPLAIN now emits a
   versioned stable logical/scalar-physical plan description without snapshot access, while EXPLAIN
   ANALYZE executes once and reports measured scalar operator-work counters with the underlying
-  result.
+  result. SELECT/CREATE/INSERT parser and binder fuzz targets, deterministic expression/aggregate
+  properties, and an independent random small-database LATEST/ASOF model close the Phase 8 test
+  boundary. The query microbenchmarks track lexing, parsing, binding, expression/decimal evaluation,
+  grouped reference execution, and INSERT materialization; scalar speed is not a product claim.
 
 - **Scope:** specify a typed analytical SQL subset; custom lexer/parser; catalog binding; scalar expression/relational reference execution; event-time and system-time query syntax required by initial workloads.
 - **Explicit non-scope:** full SQL compliance, vectorization, cost-based optimization, distributed SQL, unsupported mutation syntax, and streaming syntax beyond contracts scheduled later.
