@@ -16,6 +16,9 @@ inline constexpr std::string_view kAfterManifestFileSync = "after_manifest_file_
 inline constexpr std::string_view kAfterManifestRename = "after_manifest_rename";
 inline constexpr std::string_view kAfterManifestDirectorySync = "after_manifest_directory_sync";
 inline constexpr std::string_view kAfterPublication = "after_publication";
+inline constexpr std::string_view kAfterPartReclamationUnlink = "after_part_reclamation_unlink";
+inline constexpr std::string_view kAfterPartReclamationDirectorySync =
+    "after_part_reclamation_directory_sync";
 
 } // namespace chronos::manifest::test
 

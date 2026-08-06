@@ -68,13 +68,15 @@ private:
 struct InjectedSyscallFaults {
   std::size_t fail_fsync_call{};
   std::size_t corrupt_pread_call{};
+  std::size_t fail_unlink_call{};
 };
 
 class FailingFsyncSyscalls final : public io::detail::PosixSyscalls {
 public:
   explicit FailingFsyncSyscalls(const InjectedSyscallFaults faults)
       : delegate_(io::detail::system_posix_syscalls()), fail_call_(faults.fail_fsync_call),
-        corrupt_pread_call_(faults.corrupt_pread_call) {}
+        corrupt_pread_call_(faults.corrupt_pread_call), fail_unlink_call_(faults.fail_unlink_call) {
+  }
 
   int open_directory(const char* path, const int flags) override {
     return delegate_.open_directory(path, flags);
@@ -125,6 +127,11 @@ public:
     return delegate_.list_directory_entries(descriptor, entries);
   }
   int unlink_at(const int descriptor, const char* name) override {
+    ++unlink_calls_;
+    if (unlink_calls_ == fail_unlink_call_) {
+      errno = EIO;
+      return -1;
+    }
     return delegate_.unlink_at(descriptor, name);
   }
   int close(const int descriptor) override {
@@ -135,8 +142,10 @@ private:
   io::detail::PosixSyscalls& delegate_;
   std::size_t fail_call_;
   std::size_t corrupt_pread_call_;
+  std::size_t fail_unlink_call_;
   std::size_t fsync_calls_{};
   std::size_t pread_calls_{};
+  std::size_t unlink_calls_{};
 };
 
 void establish_layout(const std::filesystem::path& path, const bool create_lock = true) {
@@ -898,6 +907,121 @@ TEST(ManifestStorageTest, CleanupDirectorySyncFailurePoisonsOwnerWithoutPromotin
   EXPECT_TRUE(
       std::filesystem::exists(temporary.path() / kManifestDirectoryName / temporary_manifest));
   EXPECT_EQ(owner.scan_namespace().error().code(), common::StatusCode::kUnavailable);
+}
+
+TEST(ManifestStorageTest, ReclamationRejectsCurrentReferencesAndUnlinkFailureBeforeMutation) {
+  TemporaryDirectory temporary;
+  ASSERT_TRUE(temporary.valid());
+  establish_layout(temporary.path());
+  const PartFixture fixture;
+  create_entry(temporary.path(),
+               std::filesystem::path{kManifestDirectoryName} / *manifest_file_name(1U),
+               fixture.manifest(1U).bytes());
+  create_entry(temporary.path(),
+               std::filesystem::path{kManifestDirectoryName} / *manifest_file_name(2U),
+               fixture.manifest(2U).bytes());
+  create_entry(temporary.path(),
+               std::filesystem::path{kPartsDirectoryName} / part_file_name(fixture.part_id),
+               fixture.encoded.bytes());
+  const cseg::PartId orphan = id<cseg::PartId>(0x10U);
+  const std::array orphan_bytes{std::byte{0x7fU}};
+  create_entry(temporary.path(),
+               std::filesystem::path{kPartsDirectoryName} / part_file_name(orphan), orphan_bytes);
+  FailingFsyncSyscalls syscalls{{.fail_unlink_call = 1U}};
+  ManifestStorage owner = detail::ManifestStorageTestAccess::open_existing(
+                              {.database_root = temporary.path().string()}, syscalls)
+                              .value();
+  const auto bindings = fixture.bindings();
+  LoadedManifestGeneration selected =
+      owner
+          .load_selected_manifest({.expected_database_id = fixture.database_id,
+                                   .expected_wal_id = fixture.wal_id,
+                                   .schema_bindings = bindings,
+                                   .decode_limits = {},
+                                   .part_validation_limits = {}})
+          .value();
+
+  RetiredPartSet still_referenced = detail::ManifestStorageTestAccess::make_unpinned_retirement(
+      1U, {{.part_id = fixture.part_id, .file_length = fixture.descriptor.file_length}});
+  EXPECT_EQ(owner
+                .reclaim_retired_parts({.selected_manifest = std::cref(selected),
+                                        .retirement = std::cref(still_referenced),
+                                        .decode_limits = {}})
+                .error()
+                .code(),
+            common::StatusCode::kCorruption);
+  EXPECT_TRUE(owner.is_usable());
+
+  RetiredPartSet retirement = detail::ManifestStorageTestAccess::make_unpinned_retirement(
+      1U, {{.part_id = orphan, .file_length = orphan_bytes.size()}});
+  EXPECT_EQ(owner
+                .reclaim_retired_parts({.selected_manifest = std::cref(selected),
+                                        .retirement = std::cref(retirement),
+                                        .decode_limits = {}})
+                .error()
+                .code(),
+            common::StatusCode::kIoError);
+  EXPECT_TRUE(owner.is_usable());
+  EXPECT_TRUE(
+      std::filesystem::exists(temporary.path() / kPartsDirectoryName / part_file_name(orphan)));
+  EXPECT_EQ(owner.reclamation_metrics().attempts, 2U);
+  EXPECT_EQ(owner.reclamation_metrics().failures, 2U);
+}
+
+TEST(ManifestStorageTest, PartialUnlinkAndDirectorySyncFailurePoisonTheOwner) {
+  for (const bool fail_during_sync : {false, true}) {
+    TemporaryDirectory temporary;
+    ASSERT_TRUE(temporary.valid());
+    establish_layout(temporary.path());
+    const PartFixture fixture;
+    create_entry(temporary.path(),
+                 std::filesystem::path{kManifestDirectoryName} / *manifest_file_name(1U),
+                 fixture.manifest(1U).bytes());
+    create_entry(temporary.path(),
+                 std::filesystem::path{kManifestDirectoryName} / *manifest_file_name(2U),
+                 fixture.manifest(2U).bytes());
+    create_entry(temporary.path(),
+                 std::filesystem::path{kPartsDirectoryName} / part_file_name(fixture.part_id),
+                 fixture.encoded.bytes());
+    const cseg::PartId first = id<cseg::PartId>(0x10U);
+    const cseg::PartId second = id<cseg::PartId>(0x11U);
+    const std::array orphan_bytes{std::byte{0x7fU}};
+    create_entry(temporary.path(),
+                 std::filesystem::path{kPartsDirectoryName} / part_file_name(first), orphan_bytes);
+    create_entry(temporary.path(),
+                 std::filesystem::path{kPartsDirectoryName} / part_file_name(second), orphan_bytes);
+    FailingFsyncSyscalls syscalls{fail_during_sync ? InjectedSyscallFaults{.fail_fsync_call = 1U}
+                                                   : InjectedSyscallFaults{.fail_unlink_call = 2U}};
+    ManifestStorage owner = detail::ManifestStorageTestAccess::open_existing(
+                                {.database_root = temporary.path().string()}, syscalls)
+                                .value();
+    const auto bindings = fixture.bindings();
+    LoadedManifestGeneration selected =
+        owner
+            .load_selected_manifest({.expected_database_id = fixture.database_id,
+                                     .expected_wal_id = fixture.wal_id,
+                                     .schema_bindings = bindings,
+                                     .decode_limits = {},
+                                     .part_validation_limits = {}})
+            .value();
+    RetiredPartSet retirement = detail::ManifestStorageTestAccess::make_unpinned_retirement(
+        1U, {{.part_id = first, .file_length = orphan_bytes.size()},
+             {.part_id = second, .file_length = orphan_bytes.size()}});
+
+    const auto reclaimed = owner.reclaim_retired_parts({.selected_manifest = std::cref(selected),
+                                                        .retirement = std::cref(retirement),
+                                                        .decode_limits = {}});
+    ASSERT_FALSE(reclaimed.has_value());
+    EXPECT_EQ(reclaimed.error().code(), common::StatusCode::kIoError);
+    EXPECT_FALSE(owner.is_usable());
+    EXPECT_EQ(owner.poison_status().code(), common::StatusCode::kIoError);
+    EXPECT_FALSE(
+        std::filesystem::exists(temporary.path() / kPartsDirectoryName / part_file_name(first)));
+    EXPECT_EQ(
+        std::filesystem::exists(temporary.path() / kPartsDirectoryName / part_file_name(second)),
+        fail_during_sync ? false : true);
+    EXPECT_EQ(owner.scan_namespace().error().code(), common::StatusCode::kUnavailable);
+  }
 }
 
 } // namespace

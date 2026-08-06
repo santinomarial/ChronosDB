@@ -646,6 +646,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/manifest/naming_test.cpp
     tests/manifest/part_validation_header_self_contained.cpp
     tests/manifest/part_validation_test.cpp
+    tests/manifest/part_reclamation_crash_matrix_test.cpp
     tests/manifest/publication_header_self_contained.cpp
     tests/manifest/publication_test.cpp
     tests/manifest/retirement_header_self_contained.cpp

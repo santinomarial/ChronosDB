@@ -13,6 +13,7 @@ namespace chronos::manifest {
 namespace detail {
 class DatabaseStoragePublication;
 class DatabaseStoragePublisherImpl;
+class ManifestStorageTestAccess;
 } // namespace detail
 
 class DatabaseStorageSnapshot;
@@ -70,6 +71,7 @@ private:
   std::weak_ptr<const detail::DatabaseStoragePublication> predecessor_;
 
   friend class detail::DatabaseStoragePublisherImpl;
+  friend class detail::ManifestStorageTestAccess;
 };
 
 } // namespace chronos::manifest

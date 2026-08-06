@@ -30,6 +30,7 @@ struct ChildConfig {
   std::string directory;
   std::string pause_after;
   bool compaction{false};
+  bool part_reclamation{false};
 };
 
 [[nodiscard]] ChildConfig parse_arguments(const int count, char** const values) {
@@ -42,6 +43,7 @@ struct ChildConfig {
       config.pause_after = values[index + 1];
     } else if (key == "--operation") {
       config.compaction = std::string_view{values[index + 1]} == "compaction";
+      config.part_reclamation = std::string_view{values[index + 1]} == "part_reclamation";
     }
   }
   return config;
@@ -103,6 +105,10 @@ public:
   int fsync(const int descriptor) override {
     const int result = delegate_.fsync(descriptor);
     if (result == 0) {
+      if (reclamation_started_) {
+        observe(kAfterPartReclamationDirectorySync);
+        return result;
+      }
       ++syncs_;
       switch (syncs_) {
       case 1U:
@@ -139,7 +145,12 @@ public:
     return delegate_.list_directory_entries(descriptor, entries);
   }
   int unlink_at(const int descriptor, const char* name) override {
-    return delegate_.unlink_at(descriptor, name);
+    const int result = delegate_.unlink_at(descriptor, name);
+    if (result == 0) {
+      reclamation_started_ = true;
+      observe(kAfterPartReclamationUnlink);
+    }
+    return result;
   }
   int close(const int descriptor) override {
     return delegate_.close(descriptor);
@@ -167,6 +178,7 @@ private:
   std::uint64_t renames_{};
   bool part_readback_observed_{false};
   bool manifest_readback_observed_{false};
+  bool reclamation_started_{false};
 };
 
 [[nodiscard]] int run_flush(const ChildConfig& config, const std::filesystem::path& root,
@@ -203,7 +215,7 @@ private:
 }
 
 [[nodiscard]] int run_compaction(const ChildConfig& config, const std::filesystem::path& root,
-                                 ObservingSyscalls& syscalls) {
+                                 ObservingSyscalls& syscalls, const bool reclaim) {
   const ManifestFlushCrashFixture fixture;
   const EncodedManifest predecessor = fixture.manifest(2U);
   write_bytes(root / kPartsDirectoryName / part_file_name(fixture.part_id),
@@ -255,7 +267,30 @@ private:
     return 12;
   }
   syscalls.observe_publication();
-  return completed->manifest_generation == 3U ? 0 : 13;
+  if (completed->manifest_generation != 3U) {
+    return 13;
+  }
+  if (!reclaim) {
+    return 0;
+  }
+  common::Result<std::vector<RetiredPartSet>> retirements = publisher->drain_retired_part_sets();
+  if (!retirements.has_value() || retirements->size() != 1U || retirements->front().is_pinned()) {
+    return 14;
+  }
+  common::Result<LoadedManifestGeneration> current =
+      storage.load_selected_manifest({.expected_database_id = fixture.database_id,
+                                      .expected_wal_id = fixture.wal_id,
+                                      .schema_bindings = bindings,
+                                      .decode_limits = {},
+                                      .part_validation_limits = {}});
+  if (!current.has_value()) {
+    return 15;
+  }
+  const common::Result<PartReclamationReport> reclaimed =
+      storage.reclaim_retired_parts({.selected_manifest = std::cref(*current),
+                                     .retirement = std::cref(retirements->front()),
+                                     .decode_limits = {}});
+  return reclaimed.has_value() && reclaimed->removed_parts == 1U ? 0 : 16;
 }
 
 [[nodiscard]] int run(const ChildConfig& config) {
@@ -272,8 +307,9 @@ private:
   }
   write_bytes(root / kManifestDirectoryName / std::string{kManifestLockFileName}, {});
   ObservingSyscalls syscalls{io::detail::system_posix_syscalls(), config.pause_after};
-  return config.compaction ? run_compaction(config, root, syscalls)
-                           : run_flush(config, root, syscalls);
+  return config.compaction || config.part_reclamation
+             ? run_compaction(config, root, syscalls, config.part_reclamation)
+             : run_flush(config, root, syscalls);
 }
 
 } // namespace

@@ -135,6 +135,7 @@ struct CrashChildOptions {
   bool reopen{false};
   bool reclaim{false};
   bool compaction{false};
+  bool part_reclamation{false};
   std::uint64_t target_segment_size{kSegmentSizeLimit};
   std::size_t maximum_sync_batch_requests{64U};
   std::size_t maximum_sync_batch_encoded_bytes{kMaximumRecordLength};
@@ -173,7 +174,7 @@ public:
       return common::make_unexpected(common::Status{common::StatusCode::kInvalidArgument,
                                                     "crash child requires a WAL directory"});
     }
-    if (options.reopen && options.reclaim) {
+    if ((options.reopen && options.reclaim) || (options.compaction && options.part_reclamation)) {
       return common::make_unexpected(
           common::Status{common::StatusCode::kInvalidArgument,
                          "crash child cannot request reopen and reclamation modes together"});
@@ -224,6 +225,8 @@ public:
                     options.reclaim ? "reclaim" : (options.reopen ? "reopen" : "create"));
     if (options.compaction) {
       append_argument(arguments, "--operation", "compaction");
+    } else if (options.part_reclamation) {
+      append_argument(arguments, "--operation", "part_reclamation");
     }
     append_argument(arguments, "--target-segment-size",
                     std::to_string(options.target_segment_size));
