@@ -1,7 +1,7 @@
 # Columnar Ingestion Design Guide
 
 > **Status: design guide; schema, canonical batch, codecs, retry directory, bounded mutable-head
-> generation, and bounded tablet publication implemented.**
+> generation, bounded tablet publication, and live single-tablet execution implemented.**
 > The identity/type/schema layer is documented in [logical schema foundation](schema-foundation.md),
 > and immutable vectors, batches, and byte codec in
 > [columnar memory model](columnar-memory-model.md). The pure in-memory WAL command layer is
@@ -9,8 +9,9 @@
 > identity primitive is documented in
 > [retry reservation directory](retry-reservation-directory.md), and the generation/publication
 > primitive in [mutable-head generation](mutable-head.md), and the tablet-wide boundary in
-> [tablet publication](tablet-publication.md). WAL submission, recovered state, replay, retry
-> pruning, schema switching, and flush handoff remain pending. The
+> [tablet publication](tablet-publication.md). Their blocking composition is documented in
+> [columnar append execution](columnar-append-execution.md). Recovered state, replay, retry pruning,
+> routing/admission, schema switching, and flush handoff remain pending. The
 > normative sources are
 > [columnar batch v1](../formats/columnar-batch-v1.md),
 > [columnar ingestion](../architecture/columnar-ingestion.md),

@@ -5,7 +5,9 @@
 > [ADR 0013](../adr/0013-wal-v1-format-and-recovery.md), and the snapshot invariants. The writer and
 > recovery paths implement the physical write, synchronization, verification, repair, and reopen
 > boundaries. The bounded commit coordinator implements `ASYNC` and `LOCAL_SYNC` completion and
-> group commit; no query service, transport acknowledgment path, or distributed mode exists.
+> group commit. The already-routed single-tablet append executor now waits for that physical
+> boundary and completes logical tablet/retry publication. No query service, recovery application,
+> transport acknowledgment path, or distributed mode exists.
 > This document does not strengthen guarantees beyond what a process, operating system, filesystem,
 > device, or future replica protocol can establish.
 

@@ -430,6 +430,7 @@ if(CHRONOS_BUILD_TESTS)
     chronos_ingest_tests
     tests/ingest/columnar_append_corruption_test.cpp
     tests/ingest/columnar_append_executor_header_self_contained.cpp
+    tests/ingest/columnar_append_executor_test.cpp
     tests/ingest/columnar_append_format_header_self_contained.cpp
     tests/ingest/columnar_append_header_self_contained.cpp
     tests/ingest/columnar_append_property_test.cpp
@@ -561,6 +562,7 @@ if(CHRONOS_BUILD_BENCHMARKS)
   add_executable(
     chronos_ingest_benchmarks
     benchmarks/ingest/columnar_append_benchmark.cpp
+    benchmarks/ingest/columnar_append_executor_benchmark.cpp
     benchmarks/ingest/tablet_state_benchmark.cpp
   )
   set_target_properties(chronos_ingest_benchmarks PROPERTIES CXX_EXTENSIONS OFF)

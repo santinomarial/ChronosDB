@@ -14,10 +14,10 @@ WAL physical codec, fixtures, tests, fuzz target, minimal blocking POSIX file/di
 the segmented writer, bounded commit coordinator, locked discovery and verification, explicit
 final-tail repair, replay-sink passes, existing-history reopen path, and read-only inspector now
 exist. Coordinator metrics and a deterministic process-kill crash-image harness exist. The first
-application-kind codec, a bounded process-local retry reservation directory, and a bounded live
-tablet publication owner exist independently of WAL submission; recovered state,
-replay/application, retry pruning, and the server-wide operational metrics/export path do not exist
-yet.
+application-kind codec, a bounded process-local retry reservation directory, a bounded live tablet
+publication owner, and their blocking single-tablet WAL execution path exist. Recovered state,
+replay/application, retry pruning, routing/admission, and the server-wide operational metrics/export
+path do not exist yet.
 Work should proceed in order unless an accepted ADR explains why a limited dependency must move
 earlier.
 
@@ -81,9 +81,9 @@ No phase passes because its code merely compiles. A phase passes only when its a
   `ASYNC`/`LOCAL_SYNC` completion, group commit, graceful drain, terminal propagation, and coordinator
   metric snapshots are implemented with deterministic tests. The subprocess crash harness exercises
   real host files across installation, append/sync, grouped acknowledgment, rotation, corruption,
-  repair, reopen, and locking. The first application-kind byte semantics are implemented, while
-  submission orchestration and logical state-machine application are not; the server-wide
-  operational metrics/export path does not exist.
+  repair, reopen, and locking. The first application-kind byte semantics and an already-routed live
+  single-tablet submission/publication path are implemented. Recovery application and the
+  server-wide operational metrics/export path do not exist.
 - **Scope:** implement WAL v1 segment lifecycle, append/grouping, explicitly named durability modes,
   acknowledgment boundaries, rotation, torn-tail handling, ordered replay, and idempotent
   single-node recovery.
@@ -111,9 +111,14 @@ No phase passes because its code merely compiles. A phase passes only when its a
   hidden row-version identity, sealing, concurrency/property tests, and focused microbenchmarks.
   The bounded tablet owner adds a live tablet retry table, whole-batch generation rotation,
   sealed-generation backpressure, and one outer generation/rows/position/retry publication with
-  deterministic concurrency tests and focused microbenchmarks. WAL submission orchestration,
-  recovered state, retry retention, ordered replay, schema switching, flush handoff, allocation
-  failpoints, and end-to-end Phase 4 benchmarks remain unimplemented.
+  deterministic concurrency tests and focused microbenchmarks. The blocking single-tablet executor
+  composes canonical command encoding, global retry reservation, bounded WAL admission, exact
+  durability completion, tablet publication, and global outcome commit; integration tests cover
+  both durability modes, retry outcomes, admission backpressure, and accepted-WAL failure, and a
+  real-filesystem microbenchmark keeps the full execution work enabled. Recovered state, retry
+  retention, ordered replay, routing/admission, per-row deduplication, schema switching, flush
+  handoff, allocation failpoints, and the wider end-to-end Phase 4 benchmark matrix remain
+  unimplemented.
 
 - **Scope:** typed immutable input batches; null/variable-width representation; append-only tablet heads; sealing; single shard-worker ownership; stable reader boundaries; idempotent ordered replay into heads.
 - **Explicit non-scope:** durable columnar parts, SQL execution, secondary indexes, general lock-free containers, live subscriptions, and a universal allocator.

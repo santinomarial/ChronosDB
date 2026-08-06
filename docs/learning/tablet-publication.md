@@ -2,8 +2,9 @@
 
 > **Status: bounded live tablet owner implemented.** `chronos_ingest::TabletState` composes the
 > mutable-head generation and retry-outcome primitives into one schema-bound, single-writer tablet
-> publication boundary. WAL submission, recovery/replay, retry pruning, active-schema changes,
-> routing, flush handoff, CSEG, and acknowledgment orchestration remain outside this library.
+> publication boundary. `execute_columnar_append` now composes it with live WAL submission and the
+> global retry directory. Recovery/replay, retry pruning, active-schema changes, routing, flush
+> handoff, CSEG, and transport acknowledgment remain outside this primitive.
 
 ## Purpose and boundary
 
@@ -16,10 +17,10 @@ outcomes exist. `TabletState` supplies that outer boundary:
 
 The class is a pure in-memory state owner. It accepts an already validated immutable
 `OwnedColumnarBatch`, its `RetryIdentity`, and its `ColumnarAppendMutationIdentity`. It does not
-encode or submit a WAL record. The integration layer must reserve the global retry identity, submit
-the accepted `COLUMNAR_APPEND` bytes, obtain the successful `(wal_id, record_sequence)`, publish the
-prepared tablet append, and then commit the exact returned outcome pointer into the global
-directory.
+encode or submit a WAL record. The implemented single-tablet executor reserves the global retry
+identity, submits the accepted `COLUMNAR_APPEND` bytes, obtains the successful
+`(wal_id, record_sequence)`, publishes the prepared tablet append, and then commits the exact
+returned outcome pointer into the global directory.
 
 ## Public interfaces and ownership
 
@@ -113,8 +114,10 @@ Status classification is deliberately narrow:
 - an outstanding append or failed state is `UNAVAILABLE`; and
 - impossible ownership/publication inconsistencies are `INTERNAL` and fail closed after WAL.
 
-The API does not acknowledge writes. Durability mode and response eligibility belong to the future
-orchestration that composes the WAL coordinator, tablet state, and global retry directory.
+The `TabletState` API does not acknowledge writes. The executor validates the WAL coordinator's
+exact requested/effective durability and covering frontier, then returns only after tablet and
+global retry publication. A future transport may treat that successful return as its logical
+response eligibility boundary.
 
 ## Complexity and tradeoffs
 
@@ -143,8 +146,10 @@ The public header compiles alone and the installed external consumer includes it
 
 The tests run in the ordinary, AddressSanitizer/UndefinedBehaviorSanitizer, and applicable
 ThreadSanitizer configurations. `chronos_ingest_benchmarks` separately measures first publication,
-outer snapshot acquisition, and topology-only rotation across declared batch sizes. These are local
-microbenchmarks excluding WAL I/O, global retry reservation, routing, admission, and acknowledgments.
+outer snapshot acquisition, and topology-only rotation across declared batch sizes. A separate
+single-tablet execution benchmark retains canonical encoding, global retry reservation, real WAL
+write or `fdatasync`, and tablet publication while excluding per-iteration WAL setup. All are local
+microbenchmarks; routing, catalog admission, transport, and recovery remain excluded.
 
 Likely review questions include:
 

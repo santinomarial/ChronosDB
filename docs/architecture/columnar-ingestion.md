@@ -7,9 +7,12 @@
 > pre-WAL capacity/descriptor preparation, batch-atomic materialization/publication, stable owning
 > snapshots, hidden row identity, and sealing. A bounded `chronos_ingest` tablet state now adds the
 > authoritative live tablet retry table, whole-batch generation switching, sealed-generation
-> backpressure, and joint rows/retry/applied-position publication. WAL submission orchestration,
-> recovered state, ordered replay, retry pruning, schema switching, and flush handoff remain
-> unimplemented. This document
+> backpressure, and joint rows/retry/applied-position publication. The blocking single-tablet
+> `execute_columnar_append` path now composes canonical encoding, global retry reservation, bounded
+> WAL admission, the requested `ASYNC` or `LOCAL_SYNC` completion, tablet publication, and exact
+> outcome-pointer commit. Catalog/routing admission, per-row deduplication, recovered state,
+> ordered replay, retry pruning, schema switching, and flush handoff remain unimplemented. This
+> document
 > fixes the logical state-machine and WAL command contracts for Phase 4; the physical
 > [WAL v1](../formats/wal-v1.md) framing and application envelope remain unchanged.
 
@@ -154,7 +157,9 @@ Only the tablet's owning shard worker mutates its state. The intended ordered tr
    consumers.
 
 The current WAL coordinator's completion proves only its named physical persistence boundary. The
-future tablet integration must add logical publication before an external success response. An
+implemented single-tablet executor adds logical publication and global retry commit before a new
+mutation returns success. A future transport must acknowledge only after that return and must
+define durability reporting for a matching retry, which performs no new WAL operation. An
 unexpected error after WAL success places the tablet in a failed state: it publishes nothing,
 acknowledges no logical success, stops accepting later mutations, and requires replay into fresh
 state. The durable command may therefore be unacknowledged and is recovered exactly once.
@@ -182,8 +187,9 @@ requires a separate proof and evidence.
 The current `chronos::ingest::RetryDirectory` is that correctness-first process-local primitive. It
 uses one mutex, requires an explicit entry bound, returns in-flight immediately instead of waiting,
 removes abandoned reservations only before their owner marks WAL I/O started, and stores the exact
-immutable outcome pointer supplied after publication. It intentionally has no pruning or recovery
-API yet and is not connected to WAL submission or tablet state. See the
+immutable outcome pointer supplied after publication. `execute_columnar_append` connects it to one
+already-routed `TabletState` and the WAL coordinator. It intentionally has no pruning or recovery
+API yet. See the
 [retry reservation directory guide](../learning/retry-reservation-directory.md).
 
 ## APPEND_ROWS semantics

@@ -38,7 +38,9 @@ validate_wal_commit(const wal::WalCommitResult& commit,
       append.record_start.wal_id != append.record_end.wal_id ||
       append.record_start.segment_number == 0U ||
       append.record_start.segment_number != append.record_end.segment_number ||
-      append.record_start.byte_offset >= append.record_end.byte_offset) {
+      append.record_start.byte_offset < wal::kSegmentHeaderSize ||
+      append.record_start.byte_offset >= append.record_end.byte_offset ||
+      append.record_end.byte_offset > wal::kSegmentSizeLimit) {
     return internal("WAL completion returned an invalid append position");
   }
   if (requested_durability == wal::WalDurabilityMode::kAsync) {
@@ -52,6 +54,9 @@ validate_wal_commit(const wal::WalCommitResult& commit,
   }
   if (!commit.synchronization_position.has_value() || !commit.durable_record_sequence.has_value() ||
       commit.synchronization_position->wal_id != append.record_start.wal_id ||
+      commit.synchronization_position->segment_number == 0U ||
+      commit.synchronization_position->byte_offset < wal::kSegmentHeaderSize ||
+      commit.synchronization_position->byte_offset > wal::kSegmentSizeLimit ||
       *commit.durable_record_sequence < append.record_sequence) {
     return internal("LOCAL_SYNC WAL completion does not cover the appended command");
   }
@@ -75,6 +80,10 @@ execute_columnar_append(const ColumnarAppendExecutionInput& input, RetryDirector
                         TabletState& tablet, wal::WalCommitCoordinator& wal_coordinator) {
   if (input.batch == nullptr) {
     return common::make_unexpected(invalid("columnar append execution requires an owning batch"));
+  }
+  if (input.durability != wal::WalDurabilityMode::kAsync &&
+      input.durability != wal::WalDurabilityMode::kLocalSync) {
+    return common::make_unexpected(invalid("unknown WAL durability mode"));
   }
 
   common::Result<TabletSnapshot> before = tablet.snapshot();

@@ -29,6 +29,9 @@ enum class ColumnarAppendExecutionKind : std::uint8_t {
 struct ColumnarAppendExecutionResult {
   ColumnarAppendExecutionKind kind{ColumnarAppendExecutionKind::kApplied};
   std::shared_ptr<const ColumnarAppendRetryOutcome> outcome;
+
+  // The mode requested by this attempt. For kMatchingRetry this is not an effective durability
+  // frontier: no new WAL operation occurs and wal_commit remains absent.
   wal::WalDurabilityMode requested_durability{wal::WalDurabilityMode::kAsync};
 
   // Present only for kApplied. A matching retry performs no WAL operation and returns the exact
@@ -36,10 +39,11 @@ struct ColumnarAppendExecutionResult {
   std::optional<wal::WalCommitResult> wal_commit;
 };
 
-// Executes one already routed, schema-resolved append on the tablet's single shard owner. The call
-// blocks for the WAL coordinator completion, publishes tablet state, and commits the exact outcome
-// into the global retry directory before returning success. It performs no routing, authorization,
-// event-time policy, per-row deduplication, schema activation, replay, or transport acknowledgment.
+// Executes one already routed, schema-resolved append on the tablet's single shard owner. A new
+// mutation blocks for the WAL coordinator completion, publishes tablet state, and commits the exact
+// outcome into the global retry directory before returning success. A matching retry performs no
+// WAL or tablet mutation. This function performs no routing, authorization, event-time policy,
+// per-row deduplication, schema activation, replay, or transport acknowledgment.
 [[nodiscard]] common::Result<ColumnarAppendExecutionResult>
 execute_columnar_append(const ColumnarAppendExecutionInput& input, RetryDirectory& retry_directory,
                         TabletState& tablet, wal::WalCommitCoordinator& wal_coordinator);

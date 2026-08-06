@@ -1,7 +1,9 @@
 # COLUMNAR_APPEND v1 Command Codec
 
-> **Status: implemented pure in-memory command layer.** This layer does not submit to the WAL,
+> **Status: implemented pure in-memory command layer.** The codec itself does not submit to the WAL,
 > reserve retry identities, route rows, mutate tablet state, or publish logical success. The
+> separate [single-tablet executor](columnar-append-execution.md) composes it with those implemented
+> live primitives. The
 > authoritative bytes remain [WAL v1](../formats/wal-v1.md),
 > [Columnar Batch v1](../formats/columnar-batch-v1.md), and
 > [ADR 0015](../adr/0015-columnar-batch-v1-and-wal-append-command.md).

@@ -3,7 +3,8 @@
 > **Status: bounded generation primitive implemented.** `chronos_head` implements one fixed-capacity,
 > schema-bound mutable generation, batch preparation, batch-atomic publication, stable owning
 > snapshots, hidden row metadata, and idempotent sealing. Tablet-level generation sets, retry-state
-> publication, WAL submission orchestration, replay, and flush handoff remain future integration.
+> publication. The single-tablet executor now composes live WAL submission above that boundary;
+> replay and flush handoff remain future integration.
 
 ## Purpose and boundary
 

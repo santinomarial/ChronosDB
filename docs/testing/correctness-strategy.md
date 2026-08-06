@@ -31,8 +31,11 @@
 > metadata, and concurrent acquire/release publication tests. The bounded tablet owner adds exact
 > rows/position/retry pointer publication, global-directory pointer handoff, whole-batch rotation,
 > sealed/retry backpressure, stable old epochs, a controlled pause between inner and outer
-> publication, and concurrent outer-epoch readers. WAL submission orchestration, recovered state,
-> retry retention, ordered replay, schema switching, flush handoff, and allocation failpoints remain
+> publication, and concurrent outer-epoch readers. The single-tablet executor adds real-WAL tests
+> for ordered `ASYNC` and `LOCAL_SYNC` publication and exact matching retries, plus deterministic
+> in-flight rejection, WAL admission rollback, invalid durability, and accepted-WAL I/O failure
+> that leaves both identity and tablet failed closed. Recovered state, retry retention, ordered
+> replay, routing/admission, schema switching, flush handoff, and allocation failpoints remain
 > unimplemented.
 > Query and distributed harnesses also remain planned for their roadmap phases.
 

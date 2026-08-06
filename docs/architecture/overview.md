@@ -114,7 +114,9 @@ The implemented `chronos_head` boundary supplies one fixed-capacity generation w
 validity/Boolean storage, stable fixed/variable arenas, an immutable publication pointer, and owning
 snapshots. The `chronos_ingest` tablet owner adds bounded whole-batch rotation and one owning outer
 publication for the active/sealed generation snapshots, applied position, and tablet retry table.
-Recovered state, schema switching, replay, and flush handoff remain future integration.
+The blocking single-tablet append executor composes those publications with the global retry
+directory and WAL coordinator. Recovered state, schema switching, replay, routing/admission, and
+flush handoff remain future integration.
 [ADR 0005](../adr/0005-columnar-heads-and-immutable-cseg-parts.md) fixes the head/part storage model.
 
 When a head reaches a policy threshold, the owner seals it. A sealed head accepts no more rows, remains readable by active snapshots, and becomes flush input. New writes continue in a new mutable generation so durable I/O does not stop the shard.
@@ -135,14 +137,17 @@ orders records by linearized admission, acknowledges `ASYNC` after complete writ
 those acknowledgment frontiers against strict recovery, repair, rotation, reopening, and process
 locking on real host files. The generic application envelope and first columnar application-kind
 in-memory codec are implemented according to the
-[accepted command contract](columnar-ingestion.md#columnar-append-command-v1); submission,
-state-machine application, and retry-state integration remain unimplemented.
+[accepted command contract](columnar-ingestion.md#columnar-append-command-v1). An already-routed
+single-tablet execution path now submits that payload, waits for the exact requested durability
+boundary, publishes rows/position/retry state, and commits the global retry pointer. Recovery
+application, routing/admission, and transport acknowledgment remain unimplemented.
 
 The [WAL recovery state machine](wal-recovery.md) verifies the complete physical history before
 semantic preflight or replay. It can explicitly truncate only a narrowly defined incomplete suffix
 of the highest active segment; bad checksums, discontinuities, and middle-of-log damage fail closed.
 WAL v1 establishes physical order before durable CSEG installation covers operations. The columnar
-logical mutation payload has an independent byte codec but no state-machine application path.
+logical mutation payload has an independent byte codec and a live in-memory application path, but
+no recovery state-machine path.
 Deployment tuning of the implemented
 group-commit limits, checkpoints, and old-segment removal remain future work.
 

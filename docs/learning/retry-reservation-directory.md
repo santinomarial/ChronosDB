@@ -1,9 +1,9 @@
 # Retry Reservation Directory
 
 > **Status: implemented process-local primitive.** The directory implements live, database-wide
-> reservation and committed-outcome lookup for `COLUMNAR_APPEND`. It is not yet connected to WAL
-> submission, tablet publication, recovery, routing, admission, or an idempotency-retention policy.
-> Those integration steps remain required before ChronosDB has an operational ingest path.
+> reservation and committed-outcome lookup for `COLUMNAR_APPEND`. The blocking single-tablet
+> executor connects it to WAL submission and tablet publication. Recovery, routing/admission, and
+> an idempotency-retention policy remain unimplemented.
 
 ## Purpose and public interface
 
@@ -20,8 +20,7 @@ already published by tablet state.
 - `RetryReservation::mark_wal_started` crosses the point after which automatic cancellation is
   forbidden;
 - `cancel_before_wal` removes a harmless pre-WAL rejection;
-- `commit_published` records the exact shared outcome object supplied by the future tablet
-  publication path; and
+- `commit_published` records the exact shared outcome object supplied by tablet publication; and
 - `metrics` reports the configured bound, current state counts, and successful-reservation high
   water mark.
 
@@ -105,10 +104,10 @@ for `N` retained identities. Metrics collection is `O(N)` and holds the same mut
 states. Current entry count is explicitly bounded, and no throughput claim is made.
 
 There is no standalone microbenchmark for this unit because it introduced no performance
-optimization or format hot path. Phase 4 measurement must eventually cover lookup latency,
-contention, allocation count, retained memory, retry-hit mix, and end-to-end ingestion with digest,
-WAL, publication, and durability work still enabled. Evidence from that workload can justify a
-partitioned or hash-based implementation later.
+optimization or format hot path. The single-tablet executor microbenchmark keeps digest, WAL,
+publication, and durability work enabled, but the wider Phase 4 matrix must still cover lookup
+contention, allocation count, retained memory, and retry-hit mix. Evidence from that workload can
+justify a partitioned or hash-based implementation later.
 
 ## Verification strategy
 
@@ -123,11 +122,12 @@ target.
 
 ## Deferred integration
 
-The directory alone does not provide exactly-once ingestion. Remaining Phase 4 work includes
-schema/routing admission, per-row deduplication checks, bounded head capacity, WAL coordinator
-submission, batch-atomic tablet publication, fresh-state replay, failure ownership, retention and
-pruning, and crash reconciliation. In particular, startup must reconstruct committed retry entries
-in global WAL order before publishing recovered database state.
+The directory alone does not provide exactly-once ingestion. The live executor now composes bounded
+head capacity, WAL coordinator submission, batch-atomic tablet publication, and post-WAL failure
+ownership for one already-routed tablet. Remaining Phase 4 work includes schema/routing admission,
+per-row deduplication checks, fresh-state replay, retention and pruning, and crash reconciliation.
+In particular, startup must reconstruct committed retry entries in global WAL order before
+publishing recovered database state.
 
 ## Likely review questions
 
