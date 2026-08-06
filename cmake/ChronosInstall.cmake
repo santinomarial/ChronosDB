@@ -14,6 +14,7 @@ function(chronos_configure_installation)
       chronos_wal
       chronos_head
       chronos_ingest
+      chronos_manifest
       chronosctl
       chronos-csegdump
       chronos-waldump

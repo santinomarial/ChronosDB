@@ -21,7 +21,7 @@ cmake_minimum_required(VERSION 3.25)
 project(ChronosIngestConsumer LANGUAGES CXX)
 find_package(ChronosDB 0.1 CONFIG REQUIRED)
 add_executable(consumer main.cpp)
-target_link_libraries(consumer PRIVATE chronos::cseg chronos::head chronos::ingest)
+target_link_libraries(consumer PRIVATE chronos::cseg chronos::head chronos::ingest chronos::manifest)
 target_compile_features(consumer PRIVATE cxx_std_23)
 set(consumer_sanitizers "")
 if(CHRONOS_TEST_ENABLE_ASAN)
@@ -64,6 +64,9 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/ingest/retry_directory.hpp>
 #include <chronos/ingest/sha256.hpp>
 #include <chronos/ingest/tablet_state.hpp>
+#include <chronos/manifest/format.hpp>
+#include <chronos/manifest/layout.hpp>
+#include <chronos/manifest/types.hpp>
 #include <chronos/wal/application.hpp>
 
 #include <array>
@@ -147,6 +150,8 @@ int main() {
       .maximum_sealed_generations = 2U,
       .maximum_retry_entries = 8U};
   static_assert(chronos::ingest::columnar_append_v1::kCommandHeaderLength == 160U);
+  static_assert(chronos::manifest::format::kFileHeaderLength == 256U);
+  const auto manifest_layout = chronos::manifest::plan_manifest_v1_layout({});
   return execute != nullptr && recover != nullptr && register_schema != nullptr &&
                  limits.max_columns == 4096U &&
                  head_capacity.row_capacity == 4U &&
@@ -155,6 +160,7 @@ int main() {
                  retry_directory.has_value() &&
                  retry_directory->metrics().maximum_entries == 8U && !decoded.has_value() &&
                  cseg_layout.has_value() && cseg_layout->total_length == 1'248U &&
+                 manifest_layout.has_value() && manifest_layout->total_length == 264U &&
                  stored_page.has_value() && stored_page->bytes().size() == 1U &&
                  plain_page.has_value() && plain_page->bytes().size() == 1U &&
                  encoded_cseg_page.has_value() && encoded_cseg_page->bytes().size() == 1U &&

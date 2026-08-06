@@ -105,6 +105,12 @@ set(installed_ingest_header
 if(NOT EXISTS "${installed_ingest_header}")
   message(FATAL_ERROR "staging install omitted ${installed_ingest_header}")
 endif()
+
+set(installed_manifest_layout_header
+    "${install_prefix}/${CHRONOS_TEST_INSTALL_INCLUDEDIR}/chronos/manifest/layout.hpp")
+if(NOT EXISTS "${installed_manifest_layout_header}")
+  message(FATAL_ERROR "staging install omitted ${installed_manifest_layout_header}")
+endif()
 set(installed_ingest_recovery_header
     "${install_prefix}/${CHRONOS_TEST_INSTALL_INCLUDEDIR}/chronos/ingest/columnar_append_recovery.hpp")
 if(NOT EXISTS "${installed_ingest_recovery_header}")
@@ -149,6 +155,11 @@ endif()
 string(FIND "${installed_targets_contents}" "chronos::ingest" ingest_target_offset)
 if(ingest_target_offset EQUAL -1)
   message(FATAL_ERROR "installed CMake package omitted chronos::ingest")
+endif()
+
+string(FIND "${installed_targets_contents}" "chronos::manifest" manifest_target_offset)
+if(manifest_target_offset EQUAL -1)
+  message(FATAL_ERROR "installed CMake package omitted chronos::manifest")
 endif()
 
 string(FIND "${installed_targets_contents}" "chronos::head" head_target_offset)

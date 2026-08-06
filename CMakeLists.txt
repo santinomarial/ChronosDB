@@ -277,6 +277,25 @@ chronos_set_project_warnings(chronos_ingest)
 chronos_enable_sanitizers(chronos_ingest)
 chronos_enable_static_analysis(chronos_ingest)
 
+add_library(chronos_manifest src/manifest/layout.cpp)
+add_library(chronos::manifest ALIAS chronos_manifest)
+set_target_properties(chronos_manifest PROPERTIES EXPORT_NAME manifest)
+set_target_properties(chronos_manifest PROPERTIES CXX_EXTENSIONS OFF)
+target_compile_features(chronos_manifest PUBLIC cxx_std_23)
+target_include_directories(
+  chronos_manifest
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+)
+target_link_libraries(
+  chronos_manifest
+  PUBLIC chronos::cseg chronos::ingest chronos::schema chronos::wal
+)
+chronos_set_project_warnings(chronos_manifest)
+chronos_enable_sanitizers(chronos_manifest)
+chronos_enable_static_analysis(chronos_manifest)
+
 add_executable(chronosctl tools/chronosctl/main.cpp)
 set_target_properties(chronosctl PROPERTIES CXX_EXTENSIONS OFF)
 target_compile_features(chronosctl PRIVATE cxx_std_23)
@@ -561,6 +580,23 @@ if(CHRONOS_BUILD_TESTS)
   chronos_enable_sanitizers(chronos_ingest_allocation_failure_tests)
   chronos_enable_static_analysis(chronos_ingest_allocation_failure_tests)
   gtest_discover_tests(chronos_ingest_allocation_failure_tests DISCOVERY_TIMEOUT 30)
+
+  add_executable(
+    chronos_manifest_tests
+    tests/manifest/format_header_self_contained.cpp
+    tests/manifest/format_test.cpp
+    tests/manifest/layout_header_self_contained.cpp
+    tests/manifest/layout_test.cpp
+    tests/manifest/types_header_self_contained.cpp
+    tests/manifest/types_test.cpp
+  )
+  set_target_properties(chronos_manifest_tests PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_manifest_tests PRIVATE cxx_std_23)
+  target_link_libraries(chronos_manifest_tests PRIVATE chronos::manifest GTest::gtest_main)
+  chronos_set_project_warnings(chronos_manifest_tests)
+  chronos_enable_sanitizers(chronos_manifest_tests)
+  chronos_enable_static_analysis(chronos_manifest_tests)
+  gtest_discover_tests(chronos_manifest_tests DISCOVERY_TIMEOUT 30)
 
   add_executable(
     chronos_head_tests
