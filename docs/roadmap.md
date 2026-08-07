@@ -418,8 +418,11 @@ No phase passes because its code merely compiles. A phase passes only when its a
   expose user columns independently. ADR 0037 and the twentieth increment add exact checked
   fixed-width numeric/decimal/temporal CAST, lazy common-type COALESCE, and negative-safe
   `time_bucket` kernels with bound lowering, scalar differential, hostile/failure/fuzz/benchmark,
-  and consumer evidence. Variable-width scalar output, broader relational lowering, optimizer
-  rules, hidden row-version columns, complete multi-part/head composition, base/delta merge and
+  and consumer evidence. ADR 0038 and the twenty-first increment add borrowed STRING/SYMBOL
+  expression rows, exact two-pass canonical offset/value admission, direct ASCII LOWER/UPPER,
+  text casts, lazy COALESCE, and failure/fuzz/benchmark/consumer evidence without per-row payload
+  allocation. Text predicates, broader relational lowering, optimizer rules, hidden row-version
+  columns, complete multi-part/head composition, base/delta merge and
   row-version resolution, mapped/asynchronous providers, shared pin credit, scheduling, spill, and
   full scalar-engine differential plan execution are unimplemented.
 

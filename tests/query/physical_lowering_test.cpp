@@ -154,6 +154,17 @@ private:
       .value();
 }
 
+[[nodiscard]] std::string cell_text(const VectorChunk& chunk, const std::size_t column,
+                                    const std::size_t row) {
+  const common::ByteView bytes =
+      chunk.cell({.column_ordinal = column, .selected_row = row}).value().bytes().value();
+  std::string result;
+  result.reserve(bytes.size());
+  for (const std::byte byte : bytes)
+    result.push_back(static_cast<char>(std::to_integer<unsigned char>(byte)));
+  return result;
+}
+
 TEST(PhysicalSelectLoweringTest, LowersWhereProjectionAndLimitIntoExactStageOrder) {
   BoundSqlSelect select = bind("SELECT value + 2 AS adjusted, 7 AS constant FROM metrics "
                                "WHERE flag AND value BETWEEN 1 AND 9 LIMIT 2");
@@ -219,6 +230,22 @@ TEST(PhysicalSelectLoweringTest, ExecutesCheckedCastsLazyCoalesceAndTimeBucket) 
   EXPECT_EQ(std::get<std::int64_t>(cell_value(step.chunk()->chunk(), 1U, 0U).storage()), 0);
   EXPECT_EQ(std::get<std::int64_t>(cell_value(step.chunk()->chunk(), 2U, 0U).storage()),
             -1'000'000'000);
+}
+
+TEST(PhysicalSelectLoweringTest, ExecutesTextCastCaseAndLazyCoalesce) {
+  BoundSqlSelect select =
+      bind("SELECT lower(CAST('ChRoNoS' AS SYMBOL)) AS lowered, "
+           "upper(coalesce(CAST(NULL AS STRING), 'fallback')) AS chosen FROM metrics LIMIT 1");
+  PhysicalPipelinePlan plan = lower_bound_sql_select(select).value();
+  EXPECT_EQ(plan.output_columns()[0].type.kind(), schema::LogicalTypeKind::kSymbol);
+  EXPECT_EQ(plan.output_columns()[1].type.kind(), schema::LogicalTypeKind::kString);
+
+  QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+  auto pipeline = plan.instantiate(std::make_unique<OneChunkSource>(input(resources))).value();
+  auto step = pipeline->next(resources).value();
+  ASSERT_EQ(step.kind(), PhysicalOperatorStepKind::kChunk);
+  EXPECT_EQ(cell_text(step.chunk()->chunk(), 0U, 0U), "chronos");
+  EXPECT_EQ(cell_text(step.chunk()->chunk(), 1U, 0U), "FALLBACK");
 }
 
 TEST(PhysicalSelectLoweringTest, PropagatesRuntimeCastFailureAndCancelsThePipeline) {
@@ -295,8 +322,7 @@ TEST(PhysicalSelectLoweringPropertyTest, FixedWidthKernelsMatchTheScalarOracle) 
 
 TEST(PhysicalSelectLoweringTest, RejectsUnsupportedRelationalAndScalarSurfaces) {
   BoundSqlSelect text_cast = bind("SELECT CAST('value' AS SYMBOL) AS converted FROM metrics");
-  EXPECT_EQ(lower_bound_sql_select(text_cast).error().code(),
-            SqlDiagnosticCode::kUnsupportedSyntax);
+  EXPECT_TRUE(lower_bound_sql_select(text_cast).has_value());
   BoundSqlSelect ordered = bind("SELECT value FROM metrics ORDER BY value");
   EXPECT_EQ(lower_bound_sql_select(ordered).error().code(), SqlDiagnosticCode::kUnsupportedSyntax);
   BoundSqlSelect aggregate = bind("SELECT sum(value) AS total FROM metrics");

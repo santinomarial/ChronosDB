@@ -56,3 +56,9 @@ sanitizers, installation, and isolated cast/COALESCE measurement.
 - [ADR 0035](0035-bounded-checked-vector-expression-programs.md)
 - [ADR 0036](0036-bound-select-to-physical-pipeline-lowering.md)
 - [Vector expression guide](../learning/vector-expression-programs.md)
+
+## Subsequent decision
+
+[ADR 0038](0038-borrowed-variable-width-vector-materialization.md) adds the deliberately deferred
+STRING/SYMBOL cast and ASCII case path with exact two-pass sizing. It does not alter this ADR's
+fixed-width kernels or permit a row-scalar fallback.

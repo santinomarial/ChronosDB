@@ -60,7 +60,7 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_t size) {
   if (size == 0U)
     return 0;
-  static constexpr std::array<std::string_view, 13> kSql{
+  static constexpr std::array<std::string_view, 16> kSql{
       "SELECT value + 1 AS v FROM metrics",
       "SELECT value FROM metrics WHERE value BETWEEN 1 AND 9 LIMIT 2",
       "SELECT value IN (1, NULL, 3) AS v FROM metrics",
@@ -73,6 +73,9 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
       "SELECT time_bucket(INTERVAL '1 second', ts) AS v FROM metrics",
       "SELECT UUID '00000000-0000-0000-0000-000000000001' = "
       "UUID '00000000-0000-0000-0000-000000000002' AS v FROM metrics",
+      "SELECT lower(CAST('ChRoNoS' AS SYMBOL)) AS v FROM metrics",
+      "SELECT upper(coalesce(CAST(NULL AS STRING), 'fallback')) AS v FROM metrics",
+      "SELECT lower('a') = 'a' AS v FROM metrics",
       "EXPLAIN SELECT value FROM metrics",
       "EXPLAIN ANALYZE SELECT value FROM metrics"};
   auto parsed = chronos::query::parse_sql_v1_select(kSql[data[0] % kSql.size()]);

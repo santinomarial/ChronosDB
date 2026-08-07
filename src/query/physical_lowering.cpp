@@ -371,6 +371,17 @@ private:
                                expression.span()));
         break;
       }
+      if ((expression.text() == "lower" || expression.text() == "upper") &&
+          expression.children().size() == 1U) {
+        static_cast<void>(emit(
+            VectorUnaryExpression{
+                .operation = expression.text() == "lower" ? VectorUnaryOperation::kLowerAscii
+                                                          : VectorUnaryOperation::kUpperAscii,
+                .operand_instruction =
+                    append(expression.children().front(), type_of(expression.children().front()))},
+            expression.span()));
+        break;
+      }
       if (expression.text() == "coalesce" && !expression.children().empty()) {
         const schema::LogicalType& result_type = type_of(expression);
         std::optional<std::size_t> accumulated;

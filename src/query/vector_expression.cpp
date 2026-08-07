@@ -15,6 +15,7 @@
 #include <memory>
 #include <new>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -64,7 +65,12 @@ namespace {
 [[nodiscard]] bool supported_leaf(const schema::LogicalTypeKind kind) noexcept {
   return numeric(kind) || kind == schema::LogicalTypeKind::kBool ||
          kind == schema::LogicalTypeKind::kDate || kind == schema::LogicalTypeKind::kTimestampNs ||
-         kind == schema::LogicalTypeKind::kUuid;
+         kind == schema::LogicalTypeKind::kUuid || kind == schema::LogicalTypeKind::kString ||
+         kind == schema::LogicalTypeKind::kSymbol;
+}
+
+[[nodiscard]] bool text(const schema::LogicalTypeKind kind) noexcept {
+  return kind == schema::LogicalTypeKind::kString || kind == schema::LogicalTypeKind::kSymbol;
 }
 
 [[nodiscard]] const schema::LogicalType* scalar_type(const ScalarValue& value) noexcept {
@@ -147,6 +153,8 @@ namespace {
     break;
   case schema::LogicalTypeKind::kSymbol:
   case schema::LogicalTypeKind::kString:
+    valid = std::holds_alternative<std::string>(value.storage());
+    break;
   case schema::LogicalTypeKind::kBinary:
     break;
   }
@@ -175,12 +183,21 @@ unary_shape(const VectorUnaryExpression& operation, const VectorExpressionShape&
     return operand;
   case VectorUnaryOperation::kIsNull:
   case VectorUnaryOperation::kIsNotNull:
+    if (text(operand.type.kind())) {
+      return common::make_unexpected(
+          invalid("text-dependent fixed-width vector operations are not supported yet"));
+    }
     return VectorExpressionShape{
         .type = schema::LogicalType::create(schema::LogicalTypeKind::kBool).value(),
         .nullable = false};
   case VectorUnaryOperation::kAbsolute:
     if (!numeric(operand.type.kind()))
       return common::make_unexpected(invalid("ABS requires a numeric operand"));
+    return operand;
+  case VectorUnaryOperation::kLowerAscii:
+  case VectorUnaryOperation::kUpperAscii:
+    if (!text(operand.type.kind()))
+      return common::make_unexpected(invalid("ASCII case conversion requires STRING or SYMBOL"));
     return operand;
   }
   return common::make_unexpected(invalid("vector unary operation is invalid"));
@@ -192,7 +209,7 @@ cast_shape(const VectorCastExpression& operation, const VectorExpressionShape& o
   const schema::LogicalTypeKind target = operation.target_type.kind();
   if (!supported_leaf(source) || !supported_leaf(target) ||
       (!(numeric(source) && numeric(target)) && !(temporal(source) && temporal(target)) &&
-       operand.type != operation.target_type)) {
+       !(text(source) && text(target)) && operand.type != operation.target_type)) {
     return common::make_unexpected(invalid("vector CAST conversion is not supported"));
   }
   return VectorExpressionShape{.type = operation.target_type, .nullable = operand.nullable};
@@ -222,6 +239,10 @@ binary_shape(const VectorBinaryExpression& operation, const VectorExpressionShap
           invalid("vector time_bucket requires INT64 width and TIMESTAMP_NS point"));
     }
     return VectorExpressionShape{.type = right.type, .nullable = left.nullable || right.nullable};
+  }
+  if (text(left.type.kind()) || text(right.type.kind())) {
+    return common::make_unexpected(
+        invalid("text-dependent fixed-width vector operations are not supported yet"));
   }
   const bool nullable = left.nullable || right.nullable;
   if (operation.operation == VectorBinaryOperation::kAnd ||
@@ -817,6 +838,100 @@ private:
       values_{};
 };
 
+class VariableRowEvaluator {
+public:
+  VariableRowEvaluator(const VectorExpression& expression, const VectorChunk& input,
+                       const std::uint32_t physical_row) noexcept
+      : expression_(expression), input_(input), physical_row_(physical_row) {}
+
+  [[nodiscard]] common::Result<detail::BorrowedVariableExpressionValue> run() {
+    return evaluate(expression_.instructions().size() - 1U, 1U);
+  }
+
+private:
+  using Value = detail::BorrowedVariableExpressionValue;
+
+  [[nodiscard]] common::Result<Value> remember(const std::size_t index,
+                                               common::Result<Value> value) {
+    if (!value.has_value())
+      return common::make_unexpected(value.error());
+    values_[index] = *value;
+    return *value;
+  }
+
+  [[nodiscard]] common::Result<Value> evaluate(const std::size_t index, const std::size_t depth) {
+    if (depth > expression_.maximum_depth() || index >= kMaximumVectorExpressionInstructions)
+      return common::make_unexpected(internal("variable vector evaluation depth is invalid"));
+    if (const auto* cached = std::get_if<Value>(&values_[index]); cached != nullptr)
+      return *cached;
+
+    const VectorExpressionInstruction& instruction = expression_.instructions()[index];
+    if (const auto* source = std::get_if<VectorInputExpression>(&instruction); source != nullptr) {
+      const columnar::PhysicalColumnView* column = input_.column(source->input_column_ordinal);
+      if (column == nullptr)
+        return common::make_unexpected(invalid("vector expression source ordinal is out of range"));
+      common::Result<columnar::ColumnCellView> cell = column->cell(physical_row_);
+      if (!cell.has_value())
+        return common::make_unexpected(cell.error());
+      if (cell->is_null())
+        return remember(index, Value{.is_null = true,
+                                     .bytes = {},
+                                     .transform = detail::VariableByteTransform::kIdentity});
+      common::Result<common::ByteView> bytes = cell->bytes();
+      if (!bytes.has_value())
+        return common::make_unexpected(bytes.error());
+      return remember(index, Value{.is_null = false,
+                                   .bytes = *bytes,
+                                   .transform = detail::VariableByteTransform::kIdentity});
+    }
+    if (const auto* constant = std::get_if<VectorConstantExpression>(&instruction);
+        constant != nullptr) {
+      if (constant->value.is_null())
+        return remember(index, Value{.is_null = true,
+                                     .bytes = {},
+                                     .transform = detail::VariableByteTransform::kIdentity});
+      const auto* string = std::get_if<std::string>(&constant->value.storage());
+      if (string == nullptr)
+        return common::make_unexpected(internal("variable vector constant is not text"));
+      return remember(index,
+                      Value{.is_null = false,
+                            .bytes = std::as_bytes(std::span{string->data(), string->size()}),
+                            .transform = detail::VariableByteTransform::kIdentity});
+    }
+    if (const auto* unary = std::get_if<VectorUnaryExpression>(&instruction); unary != nullptr) {
+      common::Result<Value> operand = evaluate(unary->operand_instruction, depth + 1U);
+      if (!operand.has_value())
+        return common::make_unexpected(operand.error());
+      if (operand->is_null)
+        return remember(index, *operand);
+      if (unary->operation == VectorUnaryOperation::kLowerAscii)
+        operand->transform = detail::VariableByteTransform::kLowerAscii;
+      else if (unary->operation == VectorUnaryOperation::kUpperAscii)
+        operand->transform = detail::VariableByteTransform::kUpperAscii;
+      else
+        return common::make_unexpected(internal("variable vector unary operation is invalid"));
+      return remember(index, *operand);
+    }
+    if (const auto* cast = std::get_if<VectorCastExpression>(&instruction); cast != nullptr) {
+      return remember(index, evaluate(cast->operand_instruction, depth + 1U));
+    }
+    if (const auto* binary = std::get_if<VectorBinaryExpression>(&instruction);
+        binary != nullptr && binary->operation == VectorBinaryOperation::kCoalesce) {
+      common::Result<Value> left = evaluate(binary->left_instruction, depth + 1U);
+      if (!left.has_value())
+        return common::make_unexpected(left.error());
+      return remember(index, !left->is_null ? std::move(left)
+                                            : evaluate(binary->right_instruction, depth + 1U));
+    }
+    return common::make_unexpected(internal("variable vector instruction is invalid"));
+  }
+
+  const VectorExpression& expression_;
+  const VectorChunk& input_;
+  std::uint32_t physical_row_;
+  std::array<std::variant<std::monostate, Value>, kMaximumVectorExpressionInstructions> values_{};
+};
+
 } // namespace
 
 // The adjacent sizes describe distinct validated properties of one expression program.
@@ -964,6 +1079,17 @@ common::Result<ScalarValue> evaluate_vector_expression_row(const VectorExpressio
   if (physical_row >= input.physical_row_count())
     return common::make_unexpected(invalid("vector expression physical row is out of range"));
   return RowEvaluator{expression, input, physical_row}.run();
+}
+
+common::Result<BorrowedVariableExpressionValue>
+evaluate_variable_vector_expression_row(const VectorExpression& expression,
+                                        const VectorChunk& input,
+                                        const std::uint32_t physical_row) {
+  if (!expression.result_shape().type.is_variable_width())
+    return common::make_unexpected(invalid("vector expression result is not variable-width"));
+  if (physical_row >= input.physical_row_count())
+    return common::make_unexpected(invalid("vector expression physical row is out of range"));
+  return VariableRowEvaluator{expression, input, physical_row}.run();
 }
 
 } // namespace detail

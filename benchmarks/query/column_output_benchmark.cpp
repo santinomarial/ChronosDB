@@ -9,6 +9,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -31,6 +32,32 @@ inline constexpr std::size_t kBenchmarkMemoryLimit = std::size_t{256U} * 1024U *
   }
   return columnar::OwnedPhysicalColumn::create(
              {.type = schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value(),
+              .nullable = false,
+              .row_count = rows,
+              .null_count = 0U},
+             std::move(buffers))
+      .value();
+}
+
+void append_u32(std::vector<std::byte>& bytes, const std::uint32_t value) {
+  for (std::size_t byte = 0U; byte < sizeof(value); ++byte)
+    bytes.push_back(static_cast<std::byte>((value >> (byte * 8U)) & 0xffU));
+}
+
+[[nodiscard]] columnar::OwnedPhysicalColumn make_text_column(const std::uint32_t rows) {
+  static constexpr std::string_view kValue{"AbCdEfGhIjKlMnOp"};
+  columnar::ColumnVectorBuffers buffers;
+  buffers.offsets.reserve((static_cast<std::size_t>(rows) + 1U) * sizeof(std::uint32_t));
+  buffers.values.reserve(static_cast<std::size_t>(rows) * kValue.size());
+  append_u32(buffers.offsets, 0U);
+  for (std::uint32_t row = 0U; row < rows; ++row) {
+    for (const char value : kValue)
+      buffers.values.push_back(static_cast<std::byte>(value));
+    append_u32(buffers.offsets,
+               static_cast<std::uint32_t>((static_cast<std::size_t>(row) + 1U) * kValue.size()));
+  }
+  return columnar::OwnedPhysicalColumn::create(
+             {.type = schema::LogicalType::create(schema::LogicalTypeKind::kString).value(),
               .nullable = false,
               .row_count = rows,
               .null_count = 0U},
@@ -175,6 +202,53 @@ mixed_source(const QueryResourceContext& resources, const std::uint32_t rows,
                                                    .left_instruction = 0U,
                                                    .right_instruction = 2U});
   return VectorExpression::create(std::move(instructions)).value();
+}
+
+[[nodiscard]] VectorExpression variable_scalar_expression() {
+  const schema::LogicalType string_type =
+      schema::LogicalType::create(schema::LogicalTypeKind::kString).value();
+  const schema::LogicalType symbol_type =
+      schema::LogicalType::create(schema::LogicalTypeKind::kSymbol).value();
+  std::vector<VectorExpressionInstruction> instructions;
+  instructions.emplace_back(
+      VectorInputExpression{.input_column_ordinal = 0U, .type = string_type, .nullable = false});
+  instructions.emplace_back(VectorUnaryExpression{.operation = VectorUnaryOperation::kLowerAscii,
+                                                  .operand_instruction = 0U});
+  instructions.emplace_back(
+      VectorCastExpression{.operand_instruction = 1U, .target_type = symbol_type});
+  return VectorExpression::create(std::move(instructions)).value();
+}
+
+[[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>>
+text_expression_source(const QueryResourceContext& resources, const std::uint32_t rows,
+                       const std::uint32_t selection_stride) {
+  std::vector<columnar::OwnedPhysicalColumn> columns;
+  columns.push_back(make_text_column(rows));
+  common::Result<VectorChunk> chunk = VectorChunk::create(
+      std::move(columns),
+      VectorSelection::from_indices(rows, selected_rows(rows, selection_stride)).value(),
+      {.maximum_rows = rows,
+       .maximum_columns = 1U,
+       .maximum_buffer_bytes = kBenchmarkMemoryLimit,
+       .maximum_retained_buffer_bytes = kBenchmarkMemoryLimit});
+  if (!chunk.has_value())
+    return common::make_unexpected(chunk.error());
+  common::Result<QueryMemoryReservation> reservation =
+      resources.reserve(chunk->retained_buffer_bytes() + 4'096U);
+  if (!reservation.has_value())
+    return common::make_unexpected(reservation.error());
+  common::Result<AccountedVectorChunk> accounted =
+      AccountedVectorChunk::create(std::move(*chunk), std::move(*reservation), resources);
+  if (!accounted.has_value())
+    return common::make_unexpected(accounted.error());
+  std::vector<ColumnOutputPosition> positions;
+  positions.emplace_back(ComputedColumnOutputPosition{variable_scalar_expression()});
+  return ColumnOutputOperator::create(std::make_unique<OneChunkSource>(std::move(*accounted)),
+                                      std::move(positions),
+                                      {.maximum_rows = rows,
+                                       .maximum_columns = 1U,
+                                       .maximum_buffer_bytes = kBenchmarkMemoryLimit,
+                                       .maximum_retained_buffer_bytes = kBenchmarkMemoryLimit});
 }
 
 [[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>>
@@ -478,6 +552,64 @@ void materialize_fixed_width_cast_and_coalesce(benchmark::State& state) {
 }
 
 BENCHMARK(materialize_fixed_width_cast_and_coalesce)
+    ->Args({64, 1})
+    ->Args({1'024, 1})
+    ->Args({4'096, 1})
+    ->Args({1'024, 4})
+    ->Args({4'096, 4});
+
+void materialize_variable_width_case_and_cast(benchmark::State& state) {
+  const auto rows = static_cast<std::uint32_t>(state.range(0));
+  const auto selection_stride = static_cast<std::uint32_t>(state.range(1));
+  QueryResourceContext resources = QueryResourceContext::create(kBenchmarkMemoryLimit).value();
+  std::size_t measured_allocations = 0U;
+  std::size_t measured_bytes = 0U;
+  {
+    auto pipeline = text_expression_source(resources, rows, selection_stride);
+    if (!pipeline.has_value()) {
+      state.SkipWithError(pipeline.error().to_string());
+      return;
+    }
+    benchmark_support::ScopedAllocationCounting counting;
+    auto step = (*pipeline)->next(resources);
+    measured_allocations = counting.stop().allocations;
+    if (!step.has_value() || step->chunk() == nullptr) {
+      state.SkipWithError(step.has_value() ? "variable scalar output returned no chunk"
+                                           : step.error().to_string());
+      return;
+    }
+    measured_bytes = step->chunk()->chunk().buffer_bytes();
+  }
+
+  for ([[maybe_unused]] auto iteration : state) {
+    state.PauseTiming();
+    auto pipeline = text_expression_source(resources, rows, selection_stride);
+    if (!pipeline.has_value()) {
+      state.SkipWithError(pipeline.error().to_string());
+      return;
+    }
+    state.ResumeTiming();
+    auto step = (*pipeline)->next(resources);
+    benchmark::DoNotOptimize(step);
+    if (!step.has_value()) {
+      state.SkipWithError(step.error().to_string());
+      return;
+    }
+  }
+  const std::size_t selected = (static_cast<std::size_t>(rows) + selection_stride - 1U) /
+                               static_cast<std::size_t>(selection_stride);
+  state.SetItemsProcessed(static_cast<std::int64_t>(state.iterations()) *
+                          static_cast<std::int64_t>(selected));
+  state.SetBytesProcessed(static_cast<std::int64_t>(state.iterations()) *
+                          static_cast<std::int64_t>(measured_bytes));
+  state.counters["instructions"] = 3.0;
+  state.counters["physical_rows"] = static_cast<double>(rows);
+  state.counters["pull_allocations"] = static_cast<double>(measured_allocations);
+  state.counters["selection_density"] = 1.0 / static_cast<double>(selection_stride);
+  state.SetLabel("LOWER(STRING) then CAST to SYMBOL; 16-byte values; source construction excluded");
+}
+
+BENCHMARK(materialize_variable_width_case_and_cast)
     ->Args({64, 1})
     ->Args({1'024, 1})
     ->Args({4'096, 1})

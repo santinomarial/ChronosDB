@@ -6,6 +6,7 @@
 #include "query/vector_expression_internal.hpp"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -160,14 +161,19 @@ struct OutputPlan {
   std::size_t retained_charge{};
 };
 
-[[nodiscard]] std::uint32_t source_row(const VectorChunk& input, const OutputPlan plan,
+struct ColumnOutputPlan {
+  OutputPlan output;
+  std::array<std::uint32_t, kMaximumColumnOutputWidth> computed_variable_value_bytes{};
+};
+
+[[nodiscard]] std::uint32_t source_row(const VectorChunk& input, const OutputPlan& plan,
                                        const std::uint32_t output_row) noexcept {
   return plan.compact_selected_rows ? input.selection().indices()[output_row] : output_row;
 }
 
 [[nodiscard]] common::Result<std::size_t>
 variable_value_bytes(const VectorChunk& input, const columnar::PhysicalColumnView& column,
-                     const OutputPlan plan) {
+                     const OutputPlan& plan) {
   std::size_t total = 0U;
   for (std::uint32_t output_row = 0U; output_row < plan.physical_row_count; ++output_row) {
     const common::Result<columnar::ColumnCellView> cell =
@@ -193,7 +199,7 @@ variable_value_bytes(const VectorChunk& input, const columnar::PhysicalColumnVie
 }
 
 [[nodiscard]] common::Result<std::size_t>
-add_source_column_bytes(const VectorChunk& input, const std::size_t ordinal, const OutputPlan plan,
+add_source_column_bytes(const VectorChunk& input, const std::size_t ordinal, const OutputPlan& plan,
                         const VectorChunkLimits limits, std::size_t total) {
   const columnar::PhysicalColumnView* column = input.column(ordinal);
   if (column == nullptr) {
@@ -267,7 +273,7 @@ add_source_column_bytes(const VectorChunk& input, const std::size_t ordinal, con
 }
 
 [[nodiscard]] common::Result<std::size_t> add_constant_column_bytes(const ScalarValue& value,
-                                                                    const OutputPlan plan,
+                                                                    const OutputPlan& plan,
                                                                     const VectorChunkLimits limits,
                                                                     std::size_t total) {
   const common::Result<void> valid = validate_constant(value);
@@ -337,8 +343,9 @@ add_source_column_bytes(const VectorChunk& input, const std::size_t ordinal, con
 
 [[nodiscard]] common::Result<std::size_t>
 add_expression_column_bytes(const VectorExpression& expression, const VectorChunk& input,
-                            const OutputPlan plan, const VectorChunkLimits limits,
-                            std::size_t total) {
+                            const OutputPlan& plan, const VectorChunkLimits limits,
+                            std::size_t total, std::uint32_t& planned_variable_value_bytes) {
+  planned_variable_value_bytes = 0U;
   const common::Result<void> valid = detail::validate_vector_expression_input(expression, input);
   if (!valid.has_value())
     return common::make_unexpected(valid.error());
@@ -349,6 +356,46 @@ add_expression_column_bytes(const VectorExpression& expression, const VectorChun
     if (!next.has_value())
       return next;
     total = *next;
+  }
+  if (shape.type.is_variable_width()) {
+    common::Result<std::size_t> offset_count =
+        add(plan.physical_row_count, 1U, "computed column offset count overflowed");
+    if (!offset_count.has_value())
+      return offset_count;
+    common::Result<std::size_t> offset_bytes = bytes_for(
+        *offset_count, sizeof(std::uint32_t), "computed column offset buffer size overflowed");
+    if (!offset_bytes.has_value())
+      return offset_bytes;
+    common::Result<std::size_t> next =
+        add(total, *offset_bytes, "computed column output size overflowed");
+    if (!next.has_value())
+      return next;
+    total = *next;
+    std::size_t value_bytes = 0U;
+    for (std::uint32_t output_row = 0U; output_row < plan.physical_row_count; ++output_row) {
+      common::Result<detail::BorrowedVariableExpressionValue> value =
+          detail::evaluate_variable_vector_expression_row(expression, input,
+                                                          source_row(input, plan, output_row));
+      if (!value.has_value())
+        return common::make_unexpected(value.error());
+      if (value->is_null)
+        continue;
+      common::Result<std::size_t> value_next =
+          add(value_bytes, value->bytes.size(), "computed variable output size overflowed");
+      if (!value_next.has_value())
+        return value_next;
+      value_bytes = *value_next;
+    }
+    if (value_bytes > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
+      return common::make_unexpected(exhausted("computed variable output exceeds UINT32 offsets"));
+    }
+    planned_variable_value_bytes = static_cast<std::uint32_t>(value_bytes);
+    next = add(total, value_bytes, "computed column output size overflowed");
+    if (!next.has_value())
+      return next;
+    if (*next > limits.maximum_buffer_bytes)
+      return common::make_unexpected(exhausted("column output exceeds the buffer-byte limit"));
+    return *next;
   }
   common::Result<std::size_t> value_bytes =
       shape.type.kind() == schema::LogicalTypeKind::kBool
@@ -364,6 +411,16 @@ add_expression_column_bytes(const VectorExpression& expression, const VectorChun
   if (*next > limits.maximum_buffer_bytes)
     return common::make_unexpected(exhausted("column output exceeds the buffer-byte limit"));
   return *next;
+}
+
+[[nodiscard]] std::byte transformed_byte(const std::byte input,
+                                         const detail::VariableByteTransform transform) noexcept {
+  unsigned char value = std::to_integer<unsigned char>(input);
+  if (transform == detail::VariableByteTransform::kLowerAscii && value >= 'A' && value <= 'Z')
+    value = static_cast<unsigned char>(value - 'A' + 'a');
+  else if (transform == detail::VariableByteTransform::kUpperAscii && value >= 'a' && value <= 'z')
+    value = static_cast<unsigned char>(value - 'a' + 'A');
+  return static_cast<std::byte>(value);
 }
 
 [[nodiscard]] common::Result<OutputPlan>
@@ -436,7 +493,7 @@ plan_output(const VectorChunk& input, const std::vector<std::size_t>& input_colu
   return plan;
 }
 
-[[nodiscard]] common::Result<OutputPlan>
+[[nodiscard]] common::Result<ColumnOutputPlan>
 plan_output(const VectorChunk& input, const std::vector<ColumnOutputPosition>& positions,
             const VectorChunkLimits limits) {
   const common::Result<void> valid_limits = validate_limits(limits);
@@ -451,9 +508,9 @@ plan_output(const VectorChunk& input, const std::vector<ColumnOutputPosition>& p
       compact ? input.selected_row_count() : static_cast<std::size_t>(input.physical_row_count());
   if (output_rows > limits.maximum_rows)
     return common::make_unexpected(exhausted("column output exceeds the configured row limit"));
-  OutputPlan plan{.physical_row_count = static_cast<std::uint32_t>(output_rows),
-                  .compact_selected_rows = compact,
-                  .retained_charge = 0U};
+  ColumnOutputPlan plan{.output = {.physical_row_count = static_cast<std::uint32_t>(output_rows),
+                                   .compact_selected_rows = compact,
+                                   .retained_charge = 0U}};
   common::Result<std::size_t> total = bytes_for(compact ? output_rows : 0U, sizeof(std::uint32_t),
                                                 "column output selection size overflowed");
   if (!total.has_value())
@@ -461,16 +518,19 @@ plan_output(const VectorChunk& input, const std::vector<ColumnOutputPosition>& p
   if (*total > limits.maximum_buffer_bytes)
     return common::make_unexpected(exhausted("column output exceeds the buffer-byte limit"));
 
-  for (const ColumnOutputPosition& position : positions) {
+  for (std::size_t position_index = 0U; position_index < positions.size(); ++position_index) {
+    const ColumnOutputPosition& position = positions[position_index];
     if (const auto* source = std::get_if<SourceColumnOutputPosition>(&position);
         source != nullptr) {
-      total = add_source_column_bytes(input, source->input_column_ordinal, plan, limits, *total);
+      total =
+          add_source_column_bytes(input, source->input_column_ordinal, plan.output, limits, *total);
     } else if (const auto* constant = std::get_if<ConstantColumnOutputPosition>(&position);
                constant != nullptr) {
-      total = add_constant_column_bytes(constant->value, plan, limits, *total);
+      total = add_constant_column_bytes(constant->value, plan.output, limits, *total);
     } else if (const auto* computed = std::get_if<ComputedColumnOutputPosition>(&position);
                computed != nullptr) {
-      total = add_expression_column_bytes(computed->expression, input, plan, limits, *total);
+      total = add_expression_column_bytes(computed->expression, input, plan.output, limits, *total,
+                                          plan.computed_variable_value_bytes[position_index]);
     } else {
       return common::make_unexpected(internal("column output position is invalid"));
     }
@@ -506,7 +566,7 @@ plan_output(const VectorChunk& input, const std::vector<ColumnOutputPosition>& p
     return common::make_unexpected(
         exhausted("column output exceeds the configured retained-byte limit"));
   }
-  plan.retained_charge = *charge;
+  plan.output.retained_charge = *charge;
   return plan;
 }
 
@@ -532,7 +592,7 @@ void store_unsigned_le(std::vector<std::byte>& bytes, const std::size_t offset,
 
 [[nodiscard]] common::Result<columnar::OwnedPhysicalColumn>
 materialize_column(const VectorChunk& input, const std::size_t input_column_ordinal,
-                   const OutputPlan plan) {
+                   const OutputPlan& plan) {
   const columnar::PhysicalColumnView* source = input.column(input_column_ordinal);
   if (source == nullptr) {
     return common::make_unexpected(
@@ -688,7 +748,7 @@ materialize_column(const VectorChunk& input, const std::size_t input_column_ordi
 }
 
 [[nodiscard]] common::Result<columnar::OwnedPhysicalColumn>
-materialize_constant(const ScalarValue& value, const OutputPlan plan) {
+materialize_constant(const ScalarValue& value, const OutputPlan& plan) {
   const common::Result<void> valid = validate_constant(value);
   if (!valid.has_value())
     return common::make_unexpected(valid.error());
@@ -757,11 +817,50 @@ materialize_constant(const ScalarValue& value, const OutputPlan plan) {
 
 [[nodiscard]] common::Result<columnar::OwnedPhysicalColumn>
 materialize_expression(const VectorExpression& expression, const VectorChunk& input,
-                       const OutputPlan plan) {
+                       const OutputPlan& plan, const std::uint32_t planned_variable_value_bytes) {
   const VectorExpressionShape& shape = expression.result_shape();
   columnar::ColumnVectorBuffers buffers;
   if (shape.nullable)
     buffers.validity.resize(columnar::bitmap_size(plan.physical_row_count));
+  if (shape.type.is_variable_width()) {
+    const std::size_t offset_count = static_cast<std::size_t>(plan.physical_row_count) + 1U;
+    buffers.offsets.resize(offset_count * sizeof(std::uint32_t));
+    buffers.values.resize(planned_variable_value_bytes);
+
+    std::size_t cursor = 0U;
+    std::uint32_t null_count = 0U;
+    for (std::uint32_t output_row = 0U; output_row < plan.physical_row_count; ++output_row) {
+      common::Result<detail::BorrowedVariableExpressionValue> value =
+          detail::evaluate_variable_vector_expression_row(expression, input,
+                                                          source_row(input, plan, output_row));
+      if (!value.has_value())
+        return common::make_unexpected(value.error());
+      if (value->is_null) {
+        ++null_count;
+      } else {
+        if (shape.nullable)
+          set_bit(buffers.validity, output_row);
+        if (value->bytes.size() > buffers.values.size() - cursor) {
+          return common::make_unexpected(
+              internal("computed variable output exceeded its admitted size"));
+        }
+        for (const std::byte byte : value->bytes)
+          buffers.values[cursor++] = transformed_byte(byte, value->transform);
+      }
+      store_u32_le(buffers.offsets,
+                   (static_cast<std::size_t>(output_row) + 1U) * sizeof(std::uint32_t),
+                   static_cast<std::uint32_t>(cursor));
+    }
+    if (cursor != buffers.values.size()) {
+      return common::make_unexpected(
+          internal("computed variable output size changed after admission"));
+    }
+    return columnar::OwnedPhysicalColumn::create({.type = shape.type,
+                                                  .nullable = shape.nullable,
+                                                  .row_count = plan.physical_row_count,
+                                                  .null_count = null_count},
+                                                 std::move(buffers));
+  }
   const std::size_t width = fixed_width(shape.type.kind());
   if (shape.type.kind() == schema::LogicalTypeKind::kBool)
     buffers.values.resize(columnar::bitmap_size(plan.physical_row_count));
@@ -843,28 +942,31 @@ materialize_output(const QueryResourceContext& resources, const VectorChunk& inp
 materialize_output(const QueryResourceContext& resources, const VectorChunk& input,
                    const std::vector<ColumnOutputPosition>& positions,
                    const VectorChunkLimits limits) {
-  common::Result<OutputPlan> plan = plan_output(input, positions, limits);
+  common::Result<ColumnOutputPlan> plan = plan_output(input, positions, limits);
   if (!plan.has_value())
     return common::make_unexpected(plan.error());
-  common::Result<QueryMemoryReservation> reservation = resources.reserve(plan->retained_charge);
+  common::Result<QueryMemoryReservation> reservation =
+      resources.reserve(plan->output.retained_charge);
   if (!reservation.has_value())
     return common::make_unexpected(reservation.error());
 
   try {
     std::vector<columnar::OwnedPhysicalColumn> columns;
     columns.reserve(positions.size());
-    for (const ColumnOutputPosition& position : positions) {
+    for (std::size_t position_index = 0U; position_index < positions.size(); ++position_index) {
+      const ColumnOutputPosition& position = positions[position_index];
       common::Result<columnar::OwnedPhysicalColumn> column =
           common::make_unexpected(internal("column output position is invalid"));
       if (const auto* source = std::get_if<SourceColumnOutputPosition>(&position);
           source != nullptr) {
-        column = materialize_column(input, source->input_column_ordinal, *plan);
+        column = materialize_column(input, source->input_column_ordinal, plan->output);
       } else if (const auto* constant = std::get_if<ConstantColumnOutputPosition>(&position);
                  constant != nullptr) {
-        column = materialize_constant(constant->value, *plan);
+        column = materialize_constant(constant->value, plan->output);
       } else if (const auto* computed = std::get_if<ComputedColumnOutputPosition>(&position);
                  computed != nullptr) {
-        column = materialize_expression(computed->expression, input, *plan);
+        column = materialize_expression(computed->expression, input, plan->output,
+                                        plan->computed_variable_value_bytes[position_index]);
       }
       if (!column.has_value())
         return common::make_unexpected(column.error());
@@ -872,8 +974,9 @@ materialize_output(const QueryResourceContext& resources, const VectorChunk& inp
     }
 
     common::Result<VectorSelection> selection =
-        plan->compact_selected_rows ? VectorSelection::all(plan->physical_row_count)
-                                    : VectorSelection::from_indices(plan->physical_row_count, {});
+        plan->output.compact_selected_rows
+            ? VectorSelection::all(plan->output.physical_row_count)
+            : VectorSelection::from_indices(plan->output.physical_row_count, {});
     if (!selection.has_value())
       return common::make_unexpected(selection.error());
     common::Result<VectorChunk> output =

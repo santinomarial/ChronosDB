@@ -56,12 +56,11 @@ TEST(VectorExpressionTest, RejectsHostileProgramsAndUnsupportedLeafTypes) {
                 .error()
                 .code(),
             common::StatusCode::kInvalidArgument);
-  EXPECT_EQ(VectorExpression::create(
-                {VectorConstantExpression{
-                    ScalarValue::text(type(schema::LogicalTypeKind::kString), "x").value()}})
-                .error()
-                .code(),
-            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(
+      VectorExpression::create({VectorConstantExpression{ScalarValue::binary({std::byte{0x01}})}})
+          .error()
+          .code(),
+      common::StatusCode::kInvalidArgument);
   EXPECT_EQ(VectorExpression::create({VectorUnaryExpression{.operation = VectorUnaryOperation::kNot,
                                                             .operand_instruction = 0U}})
                 .error()
@@ -94,6 +93,49 @@ TEST(VectorExpressionTest, RejectsHostileProgramsAndUnsupportedLeafTypes) {
                 .error()
                 .code(),
             common::StatusCode::kResourceExhausted);
+}
+
+TEST(VectorExpressionTest, ValidatesBorrowedVariableWidthPrograms) {
+  const schema::LogicalType string = type(schema::LogicalTypeKind::kString);
+  const schema::LogicalType symbol = type(schema::LogicalTypeKind::kSymbol);
+  std::vector<VectorExpressionInstruction> instructions;
+  instructions.emplace_back(
+      VectorInputExpression{.input_column_ordinal = 1U, .type = string, .nullable = true});
+  instructions.emplace_back(VectorUnaryExpression{.operation = VectorUnaryOperation::kUpperAscii,
+                                                  .operand_instruction = 0U});
+  instructions.emplace_back(
+      VectorConstantExpression{ScalarValue::text(string, "fallback").value()});
+  instructions.emplace_back(VectorBinaryExpression{.operation = VectorBinaryOperation::kCoalesce,
+                                                   .left_instruction = 1U,
+                                                   .right_instruction = 2U});
+  instructions.emplace_back(VectorCastExpression{.operand_instruction = 3U, .target_type = symbol});
+  VectorExpression expression = VectorExpression::create(std::move(instructions)).value();
+  EXPECT_EQ(expression.result_shape().type, symbol);
+  EXPECT_FALSE(expression.result_shape().nullable);
+
+  EXPECT_EQ(
+      VectorExpression::create({VectorConstantExpression{ScalarValue::text(string, "x").value()},
+                                VectorUnaryExpression{.operation = VectorUnaryOperation::kAbsolute,
+                                                      .operand_instruction = 0U}})
+          .error()
+          .code(),
+      common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(
+      VectorExpression::create({VectorConstantExpression{ScalarValue::text(string, "x").value()},
+                                VectorConstantExpression{ScalarValue::text(string, "y").value()},
+                                VectorBinaryExpression{.operation = VectorBinaryOperation::kEqual,
+                                                       .left_instruction = 0U,
+                                                       .right_instruction = 1U}})
+          .error()
+          .code(),
+      common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(
+      VectorExpression::create({VectorConstantExpression{ScalarValue::text(string, "x").value()},
+                                VectorUnaryExpression{.operation = VectorUnaryOperation::kIsNull,
+                                                      .operand_instruction = 0U}})
+          .error()
+          .code(),
+      common::StatusCode::kInvalidArgument);
 }
 
 TEST(VectorExpressionTest, ValidatesCastCoalesceAndTimeBucketShapes) {

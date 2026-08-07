@@ -141,6 +141,10 @@
 > Fixed-width CAST, lazy COALESCE, and `time_bucket` now have hostile-shape, runtime failure/
 > cancellation, allocation-failure, 257-row scalar-differential, fuzz, sanitizer, benchmark, and
 > installed-consumer coverage. Variable-width computed scalar output remains outside this claim.
+> Borrowed variable-width output now covers STRING/SYMBOL casts, lazy COALESCE, and ASCII
+> LOWER/UPPER with exact offset/value admission, nullable-source fallback, canonical-output,
+> allocation-failure, lowering-fuzz, sanitizer, benchmark, and installed-consumer evidence. Text
+> comparisons and other text-dependent fixed-width results remain outside this claim.
 
 ## Test types
 

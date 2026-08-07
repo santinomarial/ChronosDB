@@ -92,8 +92,8 @@ credit lifetime and should be adopted only with profile evidence. Typed constant
 ownership boundary through the separate
 [typed-constant output guide](typed-constant-output-materialization.md). Checked computed
 numeric/Boolean expressions now share the boundary through the
-[vector-expression guide](vector-expression-programs.md); fixed-width bound-SQL lowering now
-builds on that boundary, while variable-width computed output remains next.
+[vector-expression guide](vector-expression-programs.md); fixed- and variable-width bound-SQL
+lowering now build on that boundary, while text predicates and aggregates remain next.
 
 ## Likely review questions
 
