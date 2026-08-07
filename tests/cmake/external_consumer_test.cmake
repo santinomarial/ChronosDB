@@ -85,6 +85,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/query/lexer.hpp>
 #include <chronos/query/literal.hpp>
 #include <chronos/query/parser.hpp>
+#include <chronos/query/column_output.hpp>
 #include <chronos/query/cseg_scan.hpp>
 #include <chronos/query/database_cseg_scan.hpp>
 #include <chronos/query/head_scan.hpp>
@@ -326,6 +327,12 @@ int main() {
           std::unique_ptr<chronos::query::PhysicalOperator>, std::vector<std::size_t>);
   const CreateColumnSubsetFunction create_column_subset =
       &chronos::query::ColumnSubsetOperator::create;
+  using CreateSourceColumnOutputFunction =
+      chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
+          std::unique_ptr<chronos::query::PhysicalOperator>, std::vector<std::size_t>,
+          chronos::query::VectorChunkLimits);
+  const CreateSourceColumnOutputFunction create_source_column_output =
+      &chronos::query::SourceColumnOutputOperator::create;
   using CreateTimestampRangeFilterFunction =
       chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
           std::unique_ptr<chronos::query::PhysicalOperator>, std::size_t,
@@ -554,7 +561,8 @@ int main() {
                  query_resources.has_value() &&
                  query_resources->available_memory_bytes() == 1'024U &&
                  physical_end.kind() == chronos::query::PhysicalOperatorStepKind::kEnd &&
-                 create_column_subset != nullptr && create_timestamp_range_filter != nullptr &&
+                 create_column_subset != nullptr && create_source_column_output != nullptr &&
+                 create_timestamp_range_filter != nullptr &&
                  timestamp_range.matches(0) && create_head_scan != nullptr &&
                  create_exact_head_scan != nullptr &&
                  create_limit != nullptr &&

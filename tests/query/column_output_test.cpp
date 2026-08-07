@@ -1,0 +1,411 @@
+#include "chronos/common/status.hpp"
+#include "chronos/query/column_output.hpp"
+#include "chronos/query/value.hpp"
+#include "chronos/schema/logical_type.hpp"
+
+#include <algorithm>
+#include <bit>
+#include <cstddef>
+#include <cstdint>
+#include <gtest/gtest.h>
+#include <memory>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+namespace chronos::query {
+namespace {
+
+[[nodiscard]] schema::LogicalType type(const schema::LogicalTypeKind kind) {
+  return schema::LogicalType::create(kind).value();
+}
+
+void append_u32(std::vector<std::byte>& bytes, const std::uint32_t value) {
+  for (std::size_t index = 0U; index < sizeof(value); ++index)
+    bytes.push_back(static_cast<std::byte>((value >> (index * 8U)) & 0xffU));
+}
+
+[[nodiscard]] columnar::OwnedPhysicalColumn
+int64_column(const std::span<const std::int64_t> values) {
+  columnar::ColumnVectorBuffers buffers;
+  buffers.values.resize(values.size() * sizeof(std::int64_t));
+  for (std::size_t row = 0U; row < values.size(); ++row) {
+    const std::uint64_t bits = std::bit_cast<std::uint64_t>(values[row]);
+    for (std::size_t byte = 0U; byte < sizeof(bits); ++byte) {
+      buffers.values[row * sizeof(bits) + byte] =
+          static_cast<std::byte>((bits >> (byte * 8U)) & 0xffU);
+    }
+  }
+  return columnar::OwnedPhysicalColumn::create(
+             {.type = type(schema::LogicalTypeKind::kInt64),
+              .nullable = false,
+              .row_count = static_cast<std::uint32_t>(values.size()),
+              .null_count = 0U},
+             std::move(buffers))
+      .value();
+}
+
+[[nodiscard]] columnar::OwnedPhysicalColumn string_column() {
+  columnar::ColumnVectorBuffers buffers;
+  buffers.validity = {std::byte{0x0d}};
+  for (const std::uint32_t offset : {0U, 1U, 1U, 4U, 5U})
+    append_u32(buffers.offsets, offset);
+  for (const char value : std::string_view{"acccd"})
+    buffers.values.push_back(static_cast<std::byte>(value));
+  return columnar::OwnedPhysicalColumn::create({.type = type(schema::LogicalTypeKind::kString),
+                                                .nullable = true,
+                                                .row_count = 4U,
+                                                .null_count = 1U},
+                                               std::move(buffers))
+      .value();
+}
+
+[[nodiscard]] columnar::OwnedPhysicalColumn bool_column() {
+  return columnar::OwnedPhysicalColumn::create(
+             {.type = type(schema::LogicalTypeKind::kBool),
+              .nullable = true,
+              .row_count = 4U,
+              .null_count = 1U},
+             {.validity = {std::byte{0x0b}}, .offsets = {}, .values = {std::byte{0x09}}})
+      .value();
+}
+
+[[nodiscard]] std::vector<columnar::OwnedPhysicalColumn> sample_columns() {
+  std::vector<columnar::OwnedPhysicalColumn> columns;
+  columns.push_back(int64_column(std::vector<std::int64_t>{10, 20, 30, 40}));
+  columns.push_back(string_column());
+  columns.push_back(bool_column());
+  return columns;
+}
+
+[[nodiscard]] AccountedVectorChunk
+accounted_chunk(const QueryResourceContext& resources,
+                std::vector<columnar::OwnedPhysicalColumn> columns,
+                std::vector<std::uint32_t> selection, const std::size_t charge = 4'096U) {
+  VectorChunk chunk =
+      VectorChunk::create(std::move(columns),
+                          VectorSelection::from_indices(4U, std::move(selection)).value())
+          .value();
+  return AccountedVectorChunk::create(std::move(chunk), resources.reserve(charge).value(),
+                                      resources)
+      .value();
+}
+
+class OneChunkSource final : public PhysicalOperator {
+public:
+  explicit OneChunkSource(AccountedVectorChunk chunk) : chunk_(std::move(chunk)) {}
+
+  [[nodiscard]] common::Result<PhysicalOperatorStep>
+  next(const QueryResourceContext& resources) override {
+    const common::Result<void> active = resources.check_cancelled();
+    if (!active.has_value())
+      return common::make_unexpected(active.error());
+    if (!chunk_.has_value())
+      return PhysicalOperatorStep::end();
+    AccountedVectorChunk chunk = std::move(*chunk_);
+    chunk_.reset();
+    return PhysicalOperatorStep::chunk(std::move(chunk));
+  }
+
+private:
+  std::optional<AccountedVectorChunk> chunk_;
+};
+
+class EmptySource final : public PhysicalOperator {
+public:
+  [[nodiscard]] common::Result<PhysicalOperatorStep> next(const QueryResourceContext&) override {
+    return PhysicalOperatorStep::end();
+  }
+};
+
+[[nodiscard]] std::int64_t i64(const VectorChunk& chunk, const std::size_t column,
+                               const std::size_t row) {
+  const common::ByteView bytes =
+      chunk.cell({.column_ordinal = column, .selected_row = row}).value().bytes().value();
+  std::uint64_t bits = 0U;
+  for (std::size_t byte = 0U; byte < bytes.size(); ++byte)
+    bits |= static_cast<std::uint64_t>(std::to_integer<std::uint8_t>(bytes[byte])) << (byte * 8U);
+  return std::bit_cast<std::int64_t>(bits);
+}
+
+[[nodiscard]] std::string text(const VectorChunk& chunk, const std::size_t column,
+                               const std::size_t row) {
+  const common::ByteView bytes =
+      chunk.cell({.column_ordinal = column, .selected_row = row}).value().bytes().value();
+  std::string result;
+  result.reserve(bytes.size());
+  for (const std::byte value : bytes)
+    result.push_back(static_cast<char>(std::to_integer<unsigned char>(value)));
+  return result;
+}
+
+TEST(SourceColumnOutputOperatorTest, ReordersDuplicatesAndCompactsSelectedRows) {
+  QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+  auto source =
+      std::make_unique<OneChunkSource>(accounted_chunk(resources, sample_columns(), {0U, 2U, 3U}));
+  auto output = SourceColumnOutputOperator::create(std::move(source), {1U, 0U, 1U, 2U});
+  ASSERT_TRUE(output.has_value()) << output.error().to_string();
+
+  common::Result<PhysicalOperatorStep> step = (*output)->next(resources);
+  ASSERT_TRUE(step.has_value()) << step.error().to_string();
+  ASSERT_EQ(step->kind(), PhysicalOperatorStepKind::kChunk);
+  const VectorChunk& chunk = step->chunk()->chunk();
+  EXPECT_EQ(chunk.physical_row_count(), 3U);
+  EXPECT_EQ(chunk.selected_row_count(), 3U);
+  EXPECT_TRUE(chunk.selection().is_identity());
+  ASSERT_EQ(chunk.column_count(), 4U);
+  EXPECT_EQ(chunk.column(0U)->type().kind(), schema::LogicalTypeKind::kString);
+  EXPECT_EQ(chunk.column(1U)->type().kind(), schema::LogicalTypeKind::kInt64);
+  EXPECT_TRUE(chunk.column(2U)->nullable());
+  EXPECT_EQ(chunk.column(3U)->type().kind(), schema::LogicalTypeKind::kBool);
+  EXPECT_EQ(text(chunk, 0U, 0U), "a");
+  EXPECT_EQ(text(chunk, 0U, 1U), "ccc");
+  EXPECT_EQ(text(chunk, 2U, 2U), "d");
+  EXPECT_EQ(i64(chunk, 1U, 0U), 10);
+  EXPECT_EQ(i64(chunk, 1U, 1U), 30);
+  EXPECT_EQ(i64(chunk, 1U, 2U), 40);
+  EXPECT_TRUE(chunk.cell({.column_ordinal = 3U, .selected_row = 0U})->boolean().value());
+  EXPECT_TRUE(chunk.cell({.column_ordinal = 3U, .selected_row = 1U})->is_null());
+  EXPECT_TRUE(chunk.cell({.column_ordinal = 3U, .selected_row = 2U})->boolean().value());
+  EXPECT_NE(chunk.column(0U)->values().data(), chunk.column(2U)->values().data());
+  EXPECT_GE(step->chunk()->charged_memory_bytes(), chunk.retained_buffer_bytes());
+  EXPECT_GT(resources.reserved_memory_bytes(), 0U);
+
+  step = PhysicalOperatorStep::end();
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  EXPECT_FALSE(resources.is_cancelled());
+  step = (*output)->next(resources);
+  ASSERT_TRUE(step.has_value());
+  EXPECT_EQ(step->kind(), PhysicalOperatorStepKind::kEnd);
+  EXPECT_EQ((*output)->next(resources)->kind(), PhysicalOperatorStepKind::kEnd);
+}
+
+TEST(SourceColumnOutputOperatorTest, PreservesEmptyProgressAndZeroColumnCardinality) {
+  {
+    QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+    auto output =
+        SourceColumnOutputOperator::create(
+            std::make_unique<OneChunkSource>(accounted_chunk(resources, sample_columns(), {})),
+            {2U, 1U, 2U})
+            .value();
+    auto step = output->next(resources);
+    ASSERT_TRUE(step.has_value()) << step.error().to_string();
+    ASSERT_EQ(step->kind(), PhysicalOperatorStepKind::kChunk);
+    EXPECT_EQ(step->chunk()->chunk().physical_row_count(), 4U);
+    EXPECT_EQ(step->chunk()->chunk().selected_row_count(), 0U);
+    EXPECT_EQ(step->chunk()->chunk().column_count(), 3U);
+    EXPECT_FALSE(step->chunk()->chunk().selection().is_identity());
+    EXPECT_TRUE(step->chunk()->chunk().column(0U)->cell(2U)->is_null());
+  }
+  {
+    QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+    auto output =
+        SourceColumnOutputOperator::create(std::make_unique<OneChunkSource>(accounted_chunk(
+                                               resources, sample_columns(), {1U, 3U})),
+                                           {})
+            .value();
+    auto step = output->next(resources);
+    ASSERT_TRUE(step.has_value()) << step.error().to_string();
+    ASSERT_EQ(step->kind(), PhysicalOperatorStepKind::kChunk);
+    EXPECT_EQ(step->chunk()->chunk().physical_row_count(), 2U);
+    EXPECT_EQ(step->chunk()->chunk().selected_row_count(), 2U);
+    EXPECT_EQ(step->chunk()->chunk().column_count(), 0U);
+  }
+}
+
+TEST(SourceColumnOutputOperatorTest, RejectsConfigurationAndRuntimeLimitsWithoutLeakingCredit) {
+  EXPECT_EQ(SourceColumnOutputOperator::create({}, {}).error().code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(
+      SourceColumnOutputOperator::create(std::make_unique<EmptySource>(), {}, {.maximum_rows = 0U})
+          .error()
+          .code(),
+      common::StatusCode::kInvalidArgument);
+  std::vector<std::size_t> oversized_capacity;
+  oversized_capacity.reserve(kMaximumSourceColumnOutputWidth + 1U);
+  oversized_capacity.push_back(0U);
+  EXPECT_EQ(SourceColumnOutputOperator::create(std::make_unique<EmptySource>(),
+                                               std::move(oversized_capacity))
+                .error()
+                .code(),
+            common::StatusCode::kResourceExhausted);
+
+  {
+    QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+    auto output =
+        SourceColumnOutputOperator::create(
+            std::make_unique<OneChunkSource>(accounted_chunk(resources, sample_columns(), {0U})),
+            {3U})
+            .value();
+    const auto failed = output->next(resources);
+    ASSERT_FALSE(failed.has_value());
+    EXPECT_EQ(failed.error().code(), common::StatusCode::kOutOfRange);
+    EXPECT_TRUE(resources.is_cancelled());
+    EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  }
+  {
+    QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+    auto output =
+        SourceColumnOutputOperator::create(std::make_unique<OneChunkSource>(accounted_chunk(
+                                               resources, sample_columns(), {0U, 1U})),
+                                           {0U}, {.maximum_rows = 1U})
+            .value();
+    const auto failed = output->next(resources);
+    ASSERT_FALSE(failed.has_value());
+    EXPECT_EQ(failed.error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  }
+  {
+    QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+    auto output =
+        SourceColumnOutputOperator::create(std::make_unique<OneChunkSource>(accounted_chunk(
+                                               resources, sample_columns(), {0U, 1U})),
+                                           {}, {.maximum_buffer_bytes = 1U})
+            .value();
+    const auto failed = output->next(resources);
+    ASSERT_FALSE(failed.has_value());
+    EXPECT_EQ(failed.error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  }
+  {
+    QueryResourceContext resources = QueryResourceContext::create(4'096U).value();
+    auto output =
+        SourceColumnOutputOperator::create(std::make_unique<OneChunkSource>(accounted_chunk(
+                                               resources, sample_columns(), {0U, 1U}, 4'096U)),
+                                           {0U})
+            .value();
+    const auto failed = output->next(resources);
+    ASSERT_FALSE(failed.has_value());
+    EXPECT_EQ(failed.error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  }
+  {
+    QueryResourceContext owner = QueryResourceContext::create(1U << 20U).value();
+    QueryResourceContext impostor = QueryResourceContext::create(1U << 20U).value();
+    auto output =
+        SourceColumnOutputOperator::create(
+            std::make_unique<OneChunkSource>(accounted_chunk(owner, sample_columns(), {0U, 1U})),
+            {0U})
+            .value();
+    const auto failed = output->next(impostor);
+    ASSERT_FALSE(failed.has_value());
+    EXPECT_EQ(failed.error().code(), common::StatusCode::kInvalidArgument);
+    EXPECT_TRUE(impostor.is_cancelled());
+    EXPECT_FALSE(owner.is_cancelled());
+    EXPECT_EQ(owner.reserved_memory_bytes(), 0U);
+  }
+}
+
+[[nodiscard]] std::size_t frozen_width(const schema::LogicalTypeKind kind) {
+  using schema::LogicalTypeKind;
+  switch (kind) {
+  case LogicalTypeKind::kInt8:
+  case LogicalTypeKind::kUInt8:
+    return 1U;
+  case LogicalTypeKind::kInt16:
+  case LogicalTypeKind::kUInt16:
+    return 2U;
+  case LogicalTypeKind::kInt32:
+  case LogicalTypeKind::kUInt32:
+  case LogicalTypeKind::kFloat32:
+  case LogicalTypeKind::kDate:
+    return 4U;
+  case LogicalTypeKind::kInt64:
+  case LogicalTypeKind::kUInt64:
+  case LogicalTypeKind::kFloat64:
+  case LogicalTypeKind::kTimestampNs:
+    return 8U;
+  case LogicalTypeKind::kDecimal:
+  case LogicalTypeKind::kUuid:
+    return 16U;
+  case LogicalTypeKind::kBool:
+  case LogicalTypeKind::kSymbol:
+  case LogicalTypeKind::kString:
+  case LogicalTypeKind::kBinary:
+    return 0U;
+  }
+  return 0U;
+}
+
+[[nodiscard]] columnar::OwnedPhysicalColumn frozen_column(const std::uint16_t code) {
+  const schema::LogicalTypeKind kind = schema::logical_type_kind_from_code(code).value();
+  const schema::LogicalType logical_type = kind == schema::LogicalTypeKind::kDecimal
+                                               ? schema::LogicalType::decimal(38U, 9U).value()
+                                               : type(kind);
+  columnar::ColumnVectorBuffers buffers;
+  buffers.validity = {std::byte{0x05}};
+  if (logical_type.is_variable_width()) {
+    for (const std::uint32_t offset : {0U, 1U, 1U, 2U})
+      append_u32(buffers.offsets, offset);
+    buffers.values = {std::byte{'a'}, std::byte{'b'}};
+  } else if (kind == schema::LogicalTypeKind::kBool) {
+    buffers.values = {std::byte{0x05}};
+  } else {
+    buffers.values.resize(frozen_width(kind) * 3U);
+  }
+  return columnar::OwnedPhysicalColumn::create(
+             {.type = logical_type, .nullable = true, .row_count = 3U, .null_count = 1U},
+             std::move(buffers))
+      .value();
+}
+
+TEST(SourceColumnOutputOperatorPropertyTest,
+     EveryFrozenTypePreservesSparseCellsUnderReverseAndDuplicateOutput) {
+  std::vector<columnar::OwnedPhysicalColumn> actual_columns;
+  std::vector<columnar::OwnedPhysicalColumn> expected_columns;
+  for (std::uint16_t code = 1U; code <= 18U; ++code) {
+    actual_columns.push_back(frozen_column(code));
+    expected_columns.push_back(frozen_column(code));
+  }
+  VectorChunk expected = VectorChunk::create(std::move(expected_columns),
+                                             VectorSelection::from_indices(3U, {0U, 2U}).value())
+                             .value();
+  std::vector<std::size_t> outputs;
+  for (std::size_t ordinal = 18U; ordinal > 0U; --ordinal)
+    outputs.push_back(ordinal - 1U);
+  outputs.push_back(17U);
+  outputs.push_back(0U);
+
+  QueryResourceContext resources = QueryResourceContext::create(16U << 20U).value();
+  VectorChunk input = VectorChunk::create(std::move(actual_columns),
+                                          VectorSelection::from_indices(3U, {0U, 2U}).value())
+                          .value();
+  auto source = std::make_unique<OneChunkSource>(
+      AccountedVectorChunk::create(std::move(input), resources.reserve(1U << 20U).value(),
+                                   resources)
+          .value());
+  auto output = SourceColumnOutputOperator::create(std::move(source), outputs,
+                                                   {.maximum_rows = 3U,
+                                                    .maximum_columns = outputs.size(),
+                                                    .maximum_buffer_bytes = 1U << 20U,
+                                                    .maximum_retained_buffer_bytes = 1U << 20U})
+                    .value();
+  auto step = output->next(resources);
+  ASSERT_TRUE(step.has_value()) << step.error().to_string();
+  const VectorChunk& actual = step->chunk()->chunk();
+  ASSERT_EQ(actual.column_count(), outputs.size());
+  for (std::size_t output_ordinal = 0U; output_ordinal < outputs.size(); ++output_ordinal) {
+    const std::size_t expected_ordinal = outputs[output_ordinal];
+    ASSERT_EQ(actual.column(output_ordinal)->type(), expected.column(expected_ordinal)->type());
+    ASSERT_EQ(actual.column(output_ordinal)->nullable(),
+              expected.column(expected_ordinal)->nullable());
+    for (std::size_t row = 0U; row < 2U; ++row) {
+      const columnar::ColumnCellView expected_cell =
+          expected.cell({.column_ordinal = expected_ordinal, .selected_row = row}).value();
+      const columnar::ColumnCellView actual_cell =
+          actual.cell({.column_ordinal = output_ordinal, .selected_row = row}).value();
+      ASSERT_EQ(actual_cell.kind(), expected_cell.kind());
+      if (actual_cell.kind() == columnar::ColumnCellView::Kind::kBoolean) {
+        EXPECT_EQ(actual_cell.boolean().value(), expected_cell.boolean().value());
+      } else if (actual_cell.kind() == columnar::ColumnCellView::Kind::kBytes) {
+        EXPECT_TRUE(std::ranges::equal(actual_cell.bytes().value(), expected_cell.bytes().value()));
+      }
+    }
+  }
+}
+
+} // namespace
+} // namespace chronos::query

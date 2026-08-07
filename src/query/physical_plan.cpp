@@ -56,6 +56,12 @@ retained_bytes_for_configuration(const std::vector<PhysicalColumnShape>& input_c
       total = add_capacity_bytes(*total, subset->column_ordinals.capacity(), sizeof(std::size_t));
       if (!total.has_value())
         return total;
+    } else if (const auto* output = std::get_if<SourceColumnOutputStage>(&stage);
+               output != nullptr) {
+      total =
+          add_capacity_bytes(*total, output->input_column_ordinals.capacity(), sizeof(std::size_t));
+      if (!total.has_value())
+        return total;
     }
   }
   return total;
@@ -202,6 +208,31 @@ PhysicalPipelinePlan::create(std::vector<PhysicalColumnShape> input_columns,
                              output_columns.end());
         continue;
       }
+      if (const auto* output = std::get_if<SourceColumnOutputStage>(&stage); output != nullptr) {
+        if (output->output_limits.maximum_rows == 0U ||
+            output->output_limits.maximum_columns == 0U ||
+            output->output_limits.maximum_buffer_bytes == 0U ||
+            output->output_limits.maximum_retained_buffer_bytes == 0U) {
+          return common::make_unexpected(
+              invalid("physical pipeline source-column output limits must be nonzero"));
+        }
+        if (output->input_column_ordinals.size() > kMaximumSourceColumnOutputWidth ||
+            output->input_column_ordinals.size() > output->output_limits.maximum_columns) {
+          return common::make_unexpected(
+              exhausted("physical pipeline source-column output exceeds its column limit"));
+        }
+        std::vector<PhysicalColumnShape> gathered;
+        gathered.reserve(output->input_column_ordinals.size());
+        for (const std::size_t ordinal : output->input_column_ordinals) {
+          if (ordinal >= output_columns.size()) {
+            return common::make_unexpected(
+                invalid("physical pipeline source-column output ordinal is out of range"));
+          }
+          gathered.push_back(output_columns[ordinal]);
+        }
+        output_columns = std::move(gathered);
+        continue;
+      }
       if (std::get_if<LimitStage>(&stage) == nullptr)
         return common::make_unexpected(invalid("physical pipeline stage is not supported"));
     }
@@ -258,6 +289,10 @@ PhysicalPipelinePlan::instantiate(std::unique_ptr<PhysicalOperator> source) cons
                                                     range->predicate);
       } else if (const auto* subset = std::get_if<ColumnSubsetStage>(&stage); subset != nullptr) {
         next = ColumnSubsetOperator::create(std::move(pipeline), subset->column_ordinals);
+      } else if (const auto* output = std::get_if<SourceColumnOutputStage>(&stage);
+                 output != nullptr) {
+        next = SourceColumnOutputOperator::create(
+            std::move(pipeline), output->input_column_ordinals, output->output_limits);
       } else if (const auto* limit = std::get_if<LimitStage>(&stage); limit != nullptr) {
         next = LimitOperator::create(std::move(pipeline), limit->maximum_rows);
       }

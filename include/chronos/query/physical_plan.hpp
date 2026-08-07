@@ -2,6 +2,7 @@
 #define CHRONOS_QUERY_PHYSICAL_PLAN_HPP_
 
 #include "chronos/common/result.hpp"
+#include "chronos/query/column_output.hpp"
 #include "chronos/query/physical_operator.hpp"
 #include "chronos/schema/logical_type.hpp"
 
@@ -39,12 +40,17 @@ struct ColumnSubsetStage {
   std::vector<std::size_t> column_ordinals;
 };
 
+struct SourceColumnOutputStage {
+  std::vector<std::size_t> input_column_ordinals;
+  VectorChunkLimits output_limits{};
+};
+
 struct LimitStage {
   std::uint64_t maximum_rows;
 };
 
-using PhysicalPipelineStage =
-    std::variant<BooleanFilterStage, TimestampRangeFilterStage, ColumnSubsetStage, LimitStage>;
+using PhysicalPipelineStage = std::variant<BooleanFilterStage, TimestampRangeFilterStage,
+                                           ColumnSubsetStage, SourceColumnOutputStage, LimitStage>;
 
 struct PhysicalPipelinePlanLimits {
   std::size_t maximum_input_columns{kDefaultVectorChunkColumnLimit};

@@ -61,7 +61,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
   const std::size_t hostile_count = size > 32U ? 32U : size;
   hostile_stages.reserve(hostile_count);
   for (std::size_t index = 0U; index < hostile_count; ++index) {
-    switch (data[index] % 4U) {
+    switch (data[index] % 5U) {
     case 0U:
       hostile_stages.emplace_back(
           chronos::query::BooleanFilterStage{static_cast<std::size_t>(data[index] >> 2U)});
@@ -86,7 +86,21 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
       hostile_stages.emplace_back(chronos::query::ColumnSubsetStage{std::move(ordinals)});
       break;
     }
-    case 3U:
+    case 3U: {
+      std::vector<std::size_t> ordinals;
+      ordinals.push_back(static_cast<std::size_t>(data[index] & 3U));
+      if ((data[index] & 4U) != 0U)
+        ordinals.push_back(static_cast<std::size_t>((data[index] >> 3U) & 3U));
+      hostile_stages.emplace_back(chronos::query::SourceColumnOutputStage{
+          .input_column_ordinals = std::move(ordinals),
+          .output_limits = {.maximum_rows = static_cast<std::uint32_t>(data[index]),
+                            .maximum_columns = static_cast<std::size_t>(data[index] >> 4U),
+                            .maximum_buffer_bytes = static_cast<std::size_t>(data[index]) * 32U,
+                            .maximum_retained_buffer_bytes =
+                                static_cast<std::size_t>(data[index]) * 64U}});
+      break;
+    }
+    case 4U:
       hostile_stages.emplace_back(chronos::query::LimitStage{data[index]});
       break;
     default:
@@ -103,7 +117,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
 
   const std::uint32_t rows = size == 0U ? 1U : static_cast<std::uint32_t>(data[0]) + 1U;
   const std::uint64_t maximum_rows = size < 2U ? 0U : data[1];
-  auto resources = chronos::query::QueryResourceContext::create(4'096U).value();
+  auto resources = chronos::query::QueryResourceContext::create(32'768U).value();
   auto reservation = resources.reserve(4'096U).value();
   std::vector<chronos::columnar::OwnedPhysicalColumn> columns;
   columns.push_back(make_bool_column(rows, input));
@@ -120,6 +134,12 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
   std::vector<chronos::query::PhysicalPipelineStage> stages;
   stages.emplace_back(chronos::query::BooleanFilterStage{0U});
   stages.emplace_back(chronos::query::LimitStage{maximum_rows});
+  stages.emplace_back(chronos::query::SourceColumnOutputStage{
+      .input_column_ordinals = {0U, 0U},
+      .output_limits = {.maximum_rows = 256U,
+                        .maximum_columns = 2U,
+                        .maximum_buffer_bytes = 4'096U,
+                        .maximum_retained_buffer_bytes = 8'192U}});
   if (size >= 3U && (data[2] & 1U) != 0U)
     stages.emplace_back(chronos::query::ColumnSubsetStage{{}});
   const auto plan = chronos::query::PhysicalPipelinePlan::create(shape, std::move(stages)).value();

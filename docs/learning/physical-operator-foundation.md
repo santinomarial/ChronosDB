@@ -5,10 +5,10 @@
 The physical pipeline foundation connects bounded vectors to query-wide memory and cancellation.
 It defines one owning pull step and implements pinned single- and sequential multi-part CSEG
 sources, a canonicalizing source over one exact mutable-head publication, allocation-free Boolean
-filtering, exact timestamp-range filtering, stable column-subset projection, and global LIMIT. It
-does not lower a bound SQL plan or compose all snapshot-visible mutable heads with durable parts
-into a complete tablet source, so the Phase 8 scalar executor remains the only complete SQL
-execution path.
+filtering, exact timestamp-range filtering, stable column-subset projection, owned source-column
+output materialization, and global LIMIT. It does not lower a bound SQL plan, compute general typed
+expressions, or compose all snapshot-visible mutable heads with durable parts into a complete
+tablet source, so the Phase 8 scalar executor remains the only complete SQL execution path.
 
 ## Public interfaces
 
@@ -23,8 +23,8 @@ execution path.
   [pruned scan guide](pruned-snapshot-cseg-scan.md);
 - the exact-publication mutable-head source described in the
   [head scan guide](mutable-head-scan-source.md); and
-- `BooleanFilterOperator`, `TimestampRangeFilterOperator`, `ColumnSubsetOperator`, and
-  `LimitOperator`, uniquely owned unary pipeline stages.
+- `BooleanFilterOperator`, `TimestampRangeFilterOperator`, `ColumnSubsetOperator`,
+  `SourceColumnOutputOperator`, and `LimitOperator`, uniquely owned unary pipeline stages.
 
 Factories and pulls return `common::Result`. Bad configuration or accounting is
 `INVALID_ARGUMENT`, bad predicate or projection ordinals are `OUT_OF_RANGE`, memory or bounded-plan
@@ -95,14 +95,26 @@ backing remains pinned and conservatively charged. Both paths allocate no memory
 physical rows, selection ordinals, row order, and column order. An empty subset is valid and
 preserves row cardinality for operators such as `COUNT(*)`.
 
-Duplicate and reordered columns are deliberately not projection pushdown: they require a later typed
-output builder with explicit output positions. `ColumnSubsetOperator` bounds its retained ordinal
+Duplicate and reordered columns are deliberately not projection pushdown: they require a typed
+output stage with explicit output positions. `ColumnSubsetOperator` bounds its retained ordinal
 plan at 4,096 entries. The accounted wrapper carries the original reservation after dropping
 buffers. That credit may conservatively exceed the remaining buffers and is returned as one unit;
 shrinking it could improve utilization but requires a separately specified resize/transfer
 contract. This first stage keeps the original finite credit and never undercounts. Backed chunks
 also retain their complete backing byte count after projection because no backing storage was
 released.
+
+## Owned source-column outputs
+
+`SourceColumnOutputOperator` handles the duplicate and reordered case by creating independent
+canonical columns in caller order. Nonempty sparse selections are stable-compacted into a new
+identity domain. The operator plans exact logical buffers and a conservative retained charge,
+reserves query credit while the input remains charged, and only then allocates. Empty selections
+remain progress over their original physical domain, and empty output lists preserve cardinality.
+
+The complete ownership, canonicalization, failure, and benchmark contract is described in the
+[source-column output guide](source-column-output-materialization.md). It handles source references
+only; constants and computed typed expressions remain future work.
 
 ## Global LIMIT semantics
 
@@ -146,9 +158,10 @@ An accounted-wrapper construction and operator step are `O(1)` excluding their t
 Boolean and timestamp-range filtering are `O(S)` for `S` selected rows. Direct column-subset
 validation and compaction are `O(P + C)` for `P` projected and `C` removed columns; backed
 compaction is `O(P)`. Both use `O(1)` additional memory. A virtual call and LIMIT truncation are
-`O(1)` per chunk. Factory allocation or an oversized retained projection plan is
-`RESOURCE_EXHAUSTED`; validation failures release the input chunk and reservation without durable
-or external effects.
+`O(1)` per chunk. Source-column output is `O(P*S + V)` for `P` positions, `S` rows, and copied
+variable bytes `V`, with proportional owned output memory. Factory allocation or an oversized
+retained plan is `RESOURCE_EXHAUSTED`; validation failures release the input chunk and reservation
+without durable or external effects.
 
 ## Verification and measurement
 
@@ -161,7 +174,9 @@ forced chunk boundaries, physical-plan composition, and a scalar-match property.
 LIMIT tests cover zero, empty progress, partial and exact boundaries, UINT64 maxima, early future
 credit release, failure, and cross-query ownership. A deterministic property compares every limit
 around a fixed multi-chunk input with the scalar prefix. Fuzzing drives filtering, truncation, and
-projection with valid and hostile ordinals under sanitizers.
+projection/output with valid and hostile ordinals under sanitizers. Source-column output adds
+all-frozen-type cell preservation, reorder/duplicate ownership, empty-progress, exact limit, and
+exhaustive allocation-failure evidence.
 
 `chronos_query_benchmarks` measures selection construction plus filtering at 64, 1,024, and 4,096
 rows with TRUE densities of 100%, 25%, and 6.25%. It also isolates ownership compaction and release
@@ -169,7 +184,9 @@ for 1, 8, and 64 input columns at 1,024 and 4,096 rows; input construction is pa
 excluded. Batched selection-truncation measurements cover dense and sparse inputs, zero, partial,
 and no-op limits with setup and destruction paused. Exact timestamp-range compaction covers dense
 and sparse selections over 64, 1,024, and 4,096 rows. These measurements do not claim end-to-end
-query speed or justify fusion, branch specialization, or physical materialization.
+query speed or justify fusion, branch specialization, or alias-backed materialization. A separate
+source-column output benchmark measures reverse-order duplicate materialization for dense and
+sparse selections with source construction excluded.
 
 ## Tradeoffs and next steps
 
@@ -182,7 +199,8 @@ epoch with safe event-time pruning, while the head source independently canonica
 generation. Both source factories now retain an omitted event-time helper through exact filtering
 and remove it before output. The next storage increment must define shared hidden columns and
 explicit part/head merge semantics before claiming complete tablet visibility. Typed physical
-expression/output building is the other immediate dependency.
+expression building and bound-plan lowering are the other immediate dependencies; source-column
+reorder and duplication now have an owned baseline.
 Parallel scheduling should follow only after task ownership, queue capacity, terminal-error
 arbitration, and cancellation release are specified.
 
@@ -200,7 +218,11 @@ need a separately specified resize/transfer contract; it is not required for saf
 
 **Why require increasing projection ordinals?** This stage models scan/projection pushdown and can
 therefore move existing owners in place. Duplicate or reordered SQL outputs require explicit new
-output positions and belong in the typed builder.
+output positions and use the owned source-column output stage.
+
+**Why does reordered output reserve new credit before releasing input?** Input cells remain live
+until the copy finishes, so both allocations coexist. Reserving only after input release would
+undercount the real peak and could permit budget oversubscription.
 
 **Why forward empty chunks through LIMIT?** They record completed upstream input but consume no
 result cardinality. Treating an empty chunk as end would lose later rows.

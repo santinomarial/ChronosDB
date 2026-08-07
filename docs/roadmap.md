@@ -400,9 +400,13 @@ No phase passes because its code merely compiles. A phase passes only when its a
   and add deterministic/property/failure/fuzz/benchmark evidence. ADR 0032 and the fifteenth
   increment add an exact event-time mutable-head factory, projection-aware helper materialization
   and removal including zero-column output, chunk-boundary truth, effective-limit validation, and
-  deterministic/property/failure/fuzz/benchmark/consumer evidence. The durable and mutable sources
-  still expose user columns independently: bound-SQL lowering, general typed vector expressions
-  and output builders, optimizer rules, hidden row-version columns, complete multi-part/head
+  deterministic/property/failure/fuzz/benchmark/consumer evidence. ADR 0033 and the sixteenth
+  increment add query-accounted owned source-column output materialization, arbitrary caller order
+  and duplicates, sparse-to-identity compaction, exact canonical type/NULL preservation, checked
+  pre-allocation limits, plan-shape integration, and deterministic/property/failure/fuzz/benchmark/
+  consumer evidence. The durable and mutable sources still expose user columns independently:
+  bound-SQL lowering, constant and computed typed vector expressions, optimizer rules, hidden row-
+  version columns, complete multi-part/head
   composition, base/delta merge and row-version resolution, mapped/asynchronous providers, shared
   pin credit, scheduling, spill, and full scalar-engine differential plan execution are
   unimplemented.

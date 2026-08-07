@@ -88,6 +88,11 @@ set(installed_physical_plan_header
 if(NOT EXISTS "${installed_physical_plan_header}")
   message(FATAL_ERROR "staging install omitted ${installed_physical_plan_header}")
 endif()
+set(installed_column_output_header
+    "${install_prefix}/${CHRONOS_TEST_INSTALL_INCLUDEDIR}/chronos/query/column_output.hpp")
+if(NOT EXISTS "${installed_column_output_header}")
+  message(FATAL_ERROR "staging install omitted ${installed_column_output_header}")
+endif()
 set(installed_cseg_scan_header
     "${install_prefix}/${CHRONOS_TEST_INSTALL_INCLUDEDIR}/chronos/query/cseg_scan.hpp")
 if(NOT EXISTS "${installed_cseg_scan_header}")

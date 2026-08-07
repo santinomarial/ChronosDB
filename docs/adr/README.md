@@ -67,3 +67,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0030](0030-exact-timestamp-range-vector-filtering.md) | Exact timestamp-range vector filtering | accepted |
 | [0031](0031-exact-prune-then-filter-snapshot-cseg-scans.md) | Exact prune-then-filter snapshot CSEG scans | accepted |
 | [0032](0032-exact-event-time-mutable-head-scans.md) | Exact event-time mutable-head scans | accepted |
+| [0033](0033-accounted-source-column-output-materialization.md) | Accounted source-column output materialization | accepted |

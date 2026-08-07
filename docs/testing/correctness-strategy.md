@@ -119,6 +119,12 @@
 > copies identical bounds into both stages, retains and removes an omitted event-time helper,
 > checks the effective projection against both limits, and adds independent exact-result,
 > allocation-failure, fuzz, and selected-pull evidence.
+> Accounted source-column output materialization adds reverse and duplicate output positions,
+> independent canonical owners, sparse-to-identity compaction, empty-progress and zero-column
+> cardinality, every-frozen-type cell comparison, exact pre-allocation byte limits, exhaustive
+> allocation failure, hostile physical-plan fuzzing, sanitizer coverage, installed-consumer
+> linkage, and isolated dense/sparse output measurement. Constants, computed expressions, and
+> bound-SQL lowering remain outside this claim.
 
 ## Test types
 

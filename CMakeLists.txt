@@ -324,6 +324,7 @@ add_library(
   src/query/ast.cpp
   src/query/binder.cpp
   src/query/catalog.cpp
+  src/query/column_output.cpp
   src/query/cseg_scan.cpp
   src/query/database_cseg_scan.cpp
   src/query/decimal_internal.cpp
@@ -774,6 +775,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/binder_test.cpp
     tests/query/catalog_header_self_contained.cpp
     tests/query/catalog_test.cpp
+    tests/query/column_output_header_self_contained.cpp
+    tests/query/column_output_test.cpp
     tests/query/lexer_header_self_contained.cpp
     tests/query/lexer_test.cpp
     tests/query/literal_header_self_contained.cpp
@@ -810,6 +813,7 @@ if(CHRONOS_BUILD_TESTS)
   add_executable(
     chronos_query_allocation_failure_tests
     tests/query/cseg_scan_allocation_failure_test.cpp
+    tests/query/column_output_allocation_failure_test.cpp
     tests/query/database_cseg_scan_allocation_failure_test.cpp
     tests/query/head_scan_allocation_failure_test.cpp
     tests/support/failing_allocator.cpp
@@ -1018,6 +1022,7 @@ if(CHRONOS_BUILD_BENCHMARKS)
 
   add_executable(
     chronos_query_benchmarks
+    benchmarks/query/column_output_benchmark.cpp
     benchmarks/query/cseg_scan_benchmark.cpp
     benchmarks/query/head_scan_benchmark.cpp
     benchmarks/query/lexer_benchmark.cpp
