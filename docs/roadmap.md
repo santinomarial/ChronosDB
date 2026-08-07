@@ -447,9 +447,12 @@ No phase passes because its code merely compiles. A phase passes only when its a
   lowering for supported base and aggregate queries: binder-resolved aliases and non-projected
   keys, direction and NULL placement, DEDUP/group identity ties, the WAL commit-position suffix,
   hidden-column removal, sort-before-LIMIT order, scalar-oracle/failure/fuzz/benchmark/consumer
-  evidence, and explicit rejection when generated logical identity is unavailable. Hashing,
-  variable-width extrema, broader relational lowering, optimizer rules, complete multi-part/head
-  composition, base/delta merge and row-version resolution, mapped/asynchronous providers, shared
+  evidence, and explicit rejection when generated logical identity is unavailable. ADR 0047 and
+  the thirtieth increment add one exact append-only tablet source over the aggregate database
+  epoch: durable parts, every sealed head, and the active head share exact predicates, projections,
+  row-version shape, bounded admission, cancellation, and ownership without duplicate or omitted
+  rows across flush replacement. Hashing, variable-width extrema, broader relational lowering,
+  optimizer rules, future correction/delete row-version resolution, mapped/asynchronous providers, shared
   pin credit, scheduling, spill, and full scalar-engine differential plan execution are unimplemented.
 
 - **Scope:** bounded vectors, vectorized scans/expressions/aggregates/joins, physical planning, memory accounting, cancellation, parallel scheduling, and spill for explicitly supported operators.

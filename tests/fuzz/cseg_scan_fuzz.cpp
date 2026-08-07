@@ -5,6 +5,7 @@
 #include "chronos/schema/schema_lineage.hpp"
 #include "chronos/schema/table_schema.hpp"
 #include "cseg/cseg_test_fixture.hpp"
+#include "query/snapshot_tablet_scan_test_fixture.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -145,6 +146,48 @@ void exercise_exact_prune_filter(const std::shared_ptr<const std::vector<std::by
   }
 }
 
+void exercise_complete_snapshot(const std::span<const std::uint8_t> input) {
+  // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+  static const chronos::query::test::SnapshotTabletScanFixture fixture{17U};
+  auto resources = chronos::query::QueryResourceContext::create(std::size_t{16U} * 1024U * 1024U);
+  if (!resources.has_value())
+    return;
+  chronos::query::SnapshotTabletScanLimits limits;
+  limits.maximum_heads = input.empty() || (input.front() & 1U) != 0U ? 1U : 0U;
+  limits.maximum_retained_configuration_bytes =
+      input.size() < 2U || (input[1] & 1U) != 0U
+          ? chronos::query::kDefaultSnapshotTabletScanConfigurationByteLimit
+          : 1U;
+  limits.head.chunk.maximum_rows =
+      input.empty() ? 17U : static_cast<std::uint32_t>(input.back() % 17U) + 1U;
+  const bool append_suffix = input.size() >= 3U && (input[2] & 1U) != 0U;
+  limits.cseg.row_version_columns = append_suffix ? chronos::query::RowVersionScanMode::kAppend
+                                                  : chronos::query::RowVersionScanMode::kOmit;
+  limits.head.row_version_columns = input.size() >= 4U && (input[3] & 1U) != 0U
+                                        ? chronos::query::RowVersionScanMode::kAppend
+                                        : limits.cseg.row_version_columns;
+  std::optional<chronos::cseg::EventTimePredicate> predicate;
+  if (input.size() >= 2U) {
+    predicate = chronos::cseg::EventTimePredicate{
+        .lower = chronos::cseg::EventTimeBound{.value = static_cast<std::int8_t>(input.front()),
+                                               .inclusive = (input.front() & 2U) != 0U},
+        .upper = chronos::cseg::EventTimeBound{.value = static_cast<std::int8_t>(input.back()),
+                                               .inclusive = (input.back() & 2U) != 0U}};
+  }
+  auto source = fixture.source(*resources, predicate, limits);
+  if (!source.has_value())
+    return;
+  if (!input.empty() && (input.front() & 4U) != 0U)
+    static_cast<void>(resources->request_cancel());
+  for (std::size_t pull = 0U; pull < 32U; ++pull) {
+    auto step = (*source)->next(*resources);
+    if (!step.has_value() || step->kind() == chronos::query::PhysicalOperatorStepKind::kEnd)
+      break;
+    if (step->chunk() != nullptr)
+      static_cast<void>(step->chunk()->chunk().selected_row_count());
+  }
+}
+
 } // namespace
 
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_t size) {
@@ -170,5 +213,6 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
   auto mutated_owner = std::make_shared<const std::vector<std::byte>>(std::move(mutated));
   exercise(mutated_owner, input);
   exercise_exact_prune_filter(std::move(mutated_owner), input);
+  exercise_complete_snapshot(input);
   return 0;
 }

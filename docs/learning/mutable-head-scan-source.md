@@ -8,11 +8,12 @@ row boundaries stay pinned, schema evolution is projected, memory is admitted be
 and output can flow through the existing filter/projection/LIMIT operators. The exact event-time
 factory automatically retains and removes an unrequested event-time helper.
 
-This is not yet a complete tablet scan. By default it exposes projected user columns only; callers
+This is not by itself a complete tablet scan. By default it exposes projected user columns only; callers
 may opt into the shared non-null WAL ID, record sequence, row ordinal, and operation suffix from
 [ADR 0045](../adr/0045-shared-vector-row-version-suffix.md). The source does not concatenate multiple
 heads, combine heads with parts, resolve versions, evaluate non-event-time SQL predicates, schedule
-parallel work, or spill.
+parallel work, or spill. The aggregate `create_snapshot_tablet_scan` factory composes every
+published head with the durable subset for today's append-only operation set.
 
 ## Public interface
 
@@ -129,9 +130,9 @@ Copying costs bandwidth but makes ownership, endian conversion, chunk sizing, an
 safety explicit. A sealed-head compact backing could reduce copies only after measurement and a
 new immutable-publication/accounting proof.
 
-The common system-column shape now exists. The next storage step needs base/delta row-version merge
-semantics and a complete aggregate snapshot source that can compose durable parts with every
-visible sealed and active head without silently duplicating or omitting logical rows.
+The common system-column shape and exact append-only aggregate source now exist. Future correction
+and delete operations still need accepted base/delta row-version winner rules before they can enter
+that source.
 
 ## Likely review questions
 
@@ -145,8 +146,9 @@ boundary.
 **Why does the output not retain the head?** Every canonical buffer is copied into owned columns;
 no returned view points into head storage.
 
-**Does this make the ADR 0028 scan complete?** No. Multiple heads, visibility resolution, and
-part/head merge semantics are still missing.
+**How is the complete tablet scanned?** `create_snapshot_tablet_scan` combines the ADR 0028 durable
+child with every sealed and active head from the same aggregate publication. This remains exact only
+for the currently accepted append-only operations.
 
 **Does head filtering prune materialization work?** No. The head has no accepted zone map. Exact
 truth runs on bounded canonical chunks after materialization.

@@ -176,6 +176,12 @@
 > a direct scalar-oracle comparison, hostile bounds, exhaustive lowering allocation failure,
 > fuzzing, installation, and retained-plan measurements. Generated-identity base ordering, hashing,
 > spill, and variable-width extrema remain outside this claim.
+> Complete append-only tablet scanning now composes the exact durable, sealed-head, and active-head
+> publications from one aggregate epoch. Deterministic multiset and suffix checks, head-only exact
+> predicate/helper-removal coverage, hostile finite limits, allocation-failure injection, public
+> consumption, and sanitizer runs prove no row is duplicated or omitted across the current
+> append-only flush boundary. Future correction/delete winner resolution and SQL source selection
+> remain outside this claim.
 
 ## Test types
 

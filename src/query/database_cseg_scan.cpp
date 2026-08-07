@@ -171,10 +171,10 @@ exact_timestamp_predicate(const cseg::EventTimePredicate& predicate) noexcept {
   return common::Status::ok();
 }
 
-class SequentialSnapshotCsegScan final : public PhysicalOperator {
+class SequentialSnapshotScan final : public PhysicalOperator {
 public:
-  SequentialSnapshotCsegScan(std::vector<std::unique_ptr<PhysicalOperator>> children,
-                             QueryMemoryReservation reservation) noexcept
+  SequentialSnapshotScan(std::vector<std::unique_ptr<PhysicalOperator>> children,
+                         QueryMemoryReservation reservation) noexcept
       : children_(std::move(children)), reservation_(std::move(reservation)) {}
 
   [[nodiscard]] common::Result<PhysicalOperatorStep>
@@ -186,7 +186,7 @@ public:
       return common::make_unexpected(active.error());
     if (!resources.owns(reservation_)) {
       static_cast<void>(resources.request_cancel());
-      return common::make_unexpected(invalid("snapshot CSEG part scan belongs to another query"));
+      return common::make_unexpected(invalid("sequential snapshot scan belongs to another query"));
     }
     while (next_child_ < children_.size()) {
       common::Result<PhysicalOperatorStep> step = children_[next_child_]->next(resources);
@@ -202,7 +202,7 @@ public:
       if (step->chunk() == nullptr || !step->chunk()->belongs_to(resources)) {
         static_cast<void>(resources.request_cancel());
         return common::make_unexpected(
-            invalid("snapshot CSEG part scan received a foreign or missing chunk"));
+            invalid("sequential snapshot scan received a foreign or missing chunk"));
       }
       return step;
     }
@@ -220,20 +220,21 @@ private:
 };
 
 [[nodiscard]] common::Result<std::size_t> sequential_source_charge(const std::size_t child_count) {
-  constexpr std::size_t fixed_objects = sizeof(SequentialSnapshotCsegScan) + 256U;
+  constexpr std::size_t fixed_objects = sizeof(SequentialSnapshotScan) + 256U;
   common::Result<std::size_t> child_slots =
       bytes_for(child_count, sizeof(std::unique_ptr<PhysicalOperator>) + 256U,
-                "snapshot CSEG child-source accounting overflowed");
+                "sequential snapshot child-source accounting overflowed");
   if (!child_slots.has_value())
     return child_slots;
   common::Result<std::size_t> total =
-      add(fixed_objects, *child_slots, "snapshot CSEG source accounting overflowed");
+      add(fixed_objects, *child_slots, "sequential snapshot source accounting overflowed");
   if (!total.has_value())
     return total;
   common::Result<std::size_t> overhead =
-      bytes_for(child_count + 3U, 64U, "snapshot CSEG allocation accounting overflowed");
-  return overhead.has_value() ? add(*total, *overhead, "snapshot CSEG source accounting overflowed")
-                              : overhead;
+      bytes_for(child_count + 3U, 64U, "sequential snapshot allocation accounting overflowed");
+  return overhead.has_value()
+             ? add(*total, *overhead, "sequential snapshot source accounting overflowed")
+             : overhead;
 }
 
 } // namespace
@@ -590,7 +591,7 @@ common::Result<std::unique_ptr<PhysicalOperator>> create_snapshot_cseg_part_scan
       }
     }
     std::unique_ptr<PhysicalOperator> pipeline{
-        new SequentialSnapshotCsegScan{std::move(children), std::move(*reservation)}};
+        new SequentialSnapshotScan{std::move(children), std::move(*reservation)}};
     if (predicate.has_value()) {
       common::Result<std::unique_ptr<PhysicalOperator>> filtered =
           TimestampRangeFilterOperator::create(std::move(pipeline), *event_time_output_ordinal,
@@ -629,6 +630,107 @@ common::Result<std::unique_ptr<PhysicalOperator>> create_snapshot_cseg_part_scan
     return common::make_unexpected(exhausted("snapshot CSEG source allocation failed"));
   } catch (const std::length_error&) {
     return common::make_unexpected(exhausted("snapshot CSEG source exceeds container limits"));
+  }
+}
+
+common::Result<std::unique_ptr<PhysicalOperator>> create_snapshot_tablet_scan(
+    const QueryResourceContext& resources, const manifest::DatabaseStorageSnapshot& snapshot,
+    const SnapshotCsegPartScanPlan& plan,
+    std::vector<std::shared_ptr<const manifest::SnapshotPartImage>> images,
+    const schema::SchemaLineage& lineage, const schema::SchemaId destination_schema_id,
+    const std::vector<std::uint32_t>& destination_column_ordinals,
+    const SnapshotTabletScanLimits limits) {
+  common::Status provenance = validate_plan_snapshot(snapshot, plan);
+  if (!provenance.is_ok())
+    return common::make_unexpected(std::move(provenance));
+  if (limits.cseg.row_version_columns != limits.head.row_version_columns) {
+    return common::make_unexpected(
+        invalid("snapshot tablet scan sources disagree on row-version suffix mode"));
+  }
+
+  const manifest::PublishedTabletStorage* published = snapshot.find_tablet(plan.tablet_id());
+  std::size_t head_count = 0U;
+  if (published != nullptr) {
+    if (published->table_id() != plan.table_id() || published->tablet_id() != plan.tablet_id()) {
+      return common::make_unexpected(
+          invalid("snapshot tablet scan publication disagrees with its durable tablet"));
+    }
+    head_count = published->sealed_heads().size() + (published->active_head() != nullptr ? 1U : 0U);
+  }
+  if (head_count > limits.maximum_heads) {
+    return common::make_unexpected(
+        exhausted("snapshot tablet scan exceeds the configured mutable-head limit"));
+  }
+  common::Result<std::size_t> retained_head_configuration =
+      bytes_for(head_count, sizeof(head::HeadSnapshot) + sizeof(std::unique_ptr<PhysicalOperator>),
+                "snapshot tablet scan retained configuration overflowed");
+  if (!retained_head_configuration.has_value())
+    return common::make_unexpected(retained_head_configuration.error());
+  common::Result<std::size_t> retained_configuration =
+      add(plan.retained_configuration_bytes(), *retained_head_configuration,
+          "snapshot tablet scan retained configuration overflowed");
+  if (!retained_configuration.has_value())
+    return common::make_unexpected(retained_configuration.error());
+  if (*retained_configuration > limits.maximum_retained_configuration_bytes) {
+    return common::make_unexpected(
+        exhausted("snapshot tablet scan exceeds the configured retained configuration limit"));
+  }
+
+  const std::optional<cseg::EventTimePredicate>& predicate = plan.event_time_predicate();
+  common::Result<std::size_t> charge = sequential_source_charge(head_count + 1U);
+  if (!charge.has_value())
+    return common::make_unexpected(charge.error());
+  common::Result<QueryMemoryReservation> reservation = resources.reserve(*charge);
+  if (!reservation.has_value())
+    return common::make_unexpected(reservation.error());
+  try {
+    std::vector<std::unique_ptr<PhysicalOperator>> children;
+    children.reserve(head_count + 1U);
+    common::Result<std::unique_ptr<PhysicalOperator>> durable = create_snapshot_cseg_part_scan(
+        resources, plan, std::move(images), lineage, destination_schema_id,
+        destination_column_ordinals, limits.cseg);
+    if (!durable.has_value())
+      return common::make_unexpected(durable.error());
+    children.push_back(std::move(*durable));
+
+    const auto append_head = [&](head::HeadSnapshot head_snapshot) -> common::Result<void> {
+      if (head_snapshot.table_id() != plan.table_id() ||
+          head_snapshot.tablet_id() != plan.tablet_id()) {
+        return common::make_unexpected(
+            invalid("snapshot tablet scan head disagrees with its published tablet"));
+      }
+      common::Result<std::unique_ptr<PhysicalOperator>> child =
+          predicate.has_value()
+              ? HeadScanOperator::create_event_time_filtered(
+                    resources, std::move(head_snapshot), lineage, destination_schema_id,
+                    plan.tablet_id(), destination_column_ordinals,
+                    exact_timestamp_predicate(*predicate), limits.head)
+              : HeadScanOperator::create(resources, std::move(head_snapshot), lineage,
+                                         destination_schema_id, plan.tablet_id(),
+                                         destination_column_ordinals, limits.head);
+      if (!child.has_value())
+        return common::make_unexpected(child.error());
+      children.push_back(std::move(*child));
+      return {};
+    };
+    if (published != nullptr) {
+      for (const head::HeadSnapshot& sealed : published->sealed_heads()) {
+        common::Result<void> appended = append_head(sealed);
+        if (!appended.has_value())
+          return common::make_unexpected(appended.error());
+      }
+      if (published->active_head() != nullptr) {
+        common::Result<void> appended = append_head(*published->active_head());
+        if (!appended.has_value())
+          return common::make_unexpected(appended.error());
+      }
+    }
+    return std::unique_ptr<PhysicalOperator>{
+        new SequentialSnapshotScan{std::move(children), std::move(*reservation)}};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("snapshot tablet scan allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("snapshot tablet scan exceeds container limits"));
   }
 }
 

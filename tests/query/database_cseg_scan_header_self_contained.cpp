@@ -7,6 +7,7 @@ static_assert(std::is_same_v<decltype(&chronos::query::pin_snapshot_cseg_part),
                                  std::shared_ptr<const chronos::manifest::SnapshotPartImage>)>);
 static_assert(!std::is_copy_constructible_v<chronos::query::SnapshotCsegPartScanPlan>);
 static_assert(std::is_nothrow_move_constructible_v<chronos::query::SnapshotCsegPartScanPlan>);
+static_assert(std::is_aggregate_v<chronos::query::SnapshotTabletScanLimits>);
 static_assert(std::is_same_v<decltype(&chronos::query::plan_snapshot_cseg_part_scan),
                              chronos::common::Result<chronos::query::SnapshotCsegPartScanPlan> (*)(
                                  const chronos::manifest::DatabaseStorageSnapshot&,

@@ -12,8 +12,9 @@
 > flush handoff, atomic head-to-manifest replacement, and receipt-authorized retirement are
 > implemented. The end-to-end durable flush coordinator and its filesystem crash matrix are also
 > implemented. Phase 9 can materialize one exact `HeadSnapshot` into bounded canonical user-column
-> query chunks and optionally append the shared canonical row-version suffix, but complete tablet
-> scans and row-version merging remain unimplemented. Retry
+> query chunks and optionally append the shared canonical row-version suffix. The aggregate Phase 9
+> tablet factory now composes every published head with the durable subset for the current
+> append-only operation set; future correction/delete row-version merging remains unimplemented. Retry
 > pruning and catalog/routing admission remain unimplemented. This document refines [ADR
 > 0005](../adr/0005-columnar-heads-and-immutable-cseg-parts.md) for Phase 4; CSEG and installation
 > bytes are defined by their accepted format specifications.
@@ -141,9 +142,9 @@ snapshot sees the logical rows exactly once. That replacement, checkpoint covera
 reclamation belong to Phase 6.
 
 `HeadScanOperator` can independently scan one captured active or sealed generation by copying its
-user columns into canonical query chunks. It does not expose the hidden position/version fields or
-compose multiple generations with installed parts; callers therefore must not treat one such scan
-as complete tablet visibility.
+user columns into canonical query chunks and can opt into the shared row-version suffix. One such
+scan is not complete tablet visibility. `create_snapshot_tablet_scan` composes all generations with
+installed parts from the same aggregate publication for the current append-only operation set.
 
 If the sealed-head/flush handoff bound is full and a new generation cannot be retained safely, the
 owner applies backpressure before admitting the append to WAL. It never drops a sealed head or

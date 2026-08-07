@@ -4,6 +4,7 @@
 #include "chronos/common/result.hpp"
 #include "chronos/manifest/storage.hpp"
 #include "chronos/query/cseg_scan.hpp"
+#include "chronos/query/head_scan.hpp"
 #include "chronos/query/physical_operator.hpp"
 #include "chronos/query/resource_context.hpp"
 #include "chronos/schema/identity.hpp"
@@ -21,12 +22,23 @@ namespace chronos::query {
 inline constexpr std::uint32_t kDefaultSnapshotCsegPartScanPartLimit = 1U << 16U;
 inline constexpr std::size_t kDefaultSnapshotCsegPartScanConfigurationByteLimit =
     std::size_t{8U} * 1024U * 1024U;
+inline constexpr std::uint32_t kDefaultSnapshotTabletScanHeadLimit = 1U << 16U;
+inline constexpr std::size_t kDefaultSnapshotTabletScanConfigurationByteLimit =
+    std::size_t{8U} * 1024U * 1024U;
 
 struct SnapshotCsegPartScanPlanLimits {
   std::uint32_t maximum_parts{kDefaultSnapshotCsegPartScanPartLimit};
   std::uint32_t maximum_selected_parts{kDefaultSnapshotCsegPartScanPartLimit};
   std::size_t maximum_retained_configuration_bytes{
       kDefaultSnapshotCsegPartScanConfigurationByteLimit};
+};
+
+struct SnapshotTabletScanLimits {
+  CsegScanLimits cseg{};
+  HeadScanLimits head{};
+  std::uint32_t maximum_heads{kDefaultSnapshotTabletScanHeadLimit};
+  std::size_t maximum_retained_configuration_bytes{
+      kDefaultSnapshotTabletScanConfigurationByteLimit};
 };
 
 // Bounded CSEG-only work selected from one tablet in one exact aggregate database epoch. Part
@@ -122,6 +134,19 @@ pin_snapshot_cseg_part(std::shared_ptr<const manifest::SnapshotPartImage> image)
     std::vector<std::shared_ptr<const manifest::SnapshotPartImage>> images,
     const schema::SchemaLineage& lineage, schema::SchemaId destination_schema_id,
     const std::vector<std::uint32_t>& destination_column_ordinals, CsegScanLimits limits = {});
+
+// Creates the complete currently supported append-only row multiset for one tablet in one exact
+// aggregate database epoch. Durable parts are followed by sealed heads in publication order and
+// then the active head, but that physical sequence is not a SQL result-order contract. The same
+// exact event-time predicate and optional row-version suffix are applied to every source. Future
+// correction/delete operation kinds require a separately accepted visibility-resolution contract.
+[[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>> create_snapshot_tablet_scan(
+    const QueryResourceContext& resources, const manifest::DatabaseStorageSnapshot& snapshot,
+    const SnapshotCsegPartScanPlan& plan,
+    std::vector<std::shared_ptr<const manifest::SnapshotPartImage>> images,
+    const schema::SchemaLineage& lineage, schema::SchemaId destination_schema_id,
+    const std::vector<std::uint32_t>& destination_column_ordinals,
+    SnapshotTabletScanLimits limits = {});
 
 } // namespace chronos::query
 

@@ -9,8 +9,9 @@ through one query-accounted sequential source. A planned event-time range is the
 on candidate rows before the caller-visible projection is returned.
 
 It is deliberately a CSEG-only source. A `DatabaseStorageSnapshot` may also expose active or sealed
-mutable-head rows; this layer neither reads nor hides them and therefore cannot represent a complete
-tablet scan while such rows are visible. It also does not perform general SQL filtering, merge
+mutable-head rows; this layer neither reads nor hides them. The later
+[complete snapshot tablet scan](complete-snapshot-tablet-scan.md) composes this source with those
+heads for the current append-only operation set. It also does not perform general SQL filtering, merge
 overlapping parts, resolve row versions, lower bound SQL, schedule parallel work, or spill.
 
 ## Public interfaces
@@ -62,7 +63,7 @@ ManifestStorage selected load
         └── publication plus per-part retention token
                   │
                   ▼
-SequentialSnapshotCsegScan
+SequentialSnapshotScan
   ├── parent query reservation
   └── eager CsegScanOperator children in Manifest PartId order
         │
@@ -128,11 +129,11 @@ Serial eager construction is easy to audit but repeats snapshot credit and metad
 physical `PartId` order is not a key merge. Compaction may change that physical order; SQL without
 `ORDER BY` has no result-order guarantee. Owned file images are portable but copy selected files.
 
-A separate source now canonicalizes one exact mutable-head publication. A complete tablet source
-still needs shared hidden-system columns, all-head one-snapshot composition, exact head predicate
-lowering, row-version and base/delta merge rules, and a scalar differential oracle. Parallelism
-requires reviewed task ownership, bounded queues, terminal-error arbitration, and pin/credit
-transfer before replacing this serial source.
+A separate source canonicalizes one exact mutable-head publication, and the complete append-only
+tablet factory composes it with this durable child under one aggregate epoch. Future correction and
+delete operations still require accepted row-version winner rules and a scalar differential oracle.
+Parallelism requires reviewed task ownership, bounded queues, terminal-error arbitration, and
+pin/credit transfer before replacing this serial source.
 
 ## Likely review questions
 
@@ -148,9 +149,9 @@ nonmatching rows before output.
 **Why validate projection on an empty selection?** Invalid query configuration must not become
 conditionally valid because current metadata happens to select no work.
 
-**Why not call this a tablet scan?** Snapshot-visible mutable heads are outside this source. The
-independent single-head source does not yet provide the hidden metadata or merge semantics needed
-to compose them without omissions or duplicates.
+**Why not call this a tablet scan?** Snapshot-visible mutable heads are outside this particular
+source. Callers needing the complete current append-only multiset use
+`create_snapshot_tablet_scan`, which binds every child to the same aggregate epoch.
 
 **Why not merge parts by event time?** Overlapping base/delta parts need explicit row-version and
 tie-break semantics plus differential validation. Concatenation makes no stronger promise.

@@ -1,4 +1,7 @@
+#include "chronos/columnar/column_vector.hpp"
+#include "chronos/columnar/columnar_batch.hpp"
 #include "chronos/common/byte_reader.hpp"
+#include "chronos/ingest/retry_directory.hpp"
 #include "chronos/manifest/codec.hpp"
 #include "chronos/manifest/naming.hpp"
 #include "chronos/manifest/publication.hpp"
@@ -11,6 +14,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -18,8 +22,10 @@
 #include <gtest/gtest.h>
 #include <memory>
 #include <optional>
+#include <ranges>
 #include <string>
 #include <system_error>
+#include <type_traits>
 #include <unistd.h>
 #include <utility>
 #include <vector>
@@ -60,6 +66,39 @@ void write_bytes(const std::filesystem::path& path, const common::ByteView bytes
   output.write(reinterpret_cast<const char*>(bytes.data()),
                static_cast<std::streamsize>(bytes.size()));
   ASSERT_TRUE(output.good());
+}
+
+template <typename Integer> void append_le(std::vector<std::byte>& bytes, const Integer value) {
+  using Unsigned = std::make_unsigned_t<Integer>;
+  const Unsigned encoded = std::bit_cast<Unsigned>(value);
+  for (std::size_t index = 0U; index < sizeof(Integer); ++index)
+    bytes.push_back(std::byte{static_cast<std::uint8_t>(encoded >> (index * 8U))});
+}
+
+[[nodiscard]] ingest::Sha256Digest digest(const std::uint8_t seed) {
+  ingest::Sha256Digest::Bytes bytes{};
+  bytes.front() = std::byte{seed};
+  return ingest::Sha256Digest{bytes};
+}
+
+[[nodiscard]] std::shared_ptr<const columnar::OwnedColumnarBatch>
+timestamp_batch(const std::shared_ptr<const schema::TableSchema>& schema_value,
+                const std::span<const std::int64_t> values) {
+  std::vector<std::byte> encoded;
+  encoded.reserve(values.size() * sizeof(std::int64_t));
+  for (const std::int64_t value : values)
+    append_le(encoded, value);
+  std::vector<columnar::OwnedColumnVector> columns;
+  columns.push_back(columnar::OwnedColumnVector::create(
+                        {.column_id = schema_value->event_time_column(),
+                         .type = schema_value->columns().front().type(),
+                         .nullable = false,
+                         .row_count = static_cast<std::uint32_t>(values.size()),
+                         .null_count = 0U},
+                        {.validity = {}, .offsets = {}, .values = std::move(encoded)})
+                        .value());
+  return std::make_shared<const columnar::OwnedColumnarBatch>(
+      columnar::OwnedColumnarBatch::create(schema_value, std::move(columns)).value());
 }
 
 [[nodiscard]] schema::SchemaLineage lineage() {
@@ -113,6 +152,7 @@ struct MultiPartSnapshot {
   std::unique_ptr<manifest::DatabaseStoragePublisher> publisher;
   std::unique_ptr<manifest::DatabaseStorageSnapshot> snapshot;
   std::vector<manifest::PartDescriptor> descriptors;
+  std::unique_ptr<ingest::TabletState> tablet_state;
 };
 
 [[nodiscard]] std::unique_ptr<MultiPartSnapshot>
@@ -202,6 +242,51 @@ load_multi_part_snapshot(const std::uint8_t database_seed = 6U) {
   fixture->snapshot =
       std::make_unique<manifest::DatabaseStorageSnapshot>(fixture->publisher->snapshot().value());
   return fixture;
+}
+
+void publish_live_heads(MultiPartSnapshot& fixture) {
+  const schema::TabletId tablet = cseg::test::identifier<schema::TabletId>(3U);
+  const auto schema_value = fixture.schemas.find(cseg::test::identifier<schema::SchemaId>(4U));
+  ASSERT_NE(schema_value, nullptr);
+  fixture.tablet_state = std::make_unique<ingest::TabletState>(
+      ingest::TabletState::create(
+          schema_value, tablet,
+          {.head_capacity = {.row_capacity = 2U, .variable_value_bytes = {0U}},
+           .maximum_schema_versions = 1U,
+           .maximum_sealed_generations = 2U,
+           .maximum_retry_entries = 8U})
+          .value());
+  wal::WalId wal_id{};
+  wal_id.bytes = cseg::test::identifier<schema::SchemaId>(0x70U).bytes();
+  const std::array first_values{std::int64_t{200}, std::int64_t{201}};
+  ingest::PreparedTabletAppend first =
+      fixture.tablet_state
+          ->prepare_append(
+              {.client_id = cseg::test::identifier<ingest::ClientId>(0x11U),
+               .client_batch_id = cseg::test::identifier<ingest::ClientBatchId>(0x12U)},
+              {.table_id = schema_value->table_id(),
+               .tablet_id = tablet,
+               .request_digest = digest(0x13U)},
+              timestamp_batch(schema_value, first_values))
+          .value();
+  ASSERT_TRUE(first.mark_wal_started().is_ok());
+  ASSERT_TRUE(first.publish({.wal_id = wal_id, .record_sequence = 4U}).has_value());
+  const std::array second_values{std::int64_t{300}};
+  ingest::PreparedTabletAppend second =
+      fixture.tablet_state
+          ->prepare_append(
+              {.client_id = cseg::test::identifier<ingest::ClientId>(0x21U),
+               .client_batch_id = cseg::test::identifier<ingest::ClientBatchId>(0x22U)},
+              {.table_id = schema_value->table_id(),
+               .tablet_id = tablet,
+               .request_digest = digest(0x23U)},
+              timestamp_batch(schema_value, second_values))
+          .value();
+  ASSERT_TRUE(second.mark_wal_started().is_ok());
+  ingest::TabletAppendResult published =
+      second.publish({.wal_id = wal_id, .record_sequence = 5U}).value();
+  fixture.snapshot = std::make_unique<manifest::DatabaseStorageSnapshot>(
+      fixture.publisher->publish_tablet_snapshot(published.snapshot).value());
 }
 
 [[nodiscard]] cseg::EventTimePredicate point_predicate(const std::int64_t value) {
@@ -311,6 +396,13 @@ void corrupt_part_magic(const MultiPartSnapshot& fixture, const std::size_t desc
   EXPECT_TRUE(bytes.has_value());
   common::ByteReader reader{*bytes};
   return reader.read_i64_le().value_or(0);
+}
+
+[[nodiscard]] std::uint64_t uint64_cell(const VectorChunk& chunk, const std::size_t row,
+                                        const std::size_t column_ordinal) {
+  const auto cell = chunk.cell({.column_ordinal = column_ordinal, .selected_row = row}).value();
+  common::ByteReader reader{cell.bytes().value()};
+  return reader.read_u64_le().value_or(0U);
 }
 
 TEST(DatabaseCsegScanTest, SnapshotImageAndChunkRetainTheExactEpochIndependently) {
@@ -803,6 +895,155 @@ TEST(DatabaseCsegPartScanTest, ResourceFailureUnwindsParentAndEveryChildReservat
   ASSERT_FALSE(failed.has_value());
   EXPECT_EQ(failed.error().code(), common::StatusCode::kResourceExhausted);
   EXPECT_EQ(constrained.reserved_memory_bytes(), 0U);
+}
+
+TEST(DatabaseSnapshotTabletScanTest, EmitsTheExactDurableSealedAndActiveHeadMultiset) {
+  const std::unique_ptr<MultiPartSnapshot> fixture = load_multi_part_snapshot();
+  publish_live_heads(*fixture);
+  const schema::TabletId tablet = cseg::test::identifier<schema::TabletId>(3U);
+  auto planned = plan_snapshot_cseg_part_scan(*fixture->snapshot, tablet).value();
+  auto images = load_snapshot_cseg_part_scan_images(*fixture->storage, *fixture->snapshot, planned,
+                                                    fixture->schemas)
+                    .value();
+  QueryResourceContext resources =
+      QueryResourceContext::create(std::size_t{96U} * 1024U * 1024U).value();
+  SnapshotTabletScanLimits limits;
+  limits.cseg.row_version_columns = RowVersionScanMode::kAppend;
+  limits.head.row_version_columns = RowVersionScanMode::kAppend;
+  auto created = create_snapshot_tablet_scan(
+      resources, *fixture->snapshot, planned, std::move(images), fixture->schemas,
+      cseg::test::identifier<schema::SchemaId>(4U), {0U}, limits);
+  ASSERT_TRUE(created.has_value()) << created.error().to_string();
+
+  std::vector<std::int64_t> values;
+  std::vector<std::uint64_t> sequences;
+  const VectorRowVersionLayout layout = vector_row_version_layout(1U).value();
+  while (true) {
+    auto step = (*created)->next(resources);
+    ASSERT_TRUE(step.has_value()) << step.error().to_string();
+    if (step->kind() == PhysicalOperatorStepKind::kEnd)
+      break;
+    ASSERT_EQ(step->chunk()->chunk().column_count(), 1U + kVectorRowVersionColumnCount);
+    for (std::size_t row = 0U; row < step->chunk()->chunk().selected_row_count(); ++row) {
+      values.push_back(int64_cell(step->chunk()->chunk(), row));
+      sequences.push_back(
+          uint64_cell(step->chunk()->chunk(), row, layout.record_sequence_column_ordinal()));
+    }
+  }
+  std::vector<std::int64_t> expected;
+  for (std::int64_t value = -100; value <= -91; ++value)
+    expected.push_back(value);
+  for (std::int64_t value = 0; value <= 9; ++value)
+    expected.push_back(value);
+  for (std::int64_t value = 100; value <= 109; ++value)
+    expected.push_back(value);
+  expected.insert(expected.end(), {200, 201, 300});
+  EXPECT_EQ(values, expected);
+  ASSERT_EQ(sequences.size(), 33U);
+  EXPECT_TRUE(std::ranges::all_of(sequences | std::views::take(10),
+                                  [](const std::uint64_t value) { return value == 1U; }));
+  EXPECT_TRUE(std::ranges::all_of(sequences | std::views::drop(30) | std::views::take(2),
+                                  [](const std::uint64_t value) { return value == 4U; }));
+  EXPECT_EQ(sequences.back(), 5U);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
+TEST(DatabaseSnapshotTabletScanTest, AppliesOneExactPredicateAndRemovesEveryHelper) {
+  const std::unique_ptr<MultiPartSnapshot> fixture = load_multi_part_snapshot();
+  publish_live_heads(*fixture);
+  const schema::TabletId tablet = cseg::test::identifier<schema::TabletId>(3U);
+  auto planned =
+      plan_snapshot_cseg_part_scan(*fixture->snapshot, tablet, point_predicate(201)).value();
+  EXPECT_TRUE(planned.selected_part_ids().empty());
+  auto images = load_snapshot_cseg_part_scan_images(*fixture->storage, *fixture->snapshot, planned,
+                                                    fixture->schemas)
+                    .value();
+  QueryResourceContext resources =
+      QueryResourceContext::create(std::size_t{32U} * 1024U * 1024U).value();
+  SnapshotTabletScanLimits limits;
+  limits.cseg.row_version_columns = RowVersionScanMode::kAppend;
+  limits.head.row_version_columns = RowVersionScanMode::kAppend;
+  auto created = create_snapshot_tablet_scan(
+      resources, *fixture->snapshot, planned, std::move(images), fixture->schemas,
+      cseg::test::identifier<schema::SchemaId>(6U), {1U}, limits);
+  ASSERT_TRUE(created.has_value()) << created.error().to_string();
+  std::size_t matches = 0U;
+  while (true) {
+    auto step = (*created)->next(resources);
+    ASSERT_TRUE(step.has_value()) << step.error().to_string();
+    if (step->kind() == PhysicalOperatorStepKind::kEnd)
+      break;
+    EXPECT_EQ(step->chunk()->chunk().column_count(), 1U + kVectorRowVersionColumnCount);
+    for (std::size_t row = 0U; row < step->chunk()->chunk().selected_row_count(); ++row) {
+      EXPECT_TRUE(
+          step->chunk()->chunk().cell({.column_ordinal = 0U, .selected_row = row})->is_null());
+      ++matches;
+    }
+  }
+  EXPECT_EQ(matches, 1U);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
+TEST(DatabaseSnapshotTabletScanTest, RejectsHostileCompositionLimitsWithoutLeakingCredit) {
+  const std::unique_ptr<MultiPartSnapshot> fixture = load_multi_part_snapshot();
+  publish_live_heads(*fixture);
+  const schema::TabletId tablet = cseg::test::identifier<schema::TabletId>(3U);
+  auto planned = plan_snapshot_cseg_part_scan(*fixture->snapshot, tablet).value();
+  const auto images = load_snapshot_cseg_part_scan_images(*fixture->storage, *fixture->snapshot,
+                                                          planned, fixture->schemas)
+                          .value();
+  QueryResourceContext resources =
+      QueryResourceContext::create(std::size_t{96U} * 1024U * 1024U).value();
+
+  SnapshotTabletScanLimits mismatched;
+  mismatched.cseg.row_version_columns = RowVersionScanMode::kAppend;
+  EXPECT_EQ(
+      create_snapshot_tablet_scan(resources, *fixture->snapshot, planned, images, fixture->schemas,
+                                  cseg::test::identifier<schema::SchemaId>(4U), {0U}, mismatched)
+          .error()
+          .code(),
+      common::StatusCode::kInvalidArgument);
+  SnapshotTabletScanLimits head_limited;
+  head_limited.maximum_heads = 1U;
+  EXPECT_EQ(
+      create_snapshot_tablet_scan(resources, *fixture->snapshot, planned, images, fixture->schemas,
+                                  cseg::test::identifier<schema::SchemaId>(4U), {0U}, head_limited)
+          .error()
+          .code(),
+      common::StatusCode::kResourceExhausted);
+  SnapshotTabletScanLimits configuration_limited;
+  configuration_limited.maximum_retained_configuration_bytes = 1U;
+  EXPECT_EQ(create_snapshot_tablet_scan(
+                resources, *fixture->snapshot, planned, images, fixture->schemas,
+                cseg::test::identifier<schema::SchemaId>(4U), {0U}, configuration_limited)
+                .error()
+                .code(),
+            common::StatusCode::kResourceExhausted);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
+TEST(DatabaseSnapshotTabletScanTest, CancellationAndForeignQueryUseReleaseEveryChild) {
+  const std::unique_ptr<MultiPartSnapshot> fixture = load_multi_part_snapshot();
+  publish_live_heads(*fixture);
+  const schema::TabletId tablet = cseg::test::identifier<schema::TabletId>(3U);
+  auto planned = plan_snapshot_cseg_part_scan(*fixture->snapshot, tablet).value();
+  auto images = load_snapshot_cseg_part_scan_images(*fixture->storage, *fixture->snapshot, planned,
+                                                    fixture->schemas)
+                    .value();
+  QueryResourceContext owner =
+      QueryResourceContext::create(std::size_t{96U} * 1024U * 1024U).value();
+  auto created = create_snapshot_tablet_scan(owner, *fixture->snapshot, planned, std::move(images),
+                                             fixture->schemas,
+                                             cseg::test::identifier<schema::SchemaId>(4U), {0U});
+  ASSERT_TRUE(created.has_value()) << created.error().to_string();
+  QueryResourceContext foreign =
+      QueryResourceContext::create(std::size_t{96U} * 1024U * 1024U).value();
+  const auto failed = (*created)->next(foreign);
+  ASSERT_FALSE(failed.has_value());
+  EXPECT_EQ(failed.error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_TRUE(foreign.is_cancelled());
+  created->reset();
+  EXPECT_EQ(owner.reserved_memory_bytes(), 0U);
 }
 
 } // namespace

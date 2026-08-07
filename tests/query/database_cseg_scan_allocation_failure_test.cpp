@@ -256,5 +256,36 @@ TEST(DatabaseCsegScanAllocationFailureTest, AggregateCreationUnwindsEveryRetaine
   EXPECT_TRUE(reached_success);
 }
 
+TEST(DatabaseCsegScanAllocationFailureTest, CompleteTabletCreationClassifiesEveryNewAllocation) {
+  const AggregateAllocationFixture fixture = aggregate_allocation_fixture();
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 96U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    QueryResourceContext resources =
+        QueryResourceContext::create(std::size_t{32U} * 1024U * 1024U).value();
+    std::vector<std::shared_ptr<const manifest::SnapshotPartImage>> images = fixture.images;
+    const std::vector<std::uint32_t> ordinals{1U};
+    SnapshotTabletScanLimits limits;
+    limits.cseg.row_version_columns = RowVersionScanMode::kAppend;
+    limits.head.row_version_columns = RowVersionScanMode::kAppend;
+    std::size_t observed = 0U;
+    auto source = run_aggregate_with_allocation_failure(fail_after, observed, [&] {
+      return create_snapshot_tablet_scan(
+          resources, fixture.snapshot, fixture.plan, std::move(images), fixture.schemas,
+          cseg::test::identifier<schema::SchemaId>(6U), ordinals, limits);
+    });
+    EXPECT_GT(observed, 0U);
+    if (source.has_value()) {
+      reached_success = true;
+      source->reset();
+      EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+      break;
+    }
+    EXPECT_EQ(source.error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  }
+  EXPECT_TRUE(reached_success);
+}
+
 } // namespace
 } // namespace chronos::query

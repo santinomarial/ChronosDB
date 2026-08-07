@@ -281,6 +281,16 @@ int main() {
           const std::vector<std::uint32_t>&, chronos::query::CsegScanLimits);
   const CreateSnapshotCsegPartScanFunction create_snapshot_cseg_part_scan =
       &chronos::query::create_snapshot_cseg_part_scan;
+  using CreateSnapshotTabletScanFunction =
+      chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
+          const chronos::query::QueryResourceContext&,
+          const chronos::manifest::DatabaseStorageSnapshot&,
+          const chronos::query::SnapshotCsegPartScanPlan&,
+          std::vector<std::shared_ptr<const chronos::manifest::SnapshotPartImage>>,
+          const chronos::schema::SchemaLineage&, chronos::schema::SchemaId,
+          const std::vector<std::uint32_t>&, chronos::query::SnapshotTabletScanLimits);
+  const CreateSnapshotTabletScanFunction create_snapshot_tablet_scan =
+      &chronos::query::create_snapshot_tablet_scan;
   using CreateHeadScanFunction =
       chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
           const chronos::query::QueryResourceContext&, chronos::head::HeadSnapshot,
@@ -716,6 +726,7 @@ int main() {
                  plan_snapshot_cseg_part_scan != nullptr &&
                  load_snapshot_cseg_part_scan_images != nullptr &&
                  create_snapshot_cseg_part_scan != nullptr &&
+                 create_snapshot_tablet_scan != nullptr &&
                  !cseg_metadata.has_value() &&
                  cseg_metadata.error().kind() ==
                      chronos::cseg::CsegMetadataDecodeErrorKind::kIncomplete &&

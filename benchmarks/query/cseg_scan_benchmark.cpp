@@ -4,6 +4,7 @@
 #include "chronos/schema/schema_lineage.hpp"
 #include "chronos/schema/table_schema.hpp"
 #include "cseg/cseg_test_fixture.hpp"
+#include "query/snapshot_tablet_scan_test_fixture.hpp"
 #include "support/counting_allocator.hpp"
 
 #include <benchmark/benchmark.h>
@@ -283,6 +284,46 @@ void scan_one_exact_row_among_many_granules(benchmark::State& state) {
 
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 BENCHMARK(scan_one_exact_row_among_many_granules)->ArgsProduct({{64, 4'096}, {0, 1}});
+
+void scan_complete_head_only_snapshot(benchmark::State& state) {
+  const auto rows = static_cast<std::uint32_t>(state.range(0));
+  const test::SnapshotTabletScanFixture fixture{rows};
+  QueryResourceContext resources =
+      QueryResourceContext::create(std::size_t{1U} * 1024U * 1024U * 1024U).value();
+  std::size_t observed_rows = 0U;
+  for ([[maybe_unused]] auto iteration : state) {
+    state.PauseTiming();
+    auto source = fixture.source(resources);
+    if (!source.has_value()) {
+      const std::string message = source.error().to_string();
+      state.SkipWithError(message);
+      return;
+    }
+    state.ResumeTiming();
+    std::size_t iteration_rows = 0U;
+    while (true) {
+      auto step = (*source)->next(resources);
+      if (!step.has_value()) {
+        const std::string message = step.error().to_string();
+        state.SkipWithError(message);
+        return;
+      }
+      if (step->kind() == PhysicalOperatorStepKind::kEnd)
+        break;
+      iteration_rows += step->chunk()->chunk().selected_row_count();
+    }
+    observed_rows = iteration_rows;
+    benchmark::DoNotOptimize(observed_rows);
+  }
+  state.SetItemsProcessed(static_cast<std::int64_t>(state.iterations()) *
+                          static_cast<std::int64_t>(observed_rows));
+  state.counters["published_heads"] = 1.0;
+  state.counters["rows"] = static_cast<double>(observed_rows);
+  state.SetLabel("exact aggregate publication; empty durable subset plus one active head");
+}
+
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+BENCHMARK(scan_complete_head_only_snapshot)->Arg(64)->Arg(1'024)->Arg(65'536);
 
 } // namespace
 } // namespace chronos::query

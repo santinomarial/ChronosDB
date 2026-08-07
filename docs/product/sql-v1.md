@@ -7,7 +7,9 @@
 > aggregate subset into bounded vector operators. Exact bounded `ORDER BY` lowering now composes
 > the physical sort and shared source row-version suffix for DEDUP-keyed base rows and aggregate
 > results. Base-row vector ordering for schemas that require a generated logical identity remains
-> unsupported because vector sources do not expose that identity. SQL v1 is deliberately smaller
+> unsupported because vector sources do not expose that identity. The storage layer now exposes an
+> exact complete append-only tablet source, but bound SQL source selection is not yet connected to
+> it. SQL v1 is deliberately smaller
 > than the SQL standard. Unsupported syntax must produce a clear bind or parse error; it must not be
 > accepted with different semantics.
 

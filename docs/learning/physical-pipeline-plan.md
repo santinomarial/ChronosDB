@@ -138,7 +138,8 @@ have separate guides, and physical sort ownership/order evidence is in the
 The unary stage variant is easy to audit and sufficient for current differential execution. It
 cannot represent scans, branches, joins, exchanges, or sinks. Bound single-source projection,
 global/grouped aggregation, and exact bounded ordering use the accounted stage baseline. Generated-
-identity base ordering, complete part/head merge, variable-width extrema, joins, scheduling, and
+identity base ordering, SQL selection of the complete append-only tablet source, future
+correction/delete merging, variable-width extrema, joins, scheduling, and
 spill remain. A later graph/optimizer can lower into or replace this
 pipeline while retaining its shape and differential guarantees.
 

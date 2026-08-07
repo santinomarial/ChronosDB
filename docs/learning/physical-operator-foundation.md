@@ -203,9 +203,9 @@ deliberate pre-measurement choices.
 
 The snapshot-bound adapter joins canonical selected durable parts from one exact aggregate database
 epoch with safe event-time pruning, while the head source independently canonicalizes one pinned
-generation. Both source factories now retain an omitted event-time helper through exact filtering
-and remove it before output. The next storage increment must define shared hidden columns and
-explicit part/head merge semantics before claiming complete tablet visibility. Remaining scalar
+generation. Both source factories retain an omitted event-time helper through exact filtering and
+remove it before output. The complete append-only tablet factory composes those children from one
+aggregate epoch; future correction/delete operations still need accepted winner semantics. Remaining scalar
 physical operations and bound-plan lowering are the other immediate dependencies; source-column
 reorder, duplication, typed constants, and checked numeric/Boolean computation now have an owned
 baseline.
