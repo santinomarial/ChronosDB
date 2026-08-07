@@ -102,6 +102,12 @@
 > empty-plan validation, exhaustive retained-allocation failure injection, predicate-aware decoder
 > fuzzing, and separate metadata-plan versus selected-pull measurements. It explicitly excludes
 > mutable heads and exact SQL filtering from its correctness claim.
+> The single-publication mutable-head source adds byte-per-row-to-bitmap canonicalization,
+> native-to-little-endian rebased offsets, exact old-snapshot boundary checks, schema-successor NULL
+> synthesis, every-frozen-type and varied-boundary properties, exhaustive source/pull allocation
+> failure, hostile projection fuzzing, sanitizer coverage, and isolated materialization
+> measurements. It explicitly excludes hidden row versions, multi-head/part composition, and exact
+> SQL filtering from its correctness claim.
 
 ## Test types
 

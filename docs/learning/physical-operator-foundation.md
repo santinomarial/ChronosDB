@@ -4,10 +4,10 @@
 
 The physical pipeline foundation connects bounded vectors to query-wide memory and cancellation.
 It defines one owning pull step and implements pinned single- and sequential multi-part CSEG
-sources, allocation-free
-Boolean filtering, stable column-subset projection, and global LIMIT. It does not lower a bound SQL
-plan or compose snapshot-visible mutable heads with durable parts into a complete tablet source, so
-the Phase 8 scalar executor remains the only complete SQL execution path.
+sources, a canonicalizing source over one exact mutable-head publication, allocation-free Boolean
+filtering, stable column-subset projection, and global LIMIT. It does not lower a bound SQL plan or
+compose all snapshot-visible mutable heads with durable parts into a complete tablet source, so the
+Phase 8 scalar executor remains the only complete SQL execution path.
 
 ## Public interfaces
 
@@ -19,7 +19,9 @@ the Phase 8 scalar executor remains the only complete SQL execution path.
 - `CsegScanOperator`, a query-accounted single-part source described in the
   [scan guide](cseg-scan-source.md);
 - the snapshot-bound sequential CSEG source described in the
-  [pruned scan guide](pruned-snapshot-cseg-scan.md); and
+  [pruned scan guide](pruned-snapshot-cseg-scan.md);
+- the exact-publication mutable-head source described in the
+  [head scan guide](mutable-head-scan-source.md); and
 - `BooleanFilterOperator`, `ColumnSubsetOperator`, and `LimitOperator`, uniquely owned unary
   pipeline stages.
 
@@ -162,10 +164,11 @@ Pull and unique child ownership make correctness visible but do not exploit core
 rows as a selection avoids copies but may reduce locality after very selective predicates. Both are
 deliberate pre-measurement choices.
 
-The snapshot-bound adapter now joins canonical selected durable parts from one exact aggregate
-database epoch with safe event-time pruning. The next storage increment must add mutable-head
-backing and explicit part/head merge semantics before claiming complete tablet visibility. Typed
-physical expression/output building is the other immediate dependency.
+The snapshot-bound adapter joins canonical selected durable parts from one exact aggregate database
+epoch with safe event-time pruning, while the head source independently canonicalizes one pinned
+generation. The next storage increment must define shared hidden columns and explicit part/head
+merge semantics before claiming complete tablet visibility. Typed physical expression/output
+building is the other immediate dependency.
 Parallel scheduling should follow only after task ownership, queue capacity, terminal-error
 arbitration, and cancellation release are specified.
 

@@ -153,7 +153,10 @@ Packed validity and BOOL storage is safe here precisely because it is immutable 
 It must not be copied as the write-in-place representation of a future concurrently readable mutable
 head: two logical rows can share one byte, which would create a C++ data race during publication.
 The accepted mutable-head contract requires independently addressable unpublished storage or an
-equivalent explicit race-free proof before compacting a sealed generation.
+equivalent explicit race-free proof before compacting a sealed generation. The Phase 9
+`HeadScanOperator` preserves that contract by reading one acquire-observed published boundary and
+copying byte validity/BOOL values and native offsets into separately owned packed-bit and
+little-endian query buffers; it never aliases mutable-head storage as a canonical vector.
 
 ## Failure behavior and complexity
 

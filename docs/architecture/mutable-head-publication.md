@@ -11,9 +11,11 @@
 > position-only outer publication for matching ancestor-schema duplicates. The bounded Phase 6
 > flush handoff, atomic head-to-manifest replacement, and receipt-authorized retirement are
 > implemented. The end-to-end durable flush coordinator and its filesystem crash matrix are also
-> implemented. Retry pruning and catalog/routing admission remain unimplemented. This document refines
-> [ADR 0005](../adr/0005-columnar-heads-and-immutable-cseg-parts.md) for Phase 4; CSEG and
-> installation bytes are defined by their accepted format specifications.
+> implemented. Phase 9 can materialize one exact `HeadSnapshot` into bounded canonical user-column
+> query chunks, but complete tablet scans and hidden row-version merging remain unimplemented. Retry
+> pruning and catalog/routing admission remain unimplemented. This document refines [ADR
+> 0005](../adr/0005-columnar-heads-and-immutable-cseg-parts.md) for Phase 4; CSEG and installation
+> bytes are defined by their accepted format specifications.
 
 ## State and ownership
 
@@ -136,6 +138,11 @@ A head is never removed from query visibility merely because it was handed to fl
 installation must atomically replace covered heads through a manifest/snapshot transition so a
 snapshot sees the logical rows exactly once. That replacement, checkpoint coverage, and durable
 reclamation belong to Phase 6.
+
+`HeadScanOperator` can independently scan one captured active or sealed generation by copying its
+user columns into canonical query chunks. It does not expose the hidden position/version fields or
+compose multiple generations with installed parts; callers therefore must not treat one such scan
+as complete tablet visibility.
 
 If the sealed-head/flush handoff bound is full and a new generation cannot be retained safely, the
 owner applies backpressure before admitting the append to WAL. It never drops a sealed head or

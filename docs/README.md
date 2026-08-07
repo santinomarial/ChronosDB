@@ -167,5 +167,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   canonical part planning, two-stage no-false-negative event-time pruning, selected-only image
   loading, query-accounted sequential composition, explicit CSEG-only visibility, and failure and
   measurement boundaries.
+- [Mutable-head scan source](learning/mutable-head-scan-source.md): implemented exact-publication
+  head pinning, bounded canonical bitmap/offset materialization, schema-tail NULL synthesis,
+  query-accounted pull ownership, and the explicit hidden-version/aggregate-scan boundary.
 
 Future format, protocol, subsystem, operations, and learning documents should be linked here when they are added by their corresponding roadmap phase.

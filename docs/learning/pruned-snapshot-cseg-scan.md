@@ -112,10 +112,11 @@ Serial eager construction is easy to audit but repeats snapshot credit and metad
 physical `PartId` order is not a key merge. Compaction may change that physical order; SQL without
 `ORDER BY` has no result-order guarantee. Owned file images are portable but copy selected files.
 
-A complete tablet source still needs canonical immutable mutable-head backing, one-snapshot
-part/head composition, exact predicate operators, row-version and base/delta merge rules, and a
-scalar differential oracle. Parallelism requires reviewed task ownership, bounded queues, terminal
-error arbitration, and pin/credit transfer before replacing this serial source.
+A separate source now canonicalizes one exact mutable-head publication. A complete tablet source
+still needs shared hidden-system columns, all-head one-snapshot composition, exact predicate
+operators, row-version and base/delta merge rules, and a scalar differential oracle. Parallelism
+requires reviewed task ownership, bounded queues, terminal-error arbitration, and pin/credit
+transfer before replacing this serial source.
 
 ## Likely review questions
 
@@ -129,8 +130,9 @@ granules. Pruning is work avoidance, not predicate evaluation.
 **Why validate projection on an empty selection?** Invalid query configuration must not become
 conditionally valid because current metadata happens to select no work.
 
-**Why not call this a tablet scan?** Snapshot-visible mutable heads are outside this source. Calling
-it complete would silently omit committed rows.
+**Why not call this a tablet scan?** Snapshot-visible mutable heads are outside this source. The
+independent single-head source does not yet provide the hidden metadata or merge semantics needed
+to compose them without omissions or duplicates.
 
 **Why not merge parts by event time?** Overlapping base/delta parts need explicit row-version and
 tie-break semantics plus differential validation. Concatenation makes no stronger promise.

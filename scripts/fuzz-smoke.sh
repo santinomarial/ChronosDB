@@ -36,6 +36,7 @@ targets=(
   chronos_cseg_page_codec_fuzz
   chronos_cseg_part_codec_fuzz
   chronos_cseg_scan_fuzz
+  chronos_head_scan_fuzz
   chronos_manifest_codec_fuzz
   chronos_sql_lexer_fuzz
   chronos_sql_parser_fuzz

@@ -386,11 +386,16 @@ No phase passes because its code merely compiles. A phase passes only when its a
   eleventh increment add bounded canonical durable-part plans, Manifest-then-CSEG event-time
   pruning with no false negatives, selected-only snapshot image loading, query-accounted sequential
   multi-part composition, deterministic properties, hostile and allocation-failure coverage,
-  pruning/selected-pull benchmarks, and installed-consumer linkage. This source is explicitly
-  CSEG-only: bound-SQL lowering, exact vector predicates, optimizer rules, typed vector expressions
-  and output builders, complete multi-part/head scans, mutable-head sources, base/delta merge and
-  row-version resolution, mapped/asynchronous providers, shared pin credit, scheduling, spill, and
-  full scalar-engine differential plan execution are unimplemented.
+  pruning/selected-pull benchmarks, and installed-consumer linkage. ADR 0029 and the twelfth
+  increment add a query-accounted source over one exact mutable-head publication, bounded canonical
+  bitmap/offset materialization, schema-successor NULL synthesis, preserved caller projection
+  order, deterministic snapshot/boundary properties, exhaustive allocation failure, fuzzing,
+  materialization benchmarks, and installed-consumer linkage. The durable and mutable sources still
+  expose user columns independently: bound-SQL lowering, exact vector predicates, optimizer rules,
+  typed vector expressions and output builders, hidden row-version columns, complete multi-part/head
+  composition, base/delta merge and row-version resolution, mapped/asynchronous providers, shared
+  pin credit, scheduling, spill, and full scalar-engine differential plan execution are
+  unimplemented.
 
 - **Scope:** bounded vectors, vectorized scans/expressions/aggregates/joins, physical planning, memory accounting, cancellation, parallel scheduling, and spill for explicitly supported operators.
 - **Explicit non-scope:** distributed fragments, GPU novelty, unbounded query memory, or optimizer rules lacking semantic/differential validation.
