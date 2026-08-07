@@ -75,7 +75,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
   const std::size_t hostile_count = size > 32U ? 32U : size;
   hostile_stages.reserve(hostile_count);
   for (std::size_t index = 0U; index < hostile_count; ++index) {
-    switch (data[index] % 7U) {
+    switch (data[index] % 8U) {
     case 0U:
       hostile_stages.emplace_back(
           chronos::query::BooleanFilterStage{static_cast<std::size_t>(data[index] >> 2U)});
@@ -181,6 +181,28 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
                                     static_cast<std::size_t>(data[index]) * 64U}}});
       break;
     }
+    case 7U: {
+      std::vector<chronos::query::VectorGroupKeyDefinition> keys;
+      keys.push_back({.column_ordinal = static_cast<std::size_t>((data[index] >> 1U) & 3U),
+                      .type = (data[index] & 8U) == 0U ? bool_type() : int64_type(),
+                      .nullable = (data[index] & 128U) != 0U});
+      hostile_stages.emplace_back(chronos::query::GroupedAggregateStage{
+          .keys = std::move(keys),
+          .definitions = {{.operation = chronos::query::VectorAggregateOperation::kCountStar,
+                           .input = std::nullopt}},
+          .limits = {
+              .maximum_groups = static_cast<std::size_t>(data[index] >> 4U),
+              .maximum_group_keys = static_cast<std::size_t>((data[index] >> 5U) & 3U),
+              .maximum_aggregates = static_cast<std::size_t>((data[index] >> 6U) & 3U),
+              .maximum_key_bytes_per_group = static_cast<std::size_t>(data[index]),
+              .maximum_retained_configuration_bytes = static_cast<std::size_t>(data[index]) * 64U,
+              .output_limits = {.maximum_rows = static_cast<std::uint32_t>(data[index]),
+                                .maximum_columns = static_cast<std::size_t>(data[index] >> 4U),
+                                .maximum_buffer_bytes = static_cast<std::size_t>(data[index]) * 32U,
+                                .maximum_retained_buffer_bytes =
+                                    static_cast<std::size_t>(data[index]) * 64U}}});
+      break;
+    }
     default:
       break;
     }
@@ -211,11 +233,32 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
                        .value();
   std::vector<chronos::query::PhysicalPipelineStage> stages;
   stages.emplace_back(chronos::query::BooleanFilterStage{0U});
-  const bool aggregate = size >= 3U && (data[2] & 1U) != 0U;
-  if (aggregate) {
+  const std::uint8_t aggregate_mode = size >= 3U ? data[2] % 3U : 0U;
+  if (aggregate_mode == 1U) {
     stages.emplace_back(chronos::query::UngroupedAggregateStage{
         .definitions = {{.operation = chronos::query::VectorAggregateOperation::kCountStar,
                          .input = std::nullopt}}});
+    stages.emplace_back(chronos::query::LimitStage{maximum_rows});
+    stages.emplace_back(chronos::query::ColumnOutputStage{
+        .positions = {chronos::query::SourceColumnOutputPosition{0U}},
+        .output_limits = {.maximum_rows = 256U,
+                          .maximum_columns = 1U,
+                          .maximum_buffer_bytes = 4'096U,
+                          .maximum_retained_buffer_bytes = 8'192U}});
+  } else if (aggregate_mode == 2U) {
+    stages.emplace_back(chronos::query::GroupedAggregateStage{
+        .keys = {{.column_ordinal = 0U, .type = bool_type(), .nullable = false}},
+        .definitions = {{.operation = chronos::query::VectorAggregateOperation::kCountStar,
+                         .input = std::nullopt}},
+        .limits = {.maximum_groups = 2U,
+                   .maximum_group_keys = 1U,
+                   .maximum_aggregates = 1U,
+                   .maximum_key_bytes_per_group = 1U,
+                   .maximum_retained_configuration_bytes = 4'096U,
+                   .output_limits = {.maximum_rows = 1U,
+                                     .maximum_columns = 2U,
+                                     .maximum_buffer_bytes = 4'096U,
+                                     .maximum_retained_buffer_bytes = 8'192U}}});
     stages.emplace_back(chronos::query::LimitStage{maximum_rows});
     stages.emplace_back(chronos::query::ColumnOutputStage{
         .positions = {chronos::query::SourceColumnOutputPosition{0U}},
@@ -247,8 +290,16 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
     actual_rows += step->chunk()->chunk().selected_row_count();
   }
 
-  std::size_t expected_rows = aggregate && maximum_rows != 0U ? 1U : 0U;
-  if (!aggregate) {
+  std::size_t expected_rows = aggregate_mode == 1U && maximum_rows != 0U ? 1U : 0U;
+  if (aggregate_mode == 2U && maximum_rows != 0U) {
+    for (std::uint32_t row = 0U; row < rows; ++row) {
+      if (!input.empty() && (input[row % input.size()] & 1U) != 0U) {
+        expected_rows = 1U;
+        break;
+      }
+    }
+  }
+  if (aggregate_mode == 0U) {
     for (std::uint32_t row = 0U; row < rows && expected_rows < maximum_rows; ++row) {
       if (!input.empty() && (input[row % input.size()] & 1U) != 0U)
         ++expected_rows;

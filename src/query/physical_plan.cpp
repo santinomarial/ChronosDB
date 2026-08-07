@@ -100,6 +100,16 @@ retained_bytes_for_configuration(const std::vector<PhysicalColumnShape>& input_c
                                  sizeof(VectorAggregateDefinition));
       if (!total.has_value())
         return total;
+    } else if (const auto* grouped = std::get_if<GroupedAggregateStage>(&stage);
+               grouped != nullptr) {
+      total =
+          add_capacity_bytes(*total, grouped->keys.capacity(), sizeof(VectorGroupKeyDefinition));
+      if (!total.has_value())
+        return total;
+      total = add_capacity_bytes(*total, grouped->definitions.capacity(),
+                                 sizeof(VectorAggregateDefinition));
+      if (!total.has_value())
+        return total;
     }
   }
   return total;
@@ -370,6 +380,70 @@ PhysicalPipelinePlan::create(std::vector<PhysicalColumnShape> input_columns,
         output_columns = std::move(aggregate_columns);
         continue;
       }
+      if (const auto* grouped = std::get_if<GroupedAggregateStage>(&stage); grouped != nullptr) {
+        const GroupedAggregateLimits& grouped_limits = grouped->limits;
+        if (grouped_limits.maximum_groups == 0U ||
+            grouped_limits.maximum_groups > kMaximumGroupedAggregateGroups ||
+            grouped_limits.maximum_group_keys == 0U ||
+            grouped_limits.maximum_group_keys > kMaximumGroupedAggregateKeys ||
+            grouped_limits.maximum_aggregates > kMaximumGroupedAggregateWidth ||
+            grouped_limits.maximum_key_bytes_per_group == 0U ||
+            grouped_limits.maximum_retained_configuration_bytes == 0U ||
+            grouped_limits.output_limits.maximum_rows == 0U ||
+            grouped_limits.output_limits.maximum_columns == 0U ||
+            grouped_limits.output_limits.maximum_buffer_bytes == 0U ||
+            grouped_limits.output_limits.maximum_retained_buffer_bytes == 0U) {
+          return common::make_unexpected(
+              invalid("physical pipeline grouped aggregate limits are invalid"));
+        }
+        if (grouped->keys.empty()) {
+          return common::make_unexpected(
+              invalid("physical pipeline grouped aggregate requires a key"));
+        }
+        if (grouped->keys.size() > grouped_limits.maximum_group_keys ||
+            grouped->keys.capacity() > grouped_limits.maximum_group_keys ||
+            grouped->definitions.size() > grouped_limits.maximum_aggregates ||
+            grouped->definitions.capacity() > grouped_limits.maximum_aggregates) {
+          return common::make_unexpected(
+              exhausted("physical pipeline grouped aggregate width exceeds its limit"));
+        }
+        const std::optional<std::size_t> grouped_width =
+            common::checked_add(grouped->keys.size(), grouped->definitions.size());
+        if (!grouped_width.has_value() ||
+            *grouped_width > grouped_limits.output_limits.maximum_columns) {
+          return common::make_unexpected(
+              exhausted("physical pipeline grouped aggregate output exceeds its limit"));
+        }
+        std::vector<PhysicalColumnShape> grouped_columns;
+        grouped_columns.reserve(*grouped_width);
+        for (const VectorGroupKeyDefinition& key : grouped->keys) {
+          if (key.column_ordinal >= output_columns.size() ||
+              output_columns[key.column_ordinal].type != key.type ||
+              output_columns[key.column_ordinal].nullable != key.nullable) {
+            return common::make_unexpected(
+                invalid("physical pipeline group key input shape is invalid"));
+          }
+          grouped_columns.push_back({.type = key.type, .nullable = key.nullable});
+        }
+        for (const VectorAggregateDefinition& definition : grouped->definitions) {
+          common::Result<VectorAggregateOutputShape> shape =
+              vector_aggregate_output_shape(definition);
+          if (!shape.has_value())
+            return common::make_unexpected(shape.error());
+          if (definition.input.has_value()) {
+            const VectorAggregateInput& input = *definition.input;
+            if (input.column_ordinal >= output_columns.size() ||
+                output_columns[input.column_ordinal].type != input.type ||
+                output_columns[input.column_ordinal].nullable != input.nullable) {
+              return common::make_unexpected(
+                  invalid("physical pipeline grouped aggregate input shape is invalid"));
+            }
+          }
+          grouped_columns.push_back({.type = shape->type, .nullable = shape->nullable});
+        }
+        output_columns = std::move(grouped_columns);
+        continue;
+      }
       if (std::get_if<LimitStage>(&stage) == nullptr)
         return common::make_unexpected(invalid("physical pipeline stage is not supported"));
     }
@@ -438,6 +512,10 @@ PhysicalPipelinePlan::instantiate(std::unique_ptr<PhysicalOperator> source) cons
                  aggregate != nullptr) {
         next = UngroupedAggregateOperator::create(std::move(pipeline), aggregate->definitions,
                                                   aggregate->limits);
+      } else if (const auto* grouped = std::get_if<GroupedAggregateStage>(&stage);
+                 grouped != nullptr) {
+        next = GroupedAggregateOperator::create(std::move(pipeline), grouped->keys,
+                                                grouped->definitions, grouped->limits);
       } else if (const auto* limit = std::get_if<LimitStage>(&stage); limit != nullptr) {
         next = LimitOperator::create(std::move(pipeline), limit->maximum_rows);
       }

@@ -191,20 +191,27 @@ decimal_column(const schema::LogicalType decimal_type,
       .value();
 }
 
-[[nodiscard]] AccountedVectorChunk accounted_chunk(const QueryResourceContext& resources,
-                                                   columnar::OwnedPhysicalColumn column,
-                                                   std::vector<std::uint32_t> selection = {}) {
-  const std::uint32_t rows = column.row_count();
+[[nodiscard]] AccountedVectorChunk
+accounted_chunk(const QueryResourceContext& resources,
+                std::vector<columnar::OwnedPhysicalColumn> columns,
+                std::vector<std::uint32_t> selection = {}) {
+  const std::uint32_t rows = columns.front().row_count();
   VectorSelection selected =
       selection.empty() ? VectorSelection::all(rows).value()
                         : VectorSelection::from_indices(rows, std::move(selection)).value();
-  std::vector<columnar::OwnedPhysicalColumn> columns;
-  columns.push_back(std::move(column));
   VectorChunk chunk = VectorChunk::create(std::move(columns), std::move(selected)).value();
   const std::size_t charge = chunk.retained_buffer_bytes() + 1'024U;
   return AccountedVectorChunk::create(std::move(chunk), resources.reserve(charge).value(),
                                       resources)
       .value();
+}
+
+[[nodiscard]] AccountedVectorChunk accounted_chunk(const QueryResourceContext& resources,
+                                                   columnar::OwnedPhysicalColumn column,
+                                                   std::vector<std::uint32_t> selection = {}) {
+  std::vector<columnar::OwnedPhysicalColumn> columns;
+  columns.push_back(std::move(column));
+  return accounted_chunk(resources, std::move(columns), std::move(selection));
 }
 
 class ManyChunkSource final : public PhysicalOperator {
@@ -557,6 +564,228 @@ TEST(UngroupedAggregatePlanTest, PropagatesShapesAndInstantiatesTheStage) {
                 .error()
                 .code(),
             common::StatusCode::kInvalidArgument);
+}
+
+TEST(GroupedAggregateOperatorTest, GroupsVariableKeysNullsAndAggregatesAcrossSelections) {
+  QueryResourceContext resources = QueryResourceContext::create(8U << 20U).value();
+  const std::array<std::optional<std::string_view>, 6> keys{"A",          "B",          "A",
+                                                            std::nullopt, std::nullopt, "ignored"};
+  const std::array<std::optional<std::int64_t>, 6> values{1, 2, std::nullopt, 4, 6, 100};
+  std::vector<columnar::OwnedPhysicalColumn> columns;
+  columns.push_back(string_column(keys));
+  columns.push_back(signed_column(schema::LogicalTypeKind::kInt64, values));
+  std::vector<AccountedVectorChunk> chunks;
+  chunks.push_back(accounted_chunk(resources, std::move(columns), {0U, 1U, 2U, 3U, 4U}));
+
+  const std::vector<VectorGroupKeyDefinition> group_keys{
+      {.column_ordinal = 0U, .type = type(schema::LogicalTypeKind::kString), .nullable = true}};
+  const std::vector<VectorAggregateDefinition> definitions{
+      {.operation = VectorAggregateOperation::kCountStar, .input = std::nullopt},
+      {.operation = VectorAggregateOperation::kCount,
+       .input = VectorAggregateInput{.column_ordinal = 1U,
+                                     .type = type(schema::LogicalTypeKind::kInt64),
+                                     .nullable = true}},
+      {.operation = VectorAggregateOperation::kSum,
+       .input = VectorAggregateInput{
+           .column_ordinal = 1U, .type = type(schema::LogicalTypeKind::kInt64), .nullable = true}}};
+  auto grouped = GroupedAggregateOperator::create(
+                     std::make_unique<ManyChunkSource>(std::move(chunks)), group_keys, definitions)
+                     .value();
+
+  auto first = grouped->next(resources).value();
+  ASSERT_EQ(first.kind(), PhysicalOperatorStepKind::kChunk);
+  EXPECT_EQ(std::get<std::string>(cell(first.chunk()->chunk(), 0U).storage()), "A");
+  EXPECT_EQ(std::get<std::int64_t>(cell(first.chunk()->chunk(), 1U).storage()), 2);
+  EXPECT_EQ(std::get<std::int64_t>(cell(first.chunk()->chunk(), 2U).storage()), 1);
+  EXPECT_EQ(std::get<std::int64_t>(cell(first.chunk()->chunk(), 3U).storage()), 1);
+  EXPECT_TRUE(first.chunk()->chunk().column(0U)->nullable());
+  first = PhysicalOperatorStep::end();
+
+  auto second = grouped->next(resources).value();
+  EXPECT_EQ(std::get<std::string>(cell(second.chunk()->chunk(), 0U).storage()), "B");
+  EXPECT_EQ(std::get<std::int64_t>(cell(second.chunk()->chunk(), 1U).storage()), 1);
+  EXPECT_EQ(std::get<std::int64_t>(cell(second.chunk()->chunk(), 3U).storage()), 2);
+  second = PhysicalOperatorStep::end();
+
+  auto third = grouped->next(resources).value();
+  EXPECT_TRUE(cell(third.chunk()->chunk(), 0U).is_null());
+  EXPECT_EQ(std::get<std::int64_t>(cell(third.chunk()->chunk(), 1U).storage()), 2);
+  EXPECT_EQ(std::get<std::int64_t>(cell(third.chunk()->chunk(), 2U).storage()), 2);
+  EXPECT_EQ(std::get<std::int64_t>(cell(third.chunk()->chunk(), 3U).storage()), 10);
+  third = PhysicalOperatorStep::end();
+  EXPECT_EQ(grouped->next(resources)->kind(), PhysicalOperatorStepKind::kEnd);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
+TEST(GroupedAggregateOperatorTest, EmptyInputAndResourceLimitsReleaseState) {
+  const std::vector<VectorGroupKeyDefinition> keys{
+      {.column_ordinal = 0U, .type = type(schema::LogicalTypeKind::kInt64), .nullable = true}};
+  QueryResourceContext empty_resources = QueryResourceContext::create(1U << 20U).value();
+  auto empty = GroupedAggregateOperator::create(std::make_unique<EmptySource>(), keys, {}).value();
+  EXPECT_EQ(empty->next(empty_resources)->kind(), PhysicalOperatorStepKind::kEnd);
+  EXPECT_EQ(empty_resources.reserved_memory_bytes(), 0U);
+
+  QueryResourceContext resources = QueryResourceContext::create(4U << 20U).value();
+  const std::array<std::optional<std::int64_t>, 3> values{1, 2, 3};
+  std::vector<AccountedVectorChunk> chunks;
+  chunks.push_back(
+      accounted_chunk(resources, signed_column(schema::LogicalTypeKind::kInt64, values)));
+  auto limited =
+      GroupedAggregateOperator::create(std::make_unique<ManyChunkSource>(std::move(chunks)), keys,
+                                       {}, {.maximum_groups = 2U})
+          .value();
+  auto failed = limited->next(resources);
+  ASSERT_FALSE(failed.has_value());
+  EXPECT_EQ(failed.error().code(), common::StatusCode::kResourceExhausted);
+  EXPECT_TRUE(resources.is_cancelled());
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+
+  QueryResourceContext key_resources = QueryResourceContext::create(4U << 20U).value();
+  const std::array<std::optional<std::string_view>, 1> long_key{"too-long"};
+  std::vector<AccountedVectorChunk> key_chunks;
+  key_chunks.push_back(accounted_chunk(key_resources, string_column(long_key)));
+  const std::vector<VectorGroupKeyDefinition> string_keys{
+      {.column_ordinal = 0U, .type = type(schema::LogicalTypeKind::kString), .nullable = true}};
+  auto key_limited =
+      GroupedAggregateOperator::create(std::make_unique<ManyChunkSource>(std::move(key_chunks)),
+                                       string_keys, {}, {.maximum_key_bytes_per_group = 3U})
+          .value();
+  auto key_failed = key_limited->next(key_resources);
+  ASSERT_FALSE(key_failed.has_value());
+  EXPECT_EQ(key_failed.error().code(), common::StatusCode::kResourceExhausted);
+  EXPECT_TRUE(key_resources.is_cancelled());
+  EXPECT_EQ(key_resources.reserved_memory_bytes(), 0U);
+}
+
+TEST(GroupedAggregateOperatorTest, RejectsChunksOwnedByAnotherQuery) {
+  QueryResourceContext owner = QueryResourceContext::create(4U << 20U).value();
+  QueryResourceContext consumer = QueryResourceContext::create(4U << 20U).value();
+  const std::array<std::optional<std::int64_t>, 1> values{1};
+  std::vector<AccountedVectorChunk> chunks;
+  chunks.push_back(accounted_chunk(owner, signed_column(schema::LogicalTypeKind::kInt64, values)));
+  const std::vector<VectorGroupKeyDefinition> keys{
+      {.column_ordinal = 0U, .type = type(schema::LogicalTypeKind::kInt64), .nullable = true}};
+  auto grouped = GroupedAggregateOperator::create(
+                     std::make_unique<ManyChunkSource>(std::move(chunks)), keys, {})
+                     .value();
+  const auto failed = grouped->next(consumer);
+  ASSERT_FALSE(failed.has_value());
+  EXPECT_EQ(failed.error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_TRUE(consumer.is_cancelled());
+  EXPECT_EQ(owner.reserved_memory_bytes(), 0U);
+  EXPECT_EQ(consumer.reserved_memory_bytes(), 0U);
+}
+
+TEST(GroupedAggregatePlanTest, PropagatesKeyAndAggregateShapesAndInstantiates) {
+  const std::vector<VectorGroupKeyDefinition> keys{
+      {.column_ordinal = 0U, .type = type(schema::LogicalTypeKind::kInt64), .nullable = true}};
+  const std::vector<VectorAggregateDefinition> definitions{
+      {.operation = VectorAggregateOperation::kCountStar, .input = std::nullopt}};
+  PhysicalPipelinePlan plan =
+      PhysicalPipelinePlan::create(
+          {{.type = type(schema::LogicalTypeKind::kInt64), .nullable = true}},
+          {GroupedAggregateStage{.keys = keys, .definitions = definitions}})
+          .value();
+  ASSERT_EQ(plan.output_columns().size(), 2U);
+  EXPECT_TRUE(plan.output_columns()[0].nullable);
+  EXPECT_FALSE(plan.output_columns()[1].nullable);
+
+  QueryResourceContext resources = QueryResourceContext::create(4U << 20U).value();
+  const std::array<std::optional<std::int64_t>, 3> values{2, 2, 3};
+  std::vector<AccountedVectorChunk> chunks;
+  chunks.push_back(
+      accounted_chunk(resources, signed_column(schema::LogicalTypeKind::kInt64, values)));
+  auto pipeline = plan.instantiate(std::make_unique<ManyChunkSource>(std::move(chunks))).value();
+  auto first = pipeline->next(resources).value();
+  EXPECT_EQ(std::get<std::int64_t>(cell(first.chunk()->chunk(), 0U).storage()), 2);
+  EXPECT_EQ(std::get<std::int64_t>(cell(first.chunk()->chunk(), 1U).storage()), 2);
+
+  EXPECT_EQ(PhysicalPipelinePlan::create(
+                {{.type = type(schema::LogicalTypeKind::kInt64), .nullable = false}},
+                {GroupedAggregateStage{.keys = keys, .definitions = definitions}})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+}
+
+TEST(GroupedAggregateOperatorPropertyTest, MatchesFirstSeenScalarGroupsAcrossChunks) {
+  struct ExpectedGroup {
+    std::optional<std::int64_t> key;
+    std::int64_t rows{};
+    std::int64_t present{};
+    std::int64_t sum{};
+  };
+  std::vector<ExpectedGroup> expected;
+  QueryResourceContext resources = QueryResourceContext::create(16U << 20U).value();
+  std::vector<AccountedVectorChunk> chunks;
+  for (const std::pair<std::size_t, std::size_t> range :
+       {std::pair{0U, 73U}, std::pair{73U, 164U}, std::pair{164U, 257U}}) {
+    std::vector<std::optional<std::int64_t>> keys;
+    std::vector<std::optional<std::int64_t>> values;
+    std::vector<std::uint32_t> selection;
+    for (std::size_t row = range.first; row < range.second; ++row) {
+      const std::optional<std::int64_t> key =
+          row % 19U == 0U
+              ? std::nullopt
+              : std::optional<std::int64_t>{static_cast<std::int64_t>((row * 7U) % 13U)};
+      const std::optional<std::int64_t> value =
+          row % 11U == 0U ? std::nullopt
+                          : std::optional<std::int64_t>{static_cast<std::int64_t>(row % 17U) - 8};
+      keys.push_back(key);
+      values.push_back(value);
+      if (row % 5U == 0U)
+        continue;
+      selection.push_back(static_cast<std::uint32_t>(row - range.first));
+      auto group = std::ranges::find_if(
+          expected, [&](const ExpectedGroup& candidate) { return candidate.key == key; });
+      if (group == expected.end()) {
+        expected.push_back({.key = key});
+        group = expected.end() - 1;
+      }
+      ++group->rows;
+      if (value.has_value()) {
+        ++group->present;
+        group->sum += *value;
+      }
+    }
+    std::vector<columnar::OwnedPhysicalColumn> columns;
+    columns.push_back(signed_column(schema::LogicalTypeKind::kInt64, keys));
+    columns.push_back(signed_column(schema::LogicalTypeKind::kInt64, values));
+    chunks.push_back(accounted_chunk(resources, std::move(columns), std::move(selection)));
+  }
+  const std::vector<VectorGroupKeyDefinition> keys{
+      {.column_ordinal = 0U, .type = type(schema::LogicalTypeKind::kInt64), .nullable = true}};
+  const std::vector<VectorAggregateDefinition> definitions{
+      {.operation = VectorAggregateOperation::kCountStar, .input = std::nullopt},
+      {.operation = VectorAggregateOperation::kCount,
+       .input = VectorAggregateInput{.column_ordinal = 1U,
+                                     .type = type(schema::LogicalTypeKind::kInt64),
+                                     .nullable = true}},
+      {.operation = VectorAggregateOperation::kSum,
+       .input = VectorAggregateInput{
+           .column_ordinal = 1U, .type = type(schema::LogicalTypeKind::kInt64), .nullable = true}}};
+  auto grouped = GroupedAggregateOperator::create(
+                     std::make_unique<ManyChunkSource>(std::move(chunks)), keys, definitions)
+                     .value();
+  for (const ExpectedGroup& model : expected) {
+    auto step = grouped->next(resources).value();
+    ASSERT_EQ(step.kind(), PhysicalOperatorStepKind::kChunk);
+    const ScalarValue actual_key = cell(step.chunk()->chunk(), 0U);
+    if (model.key.has_value()) {
+      EXPECT_EQ(std::get<std::int64_t>(actual_key.storage()), *model.key);
+    } else {
+      EXPECT_TRUE(actual_key.is_null());
+    }
+    EXPECT_EQ(std::get<std::int64_t>(cell(step.chunk()->chunk(), 1U).storage()), model.rows);
+    EXPECT_EQ(std::get<std::int64_t>(cell(step.chunk()->chunk(), 2U).storage()), model.present);
+    if (model.present == 0) {
+      EXPECT_TRUE(cell(step.chunk()->chunk(), 3U).is_null());
+    } else {
+      EXPECT_EQ(std::get<std::int64_t>(cell(step.chunk()->chunk(), 3U).storage()), model.sum);
+    }
+  }
+  EXPECT_EQ(grouped->next(resources)->kind(), PhysicalOperatorStepKind::kEnd);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
 }
 
 } // namespace

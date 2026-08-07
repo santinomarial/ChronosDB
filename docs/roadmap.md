@@ -431,7 +431,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
   global aggregate lowering follows in ADR 0041 and the twenty-fourth increment with exact
   WHERE/input/aggregate/final-output/LIMIT order, direct and computed arguments, final aggregate
   expressions, empty-input semantics, binder-to-kernel shape agreement, bounded limits, and
-  failure/fuzz/benchmark/consumer evidence. Grouped and variable-width aggregate state, broader relational lowering,
+  failure/fuzz/benchmark/consumer evidence. ADR 0042 and the twenty-fifth increment add finite
+  query-accounted grouped physical state, exact fixed/variable/NULL keys, shared aggregate kernels,
+  immediate failure cleanup, and property/failure/fuzz/benchmark/consumer evidence. Bound GROUP BY
+  lowering, hashing, spill, variable-width extrema, and broader relational lowering,
   optimizer rules, hidden row-version columns, complete multi-part/head composition, base/delta
   merge and row-version resolution, mapped/asynchronous providers, shared pin credit, scheduling,
   spill, and full scalar-engine differential plan execution are unimplemented.

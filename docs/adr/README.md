@@ -76,3 +76,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0039](0039-borrowed-text-predicate-vector-kernels.md) | Borrowed text-predicate vector kernels | accepted |
 | [0040](0040-streaming-ungrouped-vector-aggregates.md) | Streaming ungrouped vector aggregates | accepted |
 | [0041](0041-bound-global-aggregate-physical-lowering.md) | Bound global aggregate physical lowering | accepted |
+| [0042](0042-query-accounted-bounded-grouped-aggregates.md) | Query-accounted bounded grouped aggregates | accepted |

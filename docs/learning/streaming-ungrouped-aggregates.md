@@ -115,10 +115,11 @@ the scalar conversion/comparison rules, but a column-at-a-time specialized kerne
 Such a change needs a profile and differential tests for error order, floating behavior, and
 cancellation latency.
 
-The next aggregate decisions are dynamic state ownership: grouped key encoding, variable-width
-extremum payloads, finite group admission, and spill/merge behavior. Bound SQL uses this stage for
-ungrouped queries with exact source-span aggregate identity, optional expression-input
-materialization, and final one-row vector expressions.
+Grouped state now has a finite query-accounted linear-lookup baseline described in the
+[grouped aggregate guide](bounded-grouped-aggregates.md). The remaining dynamic decisions are
+variable-width extremum replacement, canonical hashing, batch output, and spill/merge behavior.
+Bound SQL uses this stage for ungrouped queries with exact source-span aggregate identity, optional
+expression-input materialization, and final one-row vector expressions.
 
 ## Likely interview questions
 

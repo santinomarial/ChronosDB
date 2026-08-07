@@ -157,8 +157,12 @@
 > WHERE-before-aggregate stage order, direct and computed arguments, final aggregate expressions,
 > empty/LIMIT semantics, exact binder-to-kernel shapes, all-type forced-nullable materialization,
 > allocation failure, hostile lowering fuzzing, sanitizer coverage, installed consumption, and a
-> retained-plan lowering benchmark. Grouped state and variable-width extrema remain outside this
-> claim.
+> retained-plan lowering benchmark. Bounded grouped physical state adds exact fixed/variable and
+> NULL key equality, sparse and
+> chunk-boundary aggregation, finite group/key/state limits, query-credit-before-allocation,
+> immediate failure cleanup, a 257-row independent group model, exhaustive allocation failure,
+> hostile plan fuzzing, sanitizers, installed consumption, and cardinality measurements. Bound SQL
+> GROUP BY, hashing, spill, and variable-width extrema remain outside this claim.
 
 ## Test types
 

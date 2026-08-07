@@ -3,10 +3,13 @@
 #include "chronos/schema/logical_type.hpp"
 #include "support/failing_allocator.hpp"
 
+#include <array>
 #include <cstddef>
+#include <cstdint>
 #include <gtest/gtest.h>
 #include <memory>
 #include <optional>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -33,6 +36,53 @@ public:
     return PhysicalOperatorStep::end();
   }
 };
+
+class OneChunkSource final : public PhysicalOperator {
+public:
+  explicit OneChunkSource(AccountedVectorChunk chunk) : chunk_(std::move(chunk)) {}
+
+  [[nodiscard]] common::Result<PhysicalOperatorStep> next(const QueryResourceContext&) override {
+    if (!chunk_.has_value())
+      return PhysicalOperatorStep::end();
+    AccountedVectorChunk chunk = std::move(*chunk_);
+    chunk_.reset();
+    return PhysicalOperatorStep::chunk(std::move(chunk));
+  }
+
+private:
+  std::optional<AccountedVectorChunk> chunk_;
+};
+
+void append_u32(std::vector<std::byte>& output, const std::uint32_t value) {
+  for (std::size_t byte = 0U; byte < sizeof(value); ++byte)
+    output.push_back(static_cast<std::byte>((value >> (byte * 8U)) & 0xffU));
+}
+
+[[nodiscard]] AccountedVectorChunk grouped_input(const QueryResourceContext& resources) {
+  constexpr std::array<std::string_view, 2> kKeys{"alpha", "beta"};
+  columnar::ColumnVectorBuffers buffers;
+  append_u32(buffers.offsets, 0U);
+  for (const std::string_view key : kKeys) {
+    for (const char byte : key)
+      buffers.values.push_back(static_cast<std::byte>(byte));
+    append_u32(buffers.offsets, static_cast<std::uint32_t>(buffers.values.size()));
+  }
+  std::vector<columnar::OwnedPhysicalColumn> columns;
+  columns.push_back(
+      columnar::OwnedPhysicalColumn::create(
+          {.type = schema::LogicalType::create(schema::LogicalTypeKind::kString).value(),
+           .nullable = false,
+           .row_count = 2U,
+           .null_count = 0U},
+          std::move(buffers))
+          .value());
+  VectorChunk chunk =
+      VectorChunk::create(std::move(columns), VectorSelection::all(2U).value()).value();
+  const std::size_t charge = chunk.retained_buffer_bytes() + 1'024U;
+  return AccountedVectorChunk::create(std::move(chunk), resources.reserve(charge).value(),
+                                      resources)
+      .value();
+}
 
 [[nodiscard]] schema::LogicalType int64_type() {
   return schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
@@ -85,6 +135,64 @@ TEST(UngroupedAggregateAllocationFailureTest,
       step = common::make_unexpected(
           common::Status{common::StatusCode::kInternal, "drop aggregate output step"});
       aggregate.reset();
+      EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+      break;
+    }
+    EXPECT_EQ(step.error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_TRUE(resources.is_cancelled());
+    EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  }
+  EXPECT_TRUE(reached_success);
+}
+
+TEST(GroupedAggregateAllocationFailureTest, CreationClassifiesEveryOwnedAllocationFailure) {
+  const std::vector<VectorGroupKeyDefinition> keys{
+      {.column_ordinal = 0U,
+       .type = schema::LogicalType::create(schema::LogicalTypeKind::kString).value(),
+       .nullable = false}};
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 32U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    std::unique_ptr<PhysicalOperator> input = std::make_unique<EmptySource>();
+    std::vector<VectorAggregateDefinition> configured = definitions();
+    std::size_t observed = 0U;
+    auto grouped = run_with_allocation_failure(fail_after, observed, [&] {
+      return GroupedAggregateOperator::create(std::move(input), keys, configured);
+    });
+    EXPECT_GT(observed, 0U);
+    if (grouped.has_value()) {
+      reached_success = true;
+      break;
+    }
+    EXPECT_EQ(grouped.error().code(), common::StatusCode::kResourceExhausted);
+  }
+  EXPECT_TRUE(reached_success);
+}
+
+TEST(GroupedAggregateAllocationFailureTest,
+     PullClassifiesEveryStateAndOutputAllocationFailureAndReleasesCredit) {
+  const std::vector<VectorGroupKeyDefinition> keys{
+      {.column_ordinal = 0U,
+       .type = schema::LogicalType::create(schema::LogicalTypeKind::kString).value(),
+       .nullable = false}};
+  const std::vector<VectorAggregateDefinition> counts{
+      {.operation = VectorAggregateOperation::kCountStar, .input = std::nullopt}};
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 128U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    QueryResourceContext resources = QueryResourceContext::create(8U << 20U).value();
+    auto grouped = GroupedAggregateOperator::create(
+                       std::make_unique<OneChunkSource>(grouped_input(resources)), keys, counts)
+                       .value();
+    std::size_t observed = 0U;
+    auto step =
+        run_with_allocation_failure(fail_after, observed, [&] { return grouped->next(resources); });
+    EXPECT_GT(observed, 0U);
+    if (step.has_value()) {
+      reached_success = true;
+      step = common::make_unexpected(
+          common::Status{common::StatusCode::kInternal, "drop grouped output step"});
+      grouped.reset();
       EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
       break;
     }

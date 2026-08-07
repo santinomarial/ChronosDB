@@ -56,13 +56,20 @@ struct UngroupedAggregateStage {
   UngroupedAggregateLimits limits{};
 };
 
+struct GroupedAggregateStage {
+  std::vector<VectorGroupKeyDefinition> keys;
+  std::vector<VectorAggregateDefinition> definitions;
+  GroupedAggregateLimits limits{};
+};
+
 struct LimitStage {
   std::uint64_t maximum_rows;
 };
 
 using PhysicalPipelineStage =
     std::variant<BooleanFilterStage, TimestampRangeFilterStage, ColumnSubsetStage,
-                 SourceColumnOutputStage, ColumnOutputStage, UngroupedAggregateStage, LimitStage>;
+                 SourceColumnOutputStage, ColumnOutputStage, UngroupedAggregateStage,
+                 GroupedAggregateStage, LimitStage>;
 
 struct PhysicalPipelinePlanLimits {
   std::size_t maximum_input_columns{kDefaultVectorChunkColumnLimit};
