@@ -238,6 +238,41 @@ int main() {
       std::shared_ptr<const chronos::manifest::SnapshotPartImage>);
   const PinSnapshotCsegPartFunction pin_snapshot_cseg_part =
       &chronos::query::pin_snapshot_cseg_part;
+  using CreatePrunedCsegScanFunction =
+      chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
+          const chronos::query::QueryResourceContext&, chronos::query::CsegPartPin,
+          const chronos::schema::SchemaLineage&, chronos::schema::SchemaId,
+          const chronos::schema::TabletId&, std::vector<std::uint32_t>,
+          chronos::cseg::EventTimePredicate, chronos::query::CsegScanLimits);
+  const CreatePrunedCsegScanFunction create_pruned_cseg_scan =
+      &chronos::query::CsegScanOperator::create_event_time_pruned;
+  using PlanSnapshotCsegPartScanFunction =
+      chronos::common::Result<chronos::query::SnapshotCsegPartScanPlan> (*)(
+          const chronos::manifest::DatabaseStorageSnapshot&,
+          const chronos::schema::TabletId&,
+          const std::optional<chronos::cseg::EventTimePredicate>&,
+          chronos::query::SnapshotCsegPartScanPlanLimits);
+  const PlanSnapshotCsegPartScanFunction plan_snapshot_cseg_part_scan =
+      &chronos::query::plan_snapshot_cseg_part_scan;
+  using LoadSnapshotCsegPartScanImagesFunction =
+      chronos::common::Result<std::vector<
+          std::shared_ptr<const chronos::manifest::SnapshotPartImage>>> (*)(
+          const chronos::manifest::ManifestStorage&,
+          const chronos::manifest::DatabaseStorageSnapshot&,
+          const chronos::query::SnapshotCsegPartScanPlan&,
+          const chronos::schema::SchemaLineage&,
+          chronos::manifest::ReferencedPartValidationLimits);
+  const LoadSnapshotCsegPartScanImagesFunction load_snapshot_cseg_part_scan_images =
+      &chronos::query::load_snapshot_cseg_part_scan_images;
+  using CreateSnapshotCsegPartScanFunction =
+      chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
+          const chronos::query::QueryResourceContext&,
+          const chronos::query::SnapshotCsegPartScanPlan&,
+          std::vector<std::shared_ptr<const chronos::manifest::SnapshotPartImage>>,
+          const chronos::schema::SchemaLineage&, chronos::schema::SchemaId,
+          const std::vector<std::uint32_t>&, chronos::query::CsegScanLimits);
+  const CreateSnapshotCsegPartScanFunction create_snapshot_cseg_part_scan =
+      &chronos::query::create_snapshot_cseg_part_scan;
   chronos::columnar::ColumnarBatchLimits limits;
   std::array<std::byte, 0> empty{};
   const auto decoded = chronos::columnar::decode_columnar_batch_v1_exact(empty);
@@ -541,6 +576,10 @@ int main() {
                  plan_projected_granule != nullptr &&
                  create_cseg_part_pin != nullptr &&
                  pin_snapshot_cseg_part != nullptr &&
+                 create_pruned_cseg_scan != nullptr &&
+                 plan_snapshot_cseg_part_scan != nullptr &&
+                 load_snapshot_cseg_part_scan_images != nullptr &&
+                 create_snapshot_cseg_part_scan != nullptr &&
                  !cseg_metadata.has_value() &&
                  cseg_metadata.error().kind() ==
                      chronos::cseg::CsegMetadataDecodeErrorKind::kIncomplete &&

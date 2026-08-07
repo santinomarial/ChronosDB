@@ -805,6 +805,7 @@ if(CHRONOS_BUILD_TESTS)
   add_executable(
     chronos_query_allocation_failure_tests
     tests/query/cseg_scan_allocation_failure_test.cpp
+    tests/query/database_cseg_scan_allocation_failure_test.cpp
     tests/support/failing_allocator.cpp
   )
   set_target_properties(chronos_query_allocation_failure_tests PROPERTIES CXX_EXTENSIONS OFF)

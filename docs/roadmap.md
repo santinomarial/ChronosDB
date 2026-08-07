@@ -382,9 +382,14 @@ No phase passes because its code merely compiles. A phase passes only when its a
   consumer linkage. ADR 0027 and the tenth increment add per-part lifetime identities carried
   across publication epochs, snapshot-bound predecessor part loading, exact database/WAL/generation
   provenance, conservative aggregate-pin accounting, a storage-validated CSEG scan adapter,
-  reclamation lifetime regression coverage, and installed-consumer linkage. Bound-SQL lowering,
-  optimizer rules, typed vector expressions and output builders, aggregate multi-part/head scans,
-  mutable-head sources, mapped/asynchronous providers, shared pin credit, scheduling, spill, and
+  reclamation lifetime regression coverage, and installed-consumer linkage. ADR 0028 and the
+  eleventh increment add bounded canonical durable-part plans, Manifest-then-CSEG event-time
+  pruning with no false negatives, selected-only snapshot image loading, query-accounted sequential
+  multi-part composition, deterministic properties, hostile and allocation-failure coverage,
+  pruning/selected-pull benchmarks, and installed-consumer linkage. This source is explicitly
+  CSEG-only: bound-SQL lowering, exact vector predicates, optimizer rules, typed vector expressions
+  and output builders, complete multi-part/head scans, mutable-head sources, base/delta merge and
+  row-version resolution, mapped/asynchronous providers, shared pin credit, scheduling, spill, and
   full scalar-engine differential plan execution are unimplemented.
 
 - **Scope:** bounded vectors, vectorized scans/expressions/aggregates/joins, physical planning, memory accounting, cancellation, parallel scheduling, and spill for explicitly supported operators.

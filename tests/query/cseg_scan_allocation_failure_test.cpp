@@ -86,6 +86,35 @@ TEST(CsegScanAllocationFailureTest, CreationClassifiesEveryRetainedAllocationFai
   EXPECT_TRUE(reached_success);
 }
 
+TEST(CsegScanAllocationFailureTest, PrunedCreationClassifiesItsOwnedPlanAllocation) {
+  const schema::SchemaLineage lineage = valid_lineage();
+  const CsegPartPin part = valid_pin();
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 40U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    auto resources = QueryResourceContext::create(std::size_t{8U} * 1024U * 1024U).value();
+    std::vector<std::uint32_t> requested{0U};
+    std::size_t observed = 0U;
+    auto source = run_with_allocation_failure(fail_after, observed, [&] {
+      return CsegScanOperator::create_event_time_pruned(
+          resources, part, lineage, cseg::test::identifier<schema::SchemaId>(4U),
+          cseg::test::identifier<schema::TabletId>(3U), std::move(requested),
+          {.lower = cseg::EventTimeBound{.value = 0, .inclusive = true},
+           .upper = cseg::EventTimeBound{.value = 0, .inclusive = true}});
+    });
+    EXPECT_GT(observed, 0U);
+    if (source.has_value()) {
+      reached_success = true;
+      source->reset();
+      EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+      break;
+    }
+    EXPECT_EQ(source.error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  }
+  EXPECT_TRUE(reached_success);
+}
+
 TEST(CsegScanAllocationFailureTest, PullClassifiesEveryOutputAllocationFailureAndReleasesCredit) {
   const schema::SchemaLineage lineage = valid_lineage();
   const CsegPartPin part = valid_pin();

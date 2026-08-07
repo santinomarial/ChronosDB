@@ -6,10 +6,11 @@ The pinned CSEG scan source is the first Phase 9 physical operator that reads re
 storage bytes. It turns one projected CSEG granule into one lifetime-backed, query-accounted
 `VectorChunk` without copying raw pages solely for ownership.
 
-It scans one already owned in-memory part. It does not acquire a database snapshot, load files,
-choose parts, apply pruning, merge mutable heads, resolve row versions, lower SQL, schedule parallel
-morsels, or spill. Those owners must compose this primitive without weakening its pin and admission
-rules.
+It scans one already owned in-memory part. Its optional event-time-pruned factory owns authenticated
+selected granule ordinals and avoids disjoint page work. It does not acquire a database snapshot,
+load or choose files, perform exact row filtering, merge mutable heads, resolve row versions, lower
+SQL, schedule parallel morsels, or spill. Those owners must compose this primitive without
+weakening its pin and admission rules.
 
 ## Public interfaces
 
@@ -17,10 +18,11 @@ rules.
 
 - `CsegPartPin`, a copyable trusted immutable owner for exact part bytes and their conservative
   retained/pin charge;
-- `CsegScanLimits`, containing projected-reader and output-chunk bounds; and
+- `CsegScanLimits`, containing projected-reader, pruning-plan, and output-chunk bounds; and
 - `CsegScanOperator`, a thread-affine `PhysicalOperator` source created against one
   `QueryResourceContext`, retained schema lineage, destination schema/tablet, and destination user
-  ordinals.
+  ordinals. `create_event_time_pruned` additionally accepts an owned predicate and retains a bounded
+  `CsegEventTimePruningPlan`; ordinary `create` scans every granule.
 
 The query library publicly links `chronos::cseg` because the installed header and implementation use
 the accepted projected reader directly.
@@ -80,7 +82,8 @@ must preserve that property before reducing the charge.
 
 ## Pull, failure, and cancellation behavior
 
-One pull returns one complete granule, error, or explicit end. User columns follow caller ordinal
+One pull returns one complete selected granule, error, or explicit end. A pruning predicate is only
+range-exclusion evidence and does not filter rows within that granule. User columns follow caller ordinal
 order; the four system pages are validated and charged but are not query-visible columns. Empty user
 projection is valid and preserves row cardinality through the identity selection.
 
@@ -96,7 +99,8 @@ is now a sufficient owner.
 
 ## Complexity
 
-Source open is `O(metadata descriptors + destination schema columns)` and touches no page body. A
+Source open is `O(metadata descriptors + destination schema columns + granules)` for the pruned
+factory and touches no page body; ordinary open does not allocate pruning state. A
 pull is `O(projected ordinals + selected/system stored page bytes + physical validation)` with output
 memory proportional to decompressed/synthesized buffers, selection, containers, and the pinned part
 charge. Raw selected pages are zero-copy. One virtual call occurs per granule, not per row.
@@ -112,10 +116,12 @@ cancellation behavior, corruption, pre-decode exhaustion, sticky end, and LIMIT 
 fixed-seed property scans varied row counts and granule boundaries under both compression policies.
 A dedicated global-allocation seam fails every creation and pull allocation until success.
 
-`chronos_cseg_scan_fuzz` combines hostile bytes/projections and canonical mutated multi-granule
-images with cancellation, pulls, and cell access. `scan_one_cseg_granule` measures the pull boundary
+`chronos_cseg_scan_fuzz` combines hostile bytes/projections/predicates and canonical mutated
+multi-granule images with cancellation, ordinary/pruned pulls, and cell access.
+`scan_one_cseg_granule` measures the pull boundary
 for 64, 1,024, and 65,536 rows under raw and Zstandard policies, reporting decoded bytes and observed
-allocations. Fixture construction and source open are outside the timed pull.
+allocations. `scan_one_selected_granule_among_many` measures one selected middle granule with 64 or
+4,096 candidates. Fixture construction and source open are outside the timed pull.
 
 ## Tradeoffs and next steps
 
@@ -124,10 +130,11 @@ granule-sized physical domains can be wider than an eventual execution morsel; a
 only as truthful as its trusted storage provider. These choices keep the first real storage/source
 ownership path auditable.
 
-The snapshot-bound adapter now pairs one validated Manifest part image with its exact aggregate
-database owner and carries that pin through returned chunks. The next storage integration must
-compose several such images with deterministic part/head order and safe pruning, then decide
-whether epoch-wide pin credit can be shared without allowing any output to retain uncharged state.
+The snapshot-bound multi-part adapter now chooses several validated Manifest images in canonical
+order and composes event-time-pruned children while retaining every exact aggregate owner. The next
+storage integration must add mutable-head physical backing and real part/head merge semantics, then
+decide whether epoch-wide pin credit can be shared without allowing any output to retain uncharged
+state.
 
 ## Likely review questions
 

@@ -9,6 +9,7 @@
 #include "chronos/schema/table_schema.hpp"
 #include "cseg/cseg_test_fixture.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -86,6 +87,124 @@ struct LoadedSnapshotPart {
   schema::SchemaLineage schemas;
   std::shared_ptr<const manifest::SnapshotPartImage> image;
 };
+
+struct MultiPartSnapshot {
+  TemporaryDirectory directory;
+  schema::SchemaLineage schemas{lineage()};
+  std::unique_ptr<manifest::ManifestStorage> storage;
+  std::unique_ptr<manifest::DatabaseStoragePublisher> publisher;
+  std::unique_ptr<manifest::DatabaseStorageSnapshot> snapshot;
+  std::vector<manifest::PartDescriptor> descriptors;
+};
+
+[[nodiscard]] std::unique_ptr<MultiPartSnapshot>
+load_multi_part_snapshot(const std::uint8_t database_seed = 6U) {
+  auto fixture = std::make_unique<MultiPartSnapshot>();
+  EXPECT_FALSE(fixture->directory.path().empty());
+  EXPECT_TRUE(
+      std::filesystem::create_directory(fixture->directory.path() / manifest::kPartsDirectoryName));
+  EXPECT_TRUE(std::filesystem::create_directory(fixture->directory.path() /
+                                                manifest::kManifestDirectoryName));
+  write_bytes(fixture->directory.path() / manifest::kManifestDirectoryName /
+                  std::string{manifest::kManifestLockFileName},
+              {});
+
+  const std::array options{cseg::test::PartFixtureOptions{
+                               .part_id_seed = 1U, .first_event_time = -100, .record_sequence = 1U},
+                           cseg::test::PartFixtureOptions{
+                               .part_id_seed = 2U, .first_event_time = 0, .record_sequence = 2U},
+                           cseg::test::PartFixtureOptions{
+                               .part_id_seed = 3U, .first_event_time = 100, .record_sequence = 3U}};
+  const schema::TableId table = cseg::test::identifier<schema::TableId>(2U);
+  const schema::TabletId tablet = cseg::test::identifier<schema::TabletId>(3U);
+  const schema::SchemaId schema_id = cseg::test::identifier<schema::SchemaId>(4U);
+  for (const cseg::test::PartFixtureOptions option : options) {
+    cseg::EncodedCsegPart encoded =
+        cseg::test::make_valid_part_with_rows(10U, 5U, cseg::PageCompression::kNone, option);
+    fixture->descriptors.push_back(
+        {.part_id = cseg::test::identifier<cseg::PartId>(option.part_id_seed),
+         .table_id = table,
+         .tablet_id = tablet,
+         .schema_id = schema_id,
+         .schema_version = schema::SchemaVersion::initial(),
+         .file_length = encoded.size(),
+         .row_count = 10U,
+         .minimum_record_sequence = option.record_sequence,
+         .maximum_record_sequence = option.record_sequence,
+         .minimum_event_time = option.first_event_time,
+         .maximum_event_time = option.first_event_time + 9});
+    write_bytes(fixture->directory.path() / manifest::kPartsDirectoryName /
+                    manifest::part_file_name(fixture->descriptors.back().part_id),
+                encoded.bytes());
+  }
+
+  wal::WalId wal_id{};
+  wal_id.bytes = cseg::test::identifier<schema::SchemaId>(0x70U).bytes();
+  const manifest::DatabaseId database_id =
+      cseg::test::identifier<manifest::DatabaseId>(database_seed);
+  const std::array tablets{
+      manifest::TabletDescriptor{.table_id = table,
+                                 .tablet_id = tablet,
+                                 .recovery_schema_id = schema_id,
+                                 .recovery_schema_version = schema::SchemaVersion::initial(),
+                                 .durable_record_sequence = 3U,
+                                 .first_part_index = 0U,
+                                 .part_count = fixture->descriptors.size(),
+                                 .durable_row_count = 30U}};
+  manifest::EncodedManifest encoded_manifest =
+      manifest::encode_manifest_v1(
+          {.generation = 1U,
+           .database_id = database_id,
+           .wal_id = wal_id,
+           .reclaim_checkpoint = {.record_sequence = 0U, .segment_number = 1U, .byte_offset = 64U},
+           .tablets = tablets,
+           .parts = fixture->descriptors,
+           .retries = {}})
+          .value();
+  write_bytes(fixture->directory.path() / manifest::kManifestDirectoryName /
+                  *manifest::manifest_file_name(1U),
+              encoded_manifest.bytes());
+
+  fixture->storage = std::make_unique<manifest::ManifestStorage>(
+      manifest::ManifestStorage::open_existing(
+          {.database_root = fixture->directory.path().string()})
+          .value());
+  const std::array bindings{
+      manifest::TabletSchemaBinding{.tablet_id = tablet, .lineage = std::cref(fixture->schemas)}};
+  auto selected = std::make_shared<const manifest::LoadedManifestGeneration>(
+      fixture->storage
+          ->load_selected_manifest({.expected_database_id = database_id,
+                                    .expected_wal_id = wal_id,
+                                    .schema_bindings = bindings,
+                                    .decode_limits = {},
+                                    .part_validation_limits = {}})
+          .value());
+  fixture->publisher = std::make_unique<manifest::DatabaseStoragePublisher>(
+      manifest::DatabaseStoragePublisher::create(selected, {}).value());
+  fixture->snapshot =
+      std::make_unique<manifest::DatabaseStorageSnapshot>(fixture->publisher->snapshot().value());
+  return fixture;
+}
+
+[[nodiscard]] cseg::EventTimePredicate point_predicate(const std::int64_t value) {
+  return {.lower = cseg::EventTimeBound{.value = value, .inclusive = true},
+          .upper = cseg::EventTimeBound{.value = value, .inclusive = true}};
+}
+
+void corrupt_part_magic(const MultiPartSnapshot& fixture, const std::size_t descriptor_index) {
+  const std::filesystem::path path =
+      fixture.directory.path() / manifest::kPartsDirectoryName /
+      manifest::part_file_name(fixture.descriptors[descriptor_index].part_id);
+  std::fstream stream{path, std::ios::binary | std::ios::in | std::ios::out};
+  ASSERT_TRUE(stream.good());
+  char first{};
+  stream.read(&first, 1);
+  ASSERT_TRUE(stream.good());
+  first = static_cast<char>(static_cast<unsigned char>(first) ^ 1U);
+  stream.seekp(0);
+  stream.write(&first, 1);
+  ASSERT_TRUE(stream.good());
+}
 
 [[nodiscard]] LoadedSnapshotPart load_snapshot_part() {
   TemporaryDirectory directory;
@@ -227,6 +346,284 @@ TEST(DatabaseCsegScanTest, RejectsIdentityMismatchAndSnapshotChargeBeforeDecode)
       cseg::test::identifier<schema::TabletId>(3U), {0U});
   ASSERT_FALSE(exhausted.has_value());
   EXPECT_EQ(exhausted.error().code(), common::StatusCode::kResourceExhausted);
+  EXPECT_EQ(constrained.reserved_memory_bytes(), 0U);
+}
+
+TEST(DatabaseCsegPartScanPlanTest, SelectsCanonicalManifestWorkAndReportsExactMetrics) {
+  const std::unique_ptr<MultiPartSnapshot> fixture = load_multi_part_snapshot();
+  const schema::TabletId tablet = cseg::test::identifier<schema::TabletId>(3U);
+  common::Result<SnapshotCsegPartScanPlan> all =
+      plan_snapshot_cseg_part_scan(*fixture->snapshot, tablet);
+  ASSERT_TRUE(all.has_value()) << all.error().to_string();
+  ASSERT_EQ(all->selected_part_count(), 3U);
+  EXPECT_EQ(all->skipped_part_count(), 0U);
+  EXPECT_EQ(all->selected_rows(), 30U);
+  EXPECT_EQ(all->skipped_rows(), 0U);
+  EXPECT_GT(all->retained_configuration_bytes(), sizeof(SnapshotCsegPartScanPlan));
+  for (std::size_t index = 0U; index < fixture->descriptors.size(); ++index)
+    EXPECT_EQ(all->selected_part_ids()[index], fixture->descriptors[index].part_id);
+
+  common::Result<SnapshotCsegPartScanPlan> middle =
+      plan_snapshot_cseg_part_scan(*fixture->snapshot, tablet, point_predicate(7));
+  ASSERT_TRUE(middle.has_value()) << middle.error().to_string();
+  ASSERT_EQ(middle->selected_part_count(), 1U);
+  EXPECT_EQ(middle->selected_part_ids().front(), fixture->descriptors[1].part_id);
+  EXPECT_EQ(middle->skipped_part_count(), 2U);
+  EXPECT_EQ(middle->selected_rows(), 10U);
+  EXPECT_EQ(middle->skipped_rows(), 20U);
+  EXPECT_EQ(middle->event_time_predicate(), point_predicate(7));
+
+  const cseg::EventTimePredicate empty{.lower = cseg::EventTimeBound{.value = 8, .inclusive = true},
+                                       .upper =
+                                           cseg::EventTimeBound{.value = 7, .inclusive = true}};
+  common::Result<SnapshotCsegPartScanPlan> none =
+      plan_snapshot_cseg_part_scan(*fixture->snapshot, tablet, empty);
+  ASSERT_TRUE(none.has_value()) << none.error().to_string();
+  EXPECT_EQ(none->selected_part_count(), 0U);
+  EXPECT_EQ(none->skipped_part_count(), 3U);
+  EXPECT_EQ(none->selected_rows(), 0U);
+  EXPECT_EQ(none->skipped_rows(), 30U);
+}
+
+TEST(DatabaseCsegPartScanPlanTest, RejectsUnknownTabletsAndEveryFinitePlanLimit) {
+  const std::unique_ptr<MultiPartSnapshot> fixture = load_multi_part_snapshot();
+  const schema::TabletId tablet = cseg::test::identifier<schema::TabletId>(3U);
+  EXPECT_EQ(plan_snapshot_cseg_part_scan(*fixture->snapshot,
+                                         cseg::test::identifier<schema::TabletId>(0xeeU))
+                .error()
+                .code(),
+            common::StatusCode::kNotFound);
+  EXPECT_EQ(
+      plan_snapshot_cseg_part_scan(*fixture->snapshot, tablet, std::nullopt,
+                                   {.maximum_parts = 2U,
+                                    .maximum_selected_parts = kDefaultSnapshotCsegPartScanPartLimit,
+                                    .maximum_retained_configuration_bytes =
+                                        kDefaultSnapshotCsegPartScanConfigurationByteLimit})
+          .error()
+          .code(),
+      common::StatusCode::kResourceExhausted);
+  EXPECT_EQ(plan_snapshot_cseg_part_scan(*fixture->snapshot, tablet, std::nullopt,
+                                         {.maximum_parts = 3U,
+                                          .maximum_selected_parts = 2U,
+                                          .maximum_retained_configuration_bytes =
+                                              kDefaultSnapshotCsegPartScanConfigurationByteLimit})
+                .error()
+                .code(),
+            common::StatusCode::kResourceExhausted);
+  EXPECT_EQ(plan_snapshot_cseg_part_scan(*fixture->snapshot, tablet, std::nullopt,
+                                         {.maximum_parts = 3U,
+                                          .maximum_selected_parts = 3U,
+                                          .maximum_retained_configuration_bytes = 1U})
+                .error()
+                .code(),
+            common::StatusCode::kResourceExhausted);
+  EXPECT_EQ(plan_snapshot_cseg_part_scan(*fixture->snapshot, tablet, std::nullopt,
+                                         {.maximum_parts = 0U,
+                                          .maximum_selected_parts = 3U,
+                                          .maximum_retained_configuration_bytes = 1024U})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+}
+
+TEST(DatabaseCsegPartScanPlanPropertyTest, PointSelectionMatchesIndependentPartRangeModel) {
+  const std::unique_ptr<MultiPartSnapshot> fixture = load_multi_part_snapshot();
+  const schema::TabletId tablet = cseg::test::identifier<schema::TabletId>(3U);
+  for (std::int64_t point = -120; point <= 120; point += 3) {
+    SCOPED_TRACE(point);
+    common::Result<SnapshotCsegPartScanPlan> planned =
+        plan_snapshot_cseg_part_scan(*fixture->snapshot, tablet, point_predicate(point));
+    ASSERT_TRUE(planned.has_value()) << planned.error().to_string();
+    std::vector<cseg::PartId> expected;
+    std::uint64_t expected_rows = 0U;
+    for (const manifest::PartDescriptor& descriptor : fixture->descriptors) {
+      if (descriptor.minimum_event_time <= point && point <= descriptor.maximum_event_time) {
+        expected.push_back(descriptor.part_id);
+        expected_rows += descriptor.row_count;
+      }
+    }
+    EXPECT_TRUE(std::ranges::equal(planned->selected_part_ids(), expected));
+    EXPECT_EQ(planned->selected_rows(), expected_rows);
+    EXPECT_EQ(planned->skipped_rows(), 30U - expected_rows);
+  }
+}
+
+TEST(DatabaseCsegPartScanTest, LoadsOnlySelectedPartsAndPrunesGranulesBeforePageWork) {
+  const std::unique_ptr<MultiPartSnapshot> fixture = load_multi_part_snapshot();
+  const schema::TabletId tablet = cseg::test::identifier<schema::TabletId>(3U);
+  common::Result<SnapshotCsegPartScanPlan> planned =
+      plan_snapshot_cseg_part_scan(*fixture->snapshot, tablet, point_predicate(7));
+  ASSERT_TRUE(planned.has_value()) << planned.error().to_string();
+  corrupt_part_magic(*fixture, 0U);
+  corrupt_part_magic(*fixture, 2U);
+  common::Result<std::vector<std::shared_ptr<const manifest::SnapshotPartImage>>> loaded =
+      load_snapshot_cseg_part_scan_images(*fixture->storage, *fixture->snapshot, *planned,
+                                          fixture->schemas);
+  ASSERT_TRUE(loaded.has_value()) << loaded.error().to_string();
+  ASSERT_EQ(loaded->size(), 1U);
+  EXPECT_EQ(loaded->front()->descriptor().part_id, fixture->descriptors[1].part_id);
+
+  QueryResourceContext resources =
+      QueryResourceContext::create(std::size_t{32U} * 1024U * 1024U).value();
+  common::Result<std::unique_ptr<PhysicalOperator>> created =
+      create_snapshot_cseg_part_scan(resources, *planned, *loaded, fixture->schemas,
+                                     cseg::test::identifier<schema::SchemaId>(4U), {0U});
+  ASSERT_TRUE(created.has_value()) << created.error().to_string();
+  common::Result<PhysicalOperatorStep> step = (*created)->next(resources);
+  ASSERT_TRUE(step.has_value()) << step.error().to_string();
+  ASSERT_EQ(step->kind(), PhysicalOperatorStepKind::kChunk);
+  ASSERT_EQ(step->chunk()->chunk().selected_row_count(), 5U);
+  for (std::size_t row = 0U; row < 5U; ++row)
+    EXPECT_EQ(int64_cell(step->chunk()->chunk(), row), static_cast<std::int64_t>(row + 5U));
+  step = (*created)->next(resources);
+  ASSERT_TRUE(step.has_value()) << step.error().to_string();
+  EXPECT_EQ(step->kind(), PhysicalOperatorStepKind::kEnd);
+  EXPECT_EQ((*created)->next(resources)->kind(), PhysicalOperatorStepKind::kEnd);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
+TEST(DatabaseCsegPartScanTest, EmitsEverySelectedPartInCanonicalPhysicalOrder) {
+  const std::unique_ptr<MultiPartSnapshot> fixture = load_multi_part_snapshot();
+  common::Result<SnapshotCsegPartScanPlan> planned = plan_snapshot_cseg_part_scan(
+      *fixture->snapshot, cseg::test::identifier<schema::TabletId>(3U));
+  ASSERT_TRUE(planned.has_value()) << planned.error().to_string();
+  common::Result<std::vector<std::shared_ptr<const manifest::SnapshotPartImage>>> loaded =
+      load_snapshot_cseg_part_scan_images(*fixture->storage, *fixture->snapshot, *planned,
+                                          fixture->schemas);
+  ASSERT_TRUE(loaded.has_value()) << loaded.error().to_string();
+  QueryResourceContext resources =
+      QueryResourceContext::create(std::size_t{64U} * 1024U * 1024U).value();
+  common::Result<std::unique_ptr<PhysicalOperator>> created =
+      create_snapshot_cseg_part_scan(resources, *planned, *loaded, fixture->schemas,
+                                     cseg::test::identifier<schema::SchemaId>(4U), {0U});
+  ASSERT_TRUE(created.has_value()) << created.error().to_string();
+
+  const std::array first_values{-100, -95, 0, 5, 100, 105};
+  for (const int first : first_values) {
+    common::Result<PhysicalOperatorStep> step = (*created)->next(resources);
+    ASSERT_TRUE(step.has_value()) << step.error().to_string();
+    ASSERT_EQ(step->kind(), PhysicalOperatorStepKind::kChunk);
+    ASSERT_EQ(step->chunk()->chunk().selected_row_count(), 5U);
+    for (std::size_t row = 0U; row < 5U; ++row)
+      EXPECT_EQ(int64_cell(step->chunk()->chunk(), row),
+                static_cast<std::int64_t>(first) + static_cast<std::int64_t>(row));
+  }
+  EXPECT_EQ((*created)->next(resources)->kind(), PhysicalOperatorStepKind::kEnd);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
+TEST(DatabaseCsegPartScanTest, EmptySelectionAvoidsIoButStillValidatesItsRequest) {
+  const std::unique_ptr<MultiPartSnapshot> fixture = load_multi_part_snapshot();
+  const cseg::EventTimePredicate empty{.lower = cseg::EventTimeBound{.value = 1, .inclusive = true},
+                                       .upper =
+                                           cseg::EventTimeBound{.value = 0, .inclusive = true}};
+  common::Result<SnapshotCsegPartScanPlan> planned = plan_snapshot_cseg_part_scan(
+      *fixture->snapshot, cseg::test::identifier<schema::TabletId>(3U), empty);
+  ASSERT_TRUE(planned.has_value()) << planned.error().to_string();
+  for (std::size_t index = 0U; index < fixture->descriptors.size(); ++index)
+    corrupt_part_magic(*fixture, index);
+  common::Result<std::vector<std::shared_ptr<const manifest::SnapshotPartImage>>> loaded =
+      load_snapshot_cseg_part_scan_images(*fixture->storage, *fixture->snapshot, *planned,
+                                          fixture->schemas);
+  ASSERT_TRUE(loaded.has_value()) << loaded.error().to_string();
+  EXPECT_TRUE(loaded->empty());
+
+  QueryResourceContext resources = QueryResourceContext::create(std::size_t{1024U} * 1024U).value();
+  auto invalid_projection =
+      create_snapshot_cseg_part_scan(resources, *planned, {}, fixture->schemas,
+                                     cseg::test::identifier<schema::SchemaId>(4U), {1U});
+  ASSERT_FALSE(invalid_projection.has_value());
+  EXPECT_EQ(invalid_projection.error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  auto created = create_snapshot_cseg_part_scan(resources, *planned, {}, fixture->schemas,
+                                                cseg::test::identifier<schema::SchemaId>(4U), {0U});
+  ASSERT_TRUE(created.has_value()) << created.error().to_string();
+  EXPECT_GT(resources.reserved_memory_bytes(), 0U);
+  EXPECT_EQ((*created)->next(resources)->kind(), PhysicalOperatorStepKind::kEnd);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
+TEST(DatabaseCsegPartScanTest, RejectsIncompleteReorderedAndForeignImagesBeforeReservation) {
+  const std::unique_ptr<MultiPartSnapshot> fixture = load_multi_part_snapshot();
+  common::Result<SnapshotCsegPartScanPlan> planned = plan_snapshot_cseg_part_scan(
+      *fixture->snapshot, cseg::test::identifier<schema::TabletId>(3U));
+  ASSERT_TRUE(planned.has_value()) << planned.error().to_string();
+  auto loaded = load_snapshot_cseg_part_scan_images(*fixture->storage, *fixture->snapshot, *planned,
+                                                    fixture->schemas)
+                    .value();
+  QueryResourceContext resources =
+      QueryResourceContext::create(std::size_t{64U} * 1024U * 1024U).value();
+  auto incomplete = loaded;
+  incomplete.pop_back();
+  EXPECT_EQ(create_snapshot_cseg_part_scan(resources, *planned, std::move(incomplete),
+                                           fixture->schemas,
+                                           cseg::test::identifier<schema::SchemaId>(4U), {0U})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  auto reordered = loaded;
+  std::reverse(reordered.begin(), reordered.end());
+  EXPECT_EQ(create_snapshot_cseg_part_scan(resources, *planned, std::move(reordered),
+                                           fixture->schemas,
+                                           cseg::test::identifier<schema::SchemaId>(4U), {0U})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  auto null_image = loaded;
+  null_image[1].reset();
+  EXPECT_EQ(create_snapshot_cseg_part_scan(resources, *planned, std::move(null_image),
+                                           fixture->schemas,
+                                           cseg::test::identifier<schema::SchemaId>(4U), {0U})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+
+  const std::unique_ptr<MultiPartSnapshot> foreign = load_multi_part_snapshot(0x44U);
+  auto foreign_plan = plan_snapshot_cseg_part_scan(
+      *foreign->snapshot, cseg::test::identifier<schema::TabletId>(3U), point_predicate(7));
+  ASSERT_TRUE(foreign_plan.has_value()) << foreign_plan.error().to_string();
+  auto foreign_images = load_snapshot_cseg_part_scan_images(*foreign->storage, *foreign->snapshot,
+                                                            *foreign_plan, foreign->schemas)
+                            .value();
+  foreign_images.front() = loaded[1];
+  EXPECT_EQ(create_snapshot_cseg_part_scan(resources, *foreign_plan, std::move(foreign_images),
+                                           foreign->schemas,
+                                           cseg::test::identifier<schema::SchemaId>(4U), {0U})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(load_snapshot_cseg_part_scan_images(*foreign->storage, *foreign->snapshot, *planned,
+                                                foreign->schemas)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
+TEST(DatabaseCsegPartScanTest, ResourceFailureUnwindsParentAndEveryChildReservation) {
+  const std::unique_ptr<MultiPartSnapshot> fixture = load_multi_part_snapshot();
+  common::Result<SnapshotCsegPartScanPlan> planned = plan_snapshot_cseg_part_scan(
+      *fixture->snapshot, cseg::test::identifier<schema::TabletId>(3U));
+  ASSERT_TRUE(planned.has_value()) << planned.error().to_string();
+  const auto loaded = load_snapshot_cseg_part_scan_images(*fixture->storage, *fixture->snapshot,
+                                                          *planned, fixture->schemas)
+                          .value();
+  QueryResourceContext ample =
+      QueryResourceContext::create(std::size_t{64U} * 1024U * 1024U).value();
+  auto measured =
+      create_snapshot_cseg_part_scan(ample, *planned, loaded, fixture->schemas,
+                                     cseg::test::identifier<schema::SchemaId>(4U), {0U});
+  ASSERT_TRUE(measured.has_value()) << measured.error().to_string();
+  const std::size_t complete_charge = ample.reserved_memory_bytes();
+  ASSERT_GT(complete_charge, 1U);
+  measured->reset();
+  EXPECT_EQ(ample.reserved_memory_bytes(), 0U);
+
+  QueryResourceContext constrained = QueryResourceContext::create(complete_charge - 1U).value();
+  auto failed = create_snapshot_cseg_part_scan(constrained, *planned, loaded, fixture->schemas,
+                                               cseg::test::identifier<schema::SchemaId>(4U), {0U});
+  ASSERT_FALSE(failed.has_value());
+  EXPECT_EQ(failed.error().code(), common::StatusCode::kResourceExhausted);
   EXPECT_EQ(constrained.reserved_memory_bytes(), 0U);
 }
 

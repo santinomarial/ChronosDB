@@ -8,6 +8,7 @@
 #include "chronos/schema/table_schema.hpp"
 #include "cseg/cseg_test_fixture.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -330,6 +331,64 @@ TEST(CsegScanOperatorTest, DetectsRequestedPageCorruptionAndCancels) {
   EXPECT_TRUE(resources.is_cancelled());
 }
 
+TEST(CsegScanOperatorTest, EventTimePruningSkipsDisjointGranulePagesBeforeDecode) {
+  cseg::EncodedCsegPart encoded = cseg::test::make_valid_part_with_rows(
+      10U, 5U, cseg::PageCompression::kNone, {.first_event_time = 0});
+  std::vector<std::byte> bytes(encoded.bytes().begin(), encoded.bytes().end());
+  const auto metadata = cseg::decode_cseg_v1_metadata_prefix(bytes);
+  ASSERT_TRUE(metadata.has_value());
+  ASSERT_EQ(metadata->granules().size(), 2U);
+  // Damage a mandatory system page in the first granule. A point predicate selecting only the
+  // second granule must neither validate nor decode this body.
+  const std::size_t skipped_page = static_cast<std::size_t>(metadata->pages()[1U].page_offset);
+  bytes[skipped_page] ^= std::byte{1U};
+  auto owner = std::make_shared<const std::vector<std::byte>>(std::move(bytes));
+  CsegPartPin part = CsegPartPin::create(owner, *owner, owner->capacity() + 64U).value();
+  auto resources = QueryResourceContext::create(std::size_t{8U} * 1024U * 1024U).value();
+  const schema::SchemaLineage lineage = valid_lineage();
+  auto source = CsegScanOperator::create_event_time_pruned(
+      resources, std::move(part), lineage, cseg::test::identifier<schema::SchemaId>(4U),
+      cseg::test::identifier<schema::TabletId>(3U), {0U},
+      {.lower = cseg::EventTimeBound{.value = 7, .inclusive = true},
+       .upper = cseg::EventTimeBound{.value = 7, .inclusive = true}});
+  ASSERT_TRUE(source.has_value()) << source.error().to_string();
+  const auto step = (*source)->next(resources);
+  ASSERT_TRUE(step.has_value()) << step.error().to_string();
+  ASSERT_NE(step->chunk(), nullptr);
+  ASSERT_EQ(step->chunk()->chunk().selected_row_count(), 5U);
+  for (std::size_t row = 0U; row < 5U; ++row)
+    EXPECT_EQ(int64_cell(step->chunk()->chunk(), row), static_cast<std::int64_t>(row + 5U));
+  EXPECT_EQ((*source)->next(resources)->kind(), PhysicalOperatorStepKind::kEnd);
+  EXPECT_FALSE(resources.is_cancelled());
+}
+
+TEST(CsegScanOperatorTest, EmptyPruningPlanEndsWithoutPageWorkAndLimitsAreValidated) {
+  const schema::SchemaLineage lineage = valid_lineage();
+  const CsegPartPin part = pin(cseg::test::make_valid_part_with_rows(10U, 2U));
+  auto resources = QueryResourceContext::create(std::size_t{8U} * 1024U * 1024U).value();
+  const cseg::EventTimePredicate empty{.lower = cseg::EventTimeBound{.value = 2, .inclusive = true},
+                                       .upper =
+                                           cseg::EventTimeBound{.value = 1, .inclusive = true}};
+  auto source = CsegScanOperator::create_event_time_pruned(
+      resources, part, lineage, cseg::test::identifier<schema::SchemaId>(4U),
+      cseg::test::identifier<schema::TabletId>(3U), {0U}, empty);
+  ASSERT_TRUE(source.has_value()) << source.error().to_string();
+  EXPECT_GT(resources.reserved_memory_bytes(), 0U);
+  EXPECT_EQ((*source)->next(resources)->kind(), PhysicalOperatorStepKind::kEnd);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  EXPECT_EQ((*source)->next(resources)->kind(), PhysicalOperatorStepKind::kEnd);
+
+  CsegScanLimits invalid_limits;
+  invalid_limits.pruning.max_granules = 0U;
+  EXPECT_EQ(CsegScanOperator::create_event_time_pruned(
+                resources, part, lineage, cseg::test::identifier<schema::SchemaId>(4U),
+                cseg::test::identifier<schema::TabletId>(3U), {0U}, empty, invalid_limits)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
 TEST(CsegScanOperatorTest, ComposesWithPhysicalShapeAndLimitWhileKeepingOutputAlive) {
   auto resources = QueryResourceContext::create(std::size_t{4U} * 1024U * 1024U).value();
   std::unique_ptr<PhysicalOperator> source =
@@ -378,6 +437,46 @@ TEST(CsegScanOperatorPropertyTest, PreservesRowsAcrossDeterministicGranuleBounda
         EXPECT_EQ(observed, rows);
         EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
       }
+    }
+  }
+}
+
+TEST(CsegScanOperatorPropertyTest, PointPruningMatchesIndependentGranuleIntersectionModel) {
+  for (const cseg::PageCompression compression :
+       {cseg::PageCompression::kNone, cseg::PageCompression::kZstd}) {
+    for (const std::int64_t point : {-10, -8, -7, -5, 0, 7, 8, 9}) {
+      SCOPED_TRACE(static_cast<int>(compression));
+      SCOPED_TRACE(point);
+      auto resources = QueryResourceContext::create(std::size_t{16U} * 1024U * 1024U).value();
+      const schema::SchemaLineage lineage = valid_lineage();
+      auto source = CsegScanOperator::create_event_time_pruned(
+          resources,
+          pin(cseg::test::make_valid_part_with_rows(17U, 3U, compression,
+                                                    {.first_event_time = -8})),
+          lineage, cseg::test::identifier<schema::SchemaId>(4U),
+          cseg::test::identifier<schema::TabletId>(3U), {0U},
+          {.lower = cseg::EventTimeBound{.value = point, .inclusive = true},
+           .upper = cseg::EventTimeBound{.value = point, .inclusive = true}});
+      ASSERT_TRUE(source.has_value()) << source.error().to_string();
+      std::vector<std::int64_t> observed;
+      for (;;) {
+        common::Result<PhysicalOperatorStep> step = (*source)->next(resources);
+        ASSERT_TRUE(step.has_value()) << step.error().to_string();
+        if (step->kind() == PhysicalOperatorStepKind::kEnd)
+          break;
+        for (std::size_t row = 0U; row < step->chunk()->chunk().selected_row_count(); ++row)
+          observed.push_back(int64_cell(step->chunk()->chunk(), row));
+      }
+      std::vector<std::int64_t> expected;
+      for (std::int64_t first = -8; first <= 8; first += 3) {
+        const std::int64_t last = std::min<std::int64_t>(first + 2, 8);
+        if (first <= point && point <= last) {
+          for (std::int64_t value = first; value <= last; ++value)
+            expected.push_back(value);
+        }
+      }
+      EXPECT_EQ(observed, expected);
+      EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
     }
   }
 }

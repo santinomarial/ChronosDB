@@ -130,9 +130,16 @@ make_valid_part(const PageCompression compression = PageCompression::kNone) {
       .value();
 }
 
+struct PartFixtureOptions {
+  std::uint8_t part_id_seed{1U};
+  std::int64_t first_event_time{-100};
+  std::uint64_t record_sequence{7U};
+};
+
 [[nodiscard]] inline EncodedCsegPart
 make_valid_part_with_rows(const std::uint32_t rows, const std::uint32_t rows_per_granule,
-                          const PageCompression compression = PageCompression::kNone) {
+                          const PageCompression compression = PageCompression::kNone,
+                          const PartFixtureOptions options = {}) {
   const schema::LogicalType timestamp = type(schema::LogicalTypeKind::kTimestampNs);
   const schema::LogicalType uuid = type(schema::LogicalTypeKind::kUuid);
   const schema::LogicalType uint64 = type(schema::LogicalTypeKind::kUInt64);
@@ -184,36 +191,40 @@ make_valid_part_with_rows(const std::uint32_t rows, const std::uint32_t rows_per
     std::vector<std::byte> row_ordinal;
     for (std::uint32_t local = 0U; local < count; ++local) {
       const std::uint32_t global = first + local;
-      append_little_endian(event_time, static_cast<std::int64_t>(global) - 100);
+      append_little_endian(event_time,
+                           options.first_event_time + static_cast<std::int64_t>(global));
       wal_id.insert(wal_id.end(), wal.begin(), wal.end());
-      append_little_endian(record_sequence, std::uint64_t{7U});
+      append_little_endian(record_sequence, options.record_sequence);
       append_little_endian(row_ordinal, global);
     }
     const std::vector<std::byte> operation(count, std::byte{format::kAppendRowsOperation});
-    granules.push_back({.first_row = first,
-                        .row_count = count,
-                        .first_page_index = static_cast<std::uint64_t>(pages.size()),
-                        .minimum_event_time = static_cast<std::int64_t>(first) - 100,
-                        .maximum_event_time = static_cast<std::int64_t>(first + count - 1U) - 100});
+    granules.push_back(
+        {.first_row = first,
+         .row_count = count,
+         .first_page_index = static_cast<std::uint64_t>(pages.size()),
+         .minimum_event_time = options.first_event_time + static_cast<std::int64_t>(first),
+         .maximum_event_time =
+             options.first_event_time + static_cast<std::int64_t>(first + count - 1U)});
     pages.push_back(encode_fixed_page(timestamp, count, event_time, compression));
     pages.push_back(encode_fixed_page(uuid, count, wal_id, compression));
     pages.push_back(encode_fixed_page(uint64, count, record_sequence, compression));
     pages.push_back(encode_fixed_page(uint32, count, row_ordinal, compression));
     pages.push_back(encode_fixed_page(uint8, count, operation, compression));
   }
-  return encode_cseg_v1_part({.part_id = identifier<PartId>(1U),
-                              .table_id = identifier<schema::TableId>(2U),
-                              .tablet_id = identifier<schema::TabletId>(3U),
-                              .schema_id = identifier<schema::SchemaId>(4U),
-                              .schema_version = schema::SchemaVersion::initial(),
-                              .row_count = rows,
-                              .event_time_column_ordinal = 0U,
-                              .ordering_column_count = 1U,
-                              .minimum_event_time = -100,
-                              .maximum_event_time = static_cast<std::int64_t>(rows - 1U) - 100,
-                              .columns = columns,
-                              .granules = granules,
-                              .pages = pages})
+  return encode_cseg_v1_part(
+             {.part_id = identifier<PartId>(options.part_id_seed),
+              .table_id = identifier<schema::TableId>(2U),
+              .tablet_id = identifier<schema::TabletId>(3U),
+              .schema_id = identifier<schema::SchemaId>(4U),
+              .schema_version = schema::SchemaVersion::initial(),
+              .row_count = rows,
+              .event_time_column_ordinal = 0U,
+              .ordering_column_count = 1U,
+              .minimum_event_time = options.first_event_time,
+              .maximum_event_time = options.first_event_time + static_cast<std::int64_t>(rows - 1U),
+              .columns = columns,
+              .granules = granules,
+              .pages = pages})
       .value();
 }
 

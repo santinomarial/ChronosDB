@@ -39,10 +39,11 @@ namespace {
 }
 
 struct Fixture {
-  Fixture(const std::uint32_t rows, const cseg::PageCompression compression)
+  Fixture(const std::uint32_t rows, const cseg::PageCompression compression,
+          const std::uint32_t rows_per_granule = 0U)
       : schema_lineage(lineage()),
-        encoded(std::make_shared<const cseg::EncodedCsegPart>(
-            cseg::test::make_valid_part_with_rows(rows, rows, compression))),
+        encoded(std::make_shared<const cseg::EncodedCsegPart>(cseg::test::make_valid_part_with_rows(
+            rows, rows_per_granule == 0U ? rows : rows_per_granule, compression))),
         part(CsegPartPin::create(encoded, encoded->bytes(),
                                  encoded->retained_buffer_bytes() + sizeof(cseg::EncodedCsegPart) +
                                      64U)
@@ -53,6 +54,15 @@ struct Fixture {
     return CsegScanOperator::create(resources, part, schema_lineage,
                                     cseg::test::identifier<schema::SchemaId>(4U),
                                     cseg::test::identifier<schema::TabletId>(3U), {0U});
+  }
+
+  [[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>>
+  pruned_source(const std::int64_t event_time) const {
+    return CsegScanOperator::create_event_time_pruned(
+        resources, part, schema_lineage, cseg::test::identifier<schema::SchemaId>(4U),
+        cseg::test::identifier<schema::TabletId>(3U), {0U},
+        {.lower = cseg::EventTimeBound{.value = event_time, .inclusive = true},
+         .upper = cseg::EventTimeBound{.value = event_time, .inclusive = true}});
   }
 
   schema::SchemaLineage schema_lineage;
@@ -120,6 +130,70 @@ void scan_one_cseg_granule(benchmark::State& state) {
 
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 BENCHMARK(scan_one_cseg_granule)->ArgsProduct({{64, 1'024, 65'536}, {0, 1}});
+
+void scan_one_selected_granule_among_many(benchmark::State& state) {
+  constexpr std::uint32_t kRowsPerGranule = 64U;
+  const auto granules = static_cast<std::uint32_t>(state.range(0));
+  const cseg::PageCompression compression =
+      state.range(1) == 0 ? cseg::PageCompression::kNone : cseg::PageCompression::kZstd;
+  const std::uint32_t rows = granules * kRowsPerGranule;
+  const Fixture fixture{rows, compression, kRowsPerGranule};
+  const std::int64_t selected_event_time =
+      -100 + static_cast<std::int64_t>((granules / 2U) * kRowsPerGranule);
+
+  std::size_t measured_allocations = 0U;
+  std::size_t measured_bytes = 0U;
+  {
+    auto source = fixture.pruned_source(selected_event_time);
+    if (!source.has_value()) {
+      const std::string message = source.error().to_string();
+      state.SkipWithError(message);
+      return;
+    }
+    benchmark_support::ScopedAllocationCounting counting;
+    auto step = (*source)->next(fixture.resources);
+    measured_allocations = counting.stop().allocations;
+    if (!step.has_value() || step->chunk() == nullptr) {
+      const std::string message =
+          step.has_value() ? "pruned CSEG scan returned no chunk" : step.error().to_string();
+      state.SkipWithError(message);
+      return;
+    }
+    measured_bytes = step->chunk()->chunk().buffer_bytes();
+  }
+
+  for ([[maybe_unused]] auto iteration : state) {
+    state.PauseTiming();
+    auto source = fixture.pruned_source(selected_event_time);
+    if (!source.has_value()) {
+      const std::string message = source.error().to_string();
+      state.SkipWithError(message);
+      return;
+    }
+    state.ResumeTiming();
+    auto step = (*source)->next(fixture.resources);
+    benchmark::DoNotOptimize(step);
+    state.PauseTiming();
+    if (!step.has_value() || step->chunk() == nullptr) {
+      const std::string message =
+          step.has_value() ? "pruned CSEG scan returned no chunk" : step.error().to_string();
+      state.SkipWithError(message);
+      return;
+    }
+    state.ResumeTiming();
+  }
+  state.SetItemsProcessed(static_cast<std::int64_t>(state.iterations()) * kRowsPerGranule);
+  state.SetBytesProcessed(static_cast<std::int64_t>(state.iterations()) *
+                          static_cast<std::int64_t>(measured_bytes));
+  state.counters["candidate_granules"] = static_cast<double>(granules);
+  state.counters["pull_allocations"] = static_cast<double>(measured_allocations);
+  state.SetLabel(compression == cseg::PageCompression::kNone
+                     ? "raw; one middle granule selected; planning excluded"
+                     : "Zstd policy; one middle granule selected; planning excluded");
+}
+
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+BENCHMARK(scan_one_selected_granule_among_many)->ArgsProduct({{64, 4'096}, {0, 1}});
 
 } // namespace
 } // namespace chronos::query

@@ -66,7 +66,8 @@ add_allocation_overhead(const AllocationOverheadInput input, const char* const m
 
 [[nodiscard]] common::Result<std::size_t>
 source_charge(const CsegPartPin& part, const schema::TableSchema& destination_schema,
-              const std::vector<std::uint32_t>& destination_column_ordinals) {
+              const std::vector<std::uint32_t>& destination_column_ordinals,
+              const CsegScanLimits limits, const bool event_time_pruned) {
   std::size_t total = part.retained_buffer_bytes();
   common::Result<std::size_t> next =
       add(total, part.bytes().size(), "CSEG scan source byte accounting overflowed");
@@ -102,11 +103,24 @@ source_charge(const CsegPartPin& part, const schema::TableSchema& destination_sc
   constexpr std::size_t source_objects =
       sizeof(CsegPartPin) + sizeof(cseg::CsegProjectedReaderView) +
       sizeof(std::vector<std::uint32_t>) + sizeof(CsegScanLimits) + sizeof(QueryMemoryReservation) +
+      sizeof(std::optional<cseg::CsegEventTimePruningPlan>) + sizeof(std::size_t) +
       sizeof(CsegScanOperator);
   next = add(*next, source_objects, "CSEG scan source object accounting overflowed");
   if (!next.has_value())
     return next;
-  return add_allocation_overhead({.bytes = *next, .allocation_count = kSourceAllocationCount},
+  if (event_time_pruned) {
+    common::Result<std::size_t> pruning_ordinals =
+        bytes_for(limits.pruning.max_granules, sizeof(std::uint32_t),
+                  "CSEG scan pruning ordinal accounting overflowed");
+    if (!pruning_ordinals.has_value())
+      return pruning_ordinals;
+    next = add(*next, *pruning_ordinals, "CSEG scan source byte accounting overflowed");
+    if (!next.has_value())
+      return next;
+  }
+  const std::size_t allocation_count =
+      kSourceAllocationCount + static_cast<std::size_t>(event_time_pruned);
+  return add_allocation_overhead({.bytes = *next, .allocation_count = allocation_count},
                                  "CSEG scan source allocation accounting overflowed");
 }
 
@@ -204,15 +218,27 @@ class CsegScanOperator::State {
 public:
   State(CsegPartPin part_value, cseg::CsegProjectedReaderView reader_value,
         std::vector<std::uint32_t> destination_column_ordinals_value, CsegScanLimits limits_value,
+        std::optional<cseg::CsegEventTimePruningPlan> pruning_value,
         QueryMemoryReservation source_reservation_value) noexcept
       : part(std::move(part_value)), reader(std::move(reader_value)),
         destination_column_ordinals(std::move(destination_column_ordinals_value)),
-        limits(limits_value), source_reservation(std::move(source_reservation_value)) {}
+        limits(limits_value), pruning(std::move(pruning_value)),
+        source_reservation(std::move(source_reservation_value)) {}
+
+  [[nodiscard]] std::size_t granule_count() const noexcept {
+    return pruning.has_value() ? pruning->selected_granules().size()
+                               : reader.metadata().granules().size();
+  }
+
+  [[nodiscard]] std::size_t granule_ordinal() const noexcept {
+    return pruning.has_value() ? pruning->selected_granules()[next_granule] : next_granule;
+  }
 
   CsegPartPin part;
   cseg::CsegProjectedReaderView reader;
   std::vector<std::uint32_t> destination_column_ordinals;
   CsegScanLimits limits;
+  std::optional<cseg::CsegEventTimePruningPlan> pruning;
   QueryMemoryReservation source_reservation;
   std::size_t next_granule{};
 };
@@ -244,6 +270,24 @@ common::Result<std::unique_ptr<PhysicalOperator>> CsegScanOperator::create(
     const QueryResourceContext& resources, CsegPartPin part, const schema::SchemaLineage& lineage,
     const schema::SchemaId destination_schema_id, const schema::TabletId& target_tablet,
     std::vector<std::uint32_t> destination_column_ordinals, const CsegScanLimits limits) {
+  return create_impl(resources, std::move(part), lineage, destination_schema_id, target_tablet,
+                     std::move(destination_column_ordinals), std::nullopt, limits);
+}
+
+common::Result<std::unique_ptr<PhysicalOperator>> CsegScanOperator::create_event_time_pruned(
+    const QueryResourceContext& resources, CsegPartPin part, const schema::SchemaLineage& lineage,
+    const schema::SchemaId destination_schema_id, const schema::TabletId& target_tablet,
+    std::vector<std::uint32_t> destination_column_ordinals, cseg::EventTimePredicate predicate,
+    const CsegScanLimits limits) {
+  return create_impl(resources, std::move(part), lineage, destination_schema_id, target_tablet,
+                     std::move(destination_column_ordinals), predicate, limits);
+}
+
+common::Result<std::unique_ptr<PhysicalOperator>> CsegScanOperator::create_impl(
+    const QueryResourceContext& resources, CsegPartPin part, const schema::SchemaLineage& lineage,
+    const schema::SchemaId destination_schema_id, const schema::TabletId& target_tablet,
+    std::vector<std::uint32_t> destination_column_ordinals,
+    std::optional<cseg::EventTimePredicate> predicate, const CsegScanLimits limits) {
   const std::shared_ptr<const schema::TableSchema> destination_schema =
       lineage.find(destination_schema_id);
   if (destination_schema == nullptr) {
@@ -255,8 +299,13 @@ common::Result<std::unique_ptr<PhysicalOperator>> CsegScanOperator::create(
       limits.chunk.maximum_buffer_bytes == 0U || limits.chunk.maximum_retained_buffer_bytes == 0U) {
     return common::make_unexpected(invalid("CSEG scan chunk limits must be nonzero"));
   }
-  common::Result<std::size_t> charge =
-      source_charge(part, *destination_schema, destination_column_ordinals);
+  if (predicate.has_value() && (limits.pruning.max_granules == 0U ||
+                                limits.pruning.max_granules > cseg::format::kMaximumGranuleCount)) {
+    return common::make_unexpected(
+        invalid("CSEG scan pruning granule limit is outside the v1 format domain"));
+  }
+  common::Result<std::size_t> charge = source_charge(
+      part, *destination_schema, destination_column_ordinals, limits, predicate.has_value());
   if (!charge.has_value())
     return common::make_unexpected(charge.error());
   common::Result<QueryMemoryReservation> source_reservation = resources.reserve(*charge);
@@ -272,10 +321,18 @@ common::Result<std::unique_ptr<PhysicalOperator>> CsegScanOperator::create(
         reader->plan_granule(0U, destination_column_ordinals);
     if (!first_plan.has_value())
       return common::make_unexpected(first_plan.error());
+    std::optional<cseg::CsegEventTimePruningPlan> pruning;
+    if (predicate.has_value()) {
+      common::Result<cseg::CsegEventTimePruningPlan> planned =
+          cseg::plan_cseg_v1_event_time_pruning(reader->metadata(), predicate, limits.pruning);
+      if (!planned.has_value())
+        return common::make_unexpected(planned.error());
+      pruning.emplace(std::move(*planned));
+    }
 
     auto state = std::make_unique<State>(std::move(part), std::move(*reader),
                                          std::move(destination_column_ordinals), limits,
-                                         std::move(*source_reservation));
+                                         std::move(pruning), std::move(*source_reservation));
     return std::unique_ptr<PhysicalOperator>{new CsegScanOperator{std::move(state)}};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("CSEG scan source allocation failed"));
@@ -294,14 +351,14 @@ common::Result<PhysicalOperatorStep> CsegScanOperator::next(const QueryResourceC
     static_cast<void>(resources.request_cancel());
     return common::make_unexpected(invalid("CSEG scan source belongs to another query"));
   }
-  if (state_->next_granule >= state_->reader.metadata().granules().size()) {
+  if (state_->next_granule >= state_->granule_count()) {
     ended_ = true;
     state_.reset();
     return PhysicalOperatorStep::end();
   }
 
   common::Result<cseg::CsegProjectedGranuleReadPlan> plan =
-      state_->reader.plan_granule(state_->next_granule, state_->destination_column_ordinals);
+      state_->reader.plan_granule(state_->granule_ordinal(), state_->destination_column_ordinals);
   if (!plan.has_value()) {
     static_cast<void>(resources.request_cancel());
     return common::make_unexpected(plan.error());
@@ -383,7 +440,7 @@ common::Result<PhysicalOperatorStep> CsegScanOperator::next(const QueryResourceC
     }
 
     ++state_->next_granule;
-    if (state_->next_granule == state_->reader.metadata().granules().size()) {
+    if (state_->next_granule == state_->granule_count()) {
       ended_ = true;
       state_.reset();
     }

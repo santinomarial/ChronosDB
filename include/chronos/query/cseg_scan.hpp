@@ -5,6 +5,7 @@
 #include "chronos/common/result.hpp"
 #include "chronos/cseg/format.hpp"
 #include "chronos/cseg/projected_reader.hpp"
+#include "chronos/cseg/pruning.hpp"
 #include "chronos/query/physical_operator.hpp"
 #include "chronos/schema/identity.hpp"
 #include "chronos/schema/schema_lineage.hpp"
@@ -12,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace chronos::query {
@@ -56,6 +58,7 @@ private:
 
 struct CsegScanLimits {
   cseg::CsegProjectedReaderLimits reader;
+  cseg::CsegEventTimePruningLimits pruning;
   VectorChunkLimits chunk{.maximum_rows = cseg::format::kMaximumGranuleRowCount,
                           .maximum_columns = cseg::format::kMaximumUserColumnCount,
                           .maximum_buffer_bytes = kDefaultCsegScanLogicalByteLimit,
@@ -75,11 +78,26 @@ public:
          const schema::TabletId& target_tablet,
          std::vector<std::uint32_t> destination_column_ordinals, CsegScanLimits limits = {});
 
+  // Uses authenticated part/granule event-time extrema only to skip provably disjoint granules.
+  // Selected granules are still emitted in full; an exact predicate operator remains authoritative.
+  [[nodiscard]] static common::Result<std::unique_ptr<PhysicalOperator>> create_event_time_pruned(
+      const QueryResourceContext& resources, CsegPartPin part, const schema::SchemaLineage& lineage,
+      schema::SchemaId destination_schema_id, const schema::TabletId& target_tablet,
+      std::vector<std::uint32_t> destination_column_ordinals, cseg::EventTimePredicate predicate,
+      CsegScanLimits limits = {});
+
   [[nodiscard]] common::Result<PhysicalOperatorStep>
   next(const QueryResourceContext& resources) override;
 
 private:
   class State;
+
+  [[nodiscard]] static common::Result<std::unique_ptr<PhysicalOperator>>
+  create_impl(const QueryResourceContext& resources, CsegPartPin part,
+              const schema::SchemaLineage& lineage, schema::SchemaId destination_schema_id,
+              const schema::TabletId& target_tablet,
+              std::vector<std::uint32_t> destination_column_ordinals,
+              std::optional<cseg::EventTimePredicate> predicate, CsegScanLimits limits);
 
   explicit CsegScanOperator(std::unique_ptr<State> state) noexcept;
 

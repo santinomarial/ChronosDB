@@ -58,10 +58,24 @@ void exercise(const std::shared_ptr<const std::vector<std::byte>>& owner,
   projection.reserve(requested);
   for (std::size_t index = 0U; index < requested; ++index)
     projection.push_back(input.empty() ? 0U : input[index % input.size()] % 3U);
-  auto source = chronos::query::CsegScanOperator::create(
-      *resources, std::move(*part), lineage(),
-      chronos::cseg::test::identifier<chronos::schema::SchemaId>(4U),
-      chronos::cseg::test::identifier<chronos::schema::TabletId>(3U), std::move(projection));
+  chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> source =
+      !input.empty() && (input.front() & 2U) != 0U
+          ? chronos::query::CsegScanOperator::create_event_time_pruned(
+                *resources, std::move(*part), lineage(),
+                chronos::cseg::test::identifier<chronos::schema::SchemaId>(4U),
+                chronos::cseg::test::identifier<chronos::schema::TabletId>(3U),
+                std::move(projection),
+                {.lower =
+                     chronos::cseg::EventTimeBound{.value = static_cast<std::int8_t>(input.front()),
+                                                   .inclusive = (input.front() & 4U) != 0U},
+                 .upper =
+                     chronos::cseg::EventTimeBound{.value = static_cast<std::int8_t>(input.back()),
+                                                   .inclusive = (input.back() & 4U) != 0U}})
+          : chronos::query::CsegScanOperator::create(
+                *resources, std::move(*part), lineage(),
+                chronos::cseg::test::identifier<chronos::schema::SchemaId>(4U),
+                chronos::cseg::test::identifier<chronos::schema::TabletId>(3U),
+                std::move(projection));
   if (!source.has_value())
     return;
   if (!input.empty() && (input.front() & 1U) != 0U)

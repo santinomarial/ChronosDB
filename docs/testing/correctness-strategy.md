@@ -97,6 +97,11 @@
 > source-destruction and LIMIT ownership, cross-query/cancellation behavior, multi-granule
 > deterministic equivalence, exhaustive allocation failure, hostile scan fuzzing, sanitizer
 > coverage, and raw/Zstandard pull measurement.
+> Snapshot-bound multi-part CSEG scanning adds independent part/granule range models,
+> corrupted-pruned-file and corrupted-pruned-page evidence, exact epoch/image-order rejection,
+> empty-plan validation, exhaustive retained-allocation failure injection, predicate-aware decoder
+> fuzzing, and separate metadata-plan versus selected-pull measurements. It explicitly excludes
+> mutable heads and exact SQL filtering from its correctness claim.
 
 ## Test types
 

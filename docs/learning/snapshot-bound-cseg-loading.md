@@ -7,8 +7,10 @@ exact part descriptor, `ManifestStorage` revalidates and owns that file's bytes,
 source retains both through every returned chunk. It is the first safe bridge from a published
 Manifest part to physical query execution.
 
-The bridge scans one part. It does not choose or order multiple parts, read mutable heads, apply
-zone-map pruning, resolve row versions, lower SQL, perform asynchronous I/O, or schedule morsels.
+The original bridge scans one part. The pruned multi-part layer now plans canonical durable work,
+loads only selected images, and composes their single-part sources. It does not read mutable heads,
+apply exact row predicates, resolve row versions, lower SQL, perform asynchronous I/O, or schedule
+morsels.
 
 ## Public interfaces
 
@@ -24,7 +26,11 @@ zone-map pruning, resolve row versions, lower SQL, perform asynchronous I/O, or 
 
 - `pin_snapshot_cseg_part`, the trusted conversion to `CsegPartPin`; and
 - `create_snapshot_cseg_scan`, the identity/schema preflight plus existing single-part source
-  factory.
+  factory;
+- `SnapshotCsegPartScanPlan` and `plan_snapshot_cseg_part_scan`, the bounded exact-epoch durable
+  work plan;
+- `load_snapshot_cseg_part_scan_images`, the selected-only, plan-revalidated provider load; and
+- `create_snapshot_cseg_part_scan`, the eager query-accounted sequential composition.
 
 `chronos::query` now publicly links `chronos::manifest` because its installed adapter accepts the
 public snapshot image type.
@@ -111,8 +117,8 @@ Owned reads are portable and auditable but copy the complete selected file. Full
 safe but pessimistic. Per-part pins add one shared lifetime object per newly selected part and one
 shared pointer per publication descriptor.
 
-The next storage execution increment can now accept several `SnapshotPartImage` values from one
-epoch, apply conservative part/granule pruning, and define deterministic part order. Mutable heads
+The storage execution layer now accepts several `SnapshotPartImage` values from one epoch, applies
+conservative part/granule pruning, and defines deterministic physical part order. Mutable heads
 still need a canonical physical materialization/backing contract before a complete aggregate scan
 can merge them without violating accounting or row semantics.
 
@@ -133,5 +139,5 @@ the lower-bound invariant.
 immutable copies. The selective reader still verifies every requested and mandatory system page at
 pull time.
 
-**Does this implement an aggregate query snapshot scan?** No. It establishes safe selected-part
-ownership for that later composition.
+**Does this implement a complete aggregate query snapshot scan?** No. It composes the durable CSEG
+subset, but snapshot-visible mutable heads remain outside the source.
