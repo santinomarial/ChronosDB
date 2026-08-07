@@ -3,10 +3,13 @@
 #include "chronos/manifest/publication.hpp"
 #include "chronos/manifest/storage.hpp"
 #include "chronos/query/database_cseg_scan.hpp"
+#include "chronos/query/physical_plan.hpp"
+#include "chronos/query/snapshot_pipeline.hpp"
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/schema_lineage.hpp"
 #include "chronos/schema/table_schema.hpp"
 #include "cseg/cseg_test_fixture.hpp"
+#include "snapshot_tablet_scan_test_fixture.hpp"
 #include "support/failing_allocator.hpp"
 
 #include <array>
@@ -282,6 +285,38 @@ TEST(DatabaseCsegScanAllocationFailureTest, CompleteTabletCreationClassifiesEver
       break;
     }
     EXPECT_EQ(source.error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  }
+  EXPECT_TRUE(reached_success);
+}
+
+TEST(DatabaseCsegScanAllocationFailureTest,
+     SnapshotPipelineInstantiationClassifiesEveryNewAllocation) {
+  const test::SnapshotTabletScanFixture fixture{4U};
+  PhysicalPipelinePlan pipeline =
+      PhysicalPipelinePlan::create(
+          {{.type = fixture.schema_ptr()->columns().front().type(), .nullable = false}}, {})
+          .value();
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 128U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    QueryResourceContext resources =
+        QueryResourceContext::create(std::size_t{32U} * 1024U * 1024U).value();
+    std::size_t observed = 0U;
+    auto instantiated = run_aggregate_with_allocation_failure(fail_after, observed, [&] {
+      return instantiate_snapshot_tablet_pipeline(resources, fixture.storage(), fixture.snapshot(),
+                                                  test::SnapshotTabletScanFixture::tablet_id(),
+                                                  fixture.lineage(),
+                                                  fixture.schema_ptr()->schema_id(), pipeline);
+    });
+    EXPECT_GT(observed, 0U);
+    if (instantiated.has_value()) {
+      reached_success = true;
+      instantiated->reset();
+      EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+      break;
+    }
+    EXPECT_EQ(instantiated.error().code(), common::StatusCode::kResourceExhausted);
     EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
   }
   EXPECT_TRUE(reached_success);

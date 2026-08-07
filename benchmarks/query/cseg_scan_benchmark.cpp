@@ -1,5 +1,7 @@
 #include "chronos/cseg/part_codec.hpp"
 #include "chronos/query/cseg_scan.hpp"
+#include "chronos/query/physical_plan.hpp"
+#include "chronos/query/snapshot_pipeline.hpp"
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/schema_lineage.hpp"
 #include "chronos/schema/table_schema.hpp"
@@ -324,6 +326,52 @@ void scan_complete_head_only_snapshot(benchmark::State& state) {
 
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 BENCHMARK(scan_complete_head_only_snapshot)->Arg(64)->Arg(1'024)->Arg(65'536);
+
+void instantiate_and_execute_snapshot_pipeline(benchmark::State& state) {
+  const auto rows = static_cast<std::uint32_t>(state.range(0));
+  const test::SnapshotTabletScanFixture fixture{rows};
+  PhysicalPipelinePlan plan =
+      PhysicalPipelinePlan::create(
+          {{.type = fixture.schema_ptr()->columns().front().type(), .nullable = false}},
+          {LimitStage{rows / 2U}})
+          .value();
+  QueryResourceContext resources =
+      QueryResourceContext::create(std::size_t{1U} * 1024U * 1024U * 1024U).value();
+  std::size_t observed_rows = 0U;
+  for ([[maybe_unused]] auto iteration : state) {
+    auto pipeline = instantiate_snapshot_tablet_pipeline(
+        resources, fixture.storage(), fixture.snapshot(),
+        test::SnapshotTabletScanFixture::tablet_id(), fixture.lineage(),
+        fixture.schema_ptr()->schema_id(), plan);
+    if (!pipeline.has_value()) {
+      const std::string message = pipeline.error().to_string();
+      state.SkipWithError(message);
+      return;
+    }
+    std::size_t iteration_rows = 0U;
+    while (true) {
+      auto step = (*pipeline)->next(resources);
+      if (!step.has_value()) {
+        const std::string message = step.error().to_string();
+        state.SkipWithError(message);
+        return;
+      }
+      if (step->kind() == PhysicalOperatorStepKind::kEnd)
+        break;
+      iteration_rows += step->chunk()->chunk().selected_row_count();
+    }
+    observed_rows = iteration_rows;
+    benchmark::DoNotOptimize(observed_rows);
+  }
+  state.SetItemsProcessed(static_cast<std::int64_t>(state.iterations()) *
+                          static_cast<std::int64_t>(observed_rows));
+  state.counters["input_rows"] = static_cast<double>(rows);
+  state.counters["limited_rows"] = static_cast<double>(observed_rows);
+  state.SetLabel("snapshot plan/load/compose plus checked pipeline execution");
+}
+
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+BENCHMARK(instantiate_and_execute_snapshot_pipeline)->Arg(64)->Arg(1'024)->Arg(65'536);
 
 } // namespace
 } // namespace chronos::query

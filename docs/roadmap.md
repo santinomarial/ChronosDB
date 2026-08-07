@@ -451,7 +451,11 @@ No phase passes because its code merely compiles. A phase passes only when its a
   the thirtieth increment add one exact append-only tablet source over the aggregate database
   epoch: durable parts, every sealed head, and the active head share exact predicates, projections,
   row-version shape, bounded admission, cancellation, and ownership without duplicate or omitted
-  rows across flush replacement. Hashing, variable-width extrema, broader relational lowering,
+  rows across flush replacement. ADR 0048 and the thirty-first increment connect any checked
+  supported physical pipeline to that exact tablet source: schema and optional row-version input
+  shape select one uniform source mode, bounded planning/loading/composition retains one snapshot
+  epoch, and bound WHERE/ORDER BY/LIMIT or aggregate stages execute without manual source wiring.
+  Hashing, variable-width extrema, broader relational lowering,
   optimizer rules, future correction/delete row-version resolution, mapped/asynchronous providers, shared
   pin credit, scheduling, spill, and full scalar-engine differential plan execution are unimplemented.
 

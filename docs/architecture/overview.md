@@ -249,9 +249,12 @@ system pages while head scans materialize accounted canonical buffers. Exact bou
 lowering under [ADR 0046](../adr/0046-exact-bounded-sql-order-by-lowering.md) now prepares aliases
 and non-projected keys, appends DEDUP/group and commit-position ties, sorts before LIMIT, and removes
 every hidden column. Base schemas without a DEDUP KEY remain unsupported until their authoritative
-generated logical identity is exposed. Bound SQL does not yet select the complete tablet source;
-future correction/delete version resolution remains separate work. Hashing, variable extrema, and
-spill remain deferred. General relational lowering, SQL source selection, parallel scheduling,
+generated logical identity is exposed.
+[ADR 0048](../adr/0048-snapshot-tablet-physical-pipeline-instantiation.md) now validates a lowered
+plan's complete schema and optional suffix input, loads one held snapshot's durable images, composes
+every current source, and instantiates the checked pipeline without collapsing SQL diagnostics.
+Future correction/delete version resolution remains separate work. Hashing, variable extrema, and
+spill remain deferred. General relational lowering, parallel scheduling,
 spilling, adaptive behavior, and join algorithms remain deferred. Implemented reservations and
 accounted chunks provide the admission/ownership invariant, but future operators must reserve every
 retained allocation and release snapshot pins and memory by cooperative cancellation unwinding.

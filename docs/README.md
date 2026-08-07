@@ -168,6 +168,12 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   canonical part planning, two-stage no-false-negative event-time pruning, selected-only image
   loading, query-accounted sequential composition, explicit CSEG-only visibility, and failure and
   measurement boundaries.
+- [Complete append-only snapshot tablet scan](learning/complete-snapshot-tablet-scan.md): implemented
+  exact durable/sealed/active source composition for one held aggregate epoch with uniform
+  predicates, suffix shape, bounded ownership, and flush-boundary multiset evidence.
+- [Snapshot physical pipeline instantiation](learning/snapshot-physical-pipeline.md): implemented
+  checked schema/suffix source selection, snapshot-bound image loading and complete-source
+  composition for reusable physical plans, with end-to-end SQL execution and failure evidence.
 - [Mutable-head scan source](learning/mutable-head-scan-source.md): implemented exact-publication
   head pinning, bounded canonical bitmap/offset materialization, schema-tail NULL synthesis,
   query-accounted pull ownership, and exact event-time filtering.

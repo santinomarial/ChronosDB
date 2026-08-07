@@ -132,6 +132,26 @@ public:
   SnapshotTabletScanFixture(const SnapshotTabletScanFixture&) = delete;
   SnapshotTabletScanFixture& operator=(const SnapshotTabletScanFixture&) = delete;
 
+  [[nodiscard]] const std::shared_ptr<const schema::TableSchema>& schema_ptr() const noexcept {
+    return schema_;
+  }
+
+  [[nodiscard]] const schema::SchemaLineage& lineage() const noexcept {
+    return lineage_;
+  }
+
+  [[nodiscard]] const manifest::ManifestStorage& storage() const noexcept {
+    return *storage_;
+  }
+
+  [[nodiscard]] const manifest::DatabaseStorageSnapshot& snapshot() const noexcept {
+    return *snapshot_;
+  }
+
+  [[nodiscard]] static schema::TabletId tablet_id() {
+    return cseg::test::identifier<schema::TabletId>(3U);
+  }
+
   [[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>>
   source(const QueryResourceContext& resources,
          const std::optional<cseg::EventTimePredicate>& predicate = std::nullopt,
@@ -151,10 +171,6 @@ private:
     const Unsigned encoded = std::bit_cast<Unsigned>(value);
     for (std::size_t index = 0U; index < sizeof(Integer); ++index)
       bytes.push_back(std::byte{static_cast<std::uint8_t>(encoded >> (index * 8U))});
-  }
-
-  [[nodiscard]] static schema::TabletId tablet_id() {
-    return cseg::test::identifier<schema::TabletId>(3U);
   }
 
   [[nodiscard]] static ingest::Sha256Digest digest(const std::uint8_t seed) {
@@ -179,7 +195,7 @@ private:
                                      .physical_ordering_key = {event},
                                      .partition_columns = {event},
                                      .shard_key = {event},
-                                     .deduplication_key = {}})
+                                     .deduplication_key = {event}})
             .value());
   }
 

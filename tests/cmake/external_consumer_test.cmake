@@ -101,6 +101,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/query/executor.hpp>
 #include <chronos/query/explain.hpp>
 #include <chronos/query/snapshot.hpp>
+#include <chronos/query/snapshot_pipeline.hpp>
 #include <chronos/query/sort.hpp>
 #include <chronos/query/statement_binder.hpp>
 #include <chronos/query/timestamp_range.hpp>
@@ -291,6 +292,16 @@ int main() {
           const std::vector<std::uint32_t>&, chronos::query::SnapshotTabletScanLimits);
   const CreateSnapshotTabletScanFunction create_snapshot_tablet_scan =
       &chronos::query::create_snapshot_tablet_scan;
+  using InstantiateSnapshotTabletPipelineFunction =
+      chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
+          const chronos::query::QueryResourceContext&,
+          const chronos::manifest::ManifestStorage&,
+          const chronos::manifest::DatabaseStorageSnapshot&,
+          const chronos::schema::TabletId&, const chronos::schema::SchemaLineage&,
+          chronos::schema::SchemaId, const chronos::query::PhysicalPipelinePlan&,
+          chronos::query::SnapshotTabletPipelineLimits);
+  const InstantiateSnapshotTabletPipelineFunction instantiate_snapshot_tablet_pipeline =
+      &chronos::query::instantiate_snapshot_tablet_pipeline;
   using CreateHeadScanFunction =
       chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
           const chronos::query::QueryResourceContext&, chronos::head::HeadSnapshot,
@@ -727,6 +738,7 @@ int main() {
                  load_snapshot_cseg_part_scan_images != nullptr &&
                  create_snapshot_cseg_part_scan != nullptr &&
                  create_snapshot_tablet_scan != nullptr &&
+                 instantiate_snapshot_tablet_pipeline != nullptr &&
                  !cseg_metadata.has_value() &&
                  cseg_metadata.error().kind() ==
                      chronos::cseg::CsegMetadataDecodeErrorKind::kIncomplete &&

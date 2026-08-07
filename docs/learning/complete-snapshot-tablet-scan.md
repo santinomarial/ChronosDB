@@ -60,9 +60,10 @@ cancellation, and pull boundaries over an authenticated head-only snapshot.
 `scan_complete_head_only_snapshot` measures aggregate serial execution for 64, 1,024, and 65,536
 active-head rows with source construction excluded from timing.
 
-The next integration is bound-SQL source selection. Shared publication credit, asynchronous/mapped
-part providers, parallel morsel scheduling, spill, and future correction/delete resolution remain
-separate work.
+Bound-SQL source selection is now connected through
+[snapshot physical pipeline instantiation](snapshot-physical-pipeline.md). Shared publication
+credit, asynchronous/mapped part providers, parallel morsel scheduling, spill, and future
+correction/delete resolution remain separate work.
 
 ## Review questions
 

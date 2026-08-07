@@ -180,8 +180,11 @@
 > publications from one aggregate epoch. Deterministic multiset and suffix checks, head-only exact
 > predicate/helper-removal coverage, hostile finite limits, allocation-failure injection, public
 > consumption, and sanitizer runs prove no row is duplicated or omitted across the current
-> append-only flush boundary. Future correction/delete winner resolution and SQL source selection
-> remain outside this claim.
+> append-only flush boundary. Checked snapshot-pipeline instantiation now adds exact destination
+> schema and inferred suffix validation, end-to-end bound WHERE/ORDER BY/LIMIT and aggregate
+> execution, malformed shape/finite-limit rejection, exhaustive construction allocation failure,
+> authenticated fuzzing, installed consumption, and connector-plus-execution measurement. Future
+> correction/delete winner resolution remains outside this claim.
 
 ## Test types
 

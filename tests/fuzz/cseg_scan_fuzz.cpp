@@ -1,6 +1,9 @@
 #include "chronos/common/bytes.hpp"
 #include "chronos/cseg/part_codec.hpp"
 #include "chronos/query/cseg_scan.hpp"
+#include "chronos/query/physical_plan.hpp"
+#include "chronos/query/row_version.hpp"
+#include "chronos/query/snapshot_pipeline.hpp"
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/schema_lineage.hpp"
 #include "chronos/schema/table_schema.hpp"
@@ -188,6 +191,45 @@ void exercise_complete_snapshot(const std::span<const std::uint8_t> input) {
   }
 }
 
+void exercise_snapshot_pipeline(const std::span<const std::uint8_t> input) {
+  // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+  static const chronos::query::test::SnapshotTabletScanFixture fixture{17U};
+  std::vector<chronos::query::PhysicalColumnShape> shape{
+      {.type = fixture.schema_ptr()->columns().front().type(), .nullable = false}};
+  if (!input.empty() && (input.front() & 1U) != 0U) {
+    for (const chronos::query::VectorRowVersionColumnKind kind :
+         {chronos::query::VectorRowVersionColumnKind::kWalId,
+          chronos::query::VectorRowVersionColumnKind::kRecordSequence,
+          chronos::query::VectorRowVersionColumnKind::kRowOrdinal,
+          chronos::query::VectorRowVersionColumnKind::kOperation}) {
+      shape.push_back({.type = chronos::query::vector_row_version_column_type(kind).value(),
+                       .nullable = false});
+    }
+    if (input.size() > 1U && (input[1] & 1U) != 0U)
+      shape.back().nullable = true;
+  }
+  auto plan = chronos::query::PhysicalPipelinePlan::create(
+      std::move(shape), {chronos::query::LimitStage{input.empty() ? 17U : input.back() % 18U}});
+  auto resources = chronos::query::QueryResourceContext::create(std::size_t{16U} * 1024U * 1024U);
+  if (!plan.has_value() || !resources.has_value())
+    return;
+  chronos::query::SnapshotTabletPipelineLimits limits;
+  limits.scan.maximum_heads = input.size() < 3U || (input[2] & 1U) != 0U ? 1U : 0U;
+  auto pipeline = chronos::query::instantiate_snapshot_tablet_pipeline(
+      *resources, fixture.storage(), fixture.snapshot(),
+      chronos::query::test::SnapshotTabletScanFixture::tablet_id(), fixture.lineage(),
+      fixture.schema_ptr()->schema_id(), *plan, limits);
+  if (!pipeline.has_value())
+    return;
+  if (input.size() > 3U && (input[3] & 1U) != 0U)
+    static_cast<void>(resources->request_cancel());
+  for (std::size_t pull = 0U; pull < 32U; ++pull) {
+    auto step = (*pipeline)->next(*resources);
+    if (!step.has_value() || step->kind() == chronos::query::PhysicalOperatorStepKind::kEnd)
+      break;
+  }
+}
+
 } // namespace
 
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_t size) {
@@ -214,5 +256,6 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
   exercise(mutated_owner, input);
   exercise_exact_prune_filter(std::move(mutated_owner), input);
   exercise_complete_snapshot(input);
+  exercise_snapshot_pipeline(input);
   return 0;
 }
