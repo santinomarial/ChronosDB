@@ -96,9 +96,9 @@ self-contained headers, installation, and external-consumer compilation protect 
 
 The fixed memo array favors a simple allocation proof over cache efficiency, and per-row graph
 dispatch is not expected to be the final hot kernel. Column-wise specialization or fusion should be
-adopted only after profiles and must remain differential with this baseline. The immediate semantic
-next steps are physical casts and the remaining scalar operations, then exact lowering from bound
-SQL expressions into these programs.
+adopted only after profiles and must remain differential with this baseline. Single-source
+nonaggregate bound SQL now lowers the supported subset into these programs. Physical casts and the
+remaining scalar operations are next, followed by aggregate and wider relational lowering.
 
 ## Likely review questions
 

@@ -70,3 +70,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0033](0033-accounted-source-column-output-materialization.md) | Accounted source-column output materialization | accepted |
 | [0034](0034-accounted-typed-constant-vector-outputs.md) | Accounted typed-constant vector outputs | accepted |
 | [0035](0035-bounded-checked-vector-expression-programs.md) | Bounded checked vector expression programs | accepted |
+| [0036](0036-bound-select-to-physical-pipeline-lowering.md) | Bound SELECT to physical pipeline lowering | accepted |

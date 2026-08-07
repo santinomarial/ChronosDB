@@ -411,8 +411,12 @@ No phase passes because its code merely compiles. A phase passes only when its a
   immutable numeric/Boolean physical expression DAGs, exact type/nullability inference, checked
   integer/decimal and IEEE kernels, SQL NULL/NaN/short-circuit behavior, computed output positions,
   fixed-stack allocation-free successful row evaluation, plan/accounting integration, and deterministic/
-  property/failure/fuzz/benchmark/consumer evidence. The durable and mutable sources still expose
-  user columns independently: remaining scalar operations, bound-SQL lowering, optimizer rules,
+  property/failure/fuzz/benchmark/consumer evidence. ADR 0036 and the nineteenth increment add
+  exact single-source, nonaggregate bound-SELECT lowering for WHERE, ordered projection, stars,
+  checked expressions, typed constants, BETWEEN/IN expansion, and LIMIT with explicit unsupported
+  diagnostics and end-to-end vector execution evidence. The durable and mutable sources still
+  expose user columns independently: remaining scalar operations, broader relational lowering,
+  optimizer rules,
   hidden row-version columns, complete multi-part/head
   composition, base/delta merge and row-version resolution, mapped/asynchronous providers, shared
   pin credit, scheduling, spill, and full scalar-engine differential plan execution are

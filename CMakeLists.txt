@@ -337,6 +337,7 @@ add_library(
   src/query/literal.cpp
   src/query/parser.cpp
   src/query/physical_operator.cpp
+  src/query/physical_lowering.cpp
   src/query/physical_plan.cpp
   src/query/resource_context.cpp
   src/query/snapshot.cpp
@@ -786,6 +787,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/parser_test.cpp
     tests/query/physical_operator_header_self_contained.cpp
     tests/query/physical_operator_test.cpp
+    tests/query/physical_lowering_header_self_contained.cpp
+    tests/query/physical_lowering_test.cpp
     tests/query/physical_plan_header_self_contained.cpp
     tests/query/physical_plan_test.cpp
     tests/query/resource_context_header_self_contained.cpp
@@ -819,6 +822,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/column_output_allocation_failure_test.cpp
     tests/query/database_cseg_scan_allocation_failure_test.cpp
     tests/query/head_scan_allocation_failure_test.cpp
+    tests/query/physical_lowering_allocation_failure_test.cpp
     tests/support/failing_allocator.cpp
   )
   set_target_properties(chronos_query_allocation_failure_tests PROPERTIES CXX_EXTENSIONS OFF)
@@ -1219,6 +1223,16 @@ if(CHRONOS_BUILD_FUZZERS)
   chronos_set_project_warnings(chronos_physical_plan_fuzz)
   chronos_enable_sanitizers(chronos_physical_plan_fuzz)
   chronos_enable_static_analysis(chronos_physical_plan_fuzz)
+
+  add_executable(chronos_physical_lowering_fuzz tests/fuzz/physical_lowering_fuzz.cpp)
+  set_target_properties(chronos_physical_lowering_fuzz PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_physical_lowering_fuzz PRIVATE cxx_std_23)
+  target_link_libraries(chronos_physical_lowering_fuzz PRIVATE chronos::query)
+  target_compile_options(chronos_physical_lowering_fuzz PRIVATE -fsanitize=fuzzer)
+  target_link_options(chronos_physical_lowering_fuzz PRIVATE -fsanitize=fuzzer)
+  chronos_set_project_warnings(chronos_physical_lowering_fuzz)
+  chronos_enable_sanitizers(chronos_physical_lowering_fuzz)
+  chronos_enable_static_analysis(chronos_physical_lowering_fuzz)
 
   add_executable(chronos_cseg_scan_fuzz tests/fuzz/cseg_scan_fuzz.cpp)
   set_target_properties(chronos_cseg_scan_fuzz PROPERTIES CXX_EXTENSIONS OFF)

@@ -9,8 +9,10 @@ subset projection, owned reordered/duplicate source-column output, mixed source/
 and computed numeric/Boolean output, and global LIMIT in explicit order and propagates the exact
 physical column shape through every stage.
 
-This is deliberately not the SQL physical planner. It does not lower a `BoundSqlSelect` into its
-computed programs, optimize stage order, scan CSEG/head storage, aggregate, join, sort, schedule work,
+This remains deliberately smaller than a general SQL physical planner. The single-source,
+nonaggregate subset now lowers through the separate
+[bound-SELECT lowering boundary](bound-select-physical-lowering.md), but the plan does not optimize
+stage order, scan CSEG/head storage, aggregate, join, sort, schedule work,
 spill, or materialize client results. Those paths need ownership and allocation contracts that do
 not exist yet.
 

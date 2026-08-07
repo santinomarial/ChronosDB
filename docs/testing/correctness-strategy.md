@@ -132,8 +132,12 @@
 > intermediate shapes, signed/unsigned/IEEE/decimal kernels, SQL NULL/NaN/short-circuit behavior,
 > fixed-seed scalar-model properties, runtime error/cancellation cleanup, physical-plan integration,
 > allocation failure, hostile fuzzing, sanitizer and installed-consumer coverage, and isolated
-> expression measurement. Remaining scalar operations and bound-SQL lowering remain outside this
-> claim.
+> expression measurement. Remaining scalar operations and general bound-SQL lowering remain
+> outside this claim.
+> Bound-SELECT lowering now covers the single-source nonaggregate subset with exact binder-to-plan
+> shapes, WHERE/projection/LIMIT execution, star and typed-constant order, BETWEEN/IN expansion,
+> finite-program rejection, unsupported-feature diagnostics, and installed-consumer coverage.
+> Aggregates, ordering, LATEST/ASOF, and the remaining scalar kernels remain outside this claim.
 
 ## Test types
 

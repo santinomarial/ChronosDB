@@ -90,6 +90,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/query/database_cseg_scan.hpp>
 #include <chronos/query/head_scan.hpp>
 #include <chronos/query/physical_operator.hpp>
+#include <chronos/query/physical_lowering.hpp>
 #include <chronos/query/physical_plan.hpp>
 #include <chronos/query/resource_context.hpp>
 #include <chronos/query/catalog.hpp>
@@ -345,6 +346,9 @@ int main() {
       chronos::query::VectorExpressionLimits);
   const CreateVectorExpressionFunction create_vector_expression =
       &chronos::query::VectorExpression::create;
+  using LowerSelectFunction = chronos::query::SqlResult<chronos::query::PhysicalPipelinePlan> (*)(
+      const chronos::query::BoundSqlSelect&, chronos::query::PhysicalSelectLoweringLimits);
+  const LowerSelectFunction lower_select = &chronos::query::lower_bound_sql_select;
   using CreateTimestampRangeFilterFunction =
       chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
           std::unique_ptr<chronos::query::PhysicalOperator>, std::size_t,
@@ -575,6 +579,7 @@ int main() {
                  physical_end.kind() == chronos::query::PhysicalOperatorStepKind::kEnd &&
                  create_column_subset != nullptr && create_source_column_output != nullptr &&
                  create_column_output != nullptr && create_vector_expression != nullptr &&
+                 lower_select != nullptr &&
                  create_timestamp_range_filter != nullptr &&
                  timestamp_range.matches(0) && create_head_scan != nullptr &&
                  create_exact_head_scan != nullptr &&

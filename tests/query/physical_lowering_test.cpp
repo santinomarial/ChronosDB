@@ -1,0 +1,228 @@
+#include "chronos/common/uuid.hpp"
+#include "chronos/query/catalog.hpp"
+#include "chronos/query/parser.hpp"
+#include "chronos/query/physical_lowering.hpp"
+#include "chronos/schema/column_definition.hpp"
+#include "chronos/schema/table_schema.hpp"
+
+#include <array>
+#include <bit>
+#include <cstddef>
+#include <cstdint>
+#include <gtest/gtest.h>
+#include <memory>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <variant>
+#include <vector>
+
+namespace chronos::query {
+namespace {
+
+template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t seed) {
+  common::Uuid::Bytes bytes{};
+  bytes.front() = static_cast<std::byte>(seed);
+  return Identifier::from_bytes(bytes).value();
+}
+
+[[nodiscard]] schema::LogicalType type(const schema::LogicalTypeKind kind) {
+  return schema::LogicalType::create(kind).value();
+}
+
+[[nodiscard]] std::shared_ptr<const schema::TableSchema> schema() {
+  std::vector<schema::ColumnDefinition> columns;
+  columns.push_back(schema::ColumnDefinition::create(id<schema::ColumnId>(3U), "ts",
+                                                     type(schema::LogicalTypeKind::kTimestampNs),
+                                                     false)
+                        .value());
+  columns.push_back(schema::ColumnDefinition::create(id<schema::ColumnId>(4U), "value",
+                                                     type(schema::LogicalTypeKind::kInt64), false)
+                        .value());
+  columns.push_back(schema::ColumnDefinition::create(id<schema::ColumnId>(5U), "flag",
+                                                     type(schema::LogicalTypeKind::kBool), false)
+                        .value());
+  return std::make_shared<const schema::TableSchema>(
+      schema::TableSchema::create(id<schema::TableId>(1U), id<schema::SchemaId>(2U),
+                                  schema::SchemaVersion::initial(), std::nullopt,
+                                  std::move(columns),
+                                  {.event_time_column = id<schema::ColumnId>(3U),
+                                   .physical_ordering_key = {id<schema::ColumnId>(3U)},
+                                   .partition_columns = {id<schema::ColumnId>(3U)},
+                                   .shard_key = {id<schema::ColumnId>(3U)},
+                                   .deduplication_key = {}})
+          .value());
+}
+
+[[nodiscard]] std::shared_ptr<const QueryCatalogSnapshot> catalog() {
+  const std::vector<QueryCatalogTableInput> tables{
+      {.name = "metrics", .quoted = false, .schema = schema()}};
+  return std::make_shared<const QueryCatalogSnapshot>(
+      QueryCatalogSnapshot::create(1U, tables).value());
+}
+
+[[nodiscard]] BoundSqlSelect bind(const std::string_view sql) {
+  return bind_sql_v1_select(parse_sql_v1_select(sql).value(), catalog()).value();
+}
+
+[[nodiscard]] columnar::OwnedPhysicalColumn
+signed_column(const schema::LogicalTypeKind kind, const std::span<const std::int64_t> values) {
+  columnar::ColumnVectorBuffers buffers;
+  buffers.values.resize(values.size() * sizeof(std::int64_t));
+  for (std::size_t row = 0U; row < values.size(); ++row) {
+    const std::uint64_t bits = std::bit_cast<std::uint64_t>(values[row]);
+    for (std::size_t byte = 0U; byte < sizeof(bits); ++byte) {
+      buffers.values[row * sizeof(bits) + byte] =
+          static_cast<std::byte>((bits >> (byte * 8U)) & 0xffU);
+    }
+  }
+  return columnar::OwnedPhysicalColumn::create(
+             {.type = type(kind),
+              .nullable = false,
+              .row_count = static_cast<std::uint32_t>(values.size()),
+              .null_count = 0U},
+             std::move(buffers))
+      .value();
+}
+
+[[nodiscard]] columnar::OwnedPhysicalColumn bool_column(const std::span<const bool> values) {
+  columnar::ColumnVectorBuffers buffers;
+  buffers.values.resize(columnar::bitmap_size(static_cast<std::uint32_t>(values.size())));
+  for (std::size_t row = 0U; row < values.size(); ++row) {
+    if (values[row])
+      buffers.values[row / 8U] |= static_cast<std::byte>(1U << (row % 8U));
+  }
+  return columnar::OwnedPhysicalColumn::create(
+             {.type = type(schema::LogicalTypeKind::kBool),
+              .nullable = false,
+              .row_count = static_cast<std::uint32_t>(values.size()),
+              .null_count = 0U},
+             std::move(buffers))
+      .value();
+}
+
+class OneChunkSource final : public PhysicalOperator {
+public:
+  explicit OneChunkSource(AccountedVectorChunk chunk) : chunk_(std::move(chunk)) {}
+
+  [[nodiscard]] common::Result<PhysicalOperatorStep> next(const QueryResourceContext&) override {
+    if (!chunk_.has_value())
+      return PhysicalOperatorStep::end();
+    AccountedVectorChunk chunk = std::move(*chunk_);
+    chunk_.reset();
+    return PhysicalOperatorStep::chunk(std::move(chunk));
+  }
+
+private:
+  std::optional<AccountedVectorChunk> chunk_;
+};
+
+[[nodiscard]] AccountedVectorChunk input(const QueryResourceContext& resources) {
+  constexpr std::array<std::int64_t, 4> kTimestamp{1, 2, 3, 4};
+  constexpr std::array<std::int64_t, 4> kValue{0, 3, 5, 8};
+  constexpr std::array<bool, 4> kFlag{true, true, false, true};
+  std::vector<columnar::OwnedPhysicalColumn> columns;
+  columns.push_back(signed_column(schema::LogicalTypeKind::kTimestampNs, kTimestamp));
+  columns.push_back(signed_column(schema::LogicalTypeKind::kInt64, kValue));
+  columns.push_back(bool_column(kFlag));
+  VectorChunk chunk =
+      VectorChunk::create(std::move(columns), VectorSelection::all(4U).value()).value();
+  return AccountedVectorChunk::create(std::move(chunk), resources.reserve(4'096U).value(),
+                                      resources)
+      .value();
+}
+
+[[nodiscard]] std::int64_t cell_i64(const VectorChunk& chunk, const std::size_t column,
+                                    const std::size_t row) {
+  const common::ByteView bytes =
+      chunk.cell({.column_ordinal = column, .selected_row = row}).value().bytes().value();
+  std::uint64_t bits = 0U;
+  for (std::size_t index = 0U; index < bytes.size(); ++index)
+    bits |= static_cast<std::uint64_t>(std::to_integer<std::uint8_t>(bytes[index])) << (index * 8U);
+  return std::bit_cast<std::int64_t>(bits);
+}
+
+TEST(PhysicalSelectLoweringTest, LowersWhereProjectionAndLimitIntoExactStageOrder) {
+  BoundSqlSelect select = bind("SELECT value + 2 AS adjusted, 7 AS constant FROM metrics "
+                               "WHERE flag AND value BETWEEN 1 AND 9 LIMIT 2");
+  SqlResult<PhysicalPipelinePlan> plan = lower_bound_sql_select(select);
+  ASSERT_TRUE(plan.has_value()) << plan.error().status().to_string();
+  ASSERT_EQ(plan->input_columns().size(), 3U);
+  ASSERT_EQ(plan->output_columns().size(), 2U);
+  EXPECT_EQ(plan->output_columns()[0].type.kind(), schema::LogicalTypeKind::kInt64);
+  ASSERT_EQ(plan->stages().size(), 4U);
+  EXPECT_TRUE(std::holds_alternative<ColumnOutputStage>(plan->stages()[0]));
+  EXPECT_TRUE(std::holds_alternative<BooleanFilterStage>(plan->stages()[1]));
+  EXPECT_TRUE(std::holds_alternative<ColumnOutputStage>(plan->stages()[2]));
+  EXPECT_TRUE(std::holds_alternative<LimitStage>(plan->stages()[3]));
+
+  QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+  auto pipeline = plan->instantiate(std::make_unique<OneChunkSource>(input(resources))).value();
+  auto step = pipeline->next(resources).value();
+  ASSERT_EQ(step.kind(), PhysicalOperatorStepKind::kChunk);
+  ASSERT_EQ(step.chunk()->chunk().selected_row_count(), 2U);
+  EXPECT_EQ(cell_i64(step.chunk()->chunk(), 0U, 0U), 5);
+  EXPECT_EQ(cell_i64(step.chunk()->chunk(), 0U, 1U), 10);
+  EXPECT_EQ(cell_i64(step.chunk()->chunk(), 1U, 0U), 7);
+  EXPECT_EQ(cell_i64(step.chunk()->chunk(), 1U, 1U), 7);
+}
+
+TEST(PhysicalSelectLoweringTest, PreservesStarOrderAndVariableConstantShape) {
+  BoundSqlSelect select = bind("SELECT *, 'fixed' AS label FROM metrics");
+  SqlResult<PhysicalPipelinePlan> plan = lower_bound_sql_select(select);
+  ASSERT_TRUE(plan.has_value()) << plan.error().status().to_string();
+  ASSERT_EQ(plan->output_columns().size(), 4U);
+  EXPECT_EQ(plan->output_columns()[0].type.kind(), schema::LogicalTypeKind::kTimestampNs);
+  EXPECT_EQ(plan->output_columns()[1].type.kind(), schema::LogicalTypeKind::kInt64);
+  EXPECT_EQ(plan->output_columns()[2].type.kind(), schema::LogicalTypeKind::kBool);
+  EXPECT_EQ(plan->output_columns()[3].type.kind(), schema::LogicalTypeKind::kString);
+
+  BoundSqlSelect nullable_in = bind("SELECT NULL IN (1, 2) AS membership FROM metrics");
+  SqlResult<PhysicalPipelinePlan> in_plan = lower_bound_sql_select(nullable_in);
+  ASSERT_TRUE(in_plan.has_value()) << in_plan.error().status().to_string();
+  ASSERT_EQ(in_plan->output_columns().size(), 1U);
+  EXPECT_EQ(in_plan->output_columns()[0].type.kind(), schema::LogicalTypeKind::kBool);
+  EXPECT_TRUE(in_plan->output_columns()[0].nullable);
+}
+
+TEST(PhysicalSelectLoweringTest, RejectsUnsupportedRelationalAndScalarSurfaces) {
+  BoundSqlSelect cast = bind("SELECT CAST(value AS FLOAT64) AS converted FROM metrics");
+  EXPECT_EQ(lower_bound_sql_select(cast).error().code(), SqlDiagnosticCode::kUnsupportedSyntax);
+  BoundSqlSelect ordered = bind("SELECT value FROM metrics ORDER BY value");
+  EXPECT_EQ(lower_bound_sql_select(ordered).error().code(), SqlDiagnosticCode::kUnsupportedSyntax);
+  BoundSqlSelect aggregate = bind("SELECT sum(value) AS total FROM metrics");
+  EXPECT_EQ(lower_bound_sql_select(aggregate).error().code(),
+            SqlDiagnosticCode::kUnsupportedSyntax);
+  BoundSqlSelect text_comparison = bind("SELECT 'a' = 'b' AS compared FROM metrics");
+  EXPECT_EQ(lower_bound_sql_select(text_comparison).error().code(),
+            SqlDiagnosticCode::kUnsupportedSyntax);
+  BoundSqlSelect subscribe = bind("SUBSCRIBE SELECT value FROM metrics");
+  EXPECT_EQ(lower_bound_sql_select(subscribe).error().code(),
+            SqlDiagnosticCode::kUnsupportedSyntax);
+  BoundSqlSelect explain = bind("EXPLAIN SELECT value FROM metrics");
+  EXPECT_EQ(lower_bound_sql_select(explain).error().code(), SqlDiagnosticCode::kUnsupportedSyntax);
+  BoundSqlSelect analyze = bind("EXPLAIN ANALYZE SELECT value FROM metrics");
+  EXPECT_EQ(lower_bound_sql_select(analyze).error().code(), SqlDiagnosticCode::kUnsupportedSyntax);
+}
+
+TEST(PhysicalSelectLoweringTest, EnforcesExpressionAndPlanLimitsBeforeExecution) {
+  BoundSqlSelect select =
+      bind("SELECT value + 1 AS adjusted FROM metrics WHERE value IN (1, 2, 3)");
+  auto lowered = lower_bound_sql_select(
+      select, {.expression_limits = {.maximum_instructions = 2U,
+                                     .maximum_retained_configuration_bytes = 4'096U}});
+  ASSERT_FALSE(lowered.has_value());
+  EXPECT_EQ(lowered.error().code(), SqlDiagnosticCode::kResourceLimit);
+  EXPECT_EQ(lowered.error().status().code(), common::StatusCode::kResourceExhausted);
+
+  BoundSqlSelect exact = bind("SELECT value + 1 AS adjusted FROM metrics");
+  EXPECT_TRUE(lower_bound_sql_select(
+                  exact, {.expression_limits = {.maximum_instructions = 3U,
+                                                .maximum_retained_configuration_bytes = 4'096U}})
+                  .has_value());
+}
+
+} // namespace
+} // namespace chronos::query
