@@ -231,8 +231,11 @@ output, borrowed text comparisons/NULL predicates, and LIMIT into the unary pipe
 [0036](../adr/0036-bound-select-to-physical-pipeline-lowering.md), and
 [0037](../adr/0037-fixed-width-vector-casts-and-scalar-functions.md), and
 [0038](../adr/0038-borrowed-variable-width-vector-materialization.md), and
-[0039](../adr/0039-borrowed-text-predicate-vector-kernels.md). General plan lowering, aggregates,
-complete part/head visibility, parallel scheduling,
+[0039](../adr/0039-borrowed-text-predicate-vector-kernels.md). One fixed-state streaming global
+aggregate stage now consumes accounted chunks and emits a canonical one-row COUNT/SUM/AVG/MIN/MAX/
+variance result under [ADR 0040](../adr/0040-streaming-ungrouped-vector-aggregates.md). Bound-SQL
+aggregate lowering, grouped/dynamic aggregate state, general relational lowering, complete
+part/head visibility, parallel scheduling,
 spilling, adaptive behavior, and join algorithms remain deferred. Implemented reservations and
 accounted chunks provide the admission/ownership invariant, but future operators must reserve every
 retained allocation and release snapshot pins and memory by cooperative cancellation unwinding.

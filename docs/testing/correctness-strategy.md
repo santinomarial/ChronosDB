@@ -149,6 +149,12 @@
 > nonnullable IS NULL/IS NOT NULL, Boolean/BETWEEN/IN composition, transformed and non-ASCII bytes,
 > a 257-row independent unsigned-byte property, allocation failure, lowering fuzz, sanitizers,
 > installed consumers, and dense/sparse microbenchmarks.
+> Streaming ungrouped aggregation now covers every SQL v1 aggregate operation across chunk and
+> selection boundaries, empty/NULL/NaN behavior, exact unsigned/DECIMAL sums, final overflow,
+> variable-width COUNT, query ownership and cancellation, exact plan shapes, a 257-row independent
+> aggregate model, exhaustive allocation failure, hostile plan fuzzing, sanitizers, installed
+> consumers, and dense/sparse multi-chunk measurements. Bound-SQL aggregate lowering, grouped state,
+> and variable-width extrema remain outside this claim.
 
 ## Test types
 

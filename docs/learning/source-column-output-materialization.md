@@ -93,8 +93,9 @@ ownership boundary through the separate
 [typed-constant output guide](typed-constant-output-materialization.md). Checked computed
 numeric/Boolean expressions now share the boundary through the
 [vector-expression guide](vector-expression-programs.md); fixed- and variable-width bound-SQL
-lowering now build on that boundary, including borrowed text predicates, while aggregates remain
-next.
+lowering now build on that boundary, including borrowed text predicates. The streaming ungrouped
+aggregate reuses the same builder for its one canonical result row; bound-SQL aggregate lowering
+and dynamic grouped state remain next.
 
 ## Likely review questions
 

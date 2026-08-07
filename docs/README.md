@@ -183,5 +183,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   scalar differential evidence.
 - [Bound SELECT physical lowering](learning/bound-select-physical-lowering.md): implemented the
   exact single-source, nonaggregate WHERE/projection/LIMIT bridge into physical pipelines.
+- [Streaming ungrouped vector aggregates](learning/streaming-ungrouped-aggregates.md): implemented
+  fixed-state global COUNT/SUM/AVG/MIN/MAX/variance over accounted chunk streams with exact empty,
+  NULL, numeric, ownership, cancellation, and canonical-output behavior.
 
 Future format, protocol, subsystem, operations, and learning documents should be linked here when they are added by their corresponding roadmap phase.

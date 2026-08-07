@@ -321,6 +321,7 @@ chronos_enable_static_analysis(chronos_manifest)
 
 add_library(
   chronos_query
+  src/query/aggregate.cpp
   src/query/ast.cpp
   src/query/binder.cpp
   src/query/catalog.cpp
@@ -759,6 +760,8 @@ if(CHRONOS_BUILD_TESTS)
 
   add_executable(
     chronos_query_tests
+    tests/query/aggregate_header_self_contained.cpp
+    tests/query/aggregate_test.cpp
     tests/query/cseg_scan_header_self_contained.cpp
     tests/query/cseg_scan_test.cpp
     tests/query/database_cseg_scan_header_self_contained.cpp
@@ -818,6 +821,7 @@ if(CHRONOS_BUILD_TESTS)
 
   add_executable(
     chronos_query_allocation_failure_tests
+    tests/query/aggregate_allocation_failure_test.cpp
     tests/query/cseg_scan_allocation_failure_test.cpp
     tests/query/column_output_allocation_failure_test.cpp
     tests/query/database_cseg_scan_allocation_failure_test.cpp
@@ -1029,6 +1033,7 @@ if(CHRONOS_BUILD_BENCHMARKS)
 
   add_executable(
     chronos_query_benchmarks
+    benchmarks/query/aggregate_benchmark.cpp
     benchmarks/query/column_output_benchmark.cpp
     benchmarks/query/cseg_scan_benchmark.cpp
     benchmarks/query/head_scan_benchmark.cpp

@@ -2,6 +2,7 @@
 #define CHRONOS_QUERY_PHYSICAL_PLAN_HPP_
 
 #include "chronos/common/result.hpp"
+#include "chronos/query/aggregate.hpp"
 #include "chronos/query/column_output.hpp"
 #include "chronos/query/physical_operator.hpp"
 #include "chronos/schema/logical_type.hpp"
@@ -50,13 +51,18 @@ struct ColumnOutputStage {
   VectorChunkLimits output_limits{};
 };
 
+struct UngroupedAggregateStage {
+  std::vector<VectorAggregateDefinition> definitions;
+  UngroupedAggregateLimits limits{};
+};
+
 struct LimitStage {
   std::uint64_t maximum_rows;
 };
 
 using PhysicalPipelineStage =
     std::variant<BooleanFilterStage, TimestampRangeFilterStage, ColumnSubsetStage,
-                 SourceColumnOutputStage, ColumnOutputStage, LimitStage>;
+                 SourceColumnOutputStage, ColumnOutputStage, UngroupedAggregateStage, LimitStage>;
 
 struct PhysicalPipelinePlanLimits {
   std::size_t maximum_input_columns{kDefaultVectorChunkColumnLimit};

@@ -424,10 +424,14 @@ No phase passes because its code merely compiles. A phase passes only when its a
   allocation. ADR 0039 and the twenty-second increment unify fixed and borrowed values in one
   bounded hybrid memo and add exact-type STRING/SYMBOL byte-order comparisons, NULL predicates,
   Boolean/BETWEEN/IN composition, and property/failure/fuzz/benchmark/consumer evidence without
-  transformed-string allocation. Aggregates, broader relational lowering, optimizer rules, hidden
-  row-version columns, complete multi-part/head composition, base/delta merge and
-  row-version resolution, mapped/asynchronous providers, shared pin credit, scheduling, spill, and
-  full scalar-engine differential plan execution are unimplemented.
+  transformed-string allocation. ADR 0040 and the twenty-third increment add one fixed-state
+  streaming global aggregate stage for COUNT/SUM/AVG/MIN/MAX/variance, exact scalar-oracle numeric,
+  NULL, empty-input, and NaN semantics, checked plan shapes/configuration, cancellation and query-
+  owned canonical output, plus property/failure/fuzz/benchmark/consumer evidence. Bound-SQL
+  aggregate lowering, grouped and variable-width aggregate state, broader relational lowering,
+  optimizer rules, hidden row-version columns, complete multi-part/head composition, base/delta
+  merge and row-version resolution, mapped/asynchronous providers, shared pin credit, scheduling,
+  spill, and full scalar-engine differential plan execution are unimplemented.
 
 - **Scope:** bounded vectors, vectorized scans/expressions/aggregates/joins, physical planning, memory accounting, cancellation, parallel scheduling, and spill for explicitly supported operators.
 - **Explicit non-scope:** distributed fragments, GPU novelty, unbounded query memory, or optimizer rules lacking semantic/differential validation.

@@ -16,6 +16,10 @@ namespace {
   return chronos::schema::LogicalType::create(chronos::schema::LogicalTypeKind::kBool).value();
 }
 
+[[nodiscard]] chronos::schema::LogicalType int64_type() {
+  return chronos::schema::LogicalType::create(chronos::schema::LogicalTypeKind::kInt64).value();
+}
+
 [[nodiscard]] chronos::columnar::OwnedPhysicalColumn
 make_bool_column(const std::uint32_t rows, const std::span<const std::uint8_t> input) {
   chronos::columnar::ColumnVectorBuffers buffers;
@@ -71,7 +75,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
   const std::size_t hostile_count = size > 32U ? 32U : size;
   hostile_stages.reserve(hostile_count);
   for (std::size_t index = 0U; index < hostile_count; ++index) {
-    switch (data[index] % 6U) {
+    switch (data[index] % 7U) {
     case 0U:
       hostile_stages.emplace_back(
           chronos::query::BooleanFilterStage{static_cast<std::size_t>(data[index] >> 2U)});
@@ -151,6 +155,32 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
                                 static_cast<std::size_t>(data[index]) * 64U}});
       break;
     }
+    case 6U: {
+      std::vector<chronos::query::VectorAggregateDefinition> definitions;
+      if ((data[index] & 1U) == 0U) {
+        definitions.push_back({.operation = chronos::query::VectorAggregateOperation::kCountStar,
+                               .input = std::nullopt});
+      } else {
+        definitions.push_back(
+            {.operation =
+                 static_cast<chronos::query::VectorAggregateOperation>((data[index] >> 1U) & 7U),
+             .input = chronos::query::VectorAggregateInput{
+                 .column_ordinal = static_cast<std::size_t>((data[index] >> 4U) & 3U),
+                 .type = (data[index] & 8U) == 0U ? bool_type() : int64_type(),
+                 .nullable = (data[index] & 128U) != 0U}});
+      }
+      hostile_stages.emplace_back(chronos::query::UngroupedAggregateStage{
+          .definitions = std::move(definitions),
+          .limits = {
+              .maximum_aggregates = static_cast<std::size_t>(data[index] >> 4U),
+              .maximum_retained_configuration_bytes = static_cast<std::size_t>(data[index]) * 64U,
+              .output_limits = {.maximum_rows = static_cast<std::uint32_t>(data[index]),
+                                .maximum_columns = static_cast<std::size_t>(data[index] >> 4U),
+                                .maximum_buffer_bytes = static_cast<std::size_t>(data[index]) * 32U,
+                                .maximum_retained_buffer_bytes =
+                                    static_cast<std::size_t>(data[index]) * 64U}}});
+      break;
+    }
     default:
       break;
     }
@@ -181,18 +211,30 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
                        .value();
   std::vector<chronos::query::PhysicalPipelineStage> stages;
   stages.emplace_back(chronos::query::BooleanFilterStage{0U});
-  stages.emplace_back(chronos::query::LimitStage{maximum_rows});
-  stages.emplace_back(chronos::query::ColumnOutputStage{
-      .positions = {chronos::query::SourceColumnOutputPosition{0U},
-                    chronos::query::ConstantColumnOutputPosition{
-                        chronos::query::ScalarValue::boolean(true).value()},
-                    chronos::query::ComputedColumnOutputPosition{bool_not_expression(0U, false)}},
-      .output_limits = {.maximum_rows = 256U,
-                        .maximum_columns = 3U,
-                        .maximum_buffer_bytes = 4'096U,
-                        .maximum_retained_buffer_bytes = 8'192U}});
-  if (size >= 3U && (data[2] & 1U) != 0U)
-    stages.emplace_back(chronos::query::ColumnSubsetStage{{}});
+  const bool aggregate = size >= 3U && (data[2] & 1U) != 0U;
+  if (aggregate) {
+    stages.emplace_back(chronos::query::UngroupedAggregateStage{
+        .definitions = {{.operation = chronos::query::VectorAggregateOperation::kCountStar,
+                         .input = std::nullopt}}});
+    stages.emplace_back(chronos::query::LimitStage{maximum_rows});
+    stages.emplace_back(chronos::query::ColumnOutputStage{
+        .positions = {chronos::query::SourceColumnOutputPosition{0U}},
+        .output_limits = {.maximum_rows = 256U,
+                          .maximum_columns = 1U,
+                          .maximum_buffer_bytes = 4'096U,
+                          .maximum_retained_buffer_bytes = 8'192U}});
+  } else {
+    stages.emplace_back(chronos::query::LimitStage{maximum_rows});
+    stages.emplace_back(chronos::query::ColumnOutputStage{
+        .positions = {chronos::query::SourceColumnOutputPosition{0U},
+                      chronos::query::ConstantColumnOutputPosition{
+                          chronos::query::ScalarValue::boolean(true).value()},
+                      chronos::query::ComputedColumnOutputPosition{bool_not_expression(0U, false)}},
+        .output_limits = {.maximum_rows = 256U,
+                          .maximum_columns = 3U,
+                          .maximum_buffer_bytes = 4'096U,
+                          .maximum_retained_buffer_bytes = 8'192U}});
+  }
   const auto plan = chronos::query::PhysicalPipelinePlan::create(shape, std::move(stages)).value();
   auto pipeline = plan.instantiate(std::make_unique<OneChunkSource>(std::move(accounted))).value();
   std::size_t actual_rows = 0U;
@@ -205,10 +247,12 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
     actual_rows += step->chunk()->chunk().selected_row_count();
   }
 
-  std::size_t expected_rows = 0U;
-  for (std::uint32_t row = 0U; row < rows && expected_rows < maximum_rows; ++row) {
-    if (!input.empty() && (input[row % input.size()] & 1U) != 0U)
-      ++expected_rows;
+  std::size_t expected_rows = aggregate && maximum_rows != 0U ? 1U : 0U;
+  if (!aggregate) {
+    for (std::uint32_t row = 0U; row < rows && expected_rows < maximum_rows; ++row) {
+      if (!input.empty() && (input[row % input.size()] & 1U) != 0U)
+        ++expected_rows;
+    }
   }
   if (actual_rows != expected_rows)
     std::abort();

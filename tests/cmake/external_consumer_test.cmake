@@ -85,6 +85,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/query/lexer.hpp>
 #include <chronos/query/literal.hpp>
 #include <chronos/query/parser.hpp>
+#include <chronos/query/aggregate.hpp>
 #include <chronos/query/column_output.hpp>
 #include <chronos/query/cseg_scan.hpp>
 #include <chronos/query/database_cseg_scan.hpp>
@@ -382,6 +383,13 @@ int main() {
       .lower = chronos::query::TimestampRangeBound{.value = -1, .inclusive = false},
       .upper = chronos::query::TimestampRangeBound{.value = 1, .inclusive = true}};
   const auto physical_plan = chronos::query::PhysicalPipelinePlan::create({}, {});
+  const chronos::query::VectorAggregateDefinition installed_count{
+      .operation = chronos::query::VectorAggregateOperation::kCountStar,
+      .input = std::nullopt};
+  const auto installed_count_shape =
+      chronos::query::vector_aggregate_output_shape(installed_count);
+  const auto installed_aggregate_plan = chronos::query::PhysicalPipelinePlan::create(
+      {}, {chronos::query::UngroupedAggregateStage{.definitions = {installed_count}}});
   const auto vector_chunk = chronos::query::VectorChunk::create(
       {}, chronos::query::VectorSelection::all(1U).value());
   const auto backed_vector_chunk = chronos::query::VectorChunk::create_backed(
@@ -604,6 +612,9 @@ int main() {
                  installed_text_predicate.has_value() &&
                  installed_text_predicate->result_shape().type.kind() ==
                      chronos::schema::LogicalTypeKind::kBool &&
+                 installed_count_shape.has_value() && !installed_count_shape->nullable &&
+                 installed_aggregate_plan.has_value() &&
+                 installed_aggregate_plan->output_columns().size() == 1U &&
                  lower_select != nullptr &&
                  create_timestamp_range_filter != nullptr &&
                  timestamp_range.matches(0) && create_head_scan != nullptr &&

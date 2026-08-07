@@ -94,6 +94,12 @@ retained_bytes_for_configuration(const std::vector<PhysicalColumnShape>& input_c
         if (!total.has_value())
           return total;
       }
+    } else if (const auto* aggregate = std::get_if<UngroupedAggregateStage>(&stage);
+               aggregate != nullptr) {
+      total = add_capacity_bytes(*total, aggregate->definitions.capacity(),
+                                 sizeof(VectorAggregateDefinition));
+      if (!total.has_value())
+        return total;
     }
   }
   return total;
@@ -321,6 +327,48 @@ PhysicalPipelinePlan::create(std::vector<PhysicalColumnShape> input_columns,
         output_columns = std::move(gathered);
         continue;
       }
+      if (const auto* aggregate = std::get_if<UngroupedAggregateStage>(&stage);
+          aggregate != nullptr) {
+        if (aggregate->limits.maximum_aggregates == 0U ||
+            aggregate->limits.maximum_aggregates > kMaximumUngroupedAggregateWidth ||
+            aggregate->limits.maximum_retained_configuration_bytes == 0U ||
+            aggregate->limits.output_limits.maximum_rows == 0U ||
+            aggregate->limits.output_limits.maximum_columns == 0U ||
+            aggregate->limits.output_limits.maximum_buffer_bytes == 0U ||
+            aggregate->limits.output_limits.maximum_retained_buffer_bytes == 0U) {
+          return common::make_unexpected(invalid("physical pipeline aggregate limits are invalid"));
+        }
+        if (aggregate->definitions.empty()) {
+          return common::make_unexpected(
+              invalid("physical pipeline aggregate definition list cannot be empty"));
+        }
+        if (aggregate->definitions.size() > aggregate->limits.maximum_aggregates ||
+            aggregate->definitions.capacity() > aggregate->limits.maximum_aggregates ||
+            aggregate->definitions.size() > aggregate->limits.output_limits.maximum_columns) {
+          return common::make_unexpected(
+              exhausted("physical pipeline aggregate width exceeds its limit"));
+        }
+        std::vector<PhysicalColumnShape> aggregate_columns;
+        aggregate_columns.reserve(aggregate->definitions.size());
+        for (const VectorAggregateDefinition& definition : aggregate->definitions) {
+          common::Result<VectorAggregateOutputShape> shape =
+              vector_aggregate_output_shape(definition);
+          if (!shape.has_value())
+            return common::make_unexpected(shape.error());
+          if (definition.input.has_value()) {
+            const VectorAggregateInput& input = *definition.input;
+            if (input.column_ordinal >= output_columns.size() ||
+                output_columns[input.column_ordinal].type != input.type ||
+                output_columns[input.column_ordinal].nullable != input.nullable) {
+              return common::make_unexpected(
+                  invalid("physical pipeline aggregate input shape is invalid"));
+            }
+          }
+          aggregate_columns.push_back({.type = shape->type, .nullable = shape->nullable});
+        }
+        output_columns = std::move(aggregate_columns);
+        continue;
+      }
       if (std::get_if<LimitStage>(&stage) == nullptr)
         return common::make_unexpected(invalid("physical pipeline stage is not supported"));
     }
@@ -385,6 +433,10 @@ PhysicalPipelinePlan::instantiate(std::unique_ptr<PhysicalOperator> source) cons
                  mixed_output != nullptr) {
         next = ColumnOutputOperator::create(std::move(pipeline), mixed_output->positions,
                                             mixed_output->output_limits);
+      } else if (const auto* aggregate = std::get_if<UngroupedAggregateStage>(&stage);
+                 aggregate != nullptr) {
+        next = UngroupedAggregateOperator::create(std::move(pipeline), aggregate->definitions,
+                                                  aggregate->limits);
       } else if (const auto* limit = std::get_if<LimitStage>(&stage); limit != nullptr) {
         next = LimitOperator::create(std::move(pipeline), limit->maximum_rows);
       }
