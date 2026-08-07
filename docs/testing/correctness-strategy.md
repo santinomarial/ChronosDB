@@ -162,7 +162,11 @@
 > chunk-boundary aggregation, finite group/key/state limits, query-credit-before-allocation,
 > immediate failure cleanup, a 257-row independent group model, exhaustive allocation failure,
 > hostile plan fuzzing, sanitizers, installed consumption, and cardinality measurements. Bound SQL
-> GROUP BY, hashing, spill, and variable-width extrema remain outside this claim.
+> GROUP BY adds exact structural group-expression mapping, WHERE/preparation/group/final/LIMIT
+> order, computed and multiple keys, computed arguments, nullable variable keys, empty groups,
+> grouped limits, allocation failure, hostile lowering fuzzing, a 257-row independent model,
+> sanitizers, installation, and retained-plan measurements. Hashing, spill, ORDER BY, and
+> variable-width extrema remain outside this claim.
 
 ## Test types
 

@@ -369,6 +369,7 @@ int main() {
   using LowerSelectFunction = chronos::query::SqlResult<chronos::query::PhysicalPipelinePlan> (*)(
       const chronos::query::BoundSqlSelect&, chronos::query::PhysicalSelectLoweringLimits);
   const LowerSelectFunction lower_select = &chronos::query::lower_bound_sql_select;
+  const chronos::query::PhysicalSelectLoweringLimits installed_lowering_limits{};
   using CreateTimestampRangeFilterFunction =
       chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
           std::unique_ptr<chronos::query::PhysicalOperator>, std::size_t,
@@ -627,6 +628,8 @@ int main() {
                  installed_grouped_plan.has_value() &&
                  installed_grouped_plan->output_columns().size() == 2U &&
                  installed_nullable_constant.force_nullable &&
+                 installed_lowering_limits.grouped_aggregate_limits.maximum_groups ==
+                     chronos::query::kMaximumGroupedAggregateGroups &&
                  lower_select != nullptr &&
                  create_timestamp_range_filter != nullptr &&
                  timestamp_range.matches(0) && create_head_scan != nullptr &&

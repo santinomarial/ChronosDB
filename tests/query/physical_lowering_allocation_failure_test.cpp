@@ -57,7 +57,9 @@ TEST(PhysicalSelectLoweringAllocationFailureTest, ClassifiesEveryOwnedAllocation
       "time_bucket(INTERVAL '1 second', ts) AS bucket FROM metrics "
       "WHERE value BETWEEN 1 AND 9 LIMIT 2",
       "SELECT sum(value + 2) + count(*) AS total, avg(value) AS mean FROM metrics "
-      "WHERE value BETWEEN 1 AND 9 LIMIT 1"};
+      "WHERE value BETWEEN 1 AND 9 LIMIT 1",
+      "SELECT value % 3 AS bucket, sum(value + 2) + count(*) AS total FROM metrics "
+      "WHERE value BETWEEN 1 AND 9 GROUP BY value % 3 LIMIT 2"};
   for (const std::string& statement : statements) {
     SCOPED_TRACE(statement);
     BoundSqlSelect select =

@@ -4,8 +4,9 @@
 
 The twenty-fifth Phase 9 increment adds the first data-dependent vector operator state. It groups a
 finite input stream by exact physical key cells, updates the shared aggregate kernels, and emits
-canonical query-accounted rows. It is physical substrate: bound SQL GROUP BY lowering, ORDER BY,
-variable-width extrema, hash tables, partial merge, scheduling, and spill remain separate work.
+canonical query-accounted rows. The twenty-sixth increment connects bound single-source GROUP BY
+through that substrate. ORDER BY, variable-width extrema, hash tables, partial merge, scheduling,
+and spill remain separate work.
 
 ## Public interface
 

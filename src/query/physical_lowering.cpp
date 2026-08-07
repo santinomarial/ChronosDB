@@ -55,12 +55,50 @@ struct AggregatePhysicalBinding {
   bool nullable;
 };
 
+struct GroupPhysicalBinding {
+  const SqlExpression* expression;
+  std::size_t column_ordinal;
+  schema::LogicalType type;
+  bool nullable;
+};
+
+[[nodiscard]] bool same_identifier(const SqlIdentifier& left, const SqlIdentifier& right) noexcept {
+  return left.text() == right.text() && left.quoted() == right.quoted();
+}
+
+[[nodiscard]] bool same_bound_expression(const BoundSqlSelect& select, const SqlExpression& left,
+                                         const SqlExpression& right) noexcept {
+  if (left.kind() == SqlExpressionKind::kColumn && right.kind() == SqlExpressionKind::kColumn) {
+    const BoundColumnReference* left_reference = select.find_column_reference(left.span());
+    const BoundColumnReference* right_reference = select.find_column_reference(right.span());
+    return left_reference != nullptr && right_reference != nullptr &&
+           left_reference->source_ordinal == right_reference->source_ordinal &&
+           left_reference->column_ordinal == right_reference->column_ordinal;
+  }
+  if (left.kind() != right.kind() || left.literal_kind() != right.literal_kind() ||
+      left.operation() != right.operation() || left.text() != right.text() ||
+      left.cast_type() != right.cast_type() || left.name().size() != right.name().size() ||
+      left.children().size() != right.children().size()) {
+    return false;
+  }
+  for (std::size_t index = 0U; index < left.name().size(); ++index) {
+    if (!same_identifier(left.name()[index], right.name()[index]))
+      return false;
+  }
+  for (std::size_t index = 0U; index < left.children().size(); ++index) {
+    if (!same_bound_expression(select, left.children()[index], right.children()[index]))
+      return false;
+  }
+  return true;
+}
+
 class ExpressionLowerer {
 public:
   ExpressionLowerer(const BoundSqlSelect& select, const VectorExpressionLimits limits,
                     const std::span<const AggregatePhysicalBinding> aggregates = {},
+                    const std::span<const GroupPhysicalBinding> groups = {},
                     const bool source_columns_available = true) noexcept
-      : select_(select), limits_(limits), aggregates_(aggregates),
+      : select_(select), limits_(limits), aggregates_(aggregates), groups_(groups),
         source_columns_available_(source_columns_available) {}
 
   [[nodiscard]] ColumnOutputPosition output(const SqlExpression& expression) {
@@ -68,6 +106,8 @@ public:
         aggregate != nullptr) {
       return SourceColumnOutputPosition{aggregate->column_ordinal};
     }
+    if (const GroupPhysicalBinding* group = find_group(expression); group != nullptr)
+      return SourceColumnOutputPosition{group->column_ordinal};
     if (expression.kind() == SqlExpressionKind::kColumn) {
       const BoundColumnReference& reference = column(expression);
       return SourceColumnOutputPosition{reference.column_ordinal};
@@ -97,6 +137,17 @@ private:
     for (const AggregatePhysicalBinding& aggregate : aggregates_) {
       if (same_span(aggregate.expression_span, span))
         return std::addressof(aggregate);
+    }
+    return nullptr;
+  }
+
+  [[nodiscard]] const GroupPhysicalBinding*
+  find_group(const SqlExpression& expression) const noexcept {
+    for (const GroupPhysicalBinding& group : groups_) {
+      if (group.expression != nullptr &&
+          same_bound_expression(select_, expression, *group.expression)) {
+        return std::addressof(group);
+      }
     }
     return nullptr;
   }
@@ -132,7 +183,7 @@ private:
     if (!source_columns_available_) {
       throw LoweringFailure{diagnostic(
           SqlDiagnosticCode::kExecutionFailure, expression.span(), common::StatusCode::kInternal,
-          "Bound global aggregate output retained an ungrouped source column")};
+          "Bound aggregate output retained an ungrouped source column")};
     }
     const BoundColumnReference* reference = select_.find_column_reference(expression.span());
     if (reference == nullptr || reference->source_ordinal != 0U) {
@@ -277,6 +328,12 @@ private:
       return emit(VectorInputExpression{.input_column_ordinal = aggregate->column_ordinal,
                                         .type = aggregate->type,
                                         .nullable = aggregate->nullable},
+                  expression.span());
+    }
+    if (const GroupPhysicalBinding* group = find_group(expression); group != nullptr) {
+      return emit(VectorInputExpression{.input_column_ordinal = group->column_ordinal,
+                                        .type = group->type,
+                                        .nullable = group->nullable},
                   expression.span());
     }
     switch (expression.kind()) {
@@ -478,6 +535,7 @@ private:
   const BoundSqlSelect& select_;
   VectorExpressionLimits limits_;
   std::span<const AggregatePhysicalBinding> aggregates_;
+  std::span<const GroupPhysicalBinding> groups_;
   bool source_columns_available_;
   std::vector<VectorExpressionInstruction> instructions_;
 };
@@ -591,12 +649,6 @@ SqlResult<PhysicalPipelinePlan> lower_bound_sql_select(const BoundSqlSelect& sel
                                         common::StatusCode::kInvalidArgument,
                                         "Physical lowering requires exactly one SQL source"));
     }
-    if (!select.syntax().group_by().empty()) {
-      return std::unexpected(diagnostic(SqlDiagnosticCode::kUnsupportedSyntax,
-                                        select.syntax().span(),
-                                        common::StatusCode::kInvalidArgument,
-                                        "Physical grouped aggregate lowering is not implemented"));
-    }
     if (select.latest_by().has_value()) {
       return std::unexpected(diagnostic(
           SqlDiagnosticCode::kUnsupportedSyntax, select.syntax().span(),
@@ -632,14 +684,16 @@ SqlResult<PhysicalPipelinePlan> lower_bound_sql_select(const BoundSqlSelect& sel
       outputs.reserve(select.outputs().size());
       for (const BoundOutputColumn& output : select.outputs()) {
         if (output.source_ordinal.has_value() && output.column_ordinal.has_value()) {
-          if (!source_outputs_available || *output.source_ordinal != 0U) {
+          if (*output.source_ordinal != 0U) {
             throw LoweringFailure{
                 diagnostic(SqlDiagnosticCode::kExecutionFailure, select.syntax().span(),
                            common::StatusCode::kInvalidArgument,
                            "Bound output references an unavailable physical source")};
           }
-          outputs.emplace_back(SourceColumnOutputPosition{*output.column_ordinal});
-          continue;
+          if (source_outputs_available) {
+            outputs.emplace_back(SourceColumnOutputPosition{*output.column_ordinal});
+            continue;
+          }
         }
         if (!output.expression_span.has_value()) {
           throw LoweringFailure{diagnostic(SqlDiagnosticCode::kExecutionFailure,
@@ -665,52 +719,18 @@ SqlResult<PhysicalPipelinePlan> lower_bound_sql_select(const BoundSqlSelect& sel
         if (const SqlExpression* expression = item.expression(); expression != nullptr)
           collect_aggregates(*expression, aggregates);
       }
-      if (aggregates.empty()) {
+      const bool grouped = !select.syntax().group_by().empty();
+      if (aggregates.empty() && !grouped) {
         throw LoweringFailure{diagnostic(SqlDiagnosticCode::kExecutionFailure,
                                          select.syntax().span(), common::StatusCode::kInternal,
                                          "Bound aggregate query has no aggregate expressions")};
       }
 
-      bool materialize_inputs = false;
-      for (const SqlExpression* aggregate : aggregates) {
-        if (aggregate->children().size() != 1U) {
-          throw LoweringFailure{diagnostic(SqlDiagnosticCode::kExecutionFailure, aggregate->span(),
-                                           common::StatusCode::kInternal,
-                                           "Bound aggregate has invalid arity")};
-        }
-        const SqlExpression& child = aggregate->children().front();
-        materialize_inputs = materialize_inputs || (child.kind() != SqlExpressionKind::kStar &&
-                                                    child.kind() != SqlExpressionKind::kColumn);
-      }
-
-      std::vector<ColumnOutputPosition> aggregate_inputs;
-      std::vector<VectorAggregateDefinition> definitions;
-      std::vector<AggregatePhysicalBinding> bindings;
-      definitions.reserve(aggregates.size());
-      bindings.reserve(aggregates.size());
-      if (materialize_inputs)
-        aggregate_inputs.reserve(aggregates.size());
-
-      for (const SqlExpression* aggregate : aggregates) {
-        const SqlExpression& child = aggregate->children().front();
-        std::optional<std::size_t> input_ordinal;
-        if (child.kind() != SqlExpressionKind::kStar) {
-          if (materialize_inputs) {
-            input_ordinal = aggregate_inputs.size();
-            aggregate_inputs.push_back(source_lowerer.output(child));
-          } else {
-            const BoundColumnReference* reference = select.find_column_reference(child.span());
-            if (reference == nullptr || reference->source_ordinal != 0U) {
-              throw LoweringFailure{diagnostic(
-                  SqlDiagnosticCode::kExecutionFailure, child.span(), common::StatusCode::kInternal,
-                  "Bound direct aggregate input has no physical source column")};
-            }
-            input_ordinal = reference->column_ordinal;
-          }
-        }
-
+      const auto validate_aggregate = [&select](const SqlExpression& aggregate,
+                                                const std::optional<std::size_t> input_ordinal,
+                                                const std::size_t output_ordinal) {
         VectorAggregateDefinition definition =
-            aggregate_definition(select, *aggregate, input_ordinal);
+            aggregate_definition(select, aggregate, input_ordinal);
         common::Result<VectorAggregateOutputShape> shape =
             vector_aggregate_output_shape(definition);
         if (!shape.has_value()) {
@@ -718,29 +738,115 @@ SqlResult<PhysicalPipelinePlan> lower_bound_sql_select(const BoundSqlSelect& sel
               shape.error().code() == common::StatusCode::kResourceExhausted
                   ? SqlDiagnosticCode::kResourceLimit
                   : SqlDiagnosticCode::kUnsupportedSyntax;
-          throw LoweringFailure{SqlDiagnostic{code, aggregate->span(), shape.error()}};
+          throw LoweringFailure{SqlDiagnostic{code, aggregate.span(), shape.error()}};
         }
-        const BoundExpressionInfo& result = bound_expression(select, *aggregate);
+        const BoundExpressionInfo& result = bound_expression(select, aggregate);
         if (result.type.value() != shape->type || result.nullable != shape->nullable) {
-          throw LoweringFailure{
-              diagnostic(SqlDiagnosticCode::kExecutionFailure, aggregate->span(),
-                         common::StatusCode::kInternal,
-                         "Bound aggregate result shape disagrees with the physical kernel")};
+          throw LoweringFailure{diagnostic(
+              SqlDiagnosticCode::kExecutionFailure, aggregate.span(), common::StatusCode::kInternal,
+              "Bound aggregate result shape disagrees with the physical kernel")};
         }
-        definitions.push_back(definition);
-        bindings.push_back({.expression_span = aggregate->span(),
-                            .column_ordinal = bindings.size(),
-                            .type = shape->type,
-                            .nullable = shape->nullable});
+        return std::pair{definition, AggregatePhysicalBinding{.expression_span = aggregate.span(),
+                                                              .column_ordinal = output_ordinal,
+                                                              .type = shape->type,
+                                                              .nullable = shape->nullable}};
+      };
+
+      std::vector<VectorAggregateDefinition> definitions;
+      std::vector<AggregatePhysicalBinding> bindings;
+      definitions.reserve(aggregates.size());
+      bindings.reserve(aggregates.size());
+      std::vector<GroupPhysicalBinding> group_bindings;
+
+      if (grouped) {
+        std::vector<ColumnOutputPosition> prepared_inputs;
+        prepared_inputs.reserve(select.syntax().group_by().size() + aggregates.size());
+        std::vector<VectorGroupKeyDefinition> keys;
+        keys.reserve(select.syntax().group_by().size());
+        group_bindings.reserve(select.syntax().group_by().size());
+        for (const SqlExpression& group : select.syntax().group_by()) {
+          const BoundExpressionInfo& information = bound_expression(select, group);
+          const std::size_t ordinal = prepared_inputs.size();
+          prepared_inputs.push_back(source_lowerer.output(group));
+          keys.push_back({.column_ordinal = ordinal,
+                          .type = information.type.value(),
+                          .nullable = information.nullable});
+          group_bindings.push_back({.expression = std::addressof(group),
+                                    .column_ordinal = keys.size() - 1U,
+                                    .type = information.type.value(),
+                                    .nullable = information.nullable});
+        }
+        for (const SqlExpression* aggregate : aggregates) {
+          if (aggregate->children().size() != 1U) {
+            throw LoweringFailure{diagnostic(SqlDiagnosticCode::kExecutionFailure,
+                                             aggregate->span(), common::StatusCode::kInternal,
+                                             "Bound aggregate has invalid arity")};
+          }
+          const SqlExpression& child = aggregate->children().front();
+          std::optional<std::size_t> input_ordinal;
+          if (child.kind() != SqlExpressionKind::kStar) {
+            input_ordinal = prepared_inputs.size();
+            prepared_inputs.push_back(source_lowerer.output(child));
+          }
+          auto [definition, binding] =
+              validate_aggregate(*aggregate, input_ordinal, keys.size() + definitions.size());
+          definitions.push_back(definition);
+          bindings.push_back(binding);
+        }
+        stages.emplace_back(ColumnOutputStage{.positions = std::move(prepared_inputs),
+                                              .output_limits = limits.output_limits});
+        stages.emplace_back(GroupedAggregateStage{.keys = std::move(keys),
+                                                  .definitions = std::move(definitions),
+                                                  .limits = limits.grouped_aggregate_limits});
+      } else {
+        bool materialize_inputs = false;
+        for (const SqlExpression* aggregate : aggregates) {
+          if (aggregate->children().size() != 1U) {
+            throw LoweringFailure{diagnostic(SqlDiagnosticCode::kExecutionFailure,
+                                             aggregate->span(), common::StatusCode::kInternal,
+                                             "Bound aggregate has invalid arity")};
+          }
+          const SqlExpression& child = aggregate->children().front();
+          materialize_inputs = materialize_inputs || (child.kind() != SqlExpressionKind::kStar &&
+                                                      child.kind() != SqlExpressionKind::kColumn);
+        }
+
+        std::vector<ColumnOutputPosition> aggregate_inputs;
+        if (materialize_inputs)
+          aggregate_inputs.reserve(aggregates.size());
+        for (const SqlExpression* aggregate : aggregates) {
+          const SqlExpression& child = aggregate->children().front();
+          std::optional<std::size_t> input_ordinal;
+          if (child.kind() != SqlExpressionKind::kStar) {
+            if (materialize_inputs) {
+              input_ordinal = aggregate_inputs.size();
+              aggregate_inputs.push_back(source_lowerer.output(child));
+            } else {
+              const BoundColumnReference* reference = select.find_column_reference(child.span());
+              if (reference == nullptr || reference->source_ordinal != 0U) {
+                throw LoweringFailure{
+                    diagnostic(SqlDiagnosticCode::kExecutionFailure, child.span(),
+                               common::StatusCode::kInternal,
+                               "Bound direct aggregate input has no physical source column")};
+              }
+              input_ordinal = reference->column_ordinal;
+            }
+          }
+          auto [definition, binding] =
+              validate_aggregate(*aggregate, input_ordinal, definitions.size());
+          definitions.push_back(definition);
+          bindings.push_back(binding);
+        }
+        if (materialize_inputs) {
+          stages.emplace_back(ColumnOutputStage{.positions = std::move(aggregate_inputs),
+                                                .output_limits = limits.output_limits});
+        }
+        stages.emplace_back(UngroupedAggregateStage{.definitions = std::move(definitions),
+                                                    .limits = limits.aggregate_limits});
       }
 
-      if (materialize_inputs) {
-        stages.emplace_back(ColumnOutputStage{.positions = std::move(aggregate_inputs),
-                                              .output_limits = limits.output_limits});
-      }
-      stages.emplace_back(UngroupedAggregateStage{.definitions = std::move(definitions),
-                                                  .limits = limits.aggregate_limits});
-      ExpressionLowerer result_lowerer{select, limits.expression_limits, bindings, false};
+      ExpressionLowerer result_lowerer{select, limits.expression_limits, bindings, group_bindings,
+                                       false};
       outputs = lower_outputs(result_lowerer, false);
     } else {
       outputs = lower_outputs(source_lowerer, true);

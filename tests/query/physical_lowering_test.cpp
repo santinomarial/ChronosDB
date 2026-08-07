@@ -6,6 +6,7 @@
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/table_schema.hpp"
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstddef>
@@ -16,6 +17,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -396,6 +398,186 @@ TEST(PhysicalSelectLoweringTest, PreservesEmptyGlobalAggregateAndLimitSemantics)
   EXPECT_EQ(zero_resources.reserved_memory_bytes(), 0U);
 }
 
+TEST(PhysicalSelectLoweringTest, ExecutesComputedGroupedAggregatesAfterWhereAndBeforeLimit) {
+  BoundSqlSelect select = bind(
+      "SELECT value % 3 AS bucket, count(*) AS rows, "
+      "sum(value + 1) + count(*) AS combined FROM metrics WHERE flag GROUP BY value % 3 LIMIT 2");
+  PhysicalPipelinePlan plan = lower_bound_sql_select(select).value();
+  ASSERT_EQ(plan.stages().size(), 6U);
+  EXPECT_TRUE(std::holds_alternative<ColumnOutputStage>(plan.stages()[0]));
+  EXPECT_TRUE(std::holds_alternative<BooleanFilterStage>(plan.stages()[1]));
+  EXPECT_TRUE(std::holds_alternative<ColumnOutputStage>(plan.stages()[2]));
+  EXPECT_TRUE(std::holds_alternative<GroupedAggregateStage>(plan.stages()[3]));
+  EXPECT_TRUE(std::holds_alternative<ColumnOutputStage>(plan.stages()[4]));
+  EXPECT_TRUE(std::holds_alternative<LimitStage>(plan.stages()[5]));
+
+  const auto& grouped = std::get<GroupedAggregateStage>(plan.stages()[3]);
+  ASSERT_EQ(grouped.keys.size(), 1U);
+  ASSERT_EQ(grouped.definitions.size(), 3U);
+  EXPECT_EQ(grouped.keys[0].column_ordinal, 0U);
+  ASSERT_TRUE(grouped.definitions[1].input.has_value());
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+  EXPECT_EQ(grouped.definitions[1].input->column_ordinal, 1U);
+
+  QueryResourceContext resources = QueryResourceContext::create(4U << 20U).value();
+  auto pipeline = plan.instantiate(std::make_unique<OneChunkSource>(input(resources))).value();
+  auto first = pipeline->next(resources).value();
+  ASSERT_EQ(first.kind(), PhysicalOperatorStepKind::kChunk);
+  EXPECT_EQ(std::get<std::int64_t>(cell_value(first.chunk()->chunk(), 0U, 0U).storage()), 0);
+  EXPECT_EQ(std::get<std::int64_t>(cell_value(first.chunk()->chunk(), 1U, 0U).storage()), 2);
+  EXPECT_EQ(std::get<std::int64_t>(cell_value(first.chunk()->chunk(), 2U, 0U).storage()), 7);
+  first = PhysicalOperatorStep::end();
+
+  auto second = pipeline->next(resources).value();
+  ASSERT_EQ(second.kind(), PhysicalOperatorStepKind::kChunk);
+  EXPECT_EQ(std::get<std::int64_t>(cell_value(second.chunk()->chunk(), 0U, 0U).storage()), 2);
+  EXPECT_EQ(std::get<std::int64_t>(cell_value(second.chunk()->chunk(), 1U, 0U).storage()), 1);
+  EXPECT_EQ(std::get<std::int64_t>(cell_value(second.chunk()->chunk(), 2U, 0U).storage()), 10);
+  second = PhysicalOperatorStep::end();
+  EXPECT_EQ(pipeline->next(resources)->kind(), PhysicalOperatorStepKind::kEnd);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
+TEST(PhysicalSelectLoweringTest, GroupsDirectNullableVariableKeysAndPreservesEmptySemantics) {
+  PhysicalPipelinePlan plan =
+      lower_bound_sql_select(
+          bind("SELECT label, count(*) AS rows FROM metrics WHERE flag GROUP BY label"))
+          .value();
+  QueryResourceContext resources = QueryResourceContext::create(4U << 20U).value();
+  auto pipeline = plan.instantiate(std::make_unique<OneChunkSource>(input(resources))).value();
+
+  auto first = pipeline->next(resources).value();
+  EXPECT_EQ(cell_text(first.chunk()->chunk(), 0U, 0U), "alpha");
+  EXPECT_EQ(std::get<std::int64_t>(cell_value(first.chunk()->chunk(), 1U, 0U).storage()), 1);
+  first = PhysicalOperatorStep::end();
+  auto second = pipeline->next(resources).value();
+  EXPECT_TRUE(cell_value(second.chunk()->chunk(), 0U, 0U).is_null());
+  EXPECT_TRUE(second.chunk()->chunk().column(0U)->nullable());
+  second = PhysicalOperatorStep::end();
+  auto third = pipeline->next(resources).value();
+  EXPECT_EQ(cell_text(third.chunk()->chunk(), 0U, 0U), "delta");
+  third = PhysicalOperatorStep::end();
+  EXPECT_EQ(pipeline->next(resources)->kind(), PhysicalOperatorStepKind::kEnd);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+
+  PhysicalPipelinePlan empty =
+      lower_bound_sql_select(bind("SELECT label FROM metrics WHERE value < 0 GROUP BY label"))
+          .value();
+  QueryResourceContext empty_resources = QueryResourceContext::create(4U << 20U).value();
+  auto empty_pipeline =
+      empty.instantiate(std::make_unique<OneChunkSource>(input(empty_resources))).value();
+  EXPECT_EQ(empty_pipeline->next(empty_resources)->kind(), PhysicalOperatorStepKind::kEnd);
+  EXPECT_EQ(empty_resources.reserved_memory_bytes(), 0U);
+}
+
+TEST(PhysicalSelectLoweringTest, PreservesDeclaredMultipleGroupKeyOrder) {
+  PhysicalPipelinePlan plan =
+      lower_bound_sql_select(bind("SELECT flag, value % 3 AS bucket, count(*) AS rows "
+                                  "FROM metrics GROUP BY flag, value % 3"))
+          .value();
+  const auto& grouped = std::get<GroupedAggregateStage>(plan.stages()[1]);
+  ASSERT_EQ(grouped.keys.size(), 2U);
+  EXPECT_EQ(grouped.keys[0].type.kind(), schema::LogicalTypeKind::kBool);
+  EXPECT_EQ(grouped.keys[1].type.kind(), schema::LogicalTypeKind::kInt64);
+
+  QueryResourceContext resources = QueryResourceContext::create(4U << 20U).value();
+  auto pipeline = plan.instantiate(std::make_unique<OneChunkSource>(input(resources))).value();
+  std::vector<std::tuple<bool, std::int64_t, std::int64_t>> observed;
+  for (;;) {
+    auto step = pipeline->next(resources).value();
+    if (step.kind() == PhysicalOperatorStepKind::kEnd)
+      break;
+    observed.emplace_back(
+        std::get<bool>(cell_value(step.chunk()->chunk(), 0U, 0U).storage()),
+        std::get<std::int64_t>(cell_value(step.chunk()->chunk(), 1U, 0U).storage()),
+        std::get<std::int64_t>(cell_value(step.chunk()->chunk(), 2U, 0U).storage()));
+  }
+  std::ranges::sort(observed);
+  const std::vector<std::tuple<bool, std::int64_t, std::int64_t>> expected{
+      {false, 2, 1}, {true, 0, 2}, {true, 2, 1}};
+  EXPECT_EQ(observed, expected);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
+TEST(PhysicalSelectLoweringPropertyTest, GroupedResultsMatchIndependentDeterministicModel) {
+  struct ExpectedGroup {
+    std::int64_t key;
+    std::int64_t rows{};
+    std::int64_t sum{};
+    bool observed{};
+  };
+  BoundSqlSelect select =
+      bind("SELECT value % 11 AS bucket, count(*) AS rows, sum(value) AS total FROM metrics "
+           "WHERE flag GROUP BY value % 11");
+  PhysicalPipelinePlan plan = lower_bound_sql_select(select).value();
+
+  std::vector<std::int64_t> timestamps;
+  std::vector<std::int64_t> values;
+  std::vector<std::optional<std::string>> labels;
+  std::array<bool, 257> flags{};
+  std::vector<ExpectedGroup> expected;
+  timestamps.reserve(257U);
+  values.reserve(257U);
+  labels.reserve(257U);
+  std::uint64_t state = 0xbb67ae8584caa73bULL;
+  for (std::size_t row = 0U; row < 257U; ++row) {
+    state = state * 2'862'933'555'777'941'757ULL + 3'037'000'493ULL;
+    const std::int64_t value = static_cast<std::int64_t>(state % 2'001U) - 1'000;
+    const bool selected = (state & 3U) != 0U;
+    timestamps.push_back(static_cast<std::int64_t>(row));
+    values.push_back(value);
+    flags[row] = selected;
+    labels.emplace_back("x");
+    if (!selected)
+      continue;
+    const std::int64_t key = value % 11;
+    auto group = std::ranges::find_if(
+        expected, [key](const ExpectedGroup& candidate) { return candidate.key == key; });
+    if (group == expected.end()) {
+      expected.push_back({.key = key});
+      group = expected.end() - 1;
+    }
+    ++group->rows;
+    group->sum += value;
+  }
+
+  QueryResourceContext resources = QueryResourceContext::create(4U << 20U).value();
+  std::vector<columnar::OwnedPhysicalColumn> columns;
+  columns.push_back(signed_column(schema::LogicalTypeKind::kTimestampNs, timestamps));
+  columns.push_back(signed_column(schema::LogicalTypeKind::kInt64, values));
+  columns.push_back(bool_column(flags));
+  columns.push_back(string_column(labels));
+  VectorChunk source_chunk =
+      VectorChunk::create(std::move(columns), VectorSelection::all(257U).value()).value();
+  AccountedVectorChunk accounted =
+      AccountedVectorChunk::create(std::move(source_chunk), resources.reserve(32'768U).value(),
+                                   resources)
+          .value();
+  auto pipeline = plan.instantiate(std::make_unique<OneChunkSource>(std::move(accounted))).value();
+  std::size_t actual_groups = 0U;
+  for (;;) {
+    auto step = pipeline->next(resources).value();
+    if (step.kind() == PhysicalOperatorStepKind::kEnd)
+      break;
+    ++actual_groups;
+    const std::int64_t key =
+        std::get<std::int64_t>(cell_value(step.chunk()->chunk(), 0U, 0U).storage());
+    auto model = std::ranges::find_if(
+        expected, [key](const ExpectedGroup& candidate) { return candidate.key == key; });
+    ASSERT_NE(model, expected.end());
+    EXPECT_FALSE(model->observed);
+    model->observed = true;
+    EXPECT_EQ(std::get<std::int64_t>(cell_value(step.chunk()->chunk(), 1U, 0U).storage()),
+              model->rows);
+    EXPECT_EQ(std::get<std::int64_t>(cell_value(step.chunk()->chunk(), 2U, 0U).storage()),
+              model->sum);
+  }
+  EXPECT_EQ(actual_groups, expected.size());
+  EXPECT_TRUE(
+      std::ranges::all_of(expected, [](const ExpectedGroup& group) { return group.observed; }));
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
 TEST(PhysicalSelectLoweringTest, PropagatesRuntimeCastFailureAndCancelsThePipeline) {
   BoundSqlSelect select = bind("SELECT CAST(1000 AS INT8) AS invalid FROM metrics");
   PhysicalPipelinePlan plan = lower_bound_sql_select(select).value();
@@ -479,7 +661,7 @@ TEST(PhysicalSelectLoweringTest, RejectsUnsupportedRelationalAndScalarSurfaces) 
   BoundSqlSelect ordered = bind("SELECT value FROM metrics ORDER BY value");
   EXPECT_EQ(lower_bound_sql_select(ordered).error().code(), SqlDiagnosticCode::kUnsupportedSyntax);
   BoundSqlSelect grouped = bind("SELECT sum(value) AS total FROM metrics GROUP BY flag");
-  EXPECT_EQ(lower_bound_sql_select(grouped).error().code(), SqlDiagnosticCode::kUnsupportedSyntax);
+  EXPECT_TRUE(lower_bound_sql_select(grouped).has_value());
   BoundSqlSelect variable_extremum = bind("SELECT min(label) AS first_label FROM metrics");
   EXPECT_EQ(lower_bound_sql_select(variable_extremum).error().code(),
             SqlDiagnosticCode::kUnsupportedSyntax);
@@ -529,6 +711,12 @@ TEST(PhysicalSelectLoweringTest, EnforcesExpressionAndPlanLimitsBeforeExecution)
       lower_bound_sql_select(aggregates, {.aggregate_limits = {.maximum_aggregates = 3U}});
   ASSERT_FALSE(narrow_aggregate.has_value());
   EXPECT_EQ(narrow_aggregate.error().code(), SqlDiagnosticCode::kResourceLimit);
+
+  BoundSqlSelect grouped = bind("SELECT flag, count(*), sum(value) FROM metrics GROUP BY flag");
+  auto narrow_grouped =
+      lower_bound_sql_select(grouped, {.grouped_aggregate_limits = {.maximum_aggregates = 1U}});
+  ASSERT_FALSE(narrow_grouped.has_value());
+  EXPECT_EQ(narrow_grouped.error().code(), SqlDiagnosticCode::kResourceLimit);
 }
 
 } // namespace

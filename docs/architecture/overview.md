@@ -238,8 +238,10 @@ global aggregates now lower WHERE, direct or computed arguments, the fixed-state
 final expressions, and LIMIT under
 [ADR 0041](../adr/0041-bound-global-aggregate-physical-lowering.md). Grouped/dynamic aggregate
 state now has a finite query-accounted linear-lookup baseline with exact fixed/variable keys under
-[ADR 0042](../adr/0042-query-accounted-bounded-grouped-aggregates.md), but bound GROUP BY lowering,
-hashing, variable extrema, and spill remain deferred. General relational lowering, complete
+[ADR 0042](../adr/0042-query-accounted-bounded-grouped-aggregates.md), and bound single-source GROUP
+BY lowering is connected under
+[ADR 0043](../adr/0043-bound-grouped-aggregate-physical-lowering.md). Hashing, variable extrema, and
+spill remain deferred. General relational lowering, complete
 part/head visibility, parallel scheduling,
 spilling, adaptive behavior, and join algorithms remain deferred. Implemented reservations and
 accounted chunks provide the admission/ownership invariant, but future operators must reserve every

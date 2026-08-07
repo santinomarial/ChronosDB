@@ -24,8 +24,14 @@ a direct column, definitions refer to current source ordinals without an extra c
 is computed, one output stage materializes every non-star argument in aggregate traversal order;
 the aggregate stage then consumes only those positions. Bound aggregate source spans are mapped to
 the resulting one-row columns, so final expressions such as `sum(value + 2) + count(*)` compile as
-ordinary vector programs over aggregate results. LIMIT remains last. GROUP BY is not routed through
-this path.
+ordinary vector programs over aggregate results. LIMIT remains last.
+
+For a grouped query, one preparation stage materializes GROUP BY expressions in declared order and
+then every non-star aggregate argument. The grouped stage consumes that exact shape and emits keys
+followed by aggregate results. Aggregate calls map by exact bound span. Equivalent SELECT and GROUP
+BY expressions have distinct spans, so group keys map by recursive bound structure, including
+resolved source and column ordinals. Final expressions can use either leaf; an ungrouped source
+column cannot cross the grouped boundary. Empty input emits no group.
 
 BETWEEN lowers to `value >= lower AND value <= upper`; IN lowers to an OR chain of equality nodes.
 The searched value is one shared DAG instruction, and NOT applies one three-valued Boolean node.
@@ -34,10 +40,10 @@ instruction family.
 
 ## Bounds, ownership, and failures
 
-`PhysicalSelectLoweringLimits` carries expression, ungrouped-aggregate, output-chunk, and plan
-limits. Program storage is reserved at the caller's instruction limit so allocator growth cannot
-make an exactly sized program fail the public spare-capacity rule. All returned stages own their
-vectors, constants, definitions, and programs.
+`PhysicalSelectLoweringLimits` carries expression, ungrouped-aggregate, grouped-aggregate,
+output-chunk, and plan limits. Program storage is reserved at the caller's instruction limit so
+allocator growth cannot make an exactly sized program fail the public spare-capacity rule. All
+returned stages own their vectors, constants, definitions, and programs.
 
 Checked numeric/decimal/temporal casts, lazy COALESCE, `time_bucket`, STRING/SYMBOL casts, and
 ASCII LOWER/UPPER plus text comparisons/NULL predicates lower directly into validated programs.
@@ -49,10 +55,10 @@ container-length failure and publishes no partial plan.
 
 ## Current boundary and next steps
 
-This baseline supports one source, ordinary WHERE, ordered projection, global aggregates, and LIMIT
-using the current numeric, Boolean, temporal, UUID, and variable-width output kernels. It rejects
-GROUP BY, ORDER BY, LATEST, ASOF, SUBSCRIBE, EXPLAIN modes, and variable-width MIN/MAX. Grouped
-state remains the next aggregate boundary before wider relational lowering.
+This baseline supports one source, ordinary WHERE, ordered projection, global and bounded grouped
+aggregates, and LIMIT using the current numeric, Boolean, temporal, UUID, and variable-width output
+kernels. It rejects ORDER BY, LATEST, ASOF, SUBSCRIBE, EXPLAIN modes, and variable-width MIN/MAX.
+Hash grouping, aggregate common-subexpression elimination, and spill remain later decisions.
 
 Lowering complexity is linear in source columns, output syntax, aggregate calls, and generated
 instructions. WHERE currently copies the complete source shape before filtering. Mixed direct and
