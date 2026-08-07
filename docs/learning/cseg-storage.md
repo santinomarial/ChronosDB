@@ -97,7 +97,8 @@ ADR 0026's scan source supplies those next-layer owners for one in-memory part. 
 `CsegPartPin` carries complete byte/snapshot lifetime and a conservative retained charge. Source
 credit precedes metadata open; output credit precedes page work; and the returned backing owns the
 pin, decoded/synthesized buffers, result containers, selection, and ordinal mapping. Database-wide
-snapshot acquisition, part/head composition, and pruning remain separate.
+snapshot-bound loading now supplies exact publication provenance and reclamation lifetime for one
+selected part. Multi-part/head composition and pruning remain separate.
 
 ## Failure behavior and limits
 

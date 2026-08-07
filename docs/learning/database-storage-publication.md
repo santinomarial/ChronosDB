@@ -17,6 +17,7 @@ part deletion. Its durable input is an owning `LoadedManifestGeneration` returne
 
 - `DatabaseStoragePublisher`, a move-only single-writer owner;
 - `DatabaseStorageSnapshot`, a copyable owning pin for one acquire-observed database epoch;
+- conservative complete retained-memory reporting for that epoch;
 - `PublishedTabletStorage`, the exact sealed and active head pins for one tablet;
 - `publish_tablet_snapshot`, which refreshes one complete monotonic tablet epoch without changing
   durable state; and
@@ -25,11 +26,13 @@ part deletion. Its durable input is an owning `LoadedManifestGeneration` returne
 - non-forgeable `SealedGenerationRetirementReceipt` values issued by that successful aggregate
   publication and consumed idempotently by the shard-owned `TabletState`.
 
-The internal immutable `DatabaseStoragePublication` owns a shared selected Manifest generation and
-copies of every exact `HeadSnapshot`. Manifest descriptors and encoded bytes borrow the retained
-Manifest owner. Head cells borrow their retained head pins. Old `DatabaseStorageSnapshot` objects
-therefore keep old Manifest bytes and retired head arenas alive after publication and after the live
-publisher is destroyed.
+The internal immutable `DatabaseStoragePublication` owns a shared selected Manifest generation,
+copies of every exact `HeadSnapshot`, and one shared private lifetime identity per selected part.
+Manifest descriptors and encoded bytes borrow the retained Manifest owner. Head cells borrow their
+retained head pins. Part identities are carried into every tablet-only or Manifest epoch that
+retains them. Old `DatabaseStorageSnapshot` objects therefore keep old Manifest bytes, retired head
+arenas, and selected-part reclamation pins alive after publication and after the live publisher is
+destroyed.
 
 ## Invariants and validation
 
@@ -74,10 +77,11 @@ validates add-only durable descriptors, and inspects the retired and remaining h
 path. Descriptor copying favors a simple auditable immutable epoch over a more complex persistent
 tree before profiles justify one.
 
-The descriptor retains Manifest identities rather than entire CSEG file images. Phase 6 never
-unlinks final parts or Manifest generations, so no concurrent deletion edge exists yet. A future
-part reclamation design must add explicit installed-file handles or generation pins before it can
-delete names.
+The descriptor retains Manifest identities rather than entire CSEG file images. Phase 7
+reclamation now watches weak per-part lifetime pins, not one immediate-predecessor publication:
+older tablet-refresh epochs can select the same part without retaining that immediate object.
+`SnapshotPartImage` closes the descriptor-to-file-open interval by copying the exact publication
+token into a fully revalidated owned image.
 
 ## Evidence and benchmark method
 
@@ -86,11 +90,13 @@ a writer paused immediately before the release store, hostile replacement identi
 behavior, and prevention of durable-row reintroduction. The same focused cases run under
 ASan/UBSan and TSan. Receipt integration additionally proves that pre-publication backpressure
 remains, post-publication retirement releases it, repeated consumption is harmless, and a paused
-tablet retirement exposes only the complete old or new outer epoch. The external-consumer test
-compiles the installed public API.
+tablet retirement exposes only the complete old or new outer epoch. A compaction regression holds
+an older same-Manifest tablet-refresh epoch and a snapshot-loaded image until reclamation proves
+both lifetimes have drained. The external-consumer test compiles the installed public API.
 
-`chronos_manifest_benchmarks` measures the acquire-load snapshot hot path and complete tablet-epoch
-descriptor construction/refresh. Fixture creation and filesystem setup occur outside timed loops.
+`chronos_manifest_benchmarks` measures the acquire-load snapshot hot path, complete tablet-epoch
+descriptor/pin construction and refresh, one-candidate pinned retirement checks, and idempotent
+post-reclamation verification. Fixture creation and filesystem setup occur outside timed loops.
 Results are local microbenchmarks, not a production latency claim.
 
 ## Likely review questions

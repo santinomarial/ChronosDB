@@ -281,9 +281,9 @@ No phase passes because its code merely compiles. A phase passes only when its a
 > proves equivalent old-or-new recovery with conservative input retention.
 > ADR 0019 now accepts the remaining correctness boundary: authenticated CSEG event-time zone maps
 > and granule sparse entries with scan fallback, rebuildable base/delta planning hints, deterministic
-> bounded selection, and exact predecessor-pin-gated final-part reclamation. The owned event-time
+> bounded selection, and exact per-part-pin-gated final-part reclamation. The owned event-time
 > part/granule pruning plan, deterministic no-false-negative oracle, rebuildable base/delta
-> classification, resource-bounded overlap selection, move-only retirement records, weak-pin gate,
+> classification, resource-bounded overlap selection, move-only retirement records, per-part weak-pin gate,
 > namespace revalidation, idempotent unlink/directory-sync path, controlled pin tests, process-crash
 > matrix, and focused benchmarks are implemented. Durable secondary sidecars and old-Manifest floors
 > stay deferred. Full workload benchmark campaigns and reviewed performance evidence remain before
@@ -379,10 +379,13 @@ No phase passes because its code merely compiles. A phase passes only when its a
   pins, pre-open and pre-decode reservations, raw/decompressed backing lifetime, explicit
   granule-sized chunk bounds, source/LIMIT/cancellation cleanup, deterministic multi-granule
   properties, exhaustive allocation failure, scan fuzzing, scan microbenchmarks, and installed
-  consumer linkage. Bound-SQL lowering, optimizer rules, typed vector expressions and output
-  builders, aggregate database-snapshot part/head scans, mutable-head sources, portable exact
-  allocator/provider charging, scheduling, spill, and full scalar-engine differential plan
-  execution are unimplemented.
+  consumer linkage. ADR 0027 and the tenth increment add per-part lifetime identities carried
+  across publication epochs, snapshot-bound predecessor part loading, exact database/WAL/generation
+  provenance, conservative aggregate-pin accounting, a storage-validated CSEG scan adapter,
+  reclamation lifetime regression coverage, and installed-consumer linkage. Bound-SQL lowering,
+  optimizer rules, typed vector expressions and output builders, aggregate multi-part/head scans,
+  mutable-head sources, mapped/asynchronous providers, shared pin credit, scheduling, spill, and
+  full scalar-engine differential plan execution are unimplemented.
 
 - **Scope:** bounded vectors, vectorized scans/expressions/aggregates/joins, physical planning, memory accounting, cancellation, parallel scheduling, and spill for explicitly supported operators.
 - **Explicit non-scope:** distributed fragments, GPU novelty, unbounded query memory, or optimizer rules lacking semantic/differential validation.

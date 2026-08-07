@@ -196,6 +196,9 @@ public:
   [[nodiscard]] std::uint32_t row_count() const noexcept;
   [[nodiscard]] std::size_t column_count() const noexcept;
   [[nodiscard]] const std::optional<HeadCommitPosition>& applied_position() const noexcept;
+  // Conservative complete generation storage retained by this pin, plus its exact publication
+  // boundary. Multiple pins may deliberately report the same shared generation bytes.
+  [[nodiscard]] std::size_t retained_buffer_bytes() const noexcept;
 
   [[nodiscard]] common::Result<HeadColumnView> column(std::size_t ordinal) const;
   [[nodiscard]] common::Result<HeadCellView> cell(HeadCellPosition position) const;

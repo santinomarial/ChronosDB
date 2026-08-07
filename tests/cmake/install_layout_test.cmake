@@ -87,6 +87,11 @@ set(installed_cseg_scan_header
 if(NOT EXISTS "${installed_cseg_scan_header}")
   message(FATAL_ERROR "staging install omitted ${installed_cseg_scan_header}")
 endif()
+set(installed_database_cseg_scan_header
+    "${install_prefix}/${CHRONOS_TEST_INSTALL_INCLUDEDIR}/chronos/query/database_cseg_scan.hpp")
+if(NOT EXISTS "${installed_database_cseg_scan_header}")
+  message(FATAL_ERROR "staging install omitted ${installed_database_cseg_scan_header}")
+endif()
 
 set(installed_cseg_layout_header
     "${install_prefix}/${CHRONOS_TEST_INSTALL_INCLUDEDIR}/chronos/cseg/layout.hpp")

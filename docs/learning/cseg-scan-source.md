@@ -124,9 +124,10 @@ granule-sized physical domains can be wider than an eventual execution morsel; a
 only as truthful as its trusted storage provider. These choices keep the first real storage/source
 ownership path auditable.
 
-The next storage integration should pair loaded Manifest part images with an aggregate database
-snapshot owner, define deterministic part/head order and safe pruning, and decide whether epoch-wide
-pin credit can be shared without allowing any output chunk to retain uncharged storage.
+The snapshot-bound adapter now pairs one validated Manifest part image with its exact aggregate
+database owner and carries that pin through returned chunks. The next storage integration must
+compose several such images with deterministic part/head order and safe pruning, then decide
+whether epoch-wide pin credit can be shared without allowing any output to retain uncharged state.
 
 ## Likely review questions
 

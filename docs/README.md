@@ -160,5 +160,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Pinned CSEG scan source](learning/cseg-scan-source.md): implemented single-part physical pulls,
   pre-decode query admission, raw/decompressed backing ownership, pin/credit lifetime, deterministic
   granule properties, allocation-failure testing, fuzzing, and scan measurement.
+- [Snapshot-bound CSEG loading](learning/snapshot-bound-cseg-loading.md): implemented per-part
+  publication lifetime pins, held-predecessor validated loading, complete epoch/image accounting,
+  safe query scan adaptation, and reclamation-through-chunk ownership.
 
 Future format, protocol, subsystem, operations, and learning documents should be linked here when they are added by their corresponding roadmap phase.

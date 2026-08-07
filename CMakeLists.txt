@@ -325,6 +325,7 @@ add_library(
   src/query/binder.cpp
   src/query/catalog.cpp
   src/query/cseg_scan.cpp
+  src/query/database_cseg_scan.cpp
   src/query/decimal_internal.cpp
   src/query/diagnostic.cpp
   src/query/evaluator.cpp
@@ -352,7 +353,8 @@ target_include_directories(
   PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
 target_link_libraries(
-  chronos_query PUBLIC chronos::columnar chronos::common chronos::cseg chronos::schema
+  chronos_query
+  PUBLIC chronos::columnar chronos::common chronos::cseg chronos::manifest chronos::schema
 )
 chronos_set_project_warnings(chronos_query)
 chronos_enable_sanitizers(chronos_query)
@@ -754,6 +756,8 @@ if(CHRONOS_BUILD_TESTS)
     chronos_query_tests
     tests/query/cseg_scan_header_self_contained.cpp
     tests/query/cseg_scan_test.cpp
+    tests/query/database_cseg_scan_header_self_contained.cpp
+    tests/query/database_cseg_scan_test.cpp
     tests/query/diagnostic_header_self_contained.cpp
     tests/query/evaluator_header_self_contained.cpp
     tests/query/evaluator_test.cpp

@@ -159,10 +159,11 @@ Pull and unique child ownership make correctness visible but do not exploit core
 rows as a selection avoids copies but may reduce locality after very selective predicates. Both are
 deliberate pre-measurement choices.
 
-The next storage increment should compose the single-part source with one exact aggregate database
-snapshot, deterministic part/head order, and safe pruning. Typed physical expression/output
-building is the other immediate dependency. Parallel scheduling should follow only after task
-ownership, queue capacity, terminal-error arbitration, and cancellation release are specified.
+The snapshot-bound adapter now joins the single-part source to one exact aggregate database epoch.
+The next storage increment should compose several selected parts and heads in deterministic order
+with safe pruning. Typed physical expression/output building is the other immediate dependency.
+Parallel scheduling should follow only after task ownership, queue capacity, terminal-error
+arbitration, and cancellation release are specified.
 
 ## Likely review questions
 

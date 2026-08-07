@@ -277,7 +277,9 @@ sequence. No input final is removed by this operation. After the directory sync,
 publisher exact-decodes both owned generations, repeats the authorized transition, copies unchanged
 live tablet/head pins, and release-publishes the successor. Acquire readers see only the complete
 predecessor or successor, and held predecessor snapshots retain their exact Manifest owner and input
-descriptors. Pin-aware final-file reclamation remains a separate Phase 7 boundary.
+descriptors. The later Phase 7 reclamation boundary assigns one shared lifetime pin per selected
+part, carries it across every epoch that retains the descriptor, and waits for all removed-input
+weak pins before unlink.
 
 The single-threaded append-only compaction coordinator composes these boundaries under the existing
 Manifest lock. It rereads the selected final inputs, installs one proven output, installs and

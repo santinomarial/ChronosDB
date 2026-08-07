@@ -124,6 +124,17 @@ public:
       : row_count_(row_count), applied_position_(applied_position),
         variable_frontiers_(std::move(variable_frontiers)) {}
 
+  [[nodiscard]] std::size_t retained_buffer_bytes() const noexcept {
+    const std::optional<std::size_t> frontiers =
+        common::checked_multiply(variable_frontiers_.capacity(), sizeof(std::size_t));
+    const std::optional<std::size_t> with_object =
+        frontiers.has_value() ? common::checked_add(*frontiers, sizeof(HeadPublication))
+                              : std::nullopt;
+    return with_object.has_value() ? common::checked_add(*with_object, std::size_t{128U})
+                                         .value_or(std::numeric_limits<std::size_t>::max())
+                                   : std::numeric_limits<std::size_t>::max();
+  }
+
   std::uint32_t row_count_;
   std::optional<HeadCommitPosition> applied_position_;
   std::vector<std::size_t> variable_frontiers_;
@@ -201,6 +212,9 @@ public:
   }
   [[nodiscard]] std::size_t column_count() const noexcept {
     return columns_.size();
+  }
+  [[nodiscard]] std::size_t retained_buffer_bytes() const noexcept {
+    return retained_storage_bytes_;
   }
 
   [[nodiscard]] common::Result<HeadColumnView> column_view(const HeadPublication& publication,
@@ -767,6 +781,15 @@ const std::optional<HeadCommitPosition>& HeadSnapshot::applied_position() const 
   return publication_->applied_position_;
 }
 
+std::size_t HeadSnapshot::retained_buffer_bytes() const noexcept {
+  const std::optional<std::size_t> publications =
+      common::checked_multiply(publication_->retained_buffer_bytes(), std::size_t{2U});
+  if (!publications.has_value())
+    return std::numeric_limits<std::size_t>::max();
+  return common::checked_add(state_->retained_buffer_bytes(), *publications)
+      .value_or(std::numeric_limits<std::size_t>::max());
+}
+
 common::Result<HeadColumnView> HeadSnapshot::column(const std::size_t ordinal) const {
   return state_->column_view(*publication_, ordinal);
 }
@@ -955,6 +978,39 @@ common::Result<MutableHead> MutableHead::create_with_materialization_hook(
       columns.push_back(std::move(storage));
     }
     std::vector<HeadRowMetadata> metadata(rows);
+    retained_storage_bytes = sizeof(detail::MutableHeadState);
+    auto retain = [&](const std::size_t count, const std::size_t width) -> common::Status {
+      const common::Result<std::size_t> total =
+          add_storage_bytes(retained_storage_bytes, StorageExtent{.count = count, .width = width});
+      if (!total.has_value())
+        return total.error();
+      retained_storage_bytes = *total;
+      return common::Status::ok();
+    };
+    common::Status retained_status = retain(columns.capacity(), sizeof(ColumnStorage));
+    if (!retained_status.is_ok())
+      return common::make_unexpected(std::move(retained_status));
+    retained_status = retain(metadata.capacity(), sizeof(HeadRowMetadata));
+    if (!retained_status.is_ok())
+      return common::make_unexpected(std::move(retained_status));
+    std::size_t allocation_count = 3U;
+    for (const ColumnStorage& storage : columns) {
+      for (const StorageExtent extent :
+           {StorageExtent{storage.validity.capacity(), sizeof(std::uint8_t)},
+            StorageExtent{storage.boolean_values.capacity(), sizeof(std::uint8_t)},
+            StorageExtent{storage.fixed_values.capacity(), sizeof(std::byte)},
+            StorageExtent{storage.variable_offsets.capacity(), sizeof(std::uint32_t)},
+            StorageExtent{storage.variable_values.capacity(), sizeof(std::byte)}}) {
+        retained_status = retain(extent.count, extent.width);
+        if (!retained_status.is_ok())
+          return common::make_unexpected(std::move(retained_status));
+        if (extent.count != 0U)
+          ++allocation_count;
+      }
+    }
+    retained_status = retain(allocation_count, 64U);
+    if (!retained_status.is_ok())
+      return common::make_unexpected(std::move(retained_status));
     auto initial = std::make_shared<const detail::HeadPublication>(
         0U, std::nullopt, std::vector<std::size_t>(schema->columns().size(), 0U));
     auto state = std::make_shared<detail::MutableHeadState>(

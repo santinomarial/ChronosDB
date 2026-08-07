@@ -44,14 +44,16 @@ reference merger and coordinator, so role or scoring defects cannot change query
 
 ## Pin-aware final-part reclamation
 
-Every aggregate storage snapshot owns its exact publication, which owns its exact selected
-Manifest. Compaction publication records the removed input identities with a weak token for the
-predecessor publication. Any component that retains descriptors or intends to open their files
-must retain the owning snapshot or an explicit token copied from it.
+Every selected part has one private lifetime pin shared through every aggregate publication epoch
+that retains it. Compaction publication records the removed input identities and weak references to
+their pins. This remains correct across tablet-only refreshes: an older publication object and the
+immediate predecessor need not own each other, but both own the same selected-part pin. Any
+component that retains descriptors or intends to open their files must retain the owning snapshot,
+an explicit token copied from it, or a snapshot-bound loaded image.
 
 The storage owner processes retirement records serially:
 
-1. a live weak token means `pending` and performs no I/O;
+1. any live removed-part weak pin means `pending` and performs no I/O;
 2. rescan the locked namespace and require the supplied current selected generation to remain the
    highest final generation;
 3. reread the exact current Manifest bytes and reject a stale/mismatched owner;

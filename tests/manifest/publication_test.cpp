@@ -385,11 +385,24 @@ TEST(DatabaseStoragePublicationTest, CompactionPublishesOneEpochAndRetainsOldSna
   std::optional<DatabaseStorageSnapshot> next;
   std::optional<PartDescriptor> input_descriptor;
   std::optional<PartDescriptor> output_descriptor;
+  std::shared_ptr<const SnapshotPartImage> query_image;
   {
     DurableFixture fixture;
     DatabaseStoragePublisher publisher = fixture.publisher();
     ASSERT_TRUE(publisher.publish_manifest(fixture.request()).has_value());
     old = publisher.snapshot().value();
+    ASSERT_EQ(old->retirement_receipts().size(), 1U);
+    const ingest::TabletSnapshot retired_tablet =
+        fixture.tablet.state.retire_sealed_generation(old->retirement_receipts().front()).value();
+    // Create a newer publication object under the same Manifest before compaction. The older
+    // snapshot must still pin its selected input even though it is not the immediate predecessor.
+    ASSERT_TRUE(publisher.publish_tablet_snapshot(retired_tablet).has_value());
+    const std::array load_bindings{TabletSchemaBinding{
+        .tablet_id = fixture.tablet.latest.tablet_id(), .lineage = std::cref(fixture.lineage)}};
+    const std::array load_ids{fixture.flushed->descriptor.part_id};
+    std::vector<SnapshotPartImage> loaded =
+        fixture.storage->load_snapshot_part_images(*old, load_ids, load_bindings, {}).value();
+    query_image = std::make_shared<const SnapshotPartImage>(std::move(loaded.front()));
 
     const std::array input_images{CompactionPartImage{
         .part_id = fixture.flushed->descriptor.part_id,
@@ -513,6 +526,8 @@ TEST(DatabaseStoragePublicationTest, CompactionPublishesOneEpochAndRetainsOldSna
     old.reset();
     EXPECT_TRUE(retirement.is_pinned());
     token.reset();
+    EXPECT_TRUE(retirement.is_pinned());
+    query_image.reset();
     EXPECT_FALSE(retirement.is_pinned());
 
     const PartReclamationReport reclaimed =

@@ -51,6 +51,17 @@ namespace {
   return common::Status{common::StatusCode::kUnavailable, std::move(message)};
 }
 
+[[nodiscard]] std::size_t saturating_size_add(const std::size_t left,
+                                              const std::size_t right) noexcept {
+  return common::checked_add(left, right).value_or(std::numeric_limits<std::size_t>::max());
+}
+
+template <typename Value>
+[[nodiscard]] std::size_t retained_vector_bytes(const std::vector<Value>& values) noexcept {
+  return common::checked_multiply(values.capacity(), sizeof(Value))
+      .value_or(std::numeric_limits<std::size_t>::max());
+}
+
 [[nodiscard]] const TabletDescriptor*
 find_durable_tablet(const LoadedManifestGeneration& manifest,
                     const schema::TabletId& tablet_id) noexcept {
@@ -342,20 +353,105 @@ struct HeadBounds {
 
 namespace detail {
 
+class PartRetentionPin final {};
+
 class DatabaseStoragePublication {
 public:
   DatabaseStoragePublication(std::shared_ptr<const LoadedManifestGeneration> manifest,
                              std::vector<PublishedTabletStorage> tablets,
                              std::vector<ingest::SealedGenerationRetirementReceipt> retirements,
+                             std::vector<std::shared_ptr<const PartRetentionPin>> part_pins,
                              const std::size_t visible_head_rows) noexcept
       : manifest_(std::move(manifest)), tablets_(std::move(tablets)),
-        retirements_(std::move(retirements)), visible_head_rows_(visible_head_rows) {}
+        retirements_(std::move(retirements)), part_pins_(std::move(part_pins)),
+        visible_head_rows_(visible_head_rows), retained_buffer_bytes_(retained_buffer_bytes()) {}
+
+  [[nodiscard]] std::size_t retained_buffer_bytes() const noexcept {
+    std::size_t total = sizeof(DatabaseStoragePublication);
+    total = saturating_size_add(total, manifest_->retained_buffer_bytes());
+    total = saturating_size_add(total, retained_vector_bytes(tablets_));
+    total = saturating_size_add(total, retained_vector_bytes(retirements_));
+    total = saturating_size_add(total, retained_vector_bytes(part_pins_));
+    std::size_t allocation_count = 4U + part_pins_.size();
+    for (const PublishedTabletStorage& tablet : tablets_) {
+      total = saturating_size_add(total, retained_vector_bytes(tablet.sealed_heads_));
+      total = saturating_size_add(total, retained_vector_bytes(tablet.active_head_));
+      allocation_count = saturating_size_add(allocation_count, 2U);
+      for (const head::HeadSnapshot& snapshot : tablet.sealed_heads_)
+        total = saturating_size_add(total, snapshot.retained_buffer_bytes());
+      for (const head::HeadSnapshot& snapshot : tablet.active_head_)
+        total = saturating_size_add(total, snapshot.retained_buffer_bytes());
+    }
+    const std::size_t overhead = common::checked_multiply(allocation_count, std::size_t{64U})
+                                     .value_or(std::numeric_limits<std::size_t>::max());
+    return saturating_size_add(total, overhead);
+  }
 
   std::shared_ptr<const LoadedManifestGeneration> manifest_;
   std::vector<PublishedTabletStorage> tablets_;
   std::vector<ingest::SealedGenerationRetirementReceipt> retirements_;
+  // Parallel to manifest_->parts(). Retained descriptors carry the same pin through tablet-only,
+  // flush, and compaction publication epochs; a newly selected part receives a fresh identity.
+  std::vector<std::shared_ptr<const PartRetentionPin>> part_pins_;
   std::size_t visible_head_rows_{};
+  std::size_t retained_buffer_bytes_{};
 };
+
+[[nodiscard]] std::vector<std::shared_ptr<const PartRetentionPin>>
+make_initial_part_pins(const std::size_t part_count) {
+  std::vector<std::shared_ptr<const PartRetentionPin>> pins;
+  pins.reserve(part_count);
+  for (std::size_t index = 0U; index < part_count; ++index)
+    pins.push_back(std::make_shared<const PartRetentionPin>());
+  return pins;
+}
+
+[[nodiscard]] common::Result<std::vector<std::shared_ptr<const PartRetentionPin>>>
+make_successor_part_pins(const DatabaseStoragePublication& current,
+                         const LoadedManifestGeneration& successor) {
+  if (current.part_pins_.size() != current.manifest_->parts().size()) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kInternal, "database publication part-pin state is inconsistent"});
+  }
+  std::vector<std::shared_ptr<const PartRetentionPin>> pins;
+  pins.reserve(successor.parts().size());
+  for (const PartDescriptor& part : successor.parts()) {
+    const auto retained =
+        std::ranges::find(current.manifest_->parts(), part.part_id, &PartDescriptor::part_id);
+    if (retained == current.manifest_->parts().end()) {
+      pins.push_back(std::make_shared<const PartRetentionPin>());
+      continue;
+    }
+    const std::size_t ordinal =
+        static_cast<std::size_t>(std::distance(current.manifest_->parts().begin(), retained));
+    pins.push_back(current.part_pins_[ordinal]);
+  }
+  return pins;
+}
+
+[[nodiscard]] common::Result<std::vector<std::weak_ptr<const PartRetentionPin>>>
+retired_part_pins(const DatabaseStoragePublication& current,
+                  const std::span<const cseg::PartId> input_part_ids) {
+  if (current.part_pins_.size() != current.manifest_->parts().size()) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kInternal, "database publication part-pin state is inconsistent"});
+  }
+  std::vector<std::weak_ptr<const PartRetentionPin>> pins;
+  pins.reserve(input_part_ids.size());
+  for (const cseg::PartId& part_id : input_part_ids) {
+    const auto part =
+        std::ranges::find(current.manifest_->parts(), part_id, &PartDescriptor::part_id);
+    if (part == current.manifest_->parts().end()) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kInternal,
+                         "validated compaction input part pin became inaccessible"});
+    }
+    const std::size_t ordinal =
+        static_cast<std::size_t>(std::distance(current.manifest_->parts().begin(), part));
+    pins.push_back(current.part_pins_[ordinal]);
+  }
+  return pins;
+}
 
 class DatabaseStoragePublisherImpl {
 public:
@@ -403,7 +499,8 @@ public:
         }
       }
       auto next = std::make_shared<const DatabaseStoragePublication>(
-          current->manifest_, std::move(tablets), current->retirements_, visible_rows);
+          current->manifest_, std::move(tablets), current->retirements_, current->part_pins_,
+          visible_rows);
       if (hook_ != nullptr) {
         hook_(hook_context_);
       }
@@ -567,9 +664,14 @@ public:
           return fail(std::move(status));
         }
       }
+      common::Result<std::vector<std::shared_ptr<const PartRetentionPin>>> part_pins =
+          make_successor_part_pins(*current, *request.selected_manifest);
+      if (!part_pins.has_value()) {
+        return fail(part_pins.error());
+      }
       auto next = std::make_shared<const DatabaseStoragePublication>(
           request.selected_manifest, std::move(tablets), std::move(retirement_receipts),
-          visible_rows);
+          std::move(*part_pins), visible_rows);
       if (hook_ != nullptr) {
         hook_(hook_context_);
       }
@@ -620,12 +722,22 @@ public:
         retired_parts.push_back(
             RetiredPartFile{.part_id = part_id, .file_length = descriptor->file_length});
       }
+      common::Result<std::vector<std::weak_ptr<const PartRetentionPin>>> retirement_pins =
+          retired_part_pins(*current, request.replacement.input_part_ids);
+      if (!retirement_pins.has_value()) {
+        return fail(retirement_pins.error());
+      }
+      common::Result<std::vector<std::shared_ptr<const PartRetentionPin>>> successor_pins =
+          make_successor_part_pins(*current, *request.selected_manifest);
+      if (!successor_pins.has_value()) {
+        return fail(successor_pins.error());
+      }
       retired_part_sets_.reserve(retired_part_sets_.size() + 1U);
       auto publication = std::make_shared<const DatabaseStoragePublication>(
           request.selected_manifest, current->tablets_, current->retirements_,
-          current->visible_head_rows_);
+          std::move(*successor_pins), current->visible_head_rows_);
       RetiredPartSet retirement{current->manifest_->generation(), std::move(retired_parts),
-                                current};
+                                std::move(*retirement_pins)};
       if (hook_ != nullptr) {
         hook_(hook_context_);
       }
@@ -672,9 +784,9 @@ std::uint64_t DatabaseStorageRetentionToken::generation() const noexcept {
 
 RetiredPartSet::RetiredPartSet(
     const std::uint64_t predecessor_generation, std::vector<RetiredPartFile> parts,
-    std::weak_ptr<const detail::DatabaseStoragePublication> predecessor) noexcept
+    std::vector<std::weak_ptr<const detail::PartRetentionPin>> part_pins) noexcept
     : predecessor_generation_(predecessor_generation), parts_(std::move(parts)),
-      predecessor_(std::move(predecessor)) {}
+      part_pins_(std::move(part_pins)) {}
 
 std::uint64_t RetiredPartSet::predecessor_generation() const noexcept {
   return predecessor_generation_;
@@ -685,7 +797,7 @@ std::span<const RetiredPartFile> RetiredPartSet::parts() const noexcept {
 }
 
 bool RetiredPartSet::is_pinned() const noexcept {
-  return !predecessor_.expired();
+  return std::ranges::any_of(part_pins_, [](const auto& pin) { return !pin.expired(); });
 }
 
 PublishedTabletStorage::PublishedTabletStorage(
@@ -779,6 +891,10 @@ std::size_t DatabaseStorageSnapshot::visible_head_row_count() const noexcept {
   return publication_->visible_head_rows_;
 }
 
+std::size_t DatabaseStorageSnapshot::retained_buffer_bytes() const noexcept {
+  return publication_->retained_buffer_bytes_;
+}
+
 DatabaseStorageRetentionToken DatabaseStorageSnapshot::retention_token() const noexcept {
   return DatabaseStorageRetentionToken{publication_};
 }
@@ -829,9 +945,12 @@ common::Result<DatabaseStoragePublisher> DatabaseStoragePublisher::create_with_p
         return common::make_unexpected(std::move(status));
       }
     }
+    std::vector<std::shared_ptr<const detail::PartRetentionPin>> part_pins =
+        detail::make_initial_part_pins(selected_manifest->parts().size());
     auto publication = std::make_shared<const detail::DatabaseStoragePublication>(
         std::move(selected_manifest), std::move(copied),
-        std::vector<ingest::SealedGenerationRetirementReceipt>{}, visible_rows);
+        std::vector<ingest::SealedGenerationRetirementReceipt>{}, std::move(part_pins),
+        visible_rows);
     auto implementation = std::make_unique<detail::DatabaseStoragePublisherImpl>(
         std::move(publication), hook, hook_context);
     return DatabaseStoragePublisher{std::move(implementation)};

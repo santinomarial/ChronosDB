@@ -86,6 +86,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/query/literal.hpp>
 #include <chronos/query/parser.hpp>
 #include <chronos/query/cseg_scan.hpp>
+#include <chronos/query/database_cseg_scan.hpp>
 #include <chronos/query/physical_operator.hpp>
 #include <chronos/query/physical_plan.hpp>
 #include <chronos/query/resource_context.hpp>
@@ -233,6 +234,10 @@ int main() {
   using CreateCsegPartPinFunction = chronos::common::Result<chronos::query::CsegPartPin> (*)(
       std::shared_ptr<const void>, chronos::common::ByteView, std::size_t);
   const CreateCsegPartPinFunction create_cseg_part_pin = &chronos::query::CsegPartPin::create;
+  using PinSnapshotCsegPartFunction = chronos::common::Result<chronos::query::CsegPartPin> (*)(
+      std::shared_ptr<const chronos::manifest::SnapshotPartImage>);
+  const PinSnapshotCsegPartFunction pin_snapshot_cseg_part =
+      &chronos::query::pin_snapshot_cseg_part;
   chronos::columnar::ColumnarBatchLimits limits;
   std::array<std::byte, 0> empty{};
   const auto decoded = chronos::columnar::decode_columnar_batch_v1_exact(empty);
@@ -402,6 +407,15 @@ int main() {
           chronos::manifest::ReferencedPartValidationLimits) const;
   const LoadSelectedPartImagesFunction load_selected_part_images =
       &chronos::manifest::ManifestStorage::load_selected_part_images;
+  using LoadSnapshotPartImagesFunction =
+      chronos::common::Result<std::vector<chronos::manifest::SnapshotPartImage>> (
+          chronos::manifest::ManifestStorage::*)(
+          const chronos::manifest::DatabaseStorageSnapshot&,
+          std::span<const chronos::cseg::PartId>,
+          std::span<const chronos::manifest::TabletSchemaBinding>,
+          chronos::manifest::ReferencedPartValidationLimits) const;
+  const LoadSnapshotPartImagesFunction load_snapshot_part_images =
+      &chronos::manifest::ManifestStorage::load_snapshot_part_images;
   using FlushSealedHeadFunction =
       chronos::common::Result<chronos::manifest::EncodedSealedHeadPart> (*)(
           const chronos::manifest::SealedHeadFlushRequest&);
@@ -505,6 +519,7 @@ int main() {
                  reclaim_retired_parts != nullptr &&
                  install_manifest != nullptr && manifest_metrics != nullptr &&
                  load_selected_manifest != nullptr && load_selected_part_images != nullptr &&
+                 load_snapshot_part_images != nullptr &&
                  flush_sealed_head != nullptr &&
                  build_manifest != nullptr && build_checkpoint != nullptr &&
                  create_storage_publisher != nullptr && publish_compaction != nullptr &&
@@ -525,6 +540,7 @@ int main() {
                  open_projected_reader != nullptr &&
                  plan_projected_granule != nullptr &&
                  create_cseg_part_pin != nullptr &&
+                 pin_snapshot_cseg_part != nullptr &&
                  !cseg_metadata.has_value() &&
                  cseg_metadata.error().kind() ==
                      chronos::cseg::CsegMetadataDecodeErrorKind::kIncomplete &&

@@ -3,6 +3,7 @@
 #include "chronos/common/checked_math.hpp"
 #include "chronos/io/posix_io.hpp"
 #include "chronos/manifest/naming.hpp"
+#include "chronos/manifest/publication.hpp"
 #include "io/posix_syscalls.hpp"
 
 #include <algorithm>
@@ -20,6 +21,28 @@
 
 namespace chronos::manifest {
 namespace {
+
+inline constexpr std::size_t kConservativeAllocationOverheadBytes = 64U;
+
+[[nodiscard]] std::size_t saturating_size_add(const std::size_t left,
+                                              const std::size_t right) noexcept {
+  return common::checked_add(left, right).value_or(std::numeric_limits<std::size_t>::max());
+}
+
+template <typename Value>
+[[nodiscard]] std::size_t retained_vector_bytes(const std::vector<Value>& values) noexcept {
+  return common::checked_multiply(values.capacity(), sizeof(Value))
+      .value_or(std::numeric_limits<std::size_t>::max());
+}
+
+[[nodiscard]] std::size_t retained_strings_bytes(const std::vector<std::string>& values) noexcept {
+  std::size_t total = retained_vector_bytes(values);
+  for (const std::string& value : values) {
+    total = saturating_size_add(total, value.capacity());
+    total = saturating_size_add(total, kConservativeAllocationOverheadBytes);
+  }
+  return total;
+}
 
 [[nodiscard]] common::Status invalid(const std::string_view message) {
   return common::Status{common::StatusCode::kInvalidArgument, std::string{message}};
@@ -291,6 +314,17 @@ std::span<const std::string> LoadedManifestGeneration::temporary_manifests() con
   return implementation_->temporary_manifests_;
 }
 
+std::size_t LoadedManifestGeneration::retained_buffer_bytes() const noexcept {
+  std::size_t total = sizeof(LoadedManifestGeneration) + sizeof(Impl);
+  total = saturating_size_add(total, retained_vector_bytes(implementation_->encoded_bytes_));
+  total = saturating_size_add(total, implementation_->decoded_.retained_buffer_bytes());
+  total = saturating_size_add(total, retained_vector_bytes(implementation_->orphan_parts_));
+  total = saturating_size_add(total, retained_strings_bytes(implementation_->temporary_parts_));
+  total = saturating_size_add(total, retained_strings_bytes(implementation_->temporary_manifests_));
+  constexpr std::size_t owner_allocation_count = 9U;
+  return saturating_size_add(total, owner_allocation_count * kConservativeAllocationOverheadBytes);
+}
+
 LoadedPartImage::LoadedPartImage(PartDescriptor descriptor, std::vector<std::byte> bytes) noexcept
     : descriptor_(descriptor), bytes_(std::move(bytes)) {}
 
@@ -300,6 +334,42 @@ const PartDescriptor& LoadedPartImage::descriptor() const noexcept {
 
 common::ByteView LoadedPartImage::bytes() const noexcept {
   return bytes_;
+}
+
+SnapshotPartImage::SnapshotPartImage(const DatabaseId database_id, const wal::WalId wal_id,
+                                     const std::uint64_t snapshot_generation,
+                                     const PartDescriptor descriptor, std::vector<std::byte> bytes,
+                                     DatabaseStorageRetentionToken retention,
+                                     const std::size_t snapshot_retained_buffer_bytes) noexcept
+    : database_id_(database_id), wal_id_(wal_id), snapshot_generation_(snapshot_generation),
+      descriptor_(descriptor), bytes_(std::move(bytes)), retention_(std::move(retention)),
+      snapshot_retained_buffer_bytes_(snapshot_retained_buffer_bytes) {}
+
+const DatabaseId& SnapshotPartImage::database_id() const noexcept {
+  return database_id_;
+}
+
+const wal::WalId& SnapshotPartImage::wal_id() const noexcept {
+  return wal_id_;
+}
+
+std::uint64_t SnapshotPartImage::snapshot_generation() const noexcept {
+  return snapshot_generation_;
+}
+
+const PartDescriptor& SnapshotPartImage::descriptor() const noexcept {
+  return descriptor_;
+}
+
+common::ByteView SnapshotPartImage::bytes() const noexcept {
+  return bytes_;
+}
+
+std::size_t SnapshotPartImage::retained_buffer_bytes() const noexcept {
+  std::size_t total = snapshot_retained_buffer_bytes_;
+  total = saturating_size_add(total, bytes_.capacity());
+  total = saturating_size_add(total, sizeof(SnapshotPartImage));
+  return saturating_size_add(total, 128U);
 }
 
 class ManifestStorage::Impl {
@@ -1092,6 +1162,75 @@ common::Result<std::vector<LoadedPartImage>> ManifestStorage::load_selected_part
   } catch (const std::length_error&) {
     return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
                                                   "Selected part images exceed container limits"});
+  }
+}
+
+common::Result<std::vector<SnapshotPartImage>> ManifestStorage::load_snapshot_part_images(
+    const DatabaseStorageSnapshot& database_snapshot, const std::span<const cseg::PartId> part_ids,
+    const std::span<const TabletSchemaBinding> schema_bindings,
+    const ReferencedPartValidationLimits limits) const {
+  if (part_ids.empty()) {
+    return common::make_unexpected(invalid("Snapshot part-image request is empty"));
+  }
+  for (std::size_t index = 1U; index < part_ids.size(); ++index) {
+    if (!(part_ids[index - 1U] < part_ids[index])) {
+      return common::make_unexpected(
+          invalid("Snapshot part-image identities are not strictly sorted"));
+    }
+  }
+  common::Result<ManifestNamespaceSnapshot> namespace_snapshot = scan_namespace();
+  if (!namespace_snapshot.has_value()) {
+    return common::make_unexpected(namespace_snapshot.error());
+  }
+
+  try {
+    std::vector<SnapshotPartImage> images;
+    images.reserve(part_ids.size());
+    for (const cseg::PartId& part_id : part_ids) {
+      const auto descriptor =
+          std::ranges::find(database_snapshot.parts(), part_id, &PartDescriptor::part_id);
+      if (descriptor == database_snapshot.parts().end()) {
+        return common::make_unexpected(
+            invalid("Snapshot part-image identity is not selected by its database epoch"));
+      }
+      if (!std::ranges::binary_search(namespace_snapshot->final_parts, part_id)) {
+        return common::make_unexpected(
+            corruption("Snapshot-selected CSEG part is missing from the locked namespace"));
+      }
+      const TabletSchemaBinding* binding = find_binding(schema_bindings, descriptor->tablet_id);
+      const std::shared_ptr<const schema::TableSchema> schema_value =
+          binding == nullptr ? nullptr : binding->lineage.get().find(descriptor->schema_id);
+      if (schema_value == nullptr) {
+        return common::make_unexpected(invalid("Snapshot part image has no exact schema binding"));
+      }
+      DatabaseStorageRetentionToken retention = database_snapshot.retention_token();
+      const std::string file_name = part_file_name(part_id);
+      common::Result<std::vector<std::byte>> bytes = read_final_file(
+          implementation_->parts_, {.name = file_name,
+                                    .maximum_length = limits.decode.max_file_length,
+                                    .exact_length = descriptor->file_length,
+                                    .description = "snapshot-selected final CSEG part image"});
+      if (!bytes.has_value()) {
+        return common::make_unexpected(bytes.error());
+      }
+      common::Status validation =
+          validate_manifest_v1_part_image(*descriptor, database_snapshot.wal_id(), *schema_value,
+                                          {.file_name = file_name, .bytes = *bytes}, limits);
+      if (!validation.is_ok()) {
+        return common::make_unexpected(std::move(validation));
+      }
+      images.push_back(SnapshotPartImage{database_snapshot.database_id(),
+                                         database_snapshot.wal_id(), database_snapshot.generation(),
+                                         *descriptor, std::move(*bytes), std::move(retention),
+                                         database_snapshot.retained_buffer_bytes()});
+    }
+    return images;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                  "Cannot allocate snapshot part images"});
+  } catch (const std::length_error&) {
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                  "Snapshot part images exceed container limits"});
   }
 }
 

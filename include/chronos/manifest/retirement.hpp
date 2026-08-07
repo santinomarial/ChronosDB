@@ -14,6 +14,7 @@ namespace detail {
 class DatabaseStoragePublication;
 class DatabaseStoragePublisherImpl;
 class ManifestStorageTestAccess;
+class PartRetentionPin;
 } // namespace detail
 
 class DatabaseStorageSnapshot;
@@ -47,8 +48,9 @@ struct RetiredPartFile {
   friend bool operator==(const RetiredPartFile&, const RetiredPartFile&) = default;
 };
 
-// Move-only proof issued by successful compaction publication. A live predecessor pin makes the
-// record pending. Once all pins expire they can never be reacquired, so reclamation may proceed.
+// Move-only proof issued by successful compaction publication. Every publication epoch that names
+// an input shares that input's private lifetime pin. Reclamation remains pending while any such pin
+// is live; after all weak pins expire they can never be reacquired, so reclamation may proceed.
 class RetiredPartSet {
 public:
   RetiredPartSet() = delete;
@@ -64,11 +66,11 @@ public:
 
 private:
   RetiredPartSet(std::uint64_t predecessor_generation, std::vector<RetiredPartFile> parts,
-                 std::weak_ptr<const detail::DatabaseStoragePublication> predecessor) noexcept;
+                 std::vector<std::weak_ptr<const detail::PartRetentionPin>> part_pins) noexcept;
 
   std::uint64_t predecessor_generation_{};
   std::vector<RetiredPartFile> parts_;
-  std::weak_ptr<const detail::DatabaseStoragePublication> predecessor_;
+  std::vector<std::weak_ptr<const detail::PartRetentionPin>> part_pins_;
 
   friend class detail::DatabaseStoragePublisherImpl;
   friend class detail::ManifestStorageTestAccess;

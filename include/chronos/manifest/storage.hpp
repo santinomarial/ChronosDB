@@ -14,6 +14,7 @@
 #include "chronos/schema/table_schema.hpp"
 #include "chronos/wal/types.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -181,6 +182,43 @@ private:
   friend class ManifestStorage;
 };
 
+// One fully validated in-memory CSEG image selected by an exact aggregate database snapshot. The
+// move-only owner pins that publication epoch, so compaction reclamation cannot unlink this part
+// while its bytes or descriptor may still be used by a query.
+class SnapshotPartImage {
+public:
+  SnapshotPartImage() = delete;
+  SnapshotPartImage(const SnapshotPartImage&) = delete;
+  SnapshotPartImage& operator=(const SnapshotPartImage&) = delete;
+  SnapshotPartImage(SnapshotPartImage&&) noexcept = default;
+  SnapshotPartImage& operator=(SnapshotPartImage&&) noexcept = default;
+
+  [[nodiscard]] const DatabaseId& database_id() const noexcept;
+  [[nodiscard]] const wal::WalId& wal_id() const noexcept;
+  [[nodiscard]] std::uint64_t snapshot_generation() const noexcept;
+  [[nodiscard]] const PartDescriptor& descriptor() const noexcept;
+  [[nodiscard]] common::ByteView bytes() const noexcept;
+  // Conservative complete publication pin plus owned image/object/allocation bytes. Separate
+  // images from one snapshot intentionally report the shared epoch independently.
+  [[nodiscard]] std::size_t retained_buffer_bytes() const noexcept;
+
+private:
+  SnapshotPartImage(DatabaseId database_id, wal::WalId wal_id, std::uint64_t snapshot_generation,
+                    PartDescriptor descriptor, std::vector<std::byte> bytes,
+                    DatabaseStorageRetentionToken retention,
+                    std::size_t snapshot_retained_buffer_bytes) noexcept;
+
+  DatabaseId database_id_;
+  wal::WalId wal_id_;
+  std::uint64_t snapshot_generation_{};
+  PartDescriptor descriptor_;
+  std::vector<std::byte> bytes_;
+  DatabaseStorageRetentionToken retention_;
+  std::size_t snapshot_retained_buffer_bytes_{};
+
+  friend class ManifestStorage;
+};
+
 // Owns the exact selected Manifest bytes and parsed descriptor state. Returned spans and byte views
 // remain valid until this move-only owner is destroyed or moved from. Orphan and temporary names
 // are observations from the same locked namespace scan; no cleanup or publication is performed.
@@ -206,6 +244,9 @@ public:
   [[nodiscard]] std::span<const cseg::PartId> orphan_parts() const noexcept;
   [[nodiscard]] std::span<const std::string> temporary_parts() const noexcept;
   [[nodiscard]] std::span<const std::string> temporary_manifests() const noexcept;
+  // Conservative bytes retained by this loaded owner, including encoded/decoded descriptor,
+  // namespace-observation capacities, object storage, and allocator allowances.
+  [[nodiscard]] std::size_t retained_buffer_bytes() const noexcept;
 
 private:
   class Impl;
@@ -269,6 +310,15 @@ public:
   // returns owning validated images. The supplied generation must still be the namespace maximum.
   [[nodiscard]] common::Result<std::vector<LoadedPartImage>>
   load_selected_part_images(const LoadedManifestGeneration& selected,
+                            std::span<const cseg::PartId> part_ids,
+                            std::span<const TabletSchemaBinding> schema_bindings,
+                            ReferencedPartValidationLimits limits) const;
+
+  // Loads exact parts from one held aggregate snapshot. Unlike the compaction-oriented selected
+  // generation loader, this accepts a predecessor epoch after a newer Manifest is published. Each
+  // returned image owns a retention token before file access and remains independently safe.
+  [[nodiscard]] common::Result<std::vector<SnapshotPartImage>>
+  load_snapshot_part_images(const DatabaseStorageSnapshot& snapshot,
                             std::span<const cseg::PartId> part_ids,
                             std::span<const TabletSchemaBinding> schema_bindings,
                             ReferencedPartValidationLimits limits) const;

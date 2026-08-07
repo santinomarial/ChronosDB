@@ -108,6 +108,9 @@ public:
   [[nodiscard]] std::span<const PartDescriptor> parts() const noexcept;
   [[nodiscard]] std::span<const RetryDescriptor> retries() const noexcept;
   [[nodiscard]] common::ByteView encoded_bytes() const noexcept;
+  // Owned descriptor-vector capacities only. The borrowed encoded bytes remain the caller's
+  // accounting responsibility.
+  [[nodiscard]] std::size_t retained_buffer_bytes() const noexcept;
 
 private:
   DecodedManifestView(std::uint64_t generation, std::uint64_t previous_generation,

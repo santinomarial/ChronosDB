@@ -25,6 +25,16 @@ namespace {
   return status(common::StatusCode::kInvalidArgument, message);
 }
 
+[[nodiscard]] std::size_t saturating_add(const std::size_t left, const std::size_t right) noexcept {
+  return common::checked_add(left, right).value_or(std::numeric_limits<std::size_t>::max());
+}
+
+template <typename Value>
+[[nodiscard]] std::size_t retained_vector_bytes(const std::vector<Value>& values) noexcept {
+  return common::checked_multiply(values.capacity(), sizeof(Value))
+      .value_or(std::numeric_limits<std::size_t>::max());
+}
+
 [[nodiscard]] ManifestDecodeError incomplete(const std::string_view message,
                                              const std::uint64_t required_size) {
   return {ManifestDecodeErrorKind::kIncomplete, status(common::StatusCode::kOutOfRange, message),
@@ -298,6 +308,12 @@ std::span<const RetryDescriptor> DecodedManifestView::retries() const noexcept {
 
 common::ByteView DecodedManifestView::encoded_bytes() const noexcept {
   return encoded_bytes_;
+}
+
+std::size_t DecodedManifestView::retained_buffer_bytes() const noexcept {
+  std::size_t total = retained_vector_bytes(tablets_);
+  total = saturating_add(total, retained_vector_bytes(parts_));
+  return saturating_add(total, retained_vector_bytes(retries_));
 }
 
 common::Result<EncodedManifest> encode_manifest_v1(const ManifestEncodeInput& input) {

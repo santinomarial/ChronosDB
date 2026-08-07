@@ -222,6 +222,13 @@ Recovery runs repeatedly and can itself crash. The oracle compares chosen manife
 
 A generated bitemporal model supplies base/delta parts, duplicate retries, replacements, tombstones, and retention pins. All current and `FOR SYSTEM_TIME AS OF` snapshots match before and after compaction. Long queries pin heads/parts while flush and compaction publish new generations.
 
+The implemented append-only lifetime slice assigns one shared pin to each selected immutable part
+and carries it through tablet-only and Manifest publication epochs. A regression holds an older
+same-Manifest tablet epoch plus a snapshot-loaded image across compaction and requires reclamation
+to remain pending until both release. Snapshot loading after a newer generation is selected repeats
+exact file/content/WAL/schema validation, while the query adapter proves the final chunk retains its
+image, epoch memory charge, and reclamation pin after source destruction.
+
 ### Query execution
 
 The scalar executor is the primary ChronosDB oracle for vector execution. Random plans vary chunk size, selection density, morsel scheduling, NULL, overflow, NaN, ASOF ties, grouping, and cancellation. The conventional supported SQL intersection is also compared with pinned DuckDB or PostgreSQL test versions; ChronosDB-specific temporal/live behavior uses its own model.

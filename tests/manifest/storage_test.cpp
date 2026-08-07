@@ -3,6 +3,7 @@
 #include "chronos/io/posix_io.hpp"
 #include "chronos/manifest/compaction.hpp"
 #include "chronos/manifest/naming.hpp"
+#include "chronos/manifest/publication.hpp"
 #include "chronos/manifest/storage.hpp"
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/logical_type.hpp"
@@ -17,6 +18,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <gtest/gtest.h>
 #include <optional>
 #include <string>
@@ -450,6 +452,91 @@ TEST(ManifestStorageTest, InstallsExactNextManifestAfterRevalidatingReferencedPa
   const common::Result<ManifestNamespaceSnapshot> snapshot = owner.scan_namespace();
   ASSERT_TRUE(snapshot.has_value());
   EXPECT_EQ(snapshot->generations, (std::vector<std::uint64_t>{1U, 2U}));
+}
+
+TEST(ManifestStorageTest, LoadsSnapshotBoundPartAfterNewerManifestBecomesSelected) {
+  TemporaryDirectory temporary;
+  ASSERT_TRUE(temporary.valid());
+  establish_layout(temporary.path());
+  const PartFixture fixture;
+  const EncodedManifest predecessor = fixture.manifest(1U);
+  create_entry(temporary.path(),
+               std::filesystem::path{kManifestDirectoryName} / *manifest_file_name(1U),
+               predecessor.bytes());
+  create_entry(temporary.path(),
+               std::filesystem::path{kPartsDirectoryName} / part_file_name(fixture.part_id),
+               fixture.encoded.bytes());
+  ManifestStorage owner =
+      ManifestStorage::open_existing({.database_root = temporary.path().string()}).value();
+  const auto bindings = fixture.bindings();
+  auto selected_one = std::make_shared<const LoadedManifestGeneration>(
+      owner
+          .load_selected_manifest({.expected_database_id = fixture.database_id,
+                                   .expected_wal_id = fixture.wal_id,
+                                   .schema_bindings = bindings,
+                                   .decode_limits = {},
+                                   .part_validation_limits = {}})
+          .value());
+  DatabaseStoragePublisher publisher = DatabaseStoragePublisher::create(selected_one, {}).value();
+  const DatabaseStorageSnapshot old_snapshot = publisher.snapshot().value();
+
+  const EncodedManifest successor = fixture.manifest(2U);
+  ASSERT_TRUE(owner
+                  .install_manifest({.encoded_manifest = std::cref(successor),
+                                     .schema_bindings = bindings,
+                                     .nonce = PartFixture::make_nonce(0xc1U),
+                                     .decode_limits = {},
+                                     .part_validation_limits = {}})
+                  .has_value());
+  auto selected_two = std::make_shared<const LoadedManifestGeneration>(
+      owner
+          .load_selected_manifest({.expected_database_id = fixture.database_id,
+                                   .expected_wal_id = fixture.wal_id,
+                                   .schema_bindings = bindings,
+                                   .decode_limits = {},
+                                   .part_validation_limits = {}})
+          .value());
+  ASSERT_TRUE(publisher.publish_manifest({.selected_manifest = selected_two, .replacements = {}})
+                  .has_value());
+  ASSERT_EQ(publisher.snapshot()->generation(), 2U);
+
+  const std::array part_ids{fixture.part_id};
+  common::Result<std::vector<SnapshotPartImage>> images =
+      owner.load_snapshot_part_images(old_snapshot, part_ids, bindings, {});
+  ASSERT_TRUE(images.has_value()) << images.error().to_string();
+  ASSERT_EQ(images->size(), 1U);
+  EXPECT_EQ(images->front().database_id(), fixture.database_id);
+  EXPECT_EQ(images->front().wal_id(), fixture.wal_id);
+  EXPECT_EQ(images->front().snapshot_generation(), 1U);
+  EXPECT_EQ(images->front().descriptor(), fixture.descriptor);
+  EXPECT_TRUE(std::ranges::equal(images->front().bytes(), fixture.encoded.bytes()));
+  EXPECT_GE(images->front().retained_buffer_bytes(), images->front().bytes().size());
+  EXPECT_GT(old_snapshot.retained_buffer_bytes(), old_snapshot.manifest_bytes().size());
+
+  EXPECT_EQ(owner.load_snapshot_part_images(old_snapshot, {}, bindings, {}).error().code(),
+            common::StatusCode::kInvalidArgument);
+  const std::array duplicate_ids{fixture.part_id, fixture.part_id};
+  EXPECT_EQ(
+      owner.load_snapshot_part_images(old_snapshot, duplicate_ids, bindings, {}).error().code(),
+      common::StatusCode::kInvalidArgument);
+  const std::array unknown_ids{id<cseg::PartId>(0xfeU)};
+  EXPECT_EQ(owner.load_snapshot_part_images(old_snapshot, unknown_ids, bindings, {}).error().code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(owner.load_snapshot_part_images(old_snapshot, part_ids, {}, {}).error().code(),
+            common::StatusCode::kInvalidArgument);
+
+  std::fstream damaged{temporary.path() / kPartsDirectoryName / part_file_name(fixture.part_id),
+                       std::ios::binary | std::ios::in | std::ios::out};
+  ASSERT_TRUE(damaged.good());
+  char first{};
+  damaged.read(&first, 1);
+  ASSERT_TRUE(damaged.good());
+  first = static_cast<char>(static_cast<unsigned char>(first) ^ 0x01U);
+  damaged.seekp(0);
+  damaged.write(&first, 1);
+  damaged.close();
+  EXPECT_EQ(owner.load_snapshot_part_images(old_snapshot, part_ids, bindings, {}).error().code(),
+            common::StatusCode::kCorruption);
 }
 
 TEST(ManifestStorageTest, CompactionAuthorityReprovesDiskImagesBeforeAtomicReplacement) {

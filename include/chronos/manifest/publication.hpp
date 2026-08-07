@@ -57,6 +57,7 @@ private:
   std::size_t visible_head_rows_{};
 
   friend class detail::DatabaseStoragePublisherImpl;
+  friend class detail::DatabaseStoragePublication;
   friend class detail::PublishedTabletStorageBuilder;
 };
 
@@ -110,6 +111,9 @@ public:
   [[nodiscard]] const PublishedTabletStorage*
   find_tablet(const schema::TabletId& tablet_id) const noexcept;
   [[nodiscard]] std::size_t visible_head_row_count() const noexcept;
+  // Conservative complete memory retained by this aggregate epoch. The same shared bytes are
+  // deliberately reported by every independent query pin; on-disk part lengths are not memory.
+  [[nodiscard]] std::size_t retained_buffer_bytes() const noexcept;
   [[nodiscard]] DatabaseStorageRetentionToken retention_token() const noexcept;
 
 private:

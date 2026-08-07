@@ -46,12 +46,13 @@ Complete the initial Phase 7 boundary without changing CSEG v1 or Manifest v1:
   slice. A late append remains the same CSEG v1 `APPEND_ROWS` version; `DELTA` does not grant row
   deletion or reinterpretation authority.
 - Successful compaction publication creates a retirement record containing the exact predecessor
-  generation, exact removed final-part identities, and a weak lifetime token for that predecessor
-  publication. Every query, backup, subscription, inspection, or other consumer that can retain
-  its descriptors or file access must retain the corresponding owning snapshot/token.
-- The single-threaded storage owner may reclaim a retirement record only after its weak token has
-  expired. It then rescans the locked namespace, rereads and exact-compares the currently selected
-  Manifest owner, proves none of the candidate identities is currently referenced, unlinks only
+  generation, exact removed final-part identities, and lifetime evidence refined by
+  [ADR 0027](0027-snapshot-bound-cseg-images-and-part-lifetime-pins.md) to one weak pin per removed
+  input. Every query, backup, subscription, inspection, or other consumer that can retain its
+  descriptors or file access must retain the corresponding owning snapshot/token/image.
+- The single-threaded storage owner may reclaim a retirement record only after every removed-input
+  weak pin has expired. It then rescans the locked namespace, rereads and exact-compares the current
+  selected Manifest owner, proves none of the candidate identities is currently referenced, unlinks only
   exact regular final-part names, and synchronizes the parts directory. A live pin returns a
   deterministic pending outcome without mutation. Already-absent unreferenced candidates make
   retry idempotent. Any failure after an unlink and before the directory sync poisons that storage
@@ -73,10 +74,11 @@ tuning. Record sequence approximates arrival order while PartId makes ties repro
 classification can only produce a less useful candidate. The full-row equivalence proof and atomic
 Manifest transition remain the only authorities for installing a replacement.
 
-A weak predecessor token directly represents invariant 11: reclamation becomes possible only when
-the final owner capable of exposing that predecessor disappears. Revalidating the selected
-Manifest immediately before unlink prevents a stale retirement record from deleting a part that a
-later generation references again, even though current writers prohibit identity reuse.
+Per-part weak pins directly represent invariant 11 across every tablet-refresh and Manifest epoch:
+reclamation becomes possible only when the final owner capable of exposing each input disappears.
+Revalidating the selected Manifest immediately before unlink prevents a stale retirement record
+from deleting a part that a later generation references again, even though current writers
+prohibit identity reuse.
 
 ## Alternatives considered
 
