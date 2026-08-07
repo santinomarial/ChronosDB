@@ -204,13 +204,13 @@ public:
   OwnedPhysicalColumn() = delete;
   OwnedPhysicalColumn(const OwnedPhysicalColumn&) = delete;
   OwnedPhysicalColumn& operator=(const OwnedPhysicalColumn&) = delete;
-  OwnedPhysicalColumn(OwnedPhysicalColumn&&) noexcept = default;
-  OwnedPhysicalColumn& operator=(OwnedPhysicalColumn&&) noexcept = default;
+  OwnedPhysicalColumn(OwnedPhysicalColumn&& other) noexcept;
+  OwnedPhysicalColumn& operator=(OwnedPhysicalColumn&& other) noexcept;
 
   [[nodiscard]] static common::Result<OwnedPhysicalColumn> create(PhysicalColumnMetadata metadata,
                                                                   ColumnVectorBuffers buffers);
 
-  [[nodiscard]] PhysicalColumnView view() const noexcept;
+  [[nodiscard]] const PhysicalColumnView& view() const noexcept;
   [[nodiscard]] const schema::LogicalType& type() const noexcept;
   [[nodiscard]] bool nullable() const noexcept;
   [[nodiscard]] std::uint32_t row_count() const noexcept;
@@ -228,6 +228,7 @@ private:
   std::uint32_t row_count_;
   std::uint32_t null_count_;
   ColumnVectorBuffers buffers_;
+  PhysicalColumnView view_;
 };
 
 // Owns immutable canonical buffers. Accessors expose only const spans; view() borrows this object.

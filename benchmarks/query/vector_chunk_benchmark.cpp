@@ -5,6 +5,7 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -27,6 +28,31 @@ struct LimitShape {
   std::uint32_t rows;
   std::uint32_t selection_stride;
   std::size_t maximum_selected_rows;
+};
+
+class BenchmarkBacking final : public VectorChunkBacking {
+public:
+  explicit BenchmarkBacking(columnar::OwnedPhysicalColumn column) : column_(std::move(column)) {}
+
+  [[nodiscard]] std::size_t column_count() const noexcept override {
+    return 1U;
+  }
+
+  [[nodiscard]] const columnar::PhysicalColumnView*
+  column(const std::size_t ordinal) const noexcept override {
+    return ordinal == 0U ? &column_.view() : nullptr;
+  }
+
+  [[nodiscard]] std::size_t buffer_bytes() const noexcept override {
+    return column_.buffer_bytes();
+  }
+
+  [[nodiscard]] std::size_t retained_buffer_bytes() const noexcept override {
+    return sizeof(column_) + column_.retained_buffer_bytes();
+  }
+
+private:
+  columnar::OwnedPhysicalColumn column_;
 };
 
 [[nodiscard]] columnar::OwnedPhysicalColumn make_column(const std::uint32_t rows) {
@@ -120,6 +146,30 @@ void scan_selected_cells(benchmark::State& state) {
       static_cast<double>(chunk.selected_row_count()) / static_cast<double>(rows);
 }
 
+void attach_pinned_chunk_backing(benchmark::State& state) {
+  const auto rows = static_cast<std::uint32_t>(state.range(0));
+  const auto stride = static_cast<std::uint32_t>(state.range(1));
+  const std::vector<std::uint32_t> source = selection_indices(rows, stride);
+  const std::shared_ptr<const VectorChunkBacking> backing =
+      std::make_shared<const BenchmarkBacking>(make_column(rows));
+  for (auto _ : state) {
+    static_cast<void>(_);
+    VectorSelection selection = VectorSelection::from_indices(rows, source).value();
+    auto chunk =
+        VectorChunk::create_backed(backing, std::move(selection),
+                                   {.maximum_rows = rows,
+                                    .maximum_columns = 1U,
+                                    .maximum_buffer_bytes = kBenchmarkChunkMemoryLimit,
+                                    .maximum_retained_buffer_bytes = kBenchmarkChunkMemoryLimit});
+    benchmark::DoNotOptimize(chunk);
+  }
+  state.SetItemsProcessed(static_cast<std::int64_t>(state.iterations()) *
+                          static_cast<std::int64_t>(source.size()));
+  state.counters["physical_rows"] = static_cast<double>(rows);
+  state.counters["selection_density"] =
+      static_cast<double>(source.size()) / static_cast<double>(rows);
+}
+
 void compact_selection_where_true(benchmark::State& state) {
   const auto rows = static_cast<std::uint32_t>(state.range(0));
   const auto true_stride = static_cast<std::uint32_t>(state.range(1));
@@ -129,7 +179,7 @@ void compact_selection_where_true(benchmark::State& state) {
   for (auto _ : state) {
     static_cast<void>(_);
     VectorSelection selection = VectorSelection::from_indices(rows, source).value();
-    auto filtered = VectorSelection::where_true(std::move(selection), predicate);
+    auto filtered = VectorSelection::where_true(std::move(selection), predicate.view());
     benchmark::DoNotOptimize(filtered);
   }
   state.SetItemsProcessed(static_cast<std::int64_t>(state.iterations()) *
@@ -220,6 +270,13 @@ BENCHMARK(scan_selected_cells)
     ->Args({64, 4})
     ->Args({1'024, 4})
     ->Args({4'096, 4})
+    ->Args({64, 16})
+    ->Args({1'024, 16})
+    ->Args({4'096, 16});
+BENCHMARK(attach_pinned_chunk_backing)
+    ->Args({64, 1})
+    ->Args({1'024, 1})
+    ->Args({4'096, 1})
     ->Args({64, 16})
     ->Args({1'024, 16})
     ->Args({4'096, 16});

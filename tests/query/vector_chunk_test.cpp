@@ -1,12 +1,16 @@
+#include "chronos/query/physical_operator.hpp"
 #include "chronos/query/value.hpp"
 #include "chronos/query/vector_chunk.hpp"
 #include "chronos/schema/logical_type.hpp"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
+#include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -61,6 +65,65 @@ namespace {
   return *std::get_if<std::int64_t>(&scalar.storage());
 }
 
+class OwnedTestBacking final : public VectorChunkBacking {
+public:
+  explicit OwnedTestBacking(std::vector<columnar::OwnedPhysicalColumn> columns,
+                            std::shared_ptr<bool> destroyed = {},
+                            std::optional<std::size_t> reported_buffer = {},
+                            std::optional<std::size_t> reported_retained = {},
+                            const bool missing_column = false)
+      : columns_(std::move(columns)), destroyed_(std::move(destroyed)),
+        missing_column_(missing_column) {
+    std::size_t buffer_bytes = 0U;
+    std::size_t retained_bytes = columns_.capacity() * sizeof(columnar::OwnedPhysicalColumn);
+    for (const columnar::OwnedPhysicalColumn& column : columns_) {
+      buffer_bytes += column.buffer_bytes();
+      retained_bytes += column.retained_buffer_bytes();
+    }
+    buffer_bytes_ = reported_buffer.value_or(buffer_bytes);
+    retained_buffer_bytes_ = reported_retained.value_or(retained_bytes);
+  }
+
+  ~OwnedTestBacking() override {
+    if (destroyed_ != nullptr)
+      *destroyed_ = true;
+  }
+
+  [[nodiscard]] std::size_t column_count() const noexcept override {
+    return columns_.size();
+  }
+
+  [[nodiscard]] const columnar::PhysicalColumnView*
+  column(const std::size_t ordinal) const noexcept override {
+    if (missing_column_ || ordinal >= columns_.size())
+      return nullptr;
+    return &columns_[ordinal].view();
+  }
+
+  [[nodiscard]] std::size_t buffer_bytes() const noexcept override {
+    return buffer_bytes_;
+  }
+
+  [[nodiscard]] std::size_t retained_buffer_bytes() const noexcept override {
+    return retained_buffer_bytes_;
+  }
+
+private:
+  std::vector<columnar::OwnedPhysicalColumn> columns_;
+  std::shared_ptr<bool> destroyed_;
+  bool missing_column_;
+  std::size_t buffer_bytes_{};
+  std::size_t retained_buffer_bytes_{};
+};
+
+[[nodiscard]] std::shared_ptr<const VectorChunkBacking>
+test_backing(std::vector<columnar::OwnedPhysicalColumn> columns,
+             std::shared_ptr<bool> destroyed = {}, std::optional<std::size_t> reported_buffer = {},
+             std::optional<std::size_t> reported_retained = {}, const bool missing_column = false) {
+  return std::make_shared<const OwnedTestBacking>(
+      std::move(columns), std::move(destroyed), reported_buffer, reported_retained, missing_column);
+}
+
 TEST(VectorSelectionTest, OwnsExplicitOrderedIdentityAndSparseSelections) {
   const auto all = VectorSelection::all(4U);
   ASSERT_TRUE(all.has_value());
@@ -99,7 +162,7 @@ TEST(VectorChunkTest, MapsSelectedRowsAcrossCanonicalPhysicalColumns) {
   ASSERT_TRUE(chunk.has_value()) << chunk.error().to_string();
   EXPECT_EQ(chunk->physical_row_count(), 4U);
   EXPECT_EQ(chunk->selected_row_count(), 3U);
-  EXPECT_EQ(chunk->columns().size(), 1U);
+  EXPECT_EQ(chunk->column_count(), 1U);
   EXPECT_EQ(selected_int64(*chunk, 0U), 10);
   EXPECT_EQ(selected_int64(*chunk, 1U), 30);
   EXPECT_EQ(selected_int64(*chunk, 2U), 40);
@@ -116,8 +179,126 @@ TEST(VectorChunkTest, SupportsColumnFreeCardinalityAndEmptySelection) {
   ASSERT_TRUE(chunk.has_value());
   EXPECT_EQ(chunk->physical_row_count(), 5U);
   EXPECT_EQ(chunk->selected_row_count(), 0U);
-  EXPECT_TRUE(chunk->columns().empty());
+  EXPECT_EQ(chunk->column_count(), 0U);
   EXPECT_EQ(chunk->buffer_bytes(), 0U);
+}
+
+TEST(VectorChunkBackingTest, PinsBorrowedColumnsAndKeepsBackingAccountingAfterProjection) {
+  auto destroyed = std::make_shared<bool>(false);
+  std::vector<columnar::OwnedPhysicalColumn> columns;
+  columns.push_back(int64_column({10, 20, 30}));
+  columns.push_back(int64_column({40, 50, 60}));
+  std::shared_ptr<const VectorChunkBacking> backing = test_backing(std::move(columns), destroyed);
+  const std::size_t backing_buffer_bytes = backing->buffer_bytes();
+  const std::size_t backing_retained_bytes = backing->retained_buffer_bytes();
+
+  {
+    auto chunk =
+        VectorChunk::create_backed(backing, VectorSelection::from_indices(3U, {0U, 2U}).value());
+    ASSERT_TRUE(chunk.has_value());
+    EXPECT_EQ(chunk->column_count(), 2U);
+    EXPECT_EQ(chunk->buffer_bytes(), backing_buffer_bytes + 2U * sizeof(std::uint32_t));
+    EXPECT_GE(chunk->retained_buffer_bytes(), backing_retained_bytes);
+    const std::size_t chunk_buffer_bytes = chunk->buffer_bytes();
+    const std::size_t chunk_retained_bytes = chunk->retained_buffer_bytes();
+    backing.reset();
+    EXPECT_FALSE(*destroyed);
+
+    auto projected =
+        VectorChunk::project_columns(std::move(*chunk), std::array<std::size_t, 1>{1U});
+    ASSERT_TRUE(projected.has_value());
+    EXPECT_EQ(projected->column_count(), 1U);
+    EXPECT_EQ(projected->buffer_bytes(), chunk_buffer_bytes);
+    EXPECT_EQ(projected->retained_buffer_bytes(), chunk_retained_bytes);
+    EXPECT_EQ(selected_int64(*projected, 0U), 40);
+    EXPECT_EQ(selected_int64(*projected, 1U), 60);
+    EXPECT_FALSE(*destroyed);
+  }
+  EXPECT_TRUE(*destroyed);
+}
+
+TEST(VectorChunkBackingTest, RejectsInvalidShapeAndUnderreportedOwnership) {
+  EXPECT_EQ(VectorChunk::create_backed({}, VectorSelection::all(1U).value()).error().code(),
+            common::StatusCode::kInvalidArgument);
+
+  {
+    std::vector<columnar::OwnedPhysicalColumn> columns;
+    columns.push_back(int64_column({1, 2}));
+    auto result = VectorChunk::create_backed(test_backing(std::move(columns)),
+                                             VectorSelection::all(3U).value());
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code(), common::StatusCode::kInvalidArgument);
+  }
+  {
+    std::vector<columnar::OwnedPhysicalColumn> columns;
+    columns.push_back(int64_column({1, 2}));
+    auto result = VectorChunk::create_backed(test_backing(std::move(columns), {}, 0U, 0U),
+                                             VectorSelection::all(2U).value());
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code(), common::StatusCode::kInvalidArgument);
+  }
+  {
+    std::vector<columnar::OwnedPhysicalColumn> columns;
+    columns.push_back(int64_column({1, 2}));
+    auto result = VectorChunk::create_backed(test_backing(std::move(columns), {}, {}, {}, true),
+                                             VectorSelection::all(2U).value());
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().code(), common::StatusCode::kInvalidArgument);
+  }
+}
+
+TEST(VectorChunkBackingTest, EnforcesEveryConfiguredConstructionBound) {
+  std::vector<columnar::OwnedPhysicalColumn> columns;
+  columns.push_back(int64_column({1, 2}));
+  columns.push_back(int64_column({3, 4}));
+  const std::shared_ptr<const VectorChunkBacking> backing = test_backing(std::move(columns));
+
+  EXPECT_EQ(
+      VectorChunk::create_backed(backing, VectorSelection::all(2U).value(), {.maximum_rows = 0U})
+          .error()
+          .code(),
+      common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(
+      VectorChunk::create_backed(backing, VectorSelection::all(2U).value(), {.maximum_rows = 1U})
+          .error()
+          .code(),
+      common::StatusCode::kResourceExhausted);
+  EXPECT_EQ(
+      VectorChunk::create_backed(backing, VectorSelection::all(2U).value(), {.maximum_columns = 1U})
+          .error()
+          .code(),
+      common::StatusCode::kResourceExhausted);
+  EXPECT_EQ(VectorChunk::create_backed(backing, VectorSelection::all(2U).value(),
+                                       {.maximum_buffer_bytes = backing->buffer_bytes()})
+                .error()
+                .code(),
+            common::StatusCode::kResourceExhausted);
+  EXPECT_EQ(VectorChunk::create_backed(
+                backing, VectorSelection::all(2U).value(),
+                {.maximum_retained_buffer_bytes = backing->retained_buffer_bytes()})
+                .error()
+                .code(),
+            common::StatusCode::kResourceExhausted);
+}
+
+TEST(VectorChunkBackingTest, AccountedOwnershipKeepsThePinAndCreditCoupled) {
+  const auto resources = QueryResourceContext::create(4'096U).value();
+  auto destroyed = std::make_shared<bool>(false);
+  std::vector<columnar::OwnedPhysicalColumn> columns;
+  columns.push_back(int64_column({1, 2, 3}));
+  std::shared_ptr<const VectorChunkBacking> backing = test_backing(std::move(columns), destroyed);
+  auto chunk = VectorChunk::create_backed(backing, VectorSelection::all(3U).value()).value();
+  const std::size_t charge = chunk.retained_buffer_bytes();
+  {
+    auto accounted = AccountedVectorChunk::create(std::move(chunk),
+                                                  resources.reserve(charge).value(), resources);
+    ASSERT_TRUE(accounted.has_value());
+    backing.reset();
+    EXPECT_FALSE(*destroyed);
+    EXPECT_EQ(resources.reserved_memory_bytes(), charge);
+  }
+  EXPECT_TRUE(*destroyed);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
 }
 
 TEST(VectorChunkTest, EnforcesShapeLogicalAndRetainedBoundsBeforeRetention) {
@@ -214,8 +395,20 @@ TEST(VectorChunkPropertyTest, PreservesOrderAcrossDeterministicBatchAndSelection
                                             .maximum_buffer_bytes = 1U << 20U,
                                             .maximum_retained_buffer_bytes = 1U << 20U});
     ASSERT_TRUE(chunk.has_value());
-    for (std::size_t index = 0U; index < selected.size(); ++index)
+    std::vector<columnar::OwnedPhysicalColumn> backed_columns;
+    backed_columns.push_back(int64_column(values));
+    const auto backed =
+        VectorChunk::create_backed(test_backing(std::move(backed_columns)),
+                                   VectorSelection::from_indices(rows, selected).value(),
+                                   {.maximum_rows = rows,
+                                    .maximum_columns = 1U,
+                                    .maximum_buffer_bytes = 1U << 20U,
+                                    .maximum_retained_buffer_bytes = 1U << 20U});
+    ASSERT_TRUE(backed.has_value());
+    for (std::size_t index = 0U; index < selected.size(); ++index) {
       EXPECT_EQ(selected_int64(*chunk, index), values[selected[index]]);
+      EXPECT_EQ(selected_int64(*backed, index), selected_int64(*chunk, index));
+    }
   }
 }
 

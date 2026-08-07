@@ -233,7 +233,7 @@ TEST(PhysicalPipelinePlanTest, InstantiatesACompletePipelineAndReleasesUnusedInp
     if (step->kind() == PhysicalOperatorStepKind::kEnd)
       break;
     ASSERT_NE(step->chunk(), nullptr);
-    ASSERT_EQ(step->chunk()->chunk().columns().size(), 1U);
+    ASSERT_EQ(step->chunk()->chunk().column_count(), 1U);
     for (std::size_t row = 0U; row < step->chunk()->chunk().selected_row_count(); ++row)
       actual.push_back(selected_int64(step->chunk()->chunk(), row));
   }

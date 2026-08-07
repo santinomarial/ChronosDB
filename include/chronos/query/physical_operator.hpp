@@ -111,8 +111,9 @@ private:
   bool ended_{};
 };
 
-// Stable projection pushdown for an ordered unique subset of input columns. Computed, duplicated,
-// or reordered SQL outputs require the later typed expression/output builder.
+// Stable projection pushdown for an ordered unique subset of input columns. Direct owned storage is
+// released for discarded columns; a shared backing remains conservatively pinned and charged.
+// Computed, duplicated, or reordered SQL outputs require the later typed expression/output builder.
 class ColumnSubsetOperator final : public PhysicalOperator {
 public:
   [[nodiscard]] static common::Result<std::unique_ptr<PhysicalOperator>>

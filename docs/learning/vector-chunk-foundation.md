@@ -22,6 +22,8 @@ the existing `PhysicalColumnView` validator and exposes safe borrowed views and 
 - `VectorSelection`, a move-only owner of strictly increasing UINT32 physical row ordinals;
 - `VectorChunkLimits`, finite row, column, logical-byte, and retained-byte limits; and
 - `VectorChunk`, a move-only owner of zero or more equal-length physical columns plus one selection.
+  ADR 0024 later generalizes physical storage to direct ownership or one lifetime-pinned backing;
+  see the [backing guide](pinned-vector-backing.md).
 
 Factories return `common::Result<T>`. Invalid shape is `INVALID_ARGUMENT`, a configured bound is
 `RESOURCE_EXHAUSTED`, and a bad selected row or column access is `OUT_OF_RANGE`.
@@ -44,9 +46,11 @@ the logical sequence returned by `indices()` or selected-cell access.
 
 ## Ownership and lifetime
 
-Columns, selection ordinals, and their allocation capacity belong to the chunk. The chunk is
-move-only and exposes no mutating accessor. `cell()` returns a borrowed `ColumnCellView`; byte cells
-remain valid only while the same unmoved chunk remains alive. A move or destruction invalidates
+Selection ordinals and direct column allocation capacity belong to the chunk. Under ADR 0024,
+columns may instead borrow one immutable `VectorChunkBacking` retained by shared ownership; its
+ordinal map and complete reported backing charge still belong to the chunk. The chunk is move-only
+and exposes no mutating accessor. `cell()` returns a borrowed `ColumnCellView`; byte cells remain
+valid only while the same unmoved chunk/backing remains alive. A move or destruction invalidates
 outstanding cells and column views.
 
 Concurrent const reads are safe because all retained buffers are immutable. No publication or
@@ -56,12 +60,15 @@ chunks or retain an owner across every task; it cannot enqueue a borrowed cell o
 ## Memory bounds
 
 `buffer_bytes()` adds exact column buffer sizes and selected-index bytes with checked arithmetic.
-`retained_buffer_bytes()` performs the same accounting with vector capacities. The factory rejects
-zero limits, row/column overflow, logical-byte excess, and retained-byte excess before returning
-the owner.
+`retained_buffer_bytes()` performs the same accounting with vector capacities. Backed chunks add
+their owner's conservative retained count and ordinal-map capacity. The factories reject zero
+limits, row/column overflow, logical-byte excess, retained-byte excess, and backing underreporting
+before returning the owner.
 
-These counters deliberately exclude object layout, `std::vector` control blocks, allocator
-metadata, operator hash tables, snapshot pins, and scheduler queues. They are a local admission
+Direct-owner counters deliberately exclude object layout, `std::vector` control blocks, allocator
+metadata, operator hash tables, snapshot pins, and scheduler queues. A backing's retained count is
+the explicit extension point for conservatively charging its non-buffer storage and external pins;
+exact allocator metadata may be rounded up because it is not portable. These are local admission
 check, not a total query-memory promise. `QueryResourceContext` now provides a query-wide credit
 boundary, but each future operator must reserve before allocation and conservatively charge all
 those additional domains.
@@ -90,9 +97,10 @@ partitions through 257 rows. The refactored physical owner is also exercised thr
 columnar batch, codec, CSEG, head, ingest, and Manifest test.
 
 `chronos_vector_chunk_fuzz` feeds arbitrary bytes into selection construction and valid Boolean
-chunk access. `chronos_query_benchmarks` measures selection construction and checked selected-cell
-traversal at 64, 1,024, and 4,096 physical rows with 100%, 25%, and 6.25% density. Benchmark results
-must follow the repository benchmark contract and do not establish a product throughput claim.
+chunk access through direct and backed owners. `chronos_query_benchmarks` measures selection
+construction, checked selected-cell traversal, and pinned-backing attachment at 64, 1,024, and
+4,096 physical rows across representative densities. Benchmark results must follow the repository
+benchmark contract and do not establish a product throughput claim.
 
 ## Tradeoffs and next steps
 

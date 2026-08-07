@@ -104,14 +104,14 @@ public:
           invalid("physical pipeline source returned a chunk charged to another query"));
     }
 
-    const std::span<const columnar::OwnedPhysicalColumn> actual = chunk->chunk().columns();
-    if (actual.size() != columns_.size()) {
+    if (chunk->chunk().column_count() != columns_.size()) {
       static_cast<void>(resources.request_cancel());
       return common::make_unexpected(invalid("physical pipeline source column count mismatch"));
     }
-    for (std::size_t ordinal = 0U; ordinal < actual.size(); ++ordinal) {
-      if (actual[ordinal].type() != columns_[ordinal].type ||
-          actual[ordinal].nullable() != columns_[ordinal].nullable) {
+    for (std::size_t ordinal = 0U; ordinal < columns_.size(); ++ordinal) {
+      const columnar::PhysicalColumnView* actual = chunk->chunk().column(ordinal);
+      if (actual == nullptr || actual->type() != columns_[ordinal].type ||
+          actual->nullable() != columns_[ordinal].nullable) {
         static_cast<void>(resources.request_cancel());
         return common::make_unexpected(invalid("physical pipeline source column shape mismatch"));
       }

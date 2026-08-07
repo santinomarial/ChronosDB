@@ -124,7 +124,7 @@ TEST(VectorSelectionFilterTest, CompactsExistingIndicesWithSqlWhereTruth) {
   const auto predicate = bool_column(std::vector<std::int8_t>{1, 0, -1, 1, 0});
   VectorSelection input = VectorSelection::from_indices(5U, {0U, 2U, 3U, 4U}).value();
   const std::size_t retained = input.retained_buffer_bytes();
-  const auto output = VectorSelection::where_true(std::move(input), predicate);
+  const auto output = VectorSelection::where_true(std::move(input), predicate.view());
   ASSERT_TRUE(output.has_value());
   const std::vector<std::uint32_t> expected{0U, 3U};
   EXPECT_TRUE(std::ranges::equal(output->indices(), expected));
@@ -134,10 +134,13 @@ TEST(VectorSelectionFilterTest, CompactsExistingIndicesWithSqlWhereTruth) {
 
 TEST(VectorSelectionFilterTest, ValidatesPredicateTypeAndPhysicalShape) {
   const auto integer = int64_column(std::vector<std::int64_t>{1, 2});
-  EXPECT_EQ(VectorSelection::where_true(VectorSelection::all(2U).value(), integer).error().code(),
-            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(
+      VectorSelection::where_true(VectorSelection::all(2U).value(), integer.view()).error().code(),
+      common::StatusCode::kInvalidArgument);
   const auto predicate = bool_column(std::vector<std::int8_t>{1});
-  EXPECT_EQ(VectorSelection::where_true(VectorSelection::all(2U).value(), predicate).error().code(),
+  EXPECT_EQ(VectorSelection::where_true(VectorSelection::all(2U).value(), predicate.view())
+                .error()
+                .code(),
             common::StatusCode::kInvalidArgument);
 }
 
@@ -202,24 +205,23 @@ TEST(VectorChunkProjectionTest, StableCompactsColumnsAndPreservesRowsSelectionAn
   const std::array<std::size_t, 1> predicate_only{1U};
   auto projected = AccountedVectorChunk::project_columns(std::move(input), predicate_only);
   ASSERT_TRUE(projected.has_value());
-  ASSERT_EQ(projected->chunk().columns().size(), 1U);
-  EXPECT_EQ(projected->chunk().columns()[0].type().code(),
+  ASSERT_EQ(projected->chunk().column_count(), 1U);
+  ASSERT_NE(projected->chunk().column(0U), nullptr);
+  EXPECT_EQ(projected->chunk().column(0U)->type().code(),
             type(schema::LogicalTypeKind::kBool).code());
   EXPECT_EQ(projected->chunk().physical_row_count(), 4U);
   const std::vector<std::uint32_t> expected_selection{0U, 2U, 3U};
   EXPECT_TRUE(std::ranges::equal(projected->chunk().selection().indices(), expected_selection));
   EXPECT_EQ(projected->chunk().buffer_bytes(), projected->chunk().selection().buffer_bytes() +
-                                                   projected->chunk().columns()[0].buffer_bytes());
-  EXPECT_EQ(projected->chunk().retained_buffer_bytes(),
-            projected->chunk().selection().retained_buffer_bytes() +
-                projected->chunk().columns()[0].retained_buffer_bytes());
+                                                   projected->chunk().column(0U)->buffer_bytes());
+  EXPECT_GE(projected->chunk().retained_buffer_bytes(), projected->chunk().buffer_bytes());
   EXPECT_LT(projected->chunk().retained_buffer_bytes(), original_retained);
   EXPECT_EQ(projected->charged_memory_bytes(), 1'024U);
   EXPECT_EQ(resources.reserved_memory_bytes(), 1'024U);
 
   auto zero_columns = AccountedVectorChunk::project_columns(std::move(*projected), {});
   ASSERT_TRUE(zero_columns.has_value());
-  EXPECT_TRUE(zero_columns->chunk().columns().empty());
+  EXPECT_EQ(zero_columns->chunk().column_count(), 0U);
   EXPECT_EQ(zero_columns->chunk().physical_row_count(), 4U);
   EXPECT_TRUE(std::ranges::equal(zero_columns->chunk().selection().indices(), expected_selection));
   EXPECT_EQ(zero_columns->chunk().buffer_bytes(), zero_columns->chunk().selection().buffer_bytes());
@@ -384,8 +386,9 @@ TEST(ColumnSubsetOperatorTest, ProjectsOneChunkWithoutChangingItsChargeAndEndsSt
     auto step = (*projection)->next(resources);
     ASSERT_TRUE(step.has_value());
     ASSERT_NE(step->chunk(), nullptr);
-    ASSERT_EQ(step->chunk()->chunk().columns().size(), 1U);
-    EXPECT_EQ(step->chunk()->chunk().columns()[0].type().code(),
+    ASSERT_EQ(step->chunk()->chunk().column_count(), 1U);
+    ASSERT_NE(step->chunk()->chunk().column(0U), nullptr);
+    EXPECT_EQ(step->chunk()->chunk().column(0U)->type().code(),
               type(schema::LogicalTypeKind::kInt64).code());
     const std::vector<std::uint32_t> expected{0U, 2U, 3U};
     EXPECT_TRUE(std::ranges::equal(step->chunk()->chunk().selection().indices(), expected));
@@ -472,7 +475,7 @@ TEST(ColumnSubsetOperatorPropertyTest, PreservesSelectedRowsAndBooleanCellsForEv
         accounted_chunk(resources, values, predicates, std::move(selected)),
         std::array<std::size_t, 1>{1U});
     ASSERT_TRUE(projected.has_value());
-    ASSERT_EQ(projected->chunk().columns().size(), 1U);
+    ASSERT_EQ(projected->chunk().column_count(), 1U);
     EXPECT_TRUE(std::ranges::equal(projected->chunk().selection().indices(), expected));
     for (std::size_t selected_row = 0U; selected_row < expected.size(); ++selected_row) {
       const auto cell =

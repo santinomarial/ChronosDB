@@ -4,11 +4,38 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <utility>
 #include <vector>
 
 namespace {
+
+class SingleColumnBacking final : public chronos::query::VectorChunkBacking {
+public:
+  explicit SingleColumnBacking(chronos::columnar::OwnedPhysicalColumn column)
+      : column_(std::move(column)) {}
+
+  [[nodiscard]] std::size_t column_count() const noexcept override {
+    return 1U;
+  }
+
+  [[nodiscard]] const chronos::columnar::PhysicalColumnView*
+  column(const std::size_t ordinal) const noexcept override {
+    return ordinal == 0U ? &column_.view() : nullptr;
+  }
+
+  [[nodiscard]] std::size_t buffer_bytes() const noexcept override {
+    return column_.buffer_bytes();
+  }
+
+  [[nodiscard]] std::size_t retained_buffer_bytes() const noexcept override {
+    return sizeof(column_) + column_.retained_buffer_bytes();
+  }
+
+private:
+  chronos::columnar::OwnedPhysicalColumn column_;
+};
 
 [[nodiscard]] chronos::columnar::OwnedPhysicalColumn
 make_bool_column(const std::uint32_t rows, const std::span<const std::uint8_t> input) {
@@ -74,13 +101,33 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
       const std::size_t ordinal_count = size == 0U ? 0U : size % (ordinals.size() + 1U);
       auto projected = chronos::query::VectorChunk::project_columns(
           std::move(limited), std::span<const std::size_t>{ordinals}.first(ordinal_count));
-      if (!projected.has_value() || projected->columns().empty() ||
+      if (!projected.has_value() || projected->column_count() == 0U ||
           projected->selected_row_count() == 0U) {
         return 0;
       }
       const auto cell = projected->cell({.column_ordinal = 0U, .selected_row = 0U});
       if (cell.has_value())
         static_cast<void>(cell->kind());
+    }
+  }
+
+  auto backing = std::make_shared<const SingleColumnBacking>(make_bool_column(rows, input));
+  auto backed = chronos::query::VectorChunk::create_backed(
+      std::move(backing), chronos::query::VectorSelection::all(rows).value(),
+      {.maximum_rows = 256U,
+       .maximum_columns = 1U,
+       .maximum_buffer_bytes = 4'096U,
+       .maximum_retained_buffer_bytes = 4'096U});
+  if (backed.has_value()) {
+    auto filtered = chronos::query::VectorChunk::where_true(std::move(*backed), 0U);
+    if (filtered.has_value()) {
+      auto projected = chronos::query::VectorChunk::project_columns(std::move(*filtered),
+                                                                    std::array<std::size_t, 1>{0U});
+      if (projected.has_value() && projected->selected_row_count() != 0U) {
+        const auto cell = projected->cell({.column_ordinal = 0U, .selected_row = 0U});
+        if (cell.has_value())
+          static_cast<void>(cell->kind());
+      }
     }
   }
   return 0;

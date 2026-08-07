@@ -151,5 +151,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Physical pipeline plan](learning/physical-pipeline-plan.md): implemented bounded immutable unary
   plans, exact physical-shape propagation and source enforcement, composed scalar differential
   execution, hostile fuzzing, allocation/ownership failure behavior, and plan-overhead measurement.
+- [Lifetime-pinned vector backing](learning/pinned-vector-backing.md): implemented uniform physical
+  views over direct or shared immutable storage, conservative backing/ordinal accounting, coupled
+  pin-credit lifetime, projection behavior, fuzzing, and ownership-overhead measurement.
 
 Future format, protocol, subsystem, operations, and learning documents should be linked here when they are added by their corresponding roadmap phase.

@@ -266,6 +266,8 @@ int main() {
   const auto physical_plan = chronos::query::PhysicalPipelinePlan::create({}, {});
   const auto vector_chunk = chronos::query::VectorChunk::create(
       {}, chronos::query::VectorSelection::all(1U).value());
+  const auto backed_vector_chunk = chronos::query::VectorChunk::create_backed(
+      {}, chronos::query::VectorSelection::all(1U).value());
   using BindSelectFunction = chronos::query::SqlResult<chronos::query::BoundSqlSelect> (*)(
       chronos::query::ParsedSqlSelect,
       std::shared_ptr<const chronos::query::QueryCatalogSnapshot>,
@@ -471,6 +473,7 @@ int main() {
                  create_limit != nullptr &&
                  physical_plan.has_value() && physical_plan->output_columns().empty() &&
                  vector_chunk.has_value() && vector_chunk->selected_row_count() == 1U &&
+                 !backed_vector_chunk.has_value() &&
                  chronos::query::kMaximumSqlV1Sources == 64U && aggregate_query != nullptr &&
                  bind_select != nullptr && bind_create != nullptr && bind_insert != nullptr &&
                  materialize_insert != nullptr &&

@@ -367,9 +367,13 @@ No phase passes because its code merely compiles. A phase passes only when its a
   installed-consumer linkage. ADR 0023 and the sixth increment add a bounded immutable unary
   physical pipeline plan, exact type/nullability propagation and runtime source enforcement,
   retained-configuration limits, composed fixed-seed scalar-model differential execution, hostile
-  fuzzing, plan-overhead benchmarks, and installed-consumer linkage. Bound-SQL lowering, optimizer
-  rules, typed vector expressions and output builders, storage scans, complete allocation charging,
-  scheduling, spill, and full scalar-engine differential plan execution are unimplemented.
+  fuzzing, plan-overhead benchmarks, and installed-consumer linkage. ADR 0024 and the seventh
+  increment add lifetime-pinned immutable chunk backings, uniform physical views, conservative
+  backing/ordinal accounting, direct-versus-backed projection reclamation, coupled pin/credit
+  lifetime, deterministic ownership properties, fuzzing, backing-attachment benchmarks, and
+  installed-consumer linkage. Bound-SQL lowering, optimizer rules, typed vector expressions and
+  output builders, CSEG and mutable-head scan sources, complete allocation charging, scheduling,
+  spill, and full scalar-engine differential plan execution are unimplemented.
 
 - **Scope:** bounded vectors, vectorized scans/expressions/aggregates/joins, physical planning, memory accounting, cancellation, parallel scheduling, and spill for explicitly supported operators.
 - **Explicit non-scope:** distributed fragments, GPU novelty, unbounded query memory, or optimizer rules lacking semantic/differential validation.

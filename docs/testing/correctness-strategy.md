@@ -85,6 +85,10 @@
 > differential execution across randomized selections and chunk boundaries, hostile plan fuzzing,
 > sanitizer coverage, and plan-overhead measurement. Bound-SQL/full scalar-engine plan differential
 > and distributed query harnesses remain planned for their roadmap phases.
+> Lifetime-pinned vector backing adds missing/shape/underreporting failures, caller-handle and
+> accounted-credit destruction checks, conservative projection accounting, direct-versus-backed
+> fixed-seed equivalence, backed-path fuzzing, sanitizer coverage, and attachment-overhead
+> measurement before the first storage scan is admitted.
 
 ## Test types
 

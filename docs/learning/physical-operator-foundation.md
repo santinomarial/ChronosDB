@@ -71,17 +71,20 @@ transformation.
 ## Stable column-subset projection
 
 `VectorChunk::project_columns` accepts only unique, strictly increasing input ordinals. It validates
-the complete request before mutation, then move-compacts retained column owners toward the front and
-destroys the rest. The operation allocates no memory, preserves physical rows, selection ordinals,
-row order, and column order, and recomputes logical and retained canonical-buffer counts. An empty
-subset is valid and preserves row cardinality for operators such as `COUNT(*)`.
+the complete request before mutation. Direct-owned chunks move-compact retained column owners and
+destroy the rest; lifetime-backed chunks compact only their ordinal map because the monolithic
+backing remains pinned and conservatively charged. Both paths allocate no memory and preserve
+physical rows, selection ordinals, row order, and column order. An empty subset is valid and
+preserves row cardinality for operators such as `COUNT(*)`.
 
 Duplicate and reordered columns are deliberately not projection pushdown: they require a later typed
 output builder with explicit output positions. `ColumnSubsetOperator` bounds its retained ordinal
 plan at 4,096 entries. The accounted wrapper carries the original reservation after dropping
 buffers. That credit may conservatively exceed the remaining buffers and is returned as one unit;
 shrinking it could improve utilization but requires a separately specified resize/transfer
-contract. This first stage keeps the original finite credit and never undercounts.
+contract. This first stage keeps the original finite credit and never undercounts. Backed chunks
+also retain their complete backing byte count after projection because no backing storage was
+released.
 
 ## Global LIMIT semantics
 
@@ -122,9 +125,10 @@ complete task/pipeline owner and acquire it before invoking `next` on another th
 ## Complexity and failure behavior
 
 An accounted-wrapper construction and operator step are `O(1)` excluding their transformation.
-Boolean filtering is `O(S)` for `S` selected rows. Column-subset validation and compaction are
-`O(P + C)` for `P` projected and `C` removed columns. Both use `O(1)` additional memory. A virtual
-call and LIMIT truncation are `O(1)` per chunk. Factory allocation or an oversized retained
+Boolean filtering is `O(S)` for `S` selected rows. Direct column-subset validation and compaction
+are `O(P + C)` for `P` projected and `C` removed columns; backed compaction is `O(P)`. Both use
+`O(1)` additional memory. A virtual call and LIMIT truncation are `O(1)` per chunk. Factory
+allocation or an oversized retained
 projection plan is `RESOURCE_EXHAUSTED`; validation failures release the input chunk and reservation
 without durable or external effects.
 

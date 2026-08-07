@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <vector>
 
@@ -40,7 +41,7 @@ public:
   // Consumes and compacts this selection to rows whose Boolean predicate is TRUE. FALSE and NULL
   // are removed according to SQL WHERE semantics. The existing index allocation is reused.
   [[nodiscard]] static common::Result<VectorSelection>
-  where_true(VectorSelection selection, const columnar::OwnedPhysicalColumn& predicate);
+  where_true(VectorSelection selection, const columnar::PhysicalColumnView& predicate);
   // Stable truncation used by LIMIT. Retained capacity is unchanged and an oversized maximum is a
   // no-op.
   [[nodiscard]] static VectorSelection take_first(VectorSelection selection,
@@ -69,9 +70,29 @@ struct SelectedVectorCell {
   std::size_t selected_row;
 };
 
+// Immutable lifetime owner for physical columns that are not individually owned by VectorChunk.
+// Implementations must return stable views, report all canonical buffer sizes in buffer_bytes(),
+// and conservatively charge their retained allocations and pins in retained_buffer_bytes(). A
+// backing must not own the chunk that references it.
+class VectorChunkBacking {
+public:
+  VectorChunkBacking() = default;
+  VectorChunkBacking(const VectorChunkBacking&) = delete;
+  VectorChunkBacking& operator=(const VectorChunkBacking&) = delete;
+  VectorChunkBacking(VectorChunkBacking&&) = delete;
+  VectorChunkBacking& operator=(VectorChunkBacking&&) = delete;
+  virtual ~VectorChunkBacking() = default;
+
+  [[nodiscard]] virtual std::size_t column_count() const noexcept = 0;
+  [[nodiscard]] virtual const columnar::PhysicalColumnView*
+  column(std::size_t ordinal) const noexcept = 0;
+  [[nodiscard]] virtual std::size_t buffer_bytes() const noexcept = 0;
+  [[nodiscard]] virtual std::size_t retained_buffer_bytes() const noexcept = 0;
+};
+
 // A move-only immutable physical chunk. Columns use canonical physical buffers without durable
-// column identities, so computed expressions never fabricate catalog identity. The explicit
-// selection preserves input order and maps logical selected rows to physical vector rows.
+// column identities and are either owned directly or borrowed through one immutable lifetime
+// backing. The explicit selection preserves input order and maps selected rows to physical rows.
 class VectorChunk {
 public:
   VectorChunk() = delete;
@@ -83,11 +104,14 @@ public:
   [[nodiscard]] static common::Result<VectorChunk>
   create(std::vector<columnar::OwnedPhysicalColumn> columns, VectorSelection selection,
          VectorChunkLimits limits = {});
+  [[nodiscard]] static common::Result<VectorChunk>
+  create_backed(std::shared_ptr<const VectorChunkBacking> backing, VectorSelection selection,
+                VectorChunkLimits limits = {});
 
   [[nodiscard]] std::uint32_t physical_row_count() const noexcept;
   [[nodiscard]] std::size_t selected_row_count() const noexcept;
-  [[nodiscard]] std::span<const columnar::OwnedPhysicalColumn> columns() const noexcept;
-  [[nodiscard]] const columnar::OwnedPhysicalColumn* column(std::size_t ordinal) const noexcept;
+  [[nodiscard]] std::size_t column_count() const noexcept;
+  [[nodiscard]] const columnar::PhysicalColumnView* column(std::size_t ordinal) const noexcept;
   [[nodiscard]] const VectorSelection& selection() const noexcept;
   [[nodiscard]] common::Result<columnar::ColumnCellView> cell(SelectedVectorCell position) const;
   [[nodiscard]] std::size_t buffer_bytes() const noexcept;
@@ -96,8 +120,9 @@ public:
   // Consumes a chunk and replaces its selection with the allocation-free SQL Boolean filter.
   [[nodiscard]] static common::Result<VectorChunk> where_true(VectorChunk chunk,
                                                               std::size_t predicate_column);
-  // Stable-compacts an ordered unique subset without allocating. An empty subset preserves row
-  // cardinality for operators such as COUNT(*); duplicate or reordered outputs require a builder.
+  // Stable-compacts an ordered unique subset without allocating. Directly owned discarded columns
+  // release their buffers; a shared backing remains wholly pinned and charged until chunk release.
+  // An empty subset preserves row cardinality; duplicate or reordered outputs require a builder.
   [[nodiscard]] static common::Result<VectorChunk>
   project_columns(VectorChunk chunk, std::span<const std::size_t> column_ordinals);
   [[nodiscard]] static VectorChunk take_first(VectorChunk chunk, std::size_t maximum_selected_rows);
@@ -110,8 +135,13 @@ private:
 
   VectorChunk(std::vector<columnar::OwnedPhysicalColumn> columns, VectorSelection selection,
               Accounting accounting) noexcept;
+  VectorChunk(std::shared_ptr<const VectorChunkBacking> backing,
+              std::vector<std::size_t> backing_column_ordinals, VectorSelection selection,
+              Accounting accounting) noexcept;
 
-  std::vector<columnar::OwnedPhysicalColumn> columns_;
+  std::vector<columnar::OwnedPhysicalColumn> owned_columns_;
+  std::shared_ptr<const VectorChunkBacking> backing_;
+  std::vector<std::size_t> backing_column_ordinals_;
   VectorSelection selection_;
   std::size_t buffer_bytes_;
   std::size_t retained_buffer_bytes_;
