@@ -48,6 +48,17 @@ AccountedVectorChunk::where_true(AccountedVectorChunk input, const std::size_t p
 }
 
 common::Result<AccountedVectorChunk>
+AccountedVectorChunk::where_timestamp_in_range(AccountedVectorChunk input,
+                                               const std::size_t timestamp_column,
+                                               const TimestampRangePredicate& predicate) {
+  common::Result<VectorChunk> filtered =
+      VectorChunk::where_timestamp_in_range(std::move(input.chunk_), timestamp_column, predicate);
+  if (!filtered.has_value())
+    return common::make_unexpected(filtered.error());
+  return AccountedVectorChunk{std::move(*filtered), std::move(input.reservation_)};
+}
+
+common::Result<AccountedVectorChunk>
 AccountedVectorChunk::project_columns(AccountedVectorChunk input,
                                       const std::span<const std::size_t> column_ordinals) {
   common::Result<VectorChunk> projected =
@@ -150,6 +161,65 @@ BooleanFilterOperator::next(const QueryResourceContext& resources) {
   }
   common::Result<AccountedVectorChunk> filtered =
       AccountedVectorChunk::where_true(std::move(*chunk), predicate_column_);
+  if (!filtered.has_value()) {
+    static_cast<void>(resources.request_cancel());
+    return common::make_unexpected(filtered.error());
+  }
+  return PhysicalOperatorStep::chunk(std::move(*filtered));
+}
+
+TimestampRangeFilterOperator::TimestampRangeFilterOperator(
+    std::unique_ptr<PhysicalOperator> input, const std::size_t timestamp_column,
+    TimestampRangePredicate predicate) noexcept
+    : input_(std::move(input)), timestamp_column_(timestamp_column), predicate_(predicate) {}
+
+common::Result<std::unique_ptr<PhysicalOperator>>
+TimestampRangeFilterOperator::create(std::unique_ptr<PhysicalOperator> input,
+                                     const std::size_t timestamp_column,
+                                     TimestampRangePredicate predicate) {
+  if (input == nullptr) {
+    return common::make_unexpected(
+        invalid("timestamp range filter input operator must be non-null"));
+  }
+  try {
+    return std::unique_ptr<PhysicalOperator>{
+        new TimestampRangeFilterOperator{std::move(input), timestamp_column, predicate}};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "timestamp range filter operator allocation failed"});
+  }
+}
+
+common::Result<PhysicalOperatorStep>
+TimestampRangeFilterOperator::next(const QueryResourceContext& resources) {
+  if (ended_)
+    return PhysicalOperatorStep::end();
+  const common::Result<void> active = resources.check_cancelled();
+  if (!active.has_value())
+    return common::make_unexpected(active.error());
+
+  common::Result<PhysicalOperatorStep> input = input_->next(resources);
+  if (!input.has_value()) {
+    static_cast<void>(resources.request_cancel());
+    return common::make_unexpected(input.error());
+  }
+  if (input->kind() == PhysicalOperatorStepKind::kEnd) {
+    ended_ = true;
+    return PhysicalOperatorStep::end();
+  }
+  common::Result<AccountedVectorChunk> chunk = std::move(*input).take_chunk();
+  if (!chunk.has_value()) {
+    static_cast<void>(resources.request_cancel());
+    return common::make_unexpected(chunk.error());
+  }
+  if (!chunk->belongs_to(resources)) {
+    static_cast<void>(resources.request_cancel());
+    return common::make_unexpected(
+        invalid("physical operator received a chunk charged to another query"));
+  }
+  common::Result<AccountedVectorChunk> filtered = AccountedVectorChunk::where_timestamp_in_range(
+      std::move(*chunk), timestamp_column_, predicate_);
   if (!filtered.has_value()) {
     static_cast<void>(resources.request_cancel());
     return common::make_unexpected(filtered.error());

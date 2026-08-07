@@ -98,6 +98,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/query/explain.hpp>
 #include <chronos/query/snapshot.hpp>
 #include <chronos/query/statement_binder.hpp>
+#include <chronos/query/timestamp_range.hpp>
 #include <chronos/query/value.hpp>
 #include <chronos/query/vector_chunk.hpp>
 #include <chronos/manifest/types.hpp>
@@ -317,10 +318,19 @@ int main() {
           std::unique_ptr<chronos::query::PhysicalOperator>, std::vector<std::size_t>);
   const CreateColumnSubsetFunction create_column_subset =
       &chronos::query::ColumnSubsetOperator::create;
+  using CreateTimestampRangeFilterFunction =
+      chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
+          std::unique_ptr<chronos::query::PhysicalOperator>, std::size_t,
+          chronos::query::TimestampRangePredicate);
+  const CreateTimestampRangeFilterFunction create_timestamp_range_filter =
+      &chronos::query::TimestampRangeFilterOperator::create;
   using CreateLimitFunction =
       chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
           std::unique_ptr<chronos::query::PhysicalOperator>, std::uint64_t);
   const CreateLimitFunction create_limit = &chronos::query::LimitOperator::create;
+  const chronos::query::TimestampRangePredicate timestamp_range{
+      .lower = chronos::query::TimestampRangeBound{.value = -1, .inclusive = false},
+      .upper = chronos::query::TimestampRangeBound{.value = 1, .inclusive = true}};
   const auto physical_plan = chronos::query::PhysicalPipelinePlan::create({}, {});
   const auto vector_chunk = chronos::query::VectorChunk::create(
       {}, chronos::query::VectorSelection::all(1U).value());
@@ -536,7 +546,8 @@ int main() {
                  query_resources.has_value() &&
                  query_resources->available_memory_bytes() == 1'024U &&
                  physical_end.kind() == chronos::query::PhysicalOperatorStepKind::kEnd &&
-                 create_column_subset != nullptr && create_head_scan != nullptr &&
+                 create_column_subset != nullptr && create_timestamp_range_filter != nullptr &&
+                 timestamp_range.matches(0) && create_head_scan != nullptr &&
                  create_limit != nullptr &&
                  physical_plan.has_value() && physical_plan->output_columns().empty() &&
                  vector_chunk.has_value() && vector_chunk->selected_row_count() == 1U &&

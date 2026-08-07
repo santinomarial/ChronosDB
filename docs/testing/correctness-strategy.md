@@ -108,6 +108,12 @@
 > failure, hostile projection fuzzing, sanitizer coverage, and isolated materialization
 > measurements. It explicitly excludes hidden row versions, multi-head/part composition, and exact
 > SQL filtering from its correctness claim.
+> Exact timestamp-range vector filtering adds direct open/closed signed-domain edge tests, NULL and
+> empty-range semantics, sparse-selection/chunk-boundary scalar properties, invalid type/shape/query
+> ownership failures, bounded-plan validation, hostile vector/plan fuzzing, sanitizer coverage,
+> compaction microbenchmarks, and installed-consumer linkage. Conservative storage pruning remains
+> separate from exact truth until bound-SQL scan lowering retains the event-time column through the
+> filter.
 
 ## Test types
 

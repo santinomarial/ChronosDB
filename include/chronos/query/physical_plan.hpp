@@ -30,6 +30,11 @@ struct BooleanFilterStage {
   std::size_t predicate_column;
 };
 
+struct TimestampRangeFilterStage {
+  std::size_t timestamp_column;
+  TimestampRangePredicate predicate;
+};
+
 struct ColumnSubsetStage {
   std::vector<std::size_t> column_ordinals;
 };
@@ -38,7 +43,8 @@ struct LimitStage {
   std::uint64_t maximum_rows;
 };
 
-using PhysicalPipelineStage = std::variant<BooleanFilterStage, ColumnSubsetStage, LimitStage>;
+using PhysicalPipelineStage =
+    std::variant<BooleanFilterStage, TimestampRangeFilterStage, ColumnSubsetStage, LimitStage>;
 
 struct PhysicalPipelinePlanLimits {
   std::size_t maximum_input_columns{kDefaultVectorChunkColumnLimit};

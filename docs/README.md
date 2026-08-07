@@ -170,5 +170,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Mutable-head scan source](learning/mutable-head-scan-source.md): implemented exact-publication
   head pinning, bounded canonical bitmap/offset materialization, schema-tail NULL synthesis,
   query-accounted pull ownership, and the explicit hidden-version/aggregate-scan boundary.
+- [Exact timestamp-range vector filter](learning/exact-timestamp-range-filter.md): implemented
+  edge-safe open/closed `TIMESTAMP_NS` truth, allocation-free stable selection compaction,
+  query-accounted pull and bounded-plan integration, fuzzing, and measurement boundaries.
 
 Future format, protocol, subsystem, operations, and learning documents should be linked here when they are added by their corresponding roadmap phase.

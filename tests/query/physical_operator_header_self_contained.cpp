@@ -11,5 +11,7 @@ static_assert(std::is_nothrow_move_constructible_v<chronos::query::PhysicalOpera
 static_assert(std::has_virtual_destructor_v<chronos::query::PhysicalOperator>);
 static_assert(
     std::is_base_of_v<chronos::query::PhysicalOperator, chronos::query::ColumnSubsetOperator>);
+static_assert(std::is_base_of_v<chronos::query::PhysicalOperator,
+                                chronos::query::TimestampRangeFilterOperator>);
 static_assert(std::is_base_of_v<chronos::query::PhysicalOperator, chronos::query::LimitOperator>);
 static_assert(chronos::query::kMaximumColumnSubsetWidth == 4'096U);

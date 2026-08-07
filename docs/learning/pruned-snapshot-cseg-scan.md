@@ -125,7 +125,9 @@ already proved disjointness for this snapshot. Selected authority remains fully 
 validated.
 
 **Does point pruning return only the matching row?** No. It returns complete intersecting
-granules. Pruning is work avoidance, not predicate evaluation.
+granules. Pruning is work avoidance, not predicate evaluation. The exact
+[timestamp-range filter](exact-timestamp-range-filter.md) supplies the row-level primitive, but
+automatic scan projection/lowering is not implemented yet.
 
 **Why validate projection on an empty selection?** Invalid query configuration must not become
 conditionally valid because current metadata happens to select no work.

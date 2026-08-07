@@ -4,6 +4,7 @@
 #include "chronos/common/status.hpp"
 #include "chronos/schema/logical_type.hpp"
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -32,6 +33,14 @@ namespace {
     return common::make_unexpected(exhausted("vector selection byte accounting overflowed"));
   }
   return *bytes;
+}
+
+[[nodiscard]] std::int64_t read_timestamp_ns(const common::ByteView bytes) noexcept {
+  std::uint64_t bits = 0U;
+  for (std::size_t byte = 0U; byte < sizeof(bits); ++byte) {
+    bits |= static_cast<std::uint64_t>(std::to_integer<std::uint8_t>(bytes[byte])) << (byte * 8U);
+  }
+  return std::bit_cast<std::int64_t>(bits);
 }
 
 } // namespace
@@ -131,6 +140,44 @@ VectorSelection::where_true(VectorSelection selection,
     if (!value.has_value())
       return common::make_unexpected(value.error());
     if (*value) {
+      selection.indices_[output] = physical_row;
+      ++output;
+    }
+  }
+  selection.indices_.resize(output);
+  selection.identity_ = selection.identity_ && output == selection.physical_row_count_;
+  return selection;
+}
+
+common::Result<VectorSelection>
+VectorSelection::where_timestamp_in_range(VectorSelection selection,
+                                          const columnar::PhysicalColumnView& timestamp_column,
+                                          const TimestampRangePredicate& predicate) {
+  if (timestamp_column.type().kind() != schema::LogicalTypeKind::kTimestampNs) {
+    return common::make_unexpected(
+        invalid("vector timestamp range column must have TIMESTAMP_NS type"));
+  }
+  if (timestamp_column.row_count() != selection.physical_row_count_) {
+    return common::make_unexpected(
+        invalid("vector timestamp row count must match the selection physical row count"));
+  }
+  if (predicate.is_empty()) {
+    selection.indices_.clear();
+    selection.identity_ = false;
+    return selection;
+  }
+
+  std::size_t output = 0U;
+  for (const std::uint32_t physical_row : selection.indices_) {
+    const common::Result<columnar::ColumnCellView> cell = timestamp_column.cell(physical_row);
+    if (!cell.has_value())
+      return common::make_unexpected(cell.error());
+    if (cell->is_null())
+      continue;
+    const common::Result<common::ByteView> bytes = cell->bytes();
+    if (!bytes.has_value())
+      return common::make_unexpected(bytes.error());
+    if (predicate.matches(read_timestamp_ns(*bytes))) {
       selection.indices_[output] = physical_row;
       ++output;
     }
@@ -368,6 +415,25 @@ common::Result<VectorChunk> VectorChunk::where_true(VectorChunk chunk,
   const std::size_t old_selection_bytes = chunk.selection_.buffer_bytes();
   common::Result<VectorSelection> filtered =
       VectorSelection::where_true(std::move(chunk.selection_), *predicate);
+  if (!filtered.has_value())
+    return common::make_unexpected(filtered.error());
+  chunk.selection_ = std::move(*filtered);
+  chunk.buffer_bytes_ -= old_selection_bytes;
+  chunk.buffer_bytes_ += chunk.selection_.buffer_bytes();
+  return chunk;
+}
+
+common::Result<VectorChunk>
+VectorChunk::where_timestamp_in_range(VectorChunk chunk, const std::size_t timestamp_column,
+                                      const TimestampRangePredicate& predicate) {
+  const columnar::PhysicalColumnView* timestamp = chunk.column(timestamp_column);
+  if (timestamp == nullptr) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kOutOfRange, "vector timestamp column is out of range"});
+  }
+  const std::size_t old_selection_bytes = chunk.selection_.buffer_bytes();
+  common::Result<VectorSelection> filtered =
+      VectorSelection::where_timestamp_in_range(std::move(chunk.selection_), *timestamp, predicate);
   if (!filtered.has_value())
     return common::make_unexpected(filtered.error());
   chunk.selection_ = std::move(*filtered);

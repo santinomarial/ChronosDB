@@ -3,6 +3,7 @@
 
 #include "chronos/columnar/column_vector.hpp"
 #include "chronos/common/result.hpp"
+#include "chronos/query/timestamp_range.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -42,6 +43,12 @@ public:
   // are removed according to SQL WHERE semantics. The existing index allocation is reused.
   [[nodiscard]] static common::Result<VectorSelection>
   where_true(VectorSelection selection, const columnar::PhysicalColumnView& predicate);
+  // Consumes and compacts this selection to non-NULL TIMESTAMP_NS rows in the exact range. The
+  // existing index allocation is reused, including for empty or unbounded predicates.
+  [[nodiscard]] static common::Result<VectorSelection>
+  where_timestamp_in_range(VectorSelection selection,
+                           const columnar::PhysicalColumnView& timestamp_column,
+                           const TimestampRangePredicate& predicate);
   // Stable truncation used by LIMIT. Retained capacity is unchanged and an oversized maximum is a
   // no-op.
   [[nodiscard]] static VectorSelection take_first(VectorSelection selection,
@@ -120,6 +127,9 @@ public:
   // Consumes a chunk and replaces its selection with the allocation-free SQL Boolean filter.
   [[nodiscard]] static common::Result<VectorChunk> where_true(VectorChunk chunk,
                                                               std::size_t predicate_column);
+  [[nodiscard]] static common::Result<VectorChunk>
+  where_timestamp_in_range(VectorChunk chunk, std::size_t timestamp_column,
+                           const TimestampRangePredicate& predicate);
   // Stable-compacts an ordered unique subset without allocating. Directly owned discarded columns
   // release their buffers; a shared backing remains wholly pinned and charged until chunk release.
   // An empty subset preserves row cardinality; duplicate or reordered outputs require a builder.

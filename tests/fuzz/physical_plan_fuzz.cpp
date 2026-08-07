@@ -61,12 +61,24 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
   const std::size_t hostile_count = size > 32U ? 32U : size;
   hostile_stages.reserve(hostile_count);
   for (std::size_t index = 0U; index < hostile_count; ++index) {
-    switch (data[index] % 3U) {
+    switch (data[index] % 4U) {
     case 0U:
       hostile_stages.emplace_back(
           chronos::query::BooleanFilterStage{static_cast<std::size_t>(data[index] >> 2U)});
       break;
-    case 1U: {
+    case 1U:
+      hostile_stages.emplace_back(chronos::query::TimestampRangeFilterStage{
+          .timestamp_column = static_cast<std::size_t>((data[index] >> 2U) & 3U),
+          .predicate = {
+              .lower =
+                  chronos::query::TimestampRangeBound{
+                      .value = static_cast<std::int64_t>(static_cast<std::int8_t>(data[index])),
+                      .inclusive = (data[index] & 16U) != 0U},
+              .upper = chronos::query::TimestampRangeBound{
+                  .value = static_cast<std::int64_t>(data[index]),
+                  .inclusive = (data[index] & 32U) != 0U}}});
+      break;
+    case 2U: {
       std::vector<std::size_t> ordinals;
       ordinals.push_back(static_cast<std::size_t>(data[index] & 3U));
       if ((data[index] & 4U) != 0U)
@@ -74,7 +86,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
       hostile_stages.emplace_back(chronos::query::ColumnSubsetStage{std::move(ordinals)});
       break;
     }
-    case 2U:
+    case 3U:
       hostile_stages.emplace_back(chronos::query::LimitStage{data[index]});
       break;
     default:

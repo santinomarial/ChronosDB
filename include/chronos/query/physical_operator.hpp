@@ -32,6 +32,9 @@ public:
   [[nodiscard]] static common::Result<AccountedVectorChunk>
   where_true(AccountedVectorChunk input, std::size_t predicate_column);
   [[nodiscard]] static common::Result<AccountedVectorChunk>
+  where_timestamp_in_range(AccountedVectorChunk input, std::size_t timestamp_column,
+                           const TimestampRangePredicate& predicate);
+  [[nodiscard]] static common::Result<AccountedVectorChunk>
   project_columns(AccountedVectorChunk input, std::span<const std::size_t> column_ordinals);
   [[nodiscard]] static AccountedVectorChunk take_first(AccountedVectorChunk input,
                                                        std::size_t maximum_selected_rows);
@@ -108,6 +111,28 @@ private:
 
   std::unique_ptr<PhysicalOperator> input_;
   std::size_t predicate_column_;
+  bool ended_{};
+};
+
+// Applies exact open/closed TIMESTAMP_NS bounds to one physical column. NULL does not match. The
+// input chunk, selection allocation, row order, and memory credit are retained.
+class TimestampRangeFilterOperator final : public PhysicalOperator {
+public:
+  [[nodiscard]] static common::Result<std::unique_ptr<PhysicalOperator>>
+  create(std::unique_ptr<PhysicalOperator> input, std::size_t timestamp_column,
+         TimestampRangePredicate predicate);
+
+  [[nodiscard]] common::Result<PhysicalOperatorStep>
+  next(const QueryResourceContext& resources) override;
+
+private:
+  TimestampRangeFilterOperator(std::unique_ptr<PhysicalOperator> input,
+                               std::size_t timestamp_column,
+                               TimestampRangePredicate predicate) noexcept;
+
+  std::unique_ptr<PhysicalOperator> input_;
+  std::size_t timestamp_column_;
+  TimestampRangePredicate predicate_;
   bool ended_{};
 };
 

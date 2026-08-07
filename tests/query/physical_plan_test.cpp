@@ -66,6 +66,26 @@ int64_column(const std::span<const std::int64_t> values) {
       .value();
 }
 
+[[nodiscard]] columnar::OwnedPhysicalColumn
+timestamp_column(const std::span<const std::int64_t> values) {
+  columnar::ColumnVectorBuffers buffers;
+  buffers.values.resize(values.size() * sizeof(std::int64_t));
+  for (std::size_t row = 0U; row < values.size(); ++row) {
+    const std::uint64_t bits = std::bit_cast<std::uint64_t>(values[row]);
+    for (std::size_t byte = 0U; byte < sizeof(bits); ++byte) {
+      buffers.values[row * sizeof(bits) + byte] =
+          static_cast<std::byte>((bits >> (byte * 8U)) & 0xffU);
+    }
+  }
+  return columnar::OwnedPhysicalColumn::create(
+             {.type = type(schema::LogicalTypeKind::kTimestampNs),
+              .nullable = false,
+              .row_count = static_cast<std::uint32_t>(values.size()),
+              .null_count = 0U},
+             std::move(buffers))
+      .value();
+}
+
 [[nodiscard]] AccountedVectorChunk accounted_chunk(const QueryResourceContext& resources,
                                                    const std::span<const std::int64_t> values,
                                                    const std::span<const std::int8_t> predicates,
@@ -88,6 +108,18 @@ int64_column(const std::span<const std::int64_t> values) {
   QueryMemoryReservation reservation = resources.reserve(1'024U).value();
   std::vector<columnar::OwnedPhysicalColumn> columns;
   columns.push_back(int64_column(values));
+  VectorChunk chunk =
+      VectorChunk::create(std::move(columns),
+                          VectorSelection::all(static_cast<std::uint32_t>(values.size())).value())
+          .value();
+  return AccountedVectorChunk::create(std::move(chunk), std::move(reservation), resources).value();
+}
+
+[[nodiscard]] AccountedVectorChunk timestamp_chunk(const QueryResourceContext& resources,
+                                                   const std::span<const std::int64_t> values) {
+  QueryMemoryReservation reservation = resources.reserve(1'024U).value();
+  std::vector<columnar::OwnedPhysicalColumn> columns;
+  columns.push_back(timestamp_column(values));
   VectorChunk chunk =
       VectorChunk::create(std::move(columns),
                           VectorSelection::all(static_cast<std::uint32_t>(values.size())).value())
@@ -147,6 +179,15 @@ TEST(PhysicalPipelinePlanTest, PropagatesExactShapesAcrossOrderedStages) {
       PhysicalPipelinePlan::create(input_shape(), {ColumnSubsetStage{.column_ordinals = {}}});
   ASSERT_TRUE(cardinality_only.has_value());
   EXPECT_TRUE(cardinality_only->output_columns().empty());
+
+  auto timestamp_plan = PhysicalPipelinePlan::create(
+      {{.type = type(schema::LogicalTypeKind::kTimestampNs), .nullable = false}},
+      {TimestampRangeFilterStage{
+          .timestamp_column = 0U,
+          .predicate = {.lower = TimestampRangeBound{.value = 0, .inclusive = true}}}});
+  ASSERT_TRUE(timestamp_plan.has_value());
+  ASSERT_EQ(timestamp_plan->output_columns().size(), 1U);
+  EXPECT_EQ(timestamp_plan->output_columns()[0].type.kind(), schema::LogicalTypeKind::kTimestampNs);
 }
 
 TEST(PhysicalPipelinePlanTest, ValidatesEveryStageAgainstItsCurrentShape) {
@@ -160,6 +201,16 @@ TEST(PhysicalPipelinePlanTest, ValidatesEveryStageAgainstItsCurrentShape) {
           .error()
           .code(),
       common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(PhysicalPipelinePlan::create(
+                input_shape(), {TimestampRangeFilterStage{.timestamp_column = 2U, .predicate = {}}})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(PhysicalPipelinePlan::create(
+                input_shape(), {TimestampRangeFilterStage{.timestamp_column = 0U, .predicate = {}}})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
   EXPECT_EQ(
       PhysicalPipelinePlan::create(input_shape(), {ColumnSubsetStage{.column_ordinals = {0U, 0U}}})
           .error()
@@ -242,6 +293,31 @@ TEST(PhysicalPipelinePlanTest, InstantiatesACompletePipelineAndReleasesUnusedInp
   EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
   EXPECT_FALSE(resources.is_cancelled());
   EXPECT_EQ(pipeline->next(resources)->kind(), PhysicalOperatorStepKind::kEnd);
+}
+
+TEST(PhysicalPipelinePlanTest, InstantiatesTimestampRangeStageWithExactBounds) {
+  const auto resources = QueryResourceContext::create(4'096U).value();
+  std::vector<AccountedVectorChunk> chunks;
+  chunks.push_back(timestamp_chunk(resources, std::vector<std::int64_t>{-2, -1, 0, 1, 2}));
+  auto plan = PhysicalPipelinePlan::create(
+                  {{.type = type(schema::LogicalTypeKind::kTimestampNs), .nullable = false}},
+                  {TimestampRangeFilterStage{
+                      .timestamp_column = 0U,
+                      .predicate = {.lower = TimestampRangeBound{.value = -1, .inclusive = false},
+                                    .upper = TimestampRangeBound{.value = 2, .inclusive = true}}}})
+                  .value();
+  auto pipeline = plan.instantiate(std::make_unique<ChunkSource>(std::move(chunks))).value();
+  std::vector<std::int64_t> actual;
+  {
+    auto step = pipeline->next(resources);
+    ASSERT_TRUE(step.has_value());
+    ASSERT_NE(step->chunk(), nullptr);
+    for (std::size_t row = 0U; row < step->chunk()->chunk().selected_row_count(); ++row)
+      actual.push_back(selected_int64(step->chunk()->chunk(), row));
+  }
+  EXPECT_EQ(actual, (std::vector<std::int64_t>{0, 1, 2}));
+  EXPECT_EQ(pipeline->next(resources)->kind(), PhysicalOperatorStepKind::kEnd);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
 }
 
 TEST(PhysicalPipelinePlanTest, RejectsRuntimeSourceShapeMismatchAndReleasesCredit) {

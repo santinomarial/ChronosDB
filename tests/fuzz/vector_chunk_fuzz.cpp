@@ -2,9 +2,12 @@
 #include "chronos/schema/logical_type.hpp"
 
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
+#include <optional>
 #include <span>
 #include <utility>
 #include <vector>
@@ -53,6 +56,46 @@ make_bool_column(const std::uint32_t rows, const std::span<const std::uint8_t> i
               .null_count = 0U},
              std::move(buffers))
       .value();
+}
+
+[[nodiscard]] chronos::columnar::OwnedPhysicalColumn
+make_timestamp_column(const std::uint32_t rows, const std::span<const std::uint8_t> input) {
+  chronos::columnar::ColumnVectorBuffers buffers;
+  buffers.validity.resize(chronos::columnar::bitmap_size(rows));
+  buffers.values.resize(static_cast<std::size_t>(rows) * sizeof(std::int64_t));
+  std::uint32_t null_count = 0U;
+  for (std::uint32_t row = 0U; row < rows; ++row) {
+    const bool present = input.empty() || (input[row % input.size()] & 4U) == 0U;
+    if (present) {
+      buffers.validity[row / 8U] |= static_cast<std::byte>(1U << (row % 8U));
+      const std::int64_t value =
+          static_cast<std::int64_t>(row) - static_cast<std::int64_t>(rows / 2U);
+      const std::uint64_t bits = std::bit_cast<std::uint64_t>(value);
+      for (std::size_t byte = 0U; byte < sizeof(bits); ++byte) {
+        buffers.values[static_cast<std::size_t>(row) * sizeof(bits) + byte] =
+            static_cast<std::byte>((bits >> (byte * 8U)) & 0xffU);
+      }
+    } else {
+      ++null_count;
+    }
+  }
+  return chronos::columnar::OwnedPhysicalColumn::create(
+             {.type = chronos::schema::LogicalType::create(
+                          chronos::schema::LogicalTypeKind::kTimestampNs)
+                          .value(),
+              .nullable = true,
+              .row_count = rows,
+              .null_count = null_count},
+             std::move(buffers))
+      .value();
+}
+
+[[nodiscard]] std::int64_t fuzz_bound(const std::uint8_t value) noexcept {
+  if (value == 0U)
+    return std::numeric_limits<std::int64_t>::min();
+  if (value == std::numeric_limits<std::uint8_t>::max())
+    return std::numeric_limits<std::int64_t>::max();
+  return static_cast<std::int64_t>(static_cast<std::int8_t>(value));
 }
 
 } // namespace
@@ -106,6 +149,34 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
         return 0;
       }
       const auto cell = projected->cell({.column_ordinal = 0U, .selected_row = 0U});
+      if (cell.has_value())
+        static_cast<void>(cell->kind());
+    }
+  }
+
+  std::vector<chronos::columnar::OwnedPhysicalColumn> timestamp_columns;
+  timestamp_columns.push_back(make_timestamp_column(rows, input));
+  auto timestamp_chunk = chronos::query::VectorChunk::create(
+      std::move(timestamp_columns), chronos::query::VectorSelection::all(rows).value(),
+      {.maximum_rows = 256U,
+       .maximum_columns = 1U,
+       .maximum_buffer_bytes = 4'096U,
+       .maximum_retained_buffer_bytes = 4'096U});
+  if (timestamp_chunk.has_value()) {
+    chronos::query::TimestampRangePredicate predicate;
+    if (size > 1U && (data[0] & 1U) != 0U) {
+      predicate.lower = chronos::query::TimestampRangeBound{.value = fuzz_bound(data[1]),
+                                                            .inclusive = (data[0] & 2U) != 0U};
+    }
+    if (size > 2U && (data[0] & 8U) != 0U) {
+      predicate.upper = chronos::query::TimestampRangeBound{.value = fuzz_bound(data[2]),
+                                                            .inclusive = (data[0] & 16U) != 0U};
+    }
+    const std::size_t ordinal = size > 3U ? static_cast<std::size_t>(data[3] % 2U) : 0U;
+    auto filtered = chronos::query::VectorChunk::where_timestamp_in_range(
+        std::move(*timestamp_chunk), ordinal, predicate);
+    if (filtered.has_value() && filtered->selected_row_count() != 0U) {
+      const auto cell = filtered->cell({.column_ordinal = 0U, .selected_row = 0U});
       if (cell.has_value())
         static_cast<void>(cell->kind());
     }

@@ -74,6 +74,25 @@ private:
       .value();
 }
 
+[[nodiscard]] columnar::OwnedPhysicalColumn make_timestamp_column(const std::uint32_t rows) {
+  columnar::ColumnVectorBuffers buffers;
+  buffers.values.resize(static_cast<std::size_t>(rows) * sizeof(std::int64_t));
+  for (std::uint32_t row = 0U; row < rows; ++row) {
+    const std::uint64_t bits = std::bit_cast<std::uint64_t>(static_cast<std::int64_t>(row));
+    for (std::size_t byte = 0U; byte < sizeof(bits); ++byte) {
+      buffers.values[static_cast<std::size_t>(row) * sizeof(bits) + byte] =
+          static_cast<std::byte>((bits >> (byte * 8U)) & 0xffU);
+    }
+  }
+  return columnar::OwnedPhysicalColumn::create(
+             {.type = schema::LogicalType::create(schema::LogicalTypeKind::kTimestampNs).value(),
+              .nullable = false,
+              .row_count = rows,
+              .null_count = 0U},
+             std::move(buffers))
+      .value();
+}
+
 [[nodiscard]] columnar::OwnedPhysicalColumn make_predicate(const PredicateShape shape) {
   columnar::ColumnVectorBuffers buffers;
   buffers.values.resize(columnar::bitmap_size(shape.rows));
@@ -188,6 +207,48 @@ void compact_selection_where_true(benchmark::State& state) {
   state.counters["true_density"] = 1.0 / static_cast<double>(true_stride);
 }
 
+void compact_selection_timestamp_range(benchmark::State& state) {
+  constexpr std::size_t kSelectionsPerIteration = 256U;
+  const auto rows = static_cast<std::uint32_t>(state.range(0));
+  const auto selection_stride = static_cast<std::uint32_t>(state.range(1));
+  const columnar::OwnedPhysicalColumn timestamps = make_timestamp_column(rows);
+  const std::vector<std::uint32_t> source = selection_indices(rows, selection_stride);
+  const TimestampRangePredicate predicate{
+      .lower =
+          TimestampRangeBound{.value = static_cast<std::int64_t>(rows / 4U), .inclusive = true},
+      .upper = TimestampRangeBound{.value = static_cast<std::int64_t>((rows * 3U) / 4U),
+                                   .inclusive = false}};
+  for (auto _ : state) {
+    static_cast<void>(_);
+    state.PauseTiming();
+    {
+      std::vector<VectorSelection> selections;
+      selections.reserve(kSelectionsPerIteration);
+      for (std::size_t index = 0U; index < kSelectionsPerIteration; ++index)
+        selections.push_back(VectorSelection::from_indices(rows, source).value());
+      state.ResumeTiming();
+      for (VectorSelection& selection : selections) {
+        auto filtered = VectorSelection::where_timestamp_in_range(std::move(selection),
+                                                                  timestamps.view(), predicate);
+        selection = std::move(filtered).value();
+      }
+      benchmark::DoNotOptimize(selections);
+      state.PauseTiming();
+    }
+    state.ResumeTiming();
+  }
+  state.SetItemsProcessed(static_cast<std::int64_t>(state.iterations()) *
+                          static_cast<std::int64_t>(kSelectionsPerIteration) *
+                          static_cast<std::int64_t>(source.size()));
+  state.SetBytesProcessed(static_cast<std::int64_t>(state.iterations()) *
+                          static_cast<std::int64_t>(kSelectionsPerIteration) *
+                          static_cast<std::int64_t>(source.size()) *
+                          static_cast<std::int64_t>(sizeof(std::int64_t)));
+  state.counters["physical_rows"] = static_cast<double>(rows);
+  state.counters["selection_density"] = 1.0 / static_cast<double>(selection_stride);
+  state.counters["range_density"] = 0.5;
+}
+
 void project_column_subset(benchmark::State& state) {
   const ProjectionShape shape{.rows = static_cast<std::uint32_t>(state.range(0)),
                               .columns = static_cast<std::size_t>(state.range(1))};
@@ -281,6 +342,16 @@ BENCHMARK(attach_pinned_chunk_backing)
     ->Args({1'024, 16})
     ->Args({4'096, 16});
 BENCHMARK(compact_selection_where_true)
+    ->Args({64, 1})
+    ->Args({1'024, 1})
+    ->Args({4'096, 1})
+    ->Args({64, 4})
+    ->Args({1'024, 4})
+    ->Args({4'096, 4})
+    ->Args({64, 16})
+    ->Args({1'024, 16})
+    ->Args({4'096, 16});
+BENCHMARK(compact_selection_timestamp_range)
     ->Args({64, 1})
     ->Args({1'024, 1})
     ->Args({4'096, 1})

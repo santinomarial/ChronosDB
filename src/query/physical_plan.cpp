@@ -166,6 +166,18 @@ PhysicalPipelinePlan::create(std::vector<PhysicalColumnShape> input_columns,
         }
         continue;
       }
+      if (const auto* range = std::get_if<TimestampRangeFilterStage>(&stage); range != nullptr) {
+        if (range->timestamp_column >= output_columns.size()) {
+          return common::make_unexpected(
+              invalid("physical pipeline timestamp range column is out of range"));
+        }
+        if (output_columns[range->timestamp_column].type.kind() !=
+            schema::LogicalTypeKind::kTimestampNs) {
+          return common::make_unexpected(
+              invalid("physical pipeline timestamp range column must have TIMESTAMP_NS type"));
+        }
+        continue;
+      }
       if (const auto* subset = std::get_if<ColumnSubsetStage>(&stage); subset != nullptr) {
         if (subset->column_ordinals.size() > kMaximumColumnSubsetWidth) {
           return common::make_unexpected(
@@ -240,6 +252,10 @@ PhysicalPipelinePlan::instantiate(std::unique_ptr<PhysicalOperator> source) cons
           common::make_unexpected(invalid("physical pipeline stage is not supported"));
       if (const auto* filter = std::get_if<BooleanFilterStage>(&stage); filter != nullptr) {
         next = BooleanFilterOperator::create(std::move(pipeline), filter->predicate_column);
+      } else if (const auto* range = std::get_if<TimestampRangeFilterStage>(&stage);
+                 range != nullptr) {
+        next = TimestampRangeFilterOperator::create(std::move(pipeline), range->timestamp_column,
+                                                    range->predicate);
       } else if (const auto* subset = std::get_if<ColumnSubsetStage>(&stage); subset != nullptr) {
         next = ColumnSubsetOperator::create(std::move(pipeline), subset->column_ordinals);
       } else if (const auto* limit = std::get_if<LimitStage>(&stage); limit != nullptr) {

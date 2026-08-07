@@ -390,9 +390,13 @@ No phase passes because its code merely compiles. A phase passes only when its a
   increment add a query-accounted source over one exact mutable-head publication, bounded canonical
   bitmap/offset materialization, schema-successor NULL synthesis, preserved caller projection
   order, deterministic snapshot/boundary properties, exhaustive allocation failure, fuzzing,
-  materialization benchmarks, and installed-consumer linkage. The durable and mutable sources still
-  expose user columns independently: bound-SQL lowering, exact vector predicates, optimizer rules,
-  typed vector expressions and output builders, hidden row-version columns, complete multi-part/head
+  materialization benchmarks, and installed-consumer linkage. ADR 0030 and the thirteenth increment
+  add edge-safe open/closed `TIMESTAMP_NS` predicates, allocation-free exact selection compaction,
+  NULL and empty-chunk semantics, query-accounted pull behavior, bounded physical-plan integration,
+  deterministic scalar properties, hostile fuzz coverage, microbenchmarks, and installed-consumer
+  linkage. The durable and mutable sources still expose user columns independently: bound-SQL
+  lowering, automatic prune-then-exact scan composition, general typed vector expressions and
+  output builders, optimizer rules, hidden row-version columns, complete multi-part/head
   composition, base/delta merge and row-version resolution, mapped/asynchronous providers, shared
   pin credit, scheduling, spill, and full scalar-engine differential plan execution are
   unimplemented.

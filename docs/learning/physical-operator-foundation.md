@@ -5,9 +5,10 @@
 The physical pipeline foundation connects bounded vectors to query-wide memory and cancellation.
 It defines one owning pull step and implements pinned single- and sequential multi-part CSEG
 sources, a canonicalizing source over one exact mutable-head publication, allocation-free Boolean
-filtering, stable column-subset projection, and global LIMIT. It does not lower a bound SQL plan or
-compose all snapshot-visible mutable heads with durable parts into a complete tablet source, so the
-Phase 8 scalar executor remains the only complete SQL execution path.
+filtering, exact timestamp-range filtering, stable column-subset projection, and global LIMIT. It
+does not lower a bound SQL plan or compose all snapshot-visible mutable heads with durable parts
+into a complete tablet source, so the Phase 8 scalar executor remains the only complete SQL
+execution path.
 
 ## Public interfaces
 
@@ -22,8 +23,8 @@ Phase 8 scalar executor remains the only complete SQL execution path.
   [pruned scan guide](pruned-snapshot-cseg-scan.md);
 - the exact-publication mutable-head source described in the
   [head scan guide](mutable-head-scan-source.md); and
-- `BooleanFilterOperator`, `ColumnSubsetOperator`, and `LimitOperator`, uniquely owned unary
-  pipeline stages.
+- `BooleanFilterOperator`, `TimestampRangeFilterOperator`, `ColumnSubsetOperator`, and
+  `LimitOperator`, uniquely owned unary pipeline stages.
 
 Factories and pulls return `common::Result`. Bad configuration or accounting is
 `INVALID_ARGUMENT`, bad predicate or projection ordinals are `OUT_OF_RANGE`, memory or bounded-plan
@@ -75,6 +76,15 @@ retained-byte count and query charge do not increase. Physical column buffers ar
 `VectorChunk::where_true` applies that operation to a consumed chunk and updates its exact logical
 buffer count. `AccountedVectorChunk::where_true` carries the original reservation across the
 transformation.
+
+## Exact timestamp-range semantics
+
+`VectorSelection::where_timestamp_in_range` performs the same stable allocation-free compaction
+over one `TIMESTAMP_NS` column. Optional bounds retain their explicit inclusive bit; comparisons do
+not adjust endpoints, so open bounds at `INT64_MIN` and `INT64_MAX` cannot overflow. NULL does not
+match, reversed or equal-open bounds produce an empty selection, and an empty result remains a
+progress chunk. The complete contract and the necessary separation from conservative CSEG pruning
+are described in the [exact timestamp-range guide](exact-timestamp-range-filter.md).
 
 ## Stable column-subset projection
 
@@ -133,12 +143,12 @@ complete task/pipeline owner and acquire it before invoking `next` on another th
 ## Complexity and failure behavior
 
 An accounted-wrapper construction and operator step are `O(1)` excluding their transformation.
-Boolean filtering is `O(S)` for `S` selected rows. Direct column-subset validation and compaction
-are `O(P + C)` for `P` projected and `C` removed columns; backed compaction is `O(P)`. Both use
-`O(1)` additional memory. A virtual call and LIMIT truncation are `O(1)` per chunk. Factory
-allocation or an oversized retained
-projection plan is `RESOURCE_EXHAUSTED`; validation failures release the input chunk and reservation
-without durable or external effects.
+Boolean and timestamp-range filtering are `O(S)` for `S` selected rows. Direct column-subset
+validation and compaction are `O(P + C)` for `P` projected and `C` removed columns; backed
+compaction is `O(P)`. Both use `O(1)` additional memory. A virtual call and LIMIT truncation are
+`O(1)` per chunk. Factory allocation or an oversized retained projection plan is
+`RESOURCE_EXHAUSTED`; validation failures release the input chunk and reservation without durable
+or external effects.
 
 ## Verification and measurement
 
@@ -146,6 +156,8 @@ Unit tests cover ownership, credit coverage/release, explicit end, sticky comple
 hostile predicate configuration, projection bounds/order/range, zero-column output, and buffer
 release. Deterministic properties compare filtering against scalar SQL truth across varied chunk
 boundaries and verify projected rows and NULL/Boolean cells for all 256 eight-row selection masks.
+Timestamp-range tests add signed-domain edges, open/closed/empty bounds, NULL, sparse selections,
+forced chunk boundaries, physical-plan composition, and a scalar-match property.
 LIMIT tests cover zero, empty progress, partial and exact boundaries, UINT64 maxima, early future
 credit release, failure, and cross-query ownership. A deterministic property compares every limit
 around a fixed multi-chunk input with the scalar prefix. Fuzzing drives filtering, truncation, and
@@ -155,8 +167,9 @@ projection with valid and hostile ordinals under sanitizers.
 rows with TRUE densities of 100%, 25%, and 6.25%. It also isolates ownership compaction and release
 for 1, 8, and 64 input columns at 1,024 and 4,096 rows; input construction is paused and therefore
 excluded. Batched selection-truncation measurements cover dense and sparse inputs, zero, partial,
-and no-op limits with setup and destruction paused. These measurements do not claim end-to-end query
-speed or justify fusion, branch specialization, or physical materialization.
+and no-op limits with setup and destruction paused. Exact timestamp-range compaction covers dense
+and sparse selections over 64, 1,024, and 4,096 rows. These measurements do not claim end-to-end
+query speed or justify fusion, branch specialization, or physical materialization.
 
 ## Tradeoffs and next steps
 
@@ -166,9 +179,11 @@ deliberate pre-measurement choices.
 
 The snapshot-bound adapter joins canonical selected durable parts from one exact aggregate database
 epoch with safe event-time pruning, while the head source independently canonicalizes one pinned
-generation. The next storage increment must define shared hidden columns and explicit part/head
-merge semantics before claiming complete tablet visibility. Typed physical expression/output
-building is the other immediate dependency.
+generation. Exact timestamp filtering can consume either source's canonical chunks, but automatic
+lowering must retain the timestamp column through filtering before projection. The next storage
+increment must define shared hidden columns and explicit part/head merge semantics before claiming
+complete tablet visibility. Typed physical expression/output building is the other immediate
+dependency.
 Parallel scheduling should follow only after task ownership, queue capacity, terminal-error
 arbitration, and cancellation release are specified.
 

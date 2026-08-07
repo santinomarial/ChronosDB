@@ -2,10 +2,11 @@
 
 ## Purpose and boundary
 
-The sixth Phase 9 increment turns the first independent vector operators into one validated,
-reusable physical pipeline. `PhysicalPipelinePlan` composes Boolean filtering, stable column-subset
-projection, and global LIMIT in explicit order and propagates the exact physical column shape
-through every stage.
+The sixth Phase 9 increment turned the first independent vector operators into one validated,
+reusable physical pipeline. The thirteenth increment adds exact timestamp-range truth.
+`PhysicalPipelinePlan` now composes Boolean filtering, timestamp-range filtering, stable column-
+subset projection, and global LIMIT in explicit order and propagates the exact physical column
+shape through every stage.
 
 This is deliberately not the SQL physical planner. It does not lower a `BoundSqlSelect`, optimize
 stage order, scan CSEG/head storage, build computed vectors, aggregate, join, sort, schedule work,
@@ -17,7 +18,7 @@ not exist yet.
 `chronos/query/physical_plan.hpp` exposes:
 
 - `PhysicalColumnShape`: exact logical type parameters plus nullability, without durable identity;
-- `BooleanFilterStage`, `ColumnSubsetStage`, and `LimitStage`;
+- `BooleanFilterStage`, `TimestampRangeFilterStage`, `ColumnSubsetStage`, and `LimitStage`;
 - `PhysicalPipelinePlanLimits`: finite input-width, stage-count, and retained-configuration bounds;
 - `PhysicalPipelinePlan::create`: checked shape propagation and immutable plan construction; and
 - `instantiate`: unique composition around one caller-owned `PhysicalOperator` source.
@@ -29,8 +30,9 @@ instantiation is safe. Returned operator trees follow the existing thread-affine
 
 The input shape is a planner assertion, not durable schema identity. A Boolean filter requires its
 current predicate ordinal to exist and have exact BOOL type, including normal logical-type
-parameters. It preserves every column shape. A stable subset requires unique, strictly increasing
-current ordinals and compacts the shape in the same order. LIMIT preserves shape.
+parameters. A timestamp-range filter similarly requires exact `TIMESTAMP_NS` type. Both preserve
+every column shape. A stable subset requires unique, strictly increasing current ordinals and
+compacts the shape in the same order. LIMIT preserves shape.
 
 Validation is sequential, so this is rejected:
 
@@ -95,6 +97,9 @@ Unit tests cover every validation and ownership boundary. A fixed-seed 128-plan 
 generates physical values, SQL TRUE/FALSE/NULL predicates, sparse or empty selections, variable
 chunk boundaries, stage order, and LIMIT values, then compares vector output with an independent
 scalar row model.
+
+Timestamp-range stage tests add current-shape type/ordinal validation and instantiated exact-bound
+execution. Its row-level boundary/null/property coverage lives with the underlying operator.
 
 `chronos_physical_plan_fuzz` drives hostile stage configurations and valid end-to-end execution.
 `chronos_query_benchmarks` separately measures plan validation and instantiation at 1, 8, 64, and

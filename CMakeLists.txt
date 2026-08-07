@@ -790,6 +790,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/snapshot_test.cpp
     tests/query/statement_binder_header_self_contained.cpp
     tests/query/statement_binder_test.cpp
+    tests/query/timestamp_range_header_self_contained.cpp
     tests/query/value_header_self_contained.cpp
     tests/query/value_test.cpp
     tests/query/vector_chunk_header_self_contained.cpp
