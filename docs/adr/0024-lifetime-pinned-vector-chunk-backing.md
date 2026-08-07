@@ -135,5 +135,5 @@ builders, and spill ownership remain later Phase 9 decisions.
 - [ADR 0020](0020-bounded-vector-chunk-representation.md)
 - [ADR 0021](0021-query-resource-accounting-and-cooperative-cancellation.md)
 - [ADR 0022](0022-pull-based-physical-operator-lifecycle.md)
-- [CSEG projected reader](../learning/cseg-projected-reader.md)
+- [CSEG projected reader](../learning/cseg-storage.md#file-and-ownership-model)
 - [Phase 9 roadmap](../roadmap.md#phase-9--vectorized-execution-and-parallel-scheduling)
