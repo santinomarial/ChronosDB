@@ -59,3 +59,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0022](0022-pull-based-physical-operator-lifecycle.md) | Pull-based physical operator lifecycle | accepted |
 | [0023](0023-bounded-physical-pipeline-plan.md) | Bounded physical pipeline plan | accepted |
 | [0024](0024-lifetime-pinned-vector-chunk-backing.md) | Lifetime-pinned vector chunk backing | accepted |
+| [0025](0025-allocation-free-cseg-projected-read-planning.md) | Allocation-free CSEG projected read planning | accepted |

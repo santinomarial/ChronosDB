@@ -404,6 +404,13 @@ semantics are checked before any projected row is exposed. Corruption in an unre
 does not block a projection that does not request that page; this selective result must never be
 used as installation or complete-part validation evidence.
 
+The implementation also exposes an allocation-free borrowed read plan over authenticated metadata.
+It validates the same request and decoded-buffer limit without touching page bodies, and reports
+exact source/synthesized counts plus canonical decoded bytes partitioned by raw borrowed versus
+compressed/synthesized owned storage. The plan changes no durable interpretation and is not complete
+query-memory accounting; container/provider overhead and encoded-part pins belong to the query scan
+owner.
+
 ## Schema binding
 
 Physical decoding is schema-independent. Before installation, replay coverage, or typed query use,

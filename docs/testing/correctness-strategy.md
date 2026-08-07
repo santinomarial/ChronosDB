@@ -89,6 +89,10 @@
 > accounted-credit destruction checks, conservative projection accounting, direct-versus-backed
 > fixed-seed equivalence, backed-path fuzzing, sanitizer coverage, and attachment-overhead
 > measurement before the first storage scan is admitted.
+> Allocation-free CSEG read planning adds exact raw/compressed/synthesized/system byte accounting,
+> borrowed-plan and foreign-reader failures, direct-versus-planned deterministic equivalence, a
+> dedicated zero-allocation/failure-injection executable, plan-then-read fuzzing, sanitizer coverage,
+> and planning-overhead measurement before scan integration.
 
 ## Test types
 

@@ -335,6 +335,90 @@ TEST(CsegProjectedReaderTest, PreservesAuthenticatedUnsupportedAndResourceClassi
   EXPECT_EQ(limited.error().status().code(), common::StatusCode::kResourceExhausted);
 }
 
+TEST(CsegProjectedReaderTest, PlansExactRawOwnedAndSynthesizedBytesBeforeExecution) {
+  const PartFixture fixture;
+  const schema::SchemaLineage lineage = fixture.lineage();
+  const auto reader = open_cseg_v1_projected_reader_exact(fixture.encoded.bytes(), lineage,
+                                                          fixture.schemas.v2_id, fixture.tablet_id);
+  ASSERT_TRUE(reader.has_value());
+  const std::array<std::uint32_t, 4> requested{3U, 1U, 2U, 0U};
+  const auto plan = reader->plan_granule(0U, requested);
+  ASSERT_TRUE(plan.has_value());
+  EXPECT_EQ(plan->granule_ordinal(), 0U);
+  EXPECT_EQ(plan->first_row(), 0U);
+  EXPECT_EQ(plan->row_count(), fixture.row_count);
+  EXPECT_TRUE(std::ranges::equal(plan->destination_column_ordinals(), requested));
+  EXPECT_EQ(plan->source_user_page_count(), 2U);
+  EXPECT_EQ(plan->synthesized_column_count(), 2U);
+  EXPECT_EQ(plan->decoded_page_count(), 2U + format::kSystemColumnCount);
+
+  std::uint64_t borrowed_bytes = 0U;
+  for (const CsegPageDescriptor& page : reader->metadata().pages())
+    borrowed_bytes += page.uncompressed_length;
+  const std::uint64_t validity = columnar::bitmap_size(fixture.row_count);
+  const std::uint64_t synthesized_bytes =
+      validity + (static_cast<std::uint64_t>(fixture.row_count) + 1U) * sizeof(std::uint32_t) +
+      validity + static_cast<std::uint64_t>(fixture.row_count) * sizeof(std::uint32_t);
+  EXPECT_EQ(plan->borrowed_buffer_bytes(), borrowed_bytes);
+  EXPECT_EQ(plan->owned_buffer_bytes(), synthesized_bytes);
+  EXPECT_EQ(plan->decoded_buffer_bytes(), borrowed_bytes + synthesized_bytes);
+
+  const auto granule = reader->read_granule(*plan);
+  ASSERT_TRUE(granule.has_value());
+  ASSERT_EQ(granule->columns().size(), requested.size());
+  EXPECT_EQ(granule->columns()[0].column_id(), fixture.schemas.added_text_id);
+  EXPECT_EQ(granule->columns()[1].column_id(), fixture.schemas.payload_id);
+  EXPECT_EQ(granule->columns()[2].column_id(), fixture.schemas.added_fixed_id);
+  EXPECT_EQ(granule->columns()[3].column_id(), fixture.schemas.event_id);
+}
+
+TEST(CsegProjectedReaderTest, RejectsAPlanFromAnotherReaderBeforePageAccess) {
+  const PartFixture fixture;
+  const schema::SchemaLineage lineage = fixture.lineage();
+  const auto first = open_cseg_v1_projected_reader_exact(fixture.encoded.bytes(), lineage,
+                                                         fixture.schemas.v1_id, fixture.tablet_id);
+  const auto second = open_cseg_v1_projected_reader_exact(fixture.encoded.bytes(), lineage,
+                                                          fixture.schemas.v1_id, fixture.tablet_id);
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(second.has_value());
+  const std::array<std::uint32_t, 1> requested{0U};
+  const auto plan = first->plan_granule(0U, requested);
+  ASSERT_TRUE(plan.has_value());
+  const auto result = second->read_granule(*plan);
+  ASSERT_FALSE(result.has_value());
+  EXPECT_EQ(result.error().code(), common::StatusCode::kInvalidArgument);
+}
+
+TEST(CsegProjectedReaderTest, ClassifiesCompressedAndFallbackPageOwnershipFromMetadata) {
+  bool saw_owned = false;
+  bool saw_borrowed = false;
+  for (const std::uint32_t rows : {1U, 1'024U}) {
+    const PartFixture fixture{rows, PageCompression::kZstd};
+    const schema::SchemaLineage lineage = fixture.lineage();
+    const auto reader = open_cseg_v1_projected_reader_exact(
+        fixture.encoded.bytes(), lineage, fixture.schemas.v1_id, fixture.tablet_id);
+    ASSERT_TRUE(reader.has_value());
+    const std::array<std::uint32_t, 2> requested{0U, 1U};
+    const auto plan = reader->plan_granule(0U, requested);
+    ASSERT_TRUE(plan.has_value());
+
+    std::uint64_t expected_owned = 0U;
+    std::uint64_t expected_borrowed = 0U;
+    for (const CsegPageDescriptor& page : reader->metadata().pages()) {
+      std::uint64_t& expected =
+          page.compression == PageCompression::kNone ? expected_borrowed : expected_owned;
+      expected += page.uncompressed_length;
+    }
+    saw_owned = saw_owned || expected_owned != 0U;
+    saw_borrowed = saw_borrowed || expected_borrowed != 0U;
+    EXPECT_EQ(plan->owned_buffer_bytes(), expected_owned);
+    EXPECT_EQ(plan->borrowed_buffer_bytes(), expected_borrowed);
+    EXPECT_EQ(plan->decoded_buffer_bytes(), expected_owned + expected_borrowed);
+  }
+  EXPECT_TRUE(saw_owned);
+  EXPECT_TRUE(saw_borrowed);
+}
+
 TEST(CsegProjectedReaderTest, ProjectsInCallerOrderAndSynthesizesCanonicalNullableTails) {
   const PartFixture fixture;
   const schema::SchemaLineage lineage = fixture.lineage();
@@ -497,7 +581,11 @@ TEST(CsegProjectedReaderPropertyTest, GeneratedRowsPoliciesAndProjectionsAreDete
       for (const std::vector<std::uint32_t>& projection :
            {std::vector<std::uint32_t>{}, std::vector<std::uint32_t>{0U},
             std::vector<std::uint32_t>{1U}, std::vector<std::uint32_t>{3U, 2U, 1U, 0U}}) {
-        const auto first = reader->read_granule(0U, projection);
+        const auto plan = reader->plan_granule(0U, projection);
+        ASSERT_TRUE(plan.has_value()) << "rows=" << rows;
+        EXPECT_EQ(plan->decoded_buffer_bytes(),
+                  plan->owned_buffer_bytes() + plan->borrowed_buffer_bytes());
+        const auto first = reader->read_granule(*plan);
         const auto second = reader->read_granule(0U, projection);
         ASSERT_TRUE(first.has_value()) << "rows=" << rows;
         ASSERT_TRUE(second.has_value()) << "rows=" << rows;

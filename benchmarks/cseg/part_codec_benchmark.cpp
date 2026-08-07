@@ -9,6 +9,7 @@
 #include "chronos/schema/logical_type.hpp"
 #include "chronos/schema/schema_lineage.hpp"
 #include "chronos/schema/table_schema.hpp"
+#include "support/counting_allocator.hpp"
 
 #include <array>
 #include <benchmark/benchmark.h>
@@ -298,6 +299,50 @@ void benchmark_projected_read(benchmark::State& state) {
                      : "one user + system pages; metadata pre-opened; local only");
 }
 
+void benchmark_projected_read_plan(benchmark::State& state) {
+  const auto rows = static_cast<std::uint32_t>(state.range(0));
+  const auto policy = state.range(1) == 0 ? chronos::cseg::PageCompression::kNone
+                                          : chronos::cseg::PageCompression::kZstd;
+  const Fixture fixture{rows, policy};
+  chronos::schema::SchemaLineage lineage =
+      chronos::schema::SchemaLineage::create(fixture.schema_value()).value();
+  const auto reader = chronos::cseg::open_cseg_v1_projected_reader_exact(
+      fixture.encoded.bytes(), lineage, fixture.schema_id, fixture.tablet_id);
+  if (!reader.has_value()) {
+    const std::string message = reader.error().status().to_string();
+    state.SkipWithError(message);
+    return;
+  }
+  const std::array<std::uint32_t, 1> event_time{0U};
+  const std::span<const std::uint32_t> projection =
+      std::span<const std::uint32_t>{event_time}.first(static_cast<std::size_t>(state.range(2)));
+
+  chronos::benchmark_support::ScopedAllocationCounting counting;
+  const auto measured_plan = reader->plan_granule(0U, projection);
+  const chronos::benchmark_support::AllocationCounts allocations = counting.stop();
+  if (!measured_plan.has_value()) {
+    const std::string message = measured_plan.error().to_string();
+    state.SkipWithError(message);
+    return;
+  }
+
+  for ([[maybe_unused]] auto iteration : state) {
+    const auto plan = reader->plan_granule(0U, projection);
+    if (!plan.has_value()) {
+      const std::string message = plan.error().to_string();
+      state.SkipWithError(message);
+      return;
+    }
+    benchmark::DoNotOptimize(plan->decoded_buffer_bytes());
+  }
+  state.SetItemsProcessed(state.iterations());
+  state.counters["planning_allocations"] = static_cast<double>(allocations.allocations);
+  state.counters["planned_decoded_bytes"] =
+      static_cast<double>(measured_plan->decoded_buffer_bytes());
+  state.SetLabel(projection.empty() ? "system-only no-allocation read planning; local only"
+                                    : "one user + system no-allocation read planning; local only");
+}
+
 // Google Benchmark registers functions during static initialization.
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 BENCHMARK(benchmark_part_encode)->ArgsProduct({{64, 1024, 65536}, {0, 1}});
@@ -309,5 +354,7 @@ BENCHMARK(benchmark_part_validate)->ArgsProduct({{64, 1024, 65536}, {0, 1}});
 BENCHMARK(benchmark_part_inspection)->ArgsProduct({{64, 1024, 65536}, {0, 1}});
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 BENCHMARK(benchmark_projected_read)->ArgsProduct({{64, 1024, 65536}, {0, 1}, {0, 1}});
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+BENCHMARK(benchmark_projected_read_plan)->ArgsProduct({{64, 1024, 65536}, {0, 1}, {0, 1}});
 
 } // namespace

@@ -223,6 +223,12 @@ int main() {
       chronos::cseg::CsegProjectedReaderLimits);
   const OpenProjectedReaderFunction open_projected_reader =
       &chronos::cseg::open_cseg_v1_projected_reader_prefix;
+  using PlanProjectedGranuleFunction =
+      chronos::common::Result<chronos::cseg::CsegProjectedGranuleReadPlan> (
+          chronos::cseg::CsegProjectedReaderView::*)(
+          std::size_t, std::span<const std::uint32_t>) const;
+  const PlanProjectedGranuleFunction plan_projected_granule =
+      &chronos::cseg::CsegProjectedReaderView::plan_granule;
   chronos::columnar::ColumnarBatchLimits limits;
   std::array<std::byte, 0> empty{};
   const auto decoded = chronos::columnar::decode_columnar_batch_v1_exact(empty);
@@ -513,6 +519,7 @@ int main() {
                  validate_cseg_part != nullptr &&
                  inspect_cseg_part != nullptr &&
                  open_projected_reader != nullptr &&
+                 plan_projected_granule != nullptr &&
                  !cseg_metadata.has_value() &&
                  cseg_metadata.error().kind() ==
                      chronos::cseg::CsegMetadataDecodeErrorKind::kIncomplete &&

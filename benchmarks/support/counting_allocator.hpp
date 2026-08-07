@@ -11,7 +11,7 @@ struct AllocationCounts {
 };
 
 // Counts regular global new/new[] calls on the current thread. This override is linked only into
-// the mutable-head benchmark executable and is disabled during timed iterations.
+// benchmark executables that explicitly include the support source and is disabled by default.
 class ScopedAllocationCounting {
 public:
   ScopedAllocationCounting() noexcept;

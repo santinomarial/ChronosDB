@@ -154,5 +154,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Lifetime-pinned vector backing](learning/pinned-vector-backing.md): implemented uniform physical
   views over direct or shared immutable storage, conservative backing/ordinal accounting, coupled
   pin-credit lifetime, projection behavior, fuzzing, and ownership-overhead measurement.
+- [CSEG storage](learning/cseg-storage.md): includes allocation-free projected-granule planning,
+  exact raw-versus-owned decoded-byte requirements, borrowed-plan lifetime, allocation-failure
+  behavior, fuzzing, and planning-overhead measurement.
 
 Future format, protocol, subsystem, operations, and learning documents should be linked here when they are added by their corresponding roadmap phase.

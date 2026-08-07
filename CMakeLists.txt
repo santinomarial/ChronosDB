@@ -516,6 +516,25 @@ if(CHRONOS_BUILD_TESTS)
   gtest_discover_tests(chronos_cseg_tests DISCOVERY_TIMEOUT 30)
 
   add_executable(
+    chronos_cseg_allocation_failure_tests
+    tests/cseg/projected_reader_allocation_failure_test.cpp
+    tests/support/failing_allocator.cpp
+  )
+  set_target_properties(chronos_cseg_allocation_failure_tests PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_cseg_allocation_failure_tests PRIVATE cxx_std_23)
+  target_include_directories(
+    chronos_cseg_allocation_failure_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+  )
+  target_link_libraries(
+    chronos_cseg_allocation_failure_tests
+    PRIVATE chronos::cseg GTest::gtest_main zstd::libzstd
+  )
+  chronos_set_project_warnings(chronos_cseg_allocation_failure_tests)
+  chronos_enable_sanitizers(chronos_cseg_allocation_failure_tests)
+  chronos_enable_static_analysis(chronos_cseg_allocation_failure_tests)
+  gtest_discover_tests(chronos_cseg_allocation_failure_tests DISCOVERY_TIMEOUT 30)
+
+  add_executable(
     chronos_io_tests
     tests/io/posix_io_header_self_contained.cpp
     tests/io/posix_io_test.cpp
@@ -892,9 +911,13 @@ if(CHRONOS_BUILD_BENCHMARKS)
     benchmarks/cseg/part_codec_benchmark.cpp
     benchmarks/cseg/page_codec_benchmark.cpp
     benchmarks/cseg/plain_page_benchmark.cpp
+    benchmarks/support/counting_allocator.cpp
   )
   set_target_properties(chronos_cseg_benchmarks PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_cseg_benchmarks PRIVATE cxx_std_23)
+  target_include_directories(
+    chronos_cseg_benchmarks PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks"
+  )
   target_link_libraries(chronos_cseg_benchmarks PRIVATE chronos::cseg benchmark::benchmark_main)
   chronos_set_project_warnings(chronos_cseg_benchmarks)
   chronos_enable_sanitizers(chronos_cseg_benchmarks)

@@ -19,6 +19,8 @@
 
 namespace chronos::cseg {
 
+class CsegProjectedReaderView;
+
 struct CsegProjectedReaderLimits {
   CsegMetadataDecodeLimits metadata;
   std::uint64_t max_decoded_buffer_bytes{4U * format::kMaximumUncompressedPageLength};
@@ -53,6 +55,75 @@ private:
   CsegProjectedReaderOpenErrorKind kind_;
   common::Status status_;
   std::uint64_t required_size_;
+};
+
+// Allocation-free validated plan for one projected granule read. The plan borrows both its reader
+// and the caller's ordinal span; neither may be moved, destroyed, or mutated before execution.
+// Planning authenticates no page body and allocates no result storage.
+class CsegProjectedGranuleReadPlan {
+public:
+  CsegProjectedGranuleReadPlan() = delete;
+
+  [[nodiscard]] constexpr std::size_t granule_ordinal() const noexcept {
+    return granule_ordinal_;
+  }
+  [[nodiscard]] constexpr std::uint64_t first_row() const noexcept {
+    return first_row_;
+  }
+  [[nodiscard]] constexpr std::uint32_t row_count() const noexcept {
+    return row_count_;
+  }
+  [[nodiscard]] constexpr std::span<const std::uint32_t>
+  destination_column_ordinals() const noexcept {
+    return destination_column_ordinals_;
+  }
+  [[nodiscard]] constexpr std::size_t source_user_page_count() const noexcept {
+    return source_user_page_count_;
+  }
+  [[nodiscard]] constexpr std::size_t synthesized_column_count() const noexcept {
+    return synthesized_column_count_;
+  }
+  [[nodiscard]] constexpr std::size_t decoded_page_count() const noexcept {
+    return source_user_page_count_ + format::kSystemColumnCount;
+  }
+  // Exact aggregate canonical bytes for selected source pages, synthesized columns, and all system
+  // pages. Raw page bytes are borrowed; compressed page outputs and synthesized columns are owned.
+  [[nodiscard]] constexpr std::uint64_t decoded_buffer_bytes() const noexcept {
+    return decoded_buffer_bytes_;
+  }
+  [[nodiscard]] constexpr std::uint64_t owned_buffer_bytes() const noexcept {
+    return owned_buffer_bytes_;
+  }
+  [[nodiscard]] constexpr std::uint64_t borrowed_buffer_bytes() const noexcept {
+    return borrowed_buffer_bytes_;
+  }
+
+private:
+  struct Accounting {
+    std::size_t source_user_page_count;
+    std::size_t synthesized_column_count;
+    std::uint64_t decoded_buffer_bytes;
+    std::uint64_t owned_buffer_bytes;
+    std::uint64_t borrowed_buffer_bytes;
+  };
+
+  CsegProjectedGranuleReadPlan(const CsegProjectedReaderView* reader, std::size_t granule_ordinal,
+                               const CsegGranuleDescriptor& descriptor,
+                               std::span<const std::uint32_t> destination_column_ordinals,
+                               Accounting accounting) noexcept;
+
+  const CsegProjectedReaderView* reader_;
+  std::size_t granule_ordinal_;
+  std::uint64_t first_row_;
+  std::uint32_t row_count_;
+  std::span<const std::uint32_t> destination_column_ordinals_;
+  std::size_t source_user_page_count_;
+  std::size_t synthesized_column_count_;
+  std::uint64_t decoded_buffer_bytes_;
+  std::uint64_t owned_buffer_bytes_;
+  std::uint64_t borrowed_buffer_bytes_;
+
+  friend class CsegProjectedReaderView;
 };
 
 // One destination-schema user column in a projected granule. The physical buffers borrow either
@@ -158,12 +229,23 @@ public:
     return destination_schema_;
   }
 
+  // Validates a complete projection request and computes its exact aggregate decoded-buffer
+  // requirement without allocating or touching page bodies. The returned plan borrows the ordinal
+  // span and this unmoved reader.
+  [[nodiscard]] common::Result<CsegProjectedGranuleReadPlan>
+  plan_granule(std::size_t granule_ordinal,
+               std::span<const std::uint32_t> destination_column_ordinals) const;
+
   // Destination ordinals are returned in caller order and must be unique. An empty projection is
   // valid and still reads and validates the system columns. Added nullable tail columns are
   // synthesized as canonical all-null vectors without touching any unrelated source page.
   [[nodiscard]] common::Result<ProjectedCsegGranule>
   read_granule(std::size_t granule_ordinal,
                std::span<const std::uint32_t> destination_column_ordinals) const;
+  // Executes a plan produced by this unmoved reader. The borrowed ordinal request is revalidated
+  // before allocation, and allocation failures are reported as RESOURCE_EXHAUSTED.
+  [[nodiscard]] common::Result<ProjectedCsegGranule>
+  read_granule(const CsegProjectedGranuleReadPlan& plan) const;
 
 private:
   CsegProjectedReaderView(DecodedCsegMetadataView metadata, common::ByteView encoded_part,
@@ -171,6 +253,8 @@ private:
                           std::shared_ptr<const schema::TableSchema> destination_schema,
                           schema::SchemaProjection projection,
                           CsegProjectedReaderLimits limits) noexcept;
+  [[nodiscard]] common::Result<ProjectedCsegGranule>
+  execute_granule_plan(const CsegProjectedGranuleReadPlan& plan) const;
 
   DecodedCsegMetadataView metadata_;
   common::ByteView encoded_part_;

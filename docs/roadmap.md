@@ -371,9 +371,13 @@ No phase passes because its code merely compiles. A phase passes only when its a
   increment add lifetime-pinned immutable chunk backings, uniform physical views, conservative
   backing/ordinal accounting, direct-versus-backed projection reclamation, coupled pin/credit
   lifetime, deterministic ownership properties, fuzzing, backing-attachment benchmarks, and
-  installed-consumer linkage. Bound-SQL lowering, optimizer rules, typed vector expressions and
-  output builders, CSEG and mutable-head scan sources, complete allocation charging, scheduling,
-  spill, and full scalar-engine differential plan execution are unimplemented.
+  installed-consumer linkage. ADR 0025 and the eighth increment add allocation-free CSEG
+  projected-granule planning, exact raw-versus-owned decoded-byte requirements, mandatory system
+  page accounting, borrowed plan lifetime, output allocation-failure classification, deterministic
+  planned/direct properties, fuzzing, planning benchmarks, and installed-consumer linkage.
+  Bound-SQL lowering, optimizer rules, typed vector expressions and output builders, CSEG and
+  mutable-head scan sources, complete allocation charging, scheduling, spill, and full scalar-engine
+  differential plan execution are unimplemented.
 
 - **Scope:** bounded vectors, vectorized scans/expressions/aggregates/joins, physical planning, memory accounting, cancellation, parallel scheduling, and spill for explicitly supported operators.
 - **Explicit non-scope:** distributed fragments, GPU novelty, unbounded query memory, or optimizer rules lacking semantic/differential validation.

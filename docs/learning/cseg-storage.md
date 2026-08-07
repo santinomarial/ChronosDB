@@ -33,7 +33,8 @@ readers with storage deletion. Those are Phase 6 responsibilities.
 - `validator.hpp` performs complete schema-independent row validation and optional exact catalog
   binding.
 - `projected_reader.hpp` authenticates metadata and reads selected granules/columns against a
-  retained schema lineage.
+  retained schema lineage. Its borrowed read plan validates and reports exact decoded-buffer work
+  before result allocation.
 - `inspection.hpp` returns an owned, value-free report after complete structural and
   schema-independent semantic validation.
 
@@ -82,6 +83,14 @@ the stored schema through `SchemaLineage`, permits an explicitly requested retai
 synthesizes canonical all-null buffers only for nullable columns appended by that successor.
 Unrequested user page bytes are neither read nor claimed to be valid by this API.
 
+`plan_granule` first validates the complete ordinal request with a fixed bounded bitmap and reads
+only authenticated descriptors. Its borrowed plan reports source and synthesized counts and exact
+decoded canonical bytes split between raw page borrows and compressed/synthesized owned buffers.
+The reader and caller-owned ordinal span remain alive, unmoved, and immutable until plan execution.
+Execution revalidates the request before allocating, removes the former temporary projection
+vectors, and converts allocation failures to `RESOURCE_EXHAUSTED`. The byte plan does not include
+container/allocator bookkeeping, provider workspace, file pins, or future query backing objects.
+
 ## Failure behavior and limits
 
 Decode APIs separate a valid short prefix from invalid bytes. `kIncomplete` carries the exact next
@@ -108,6 +117,7 @@ still only a candidate until the future installation protocol durably places and
 | Zstandard page decode | `O(stored + output bytes)` | bounded uncompressed page |
 | Complete part decode | `O(metadata + all page bytes)` | descriptor storage plus one decoded page at a time |
 | Full semantic validation | `O(rows × stored columns)` | bounded per-page decode and ordering state |
+| Projected granule planning | `O(selected columns + 4)` | fixed 4,096-bit stack bitmap; no heap |
 | Projected granule read | `O(metadata + selected/system page bytes)` | owned requested result buffers |
 | Inspection | `O(metadata + all page bytes + rows × stored columns)` | owned descriptors plus bounded validation state |
 
@@ -128,6 +138,11 @@ property tests; round trips across logical types, nulls, variable-width data, an
 truncation, suffix, splice, reserved-byte, registry, checksum, extrema, ordering, system-row,
 schema-binding, and decompression-limit corruption cases; decoder fuzzers; external-consumer and
 installation tests; and ASan/UBSan/TSan coverage.
+
+Projected planning additionally has exact descriptor/ownership accounting tests, foreign-reader and
+hostile-request rejection, deterministic direct-versus-planned execution, a dedicated allocator
+test proving zero successful-path plan allocations and classifying every output allocation failure,
+and plan-then-read fuzz coverage.
 
 Microbenchmarks cover metadata, PLAIN payloads, stored pages, complete part composition/decoding,
 validation, and projected reads. Interpret them using the repository benchmark contract: retain the
@@ -154,6 +169,8 @@ misuse, and `1` for corruption, limits, or I/O failure. It never modifies the in
 - Why is projected reading not implemented by full part decode first? Full decode would destroy the
   selective-I/O boundary; projected reading authenticates metadata and validates exactly the pages
   whose semantics it returns, plus required row identities.
+- Why is the read plan borrowed? Copying projection ordinals would allocate before a query scan can
+  reserve for the read; the physical plan already owns stable immutable ordinals.
 - Why are decode views borrowed? They avoid redundant copies on immutable input while keeping
   lifetime responsibility explicit; APIs that need independence return owned objects.
 - Why is schema binding separate from physical decode? Durable physical types are self-describing,

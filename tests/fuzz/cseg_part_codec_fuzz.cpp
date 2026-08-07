@@ -171,8 +171,12 @@ void exercise(const chronos::common::ByteView bytes) {
       id<chronos::schema::TabletId>(3U));
   if (projected.has_value()) {
     const std::array<std::uint32_t, 1> selection{0U};
-    [[maybe_unused]] const auto selected = projected->read_granule(0U, selection);
-    [[maybe_unused]] const auto system_only = projected->read_granule(0U, {});
+    const auto selected_plan = projected->plan_granule(0U, selection);
+    if (selected_plan.has_value()) [[maybe_unused]]
+      const auto selected = projected->read_granule(*selected_plan);
+    const auto system_plan = projected->plan_granule(0U, {});
+    if (system_plan.has_value()) [[maybe_unused]]
+      const auto system_only = projected->read_granule(*system_plan);
   }
 }
 
@@ -220,7 +224,9 @@ void exercise_authenticated_semantics(std::vector<std::byte> bytes, const std::u
   if (!projected.has_value()) {
     std::abort();
   }
-  [[maybe_unused]] const auto system_only = projected->read_granule(0U, {});
+  const auto system_plan = projected->plan_granule(0U, {});
+  if (system_plan.has_value()) [[maybe_unused]]
+    const auto system_only = projected->read_granule(*system_plan);
 }
 
 } // namespace
