@@ -219,9 +219,24 @@ mixed_source(const QueryResourceContext& resources, const std::uint32_t rows,
   return VectorExpression::create(std::move(instructions)).value();
 }
 
+[[nodiscard]] VectorExpression text_predicate_expression() {
+  const schema::LogicalType string_type =
+      schema::LogicalType::create(schema::LogicalTypeKind::kString).value();
+  std::vector<VectorExpressionInstruction> instructions;
+  instructions.emplace_back(
+      VectorInputExpression{.input_column_ordinal = 0U, .type = string_type, .nullable = false});
+  instructions.emplace_back(VectorUnaryExpression{.operation = VectorUnaryOperation::kLowerAscii,
+                                                  .operand_instruction = 0U});
+  instructions.emplace_back(
+      VectorConstantExpression{ScalarValue::text(string_type, "abcdefghijklmnop").value()});
+  instructions.emplace_back(VectorBinaryExpression{
+      .operation = VectorBinaryOperation::kEqual, .left_instruction = 1U, .right_instruction = 2U});
+  return VectorExpression::create(std::move(instructions)).value();
+}
+
 [[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>>
 text_expression_source(const QueryResourceContext& resources, const std::uint32_t rows,
-                       const std::uint32_t selection_stride) {
+                       const std::uint32_t selection_stride, VectorExpression expression) {
   std::vector<columnar::OwnedPhysicalColumn> columns;
   columns.push_back(make_text_column(rows));
   common::Result<VectorChunk> chunk = VectorChunk::create(
@@ -242,7 +257,7 @@ text_expression_source(const QueryResourceContext& resources, const std::uint32_
   if (!accounted.has_value())
     return common::make_unexpected(accounted.error());
   std::vector<ColumnOutputPosition> positions;
-  positions.emplace_back(ComputedColumnOutputPosition{variable_scalar_expression()});
+  positions.emplace_back(ComputedColumnOutputPosition{std::move(expression)});
   return ColumnOutputOperator::create(std::make_unique<OneChunkSource>(std::move(*accounted)),
                                       std::move(positions),
                                       {.maximum_rows = rows,
@@ -565,7 +580,8 @@ void materialize_variable_width_case_and_cast(benchmark::State& state) {
   std::size_t measured_allocations = 0U;
   std::size_t measured_bytes = 0U;
   {
-    auto pipeline = text_expression_source(resources, rows, selection_stride);
+    auto pipeline =
+        text_expression_source(resources, rows, selection_stride, variable_scalar_expression());
     if (!pipeline.has_value()) {
       state.SkipWithError(pipeline.error().to_string());
       return;
@@ -583,7 +599,8 @@ void materialize_variable_width_case_and_cast(benchmark::State& state) {
 
   for ([[maybe_unused]] auto iteration : state) {
     state.PauseTiming();
-    auto pipeline = text_expression_source(resources, rows, selection_stride);
+    auto pipeline =
+        text_expression_source(resources, rows, selection_stride, variable_scalar_expression());
     if (!pipeline.has_value()) {
       state.SkipWithError(pipeline.error().to_string());
       return;
@@ -610,6 +627,66 @@ void materialize_variable_width_case_and_cast(benchmark::State& state) {
 }
 
 BENCHMARK(materialize_variable_width_case_and_cast)
+    ->Args({64, 1})
+    ->Args({1'024, 1})
+    ->Args({4'096, 1})
+    ->Args({1'024, 4})
+    ->Args({4'096, 4});
+
+void materialize_borrowed_text_predicate(benchmark::State& state) {
+  const auto rows = static_cast<std::uint32_t>(state.range(0));
+  const auto selection_stride = static_cast<std::uint32_t>(state.range(1));
+  QueryResourceContext resources = QueryResourceContext::create(kBenchmarkMemoryLimit).value();
+  std::size_t measured_allocations = 0U;
+  std::size_t measured_bytes = 0U;
+  {
+    auto pipeline =
+        text_expression_source(resources, rows, selection_stride, text_predicate_expression());
+    if (!pipeline.has_value()) {
+      state.SkipWithError(pipeline.error().to_string());
+      return;
+    }
+    benchmark_support::ScopedAllocationCounting counting;
+    auto step = (*pipeline)->next(resources);
+    measured_allocations = counting.stop().allocations;
+    if (!step.has_value() || step->chunk() == nullptr) {
+      state.SkipWithError(step.has_value() ? "text predicate output returned no chunk"
+                                           : step.error().to_string());
+      return;
+    }
+    measured_bytes = step->chunk()->chunk().buffer_bytes();
+  }
+
+  for ([[maybe_unused]] auto iteration : state) {
+    state.PauseTiming();
+    auto pipeline =
+        text_expression_source(resources, rows, selection_stride, text_predicate_expression());
+    if (!pipeline.has_value()) {
+      state.SkipWithError(pipeline.error().to_string());
+      return;
+    }
+    state.ResumeTiming();
+    auto step = (*pipeline)->next(resources);
+    benchmark::DoNotOptimize(step);
+    if (!step.has_value()) {
+      state.SkipWithError(step.error().to_string());
+      return;
+    }
+  }
+  const std::size_t selected = (static_cast<std::size_t>(rows) + selection_stride - 1U) /
+                               static_cast<std::size_t>(selection_stride);
+  state.SetItemsProcessed(static_cast<std::int64_t>(state.iterations()) *
+                          static_cast<std::int64_t>(selected));
+  state.SetBytesProcessed(static_cast<std::int64_t>(state.iterations()) *
+                          static_cast<std::int64_t>(measured_bytes));
+  state.counters["instructions"] = 4.0;
+  state.counters["physical_rows"] = static_cast<double>(rows);
+  state.counters["pull_allocations"] = static_cast<double>(measured_allocations);
+  state.counters["selection_density"] = 1.0 / static_cast<double>(selection_stride);
+  state.SetLabel("LOWER(STRING) equality over 16-byte values; source construction excluded");
+}
+
+BENCHMARK(materialize_borrowed_text_predicate)
     ->Args({64, 1})
     ->Args({1'024, 1})
     ->Args({4'096, 1})

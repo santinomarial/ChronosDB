@@ -183,10 +183,6 @@ unary_shape(const VectorUnaryExpression& operation, const VectorExpressionShape&
     return operand;
   case VectorUnaryOperation::kIsNull:
   case VectorUnaryOperation::kIsNotNull:
-    if (text(operand.type.kind())) {
-      return common::make_unexpected(
-          invalid("text-dependent fixed-width vector operations are not supported yet"));
-    }
     return VectorExpressionShape{
         .type = schema::LogicalType::create(schema::LogicalTypeKind::kBool).value(),
         .nullable = false};
@@ -241,8 +237,14 @@ binary_shape(const VectorBinaryExpression& operation, const VectorExpressionShap
     return VectorExpressionShape{.type = right.type, .nullable = left.nullable || right.nullable};
   }
   if (text(left.type.kind()) || text(right.type.kind())) {
-    return common::make_unexpected(
-        invalid("text-dependent fixed-width vector operations are not supported yet"));
+    if (!text(left.type.kind()) || !text(right.type.kind()) || left.type != right.type ||
+        !comparison(operation.operation)) {
+      return common::make_unexpected(
+          invalid("text vector operands require one exact type and a comparison operation"));
+    }
+    return VectorExpressionShape{
+        .type = schema::LogicalType::create(schema::LogicalTypeKind::kBool).value(),
+        .nullable = left.nullable || right.nullable};
   }
   const bool nullable = left.nullable || right.nullable;
   if (operation.operation == VectorBinaryOperation::kAnd ||
@@ -740,116 +742,89 @@ checked_signed_multiply(const std::int64_t left, const std::int64_t right) noexc
   return ScalarValue::decimal(result.type, *value);
 }
 
-class RowEvaluator {
+[[nodiscard]] common::Result<ScalarValue>
+evaluate_text_comparison(const VectorBinaryOperation operation,
+                         const detail::BorrowedVariableExpressionValue& left,
+                         const detail::BorrowedVariableExpressionValue& right) {
+  if (left.is_null || right.is_null)
+    return boolean_value(SqlTruthValue::kUnknown);
+  const std::size_t shared = std::min(left.bytes.size(), right.bytes.size());
+  int order = 0;
+  for (std::size_t index = 0U; index < shared; ++index) {
+    const unsigned char lhs = std::to_integer<unsigned char>(
+        detail::transform_variable_byte(left.bytes[index], left.transform));
+    const unsigned char rhs = std::to_integer<unsigned char>(
+        detail::transform_variable_byte(right.bytes[index], right.transform));
+    if (lhs != rhs) {
+      order = lhs < rhs ? -1 : 1;
+      break;
+    }
+  }
+  if (order == 0 && left.bytes.size() != right.bytes.size())
+    order = left.bytes.size() < right.bytes.size() ? -1 : 1;
+
+  bool result = false;
+  switch (operation) {
+  case VectorBinaryOperation::kEqual:
+    result = order == 0;
+    break;
+  case VectorBinaryOperation::kNotEqual:
+    result = order != 0;
+    break;
+  case VectorBinaryOperation::kLess:
+    result = order < 0;
+    break;
+  case VectorBinaryOperation::kLessEqual:
+    result = order <= 0;
+    break;
+  case VectorBinaryOperation::kGreater:
+    result = order > 0;
+    break;
+  case VectorBinaryOperation::kGreaterEqual:
+    result = order >= 0;
+    break;
+  default:
+    return common::make_unexpected(internal("text vector comparison operation is invalid"));
+  }
+  return ScalarValue::boolean(result);
+}
+
+class HybridRowEvaluator {
 public:
-  RowEvaluator(const VectorExpression& expression, const VectorChunk& input,
-               const std::uint32_t physical_row) noexcept
+  using Borrowed = detail::BorrowedVariableExpressionValue;
+  using Value = std::variant<ScalarValue, Borrowed>;
+
+  HybridRowEvaluator(const VectorExpression& expression, const VectorChunk& input,
+                     const std::uint32_t physical_row) noexcept
       : expression_(expression), input_(input), physical_row_(physical_row) {}
 
-  [[nodiscard]] common::Result<ScalarValue> run() {
-    return evaluate(expression_.instructions().size() - 1U, 1U);
-  }
-
-private:
-  [[nodiscard]] common::Result<ScalarValue> remember(const std::size_t index,
-                                                     common::Result<ScalarValue> value) {
+  [[nodiscard]] common::Result<ScalarValue> run_scalar() {
+    common::Result<Value> value = evaluate(expression_.instructions().size() - 1U, 1U);
     if (!value.has_value())
       return common::make_unexpected(value.error());
-    values_[index] = *value;
-    return *value;
+    const auto* scalar = std::get_if<ScalarValue>(&*value);
+    if (scalar == nullptr)
+      return common::make_unexpected(internal("vector expression result is not fixed-width"));
+    return *scalar;
   }
 
-  [[nodiscard]] common::Result<ScalarValue> evaluate(const std::size_t index,
-                                                     const std::size_t depth) {
-    if (depth > expression_.maximum_depth() || index >= kMaximumVectorExpressionInstructions) {
-      return common::make_unexpected(internal("vector expression evaluation depth is invalid"));
-    }
-    if (const auto* cached = std::get_if<ScalarValue>(&values_[index]); cached != nullptr)
-      return *cached;
-
-    const VectorExpressionInstruction& instruction = expression_.instructions()[index];
-    if (const auto* source = std::get_if<VectorInputExpression>(&instruction); source != nullptr) {
-      const columnar::PhysicalColumnView* column = input_.column(source->input_column_ordinal);
-      if (column == nullptr)
-        return common::make_unexpected(invalid("vector expression source ordinal is out of range"));
-      common::Result<columnar::ColumnCellView> cell = column->cell(physical_row_);
-      if (!cell.has_value())
-        return common::make_unexpected(cell.error());
-      return remember(index, ScalarValue::from_column_cell(source->type, *cell));
-    }
-    if (const auto* constant = std::get_if<VectorConstantExpression>(&instruction);
-        constant != nullptr) {
-      return remember(index, constant->value);
-    }
-    if (const auto* unary = std::get_if<VectorUnaryExpression>(&instruction); unary != nullptr) {
-      common::Result<ScalarValue> operand = evaluate(unary->operand_instruction, depth + 1U);
-      if (!operand.has_value())
-        return common::make_unexpected(operand.error());
-      return remember(index, evaluate_unary(unary->operation, *operand,
-                                            expression_.instruction_shapes()[index]));
-    }
-    if (const auto* cast = std::get_if<VectorCastExpression>(&instruction); cast != nullptr) {
-      common::Result<ScalarValue> operand = evaluate(cast->operand_instruction, depth + 1U);
-      if (!operand.has_value())
-        return common::make_unexpected(operand.error());
-      return remember(index, evaluate_cast(*operand, cast->target_type));
-    }
-    if (const auto* binary = std::get_if<VectorBinaryExpression>(&instruction); binary != nullptr) {
-      common::Result<ScalarValue> left = evaluate(binary->left_instruction, depth + 1U);
-      if (!left.has_value())
-        return common::make_unexpected(left.error());
-      if (binary->operation == VectorBinaryOperation::kCoalesce && !left->is_null())
-        return remember(index, std::move(left));
-      if (binary->operation == VectorBinaryOperation::kAnd ||
-          binary->operation == VectorBinaryOperation::kOr) {
-        const SqlTruthValue left_truth = truth(*left);
-        if ((binary->operation == VectorBinaryOperation::kAnd &&
-             left_truth == SqlTruthValue::kFalse) ||
-            (binary->operation == VectorBinaryOperation::kOr &&
-             left_truth == SqlTruthValue::kTrue)) {
-          return remember(index, boolean_value(left_truth));
-        }
-        common::Result<ScalarValue> right = evaluate(binary->right_instruction, depth + 1U);
-        if (!right.has_value())
-          return common::make_unexpected(right.error());
-        return remember(index, boolean_value(binary->operation == VectorBinaryOperation::kAnd
-                                                 ? sql_and(left_truth, truth(*right))
-                                                 : sql_or(left_truth, truth(*right))));
-      }
-      common::Result<ScalarValue> right = evaluate(binary->right_instruction, depth + 1U);
-      if (!right.has_value())
-        return common::make_unexpected(right.error());
-      if (binary->operation == VectorBinaryOperation::kCoalesce)
-        return remember(index, std::move(right));
-      if (binary->operation == VectorBinaryOperation::kTimeBucket)
-        return remember(index, evaluate_time_bucket(*left, *right));
-      return remember(index, comparison(binary->operation)
-                                 ? evaluate_comparison(binary->operation, *left, *right)
-                                 : evaluate_arithmetic(binary->operation, *left, *right,
-                                                       expression_.instruction_shapes()[index]));
-    }
-    return common::make_unexpected(internal("vector expression instruction is invalid"));
-  }
-
-  const VectorExpression& expression_;
-  const VectorChunk& input_;
-  std::uint32_t physical_row_;
-  std::array<std::variant<std::monostate, ScalarValue>, kMaximumVectorExpressionInstructions>
-      values_{};
-};
-
-class VariableRowEvaluator {
-public:
-  VariableRowEvaluator(const VectorExpression& expression, const VectorChunk& input,
-                       const std::uint32_t physical_row) noexcept
-      : expression_(expression), input_(input), physical_row_(physical_row) {}
-
-  [[nodiscard]] common::Result<detail::BorrowedVariableExpressionValue> run() {
-    return evaluate(expression_.instructions().size() - 1U, 1U);
+  [[nodiscard]] common::Result<Borrowed> run_variable() {
+    common::Result<Value> value = evaluate(expression_.instructions().size() - 1U, 1U);
+    if (!value.has_value())
+      return common::make_unexpected(value.error());
+    const auto* borrowed = std::get_if<Borrowed>(&*value);
+    if (borrowed == nullptr)
+      return common::make_unexpected(internal("vector expression result is not variable-width"));
+    return *borrowed;
   }
 
 private:
-  using Value = detail::BorrowedVariableExpressionValue;
+  [[nodiscard]] static bool is_null(const Value& value) noexcept {
+    if (const auto* scalar = std::get_if<ScalarValue>(&value); scalar != nullptr)
+      return scalar->is_null();
+    const auto* borrowed = std::get_if<Borrowed>(&value);
+    return borrowed != nullptr && borrowed->is_null;
+  }
 
   [[nodiscard]] common::Result<Value> remember(const std::size_t index,
                                                common::Result<Value> value) {
@@ -859,11 +834,35 @@ private:
     return *value;
   }
 
+  [[nodiscard]] common::Result<Value> remember_scalar(const std::size_t index,
+                                                      common::Result<ScalarValue> value) {
+    if (!value.has_value())
+      return common::make_unexpected(value.error());
+    return remember(index, Value{*value});
+  }
+
+  [[nodiscard]] common::Result<Value> borrow_cell(const std::size_t index,
+                                                  const columnar::ColumnCellView& cell) {
+    if (cell.is_null()) {
+      return remember(index,
+                      Value{Borrowed{.is_null = true,
+                                     .bytes = {},
+                                     .transform = detail::VariableByteTransform::kIdentity}});
+    }
+    common::Result<common::ByteView> bytes = cell.bytes();
+    if (!bytes.has_value())
+      return common::make_unexpected(bytes.error());
+    return remember(index, Value{Borrowed{.is_null = false,
+                                          .bytes = *bytes,
+                                          .transform = detail::VariableByteTransform::kIdentity}});
+  }
+
   [[nodiscard]] common::Result<Value> evaluate(const std::size_t index, const std::size_t depth) {
     if (depth > expression_.maximum_depth() || index >= kMaximumVectorExpressionInstructions)
-      return common::make_unexpected(internal("variable vector evaluation depth is invalid"));
-    if (const auto* cached = std::get_if<Value>(&values_[index]); cached != nullptr)
-      return *cached;
+      return common::make_unexpected(internal("vector expression evaluation depth is invalid"));
+    if (values_[index].has_value()) {
+      return values_[index].value(); // NOLINT(bugprone-unchecked-optional-access)
+    }
 
     const VectorExpressionInstruction& instruction = expression_.instructions()[index];
     if (const auto* source = std::get_if<VectorInputExpression>(&instruction); source != nullptr) {
@@ -873,63 +872,121 @@ private:
       common::Result<columnar::ColumnCellView> cell = column->cell(physical_row_);
       if (!cell.has_value())
         return common::make_unexpected(cell.error());
-      if (cell->is_null())
-        return remember(index, Value{.is_null = true,
-                                     .bytes = {},
-                                     .transform = detail::VariableByteTransform::kIdentity});
-      common::Result<common::ByteView> bytes = cell->bytes();
-      if (!bytes.has_value())
-        return common::make_unexpected(bytes.error());
-      return remember(index, Value{.is_null = false,
-                                   .bytes = *bytes,
-                                   .transform = detail::VariableByteTransform::kIdentity});
+      return text(source->type.kind())
+                 ? borrow_cell(index, *cell)
+                 : remember_scalar(index, ScalarValue::from_column_cell(source->type, *cell));
     }
     if (const auto* constant = std::get_if<VectorConstantExpression>(&instruction);
         constant != nullptr) {
-      if (constant->value.is_null())
-        return remember(index, Value{.is_null = true,
-                                     .bytes = {},
-                                     .transform = detail::VariableByteTransform::kIdentity});
+      const schema::LogicalType* type = scalar_type(constant->value);
+      if (type == nullptr || !text(type->kind()))
+        return remember(index, Value{constant->value});
+      if (constant->value.is_null()) {
+        return remember(index,
+                        Value{Borrowed{.is_null = true,
+                                       .bytes = {},
+                                       .transform = detail::VariableByteTransform::kIdentity}});
+      }
       const auto* string = std::get_if<std::string>(&constant->value.storage());
       if (string == nullptr)
         return common::make_unexpected(internal("variable vector constant is not text"));
-      return remember(index,
-                      Value{.is_null = false,
-                            .bytes = std::as_bytes(std::span{string->data(), string->size()}),
-                            .transform = detail::VariableByteTransform::kIdentity});
+      return remember(
+          index, Value{Borrowed{.is_null = false,
+                                .bytes = std::as_bytes(std::span{string->data(), string->size()}),
+                                .transform = detail::VariableByteTransform::kIdentity}});
     }
     if (const auto* unary = std::get_if<VectorUnaryExpression>(&instruction); unary != nullptr) {
       common::Result<Value> operand = evaluate(unary->operand_instruction, depth + 1U);
       if (!operand.has_value())
         return common::make_unexpected(operand.error());
-      if (operand->is_null)
-        return remember(index, *operand);
-      if (unary->operation == VectorUnaryOperation::kLowerAscii)
-        operand->transform = detail::VariableByteTransform::kLowerAscii;
-      else if (unary->operation == VectorUnaryOperation::kUpperAscii)
-        operand->transform = detail::VariableByteTransform::kUpperAscii;
-      else
-        return common::make_unexpected(internal("variable vector unary operation is invalid"));
-      return remember(index, *operand);
+      if (auto* borrowed = std::get_if<Borrowed>(&*operand); borrowed != nullptr) {
+        if (unary->operation == VectorUnaryOperation::kIsNull ||
+            unary->operation == VectorUnaryOperation::kIsNotNull) {
+          return remember_scalar(
+              index, ScalarValue::boolean(unary->operation == VectorUnaryOperation::kIsNull
+                                              ? borrowed->is_null
+                                              : !borrowed->is_null));
+        }
+        if (unary->operation == VectorUnaryOperation::kLowerAscii)
+          borrowed->transform = detail::VariableByteTransform::kLowerAscii;
+        else if (unary->operation == VectorUnaryOperation::kUpperAscii)
+          borrowed->transform = detail::VariableByteTransform::kUpperAscii;
+        else
+          return common::make_unexpected(internal("variable vector unary operation is invalid"));
+        return remember(index, std::move(operand));
+      }
+      return remember_scalar(index,
+                             evaluate_unary(unary->operation, std::get<ScalarValue>(*operand),
+                                            expression_.instruction_shapes()[index]));
     }
     if (const auto* cast = std::get_if<VectorCastExpression>(&instruction); cast != nullptr) {
-      return remember(index, evaluate(cast->operand_instruction, depth + 1U));
+      common::Result<Value> operand = evaluate(cast->operand_instruction, depth + 1U);
+      if (!operand.has_value())
+        return common::make_unexpected(operand.error());
+      if (std::holds_alternative<Borrowed>(*operand))
+        return remember(index, std::move(operand));
+      return remember_scalar(index,
+                             evaluate_cast(std::get<ScalarValue>(*operand), cast->target_type));
     }
-    if (const auto* binary = std::get_if<VectorBinaryExpression>(&instruction);
-        binary != nullptr && binary->operation == VectorBinaryOperation::kCoalesce) {
+    if (const auto* binary = std::get_if<VectorBinaryExpression>(&instruction); binary != nullptr) {
       common::Result<Value> left = evaluate(binary->left_instruction, depth + 1U);
       if (!left.has_value())
         return common::make_unexpected(left.error());
-      return remember(index, !left->is_null ? std::move(left)
-                                            : evaluate(binary->right_instruction, depth + 1U));
+      if (binary->operation == VectorBinaryOperation::kCoalesce && !is_null(*left))
+        return remember(index, std::move(left));
+      if (binary->operation == VectorBinaryOperation::kAnd ||
+          binary->operation == VectorBinaryOperation::kOr) {
+        const auto* left_scalar = std::get_if<ScalarValue>(&*left);
+        if (left_scalar == nullptr)
+          return common::make_unexpected(internal("logical vector operand is not fixed-width"));
+        const SqlTruthValue left_truth = truth(*left_scalar);
+        if ((binary->operation == VectorBinaryOperation::kAnd &&
+             left_truth == SqlTruthValue::kFalse) ||
+            (binary->operation == VectorBinaryOperation::kOr &&
+             left_truth == SqlTruthValue::kTrue)) {
+          return remember_scalar(index, boolean_value(left_truth));
+        }
+        common::Result<Value> right = evaluate(binary->right_instruction, depth + 1U);
+        if (!right.has_value())
+          return common::make_unexpected(right.error());
+        const auto* right_scalar = std::get_if<ScalarValue>(&*right);
+        if (right_scalar == nullptr)
+          return common::make_unexpected(internal("logical vector operand is not fixed-width"));
+        return remember_scalar(index,
+                               boolean_value(binary->operation == VectorBinaryOperation::kAnd
+                                                 ? sql_and(left_truth, truth(*right_scalar))
+                                                 : sql_or(left_truth, truth(*right_scalar))));
+      }
+      common::Result<Value> right = evaluate(binary->right_instruction, depth + 1U);
+      if (!right.has_value())
+        return common::make_unexpected(right.error());
+      if (binary->operation == VectorBinaryOperation::kCoalesce)
+        return remember(index, std::move(right));
+      const auto* left_borrowed = std::get_if<Borrowed>(&*left);
+      const auto* right_borrowed = std::get_if<Borrowed>(&*right);
+      if (left_borrowed != nullptr || right_borrowed != nullptr) {
+        if (left_borrowed == nullptr || right_borrowed == nullptr)
+          return common::make_unexpected(internal("text vector comparison storage mismatch"));
+        return remember_scalar(
+            index, evaluate_text_comparison(binary->operation, *left_borrowed, *right_borrowed));
+      }
+      const ScalarValue& left_scalar = std::get<ScalarValue>(*left);
+      const ScalarValue& right_scalar = std::get<ScalarValue>(*right);
+      if (binary->operation == VectorBinaryOperation::kTimeBucket)
+        return remember_scalar(index, evaluate_time_bucket(left_scalar, right_scalar));
+      return remember_scalar(index,
+                             comparison(binary->operation)
+                                 ? evaluate_comparison(binary->operation, left_scalar, right_scalar)
+                                 : evaluate_arithmetic(binary->operation, left_scalar, right_scalar,
+                                                       expression_.instruction_shapes()[index]));
     }
-    return common::make_unexpected(internal("variable vector instruction is invalid"));
+    return common::make_unexpected(internal("vector expression instruction is invalid"));
   }
 
   const VectorExpression& expression_;
   const VectorChunk& input_;
   std::uint32_t physical_row_;
-  std::array<std::variant<std::monostate, Value>, kMaximumVectorExpressionInstructions> values_{};
+  std::array<std::optional<Value>, kMaximumVectorExpressionInstructions> values_{};
 };
 
 } // namespace
@@ -1078,7 +1135,7 @@ common::Result<ScalarValue> evaluate_vector_expression_row(const VectorExpressio
                                                            const std::uint32_t physical_row) {
   if (physical_row >= input.physical_row_count())
     return common::make_unexpected(invalid("vector expression physical row is out of range"));
-  return RowEvaluator{expression, input, physical_row}.run();
+  return HybridRowEvaluator{expression, input, physical_row}.run_scalar();
 }
 
 common::Result<BorrowedVariableExpressionValue>
@@ -1089,7 +1146,7 @@ evaluate_variable_vector_expression_row(const VectorExpression& expression,
     return common::make_unexpected(invalid("vector expression result is not variable-width"));
   if (physical_row >= input.physical_row_count())
     return common::make_unexpected(invalid("vector expression physical row is out of range"));
-  return VariableRowEvaluator{expression, input, physical_row}.run();
+  return HybridRowEvaluator{expression, input, physical_row}.run_variable();
 }
 
 } // namespace detail

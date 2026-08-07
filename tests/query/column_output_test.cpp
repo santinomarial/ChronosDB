@@ -4,6 +4,7 @@
 #include "chronos/schema/logical_type.hpp"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <cstddef>
@@ -336,6 +337,35 @@ public:
                                                    .right_instruction = 3U});
   instructions.emplace_back(VectorCastExpression{.operand_instruction = 4U, .target_type = symbol});
   return VectorExpression::create(std::move(instructions));
+}
+
+[[nodiscard]] VectorExpression
+text_comparison_expression(const VectorBinaryOperation operation,
+                           const std::size_t input_column_ordinal = 1U,
+                           const std::string_view constant = "CCC") {
+  const schema::LogicalType string = type(schema::LogicalTypeKind::kString);
+  std::vector<VectorExpressionInstruction> instructions;
+  instructions.emplace_back(VectorInputExpression{
+      .input_column_ordinal = input_column_ordinal, .type = string, .nullable = true});
+  instructions.emplace_back(VectorUnaryExpression{.operation = VectorUnaryOperation::kLowerAscii,
+                                                  .operand_instruction = 0U});
+  instructions.emplace_back(VectorUnaryExpression{.operation = VectorUnaryOperation::kUpperAscii,
+                                                  .operand_instruction = 1U});
+  instructions.emplace_back(
+      VectorConstantExpression{ScalarValue::text(string, std::string{constant}).value()});
+  instructions.emplace_back(VectorBinaryExpression{
+      .operation = operation, .left_instruction = 2U, .right_instruction = 3U});
+  return VectorExpression::create(std::move(instructions)).value();
+}
+
+[[nodiscard]] VectorExpression text_null_expression(const VectorUnaryOperation operation) {
+  const schema::LogicalType string = type(schema::LogicalTypeKind::kString);
+  std::vector<VectorExpressionInstruction> instructions;
+  instructions.emplace_back(
+      VectorInputExpression{.input_column_ordinal = 1U, .type = string, .nullable = true});
+  instructions.emplace_back(
+      VectorUnaryExpression{.operation = operation, .operand_instruction = 0U});
+  return VectorExpression::create(std::move(instructions)).value();
 }
 
 TEST(SourceColumnOutputOperatorTest, ReordersDuplicatesAndCompactsSelectedRows) {
@@ -898,6 +928,79 @@ TEST(ColumnOutputOperatorTest, MaterializesCanonicalBorrowedVariableExpressions)
   EXPECT_EQ(limited_resources.reserved_memory_bytes(), 0U);
 }
 
+TEST(ColumnOutputOperatorTest, MaterializesBorrowedTextComparisonsAndNullPredicates) {
+  static constexpr std::array<VectorBinaryOperation, 6> kOperations{
+      VectorBinaryOperation::kEqual,   VectorBinaryOperation::kNotEqual,
+      VectorBinaryOperation::kLess,    VectorBinaryOperation::kLessEqual,
+      VectorBinaryOperation::kGreater, VectorBinaryOperation::kGreaterEqual};
+  static constexpr std::array<std::array<bool, 4>, 6> kExpected{{
+      {false, false, true, false},
+      {true, false, false, true},
+      {true, false, false, false},
+      {true, false, true, false},
+      {false, false, false, true},
+      {false, false, true, true},
+  }};
+  std::vector<ColumnOutputPosition> positions;
+  positions.reserve(9U);
+  for (const VectorBinaryOperation operation : kOperations)
+    positions.emplace_back(ComputedColumnOutputPosition{text_comparison_expression(operation)});
+  positions.emplace_back(
+      ComputedColumnOutputPosition{text_null_expression(VectorUnaryOperation::kIsNull)});
+  positions.emplace_back(
+      ComputedColumnOutputPosition{text_null_expression(VectorUnaryOperation::kIsNotNull)});
+
+  const schema::LogicalType string = type(schema::LogicalTypeKind::kString);
+  std::vector<VectorExpressionInstruction> combined;
+  combined.emplace_back(
+      VectorInputExpression{.input_column_ordinal = 1U, .type = string, .nullable = true});
+  combined.emplace_back(VectorUnaryExpression{.operation = VectorUnaryOperation::kUpperAscii,
+                                              .operand_instruction = 0U});
+  combined.emplace_back(VectorConstantExpression{ScalarValue::text(string, "CCC").value()});
+  combined.emplace_back(VectorBinaryExpression{
+      .operation = VectorBinaryOperation::kEqual, .left_instruction = 1U, .right_instruction = 2U});
+  combined.emplace_back(
+      VectorUnaryExpression{.operation = VectorUnaryOperation::kIsNull, .operand_instruction = 0U});
+  combined.emplace_back(VectorBinaryExpression{
+      .operation = VectorBinaryOperation::kOr, .left_instruction = 3U, .right_instruction = 4U});
+  positions.emplace_back(
+      ComputedColumnOutputPosition{VectorExpression::create(std::move(combined)).value()});
+
+  QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+  auto output = ColumnOutputOperator::create(
+                    std::make_unique<OneChunkSource>(accounted_chunk(
+                        resources, sample_columns(), std::vector<std::uint32_t>{0U, 1U, 2U, 3U})),
+                    std::move(positions))
+                    .value();
+  auto step = output->next(resources).value();
+  const VectorChunk& actual = step.chunk()->chunk();
+  ASSERT_EQ(actual.column_count(), 9U);
+  for (std::size_t column = 0U; column < kOperations.size(); ++column) {
+    EXPECT_TRUE(actual.column(column)->nullable());
+    EXPECT_EQ(actual.column(column)->null_count(), 1U);
+    for (std::size_t row = 0U; row < 4U; ++row) {
+      const columnar::ColumnCellView cell =
+          actual.cell({.column_ordinal = column, .selected_row = row}).value();
+      if (row == 1U)
+        EXPECT_TRUE(cell.is_null());
+      else
+        EXPECT_EQ(cell.boolean().value(), kExpected[column][row]);
+    }
+  }
+  for (std::size_t row = 0U; row < 4U; ++row) {
+    EXPECT_EQ(actual.cell({.column_ordinal = 6U, .selected_row = row})->boolean().value(),
+              row == 1U);
+    EXPECT_EQ(actual.cell({.column_ordinal = 7U, .selected_row = row})->boolean().value(),
+              row != 1U);
+    EXPECT_EQ(actual.cell({.column_ordinal = 8U, .selected_row = row})->boolean().value(),
+              row == 1U || row == 2U);
+  }
+  EXPECT_FALSE(actual.column(6U)->nullable());
+  EXPECT_FALSE(actual.column(7U)->nullable());
+  EXPECT_TRUE(actual.column(8U)->nullable());
+  EXPECT_EQ(actual.column(8U)->null_count(), 0U);
+}
+
 TEST(ColumnOutputOperatorPropertyTest, VariableCaseOutputMatchesIndependentByteModel) {
   constexpr std::uint32_t kRows = 257U;
   std::vector<std::optional<std::string>> values;
@@ -963,6 +1066,116 @@ TEST(ColumnOutputOperatorPropertyTest, VariableCaseOutputMatchesIndependentByteM
         byte = static_cast<char>(byte - 'A' + 'a');
     }
     EXPECT_EQ(text(actual, 0U, selected), expected);
+  }
+}
+
+TEST(ColumnOutputOperatorPropertyTest, TextPredicatesMatchIndependentUnsignedByteOrder) {
+  constexpr std::uint32_t kRows = 257U;
+  static constexpr std::array<VectorBinaryOperation, 6> kOperations{
+      VectorBinaryOperation::kEqual,   VectorBinaryOperation::kNotEqual,
+      VectorBinaryOperation::kLess,    VectorBinaryOperation::kLessEqual,
+      VectorBinaryOperation::kGreater, VectorBinaryOperation::kGreaterEqual};
+  std::vector<std::optional<std::string>> values;
+  std::vector<std::uint32_t> selection;
+  values.reserve(kRows);
+  selection.reserve(kRows);
+  std::uint64_t state = 0x13198a2e03707344ULL;
+  for (std::uint32_t row = 0U; row < kRows; ++row) {
+    state = state * 2'862'933'555'777'941'757ULL + 3'037'000'493ULL;
+    if (row % 13U == 0U) {
+      values.emplace_back(std::nullopt);
+    } else {
+      std::string value;
+      const std::size_t length = static_cast<std::size_t>(state % 17U);
+      value.reserve(length + 3U);
+      for (std::size_t index = 0U; index < length; ++index) {
+        state = state * 2'862'933'555'777'941'757ULL + 3'037'000'493ULL;
+        const char base = state % 2U == 0U ? 'A' : 'a';
+        value.push_back(static_cast<char>(base + static_cast<char>(state % 26U)));
+      }
+      if (row % 17U == 0U)
+        value.append("\xE2\x82\xAC");
+      values.emplace_back(std::move(value));
+    }
+    if (row % 4U != 2U)
+      selection.push_back(row);
+  }
+
+  std::vector<ColumnOutputPosition> positions;
+  positions.reserve(kOperations.size());
+  for (const VectorBinaryOperation operation : kOperations) {
+    positions.emplace_back(
+        ComputedColumnOutputPosition{text_comparison_expression(operation, 0U, "M")});
+  }
+  QueryResourceContext resources = QueryResourceContext::create(1U << 22U).value();
+  std::vector<columnar::OwnedPhysicalColumn> columns;
+  columns.push_back(generated_string_column(values));
+  VectorChunk source = VectorChunk::create(std::move(columns),
+                                           VectorSelection::from_indices(kRows, selection).value())
+                           .value();
+  AccountedVectorChunk accounted =
+      AccountedVectorChunk::create(std::move(source),
+                                   resources.reserve(std::size_t{64U} * 1024U).value(), resources)
+          .value();
+  auto output = ColumnOutputOperator::create(std::make_unique<OneChunkSource>(std::move(accounted)),
+                                             std::move(positions))
+                    .value();
+  auto step = output->next(resources).value();
+  const VectorChunk& actual = step.chunk()->chunk();
+  ASSERT_EQ(actual.selected_row_count(), selection.size());
+  for (std::size_t selected = 0U; selected < selection.size(); ++selected) {
+    const std::optional<std::string>& source_value = values[selection[selected]];
+    for (std::size_t operation_index = 0U; operation_index < kOperations.size();
+         ++operation_index) {
+      const columnar::ColumnCellView cell =
+          actual.cell({.column_ordinal = operation_index, .selected_row = selected}).value();
+      if (!source_value.has_value()) {
+        EXPECT_TRUE(cell.is_null());
+        continue;
+      }
+      std::string transformed = source_value.value(); // NOLINT(bugprone-unchecked-optional-access)
+      for (char& byte : transformed) {
+        if (byte >= 'a' && byte <= 'z')
+          byte = static_cast<char>(byte - 'a' + 'A');
+      }
+      constexpr std::string_view kCompared{"M"};
+      int order = 0;
+      const std::size_t shared = std::min(transformed.size(), kCompared.size());
+      for (std::size_t index = 0U; index < shared; ++index) {
+        const auto lhs = static_cast<unsigned char>(transformed[index]);
+        const auto rhs = static_cast<unsigned char>(kCompared[index]);
+        if (lhs != rhs) {
+          order = lhs < rhs ? -1 : 1;
+          break;
+        }
+      }
+      if (order == 0 && transformed.size() != kCompared.size())
+        order = transformed.size() < kCompared.size() ? -1 : 1;
+      bool expected = false;
+      switch (kOperations[operation_index]) {
+      case VectorBinaryOperation::kEqual:
+        expected = order == 0;
+        break;
+      case VectorBinaryOperation::kNotEqual:
+        expected = order != 0;
+        break;
+      case VectorBinaryOperation::kLess:
+        expected = order < 0;
+        break;
+      case VectorBinaryOperation::kLessEqual:
+        expected = order <= 0;
+        break;
+      case VectorBinaryOperation::kGreater:
+        expected = order > 0;
+        break;
+      case VectorBinaryOperation::kGreaterEqual:
+        expected = order >= 0;
+        break;
+      default:
+        FAIL() << "unexpected text comparison operation";
+      }
+      EXPECT_EQ(cell.boolean().value(), expected);
+    }
   }
 }
 

@@ -114,6 +114,19 @@ public:
   return VectorExpression::create(std::move(instructions)).value();
 }
 
+[[nodiscard]] VectorExpression text_predicate_expression() {
+  const schema::LogicalType string = type(schema::LogicalTypeKind::kString);
+  std::vector<VectorExpressionInstruction> instructions;
+  instructions.emplace_back(
+      VectorInputExpression{.input_column_ordinal = 0U, .type = string, .nullable = true});
+  instructions.emplace_back(VectorUnaryExpression{.operation = VectorUnaryOperation::kUpperAscii,
+                                                  .operand_instruction = 0U});
+  instructions.emplace_back(VectorConstantExpression{ScalarValue::text(string, "ABC").value()});
+  instructions.emplace_back(VectorBinaryExpression{
+      .operation = VectorBinaryOperation::kEqual, .left_instruction = 1U, .right_instruction = 2U});
+  return VectorExpression::create(std::move(instructions)).value();
+}
+
 TEST(VectorExpressionAllocationFailureTest, CreationClassifiesEveryOwnedAllocationFailure) {
   bool reached_success = false;
   for (std::size_t fail_after = 0U; fail_after < 16U; ++fail_after) {
@@ -221,6 +234,7 @@ TEST(ColumnOutputAllocationFailureTest,
         ConstantColumnOutputPosition{ScalarValue::null(type(schema::LogicalTypeKind::kBinary))});
     positions.emplace_back(ComputedColumnOutputPosition{constant_expression()});
     positions.emplace_back(ComputedColumnOutputPosition{variable_expression()});
+    positions.emplace_back(ComputedColumnOutputPosition{text_predicate_expression()});
     auto output = ColumnOutputOperator::create(std::make_unique<OneChunkSource>(chunk(resources)),
                                                std::move(positions))
                       .value();

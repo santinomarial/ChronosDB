@@ -413,16 +413,6 @@ add_expression_column_bytes(const VectorExpression& expression, const VectorChun
   return *next;
 }
 
-[[nodiscard]] std::byte transformed_byte(const std::byte input,
-                                         const detail::VariableByteTransform transform) noexcept {
-  unsigned char value = std::to_integer<unsigned char>(input);
-  if (transform == detail::VariableByteTransform::kLowerAscii && value >= 'A' && value <= 'Z')
-    value = static_cast<unsigned char>(value - 'A' + 'a');
-  else if (transform == detail::VariableByteTransform::kUpperAscii && value >= 'a' && value <= 'z')
-    value = static_cast<unsigned char>(value - 'a' + 'A');
-  return static_cast<std::byte>(value);
-}
-
 [[nodiscard]] common::Result<OutputPlan>
 plan_output(const VectorChunk& input, const std::vector<std::size_t>& input_column_ordinals,
             const VectorChunkLimits limits) {
@@ -845,7 +835,7 @@ materialize_expression(const VectorExpression& expression, const VectorChunk& in
               internal("computed variable output exceeded its admitted size"));
         }
         for (const std::byte byte : value->bytes)
-          buffers.values[cursor++] = transformed_byte(byte, value->transform);
+          buffers.values[cursor++] = detail::transform_variable_byte(byte, value->transform);
       }
       store_u32_le(buffers.offsets,
                    (static_cast<std::size_t>(output_row) + 1U) * sizeof(std::uint32_t),

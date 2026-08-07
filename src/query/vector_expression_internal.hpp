@@ -13,6 +13,16 @@ namespace chronos::query::detail {
 
 enum class VariableByteTransform : std::uint8_t { kIdentity, kLowerAscii, kUpperAscii };
 
+[[nodiscard]] constexpr std::byte
+transform_variable_byte(const std::byte input, const VariableByteTransform transform) noexcept {
+  unsigned char value = std::to_integer<unsigned char>(input);
+  if (transform == VariableByteTransform::kLowerAscii && value >= 'A' && value <= 'Z')
+    value = static_cast<unsigned char>(value - 'A' + 'a');
+  else if (transform == VariableByteTransform::kUpperAscii && value >= 'a' && value <= 'z')
+    value = static_cast<unsigned char>(value - 'a' + 'A');
+  return static_cast<std::byte>(value);
+}
+
 struct BorrowedVariableExpressionValue {
   bool is_null;
   common::ByteView bytes;

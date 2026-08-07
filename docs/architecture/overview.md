@@ -226,12 +226,13 @@ ChronosDB plans a custom parser, binder, optimizer, and execution engine under [
 Accounted column output now supports arbitrary source order/duplicates, typed constants, and bounded
 checked expression programs. One exact single-source, nonaggregate bound-SELECT subset lowers
 WHERE, ordered projection, fixed-width scalar expressions, STRING/SYMBOL casts and ASCII case
-output, and LIMIT into the unary pipeline under
+output, borrowed text comparisons/NULL predicates, and LIMIT into the unary pipeline under
 [ADRs 0035](../adr/0035-bounded-checked-vector-expression-programs.md),
 [0036](../adr/0036-bound-select-to-physical-pipeline-lowering.md), and
 [0037](../adr/0037-fixed-width-vector-casts-and-scalar-functions.md), and
-[0038](../adr/0038-borrowed-variable-width-vector-materialization.md). General plan lowering,
-text predicates, aggregates, complete part/head visibility, parallel scheduling,
+[0038](../adr/0038-borrowed-variable-width-vector-materialization.md), and
+[0039](../adr/0039-borrowed-text-predicate-vector-kernels.md). General plan lowering, aggregates,
+complete part/head visibility, parallel scheduling,
 spilling, adaptive behavior, and join algorithms remain deferred. Implemented reservations and
 accounted chunks provide the admission/ownership invariant, but future operators must reserve every
 retained allocation and release snapshot pins and memory by cooperative cancellation unwinding.

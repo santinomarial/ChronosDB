@@ -89,9 +89,9 @@ struct VectorExpressionLimits {
   std::size_t maximum_retained_configuration_bytes{kDefaultVectorExpressionConfigurationByteLimit};
 };
 
-// An immutable, copyable postorder DAG for checked physical scalar expressions. Variable-width
-// programs are restricted to STRING/SYMBOL casts, ASCII case conversion, and lazy COALESCE so the
-// materializer can evaluate them through borrowed bytes without per-row allocation.
+// An immutable, copyable postorder DAG for checked physical scalar expressions. STRING/SYMBOL
+// values remain borrowed through casts, ASCII case conversion, lazy COALESCE, comparisons, and NULL
+// predicates so successful row evaluation does not allocate variable payloads.
 // Successful per-row evaluation uses no heap allocation; diagnostic construction on a failing row
 // may allocate. Every operand references an earlier instruction and the final instruction is the
 // result. Source leaves retain exact expected physical shapes.

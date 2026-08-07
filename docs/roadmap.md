@@ -421,8 +421,11 @@ No phase passes because its code merely compiles. A phase passes only when its a
   and consumer evidence. ADR 0038 and the twenty-first increment add borrowed STRING/SYMBOL
   expression rows, exact two-pass canonical offset/value admission, direct ASCII LOWER/UPPER,
   text casts, lazy COALESCE, and failure/fuzz/benchmark/consumer evidence without per-row payload
-  allocation. Text predicates, broader relational lowering, optimizer rules, hidden row-version
-  columns, complete multi-part/head composition, base/delta merge and
+  allocation. ADR 0039 and the twenty-second increment unify fixed and borrowed values in one
+  bounded hybrid memo and add exact-type STRING/SYMBOL byte-order comparisons, NULL predicates,
+  Boolean/BETWEEN/IN composition, and property/failure/fuzz/benchmark/consumer evidence without
+  transformed-string allocation. Aggregates, broader relational lowering, optimizer rules, hidden
+  row-version columns, complete multi-part/head composition, base/delta merge and
   row-version resolution, mapped/asynchronous providers, shared pin credit, scheduling, spill, and
   full scalar-engine differential plan execution are unimplemented.
 

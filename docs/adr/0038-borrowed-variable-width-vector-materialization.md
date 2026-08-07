@@ -52,3 +52,9 @@ dense/sparse 16-byte text measurements.
 - [ADR 0036](0036-bound-select-to-physical-pipeline-lowering.md)
 - [ADR 0037](0037-fixed-width-vector-casts-and-scalar-functions.md)
 - [Vector expression guide](../learning/vector-expression-programs.md)
+
+## Subsequent decision
+
+[ADR 0039](0039-borrowed-text-predicate-vector-kernels.md) extends borrowed values into
+STRING/SYMBOL comparisons and NULL predicates through one hybrid fixed-stack evaluator. It
+preserves this ADR's two-pass variable-output contract and no-per-row-allocation rule.

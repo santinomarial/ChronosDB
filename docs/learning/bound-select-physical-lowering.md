@@ -31,7 +31,8 @@ reserved at the caller's instruction limit so allocator growth cannot make an ex
 fail the public spare-capacity rule. All returned stages own their vectors, constants, and programs.
 
 Checked numeric/decimal/temporal casts, lazy COALESCE, `time_bucket`, STRING/SYMBOL casts, and
-ASCII LOWER/UPPER lower directly into validated programs. Unsupported semantic surfaces return
+ASCII LOWER/UPPER plus text comparisons/NULL predicates lower directly into validated programs.
+Unsupported semantic surfaces return
 `kUnsupportedSyntax`; capacity
 exhaustion returns `kResourceLimit`; inconsistent bound metadata returns `kExecutionFailure`. No
 unsupported node is routed through the scalar evaluator. Construction catches allocation and
@@ -41,8 +42,8 @@ container-length failure and publishes no partial plan.
 
 This baseline supports one source, ordinary WHERE, ordered projection, and LIMIT using the current
 numeric, Boolean, temporal, UUID, and variable-width output kernels. It rejects aggregates,
-grouping, ORDER BY, LATEST, ASOF, SUBSCRIBE, EXPLAIN modes, and text-dependent fixed-width
-predicates. Text predicates and aggregate operators remain before wider relational lowering.
+grouping, ORDER BY, LATEST, ASOF, SUBSCRIBE, and EXPLAIN modes. Aggregate operators remain before
+wider relational lowering.
 
 Complexity is linear in source columns, outputs, and generated instructions. WHERE currently copies
 the complete source shape before filtering; later projection pruning or fusion requires measured

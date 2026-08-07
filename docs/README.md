@@ -179,7 +179,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   implemented all-type and typed-NULL canonical expansion under exact admission.
 - [Checked vector expressions](learning/vector-expression-programs.md): implemented bounded
   fixed-width arithmetic, comparison, Boolean, CAST, COALESCE, and time-bucket programs plus
-  borrowed STRING/SYMBOL casts and ASCII case output with scalar differential evidence.
+  borrowed STRING/SYMBOL casts, ASCII case output, byte-order comparisons, and NULL predicates with
+  scalar differential evidence.
 - [Bound SELECT physical lowering](learning/bound-select-physical-lowering.md): implemented the
   exact single-source, nonaggregate WHERE/projection/LIMIT bridge into physical pipelines.
 

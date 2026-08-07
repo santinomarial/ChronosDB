@@ -73,3 +73,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0036](0036-bound-select-to-physical-pipeline-lowering.md) | Bound SELECT to physical pipeline lowering | accepted |
 | [0037](0037-fixed-width-vector-casts-and-scalar-functions.md) | Fixed-width vector casts and scalar functions | accepted |
 | [0038](0038-borrowed-variable-width-vector-materialization.md) | Borrowed variable-width vector materialization | accepted |
+| [0039](0039-borrowed-text-predicate-vector-kernels.md) | Borrowed text-predicate vector kernels | accepted |

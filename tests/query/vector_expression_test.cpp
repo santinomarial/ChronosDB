@@ -120,19 +120,28 @@ TEST(VectorExpressionTest, ValidatesBorrowedVariableWidthPrograms) {
           .error()
           .code(),
       common::StatusCode::kInvalidArgument);
-  EXPECT_EQ(
+  VectorExpression comparison =
       VectorExpression::create({VectorConstantExpression{ScalarValue::text(string, "x").value()},
                                 VectorConstantExpression{ScalarValue::text(string, "y").value()},
                                 VectorBinaryExpression{.operation = VectorBinaryOperation::kEqual,
                                                        .left_instruction = 0U,
                                                        .right_instruction = 1U}})
-          .error()
-          .code(),
-      common::StatusCode::kInvalidArgument);
-  EXPECT_EQ(
-      VectorExpression::create({VectorConstantExpression{ScalarValue::text(string, "x").value()},
+          .value();
+  EXPECT_EQ(comparison.result_shape().type.kind(), schema::LogicalTypeKind::kBool);
+  EXPECT_FALSE(comparison.result_shape().nullable);
+  VectorExpression is_null =
+      VectorExpression::create({VectorConstantExpression{ScalarValue::null(string)},
                                 VectorUnaryExpression{.operation = VectorUnaryOperation::kIsNull,
                                                       .operand_instruction = 0U}})
+          .value();
+  EXPECT_EQ(is_null.result_shape().type.kind(), schema::LogicalTypeKind::kBool);
+  EXPECT_FALSE(is_null.result_shape().nullable);
+  EXPECT_EQ(
+      VectorExpression::create({VectorConstantExpression{ScalarValue::text(string, "x").value()},
+                                VectorConstantExpression{ScalarValue::text(symbol, "x").value()},
+                                VectorBinaryExpression{.operation = VectorBinaryOperation::kEqual,
+                                                       .left_instruction = 0U,
+                                                       .right_instruction = 1U}})
           .error()
           .code(),
       common::StatusCode::kInvalidArgument);

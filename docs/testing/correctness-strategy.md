@@ -145,6 +145,10 @@
 > LOWER/UPPER with exact offset/value admission, nullable-source fallback, canonical-output,
 > allocation-failure, lowering-fuzz, sanitizer, benchmark, and installed-consumer evidence. Text
 > comparisons and other text-dependent fixed-width results remain outside this claim.
+> Borrowed text predicates now cover all six exact-type STRING/SYMBOL comparisons, NULL/UNKNOWN,
+> nonnullable IS NULL/IS NOT NULL, Boolean/BETWEEN/IN composition, transformed and non-ASCII bytes,
+> a 257-row independent unsigned-byte property, allocation failure, lowering fuzz, sanitizers,
+> installed consumers, and dense/sparse microbenchmarks.
 
 ## Test types
 

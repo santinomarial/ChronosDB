@@ -352,6 +352,19 @@ int main() {
       .operand_instruction = 0U, .target_type = installed_expression_type};
   const auto installed_coalesce = chronos::query::VectorBinaryOperation::kCoalesce;
   const auto installed_lower = chronos::query::VectorUnaryOperation::kLowerAscii;
+  const auto installed_text_type =
+      chronos::schema::LogicalType::create(chronos::schema::LogicalTypeKind::kString).value();
+  std::vector<chronos::query::VectorExpressionInstruction> installed_text_instructions;
+  installed_text_instructions.emplace_back(chronos::query::VectorConstantExpression{
+      chronos::query::ScalarValue::text(installed_text_type, "a").value()});
+  installed_text_instructions.emplace_back(chronos::query::VectorConstantExpression{
+      chronos::query::ScalarValue::text(installed_text_type, "b").value()});
+  installed_text_instructions.emplace_back(chronos::query::VectorBinaryExpression{
+      .operation = chronos::query::VectorBinaryOperation::kLess,
+      .left_instruction = 0U,
+      .right_instruction = 1U});
+  const auto installed_text_predicate = create_vector_expression(
+      std::move(installed_text_instructions), chronos::query::VectorExpressionLimits{});
   using LowerSelectFunction = chronos::query::SqlResult<chronos::query::PhysicalPipelinePlan> (*)(
       const chronos::query::BoundSqlSelect&, chronos::query::PhysicalSelectLoweringLimits);
   const LowerSelectFunction lower_select = &chronos::query::lower_bound_sql_select;
@@ -588,6 +601,9 @@ int main() {
                  installed_cast.target_type == installed_expression_type &&
                  installed_coalesce == chronos::query::VectorBinaryOperation::kCoalesce &&
                  installed_lower == chronos::query::VectorUnaryOperation::kLowerAscii &&
+                 installed_text_predicate.has_value() &&
+                 installed_text_predicate->result_shape().type.kind() ==
+                     chronos::schema::LogicalTypeKind::kBool &&
                  lower_select != nullptr &&
                  create_timestamp_range_filter != nullptr &&
                  timestamp_range.matches(0) && create_head_scan != nullptr &&

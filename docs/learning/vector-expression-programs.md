@@ -9,10 +9,9 @@ and short-circuit rules. It is a physical in-memory program, not SQL syntax, an 
 durable bytecode.
 
 The current program includes the fixed-width SQL v1 scalar intersection plus variable-width
-STRING/SYMBOL casts, lazy COALESCE, and ASCII LOWER/UPPER. Bound lowering expands
-BETWEEN/IN, inserts checked fixed-width casts, folds lazy COALESCE chains, and emits exact
-`time_bucket` nodes. Text-dependent fixed-width results, aggregates, and joins remain outside this
-boundary.
+STRING/SYMBOL casts, lazy COALESCE, ASCII LOWER/UPPER, comparisons, and NULL predicates. Bound
+lowering expands BETWEEN/IN, inserts checked fixed-width casts, folds lazy COALESCE chains, and
+emits exact `time_bucket` nodes. Aggregates and joins remain outside this boundary.
 
 ## Public interfaces
 
@@ -48,20 +47,17 @@ unsigned types, and
 mixed floating operands produce FLOAT64. Decimal, Boolean, temporal, and UUID binary operands must
 have exact matching types. Checked casts separately admit numeric family crossings and DATE/
 TIMESTAMP_NS conversion. Variable programs admit only STRING/SYMBOL casts, LOWER/UPPER, and exact-
-type COALESCE, and must return STRING or SYMBOL; this keeps text predicates out of the owned scalar
-row path.
+type COALESCE. Exact-type text comparisons and NULL predicates return BOOL without converting the
+borrowed operands to owned scalar strings.
 
 ## Evaluation semantics
 
-Each output row evaluates lazily from the result. A fixed 256-slot stack array memoizes values; the
-supported scalar alternatives contain no variable payload, so successful evaluation performs no
-heap allocation per row. A failing row may allocate its owned diagnostic message.
-
-Variable-width evaluation uses a separate fixed 256-slot memo whose value is a borrowed byte span,
-NULL state, and identity/lower/upper transform. Input spans borrow the immutable chunk; constant
-spans borrow the retained program. Applying a later case operation replaces the transform because
-the last lower/upper operation determines the case of ASCII letters. Non-ASCII bytes are copied
-unchanged, exactly matching the scalar SQL oracle.
+Each output row evaluates lazily from the result through one fixed 256-slot hybrid memo. A slot
+contains either a fixed-width `ScalarValue` or a borrowed byte span with NULL state and an
+identity/lower/upper transform. Input spans borrow the immutable chunk; constant spans borrow the
+retained program. Applying a later case operation replaces the transform because the last lower/
+upper operation determines the case of ASCII letters. Successful evaluation performs no heap
+allocation per row; a failing row may allocate its owned diagnostic message.
 
 Lazy evaluation is observable correctness. `FALSE AND (1 / 0 > 0)` returns FALSE without executing
 the invalid divisor. TRUE similarly short-circuits OR. The remaining SQL truth tables retain UNKNOWN
@@ -76,6 +72,9 @@ Signed and unsigned arithmetic checks before wraparound. Integer division/remain
 the signed minimum divided by negative one is checked. FLOAT follows IEEE behavior, including
 infinity and NaN. DECIMAL delegates to the same exact widened implementation as the scalar oracle.
 Ordinary NULL comparisons produce UNKNOWN, and ordered comparisons with NaN produce FALSE.
+STRING/SYMBOL comparisons require one exact logical type and use lexicographic unsigned UTF-8 byte
+order after applying each operand's case transform; a shared prefix sorts first. Text NULL
+predicates inspect only the borrowed NULL state and are always nonnullable.
 Fixed-width casts match the scalar reference range and truncation rules, including decimal
 rescaling, finite float-to-integer checks, narrow integer admission, and floor conversion between
 negative TIMESTAMP_NS and DATE.
@@ -106,7 +105,9 @@ transformed-string intermediate is retained.
 `materialize_checked_numeric_expression` measures `(source + 42) * 3 > source` and
 `materialize_fixed_width_cast_and_coalesce` measures `coalesce(NULL, CAST(source AS FLOAT64))` over
 dense and quarter-dense selections. `materialize_variable_width_case_and_cast` measures direct
-LOWER plus STRING-to-SYMBOL materialization over 16-byte values and the same densities. All run over
+LOWER plus STRING-to-SYMBOL materialization over 16-byte values and the same densities.
+`materialize_borrowed_text_predicate` measures LOWER plus
+16-byte STRING equality without transformed-string allocation. All expression benchmarks run over
 dense and quarter-dense selections at 64, 1,024, and 4,096 physical rows. Source and program
 construction are excluded. The benchmarks record output bytes, rows, instruction count, density,
 and pull allocations; they are not end-to-end SQL claims.
@@ -114,9 +115,10 @@ and pull allocations; they are not end-to-end SQL claims.
 ## Correctness evidence
 
 Deterministic tests cover every instruction family, exact shapes, invalid references/types/limits,
-NULL, short-circuit errors, casts, COALESCE, negative time bucketing, sparse compaction, runtime
-overflow, cancellation, and plan integration. Fixed-seed 257-row properties compare arithmetic
-with an independent model and bound fixed-width scalar programs with the scalar SQL oracle.
+NULL, short-circuit errors, casts, COALESCE, negative time bucketing, all text comparisons, sparse
+compaction, runtime overflow, cancellation, and plan integration. Fixed-seed 257-row properties
+compare arithmetic and transformed unsigned-byte text order with independent models and bound
+fixed-width scalar programs with the scalar SQL oracle.
 Allocation-failure injection requires complete credit release. Lowering fuzzing includes valid and
 unsupported scalar forms. Sanitizers, self-contained headers, installation, and external-consumer
 compilation protect the boundary.
@@ -127,7 +129,7 @@ The fixed memo array favors a simple allocation proof over cache efficiency, and
 dispatch is not expected to be the final hot kernel. Column-wise specialization or fusion should be
 adopted only after profiles and must remain differential with this baseline. Single-source
 nonaggregate bound SQL now lowers the complete fixed-width scalar subset into these programs.
-Text-dependent Boolean kernels are next, followed by aggregate and wider relational lowering.
+Aggregate operators are next, followed by wider relational lowering.
 
 ## Likely review questions
 
@@ -140,6 +142,6 @@ recursive construction API or graph allocator.
 **Why is evaluation lazy if the program is postorder?** Instruction storage order makes validation
 simple; SQL error semantics still require short-circuit execution from the result.
 
-**Why are text comparisons still rejected?** A variable result can borrow its chosen bytes until
-the final write. A Boolean comparison needs a different borrowed-value evaluator; rejecting it is
-safer than silently copying strings into the scalar reference representation.
+**Why use a hybrid memo for text predicates?** Comparisons return fixed-width BOOL but consume
+variable-width operands. Carrying both fixed scalars and borrowed bytes in one lazy memo preserves
+AND/OR short circuit and DAG reuse without scratch strings or a second expression representation.

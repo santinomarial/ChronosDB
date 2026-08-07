@@ -45,6 +45,9 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
   columns.push_back(schema::ColumnDefinition::create(id<schema::ColumnId>(5U), "flag",
                                                      type(schema::LogicalTypeKind::kBool), false)
                         .value());
+  columns.push_back(schema::ColumnDefinition::create(id<schema::ColumnId>(6U), "label",
+                                                     type(schema::LogicalTypeKind::kString), true)
+                        .value());
   return std::make_shared<const schema::TableSchema>(
       schema::TableSchema::create(id<schema::TableId>(1U), id<schema::SchemaId>(2U),
                                   schema::SchemaVersion::initial(), std::nullopt,
@@ -104,6 +107,35 @@ signed_column(const schema::LogicalTypeKind kind, const std::span<const std::int
       .value();
 }
 
+[[nodiscard]] columnar::OwnedPhysicalColumn
+string_column(const std::span<const std::optional<std::string>> values) {
+  columnar::ColumnVectorBuffers buffers;
+  buffers.validity.resize(columnar::bitmap_size(static_cast<std::uint32_t>(values.size())));
+  const auto append_offset = [&buffers](const std::uint32_t value) {
+    for (std::size_t byte = 0U; byte < sizeof(value); ++byte)
+      buffers.offsets.push_back(static_cast<std::byte>((value >> (byte * 8U)) & 0xffU));
+  };
+  append_offset(0U);
+  std::uint32_t null_count = 0U;
+  for (std::size_t row = 0U; row < values.size(); ++row) {
+    if (!values[row].has_value()) {
+      ++null_count;
+    } else {
+      buffers.validity[row / 8U] |= static_cast<std::byte>(1U << (row % 8U));
+      for (const char byte : values[row].value()) // NOLINT(bugprone-unchecked-optional-access)
+        buffers.values.push_back(static_cast<std::byte>(byte));
+    }
+    append_offset(static_cast<std::uint32_t>(buffers.values.size()));
+  }
+  return columnar::OwnedPhysicalColumn::create(
+             {.type = type(schema::LogicalTypeKind::kString),
+              .nullable = true,
+              .row_count = static_cast<std::uint32_t>(values.size()),
+              .null_count = null_count},
+             std::move(buffers))
+      .value();
+}
+
 class OneChunkSource final : public PhysicalOperator {
 public:
   explicit OneChunkSource(AccountedVectorChunk chunk) : chunk_(std::move(chunk)) {}
@@ -124,10 +156,12 @@ private:
   constexpr std::array<std::int64_t, 4> kTimestamp{1, 2, 3, 4};
   constexpr std::array<std::int64_t, 4> kValue{0, 3, 5, 8};
   constexpr std::array<bool, 4> kFlag{true, true, false, true};
+  const std::array<std::optional<std::string>, 4> labels{"alpha", std::nullopt, "ccc", "delta"};
   std::vector<columnar::OwnedPhysicalColumn> columns;
   columns.push_back(signed_column(schema::LogicalTypeKind::kTimestampNs, kTimestamp));
   columns.push_back(signed_column(schema::LogicalTypeKind::kInt64, kValue));
   columns.push_back(bool_column(kFlag));
+  columns.push_back(string_column(labels));
   VectorChunk chunk =
       VectorChunk::create(std::move(columns), VectorSelection::all(4U).value()).value();
   return AccountedVectorChunk::create(std::move(chunk), resources.reserve(4'096U).value(),
@@ -170,7 +204,7 @@ TEST(PhysicalSelectLoweringTest, LowersWhereProjectionAndLimitIntoExactStageOrde
                                "WHERE flag AND value BETWEEN 1 AND 9 LIMIT 2");
   SqlResult<PhysicalPipelinePlan> plan = lower_bound_sql_select(select);
   ASSERT_TRUE(plan.has_value()) << plan.error().status().to_string();
-  ASSERT_EQ(plan->input_columns().size(), 3U);
+  ASSERT_EQ(plan->input_columns().size(), 4U);
   ASSERT_EQ(plan->output_columns().size(), 2U);
   EXPECT_EQ(plan->output_columns()[0].type.kind(), schema::LogicalTypeKind::kInt64);
   ASSERT_EQ(plan->stages().size(), 4U);
@@ -191,14 +225,15 @@ TEST(PhysicalSelectLoweringTest, LowersWhereProjectionAndLimitIntoExactStageOrde
 }
 
 TEST(PhysicalSelectLoweringTest, PreservesStarOrderAndVariableConstantShape) {
-  BoundSqlSelect select = bind("SELECT *, 'fixed' AS label FROM metrics");
+  BoundSqlSelect select = bind("SELECT *, 'fixed' AS fixed_label FROM metrics");
   SqlResult<PhysicalPipelinePlan> plan = lower_bound_sql_select(select);
   ASSERT_TRUE(plan.has_value()) << plan.error().status().to_string();
-  ASSERT_EQ(plan->output_columns().size(), 4U);
+  ASSERT_EQ(plan->output_columns().size(), 5U);
   EXPECT_EQ(plan->output_columns()[0].type.kind(), schema::LogicalTypeKind::kTimestampNs);
   EXPECT_EQ(plan->output_columns()[1].type.kind(), schema::LogicalTypeKind::kInt64);
   EXPECT_EQ(plan->output_columns()[2].type.kind(), schema::LogicalTypeKind::kBool);
   EXPECT_EQ(plan->output_columns()[3].type.kind(), schema::LogicalTypeKind::kString);
+  EXPECT_EQ(plan->output_columns()[4].type.kind(), schema::LogicalTypeKind::kString);
 
   BoundSqlSelect nullable_in = bind("SELECT NULL IN (1, 2) AS membership FROM metrics");
   SqlResult<PhysicalPipelinePlan> in_plan = lower_bound_sql_select(nullable_in);
@@ -235,10 +270,14 @@ TEST(PhysicalSelectLoweringTest, ExecutesCheckedCastsLazyCoalesceAndTimeBucket) 
 TEST(PhysicalSelectLoweringTest, ExecutesTextCastCaseAndLazyCoalesce) {
   BoundSqlSelect select =
       bind("SELECT lower(CAST('ChRoNoS' AS SYMBOL)) AS lowered, "
-           "upper(coalesce(CAST(NULL AS STRING), 'fallback')) AS chosen FROM metrics LIMIT 1");
+           "upper(coalesce(CAST(NULL AS STRING), 'fallback')) AS chosen, "
+           "lower('A') = 'a' AS compared, upper(CAST(NULL AS STRING)) IS NULL AS missing "
+           "FROM metrics LIMIT 1");
   PhysicalPipelinePlan plan = lower_bound_sql_select(select).value();
   EXPECT_EQ(plan.output_columns()[0].type.kind(), schema::LogicalTypeKind::kSymbol);
   EXPECT_EQ(plan.output_columns()[1].type.kind(), schema::LogicalTypeKind::kString);
+  EXPECT_EQ(plan.output_columns()[2].type.kind(), schema::LogicalTypeKind::kBool);
+  EXPECT_EQ(plan.output_columns()[3].type.kind(), schema::LogicalTypeKind::kBool);
 
   QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
   auto pipeline = plan.instantiate(std::make_unique<OneChunkSource>(input(resources))).value();
@@ -246,6 +285,27 @@ TEST(PhysicalSelectLoweringTest, ExecutesTextCastCaseAndLazyCoalesce) {
   ASSERT_EQ(step.kind(), PhysicalOperatorStepKind::kChunk);
   EXPECT_EQ(cell_text(step.chunk()->chunk(), 0U, 0U), "chronos");
   EXPECT_EQ(cell_text(step.chunk()->chunk(), 1U, 0U), "FALLBACK");
+  EXPECT_TRUE(std::get<bool>(cell_value(step.chunk()->chunk(), 2U, 0U).storage()));
+  EXPECT_TRUE(std::get<bool>(cell_value(step.chunk()->chunk(), 3U, 0U).storage()));
+}
+
+TEST(PhysicalSelectLoweringTest, FiltersBorrowedSourceTextThroughBoundSql) {
+  BoundSqlSelect select = bind("SELECT label, label IS NULL AS missing FROM metrics "
+                               "WHERE upper(label) IN ('ALPHA', 'CCC') OR label IS NULL");
+  PhysicalPipelinePlan plan = lower_bound_sql_select(select).value();
+
+  QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+  auto pipeline = plan.instantiate(std::make_unique<OneChunkSource>(input(resources))).value();
+  auto step = pipeline->next(resources).value();
+  ASSERT_EQ(step.kind(), PhysicalOperatorStepKind::kChunk);
+  ASSERT_EQ(step.chunk()->chunk().selected_row_count(), 3U);
+  EXPECT_EQ(cell_text(step.chunk()->chunk(), 0U, 0U), "alpha");
+  EXPECT_TRUE(
+      step.chunk()->chunk().cell({.column_ordinal = 0U, .selected_row = 1U}).value().is_null());
+  EXPECT_EQ(cell_text(step.chunk()->chunk(), 0U, 2U), "ccc");
+  EXPECT_FALSE(std::get<bool>(cell_value(step.chunk()->chunk(), 1U, 0U).storage()));
+  EXPECT_TRUE(std::get<bool>(cell_value(step.chunk()->chunk(), 1U, 1U).storage()));
+  EXPECT_FALSE(std::get<bool>(cell_value(step.chunk()->chunk(), 1U, 2U).storage()));
 }
 
 TEST(PhysicalSelectLoweringTest, PropagatesRuntimeCastFailureAndCancelsThePipeline) {
@@ -270,9 +330,11 @@ TEST(PhysicalSelectLoweringPropertyTest, FixedWidthKernelsMatchTheScalarOracle) 
 
   std::vector<std::int64_t> timestamps;
   std::vector<std::int64_t> values;
+  std::vector<std::optional<std::string>> labels;
   std::array<bool, 257> flags{};
   timestamps.reserve(257U);
   values.reserve(257U);
+  labels.reserve(257U);
   std::uint64_t state = 0x6a09e667f3bcc909ULL;
   for (std::size_t row = 0U; row < 257U; ++row) {
     state = state * 6'364'136'223'846'793'005ULL + 1'442'695'040'888'963'407ULL;
@@ -280,6 +342,7 @@ TEST(PhysicalSelectLoweringPropertyTest, FixedWidthKernelsMatchTheScalarOracle) 
     state = state * 6'364'136'223'846'793'005ULL + 1'442'695'040'888'963'407ULL;
     values.push_back(static_cast<std::int64_t>(state % 2'000'001ULL) - 1'000'000LL);
     flags[row] = (state & 1U) != 0U;
+    labels.emplace_back("x");
   }
 
   QueryResourceContext resources = QueryResourceContext::create(1U << 22U).value();
@@ -287,6 +350,7 @@ TEST(PhysicalSelectLoweringPropertyTest, FixedWidthKernelsMatchTheScalarOracle) 
   columns.push_back(signed_column(schema::LogicalTypeKind::kTimestampNs, timestamps));
   columns.push_back(signed_column(schema::LogicalTypeKind::kInt64, values));
   columns.push_back(bool_column(flags));
+  columns.push_back(string_column(labels));
   VectorChunk source_chunk =
       VectorChunk::create(std::move(columns), VectorSelection::all(257U).value()).value();
   AccountedVectorChunk accounted =
@@ -300,11 +364,12 @@ TEST(PhysicalSelectLoweringPropertyTest, FixedWidthKernelsMatchTheScalarOracle) 
   ASSERT_EQ(actual.selected_row_count(), values.size());
 
   for (std::size_t row = 0U; row < values.size(); ++row) {
-    std::array<ScalarValue, 3> source_values{
+    std::array<ScalarValue, 4> source_values{
         ScalarValue::signed_value(type(schema::LogicalTypeKind::kTimestampNs), timestamps[row])
             .value(),
         ScalarValue::signed_value(type(schema::LogicalTypeKind::kInt64), values[row]).value(),
-        ScalarValue::boolean(flags[row]).value()};
+        ScalarValue::boolean(flags[row]).value(),
+        ScalarValue::text(type(schema::LogicalTypeKind::kString), "x").value()};
     const std::array<ScalarSourceRow, 1> sources{
         ScalarSourceRow{std::span<const ScalarValue>{source_values}}};
     const ScalarEvaluationContext context{.sources = sources};
@@ -329,8 +394,7 @@ TEST(PhysicalSelectLoweringTest, RejectsUnsupportedRelationalAndScalarSurfaces) 
   EXPECT_EQ(lower_bound_sql_select(aggregate).error().code(),
             SqlDiagnosticCode::kUnsupportedSyntax);
   BoundSqlSelect text_comparison = bind("SELECT 'a' = 'b' AS compared FROM metrics");
-  EXPECT_EQ(lower_bound_sql_select(text_comparison).error().code(),
-            SqlDiagnosticCode::kUnsupportedSyntax);
+  EXPECT_TRUE(lower_bound_sql_select(text_comparison).has_value());
   BoundSqlSelect subscribe = bind("SUBSCRIBE SELECT value FROM metrics");
   EXPECT_EQ(lower_bound_sql_select(subscribe).error().code(),
             SqlDiagnosticCode::kUnsupportedSyntax);
