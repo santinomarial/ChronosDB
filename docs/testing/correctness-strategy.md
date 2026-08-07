@@ -108,9 +108,11 @@
 > failure, hostile projection fuzzing, sanitizer coverage, and isolated materialization
 > measurements. Exact event-time head construction now adds projection-aware helper materialization
 > and removal, forced-boundary/empty-progress truth, independent point properties, allocation
-> failure, hostile fuzzing, and selective materialization measurement. It explicitly excludes
-> hidden row versions, multi-head/part composition, and non-event-time SQL filtering from its
-> correctness claim.
+> failure, hostile fuzzing, and selective materialization measurement. The shared opt-in row-version
+> suffix adds frozen type/order/value checks, zero-copy CSEG views, accounted canonical head copies,
+> helper preservation, allocation-failure sweeps, hostile mode fuzzing, sanitizer coverage, paired
+> benchmarks, and installed-consumer use. It explicitly excludes multi-head/part composition,
+> version resolution, SQL exposure, and non-event-time SQL filtering from its correctness claim.
 > Exact timestamp-range vector filtering adds direct open/closed signed-domain edge tests, NULL and
 > empty-range semantics, sparse-selection/chunk-boundary scalar properties, invalid type/shape/query
 > ownership failures, bounded-plan validation, hostile vector/plan fuzzing, sanitizer coverage,

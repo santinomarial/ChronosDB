@@ -94,6 +94,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/query/physical_lowering.hpp>
 #include <chronos/query/physical_plan.hpp>
 #include <chronos/query/resource_context.hpp>
+#include <chronos/query/row_version.hpp>
 #include <chronos/query/catalog.hpp>
 #include <chronos/query/binder.hpp>
 #include <chronos/query/evaluator.hpp>
@@ -326,6 +327,9 @@ int main() {
   const auto query_scalar = chronos::query::ScalarValue::float64(1.0);
   const auto query_resources = chronos::query::QueryResourceContext::create(1'024U);
   const auto physical_end = chronos::query::PhysicalOperatorStep::end();
+  const auto row_version_layout = chronos::query::vector_row_version_layout(2U);
+  const auto row_version_type = chronos::query::vector_row_version_column_type(
+      chronos::query::VectorRowVersionColumnKind::kWalId);
   using CreateColumnSubsetFunction =
       chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
           std::unique_ptr<chronos::query::PhysicalOperator>, std::vector<std::size_t>);
@@ -632,6 +636,10 @@ int main() {
                  query_resources.has_value() &&
                  query_resources->available_memory_bytes() == 1'024U &&
                  physical_end.kind() == chronos::query::PhysicalOperatorStepKind::kEnd &&
+                 row_version_layout.has_value() &&
+                 row_version_layout->wal_id_column_ordinal() == 2U &&
+                 row_version_type.has_value() &&
+                 row_version_type->kind() == chronos::schema::LogicalTypeKind::kUuid &&
                  create_column_subset != nullptr && create_source_column_output != nullptr &&
                  create_column_output != nullptr && create_vector_expression != nullptr &&
                  installed_cast.target_type == installed_expression_type &&

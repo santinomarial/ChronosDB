@@ -235,11 +235,13 @@ TEST(DatabaseCsegScanAllocationFailureTest, AggregateCreationUnwindsEveryRetaine
         QueryResourceContext::create(std::size_t{16U} * 1024U * 1024U).value();
     std::vector<std::shared_ptr<const manifest::SnapshotPartImage>> images = fixture.images;
     const std::vector<std::uint32_t> ordinals{1U};
+    CsegScanLimits limits;
+    limits.row_version_columns = RowVersionScanMode::kAppend;
     std::size_t observed = 0U;
     auto source = run_aggregate_with_allocation_failure(fail_after, observed, [&] {
-      return create_snapshot_cseg_part_scan(resources, fixture.plan, std::move(images),
-                                            fixture.schemas,
-                                            cseg::test::identifier<schema::SchemaId>(6U), ordinals);
+      return create_snapshot_cseg_part_scan(
+          resources, fixture.plan, std::move(images), fixture.schemas,
+          cseg::test::identifier<schema::SchemaId>(6U), ordinals, limits);
     });
     EXPECT_GT(observed, 0U);
     if (source.has_value()) {

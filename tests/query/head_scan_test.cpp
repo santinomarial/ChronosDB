@@ -38,6 +38,11 @@ namespace {
   return reader.read_i64_le().value();
 }
 
+[[nodiscard]] common::ByteView raw_cell(const VectorChunk& chunk, const std::size_t column,
+                                        const std::size_t row) {
+  return chunk.cell({.column_ordinal = column, .selected_row = row})->bytes().value();
+}
+
 TEST(HeadScanOperatorTest, MaterializesCanonicalChunksAndSynthesizesNullableTailInCallerOrder) {
   test::HeadFixture fixture{6U};
   fixture.publish({.range = {.first_row = 0U, .row_count = 6U}, .record_sequence = 7U});
@@ -144,6 +149,53 @@ TEST(HeadScanOperatorTest, SupportsEmptyHeadAndZeroColumnCardinality) {
   EXPECT_EQ(rows_resources.reserved_memory_bytes(), 0U);
 }
 
+TEST(HeadScanOperatorTest, AppendsCanonicalRowVersionColumnsAcrossChunkBoundaries) {
+  test::HeadFixture fixture{5U};
+  fixture.publish({.range = {.first_row = 0U, .row_count = 5U}, .record_sequence = 7U});
+  const head::HeadSnapshot snapshot = fixture.snapshot();
+  QueryResourceContext resources =
+      QueryResourceContext::create(std::size_t{16U} * 1024U * 1024U).value();
+  HeadScanLimits limits;
+  limits.chunk.maximum_rows = 2U;
+  limits.row_version_columns = RowVersionScanMode::kAppend;
+  auto source =
+      HeadScanOperator::create(resources, snapshot, fixture.schemas(),
+                               columnar::test::id<schema::SchemaId>(test::kInitialSchemaId),
+                               snapshot.tablet_id(), {}, limits);
+  ASSERT_TRUE(source.has_value()) << source.error().to_string();
+
+  const auto layout = vector_row_version_layout(0U).value();
+  std::uint32_t global_row = 0U;
+  for (;;) {
+    const auto step = (*source)->next(resources);
+    ASSERT_TRUE(step.has_value()) << step.error().to_string();
+    if (step->kind() == PhysicalOperatorStepKind::kEnd)
+      break;
+    const VectorChunk& chunk = step->chunk()->chunk();
+    ASSERT_EQ(chunk.column_count(), kVectorRowVersionColumnCount);
+    EXPECT_EQ(chunk.column(layout.wal_id_column_ordinal())->type().kind(),
+              schema::LogicalTypeKind::kUuid);
+    EXPECT_EQ(chunk.column(layout.record_sequence_column_ordinal())->type().kind(),
+              schema::LogicalTypeKind::kUInt64);
+    EXPECT_EQ(chunk.column(layout.row_ordinal_column_ordinal())->type().kind(),
+              schema::LogicalTypeKind::kUInt32);
+    EXPECT_EQ(chunk.column(layout.operation_column_ordinal())->type().kind(),
+              schema::LogicalTypeKind::kUInt8);
+    for (std::size_t local = 0U; local < chunk.selected_row_count(); ++local, ++global_row) {
+      EXPECT_TRUE(std::ranges::equal(raw_cell(chunk, layout.wal_id_column_ordinal(), local),
+                                     test::wal_id().bytes));
+      common::ByteReader sequence{raw_cell(chunk, layout.record_sequence_column_ordinal(), local)};
+      EXPECT_EQ(sequence.read_u64_le().value(), 7U);
+      common::ByteReader ordinal{raw_cell(chunk, layout.row_ordinal_column_ordinal(), local)};
+      EXPECT_EQ(ordinal.read_u32_le().value(), global_row);
+      ASSERT_EQ(raw_cell(chunk, layout.operation_column_ordinal(), local).size(), 1U);
+      EXPECT_EQ(raw_cell(chunk, layout.operation_column_ordinal(), local).front(), std::byte{1U});
+    }
+  }
+  EXPECT_EQ(global_row, 5U);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
 TEST(HeadScanOperatorTest, ExactEventTimeFilteringPreservesBoundsAcrossChunkBoundaries) {
   test::HeadFixture fixture{8U};
   fixture.publish({.range = {.first_row = 0U, .row_count = 8U}, .record_sequence = 1U});
@@ -183,19 +235,26 @@ TEST(HeadScanOperatorTest, RemovesAnUnrequestedEventTimeHelperIncludingZeroColum
   fixture.publish({.range = {.first_row = 0U, .row_count = 5U}, .record_sequence = 1U});
   QueryResourceContext resources =
       QueryResourceContext::create(std::size_t{32U} * 1024U * 1024U).value();
+  HeadScanLimits row_version_limits;
+  row_version_limits.row_version_columns = RowVersionScanMode::kAppend;
   auto nullable_tail = HeadScanOperator::create_event_time_filtered(
       resources, fixture.snapshot(), fixture.schemas(),
       columnar::test::id<schema::SchemaId>(test::kSuccessorSchemaId),
       columnar::test::id<schema::TabletId>(test::kTabletId), {4U},
       {.lower = TimestampRangeBound{.value = 30, .inclusive = true},
-       .upper = TimestampRangeBound{.value = 30, .inclusive = true}});
+       .upper = TimestampRangeBound{.value = 30, .inclusive = true}},
+      row_version_limits);
   ASSERT_TRUE(nullable_tail.has_value()) << nullable_tail.error().to_string();
   common::Result<PhysicalOperatorStep> step = (*nullable_tail)->next(resources);
   ASSERT_TRUE(step.has_value()) << step.error().to_string();
   ASSERT_EQ(step->kind(), PhysicalOperatorStepKind::kChunk);
-  ASSERT_EQ(step->chunk()->chunk().column_count(), 1U);
+  ASSERT_EQ(step->chunk()->chunk().column_count(), 1U + kVectorRowVersionColumnCount);
   ASSERT_EQ(step->chunk()->chunk().selected_row_count(), 1U);
   EXPECT_TRUE(step->chunk()->chunk().cell({.column_ordinal = 0U, .selected_row = 0U})->is_null());
+  const auto layout = vector_row_version_layout(1U).value();
+  common::ByteReader ordinal{
+      raw_cell(step->chunk()->chunk(), layout.row_ordinal_column_ordinal(), 0U)};
+  EXPECT_EQ(ordinal.read_u32_le().value(), 3U);
   step = (*nullable_tail)->next(resources);
   ASSERT_TRUE(step.has_value()) << step.error().to_string();
   EXPECT_EQ(step->kind(), PhysicalOperatorStepKind::kEnd);

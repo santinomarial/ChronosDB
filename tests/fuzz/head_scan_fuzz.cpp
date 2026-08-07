@@ -31,6 +31,9 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
       input.size() < 4U ? 1U : static_cast<std::size_t>(input[3]) * 256U + 1U;
   hostile_limits.chunk.maximum_retained_buffer_bytes =
       input.size() < 5U ? 1U : static_cast<std::size_t>(input[4]) * 512U + 1U;
+  hostile_limits.row_version_columns = input.size() >= 10U && (input[9] & 1U) != 0U
+                                           ? chronos::query::RowVersionScanMode::kAppend
+                                           : chronos::query::RowVersionScanMode::kOmit;
   const chronos::schema::SchemaId hostile_schema =
       chronos::columnar::test::id<chronos::schema::SchemaId>(
           (input.size() >= 6U && (input[5] & 1U) != 0U) ? chronos::query::test::kSuccessorSchemaId
@@ -72,6 +75,9 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
       chronos::query::QueryResourceContext::create(std::size_t{32U} * 1024U * 1024U).value();
   chronos::query::HeadScanLimits limits;
   limits.chunk.maximum_rows = input.size() < 2U ? 1U : static_cast<std::uint32_t>(input[1]) + 1U;
+  limits.row_version_columns = !input.empty() && (input.back() & 16U) != 0U
+                                   ? chronos::query::RowVersionScanMode::kAppend
+                                   : chronos::query::RowVersionScanMode::kOmit;
   auto source = chronos::query::HeadScanOperator::create(
       resources, fixture.snapshot(), fixture.schemas(),
       chronos::columnar::test::id<chronos::schema::SchemaId>(
@@ -117,7 +123,11 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
       return 0;
     if (step->kind() == chronos::query::PhysicalOperatorStepKind::kEnd)
       break;
-    if (step->chunk()->chunk().column_count() != 1U)
+    const std::size_t expected_columns =
+        1U + (limits.row_version_columns == chronos::query::RowVersionScanMode::kAppend
+                  ? chronos::query::kVectorRowVersionColumnCount
+                  : 0U);
+    if (step->chunk()->chunk().column_count() != expected_columns)
       std::abort();
     exact_rows += step->chunk()->chunk().selected_row_count();
   }

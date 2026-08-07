@@ -119,6 +119,14 @@ validate_projection_request(const schema::TableSchema& destination_schema,
       destination_column_ordinals.size() > limits.chunk.maximum_columns) {
     return exhausted("snapshot CSEG part-scan projection exceeds configured limits");
   }
+  common::Result<std::size_t> exposed_columns =
+      scan_output_column_count(destination_column_ordinals.size(), limits.row_version_columns);
+  if (!exposed_columns.has_value())
+    return exposed_columns.error();
+  if (*exposed_columns > limits.chunk.maximum_columns) {
+    return exhausted(
+        "snapshot CSEG part-scan output including row-version columns exceeds configured limits");
+  }
   if (predicate.has_value() && (limits.pruning.max_granules == 0U ||
                                 limits.pruning.max_granules > cseg::format::kMaximumGranuleCount)) {
     return invalid("snapshot CSEG part-scan pruning limit is outside the v1 format domain");
@@ -511,8 +519,17 @@ common::Result<std::unique_ptr<PhysicalOperator>> create_snapshot_cseg_part_scan
       event_time_output_ordinal =
           static_cast<std::size_t>(requested - destination_column_ordinals.begin());
     } else {
+      const std::optional<std::size_t> helper_user_columns =
+          common::checked_add(destination_column_ordinals.size(), std::size_t{1U});
+      if (!helper_user_columns.has_value()) {
+        return common::make_unexpected(
+            exhausted("snapshot CSEG exact predicate helper column count overflowed"));
+      }
+      common::Result<std::size_t> helper_output_columns =
+          scan_output_column_count(*helper_user_columns, limits.row_version_columns);
       if (destination_column_ordinals.size() >= limits.reader.max_projected_columns ||
-          destination_column_ordinals.size() >= limits.chunk.maximum_columns) {
+          !helper_output_columns.has_value() ||
+          *helper_output_columns > limits.chunk.maximum_columns) {
         return common::make_unexpected(
             exhausted("snapshot CSEG exact predicate helper exceeds configured projection limits"));
       }
@@ -582,9 +599,24 @@ common::Result<std::unique_ptr<PhysicalOperator>> create_snapshot_cseg_part_scan
         return common::make_unexpected(filtered.error());
       pipeline = std::move(*filtered);
       if (append_event_time_helper) {
-        std::vector<std::size_t> visible_columns(destination_column_ordinals.size());
-        for (std::size_t ordinal = 0U; ordinal < visible_columns.size(); ++ordinal)
-          visible_columns[ordinal] = ordinal;
+        std::vector<std::size_t> visible_columns;
+        const std::size_t visible_count = destination_column_ordinals.size() +
+                                          (limits.row_version_columns == RowVersionScanMode::kAppend
+                                               ? kVectorRowVersionColumnCount
+                                               : 0U);
+        visible_columns.reserve(visible_count);
+        for (std::size_t ordinal = 0U; ordinal < destination_column_ordinals.size(); ++ordinal)
+          visible_columns.push_back(ordinal);
+        if (limits.row_version_columns == RowVersionScanMode::kAppend) {
+          common::Result<VectorRowVersionLayout> layout =
+              vector_row_version_layout(destination_column_ordinals.size() + 1U);
+          if (!layout.has_value())
+            return common::make_unexpected(layout.error());
+          for (std::size_t ordinal = layout->first_column_ordinal();
+               ordinal < layout->total_column_count(); ++ordinal) {
+            visible_columns.push_back(ordinal);
+          }
+        }
         common::Result<std::unique_ptr<PhysicalOperator>> projected =
             ColumnSubsetOperator::create(std::move(pipeline), std::move(visible_columns));
         if (!projected.has_value())

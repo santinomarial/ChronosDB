@@ -125,7 +125,8 @@ source_charge(const CsegPartPin& part, const schema::TableSchema& destination_sc
 }
 
 [[nodiscard]] common::Result<std::size_t>
-output_charge(const CsegPartPin& part, const cseg::CsegProjectedGranuleReadPlan& plan) {
+output_charge(const CsegPartPin& part, const cseg::CsegProjectedGranuleReadPlan& plan,
+              const std::size_t exposed_column_count) {
   if (plan.owned_buffer_bytes() > std::numeric_limits<std::size_t>::max())
     return common::make_unexpected(exhausted("CSEG scan decoded output does not fit size_t"));
   std::size_t total = part.retained_buffer_bytes();
@@ -140,7 +141,7 @@ output_charge(const CsegPartPin& part, const cseg::CsegProjectedGranuleReadPlan&
         std::pair{plan.synthesized_column_count(), sizeof(columnar::OwnedColumnVector)},
         std::pair{plan.destination_column_ordinals().size(), sizeof(cseg::CsegProjectedColumnView)},
         std::pair{static_cast<std::size_t>(plan.row_count()), sizeof(std::uint32_t)},
-        std::pair{plan.destination_column_ordinals().size(), sizeof(std::size_t)}}) {
+        std::pair{exposed_column_count, sizeof(std::size_t)}}) {
     common::Result<std::size_t> container =
         bytes_for(count, element_size, "CSEG scan output container accounting overflowed");
     if (!container.has_value())
@@ -174,8 +175,10 @@ output_charge(const CsegPartPin& part, const cseg::CsegProjectedGranuleReadPlan&
 
 class CsegGranuleBacking final : public VectorChunkBacking {
 public:
-  CsegGranuleBacking(CsegPartPin part, cseg::ProjectedCsegGranule granule) noexcept
-      : part_(std::move(part)), granule_(std::move(granule)) {
+  CsegGranuleBacking(CsegPartPin part, cseg::ProjectedCsegGranule granule,
+                     const RowVersionScanMode row_version_columns) noexcept
+      : part_(std::move(part)), granule_(std::move(granule)),
+        row_version_columns_(row_version_columns) {
     buffer_bytes_ = granule_.buffer_bytes();
     const std::optional<std::size_t> with_granule =
         common::checked_add(part_.retained_buffer_bytes(), granule_.retained_buffer_bytes());
@@ -188,13 +191,30 @@ public:
   }
 
   [[nodiscard]] std::size_t column_count() const noexcept override {
-    return granule_.columns().size();
+    return granule_.columns().size() + (row_version_columns_ == RowVersionScanMode::kAppend
+                                            ? kVectorRowVersionColumnCount
+                                            : 0U);
   }
 
   [[nodiscard]] const columnar::PhysicalColumnView*
   column(const std::size_t ordinal) const noexcept override {
     const cseg::CsegProjectedColumnView* value = granule_.column(ordinal);
-    return value == nullptr ? nullptr : std::addressof(value->physical());
+    if (value != nullptr)
+      return std::addressof(value->physical());
+    if (row_version_columns_ != RowVersionScanMode::kAppend || ordinal < granule_.columns().size())
+      return nullptr;
+    switch (ordinal - granule_.columns().size()) {
+    case 0U:
+      return std::addressof(granule_.wal_id());
+    case 1U:
+      return std::addressof(granule_.record_sequence());
+    case 2U:
+      return std::addressof(granule_.row_ordinal());
+    case 3U:
+      return std::addressof(granule_.operation());
+    default:
+      return nullptr;
+    }
   }
 
   [[nodiscard]] std::size_t buffer_bytes() const noexcept override {
@@ -208,6 +228,7 @@ public:
 private:
   CsegPartPin part_;
   cseg::ProjectedCsegGranule granule_;
+  RowVersionScanMode row_version_columns_;
   std::size_t buffer_bytes_{};
   std::size_t retained_buffer_bytes_{};
 };
@@ -299,6 +320,10 @@ common::Result<std::unique_ptr<PhysicalOperator>> CsegScanOperator::create_impl(
       limits.chunk.maximum_buffer_bytes == 0U || limits.chunk.maximum_retained_buffer_bytes == 0U) {
     return common::make_unexpected(invalid("CSEG scan chunk limits must be nonzero"));
   }
+  common::Result<std::size_t> exposed_columns =
+      scan_output_column_count(destination_column_ordinals.size(), limits.row_version_columns);
+  if (!exposed_columns.has_value())
+    return common::make_unexpected(exposed_columns.error());
   if (predicate.has_value() && (limits.pruning.max_granules == 0U ||
                                 limits.pruning.max_granules > cseg::format::kMaximumGranuleCount)) {
     return common::make_unexpected(
@@ -368,10 +393,16 @@ common::Result<PhysicalOperatorStep> CsegScanOperator::next(const QueryResourceC
     return common::make_unexpected(
         exhausted("CSEG scan granule exceeds the configured chunk row limit"));
   }
-  if (plan->destination_column_ordinals().size() > state_->limits.chunk.maximum_columns) {
+  common::Result<std::size_t> exposed_columns = scan_output_column_count(
+      plan->destination_column_ordinals().size(), state_->limits.row_version_columns);
+  if (!exposed_columns.has_value()) {
+    static_cast<void>(resources.request_cancel());
+    return common::make_unexpected(exposed_columns.error());
+  }
+  if (*exposed_columns > state_->limits.chunk.maximum_columns) {
     static_cast<void>(resources.request_cancel());
     return common::make_unexpected(
-        exhausted("CSEG scan projection exceeds the configured chunk column limit"));
+        exhausted("CSEG scan output exceeds the configured chunk column limit"));
   }
   if (plan->decoded_buffer_bytes() > std::numeric_limits<std::size_t>::max()) {
     static_cast<void>(resources.request_cancel());
@@ -393,7 +424,7 @@ common::Result<PhysicalOperatorStep> CsegScanOperator::next(const QueryResourceC
     return common::make_unexpected(
         exhausted("CSEG scan planned output exceeds the chunk logical-byte limit"));
   }
-  common::Result<std::size_t> charge = output_charge(state_->part, *plan);
+  common::Result<std::size_t> charge = output_charge(state_->part, *plan, *exposed_columns);
   if (!charge.has_value()) {
     static_cast<void>(resources.request_cancel());
     return common::make_unexpected(charge.error());
@@ -419,8 +450,8 @@ common::Result<PhysicalOperatorStep> CsegScanOperator::next(const QueryResourceC
     return common::make_unexpected(still_active.error());
 
   try {
-    std::shared_ptr<const VectorChunkBacking> backing =
-        std::make_shared<const CsegGranuleBacking>(state_->part, std::move(*granule));
+    std::shared_ptr<const VectorChunkBacking> backing = std::make_shared<const CsegGranuleBacking>(
+        state_->part, std::move(*granule), state_->limits.row_version_columns);
     common::Result<VectorSelection> selection = VectorSelection::all(plan->row_count());
     if (!selection.has_value()) {
       static_cast<void>(resources.request_cancel());

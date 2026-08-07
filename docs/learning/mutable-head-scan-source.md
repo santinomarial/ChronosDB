@@ -8,9 +8,9 @@ row boundaries stay pinned, schema evolution is projected, memory is admitted be
 and output can flow through the existing filter/projection/LIMIT operators. The exact event-time
 factory automatically retains and removes an unrequested event-time helper.
 
-This is not yet a complete tablet scan. It exposes projected user columns only. Hidden WAL
-position, row ordinal, operation, and row-version identity remain inside the head until one common
-CSEG/head system-column and merge contract is accepted. The source does not concatenate multiple
+This is not yet a complete tablet scan. By default it exposes projected user columns only; callers
+may opt into the shared non-null WAL ID, record sequence, row ordinal, and operation suffix from
+[ADR 0045](../adr/0045-shared-vector-row-version-suffix.md). The source does not concatenate multiple
 heads, combine heads with parts, resolve versions, evaluate non-event-time SQL predicates, schedule
 parallel work, or spill.
 
@@ -18,7 +18,7 @@ parallel work, or spill.
 
 `chronos/query/head_scan.hpp` exposes:
 
-- `HeadScanLimits`, currently containing the finite `VectorChunkLimits`; and
+- `HeadScanLimits`, containing finite `VectorChunkLimits` and the default-omit row-version mode; and
 - `HeadScanOperator::create(resources, snapshot, lineage, destination_schema_id, tablet_id,
   destination_ordinals, limits)` for raw physical chunks; and
 - `HeadScanOperator::create_event_time_filtered(...)`, which additionally accepts an exact
@@ -30,6 +30,7 @@ columns preserve type/nullability and newly appended nullable columns can be syn
 The exact factory filters at the requested event-time output position. If event time was omitted,
 it appends that destination ordinal for materialization and removes the final helper after exact
 selection. Caller output order and zero-column cardinality are preserved.
+If row-version mode is append, helper removal also preserves the suffix after caller user columns.
 
 ## Why materialization is required
 
@@ -64,6 +65,10 @@ without allocation, checks logical/retained limits, and reserves output credit. 
 and validates owned columns and an identity selection. Output owns every byte and therefore needs
 no head pin. On the final successful pull, source state and its generation charge are released
 before the chunk is returned.
+
+Append mode additionally plans and copies 29 non-null metadata bytes per row into UUID, UINT64,
+UINT32, and UINT8 columns. These buffers follow user columns, use canonical little-endian integer
+storage, and are included in width, byte, retained, allocation, and query-credit limits.
 
 The exact factory wraps this source with `TimestampRangeFilterOperator` and, when needed,
 `ColumnSubsetOperator`. Filtering may return an empty progress chunk; it never skips a later head
@@ -124,10 +129,9 @@ Copying costs bandwidth but makes ownership, endian conversion, chunk sizing, an
 safety explicit. A sealed-head compact backing could reduce copies only after measurement and a
 new immutable-publication/accounting proof.
 
-The next storage step needs one canonical hidden-system-column shape for both CSEG and head chunks,
-followed by base/delta row-version merge semantics. Only then can one aggregate snapshot source
-compose durable parts with every visible sealed and active head without silently duplicating or
-omitting logical rows.
+The common system-column shape now exists. The next storage step needs base/delta row-version merge
+semantics and a complete aggregate snapshot source that can compose durable parts with every
+visible sealed and active head without silently duplicating or omitting logical rows.
 
 ## Likely review questions
 
@@ -141,7 +145,7 @@ boundary.
 **Why does the output not retain the head?** Every canonical buffer is copied into owned columns;
 no returned view points into head storage.
 
-**Does this make the ADR 0028 scan complete?** No. Multiple heads, hidden row versions, and
+**Does this make the ADR 0028 scan complete?** No. Multiple heads, visibility resolution, and
 part/head merge semantics are still missing.
 
 **Does head filtering prune materialization work?** No. The head has no accepted zone map. Exact

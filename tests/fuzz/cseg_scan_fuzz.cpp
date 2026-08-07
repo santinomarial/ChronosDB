@@ -58,6 +58,10 @@ void exercise(const std::shared_ptr<const std::vector<std::byte>>& owner,
   projection.reserve(requested);
   for (std::size_t index = 0U; index < requested; ++index)
     projection.push_back(input.empty() ? 0U : input[index % input.size()] % 3U);
+  chronos::query::CsegScanLimits limits;
+  limits.row_version_columns = !input.empty() && (input.back() & 16U) != 0U
+                                   ? chronos::query::RowVersionScanMode::kAppend
+                                   : chronos::query::RowVersionScanMode::kOmit;
   chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> source =
       !input.empty() && (input.front() & 2U) != 0U
           ? chronos::query::CsegScanOperator::create_event_time_pruned(
@@ -70,12 +74,13 @@ void exercise(const std::shared_ptr<const std::vector<std::byte>>& owner,
                                                    .inclusive = (input.front() & 4U) != 0U},
                  .upper =
                      chronos::cseg::EventTimeBound{.value = static_cast<std::int8_t>(input.back()),
-                                                   .inclusive = (input.back() & 4U) != 0U}})
+                                                   .inclusive = (input.back() & 4U) != 0U}},
+                limits)
           : chronos::query::CsegScanOperator::create(
                 *resources, std::move(*part), lineage(),
                 chronos::cseg::test::identifier<chronos::schema::SchemaId>(4U),
                 chronos::cseg::test::identifier<chronos::schema::TabletId>(3U),
-                std::move(projection));
+                std::move(projection), limits);
   if (!source.has_value())
     return;
   if (!input.empty() && (input.front() & 1U) != 0U)
@@ -107,12 +112,17 @@ void exercise_exact_prune_filter(const std::shared_ptr<const std::vector<std::by
       input.empty() ? 100 : static_cast<std::int64_t>(static_cast<std::int8_t>(input.back()));
   const bool lower_inclusive = input.empty() || (input.front() & 1U) != 0U;
   const bool upper_inclusive = input.empty() || (input.back() & 1U) != 0U;
+  chronos::query::CsegScanLimits limits;
+  limits.row_version_columns = !input.empty() && (input.back() & 16U) != 0U
+                                   ? chronos::query::RowVersionScanMode::kAppend
+                                   : chronos::query::RowVersionScanMode::kOmit;
   auto source = chronos::query::CsegScanOperator::create_event_time_pruned(
       *resources, std::move(*part), lineage(),
       chronos::cseg::test::identifier<chronos::schema::SchemaId>(4U),
       chronos::cseg::test::identifier<chronos::schema::TabletId>(3U), {0U},
       {.lower = chronos::cseg::EventTimeBound{.value = lower, .inclusive = lower_inclusive},
-       .upper = chronos::cseg::EventTimeBound{.value = upper, .inclusive = upper_inclusive}});
+       .upper = chronos::cseg::EventTimeBound{.value = upper, .inclusive = upper_inclusive}},
+      limits);
   if (!source.has_value())
     return;
   source = chronos::query::TimestampRangeFilterOperator::create(

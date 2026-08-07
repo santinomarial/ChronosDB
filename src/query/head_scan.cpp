@@ -155,7 +155,11 @@ source_charge(const head::HeadSnapshot& snapshot, const schema::TableSchema& des
     return common::make_unexpected(
         invalid("head scan destination schema belongs to another table"));
   }
-  if (destination_column_ordinals.size() > limits.chunk.maximum_columns)
+  common::Result<std::size_t> exposed_columns =
+      scan_output_column_count(destination_column_ordinals.size(), limits.row_version_columns);
+  if (!exposed_columns.has_value())
+    return common::make_unexpected(exposed_columns.error());
+  if (*exposed_columns > limits.chunk.maximum_columns)
     return common::make_unexpected(exhausted("head scan projection exceeds its column limit"));
   std::bitset<schema::kMaximumSchemaColumnCount> seen;
   for (const std::uint32_t ordinal : destination_column_ordinals) {
@@ -303,11 +307,25 @@ plan_chunk(const head::HeadSnapshot& snapshot, const schema::TableSchema& destin
     if (!total.has_value())
       return common::make_unexpected(total.error());
   }
+  if (limits.row_version_columns == RowVersionScanMode::kAppend) {
+    common::Result<std::size_t> row_version_values = bytes_for(
+        row_count, 16U + sizeof(std::uint64_t) + sizeof(std::uint32_t) + sizeof(std::uint8_t),
+        "head scan row-version buffer accounting overflowed");
+    if (!row_version_values.has_value())
+      return common::make_unexpected(row_version_values.error());
+    total = add(*total, *row_version_values, "head scan logical buffer accounting overflowed");
+    if (!total.has_value())
+      return common::make_unexpected(total.error());
+  }
   if (*total > limits.chunk.maximum_buffer_bytes)
     return common::make_unexpected(exhausted("head scan output exceeds its logical-byte limit"));
 
+  common::Result<std::size_t> exposed_columns =
+      scan_output_column_count(destination_column_ordinals.size(), limits.row_version_columns);
+  if (!exposed_columns.has_value())
+    return common::make_unexpected(exposed_columns.error());
   common::Result<std::size_t> containers =
-      bytes_for(destination_column_ordinals.size(), sizeof(columnar::OwnedPhysicalColumn),
+      bytes_for(*exposed_columns, sizeof(columnar::OwnedPhysicalColumn),
                 "head scan output-container accounting overflowed");
   if (!containers.has_value())
     return common::make_unexpected(containers.error());
@@ -316,7 +334,7 @@ plan_chunk(const head::HeadSnapshot& snapshot, const schema::TableSchema& destin
   if (!charge.has_value())
     return common::make_unexpected(charge.error());
   const std::optional<std::size_t> column_allocations =
-      common::checked_multiply(destination_column_ordinals.size(), std::size_t{3U});
+      common::checked_multiply(*exposed_columns, std::size_t{3U});
   const std::optional<std::size_t> allocation_count =
       column_allocations.has_value() ? common::checked_add(*column_allocations, std::size_t{2U})
                                      : std::nullopt;
@@ -345,6 +363,13 @@ void set_bit(std::vector<std::byte>& bitmap, const std::uint32_t row) {
 
 void store_u32_le(std::vector<std::byte>& bytes, const std::size_t offset,
                   const std::uint32_t value) {
+  for (std::size_t index = 0U; index < sizeof(value); ++index) {
+    bytes[offset + index] = static_cast<std::byte>((value >> (index * 8U)) & 0xffU);
+  }
+}
+
+void store_u64_le(std::vector<std::byte>& bytes, const std::size_t offset,
+                  const std::uint64_t value) {
   for (std::size_t index = 0U; index < sizeof(value); ++index) {
     bytes[offset + index] = static_cast<std::byte>((value >> (index * 8U)) & 0xffU);
   }
@@ -449,12 +474,18 @@ materialize_column(const head::HeadSnapshot& snapshot, const schema::ColumnDefin
                                                std::move(buffers));
 }
 
-[[nodiscard]] common::Result<std::vector<columnar::OwnedPhysicalColumn>> materialize_columns(
-    const head::HeadSnapshot& snapshot, const schema::TableSchema& destination_schema,
-    const schema::SchemaProjection& projection,
-    const std::vector<std::uint32_t>& destination_column_ordinals, const HeadChunkPlan plan) {
+[[nodiscard]] common::Result<std::vector<columnar::OwnedPhysicalColumn>>
+materialize_columns(const head::HeadSnapshot& snapshot,
+                    const schema::TableSchema& destination_schema,
+                    const schema::SchemaProjection& projection,
+                    const std::vector<std::uint32_t>& destination_column_ordinals,
+                    const HeadChunkPlan plan, const RowVersionScanMode row_version_columns) {
   std::vector<columnar::OwnedPhysicalColumn> columns;
-  columns.reserve(destination_column_ordinals.size());
+  common::Result<std::size_t> exposed_columns =
+      scan_output_column_count(destination_column_ordinals.size(), row_version_columns);
+  if (!exposed_columns.has_value())
+    return common::make_unexpected(exposed_columns.error());
+  columns.reserve(*exposed_columns);
   for (const std::uint32_t destination_ordinal : destination_column_ordinals) {
     const schema::ProjectionEntry& entry = projection.entries()[destination_ordinal];
     common::Result<columnar::OwnedPhysicalColumn> column =
@@ -463,6 +494,52 @@ materialize_column(const head::HeadSnapshot& snapshot, const schema::ColumnDefin
     if (!column.has_value())
       return common::make_unexpected(column.error());
     columns.push_back(std::move(*column));
+  }
+  if (row_version_columns == RowVersionScanMode::kAppend) {
+    columnar::ColumnVectorBuffers wal_id;
+    columnar::ColumnVectorBuffers record_sequence;
+    columnar::ColumnVectorBuffers row_ordinal;
+    columnar::ColumnVectorBuffers operation;
+    wal_id.values.resize(static_cast<std::size_t>(plan.row_count) * 16U);
+    record_sequence.values.resize(static_cast<std::size_t>(plan.row_count) * sizeof(std::uint64_t));
+    row_ordinal.values.resize(static_cast<std::size_t>(plan.row_count) * sizeof(std::uint32_t));
+    operation.values.resize(static_cast<std::size_t>(plan.row_count));
+    for (std::uint32_t local = 0U; local < plan.row_count; ++local) {
+      common::Result<head::HeadRowMetadata> metadata =
+          snapshot.row_metadata(plan.first_row + local);
+      if (!metadata.has_value())
+        return common::make_unexpected(metadata.error());
+      const std::size_t wal_offset = static_cast<std::size_t>(local) * 16U;
+      std::copy(metadata->commit_position.wal_id.bytes.begin(),
+                metadata->commit_position.wal_id.bytes.end(), wal_id.values.data() + wal_offset);
+      store_u64_le(record_sequence.values, static_cast<std::size_t>(local) * sizeof(std::uint64_t),
+                   metadata->commit_position.record_sequence);
+      store_u32_le(row_ordinal.values, static_cast<std::size_t>(local) * sizeof(std::uint32_t),
+                   metadata->row_ordinal);
+      operation.values[local] = static_cast<std::byte>(metadata->operation);
+    }
+    const auto append = [&](const VectorRowVersionColumnKind kind,
+                            columnar::ColumnVectorBuffers buffers) -> common::Result<void> {
+      common::Result<schema::LogicalType> type = vector_row_version_column_type(kind);
+      if (!type.has_value())
+        return common::make_unexpected(type.error());
+      common::Result<columnar::OwnedPhysicalColumn> column = columnar::OwnedPhysicalColumn::create(
+          {.type = *type, .nullable = false, .row_count = plan.row_count, .null_count = 0U},
+          std::move(buffers));
+      if (!column.has_value())
+        return common::make_unexpected(column.error());
+      columns.push_back(std::move(*column));
+      return {};
+    };
+    common::Result<void> appended = append(VectorRowVersionColumnKind::kWalId, std::move(wal_id));
+    if (appended.has_value())
+      appended = append(VectorRowVersionColumnKind::kRecordSequence, std::move(record_sequence));
+    if (appended.has_value())
+      appended = append(VectorRowVersionColumnKind::kRowOrdinal, std::move(row_ordinal));
+    if (appended.has_value())
+      appended = append(VectorRowVersionColumnKind::kOperation, std::move(operation));
+    if (!appended.has_value())
+      return common::make_unexpected(appended.error());
   }
   return columns;
 }
@@ -561,10 +638,21 @@ common::Result<std::unique_ptr<PhysicalOperator>> HeadScanOperator::create_event
       append_event_time_helper
           ? destination_column_ordinals.size()
           : static_cast<std::size_t>(requested - destination_column_ordinals.begin());
-  if (append_event_time_helper &&
-      destination_column_ordinals.size() >= limits.chunk.maximum_columns) {
-    return common::make_unexpected(
-        exhausted("head scan exact predicate helper exceeds its column limit"));
+  if (append_event_time_helper) {
+    const std::optional<std::size_t> helper_user_columns =
+        common::checked_add(destination_column_ordinals.size(), std::size_t{1U});
+    if (!helper_user_columns.has_value()) {
+      return common::make_unexpected(
+          exhausted("head scan exact predicate helper column count overflowed"));
+    }
+    common::Result<std::size_t> helper_output_columns =
+        scan_output_column_count(*helper_user_columns, limits.row_version_columns);
+    if (!helper_output_columns.has_value())
+      return common::make_unexpected(helper_output_columns.error());
+    if (*helper_output_columns > limits.chunk.maximum_columns) {
+      return common::make_unexpected(
+          exhausted("head scan exact predicate helper exceeds its column limit"));
+    }
   }
 
   try {
@@ -582,9 +670,25 @@ common::Result<std::unique_ptr<PhysicalOperator>> HeadScanOperator::create_event
     if (!append_event_time_helper)
       return source;
 
-    std::vector<std::size_t> visible_columns(event_time_output_ordinal);
-    for (std::size_t ordinal = 0U; ordinal < visible_columns.size(); ++ordinal)
-      visible_columns[ordinal] = ordinal;
+    std::vector<std::size_t> visible_columns;
+    const std::size_t user_column_count = event_time_output_ordinal;
+    const std::size_t visible_count =
+        user_column_count + (limits.row_version_columns == RowVersionScanMode::kAppend
+                                 ? kVectorRowVersionColumnCount
+                                 : 0U);
+    visible_columns.reserve(visible_count);
+    for (std::size_t ordinal = 0U; ordinal < user_column_count; ++ordinal)
+      visible_columns.push_back(ordinal);
+    if (limits.row_version_columns == RowVersionScanMode::kAppend) {
+      common::Result<VectorRowVersionLayout> layout =
+          vector_row_version_layout(user_column_count + 1U);
+      if (!layout.has_value())
+        return common::make_unexpected(layout.error());
+      for (std::size_t ordinal = layout->first_column_ordinal();
+           ordinal < layout->total_column_count(); ++ordinal) {
+        visible_columns.push_back(ordinal);
+      }
+    }
     return ColumnSubsetOperator::create(std::move(*source), std::move(visible_columns));
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("head scan exact source allocation failed"));
@@ -624,9 +728,9 @@ common::Result<PhysicalOperatorStep> HeadScanOperator::next(const QueryResourceC
   }
 
   try {
-    common::Result<std::vector<columnar::OwnedPhysicalColumn>> columns =
-        materialize_columns(state_->snapshot, *state_->destination_schema, state_->projection,
-                            state_->destination_column_ordinals, *plan);
+    common::Result<std::vector<columnar::OwnedPhysicalColumn>> columns = materialize_columns(
+        state_->snapshot, *state_->destination_schema, state_->projection,
+        state_->destination_column_ordinals, *plan, state_->limits.row_version_columns);
     if (!columns.has_value()) {
       static_cast<void>(resources.request_cancel());
       return common::make_unexpected(columns.error());

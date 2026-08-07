@@ -96,10 +96,12 @@ TEST(HeadScanAllocationFailureTest, PullClassifiesEveryCanonicalOutputAllocation
     SCOPED_TRACE(fail_after);
     QueryResourceContext resources =
         QueryResourceContext::create(std::size_t{16U} * 1024U * 1024U).value();
+    HeadScanLimits limits;
+    limits.row_version_columns = RowVersionScanMode::kAppend;
     auto source = HeadScanOperator::create(
         resources, fixture.snapshot(), fixture.schemas(),
         columnar::test::id<schema::SchemaId>(test::kSuccessorSchemaId),
-        columnar::test::id<schema::TabletId>(test::kTabletId), {4U, 1U, 2U, 3U, 0U});
+        columnar::test::id<schema::TabletId>(test::kTabletId), {4U, 1U, 2U, 3U, 0U}, limits);
     ASSERT_TRUE(source.has_value()) << source.error().to_string();
     const std::size_t source_charge = resources.reserved_memory_bytes();
     std::size_t observed = 0U;

@@ -99,6 +99,11 @@ struct PartOwner {
   return value.value_or(0);
 }
 
+[[nodiscard]] common::ByteView bytes_cell(const VectorChunk& chunk, const std::size_t column,
+                                          const std::size_t row) {
+  return chunk.cell({.column_ordinal = column, .selected_row = row})->bytes().value();
+}
+
 [[nodiscard]] std::unique_ptr<PhysicalOperator>
 scan(const QueryResourceContext& resources, CsegPartPin part,
      const cseg::CsegProjectedReaderLimits reader_limits = {}) {
@@ -201,6 +206,51 @@ TEST(CsegScanOperatorTest, SupportsEmptyUserProjectionWithSystemValidationAndCar
   EXPECT_EQ(step->chunk()->chunk().selected_row_count(), 2U);
   EXPECT_GT(step->chunk()->chunk().buffer_bytes(),
             step->chunk()->chunk().selection().buffer_bytes());
+}
+
+TEST(CsegScanOperatorTest, AppendsTheFrozenBorrowedRowVersionSuffix) {
+  auto resources = QueryResourceContext::create(std::size_t{4U} * 1024U * 1024U).value();
+  const schema::SchemaLineage lineage = valid_lineage();
+  CsegScanLimits limits;
+  limits.row_version_columns = RowVersionScanMode::kAppend;
+  auto source = CsegScanOperator::create(
+      resources, pin(cseg::test::make_valid_part(cseg::PageCompression::kNone)), lineage,
+      cseg::test::identifier<schema::SchemaId>(4U), cseg::test::identifier<schema::TabletId>(3U),
+      {}, limits);
+  ASSERT_TRUE(source.has_value()) << source.error().to_string();
+  const auto step = (*source)->next(resources);
+  ASSERT_TRUE(step.has_value()) << step.error().to_string();
+  const VectorChunk& chunk = step->chunk()->chunk();
+  ASSERT_EQ(chunk.column_count(), kVectorRowVersionColumnCount);
+  const auto layout = vector_row_version_layout(0U).value();
+  EXPECT_EQ(chunk.column(layout.wal_id_column_ordinal())->type().kind(),
+            schema::LogicalTypeKind::kUuid);
+  EXPECT_EQ(chunk.column(layout.record_sequence_column_ordinal())->type().kind(),
+            schema::LogicalTypeKind::kUInt64);
+  EXPECT_EQ(chunk.column(layout.row_ordinal_column_ordinal())->type().kind(),
+            schema::LogicalTypeKind::kUInt32);
+  EXPECT_EQ(chunk.column(layout.operation_column_ordinal())->type().kind(),
+            schema::LogicalTypeKind::kUInt8);
+  const common::Uuid::Bytes expected_wal = cseg::test::identifier<schema::SchemaId>(0x70U).bytes();
+  EXPECT_TRUE(
+      std::ranges::equal(bytes_cell(chunk, layout.wal_id_column_ordinal(), 0U), expected_wal));
+  common::ByteReader sequence{bytes_cell(chunk, layout.record_sequence_column_ordinal(), 1U)};
+  EXPECT_EQ(sequence.read_u64_le().value(), 7U);
+  common::ByteReader ordinal{bytes_cell(chunk, layout.row_ordinal_column_ordinal(), 1U)};
+  EXPECT_EQ(ordinal.read_u32_le().value(), 1U);
+  ASSERT_EQ(bytes_cell(chunk, layout.operation_column_ordinal(), 0U).size(), 1U);
+  EXPECT_EQ(bytes_cell(chunk, layout.operation_column_ordinal(), 0U).front(), std::byte{1U});
+
+  CsegScanLimits too_narrow = limits;
+  too_narrow.chunk.maximum_columns = kVectorRowVersionColumnCount - 1U;
+  auto rejected = CsegScanOperator::create(
+      resources, pin(cseg::test::make_valid_part(cseg::PageCompression::kNone)), lineage,
+      cseg::test::identifier<schema::SchemaId>(4U), cseg::test::identifier<schema::TabletId>(3U),
+      {}, too_narrow);
+  ASSERT_TRUE(rejected.has_value());
+  const auto failed = (*rejected)->next(resources);
+  ASSERT_FALSE(failed.has_value());
+  EXPECT_EQ(failed.error().code(), common::StatusCode::kResourceExhausted);
 }
 
 TEST(CsegScanOperatorTest, RejectsAnotherQueryAndRequestsItsCancellation) {

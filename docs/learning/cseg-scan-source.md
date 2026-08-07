@@ -18,7 +18,8 @@ weakening its pin and admission rules.
 
 - `CsegPartPin`, a copyable trusted immutable owner for exact part bytes and their conservative
   retained/pin charge;
-- `CsegScanLimits`, containing projected-reader, pruning-plan, and output-chunk bounds; and
+- `CsegScanLimits`, containing projected-reader, pruning-plan, output-chunk bounds, and the
+  default-omit shared row-version mode; and
 - `CsegScanOperator`, a thread-affine `PhysicalOperator` source created against one
   `QueryResourceContext`, retained schema lineage, destination schema/tablet, and destination user
   ordinals. `create_event_time_pruned` additionally accepts an owned predicate and retains a bounded
@@ -83,9 +84,11 @@ must preserve that property before reducing the charge.
 ## Pull, failure, and cancellation behavior
 
 One pull returns one complete selected granule, error, or explicit end. A pruning predicate is only
-range-exclusion evidence and does not filter rows within that granule. User columns follow caller ordinal
-order; the four system pages are validated and charged but are not query-visible columns. Empty user
-projection is valid and preserves row cardinality through the identity selection.
+range-exclusion evidence and does not filter rows within that granule. User columns follow caller
+ordinal order. The four system pages are always validated and charged; append mode exposes their
+existing views as the shared WAL ID, record sequence, row ordinal, and operation suffix without
+copying. Empty user projection is valid and preserves row cardinality through the identity
+selection, including a row-version-only stream when requested.
 
 Pre-cancelled pulls return `CANCELLED` before page work. A source used with a different query returns
 `INVALID_ARGUMENT` and cancels that caller. Corruption and unsupported page semantics propagate from
@@ -118,9 +121,9 @@ A dedicated global-allocation seam fails every creation and pull allocation unti
 
 `chronos_cseg_scan_fuzz` combines hostile bytes/projections/predicates and canonical mutated
 multi-granule images with cancellation, ordinary/pruned pulls, and cell access.
-`scan_one_cseg_granule` measures the pull boundary
-for 64, 1,024, and 65,536 rows under raw and Zstandard policies, reporting decoded bytes and observed
-allocations. `scan_one_selected_granule_among_many` measures one selected middle granule with 64 or
+`scan_one_cseg_granule` measures the pull boundary for 64, 1,024, and 65,536 rows under raw and
+Zstandard policies in both hidden and exposed system-page modes, reporting decoded bytes and
+observed allocations. `scan_one_selected_granule_among_many` measures one selected middle granule with 64 or
 4,096 candidates. Fixture construction and source open are outside the timed pull.
 
 ## Tradeoffs and next steps
@@ -146,8 +149,9 @@ a use-after-free risk.
 **Why charge the part more than once?** Each output has an independent sufficient reservation. This
 is conservative but safe until shared reservation transfer has a reviewed lifetime model.
 
-**Why are system pages charged when they are not output columns?** They are decoded and retained to
-validate row identity and operation semantics before any user row is exposed.
+**Why are system pages charged when append mode is off?** They are decoded and retained to validate
+row identity and operation semantics before any user row is exposed. Visibility does not weaken
+format validation.
 
 **Does a successful scan validate the complete part?** No. It validates authenticated metadata and
 the requested user plus mandatory system pages. Unrequested user-page corruption is outside this

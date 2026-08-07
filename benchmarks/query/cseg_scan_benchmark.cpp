@@ -50,10 +50,13 @@ struct Fixture {
                  .value()),
         resources(QueryResourceContext::create(std::size_t{1U} * 1024U * 1024U * 1024U).value()) {}
 
-  [[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>> source() const {
+  [[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>>
+  source(const RowVersionScanMode row_version_columns) const {
+    CsegScanLimits limits;
+    limits.row_version_columns = row_version_columns;
     return CsegScanOperator::create(resources, part, schema_lineage,
                                     cseg::test::identifier<schema::SchemaId>(4U),
-                                    cseg::test::identifier<schema::TabletId>(3U), {0U});
+                                    cseg::test::identifier<schema::TabletId>(3U), {0U}, limits);
   }
 
   [[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>>
@@ -86,12 +89,14 @@ void scan_one_cseg_granule(benchmark::State& state) {
   const auto rows = static_cast<std::uint32_t>(state.range(0));
   const cseg::PageCompression compression =
       state.range(1) == 0 ? cseg::PageCompression::kNone : cseg::PageCompression::kZstd;
+  const RowVersionScanMode row_version_columns =
+      state.range(2) == 0 ? RowVersionScanMode::kOmit : RowVersionScanMode::kAppend;
   const Fixture fixture{rows, compression};
 
   std::size_t measured_allocations = 0U;
   std::size_t measured_bytes = 0U;
   {
-    auto source = fixture.source();
+    auto source = fixture.source(row_version_columns);
     if (!source.has_value()) {
       const std::string message = source.error().to_string();
       state.SkipWithError(message);
@@ -111,7 +116,7 @@ void scan_one_cseg_granule(benchmark::State& state) {
 
   for ([[maybe_unused]] auto iteration : state) {
     state.PauseTiming();
-    auto source = fixture.source();
+    auto source = fixture.source(row_version_columns);
     if (!source.has_value()) {
       const std::string message = source.error().to_string();
       state.SkipWithError(message);
@@ -134,13 +139,17 @@ void scan_one_cseg_granule(benchmark::State& state) {
                           static_cast<std::int64_t>(measured_bytes));
   state.counters["pull_allocations"] = static_cast<double>(measured_allocations);
   state.counters["physical_rows"] = static_cast<double>(rows);
-  state.SetLabel(compression == cseg::PageCompression::kNone
-                     ? "raw one-user plus system granule; source pre-opened per iteration"
-                     : "Zstd-policy one-user plus system granule; source pre-opened per iteration");
+  const std::string suffix = row_version_columns == RowVersionScanMode::kAppend
+                                 ? "; system pages exposed as borrowed row-version suffix"
+                                 : "; system pages validated but hidden";
+  state.SetLabel((compression == cseg::PageCompression::kNone
+                      ? "raw one-user granule; source pre-opened per iteration"
+                      : "Zstd-policy one-user granule; source pre-opened per iteration") +
+                 suffix);
 }
 
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
-BENCHMARK(scan_one_cseg_granule)->ArgsProduct({{64, 1'024, 65'536}, {0, 1}});
+BENCHMARK(scan_one_cseg_granule)->ArgsProduct({{64, 1'024, 65'536}, {0, 1}, {0, 1}});
 
 void scan_one_selected_granule_among_many(benchmark::State& state) {
   constexpr std::uint32_t kRowsPerGranule = 64U;

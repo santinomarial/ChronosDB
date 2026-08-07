@@ -341,6 +341,7 @@ add_library(
   src/query/physical_lowering.cpp
   src/query/physical_plan.cpp
   src/query/resource_context.cpp
+  src/query/row_version.cpp
   src/query/snapshot.cpp
   src/query/sort.cpp
   src/query/statement_binder.cpp
@@ -797,6 +798,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/physical_plan_test.cpp
     tests/query/resource_context_header_self_contained.cpp
     tests/query/resource_context_test.cpp
+    tests/query/row_version_header_self_contained.cpp
+    tests/query/row_version_test.cpp
     tests/query/snapshot_header_self_contained.cpp
     tests/query/snapshot_test.cpp
     tests/query/sort_header_self_contained.cpp

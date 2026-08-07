@@ -511,20 +511,29 @@ TEST(DatabaseCsegPartScanTest, RemovesAnUnrequestedEventTimeHelperAfterExactFilt
                     .value();
   QueryResourceContext resources =
       QueryResourceContext::create(std::size_t{32U} * 1024U * 1024U).value();
+  CsegScanLimits limits;
+  limits.row_version_columns = RowVersionScanMode::kAppend;
   common::Result<std::unique_ptr<PhysicalOperator>> created =
       create_snapshot_cseg_part_scan(resources, *planned, std::move(loaded), fixture->schemas,
-                                     cseg::test::identifier<schema::SchemaId>(6U), {1U});
+                                     cseg::test::identifier<schema::SchemaId>(6U), {1U}, limits);
   ASSERT_TRUE(created.has_value()) << created.error().to_string();
 
   common::Result<PhysicalOperatorStep> step = (*created)->next(resources);
   ASSERT_TRUE(step.has_value()) << step.error().to_string();
   ASSERT_EQ(step->kind(), PhysicalOperatorStepKind::kChunk);
-  EXPECT_EQ(step->chunk()->chunk().column_count(), 1U);
+  EXPECT_EQ(step->chunk()->chunk().column_count(), 1U + kVectorRowVersionColumnCount);
   ASSERT_EQ(step->chunk()->chunk().selected_row_count(), 1U);
   const common::Result<columnar::ColumnCellView> cell =
       step->chunk()->chunk().cell({.column_ordinal = 0U, .selected_row = 0U});
   ASSERT_TRUE(cell.has_value()) << cell.error().to_string();
   EXPECT_TRUE(cell->is_null());
+  const auto layout = vector_row_version_layout(1U).value();
+  EXPECT_EQ(step->chunk()->chunk().column(layout.wal_id_column_ordinal())->type().kind(),
+            schema::LogicalTypeKind::kUuid);
+  EXPECT_FALSE(step->chunk()
+                   ->chunk()
+                   .cell({.column_ordinal = layout.operation_column_ordinal(), .selected_row = 0U})
+                   ->is_null());
   step = (*created)->next(resources);
   ASSERT_TRUE(step.has_value()) << step.error().to_string();
   EXPECT_EQ(step->kind(), PhysicalOperatorStepKind::kEnd);

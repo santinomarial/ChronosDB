@@ -122,9 +122,11 @@ TEST(CsegScanAllocationFailureTest, PullClassifiesEveryOutputAllocationFailureAn
   for (std::size_t fail_after = 0U; fail_after < 32U; ++fail_after) {
     SCOPED_TRACE(fail_after);
     auto resources = QueryResourceContext::create(std::size_t{8U} * 1024U * 1024U).value();
+    CsegScanLimits limits;
+    limits.row_version_columns = RowVersionScanMode::kAppend;
     auto source = CsegScanOperator::create(
         resources, part, lineage, cseg::test::identifier<schema::SchemaId>(4U),
-        cseg::test::identifier<schema::TabletId>(3U), std::vector<std::uint32_t>{0U});
+        cseg::test::identifier<schema::TabletId>(3U), std::vector<std::uint32_t>{0U}, limits);
     ASSERT_TRUE(source.has_value());
     const std::size_t source_charge = resources.reserved_memory_bytes();
     std::size_t observed = 0U;

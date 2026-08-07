@@ -21,11 +21,12 @@ struct HeadScanBenchmarkFixture {
   }
 
   [[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>>
-  source(const std::uint32_t rows) const {
+  source(const std::uint32_t rows, const RowVersionScanMode row_version_columns) const {
     HeadScanLimits limits;
     limits.chunk.maximum_rows = rows;
     limits.chunk.maximum_buffer_bytes = std::size_t{256U} * 1024U * 1024U;
     limits.chunk.maximum_retained_buffer_bytes = std::size_t{256U} * 1024U * 1024U;
+    limits.row_version_columns = row_version_columns;
     return HeadScanOperator::create(resources, head.snapshot(), head.schemas(),
                                     columnar::test::id<schema::SchemaId>(test::kInitialSchemaId),
                                     columnar::test::id<schema::TabletId>(test::kTabletId),
@@ -53,11 +54,13 @@ struct HeadScanBenchmarkFixture {
 
 void materialize_one_head_chunk(benchmark::State& state) {
   const auto rows = static_cast<std::uint32_t>(state.range(0));
+  const RowVersionScanMode row_version_columns =
+      state.range(1) == 0 ? RowVersionScanMode::kOmit : RowVersionScanMode::kAppend;
   const HeadScanBenchmarkFixture fixture{rows};
   std::size_t measured_allocations = 0U;
   std::size_t measured_bytes = 0U;
   {
-    auto source = fixture.source(rows);
+    auto source = fixture.source(rows, row_version_columns);
     if (!source.has_value()) {
       const std::string message = source.error().to_string();
       state.SkipWithError(message);
@@ -77,7 +80,7 @@ void materialize_one_head_chunk(benchmark::State& state) {
 
   for ([[maybe_unused]] auto iteration : state) {
     state.PauseTiming();
-    auto source = fixture.source(rows);
+    auto source = fixture.source(rows, row_version_columns);
     if (!source.has_value()) {
       const std::string message = source.error().to_string();
       state.SkipWithError(message);
@@ -100,11 +103,14 @@ void materialize_one_head_chunk(benchmark::State& state) {
                           static_cast<std::int64_t>(measured_bytes));
   state.counters["pull_allocations"] = static_cast<double>(measured_allocations);
   state.counters["physical_rows"] = static_cast<double>(rows);
-  state.SetLabel("four user columns; race-safe head storage canonicalized; source open excluded");
+  state.SetLabel(
+      row_version_columns == RowVersionScanMode::kAppend
+          ? "four user columns plus materialized row-version suffix; source open excluded"
+          : "four user columns; race-safe head storage canonicalized; source open excluded");
 }
 
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
-BENCHMARK(materialize_one_head_chunk)->Arg(64)->Arg(1'024)->Arg(65'536);
+BENCHMARK(materialize_one_head_chunk)->ArgsProduct({{64, 1'024, 65'536}, {0, 1}});
 
 void materialize_and_exact_filter_one_head_chunk(benchmark::State& state) {
   const auto rows = static_cast<std::uint32_t>(state.range(0));

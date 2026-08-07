@@ -4,6 +4,7 @@
 #include "chronos/common/result.hpp"
 #include "chronos/head/mutable_head.hpp"
 #include "chronos/query/physical_operator.hpp"
+#include "chronos/query/row_version.hpp"
 #include "chronos/schema/identity.hpp"
 #include "chronos/schema/schema_lineage.hpp"
 
@@ -15,11 +16,12 @@ namespace chronos::query {
 
 struct HeadScanLimits {
   VectorChunkLimits chunk{};
+  RowVersionScanMode row_version_columns{RowVersionScanMode::kOmit};
 };
 
 // A thread-affine source over one acquire-observed immutable mutable-head boundary. Head storage
 // uses race-safe byte-per-row validity/BOOL state and native offsets, so each pull materializes one
-// bounded canonical query chunk. Hidden row-version metadata is deliberately not exposed here.
+// bounded canonical query chunk. Callers may opt into the shared fixed row-version suffix.
 class HeadScanOperator final : public PhysicalOperator {
 public:
   ~HeadScanOperator() override;

@@ -7,6 +7,7 @@
 #include "chronos/cseg/projected_reader.hpp"
 #include "chronos/cseg/pruning.hpp"
 #include "chronos/query/physical_operator.hpp"
+#include "chronos/query/row_version.hpp"
 #include "chronos/schema/identity.hpp"
 #include "chronos/schema/schema_lineage.hpp"
 
@@ -63,6 +64,7 @@ struct CsegScanLimits {
                           .maximum_columns = cseg::format::kMaximumUserColumnCount,
                           .maximum_buffer_bytes = kDefaultCsegScanLogicalByteLimit,
                           .maximum_retained_buffer_bytes = kDefaultCsegScanRetainedByteLimit};
+  RowVersionScanMode row_version_columns{RowVersionScanMode::kOmit};
 };
 
 // Thread-affine single-part physical source. Creation reserves the encoded-part pin, reader

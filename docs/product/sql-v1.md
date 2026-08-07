@@ -4,8 +4,9 @@
 > parser, schema-version-stable binder, CREATE TABLE/INSERT statement binding, scalar SELECT
 > execution, and EXPLAIN paths are implemented. `SUBSCRIBE` is parsed and bound but remains a Phase
 > 11 execution concern. Phase 9 now lowers the supported single-source projection and global/grouped
-> aggregate subset into bounded vector operators. A bounded physical sort exists, but exact base-row
-> `ORDER BY` lowering remains gated on hidden logical/version identities. SQL v1 is deliberately
+> aggregate subset into bounded vector operators. A bounded physical sort and shared source
+> row-version suffix exist, but exact base-row `ORDER BY` lowering still must supply the complete
+> hidden logical/version tie sequence. SQL v1 is deliberately
 > smaller than the SQL standard. Unsupported
 > syntax must produce a clear bind or parse error; it must not be accepted with different semantics.
 

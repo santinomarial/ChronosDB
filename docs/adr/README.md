@@ -79,3 +79,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0042](0042-query-accounted-bounded-grouped-aggregates.md) | Query-accounted bounded grouped aggregates | accepted |
 | [0043](0043-bound-grouped-aggregate-physical-lowering.md) | Bound grouped aggregate physical lowering | accepted |
 | [0044](0044-query-accounted-bounded-physical-sort.md) | Query-accounted bounded physical sort | accepted |
+| [0045](0045-shared-vector-row-version-suffix.md) | Shared vector row-version suffix | accepted |

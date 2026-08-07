@@ -14,8 +14,8 @@ This remains deliberately smaller than a general SQL physical planner. The singl
 nonaggregate subset now lowers through the separate
 [bound-SELECT lowering boundary](bound-select-physical-lowering.md), but the plan does not optimize
 stage order, create storage scans, join, schedule work, spill, or materialize client results. Exact
-base-row SQL ordering also remains gated on hidden logical/version columns even though the physical
-sort stage exists.
+base-row SQL ordering remains unimplemented even though the physical sort and shared source
+row-version suffix exist; lowering must still supply the complete logical/version tie sequence.
 
 ## Public interface
 

@@ -439,10 +439,13 @@ No phase passes because its code merely compiles. A phase passes only when its a
   and failure/fuzz/benchmark/consumer evidence. ADR 0044 and the twenty-seventh increment add a
   blocking query-accounted physical sort, explicit all-type direction/NULL keys, allocation-free
   borrowed variable comparison, deterministic stable merge, arbitrary canonical row gather, exact
-  plan shapes, and failure/fuzz/benchmark/consumer evidence. Exact base-row SQL ORDER BY remains
-  gated on hidden logical/version columns rather than substituting scan arrival order. Hashing,
-  spill, variable-width extrema, and broader relational lowering,
-  optimizer rules, hidden row-version columns, complete multi-part/head composition, base/delta
+  plan shapes, and failure/fuzz/benchmark/consumer evidence. ADR 0045 and the twenty-eighth
+  increment add one opt-in non-null WAL ID/record sequence/row ordinal/operation suffix to both
+  CSEG and mutable-head vector sources, checked shared layout, zero-copy CSEG exposure, accounted
+  canonical head materialization, exact-filter helper preservation, and failure/fuzz/benchmark/
+  consumer evidence. Exact base-row SQL ORDER BY lowering remains unimplemented; it must consume
+  the explicit suffix rather than substitute scan arrival order. Hashing, spill, variable-width
+  extrema, and broader relational lowering, optimizer rules, complete multi-part/head composition, base/delta
   merge and row-version resolution, mapped/asynchronous providers, shared pin credit, scheduling,
   spill, and full scalar-engine differential plan execution are unimplemented.
 
