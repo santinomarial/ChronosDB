@@ -245,8 +245,11 @@ retains accounted input, stably orders explicit all-type keys, and gathers one i
 output under [ADR 0044](../adr/0044-query-accounted-bounded-physical-sort.md). CSEG and mutable-head
 sources can now append the same checked WAL ID/record sequence/row ordinal/operation suffix under
 [ADR 0045](../adr/0045-shared-vector-row-version-suffix.md): CSEG borrows mandatory authenticated
-system pages while head scans materialize accounted canonical buffers. Exact base-row SQL ORDER BY
-lowering and complete part/head version resolution remain separate work.
+system pages while head scans materialize accounted canonical buffers. Exact bounded SQL ORDER BY
+lowering under [ADR 0046](../adr/0046-exact-bounded-sql-order-by-lowering.md) now prepares aliases
+and non-projected keys, appends DEDUP/group and commit-position ties, sorts before LIMIT, and removes
+every hidden column. Base schemas without a DEDUP KEY remain unsupported until their authoritative
+generated logical identity is exposed. Complete part/head version resolution remains separate work.
 Hashing, variable extrema, and spill remain deferred. General relational lowering, complete
 part/head visibility, parallel scheduling,
 spilling, adaptive behavior, and join algorithms remain deferred. Implemented reservations and

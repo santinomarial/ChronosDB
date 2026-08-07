@@ -4,8 +4,8 @@
 
 `SortOperator` is the first query-accounted arbitrary reorder in the vector engine. It consumes a
 finite stream of accounted chunks, sorts selected rows by explicit physical keys, and emits one
-independent canonical chunk. It is a physical primitive, not complete SQL `ORDER BY`: base-row SQL
-ties still require hidden logical/version identities that current vector sources do not expose.
+independent canonical chunk. ADR 0046 now uses it for exact bounded SQL `ORDER BY` by preparing
+explicit logical/version or group identity keys before the operator is constructed.
 
 ## Public interface
 
@@ -76,4 +76,5 @@ before materialization would create dangling views and make memory accounting fa
 
 **Why is stable input order not enough for SQL ties?** Scan arrival order may change after
 compaction, parallelism, or plan changes. SQL requires stable logical/version identity; the planner
-must carry those columns explicitly.
+must carry those columns explicitly. The bound SQL lowerer now does so for DEDUP-keyed base rows and
+grouped results, while rejecting base schemas whose generated identity remains unavailable.

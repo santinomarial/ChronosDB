@@ -14,8 +14,8 @@ This remains deliberately smaller than a general SQL physical planner. The singl
 nonaggregate subset now lowers through the separate
 [bound-SELECT lowering boundary](bound-select-physical-lowering.md), but the plan does not optimize
 stage order, create storage scans, join, schedule work, spill, or materialize client results. Exact
-base-row SQL ordering remains unimplemented even though the physical sort and shared source
-row-version suffix exist; lowering must still supply the complete logical/version tie sequence.
+bounded SQL ordering is now lowered separately for DEDUP-keyed base rows and aggregate results; its
+temporary order/identity columns remain ordinary checked stage shapes and are removed before output.
 
 ## Public interface
 
@@ -136,10 +136,10 @@ have separate guides, and physical sort ownership/order evidence is in the
 ## Tradeoffs and next steps
 
 The unary stage variant is easy to audit and sufficient for current differential execution. It
-cannot represent scans, branches, joins, exchanges, or sinks. Bound single-source projection and
-global/grouped aggregation use the accounted stage baseline. Physical sort is present, but exact
-base-row lowering must wait for hidden identities while the storage path settles complete part/head
-merge. Variable-width extrema, joins, scheduling, and spill remain. A later graph/optimizer can lower into or replace this
+cannot represent scans, branches, joins, exchanges, or sinks. Bound single-source projection,
+global/grouped aggregation, and exact bounded ordering use the accounted stage baseline. Generated-
+identity base ordering, complete part/head merge, variable-width extrema, joins, scheduling, and
+spill remain. A later graph/optimizer can lower into or replace this
 pipeline while retaining its shape and differential guarantees.
 
 ## Likely interview questions

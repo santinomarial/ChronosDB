@@ -1,8 +1,10 @@
 #include "chronos/common/uuid.hpp"
 #include "chronos/query/catalog.hpp"
 #include "chronos/query/evaluator.hpp"
+#include "chronos/query/executor.hpp"
 #include "chronos/query/parser.hpp"
 #include "chronos/query/physical_lowering.hpp"
+#include "chronos/query/snapshot.hpp"
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/table_schema.hpp"
 
@@ -18,6 +20,7 @@
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -35,7 +38,7 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
   return schema::LogicalType::create(kind).value();
 }
 
-[[nodiscard]] std::shared_ptr<const schema::TableSchema> schema() {
+[[nodiscard]] std::shared_ptr<const schema::TableSchema> schema(const bool deduplicated = true) {
   std::vector<schema::ColumnDefinition> columns;
   columns.push_back(schema::ColumnDefinition::create(id<schema::ColumnId>(3U), "ts",
                                                      type(schema::LogicalTypeKind::kTimestampNs),
@@ -51,14 +54,15 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
                                                      type(schema::LogicalTypeKind::kString), true)
                         .value());
   return std::make_shared<const schema::TableSchema>(
-      schema::TableSchema::create(id<schema::TableId>(1U), id<schema::SchemaId>(2U),
-                                  schema::SchemaVersion::initial(), std::nullopt,
-                                  std::move(columns),
-                                  {.event_time_column = id<schema::ColumnId>(3U),
-                                   .physical_ordering_key = {id<schema::ColumnId>(3U)},
-                                   .partition_columns = {id<schema::ColumnId>(3U)},
-                                   .shard_key = {id<schema::ColumnId>(3U)},
-                                   .deduplication_key = {}})
+      schema::TableSchema::create(
+          id<schema::TableId>(1U), id<schema::SchemaId>(2U), schema::SchemaVersion::initial(),
+          std::nullopt, std::move(columns),
+          {.event_time_column = id<schema::ColumnId>(3U),
+           .physical_ordering_key = {id<schema::ColumnId>(3U)},
+           .partition_columns = {id<schema::ColumnId>(3U)},
+           .shard_key = {id<schema::ColumnId>(3U)},
+           .deduplication_key = deduplicated ? std::vector{id<schema::ColumnId>(3U)}
+                                             : std::vector<schema::ColumnId>{}})
           .value());
 }
 
@@ -102,6 +106,44 @@ signed_column(const schema::LogicalTypeKind kind, const std::span<const std::int
   }
   return columnar::OwnedPhysicalColumn::create(
              {.type = type(schema::LogicalTypeKind::kBool),
+              .nullable = false,
+              .row_count = static_cast<std::uint32_t>(values.size()),
+              .null_count = 0U},
+             std::move(buffers))
+      .value();
+}
+
+template <typename Value>
+[[nodiscard]] columnar::OwnedPhysicalColumn unsigned_column(const schema::LogicalTypeKind kind,
+                                                            const std::span<const Value> values) {
+  static_assert(std::is_unsigned_v<Value>);
+  columnar::ColumnVectorBuffers buffers;
+  buffers.values.resize(values.size() * sizeof(Value));
+  for (std::size_t row = 0U; row < values.size(); ++row) {
+    for (std::size_t byte = 0U; byte < sizeof(Value); ++byte) {
+      buffers.values[row * sizeof(Value) + byte] =
+          static_cast<std::byte>((values[row] >> (byte * 8U)) & Value{0xffU});
+    }
+  }
+  return columnar::OwnedPhysicalColumn::create(
+             {.type = type(kind),
+              .nullable = false,
+              .row_count = static_cast<std::uint32_t>(values.size()),
+              .null_count = 0U},
+             std::move(buffers))
+      .value();
+}
+
+[[nodiscard]] columnar::OwnedPhysicalColumn
+uuid_column(const std::span<const common::Uuid> values) {
+  columnar::ColumnVectorBuffers buffers;
+  buffers.values.resize(values.size() * common::Uuid::kSize);
+  for (std::size_t row = 0U; row < values.size(); ++row) {
+    std::ranges::copy(values[row].bytes(), buffers.values.begin() + static_cast<std::ptrdiff_t>(
+                                                                        row * common::Uuid::kSize));
+  }
+  return columnar::OwnedPhysicalColumn::create(
+             {.type = type(schema::LogicalTypeKind::kUuid),
               .nullable = false,
               .row_count = static_cast<std::uint32_t>(values.size()),
               .null_count = 0U},
@@ -154,6 +196,21 @@ private:
   std::optional<AccountedVectorChunk> chunk_;
 };
 
+class OneSnapshotProvider final : public ScalarSnapshotProvider {
+public:
+  explicit OneSnapshotProvider(std::shared_ptr<const ScalarTableSnapshot> snapshot)
+      : snapshot_(std::move(snapshot)) {}
+
+  [[nodiscard]] common::Result<std::shared_ptr<const ScalarTableSnapshot>>
+  resolve(const std::shared_ptr<const schema::TableSchema>&,
+          const std::optional<std::int64_t>) const override {
+    return snapshot_;
+  }
+
+private:
+  std::shared_ptr<const ScalarTableSnapshot> snapshot_;
+};
+
 [[nodiscard]] AccountedVectorChunk input(const QueryResourceContext& resources) {
   constexpr std::array<std::int64_t, 4> kTimestamp{1, 2, 3, 4};
   constexpr std::array<std::int64_t, 4> kValue{0, 3, 5, 8};
@@ -169,6 +226,79 @@ private:
   return AccountedVectorChunk::create(std::move(chunk), resources.reserve(4'096U).value(),
                                       resources)
       .value();
+}
+
+[[nodiscard]] AccountedVectorChunk ordered_input(const QueryResourceContext& resources) {
+  constexpr std::array<std::int64_t, 6> kTimestamp{2, 1, 1, 1, 3, 4};
+  constexpr std::array<std::int64_t, 6> kValue{7, 7, 7, 7, 2, 9};
+  constexpr std::array<bool, 6> kFlag{true, false, true, false, true, true};
+  const std::array<std::optional<std::string>, 6> labels{"late", "seq2",       "row1",
+                                                         "row0", std::nullopt, "high"};
+  const common::Uuid wal{common::Uuid::Bytes{
+      std::byte{1}, std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0},
+      std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0},
+      std::byte{0}, std::byte{0}, std::byte{0}, std::byte{1}}};
+  const std::array<common::Uuid, 6> wal_ids{wal, wal, wal, wal, wal, wal};
+  constexpr std::array<std::uint64_t, 6> kRecordSequence{2, 2, 1, 1, 3, 4};
+  constexpr std::array<std::uint32_t, 6> kRowOrdinal{0, 1, 1, 0, 0, 0};
+  constexpr std::array<std::uint8_t, 6> kOperation{1, 1, 1, 1, 1, 1};
+  std::vector<columnar::OwnedPhysicalColumn> columns;
+  columns.push_back(signed_column(schema::LogicalTypeKind::kTimestampNs, kTimestamp));
+  columns.push_back(signed_column(schema::LogicalTypeKind::kInt64, kValue));
+  columns.push_back(bool_column(kFlag));
+  columns.push_back(string_column(labels));
+  columns.push_back(uuid_column(wal_ids));
+  columns.push_back(unsigned_column(schema::LogicalTypeKind::kUInt64,
+                                    std::span<const std::uint64_t>{kRecordSequence}));
+  columns.push_back(unsigned_column(schema::LogicalTypeKind::kUInt32,
+                                    std::span<const std::uint32_t>{kRowOrdinal}));
+  columns.push_back(
+      unsigned_column(schema::LogicalTypeKind::kUInt8, std::span<const std::uint8_t>{kOperation}));
+  VectorChunk chunk =
+      VectorChunk::create(std::move(columns), VectorSelection::all(6U).value()).value();
+  return AccountedVectorChunk::create(std::move(chunk), resources.reserve(8'192U).value(),
+                                      resources)
+      .value();
+}
+
+[[nodiscard]] std::shared_ptr<const ScalarTableSnapshot> ordered_scalar_snapshot() {
+  constexpr std::array<std::int64_t, 6> kTimestamp{2, 1, 1, 1, 3, 4};
+  constexpr std::array<std::int64_t, 6> kValue{7, 7, 7, 7, 2, 9};
+  constexpr std::array<bool, 6> kFlag{true, false, true, false, true, true};
+  const std::array<std::optional<std::string>, 6> labels{"late", "seq2",       "row1",
+                                                         "row0", std::nullopt, "high"};
+  constexpr std::array<std::uint64_t, 6> kRecordSequence{2, 2, 1, 1, 3, 4};
+  constexpr std::array<std::uint32_t, 6> kRowOrdinal{0, 1, 1, 0, 0, 0};
+  const common::Uuid wal{common::Uuid::Bytes{
+      std::byte{1}, std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0},
+      std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0},
+      std::byte{0}, std::byte{0}, std::byte{0}, std::byte{1}}};
+  std::vector<ScalarInputRow> rows;
+  rows.reserve(kTimestamp.size());
+  for (std::size_t row = 0U; row < kTimestamp.size(); ++row) {
+    std::vector<ScalarValue> columns;
+    columns.push_back(
+        ScalarValue::signed_value(type(schema::LogicalTypeKind::kTimestampNs), kTimestamp[row])
+            .value());
+    columns.push_back(
+        ScalarValue::signed_value(type(schema::LogicalTypeKind::kInt64), kValue[row]).value());
+    columns.push_back(ScalarValue::boolean(kFlag[row]).value());
+    const auto& label = labels[row];
+    if (label.has_value()) {
+      columns.push_back(
+          ScalarValue::text(type(schema::LogicalTypeKind::kString), label.value()).value());
+    } else {
+      columns.push_back(ScalarValue::null(type(schema::LogicalTypeKind::kString)));
+    }
+    rows.push_back({.columns = std::move(columns),
+                    .generated_logical_identity = {},
+                    .wal_id = wal,
+                    .record_sequence = kRecordSequence[row],
+                    .system_commit_position = kRecordSequence[row],
+                    .row_ordinal = kRowOrdinal[row]});
+  }
+  return std::make_shared<const ScalarTableSnapshot>(
+      ScalarTableSnapshot::create(schema(), 10U, std::move(rows)).value());
 }
 
 [[nodiscard]] std::int64_t cell_i64(const VectorChunk& chunk, const std::size_t column,
@@ -655,11 +785,166 @@ TEST(PhysicalSelectLoweringPropertyTest, FixedWidthKernelsMatchTheScalarOracle) 
   }
 }
 
+TEST(PhysicalSelectLoweringTest,
+     LowersBaseOrderKeysLogicalIdentityCommitPositionAndLimitBeforeHiddenRemoval) {
+  BoundSqlSelect select =
+      bind("SELECT label FROM metrics WHERE value >= 2 ORDER BY value ASC, flag DESC LIMIT 4");
+  PhysicalPipelinePlan plan = lower_bound_sql_select(select).value();
+  ASSERT_EQ(plan.input_columns().size(), 8U);
+  ASSERT_EQ(plan.output_columns().size(), 1U);
+  ASSERT_EQ(plan.stages().size(), 6U);
+  ASSERT_TRUE(std::holds_alternative<ColumnOutputStage>(plan.stages()[0]));
+  ASSERT_TRUE(std::holds_alternative<BooleanFilterStage>(plan.stages()[1]));
+  ASSERT_TRUE(std::holds_alternative<ColumnOutputStage>(plan.stages()[2]));
+  ASSERT_TRUE(std::holds_alternative<SortStage>(plan.stages()[3]));
+  ASSERT_TRUE(std::holds_alternative<ColumnSubsetStage>(plan.stages()[4]));
+  ASSERT_TRUE(std::holds_alternative<LimitStage>(plan.stages()[5]));
+  const auto& sort = std::get<SortStage>(plan.stages()[3]);
+  ASSERT_EQ(sort.keys.size(), 6U);
+  EXPECT_EQ(sort.keys[0].direction, PhysicalSortDirection::kAscending);
+  EXPECT_EQ(sort.keys[1].direction, PhysicalSortDirection::kDescending);
+  EXPECT_EQ(sort.keys[1].null_placement, ScalarNullPlacement::kFirst);
+  for (std::size_t key = 2U; key < sort.keys.size(); ++key)
+    EXPECT_EQ(sort.keys[key].direction, PhysicalSortDirection::kAscending);
+
+  QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+  auto pipeline =
+      plan.instantiate(std::make_unique<OneChunkSource>(ordered_input(resources))).value();
+  auto step = pipeline->next(resources).value();
+  ASSERT_EQ(step.kind(), PhysicalOperatorStepKind::kChunk);
+  const VectorChunk& output = step.chunk()->chunk();
+  ASSERT_EQ(output.column_count(), 1U);
+  ASSERT_EQ(output.selected_row_count(), 4U);
+  EXPECT_TRUE(cell_value(output, 0U, 0U).is_null());
+  EXPECT_EQ(cell_text(output, 0U, 1U), "row1");
+  EXPECT_EQ(cell_text(output, 0U, 2U), "late");
+  EXPECT_EQ(cell_text(output, 0U, 3U), "row0");
+  OneSnapshotProvider provider{ordered_scalar_snapshot()};
+  SqlResult<ScalarQueryResult> scalar = execute_sql_v1_select(select, provider);
+  ASSERT_TRUE(scalar.has_value()) << scalar.error().status().to_string();
+  ASSERT_EQ(scalar->rows().size(), output.selected_row_count());
+  for (std::size_t row = 0U; row < scalar->rows().size(); ++row) {
+    const ScalarValue physical = cell_value(output, 0U, row);
+    EXPECT_EQ(physical.type(), scalar->rows()[row][0].type());
+    EXPECT_EQ(physical.storage(), scalar->rows()[row][0].storage());
+  }
+  step = PhysicalOperatorStep::end();
+  EXPECT_EQ(pipeline->next(resources)->kind(), PhysicalOperatorStepKind::kEnd);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
+TEST(PhysicalSelectLoweringTest, PreservesAliasVisibilityAndExplicitOrDefaultNullPlacement) {
+  for (const auto& [sql, null_first] : std::array<std::pair<std::string_view, bool>, 4>{
+           std::pair{"SELECT label AS name FROM metrics ORDER BY name DESC", true},
+           std::pair{"SELECT label AS name FROM metrics ORDER BY name DESC NULLS LAST", false},
+           std::pair{"SELECT label AS name FROM metrics ORDER BY name ASC", false},
+           std::pair{"SELECT label AS name FROM metrics ORDER BY name ASC NULLS FIRST", true}}) {
+    SCOPED_TRACE(sql);
+    PhysicalPipelinePlan plan = lower_bound_sql_select(bind(sql)).value();
+    const auto& sort = std::get<SortStage>(plan.stages()[1]);
+    ASSERT_FALSE(sort.keys.empty());
+    EXPECT_EQ(sort.keys.front().null_placement,
+              null_first ? ScalarNullPlacement::kFirst : ScalarNullPlacement::kLast);
+    QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+    auto pipeline =
+        plan.instantiate(std::make_unique<OneChunkSource>(ordered_input(resources))).value();
+    auto step = pipeline->next(resources).value();
+    ASSERT_EQ(step.kind(), PhysicalOperatorStepKind::kChunk);
+    const VectorChunk& output = step.chunk()->chunk();
+    EXPECT_EQ(cell_value(output, 0U, null_first ? 0U : 5U).is_null(), true);
+    step = PhysicalOperatorStep::end();
+    EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  }
+}
+
+TEST(PhysicalSelectLoweringTest,
+     LowersAggregateAliasesOrderOnlyAggregatesGroupIdentityAndHiddenRemoval) {
+  BoundSqlSelect select =
+      bind("SELECT value % 3 AS bucket, count(*) AS rows FROM metrics GROUP BY value % 3 "
+           "ORDER BY rows DESC, sum(value) DESC, bucket ASC LIMIT 2");
+  PhysicalPipelinePlan plan = lower_bound_sql_select(select).value();
+  ASSERT_EQ(plan.output_columns().size(), 2U);
+  ASSERT_EQ(plan.stages().size(), 6U);
+  ASSERT_TRUE(std::holds_alternative<ColumnOutputStage>(plan.stages()[0]));
+  ASSERT_TRUE(std::holds_alternative<GroupedAggregateStage>(plan.stages()[1]));
+  ASSERT_TRUE(std::holds_alternative<ColumnOutputStage>(plan.stages()[2]));
+  ASSERT_TRUE(std::holds_alternative<SortStage>(plan.stages()[3]));
+  ASSERT_TRUE(std::holds_alternative<ColumnSubsetStage>(plan.stages()[4]));
+  ASSERT_TRUE(std::holds_alternative<LimitStage>(plan.stages()[5]));
+  const auto& grouped = std::get<GroupedAggregateStage>(plan.stages()[1]);
+  ASSERT_EQ(grouped.definitions.size(), 2U);
+  const auto& sort = std::get<SortStage>(plan.stages()[3]);
+  ASSERT_EQ(sort.keys.size(), 4U);
+  EXPECT_EQ(sort.keys.back().direction, PhysicalSortDirection::kAscending);
+  EXPECT_EQ(sort.keys.back().null_placement, ScalarNullPlacement::kLast);
+
+  QueryResourceContext resources = QueryResourceContext::create(4U << 20U).value();
+  auto pipeline = plan.instantiate(std::make_unique<OneChunkSource>(input(resources))).value();
+  auto step = pipeline->next(resources).value();
+  ASSERT_EQ(step.kind(), PhysicalOperatorStepKind::kChunk);
+  const VectorChunk& output = step.chunk()->chunk();
+  ASSERT_EQ(output.column_count(), 2U);
+  ASSERT_EQ(output.selected_row_count(), 2U);
+  EXPECT_EQ(std::get<std::int64_t>(cell_value(output, 0U, 0U).storage()), 2);
+  EXPECT_EQ(std::get<std::int64_t>(cell_value(output, 1U, 0U).storage()), 2);
+  EXPECT_EQ(std::get<std::int64_t>(cell_value(output, 0U, 1U).storage()), 0);
+  EXPECT_EQ(std::get<std::int64_t>(cell_value(output, 1U, 1U).storage()), 2);
+  step = PhysicalOperatorStep::end();
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
+TEST(PhysicalSelectLoweringTest, UsesEncodedGroupKeyIdentityForEqualAggregateOrderKeys) {
+  PhysicalPipelinePlan plan =
+      lower_bound_sql_select(bind("SELECT label, count(*) AS rows FROM metrics GROUP BY label "
+                                  "ORDER BY rows DESC"))
+          .value();
+  QueryResourceContext resources = QueryResourceContext::create(4U << 20U).value();
+  auto pipeline = plan.instantiate(std::make_unique<OneChunkSource>(input(resources))).value();
+  auto step = pipeline->next(resources).value();
+  ASSERT_EQ(step.kind(), PhysicalOperatorStepKind::kChunk);
+  const VectorChunk& output = step.chunk()->chunk();
+  ASSERT_EQ(output.selected_row_count(), 4U);
+  EXPECT_EQ(cell_text(output, 0U, 0U), "alpha");
+  EXPECT_EQ(cell_text(output, 0U, 1U), "ccc");
+  EXPECT_EQ(cell_text(output, 0U, 2U), "delta");
+  EXPECT_TRUE(cell_value(output, 0U, 3U).is_null());
+}
+
+TEST(PhysicalSelectLoweringTest, LowersOrderOnlyGlobalAggregateWithoutExposingIt) {
+  PhysicalPipelinePlan plan =
+      lower_bound_sql_select(bind("SELECT 1 AS one FROM metrics ORDER BY count(*) DESC")).value();
+  ASSERT_EQ(plan.output_columns().size(), 1U);
+  ASSERT_TRUE(std::ranges::any_of(plan.stages(), [](const PhysicalPipelineStage& stage) {
+    return std::holds_alternative<UngroupedAggregateStage>(stage);
+  }));
+  QueryResourceContext resources = QueryResourceContext::create(4U << 20U).value();
+  auto pipeline = plan.instantiate(std::make_unique<OneChunkSource>(input(resources))).value();
+  auto step = pipeline->next(resources).value();
+  ASSERT_EQ(step.kind(), PhysicalOperatorStepKind::kChunk);
+  EXPECT_EQ(step.chunk()->chunk().column_count(), 1U);
+  EXPECT_EQ(std::get<std::int64_t>(cell_value(step.chunk()->chunk(), 0U, 0U).storage()), 1);
+}
+
+TEST(PhysicalSelectLoweringTest, RejectsBaseOrderWhenGeneratedLogicalIdentityIsUnavailable) {
+  const std::vector<QueryCatalogTableInput> tables{
+      {.name = "metrics", .quoted = false, .schema = schema(false)}};
+  auto no_identity_catalog = std::make_shared<const QueryCatalogSnapshot>(
+      QueryCatalogSnapshot::create(2U, tables).value());
+  BoundSqlSelect select =
+      bind_sql_v1_select(parse_sql_v1_select("SELECT value FROM metrics ORDER BY value").value(),
+                         std::move(no_identity_catalog))
+          .value();
+  SqlResult<PhysicalPipelinePlan> lowered = lower_bound_sql_select(select);
+  ASSERT_FALSE(lowered.has_value());
+  EXPECT_EQ(lowered.error().code(), SqlDiagnosticCode::kUnsupportedSyntax);
+  EXPECT_EQ(lowered.error().status().code(), common::StatusCode::kInvalidArgument);
+}
+
 TEST(PhysicalSelectLoweringTest, RejectsUnsupportedRelationalAndScalarSurfaces) {
   BoundSqlSelect text_cast = bind("SELECT CAST('value' AS SYMBOL) AS converted FROM metrics");
   EXPECT_TRUE(lower_bound_sql_select(text_cast).has_value());
   BoundSqlSelect ordered = bind("SELECT value FROM metrics ORDER BY value");
-  EXPECT_EQ(lower_bound_sql_select(ordered).error().code(), SqlDiagnosticCode::kUnsupportedSyntax);
+  EXPECT_TRUE(lower_bound_sql_select(ordered).has_value());
   BoundSqlSelect grouped = bind("SELECT sum(value) AS total FROM metrics GROUP BY flag");
   EXPECT_TRUE(lower_bound_sql_select(grouped).has_value());
   BoundSqlSelect variable_extremum = bind("SELECT min(label) AS first_label FROM metrics");
@@ -717,6 +1002,16 @@ TEST(PhysicalSelectLoweringTest, EnforcesExpressionAndPlanLimitsBeforeExecution)
       lower_bound_sql_select(grouped, {.grouped_aggregate_limits = {.maximum_aggregates = 1U}});
   ASSERT_FALSE(narrow_grouped.has_value());
   EXPECT_EQ(narrow_grouped.error().code(), SqlDiagnosticCode::kResourceLimit);
+
+  BoundSqlSelect ordered = bind("SELECT value FROM metrics ORDER BY value");
+  auto narrow_sort = lower_bound_sql_select(ordered, {.sort_limits = {.maximum_keys = 4U}});
+  ASSERT_FALSE(narrow_sort.has_value());
+  EXPECT_EQ(narrow_sort.error().code(), SqlDiagnosticCode::kResourceLimit);
+
+  auto narrow_hidden_output =
+      lower_bound_sql_select(ordered, {.output_limits = {.maximum_columns = 5U}});
+  ASSERT_FALSE(narrow_hidden_output.has_value());
+  EXPECT_EQ(narrow_hidden_output.error().code(), SqlDiagnosticCode::kResourceLimit);
 }
 
 } // namespace

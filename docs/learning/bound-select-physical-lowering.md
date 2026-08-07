@@ -7,9 +7,11 @@ borrowed immutable `BoundSqlSelect` for one synchronous call and returns an owni
 `PhysicalPipelinePlan`. The returned plan retains no pointer into the bound SQL object; callers must
 separately keep the bound plan when they need output names or catalog identities.
 
-The physical input is every primary-source column in exact schema ordinal, logical type, and
-nullability order. A future scan planner can project or remap storage, but it must satisfy this shape
-or introduce an explicit checked mapping stage.
+The unordered physical input is every primary-source column in exact schema ordinal, logical type,
+and nullability order. An ordered nonaggregate plan additionally requires the shared four-column
+row-version suffix. Aggregate ordering consumes ordinary source shape because its deterministic
+identity is produced by the aggregate stage. A future scan planner can project or remap storage,
+but it must satisfy the selected shape or introduce an explicit checked mapping stage.
 
 ## Lowering algorithm
 
@@ -33,6 +35,20 @@ BY expressions have distinct spans, so group keys map by recursive bound structu
 resolved source and column ordinals. Final expressions can use either leaf; an ungrouped source
 column cannot cross the grouped boundary. Empty input emits no group.
 
+ORDER BY adds its keys after visible output positions, so expressions need not be projected. A
+binder-resolved alias is re-lowered from the aliased SELECT expression because positions in one
+output stage cannot refer to sibling outputs. Order-only aggregates join aggregate traversal before
+input preparation. Explicit keys retain declared direction and SQL default or explicit NULL
+placement.
+
+Base-row ties append schema DEDUP KEY columns, then WAL ID, record sequence, and row ordinal from
+the shared suffix. These keys are ascending and NULL-last. WAL ID plus record sequence is the
+accepted logical commit position; scan arrival and stable-sort fallback are not SQL identity.
+Schemas with no DEDUP KEY use a generated logical identity that current vector sources do not
+expose, so their base ORDER BY lowering fails explicitly. Grouped result ties append group-key
+columns in declared order; a global aggregate has only one group. After sort, a checked subset
+removes every order and identity helper before LIMIT is applied to client-visible columns.
+
 BETWEEN lowers to `value >= lower AND value <= upper`; IN lowers to an OR chain of equality nodes.
 The searched value is one shared DAG instruction, and NOT applies one three-valued Boolean node.
 Untyped NULL candidates receive the bound peer type. This preserves UNKNOWN behavior without a new
@@ -40,7 +56,7 @@ instruction family.
 
 ## Bounds, ownership, and failures
 
-`PhysicalSelectLoweringLimits` carries expression, ungrouped-aggregate, grouped-aggregate,
+`PhysicalSelectLoweringLimits` carries expression, ungrouped-aggregate, grouped-aggregate, sort,
 output-chunk, and plan limits. Program storage is reserved at the caller's instruction limit so
 allocator growth cannot make an exactly sized program fail the public spare-capacity rule. All
 returned stages own their vectors, constants, definitions, and programs.
@@ -56,8 +72,9 @@ container-length failure and publishes no partial plan.
 ## Current boundary and next steps
 
 This baseline supports one source, ordinary WHERE, ordered projection, global and bounded grouped
-aggregates, and LIMIT using the current numeric, Boolean, temporal, UUID, and variable-width output
-kernels. It rejects ORDER BY, LATEST, ASOF, SUBSCRIBE, EXPLAIN modes, and variable-width MIN/MAX.
+aggregates, exact bounded ORDER BY where authoritative identity is available, and LIMIT using the
+current numeric, Boolean, temporal, UUID, and variable-width output kernels. It rejects generated-
+identity base ORDER BY, LATEST, ASOF, SUBSCRIBE, EXPLAIN modes, and variable-width MIN/MAX.
 Hash grouping, aggregate common-subexpression elimination, and spill remain later decisions.
 
 Lowering complexity is linear in source columns, output syntax, aggregate calls, and generated

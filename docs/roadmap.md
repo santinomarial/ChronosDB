@@ -443,11 +443,14 @@ No phase passes because its code merely compiles. A phase passes only when its a
   increment add one opt-in non-null WAL ID/record sequence/row ordinal/operation suffix to both
   CSEG and mutable-head vector sources, checked shared layout, zero-copy CSEG exposure, accounted
   canonical head materialization, exact-filter helper preservation, and failure/fuzz/benchmark/
-  consumer evidence. Exact base-row SQL ORDER BY lowering remains unimplemented; it must consume
-  the explicit suffix rather than substitute scan arrival order. Hashing, spill, variable-width
-  extrema, and broader relational lowering, optimizer rules, complete multi-part/head composition, base/delta
-  merge and row-version resolution, mapped/asynchronous providers, shared pin credit, scheduling,
-  spill, and full scalar-engine differential plan execution are unimplemented.
+  consumer evidence. ADR 0046 and the twenty-ninth increment add exact bounded SQL ORDER BY
+  lowering for supported base and aggregate queries: binder-resolved aliases and non-projected
+  keys, direction and NULL placement, DEDUP/group identity ties, the WAL commit-position suffix,
+  hidden-column removal, sort-before-LIMIT order, scalar-oracle/failure/fuzz/benchmark/consumer
+  evidence, and explicit rejection when generated logical identity is unavailable. Hashing,
+  variable-width extrema, broader relational lowering, optimizer rules, complete multi-part/head
+  composition, base/delta merge and row-version resolution, mapped/asynchronous providers, shared
+  pin credit, scheduling, spill, and full scalar-engine differential plan execution are unimplemented.
 
 - **Scope:** bounded vectors, vectorized scans/expressions/aggregates/joins, physical planning, memory accounting, cancellation, parallel scheduling, and spill for explicitly supported operators.
 - **Explicit non-scope:** distributed fragments, GPU novelty, unbounded query memory, or optimizer rules lacking semantic/differential validation.

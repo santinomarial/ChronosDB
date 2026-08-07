@@ -44,7 +44,7 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
                                    .physical_ordering_key = {id<schema::ColumnId>(3U)},
                                    .partition_columns = {id<schema::ColumnId>(3U)},
                                    .shard_key = {id<schema::ColumnId>(3U)},
-                                   .deduplication_key = {}})
+                                   .deduplication_key = {id<schema::ColumnId>(3U)}})
           .value());
   const std::vector<QueryCatalogTableInput> tables{
       {.name = "metrics", .quoted = false, .schema = std::move(table)}};
@@ -76,6 +76,23 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
              parse_sql_v1_select("SELECT value % 16 AS bucket, count(*) AS rows, "
                                  "sum(value + 1) + count(*) AS total FROM metrics "
                                  "WHERE value BETWEEN 10 AND 100 GROUP BY value % 16 LIMIT 32")
+                 .value(),
+             benchmark_catalog())
+      .value();
+}
+
+[[nodiscard]] BoundSqlSelect benchmark_ordered_select() {
+  return bind_sql_v1_select(parse_sql_v1_select("SELECT value + 1 AS adjusted FROM metrics "
+                                                "ORDER BY adjusted DESC, ts ASC LIMIT 32")
+                                .value(),
+                            benchmark_catalog())
+      .value();
+}
+
+[[nodiscard]] BoundSqlSelect benchmark_ordered_grouped_select() {
+  return bind_sql_v1_select(
+             parse_sql_v1_select("SELECT value % 16 AS bucket, count(*) AS rows FROM metrics "
+                                 "GROUP BY value % 16 ORDER BY rows DESC, sum(value) DESC LIMIT 32")
                  .value(),
              benchmark_catalog())
       .value();
@@ -173,11 +190,41 @@ void lower_bound_grouped_aggregate_pipeline(benchmark::State& state) {
   state.SetLabel("bound grouped aggregate retained; parse and bind excluded");
 }
 
+void lower_bound_ordered_pipeline(benchmark::State& state) {
+  const BoundSqlSelect select = benchmark_ordered_select();
+  for (auto iteration : state) {
+    static_cast<void>(iteration);
+    auto plan = lower_bound_sql_select(select);
+    benchmark::DoNotOptimize(plan);
+  }
+  state.SetItemsProcessed(static_cast<std::int64_t>(state.iterations()) * 2);
+  state.counters["order_keys"] = 2.0;
+  state.counters["outputs"] = 1.0;
+  state.counters["physical_stages"] = 4.0;
+  state.SetLabel("bound base ORDER BY retained; parse and bind excluded");
+}
+
+void lower_bound_ordered_grouped_pipeline(benchmark::State& state) {
+  const BoundSqlSelect select = benchmark_ordered_grouped_select();
+  for (auto iteration : state) {
+    static_cast<void>(iteration);
+    auto plan = lower_bound_sql_select(select);
+    benchmark::DoNotOptimize(plan);
+  }
+  state.SetItemsProcessed(static_cast<std::int64_t>(state.iterations()) * 3);
+  state.counters["order_keys"] = 2.0;
+  state.counters["outputs"] = 2.0;
+  state.counters["physical_stages"] = 6.0;
+  state.SetLabel("bound grouped ORDER BY retained; parse and bind excluded");
+}
+
 BENCHMARK(validate_physical_pipeline_plan)->Arg(1)->Arg(8)->Arg(64)->Arg(256);
 BENCHMARK(instantiate_physical_pipeline_plan)->Arg(1)->Arg(8)->Arg(64)->Arg(256);
 BENCHMARK(lower_bound_select_pipeline);
 BENCHMARK(lower_bound_global_aggregate_pipeline);
 BENCHMARK(lower_bound_grouped_aggregate_pipeline);
+BENCHMARK(lower_bound_ordered_pipeline);
+BENCHMARK(lower_bound_ordered_grouped_pipeline);
 
 } // namespace
 } // namespace chronos::query

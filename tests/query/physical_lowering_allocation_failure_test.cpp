@@ -43,7 +43,7 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
                                    .physical_ordering_key = {id<schema::ColumnId>(3U)},
                                    .partition_columns = {id<schema::ColumnId>(3U)},
                                    .shard_key = {id<schema::ColumnId>(3U)},
-                                   .deduplication_key = {}})
+                                   .deduplication_key = {id<schema::ColumnId>(3U)}})
           .value());
   const std::vector<QueryCatalogTableInput> tables{
       {.name = "metrics", .quoted = false, .schema = std::move(table)}};
@@ -53,13 +53,11 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
 
 TEST(PhysicalSelectLoweringAllocationFailureTest, ClassifiesEveryOwnedAllocationFailure) {
   const std::vector<std::string> statements{
-      "SELECT coalesce(CAST(NULL AS INT8), CAST(value AS INT64)) AS v, "
-      "time_bucket(INTERVAL '1 second', ts) AS bucket FROM metrics "
-      "WHERE value BETWEEN 1 AND 9 LIMIT 2",
-      "SELECT sum(value + 2) + count(*) AS total, avg(value) AS mean FROM metrics "
-      "WHERE value BETWEEN 1 AND 9 LIMIT 1",
-      "SELECT value % 3 AS bucket, sum(value + 2) + count(*) AS total FROM metrics "
-      "WHERE value BETWEEN 1 AND 9 GROUP BY value % 3 LIMIT 2"};
+      R"(SELECT coalesce(CAST(NULL AS INT8), CAST(value AS INT64)) AS v, time_bucket(INTERVAL '1 second', ts) AS bucket FROM metrics WHERE value BETWEEN 1 AND 9 LIMIT 2)",
+      R"(SELECT sum(value + 2) + count(*) AS total, avg(value) AS mean FROM metrics WHERE value BETWEEN 1 AND 9 LIMIT 1)",
+      R"(SELECT value % 3 AS bucket, sum(value + 2) + count(*) AS total FROM metrics WHERE value BETWEEN 1 AND 9 GROUP BY value % 3 LIMIT 2)",
+      R"(SELECT value + 1 AS adjusted FROM metrics ORDER BY value DESC LIMIT 2)",
+      R"(SELECT value % 3 AS bucket, count(*) AS rows FROM metrics GROUP BY value % 3 ORDER BY rows DESC, sum(value) DESC LIMIT 2)"};
   for (const std::string& statement : statements) {
     SCOPED_TRACE(statement);
     BoundSqlSelect select =

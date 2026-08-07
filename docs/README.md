@@ -150,7 +150,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   boundaries.
 - [Physical pipeline plan](learning/physical-pipeline-plan.md): implemented bounded immutable unary
   plans, exact physical-shape propagation and source enforcement, composed scalar differential
-  execution, hostile fuzzing, allocation/ownership failure behavior, and plan-overhead measurement.
+  execution, exact bounded SQL ORDER BY stage shapes, hostile fuzzing, allocation/ownership failure
+  behavior, and plan-overhead measurement.
 - [Lifetime-pinned vector backing](learning/pinned-vector-backing.md): implemented uniform physical
   views over direct or shared immutable storage, conservative backing/ordinal accounting, coupled
   pin-credit lifetime, projection behavior, fuzzing, and ownership-overhead measurement.
@@ -172,7 +173,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   query-accounted pull ownership, and exact event-time filtering.
 - [Shared vector row-version suffix](learning/vector-row-version-suffix.md): implemented opt-in
   common WAL/sequence/row/operation columns for CSEG and head sources with checked layout,
-  source-specific ownership, query accounting, helper preservation, fuzzing, and measurement.
+  source-specific ownership, query accounting, exact DEDUP-keyed ORDER BY tie consumption, helper
+  preservation, fuzzing, and measurement.
 - [Exact timestamp-range vector filter](learning/exact-timestamp-range-filter.md): implemented
   edge-safe open/closed `TIMESTAMP_NS` truth, allocation-free stable selection compaction,
   query-accounted pull and bounded-plan integration, fuzzing, and measurement boundaries.

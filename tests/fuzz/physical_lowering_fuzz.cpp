@@ -42,7 +42,7 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
                                    .physical_ordering_key = {id<schema::ColumnId>(3U)},
                                    .partition_columns = {id<schema::ColumnId>(3U)},
                                    .shard_key = {id<schema::ColumnId>(3U)},
-                                   .deduplication_key = {}})
+                                   .deduplication_key = {id<schema::ColumnId>(3U)}})
           .value());
   const std::vector<query::QueryCatalogTableInput> tables{
       {.name = "metrics", .quoted = false, .schema = std::move(table)}};
@@ -60,12 +60,13 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_t size) {
   if (size == 0U)
     return 0;
-  static constexpr std::array<std::string_view, 25> kSql{
+  static constexpr std::array<std::string_view, 28> kSql{
       "SELECT value + 1 AS v FROM metrics",
       "SELECT value FROM metrics WHERE value BETWEEN 1 AND 9 LIMIT 2",
       "SELECT value IN (1, NULL, 3) AS v FROM metrics",
       "SELECT CAST(value AS FLOAT64) AS v FROM metrics",
       "SELECT value FROM metrics ORDER BY value",
+      "SELECT value + 1 AS adjusted FROM metrics ORDER BY adjusted DESC, ts ASC LIMIT 2",
       "SELECT sum(value) AS v FROM metrics",
       "SELECT count(*), count(value), sum(value), avg(value), min(value), max(value), "
       "var_pop(value), var_samp(value) FROM metrics WHERE value > 0",
@@ -75,6 +76,9 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
       "SELECT ts, count(*), sum(value) FROM metrics GROUP BY ts",
       "SELECT value % 3 AS bucket, sum(value + 1) + count(*) AS v FROM metrics "
       "WHERE value > 0 GROUP BY value % 3 LIMIT 2",
+      "SELECT value % 3 AS bucket, count(*) AS rows FROM metrics GROUP BY value % 3 "
+      "ORDER BY rows DESC, sum(value) ASC LIMIT 2",
+      "SELECT 1 AS one FROM metrics ORDER BY count(*)",
       "SELECT coalesce(value, 0) AS v FROM metrics",
       "SELECT CAST(value AS FLOAT64) AS v FROM metrics",
       "SELECT coalesce(CAST(NULL AS INT8), value) AS v FROM metrics",

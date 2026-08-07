@@ -171,7 +171,11 @@
 > direction/NULL placement, multi-chunk variable keys, stable ties, canonical gathered output,
 > fixed state admission, exhaustive allocation failure, an independent fixed-seed model, hostile
 > plan fuzzing, sanitizers, installation, and duplicate-density measurements. Exact bound-SQL ORDER
-> BY, hashing, spill, and variable-width extrema remain outside this claim.
+> BY lowering now adds aliases, non-projected and order-only aggregate expressions, exact base
+> DEDUP/commit/row ties, aggregate group-key ties, hidden-column removal, sort-before-LIMIT shapes,
+> a direct scalar-oracle comparison, hostile bounds, exhaustive lowering allocation failure,
+> fuzzing, installation, and retained-plan measurements. Generated-identity base ordering, hashing,
+> spill, and variable-width extrema remain outside this claim.
 
 ## Test types
 

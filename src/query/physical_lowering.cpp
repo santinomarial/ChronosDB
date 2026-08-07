@@ -2,6 +2,7 @@
 
 #include "chronos/common/status.hpp"
 #include "chronos/query/literal.hpp"
+#include "chronos/query/row_version.hpp"
 #include "chronos/query/value.hpp"
 
 #include <cstddef>
@@ -625,6 +626,20 @@ aggregate_definition(const BoundSqlSelect& select, const SqlExpression& expressi
   return nullptr;
 }
 
+[[nodiscard]] PhysicalSortDirection order_direction(const SqlOrderDirection direction) noexcept {
+  return direction == SqlOrderDirection::kAscending ? PhysicalSortDirection::kAscending
+                                                    : PhysicalSortDirection::kDescending;
+}
+
+[[nodiscard]] ScalarNullPlacement order_null_placement(const SqlOrderItem& item) noexcept {
+  if (item.null_order == SqlNullOrder::kFirst)
+    return ScalarNullPlacement::kFirst;
+  if (item.null_order == SqlNullOrder::kLast)
+    return ScalarNullPlacement::kLast;
+  return item.direction == SqlOrderDirection::kAscending ? ScalarNullPlacement::kLast
+                                                         : ScalarNullPlacement::kFirst;
+}
+
 } // namespace
 
 SqlResult<PhysicalPipelinePlan> lower_bound_sql_select(const BoundSqlSelect& select,
@@ -654,16 +669,42 @@ SqlResult<PhysicalPipelinePlan> lower_bound_sql_select(const BoundSqlSelect& sel
           SqlDiagnosticCode::kUnsupportedSyntax, select.syntax().span(),
           common::StatusCode::kInvalidArgument, "Physical LATEST lowering is not implemented"));
     }
-    if (!select.syntax().order_by().empty()) {
+    const bool ordered = !select.syntax().order_by().empty();
+    const schema::TableSchema& source_schema = *select.sources()[0].schema_ptr();
+    if (ordered && !select.aggregate_query() && source_schema.deduplication_key().empty()) {
       return std::unexpected(diagnostic(
-          SqlDiagnosticCode::kUnsupportedSyntax, select.syntax().span(),
-          common::StatusCode::kInvalidArgument, "Physical ORDER BY lowering is not implemented"));
+          SqlDiagnosticCode::kUnsupportedSyntax,
+          select.syntax().order_by().front().expression.span(),
+          common::StatusCode::kInvalidArgument,
+          "Base-row physical ORDER BY requires a schema DEDUP KEY because generated logical "
+          "identity is not exposed by vector sources"));
     }
-
     std::vector<PhysicalColumnShape> input_columns;
-    input_columns.reserve(select.sources()[0].schema_ptr()->columns().size());
-    for (const schema::ColumnDefinition& column : select.sources()[0].schema_ptr()->columns())
+    const std::size_t source_column_count = source_schema.columns().size();
+    std::size_t input_column_count = source_column_count;
+    if (ordered && !select.aggregate_query()) {
+      common::Result<std::size_t> ordered_input_count =
+          scan_output_column_count(source_column_count, RowVersionScanMode::kAppend);
+      if (!ordered_input_count.has_value())
+        throw LoweringFailure{from_status(select.syntax().span(), ordered_input_count.error())};
+      input_column_count = *ordered_input_count;
+    }
+    input_columns.reserve(input_column_count);
+    for (const schema::ColumnDefinition& column : source_schema.columns())
       input_columns.push_back({.type = column.type(), .nullable = column.nullable()});
+    if (ordered && !select.aggregate_query()) {
+      for (const VectorRowVersionColumnKind kind : {
+               VectorRowVersionColumnKind::kWalId,
+               VectorRowVersionColumnKind::kRecordSequence,
+               VectorRowVersionColumnKind::kRowOrdinal,
+               VectorRowVersionColumnKind::kOperation,
+           }) {
+        common::Result<schema::LogicalType> suffix_type = vector_row_version_column_type(kind);
+        if (!suffix_type.has_value())
+          throw LoweringFailure{from_status(select.syntax().span(), suffix_type.error())};
+        input_columns.push_back({.type = *suffix_type, .nullable = false});
+      }
+    }
 
     std::vector<PhysicalPipelineStage> stages;
     ExpressionLowerer source_lowerer{select, limits.expression_limits};
@@ -678,47 +719,76 @@ SqlResult<PhysicalPipelinePlan> lower_bound_sql_select(const BoundSqlSelect& sel
       stages.emplace_back(BooleanFilterStage{.predicate_column = input_columns.size()});
     }
 
-    const auto lower_outputs = [&select](ExpressionLowerer& lowerer,
-                                         const bool source_outputs_available) {
+    const auto lower_output = [&select](ExpressionLowerer& lowerer, const BoundOutputColumn& output,
+                                        const bool source_outputs_available) {
+      if (output.source_ordinal.has_value() && output.column_ordinal.has_value()) {
+        if (*output.source_ordinal != 0U) {
+          throw LoweringFailure{
+              diagnostic(SqlDiagnosticCode::kExecutionFailure, select.syntax().span(),
+                         common::StatusCode::kInvalidArgument,
+                         "Bound output references an unavailable physical source")};
+        }
+        if (source_outputs_available)
+          return ColumnOutputPosition{SourceColumnOutputPosition{*output.column_ordinal}};
+      }
+      if (!output.expression_span.has_value()) {
+        throw LoweringFailure{diagnostic(SqlDiagnosticCode::kExecutionFailure,
+                                         select.syntax().span(), common::StatusCode::kInternal,
+                                         "Bound output has no physical expression")};
+      }
+      const SqlExpression* expression = output_expression(select, *output.expression_span);
+      if (expression == nullptr) {
+        throw LoweringFailure{diagnostic(SqlDiagnosticCode::kExecutionFailure,
+                                         *output.expression_span, common::StatusCode::kInternal,
+                                         "Bound output expression is absent from the syntax tree")};
+      }
+      return lowerer.output(*expression);
+    };
+    const auto lower_outputs = [&select, &lower_output](ExpressionLowerer& lowerer,
+                                                        const bool source_outputs_available) {
       std::vector<ColumnOutputPosition> outputs;
       outputs.reserve(select.outputs().size());
-      for (const BoundOutputColumn& output : select.outputs()) {
-        if (output.source_ordinal.has_value() && output.column_ordinal.has_value()) {
-          if (*output.source_ordinal != 0U) {
-            throw LoweringFailure{
-                diagnostic(SqlDiagnosticCode::kExecutionFailure, select.syntax().span(),
-                           common::StatusCode::kInvalidArgument,
-                           "Bound output references an unavailable physical source")};
-          }
-          if (source_outputs_available) {
-            outputs.emplace_back(SourceColumnOutputPosition{*output.column_ordinal});
-            continue;
-          }
-        }
-        if (!output.expression_span.has_value()) {
-          throw LoweringFailure{diagnostic(SqlDiagnosticCode::kExecutionFailure,
-                                           select.syntax().span(), common::StatusCode::kInternal,
-                                           "Bound output has no physical expression")};
-        }
-        const SqlExpression* expression = output_expression(select, *output.expression_span);
-        if (expression == nullptr) {
-          throw LoweringFailure{
-              diagnostic(SqlDiagnosticCode::kExecutionFailure, *output.expression_span,
-                         common::StatusCode::kInternal,
-                         "Bound output expression is absent from the syntax tree")};
-        }
-        outputs.push_back(lowerer.output(*expression));
-      }
+      for (const BoundOutputColumn& output : select.outputs())
+        outputs.push_back(lower_output(lowerer, output, source_outputs_available));
       return outputs;
     };
 
+    std::vector<VectorSortKey> sort_keys;
+    const auto append_order_outputs = [&select, &sort_keys,
+                                       &lower_output](ExpressionLowerer& lowerer,
+                                                      std::vector<ColumnOutputPosition>& positions,
+                                                      const bool source_outputs_available) {
+      for (const SqlOrderItem& item : select.syntax().order_by()) {
+        const std::size_t key_ordinal = positions.size();
+        const BoundExpressionInfo* information = select.find_expression(item.expression.span());
+        if (information != nullptr && information->output_ordinal.has_value()) {
+          if (*information->output_ordinal >= select.outputs().size()) {
+            throw LoweringFailure{
+                diagnostic(SqlDiagnosticCode::kExecutionFailure, item.expression.span(),
+                           common::StatusCode::kInternal,
+                           "Bound ORDER BY alias ordinal is outside the SELECT output")};
+          }
+          positions.push_back(lower_output(lowerer, select.outputs()[*information->output_ordinal],
+                                           source_outputs_available));
+        } else {
+          positions.push_back(lowerer.output(item.expression));
+        }
+        sort_keys.push_back({.column_ordinal = key_ordinal,
+                             .direction = order_direction(item.direction),
+                             .null_placement = order_null_placement(item)});
+      }
+    };
+
     std::vector<ColumnOutputPosition> outputs;
+    std::size_t aggregate_group_key_count = 0U;
     if (select.aggregate_query()) {
       std::vector<const SqlExpression*> aggregates;
       for (const SqlSelectItem& item : select.syntax().items()) {
         if (const SqlExpression* expression = item.expression(); expression != nullptr)
           collect_aggregates(*expression, aggregates);
       }
+      for (const SqlOrderItem& item : select.syntax().order_by())
+        collect_aggregates(item.expression, aggregates);
       const bool grouped = !select.syntax().group_by().empty();
       if (aggregates.empty() && !grouped) {
         throw LoweringFailure{diagnostic(SqlDiagnosticCode::kExecutionFailure,
@@ -759,6 +829,7 @@ SqlResult<PhysicalPipelinePlan> lower_bound_sql_select(const BoundSqlSelect& sel
       std::vector<GroupPhysicalBinding> group_bindings;
 
       if (grouped) {
+        aggregate_group_key_count = select.syntax().group_by().size();
         std::vector<ColumnOutputPosition> prepared_inputs;
         prepared_inputs.reserve(select.syntax().group_by().size() + aggregates.size());
         std::vector<VectorGroupKeyDefinition> keys;
@@ -848,11 +919,60 @@ SqlResult<PhysicalPipelinePlan> lower_bound_sql_select(const BoundSqlSelect& sel
       ExpressionLowerer result_lowerer{select, limits.expression_limits, bindings, group_bindings,
                                        false};
       outputs = lower_outputs(result_lowerer, false);
+      if (ordered) {
+        append_order_outputs(result_lowerer, outputs, false);
+        for (std::size_t group = 0U; group < aggregate_group_key_count; ++group) {
+          const std::size_t key_ordinal = outputs.size();
+          outputs.emplace_back(SourceColumnOutputPosition{group});
+          sort_keys.push_back({.column_ordinal = key_ordinal,
+                               .direction = PhysicalSortDirection::kAscending,
+                               .null_placement = ScalarNullPlacement::kLast});
+        }
+      }
     } else {
       outputs = lower_outputs(source_lowerer, true);
+      if (ordered) {
+        append_order_outputs(source_lowerer, outputs, true);
+        for (const schema::ColumnId key : source_schema.deduplication_key()) {
+          const std::optional<std::size_t> ordinal = source_schema.column_ordinal(key);
+          if (!ordinal.has_value()) {
+            throw LoweringFailure{diagnostic(SqlDiagnosticCode::kExecutionFailure,
+                                             select.syntax().span(), common::StatusCode::kInternal,
+                                             "DEDUP KEY identity has no source schema ordinal")};
+          }
+          const std::size_t key_ordinal = outputs.size();
+          outputs.emplace_back(SourceColumnOutputPosition{*ordinal});
+          sort_keys.push_back({.column_ordinal = key_ordinal,
+                               .direction = PhysicalSortDirection::kAscending,
+                               .null_placement = ScalarNullPlacement::kLast});
+        }
+        common::Result<VectorRowVersionLayout> suffix =
+            vector_row_version_layout(source_column_count);
+        if (!suffix.has_value())
+          throw LoweringFailure{from_status(select.syntax().span(), suffix.error())};
+        for (const std::size_t source_ordinal : {
+                 suffix->wal_id_column_ordinal(),
+                 suffix->record_sequence_column_ordinal(),
+                 suffix->row_ordinal_column_ordinal(),
+             }) {
+          const std::size_t key_ordinal = outputs.size();
+          outputs.emplace_back(SourceColumnOutputPosition{source_ordinal});
+          sort_keys.push_back({.column_ordinal = key_ordinal,
+                               .direction = PhysicalSortDirection::kAscending,
+                               .null_placement = ScalarNullPlacement::kLast});
+        }
+      }
     }
     stages.emplace_back(
         ColumnOutputStage{.positions = std::move(outputs), .output_limits = limits.output_limits});
+    if (ordered) {
+      stages.emplace_back(SortStage{.keys = std::move(sort_keys), .limits = limits.sort_limits});
+      std::vector<std::size_t> visible_outputs;
+      visible_outputs.reserve(select.outputs().size());
+      for (std::size_t ordinal = 0U; ordinal < select.outputs().size(); ++ordinal)
+        visible_outputs.push_back(ordinal);
+      stages.emplace_back(ColumnSubsetStage{.column_ordinals = std::move(visible_outputs)});
+    }
     const std::optional<std::uint64_t>& maximum_rows = select.syntax().limit();
     if (maximum_rows.has_value())
       stages.emplace_back(LimitStage{.maximum_rows = maximum_rows.value()});

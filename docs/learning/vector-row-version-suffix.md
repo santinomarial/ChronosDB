@@ -7,7 +7,9 @@ heads. The Phase 9 query sources can append that provenance to a vector chunk th
 contract, so downstream operators no longer have to infer identity from scan arrival order.
 
 This is a physical, in-memory interface. It does not make system columns visible to SQL, combine
-parts and heads, select a winning version, apply deletes, or change a durable byte.
+parts and heads, select a winning version, apply deletes, or change a durable byte. Exact bounded
+base-row ORDER BY now consumes WAL ID, record sequence, and row ordinal from this suffix after the
+schema DEDUP KEY; operation remains available for later visibility work but is not an ordering tie.
 
 ## Public interface
 
