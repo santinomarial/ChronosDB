@@ -333,6 +333,7 @@ add_library(
   src/query/literal.cpp
   src/query/parser.cpp
   src/query/physical_operator.cpp
+  src/query/physical_plan.cpp
   src/query/resource_context.cpp
   src/query/snapshot.cpp
   src/query/statement_binder.cpp
@@ -749,6 +750,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/parser_test.cpp
     tests/query/physical_operator_header_self_contained.cpp
     tests/query/physical_operator_test.cpp
+    tests/query/physical_plan_header_self_contained.cpp
+    tests/query/physical_plan_test.cpp
     tests/query/resource_context_header_self_contained.cpp
     tests/query/resource_context_test.cpp
     tests/query/snapshot_header_self_contained.cpp
@@ -958,6 +961,7 @@ if(CHRONOS_BUILD_BENCHMARKS)
   add_executable(
     chronos_query_benchmarks
     benchmarks/query/lexer_benchmark.cpp
+    benchmarks/query/physical_plan_benchmark.cpp
     benchmarks/query/resource_context_benchmark.cpp
     benchmarks/query/vector_chunk_benchmark.cpp
   )
@@ -1129,6 +1133,16 @@ if(CHRONOS_BUILD_FUZZERS)
   chronos_set_project_warnings(chronos_vector_chunk_fuzz)
   chronos_enable_sanitizers(chronos_vector_chunk_fuzz)
   chronos_enable_static_analysis(chronos_vector_chunk_fuzz)
+
+  add_executable(chronos_physical_plan_fuzz tests/fuzz/physical_plan_fuzz.cpp)
+  set_target_properties(chronos_physical_plan_fuzz PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_physical_plan_fuzz PRIVATE cxx_std_23)
+  target_link_libraries(chronos_physical_plan_fuzz PRIVATE chronos::query)
+  target_compile_options(chronos_physical_plan_fuzz PRIVATE -fsanitize=fuzzer)
+  target_link_options(chronos_physical_plan_fuzz PRIVATE -fsanitize=fuzzer)
+  chronos_set_project_warnings(chronos_physical_plan_fuzz)
+  chronos_enable_sanitizers(chronos_physical_plan_fuzz)
+  chronos_enable_static_analysis(chronos_physical_plan_fuzz)
 endif()
 
 chronos_configure_installation()

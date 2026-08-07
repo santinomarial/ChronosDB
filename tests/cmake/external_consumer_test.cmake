@@ -86,6 +86,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/query/literal.hpp>
 #include <chronos/query/parser.hpp>
 #include <chronos/query/physical_operator.hpp>
+#include <chronos/query/physical_plan.hpp>
 #include <chronos/query/resource_context.hpp>
 #include <chronos/query/catalog.hpp>
 #include <chronos/query/binder.hpp>
@@ -262,6 +263,7 @@ int main() {
       chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
           std::unique_ptr<chronos::query::PhysicalOperator>, std::uint64_t);
   const CreateLimitFunction create_limit = &chronos::query::LimitOperator::create;
+  const auto physical_plan = chronos::query::PhysicalPipelinePlan::create({}, {});
   const auto vector_chunk = chronos::query::VectorChunk::create(
       {}, chronos::query::VectorSelection::all(1U).value());
   using BindSelectFunction = chronos::query::SqlResult<chronos::query::BoundSqlSelect> (*)(
@@ -467,6 +469,7 @@ int main() {
                  physical_end.kind() == chronos::query::PhysicalOperatorStepKind::kEnd &&
                  create_column_subset != nullptr &&
                  create_limit != nullptr &&
+                 physical_plan.has_value() && physical_plan->output_columns().empty() &&
                  vector_chunk.has_value() && vector_chunk->selected_row_count() == 1U &&
                  chronos::query::kMaximumSqlV1Sources == 64U && aggregate_query != nullptr &&
                  bind_select != nullptr && bind_create != nullptr && bind_insert != nullptr &&

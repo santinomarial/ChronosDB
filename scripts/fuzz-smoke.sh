@@ -40,6 +40,7 @@ targets=(
   chronos_sql_parser_fuzz
   chronos_sql_binder_fuzz
   chronos_vector_chunk_fuzz
+  chronos_physical_plan_fuzz
 )
 
 campaign_root="$(mktemp -d "${TMPDIR:-/tmp}/chronos-fuzz-smoke.XXXXXX")"

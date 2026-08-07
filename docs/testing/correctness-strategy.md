@@ -80,7 +80,11 @@
 > Global LIMIT adds zero/exact/partial/oversized boundaries, empty-chunk progress, eager unpulled
 > credit release, deterministic scalar-prefix comparison, truncation fuzzing, batched measurement,
 > and installed-consumer linkage.
-> Vector-plan differential and distributed query harnesses remain planned for their roadmap phases.
+> The bounded physical pipeline adds sequential shape-transition failures, exact runtime source
+> shape and query-identity enforcement, finite retained configuration, composed filter/subset/LIMIT
+> differential execution across randomized selections and chunk boundaries, hostile plan fuzzing,
+> sanitizer coverage, and plan-overhead measurement. Bound-SQL/full scalar-engine plan differential
+> and distributed query harnesses remain planned for their roadmap phases.
 
 ## Test types
 

@@ -57,3 +57,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0020](0020-bounded-vector-chunk-representation.md) | Bounded vector chunk representation | accepted |
 | [0021](0021-query-resource-accounting-and-cooperative-cancellation.md) | Query resource accounting and cooperative cancellation | accepted |
 | [0022](0022-pull-based-physical-operator-lifecycle.md) | Pull-based physical operator lifecycle | accepted |
+| [0023](0023-bounded-physical-pipeline-plan.md) | Bounded physical pipeline plan | accepted |

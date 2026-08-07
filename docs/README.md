@@ -148,5 +148,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   allocation-free stable column-subset projection and global LIMIT, scalar-differential and
   deterministic projection/prefix properties, cancellation, early release, fuzzing, and measurement
   boundaries.
+- [Physical pipeline plan](learning/physical-pipeline-plan.md): implemented bounded immutable unary
+  plans, exact physical-shape propagation and source enforcement, composed scalar differential
+  execution, hostile fuzzing, allocation/ownership failure behavior, and plan-overhead measurement.
 
 Future format, protocol, subsystem, operations, and learning documents should be linked here when they are added by their corresponding roadmap phase.
