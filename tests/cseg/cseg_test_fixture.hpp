@@ -8,6 +8,7 @@
 #include "chronos/schema/identity.hpp"
 #include "chronos/schema/logical_type.hpp"
 
+#include <algorithm>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -60,19 +61,31 @@ make_valid_part(const PageCompression compression = PageCompression::kNone) {
       {.column_id = std::nullopt,
        .storage_kind = StorageKind::kWalId,
        .logical_type = type(schema::LogicalTypeKind::kUuid),
-       .nullable = false},
+       .nullable = false,
+       .event_time = false,
+       .schema_ordinal = std::nullopt,
+       .ordering_ordinal = std::nullopt},
       {.column_id = std::nullopt,
        .storage_kind = StorageKind::kRecordSequence,
        .logical_type = type(schema::LogicalTypeKind::kUInt64),
-       .nullable = false},
+       .nullable = false,
+       .event_time = false,
+       .schema_ordinal = std::nullopt,
+       .ordering_ordinal = std::nullopt},
       {.column_id = std::nullopt,
        .storage_kind = StorageKind::kRowOrdinal,
        .logical_type = type(schema::LogicalTypeKind::kUInt32),
-       .nullable = false},
+       .nullable = false,
+       .event_time = false,
+       .schema_ordinal = std::nullopt,
+       .ordering_ordinal = std::nullopt},
       {.column_id = std::nullopt,
        .storage_kind = StorageKind::kOperation,
        .logical_type = type(schema::LogicalTypeKind::kUInt8),
-       .nullable = false},
+       .nullable = false,
+       .event_time = false,
+       .schema_ordinal = std::nullopt,
+       .ordering_ordinal = std::nullopt},
   };
 
   std::vector<std::byte> event_time;
@@ -111,6 +124,93 @@ make_valid_part(const PageCompression compression = PageCompression::kNone) {
                               .ordering_column_count = 1U,
                               .minimum_event_time = -5,
                               .maximum_event_time = 10,
+                              .columns = columns,
+                              .granules = granules,
+                              .pages = pages})
+      .value();
+}
+
+[[nodiscard]] inline EncodedCsegPart
+make_valid_part_with_rows(const std::uint32_t rows, const std::uint32_t rows_per_granule,
+                          const PageCompression compression = PageCompression::kNone) {
+  const schema::LogicalType timestamp = type(schema::LogicalTypeKind::kTimestampNs);
+  const schema::LogicalType uuid = type(schema::LogicalTypeKind::kUuid);
+  const schema::LogicalType uint64 = type(schema::LogicalTypeKind::kUInt64);
+  const schema::LogicalType uint32 = type(schema::LogicalTypeKind::kUInt32);
+  const schema::LogicalType uint8 = type(schema::LogicalTypeKind::kUInt8);
+  const std::vector<CsegColumnDescriptor> columns{{.column_id = identifier<schema::ColumnId>(5U),
+                                                   .storage_kind = StorageKind::kUser,
+                                                   .logical_type = timestamp,
+                                                   .nullable = false,
+                                                   .event_time = true,
+                                                   .schema_ordinal = 0U,
+                                                   .ordering_ordinal = 0U},
+                                                  {.column_id = std::nullopt,
+                                                   .storage_kind = StorageKind::kWalId,
+                                                   .logical_type = uuid,
+                                                   .nullable = false,
+                                                   .event_time = false,
+                                                   .schema_ordinal = std::nullopt,
+                                                   .ordering_ordinal = std::nullopt},
+                                                  {.column_id = std::nullopt,
+                                                   .storage_kind = StorageKind::kRecordSequence,
+                                                   .logical_type = uint64,
+                                                   .nullable = false,
+                                                   .event_time = false,
+                                                   .schema_ordinal = std::nullopt,
+                                                   .ordering_ordinal = std::nullopt},
+                                                  {.column_id = std::nullopt,
+                                                   .storage_kind = StorageKind::kRowOrdinal,
+                                                   .logical_type = uint32,
+                                                   .nullable = false,
+                                                   .event_time = false,
+                                                   .schema_ordinal = std::nullopt,
+                                                   .ordering_ordinal = std::nullopt},
+                                                  {.column_id = std::nullopt,
+                                                   .storage_kind = StorageKind::kOperation,
+                                                   .logical_type = uint8,
+                                                   .nullable = false,
+                                                   .event_time = false,
+                                                   .schema_ordinal = std::nullopt,
+                                                   .ordering_ordinal = std::nullopt}};
+  std::vector<CsegGranuleDescriptor> granules;
+  std::vector<EncodedCsegPage> pages;
+  const common::Uuid::Bytes wal = identifier<schema::SchemaId>(0x70U).bytes();
+  for (std::uint32_t first = 0U; first < rows; first += rows_per_granule) {
+    const std::uint32_t count = std::min(rows_per_granule, rows - first);
+    std::vector<std::byte> event_time;
+    std::vector<std::byte> wal_id;
+    std::vector<std::byte> record_sequence;
+    std::vector<std::byte> row_ordinal;
+    for (std::uint32_t local = 0U; local < count; ++local) {
+      const std::uint32_t global = first + local;
+      append_little_endian(event_time, static_cast<std::int64_t>(global) - 100);
+      wal_id.insert(wal_id.end(), wal.begin(), wal.end());
+      append_little_endian(record_sequence, std::uint64_t{7U});
+      append_little_endian(row_ordinal, global);
+    }
+    const std::vector<std::byte> operation(count, std::byte{format::kAppendRowsOperation});
+    granules.push_back({.first_row = first,
+                        .row_count = count,
+                        .first_page_index = static_cast<std::uint64_t>(pages.size()),
+                        .minimum_event_time = static_cast<std::int64_t>(first) - 100,
+                        .maximum_event_time = static_cast<std::int64_t>(first + count - 1U) - 100});
+    pages.push_back(encode_fixed_page(timestamp, count, event_time, compression));
+    pages.push_back(encode_fixed_page(uuid, count, wal_id, compression));
+    pages.push_back(encode_fixed_page(uint64, count, record_sequence, compression));
+    pages.push_back(encode_fixed_page(uint32, count, row_ordinal, compression));
+    pages.push_back(encode_fixed_page(uint8, count, operation, compression));
+  }
+  return encode_cseg_v1_part({.part_id = identifier<PartId>(1U),
+                              .table_id = identifier<schema::TableId>(2U),
+                              .tablet_id = identifier<schema::TabletId>(3U),
+                              .schema_id = identifier<schema::SchemaId>(4U),
+                              .schema_version = schema::SchemaVersion::initial(),
+                              .row_count = rows,
+                              .event_time_column_ordinal = 0U,
+                              .ordering_column_count = 1U,
+                              .minimum_event_time = -100,
+                              .maximum_event_time = static_cast<std::int64_t>(rows - 1U) - 100,
                               .columns = columns,
                               .granules = granules,
                               .pages = pages})

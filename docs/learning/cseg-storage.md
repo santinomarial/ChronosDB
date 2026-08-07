@@ -35,6 +35,8 @@ readers with storage deletion. Those are Phase 6 responsibilities.
 - `projected_reader.hpp` authenticates metadata and reads selected granules/columns against a
   retained schema lineage. Its borrowed read plan validates and reports exact decoded-buffer work
   before result allocation.
+- `chronos/query/cseg_scan.hpp` is the query-layer single-part source that reserves from that plan
+  and retains the decoded granule plus immutable encoded-image pin in one chunk backing.
 - `inspection.hpp` returns an owned, value-free report after complete structural and
   schema-independent semantic validation.
 
@@ -91,6 +93,12 @@ Execution revalidates the request before allocating, removes the former temporar
 vectors, and converts allocation failures to `RESOURCE_EXHAUSTED`. The byte plan does not include
 container/allocator bookkeeping, provider workspace, file pins, or future query backing objects.
 
+ADR 0026's scan source supplies those next-layer owners for one in-memory part. Its trusted
+`CsegPartPin` carries complete byte/snapshot lifetime and a conservative retained charge. Source
+credit precedes metadata open; output credit precedes page work; and the returned backing owns the
+pin, decoded/synthesized buffers, result containers, selection, and ordinal mapping. Database-wide
+snapshot acquisition, part/head composition, and pruning remain separate.
+
 ## Failure behavior and limits
 
 Decode APIs separate a valid short prefix from invalid bytes. `kIncomplete` carries the exact next
@@ -119,6 +127,7 @@ still only a candidate until the future installation protocol durably places and
 | Full semantic validation | `O(rows × stored columns)` | bounded per-page decode and ordering state |
 | Projected granule planning | `O(selected columns + 4)` | fixed 4,096-bit stack bitmap; no heap |
 | Projected granule read | `O(metadata + selected/system page bytes)` | owned requested result buffers |
+| Single-part physical pull | `O(selected/system page bytes + rows)` | accounted backing, selection, and part pin |
 | Inspection | `O(metadata + all page bytes + rows × stored columns)` | owned descriptors plus bounded validation state |
 
 The table is asymptotic. Compression cost depends on the maintained Zstandard provider and data
@@ -143,6 +152,10 @@ Projected planning additionally has exact descriptor/ownership accounting tests,
 hostile-request rejection, deterministic direct-versus-planned execution, a dedicated allocator
 test proving zero successful-path plan allocations and classifying every output allocation failure,
 and plan-then-read fuzz coverage.
+
+The query scan adds pin-after-source-destruction, pre-decode admission, cross-query, cancellation,
+LIMIT composition, multi-granule deterministic properties, exhaustive allocation failure, hostile
+scan fuzzing, and raw/Zstandard pull benchmarks.
 
 Microbenchmarks cover metadata, PLAIN payloads, stored pages, complete part composition/decoding,
 validation, and projected reads. Interpret them using the repository benchmark contract: retain the

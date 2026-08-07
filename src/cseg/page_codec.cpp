@@ -93,6 +93,10 @@ DecodedCsegPage::DecodedCsegPage(std::vector<std::byte> owned_uncompressed,
     : owned_uncompressed_(std::move(owned_uncompressed)), uncompressed_bytes_(uncompressed_bytes),
       physical_(physical) {}
 
+std::size_t DecodedCsegPage::retained_buffer_bytes() const noexcept {
+  return owned_uncompressed_.capacity();
+}
+
 common::Result<DecodedCsegPage> decode_cseg_v1_page(const common::ByteView stored_bytes,
                                                     const CsegColumnDescriptor& column,
                                                     const CsegPageDescriptor& page) {

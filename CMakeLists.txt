@@ -324,6 +324,7 @@ add_library(
   src/query/ast.cpp
   src/query/binder.cpp
   src/query/catalog.cpp
+  src/query/cseg_scan.cpp
   src/query/decimal_internal.cpp
   src/query/diagnostic.cpp
   src/query/evaluator.cpp
@@ -350,7 +351,9 @@ target_include_directories(
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
   PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
-target_link_libraries(chronos_query PUBLIC chronos::columnar chronos::common chronos::schema)
+target_link_libraries(
+  chronos_query PUBLIC chronos::columnar chronos::common chronos::cseg chronos::schema
+)
 chronos_set_project_warnings(chronos_query)
 chronos_enable_sanitizers(chronos_query)
 chronos_enable_static_analysis(chronos_query)
@@ -749,6 +752,8 @@ if(CHRONOS_BUILD_TESTS)
 
   add_executable(
     chronos_query_tests
+    tests/query/cseg_scan_header_self_contained.cpp
+    tests/query/cseg_scan_test.cpp
     tests/query/diagnostic_header_self_contained.cpp
     tests/query/evaluator_header_self_contained.cpp
     tests/query/evaluator_test.cpp
@@ -784,14 +789,33 @@ if(CHRONOS_BUILD_TESTS)
   )
   set_target_properties(chronos_query_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_query_tests PRIVATE cxx_std_23)
+  target_include_directories(chronos_query_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
   target_link_libraries(
-    chronos_query_tests
-    PRIVATE chronos::query GTest::gtest_main Threads::Threads
+    chronos_query_tests PRIVATE chronos::query GTest::gtest_main Threads::Threads zstd::libzstd
   )
   chronos_set_project_warnings(chronos_query_tests)
   chronos_enable_sanitizers(chronos_query_tests)
   chronos_enable_static_analysis(chronos_query_tests)
   gtest_discover_tests(chronos_query_tests DISCOVERY_TIMEOUT 30)
+
+  add_executable(
+    chronos_query_allocation_failure_tests
+    tests/query/cseg_scan_allocation_failure_test.cpp
+    tests/support/failing_allocator.cpp
+  )
+  set_target_properties(chronos_query_allocation_failure_tests PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_query_allocation_failure_tests PRIVATE cxx_std_23)
+  target_include_directories(
+    chronos_query_allocation_failure_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+  )
+  target_link_libraries(
+    chronos_query_allocation_failure_tests
+    PRIVATE chronos::query GTest::gtest_main zstd::libzstd
+  )
+  chronos_set_project_warnings(chronos_query_allocation_failure_tests)
+  chronos_enable_sanitizers(chronos_query_allocation_failure_tests)
+  chronos_enable_static_analysis(chronos_query_allocation_failure_tests)
+  gtest_discover_tests(chronos_query_allocation_failure_tests DISCOVERY_TIMEOUT 30)
 
   add_executable(
     chronos_head_tests
@@ -983,14 +1007,23 @@ if(CHRONOS_BUILD_BENCHMARKS)
 
   add_executable(
     chronos_query_benchmarks
+    benchmarks/query/cseg_scan_benchmark.cpp
     benchmarks/query/lexer_benchmark.cpp
     benchmarks/query/physical_plan_benchmark.cpp
     benchmarks/query/resource_context_benchmark.cpp
     benchmarks/query/vector_chunk_benchmark.cpp
+    benchmarks/support/counting_allocator.cpp
   )
   set_target_properties(chronos_query_benchmarks PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_query_benchmarks PRIVATE cxx_std_23)
-  target_link_libraries(chronos_query_benchmarks PRIVATE chronos::query benchmark::benchmark_main)
+  target_include_directories(
+    chronos_query_benchmarks
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks" "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+  )
+  target_link_libraries(
+    chronos_query_benchmarks
+    PRIVATE chronos::query benchmark::benchmark_main zstd::libzstd
+  )
   chronos_set_project_warnings(chronos_query_benchmarks)
   chronos_enable_sanitizers(chronos_query_benchmarks)
   chronos_enable_static_analysis(chronos_query_benchmarks)
@@ -1166,6 +1199,17 @@ if(CHRONOS_BUILD_FUZZERS)
   chronos_set_project_warnings(chronos_physical_plan_fuzz)
   chronos_enable_sanitizers(chronos_physical_plan_fuzz)
   chronos_enable_static_analysis(chronos_physical_plan_fuzz)
+
+  add_executable(chronos_cseg_scan_fuzz tests/fuzz/cseg_scan_fuzz.cpp)
+  set_target_properties(chronos_cseg_scan_fuzz PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_cseg_scan_fuzz PRIVATE cxx_std_23)
+  target_include_directories(chronos_cseg_scan_fuzz PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+  target_link_libraries(chronos_cseg_scan_fuzz PRIVATE chronos::query zstd::libzstd)
+  target_compile_options(chronos_cseg_scan_fuzz PRIVATE -fsanitize=fuzzer)
+  target_link_options(chronos_cseg_scan_fuzz PRIVATE -fsanitize=fuzzer)
+  chronos_set_project_warnings(chronos_cseg_scan_fuzz)
+  chronos_enable_sanitizers(chronos_cseg_scan_fuzz)
+  chronos_enable_static_analysis(chronos_cseg_scan_fuzz)
 endif()
 
 chronos_configure_installation()

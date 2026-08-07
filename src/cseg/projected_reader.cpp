@@ -192,6 +192,18 @@ struct ByteAccountingInput {
   return common::Status::ok();
 }
 
+[[nodiscard]] std::size_t saturating_add(const std::size_t left, const std::size_t right) noexcept {
+  const std::optional<std::size_t> total = common::checked_add(left, right);
+  return total.value_or(std::numeric_limits<std::size_t>::max());
+}
+
+template <typename Value>
+[[nodiscard]] std::size_t retained_vector_objects(const std::vector<Value>& values) noexcept {
+  const std::optional<std::size_t> bytes =
+      common::checked_multiply(values.capacity(), sizeof(Value));
+  return bytes.value_or(std::numeric_limits<std::size_t>::max());
+}
+
 } // namespace
 
 CsegProjectedReaderOpenError::CsegProjectedReaderOpenError(
@@ -247,6 +259,26 @@ const columnar::PhysicalColumnView& ProjectedCsegGranule::row_ordinal() const no
 
 const columnar::PhysicalColumnView& ProjectedCsegGranule::operation() const noexcept {
   return decoded_pages_[system_page_start_ + 3U].physical();
+}
+
+std::size_t ProjectedCsegGranule::buffer_bytes() const noexcept {
+  std::size_t total = 0U;
+  for (const DecodedCsegPage& page : decoded_pages_)
+    total = saturating_add(total, page.uncompressed_bytes().size());
+  for (const columnar::OwnedColumnVector& column : synthesized_columns_)
+    total = saturating_add(total, column.buffer_bytes());
+  return total;
+}
+
+std::size_t ProjectedCsegGranule::retained_buffer_bytes() const noexcept {
+  std::size_t total = retained_vector_objects(decoded_pages_);
+  total = saturating_add(total, retained_vector_objects(synthesized_columns_));
+  total = saturating_add(total, retained_vector_objects(columns_));
+  for (const DecodedCsegPage& page : decoded_pages_)
+    total = saturating_add(total, page.retained_buffer_bytes());
+  for (const columnar::OwnedColumnVector& column : synthesized_columns_)
+    total = saturating_add(total, column.retained_buffer_bytes());
+  return total;
 }
 
 CsegProjectedReaderView::CsegProjectedReaderView(

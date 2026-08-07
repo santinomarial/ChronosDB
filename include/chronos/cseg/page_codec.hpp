@@ -63,6 +63,9 @@ public:
   [[nodiscard]] constexpr common::ByteView uncompressed_bytes() const noexcept {
     return uncompressed_bytes_;
   }
+  // Retained owned payload capacity. Raw pages borrow their input and therefore report zero here;
+  // the caller must account for the owner that pins those input bytes.
+  [[nodiscard]] std::size_t retained_buffer_bytes() const noexcept;
   [[nodiscard]] constexpr const columnar::PhysicalColumnView& physical() const noexcept {
     return physical_;
   }

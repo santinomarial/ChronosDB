@@ -181,6 +181,11 @@ public:
   [[nodiscard]] const columnar::PhysicalColumnView& record_sequence() const noexcept;
   [[nodiscard]] const columnar::PhysicalColumnView& row_ordinal() const noexcept;
   [[nodiscard]] const columnar::PhysicalColumnView& operation() const noexcept;
+  // Exact logical bytes across requested/synthesized user columns and the four mandatory system
+  // pages. Retained bytes count owned page/synthesis capacities and result-container capacities;
+  // raw page bytes remain the responsibility of the encoded-part owner.
+  [[nodiscard]] std::size_t buffer_bytes() const noexcept;
+  [[nodiscard]] std::size_t retained_buffer_bytes() const noexcept;
 
 private:
   ProjectedCsegGranule(std::size_t granule_ordinal, const CsegGranuleDescriptor& descriptor,

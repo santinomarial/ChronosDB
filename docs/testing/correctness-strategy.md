@@ -93,6 +93,10 @@
 > borrowed-plan and foreign-reader failures, direct-versus-planned deterministic equivalence, a
 > dedicated zero-allocation/failure-injection executable, plan-then-read fuzzing, sanitizer coverage,
 > and planning-overhead measurement before scan integration.
+> The pinned CSEG source adds pre-open and pre-decode admission, raw/decompressed pin lifetime,
+> source-destruction and LIMIT ownership, cross-query/cancellation behavior, multi-granule
+> deterministic equivalence, exhaustive allocation failure, hostile scan fuzzing, sanitizer
+> coverage, and raw/Zstandard pull measurement.
 
 ## Test types
 

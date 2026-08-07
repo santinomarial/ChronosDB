@@ -7,9 +7,8 @@ losing their owner. This is the ownership prerequisite for zero-copy raw CSEG pa
 decompression groups: a downstream operator sees the same `PhysicalColumnView` interface while one
 shared backing keeps every referenced byte alive.
 
-It does not implement a CSEG scan, mutable-head scan, scheduler publication, or output builder.
-Those components can now use one reviewed lifetime boundary instead of copying solely to make a
-borrow valid.
+The later pinned CSEG source now implements the first storage use of this boundary. Mutable-head
+scans, aggregate snapshot composition, scheduler publication, and output builders remain deferred.
 
 ## Interfaces
 
@@ -62,8 +61,9 @@ selection capacity and all reported backing bytes are also included. `AccountedV
 therefore refuses a reservation smaller than the complete backed chunk count.
 
 The interface trusts a backing to report hidden allocations honestly. It is an internal producer
-boundary, not a sandbox for adversarial C++ subclasses. A CSEG scan must document how decoded,
-container, raw-part pin, and transient bytes map to these counters before it can claim admission.
+boundary, not a sandbox for adversarial C++ subclasses. The implemented CSEG source documents how
+decoded buffers, containers, raw-part pins, and output credit map to these counters; other backing
+providers require the same proof.
 
 ## Projection behavior
 
@@ -98,15 +98,16 @@ now executes Boolean filtering and projection through both storage modes.
 
 `attach_pinned_chunk_backing` measures selection validation, ordinal-map allocation, shape checks,
 and shared-owner attachment for 64, 1,024, and 4,096 rows at dense and sparse selection densities.
-It is an ownership-overhead measurement, not a CSEG scan benchmark.
+It is an ownership-overhead measurement; the separate CSEG scan benchmark measures real source
+pulls.
 
 ## Tradeoffs and next steps
 
 One backing per chunk keeps lifetime auditable and matches a decoded granule, but a subset cannot
 release individual pages. Per-column owners could improve that later if profiles justify their
-reference-count and object overhead. The immediate next step is a no-allocation CSEG granule-read
-plan so query credit can be reserved before page decode, followed by a CSEG source operator whose
-backing owns both the projected granule and the encoded part pin.
+reference-count and object overhead. Allocation-free CSEG planning and the pinned single-part source
+are now implemented. The next storage step is aggregate database-snapshot and multi-part/head
+composition without detaching shared pin credit from any returned backing.
 
 ## Likely interview questions
 

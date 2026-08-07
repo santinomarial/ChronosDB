@@ -411,6 +411,11 @@ compressed/synthesized owned storage. The plan changes no durable interpretation
 query-memory accounting; container/provider overhead and encoded-part pins belong to the query scan
 owner.
 
+The query layer composes that plan into a single-part physical source under ADR 0026. An explicit
+immutable owner pins the complete encoded image, query credit is reserved before page decode, and
+the returned chunk backing owns both the projected granule and its part pin. This changes no durable
+interpretation and is still selective validation rather than complete-part acceptance.
+
 ## Schema binding
 
 Physical decoding is schema-independent. Before installation, replay coverage, or typed query use,

@@ -42,6 +42,7 @@ public:
 
   [[nodiscard]] common::ByteView bytes() const noexcept;
   [[nodiscard]] std::size_t size() const noexcept;
+  [[nodiscard]] std::size_t retained_buffer_bytes() const noexcept;
 
 private:
   explicit EncodedCsegPart(std::vector<std::byte> bytes) noexcept;

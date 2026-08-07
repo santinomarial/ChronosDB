@@ -54,6 +54,10 @@ std::size_t EncodedCsegPart::size() const noexcept {
   return bytes_.size();
 }
 
+std::size_t EncodedCsegPart::retained_buffer_bytes() const noexcept {
+  return bytes_.capacity();
+}
+
 common::Result<EncodedCsegPart> encode_cseg_v1_part(const CsegPartEncodeInput& input) {
   std::vector<CsegPageMetadataInput> page_metadata;
   page_metadata.reserve(input.pages.size());

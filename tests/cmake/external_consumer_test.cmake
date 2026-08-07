@@ -85,6 +85,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/query/lexer.hpp>
 #include <chronos/query/literal.hpp>
 #include <chronos/query/parser.hpp>
+#include <chronos/query/cseg_scan.hpp>
 #include <chronos/query/physical_operator.hpp>
 #include <chronos/query/physical_plan.hpp>
 #include <chronos/query/resource_context.hpp>
@@ -229,6 +230,9 @@ int main() {
           std::size_t, std::span<const std::uint32_t>) const;
   const PlanProjectedGranuleFunction plan_projected_granule =
       &chronos::cseg::CsegProjectedReaderView::plan_granule;
+  using CreateCsegPartPinFunction = chronos::common::Result<chronos::query::CsegPartPin> (*)(
+      std::shared_ptr<const void>, chronos::common::ByteView, std::size_t);
+  const CreateCsegPartPinFunction create_cseg_part_pin = &chronos::query::CsegPartPin::create;
   chronos::columnar::ColumnarBatchLimits limits;
   std::array<std::byte, 0> empty{};
   const auto decoded = chronos::columnar::decode_columnar_batch_v1_exact(empty);
@@ -520,6 +524,7 @@ int main() {
                  inspect_cseg_part != nullptr &&
                  open_projected_reader != nullptr &&
                  plan_projected_granule != nullptr &&
+                 create_cseg_part_pin != nullptr &&
                  !cseg_metadata.has_value() &&
                  cseg_metadata.error().kind() ==
                      chronos::cseg::CsegMetadataDecodeErrorKind::kIncomplete &&

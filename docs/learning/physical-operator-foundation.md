@@ -3,9 +3,10 @@
 ## Purpose and phase boundary
 
 The physical pipeline foundation connects bounded vectors to query-wide memory and cancellation.
-It defines one owning pull step and implements allocation-free Boolean filtering plus stable
-column-subset projection and global LIMIT. It does not lower a bound SQL plan or read ChronosDB
-storage, so the Phase 8 scalar executor remains the only complete SQL execution path.
+It defines one owning pull step and implements a pinned single-part CSEG source, allocation-free
+Boolean filtering, stable column-subset projection, and global LIMIT. It does not lower a bound SQL
+plan or compose an aggregate database snapshot, so the Phase 8 scalar executor remains the only
+complete SQL execution path.
 
 ## Public interfaces
 
@@ -13,7 +14,9 @@ storage, so the Phase 8 scalar executor remains the only complete SQL execution 
 
 - `AccountedVectorChunk`, a move-only `VectorChunk` plus its live memory credit;
 - `PhysicalOperatorStep`, a move-only tagged owner containing a chunk or explicit end;
-- `PhysicalOperator`, the thread-affine `next(resources)` interface; and
+- `PhysicalOperator`, the thread-affine `next(resources)` interface;
+- `CsegScanOperator`, a query-accounted single-part source described in the
+  [scan guide](cseg-scan-source.md); and
 - `BooleanFilterOperator`, `ColumnSubsetOperator`, and `LimitOperator`, uniquely owned unary
   pipeline stages.
 
@@ -156,10 +159,10 @@ Pull and unique child ownership make correctness visible but do not exploit core
 rows as a selection avoids copies but may reduce locality after very selective predicates. Both are
 deliberate pre-measurement choices.
 
-The next increment should define the pre-allocation accounting contract needed by a typed physical
-expression/output builder, or a storage scan adapter with exact snapshot pins. Parallel scheduling
-should follow only after task ownership, queue capacity, terminal-error arbitration, and
-cancellation release are specified.
+The next storage increment should compose the single-part source with one exact aggregate database
+snapshot, deterministic part/head order, and safe pruning. Typed physical expression/output
+building is the other immediate dependency. Parallel scheduling should follow only after task
+ownership, queue capacity, terminal-error arbitration, and cancellation release are specified.
 
 ## Likely review questions
 

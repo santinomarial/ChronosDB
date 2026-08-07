@@ -157,5 +157,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [CSEG storage](learning/cseg-storage.md): includes allocation-free projected-granule planning,
   exact raw-versus-owned decoded-byte requirements, borrowed-plan lifetime, allocation-failure
   behavior, fuzzing, and planning-overhead measurement.
+- [Pinned CSEG scan source](learning/cseg-scan-source.md): implemented single-part physical pulls,
+  pre-decode query admission, raw/decompressed backing ownership, pin/credit lifetime, deterministic
+  granule properties, allocation-failure testing, fuzzing, and scan measurement.
 
 Future format, protocol, subsystem, operations, and learning documents should be linked here when they are added by their corresponding roadmap phase.
