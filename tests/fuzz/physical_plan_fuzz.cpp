@@ -75,7 +75,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
   const std::size_t hostile_count = size > 32U ? 32U : size;
   hostile_stages.reserve(hostile_count);
   for (std::size_t index = 0U; index < hostile_count; ++index) {
-    switch (data[index] % 8U) {
+    switch (data[index] % 9U) {
     case 0U:
       hostile_stages.emplace_back(
           chronos::query::BooleanFilterStage{static_cast<std::size_t>(data[index] >> 2U)});
@@ -203,6 +203,28 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
                                     static_cast<std::size_t>(data[index]) * 64U}}});
       break;
     }
+    case 8U: {
+      std::vector<chronos::query::VectorSortKey> keys;
+      keys.push_back({.column_ordinal = static_cast<std::size_t>((data[index] >> 2U) & 3U),
+                      .direction = (data[index] & 1U) == 0U
+                                       ? chronos::query::PhysicalSortDirection::kAscending
+                                       : chronos::query::PhysicalSortDirection::kDescending,
+                      .null_placement = (data[index] & 2U) == 0U
+                                            ? chronos::query::ScalarNullPlacement::kFirst
+                                            : chronos::query::ScalarNullPlacement::kLast});
+      hostile_stages.emplace_back(chronos::query::SortStage{
+          .keys = std::move(keys),
+          .limits = {
+              .maximum_rows = static_cast<std::uint32_t>(data[index]),
+              .maximum_keys = static_cast<std::size_t>(data[index] >> 4U),
+              .maximum_state_bytes = static_cast<std::size_t>(data[index]) * 1'024U,
+              .output_limits = {.maximum_rows = static_cast<std::uint32_t>(data[index]),
+                                .maximum_columns = static_cast<std::size_t>(data[index] >> 4U),
+                                .maximum_buffer_bytes = static_cast<std::size_t>(data[index]) * 32U,
+                                .maximum_retained_buffer_bytes =
+                                    static_cast<std::size_t>(data[index]) * 64U}}});
+      break;
+    }
     default:
       break;
     }
@@ -217,7 +239,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
 
   const std::uint32_t rows = size == 0U ? 1U : static_cast<std::uint32_t>(data[0]) + 1U;
   const std::uint64_t maximum_rows = size < 2U ? 0U : data[1];
-  auto resources = chronos::query::QueryResourceContext::create(32'768U).value();
+  auto resources = chronos::query::QueryResourceContext::create(1U << 20U).value();
   auto reservation = resources.reserve(4'096U).value();
   std::vector<chronos::columnar::OwnedPhysicalColumn> columns;
   columns.push_back(make_bool_column(rows, input));
@@ -267,6 +289,21 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
                           .maximum_buffer_bytes = 4'096U,
                           .maximum_retained_buffer_bytes = 8'192U}});
   } else {
+    if (size >= 4U && (data[3] & 1U) != 0U) {
+      stages.emplace_back(chronos::query::SortStage{
+          .keys = {{.column_ordinal = 0U,
+                    .direction = (data[3] & 2U) == 0U
+                                     ? chronos::query::PhysicalSortDirection::kAscending
+                                     : chronos::query::PhysicalSortDirection::kDescending,
+                    .null_placement = chronos::query::ScalarNullPlacement::kLast}},
+          .limits = {.maximum_rows = 256U,
+                     .maximum_keys = 1U,
+                     .maximum_state_bytes = 256U * 1'024U,
+                     .output_limits = {.maximum_rows = 256U,
+                                       .maximum_columns = 1U,
+                                       .maximum_buffer_bytes = 4'096U,
+                                       .maximum_retained_buffer_bytes = 8'192U}}});
+    }
     stages.emplace_back(chronos::query::LimitStage{maximum_rows});
     stages.emplace_back(chronos::query::ColumnOutputStage{
         .positions = {chronos::query::SourceColumnOutputPosition{0U},

@@ -3,9 +3,10 @@
 > **Status: implemented as the Phase 8 bounded scalar reference engine.** The custom lexer,
 > parser, schema-version-stable binder, CREATE TABLE/INSERT statement binding, scalar SELECT
 > execution, and EXPLAIN paths are implemented. `SUBSCRIBE` is parsed and bound but remains a Phase
-> 11 execution concern; Phase 9 has bounded vector/resource substrates, a Boolean filter, and stable
-> column-subset projection plus a global LIMIT operator, but bound plans cannot yet run through a
-> vectorized product engine. SQL v1 is deliberately smaller than the SQL standard. Unsupported
+> 11 execution concern. Phase 9 now lowers the supported single-source projection and global/grouped
+> aggregate subset into bounded vector operators. A bounded physical sort exists, but exact base-row
+> `ORDER BY` lowering remains gated on hidden logical/version identities. SQL v1 is deliberately
+> smaller than the SQL standard. Unsupported
 > syntax must produce a clear bind or parse error; it must not be accepted with different semantics.
 
 The canonical types and table clauses are defined in the [data model](data-model.md). The custom parser, binder, scalar reference engine, and vector engine follow [ADR 0008](../adr/0008-custom-sql-and-vectorized-execution.md).

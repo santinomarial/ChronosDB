@@ -240,8 +240,11 @@ final expressions, and LIMIT under
 state now has a finite query-accounted linear-lookup baseline with exact fixed/variable keys under
 [ADR 0042](../adr/0042-query-accounted-bounded-grouped-aggregates.md), and bound single-source GROUP
 BY lowering is connected under
-[ADR 0043](../adr/0043-bound-grouped-aggregate-physical-lowering.md). Hashing, variable extrema, and
-spill remain deferred. General relational lowering, complete
+[ADR 0043](../adr/0043-bound-grouped-aggregate-physical-lowering.md). A bounded physical sort now
+retains accounted input, stably orders explicit all-type keys, and gathers one independent canonical
+output under [ADR 0044](../adr/0044-query-accounted-bounded-physical-sort.md). It does not yet lower
+base-row SQL ORDER BY because the sources still lack its frozen hidden identity tie-breakers.
+Hashing, variable extrema, and spill remain deferred. General relational lowering, complete
 part/head visibility, parallel scheduling,
 spilling, adaptive behavior, and join algorithms remain deferred. Implemented reservations and
 accounted chunks provide the admission/ownership invariant, but future operators must reserve every

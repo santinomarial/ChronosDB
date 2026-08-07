@@ -419,6 +419,39 @@ TEST(PhysicalPipelinePlanTest, InstantiatesTimestampRangeStageWithExactBounds) {
   EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
 }
 
+TEST(PhysicalPipelinePlanTest, ValidatesAndInstantiatesStableSortStage) {
+  const auto resources = QueryResourceContext::create(std::size_t{8U} * 1024U * 1024U).value();
+  std::vector<AccountedVectorChunk> chunks;
+  chunks.push_back(one_column_chunk(resources, std::vector<std::int64_t>{3, 1, 2}));
+  chunks.push_back(one_column_chunk(resources, std::vector<std::int64_t>{2, 4}));
+  std::vector<PhysicalPipelineStage> stages;
+  stages.emplace_back(SortStage{.keys = {{.column_ordinal = 0U,
+                                          .direction = PhysicalSortDirection::kDescending,
+                                          .null_placement = ScalarNullPlacement::kFirst}}});
+  stages.emplace_back(LimitStage{4U});
+  auto plan =
+      PhysicalPipelinePlan::create(
+          {{.type = type(schema::LogicalTypeKind::kInt64), .nullable = false}}, std::move(stages))
+          .value();
+  ASSERT_EQ(plan.output_columns().size(), plan.input_columns().size());
+  EXPECT_EQ(plan.output_columns().front(), plan.input_columns().front());
+  auto pipeline = plan.instantiate(std::make_unique<ChunkSource>(std::move(chunks))).value();
+  auto step = pipeline->next(resources);
+  ASSERT_TRUE(step.has_value()) << step.error().message();
+  ASSERT_EQ(step->kind(), PhysicalOperatorStepKind::kChunk);
+  std::vector<std::int64_t> actual;
+  for (std::size_t row = 0U; row < step->chunk()->chunk().selected_row_count(); ++row)
+    actual.push_back(selected_int64(step->chunk()->chunk(), row));
+  EXPECT_EQ(actual, (std::vector<std::int64_t>{4, 3, 2, 2}));
+
+  EXPECT_EQ(PhysicalPipelinePlan::create(
+                {{.type = type(schema::LogicalTypeKind::kInt64), .nullable = false}},
+                {SortStage{.keys = {{.column_ordinal = 1U}}}})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+}
+
 TEST(PhysicalPipelinePlanTest, InstantiatesReorderedDuplicateSourceColumnOutputs) {
   const auto resources = QueryResourceContext::create(8'192U).value();
   std::vector<AccountedVectorChunk> chunks;

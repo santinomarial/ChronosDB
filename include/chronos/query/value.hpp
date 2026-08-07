@@ -76,6 +76,12 @@ enum class ScalarNullPlacement : std::uint8_t { kFirst, kLast };
 [[nodiscard]] common::Result<int> compare_scalar_values(const ScalarValue& left,
                                                         const ScalarValue& right,
                                                         ScalarNullPlacement null_placement);
+// Allocation-free total comparison for two validated cells of one exact physical type. Variable-
+// width values are compared directly from their borrowed canonical bytes.
+[[nodiscard]] common::Result<int> compare_physical_cells(schema::LogicalType type,
+                                                         const columnar::ColumnCellView& left,
+                                                         const columnar::ColumnCellView& right,
+                                                         ScalarNullPlacement null_placement);
 
 } // namespace chronos::query
 

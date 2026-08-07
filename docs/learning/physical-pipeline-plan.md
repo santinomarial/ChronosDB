@@ -3,18 +3,19 @@
 ## Purpose and boundary
 
 The sixth Phase 9 increment turned the first independent vector operators into one validated,
-reusable physical pipeline. The thirteenth increment adds exact timestamp-range truth.
+reusable physical pipeline. Later increments add exact timestamp-range truth, global/grouped
+aggregation, and bounded physical sort.
 `PhysicalPipelinePlan` now composes Boolean filtering, timestamp-range filtering, stable column-
 subset projection, owned reordered/duplicate source-column output, mixed source/typed-constant
-and computed numeric/Boolean output, one streaming ungrouped aggregate, and global LIMIT in explicit
-order and propagates the exact physical column shape through every stage.
+and computed numeric/Boolean output, global/grouped aggregates, bounded stable sort, and global LIMIT
+in explicit order and propagates the exact physical column shape through every stage.
 
 This remains deliberately smaller than a general SQL physical planner. The single-source,
 nonaggregate subset now lowers through the separate
 [bound-SELECT lowering boundary](bound-select-physical-lowering.md), but the plan does not optimize
-stage order, scan CSEG/head storage, grouped aggregation, join, sort, schedule work,
-spill, or materialize client results. Those paths need ownership and allocation contracts that do
-not exist yet.
+stage order, create storage scans, join, schedule work, spill, or materialize client results. Exact
+base-row SQL ordering also remains gated on hidden logical/version columns even though the physical
+sort stage exists.
 
 ## Public interface
 
@@ -22,7 +23,8 @@ not exist yet.
 
 - `PhysicalColumnShape`: exact logical type parameters plus nullability, without durable identity;
 - `BooleanFilterStage`, `TimestampRangeFilterStage`, `ColumnSubsetStage`,
-  `SourceColumnOutputStage`, `ColumnOutputStage`, `UngroupedAggregateStage`, and `LimitStage`;
+  `SourceColumnOutputStage`, `ColumnOutputStage`, `UngroupedAggregateStage`,
+  `GroupedAggregateStage`, `SortStage`, and `LimitStage`;
 - `PhysicalPipelinePlanLimits`: finite input-width, stage-count, and retained-configuration bounds;
 - `PhysicalPipelinePlan::create`: checked shape propagation and immutable plan construction; and
 - `instantiate`: unique composition around one caller-owned `PhysicalOperator` source.
@@ -40,8 +42,9 @@ compacts the shape in the same order. A source-column output validates caller-or
 gathers the corresponding shapes, including reorder and duplicates. A mixed output additionally
 derives each typed constant's exact type and non-NULL/typed-NULL nullability and validates every
 computed program source against the current shape before using its derived result. LIMIT preserves
-shape. An ungrouped aggregate validates every optional input ordinal/type/nullability, derives each
-exact result shape, and replaces the current shape with its ordered result columns.
+shape. Aggregate stages validate every key/input ordinal/type/nullability, derive exact result
+shapes, and replace the current shape with their ordered result columns. Sort validates nonempty
+bounded key configuration and current ordinals while preserving every column shape.
 
 Validation is sequential, so this is rejected:
 
@@ -75,8 +78,9 @@ each computed program's instruction/shape capacities. Capacity rather than logic
 caller from moving an arbitrarily over-reserved vector into a small-looking plan. Checked
 multiplication and addition classify overflow as `RESOURCE_EXHAUSTED`.
 
-Aggregate-definition capacity is included in the plan total. Each instantiated aggregate also
-applies its own finite width/state bound; result buffers use normal query resource credit.
+Aggregate-definition and sort-key capacities are included in the plan total. Each instantiated
+stateful operator also applies its own finite width/state bound; result buffers use normal query
+resource credit.
 
 Plan/configuration memory and instantiated operator objects are not currently charged to the query
 resource budget. They are finitely bounded, coordinator-owned state. Complete allocation charging
@@ -121,7 +125,9 @@ typed/nonnullable and typed-NULL shapes plus all-type scalar round trips; its co
 exact input/result shapes, checked runtime failure, short-circuit, and deterministic arithmetic
 properties described in the [vector-expression guide](vector-expression-programs.md).
 Ungrouped aggregate shape, streaming, numeric, NULL, ownership, allocation, and property evidence is
-described in the [aggregate guide](streaming-ungrouped-aggregates.md).
+described in the [aggregate guide](streaming-ungrouped-aggregates.md). Grouped state and lowering
+have separate guides, and physical sort ownership/order evidence is in the
+[bounded-sort guide](bounded-physical-sort.md).
 
 `chronos_physical_plan_fuzz` drives hostile stage configurations and valid end-to-end execution.
 `chronos_query_benchmarks` separately measures plan validation and instantiation at 1, 8, 64, and
@@ -130,11 +136,10 @@ described in the [aggregate guide](streaming-ungrouped-aggregates.md).
 ## Tradeoffs and next steps
 
 The unary stage variant is easy to audit and sufficient for current differential execution. It
-cannot represent scans, branches, joins, exchanges, or sinks. Bound single-source SELECT and its
-fixed-width scalar expressions now use this accounted mixed-output baseline; variable-width
-computed output and one ungrouped aggregate now use the same baseline. Bound aggregate lowering,
-grouped state, and variable-width extrema remain next while the storage path separately settles
-hidden versions and complete part/head merge. A later graph/optimizer can lower into or replace this
+cannot represent scans, branches, joins, exchanges, or sinks. Bound single-source projection and
+global/grouped aggregation use the accounted stage baseline. Physical sort is present, but exact
+base-row lowering must wait for hidden identities while the storage path settles complete part/head
+merge. Variable-width extrema, joins, scheduling, and spill remain. A later graph/optimizer can lower into or replace this
 pipeline while retaining its shape and differential guarantees.
 
 ## Likely interview questions

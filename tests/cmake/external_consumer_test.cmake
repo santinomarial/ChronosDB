@@ -100,6 +100,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/query/executor.hpp>
 #include <chronos/query/explain.hpp>
 #include <chronos/query/snapshot.hpp>
+#include <chronos/query/sort.hpp>
 #include <chronos/query/statement_binder.hpp>
 #include <chronos/query/timestamp_range.hpp>
 #include <chronos/query/value.hpp>
@@ -397,6 +398,23 @@ int main() {
       {{.type = installed_expression_type, .nullable = false}},
       {chronos::query::GroupedAggregateStage{.keys = {installed_group_key},
                                              .definitions = {installed_count}}});
+  const chronos::query::SortLimits installed_sort_limits{
+      .maximum_rows = 8U,
+      .maximum_keys = 1U,
+      .maximum_state_bytes = 1U << 20U,
+      .output_limits = {.maximum_rows = 8U,
+                        .maximum_columns = 1U,
+                        .maximum_buffer_bytes = 4'096U,
+                        .maximum_retained_buffer_bytes = 8'192U}};
+  const auto installed_sort_state_bytes =
+      chronos::query::sort_state_reservation_bytes(installed_sort_limits);
+  const auto installed_sort_plan = chronos::query::PhysicalPipelinePlan::create(
+      {{.type = installed_expression_type, .nullable = false}},
+      {chronos::query::SortStage{
+          .keys = {{.column_ordinal = 0U,
+                    .direction = chronos::query::PhysicalSortDirection::kDescending,
+                    .null_placement = chronos::query::ScalarNullPlacement::kFirst}},
+          .limits = installed_sort_limits}});
   const chronos::query::ConstantColumnOutputPosition installed_nullable_constant{
       .value = chronos::query::ScalarValue::signed_value(installed_expression_type, 1).value(),
       .force_nullable = true};
@@ -627,6 +645,9 @@ int main() {
                  installed_aggregate_plan->output_columns().size() == 1U &&
                  installed_grouped_plan.has_value() &&
                  installed_grouped_plan->output_columns().size() == 2U &&
+                 installed_sort_state_bytes.has_value() &&
+                 installed_sort_plan.has_value() &&
+                 installed_sort_plan->output_columns().size() == 1U &&
                  installed_nullable_constant.force_nullable &&
                  installed_lowering_limits.grouped_aggregate_limits.maximum_groups ==
                      chronos::query::kMaximumGroupedAggregateGroups &&

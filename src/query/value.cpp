@@ -412,6 +412,34 @@ common::Result<int> compare_scalar_values(const ScalarValue& left, const ScalarV
   return common::make_unexpected(invalid("scalar comparison kind is invalid"));
 }
 
+common::Result<int> compare_physical_cells(const schema::LogicalType type,
+                                           const columnar::ColumnCellView& left,
+                                           const columnar::ColumnCellView& right,
+                                           const ScalarNullPlacement null_placement) {
+  if (left.is_null() || right.is_null()) {
+    if (left.is_null() && right.is_null())
+      return 0;
+    const int null_comparison = null_placement == ScalarNullPlacement::kFirst ? -1 : 1;
+    return left.is_null() ? null_comparison : -null_comparison;
+  }
+  if (type.is_variable_width()) {
+    const common::Result<common::ByteView> left_bytes = left.bytes();
+    if (!left_bytes.has_value())
+      return common::make_unexpected(left_bytes.error());
+    const common::Result<common::ByteView> right_bytes = right.bytes();
+    if (!right_bytes.has_value())
+      return common::make_unexpected(right_bytes.error());
+    return compare_bytes(*left_bytes, *right_bytes);
+  }
+  const common::Result<ScalarValue> left_value = ScalarValue::from_column_cell(type, left);
+  if (!left_value.has_value())
+    return common::make_unexpected(left_value.error());
+  const common::Result<ScalarValue> right_value = ScalarValue::from_column_cell(type, right);
+  if (!right_value.has_value())
+    return common::make_unexpected(right_value.error());
+  return compare_scalar_values(*left_value, *right_value, null_placement);
+}
+
 common::Result<SqlTruthValue> sql_scalar_equal(const ScalarValue& left, const ScalarValue& right) {
   if (left.is_null() || right.is_null())
     return SqlTruthValue::kUnknown;

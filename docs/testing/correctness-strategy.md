@@ -165,8 +165,11 @@
 > GROUP BY adds exact structural group-expression mapping, WHERE/preparation/group/final/LIMIT
 > order, computed and multiple keys, computed arguments, nullable variable keys, empty groups,
 > grouped limits, allocation failure, hostile lowering fuzzing, a 257-row independent model,
-> sanitizers, installation, and retained-plan measurements. Hashing, spill, ORDER BY, and
-> variable-width extrema remain outside this claim.
+> sanitizers, installation, and retained-plan measurements. Bounded physical sort adds explicit
+> direction/NULL placement, multi-chunk variable keys, stable ties, canonical gathered output,
+> fixed state admission, exhaustive allocation failure, an independent fixed-seed model, hostile
+> plan fuzzing, sanitizers, installation, and duplicate-density measurements. Exact bound-SQL ORDER
+> BY, hashing, spill, and variable-width extrema remain outside this claim.
 
 ## Test types
 

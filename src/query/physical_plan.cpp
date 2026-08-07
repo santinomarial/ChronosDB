@@ -110,6 +110,10 @@ retained_bytes_for_configuration(const std::vector<PhysicalColumnShape>& input_c
                                  sizeof(VectorAggregateDefinition));
       if (!total.has_value())
         return total;
+    } else if (const auto* sort = std::get_if<SortStage>(&stage); sort != nullptr) {
+      total = add_capacity_bytes(*total, sort->keys.capacity(), sizeof(VectorSortKey));
+      if (!total.has_value())
+        return total;
     }
   }
   return total;
@@ -444,6 +448,25 @@ PhysicalPipelinePlan::create(std::vector<PhysicalColumnShape> input_columns,
         output_columns = std::move(grouped_columns);
         continue;
       }
+      if (const auto* sort = std::get_if<SortStage>(&stage); sort != nullptr) {
+        const common::Result<std::size_t> state_bytes = sort_state_reservation_bytes(sort->limits);
+        if (!state_bytes.has_value())
+          return common::make_unexpected(state_bytes.error());
+        if (sort->keys.empty())
+          return common::make_unexpected(invalid("physical pipeline sort requires a key"));
+        if (sort->keys.size() > sort->limits.maximum_keys ||
+            sort->keys.capacity() > sort->limits.maximum_keys) {
+          return common::make_unexpected(
+              exhausted("physical pipeline sort key configuration exceeds its limit"));
+        }
+        for (const VectorSortKey& key : sort->keys) {
+          if (key.column_ordinal >= output_columns.size()) {
+            return common::make_unexpected(
+                invalid("physical pipeline sort key ordinal is out of range"));
+          }
+        }
+        continue;
+      }
       if (std::get_if<LimitStage>(&stage) == nullptr)
         return common::make_unexpected(invalid("physical pipeline stage is not supported"));
     }
@@ -516,6 +539,8 @@ PhysicalPipelinePlan::instantiate(std::unique_ptr<PhysicalOperator> source) cons
                  grouped != nullptr) {
         next = GroupedAggregateOperator::create(std::move(pipeline), grouped->keys,
                                                 grouped->definitions, grouped->limits);
+      } else if (const auto* sort = std::get_if<SortStage>(&stage); sort != nullptr) {
+        next = SortOperator::create(std::move(pipeline), sort->keys, sort->limits);
       } else if (const auto* limit = std::get_if<LimitStage>(&stage); limit != nullptr) {
         next = LimitOperator::create(std::move(pipeline), limit->maximum_rows);
       }

@@ -342,6 +342,7 @@ add_library(
   src/query/physical_plan.cpp
   src/query/resource_context.cpp
   src/query/snapshot.cpp
+  src/query/sort.cpp
   src/query/statement_binder.cpp
   src/query/value.cpp
   src/query/vector_chunk.cpp
@@ -798,6 +799,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/resource_context_test.cpp
     tests/query/snapshot_header_self_contained.cpp
     tests/query/snapshot_test.cpp
+    tests/query/sort_header_self_contained.cpp
+    tests/query/sort_test.cpp
     tests/query/statement_binder_header_self_contained.cpp
     tests/query/statement_binder_test.cpp
     tests/query/timestamp_range_header_self_contained.cpp
@@ -827,6 +830,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/database_cseg_scan_allocation_failure_test.cpp
     tests/query/head_scan_allocation_failure_test.cpp
     tests/query/physical_lowering_allocation_failure_test.cpp
+    tests/query/sort_allocation_failure_test.cpp
     tests/support/failing_allocator.cpp
   )
   set_target_properties(chronos_query_allocation_failure_tests PROPERTIES CXX_EXTENSIONS OFF)
@@ -1040,6 +1044,7 @@ if(CHRONOS_BUILD_BENCHMARKS)
     benchmarks/query/lexer_benchmark.cpp
     benchmarks/query/physical_plan_benchmark.cpp
     benchmarks/query/resource_context_benchmark.cpp
+    benchmarks/query/sort_benchmark.cpp
     benchmarks/query/vector_chunk_benchmark.cpp
     benchmarks/support/counting_allocator.cpp
   )
