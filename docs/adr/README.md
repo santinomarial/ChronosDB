@@ -71,3 +71,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0034](0034-accounted-typed-constant-vector-outputs.md) | Accounted typed-constant vector outputs | accepted |
 | [0035](0035-bounded-checked-vector-expression-programs.md) | Bounded checked vector expression programs | accepted |
 | [0036](0036-bound-select-to-physical-pipeline-lowering.md) | Bound SELECT to physical pipeline lowering | accepted |
+| [0037](0037-fixed-width-vector-casts-and-scalar-functions.md) | Fixed-width vector casts and scalar functions | accepted |

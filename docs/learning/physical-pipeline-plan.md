@@ -123,12 +123,12 @@ properties described in the [vector-expression guide](vector-expression-programs
 
 ## Tradeoffs and next steps
 
-The unary variant is easy to audit and sufficient for current differential execution. It cannot
-represent scans, branches, joins, exchanges, or sinks. The next increments should first settle
-remaining scalar expression execution and bound-SQL lowering on the now-accounted mixed-output
-baseline, while the storage path separately settles hidden versions and complete
-part/head merge. A later graph/optimizer can lower into or replace this pipeline while retaining
-its shape and differential guarantees.
+The unary stage variant is easy to audit and sufficient for current differential execution. It
+cannot represent scans, branches, joins, exchanges, or sinks. Bound single-source SELECT and its
+fixed-width scalar expressions now use this accounted mixed-output baseline; variable-width
+computed output and aggregates come next while the storage path separately settles hidden versions
+and complete part/head merge. A later graph/optimizer can lower into or replace this pipeline while
+retaining its shape and differential guarantees.
 
 ## Likely interview questions
 

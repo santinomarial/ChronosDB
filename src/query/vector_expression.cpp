@@ -57,9 +57,14 @@ namespace {
          kind == schema::LogicalTypeKind::kDecimal;
 }
 
+[[nodiscard]] bool temporal(const schema::LogicalTypeKind kind) noexcept {
+  return kind == schema::LogicalTypeKind::kDate || kind == schema::LogicalTypeKind::kTimestampNs;
+}
+
 [[nodiscard]] bool supported_leaf(const schema::LogicalTypeKind kind) noexcept {
   return numeric(kind) || kind == schema::LogicalTypeKind::kBool ||
-         kind == schema::LogicalTypeKind::kDate || kind == schema::LogicalTypeKind::kTimestampNs;
+         kind == schema::LogicalTypeKind::kDate || kind == schema::LogicalTypeKind::kTimestampNs ||
+         kind == schema::LogicalTypeKind::kUuid;
 }
 
 [[nodiscard]] const schema::LogicalType* scalar_type(const ScalarValue& value) noexcept {
@@ -137,10 +142,12 @@ namespace {
   case schema::LogicalTypeKind::kDecimal:
     valid = std::holds_alternative<Decimal128Value>(value.storage());
     break;
+  case schema::LogicalTypeKind::kUuid:
+    valid = std::holds_alternative<common::Uuid>(value.storage());
+    break;
   case schema::LogicalTypeKind::kSymbol:
   case schema::LogicalTypeKind::kString:
   case schema::LogicalTypeKind::kBinary:
-  case schema::LogicalTypeKind::kUuid:
     break;
   }
   if (!valid)
@@ -179,6 +186,18 @@ unary_shape(const VectorUnaryExpression& operation, const VectorExpressionShape&
   return common::make_unexpected(invalid("vector unary operation is invalid"));
 }
 
+[[nodiscard]] common::Result<VectorExpressionShape>
+cast_shape(const VectorCastExpression& operation, const VectorExpressionShape& operand) {
+  const schema::LogicalTypeKind source = operand.type.kind();
+  const schema::LogicalTypeKind target = operation.target_type.kind();
+  if (!supported_leaf(source) || !supported_leaf(target) ||
+      (!(numeric(source) && numeric(target)) && !(temporal(source) && temporal(target)) &&
+       operand.type != operation.target_type)) {
+    return common::make_unexpected(invalid("vector CAST conversion is not supported"));
+  }
+  return VectorExpressionShape{.type = operation.target_type, .nullable = operand.nullable};
+}
+
 [[nodiscard]] bool comparison(const VectorBinaryOperation operation) noexcept {
   return operation >= VectorBinaryOperation::kEqual &&
          operation <= VectorBinaryOperation::kGreaterEqual;
@@ -191,6 +210,19 @@ unary_shape(const VectorUnaryExpression& operation, const VectorExpressionShape&
 [[nodiscard]] common::Result<VectorExpressionShape>
 binary_shape(const VectorBinaryExpression& operation, const VectorExpressionShape& left,
              const VectorExpressionShape& right) {
+  if (operation.operation == VectorBinaryOperation::kCoalesce) {
+    if (left.type != right.type)
+      return common::make_unexpected(invalid("vector COALESCE operands must have one exact type"));
+    return VectorExpressionShape{.type = left.type, .nullable = left.nullable && right.nullable};
+  }
+  if (operation.operation == VectorBinaryOperation::kTimeBucket) {
+    if (left.type.kind() != schema::LogicalTypeKind::kInt64 ||
+        right.type.kind() != schema::LogicalTypeKind::kTimestampNs) {
+      return common::make_unexpected(
+          invalid("vector time_bucket requires INT64 width and TIMESTAMP_NS point"));
+    }
+    return VectorExpressionShape{.type = right.type, .nullable = left.nullable || right.nullable};
+  }
   const bool nullable = left.nullable || right.nullable;
   if (operation.operation == VectorBinaryOperation::kAnd ||
       operation.operation == VectorBinaryOperation::kOr) {
@@ -245,6 +277,167 @@ checked_signed_multiply(const std::int64_t left, const std::int64_t right) noexc
     return std::nullopt;
   }
   return left * right;
+}
+
+[[nodiscard]] common::Result<ScalarValue> evaluate_cast(const ScalarValue& operand,
+                                                        const schema::LogicalType& target) {
+  if (operand.is_null())
+    return ScalarValue::null(target);
+  const schema::LogicalType* source = scalar_type(operand);
+  if (source == nullptr)
+    return common::make_unexpected(internal("vector CAST operand is untyped"));
+  if (*source == target)
+    return operand;
+
+  if (target.is_decimal()) {
+    common::Result<Decimal128Value> converted =
+        common::make_unexpected(invalid("vector CAST to DECIMAL has an invalid operand"));
+    if (const auto* signed_value = std::get_if<std::int64_t>(&operand.storage());
+        signed_value != nullptr)
+      converted = detail::decimal_from_signed(*signed_value, target);
+    else if (const auto* unsigned_value = std::get_if<std::uint64_t>(&operand.storage());
+             unsigned_value != nullptr)
+      converted = detail::decimal_from_unsigned(*unsigned_value, target);
+    else if (const auto* float_value = std::get_if<float>(&operand.storage());
+             float_value != nullptr)
+      converted = detail::decimal_from_float(*float_value, target);
+    else if (const auto* double_value = std::get_if<double>(&operand.storage());
+             double_value != nullptr)
+      converted = detail::decimal_from_double(*double_value, target);
+    else if (const auto* decimal_value = std::get_if<Decimal128Value>(&operand.storage());
+             decimal_value != nullptr)
+      converted = detail::rescale_decimal(*decimal_value, *source, target);
+    if (!converted.has_value())
+      return common::make_unexpected(converted.error());
+    return ScalarValue::decimal(target, *converted);
+  }
+
+  if (signed_integer(target.kind()) || temporal(target.kind())) {
+    std::int64_t value = 0;
+    if (const auto* decimal = std::get_if<Decimal128Value>(&operand.storage());
+        decimal != nullptr) {
+      common::Result<std::int64_t> converted = detail::decimal_to_signed(*decimal, *source);
+      if (!converted.has_value())
+        return common::make_unexpected(converted.error());
+      value = *converted;
+    } else if (const auto* signed_value = std::get_if<std::int64_t>(&operand.storage());
+               signed_value != nullptr) {
+      value = *signed_value;
+    } else if (const auto* unsigned_value = std::get_if<std::uint64_t>(&operand.storage());
+               unsigned_value != nullptr &&
+               *unsigned_value <=
+                   static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+      value = static_cast<std::int64_t>(*unsigned_value);
+    } else if (const auto* float_value = std::get_if<float>(&operand.storage());
+               float_value != nullptr && std::isfinite(*float_value) &&
+               static_cast<double>(*float_value) >= -9'223'372'036'854'775'808.0 &&
+               static_cast<double>(*float_value) < 9'223'372'036'854'775'808.0) {
+      value = static_cast<std::int64_t>(*float_value);
+    } else if (const auto* double_value = std::get_if<double>(&operand.storage());
+               double_value != nullptr && std::isfinite(*double_value) &&
+               *double_value >= -9'223'372'036'854'775'808.0 &&
+               *double_value < 9'223'372'036'854'775'808.0) {
+      value = static_cast<std::int64_t>(*double_value);
+    } else {
+      return common::make_unexpected(
+          out_of_range("vector CAST to signed or temporal type is out of range"));
+    }
+    if (source->kind() == schema::LogicalTypeKind::kDate &&
+        target.kind() == schema::LogicalTypeKind::kTimestampNs) {
+      const std::optional<std::int64_t> converted =
+          checked_signed_multiply(value, 86'400'000'000'000LL);
+      if (!converted.has_value())
+        return common::make_unexpected(out_of_range("DATE to TIMESTAMP_NS vector CAST overflows"));
+      value = *converted;
+    } else if (source->kind() == schema::LogicalTypeKind::kTimestampNs &&
+               target.kind() == schema::LogicalTypeKind::kDate) {
+      constexpr std::int64_t kDay = 86'400'000'000'000LL;
+      value = value / kDay - (value < 0 && value % kDay != 0 ? 1 : 0);
+    }
+    return ScalarValue::signed_value(target, value);
+  }
+
+  if (unsigned_integer(target.kind())) {
+    std::uint64_t value = 0U;
+    if (const auto* decimal = std::get_if<Decimal128Value>(&operand.storage());
+        decimal != nullptr) {
+      common::Result<std::uint64_t> converted = detail::decimal_to_unsigned(*decimal, *source);
+      if (!converted.has_value())
+        return common::make_unexpected(converted.error());
+      value = *converted;
+    } else if (const auto* unsigned_value = std::get_if<std::uint64_t>(&operand.storage());
+               unsigned_value != nullptr) {
+      value = *unsigned_value;
+    } else if (const auto* signed_value = std::get_if<std::int64_t>(&operand.storage());
+               signed_value != nullptr && *signed_value >= 0) {
+      value = static_cast<std::uint64_t>(*signed_value);
+    } else if (const auto* float_value = std::get_if<float>(&operand.storage());
+               float_value != nullptr && std::isfinite(*float_value) && *float_value >= 0.0F &&
+               static_cast<double>(*float_value) < 18'446'744'073'709'551'616.0) {
+      value = static_cast<std::uint64_t>(*float_value);
+    } else if (const auto* double_value = std::get_if<double>(&operand.storage());
+               double_value != nullptr && std::isfinite(*double_value) && *double_value >= 0.0 &&
+               *double_value < 18'446'744'073'709'551'616.0) {
+      value = static_cast<std::uint64_t>(*double_value);
+    } else {
+      return common::make_unexpected(out_of_range("vector CAST to unsigned type is out of range"));
+    }
+    return ScalarValue::unsigned_value(target, value);
+  }
+
+  if (floating(target.kind())) {
+    double value = 0.0;
+    if (const auto* decimal = std::get_if<Decimal128Value>(&operand.storage());
+        decimal != nullptr) {
+      if (target.kind() == schema::LogicalTypeKind::kFloat32) {
+        common::Result<float> converted = detail::decimal_to_float(*decimal, *source);
+        if (!converted.has_value())
+          return common::make_unexpected(converted.error());
+        return ScalarValue::float32(*converted);
+      }
+      common::Result<double> converted = detail::decimal_to_double(*decimal, *source);
+      if (!converted.has_value())
+        return common::make_unexpected(converted.error());
+      value = *converted;
+    } else if (const auto* signed_value = std::get_if<std::int64_t>(&operand.storage());
+               signed_value != nullptr) {
+      value = static_cast<double>(*signed_value);
+    } else if (const auto* unsigned_value = std::get_if<std::uint64_t>(&operand.storage());
+               unsigned_value != nullptr) {
+      value = static_cast<double>(*unsigned_value);
+    } else if (const auto* float_value = std::get_if<float>(&operand.storage());
+               float_value != nullptr) {
+      value = *float_value;
+    } else if (const auto* double_value = std::get_if<double>(&operand.storage());
+               double_value != nullptr) {
+      value = *double_value;
+    } else {
+      return common::make_unexpected(invalid("vector CAST to floating type is unsupported"));
+    }
+    return target.kind() == schema::LogicalTypeKind::kFloat32
+               ? ScalarValue::float32(static_cast<float>(value))
+               : ScalarValue::float64(value);
+  }
+  return common::make_unexpected(invalid("vector CAST conversion is unsupported"));
+}
+
+[[nodiscard]] common::Result<ScalarValue> evaluate_time_bucket(const ScalarValue& width_value,
+                                                               const ScalarValue& point_value) {
+  const schema::LogicalType timestamp =
+      schema::LogicalType::create(schema::LogicalTypeKind::kTimestampNs).value();
+  if (width_value.is_null() || point_value.is_null())
+    return ScalarValue::null(timestamp);
+  const auto* width = std::get_if<std::int64_t>(&width_value.storage());
+  const auto* point = std::get_if<std::int64_t>(&point_value.storage());
+  if (width == nullptr || point == nullptr || *width <= 0)
+    return common::make_unexpected(invalid("vector time_bucket width must be positive"));
+  std::int64_t bucket = *point / *width;
+  if (*point < 0 && *point % *width != 0)
+    --bucket;
+  const std::optional<std::int64_t> start = checked_signed_multiply(bucket, *width);
+  if (!start.has_value())
+    return common::make_unexpected(out_of_range("vector time_bucket result overflows"));
+  return ScalarValue::signed_value(timestamp, *start);
 }
 
 [[nodiscard]] SqlTruthValue truth(const ScalarValue& value) {
@@ -574,10 +767,18 @@ private:
       return remember(index, evaluate_unary(unary->operation, *operand,
                                             expression_.instruction_shapes()[index]));
     }
+    if (const auto* cast = std::get_if<VectorCastExpression>(&instruction); cast != nullptr) {
+      common::Result<ScalarValue> operand = evaluate(cast->operand_instruction, depth + 1U);
+      if (!operand.has_value())
+        return common::make_unexpected(operand.error());
+      return remember(index, evaluate_cast(*operand, cast->target_type));
+    }
     if (const auto* binary = std::get_if<VectorBinaryExpression>(&instruction); binary != nullptr) {
       common::Result<ScalarValue> left = evaluate(binary->left_instruction, depth + 1U);
       if (!left.has_value())
         return common::make_unexpected(left.error());
+      if (binary->operation == VectorBinaryOperation::kCoalesce && !left->is_null())
+        return remember(index, std::move(left));
       if (binary->operation == VectorBinaryOperation::kAnd ||
           binary->operation == VectorBinaryOperation::kOr) {
         const SqlTruthValue left_truth = truth(*left);
@@ -597,6 +798,10 @@ private:
       common::Result<ScalarValue> right = evaluate(binary->right_instruction, depth + 1U);
       if (!right.has_value())
         return common::make_unexpected(right.error());
+      if (binary->operation == VectorBinaryOperation::kCoalesce)
+        return remember(index, std::move(right));
+      if (binary->operation == VectorBinaryOperation::kTimeBucket)
+        return remember(index, evaluate_time_bucket(*left, *right));
       return remember(index, comparison(binary->operation)
                                  ? evaluate_comparison(binary->operation, *left, *right)
                                  : evaluate_arithmetic(binary->operation, *left, *right,
@@ -670,6 +875,12 @@ VectorExpression::create(std::vector<VectorExpressionInstruction> instructions,
           return common::make_unexpected(invalid("vector unary operand must precede its use"));
         shape = unary_shape(*unary, shapes[unary->operand_instruction]);
         depth = depths[unary->operand_instruction] + 1U;
+      } else if (const auto* cast = std::get_if<VectorCastExpression>(&instruction);
+                 cast != nullptr) {
+        if (cast->operand_instruction >= index)
+          return common::make_unexpected(invalid("vector CAST operand must precede its use"));
+        shape = cast_shape(*cast, shapes[cast->operand_instruction]);
+        depth = depths[cast->operand_instruction] + 1U;
       } else if (const auto* binary = std::get_if<VectorBinaryExpression>(&instruction);
                  binary != nullptr) {
         if (binary->left_instruction >= index || binary->right_instruction >= index) {

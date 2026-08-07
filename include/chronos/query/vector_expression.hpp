@@ -40,6 +40,8 @@ enum class VectorBinaryOperation : std::uint8_t {
   kMultiply,
   kDivide,
   kRemainder,
+  kCoalesce,
+  kTimeBucket,
 };
 
 struct VectorInputExpression {
@@ -57,14 +59,20 @@ struct VectorUnaryExpression {
   std::size_t operand_instruction;
 };
 
+struct VectorCastExpression {
+  std::size_t operand_instruction;
+  schema::LogicalType target_type;
+};
+
 struct VectorBinaryExpression {
   VectorBinaryOperation operation;
   std::size_t left_instruction;
   std::size_t right_instruction;
 };
 
-using VectorExpressionInstruction = std::variant<VectorInputExpression, VectorConstantExpression,
-                                                 VectorUnaryExpression, VectorBinaryExpression>;
+using VectorExpressionInstruction =
+    std::variant<VectorInputExpression, VectorConstantExpression, VectorUnaryExpression,
+                 VectorCastExpression, VectorBinaryExpression>;
 
 struct VectorExpressionShape {
   schema::LogicalType type;
@@ -79,7 +87,7 @@ struct VectorExpressionLimits {
   std::size_t maximum_retained_configuration_bytes{kDefaultVectorExpressionConfigurationByteLimit};
 };
 
-// An immutable, copyable postorder DAG for checked numeric and Boolean physical expressions.
+// An immutable, copyable postorder DAG for checked fixed-width physical scalar expressions.
 // Successful per-row evaluation uses no heap allocation; diagnostic construction on a failing row
 // may allocate. Every operand references an earlier instruction and the final instruction is the
 // result. Source leaves retain exact expected physical shapes.

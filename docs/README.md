@@ -173,5 +173,14 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Exact timestamp-range vector filter](learning/exact-timestamp-range-filter.md): implemented
   edge-safe open/closed `TIMESTAMP_NS` truth, allocation-free stable selection compaction,
   query-accounted pull and bounded-plan integration, fuzzing, and measurement boundaries.
+- [Source-column output materialization](learning/source-column-output-materialization.md):
+  implemented accounted reordered/duplicate source output and canonical selected-row compaction.
+- [Typed-constant output materialization](learning/typed-constant-output-materialization.md):
+  implemented all-type and typed-NULL canonical expansion under exact admission.
+- [Checked vector expressions](learning/vector-expression-programs.md): implemented bounded
+  fixed-width arithmetic, comparison, Boolean, CAST, COALESCE, and time-bucket programs with scalar
+  differential evidence.
+- [Bound SELECT physical lowering](learning/bound-select-physical-lowering.md): implemented the
+  exact single-source, nonaggregate WHERE/projection/LIMIT bridge into physical pipelines.
 
 Future format, protocol, subsystem, operations, and learning documents should be linked here when they are added by their corresponding roadmap phase.

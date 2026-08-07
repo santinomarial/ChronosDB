@@ -3,20 +3,23 @@
 ## Purpose and boundary
 
 `VectorExpression` is the first computed-value substrate in the Phase 9 physical engine. It turns
-typed numeric and Boolean source/constant leaves into one canonical fixed-width output column while
-preserving the scalar reference engine's checked errors, SQL NULL, IEEE, decimal, and short-circuit
-rules. It is a physical in-memory program, not SQL syntax, an optimizer IR, or a durable bytecode.
+typed fixed-width source/constant leaves into one canonical fixed-width output column while
+preserving the scalar reference engine's checked errors, SQL NULL, IEEE, decimal, temporal, UUID,
+and short-circuit rules. It is a physical in-memory program, not SQL syntax, an optimizer IR, or a
+durable bytecode.
 
-This version intentionally excludes casts, BETWEEN/IN, COALESCE, text case conversion,
-`time_bucket`, aggregates, joins, and bound-SQL lowering.
+The current program includes the fixed-width SQL v1 scalar intersection. Bound lowering expands
+BETWEEN/IN, inserts checked fixed-width casts, folds lazy COALESCE chains, and emits exact
+`time_bucket` nodes. Text case conversion, aggregates, joins, and variable-width computed values
+remain outside this boundary.
 
 ## Public interfaces
 
 `chronos/query/vector_expression.hpp` exports:
 
 - source and typed-constant leaf instructions;
-- unary and binary operation enums and instruction records;
-- `VectorExpressionInstruction`, a closed four-alternative variant;
+- unary, cast, and binary operation records;
+- `VectorExpressionInstruction`, a closed five-alternative variant;
 - exact `VectorExpressionShape` values;
 - finite instruction/configuration limits; and
 - `VectorExpression::create`, immutable instruction/shape access, maximum depth, and retained-byte
@@ -38,10 +41,11 @@ logical size and spare vector capacity must fit. Retained bytes include instruct
 shape capacities. A physical pipeline additionally counts every program inside its stage
 configuration.
 
-Supported leaves are signed/unsigned integers, FLOAT32/FLOAT64, DECIMAL, BOOL, DATE, and
-TIMESTAMP_NS. DATE/TIMESTAMP_NS are comparison-only. Signed families widen only within signed
-types, unsigned only within unsigned types, and mixed floating operands produce FLOAT64. Decimal,
-Boolean, and temporal operands must have exact matching types.
+Supported leaves are signed/unsigned integers, FLOAT32/FLOAT64, DECIMAL, BOOL, DATE, TIMESTAMP_NS,
+and UUID. Signed families widen only within signed types, unsigned only within unsigned types, and
+mixed floating operands produce FLOAT64. Decimal, Boolean, temporal, and UUID binary operands must
+have exact matching types. Checked casts separately admit numeric family crossings and DATE/
+TIMESTAMP_NS conversion.
 
 ## Evaluation semantics
 
@@ -53,10 +57,18 @@ Lazy evaluation is observable correctness. `FALSE AND (1 / 0 > 0)` returns FALSE
 the invalid divisor. TRUE similarly short-circuits OR. The remaining SQL truth tables retain UNKNOWN
 for NULL. Arithmetic NULL produces a typed NULL. IS NULL and IS NOT NULL are always nonnullable.
 
+COALESCE uses the same lazy rule: a non-NULL left branch prevents evaluation of the right. Its
+operands have already been cast to one bound common type, and its result is nullable only when both
+branches are nullable. `time_bucket` checks a positive nanosecond width and floors negative points
+to the lower epoch-aligned boundary.
+
 Signed and unsigned arithmetic checks before wraparound. Integer division/remainder reject zero;
 the signed minimum divided by negative one is checked. FLOAT follows IEEE behavior, including
 infinity and NaN. DECIMAL delegates to the same exact widened implementation as the scalar oracle.
 Ordinary NULL comparisons produce UNKNOWN, and ordered comparisons with NaN produce FALSE.
+Fixed-width casts match the scalar reference range and truncation rules, including decimal
+rescaling, finite float-to-integer checks, narrow integer admission, and floor conversion between
+negative TIMESTAMP_NS and DATE.
 
 ## Materialization, ownership, and accounting
 
@@ -78,27 +90,29 @@ For `R` materialized rows and `I` reachable instructions, evaluation is `O(R*I)`
 memory plus configuration. DAG memoization evaluates a reachable instruction at most once per row.
 No vector intermediate is retained.
 
-`materialize_checked_numeric_expression` measures `(source + 42) * 3 > source` over dense and
-quarter-dense selections at 64, 1,024, and 4,096 physical rows. Source and program construction are
-excluded. The benchmark records output bytes, rows, instruction count, density, and pull
-allocations; it is not an end-to-end SQL claim.
+`materialize_checked_numeric_expression` measures `(source + 42) * 3 > source` and
+`materialize_fixed_width_cast_and_coalesce` measures `coalesce(NULL, CAST(source AS FLOAT64))` over
+dense and quarter-dense selections at 64, 1,024, and 4,096 physical rows. Source and program
+construction are excluded. The benchmarks record output bytes, rows, instruction count, density,
+and pull allocations; they are not end-to-end SQL claims.
 
 ## Correctness evidence
 
 Deterministic tests cover every instruction family, exact shapes, invalid references/types/limits,
-NULL, short-circuit errors, sparse compaction, runtime overflow, cancellation, and plan integration.
-A fixed-seed 257-row property compares signed add/subtract/multiply/divide/remainder and comparison
-outputs with an independent scalar model. Allocation-failure injection requires complete credit
-release. The physical-plan fuzzer includes valid and hostile computed positions. Sanitizers,
-self-contained headers, installation, and external-consumer compilation protect the boundary.
+NULL, short-circuit errors, casts, COALESCE, negative time bucketing, sparse compaction, runtime
+overflow, cancellation, and plan integration. Fixed-seed 257-row properties compare arithmetic
+with an independent model and bound fixed-width scalar programs with the scalar SQL oracle.
+Allocation-failure injection requires complete credit release. Lowering fuzzing includes valid and
+unsupported scalar forms. Sanitizers, self-contained headers, installation, and external-consumer
+compilation protect the boundary.
 
 ## Tradeoffs and next steps
 
 The fixed memo array favors a simple allocation proof over cache efficiency, and per-row graph
 dispatch is not expected to be the final hot kernel. Column-wise specialization or fusion should be
 adopted only after profiles and must remain differential with this baseline. Single-source
-nonaggregate bound SQL now lowers the supported subset into these programs. Physical casts and the
-remaining scalar operations are next, followed by aggregate and wider relational lowering.
+nonaggregate bound SQL now lowers the complete fixed-width scalar subset into these programs.
+Variable-width output sizing is next, followed by aggregate and wider relational lowering.
 
 ## Likely review questions
 

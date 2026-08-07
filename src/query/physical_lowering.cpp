@@ -225,6 +225,17 @@ private:
     }
   }
 
+  template <typename Instruction>
+  [[nodiscard]] std::size_t emit(Instruction instruction, const SourceSpan span) {
+    if (instructions_.size() >= limits_.maximum_instructions) {
+      throw LoweringFailure{diagnostic(SqlDiagnosticCode::kResourceLimit, span,
+                                       common::StatusCode::kResourceExhausted,
+                                       "Physical expression instruction limit exceeded")};
+    }
+    instructions_.emplace_back(std::move(instruction));
+    return instructions_.size() - 1U;
+  }
+
   [[nodiscard]] std::size_t append(const SqlExpression& expression,
                                    const schema::LogicalType& expected) {
     if (instructions_.size() >= limits_.maximum_instructions) {
@@ -235,21 +246,23 @@ private:
     switch (expression.kind()) {
     case SqlExpressionKind::kColumn: {
       const BoundColumnReference& reference = column(expression);
-      instructions_.emplace_back(
-          VectorInputExpression{.input_column_ordinal = reference.column_ordinal,
-                                .type = reference.type,
-                                .nullable = reference.nullable});
+      static_cast<void>(emit(VectorInputExpression{.input_column_ordinal = reference.column_ordinal,
+                                                   .type = reference.type,
+                                                   .nullable = reference.nullable},
+                             expression.span()));
       break;
     }
     case SqlExpressionKind::kLiteral:
-      instructions_.emplace_back(VectorConstantExpression{literal(expression, expected)});
+      static_cast<void>(
+          emit(VectorConstantExpression{literal(expression, expected)}, expression.span()));
       break;
     case SqlExpressionKind::kUnary: {
       const std::size_t operand =
           append(expression.children().front(), type_of(expression.children().front()));
-      instructions_.emplace_back(
-          VectorUnaryExpression{.operation = unary(expression.operation(), expression.span()),
-                                .operand_instruction = operand});
+      static_cast<void>(
+          emit(VectorUnaryExpression{.operation = unary(expression.operation(), expression.span()),
+                                     .operand_instruction = operand},
+               expression.span()));
       break;
     }
     case SqlExpressionKind::kIsNull: {
@@ -258,9 +271,10 @@ private:
       const schema::LogicalType& child_type =
           information != nullptr && information->type.has_value() ? *information->type : expected;
       const std::size_t operand = append(child, child_type);
-      instructions_.emplace_back(
-          VectorUnaryExpression{.operation = unary(expression.operation(), expression.span()),
-                                .operand_instruction = operand});
+      static_cast<void>(
+          emit(VectorUnaryExpression{.operation = unary(expression.operation(), expression.span()),
+                                     .operand_instruction = operand},
+               expression.span()));
       break;
     }
     case SqlExpressionKind::kBinary: {
@@ -277,10 +291,11 @@ private:
           right_info != nullptr && right_info->type.has_value() ? *right_info->type : left_type;
       const std::size_t lhs = append(left, left_type);
       const std::size_t rhs = append(right, right_type);
-      instructions_.emplace_back(
+      static_cast<void>(emit(
           VectorBinaryExpression{.operation = binary(expression.operation(), expression.span()),
                                  .left_instruction = lhs,
-                                 .right_instruction = rhs});
+                                 .right_instruction = rhs},
+          expression.span()));
       break;
     }
     case SqlExpressionKind::kBetween: {
@@ -289,25 +304,27 @@ private:
       const schema::LogicalType& operand_type = type_or(value, first_child_type(expression));
       const std::size_t value_index = append(value, operand_type);
       const std::size_t lower = append(lower_expression, type_or(lower_expression, operand_type));
-      instructions_.emplace_back(
-          VectorBinaryExpression{.operation = VectorBinaryOperation::kGreaterEqual,
-                                 .left_instruction = value_index,
-                                 .right_instruction = lower});
-      const std::size_t low = instructions_.size() - 1U;
+      const std::size_t low =
+          emit(VectorBinaryExpression{.operation = VectorBinaryOperation::kGreaterEqual,
+                                      .left_instruction = value_index,
+                                      .right_instruction = lower},
+               expression.span());
       const SqlExpression& upper_expression = expression.children()[2];
       const std::size_t upper = append(upper_expression, type_or(upper_expression, operand_type));
-      instructions_.emplace_back(
-          VectorBinaryExpression{.operation = VectorBinaryOperation::kLessEqual,
-                                 .left_instruction = value_index,
-                                 .right_instruction = upper});
-      const std::size_t high = instructions_.size() - 1U;
-      instructions_.emplace_back(VectorBinaryExpression{.operation = VectorBinaryOperation::kAnd,
-                                                        .left_instruction = low,
-                                                        .right_instruction = high});
+      const std::size_t high =
+          emit(VectorBinaryExpression{.operation = VectorBinaryOperation::kLessEqual,
+                                      .left_instruction = value_index,
+                                      .right_instruction = upper},
+               expression.span());
+      static_cast<void>(emit(VectorBinaryExpression{.operation = VectorBinaryOperation::kAnd,
+                                                    .left_instruction = low,
+                                                    .right_instruction = high},
+                             expression.span()));
       if (expression.operation() == SqlOperator::kNotBetween) {
-        instructions_.emplace_back(
-            VectorUnaryExpression{.operation = VectorUnaryOperation::kNot,
-                                  .operand_instruction = instructions_.size() - 1U});
+        static_cast<void>(
+            emit(VectorUnaryExpression{.operation = VectorUnaryOperation::kNot,
+                                       .operand_instruction = instructions_.size() - 1U},
+                 expression.span()));
       }
       break;
     }
@@ -320,15 +337,16 @@ private:
         const SqlExpression& candidate_expression = expression.children()[index];
         const std::size_t candidate =
             append(candidate_expression, type_or(candidate_expression, operand_type));
-        instructions_.emplace_back(
-            VectorBinaryExpression{.operation = VectorBinaryOperation::kEqual,
-                                   .left_instruction = searched_index,
-                                   .right_instruction = candidate});
-        const std::size_t equal = instructions_.size() - 1U;
+        const std::size_t equal =
+            emit(VectorBinaryExpression{.operation = VectorBinaryOperation::kEqual,
+                                        .left_instruction = searched_index,
+                                        .right_instruction = candidate},
+                 expression.span());
         if (accumulated.has_value()) {
-          instructions_.emplace_back(VectorBinaryExpression{.operation = VectorBinaryOperation::kOr,
-                                                            .left_instruction = *accumulated,
-                                                            .right_instruction = equal});
+          static_cast<void>(emit(VectorBinaryExpression{.operation = VectorBinaryOperation::kOr,
+                                                        .left_instruction = *accumulated,
+                                                        .right_instruction = equal},
+                                 expression.span()));
         }
         accumulated = instructions_.size() - 1U;
       }
@@ -338,30 +356,69 @@ private:
                                          "Bound IN expression has no candidates")};
       }
       if (expression.operation() == SqlOperator::kNotIn) {
-        instructions_.emplace_back(VectorUnaryExpression{.operation = VectorUnaryOperation::kNot,
-                                                         .operand_instruction = *accumulated});
+        static_cast<void>(emit(VectorUnaryExpression{.operation = VectorUnaryOperation::kNot,
+                                                     .operand_instruction = *accumulated},
+                               expression.span()));
       }
       break;
     }
     case SqlExpressionKind::kFunction:
-      if (expression.text() != "abs" || expression.children().size() != 1U) {
+      if (expression.text() == "abs" && expression.children().size() == 1U) {
+        static_cast<void>(emit(VectorUnaryExpression{.operation = VectorUnaryOperation::kAbsolute,
+                                                     .operand_instruction = append(
+                                                         expression.children().front(),
+                                                         type_of(expression.children().front()))},
+                               expression.span()));
+        break;
+      }
+      if (expression.text() == "coalesce" && !expression.children().empty()) {
+        const schema::LogicalType& result_type = type_of(expression);
+        std::optional<std::size_t> accumulated;
+        for (const SqlExpression& child : expression.children()) {
+          const schema::LogicalType& child_type = type_or(child, result_type);
+          std::size_t child_index = append(child, child_type);
+          if (child_type != result_type) {
+            child_index = emit(VectorCastExpression{.operand_instruction = child_index,
+                                                    .target_type = result_type},
+                               expression.span());
+          }
+          if (accumulated.has_value()) {
+            child_index = emit(VectorBinaryExpression{.operation = VectorBinaryOperation::kCoalesce,
+                                                      .left_instruction = *accumulated,
+                                                      .right_instruction = child_index},
+                               expression.span());
+          }
+          accumulated = child_index;
+        }
+        break;
+      }
+      if (expression.text() == "time_bucket" && expression.children().size() == 2U) {
+        const std::size_t width =
+            append(expression.children()[0], type_of(expression.children()[0]));
+        const std::size_t point =
+            append(expression.children()[1], type_of(expression.children()[1]));
+        static_cast<void>(
+            emit(VectorBinaryExpression{.operation = VectorBinaryOperation::kTimeBucket,
+                                        .left_instruction = width,
+                                        .right_instruction = point},
+                 expression.span()));
+        break;
+      }
+      {
         throw LoweringFailure{diagnostic(SqlDiagnosticCode::kUnsupportedSyntax, expression.span(),
                                          common::StatusCode::kInvalidArgument,
                                          "SQL function has no physical kernel")};
       }
-      instructions_.emplace_back(VectorUnaryExpression{
-          .operation = VectorUnaryOperation::kAbsolute,
-          .operand_instruction =
-              append(expression.children().front(), type_of(expression.children().front()))});
-      break;
     case SqlExpressionKind::kCast: {
       const SqlExpression& child = expression.children().front();
-      if (type_of(child) != expected) {
-        throw LoweringFailure{diagnostic(SqlDiagnosticCode::kUnsupportedSyntax, expression.span(),
-                                         common::StatusCode::kInvalidArgument,
-                                         "CAST has no physical kernel")};
-      }
-      return append(child, expected);
+      const schema::LogicalType& child_type = type_or(child, expected);
+      const std::size_t operand = append(child, child_type);
+      if (child_type == expected)
+        return operand;
+      static_cast<void>(
+          emit(VectorCastExpression{.operand_instruction = operand, .target_type = expected},
+               expression.span()));
+      break;
     }
     case SqlExpressionKind::kStar:
       throw LoweringFailure{diagnostic(SqlDiagnosticCode::kExecutionFailure, expression.span(),

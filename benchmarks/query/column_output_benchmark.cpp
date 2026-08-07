@@ -160,9 +160,26 @@ mixed_source(const QueryResourceContext& resources, const std::uint32_t rows,
   return VectorExpression::create(std::move(instructions)).value();
 }
 
+[[nodiscard]] VectorExpression fixed_scalar_expression() {
+  const schema::LogicalType int64_type =
+      schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
+  const schema::LogicalType float64_type =
+      schema::LogicalType::create(schema::LogicalTypeKind::kFloat64).value();
+  std::vector<VectorExpressionInstruction> instructions;
+  instructions.emplace_back(VectorConstantExpression{ScalarValue::null(float64_type)});
+  instructions.emplace_back(
+      VectorInputExpression{.input_column_ordinal = 0U, .type = int64_type, .nullable = false});
+  instructions.emplace_back(
+      VectorCastExpression{.operand_instruction = 1U, .target_type = float64_type});
+  instructions.emplace_back(VectorBinaryExpression{.operation = VectorBinaryOperation::kCoalesce,
+                                                   .left_instruction = 0U,
+                                                   .right_instruction = 2U});
+  return VectorExpression::create(std::move(instructions)).value();
+}
+
 [[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>>
 expression_source(const QueryResourceContext& resources, const std::uint32_t rows,
-                  const std::uint32_t selection_stride) {
+                  const std::uint32_t selection_stride, VectorExpression expression) {
   std::vector<columnar::OwnedPhysicalColumn> columns;
   columns.push_back(make_column(rows, 0U));
   common::Result<VectorChunk> chunk = VectorChunk::create(
@@ -183,7 +200,7 @@ expression_source(const QueryResourceContext& resources, const std::uint32_t row
   if (!accounted.has_value())
     return common::make_unexpected(accounted.error());
   std::vector<ColumnOutputPosition> positions;
-  positions.emplace_back(ComputedColumnOutputPosition{benchmark_expression()});
+  positions.emplace_back(ComputedColumnOutputPosition{std::move(expression)});
   return ColumnOutputOperator::create(std::make_unique<OneChunkSource>(std::move(*accounted)),
                                       std::move(positions),
                                       {.maximum_rows = rows,
@@ -344,7 +361,7 @@ void materialize_checked_numeric_expression(benchmark::State& state) {
   std::size_t measured_allocations = 0U;
   std::size_t measured_bytes = 0U;
   {
-    auto pipeline = expression_source(resources, rows, selection_stride);
+    auto pipeline = expression_source(resources, rows, selection_stride, benchmark_expression());
     if (!pipeline.has_value()) {
       const std::string message = pipeline.error().to_string();
       state.SkipWithError(message);
@@ -364,7 +381,7 @@ void materialize_checked_numeric_expression(benchmark::State& state) {
 
   for ([[maybe_unused]] auto iteration : state) {
     state.PauseTiming();
-    auto pipeline = expression_source(resources, rows, selection_stride);
+    auto pipeline = expression_source(resources, rows, selection_stride, benchmark_expression());
     if (!pipeline.has_value()) {
       const std::string message = pipeline.error().to_string();
       state.SkipWithError(message);
@@ -396,6 +413,71 @@ void materialize_checked_numeric_expression(benchmark::State& state) {
 }
 
 BENCHMARK(materialize_checked_numeric_expression)
+    ->Args({64, 1})
+    ->Args({1'024, 1})
+    ->Args({4'096, 1})
+    ->Args({1'024, 4})
+    ->Args({4'096, 4});
+
+void materialize_fixed_width_cast_and_coalesce(benchmark::State& state) {
+  const auto rows = static_cast<std::uint32_t>(state.range(0));
+  const auto selection_stride = static_cast<std::uint32_t>(state.range(1));
+  QueryResourceContext resources = QueryResourceContext::create(kBenchmarkMemoryLimit).value();
+  std::size_t measured_allocations = 0U;
+  std::size_t measured_bytes = 0U;
+  {
+    auto pipeline = expression_source(resources, rows, selection_stride, fixed_scalar_expression());
+    if (!pipeline.has_value()) {
+      const std::string message = pipeline.error().to_string();
+      state.SkipWithError(message);
+      return;
+    }
+    benchmark_support::ScopedAllocationCounting counting;
+    auto step = (*pipeline)->next(resources);
+    measured_allocations = counting.stop().allocations;
+    if (!step.has_value() || step->chunk() == nullptr ||
+        step->chunk()->chunk().column_count() != 1U) {
+      state.SkipWithError(step.has_value() ? "fixed scalar output returned the wrong shape"
+                                           : step.error().to_string());
+      return;
+    }
+    measured_bytes = step->chunk()->chunk().buffer_bytes();
+  }
+
+  for ([[maybe_unused]] auto iteration : state) {
+    state.PauseTiming();
+    auto pipeline = expression_source(resources, rows, selection_stride, fixed_scalar_expression());
+    if (!pipeline.has_value()) {
+      const std::string message = pipeline.error().to_string();
+      state.SkipWithError(message);
+      return;
+    }
+    state.ResumeTiming();
+    auto step = (*pipeline)->next(resources);
+    benchmark::DoNotOptimize(step);
+    state.PauseTiming();
+    if (!step.has_value() || step->chunk() == nullptr ||
+        step->chunk()->chunk().column_count() != 1U) {
+      state.SkipWithError(step.has_value() ? "fixed scalar output returned the wrong shape"
+                                           : step.error().to_string());
+      return;
+    }
+    state.ResumeTiming();
+  }
+  const std::size_t selected = (static_cast<std::size_t>(rows) + selection_stride - 1U) /
+                               static_cast<std::size_t>(selection_stride);
+  state.SetItemsProcessed(static_cast<std::int64_t>(state.iterations()) *
+                          static_cast<std::int64_t>(selected));
+  state.SetBytesProcessed(static_cast<std::int64_t>(state.iterations()) *
+                          static_cast<std::int64_t>(measured_bytes));
+  state.counters["instructions"] = 4.0;
+  state.counters["physical_rows"] = static_cast<double>(rows);
+  state.counters["pull_allocations"] = static_cast<double>(measured_allocations);
+  state.counters["selection_density"] = 1.0 / static_cast<double>(selection_stride);
+  state.SetLabel("coalesce(NULL, CAST(INT64 AS FLOAT64)); source construction excluded");
+}
+
+BENCHMARK(materialize_fixed_width_cast_and_coalesce)
     ->Args({64, 1})
     ->Args({1'024, 1})
     ->Args({4'096, 1})

@@ -284,6 +284,14 @@ public:
   return VectorExpression::create(std::move(instructions)).value();
 }
 
+[[nodiscard]] VectorExpression constant_cast_expression(ScalarValue operand,
+                                                        const schema::LogicalType& target) {
+  std::vector<VectorExpressionInstruction> instructions;
+  instructions.emplace_back(VectorConstantExpression{std::move(operand)});
+  instructions.emplace_back(VectorCastExpression{.operand_instruction = 0U, .target_type = target});
+  return VectorExpression::create(std::move(instructions)).value();
+}
+
 TEST(SourceColumnOutputOperatorTest, ReordersDuplicatesAndCompactsSelectedRows) {
   QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
   auto source =
@@ -629,6 +637,11 @@ TEST(ColumnOutputOperatorTest, MaterializesUnsignedIeeeDecimalAndThreeValuedKern
   positions.emplace_back(ComputedColumnOutputPosition{constant_binary_expression(
       ScalarValue::float64(std::numeric_limits<double>::quiet_NaN()).value(),
       ScalarValue::float64(1.0).value(), VectorBinaryOperation::kLess)});
+  common::Uuid::Bytes uuid_bytes{};
+  uuid_bytes.front() = std::byte{0x42U};
+  positions.emplace_back(ComputedColumnOutputPosition{constant_binary_expression(
+      ScalarValue::uuid(common::Uuid{uuid_bytes}), ScalarValue::uuid(common::Uuid{uuid_bytes}),
+      VectorBinaryOperation::kEqual)});
 
   QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
   auto output =
@@ -654,6 +667,72 @@ TEST(ColumnOutputOperatorTest, MaterializesUnsignedIeeeDecimalAndThreeValuedKern
   EXPECT_FALSE(std::get<bool>(decoded(5U).storage()));
   EXPECT_TRUE(decoded(6U).is_null());
   EXPECT_FALSE(std::get<bool>(decoded(7U).storage()));
+  EXPECT_TRUE(std::get<bool>(decoded(8U).storage()));
+}
+
+TEST(ColumnOutputOperatorTest, MaterializesFixedWidthCastsCoalesceAndTimeBucket) {
+  const schema::LogicalType int8_type = type(schema::LogicalTypeKind::kInt8);
+  const schema::LogicalType int64_type = type(schema::LogicalTypeKind::kInt64);
+  const schema::LogicalType uint64_type = type(schema::LogicalTypeKind::kUInt64);
+  const schema::LogicalType date_type = type(schema::LogicalTypeKind::kDate);
+  const schema::LogicalType timestamp_type = type(schema::LogicalTypeKind::kTimestampNs);
+  const schema::LogicalType decimal_type = schema::LogicalType::decimal(6U, 2U).value();
+
+  std::vector<ColumnOutputPosition> positions;
+  positions.emplace_back(ComputedColumnOutputPosition{
+      constant_cast_expression(ScalarValue::signed_value(int64_type, 127).value(), int8_type)});
+  positions.emplace_back(ComputedColumnOutputPosition{
+      constant_cast_expression(ScalarValue::unsigned_value(uint64_type, 42U).value(), int64_type)});
+  positions.emplace_back(ComputedColumnOutputPosition{
+      constant_cast_expression(ScalarValue::float64(7.9).value(), int8_type)});
+  positions.emplace_back(ComputedColumnOutputPosition{
+      constant_cast_expression(ScalarValue::signed_value(date_type, -1).value(), timestamp_type)});
+  positions.emplace_back(ComputedColumnOutputPosition{
+      constant_cast_expression(ScalarValue::signed_value(timestamp_type, -1).value(), date_type)});
+  positions.emplace_back(ComputedColumnOutputPosition{
+      constant_cast_expression(ScalarValue::signed_value(int64_type, 7).value(), decimal_type)});
+
+  std::vector<VectorExpressionInstruction> coalesce;
+  coalesce.emplace_back(VectorConstantExpression{ScalarValue::signed_value(int64_type, 9).value()});
+  coalesce.emplace_back(VectorConstantExpression{ScalarValue::signed_value(int64_type, 1).value()});
+  coalesce.emplace_back(VectorConstantExpression{ScalarValue::signed_value(int64_type, 0).value()});
+  coalesce.emplace_back(VectorBinaryExpression{.operation = VectorBinaryOperation::kDivide,
+                                               .left_instruction = 1U,
+                                               .right_instruction = 2U});
+  coalesce.emplace_back(VectorBinaryExpression{.operation = VectorBinaryOperation::kCoalesce,
+                                               .left_instruction = 0U,
+                                               .right_instruction = 3U});
+  positions.emplace_back(
+      ComputedColumnOutputPosition{VectorExpression::create(std::move(coalesce)).value()});
+  positions.emplace_back(ComputedColumnOutputPosition{
+      constant_binary_expression(ScalarValue::signed_value(int64_type, 1'000'000'000).value(),
+                                 ScalarValue::signed_value(timestamp_type, -500'000'000).value(),
+                                 VectorBinaryOperation::kTimeBucket)});
+
+  QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+  auto output =
+      ColumnOutputOperator::create(
+          std::make_unique<OneChunkSource>(accounted_chunk(resources, sample_columns(), {0U})),
+          std::move(positions))
+          .value();
+  auto step = output->next(resources);
+  ASSERT_TRUE(step.has_value()) << step.error().to_string();
+  const VectorChunk& chunk = step->chunk()->chunk();
+  const auto decoded = [&](const std::size_t column) {
+    const columnar::PhysicalColumnView* output_column = chunk.column(column);
+    return ScalarValue::from_column_cell(
+               output_column->type(),
+               chunk.cell({.column_ordinal = column, .selected_row = 0U}).value())
+        .value();
+  };
+  EXPECT_EQ(std::get<std::int64_t>(decoded(0U).storage()), 127);
+  EXPECT_EQ(std::get<std::int64_t>(decoded(1U).storage()), 42);
+  EXPECT_EQ(std::get<std::int64_t>(decoded(2U).storage()), 7);
+  EXPECT_EQ(std::get<std::int64_t>(decoded(3U).storage()), -86'400'000'000'000LL);
+  EXPECT_EQ(std::get<std::int64_t>(decoded(4U).storage()), -1);
+  EXPECT_EQ(std::get<Decimal128Value>(decoded(5U).storage()).coefficient.front(), std::byte{0xbcU});
+  EXPECT_EQ(std::get<std::int64_t>(decoded(6U).storage()), 9);
+  EXPECT_EQ(std::get<std::int64_t>(decoded(7U).storage()), -1'000'000'000);
 }
 
 TEST(ColumnOutputOperatorPropertyTest, MaterializesEveryFrozenTypedConstantAndTypedNull) {

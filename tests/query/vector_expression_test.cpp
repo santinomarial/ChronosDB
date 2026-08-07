@@ -96,5 +96,58 @@ TEST(VectorExpressionTest, RejectsHostileProgramsAndUnsupportedLeafTypes) {
             common::StatusCode::kResourceExhausted);
 }
 
+TEST(VectorExpressionTest, ValidatesCastCoalesceAndTimeBucketShapes) {
+  const schema::LogicalType int8 = type(schema::LogicalTypeKind::kInt8);
+  const schema::LogicalType int64 = type(schema::LogicalTypeKind::kInt64);
+  const schema::LogicalType timestamp = type(schema::LogicalTypeKind::kTimestampNs);
+  std::vector<VectorExpressionInstruction> instructions;
+  instructions.emplace_back(VectorConstantExpression{ScalarValue::null(int8)});
+  instructions.emplace_back(VectorCastExpression{.operand_instruction = 0U, .target_type = int64});
+  instructions.emplace_back(VectorConstantExpression{ScalarValue::signed_value(int64, 7).value()});
+  instructions.emplace_back(VectorBinaryExpression{.operation = VectorBinaryOperation::kCoalesce,
+                                                   .left_instruction = 1U,
+                                                   .right_instruction = 2U});
+  instructions.emplace_back(
+      VectorConstantExpression{ScalarValue::signed_value(int64, 1'000'000'000).value()});
+  instructions.emplace_back(
+      VectorConstantExpression{ScalarValue::signed_value(timestamp, -500'000'000).value()});
+  instructions.emplace_back(VectorBinaryExpression{.operation = VectorBinaryOperation::kTimeBucket,
+                                                   .left_instruction = 4U,
+                                                   .right_instruction = 5U});
+  VectorExpression expression = VectorExpression::create(std::move(instructions)).value();
+
+  EXPECT_EQ(expression.instruction_shapes()[1U].type, int64);
+  EXPECT_TRUE(expression.instruction_shapes()[1U].nullable);
+  EXPECT_EQ(expression.instruction_shapes()[3U].type, int64);
+  EXPECT_FALSE(expression.instruction_shapes()[3U].nullable);
+  EXPECT_EQ(expression.result_shape().type, timestamp);
+  EXPECT_FALSE(expression.result_shape().nullable);
+
+  EXPECT_EQ(VectorExpression::create(
+                {VectorConstantExpression{ScalarValue::boolean(true).value()},
+                 VectorCastExpression{.operand_instruction = 0U, .target_type = int64}})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(VectorExpression::create(
+                {VectorConstantExpression{ScalarValue::signed_value(int8, 1).value()},
+                 VectorConstantExpression{ScalarValue::signed_value(int64, 1).value()},
+                 VectorBinaryExpression{.operation = VectorBinaryOperation::kCoalesce,
+                                        .left_instruction = 0U,
+                                        .right_instruction = 1U}})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(VectorExpression::create(
+                {VectorConstantExpression{ScalarValue::signed_value(int64, 1).value()},
+                 VectorConstantExpression{ScalarValue::signed_value(int64, 2).value()},
+                 VectorBinaryExpression{.operation = VectorBinaryOperation::kTimeBucket,
+                                        .left_instruction = 0U,
+                                        .right_instruction = 1U}})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+}
+
 } // namespace
 } // namespace chronos::query

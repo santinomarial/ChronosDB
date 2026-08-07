@@ -346,6 +346,11 @@ int main() {
       chronos::query::VectorExpressionLimits);
   const CreateVectorExpressionFunction create_vector_expression =
       &chronos::query::VectorExpression::create;
+  const auto installed_expression_type =
+      chronos::schema::LogicalType::create(chronos::schema::LogicalTypeKind::kInt64).value();
+  const chronos::query::VectorCastExpression installed_cast{
+      .operand_instruction = 0U, .target_type = installed_expression_type};
+  const auto installed_coalesce = chronos::query::VectorBinaryOperation::kCoalesce;
   using LowerSelectFunction = chronos::query::SqlResult<chronos::query::PhysicalPipelinePlan> (*)(
       const chronos::query::BoundSqlSelect&, chronos::query::PhysicalSelectLoweringLimits);
   const LowerSelectFunction lower_select = &chronos::query::lower_bound_sql_select;
@@ -579,6 +584,8 @@ int main() {
                  physical_end.kind() == chronos::query::PhysicalOperatorStepKind::kEnd &&
                  create_column_subset != nullptr && create_source_column_output != nullptr &&
                  create_column_output != nullptr && create_vector_expression != nullptr &&
+                 installed_cast.target_type == installed_expression_type &&
+                 installed_coalesce == chronos::query::VectorBinaryOperation::kCoalesce &&
                  lower_select != nullptr &&
                  create_timestamp_range_filter != nullptr &&
                  timestamp_range.matches(0) && create_head_scan != nullptr &&

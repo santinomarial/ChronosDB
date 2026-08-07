@@ -53,13 +53,15 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
 
 TEST(PhysicalSelectLoweringAllocationFailureTest, ClassifiesEveryOwnedAllocationFailure) {
   BoundSqlSelect select =
-      bind_sql_v1_select(parse_sql_v1_select("SELECT value + 1 AS v FROM metrics "
-                                             "WHERE value BETWEEN 1 AND 9 LIMIT 2")
-                             .value(),
-                         catalog())
+      bind_sql_v1_select(
+          parse_sql_v1_select("SELECT coalesce(CAST(NULL AS INT8), CAST(value AS INT64)) AS v, "
+                              "time_bucket(INTERVAL '1 second', ts) AS bucket FROM metrics "
+                              "WHERE value BETWEEN 1 AND 9 LIMIT 2")
+              .value(),
+          catalog())
           .value();
   bool reached_success = false;
-  for (std::size_t fail_after = 0U; fail_after < 128U; ++fail_after) {
+  for (std::size_t fail_after = 0U; fail_after < 256U; ++fail_after) {
     SCOPED_TRACE(fail_after);
     std::optional<SqlResult<PhysicalPipelinePlan>> result;
     std::size_t observed = 0U;

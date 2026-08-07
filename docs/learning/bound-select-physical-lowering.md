@@ -30,18 +30,19 @@ instruction family.
 reserved at the caller's instruction limit so allocator growth cannot make an exactly sized program
 fail the public spare-capacity rule. All returned stages own their vectors, constants, and programs.
 
-Unsupported semantic surfaces return `kUnsupportedSyntax`; capacity exhaustion returns
-`kResourceLimit`; inconsistent bound metadata returns `kExecutionFailure`. No unsupported node is
-routed through the scalar evaluator. Construction catches allocation and container-length failure
-and publishes no partial plan.
+Checked numeric/decimal/temporal casts, lazy COALESCE, and `time_bucket` lower directly into the
+fixed-width program. Unsupported semantic surfaces return `kUnsupportedSyntax`; capacity
+exhaustion returns `kResourceLimit`; inconsistent bound metadata returns `kExecutionFailure`. No
+unsupported node is routed through the scalar evaluator. Construction catches allocation and
+container-length failure and publishes no partial plan.
 
 ## Current boundary and next steps
 
 This baseline supports one source, ordinary WHERE, ordered projection, and LIMIT using the current
 numeric/Boolean/temporal kernels. It rejects aggregates, grouping, ORDER BY, LATEST, ASOF,
-SUBSCRIBE, EXPLAIN modes, general casts, COALESCE, text transformation, and time bucketing. The
-next work is to finish scalar physical kernels and add aggregate operators before widening
-relational lowering.
+SUBSCRIBE, EXPLAIN modes, text casts, and case transformation. The next work is an exact
+variable-width computed-output sizing contract, then aggregate operators before wider relational
+lowering.
 
 Complexity is linear in source columns, outputs, and generated instructions. WHERE currently copies
 the complete source shape before filtering; later projection pruning or fusion requires measured

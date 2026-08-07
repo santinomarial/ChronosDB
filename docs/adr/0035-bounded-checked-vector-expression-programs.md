@@ -103,6 +103,12 @@ Physical casts, multi-comparisons, COALESCE, variable-width functions, time buck
 lowering, expression fusion, vector intermediates, aggregates, joins, hidden versions, scheduling,
 and spill remain later Phase 9 decisions.
 
+## Subsequent decisions
+
+[ADR 0036](0036-bound-select-to-physical-pipeline-lowering.md) adds BETWEEN/IN expansion and exact
+bound-SQL lowering. [ADR 0037](0037-fixed-width-vector-casts-and-scalar-functions.md) adds checked
+fixed-width casts, lazy COALESCE, and `time_bucket`; variable-width functions remain unresolved.
+
 ## References
 
 - [ADR 0008](0008-custom-sql-and-vectorized-execution.md)

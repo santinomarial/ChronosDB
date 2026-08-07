@@ -1,5 +1,6 @@
 #include "chronos/common/uuid.hpp"
 #include "chronos/query/catalog.hpp"
+#include "chronos/query/evaluator.hpp"
 #include "chronos/query/parser.hpp"
 #include "chronos/query/physical_lowering.hpp"
 #include "chronos/schema/column_definition.hpp"
@@ -144,6 +145,15 @@ private:
   return std::bit_cast<std::int64_t>(bits);
 }
 
+[[nodiscard]] ScalarValue cell_value(const VectorChunk& chunk, const std::size_t column,
+                                     const std::size_t row) {
+  const columnar::PhysicalColumnView* physical = chunk.column(column);
+  EXPECT_NE(physical, nullptr);
+  return ScalarValue::from_column_cell(
+             physical->type(), chunk.cell({.column_ordinal = column, .selected_row = row}).value())
+      .value();
+}
+
 TEST(PhysicalSelectLoweringTest, LowersWhereProjectionAndLimitIntoExactStageOrder) {
   BoundSqlSelect select = bind("SELECT value + 2 AS adjusted, 7 AS constant FROM metrics "
                                "WHERE flag AND value BETWEEN 1 AND 9 LIMIT 2");
@@ -187,9 +197,106 @@ TEST(PhysicalSelectLoweringTest, PreservesStarOrderAndVariableConstantShape) {
   EXPECT_TRUE(in_plan->output_columns()[0].nullable);
 }
 
+TEST(PhysicalSelectLoweringTest, ExecutesCheckedCastsLazyCoalesceAndTimeBucket) {
+  BoundSqlSelect select =
+      bind("SELECT CAST(value AS FLOAT64) AS floating, "
+           "coalesce(CAST(NULL AS INT8), CAST(value AS INT64), CAST(1000 AS INT8)) AS chosen, "
+           "time_bucket(INTERVAL '1 second', "
+           "TIMESTAMP '1969-12-31 23:59:59.500000000Z') AS bucket FROM metrics LIMIT 1");
+  SqlResult<PhysicalPipelinePlan> plan = lower_bound_sql_select(select);
+  ASSERT_TRUE(plan.has_value()) << plan.error().status().to_string();
+  ASSERT_EQ(plan->output_columns().size(), 3U);
+  EXPECT_EQ(plan->output_columns()[0].type.kind(), schema::LogicalTypeKind::kFloat64);
+  EXPECT_EQ(plan->output_columns()[1].type.kind(), schema::LogicalTypeKind::kInt64);
+  EXPECT_EQ(plan->output_columns()[2].type.kind(), schema::LogicalTypeKind::kTimestampNs);
+
+  QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+  auto pipeline = plan->instantiate(std::make_unique<OneChunkSource>(input(resources))).value();
+  auto step = pipeline->next(resources).value();
+  ASSERT_EQ(step.kind(), PhysicalOperatorStepKind::kChunk);
+  ASSERT_EQ(step.chunk()->chunk().selected_row_count(), 1U);
+  EXPECT_DOUBLE_EQ(std::get<double>(cell_value(step.chunk()->chunk(), 0U, 0U).storage()), 0.0);
+  EXPECT_EQ(std::get<std::int64_t>(cell_value(step.chunk()->chunk(), 1U, 0U).storage()), 0);
+  EXPECT_EQ(std::get<std::int64_t>(cell_value(step.chunk()->chunk(), 2U, 0U).storage()),
+            -1'000'000'000);
+}
+
+TEST(PhysicalSelectLoweringTest, PropagatesRuntimeCastFailureAndCancelsThePipeline) {
+  BoundSqlSelect select = bind("SELECT CAST(1000 AS INT8) AS invalid FROM metrics");
+  PhysicalPipelinePlan plan = lower_bound_sql_select(select).value();
+  QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+  auto pipeline = plan.instantiate(std::make_unique<OneChunkSource>(input(resources))).value();
+  common::Result<PhysicalOperatorStep> step = pipeline->next(resources);
+  ASSERT_FALSE(step.has_value());
+  EXPECT_EQ(step.error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_TRUE(resources.is_cancelled());
+}
+
+TEST(PhysicalSelectLoweringPropertyTest, FixedWidthKernelsMatchTheScalarOracle) {
+  BoundSqlSelect select = bind(
+      "SELECT CAST(value AS FLOAT64) AS floating, CAST(value AS DECIMAL(18,3)) AS decimal_value, "
+      "coalesce(CAST(NULL AS INT8), CAST(value AS INT64)) AS chosen, "
+      "time_bucket(INTERVAL '1 second', ts) AS bucket, "
+      "UUID '00000000-0000-0000-0000-000000000001' = "
+      "UUID '00000000-0000-0000-0000-000000000001' AS uuid_equal FROM metrics");
+  PhysicalPipelinePlan plan = lower_bound_sql_select(select).value();
+
+  std::vector<std::int64_t> timestamps;
+  std::vector<std::int64_t> values;
+  std::array<bool, 257> flags{};
+  timestamps.reserve(257U);
+  values.reserve(257U);
+  std::uint64_t state = 0x6a09e667f3bcc909ULL;
+  for (std::size_t row = 0U; row < 257U; ++row) {
+    state = state * 6'364'136'223'846'793'005ULL + 1'442'695'040'888'963'407ULL;
+    timestamps.push_back(static_cast<std::int64_t>(state % 20'000'000'001ULL) - 10'000'000'000LL);
+    state = state * 6'364'136'223'846'793'005ULL + 1'442'695'040'888'963'407ULL;
+    values.push_back(static_cast<std::int64_t>(state % 2'000'001ULL) - 1'000'000LL);
+    flags[row] = (state & 1U) != 0U;
+  }
+
+  QueryResourceContext resources = QueryResourceContext::create(1U << 22U).value();
+  std::vector<columnar::OwnedPhysicalColumn> columns;
+  columns.push_back(signed_column(schema::LogicalTypeKind::kTimestampNs, timestamps));
+  columns.push_back(signed_column(schema::LogicalTypeKind::kInt64, values));
+  columns.push_back(bool_column(flags));
+  VectorChunk source_chunk =
+      VectorChunk::create(std::move(columns), VectorSelection::all(257U).value()).value();
+  AccountedVectorChunk accounted =
+      AccountedVectorChunk::create(std::move(source_chunk), resources.reserve(32'768U).value(),
+                                   resources)
+          .value();
+  auto pipeline = plan.instantiate(std::make_unique<OneChunkSource>(std::move(accounted))).value();
+  auto step = pipeline->next(resources).value();
+  ASSERT_EQ(step.kind(), PhysicalOperatorStepKind::kChunk);
+  const VectorChunk& actual = step.chunk()->chunk();
+  ASSERT_EQ(actual.selected_row_count(), values.size());
+
+  for (std::size_t row = 0U; row < values.size(); ++row) {
+    std::array<ScalarValue, 3> source_values{
+        ScalarValue::signed_value(type(schema::LogicalTypeKind::kTimestampNs), timestamps[row])
+            .value(),
+        ScalarValue::signed_value(type(schema::LogicalTypeKind::kInt64), values[row]).value(),
+        ScalarValue::boolean(flags[row]).value()};
+    const std::array<ScalarSourceRow, 1> sources{
+        ScalarSourceRow{std::span<const ScalarValue>{source_values}}};
+    const ScalarEvaluationContext context{.sources = sources};
+    for (std::size_t output = 0U; output < select.syntax().items().size(); ++output) {
+      const SqlExpression* expression = select.syntax().items()[output].expression();
+      ASSERT_NE(expression, nullptr);
+      SqlResult<ScalarValue> expected = evaluate_sql_v1_expression(select, *expression, context);
+      ASSERT_TRUE(expected.has_value()) << expected.error().status().to_string();
+      const ScalarValue observed = cell_value(actual, output, row);
+      EXPECT_EQ(observed.type(), expected->type());
+      EXPECT_EQ(observed.storage(), expected->storage());
+    }
+  }
+}
+
 TEST(PhysicalSelectLoweringTest, RejectsUnsupportedRelationalAndScalarSurfaces) {
-  BoundSqlSelect cast = bind("SELECT CAST(value AS FLOAT64) AS converted FROM metrics");
-  EXPECT_EQ(lower_bound_sql_select(cast).error().code(), SqlDiagnosticCode::kUnsupportedSyntax);
+  BoundSqlSelect text_cast = bind("SELECT CAST('value' AS SYMBOL) AS converted FROM metrics");
+  EXPECT_EQ(lower_bound_sql_select(text_cast).error().code(),
+            SqlDiagnosticCode::kUnsupportedSyntax);
   BoundSqlSelect ordered = bind("SELECT value FROM metrics ORDER BY value");
   EXPECT_EQ(lower_bound_sql_select(ordered).error().code(), SqlDiagnosticCode::kUnsupportedSyntax);
   BoundSqlSelect aggregate = bind("SELECT sum(value) AS total FROM metrics");
@@ -222,6 +329,19 @@ TEST(PhysicalSelectLoweringTest, EnforcesExpressionAndPlanLimitsBeforeExecution)
                   exact, {.expression_limits = {.maximum_instructions = 3U,
                                                 .maximum_retained_configuration_bytes = 4'096U}})
                   .has_value());
+
+  BoundSqlSelect exact_bucket =
+      bind("SELECT time_bucket(INTERVAL '1 second', ts) AS bucket FROM metrics");
+  EXPECT_TRUE(
+      lower_bound_sql_select(
+          exact_bucket, {.expression_limits = {.maximum_instructions = 3U,
+                                               .maximum_retained_configuration_bytes = 4'096U}})
+          .has_value());
+  auto short_bucket = lower_bound_sql_select(
+      exact_bucket, {.expression_limits = {.maximum_instructions = 2U,
+                                           .maximum_retained_configuration_bytes = 4'096U}});
+  ASSERT_FALSE(short_bucket.has_value());
+  EXPECT_EQ(short_bucket.error().code(), SqlDiagnosticCode::kResourceLimit);
 }
 
 } // namespace

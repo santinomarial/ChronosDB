@@ -415,12 +415,13 @@ No phase passes because its code merely compiles. A phase passes only when its a
   exact single-source, nonaggregate bound-SELECT lowering for WHERE, ordered projection, stars,
   checked expressions, typed constants, BETWEEN/IN expansion, and LIMIT with explicit unsupported
   diagnostics and end-to-end vector execution evidence. The durable and mutable sources still
-  expose user columns independently: remaining scalar operations, broader relational lowering,
-  optimizer rules,
-  hidden row-version columns, complete multi-part/head
-  composition, base/delta merge and row-version resolution, mapped/asynchronous providers, shared
-  pin credit, scheduling, spill, and full scalar-engine differential plan execution are
-  unimplemented.
+  expose user columns independently. ADR 0037 and the twentieth increment add exact checked
+  fixed-width numeric/decimal/temporal CAST, lazy common-type COALESCE, and negative-safe
+  `time_bucket` kernels with bound lowering, scalar differential, hostile/failure/fuzz/benchmark,
+  and consumer evidence. Variable-width scalar output, broader relational lowering, optimizer
+  rules, hidden row-version columns, complete multi-part/head composition, base/delta merge and
+  row-version resolution, mapped/asynchronous providers, shared pin credit, scheduling, spill, and
+  full scalar-engine differential plan execution are unimplemented.
 
 - **Scope:** bounded vectors, vectorized scans/expressions/aggregates/joins, physical planning, memory accounting, cancellation, parallel scheduling, and spill for explicitly supported operators.
 - **Explicit non-scope:** distributed fragments, GPU novelty, unbounded query memory, or optimizer rules lacking semantic/differential validation.

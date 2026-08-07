@@ -50,6 +50,11 @@ variable-constant output, unsupported-feature classification, exact expression l
 consumer compilation, sanitizers, and full repository regression. Lowering benchmarks exclude
 parse and bind setup.
 
+## Subsequent decisions
+
+[ADR 0037](0037-fixed-width-vector-casts-and-scalar-functions.md) extends this lowerer with checked
+fixed-width casts, lazy COALESCE, and `time_bucket`. Its variable-width exclusions remain in force.
+
 ## References
 
 - [ADR 0008](0008-custom-sql-and-vectorized-execution.md)
