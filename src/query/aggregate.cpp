@@ -7,6 +7,7 @@
 #include "query/decimal_internal.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -18,6 +19,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -648,7 +650,99 @@ struct GroupState {
   std::vector<ScalarValue> key;
   std::vector<AggregateState> aggregates;
   QueryMemoryReservation reservation;
+  std::uint64_t hash;
 };
+
+struct GroupLookup {
+  std::optional<std::size_t> group_index;
+  std::size_t bucket_index;
+  std::uint64_t hash;
+};
+
+inline constexpr std::uint64_t kGroupHashOffset = 14'695'981'039'346'656'037ULL;
+inline constexpr std::uint64_t kGroupHashPrime = 1'099'511'628'211ULL;
+inline constexpr std::size_t kEmptyGroupBucket = std::numeric_limits<std::size_t>::max();
+
+void hash_byte(std::uint64_t& hash, const std::uint8_t byte) noexcept {
+  hash ^= byte;
+  hash *= kGroupHashPrime;
+}
+
+template <typename Integer> void hash_integer(std::uint64_t& hash, const Integer value) noexcept {
+  static_assert(std::is_unsigned_v<Integer>);
+  for (std::size_t byte = 0U; byte < sizeof(value); ++byte)
+    hash_byte(hash, static_cast<std::uint8_t>((value >> (byte * 8U)) & Integer{0xffU}));
+}
+
+void hash_bytes(std::uint64_t& hash, const common::ByteView bytes) noexcept {
+  hash_integer(hash, static_cast<std::uint64_t>(bytes.size()));
+  for (const std::byte byte : bytes)
+    hash_byte(hash, std::to_integer<std::uint8_t>(byte));
+}
+
+[[nodiscard]] common::Result<void> hash_group_cell(std::uint64_t& hash,
+                                                   const schema::LogicalType type,
+                                                   const columnar::ColumnCellView& cell) {
+  hash_integer(hash, type.code());
+  hash_integer(hash, type.parameter_0());
+  hash_integer(hash, type.parameter_1());
+  hash_byte(hash, cell.is_null() ? 0U : 1U);
+  if (cell.is_null())
+    return {};
+  if (type.kind() == schema::LogicalTypeKind::kBool) {
+    const common::Result<bool> value = cell.boolean();
+    if (!value.has_value())
+      return common::make_unexpected(value.error());
+    hash_byte(hash, *value ? 1U : 0U);
+    return {};
+  }
+  if (type.kind() == schema::LogicalTypeKind::kFloat32 ||
+      type.kind() == schema::LogicalTypeKind::kFloat64) {
+    const common::Result<ScalarValue> value = ScalarValue::from_column_cell(type, cell);
+    if (!value.has_value())
+      return common::make_unexpected(value.error());
+    if (type.kind() == schema::LogicalTypeKind::kFloat32) {
+      const auto* number = std::get_if<float>(&value->storage());
+      if (number == nullptr)
+        return common::make_unexpected(invalid("FLOAT32 group hash storage is invalid"));
+      const std::uint32_t bits =
+          std::isnan(*number)
+              ? std::uint32_t{0x7fc00000U}
+              : (*number == 0.0F ? std::uint32_t{0U} : std::bit_cast<std::uint32_t>(*number));
+      hash_integer(hash, bits);
+      return {};
+    }
+    const auto* number = std::get_if<double>(&value->storage());
+    if (number == nullptr)
+      return common::make_unexpected(invalid("FLOAT64 group hash storage is invalid"));
+    const std::uint64_t bits =
+        std::isnan(*number)
+            ? std::uint64_t{0x7ff8000000000000ULL}
+            : (*number == 0.0 ? std::uint64_t{0U} : std::bit_cast<std::uint64_t>(*number));
+    hash_integer(hash, bits);
+    return {};
+  }
+  const common::Result<common::ByteView> bytes = cell.bytes();
+  if (!bytes.has_value())
+    return common::make_unexpected(bytes.error());
+  hash_bytes(hash, *bytes);
+  return {};
+}
+
+[[nodiscard]] common::Result<std::size_t> group_bucket_count(const std::size_t maximum_groups) {
+  const std::optional<std::size_t> required =
+      common::checked_multiply(maximum_groups, std::size_t{2U});
+  if (!required.has_value())
+    return common::make_unexpected(exhausted("grouped aggregate bucket count overflowed"));
+  std::size_t buckets = 1U;
+  while (buckets < *required) {
+    const std::optional<std::size_t> doubled = common::checked_multiply(buckets, std::size_t{2U});
+    if (!doubled.has_value())
+      return common::make_unexpected(exhausted("grouped aggregate bucket count overflowed"));
+    buckets = *doubled;
+  }
+  return buckets;
+}
 
 [[nodiscard]] common::Result<std::size_t> add_bytes(const std::size_t left, const std::size_t right,
                                                     const std::string_view message) {
@@ -759,12 +853,15 @@ public:
         if (!active.has_value())
           return common::make_unexpected(active.error());
       }
-      common::Result<std::optional<std::size_t>> existing = find_group(chunk, selected_row);
-      if (!existing.has_value())
-        return common::make_unexpected(existing.error());
-      std::size_t group_index = existing->value_or(groups_.size());
+      const common::Result<void> storage = ensure_group_storage(resources);
+      if (!storage.has_value())
+        return common::make_unexpected(storage.error());
+      common::Result<GroupLookup> lookup = find_group(chunk, selected_row);
+      if (!lookup.has_value())
+        return common::make_unexpected(lookup.error());
+      std::size_t group_index = lookup->group_index.value_or(groups_.size());
       if (group_index == groups_.size()) {
-        common::Result<std::size_t> created = create_group(chunk, selected_row, resources);
+        common::Result<std::size_t> created = create_group(chunk, selected_row, *lookup, resources);
         if (!created.has_value())
           return common::make_unexpected(created.error());
         group_index = *created;
@@ -852,9 +949,30 @@ private:
     return {};
   }
 
-  [[nodiscard]] common::Result<std::optional<std::size_t>>
-  find_group(const VectorChunk& chunk, const std::size_t selected_row) const {
-    for (std::size_t candidate = 0U; candidate < groups_.size(); ++candidate) {
+  [[nodiscard]] common::Result<GroupLookup> find_group(const VectorChunk& chunk,
+                                                       const std::size_t selected_row) const {
+    if (buckets_.empty())
+      return common::make_unexpected(invalid("grouped aggregate hash storage is unavailable"));
+    std::uint64_t hash = kGroupHashOffset;
+    for (const VectorGroupKeyDefinition& key : keys_) {
+      const common::Result<columnar::ColumnCellView> cell =
+          chunk.cell({.column_ordinal = key.column_ordinal, .selected_row = selected_row});
+      if (!cell.has_value())
+        return common::make_unexpected(cell.error());
+      const common::Result<void> hashed = hash_group_cell(hash, key.type, *cell);
+      if (!hashed.has_value())
+        return common::make_unexpected(hashed.error());
+    }
+    const std::size_t mask = buckets_.size() - 1U;
+    for (std::size_t probe = 0U; probe < buckets_.size(); ++probe) {
+      const std::size_t bucket = (static_cast<std::size_t>(hash) + probe) & mask;
+      const std::size_t candidate = buckets_[bucket];
+      if (candidate == kEmptyGroupBucket)
+        return GroupLookup{.group_index = std::nullopt, .bucket_index = bucket, .hash = hash};
+      if (candidate >= groups_.size())
+        return common::make_unexpected(invalid("grouped aggregate hash bucket is invalid"));
+      if (groups_[candidate].hash != hash)
+        continue;
       bool equal = true;
       for (std::size_t key = 0U; key < keys_.size(); ++key) {
         const common::Result<columnar::ColumnCellView> cell =
@@ -871,21 +989,31 @@ private:
         }
       }
       if (equal)
-        return std::optional<std::size_t>{candidate};
+        return GroupLookup{.group_index = candidate, .bucket_index = bucket, .hash = hash};
     }
-    return std::optional<std::size_t>{};
+    return common::make_unexpected(exhausted("grouped aggregate hash table is full"));
   }
 
-  [[nodiscard]] common::Result<void> ensure_group_slots(const QueryResourceContext& resources) {
-    if (group_slots_reservation_.is_valid())
+  [[nodiscard]] common::Result<void> ensure_group_storage(const QueryResourceContext& resources) {
+    if (group_storage_reservation_.is_valid())
       return {};
     common::Result<std::size_t> slot_bytes = multiply_bytes(
         limits_.maximum_groups, sizeof(GroupState) * 2U, "grouped aggregate slot size overflowed");
     if (!slot_bytes.has_value())
       return common::make_unexpected(slot_bytes.error());
+    common::Result<std::size_t> bucket_count = group_bucket_count(limits_.maximum_groups);
+    if (!bucket_count.has_value())
+      return common::make_unexpected(bucket_count.error());
+    common::Result<std::size_t> bucket_bytes = multiply_bytes(
+        *bucket_count, sizeof(std::size_t) * 2U, "grouped aggregate bucket size overflowed");
+    if (!bucket_bytes.has_value())
+      return common::make_unexpected(bucket_bytes.error());
     common::Result<std::size_t> charge =
-        add_bytes(*slot_bytes, kConservativeAllocationOverheadBytes,
-                  "grouped aggregate slot size overflowed");
+        add_bytes(*slot_bytes, *bucket_bytes, "grouped aggregate storage size overflowed");
+    if (!charge.has_value())
+      return common::make_unexpected(charge.error());
+    charge = add_bytes(*charge, kConservativeAllocationOverheadBytes * 2U,
+                       "grouped aggregate slot size overflowed");
     if (!charge.has_value())
       return common::make_unexpected(charge.error());
     common::Result<QueryMemoryReservation> reservation = resources.reserve(*charge);
@@ -893,19 +1021,32 @@ private:
       return common::make_unexpected(reservation.error());
     try {
       groups_.reserve(limits_.maximum_groups);
-      const std::optional<std::size_t> retained =
+      buckets_.assign(*bucket_count, kEmptyGroupBucket);
+      const std::optional<std::size_t> retained_groups =
           common::checked_multiply(groups_.capacity(), sizeof(GroupState));
+      const std::optional<std::size_t> retained_buckets =
+          common::checked_multiply(buckets_.capacity(), sizeof(std::size_t));
+      const std::optional<std::size_t> retained =
+          retained_groups.has_value() && retained_buckets.has_value()
+              ? common::checked_add(*retained_groups, *retained_buckets)
+              : std::nullopt;
       if (!retained.has_value() || *retained > reservation->bytes()) {
         std::vector<GroupState>{}.swap(groups_);
+        std::vector<std::size_t>{}.swap(buckets_);
         return common::make_unexpected(
-            exhausted("grouped aggregate slot allocation exceeded its charge"));
+            exhausted("grouped aggregate storage allocation exceeded its charge"));
       }
-      group_slots_reservation_ = std::move(*reservation);
+      group_storage_reservation_ = std::move(*reservation);
       return {};
     } catch (const std::bad_alloc&) {
-      return common::make_unexpected(exhausted("grouped aggregate slot allocation failed"));
+      std::vector<GroupState>{}.swap(groups_);
+      std::vector<std::size_t>{}.swap(buckets_);
+      return common::make_unexpected(exhausted("grouped aggregate storage allocation failed"));
     } catch (const std::length_error&) {
-      return common::make_unexpected(exhausted("grouped aggregate slots exceed container limits"));
+      std::vector<GroupState>{}.swap(groups_);
+      std::vector<std::size_t>{}.swap(buckets_);
+      return common::make_unexpected(
+          exhausted("grouped aggregate storage exceeds container limits"));
     }
   }
 
@@ -959,12 +1100,14 @@ private:
 
   [[nodiscard]] common::Result<std::size_t> create_group(const VectorChunk& chunk,
                                                          const std::size_t selected_row,
+                                                         const GroupLookup& lookup,
                                                          const QueryResourceContext& resources) {
     if (groups_.size() >= limits_.maximum_groups)
       return common::make_unexpected(exhausted("grouped aggregate group count exceeds its limit"));
-    const common::Result<void> slots = ensure_group_slots(resources);
-    if (!slots.has_value())
-      return common::make_unexpected(slots.error());
+    if (lookup.group_index.has_value() || lookup.bucket_index >= buckets_.size() ||
+        buckets_[lookup.bucket_index] != kEmptyGroupBucket) {
+      return common::make_unexpected(invalid("grouped aggregate insertion bucket is invalid"));
+    }
     common::Result<std::size_t> charge = group_charge(chunk, selected_row);
     if (!charge.has_value())
       return common::make_unexpected(charge.error());
@@ -997,7 +1140,9 @@ private:
       }
       groups_.push_back(GroupState{.key = std::move(key),
                                    .aggregates = std::move(aggregates),
-                                   .reservation = std::move(*reservation)});
+                                   .reservation = std::move(*reservation),
+                                   .hash = lookup.hash});
+      buckets_[lookup.bucket_index] = groups_.size() - 1U;
       return groups_.size() - 1U;
     } catch (const std::bad_alloc&) {
       return common::make_unexpected(exhausted("grouped aggregate state allocation failed"));
@@ -1033,7 +1178,8 @@ private:
   std::vector<VectorAggregateDefinition> definitions_;
   GroupedAggregateLimits limits_;
   std::vector<GroupState> groups_;
-  QueryMemoryReservation group_slots_reservation_;
+  std::vector<std::size_t> buckets_;
+  QueryMemoryReservation group_storage_reservation_;
 };
 
 GroupedAggregateOperator::GroupedAggregateOperator(std::unique_ptr<PhysicalOperator> input,

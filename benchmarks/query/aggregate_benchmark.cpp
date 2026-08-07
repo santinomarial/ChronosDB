@@ -399,7 +399,11 @@ BENCHMARK(streaming_ungrouped_aggregates)
     ->Args({32'768, 256, 1})
     ->Args({32'768, 2'048, 4});
 
-BENCHMARK(bounded_grouped_aggregates)->Args({32'768, 2'048, 16})->Args({32'768, 2'048, 256});
+BENCHMARK(bounded_grouped_aggregates)
+    ->Args({32'768, 2'048, 1})
+    ->Args({32'768, 2'048, 16})
+    ->Args({32'768, 2'048, 256})
+    ->Args({32'768, 2'048, 4'096});
 
 BENCHMARK(variable_width_extrema)->Args({32'768, 2'048, 0})->Args({32'768, 2'048, 1});
 

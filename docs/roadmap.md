@@ -458,9 +458,12 @@ No phase passes because its code merely compiles. A phase passes only when its a
   ADR 0049 and the thirty-second increment add exact STRING/SYMBOL/BINARY MIN/MAX to global and
   grouped aggregation with unsigned byte order, reserve-before-copy replacement, per-state payload
   limits, query-credit cleanup, SQL lowering, failure injection, fuzzing, and microbenchmarks.
-  Hashing, broader relational lowering,
-  optimizer rules, future correction/delete row-version resolution, mapped/asynchronous providers, shared
-  pin credit, scheduling, spill, and full scalar-engine differential plan execution are unimplemented.
+  ADR 0050 and the thirty-third increment replace linear group lookup with one pre-sized
+  query-accounted open-addressed table, canonical all-type hash framing, exact collision checks,
+  floating zero/NaN equivalence, independent-model fuzzing, and cardinality profiles. Broader
+  relational lowering, optimizer rules, future correction/delete row-version resolution,
+  mapped/asynchronous providers, shared pin credit, scheduling, spill, and full scalar-engine
+  differential plan execution are unimplemented.
 
 - **Scope:** bounded vectors, vectorized scans/expressions/aggregates/joins, physical planning, memory accounting, cancellation, parallel scheduling, and spill for explicitly supported operators.
 - **Explicit non-scope:** distributed fragments, GPU novelty, unbounded query memory, or optimizer rules lacking semantic/differential validation.

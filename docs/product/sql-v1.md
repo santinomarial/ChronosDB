@@ -11,7 +11,9 @@
 > instantiates those supported physical pipelines over one exact complete append-only tablet
 > snapshot while preserving automatic row-version shape and hidden-column removal. Global and
 > grouped vector aggregation now implements STRING/SYMBOL/BINARY `MIN` and `MAX` with unsigned byte
-> order and bounded query-accounted winner storage. SQL v1 is deliberately smaller than the SQL
+> order and bounded query-accounted winner storage. Group lookup uses bounded query-accounted
+> canonical hashing with exact collision comparison; this changes no grouping or output-order
+> semantics. SQL v1 is deliberately smaller than the SQL
 > standard. Unsupported syntax must produce a clear bind or
 > parse error; it must not be accepted with different semantics.
 

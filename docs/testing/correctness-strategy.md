@@ -177,7 +177,9 @@
 > fuzzing, installation, and retained-plan measurements. Query-accounted variable-width extrema
 > add global/grouped STRING/SYMBOL/BINARY byte-order, replacement, NULL/empty, payload-limit,
 > SQL-lowering, allocation-failure, fuzz, sanitizer, and replacement-pattern benchmark coverage.
-> Generated-identity base ordering, hashing, and spill remain outside this claim.
+> Canonical grouped hashing adds exact NULL/zero/NaN equivalence, deliberate collision checks,
+> bucket allocation-failure cleanup, independent-model execution fuzzing, and cardinality profiles.
+> Generated-identity base ordering and spill remain outside this claim.
 > Complete append-only tablet scanning now composes the exact durable, sealed-head, and active-head
 > publications from one aggregate epoch. Deterministic multiset and suffix checks, head-only exact
 > predicate/helper-removal coverage, hostile finite limits, allocation-failure injection, public

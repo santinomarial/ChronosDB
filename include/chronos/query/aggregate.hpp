@@ -111,10 +111,10 @@ private:
   bool emitted_{};
 };
 
-// Consumes its complete input stream into a finite query-accounted set of groups and then emits one
-// canonical accounted row per pull. Key order in each row is caller order, followed by aggregate
-// order. Empty input emits no groups. NULL key cells compare equal for grouping. Every retained
-// variable-width extremum is independently bounded and query-accounted.
+// Consumes its complete input stream into a finite query-accounted hash table and then emits one
+// canonical accounted row per pull in first-seen group order. Key order in each row is caller
+// order, followed by aggregate order. Empty input emits no groups. NULL key cells compare equal for
+// grouping. Every retained variable-width extremum is independently bounded and query-accounted.
 class GroupedAggregateOperator final : public PhysicalOperator {
 public:
   ~GroupedAggregateOperator() override;

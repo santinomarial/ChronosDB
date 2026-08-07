@@ -126,7 +126,8 @@ exact input/result shapes, checked runtime failure, short-circuit, and determini
 properties described in the [vector-expression guide](vector-expression-programs.md).
 Ungrouped aggregate shape, streaming, numeric, NULL, ownership, allocation, and property evidence is
 described in the [aggregate guide](streaming-ungrouped-aggregates.md). Grouped state and lowering
-have separate guides, and physical sort ownership/order evidence is in the
+have separate guides, including canonical query-accounted hashing, and physical sort
+ownership/order evidence is in the
 [bounded-sort guide](bounded-physical-sort.md).
 
 `chronos_physical_plan_fuzz` drives hostile stage configurations and valid end-to-end execution.

@@ -75,8 +75,9 @@ This baseline supports one source, ordinary WHERE, ordered projection, global an
 aggregates, exact bounded ORDER BY where authoritative identity is available, and LIMIT using the
 current numeric, Boolean, temporal, UUID, and variable-width output kernels. It rejects generated-
 identity base ORDER BY, LATEST, ASOF, SUBSCRIBE, and EXPLAIN modes. Variable-width MIN/MAX now lower
-through the query-accounted aggregate state.
-Hash grouping, aggregate common-subexpression elimination, and spill remain later decisions.
+through the query-accounted aggregate state. Grouped execution uses canonical, collision-checked,
+query-accounted hashing. Aggregate common-subexpression elimination and spill remain later
+decisions.
 
 Lowering complexity is linear in source columns, output syntax, aggregate calls, and generated
 instructions. WHERE currently copies the complete source shape before filtering. Mixed direct and

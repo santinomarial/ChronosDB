@@ -237,10 +237,13 @@ variance result under [ADR 0040](../adr/0040-streaming-ungrouped-vector-aggregat
 global aggregates now lower WHERE, direct or computed arguments, the fixed-state aggregate stage,
 final expressions, and LIMIT under
 [ADR 0041](../adr/0041-bound-global-aggregate-physical-lowering.md). Grouped/dynamic aggregate
-state now has a finite query-accounted linear-lookup baseline with exact fixed/variable keys under
+state has finite query-accounted exact fixed/variable keys under
 [ADR 0042](../adr/0042-query-accounted-bounded-grouped-aggregates.md), and bound single-source GROUP
 BY lowering is connected under
-[ADR 0043](../adr/0043-bound-grouped-aggregate-physical-lowering.md). A bounded physical sort now
+[ADR 0043](../adr/0043-bound-grouped-aggregate-physical-lowering.md). Canonical query-accounted
+open addressing now replaces linear group lookup while preserving exact collision checks and
+floating grouping equivalence under
+[ADR 0050](../adr/0050-canonical-query-accounted-group-hashing.md). A bounded physical sort now
 retains accounted input, stably orders explicit all-type keys, and gathers one independent canonical
 output under [ADR 0044](../adr/0044-query-accounted-bounded-physical-sort.md). CSEG and mutable-head
 sources can now append the same checked WAL ID/record sequence/row ordinal/operation suffix under
@@ -255,8 +258,7 @@ plan's complete schema and optional suffix input, loads one held snapshot's dura
 every current source, and instantiates the checked pipeline without collapsing SQL diagnostics.
 Future correction/delete version resolution remains separate work. Variable-width aggregate
 extrema now use exact unsigned byte order and reserve-before-copy query accounting under
-[ADR 0049](../adr/0049-query-accounted-variable-width-extrema.md). Hashing and spill remain
-deferred. General relational lowering, parallel scheduling,
+[ADR 0049](../adr/0049-query-accounted-variable-width-extrema.md). General relational lowering, parallel scheduling,
 spilling, adaptive behavior, and join algorithms remain deferred. Implemented reservations and
 accounted chunks provide the admission/ownership invariant, but future operators must reserve every
 retained allocation and release snapshot pins and memory by cooperative cancellation unwinding.
