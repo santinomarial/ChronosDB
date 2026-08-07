@@ -4,6 +4,7 @@
 #include "chronos/common/result.hpp"
 #include "chronos/query/aggregate.hpp"
 #include "chronos/query/column_output.hpp"
+#include "chronos/query/latest.hpp"
 #include "chronos/query/physical_operator.hpp"
 #include "chronos/query/sort.hpp"
 #include "chronos/schema/logical_type.hpp"
@@ -68,6 +69,11 @@ struct SortStage {
   SortLimits limits{};
 };
 
+struct LatestByStage {
+  VectorLatestByDefinition definition;
+  LatestByLimits limits{};
+};
+
 struct LimitStage {
   std::uint64_t maximum_rows;
 };
@@ -75,7 +81,7 @@ struct LimitStage {
 using PhysicalPipelineStage =
     std::variant<BooleanFilterStage, TimestampRangeFilterStage, ColumnSubsetStage,
                  SourceColumnOutputStage, ColumnOutputStage, UngroupedAggregateStage,
-                 GroupedAggregateStage, SortStage, LimitStage>;
+                 GroupedAggregateStage, LatestByStage, SortStage, LimitStage>;
 
 struct PhysicalPipelinePlanLimits {
   std::size_t maximum_input_columns{kDefaultVectorChunkColumnLimit};

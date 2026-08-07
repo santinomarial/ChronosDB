@@ -7,6 +7,7 @@
 #include "chronos/query/snapshot_pipeline.hpp"
 #include "snapshot_tablet_scan_test_fixture.hpp"
 
+#include <algorithm>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -96,6 +97,27 @@ TEST(SnapshotPipelineTest, InfersSuffixFreeAggregateInputAndExecutesExactSnapsho
       fixture.schema_ptr()->schema_id(), plan);
   ASSERT_TRUE(pipeline.has_value()) << pipeline.error().to_string();
   EXPECT_EQ(drain_signed(**pipeline, resources), (std::vector<std::int64_t>{7}));
+  pipeline->reset();
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
+TEST(SnapshotPipelineTest, InfersLatestSuffixAndExecutesComputedTimestampBeforeOrder) {
+  test::SnapshotTabletScanFixture fixture{6U};
+  PhysicalPipelinePlan plan = lower(
+      fixture, "SELECT event_time FROM metrics LATEST BY (event_time) ON "
+               "time_bucket(INTERVAL '1 second', event_time) ORDER BY event_time DESC LIMIT 2");
+  ASSERT_EQ(plan.input_columns().size(), 5U);
+  ASSERT_TRUE(std::ranges::any_of(plan.stages(), [](const PhysicalPipelineStage& stage) {
+    return std::holds_alternative<LatestByStage>(stage);
+  }));
+  QueryResourceContext resources =
+      QueryResourceContext::create(std::size_t{32U} * 1024U * 1024U).value();
+  auto pipeline = instantiate_snapshot_tablet_pipeline(
+      resources, fixture.storage(), fixture.snapshot(),
+      test::SnapshotTabletScanFixture::tablet_id(), fixture.lineage(),
+      fixture.schema_ptr()->schema_id(), plan);
+  ASSERT_TRUE(pipeline.has_value()) << pipeline.error().to_string();
+  EXPECT_EQ(drain_signed(**pipeline, resources), (std::vector<std::int64_t>{-95, -96}));
   pipeline->reset();
   EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
 }

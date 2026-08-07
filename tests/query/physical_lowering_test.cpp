@@ -870,6 +870,98 @@ TEST(PhysicalSelectLoweringTest,
   EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
 }
 
+TEST(PhysicalSelectLoweringTest,
+     LowersLatestByComputedTimestampMultipleKeysAndExactVersionTieAgainstScalarOracle) {
+  const std::string_view sql =
+      "SELECT flag, label AS winner FROM metrics LATEST BY (flag, value) ON "
+      "time_bucket(INTERVAL '1 second', ts) "
+      "ORDER BY flag ASC, value ASC";
+  SqlResult<ParsedSqlSelect> parsed = parse_sql_v1_select(sql);
+  ASSERT_TRUE(parsed.has_value()) << parsed.error().status().to_string();
+  SqlResult<BoundSqlSelect> bound = bind_sql_v1_select(std::move(*parsed), catalog());
+  ASSERT_TRUE(bound.has_value()) << bound.error().status().to_string();
+  BoundSqlSelect select = std::move(*bound);
+  SqlResult<PhysicalPipelinePlan> lowered = lower_bound_sql_select(select);
+  ASSERT_TRUE(lowered.has_value()) << lowered.error().status().to_string();
+  PhysicalPipelinePlan plan = std::move(*lowered);
+  ASSERT_EQ(plan.input_columns().size(), 8U);
+  ASSERT_EQ(plan.output_columns().size(), 2U);
+  ASSERT_EQ(plan.stages().size(), 6U);
+  ASSERT_TRUE(std::holds_alternative<ColumnOutputStage>(plan.stages()[0]));
+  ASSERT_TRUE(std::holds_alternative<LatestByStage>(plan.stages()[1]));
+  ASSERT_TRUE(std::holds_alternative<ColumnSubsetStage>(plan.stages()[2]));
+  ASSERT_TRUE(std::holds_alternative<ColumnOutputStage>(plan.stages()[3]));
+  ASSERT_TRUE(std::holds_alternative<SortStage>(plan.stages()[4]));
+  ASSERT_TRUE(std::holds_alternative<ColumnSubsetStage>(plan.stages()[5]));
+  const LatestByStage& latest = std::get<LatestByStage>(plan.stages()[1]);
+  EXPECT_EQ(latest.definition.key_column_ordinals, (std::vector<std::size_t>{2U, 1U}));
+  EXPECT_EQ(latest.definition.timestamp_column_ordinal, 8U);
+  EXPECT_EQ(latest.definition.physical_ordering_key_ordinals, (std::vector<std::size_t>{0U}));
+  EXPECT_EQ(latest.definition.row_version_first_column_ordinal, 4U);
+
+  QueryResourceContext resources = QueryResourceContext::create(4U << 20U).value();
+  auto instantiated = plan.instantiate(std::make_unique<OneChunkSource>(ordered_input(resources)));
+  ASSERT_TRUE(instantiated.has_value()) << instantiated.error().to_string();
+  auto pipeline = std::move(*instantiated);
+  auto pulled = pipeline->next(resources);
+  ASSERT_TRUE(pulled.has_value()) << pulled.error().to_string();
+  auto step = std::move(*pulled);
+  ASSERT_EQ(step.kind(), PhysicalOperatorStepKind::kChunk);
+  const VectorChunk& output = step.chunk()->chunk();
+  ASSERT_EQ(output.column_count(), 2U);
+  ASSERT_EQ(output.selected_row_count(), 4U);
+  EXPECT_FALSE(std::get<bool>(cell_value(output, 0U, 0U).storage()));
+  EXPECT_EQ(cell_text(output, 1U, 0U), "seq2");
+  EXPECT_TRUE(cell_value(output, 1U, 1U).is_null());
+  EXPECT_EQ(cell_text(output, 1U, 2U), "late");
+  EXPECT_EQ(cell_text(output, 1U, 3U), "high");
+
+  OneSnapshotProvider provider{ordered_scalar_snapshot()};
+  SqlResult<ScalarQueryResult> scalar = execute_sql_v1_select(select, provider);
+  ASSERT_TRUE(scalar.has_value()) << scalar.error().status().to_string();
+  ASSERT_EQ(scalar->rows().size(), output.selected_row_count());
+  for (std::size_t row = 0U; row < scalar->rows().size(); ++row) {
+    for (std::size_t column = 0U; column < scalar->rows()[row].size(); ++column) {
+      const ScalarValue physical = cell_value(output, column, row);
+      EXPECT_EQ(physical.type(), scalar->rows()[row][column].type());
+      EXPECT_EQ(physical.storage(), scalar->rows()[row][column].storage());
+    }
+  }
+  step = PhysicalOperatorStep::end();
+  EXPECT_EQ(pipeline->next(resources)->kind(), PhysicalOperatorStepKind::kEnd);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
+TEST(PhysicalSelectLoweringTest, PreservesLatestWhereAggregateOrderLimitStageOrder) {
+  BoundSqlSelect select = bind("SELECT flag, count(*) AS rows FROM metrics LATEST BY (flag) ON "
+                               "time_bucket(INTERVAL '1 second', ts) WHERE value < 9 GROUP BY flag "
+                               "ORDER BY rows DESC, flag ASC LIMIT 1");
+  PhysicalPipelinePlan plan = lower_bound_sql_select(select).value();
+  ASSERT_EQ(plan.output_columns().size(), 2U);
+  ASSERT_EQ(plan.stages().size(), 11U);
+  EXPECT_TRUE(std::holds_alternative<ColumnOutputStage>(plan.stages()[0]));
+  EXPECT_TRUE(std::holds_alternative<LatestByStage>(plan.stages()[1]));
+  EXPECT_TRUE(std::holds_alternative<ColumnSubsetStage>(plan.stages()[2]));
+  EXPECT_TRUE(std::holds_alternative<ColumnOutputStage>(plan.stages()[3]));
+  EXPECT_TRUE(std::holds_alternative<BooleanFilterStage>(plan.stages()[4]));
+  EXPECT_TRUE(std::holds_alternative<ColumnOutputStage>(plan.stages()[5]));
+  EXPECT_TRUE(std::holds_alternative<GroupedAggregateStage>(plan.stages()[6]));
+  EXPECT_TRUE(std::holds_alternative<ColumnOutputStage>(plan.stages()[7]));
+  EXPECT_TRUE(std::holds_alternative<SortStage>(plan.stages()[8]));
+  EXPECT_TRUE(std::holds_alternative<ColumnSubsetStage>(plan.stages()[9]));
+  EXPECT_TRUE(std::holds_alternative<LimitStage>(plan.stages()[10]));
+
+  QueryResourceContext resources = QueryResourceContext::create(4U << 20U).value();
+  auto pipeline =
+      plan.instantiate(std::make_unique<OneChunkSource>(ordered_input(resources))).value();
+  auto step = pipeline->next(resources).value();
+  ASSERT_EQ(step.kind(), PhysicalOperatorStepKind::kChunk);
+  const VectorChunk& output = step.chunk()->chunk();
+  ASSERT_EQ(output.selected_row_count(), 1U);
+  EXPECT_FALSE(std::get<bool>(cell_value(output, 0U, 0U).storage()));
+  EXPECT_EQ(std::get<std::int64_t>(cell_value(output, 1U, 0U).storage()), 1);
+}
+
 TEST(PhysicalSelectLoweringTest, PreservesAliasVisibilityAndExplicitOrDefaultNullPlacement) {
   for (const auto& [sql, null_first] : std::array<std::pair<std::string_view, bool>, 4>{
            std::pair{"SELECT label AS name FROM metrics ORDER BY name DESC", true},

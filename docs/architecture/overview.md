@@ -253,12 +253,16 @@ lowering under [ADR 0046](../adr/0046-exact-bounded-sql-order-by-lowering.md) no
 and non-projected keys, appends DEDUP/group and commit-position ties, sorts before LIMIT, and removes
 every hidden column. Base schemas without a DEDUP KEY remain unsupported until their authoritative
 generated logical identity is exposed.
+[ADR 0051](../adr/0051-exact-bounded-latest-by-physical-lowering.md) adds exact bounded LATEST BY:
+the bound timestamp is prepared before WHERE, complete physical and row-version winner ties are
+explicit sort keys, adjacent groups compact allocation-free, and all helper columns remain hidden.
 [ADR 0048](../adr/0048-snapshot-tablet-physical-pipeline-instantiation.md) now validates a lowered
 plan's complete schema and optional suffix input, loads one held snapshot's durable images, composes
 every current source, and instantiates the checked pipeline without collapsing SQL diagnostics.
 Future correction/delete version resolution remains separate work. Variable-width aggregate
 extrema now use exact unsigned byte order and reserve-before-copy query accounting under
-[ADR 0049](../adr/0049-query-accounted-variable-width-extrema.md). General relational lowering, parallel scheduling,
+[ADR 0049](../adr/0049-query-accounted-variable-width-extrema.md). ASOF and broader relational
+lowering, parallel scheduling,
 spilling, adaptive behavior, and join algorithms remain deferred. Implemented reservations and
 accounted chunks provide the admission/ownership invariant, but future operators must reserve every
 retained allocation and release snapshot pins and memory by cooperative cancellation unwinding.

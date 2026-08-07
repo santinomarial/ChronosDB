@@ -193,7 +193,10 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   borrowed STRING/SYMBOL casts, ASCII case output, byte-order comparisons, and NULL predicates with
   scalar differential evidence.
 - [Bound SELECT physical lowering](learning/bound-select-physical-lowering.md): implemented the
-  exact single-source, nonaggregate WHERE/projection/LIMIT bridge into physical pipelines.
+  exact single-source WHERE/projection/aggregate/ORDER/LATEST/LIMIT bridge into physical pipelines.
+- [Bounded physical LATEST BY](learning/bounded-latest-by.md): implemented exact typed grouping,
+  timestamp, physical-key, and row-version winner ties before WHERE with bounded accounted sort
+  ownership and allocation-free adjacent compaction.
 - [Streaming ungrouped vector aggregates](learning/streaming-ungrouped-aggregates.md): implemented
   fixed-state global COUNT/SUM/AVG/MIN/MAX/variance over accounted chunk streams with exact empty,
   NULL, numeric, ownership, cancellation, and canonical-output behavior.

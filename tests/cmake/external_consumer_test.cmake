@@ -83,6 +83,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/manifest/startup_recovery.hpp>
 #include <chronos/manifest/storage.hpp>
 #include <chronos/query/lexer.hpp>
+#include <chronos/query/latest.hpp>
 #include <chronos/query/literal.hpp>
 #include <chronos/query/parser.hpp>
 #include <chronos/query/aggregate.hpp>
@@ -441,6 +442,10 @@ int main() {
                     .direction = chronos::query::PhysicalSortDirection::kDescending,
                     .null_placement = chronos::query::ScalarNullPlacement::kFirst}},
           .limits = installed_sort_limits}});
+  using CreateLatestFunction = chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
+      std::unique_ptr<chronos::query::PhysicalOperator>,
+      chronos::query::VectorLatestByDefinition, chronos::query::LatestByLimits);
+  const CreateLatestFunction create_latest = &chronos::query::LatestByOperator::create;
   const chronos::query::ConstantColumnOutputPosition installed_nullable_constant{
       .value = chronos::query::ScalarValue::signed_value(installed_expression_type, 1).value(),
       .force_nullable = true};
@@ -678,6 +683,8 @@ int main() {
                  installed_sort_state_bytes.has_value() &&
                  installed_sort_plan.has_value() &&
                  installed_sort_plan->output_columns().size() == 1U &&
+                 create_latest != nullptr &&
+                 chronos::query::kDefaultLatestByKeyLimit == 256U &&
                  installed_nullable_constant.force_nullable &&
                  installed_lowering_limits.grouped_aggregate_limits.maximum_groups ==
                      chronos::query::kMaximumGroupedAggregateGroups &&

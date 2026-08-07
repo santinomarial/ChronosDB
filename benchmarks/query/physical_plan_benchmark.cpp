@@ -98,6 +98,16 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
       .value();
 }
 
+[[nodiscard]] BoundSqlSelect benchmark_latest_select() {
+  return bind_sql_v1_select(
+             parse_sql_v1_select(
+                 "SELECT value + 1 AS adjusted FROM metrics LATEST BY (value) ON "
+                 "time_bucket(INTERVAL '1 second', ts) ORDER BY adjusted DESC LIMIT 32")
+                 .value(),
+             benchmark_catalog())
+      .value();
+}
+
 class EmptySource final : public PhysicalOperator {
 public:
   [[nodiscard]] common::Result<PhysicalOperatorStep> next(const QueryResourceContext&) override {
@@ -218,6 +228,21 @@ void lower_bound_ordered_grouped_pipeline(benchmark::State& state) {
   state.SetLabel("bound grouped ORDER BY retained; parse and bind excluded");
 }
 
+void lower_bound_latest_pipeline(benchmark::State& state) {
+  const BoundSqlSelect select = benchmark_latest_select();
+  for (auto iteration : state) {
+    static_cast<void>(iteration);
+    auto plan = lower_bound_sql_select(select);
+    benchmark::DoNotOptimize(plan);
+  }
+  state.SetItemsProcessed(static_cast<std::int64_t>(state.iterations()) * 3);
+  state.counters["latest_keys"] = 1.0;
+  state.counters["order_keys"] = 1.0;
+  state.counters["outputs"] = 1.0;
+  state.counters["physical_stages"] = 7.0;
+  state.SetLabel("bound LATEST BY plus ORDER BY retained; parse and bind excluded");
+}
+
 BENCHMARK(validate_physical_pipeline_plan)->Arg(1)->Arg(8)->Arg(64)->Arg(256);
 BENCHMARK(instantiate_physical_pipeline_plan)->Arg(1)->Arg(8)->Arg(64)->Arg(256);
 BENCHMARK(lower_bound_select_pipeline);
@@ -225,6 +250,7 @@ BENCHMARK(lower_bound_global_aggregate_pipeline);
 BENCHMARK(lower_bound_grouped_aggregate_pipeline);
 BENCHMARK(lower_bound_ordered_pipeline);
 BENCHMARK(lower_bound_ordered_grouped_pipeline);
+BENCHMARK(lower_bound_latest_pipeline);
 
 } // namespace
 } // namespace chronos::query

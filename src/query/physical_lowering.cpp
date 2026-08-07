@@ -664,12 +664,8 @@ SqlResult<PhysicalPipelinePlan> lower_bound_sql_select(const BoundSqlSelect& sel
                                         common::StatusCode::kInvalidArgument,
                                         "Physical lowering requires exactly one SQL source"));
     }
-    if (select.latest_by().has_value()) {
-      return std::unexpected(diagnostic(
-          SqlDiagnosticCode::kUnsupportedSyntax, select.syntax().span(),
-          common::StatusCode::kInvalidArgument, "Physical LATEST lowering is not implemented"));
-    }
     const bool ordered = !select.syntax().order_by().empty();
+    const bool latest = select.latest_by().has_value();
     const schema::TableSchema& source_schema = *select.sources()[0].schema_ptr();
     if (ordered && !select.aggregate_query() && source_schema.deduplication_key().empty()) {
       return std::unexpected(diagnostic(
@@ -682,7 +678,8 @@ SqlResult<PhysicalPipelinePlan> lower_bound_sql_select(const BoundSqlSelect& sel
     std::vector<PhysicalColumnShape> input_columns;
     const std::size_t source_column_count = source_schema.columns().size();
     std::size_t input_column_count = source_column_count;
-    if (ordered && !select.aggregate_query()) {
+    const bool needs_row_version = latest || (ordered && !select.aggregate_query());
+    if (needs_row_version) {
       common::Result<std::size_t> ordered_input_count =
           scan_output_column_count(source_column_count, RowVersionScanMode::kAppend);
       if (!ordered_input_count.has_value())
@@ -692,7 +689,7 @@ SqlResult<PhysicalPipelinePlan> lower_bound_sql_select(const BoundSqlSelect& sel
     input_columns.reserve(input_column_count);
     for (const schema::ColumnDefinition& column : source_schema.columns())
       input_columns.push_back({.type = column.type(), .nullable = column.nullable()});
-    if (ordered && !select.aggregate_query()) {
+    if (needs_row_version) {
       for (const VectorRowVersionColumnKind kind : {
                VectorRowVersionColumnKind::kWalId,
                VectorRowVersionColumnKind::kRecordSequence,
@@ -708,6 +705,54 @@ SqlResult<PhysicalPipelinePlan> lower_bound_sql_select(const BoundSqlSelect& sel
 
     std::vector<PhysicalPipelineStage> stages;
     ExpressionLowerer source_lowerer{select, limits.expression_limits};
+    if (latest) {
+      const BoundLatestBy& bound_latest = *select.latest_by();
+      const SqlLatestBy* syntax_latest = select.syntax().latest_by().has_value()
+                                             ? std::addressof(*select.syntax().latest_by())
+                                             : nullptr;
+      if (syntax_latest == nullptr ||
+          !same_span(syntax_latest->timestamp.span(), bound_latest.timestamp_expression_span)) {
+        throw LoweringFailure{diagnostic(SqlDiagnosticCode::kExecutionFailure,
+                                         select.syntax().span(), common::StatusCode::kInternal,
+                                         "Bound and parsed LATEST BY definitions disagree")};
+      }
+      std::vector<ColumnOutputPosition> latest_inputs;
+      latest_inputs.reserve(input_columns.size() + 1U);
+      for (std::size_t ordinal = 0U; ordinal < input_columns.size(); ++ordinal)
+        latest_inputs.emplace_back(SourceColumnOutputPosition{ordinal});
+      const std::size_t timestamp_ordinal = latest_inputs.size();
+      latest_inputs.push_back(source_lowerer.output(syntax_latest->timestamp));
+      stages.emplace_back(ColumnOutputStage{.positions = std::move(latest_inputs),
+                                            .output_limits = limits.output_limits});
+
+      std::vector<std::size_t> physical_keys;
+      physical_keys.reserve(source_schema.physical_ordering_key().size());
+      for (const schema::ColumnId column : source_schema.physical_ordering_key()) {
+        const std::optional<std::size_t> ordinal = source_schema.column_ordinal(column);
+        if (!ordinal.has_value()) {
+          throw LoweringFailure{
+              diagnostic(SqlDiagnosticCode::kExecutionFailure, syntax_latest->timestamp.span(),
+                         common::StatusCode::kInternal,
+                         "LATEST BY physical ordering key has no source schema ordinal")};
+        }
+        physical_keys.push_back(*ordinal);
+      }
+      stages.emplace_back(LatestByStage{
+          .definition =
+              VectorLatestByDefinition{
+                  .key_column_ordinals = bound_latest.key_column_ordinals,
+                  .timestamp_column_ordinal = timestamp_ordinal,
+                  .physical_ordering_key_ordinals = std::move(physical_keys),
+                  .row_version_first_column_ordinal = source_column_count,
+              },
+          .limits = limits.latest_by_limits,
+      });
+      std::vector<std::size_t> source_columns;
+      source_columns.reserve(input_columns.size());
+      for (std::size_t ordinal = 0U; ordinal < input_columns.size(); ++ordinal)
+        source_columns.push_back(ordinal);
+      stages.emplace_back(ColumnSubsetStage{.column_ordinals = std::move(source_columns)});
+    }
     if (const SqlExpression* where = select.syntax().where(); where != nullptr) {
       std::vector<ColumnOutputPosition> predicate_positions;
       predicate_positions.reserve(input_columns.size() + 1U);

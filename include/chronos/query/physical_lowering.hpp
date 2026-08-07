@@ -13,6 +13,7 @@ struct PhysicalSelectLoweringLimits {
   VectorExpressionLimits expression_limits{};
   UngroupedAggregateLimits aggregate_limits{};
   GroupedAggregateLimits grouped_aggregate_limits{};
+  LatestByLimits latest_by_limits{};
   SortLimits sort_limits{};
   VectorChunkLimits output_limits{};
   PhysicalPipelinePlanLimits plan_limits{};
@@ -21,8 +22,10 @@ struct PhysicalSelectLoweringLimits {
 // Lowers the executable single-source SQL v1 subset, including global and grouped aggregation,
 // into one immutable physical pipeline. Unordered input is the primary source's exact
 // schema-ordinal physical shape. Base-row ORDER BY additionally requires the shared row-version
-// suffix after those source columns; aggregate ORDER BY does not. Unsupported relational or scalar
-// features fail with a source-span SQL diagnostic; there is no scalar fallback.
+// suffix after those source columns; aggregate ORDER BY does not. LATEST BY also requires that
+// suffix, evaluates before WHERE, and uses the schema physical ordering key plus row version for
+// exact winner ties. Unsupported relational or scalar features fail with a source-span SQL
+// diagnostic; there is no scalar fallback.
 [[nodiscard]] SqlResult<PhysicalPipelinePlan>
 lower_bound_sql_select(const BoundSqlSelect& select, PhysicalSelectLoweringLimits limits = {});
 

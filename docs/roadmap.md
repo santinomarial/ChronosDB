@@ -460,8 +460,12 @@ No phase passes because its code merely compiles. A phase passes only when its a
   limits, query-credit cleanup, SQL lowering, failure injection, fuzzing, and microbenchmarks.
   ADR 0050 and the thirty-third increment replace linear group lookup with one pre-sized
   query-accounted open-addressed table, canonical all-type hash framing, exact collision checks,
-  floating zero/NaN equivalence, independent-model fuzzing, and cardinality profiles. Broader
-  relational lowering, optimizer rules, future correction/delete row-version resolution,
+  floating zero/NaN equivalence, independent-model fuzzing, and cardinality profiles. ADR 0051 and
+  the thirty-fourth increment add exact bounded LATEST BY lowering: computed timestamp preparation
+  before WHERE, typed multiple/NULL groups, explicit physical-ordering and WAL/record/row winner
+  ties, allocation-free adjacent winner compaction, suffix/helper hiding, aggregate/ORDER/LIMIT
+  composition, scalar differential tests, and hostile/failure/fuzz/benchmark/consumer evidence.
+  ASOF and broader relational lowering, optimizer rules, future correction/delete row-version resolution,
   mapped/asynchronous providers, shared pin credit, scheduling, spill, and full scalar-engine
   differential plan execution are unimplemented.
 

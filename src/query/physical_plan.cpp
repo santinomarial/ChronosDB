@@ -2,7 +2,9 @@
 
 #include "chronos/common/checked_math.hpp"
 #include "chronos/common/status.hpp"
+#include "chronos/query/row_version.hpp"
 
+#include <array>
 #include <cstddef>
 #include <memory>
 #include <new>
@@ -112,6 +114,16 @@ retained_bytes_for_configuration(const std::vector<PhysicalColumnShape>& input_c
         return total;
     } else if (const auto* sort = std::get_if<SortStage>(&stage); sort != nullptr) {
       total = add_capacity_bytes(*total, sort->keys.capacity(), sizeof(VectorSortKey));
+      if (!total.has_value())
+        return total;
+    } else if (const auto* latest = std::get_if<LatestByStage>(&stage); latest != nullptr) {
+      total = add_capacity_bytes(*total, latest->definition.key_column_ordinals.capacity(),
+                                 sizeof(std::size_t));
+      if (!total.has_value())
+        return total;
+      total =
+          add_capacity_bytes(*total, latest->definition.physical_ordering_key_ordinals.capacity(),
+                             sizeof(std::size_t));
       if (!total.has_value())
         return total;
     }
@@ -467,6 +479,80 @@ PhysicalPipelinePlan::create(std::vector<PhysicalColumnShape> input_columns,
         }
         continue;
       }
+      if (const auto* latest = std::get_if<LatestByStage>(&stage); latest != nullptr) {
+        const VectorLatestByDefinition& definition = latest->definition;
+        if (latest->limits.maximum_group_keys == 0U ||
+            latest->limits.maximum_physical_ordering_keys == 0U) {
+          return common::make_unexpected(
+              invalid("physical pipeline LATEST BY limits must be nonzero"));
+        }
+        const common::Result<std::size_t> state_bytes =
+            sort_state_reservation_bytes(latest->limits.sort_limits);
+        if (!state_bytes.has_value())
+          return common::make_unexpected(state_bytes.error());
+        if (definition.key_column_ordinals.empty() ||
+            definition.physical_ordering_key_ordinals.empty()) {
+          return common::make_unexpected(
+              invalid("physical pipeline LATEST BY requires group and physical keys"));
+        }
+        if (definition.key_column_ordinals.size() > latest->limits.maximum_group_keys ||
+            definition.key_column_ordinals.capacity() > latest->limits.maximum_group_keys ||
+            definition.physical_ordering_key_ordinals.size() >
+                latest->limits.maximum_physical_ordering_keys ||
+            definition.physical_ordering_key_ordinals.capacity() >
+                latest->limits.maximum_physical_ordering_keys) {
+          return common::make_unexpected(
+              exhausted("physical pipeline LATEST BY key configuration exceeds its limit"));
+        }
+        const std::optional<std::size_t> trailing_key_count =
+            common::checked_add(definition.physical_ordering_key_ordinals.size(), std::size_t{4U});
+        const std::optional<std::size_t> sort_key_count =
+            trailing_key_count.has_value()
+                ? common::checked_add(definition.key_column_ordinals.size(), *trailing_key_count)
+                : std::nullopt;
+        if (!sort_key_count.has_value() ||
+            *sort_key_count > latest->limits.sort_limits.maximum_keys) {
+          return common::make_unexpected(
+              exhausted("physical pipeline LATEST BY sort keys exceed their limit"));
+        }
+        for (const std::size_t ordinal : definition.key_column_ordinals) {
+          if (ordinal >= output_columns.size())
+            return common::make_unexpected(
+                invalid("physical pipeline LATEST BY group key is out of range"));
+        }
+        if (definition.timestamp_column_ordinal >= output_columns.size() ||
+            output_columns[definition.timestamp_column_ordinal].type.kind() !=
+                schema::LogicalTypeKind::kTimestampNs) {
+          return common::make_unexpected(
+              invalid("physical pipeline LATEST BY timestamp must be TIMESTAMP_NS"));
+        }
+        for (const std::size_t ordinal : definition.physical_ordering_key_ordinals) {
+          if (ordinal >= output_columns.size())
+            return common::make_unexpected(
+                invalid("physical pipeline LATEST BY physical key is out of range"));
+        }
+        common::Result<VectorRowVersionLayout> suffix =
+            vector_row_version_layout(definition.row_version_first_column_ordinal);
+        if (!suffix.has_value())
+          return common::make_unexpected(suffix.error());
+        const std::array<std::pair<std::size_t, VectorRowVersionColumnKind>, 4U> suffix_columns{{
+            {suffix->wal_id_column_ordinal(), VectorRowVersionColumnKind::kWalId},
+            {suffix->record_sequence_column_ordinal(), VectorRowVersionColumnKind::kRecordSequence},
+            {suffix->row_ordinal_column_ordinal(), VectorRowVersionColumnKind::kRowOrdinal},
+            {suffix->operation_column_ordinal(), VectorRowVersionColumnKind::kOperation},
+        }};
+        for (const auto& [ordinal, kind] : suffix_columns) {
+          common::Result<schema::LogicalType> expected = vector_row_version_column_type(kind);
+          if (!expected.has_value())
+            return common::make_unexpected(expected.error());
+          if (ordinal >= output_columns.size() || output_columns[ordinal].type != *expected ||
+              output_columns[ordinal].nullable) {
+            return common::make_unexpected(
+                invalid("physical pipeline LATEST BY row-version suffix is invalid"));
+          }
+        }
+        continue;
+      }
       if (std::get_if<LimitStage>(&stage) == nullptr)
         return common::make_unexpected(invalid("physical pipeline stage is not supported"));
     }
@@ -541,6 +627,8 @@ PhysicalPipelinePlan::instantiate(std::unique_ptr<PhysicalOperator> source) cons
                                                 grouped->definitions, grouped->limits);
       } else if (const auto* sort = std::get_if<SortStage>(&stage); sort != nullptr) {
         next = SortOperator::create(std::move(pipeline), sort->keys, sort->limits);
+      } else if (const auto* latest = std::get_if<LatestByStage>(&stage); latest != nullptr) {
+        next = LatestByOperator::create(std::move(pipeline), latest->definition, latest->limits);
       } else if (const auto* limit = std::get_if<LimitStage>(&stage); limit != nullptr) {
         next = LimitOperator::create(std::move(pipeline), limit->maximum_rows);
       }

@@ -14,6 +14,8 @@
 
 namespace chronos::query {
 
+class LatestByOperator;
+
 inline constexpr std::size_t kMaximumColumnSubsetWidth = kDefaultVectorChunkColumnLimit;
 
 // Couples retained chunk ownership to query-wide byte credit. The charge may conservatively exceed
@@ -48,6 +50,8 @@ private:
 
   VectorChunk chunk_;
   QueryMemoryReservation reservation_;
+
+  friend class LatestByOperator;
 };
 
 enum class PhysicalOperatorStepKind : std::uint8_t {

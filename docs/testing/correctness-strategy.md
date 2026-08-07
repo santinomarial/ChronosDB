@@ -179,7 +179,11 @@
 > SQL-lowering, allocation-failure, fuzz, sanitizer, and replacement-pattern benchmark coverage.
 > Canonical grouped hashing adds exact NULL/zero/NaN equivalence, deliberate collision checks,
 > bucket allocation-failure cleanup, independent-model execution fuzzing, and cardinality profiles.
-> Generated-identity base ordering and spill remain outside this claim.
+> Exact bounded LATEST BY adds computed and nullable timestamp handling, multiple/NULL keys,
+> physical-key and WAL/sequence/row ties, pre-WHERE aggregate/order/LIMIT stage order, scalar-oracle
+> differential execution, hidden-column removal, hostile shape/cancellation cleanup, allocation
+> failure, plan fuzzing, sanitizers, installation, and lowering/execution measurements.
+> Generated-identity base ordering, ASOF, and spill remain outside this claim.
 > Complete append-only tablet scanning now composes the exact durable, sealed-head, and active-head
 > publications from one aggregate epoch. Deterministic multiset and suffix checks, head-only exact
 > predicate/helper-removal coverage, hostile finite limits, allocation-failure injection, public

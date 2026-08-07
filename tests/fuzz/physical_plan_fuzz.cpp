@@ -75,7 +75,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
   const std::size_t hostile_count = size > 32U ? 32U : size;
   hostile_stages.reserve(hostile_count);
   for (std::size_t index = 0U; index < hostile_count; ++index) {
-    switch (data[index] % 9U) {
+    switch (data[index] % 10U) {
     case 0U:
       hostile_stages.emplace_back(
           chronos::query::BooleanFilterStage{static_cast<std::size_t>(data[index] >> 2U)});
@@ -227,6 +227,28 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
                                     static_cast<std::size_t>(data[index]) * 64U}}});
       break;
     }
+    case 9U:
+      hostile_stages.emplace_back(chronos::query::LatestByStage{
+          .definition =
+              {.key_column_ordinals = {static_cast<std::size_t>((data[index] >> 1U) & 3U)},
+               .timestamp_column_ordinal = static_cast<std::size_t>((data[index] >> 3U) & 3U),
+               .physical_ordering_key_ordinals = {static_cast<std::size_t>((data[index] >> 5U) &
+                                                                           3U)},
+               .row_version_first_column_ordinal =
+                   static_cast<std::size_t>((data[index] >> 2U) & 3U)},
+          .limits = {.maximum_group_keys = static_cast<std::size_t>(data[index] >> 4U),
+                     .maximum_physical_ordering_keys = static_cast<std::size_t>(data[index] >> 5U),
+                     .sort_limits = {
+                         .maximum_rows = static_cast<std::uint32_t>(data[index]),
+                         .maximum_keys = static_cast<std::size_t>(data[index] >> 4U),
+                         .maximum_state_bytes = static_cast<std::size_t>(data[index]) * 1'024U,
+                         .output_limits = {
+                             .maximum_rows = static_cast<std::uint32_t>(data[index]),
+                             .maximum_columns = static_cast<std::size_t>(data[index] >> 4U),
+                             .maximum_buffer_bytes = static_cast<std::size_t>(data[index]) * 32U,
+                             .maximum_retained_buffer_bytes =
+                                 static_cast<std::size_t>(data[index]) * 64U}}}});
+      break;
     default:
       break;
     }

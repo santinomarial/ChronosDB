@@ -4,7 +4,9 @@
 > parser, schema-version-stable binder, CREATE TABLE/INSERT statement binding, scalar SELECT
 > execution, and EXPLAIN paths are implemented. `SUBSCRIBE` is parsed and bound but remains a Phase
 > 11 execution concern. Phase 9 now lowers the supported single-source projection and global/grouped
-> aggregate subset into bounded vector operators. Exact bounded `ORDER BY` lowering now composes
+> aggregate subset into bounded vector operators. Exact bounded `LATEST BY` lowering now executes
+> before WHERE using the bound timestamp, schema physical-ordering key, and shared row-version
+> identity. Exact bounded `ORDER BY` lowering composes
 > the physical sort and shared source row-version suffix for DEDUP-keyed base rows and aggregate
 > results. Base-row vector ordering for schemas that require a generated logical identity remains
 > unsupported because vector sources do not expose that identity. A checked adapter now

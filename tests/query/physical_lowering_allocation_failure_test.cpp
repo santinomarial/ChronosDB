@@ -57,6 +57,7 @@ TEST(PhysicalSelectLoweringAllocationFailureTest, ClassifiesEveryOwnedAllocation
       R"(SELECT sum(value + 2) + count(*) AS total, avg(value) AS mean FROM metrics WHERE value BETWEEN 1 AND 9 LIMIT 1)",
       R"(SELECT value % 3 AS bucket, sum(value + 2) + count(*) AS total FROM metrics WHERE value BETWEEN 1 AND 9 GROUP BY value % 3 LIMIT 2)",
       R"(SELECT value + 1 AS adjusted FROM metrics ORDER BY value DESC LIMIT 2)",
+      R"(SELECT value AS adjusted FROM metrics LATEST BY (value) ON time_bucket(INTERVAL '1 second', ts) WHERE value > 0 ORDER BY adjusted DESC LIMIT 2)",
       R"(SELECT value % 3 AS bucket, count(*) AS rows FROM metrics GROUP BY value % 3 ORDER BY rows DESC, sum(value) DESC LIMIT 2)"};
   for (const std::string& statement : statements) {
     SCOPED_TRACE(statement);

@@ -13,6 +13,10 @@ row-version suffix. Aggregate ordering consumes ordinary source shape because it
 identity is produced by the aggregate stage. A future scan planner can project or remap storage,
 but it must satisfy the selected shape or introduce an explicit checked mapping stage.
 
+A LATEST plan also requires the suffix, regardless of later aggregation or ordering. It prepares
+the bound timestamp expression before WHERE, selects exact winners using physical and row-version
+ties, and removes only that timestamp helper before normal lowering continues.
+
 ## Lowering algorithm
 
 For WHERE, lowering first outputs every source column plus the predicate. The predicate may be a
@@ -74,8 +78,9 @@ container-length failure and publishes no partial plan.
 This baseline supports one source, ordinary WHERE, ordered projection, global and bounded grouped
 aggregates, exact bounded ORDER BY where authoritative identity is available, and LIMIT using the
 current numeric, Boolean, temporal, UUID, and variable-width output kernels. It rejects generated-
-identity base ORDER BY, LATEST, ASOF, SUBSCRIBE, and EXPLAIN modes. Variable-width MIN/MAX now lower
-through the query-accounted aggregate state. Grouped execution uses canonical, collision-checked,
+identity base ORDER BY, ASOF, SUBSCRIBE, and EXPLAIN modes. Exact bounded LATEST BY now lowers
+through the shared suffix and executes before WHERE. Variable-width MIN/MAX lower through the
+query-accounted aggregate state. Grouped execution uses canonical, collision-checked,
 query-accounted hashing. Aggregate common-subexpression elimination and spill remain later
 decisions.
 

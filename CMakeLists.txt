@@ -335,6 +335,7 @@ add_library(
   src/query/explain.cpp
   src/query/head_scan.cpp
   src/query/lexer.cpp
+  src/query/latest.cpp
   src/query/literal.cpp
   src/query/parser.cpp
   src/query/physical_operator.cpp
@@ -787,6 +788,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/column_output_test.cpp
     tests/query/lexer_header_self_contained.cpp
     tests/query/lexer_test.cpp
+    tests/query/latest_header_self_contained.cpp
+    tests/query/latest_test.cpp
     tests/query/literal_header_self_contained.cpp
     tests/query/literal_test.cpp
     tests/query/parser_header_self_contained.cpp
@@ -835,6 +838,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/column_output_allocation_failure_test.cpp
     tests/query/database_cseg_scan_allocation_failure_test.cpp
     tests/query/head_scan_allocation_failure_test.cpp
+    tests/query/latest_allocation_failure_test.cpp
     tests/query/physical_lowering_allocation_failure_test.cpp
     tests/query/sort_allocation_failure_test.cpp
     tests/support/failing_allocator.cpp
@@ -1048,6 +1052,7 @@ if(CHRONOS_BUILD_BENCHMARKS)
     benchmarks/query/cseg_scan_benchmark.cpp
     benchmarks/query/head_scan_benchmark.cpp
     benchmarks/query/lexer_benchmark.cpp
+    benchmarks/query/latest_benchmark.cpp
     benchmarks/query/physical_plan_benchmark.cpp
     benchmarks/query/resource_context_benchmark.cpp
     benchmarks/query/sort_benchmark.cpp

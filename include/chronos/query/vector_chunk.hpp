@@ -13,6 +13,8 @@
 
 namespace chronos::query {
 
+class LatestByOperator;
+
 inline constexpr std::uint32_t kDefaultVectorChunkRowLimit = 2'048U;
 inline constexpr std::size_t kDefaultVectorChunkColumnLimit = 4'096U;
 inline constexpr std::size_t kDefaultVectorChunkMemoryLimit = std::size_t{32U} * 1024U * 1024U;
@@ -61,6 +63,8 @@ private:
   std::uint32_t physical_row_count_;
   std::vector<std::uint32_t> indices_;
   bool identity_;
+
+  friend class LatestByOperator;
 };
 
 // All limits are finite and checked before a VectorChunk retains its columns and selection.
@@ -155,6 +159,8 @@ private:
   VectorSelection selection_;
   std::size_t buffer_bytes_;
   std::size_t retained_buffer_bytes_;
+
+  friend class LatestByOperator;
 };
 
 } // namespace chronos::query
