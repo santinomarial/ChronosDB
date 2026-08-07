@@ -20,6 +20,39 @@ constexpr std::size_t kBenchmarkMemoryLimit = std::size_t{256U} * 1024U * 1024U;
   return schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
 }
 
+[[nodiscard]] schema::LogicalType string_type() {
+  return schema::LogicalType::create(schema::LogicalTypeKind::kString).value();
+}
+
+void append_u32(std::vector<std::byte>& output, const std::uint32_t value) {
+  for (std::size_t byte = 0U; byte < sizeof(value); ++byte)
+    output.push_back(static_cast<std::byte>((value >> (byte * 8U)) & 0xffU));
+}
+
+[[nodiscard]] columnar::OwnedPhysicalColumn
+make_string_column(const std::uint32_t rows, const std::uint32_t offset, const bool replacing) {
+  columnar::ColumnVectorBuffers buffers;
+  buffers.offsets.reserve((static_cast<std::size_t>(rows) + 1U) * sizeof(std::uint32_t));
+  buffers.values.reserve(static_cast<std::size_t>(rows) * 32U);
+  append_u32(buffers.offsets, 0U);
+  for (std::uint32_t row = 0U; row < rows; ++row) {
+    const std::uint32_t sequence = offset + row;
+    const std::uint32_t ordered = replacing ? 99'999'999U - sequence : 0U;
+    std::uint32_t divisor = 10'000'000U;
+    for (std::size_t byte = 0U; byte < 8U; ++byte) {
+      buffers.values.push_back(static_cast<std::byte>('0' + ((ordered / divisor) % 10U)));
+      divisor /= 10U;
+    }
+    for (std::size_t byte = 8U; byte < 32U; ++byte)
+      buffers.values.push_back(std::byte{'m'});
+    append_u32(buffers.offsets, static_cast<std::uint32_t>(buffers.values.size()));
+  }
+  return columnar::OwnedPhysicalColumn::create(
+             {.type = string_type(), .nullable = false, .row_count = rows, .null_count = 0U},
+             std::move(buffers))
+      .value();
+}
+
 [[nodiscard]] columnar::OwnedPhysicalColumn make_column(const std::uint32_t rows,
                                                         const std::uint64_t seed) {
   columnar::ColumnVectorBuffers buffers;
@@ -125,6 +158,46 @@ source(const QueryResourceContext& resources, const std::uint32_t total_rows,
       aggregate(VectorAggregateOperation::kMinimum),
       aggregate(VectorAggregateOperation::kMaximum),
       aggregate(VectorAggregateOperation::kVariancePopulation)};
+  return UngroupedAggregateOperator::create(std::make_unique<ManyChunkSource>(std::move(chunks)),
+                                            definitions);
+}
+
+[[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>>
+variable_extremum_source(const QueryResourceContext& resources, const std::uint32_t total_rows,
+                         const std::uint32_t chunk_rows, const bool replacing) {
+  std::vector<AccountedVectorChunk> chunks;
+  const std::size_t chunk_count =
+      (static_cast<std::size_t>(total_rows) + chunk_rows - 1U) / chunk_rows;
+  chunks.reserve(chunk_count);
+  for (std::uint32_t begin = 0U; begin < total_rows; begin += chunk_rows) {
+    const std::uint32_t rows = std::min(chunk_rows, total_rows - begin);
+    std::vector<columnar::OwnedPhysicalColumn> columns;
+    columns.push_back(make_string_column(rows, begin, replacing));
+    common::Result<VectorChunk> chunk =
+        VectorChunk::create(std::move(columns), VectorSelection::all(rows).value(),
+                            {.maximum_rows = chunk_rows,
+                             .maximum_columns = 1U,
+                             .maximum_buffer_bytes = kBenchmarkMemoryLimit,
+                             .maximum_retained_buffer_bytes = kBenchmarkMemoryLimit});
+    if (!chunk.has_value())
+      return common::make_unexpected(chunk.error());
+    common::Result<QueryMemoryReservation> reservation =
+        resources.reserve(chunk->retained_buffer_bytes() + 1'024U);
+    if (!reservation.has_value())
+      return common::make_unexpected(reservation.error());
+    common::Result<AccountedVectorChunk> accounted =
+        AccountedVectorChunk::create(std::move(*chunk), std::move(*reservation), resources);
+    if (!accounted.has_value())
+      return common::make_unexpected(accounted.error());
+    chunks.push_back(std::move(*accounted));
+  }
+  const std::vector<VectorAggregateDefinition> definitions{
+      {.operation = VectorAggregateOperation::kMinimum,
+       .input =
+           VectorAggregateInput{.column_ordinal = 0U, .type = string_type(), .nullable = false}},
+      {.operation = VectorAggregateOperation::kMaximum,
+       .input =
+           VectorAggregateInput{.column_ordinal = 0U, .type = string_type(), .nullable = false}}};
   return UngroupedAggregateOperator::create(std::make_unique<ManyChunkSource>(std::move(chunks)),
                                             definitions);
 }
@@ -277,6 +350,49 @@ void bounded_grouped_aggregates(benchmark::State& state) {
   state.SetLabel("INT64 key; COUNT/SUM; source construction excluded");
 }
 
+void variable_width_extrema(benchmark::State& state) {
+  const auto total_rows = static_cast<std::uint32_t>(state.range(0));
+  const auto chunk_rows = static_cast<std::uint32_t>(state.range(1));
+  const bool replacing = state.range(2) != 0;
+  QueryResourceContext resources = QueryResourceContext::create(kBenchmarkMemoryLimit).value();
+  std::size_t measured_allocations = 0U;
+  {
+    auto pipeline = variable_extremum_source(resources, total_rows, chunk_rows, replacing);
+    if (!pipeline.has_value()) {
+      state.SkipWithError(pipeline.error().to_string());
+      return;
+    }
+    benchmark_support::ScopedAllocationCounting counting;
+    auto step = (*pipeline)->next(resources);
+    measured_allocations = counting.stop().allocations;
+    if (!step.has_value() || step->chunk() == nullptr) {
+      state.SkipWithError(step.has_value() ? "variable extrema benchmark returned no chunk"
+                                           : step.error().to_string());
+      return;
+    }
+  }
+  for ([[maybe_unused]] auto iteration : state) {
+    state.PauseTiming();
+    auto pipeline = variable_extremum_source(resources, total_rows, chunk_rows, replacing);
+    if (!pipeline.has_value()) {
+      state.SkipWithError(pipeline.error().to_string());
+      return;
+    }
+    state.ResumeTiming();
+    auto step = (*pipeline)->next(resources);
+    benchmark::DoNotOptimize(step);
+    if (!step.has_value()) {
+      state.SkipWithError(step.error().to_string());
+      return;
+    }
+  }
+  state.SetItemsProcessed(static_cast<std::int64_t>(state.iterations()) * total_rows);
+  state.counters["chunk_rows"] = static_cast<double>(chunk_rows);
+  state.counters["pull_allocations"] = static_cast<double>(measured_allocations);
+  state.counters["replacement_pattern"] = replacing ? 1.0 : 0.0;
+  state.SetLabel("STRING MIN/MAX; 32-byte values; source construction excluded");
+}
+
 BENCHMARK(streaming_ungrouped_aggregates)
     ->Args({2'048, 2'048, 1})
     ->Args({32'768, 2'048, 1})
@@ -284,6 +400,8 @@ BENCHMARK(streaming_ungrouped_aggregates)
     ->Args({32'768, 2'048, 4});
 
 BENCHMARK(bounded_grouped_aggregates)->Args({32'768, 2'048, 16})->Args({32'768, 2'048, 256});
+
+BENCHMARK(variable_width_extrema)->Args({32'768, 2'048, 0})->Args({32'768, 2'048, 1});
 
 } // namespace
 } // namespace chronos::query

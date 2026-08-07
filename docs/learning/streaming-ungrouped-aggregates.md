@@ -6,9 +6,9 @@ The twenty-third Phase 9 increment adds the first vector aggregate: one bounded 
 group. It consumes `AccountedVectorChunk` inputs, updates fixed state, releases each input chunk,
 and emits one query-accounted canonical row.
 
-Bound single-source SQL now lowers global aggregate expressions through this substrate. It does not
-implement GROUP BY, variable-width MIN/MAX, ordering, joins, partial-state merge, spill, parallel
-scheduling, or storage visibility composition.
+Bound single-source SQL now lowers global aggregate expressions through this substrate. Later
+increments added GROUP BY, ORDER BY, snapshot-backed execution, and query-accounted variable-width
+MIN/MAX. Joins, partial-state merge, spill, and parallel scheduling remain separate work.
 
 ## Public interface
 
@@ -17,7 +17,8 @@ scheduling, or storage visibility composition.
 - `VectorAggregateOperation`, covering all eight SQL v1 aggregate operations;
 - `VectorAggregateInput`, an exact physical ordinal/type/nullability assertion;
 - `VectorAggregateDefinition` and `vector_aggregate_output_shape()`;
-- `UngroupedAggregateLimits`, bounding width, retained configuration, and output chunks; and
+- `UngroupedAggregateLimits`, bounding width, variable extrema, retained configuration, and output
+  chunks; and
 - `UngroupedAggregateOperator::create()`, returning the ordinary uniquely owned physical-operator
   interface.
 
@@ -39,7 +40,7 @@ Every definition has one `AggregateState`:
 | exact `SUM` | signed-magnitude 256-bit accumulator | declared integer/DECIMAL type |
 | floating `SUM` | native FLOAT32 or FLOAT64 sum | same floating type |
 | `AVG` | FLOAT64 sum and contributing count | nullable FLOAT64 |
-| `MIN`, `MAX` | optional fixed-width scalar | nullable input type |
+| `MIN`, `MAX` | optional scalar plus dynamic-payload reservation when needed | nullable input type |
 | variance | count, mean, and Welford `M2` | nullable FLOAT64 |
 
 `COUNT(*)` counts selected rows. `COUNT(expr)` reads only the cell's NULL bit, so STRING, SYMBOL,
@@ -51,7 +52,8 @@ Exact SUM accumulates beyond the declared result width and validates only at fin
 the scalar oracle. This means intermediate INT8 overflow does not fail if later values bring the
 final result back into range. Floating SUM and AVG preserve input order. Variance uses the same
 Welford update as the reference engine. MIN/MAX use the shared scalar comparison, whose floating
-order places ordinary numbers before NaNs and compares NaN payloads deterministically.
+order places ordinary numbers before NaNs and compares NaN payloads deterministically. STRING,
+SYMBOL, and BINARY use the same unsigned lexicographic byte order as the scalar oracle.
 
 ## Pull, memory, and cancellation
 
@@ -59,7 +61,10 @@ The first pull drains the sequential child. A chunk is shape- and query-owner-ch
 and destroyed before the next child pull. Thus peak input ownership remains the child's existing
 chunk contract; the aggregate never retains a row set.
 
-Width is capped at 4,096 definitions by default. Checked capacity accounting covers the retained
+Width is capped at 4,096 definitions by default. Each variable-width extremum has a default 1 MiB
+payload limit. A replacement reserves conservative query credit before copying, verifies actual
+container capacity, and swaps value plus reservation only after success; non-winners allocate
+nothing. Checked capacity accounting covers the retained
 fixed state vector, including its copied definitions, with a default 2 MiB configuration bound.
 The caller's definition vector is read synchronously and is not retained. This bounded coordinator-
 owned memory is not charged again to `QueryResourceContext`. Result
@@ -75,8 +80,8 @@ normal stack unwinding. Successful output is emitted once; later pulls return st
 
 ## Failure behavior
 
-- `INVALID_ARGUMENT`: malformed definitions/limits, unsupported input type, variable-width
-  extrema, source shape mismatch, or a chunk owned by another query;
+- `INVALID_ARGUMENT`: malformed definitions/limits, unsupported input type, source shape mismatch,
+  or a chunk owned by another query;
 - `RESOURCE_EXHAUSTED`: width/configuration/output limits or classified allocation failure;
 - `OUT_OF_RANGE`: an aggregate count or internal running-count domain is exhausted; and
 - `CANCELLED`: cooperative cancellation observed before or during work.
@@ -98,7 +103,8 @@ an operator baseline, not an end-to-end SQL throughput claim.
 ## Correctness evidence
 
 Deterministic examples cover all operations, empty/NULL/NaN rules, exact UINT64 and DECIMAL sums,
-variable-width COUNT, result overflow, physical-plan integration, ownership, cancellation, and
+variable-width COUNT and extrema, result overflow, physical-plan integration, ownership,
+cancellation, and
 runtime shape failures. A fixed-seed 257-row model crosses three unequal chunk boundaries and sparse
 selections while independently computing count, exact sum, average, extrema, and variance.
 
@@ -117,7 +123,7 @@ cancellation latency.
 
 Grouped state now has a finite query-accounted linear-lookup baseline described in the
 [grouped aggregate guide](bounded-grouped-aggregates.md). The remaining dynamic decisions are
-variable-width extremum replacement, canonical hashing, batch output, and spill/merge behavior.
+canonical hashing, batch output, and spill/merge behavior.
 Bound SQL uses this stage for ungrouped queries with exact source-span aggregate identity, optional
 expression-input materialization, and final one-row vector expressions.
 
@@ -126,8 +132,8 @@ expression-input materialization, and final one-row vector expressions.
 **Why does an empty input emit a row?** SQL global aggregation forms one implicit group. Grouped
 aggregation instead has no group and emits no rows.
 
-**Why reject variable-width MIN/MAX but allow COUNT(STRING)?** COUNT needs only NULL presence.
-MIN/MAX must retain a winning payload whose dynamic bytes need an explicit query-accounting policy.
+**Why reserve a replacement before releasing the old winner?** It preserves the previous valid
+state if admission or allocation fails. The temporary peak is conservative and fully query-visible.
 
 **Why not retain chunks and call the scalar engine?** That would make memory proportional to input,
 violate streaming ownership, and turn the scalar oracle into the production vector path.

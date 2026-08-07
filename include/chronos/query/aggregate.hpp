@@ -22,6 +22,7 @@ inline constexpr std::size_t kMaximumGroupedAggregateGroups = 4096U;
 inline constexpr std::size_t kDefaultGroupedAggregateConfigurationByteLimit =
     std::size_t{2U} * 1024U * 1024U;
 inline constexpr std::size_t kDefaultGroupedAggregateKeyByteLimit = std::size_t{1U} * 1024U * 1024U;
+inline constexpr std::size_t kDefaultAggregateExtremumByteLimit = std::size_t{1U} * 1024U * 1024U;
 
 enum class VectorAggregateOperation : std::uint8_t {
   kCountStar,
@@ -55,6 +56,7 @@ struct VectorAggregateOutputShape {
 
 struct UngroupedAggregateLimits {
   std::size_t maximum_aggregates{kMaximumUngroupedAggregateWidth};
+  std::size_t maximum_variable_extremum_bytes{kDefaultAggregateExtremumByteLimit};
   std::size_t maximum_retained_configuration_bytes{
       kDefaultUngroupedAggregateConfigurationByteLimit};
   VectorChunkLimits output_limits{};
@@ -71,12 +73,13 @@ struct GroupedAggregateLimits {
   std::size_t maximum_group_keys{kMaximumGroupedAggregateKeys};
   std::size_t maximum_aggregates{kMaximumGroupedAggregateWidth};
   std::size_t maximum_key_bytes_per_group{kDefaultGroupedAggregateKeyByteLimit};
+  std::size_t maximum_variable_extremum_bytes{kDefaultAggregateExtremumByteLimit};
   std::size_t maximum_retained_configuration_bytes{kDefaultGroupedAggregateConfigurationByteLimit};
   VectorChunkLimits output_limits{};
 };
 
 // Validates one aggregate definition and returns its exact result type/nullability. The current
-// version admits COUNT over every physical type and fixed-width inputs for all other operations.
+// version admits COUNT over every physical type, numeric SUM/AVG/variance, and all-type MIN/MAX.
 [[nodiscard]] common::Result<VectorAggregateOutputShape>
 vector_aggregate_output_shape(const VectorAggregateDefinition& definition);
 
@@ -110,8 +113,8 @@ private:
 
 // Consumes its complete input stream into a finite query-accounted set of groups and then emits one
 // canonical accounted row per pull. Key order in each row is caller order, followed by aggregate
-// order. Empty input emits no groups. NULL key cells compare equal for grouping. The current
-// aggregate kernels retain no variable-width extrema.
+// order. Empty input emits no groups. NULL key cells compare equal for grouping. Every retained
+// variable-width extremum is independently bounded and query-accounted.
 class GroupedAggregateOperator final : public PhysicalOperator {
 public:
   ~GroupedAggregateOperator() override;

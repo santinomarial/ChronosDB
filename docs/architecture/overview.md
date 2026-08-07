@@ -253,8 +253,10 @@ generated logical identity is exposed.
 [ADR 0048](../adr/0048-snapshot-tablet-physical-pipeline-instantiation.md) now validates a lowered
 plan's complete schema and optional suffix input, loads one held snapshot's durable images, composes
 every current source, and instantiates the checked pipeline without collapsing SQL diagnostics.
-Future correction/delete version resolution remains separate work. Hashing, variable extrema, and
-spill remain deferred. General relational lowering, parallel scheduling,
+Future correction/delete version resolution remains separate work. Variable-width aggregate
+extrema now use exact unsigned byte order and reserve-before-copy query accounting under
+[ADR 0049](../adr/0049-query-accounted-variable-width-extrema.md). Hashing and spill remain
+deferred. General relational lowering, parallel scheduling,
 spilling, adaptive behavior, and join algorithms remain deferred. Implemented reservations and
 accounted chunks provide the admission/ownership invariant, but future operators must reserve every
 retained allocation and release snapshot pins and memory by cooperative cancellation unwinding.

@@ -173,6 +173,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
           .definitions = std::move(definitions),
           .limits = {
               .maximum_aggregates = static_cast<std::size_t>(data[index] >> 4U),
+              .maximum_variable_extremum_bytes = static_cast<std::size_t>(data[index]),
               .maximum_retained_configuration_bytes = static_cast<std::size_t>(data[index]) * 64U,
               .output_limits = {.maximum_rows = static_cast<std::uint32_t>(data[index]),
                                 .maximum_columns = static_cast<std::size_t>(data[index] >> 4U),
@@ -195,6 +196,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
               .maximum_group_keys = static_cast<std::size_t>((data[index] >> 5U) & 3U),
               .maximum_aggregates = static_cast<std::size_t>((data[index] >> 6U) & 3U),
               .maximum_key_bytes_per_group = static_cast<std::size_t>(data[index]),
+              .maximum_variable_extremum_bytes = static_cast<std::size_t>(data[index]),
               .maximum_retained_configuration_bytes = static_cast<std::size_t>(data[index]) * 64U,
               .output_limits = {.maximum_rows = static_cast<std::uint32_t>(data[index]),
                                 .maximum_columns = static_cast<std::size_t>(data[index] >> 4U),

@@ -455,7 +455,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
   supported physical pipeline to that exact tablet source: schema and optional row-version input
   shape select one uniform source mode, bounded planning/loading/composition retains one snapshot
   epoch, and bound WHERE/ORDER BY/LIMIT or aggregate stages execute without manual source wiring.
-  Hashing, variable-width extrema, broader relational lowering,
+  ADR 0049 and the thirty-second increment add exact STRING/SYMBOL/BINARY MIN/MAX to global and
+  grouped aggregation with unsigned byte order, reserve-before-copy replacement, per-state payload
+  limits, query-credit cleanup, SQL lowering, failure injection, fuzzing, and microbenchmarks.
+  Hashing, broader relational lowering,
   optimizer rules, future correction/delete row-version resolution, mapped/asynchronous providers, shared
   pin credit, scheduling, spill, and full scalar-engine differential plan execution are unimplemented.
 

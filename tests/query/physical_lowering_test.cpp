@@ -228,6 +228,43 @@ private:
       .value();
 }
 
+[[nodiscard]] std::shared_ptr<const ScalarTableSnapshot> input_scalar_snapshot() {
+  constexpr std::array<std::int64_t, 4> kTimestamp{1, 2, 3, 4};
+  constexpr std::array<std::int64_t, 4> kValue{0, 3, 5, 8};
+  constexpr std::array<bool, 4> kFlag{true, true, false, true};
+  const std::array<std::optional<std::string>, 4> labels{"alpha", std::nullopt, "ccc", "delta"};
+  common::Uuid::Bytes wal_bytes{};
+  wal_bytes.front() = std::byte{1U};
+  const common::Uuid wal{wal_bytes};
+  std::vector<ScalarInputRow> rows;
+  rows.reserve(kTimestamp.size());
+  for (std::size_t row = 0U; row < kTimestamp.size(); ++row) {
+    std::vector<ScalarValue> columns;
+    columns.push_back(
+        ScalarValue::signed_value(type(schema::LogicalTypeKind::kTimestampNs), kTimestamp[row])
+            .value());
+    columns.push_back(
+        ScalarValue::signed_value(type(schema::LogicalTypeKind::kInt64), kValue[row]).value());
+    columns.push_back(ScalarValue::boolean(kFlag[row]).value());
+    if (labels[row].has_value()) {
+      columns.push_back(
+          ScalarValue::text(type(schema::LogicalTypeKind::kString),
+                            labels[row].value()) // NOLINT(bugprone-unchecked-optional-access)
+              .value());
+    } else {
+      columns.push_back(ScalarValue::null(type(schema::LogicalTypeKind::kString)));
+    }
+    rows.push_back({.columns = std::move(columns),
+                    .generated_logical_identity = {},
+                    .wal_id = wal,
+                    .record_sequence = row + 1U,
+                    .system_commit_position = row + 1U,
+                    .row_ordinal = 0U});
+  }
+  return std::make_shared<const ScalarTableSnapshot>(
+      ScalarTableSnapshot::create(schema(), 10U, std::move(rows)).value());
+}
+
 [[nodiscard]] AccountedVectorChunk ordered_input(const QueryResourceContext& resources) {
   constexpr std::array<std::int64_t, 6> kTimestamp{2, 1, 1, 1, 3, 4};
   constexpr std::array<std::int64_t, 6> kValue{7, 7, 7, 7, 2, 9};
@@ -940,6 +977,45 @@ TEST(PhysicalSelectLoweringTest, RejectsBaseOrderWhenGeneratedLogicalIdentityIsU
   EXPECT_EQ(lowered.error().status().code(), common::StatusCode::kInvalidArgument);
 }
 
+TEST(PhysicalSelectLoweringTest, LowersVariableExtremaAgainstTheScalarOracle) {
+  for (const std::string_view sql :
+       {"SELECT min(label) AS first_label, max(label) AS last_label FROM metrics",
+        "SELECT flag, min(label) AS first_label, max(label) AS last_label FROM metrics "
+        "GROUP BY flag ORDER BY flag"}) {
+    SCOPED_TRACE(sql);
+    BoundSqlSelect select = bind(sql);
+    PhysicalPipelinePlan plan = lower_bound_sql_select(select).value();
+    QueryResourceContext resources = QueryResourceContext::create(4U << 20U).value();
+    auto pipeline = plan.instantiate(std::make_unique<OneChunkSource>(input(resources))).value();
+    std::vector<std::vector<ScalarValue>> physical_rows;
+    for (;;) {
+      auto step = pipeline->next(resources).value();
+      if (step.kind() == PhysicalOperatorStepKind::kEnd)
+        break;
+      const VectorChunk& chunk = step.chunk()->chunk();
+      for (std::size_t row = 0U; row < chunk.selected_row_count(); ++row) {
+        std::vector<ScalarValue> values;
+        values.reserve(chunk.column_count());
+        for (std::size_t column = 0U; column < chunk.column_count(); ++column)
+          values.push_back(cell_value(chunk, column, row));
+        physical_rows.push_back(std::move(values));
+      }
+    }
+    OneSnapshotProvider provider{input_scalar_snapshot()};
+    SqlResult<ScalarQueryResult> scalar = execute_sql_v1_select(select, provider);
+    ASSERT_TRUE(scalar.has_value()) << scalar.error().status().to_string();
+    ASSERT_EQ(physical_rows.size(), scalar->rows().size());
+    for (std::size_t row = 0U; row < physical_rows.size(); ++row) {
+      ASSERT_EQ(physical_rows[row].size(), scalar->rows()[row].size());
+      for (std::size_t column = 0U; column < physical_rows[row].size(); ++column) {
+        EXPECT_EQ(physical_rows[row][column].type(), scalar->rows()[row][column].type());
+        EXPECT_EQ(physical_rows[row][column].storage(), scalar->rows()[row][column].storage());
+      }
+    }
+    EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  }
+}
+
 TEST(PhysicalSelectLoweringTest, RejectsUnsupportedRelationalAndScalarSurfaces) {
   BoundSqlSelect text_cast = bind("SELECT CAST('value' AS SYMBOL) AS converted FROM metrics");
   EXPECT_TRUE(lower_bound_sql_select(text_cast).has_value());
@@ -948,8 +1024,12 @@ TEST(PhysicalSelectLoweringTest, RejectsUnsupportedRelationalAndScalarSurfaces) 
   BoundSqlSelect grouped = bind("SELECT sum(value) AS total FROM metrics GROUP BY flag");
   EXPECT_TRUE(lower_bound_sql_select(grouped).has_value());
   BoundSqlSelect variable_extremum = bind("SELECT min(label) AS first_label FROM metrics");
-  EXPECT_EQ(lower_bound_sql_select(variable_extremum).error().code(),
-            SqlDiagnosticCode::kUnsupportedSyntax);
+  PhysicalPipelinePlan variable_plan = lower_bound_sql_select(variable_extremum).value();
+  QueryResourceContext resources = QueryResourceContext::create(4U << 20U).value();
+  auto variable_pipeline =
+      variable_plan.instantiate(std::make_unique<OneChunkSource>(input(resources))).value();
+  auto variable_step = variable_pipeline->next(resources).value();
+  EXPECT_EQ(cell_text(variable_step.chunk()->chunk(), 0U, 0U), "alpha");
   BoundSqlSelect text_comparison = bind("SELECT 'a' = 'b' AS compared FROM metrics");
   EXPECT_TRUE(lower_bound_sql_select(text_comparison).has_value());
   BoundSqlSelect subscribe = bind("SUBSCRIBE SELECT value FROM metrics");

@@ -681,6 +681,11 @@ int main() {
                  installed_nullable_constant.force_nullable &&
                  installed_lowering_limits.grouped_aggregate_limits.maximum_groups ==
                      chronos::query::kMaximumGroupedAggregateGroups &&
+                 installed_lowering_limits.aggregate_limits.maximum_variable_extremum_bytes ==
+                     chronos::query::kDefaultAggregateExtremumByteLimit &&
+                 installed_lowering_limits.grouped_aggregate_limits
+                         .maximum_variable_extremum_bytes ==
+                     chronos::query::kDefaultAggregateExtremumByteLimit &&
                  installed_order_key_limit == chronos::query::kDefaultSortKeyLimit &&
                  lower_select != nullptr &&
                  create_timestamp_range_filter != nullptr &&

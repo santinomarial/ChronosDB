@@ -8,3 +8,4 @@ static_assert(std::is_aggregate_v<chronos::query::VectorAggregateOutputShape>);
 static_assert(std::is_aggregate_v<chronos::query::UngroupedAggregateLimits>);
 static_assert(std::is_aggregate_v<chronos::query::VectorGroupKeyDefinition>);
 static_assert(std::is_aggregate_v<chronos::query::GroupedAggregateLimits>);
+static_assert(chronos::query::kDefaultAggregateExtremumByteLimit > 0U);

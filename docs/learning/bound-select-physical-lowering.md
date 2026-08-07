@@ -74,7 +74,8 @@ container-length failure and publishes no partial plan.
 This baseline supports one source, ordinary WHERE, ordered projection, global and bounded grouped
 aggregates, exact bounded ORDER BY where authoritative identity is available, and LIMIT using the
 current numeric, Boolean, temporal, UUID, and variable-width output kernels. It rejects generated-
-identity base ORDER BY, LATEST, ASOF, SUBSCRIBE, EXPLAIN modes, and variable-width MIN/MAX.
+identity base ORDER BY, LATEST, ASOF, SUBSCRIBE, and EXPLAIN modes. Variable-width MIN/MAX now lower
+through the query-accounted aggregate state.
 Hash grouping, aggregate common-subexpression elimination, and spill remain later decisions.
 
 Lowering complexity is linear in source columns, output syntax, aggregate calls, and generated

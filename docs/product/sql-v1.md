@@ -9,8 +9,10 @@
 > results. Base-row vector ordering for schemas that require a generated logical identity remains
 > unsupported because vector sources do not expose that identity. A checked adapter now
 > instantiates those supported physical pipelines over one exact complete append-only tablet
-> snapshot while preserving automatic row-version shape and hidden-column removal. SQL v1 is
-> deliberately smaller than the SQL standard. Unsupported syntax must produce a clear bind or
+> snapshot while preserving automatic row-version shape and hidden-column removal. Global and
+> grouped vector aggregation now implements STRING/SYMBOL/BINARY `MIN` and `MAX` with unsigned byte
+> order and bounded query-accounted winner storage. SQL v1 is deliberately smaller than the SQL
+> standard. Unsupported syntax must produce a clear bind or
 > parse error; it must not be accepted with different semantics.
 
 The canonical types and table clauses are defined in the [data model](data-model.md). The custom parser, binder, scalar reference engine, and vector engine follow [ADR 0008](../adr/0008-custom-sql-and-vectorized-execution.md).

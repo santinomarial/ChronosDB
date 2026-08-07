@@ -84,6 +84,80 @@ void append_u32(std::vector<std::byte>& output, const std::uint32_t value) {
       .value();
 }
 
+[[nodiscard]] AccountedVectorChunk variable_extremum_input(const QueryResourceContext& resources) {
+  constexpr std::array<std::string_view, 3> kValues{"zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+                                                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                                                    "mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm"};
+  columnar::ColumnVectorBuffers buffers;
+  append_u32(buffers.offsets, 0U);
+  for (const std::string_view value : kValues) {
+    for (const char byte : value)
+      buffers.values.push_back(static_cast<std::byte>(byte));
+    append_u32(buffers.offsets, static_cast<std::uint32_t>(buffers.values.size()));
+  }
+  std::vector<columnar::OwnedPhysicalColumn> columns;
+  columns.push_back(
+      columnar::OwnedPhysicalColumn::create(
+          {.type = schema::LogicalType::create(schema::LogicalTypeKind::kString).value(),
+           .nullable = false,
+           .row_count = static_cast<std::uint32_t>(kValues.size()),
+           .null_count = 0U},
+          std::move(buffers))
+          .value());
+  VectorChunk chunk =
+      VectorChunk::create(std::move(columns), VectorSelection::all(kValues.size()).value()).value();
+  const std::size_t charge = chunk.retained_buffer_bytes() + 1'024U;
+  return AccountedVectorChunk::create(std::move(chunk), resources.reserve(charge).value(),
+                                      resources)
+      .value();
+}
+
+[[nodiscard]] AccountedVectorChunk grouped_extremum_input(const QueryResourceContext& resources) {
+  constexpr std::array<std::int64_t, 3> kKeys{1, 1, 2};
+  constexpr std::array<std::string_view, 3> kValues{"zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+                                                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                                                    "mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm"};
+  columnar::ColumnVectorBuffers key_buffers;
+  key_buffers.values.resize(kKeys.size() * sizeof(std::int64_t));
+  for (std::size_t row = 0U; row < kKeys.size(); ++row) {
+    const std::uint64_t bits = static_cast<std::uint64_t>(kKeys[row]);
+    for (std::size_t byte = 0U; byte < sizeof(bits); ++byte) {
+      key_buffers.values[row * sizeof(bits) + byte] =
+          static_cast<std::byte>((bits >> (byte * 8U)) & 0xffU);
+    }
+  }
+  columnar::ColumnVectorBuffers value_buffers;
+  append_u32(value_buffers.offsets, 0U);
+  for (const std::string_view value : kValues) {
+    for (const char byte : value)
+      value_buffers.values.push_back(static_cast<std::byte>(byte));
+    append_u32(value_buffers.offsets, static_cast<std::uint32_t>(value_buffers.values.size()));
+  }
+  std::vector<columnar::OwnedPhysicalColumn> columns;
+  columns.push_back(
+      columnar::OwnedPhysicalColumn::create(
+          {.type = schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value(),
+           .nullable = false,
+           .row_count = static_cast<std::uint32_t>(kKeys.size()),
+           .null_count = 0U},
+          std::move(key_buffers))
+          .value());
+  columns.push_back(
+      columnar::OwnedPhysicalColumn::create(
+          {.type = schema::LogicalType::create(schema::LogicalTypeKind::kString).value(),
+           .nullable = false,
+           .row_count = static_cast<std::uint32_t>(kValues.size()),
+           .null_count = 0U},
+          std::move(value_buffers))
+          .value());
+  VectorChunk chunk =
+      VectorChunk::create(std::move(columns), VectorSelection::all(kKeys.size()).value()).value();
+  const std::size_t charge = chunk.retained_buffer_bytes() + 1'024U;
+  return AccountedVectorChunk::create(std::move(chunk), resources.reserve(charge).value(),
+                                      resources)
+      .value();
+}
+
 [[nodiscard]] schema::LogicalType int64_type() {
   return schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
 }
@@ -145,6 +219,42 @@ TEST(UngroupedAggregateAllocationFailureTest,
   EXPECT_TRUE(reached_success);
 }
 
+TEST(UngroupedAggregateAllocationFailureTest,
+     PullClassifiesEveryVariableExtremumAllocationFailureAndReleasesCredit) {
+  const schema::LogicalType string =
+      schema::LogicalType::create(schema::LogicalTypeKind::kString).value();
+  const std::vector<VectorAggregateDefinition> extrema{
+      {.operation = VectorAggregateOperation::kMinimum,
+       .input = VectorAggregateInput{.column_ordinal = 0U, .type = string, .nullable = false}},
+      {.operation = VectorAggregateOperation::kMaximum,
+       .input = VectorAggregateInput{.column_ordinal = 0U, .type = string, .nullable = false}}};
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 128U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    QueryResourceContext resources = QueryResourceContext::create(8U << 20U).value();
+    auto aggregate =
+        UngroupedAggregateOperator::create(
+            std::make_unique<OneChunkSource>(variable_extremum_input(resources)), extrema)
+            .value();
+    std::size_t observed = 0U;
+    auto step = run_with_allocation_failure(fail_after, observed,
+                                            [&] { return aggregate->next(resources); });
+    EXPECT_GT(observed, 0U);
+    if (step.has_value()) {
+      reached_success = true;
+      step = common::make_unexpected(
+          common::Status{common::StatusCode::kInternal, "drop aggregate output step"});
+      aggregate.reset();
+      EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+      break;
+    }
+    EXPECT_EQ(step.error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_TRUE(resources.is_cancelled());
+    EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  }
+  EXPECT_TRUE(reached_success);
+}
+
 TEST(GroupedAggregateAllocationFailureTest, CreationClassifiesEveryOwnedAllocationFailure) {
   const std::vector<VectorGroupKeyDefinition> keys{
       {.column_ordinal = 0U,
@@ -184,6 +294,44 @@ TEST(GroupedAggregateAllocationFailureTest,
     auto grouped = GroupedAggregateOperator::create(
                        std::make_unique<OneChunkSource>(grouped_input(resources)), keys, counts)
                        .value();
+    std::size_t observed = 0U;
+    auto step =
+        run_with_allocation_failure(fail_after, observed, [&] { return grouped->next(resources); });
+    EXPECT_GT(observed, 0U);
+    if (step.has_value()) {
+      reached_success = true;
+      step = common::make_unexpected(
+          common::Status{common::StatusCode::kInternal, "drop grouped output step"});
+      grouped.reset();
+      EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+      break;
+    }
+    EXPECT_EQ(step.error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_TRUE(resources.is_cancelled());
+    EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  }
+  EXPECT_TRUE(reached_success);
+}
+
+TEST(GroupedAggregateAllocationFailureTest,
+     PullClassifiesEveryVariableExtremumAllocationFailureAndReleasesCredit) {
+  const schema::LogicalType string =
+      schema::LogicalType::create(schema::LogicalTypeKind::kString).value();
+  const std::vector<VectorGroupKeyDefinition> keys{
+      {.column_ordinal = 0U, .type = int64_type(), .nullable = false}};
+  const std::vector<VectorAggregateDefinition> extrema{
+      {.operation = VectorAggregateOperation::kMinimum,
+       .input = VectorAggregateInput{.column_ordinal = 1U, .type = string, .nullable = false}},
+      {.operation = VectorAggregateOperation::kMaximum,
+       .input = VectorAggregateInput{.column_ordinal = 1U, .type = string, .nullable = false}}};
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 256U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    QueryResourceContext resources = QueryResourceContext::create(8U << 20U).value();
+    auto grouped =
+        GroupedAggregateOperator::create(
+            std::make_unique<OneChunkSource>(grouped_extremum_input(resources)), keys, extrema)
+            .value();
     std::size_t observed = 0U;
     auto step =
         run_with_allocation_failure(fail_after, observed, [&] { return grouped->next(resources); });

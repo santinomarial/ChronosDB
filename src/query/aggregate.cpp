@@ -109,8 +109,93 @@ struct AggregateState {
   double mean{};
   double squared_distance{};
   std::optional<ScalarValue> extremum;
+  QueryMemoryReservation extremum_reservation;
   bool has_value{};
 };
+
+[[nodiscard]] common::Result<int> compare_variable_extremum(const common::ByteView candidate,
+                                                            const ScalarValue& extremum,
+                                                            const schema::LogicalTypeKind kind) {
+  common::ByteView stored;
+  if (kind == schema::LogicalTypeKind::kBinary) {
+    const auto* bytes = std::get_if<std::vector<std::byte>>(&extremum.storage());
+    if (bytes == nullptr)
+      return common::make_unexpected(invalid("variable aggregate binary storage is invalid"));
+    stored = *bytes;
+  } else {
+    const auto* text = std::get_if<std::string>(&extremum.storage());
+    if (text == nullptr)
+      return common::make_unexpected(invalid("variable aggregate text storage is invalid"));
+    const std::size_t prefix = std::min(candidate.size(), text->size());
+    const int compared = prefix == 0U ? 0 : std::memcmp(candidate.data(), text->data(), prefix);
+    if (compared != 0)
+      return compared < 0 ? -1 : 1;
+    return candidate.size() == text->size() ? 0 : (candidate.size() < text->size() ? -1 : 1);
+  }
+  const std::size_t prefix = std::min(candidate.size(), stored.size());
+  const int compared = prefix == 0U ? 0 : std::memcmp(candidate.data(), stored.data(), prefix);
+  if (compared != 0)
+    return compared < 0 ? -1 : 1;
+  return candidate.size() == stored.size() ? 0 : (candidate.size() < stored.size() ? -1 : 1);
+}
+
+[[nodiscard]] common::Result<void>
+accumulate_variable_extremum(AggregateState& state, const columnar::ColumnCellView& cell,
+                             const schema::LogicalType& input_type,
+                             const QueryResourceContext& resources,
+                             const std::size_t maximum_bytes) {
+  const common::Result<common::ByteView> bytes = cell.bytes();
+  if (!bytes.has_value())
+    return common::make_unexpected(bytes.error());
+  bool replace = !state.extremum.has_value();
+  if (!replace) {
+    const common::Result<int> order =
+        compare_variable_extremum(*bytes, *state.extremum, input_type.kind());
+    if (!order.has_value())
+      return common::make_unexpected(order.error());
+    replace = (state.definition.operation == VectorAggregateOperation::kMinimum && *order < 0) ||
+              (state.definition.operation == VectorAggregateOperation::kMaximum && *order > 0);
+  }
+  if (!replace)
+    return {};
+  if (bytes->size() > maximum_bytes)
+    return common::make_unexpected(exhausted("aggregate extremum exceeds its byte limit"));
+  const std::optional<std::size_t> doubled =
+      common::checked_multiply(bytes->size(), std::size_t{2U});
+  const std::optional<std::size_t> charge =
+      doubled.has_value() ? common::checked_add(*doubled, kConservativeAllocationOverheadBytes)
+                          : std::nullopt;
+  if (!charge.has_value())
+    return common::make_unexpected(exhausted("aggregate extremum accounting overflowed"));
+  common::Result<QueryMemoryReservation> reservation = resources.reserve(*charge);
+  if (!reservation.has_value())
+    return common::make_unexpected(reservation.error());
+  try {
+    common::Result<ScalarValue> value = ScalarValue::from_column_cell(input_type, cell);
+    if (!value.has_value())
+      return common::make_unexpected(value.error());
+    std::size_t retained_payload = 0U;
+    if (const auto* text = std::get_if<std::string>(&value->storage()); text != nullptr) {
+      retained_payload = text->capacity();
+    } else if (const auto* binary = std::get_if<std::vector<std::byte>>(&value->storage());
+               binary != nullptr) {
+      retained_payload = binary->capacity();
+    } else {
+      return common::make_unexpected(invalid("variable aggregate storage is invalid"));
+    }
+    if (retained_payload > reservation->bytes()) {
+      return common::make_unexpected(
+          exhausted("aggregate extremum allocation exceeded its charge"));
+    }
+    state.extremum = std::move(*value);
+    state.extremum_reservation = std::move(*reservation);
+    return {};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("aggregate extremum allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("aggregate extremum exceeds container limits"));
+  }
+}
 
 [[nodiscard]] common::Result<void> increment_count(std::int64_t& count) {
   if (count == std::numeric_limits<std::int64_t>::max())
@@ -201,7 +286,9 @@ struct AggregateState {
 }
 
 [[nodiscard]] common::Result<void> accumulate_cell(AggregateState& state,
-                                                   const columnar::ColumnCellView& cell) {
+                                                   const columnar::ColumnCellView& cell,
+                                                   const QueryResourceContext& resources,
+                                                   const std::size_t maximum_extremum_bytes) {
   if (state.definition.operation == VectorAggregateOperation::kCount) {
     if (!cell.is_null())
       return increment_count(state.count);
@@ -211,8 +298,13 @@ struct AggregateState {
     return {};
   if (!state.definition.input.has_value())
     return common::make_unexpected(invalid("aggregate operation has no input definition"));
-  const common::Result<ScalarValue> value =
-      ScalarValue::from_column_cell(state.definition.input->type, cell);
+  const schema::LogicalType& input_type = state.definition.input.value().type;
+  if ((state.definition.operation == VectorAggregateOperation::kMinimum ||
+       state.definition.operation == VectorAggregateOperation::kMaximum) &&
+      variable(input_type.kind())) {
+    return accumulate_variable_extremum(state, cell, input_type, resources, maximum_extremum_bytes);
+  }
+  const common::Result<ScalarValue> value = ScalarValue::from_column_cell(input_type, cell);
   if (!value.has_value())
     return common::make_unexpected(value.error());
   return accumulate_value(state, *value);
@@ -243,7 +335,7 @@ struct AggregateState {
   return common::make_unexpected(invalid("exact SUM result type is invalid"));
 }
 
-[[nodiscard]] common::Result<ScalarValue> finish(const AggregateState& state) {
+[[nodiscard]] common::Result<ScalarValue> finish(AggregateState& state) {
   const VectorAggregateOperation operation = state.definition.operation;
   const common::Result<VectorAggregateOutputShape> shape =
       vector_aggregate_output_shape(state.definition);
@@ -255,7 +347,7 @@ struct AggregateState {
   }
   if (operation == VectorAggregateOperation::kMinimum ||
       operation == VectorAggregateOperation::kMaximum) {
-    return state.extremum.has_value() ? common::Result<ScalarValue>{*state.extremum}
+    return state.extremum.has_value() ? common::Result<ScalarValue>{std::move(*state.extremum)}
                                       : common::Result<ScalarValue>{ScalarValue::null(shape->type)};
   }
   if (operation == VectorAggregateOperation::kAverage) {
@@ -328,7 +420,8 @@ public:
     bool nullable;
   };
 
-  explicit Impl(std::vector<AggregateState> states) noexcept : states_(std::move(states)) {}
+  Impl(std::vector<AggregateState> states, const std::size_t maximum_extremum_bytes) noexcept
+      : states_(std::move(states)), maximum_extremum_bytes_(maximum_extremum_bytes) {}
 
   [[nodiscard]] common::Result<void> consume(const VectorChunk& chunk,
                                              const QueryResourceContext& resources) {
@@ -361,7 +454,8 @@ public:
             chunk.cell({.column_ordinal = input.column_ordinal, .selected_row = selected_row});
         if (!cell.has_value())
           return common::make_unexpected(cell.error());
-        const common::Result<void> accumulated = accumulate_cell(state, *cell);
+        const common::Result<void> accumulated =
+            accumulate_cell(state, *cell, resources, maximum_extremum_bytes_);
         if (!accumulated.has_value())
           return accumulated;
       }
@@ -369,11 +463,11 @@ public:
     return {};
   }
 
-  [[nodiscard]] common::Result<std::vector<Result>> finish_all() const {
+  [[nodiscard]] common::Result<std::vector<Result>> finish_all() {
     try {
       std::vector<Result> results;
       results.reserve(states_.size());
-      for (const AggregateState& state : states_) {
+      for (AggregateState& state : states_) {
         common::Result<ScalarValue> value = finish(state);
         if (!value.has_value())
           return common::make_unexpected(value.error());
@@ -393,6 +487,7 @@ public:
 
 private:
   std::vector<AggregateState> states_;
+  std::size_t maximum_extremum_bytes_;
 };
 
 common::Result<VectorAggregateOutputShape>
@@ -423,10 +518,6 @@ vector_aggregate_output_shape(const VectorAggregateDefinition& definition) {
   }
   if (definition.operation == VectorAggregateOperation::kMinimum ||
       definition.operation == VectorAggregateOperation::kMaximum) {
-    if (variable(input_type.kind())) {
-      return common::make_unexpected(
-          invalid("variable-width MIN/MAX requires the grouped-state accounting decision"));
-    }
     return VectorAggregateOutputShape{.type = input_type, .nullable = true};
   }
   return common::make_unexpected(invalid("aggregate operation is invalid"));
@@ -447,6 +538,7 @@ UngroupedAggregateOperator::create(std::unique_ptr<PhysicalOperator> input,
     return common::make_unexpected(invalid("aggregate input operator is required"));
   if (limits.maximum_aggregates == 0U ||
       limits.maximum_aggregates > kMaximumUngroupedAggregateWidth ||
+      limits.maximum_variable_extremum_bytes == 0U ||
       limits.maximum_retained_configuration_bytes == 0U ||
       limits.output_limits.maximum_rows == 0U || limits.output_limits.maximum_columns == 0U ||
       limits.output_limits.maximum_buffer_bytes == 0U ||
@@ -482,7 +574,7 @@ UngroupedAggregateOperator::create(std::unique_ptr<PhysicalOperator> input,
     }
     for (const VectorAggregateDefinition& definition : definitions)
       states.emplace_back(definition);
-    auto impl = std::make_unique<Impl>(std::move(states));
+    auto impl = std::make_unique<Impl>(std::move(states), limits.maximum_variable_extremum_bytes);
     return std::unique_ptr<PhysicalOperator>{
         new UngroupedAggregateOperator{std::move(input), std::move(impl), limits.output_limits}};
   } catch (const std::bad_alloc&) {
@@ -496,46 +588,39 @@ common::Result<PhysicalOperatorStep>
 UngroupedAggregateOperator::next(const QueryResourceContext& resources) {
   if (emitted_)
     return PhysicalOperatorStep::end();
+  const auto fail = [this,
+                     &resources](common::Status status) -> common::Result<PhysicalOperatorStep> {
+    static_cast<void>(resources.request_cancel());
+    input_.reset();
+    impl_.reset();
+    emitted_ = true;
+    return common::make_unexpected(std::move(status));
+  };
   const common::Result<void> active = resources.check_cancelled();
   if (!active.has_value())
-    return common::make_unexpected(active.error());
+    return fail(active.error());
 
   while (input_ != nullptr) {
     common::Result<PhysicalOperatorStep> step = input_->next(resources);
-    if (!step.has_value()) {
-      static_cast<void>(resources.request_cancel());
-      return common::make_unexpected(step.error());
-    }
+    if (!step.has_value())
+      return fail(step.error());
     if (step->kind() == PhysicalOperatorStepKind::kEnd) {
       input_.reset();
       break;
     }
     common::Result<AccountedVectorChunk> chunk = std::move(*step).take_chunk();
-    if (!chunk.has_value()) {
-      static_cast<void>(resources.request_cancel());
-      return common::make_unexpected(chunk.error());
-    }
-    if (!chunk->belongs_to(resources)) {
-      static_cast<void>(resources.request_cancel());
-      return common::make_unexpected(invalid("aggregate input chunk belongs to another query"));
-    }
+    if (!chunk.has_value())
+      return fail(chunk.error());
+    if (!chunk->belongs_to(resources))
+      return fail(invalid("aggregate input chunk belongs to another query"));
     const common::Result<void> consumed = impl_->consume(chunk->chunk(), resources);
-    if (!consumed.has_value()) {
-      static_cast<void>(resources.request_cancel());
-      return common::make_unexpected(consumed.error());
-    }
+    if (!consumed.has_value())
+      return fail(consumed.error());
   }
 
   common::Result<std::vector<Impl::Result>> values = impl_->finish_all();
-  if (!values.has_value()) {
-    static_cast<void>(resources.request_cancel());
-    return common::make_unexpected(values.error());
-  }
-  const auto fail_output =
-      [&resources](common::Status status) -> common::Result<PhysicalOperatorStep> {
-    static_cast<void>(resources.request_cancel());
-    return common::make_unexpected(std::move(status));
-  };
+  if (!values.has_value())
+    return fail(values.error());
   try {
     std::vector<ColumnOutputPosition> positions;
     positions.reserve(values->size());
@@ -545,16 +630,15 @@ UngroupedAggregateOperator::next(const QueryResourceContext& resources) {
     }
     common::Result<PhysicalOperatorStep> result =
         materialize_single_row(resources, std::move(positions), output_limits_);
-    if (!result.has_value()) {
-      static_cast<void>(resources.request_cancel());
-      return common::make_unexpected(result.error());
-    }
+    if (!result.has_value())
+      return fail(result.error());
+    impl_.reset();
     emitted_ = true;
     return result;
   } catch (const std::bad_alloc&) {
-    return fail_output(exhausted("aggregate output allocation failed"));
+    return fail(exhausted("aggregate output allocation failed"));
   } catch (const std::length_error&) {
-    return fail_output(exhausted("aggregate output exceeds container limits"));
+    return fail(exhausted("aggregate output exceeds container limits"));
   }
 }
 
@@ -686,7 +770,7 @@ public:
         group_index = *created;
       }
       common::Result<void> accumulated =
-          accumulate_group(groups_[group_index], chunk, selected_row);
+          accumulate_group(groups_[group_index], chunk, selected_row, resources);
       if (!accumulated.has_value())
         return accumulated;
     }
@@ -725,7 +809,7 @@ public:
         positions.emplace_back(ConstantColumnOutputPosition{.value = std::move(source.key[key]),
                                                             .force_nullable = keys_[key].nullable});
       }
-      for (const AggregateState& state : source.aggregates) {
+      for (AggregateState& state : source.aggregates) {
         common::Result<ScalarValue> value = finish(state);
         if (!value.has_value())
           return common::make_unexpected(value.error());
@@ -922,8 +1006,9 @@ private:
     }
   }
 
-  [[nodiscard]] static common::Result<void>
-  accumulate_group(GroupState& group, const VectorChunk& chunk, const std::size_t selected_row) {
+  [[nodiscard]] common::Result<void> accumulate_group(GroupState& group, const VectorChunk& chunk,
+                                                      const std::size_t selected_row,
+                                                      const QueryResourceContext& resources) const {
     for (AggregateState& state : group.aggregates) {
       if (state.definition.operation == VectorAggregateOperation::kCountStar) {
         common::Result<void> counted = increment_count(state.count);
@@ -936,7 +1021,8 @@ private:
           chunk.cell({.column_ordinal = input.column_ordinal, .selected_row = selected_row});
       if (!cell.has_value())
         return common::make_unexpected(cell.error());
-      common::Result<void> accumulated = accumulate_cell(state, *cell);
+      common::Result<void> accumulated =
+          accumulate_cell(state, *cell, resources, limits_.maximum_variable_extremum_bytes);
       if (!accumulated.has_value())
         return accumulated;
     }
@@ -967,7 +1053,7 @@ GroupedAggregateOperator::create(std::unique_ptr<PhysicalOperator> input,
   if (limits.maximum_groups == 0U || limits.maximum_groups > kMaximumGroupedAggregateGroups ||
       limits.maximum_group_keys == 0U || limits.maximum_group_keys > kMaximumGroupedAggregateKeys ||
       limits.maximum_aggregates > kMaximumGroupedAggregateWidth ||
-      limits.maximum_key_bytes_per_group == 0U ||
+      limits.maximum_key_bytes_per_group == 0U || limits.maximum_variable_extremum_bytes == 0U ||
       limits.maximum_retained_configuration_bytes == 0U ||
       limits.output_limits.maximum_rows == 0U || limits.output_limits.maximum_columns == 0U ||
       limits.output_limits.maximum_buffer_bytes == 0U ||

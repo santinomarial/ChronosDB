@@ -104,7 +104,8 @@ float64_column(const std::span<const std::optional<double>> values) {
 }
 
 [[nodiscard]] columnar::OwnedPhysicalColumn
-string_column(const std::span<const std::optional<std::string_view>> values) {
+variable_column(const schema::LogicalTypeKind kind,
+                const std::span<const std::optional<std::string_view>> values) {
   columnar::ColumnVectorBuffers buffers;
   buffers.validity.resize(columnar::bitmap_size(static_cast<std::uint32_t>(values.size())));
   append_u32(buffers.offsets, 0U);
@@ -120,12 +121,17 @@ string_column(const std::span<const std::optional<std::string_view>> values) {
     append_u32(buffers.offsets, static_cast<std::uint32_t>(buffers.values.size()));
   }
   return columnar::OwnedPhysicalColumn::create(
-             {.type = type(schema::LogicalTypeKind::kString),
+             {.type = type(kind),
               .nullable = true,
               .row_count = static_cast<std::uint32_t>(values.size()),
               .null_count = null_count},
              std::move(buffers))
       .value();
+}
+
+[[nodiscard]] columnar::OwnedPhysicalColumn
+string_column(const std::span<const std::optional<std::string_view>> values) {
+  return variable_column(schema::LogicalTypeKind::kString, values);
 }
 
 [[nodiscard]] columnar::OwnedPhysicalColumn
@@ -337,6 +343,53 @@ TEST(UngroupedAggregateOperatorTest, ImplementsEmptyInputAndFloatingNanSemantics
   EXPECT_TRUE(std::isnan(std::get<double>(cell(step.chunk()->chunk(), 4U).storage())));
 }
 
+TEST(UngroupedAggregateOperatorTest,
+     ComputesByteOrderedVariableExtremaAcrossChunksAndAccountsOwnedPayloads) {
+  QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+  const std::array<std::optional<std::string_view>, 4> first{"zeta", std::nullopt, "alpha", ""};
+  const std::array<std::optional<std::string_view>, 3> second{"alphabet", "omega", "ignored"};
+  std::vector<AccountedVectorChunk> chunks;
+  const auto append_chunk = [&resources,
+                             &chunks](const std::span<const std::optional<std::string_view>> values,
+                                      std::vector<std::uint32_t> selection) {
+    std::vector<columnar::OwnedPhysicalColumn> columns;
+    columns.push_back(variable_column(schema::LogicalTypeKind::kString, values));
+    columns.push_back(variable_column(schema::LogicalTypeKind::kSymbol, values));
+    columns.push_back(variable_column(schema::LogicalTypeKind::kBinary, values));
+    chunks.push_back(accounted_chunk(resources, std::move(columns), std::move(selection)));
+  };
+  append_chunk(first, {});
+  append_chunk(second, {0U, 1U});
+  std::vector<VectorAggregateDefinition> definitions;
+  for (std::size_t column = 0U; column < 3U; ++column) {
+    const schema::LogicalTypeKind kind = column == 0U   ? schema::LogicalTypeKind::kString
+                                         : column == 1U ? schema::LogicalTypeKind::kSymbol
+                                                        : schema::LogicalTypeKind::kBinary;
+    definitions.push_back({.operation = VectorAggregateOperation::kMinimum,
+                           .input = VectorAggregateInput{
+                               .column_ordinal = column, .type = type(kind), .nullable = true}});
+    definitions.push_back({.operation = VectorAggregateOperation::kMaximum,
+                           .input = VectorAggregateInput{
+                               .column_ordinal = column, .type = type(kind), .nullable = true}});
+  }
+  auto aggregate = UngroupedAggregateOperator::create(
+                       std::make_unique<ManyChunkSource>(std::move(chunks)), definitions)
+                       .value();
+  auto step = aggregate->next(resources).value();
+  const VectorChunk& output = step.chunk()->chunk();
+  EXPECT_EQ(std::get<std::string>(cell(output, 0U).storage()), "");
+  EXPECT_EQ(std::get<std::string>(cell(output, 1U).storage()), "zeta");
+  EXPECT_EQ(std::get<std::string>(cell(output, 2U).storage()), "");
+  EXPECT_EQ(std::get<std::string>(cell(output, 3U).storage()), "zeta");
+  EXPECT_TRUE(std::get<std::vector<std::byte>>(cell(output, 4U).storage()).empty());
+  const std::vector<std::byte> expected_max{std::byte{'z'}, std::byte{'e'}, std::byte{'t'},
+                                            std::byte{'a'}};
+  EXPECT_EQ(std::get<std::vector<std::byte>>(cell(output, 5U).storage()), expected_max);
+  step = PhysicalOperatorStep::end();
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  aggregate.reset();
+}
+
 TEST(UngroupedAggregateOperatorTest, PreservesExactUnsignedAndDecimalSums) {
   QueryResourceContext unsigned_resources = QueryResourceContext::create(1U << 20U).value();
   const std::array<std::optional<std::uint64_t>, 3> unsigned_values{2U, std::nullopt, 3U};
@@ -378,9 +431,8 @@ TEST(UngroupedAggregateOperatorTest, RejectsInvalidDefinitionsShapesAndFinalOver
       vector_aggregate_output_shape(
           {.operation = VectorAggregateOperation::kMinimum,
            .input = VectorAggregateInput{.column_ordinal = 0U, .type = string, .nullable = true}})
-          .error()
-          .code(),
-      common::StatusCode::kInvalidArgument);
+          .value(),
+      (VectorAggregateOutputShape{.type = string, .nullable = true}));
   EXPECT_TRUE(
       vector_aggregate_output_shape(
           {.operation = VectorAggregateOperation::kCount,
@@ -419,6 +471,47 @@ TEST(UngroupedAggregateOperatorTest, RejectsInvalidDefinitionsShapesAndFinalOver
   EXPECT_EQ(overflow->next(overflow_resources).error().code(),
             common::StatusCode::kInvalidArgument);
   EXPECT_TRUE(overflow_resources.is_cancelled());
+}
+
+TEST(UngroupedAggregateOperatorTest, EnforcesVariableExtremumLimitsAndReleasesCredit) {
+  QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+  const std::array<std::optional<std::string_view>, 1> values{"four"};
+  std::vector<AccountedVectorChunk> chunks;
+  chunks.push_back(accounted_chunk(resources, string_column(values)));
+  auto extremum_operator =
+      UngroupedAggregateOperator::create(
+          std::make_unique<ManyChunkSource>(std::move(chunks)),
+          {aggregate(VectorAggregateOperation::kMinimum, schema::LogicalTypeKind::kString)},
+          {.maximum_variable_extremum_bytes = 3U})
+          .value();
+  auto failed = extremum_operator->next(resources);
+  ASSERT_FALSE(failed.has_value());
+  EXPECT_EQ(failed.error().code(), common::StatusCode::kResourceExhausted);
+  EXPECT_TRUE(resources.is_cancelled());
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+
+  QueryResourceContext nonwinner_resources = QueryResourceContext::create(1U << 20U).value();
+  const std::array<std::optional<std::string_view>, 2> nonwinners{"a", "too-long"};
+  std::vector<AccountedVectorChunk> nonwinner_chunks;
+  nonwinner_chunks.push_back(accounted_chunk(nonwinner_resources, string_column(nonwinners)));
+  auto bounded_min =
+      UngroupedAggregateOperator::create(
+          std::make_unique<ManyChunkSource>(std::move(nonwinner_chunks)),
+          {aggregate(VectorAggregateOperation::kMinimum, schema::LogicalTypeKind::kString)},
+          {.maximum_variable_extremum_bytes = 1U})
+          .value();
+  auto bounded_step = bounded_min->next(nonwinner_resources).value();
+  EXPECT_EQ(std::get<std::string>(cell(bounded_step.chunk()->chunk(), 0U).storage()), "a");
+  bounded_step = PhysicalOperatorStep::end();
+  EXPECT_EQ(nonwinner_resources.reserved_memory_bytes(), 0U);
+
+  EXPECT_EQ(UngroupedAggregateOperator::create(
+                std::make_unique<EmptySource>(),
+                {aggregate(VectorAggregateOperation::kMinimum, schema::LogicalTypeKind::kString)},
+                {.maximum_variable_extremum_bytes = 0U})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
 }
 
 TEST(UngroupedAggregateOperatorTest, CountsVariableInputAndEnforcesQueryOwnershipAndCancellation) {
@@ -617,9 +710,67 @@ TEST(GroupedAggregateOperatorTest, GroupsVariableKeysNullsAndAggregatesAcrossSel
   EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
 }
 
+TEST(GroupedAggregateOperatorTest, ComputesAndBoundsVariableExtremaPerAggregateState) {
+  QueryResourceContext resources = QueryResourceContext::create(8U << 20U).value();
+  const std::array<std::optional<std::int64_t>, 5> keys{1, 2, 1, 2, 1};
+  const std::array<std::optional<std::string_view>, 5> values{"z", "beta", "alpha", "omega", "m"};
+  std::vector<columnar::OwnedPhysicalColumn> columns;
+  columns.push_back(signed_column(schema::LogicalTypeKind::kInt64, keys));
+  columns.push_back(string_column(values));
+  std::vector<AccountedVectorChunk> chunks;
+  chunks.push_back(accounted_chunk(resources, std::move(columns)));
+  const std::vector<VectorGroupKeyDefinition> group_keys{
+      {.column_ordinal = 0U, .type = type(schema::LogicalTypeKind::kInt64), .nullable = true}};
+  const std::vector<VectorAggregateDefinition> definitions{
+      {.operation = VectorAggregateOperation::kMinimum,
+       .input = VectorAggregateInput{.column_ordinal = 1U,
+                                     .type = type(schema::LogicalTypeKind::kString),
+                                     .nullable = true}},
+      {.operation = VectorAggregateOperation::kMaximum,
+       .input = VectorAggregateInput{.column_ordinal = 1U,
+                                     .type = type(schema::LogicalTypeKind::kString),
+                                     .nullable = true}}};
+  auto grouped = GroupedAggregateOperator::create(
+                     std::make_unique<ManyChunkSource>(std::move(chunks)), group_keys, definitions)
+                     .value();
+  auto first = grouped->next(resources).value();
+  EXPECT_EQ(std::get<std::int64_t>(cell(first.chunk()->chunk(), 0U).storage()), 1);
+  EXPECT_EQ(std::get<std::string>(cell(first.chunk()->chunk(), 1U).storage()), "alpha");
+  EXPECT_EQ(std::get<std::string>(cell(first.chunk()->chunk(), 2U).storage()), "z");
+  first = PhysicalOperatorStep::end();
+  auto second = grouped->next(resources).value();
+  EXPECT_EQ(std::get<std::int64_t>(cell(second.chunk()->chunk(), 0U).storage()), 2);
+  EXPECT_EQ(std::get<std::string>(cell(second.chunk()->chunk(), 1U).storage()), "beta");
+  EXPECT_EQ(std::get<std::string>(cell(second.chunk()->chunk(), 2U).storage()), "omega");
+  second = PhysicalOperatorStep::end();
+  EXPECT_EQ(grouped->next(resources)->kind(), PhysicalOperatorStepKind::kEnd);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+
+  QueryResourceContext limited_resources = QueryResourceContext::create(8U << 20U).value();
+  std::vector<columnar::OwnedPhysicalColumn> limited_columns;
+  limited_columns.push_back(signed_column(schema::LogicalTypeKind::kInt64, keys));
+  limited_columns.push_back(string_column(values));
+  std::vector<AccountedVectorChunk> limited_chunks;
+  limited_chunks.push_back(accounted_chunk(limited_resources, std::move(limited_columns)));
+  auto limited = GroupedAggregateOperator::create(
+                     std::make_unique<ManyChunkSource>(std::move(limited_chunks)), group_keys,
+                     definitions, {.maximum_variable_extremum_bytes = 3U})
+                     .value();
+  auto failed = limited->next(limited_resources);
+  ASSERT_FALSE(failed.has_value());
+  EXPECT_EQ(failed.error().code(), common::StatusCode::kResourceExhausted);
+  EXPECT_TRUE(limited_resources.is_cancelled());
+  EXPECT_EQ(limited_resources.reserved_memory_bytes(), 0U);
+}
+
 TEST(GroupedAggregateOperatorTest, EmptyInputAndResourceLimitsReleaseState) {
   const std::vector<VectorGroupKeyDefinition> keys{
       {.column_ordinal = 0U, .type = type(schema::LogicalTypeKind::kInt64), .nullable = true}};
+  EXPECT_EQ(GroupedAggregateOperator::create(std::make_unique<EmptySource>(), keys, {},
+                                             {.maximum_variable_extremum_bytes = 0U})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
   QueryResourceContext empty_resources = QueryResourceContext::create(1U << 20U).value();
   auto empty = GroupedAggregateOperator::create(std::make_unique<EmptySource>(), keys, {}).value();
   EXPECT_EQ(empty->next(empty_resources)->kind(), PhysicalOperatorStepKind::kEnd);

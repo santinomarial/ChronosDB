@@ -83,3 +83,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0046](0046-exact-bounded-sql-order-by-lowering.md) | Exact bounded SQL ORDER BY lowering | accepted |
 | [0047](0047-exact-append-only-snapshot-tablet-scan.md) | Exact append-only snapshot tablet scan | accepted |
 | [0048](0048-snapshot-tablet-physical-pipeline-instantiation.md) | Snapshot tablet physical pipeline instantiation | accepted |
+| [0049](0049-query-accounted-variable-width-extrema.md) | Query-accounted variable-width extrema | accepted |

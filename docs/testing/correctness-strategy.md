@@ -174,8 +174,10 @@
 > BY lowering now adds aliases, non-projected and order-only aggregate expressions, exact base
 > DEDUP/commit/row ties, aggregate group-key ties, hidden-column removal, sort-before-LIMIT shapes,
 > a direct scalar-oracle comparison, hostile bounds, exhaustive lowering allocation failure,
-> fuzzing, installation, and retained-plan measurements. Generated-identity base ordering, hashing,
-> spill, and variable-width extrema remain outside this claim.
+> fuzzing, installation, and retained-plan measurements. Query-accounted variable-width extrema
+> add global/grouped STRING/SYMBOL/BINARY byte-order, replacement, NULL/empty, payload-limit,
+> SQL-lowering, allocation-failure, fuzz, sanitizer, and replacement-pattern benchmark coverage.
+> Generated-identity base ordering, hashing, and spill remain outside this claim.
 > Complete append-only tablet scanning now composes the exact durable, sealed-head, and active-head
 > publications from one aggregate epoch. Deterministic multiset and suffix checks, head-only exact
 > predicate/helper-removal coverage, hostile finite limits, allocation-failure injection, public

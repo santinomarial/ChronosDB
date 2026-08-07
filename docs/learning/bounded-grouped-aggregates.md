@@ -5,16 +5,16 @@
 The twenty-fifth Phase 9 increment adds the first data-dependent vector operator state. It groups a
 finite input stream by exact physical key cells, updates the shared aggregate kernels, and emits
 canonical query-accounted rows. The twenty-sixth increment connects bound single-source GROUP BY
-through that substrate. ORDER BY, variable-width extrema, hash tables, partial merge, scheduling,
-and spill remain separate work.
+through that substrate. Later increments added ORDER BY and query-accounted variable-width extrema;
+hash tables, partial merge, scheduling, and spill remain separate work.
 
 ## Public interface
 
 [`aggregate.hpp`](../../include/chronos/query/aggregate.hpp) exports:
 
 - `VectorGroupKeyDefinition`, carrying one ordinal/type/nullability assertion;
-- `GroupedAggregateLimits`, bounding groups, keys, aggregates, variable key bytes, retained
-  configuration, and output chunks; and
+- `GroupedAggregateLimits`, bounding groups, keys, aggregates, variable key/extremum bytes,
+  retained configuration, and output chunks; and
 - `GroupedAggregateOperator::create(input, keys, definitions, limits)`.
 
 [`physical_plan.hpp`](../../include/chronos/query/physical_plan.hpp) adds
@@ -36,9 +36,10 @@ The first occurrence establishes a group's output position. SQL without ORDER BY
 that order, so consumers must treat results as a multiset. Empty grouped input has no group and
 emits no row, unlike global aggregation's one implicit empty group.
 
-COUNT, exact/floating SUM, AVG, fixed-width MIN/MAX, and both variances reuse the global kernels.
+COUNT, exact/floating SUM, AVG, all-type MIN/MAX, and both variances reuse the global kernels.
 The same NULL skipping, widened final overflow, NaN, and sample-cardinality rules therefore apply.
-Variable-width MIN/MAX are rejected because their winning payload can be replaced and grow.
+Each variable-width MIN/MAX state reserves its winning payload independently before copying it.
+Replacement holds old and new credit until the new value is complete, then releases the old owner.
 
 ## Memory, pull lifecycle, and failure
 
@@ -62,7 +63,8 @@ before returning, so query credit does not wait for caller destruction of the fa
 ## Complexity and performance evidence
 
 For `R` selected rows, `G` groups, `K` key columns, and `A` aggregate definitions, this baseline is
-`O(R * G * K + R * A)` time, `O(G * (K + A) + key bytes)` retained state, and `O(K + A)` temporary
+`O(R * G * K + R * A)` time, `O(G * (K + A) + key and extremum bytes)` retained state, and
+`O(K + A)` temporary
 output state. Successful lookup allocates nothing. New groups and emitted rows allocate bounded
 owned storage.
 
@@ -91,9 +93,9 @@ aggregate arguments into this stage; ORDER BY remains a later operator.
 
 ## Likely review questions
 
-**Why are variable grouping keys supported but variable extrema are not?** A group key is copied
-once after its exact size is known. A winning extremum can be replaced repeatedly and needs a safe
-reservation-resize protocol.
+**Why is each variable extremum bounded independently?** Each aggregate state has an independently
+replaceable winner. Per-state bounds compose with the query-wide budget without coupling otherwise
+independent aggregate definitions.
 
 **Why linear lookup?** It is allocation-free after admitted group creation and uses the scalar total
 comparison directly. It gives a trusted semantic baseline for a measured hash implementation.
