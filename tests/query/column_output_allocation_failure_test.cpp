@@ -135,5 +135,62 @@ TEST(SourceColumnOutputAllocationFailureTest,
   EXPECT_TRUE(reached_success);
 }
 
+TEST(ColumnOutputAllocationFailureTest, CreationClassifiesOperatorAllocationFailure) {
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 8U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    std::unique_ptr<PhysicalOperator> child = std::make_unique<EmptySource>();
+    std::vector<ColumnOutputPosition> positions;
+    positions.emplace_back(ConstantColumnOutputPosition{
+        ScalarValue::text(type(schema::LogicalTypeKind::kString), "constant").value()});
+    positions.emplace_back(SourceColumnOutputPosition{0U});
+    std::size_t observed = 0U;
+    auto output = run_with_output_allocation_failure(fail_after, observed, [&] {
+      return ColumnOutputOperator::create(std::move(child), std::move(positions));
+    });
+    EXPECT_GT(observed, 0U);
+    if (output.has_value()) {
+      reached_success = true;
+      break;
+    }
+    EXPECT_EQ(output.error().code(), common::StatusCode::kResourceExhausted);
+  }
+  EXPECT_TRUE(reached_success);
+}
+
+TEST(ColumnOutputAllocationFailureTest,
+     PullClassifiesEveryMixedOutputAllocationFailureAndReleasesCredit) {
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 96U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+    std::vector<ColumnOutputPosition> positions;
+    positions.emplace_back(SourceColumnOutputPosition{0U});
+    positions.emplace_back(ConstantColumnOutputPosition{
+        ScalarValue::text(type(schema::LogicalTypeKind::kString), "constant").value()});
+    positions.emplace_back(
+        ConstantColumnOutputPosition{ScalarValue::null(type(schema::LogicalTypeKind::kBinary))});
+    auto output = ColumnOutputOperator::create(std::make_unique<OneChunkSource>(chunk(resources)),
+                                               std::move(positions))
+                      .value();
+    std::size_t observed = 0U;
+    auto step = run_with_output_allocation_failure(fail_after, observed,
+                                                   [&] { return output->next(resources); });
+    EXPECT_GT(observed, 0U);
+    if (step.has_value()) {
+      reached_success = true;
+      step = common::make_unexpected(
+          common::Status{common::StatusCode::kInternal, "drop column output step"});
+      output.reset();
+      EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+      break;
+    }
+    EXPECT_EQ(step.error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_TRUE(resources.is_cancelled());
+    EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  }
+  EXPECT_TRUE(reached_success);
+}
+
 } // namespace
 } // namespace chronos::query

@@ -7,6 +7,7 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <gtest/gtest.h>
 #include <memory>
 #include <optional>
@@ -140,6 +141,57 @@ public:
   for (const std::byte value : bytes)
     result.push_back(static_cast<char>(std::to_integer<unsigned char>(value)));
   return result;
+}
+
+[[nodiscard]] ScalarValue representative_constant(const schema::LogicalTypeKind kind) {
+  using schema::LogicalTypeKind;
+  const schema::LogicalType logical_type = kind == LogicalTypeKind::kDecimal
+                                               ? schema::LogicalType::decimal(38U, 9U).value()
+                                               : type(kind);
+  switch (kind) {
+  case LogicalTypeKind::kBool:
+    return ScalarValue::boolean(true).value();
+  case LogicalTypeKind::kInt8:
+  case LogicalTypeKind::kInt16:
+  case LogicalTypeKind::kInt32:
+  case LogicalTypeKind::kInt64:
+  case LogicalTypeKind::kTimestampNs:
+  case LogicalTypeKind::kDate:
+    return ScalarValue::signed_value(logical_type, -7).value();
+  case LogicalTypeKind::kUInt8:
+  case LogicalTypeKind::kUInt16:
+  case LogicalTypeKind::kUInt32:
+  case LogicalTypeKind::kUInt64:
+    return ScalarValue::unsigned_value(logical_type, 7U).value();
+  case LogicalTypeKind::kFloat32:
+    return ScalarValue::float32(1.25F).value();
+  case LogicalTypeKind::kFloat64:
+    return ScalarValue::float64(-2.5).value();
+  case LogicalTypeKind::kDecimal: {
+    Decimal128Value decimal;
+    decimal.coefficient.front() = std::byte{42};
+    return ScalarValue::decimal(logical_type, decimal).value();
+  }
+  case LogicalTypeKind::kSymbol:
+  case LogicalTypeKind::kString:
+    return ScalarValue::text(logical_type, "constant").value();
+  case LogicalTypeKind::kBinary:
+    return ScalarValue::binary({std::byte{0x00}, std::byte{0xff}, std::byte{0x41}});
+  case LogicalTypeKind::kUuid: {
+    common::Uuid::Bytes bytes{};
+    bytes.front() = std::byte{0x12};
+    bytes.back() = std::byte{0x34};
+    return ScalarValue::uuid(common::Uuid{bytes});
+  }
+  }
+  return ScalarValue::untyped_null();
+}
+
+[[nodiscard]] const schema::LogicalType& required_type(const ScalarValue& value) {
+  const std::optional<schema::LogicalType>& logical_type = value.type();
+  if (!logical_type.has_value())
+    std::abort();
+  return *logical_type;
 }
 
 TEST(SourceColumnOutputOperatorTest, ReordersDuplicatesAndCompactsSelectedRows) {
@@ -289,6 +341,191 @@ TEST(SourceColumnOutputOperatorTest, RejectsConfigurationAndRuntimeLimitsWithout
         SourceColumnOutputOperator::create(
             std::make_unique<OneChunkSource>(accounted_chunk(owner, sample_columns(), {0U, 1U})),
             {0U})
+            .value();
+    const auto failed = output->next(impostor);
+    ASSERT_FALSE(failed.has_value());
+    EXPECT_EQ(failed.error().code(), common::StatusCode::kInvalidArgument);
+    EXPECT_TRUE(impostor.is_cancelled());
+    EXPECT_FALSE(owner.is_cancelled());
+    EXPECT_EQ(owner.reserved_memory_bytes(), 0U);
+  }
+}
+
+TEST(ColumnOutputOperatorTest, InterleavesSourceAndTypedConstantsAndCompactsSparseRows) {
+  QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+  auto source =
+      std::make_unique<OneChunkSource>(accounted_chunk(resources, sample_columns(), {0U, 2U, 3U}));
+  std::vector<ColumnOutputPosition> positions;
+  positions.emplace_back(SourceColumnOutputPosition{1U});
+  positions.emplace_back(ConstantColumnOutputPosition{
+      ScalarValue::signed_value(type(schema::LogicalTypeKind::kInt64), 77).value()});
+  positions.emplace_back(
+      ConstantColumnOutputPosition{ScalarValue::null(type(schema::LogicalTypeKind::kString))});
+  positions.emplace_back(ConstantColumnOutputPosition{ScalarValue::boolean(true).value()});
+  positions.emplace_back(SourceColumnOutputPosition{0U});
+  auto output = ColumnOutputOperator::create(std::move(source), std::move(positions)).value();
+
+  auto step = output->next(resources);
+  ASSERT_TRUE(step.has_value()) << step.error().to_string();
+  ASSERT_EQ(step->kind(), PhysicalOperatorStepKind::kChunk);
+  const VectorChunk& chunk = step->chunk()->chunk();
+  ASSERT_EQ(chunk.column_count(), 5U);
+  EXPECT_EQ(chunk.physical_row_count(), 3U);
+  EXPECT_EQ(chunk.selected_row_count(), 3U);
+  EXPECT_TRUE(chunk.selection().is_identity());
+  EXPECT_EQ(text(chunk, 0U, 1U), "ccc");
+  EXPECT_EQ(i64(chunk, 1U, 0U), 77);
+  EXPECT_EQ(i64(chunk, 1U, 2U), 77);
+  EXPECT_TRUE(chunk.column(2U)->nullable());
+  EXPECT_EQ(chunk.column(2U)->null_count(), 3U);
+  EXPECT_TRUE(chunk.cell({.column_ordinal = 2U, .selected_row = 1U})->is_null());
+  EXPECT_FALSE(chunk.column(3U)->nullable());
+  EXPECT_TRUE(chunk.cell({.column_ordinal = 3U, .selected_row = 2U})->boolean().value());
+  EXPECT_EQ(i64(chunk, 4U, 1U), 30);
+
+  step = PhysicalOperatorStep::end();
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  EXPECT_EQ(output->next(resources)->kind(), PhysicalOperatorStepKind::kEnd);
+}
+
+TEST(ColumnOutputOperatorPropertyTest, MaterializesEveryFrozenTypedConstantAndTypedNull) {
+  std::vector<ColumnOutputPosition> positions;
+  std::vector<ScalarValue> expected;
+  for (std::uint16_t code = 1U; code <= 18U; ++code) {
+    const schema::LogicalTypeKind kind = schema::logical_type_kind_from_code(code).value();
+    ScalarValue value = representative_constant(kind);
+    positions.emplace_back(ConstantColumnOutputPosition{value});
+    expected.push_back(value);
+    positions.emplace_back(ConstantColumnOutputPosition{ScalarValue::null(required_type(value))});
+    expected.push_back(ScalarValue::null(required_type(value)));
+  }
+
+  QueryResourceContext resources = QueryResourceContext::create(16U << 20U).value();
+  auto source =
+      std::make_unique<OneChunkSource>(accounted_chunk(resources, sample_columns(), {0U, 2U, 3U}));
+  auto output = ColumnOutputOperator::create(std::move(source), std::move(positions),
+                                             {.maximum_rows = 4U,
+                                              .maximum_columns = expected.size(),
+                                              .maximum_buffer_bytes = 1U << 20U,
+                                              .maximum_retained_buffer_bytes = 2U << 20U})
+                    .value();
+  auto step = output->next(resources);
+  ASSERT_TRUE(step.has_value()) << step.error().to_string();
+  const VectorChunk& chunk = step->chunk()->chunk();
+  ASSERT_EQ(chunk.column_count(), expected.size());
+  for (std::size_t column = 0U; column < expected.size(); ++column) {
+    ASSERT_EQ(chunk.column(column)->type(), required_type(expected[column]));
+    EXPECT_EQ(chunk.column(column)->nullable(), expected[column].is_null());
+    for (std::size_t row = 0U; row < chunk.selected_row_count(); ++row) {
+      const columnar::ColumnCellView cell =
+          chunk.cell({.column_ordinal = column, .selected_row = row}).value();
+      const ScalarValue actual =
+          ScalarValue::from_column_cell(required_type(expected[column]), cell).value();
+      EXPECT_EQ(actual.type(), expected[column].type());
+      EXPECT_EQ(actual.storage(), expected[column].storage());
+    }
+  }
+}
+
+TEST(ColumnOutputOperatorTest, PreservesEmptySelectionProgressAndRejectsInvalidInputs) {
+  EXPECT_EQ(ColumnOutputOperator::create({}, {}).error().code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(
+      ColumnOutputOperator::create(std::make_unique<EmptySource>(),
+                                   {ConstantColumnOutputPosition{ScalarValue::untyped_null()}})
+          .error()
+          .code(),
+      common::StatusCode::kInvalidArgument);
+
+  QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+  auto output =
+      ColumnOutputOperator::create(
+          std::make_unique<OneChunkSource>(accounted_chunk(resources, sample_columns(), {})),
+          {ConstantColumnOutputPosition{
+               ScalarValue::text(type(schema::LogicalTypeKind::kString), "x").value()},
+           SourceColumnOutputPosition{0U}})
+          .value();
+  auto step = output->next(resources);
+  ASSERT_TRUE(step.has_value()) << step.error().to_string();
+  ASSERT_EQ(step->kind(), PhysicalOperatorStepKind::kChunk);
+  EXPECT_EQ(step->chunk()->chunk().physical_row_count(), 4U);
+  EXPECT_EQ(step->chunk()->chunk().selected_row_count(), 0U);
+  EXPECT_FALSE(step->chunk()->chunk().selection().is_identity());
+  EXPECT_EQ(step->chunk()->chunk().column(0U)->values().size(), 4U);
+
+  QueryResourceContext failed_resources = QueryResourceContext::create(1U << 20U).value();
+  auto invalid_ordinal =
+      ColumnOutputOperator::create(std::make_unique<OneChunkSource>(
+                                       accounted_chunk(failed_resources, sample_columns(), {0U})),
+                                   {SourceColumnOutputPosition{3U}})
+          .value();
+  const auto failed = invalid_ordinal->next(failed_resources);
+  ASSERT_FALSE(failed.has_value());
+  EXPECT_EQ(failed.error().code(), common::StatusCode::kOutOfRange);
+  EXPECT_TRUE(failed_resources.is_cancelled());
+  EXPECT_EQ(failed_resources.reserved_memory_bytes(), 0U);
+}
+
+TEST(ColumnOutputOperatorTest, RejectsConfigurationRuntimeBudgetAndForeignOwnership) {
+  std::vector<ColumnOutputPosition> oversized_positions;
+  oversized_positions.reserve(kMaximumColumnOutputWidth + 1U);
+  oversized_positions.emplace_back(SourceColumnOutputPosition{0U});
+  EXPECT_EQ(
+      ColumnOutputOperator::create(std::make_unique<EmptySource>(), std::move(oversized_positions))
+          .error()
+          .code(),
+      common::StatusCode::kResourceExhausted);
+
+  std::string oversized_constant{"x"};
+  oversized_constant.reserve(4'096U);
+  std::vector<ColumnOutputPosition> retained_positions;
+  retained_positions.emplace_back(ConstantColumnOutputPosition{
+      ScalarValue::text(type(schema::LogicalTypeKind::kString), std::move(oversized_constant))
+          .value()});
+  EXPECT_EQ(ColumnOutputOperator::create(std::make_unique<EmptySource>(),
+                                         std::move(retained_positions),
+                                         {.maximum_retained_buffer_bytes = 1'024U})
+                .error()
+                .code(),
+            common::StatusCode::kResourceExhausted);
+
+  {
+    QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+    auto output =
+        ColumnOutputOperator::create(
+            std::make_unique<OneChunkSource>(
+                accounted_chunk(resources, sample_columns(), {0U, 1U})),
+            {ConstantColumnOutputPosition{
+                ScalarValue::text(type(schema::LogicalTypeKind::kString), "long").value()}},
+            {.maximum_buffer_bytes = 1U})
+            .value();
+    const auto failed = output->next(resources);
+    ASSERT_FALSE(failed.has_value());
+    EXPECT_EQ(failed.error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_TRUE(resources.is_cancelled());
+    EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  }
+  {
+    QueryResourceContext resources = QueryResourceContext::create(4'096U).value();
+    auto output =
+        ColumnOutputOperator::create(
+            std::make_unique<OneChunkSource>(
+                accounted_chunk(resources, sample_columns(), {0U, 1U}, 4'096U)),
+            {ConstantColumnOutputPosition{
+                ScalarValue::signed_value(type(schema::LogicalTypeKind::kInt64), 1).value()}})
+            .value();
+    const auto failed = output->next(resources);
+    ASSERT_FALSE(failed.has_value());
+    EXPECT_EQ(failed.error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  }
+  {
+    QueryResourceContext owner = QueryResourceContext::create(1U << 20U).value();
+    QueryResourceContext impostor = QueryResourceContext::create(1U << 20U).value();
+    auto output =
+        ColumnOutputOperator::create(
+            std::make_unique<OneChunkSource>(accounted_chunk(owner, sample_columns(), {0U, 1U})),
+            {ConstantColumnOutputPosition{ScalarValue::boolean(true).value()}})
             .value();
     const auto failed = output->next(impostor);
     ASSERT_FALSE(failed.has_value());

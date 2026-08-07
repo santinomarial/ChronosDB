@@ -96,6 +96,49 @@ source(const QueryResourceContext& resources, const std::uint32_t rows,
        .maximum_retained_buffer_bytes = kBenchmarkMemoryLimit});
 }
 
+[[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>>
+mixed_source(const QueryResourceContext& resources, const std::uint32_t rows,
+             const std::uint32_t selection_stride) {
+  std::vector<columnar::OwnedPhysicalColumn> columns;
+  columns.push_back(make_column(rows, 0U));
+  common::Result<VectorChunk> chunk = VectorChunk::create(
+      std::move(columns),
+      VectorSelection::from_indices(rows, selected_rows(rows, selection_stride)).value(),
+      {.maximum_rows = rows,
+       .maximum_columns = 1U,
+       .maximum_buffer_bytes = kBenchmarkMemoryLimit,
+       .maximum_retained_buffer_bytes = kBenchmarkMemoryLimit});
+  if (!chunk.has_value())
+    return common::make_unexpected(chunk.error());
+  common::Result<QueryMemoryReservation> reservation =
+      resources.reserve(chunk->retained_buffer_bytes() + 4'096U);
+  if (!reservation.has_value())
+    return common::make_unexpected(reservation.error());
+  common::Result<AccountedVectorChunk> accounted =
+      AccountedVectorChunk::create(std::move(*chunk), std::move(*reservation), resources);
+  if (!accounted.has_value())
+    return common::make_unexpected(accounted.error());
+
+  std::vector<ColumnOutputPosition> positions;
+  positions.emplace_back(SourceColumnOutputPosition{0U});
+  positions.emplace_back(ConstantColumnOutputPosition{
+      ScalarValue::signed_value(
+          schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value(), 42)
+          .value()});
+  positions.emplace_back(ConstantColumnOutputPosition{
+      ScalarValue::text(schema::LogicalType::create(schema::LogicalTypeKind::kString).value(),
+                        "chronos-constant")
+          .value()});
+  positions.emplace_back(ConstantColumnOutputPosition{
+      ScalarValue::null(schema::LogicalType::create(schema::LogicalTypeKind::kBinary).value())});
+  return ColumnOutputOperator::create(std::make_unique<OneChunkSource>(std::move(*accounted)),
+                                      std::move(positions),
+                                      {.maximum_rows = rows,
+                                       .maximum_columns = 4U,
+                                       .maximum_buffer_bytes = kBenchmarkMemoryLimit,
+                                       .maximum_retained_buffer_bytes = kBenchmarkMemoryLimit});
+}
+
 void materialize_reordered_duplicate_source_columns(benchmark::State& state) {
   const auto rows = static_cast<std::uint32_t>(state.range(0));
   const auto input_columns = static_cast<std::size_t>(state.range(1));
@@ -174,6 +217,72 @@ BENCHMARK(materialize_reordered_duplicate_source_columns)
     ->Args({4'096, 4, 1})
     ->Args({1'024, 4, 4})
     ->Args({4'096, 8, 4});
+
+void materialize_mixed_source_and_typed_constants(benchmark::State& state) {
+  const auto rows = static_cast<std::uint32_t>(state.range(0));
+  const auto selection_stride = static_cast<std::uint32_t>(state.range(1));
+  QueryResourceContext resources = QueryResourceContext::create(kBenchmarkMemoryLimit).value();
+
+  std::size_t measured_allocations = 0U;
+  std::size_t measured_bytes = 0U;
+  {
+    auto pipeline = mixed_source(resources, rows, selection_stride);
+    if (!pipeline.has_value()) {
+      const std::string message = pipeline.error().to_string();
+      state.SkipWithError(message);
+      return;
+    }
+    benchmark_support::ScopedAllocationCounting counting;
+    auto step = (*pipeline)->next(resources);
+    measured_allocations = counting.stop().allocations;
+    if (!step.has_value() || step->chunk() == nullptr ||
+        step->chunk()->chunk().column_count() != 4U) {
+      state.SkipWithError(step.has_value() ? "mixed column output returned the wrong shape"
+                                           : step.error().to_string());
+      return;
+    }
+    measured_bytes = step->chunk()->chunk().buffer_bytes();
+  }
+
+  for ([[maybe_unused]] auto iteration : state) {
+    state.PauseTiming();
+    auto pipeline = mixed_source(resources, rows, selection_stride);
+    if (!pipeline.has_value()) {
+      const std::string message = pipeline.error().to_string();
+      state.SkipWithError(message);
+      return;
+    }
+    state.ResumeTiming();
+    auto step = (*pipeline)->next(resources);
+    benchmark::DoNotOptimize(step);
+    state.PauseTiming();
+    if (!step.has_value() || step->chunk() == nullptr ||
+        step->chunk()->chunk().column_count() != 4U) {
+      state.SkipWithError(step.has_value() ? "mixed column output returned the wrong shape"
+                                           : step.error().to_string());
+      return;
+    }
+    state.ResumeTiming();
+  }
+  const std::size_t selected = (static_cast<std::size_t>(rows) + selection_stride - 1U) /
+                               static_cast<std::size_t>(selection_stride);
+  state.SetItemsProcessed(static_cast<std::int64_t>(state.iterations()) *
+                          static_cast<std::int64_t>(selected) * 4);
+  state.SetBytesProcessed(static_cast<std::int64_t>(state.iterations()) *
+                          static_cast<std::int64_t>(measured_bytes));
+  state.counters["output_columns"] = 4.0;
+  state.counters["physical_rows"] = static_cast<double>(rows);
+  state.counters["pull_allocations"] = static_cast<double>(measured_allocations);
+  state.counters["selection_density"] = 1.0 / static_cast<double>(selection_stride);
+  state.SetLabel("source + fixed/string/typed-NULL constants; source construction excluded");
+}
+
+BENCHMARK(materialize_mixed_source_and_typed_constants)
+    ->Args({64, 1})
+    ->Args({1'024, 1})
+    ->Args({4'096, 1})
+    ->Args({1'024, 4})
+    ->Args({4'096, 4});
 
 } // namespace
 } // namespace chronos::query

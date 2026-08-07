@@ -88,9 +88,10 @@ end-to-end SQL performance or justify fusion.
 
 Owned copying gives simple independent lifetimes and a canonical positional domain, at the cost of
 memory bandwidth and peak coexistence with the input. A later aliasing path must prove backing and
-credit lifetime and should be adopted only with profile evidence. The next semantic step is a typed
-output expression representation that can combine source references and constants with exact NULL,
-overflow, and result-type rules, followed by bound-SQL lowering.
+credit lifetime and should be adopted only with profile evidence. Typed constants now use the same
+ownership boundary through the separate
+[typed-constant output guide](typed-constant-output-materialization.md). Checked computed
+expressions and bound-SQL lowering remain next.
 
 ## Likely review questions
 

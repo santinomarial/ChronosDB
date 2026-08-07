@@ -3,18 +3,30 @@
 
 #include "chronos/common/result.hpp"
 #include "chronos/query/physical_operator.hpp"
+#include "chronos/query/value.hpp"
 
 #include <cstddef>
 #include <memory>
+#include <variant>
 #include <vector>
 
 namespace chronos::query {
 
 inline constexpr std::size_t kMaximumSourceColumnOutputWidth = kDefaultVectorChunkColumnLimit;
+inline constexpr std::size_t kMaximumColumnOutputWidth = kDefaultVectorChunkColumnLimit;
+
+struct SourceColumnOutputPosition {
+  std::size_t input_column_ordinal;
+};
+
+struct ConstantColumnOutputPosition {
+  ScalarValue value;
+};
+
+using ColumnOutputPosition = std::variant<SourceColumnOutputPosition, ConstantColumnOutputPosition>;
 
 // Materializes caller-ordered source columns into new canonical output positions. Reordering and
 // duplication are supported; selected nonempty rows are compacted into an identity selection.
-// Computed expressions and constants belong to later typed-expression increments.
 class SourceColumnOutputOperator final : public PhysicalOperator {
 public:
   [[nodiscard]] static common::Result<std::unique_ptr<PhysicalOperator>>
@@ -31,6 +43,29 @@ private:
 
   std::unique_ptr<PhysicalOperator> input_;
   std::vector<std::size_t> input_column_ordinals_;
+  VectorChunkLimits output_limits_;
+  bool ended_{};
+};
+
+// Materializes caller-ordered source columns and typed constants into canonical owned physical
+// columns. Source positions may be reordered or duplicated. Constants are expanded directly into
+// physical buffers without constructing a scalar object per row.
+class ColumnOutputOperator final : public PhysicalOperator {
+public:
+  [[nodiscard]] static common::Result<std::unique_ptr<PhysicalOperator>>
+  create(std::unique_ptr<PhysicalOperator> input, std::vector<ColumnOutputPosition> positions,
+         VectorChunkLimits output_limits = {});
+
+  [[nodiscard]] common::Result<PhysicalOperatorStep>
+  next(const QueryResourceContext& resources) override;
+
+private:
+  ColumnOutputOperator(std::unique_ptr<PhysicalOperator> input,
+                       std::vector<ColumnOutputPosition> positions,
+                       VectorChunkLimits output_limits) noexcept;
+
+  std::unique_ptr<PhysicalOperator> input_;
+  std::vector<ColumnOutputPosition> positions_;
   VectorChunkLimits output_limits_;
   bool ended_{};
 };

@@ -5,15 +5,19 @@
 #include "chronos/schema/logical_type.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <new>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace chronos::query {
@@ -87,8 +91,65 @@ bytes_for(const std::size_t count, const std::size_t width, const char* const me
 [[nodiscard]] common::Result<void> validate_limits(const VectorChunkLimits limits) {
   if (limits.maximum_rows == 0U || limits.maximum_columns == 0U ||
       limits.maximum_buffer_bytes == 0U || limits.maximum_retained_buffer_bytes == 0U) {
-    return common::make_unexpected(invalid("source-column output limits must be nonzero"));
+    return common::make_unexpected(invalid("column output limits must be nonzero"));
   }
+  return {};
+}
+
+[[nodiscard]] const schema::LogicalType* constant_type(const ScalarValue& value) noexcept {
+  const std::optional<schema::LogicalType>& type = value.type();
+  return type.has_value() ? std::addressof(*type) : nullptr;
+}
+
+[[nodiscard]] common::Result<void> validate_constant(const ScalarValue& value) {
+  const schema::LogicalType* type = constant_type(value);
+  if (type == nullptr)
+    return common::make_unexpected(invalid("column output constant must have a logical type"));
+  if (value.is_null())
+    return {};
+
+  using schema::LogicalTypeKind;
+  bool valid_storage = false;
+  switch (type->kind()) {
+  case LogicalTypeKind::kBool:
+    valid_storage = std::holds_alternative<bool>(value.storage());
+    break;
+  case LogicalTypeKind::kInt8:
+  case LogicalTypeKind::kInt16:
+  case LogicalTypeKind::kInt32:
+  case LogicalTypeKind::kInt64:
+  case LogicalTypeKind::kTimestampNs:
+  case LogicalTypeKind::kDate:
+    valid_storage = std::holds_alternative<std::int64_t>(value.storage());
+    break;
+  case LogicalTypeKind::kUInt8:
+  case LogicalTypeKind::kUInt16:
+  case LogicalTypeKind::kUInt32:
+  case LogicalTypeKind::kUInt64:
+    valid_storage = std::holds_alternative<std::uint64_t>(value.storage());
+    break;
+  case LogicalTypeKind::kFloat32:
+    valid_storage = std::holds_alternative<float>(value.storage());
+    break;
+  case LogicalTypeKind::kFloat64:
+    valid_storage = std::holds_alternative<double>(value.storage());
+    break;
+  case LogicalTypeKind::kDecimal:
+    valid_storage = std::holds_alternative<Decimal128Value>(value.storage());
+    break;
+  case LogicalTypeKind::kSymbol:
+  case LogicalTypeKind::kString:
+    valid_storage = std::holds_alternative<std::string>(value.storage());
+    break;
+  case LogicalTypeKind::kBinary:
+    valid_storage = std::holds_alternative<std::vector<std::byte>>(value.storage());
+    break;
+  case LogicalTypeKind::kUuid:
+    valid_storage = std::holds_alternative<common::Uuid>(value.storage());
+    break;
+  }
+  if (!valid_storage)
+    return common::make_unexpected(internal("column output constant storage is inconsistent"));
   return {};
 }
 
@@ -130,6 +191,149 @@ variable_value_bytes(const VectorChunk& input, const columnar::PhysicalColumnVie
   return total;
 }
 
+[[nodiscard]] common::Result<std::size_t>
+add_source_column_bytes(const VectorChunk& input, const std::size_t ordinal, const OutputPlan plan,
+                        const VectorChunkLimits limits, std::size_t total) {
+  const columnar::PhysicalColumnView* column = input.column(ordinal);
+  if (column == nullptr) {
+    return common::make_unexpected(
+        out_of_range("source-column output ordinal is outside the input chunk"));
+  }
+  if (column->row_count() != input.physical_row_count()) {
+    return common::make_unexpected(
+        internal("source-column output input has inconsistent physical row counts"));
+  }
+  if (column->nullable()) {
+    common::Result<std::size_t> next = add(total, columnar::bitmap_size(plan.physical_row_count),
+                                           "source-column output validity size overflowed");
+    if (!next.has_value())
+      return next;
+    total = *next;
+  }
+  if (column->type().kind() == schema::LogicalTypeKind::kBool) {
+    common::Result<std::size_t> next = add(total, columnar::bitmap_size(plan.physical_row_count),
+                                           "source-column Boolean output size overflowed");
+    if (!next.has_value())
+      return next;
+    total = *next;
+  } else if (column->type().is_variable_width()) {
+    common::Result<std::size_t> offset_count =
+        add(plan.physical_row_count, 1U, "source-column offset count overflowed");
+    if (!offset_count.has_value())
+      return offset_count;
+    common::Result<std::size_t> offsets = bytes_for(*offset_count, sizeof(std::uint32_t),
+                                                    "source-column offset buffer size overflowed");
+    if (!offsets.has_value())
+      return offsets;
+    common::Result<std::size_t> next = add(total, *offsets, "source-column output size overflowed");
+    if (!next.has_value())
+      return next;
+    common::Result<std::size_t> values = variable_value_bytes(input, *column, plan);
+    if (!values.has_value())
+      return values;
+    next = add(*next, *values, "source-column output size overflowed");
+    if (!next.has_value())
+      return next;
+    total = *next;
+  } else {
+    common::Result<std::size_t> values =
+        bytes_for(plan.physical_row_count, fixed_width(column->type().kind()),
+                  "source-column fixed output size overflowed");
+    if (!values.has_value())
+      return values;
+    common::Result<std::size_t> next = add(total, *values, "source-column output size overflowed");
+    if (!next.has_value())
+      return next;
+    total = *next;
+  }
+  if (total > limits.maximum_buffer_bytes) {
+    return common::make_unexpected(
+        exhausted("source-column output exceeds the configured buffer-byte limit"));
+  }
+  return total;
+}
+
+[[nodiscard]] common::Result<std::size_t> constant_payload_size(const ScalarValue& value) {
+  if (value.is_null())
+    return 0U;
+  if (const auto* text = std::get_if<std::string>(&value.storage()); text != nullptr)
+    return text->size();
+  if (const auto* binary = std::get_if<std::vector<std::byte>>(&value.storage());
+      binary != nullptr) {
+    return binary->size();
+  }
+  return common::make_unexpected(internal("variable column output constant storage is invalid"));
+}
+
+[[nodiscard]] common::Result<std::size_t> add_constant_column_bytes(const ScalarValue& value,
+                                                                    const OutputPlan plan,
+                                                                    const VectorChunkLimits limits,
+                                                                    std::size_t total) {
+  const common::Result<void> valid = validate_constant(value);
+  if (!valid.has_value())
+    return common::make_unexpected(valid.error());
+  const schema::LogicalType* type_ptr = constant_type(value);
+  if (type_ptr == nullptr)
+    return common::make_unexpected(internal("column output constant lost its logical type"));
+  const schema::LogicalType& type = *type_ptr;
+  if (value.is_null()) {
+    common::Result<std::size_t> next = add(total, columnar::bitmap_size(plan.physical_row_count),
+                                           "constant column output validity size overflowed");
+    if (!next.has_value())
+      return next;
+    total = *next;
+  }
+  if (type.kind() == schema::LogicalTypeKind::kBool) {
+    common::Result<std::size_t> next = add(total, columnar::bitmap_size(plan.physical_row_count),
+                                           "constant Boolean output size overflowed");
+    if (!next.has_value())
+      return next;
+    total = *next;
+  } else if (type.is_variable_width()) {
+    common::Result<std::size_t> offset_count =
+        add(plan.physical_row_count, 1U, "constant column output offset count overflowed");
+    if (!offset_count.has_value())
+      return offset_count;
+    common::Result<std::size_t> offsets = bytes_for(
+        *offset_count, sizeof(std::uint32_t), "constant column output offset size overflowed");
+    if (!offsets.has_value())
+      return offsets;
+    common::Result<std::size_t> next =
+        add(total, *offsets, "constant column output size overflowed");
+    if (!next.has_value())
+      return next;
+    common::Result<std::size_t> payload = constant_payload_size(value);
+    if (!payload.has_value())
+      return payload;
+    common::Result<std::size_t> values = bytes_for(plan.physical_row_count, *payload,
+                                                   "constant column output value size overflowed");
+    if (!values.has_value())
+      return values;
+    if (*values > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
+      return common::make_unexpected(exhausted("constant column output exceeds UINT32 offsets"));
+    }
+    next = add(*next, *values, "constant column output size overflowed");
+    if (!next.has_value())
+      return next;
+    total = *next;
+  } else {
+    common::Result<std::size_t> values = bytes_for(
+        plan.physical_row_count, fixed_width(type.kind()), "constant fixed output size overflowed");
+    if (!values.has_value())
+      return values;
+    common::Result<std::size_t> next =
+        add(total, *values, "constant column output size overflowed");
+    if (!next.has_value())
+      return next;
+    total = *next;
+  }
+  if (total > limits.maximum_buffer_bytes) {
+    return common::make_unexpected(
+        exhausted("column output exceeds the configured buffer-byte limit"));
+  }
+  return total;
+}
+
 [[nodiscard]] common::Result<OutputPlan>
 plan_output(const VectorChunk& input, const std::vector<std::size_t>& input_column_ordinals,
             const VectorChunkLimits limits) {
@@ -162,54 +366,9 @@ plan_output(const VectorChunk& input, const std::vector<std::size_t>& input_colu
         exhausted("source-column output exceeds the configured buffer-byte limit"));
   }
   for (const std::size_t ordinal : input_column_ordinals) {
-    const columnar::PhysicalColumnView* column = input.column(ordinal);
-    if (column == nullptr) {
-      return common::make_unexpected(
-          out_of_range("source-column output ordinal is outside the input chunk"));
-    }
-    if (column->row_count() != input.physical_row_count()) {
-      return common::make_unexpected(
-          internal("source-column output input has inconsistent physical row counts"));
-    }
-    if (column->nullable()) {
-      total = add(*total, columnar::bitmap_size(physical_rows),
-                  "source-column output validity size overflowed");
-      if (!total.has_value())
-        return common::make_unexpected(total.error());
-    }
-    if (column->type().kind() == schema::LogicalTypeKind::kBool) {
-      total = add(*total, columnar::bitmap_size(physical_rows),
-                  "source-column Boolean output size overflowed");
-    } else if (column->type().is_variable_width()) {
-      common::Result<std::size_t> offset_count =
-          add(output_rows, 1U, "source-column offset count overflowed");
-      if (!offset_count.has_value())
-        return common::make_unexpected(offset_count.error());
-      common::Result<std::size_t> offsets = bytes_for(
-          *offset_count, sizeof(std::uint32_t), "source-column offset buffer size overflowed");
-      if (!offsets.has_value())
-        return common::make_unexpected(offsets.error());
-      total = add(*total, *offsets, "source-column output size overflowed");
-      if (total.has_value()) {
-        common::Result<std::size_t> values = variable_value_bytes(input, *column, plan);
-        if (!values.has_value())
-          return common::make_unexpected(values.error());
-        total = add(*total, *values, "source-column output size overflowed");
-      }
-    } else {
-      common::Result<std::size_t> values =
-          bytes_for(output_rows, fixed_width(column->type().kind()),
-                    "source-column fixed output size overflowed");
-      if (!values.has_value())
-        return common::make_unexpected(values.error());
-      total = add(*total, *values, "source-column output size overflowed");
-    }
+    total = add_source_column_bytes(input, ordinal, plan, limits, *total);
     if (!total.has_value())
       return common::make_unexpected(total.error());
-    if (*total > limits.maximum_buffer_bytes) {
-      return common::make_unexpected(
-          exhausted("source-column output exceeds the configured buffer-byte limit"));
-    }
   }
 
   common::Result<std::size_t> column_objects =
@@ -245,6 +404,77 @@ plan_output(const VectorChunk& input, const std::vector<std::size_t>& input_colu
   return plan;
 }
 
+[[nodiscard]] common::Result<OutputPlan>
+plan_output(const VectorChunk& input, const std::vector<ColumnOutputPosition>& positions,
+            const VectorChunkLimits limits) {
+  const common::Result<void> valid_limits = validate_limits(limits);
+  if (!valid_limits.has_value())
+    return common::make_unexpected(valid_limits.error());
+  if (positions.size() > limits.maximum_columns || positions.size() > kMaximumColumnOutputWidth) {
+    return common::make_unexpected(exhausted("column output exceeds the configured column limit"));
+  }
+
+  const bool compact = input.selected_row_count() != 0U;
+  const std::size_t output_rows =
+      compact ? input.selected_row_count() : static_cast<std::size_t>(input.physical_row_count());
+  if (output_rows > limits.maximum_rows)
+    return common::make_unexpected(exhausted("column output exceeds the configured row limit"));
+  OutputPlan plan{.physical_row_count = static_cast<std::uint32_t>(output_rows),
+                  .compact_selected_rows = compact,
+                  .retained_charge = 0U};
+  common::Result<std::size_t> total = bytes_for(compact ? output_rows : 0U, sizeof(std::uint32_t),
+                                                "column output selection size overflowed");
+  if (!total.has_value())
+    return common::make_unexpected(total.error());
+  if (*total > limits.maximum_buffer_bytes)
+    return common::make_unexpected(exhausted("column output exceeds the buffer-byte limit"));
+
+  for (const ColumnOutputPosition& position : positions) {
+    if (const auto* source = std::get_if<SourceColumnOutputPosition>(&position);
+        source != nullptr) {
+      total = add_source_column_bytes(input, source->input_column_ordinal, plan, limits, *total);
+    } else if (const auto* constant = std::get_if<ConstantColumnOutputPosition>(&position);
+               constant != nullptr) {
+      total = add_constant_column_bytes(constant->value, plan, limits, *total);
+    } else {
+      return common::make_unexpected(internal("column output position is invalid"));
+    }
+    if (!total.has_value())
+      return common::make_unexpected(total.error());
+  }
+
+  common::Result<std::size_t> column_objects =
+      bytes_for(positions.size(), sizeof(columnar::OwnedPhysicalColumn),
+                "column output container size overflowed");
+  if (!column_objects.has_value())
+    return common::make_unexpected(column_objects.error());
+  common::Result<std::size_t> charge =
+      add(*total, *column_objects, "column output retained size overflowed");
+  if (!charge.has_value())
+    return common::make_unexpected(charge.error());
+  const std::optional<std::size_t> buffer_allocations =
+      common::checked_multiply(positions.size(), std::size_t{3U});
+  const std::optional<std::size_t> allocation_count =
+      buffer_allocations.has_value() ? common::checked_add(*buffer_allocations, std::size_t{2U})
+                                     : std::nullopt;
+  if (!allocation_count.has_value())
+    return common::make_unexpected(exhausted("column output allocation count overflowed"));
+  common::Result<std::size_t> overhead =
+      bytes_for(*allocation_count, kConservativeAllocationOverheadBytes,
+                "column output allocation overhead overflowed");
+  if (!overhead.has_value())
+    return common::make_unexpected(overhead.error());
+  charge = add(*charge, *overhead, "column output retained size overflowed");
+  if (!charge.has_value())
+    return common::make_unexpected(charge.error());
+  if (*charge > limits.maximum_retained_buffer_bytes) {
+    return common::make_unexpected(
+        exhausted("column output exceeds the configured retained-byte limit"));
+  }
+  plan.retained_charge = *charge;
+  return plan;
+}
+
 void set_bit(std::vector<std::byte>& bitmap, const std::uint32_t row) {
   bitmap[row / 8U] |= static_cast<std::byte>(1U << (row % 8U));
 }
@@ -253,6 +483,16 @@ void store_u32_le(std::vector<std::byte>& bytes, const std::size_t offset,
                   const std::uint32_t value) {
   for (std::size_t index = 0U; index < sizeof(value); ++index)
     bytes[offset + index] = static_cast<std::byte>((value >> (index * 8U)) & 0xffU);
+}
+
+template <typename Unsigned>
+void store_unsigned_le(std::vector<std::byte>& bytes, const std::size_t offset,
+                       const Unsigned value) {
+  static_assert(std::is_unsigned_v<Unsigned>);
+  for (std::size_t index = 0U; index < sizeof(value); ++index) {
+    bytes[offset + index] =
+        static_cast<std::byte>((value >> (index * 8U)) & static_cast<Unsigned>(0xffU));
+  }
 }
 
 [[nodiscard]] common::Result<columnar::OwnedPhysicalColumn>
@@ -340,6 +580,146 @@ materialize_column(const VectorChunk& input, const std::size_t input_column_ordi
                                                std::move(buffers));
 }
 
+[[nodiscard]] common::Result<void> store_constant_fixed_cell(const ScalarValue& value,
+                                                             std::vector<std::byte>& bytes,
+                                                             const std::size_t offset) {
+  using schema::LogicalTypeKind;
+  const schema::LogicalType* type = constant_type(value);
+  if (type == nullptr)
+    return common::make_unexpected(internal("column output constant lost its logical type"));
+  const LogicalTypeKind kind = type->kind();
+  switch (kind) {
+  case LogicalTypeKind::kInt8: {
+    const auto narrowed = static_cast<std::int8_t>(std::get<std::int64_t>(value.storage()));
+    store_unsigned_le(bytes, offset, std::bit_cast<std::uint8_t>(narrowed));
+    return {};
+  }
+  case LogicalTypeKind::kInt16: {
+    const auto narrowed = static_cast<std::int16_t>(std::get<std::int64_t>(value.storage()));
+    store_unsigned_le(bytes, offset, std::bit_cast<std::uint16_t>(narrowed));
+    return {};
+  }
+  case LogicalTypeKind::kInt32:
+  case LogicalTypeKind::kDate: {
+    const auto narrowed = static_cast<std::int32_t>(std::get<std::int64_t>(value.storage()));
+    store_unsigned_le(bytes, offset, std::bit_cast<std::uint32_t>(narrowed));
+    return {};
+  }
+  case LogicalTypeKind::kInt64:
+  case LogicalTypeKind::kTimestampNs:
+    store_unsigned_le(bytes, offset,
+                      std::bit_cast<std::uint64_t>(std::get<std::int64_t>(value.storage())));
+    return {};
+  case LogicalTypeKind::kUInt8:
+    store_unsigned_le(bytes, offset,
+                      static_cast<std::uint8_t>(std::get<std::uint64_t>(value.storage())));
+    return {};
+  case LogicalTypeKind::kUInt16:
+    store_unsigned_le(bytes, offset,
+                      static_cast<std::uint16_t>(std::get<std::uint64_t>(value.storage())));
+    return {};
+  case LogicalTypeKind::kUInt32:
+    store_unsigned_le(bytes, offset,
+                      static_cast<std::uint32_t>(std::get<std::uint64_t>(value.storage())));
+    return {};
+  case LogicalTypeKind::kUInt64:
+    store_unsigned_le(bytes, offset, std::get<std::uint64_t>(value.storage()));
+    return {};
+  case LogicalTypeKind::kFloat32:
+    store_unsigned_le(bytes, offset,
+                      std::bit_cast<std::uint32_t>(std::get<float>(value.storage())));
+    return {};
+  case LogicalTypeKind::kFloat64:
+    store_unsigned_le(bytes, offset,
+                      std::bit_cast<std::uint64_t>(std::get<double>(value.storage())));
+    return {};
+  case LogicalTypeKind::kDecimal: {
+    const auto& coefficient = std::get<Decimal128Value>(value.storage()).coefficient;
+    std::ranges::copy(coefficient, bytes.begin() + static_cast<std::ptrdiff_t>(offset));
+    return {};
+  }
+  case LogicalTypeKind::kUuid: {
+    const auto& uuid = std::get<common::Uuid>(value.storage()).bytes();
+    std::ranges::copy(uuid, bytes.begin() + static_cast<std::ptrdiff_t>(offset));
+    return {};
+  }
+  case LogicalTypeKind::kBool:
+  case LogicalTypeKind::kSymbol:
+  case LogicalTypeKind::kString:
+  case LogicalTypeKind::kBinary:
+    return common::make_unexpected(internal("constant is not fixed-width"));
+  }
+  return common::make_unexpected(internal("constant logical type is invalid"));
+}
+
+[[nodiscard]] common::Result<columnar::OwnedPhysicalColumn>
+materialize_constant(const ScalarValue& value, const OutputPlan plan) {
+  const common::Result<void> valid = validate_constant(value);
+  if (!valid.has_value())
+    return common::make_unexpected(valid.error());
+  const schema::LogicalType* type_ptr = constant_type(value);
+  if (type_ptr == nullptr)
+    return common::make_unexpected(internal("column output constant lost its logical type"));
+  const schema::LogicalType& type = *type_ptr;
+  const bool nullable = value.is_null();
+  columnar::ColumnVectorBuffers buffers;
+  if (nullable)
+    buffers.validity.resize(columnar::bitmap_size(plan.physical_row_count));
+
+  if (type.kind() == schema::LogicalTypeKind::kBool) {
+    buffers.values.resize(columnar::bitmap_size(plan.physical_row_count));
+    if (!nullable && std::get<bool>(value.storage())) {
+      for (std::uint32_t row = 0U; row < plan.physical_row_count; ++row)
+        set_bit(buffers.values, row);
+    }
+  } else if (type.is_variable_width()) {
+    const std::size_t offset_count = static_cast<std::size_t>(plan.physical_row_count) + 1U;
+    buffers.offsets.resize(offset_count * sizeof(std::uint32_t));
+    if (!nullable) {
+      if (const auto* text = std::get_if<std::string>(&value.storage()); text != nullptr) {
+        buffers.values.resize(text->size() * static_cast<std::size_t>(plan.physical_row_count));
+        for (std::uint32_t row = 0U; row < plan.physical_row_count; ++row) {
+          const std::size_t begin = static_cast<std::size_t>(row) * text->size();
+          if (!text->empty())
+            std::memcpy(buffers.values.data() + begin, text->data(), text->size());
+          store_u32_le(buffers.offsets,
+                       (static_cast<std::size_t>(row) + 1U) * sizeof(std::uint32_t),
+                       static_cast<std::uint32_t>(begin + text->size()));
+        }
+      } else {
+        const auto& binary = std::get<std::vector<std::byte>>(value.storage());
+        buffers.values.resize(binary.size() * static_cast<std::size_t>(plan.physical_row_count));
+        for (std::uint32_t row = 0U; row < plan.physical_row_count; ++row) {
+          const std::size_t begin = static_cast<std::size_t>(row) * binary.size();
+          std::ranges::copy(binary, buffers.values.begin() + static_cast<std::ptrdiff_t>(begin));
+          store_u32_le(buffers.offsets,
+                       (static_cast<std::size_t>(row) + 1U) * sizeof(std::uint32_t),
+                       static_cast<std::uint32_t>(begin + binary.size()));
+        }
+      }
+    }
+  } else {
+    const std::size_t width = fixed_width(type.kind());
+    buffers.values.resize(width * static_cast<std::size_t>(plan.physical_row_count));
+    if (!nullable && plan.physical_row_count != 0U) {
+      common::Result<void> stored = store_constant_fixed_cell(value, buffers.values, 0U);
+      if (!stored.has_value())
+        return common::make_unexpected(stored.error());
+      for (std::uint32_t row = 1U; row < plan.physical_row_count; ++row) {
+        std::ranges::copy_n(buffers.values.begin(), static_cast<std::ptrdiff_t>(width),
+                            buffers.values.begin() + static_cast<std::ptrdiff_t>(row * width));
+      }
+    }
+  }
+
+  return columnar::OwnedPhysicalColumn::create(
+      {.type = type,
+       .nullable = nullable,
+       .row_count = plan.physical_row_count,
+       .null_count = nullable ? plan.physical_row_count : 0U},
+      std::move(buffers));
+}
+
 [[nodiscard]] common::Result<AccountedVectorChunk>
 materialize_output(const QueryResourceContext& resources, const VectorChunk& input,
                    const std::vector<std::size_t>& input_column_ordinals,
@@ -377,6 +757,89 @@ materialize_output(const QueryResourceContext& resources, const VectorChunk& inp
   } catch (const std::length_error&) {
     return common::make_unexpected(exhausted("source-column output exceeds container limits"));
   }
+}
+
+[[nodiscard]] common::Result<AccountedVectorChunk>
+materialize_output(const QueryResourceContext& resources, const VectorChunk& input,
+                   const std::vector<ColumnOutputPosition>& positions,
+                   const VectorChunkLimits limits) {
+  common::Result<OutputPlan> plan = plan_output(input, positions, limits);
+  if (!plan.has_value())
+    return common::make_unexpected(plan.error());
+  common::Result<QueryMemoryReservation> reservation = resources.reserve(plan->retained_charge);
+  if (!reservation.has_value())
+    return common::make_unexpected(reservation.error());
+
+  try {
+    std::vector<columnar::OwnedPhysicalColumn> columns;
+    columns.reserve(positions.size());
+    for (const ColumnOutputPosition& position : positions) {
+      common::Result<columnar::OwnedPhysicalColumn> column =
+          common::make_unexpected(internal("column output position is invalid"));
+      if (const auto* source = std::get_if<SourceColumnOutputPosition>(&position);
+          source != nullptr) {
+        column = materialize_column(input, source->input_column_ordinal, *plan);
+      } else if (const auto* constant = std::get_if<ConstantColumnOutputPosition>(&position);
+                 constant != nullptr) {
+        column = materialize_constant(constant->value, *plan);
+      }
+      if (!column.has_value())
+        return common::make_unexpected(column.error());
+      columns.push_back(std::move(*column));
+    }
+
+    common::Result<VectorSelection> selection =
+        plan->compact_selected_rows ? VectorSelection::all(plan->physical_row_count)
+                                    : VectorSelection::from_indices(plan->physical_row_count, {});
+    if (!selection.has_value())
+      return common::make_unexpected(selection.error());
+    common::Result<VectorChunk> output =
+        VectorChunk::create(std::move(columns), std::move(*selection), limits);
+    if (!output.has_value())
+      return common::make_unexpected(output.error());
+    return AccountedVectorChunk::create(std::move(*output), std::move(*reservation), resources);
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("column output allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("column output exceeds container limits"));
+  }
+}
+
+[[nodiscard]] common::Result<void>
+validate_position_configuration(const std::vector<ColumnOutputPosition>& positions,
+                                const VectorChunkLimits limits) {
+  if (positions.size() > limits.maximum_columns || positions.size() > kMaximumColumnOutputWidth ||
+      positions.capacity() > kMaximumColumnOutputWidth) {
+    return common::make_unexpected(exhausted("column output configuration exceeds column limit"));
+  }
+  const std::optional<std::size_t> vector_bytes =
+      common::checked_multiply(positions.capacity(), sizeof(ColumnOutputPosition));
+  if (!vector_bytes.has_value())
+    return common::make_unexpected(exhausted("column output configuration size overflowed"));
+  std::size_t retained = *vector_bytes;
+  for (const ColumnOutputPosition& position : positions) {
+    const auto* constant = std::get_if<ConstantColumnOutputPosition>(&position);
+    if (constant == nullptr)
+      continue;
+    const common::Result<void> valid = validate_constant(constant->value);
+    if (!valid.has_value())
+      return common::make_unexpected(valid.error());
+    std::size_t capacity = 0U;
+    if (const auto* text = std::get_if<std::string>(&constant->value.storage()); text != nullptr)
+      capacity = text->capacity();
+    else if (const auto* binary = std::get_if<std::vector<std::byte>>(&constant->value.storage());
+             binary != nullptr)
+      capacity = binary->capacity();
+    const std::optional<std::size_t> next = common::checked_add(retained, capacity);
+    if (!next.has_value())
+      return common::make_unexpected(exhausted("column output configuration size overflowed"));
+    retained = *next;
+  }
+  if (retained > limits.maximum_retained_buffer_bytes) {
+    return common::make_unexpected(
+        exhausted("column output configuration exceeds retained-byte limit"));
+  }
+  return {};
 }
 
 } // namespace
@@ -440,6 +903,69 @@ SourceColumnOutputOperator::next(const QueryResourceContext& resources) {
   }
   common::Result<AccountedVectorChunk> output =
       materialize_output(resources, chunk->chunk(), input_column_ordinals_, output_limits_);
+  if (!output.has_value()) {
+    static_cast<void>(resources.request_cancel());
+    return common::make_unexpected(output.error());
+  }
+  return PhysicalOperatorStep::chunk(std::move(*output));
+}
+
+ColumnOutputOperator::ColumnOutputOperator(std::unique_ptr<PhysicalOperator> input,
+                                           std::vector<ColumnOutputPosition> positions,
+                                           const VectorChunkLimits output_limits) noexcept
+    : input_(std::move(input)), positions_(std::move(positions)), output_limits_(output_limits) {}
+
+common::Result<std::unique_ptr<PhysicalOperator>>
+ColumnOutputOperator::create(std::unique_ptr<PhysicalOperator> input,
+                             std::vector<ColumnOutputPosition> positions,
+                             const VectorChunkLimits output_limits) {
+  if (input == nullptr)
+    return common::make_unexpected(invalid("column output input must be non-null"));
+  const common::Result<void> valid_limits = validate_limits(output_limits);
+  if (!valid_limits.has_value())
+    return common::make_unexpected(valid_limits.error());
+  const common::Result<void> valid_positions =
+      validate_position_configuration(positions, output_limits);
+  if (!valid_positions.has_value())
+    return common::make_unexpected(valid_positions.error());
+  try {
+    return std::unique_ptr<PhysicalOperator>{
+        new ColumnOutputOperator{std::move(input), std::move(positions), output_limits}};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("column output operator allocation failed"));
+  }
+}
+
+common::Result<PhysicalOperatorStep>
+ColumnOutputOperator::next(const QueryResourceContext& resources) {
+  if (ended_)
+    return PhysicalOperatorStep::end();
+  const common::Result<void> active = resources.check_cancelled();
+  if (!active.has_value())
+    return common::make_unexpected(active.error());
+
+  common::Result<PhysicalOperatorStep> input = input_->next(resources);
+  if (!input.has_value()) {
+    static_cast<void>(resources.request_cancel());
+    return common::make_unexpected(input.error());
+  }
+  if (input->kind() == PhysicalOperatorStepKind::kEnd) {
+    ended_ = true;
+    input_.reset();
+    return PhysicalOperatorStep::end();
+  }
+  common::Result<AccountedVectorChunk> chunk = std::move(*input).take_chunk();
+  if (!chunk.has_value()) {
+    static_cast<void>(resources.request_cancel());
+    return common::make_unexpected(chunk.error());
+  }
+  if (!chunk->belongs_to(resources)) {
+    static_cast<void>(resources.request_cancel());
+    return common::make_unexpected(
+        invalid("column output received a chunk charged to another query"));
+  }
+  common::Result<AccountedVectorChunk> output =
+      materialize_output(resources, chunk->chunk(), positions_, output_limits_);
   if (!output.has_value()) {
     static_cast<void>(resources.request_cancel());
     return common::make_unexpected(output.error());

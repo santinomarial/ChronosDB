@@ -11,6 +11,7 @@
 #include <memory>
 #include <ranges>
 #include <span>
+#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -196,6 +197,22 @@ TEST(PhysicalPipelinePlanTest, PropagatesExactShapesAcrossOrderedStages) {
   EXPECT_EQ(source_outputs->output_columns()[0], input_shape()[1U]);
   EXPECT_EQ(source_outputs->output_columns()[1], input_shape()[0U]);
   EXPECT_EQ(source_outputs->output_columns()[2], input_shape()[1U]);
+
+  auto mixed_outputs = PhysicalPipelinePlan::create(
+      input_shape(),
+      {ColumnOutputStage{
+          .positions = {SourceColumnOutputPosition{0U},
+                        ConstantColumnOutputPosition{ScalarValue::boolean(true).value()},
+                        ConstantColumnOutputPosition{
+                            ScalarValue::null(type(schema::LogicalTypeKind::kString))}}}});
+  ASSERT_TRUE(mixed_outputs.has_value()) << mixed_outputs.error().to_string();
+  ASSERT_EQ(mixed_outputs->output_columns().size(), 3U);
+  EXPECT_EQ(mixed_outputs->output_columns()[0], input_shape()[0U]);
+  EXPECT_EQ(mixed_outputs->output_columns()[1],
+            (PhysicalColumnShape{.type = type(schema::LogicalTypeKind::kBool), .nullable = false}));
+  EXPECT_EQ(
+      mixed_outputs->output_columns()[2],
+      (PhysicalColumnShape{.type = type(schema::LogicalTypeKind::kString), .nullable = true}));
 }
 
 TEST(PhysicalPipelinePlanTest, ValidatesEveryStageAgainstItsCurrentShape) {
@@ -257,6 +274,24 @@ TEST(PhysicalPipelinePlanTest, ValidatesEveryStageAgainstItsCurrentShape) {
                 .error()
                 .code(),
             common::StatusCode::kResourceExhausted);
+  EXPECT_EQ(PhysicalPipelinePlan::create(
+                input_shape(), {ColumnOutputStage{.positions = {SourceColumnOutputPosition{2U}}}})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(PhysicalPipelinePlan::create(
+                input_shape(), {ColumnOutputStage{.positions = {ConstantColumnOutputPosition{
+                                                      ScalarValue::untyped_null()}}}})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(PhysicalPipelinePlan::create(
+                input_shape(), {ColumnOutputStage{.positions = {ConstantColumnOutputPosition{
+                                                      ScalarValue::boolean(true).value()}},
+                                                  .output_limits = {.maximum_columns = 0U}}})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
 }
 
 TEST(PhysicalPipelinePlanTest, EnforcesFiniteStageWidthAndRetainedConfigurationLimits) {
@@ -282,6 +317,23 @@ TEST(PhysicalPipelinePlanTest, EnforcesFiniteStageWidthAndRetainedConfigurationL
                                          {.maximum_input_columns = 2U,
                                           .maximum_stages = 64U,
                                           .maximum_retained_configuration_bytes = 1U})
+                .error()
+                .code(),
+            common::StatusCode::kResourceExhausted);
+
+  std::string retained_constant{"x"};
+  retained_constant.reserve(4'096U);
+  std::vector<ColumnOutputPosition> retained_positions;
+  retained_positions.emplace_back(ConstantColumnOutputPosition{
+      ScalarValue::text(type(schema::LogicalTypeKind::kString), std::move(retained_constant))
+          .value()});
+  std::vector<PhysicalPipelineStage> retained_constant_stages;
+  retained_constant_stages.emplace_back(
+      ColumnOutputStage{.positions = std::move(retained_positions)});
+  EXPECT_EQ(PhysicalPipelinePlan::create(input_shape(), std::move(retained_constant_stages),
+                                         {.maximum_input_columns = 2U,
+                                          .maximum_stages = 1U,
+                                          .maximum_retained_configuration_bytes = 1'024U})
                 .error()
                 .code(),
             common::StatusCode::kResourceExhausted);
@@ -377,6 +429,47 @@ TEST(PhysicalPipelinePlanTest, InstantiatesReorderedDuplicateSourceColumnOutputs
   };
   EXPECT_EQ(output_i64(1U, 0U), 10);
   EXPECT_EQ(output_i64(2U, 1U), 12);
+}
+
+TEST(PhysicalPipelinePlanTest, InstantiatesMixedSourceAndConstantOutputsInPlanOrder) {
+  const auto resources = QueryResourceContext::create(8'192U).value();
+  std::vector<AccountedVectorChunk> chunks;
+  chunks.push_back(accounted_chunk(resources, std::vector<std::int64_t>{10, 11, 12},
+                                   std::vector<std::int8_t>{1, 0, 1}, {0U, 1U, 2U}));
+  auto plan =
+      PhysicalPipelinePlan::create(
+          input_shape(),
+          {BooleanFilterStage{.predicate_column = 1U},
+           ColumnOutputStage{.positions = {ConstantColumnOutputPosition{
+                                               ScalarValue::signed_value(
+                                                   type(schema::LogicalTypeKind::kInt64), 99)
+                                                   .value()},
+                                           SourceColumnOutputPosition{0U},
+                                           ConstantColumnOutputPosition{ScalarValue::null(
+                                               type(schema::LogicalTypeKind::kString))}}}})
+          .value();
+  auto pipeline = plan.instantiate(std::make_unique<ChunkSource>(std::move(chunks))).value();
+  auto step = pipeline->next(resources);
+  ASSERT_TRUE(step.has_value()) << step.error().to_string();
+  ASSERT_EQ(step->kind(), PhysicalOperatorStepKind::kChunk);
+  const VectorChunk& chunk = step->chunk()->chunk();
+  ASSERT_EQ(chunk.column_count(), 3U);
+  EXPECT_EQ(chunk.physical_row_count(), 2U);
+  EXPECT_TRUE(chunk.selection().is_identity());
+  const auto read_i64 = [&](const std::size_t column, const std::size_t row) {
+    const common::ByteView value =
+        chunk.cell({.column_ordinal = column, .selected_row = row})->bytes().value();
+    std::uint64_t bits = 0U;
+    for (std::size_t byte = 0U; byte < value.size(); ++byte) {
+      bits |= static_cast<std::uint64_t>(std::to_integer<std::uint8_t>(value[byte])) << (byte * 8U);
+    }
+    return std::bit_cast<std::int64_t>(bits);
+  };
+  EXPECT_EQ(read_i64(0U, 0U), 99);
+  EXPECT_EQ(read_i64(0U, 1U), 99);
+  EXPECT_EQ(read_i64(1U, 0U), 10);
+  EXPECT_EQ(read_i64(1U, 1U), 12);
+  EXPECT_TRUE(chunk.cell({.column_ordinal = 2U, .selected_row = 0U})->is_null());
 }
 
 TEST(PhysicalPipelinePlanTest, RejectsRuntimeSourceShapeMismatchAndReleasesCredit) {

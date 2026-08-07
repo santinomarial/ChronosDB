@@ -113,8 +113,11 @@ reserves query credit while the input remains charged, and only then allocates. 
 remain progress over their original physical domain, and empty output lists preserve cardinality.
 
 The complete ownership, canonicalization, failure, and benchmark contract is described in the
-[source-column output guide](source-column-output-materialization.md). It handles source references
-only; constants and computed typed expressions remain future work.
+[source-column output guide](source-column-output-materialization.md). `ColumnOutputOperator`
+extends the same boundary with caller-ordered typed constants; its direct canonical expansion and
+shape contract are described in the
+[typed-constant output guide](typed-constant-output-materialization.md). Computed typed expressions
+remain future work.
 
 ## Global LIMIT semantics
 
@@ -186,7 +189,8 @@ and no-op limits with setup and destruction paused. Exact timestamp-range compac
 and sparse selections over 64, 1,024, and 4,096 rows. These measurements do not claim end-to-end
 query speed or justify fusion, branch specialization, or alias-backed materialization. A separate
 source-column output benchmark measures reverse-order duplicate materialization for dense and
-sparse selections with source construction excluded.
+sparse selections with source construction excluded. A companion mixed-output benchmark measures
+source, fixed, string, and typed-NULL positions under the same setup exclusion.
 
 ## Tradeoffs and next steps
 
@@ -198,9 +202,9 @@ The snapshot-bound adapter joins canonical selected durable parts from one exact
 epoch with safe event-time pruning, while the head source independently canonicalizes one pinned
 generation. Both source factories now retain an omitted event-time helper through exact filtering
 and remove it before output. The next storage increment must define shared hidden columns and
-explicit part/head merge semantics before claiming complete tablet visibility. Typed physical
-expression building and bound-plan lowering are the other immediate dependencies; source-column
-reorder and duplication now have an owned baseline.
+explicit part/head merge semantics before claiming complete tablet visibility. Checked computed
+physical expressions and bound-plan lowering are the other immediate dependencies; source-column
+reorder, duplication, and typed constants now have an owned baseline.
 Parallel scheduling should follow only after task ownership, queue capacity, terminal-error
 arbitration, and cancellation release are specified.
 

@@ -45,12 +45,18 @@ struct SourceColumnOutputStage {
   VectorChunkLimits output_limits{};
 };
 
+struct ColumnOutputStage {
+  std::vector<ColumnOutputPosition> positions;
+  VectorChunkLimits output_limits{};
+};
+
 struct LimitStage {
   std::uint64_t maximum_rows;
 };
 
-using PhysicalPipelineStage = std::variant<BooleanFilterStage, TimestampRangeFilterStage,
-                                           ColumnSubsetStage, SourceColumnOutputStage, LimitStage>;
+using PhysicalPipelineStage =
+    std::variant<BooleanFilterStage, TimestampRangeFilterStage, ColumnSubsetStage,
+                 SourceColumnOutputStage, ColumnOutputStage, LimitStage>;
 
 struct PhysicalPipelinePlanLimits {
   std::size_t maximum_input_columns{kDefaultVectorChunkColumnLimit};

@@ -123,8 +123,12 @@
 > independent canonical owners, sparse-to-identity compaction, empty-progress and zero-column
 > cardinality, every-frozen-type cell comparison, exact pre-allocation byte limits, exhaustive
 > allocation failure, hostile physical-plan fuzzing, sanitizer coverage, installed-consumer
-> linkage, and isolated dense/sparse output measurement. Constants, computed expressions, and
-> bound-SQL lowering remain outside this claim.
+> linkage, and isolated dense/sparse output measurement. Mixed typed-constant output adds exact
+> caller order, nonnullable constants, all-NULL typed vectors, direct canonical materialization for
+> all 18 frozen logical types, sparse/empty selection behavior, checked retained configuration and
+> output admission, exact physical-plan shapes, exhaustive allocation failure, hostile plan
+> fuzzing, sanitizer coverage, external-consumer linkage, and fixed/string/NULL measurement.
+> Computed expressions and bound-SQL lowering remain outside this claim.
 
 ## Test types
 

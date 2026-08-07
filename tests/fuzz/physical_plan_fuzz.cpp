@@ -61,7 +61,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
   const std::size_t hostile_count = size > 32U ? 32U : size;
   hostile_stages.reserve(hostile_count);
   for (std::size_t index = 0U; index < hostile_count; ++index) {
-    switch (data[index] % 5U) {
+    switch (data[index] % 6U) {
     case 0U:
       hostile_stages.emplace_back(
           chronos::query::BooleanFilterStage{static_cast<std::size_t>(data[index] >> 2U)});
@@ -103,6 +103,27 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
     case 4U:
       hostile_stages.emplace_back(chronos::query::LimitStage{data[index]});
       break;
+    case 5U: {
+      std::vector<chronos::query::ColumnOutputPosition> positions;
+      if ((data[index] & 1U) != 0U) {
+        positions.emplace_back(chronos::query::SourceColumnOutputPosition{
+            static_cast<std::size_t>((data[index] >> 1U) & 3U)});
+      } else if ((data[index] & 2U) != 0U) {
+        positions.emplace_back(chronos::query::ConstantColumnOutputPosition{
+            chronos::query::ScalarValue::boolean((data[index] & 4U) != 0U).value()});
+      } else {
+        positions.emplace_back(chronos::query::ConstantColumnOutputPosition{
+            chronos::query::ScalarValue::untyped_null()});
+      }
+      hostile_stages.emplace_back(chronos::query::ColumnOutputStage{
+          .positions = std::move(positions),
+          .output_limits = {.maximum_rows = static_cast<std::uint32_t>(data[index]),
+                            .maximum_columns = static_cast<std::size_t>(data[index] >> 4U),
+                            .maximum_buffer_bytes = static_cast<std::size_t>(data[index]) * 32U,
+                            .maximum_retained_buffer_bytes =
+                                static_cast<std::size_t>(data[index]) * 64U}});
+      break;
+    }
     default:
       break;
     }
@@ -134,8 +155,10 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
   std::vector<chronos::query::PhysicalPipelineStage> stages;
   stages.emplace_back(chronos::query::BooleanFilterStage{0U});
   stages.emplace_back(chronos::query::LimitStage{maximum_rows});
-  stages.emplace_back(chronos::query::SourceColumnOutputStage{
-      .input_column_ordinals = {0U, 0U},
+  stages.emplace_back(chronos::query::ColumnOutputStage{
+      .positions = {chronos::query::SourceColumnOutputPosition{0U},
+                    chronos::query::ConstantColumnOutputPosition{
+                        chronos::query::ScalarValue::boolean(true).value()}},
       .output_limits = {.maximum_rows = 256U,
                         .maximum_columns = 2U,
                         .maximum_buffer_bytes = 4'096U,

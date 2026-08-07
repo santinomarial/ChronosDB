@@ -333,6 +333,12 @@ int main() {
           chronos::query::VectorChunkLimits);
   const CreateSourceColumnOutputFunction create_source_column_output =
       &chronos::query::SourceColumnOutputOperator::create;
+  using CreateColumnOutputFunction =
+      chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
+          std::unique_ptr<chronos::query::PhysicalOperator>,
+          std::vector<chronos::query::ColumnOutputPosition>, chronos::query::VectorChunkLimits);
+  const CreateColumnOutputFunction create_column_output =
+      &chronos::query::ColumnOutputOperator::create;
   using CreateTimestampRangeFilterFunction =
       chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
           std::unique_ptr<chronos::query::PhysicalOperator>, std::size_t,
@@ -562,6 +568,7 @@ int main() {
                  query_resources->available_memory_bytes() == 1'024U &&
                  physical_end.kind() == chronos::query::PhysicalOperatorStepKind::kEnd &&
                  create_column_subset != nullptr && create_source_column_output != nullptr &&
+                 create_column_output != nullptr &&
                  create_timestamp_range_filter != nullptr &&
                  timestamp_range.matches(0) && create_head_scan != nullptr &&
                  create_exact_head_scan != nullptr &&
