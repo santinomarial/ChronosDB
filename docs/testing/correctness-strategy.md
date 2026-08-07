@@ -101,7 +101,7 @@
 > corrupted-pruned-file and corrupted-pruned-page evidence, exact epoch/image-order rejection,
 > empty-plan validation, exhaustive retained-allocation failure injection, predicate-aware decoder
 > fuzzing, and separate metadata-plan versus selected-pull measurements. It explicitly excludes
-> mutable heads and exact SQL filtering from its correctness claim.
+> mutable heads and non-event-time SQL filtering from its correctness claim.
 > The single-publication mutable-head source adds byte-per-row-to-bitmap canonicalization,
 > native-to-little-endian rebased offsets, exact old-snapshot boundary checks, schema-successor NULL
 > synthesis, every-frozen-type and varied-boundary properties, exhaustive source/pull allocation
@@ -112,8 +112,10 @@
 > empty-range semantics, sparse-selection/chunk-boundary scalar properties, invalid type/shape/query
 > ownership failures, bounded-plan validation, hostile vector/plan fuzzing, sanitizer coverage,
 > compaction microbenchmarks, and installed-consumer linkage. Conservative storage pruning remains
-> separate from exact truth until bound-SQL scan lowering retains the event-time column through the
-> filter.
+> separate from exact truth in the low-level source. Aggregate snapshot CSEG construction now
+> copies identical bounds into both stages, retains and removes an omitted event-time helper,
+> checks the effective projection against both limits, and adds independent exact-result,
+> allocation-failure, fuzz, and selected-pull evidence.
 
 ## Test types
 

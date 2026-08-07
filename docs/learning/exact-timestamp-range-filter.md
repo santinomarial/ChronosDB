@@ -140,10 +140,11 @@ Selection compaction avoids copying but retains columns that may now have very f
 The generic per-cell path is auditable and safe, though a specialized canonical fixed-width loop may
 later be faster. Neither cost justifies weakening exact comparisons or memory ownership.
 
-The immediate integration task is bound-SQL/storage lowering that retains the event-time column,
-uses the same bounds for conservative Manifest/CSEG pruning and exact filtering, then removes an
-unrequested helper column. Complete part/head composition still requires accepted hidden-system-
-column and row-version semantics first.
+The aggregate snapshot CSEG factory now performs the first storage integration: it retains the
+event-time column, uses identical bounds for conservative Manifest/CSEG pruning and exact filtering,
+then removes an unrequested helper column. Bound-SQL lowering and exact mutable-head integration
+remain separate. Complete part/head composition still requires accepted hidden-system-column and
+row-version semantics first.
 
 ## Likely review questions
 

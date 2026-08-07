@@ -131,8 +131,9 @@ only as truthful as its trusted storage provider. These choices keep the first r
 ownership path auditable.
 
 The snapshot-bound multi-part adapter now chooses several validated Manifest images in canonical
-order and composes event-time-pruned children while retaining every exact aggregate owner. The next
-storage integration must add mutable-head physical backing and real part/head merge semantics, then
+order, composes event-time-pruned children while retaining every exact aggregate owner, and wraps
+the aggregate with exact timestamp truth plus projection-aware helper removal. The next storage
+integration must add mutable-head physical backing and real part/head merge semantics, then
 decide whether epoch-wide pin credit can be shared without allowing any output to retain uncharged
 state.
 

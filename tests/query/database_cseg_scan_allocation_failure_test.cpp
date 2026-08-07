@@ -69,18 +69,36 @@ void write_allocation_fixture_bytes(const std::filesystem::path& path,
       schema::ColumnDefinition::create(
           event, "event_time", cseg::test::type(schema::LogicalTypeKind::kTimestampNs), false)
           .value());
-  return schema::SchemaLineage::create(
-             schema::TableSchema::create(cseg::test::identifier<schema::TableId>(2U),
-                                         cseg::test::identifier<schema::SchemaId>(4U),
-                                         schema::SchemaVersion::initial(), std::nullopt,
-                                         std::move(columns),
-                                         {.event_time_column = event,
-                                          .physical_ordering_key = {event},
-                                          .partition_columns = {event},
-                                          .shard_key = {event},
-                                          .deduplication_key = {}})
-                 .value())
-      .value();
+  schema::SchemaLineage result =
+      schema::SchemaLineage::create(
+          schema::TableSchema::create(cseg::test::identifier<schema::TableId>(2U),
+                                      cseg::test::identifier<schema::SchemaId>(4U),
+                                      schema::SchemaVersion::initial(), std::nullopt, columns,
+                                      {.event_time_column = event,
+                                       .physical_ordering_key = {event},
+                                       .partition_columns = {event},
+                                       .shard_key = {event},
+                                       .deduplication_key = {}})
+              .value())
+          .value();
+  columns.push_back(
+      schema::ColumnDefinition::create(cseg::test::identifier<schema::ColumnId>(7U), "added",
+                                       cseg::test::type(schema::LogicalTypeKind::kString), true)
+          .value());
+  EXPECT_TRUE(result
+                  .append(schema::TableSchema::create(cseg::test::identifier<schema::TableId>(2U),
+                                                      cseg::test::identifier<schema::SchemaId>(6U),
+                                                      schema::SchemaVersion::from_value(2U).value(),
+                                                      cseg::test::identifier<schema::SchemaId>(4U),
+                                                      std::move(columns),
+                                                      {.event_time_column = event,
+                                                       .physical_ordering_key = {event},
+                                                       .partition_columns = {event},
+                                                       .shard_key = {event},
+                                                       .deduplication_key = {}})
+                              .value())
+                  .is_ok());
+  return result;
 }
 
 struct AggregateAllocationFixture {
@@ -161,7 +179,10 @@ struct AggregateAllocationFixture {
   manifest::DatabaseStoragePublisher publisher =
       manifest::DatabaseStoragePublisher::create(selected, {}).value();
   manifest::DatabaseStorageSnapshot snapshot = publisher.snapshot().value();
-  SnapshotCsegPartScanPlan plan = plan_snapshot_cseg_part_scan(snapshot, tablet).value();
+  const cseg::EventTimePredicate predicate{
+      .lower = cseg::EventTimeBound{.value = -97, .inclusive = true},
+      .upper = cseg::EventTimeBound{.value = -97, .inclusive = true}};
+  SnapshotCsegPartScanPlan plan = plan_snapshot_cseg_part_scan(snapshot, tablet, predicate).value();
   std::vector<std::shared_ptr<const manifest::SnapshotPartImage>> images =
       load_snapshot_cseg_part_scan_images(storage, snapshot, plan, schemas).value();
   return {.schemas = std::move(schemas),
@@ -213,12 +234,12 @@ TEST(DatabaseCsegScanAllocationFailureTest, AggregateCreationUnwindsEveryRetaine
     QueryResourceContext resources =
         QueryResourceContext::create(std::size_t{16U} * 1024U * 1024U).value();
     std::vector<std::shared_ptr<const manifest::SnapshotPartImage>> images = fixture.images;
-    const std::vector<std::uint32_t> ordinals{0U};
+    const std::vector<std::uint32_t> ordinals{1U};
     std::size_t observed = 0U;
     auto source = run_aggregate_with_allocation_failure(fail_after, observed, [&] {
       return create_snapshot_cseg_part_scan(resources, fixture.plan, std::move(images),
                                             fixture.schemas,
-                                            cseg::test::identifier<schema::SchemaId>(4U), ordinals);
+                                            cseg::test::identifier<schema::SchemaId>(6U), ordinals);
     });
     EXPECT_GT(observed, 0U);
     if (source.has_value()) {

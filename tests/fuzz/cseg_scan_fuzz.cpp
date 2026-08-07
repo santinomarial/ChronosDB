@@ -93,6 +93,48 @@ void exercise(const std::shared_ptr<const std::vector<std::byte>>& owner,
   }
 }
 
+void exercise_exact_prune_filter(const std::shared_ptr<const std::vector<std::byte>>& owner,
+                                 const std::span<const std::uint8_t> input) {
+  if (owner->empty())
+    return;
+  auto part = chronos::query::CsegPartPin::create(owner, *owner, owner->capacity() + 64U);
+  auto resources = chronos::query::QueryResourceContext::create(std::size_t{16U} * 1024U * 1024U);
+  if (!part.has_value() || !resources.has_value())
+    return;
+  const std::int64_t lower =
+      input.empty() ? -100 : static_cast<std::int64_t>(static_cast<std::int8_t>(input.front()));
+  const std::int64_t upper =
+      input.empty() ? 100 : static_cast<std::int64_t>(static_cast<std::int8_t>(input.back()));
+  const bool lower_inclusive = input.empty() || (input.front() & 1U) != 0U;
+  const bool upper_inclusive = input.empty() || (input.back() & 1U) != 0U;
+  auto source = chronos::query::CsegScanOperator::create_event_time_pruned(
+      *resources, std::move(*part), lineage(),
+      chronos::cseg::test::identifier<chronos::schema::SchemaId>(4U),
+      chronos::cseg::test::identifier<chronos::schema::TabletId>(3U), {0U},
+      {.lower = chronos::cseg::EventTimeBound{.value = lower, .inclusive = lower_inclusive},
+       .upper = chronos::cseg::EventTimeBound{.value = upper, .inclusive = upper_inclusive}});
+  if (!source.has_value())
+    return;
+  source = chronos::query::TimestampRangeFilterOperator::create(
+      std::move(*source), 0U,
+      {.lower = chronos::query::TimestampRangeBound{.value = lower, .inclusive = lower_inclusive},
+       .upper = chronos::query::TimestampRangeBound{.value = upper, .inclusive = upper_inclusive}});
+  if (!source.has_value())
+    return;
+  if (!input.empty() && (input.front() & 8U) != 0U) {
+    source = chronos::query::ColumnSubsetOperator::create(std::move(*source), {});
+    if (!source.has_value())
+      return;
+  }
+  for (std::size_t pull = 0U; pull < 8U; ++pull) {
+    auto step = (*source)->next(*resources);
+    if (!step.has_value() || step->kind() == chronos::query::PhysicalOperatorStepKind::kEnd)
+      break;
+    if (step->chunk() != nullptr)
+      static_cast<void>(step->chunk()->chunk().selected_row_count());
+  }
+}
+
 } // namespace
 
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_t size) {
@@ -100,7 +142,9 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
   std::vector<std::byte> hostile(size);
   for (std::size_t index = 0U; index < size; ++index)
     hostile[index] = std::byte{data[index]};
-  exercise(std::make_shared<const std::vector<std::byte>>(std::move(hostile)), input);
+  auto hostile_owner = std::make_shared<const std::vector<std::byte>>(std::move(hostile));
+  exercise(hostile_owner, input);
+  exercise_exact_prune_filter(std::move(hostile_owner), input);
 
   // Keep a rich authenticated seed in every run so configuration and output ownership stay hot.
   // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
@@ -113,6 +157,8 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
   if (!input.empty())
     mutated[input.front() % mutated.size()] ^=
         std::byte{static_cast<std::uint8_t>(input.back() | 1U)};
-  exercise(std::make_shared<const std::vector<std::byte>>(std::move(mutated)), input);
+  auto mutated_owner = std::make_shared<const std::vector<std::byte>>(std::move(mutated));
+  exercise(mutated_owner, input);
+  exercise_exact_prune_filter(std::move(mutated_owner), input);
   return 0;
 }

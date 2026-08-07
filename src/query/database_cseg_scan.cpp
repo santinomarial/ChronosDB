@@ -134,6 +134,20 @@ validate_projection_request(const schema::TableSchema& destination_schema,
   return common::Status::ok();
 }
 
+[[nodiscard]] TimestampRangePredicate
+exact_timestamp_predicate(const cseg::EventTimePredicate& predicate) noexcept {
+  TimestampRangePredicate result;
+  if (predicate.lower.has_value()) {
+    result.lower = TimestampRangeBound{.value = predicate.lower->value,
+                                       .inclusive = predicate.lower->inclusive};
+  }
+  if (predicate.upper.has_value()) {
+    result.upper = TimestampRangeBound{.value = predicate.upper->value,
+                                       .inclusive = predicate.upper->inclusive};
+  }
+  return result;
+}
+
 [[nodiscard]] common::Status validate_image(const SnapshotCsegPartScanPlan& plan,
                                             const manifest::SnapshotPartImage& image,
                                             const cseg::PartId& expected_part_id) {
@@ -478,6 +492,34 @@ common::Result<std::unique_ptr<PhysicalOperator>> create_snapshot_cseg_part_scan
       *destination_schema, destination_column_ordinals, plan.event_time_predicate(), limits);
   if (!projection.is_ok())
     return common::make_unexpected(std::move(projection));
+
+  const std::optional<cseg::EventTimePredicate>& predicate = plan.event_time_predicate();
+  std::optional<std::size_t> event_time_output_ordinal;
+  std::uint32_t event_time_destination_ordinal = 0U;
+  bool append_event_time_helper = false;
+  if (predicate.has_value()) {
+    const std::optional<std::size_t> destination_ordinal =
+        destination_schema->column_ordinal(destination_schema->event_time_column());
+    if (!destination_ordinal.has_value()) {
+      return common::make_unexpected(
+          invalid("snapshot CSEG destination schema has no event-time column"));
+    }
+    event_time_destination_ordinal = static_cast<std::uint32_t>(*destination_ordinal);
+    const auto requested =
+        std::ranges::find(destination_column_ordinals, event_time_destination_ordinal);
+    if (requested != destination_column_ordinals.end()) {
+      event_time_output_ordinal =
+          static_cast<std::size_t>(requested - destination_column_ordinals.begin());
+    } else {
+      if (destination_column_ordinals.size() >= limits.reader.max_projected_columns ||
+          destination_column_ordinals.size() >= limits.chunk.maximum_columns) {
+        return common::make_unexpected(
+            exhausted("snapshot CSEG exact predicate helper exceeds configured projection limits"));
+      }
+      event_time_output_ordinal = destination_column_ordinals.size();
+      append_event_time_helper = true;
+    }
+  }
   if (images.size() != plan.selected_part_ids().size())
     return common::make_unexpected(
         invalid("snapshot CSEG images do not exactly cover the planned parts"));
@@ -506,13 +548,14 @@ common::Result<std::unique_ptr<PhysicalOperator>> create_snapshot_cseg_part_scan
   try {
     std::vector<std::unique_ptr<PhysicalOperator>> children;
     children.reserve(images.size());
-    const std::optional<cseg::EventTimePredicate>& predicate = plan.event_time_predicate();
     for (std::shared_ptr<const manifest::SnapshotPartImage>& image : images) {
       common::Result<CsegPartPin> part = pin_snapshot_cseg_part(std::move(image));
       if (!part.has_value())
         return common::make_unexpected(part.error());
       std::vector<std::uint32_t> child_ordinals = destination_column_ordinals;
       if (predicate.has_value()) {
+        if (append_event_time_helper)
+          child_ordinals.push_back(event_time_destination_ordinal);
         common::Result<std::unique_ptr<PhysicalOperator>> child =
             CsegScanOperator::create_event_time_pruned(
                 resources, std::move(*part), lineage, destination_schema_id, plan.tablet_id(),
@@ -529,8 +572,27 @@ common::Result<std::unique_ptr<PhysicalOperator>> create_snapshot_cseg_part_scan
         children.push_back(std::move(*child));
       }
     }
-    return std::unique_ptr<PhysicalOperator>{
+    std::unique_ptr<PhysicalOperator> pipeline{
         new SequentialSnapshotCsegScan{std::move(children), std::move(*reservation)}};
+    if (predicate.has_value()) {
+      common::Result<std::unique_ptr<PhysicalOperator>> filtered =
+          TimestampRangeFilterOperator::create(std::move(pipeline), *event_time_output_ordinal,
+                                               exact_timestamp_predicate(*predicate));
+      if (!filtered.has_value())
+        return common::make_unexpected(filtered.error());
+      pipeline = std::move(*filtered);
+      if (append_event_time_helper) {
+        std::vector<std::size_t> visible_columns(destination_column_ordinals.size());
+        for (std::size_t ordinal = 0U; ordinal < visible_columns.size(); ++ordinal)
+          visible_columns[ordinal] = ordinal;
+        common::Result<std::unique_ptr<PhysicalOperator>> projected =
+            ColumnSubsetOperator::create(std::move(pipeline), std::move(visible_columns));
+        if (!projected.has_value())
+          return common::make_unexpected(projected.error());
+        pipeline = std::move(*projected);
+      }
+    }
+    return pipeline;
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("snapshot CSEG source allocation failed"));
   } catch (const std::length_error&) {

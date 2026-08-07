@@ -30,7 +30,8 @@ struct SnapshotCsegPartScanPlanLimits {
 };
 
 // Bounded CSEG-only work selected from one tablet in one exact aggregate database epoch. Part
-// identities preserve canonical Manifest order. The optional predicate is pruning evidence only.
+// identities preserve canonical Manifest order. In the plan, the optional predicate is
+// conservative pruning evidence; source construction later applies the same bounds exactly.
 class SnapshotCsegPartScanPlan {
 public:
   SnapshotCsegPartScanPlan() = delete;
@@ -113,7 +114,9 @@ pin_snapshot_cseg_part(std::shared_ptr<const manifest::SnapshotPartImage> image)
     CsegScanLimits limits = {});
 
 // Eagerly validates and adopts every selected image, then emits child chunks in canonical part and
-// physical granule order. This remains CSEG-only and is not a complete tablet scan with live heads.
+// physical granule order. A planned event-time predicate first prunes parts/granules, then filters
+// rows exactly. If event time was not requested, a temporary scan column is removed before output.
+// This remains CSEG-only and is not a complete tablet scan with live heads.
 [[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>> create_snapshot_cseg_part_scan(
     const QueryResourceContext& resources, const SnapshotCsegPartScanPlan& plan,
     std::vector<std::shared_ptr<const manifest::SnapshotPartImage>> images,

@@ -394,9 +394,12 @@ No phase passes because its code merely compiles. A phase passes only when its a
   add edge-safe open/closed `TIMESTAMP_NS` predicates, allocation-free exact selection compaction,
   NULL and empty-chunk semantics, query-accounted pull behavior, bounded physical-plan integration,
   deterministic scalar properties, hostile fuzz coverage, microbenchmarks, and installed-consumer
-  linkage. The durable and mutable sources still expose user columns independently: bound-SQL
-  lowering, automatic prune-then-exact scan composition, general typed vector expressions and
-  output builders, optimizer rules, hidden row-version columns, complete multi-part/head
+  linkage. ADR 0031 and the fourteenth increment automatically compose conservative Manifest/CSEG
+  pruning with exact row truth in aggregate snapshot CSEG scans, retain and remove an unrequested
+  event-time helper column, preserve caller projection order, enforce effective projection limits,
+  and add deterministic/property/failure/fuzz/benchmark evidence. The durable and mutable sources
+  still expose user columns independently: bound-SQL lowering, general typed vector expressions
+  and output builders, optimizer rules, hidden row-version columns, complete multi-part/head
   composition, base/delta merge and row-version resolution, mapped/asynchronous providers, shared
   pin credit, scheduling, spill, and full scalar-engine differential plan execution are
   unimplemented.

@@ -5,11 +5,12 @@
 This Phase 9 layer turns one exact aggregate database snapshot into bounded durable CSEG work for
 one tablet. It prunes provably disjoint Manifest parts before file I/O, prunes provably disjoint
 CSEG granules before page work, loads only the selected immutable images, and emits their chunks
-through one query-accounted sequential source.
+through one query-accounted sequential source. A planned event-time range is then evaluated exactly
+on candidate rows before the caller-visible projection is returned.
 
 It is deliberately a CSEG-only source. A `DatabaseStorageSnapshot` may also expose active or sealed
 mutable-head rows; this layer neither reads nor hides them and therefore cannot represent a complete
-tablet scan while such rows are visible. It also does not perform exact SQL filtering, merge
+tablet scan while such rows are visible. It also does not perform general SQL filtering, merge
 overlapping parts, resolve row versions, lower bound SQL, schedule parallel work, or spill.
 
 ## Public interfaces
@@ -25,12 +26,14 @@ overlapping parts, resolve row versions, lower bound SQL, schedule parallel work
   pins alive.
 - `create_snapshot_cseg_part_scan` validates destination/source schemas and exact ordered image
   coverage, reserves query credit, eagerly creates one ordinary or event-time-pruned child per
-  image, and returns one `PhysicalOperator`.
+  image, composes the children sequentially, and applies exact event-time truth. When the requested
+  projection omitted event time, it appends that destination ordinal for child scans and removes it
+  after filtering.
 
 `CsegScanOperator::create_event_time_pruned` is the page-work boundary. It authenticates metadata,
 owns a bounded `CsegEventTimePruningPlan`, and visits only selected physical granule ordinals.
 
-## Two-stage no-false-negative pruning
+## Two-stage pruning followed by exact truth
 
 An optional event-time predicate is a conjunction of lower and upper bounds. Reversed bounds, or
 equal bounds with an open side, are valid empty predicates. At both pruning levels the same range
@@ -40,10 +43,11 @@ intersection rule is used:
 2. Authenticated CSEG granule extrema select candidate granule ordinals without validating or
    decoding disjoint page bodies.
 
-Stored minima and maxima are evidence for exclusion only. Every selected granule is returned in
-full, so a point predicate can yield many rows. A later exact vector predicate must apply SQL truth.
-This separation prevents false negatives while preserving the existing selective page-integrity
-contract.
+Stored minima and maxima are evidence for exclusion only. Every selected granule is decoded in
+full, then `TimestampRangeFilterOperator` applies exact row truth using mechanically copied endpoint
+values and inclusive bits. This separation prevents false negatives while preserving the existing
+selective page-integrity contract. The low-level pruned CSEG source still returns complete candidate
+granules; the aggregate factory does not expose those false positives.
 
 ## Ownership and lifetime
 
@@ -61,6 +65,10 @@ ManifestStorage selected load
 SequentialSnapshotCsegScan
   ├── parent query reservation
   └── eager CsegScanOperator children in Manifest PartId order
+        │
+        ▼
+TimestampRangeFilterOperator (when planned)
+  └── ColumnSubsetOperator (only when a final event-time helper must be removed)
         └── output AccountedVectorChunk retains its own image/pin and credit
 ```
 
@@ -89,6 +97,12 @@ budget failures are `RESOURCE_EXHAUSTED` and unwind every parent/child reservati
 or child failure requests cooperative cancellation and returns no partial step. A foreign resource
 context is rejected and cancelled.
 
+When a predicate requires an unrequested event-time helper, the effective projection including that
+helper must fit both the projected-reader and output-chunk column limits. The helper is always the
+last child output, exact filtering uses that position, and stable prefix projection prevents it
+from leaking. If event time was requested, filtering uses its caller-visible output position and no
+projection is rewritten.
+
 No failure mutates storage, publication state, reclamation records, or schema state.
 
 ## Complexity and measurement
@@ -96,15 +110,17 @@ No failure mutates storage, publication state, reclamation records, or schema st
 For `P` tablet parts, planning is `O(P)` time and `O(S)` owned identities for `S` selected parts.
 Loading costs the locked namespace scan plus selected file bytes and complete selected-file
 validation. Eager source creation is the sum of selected metadata/projection opens. A pull skips
-ended children and otherwise has the selected single-granule cost; no page body from a pruned
-granule is touched.
+ended children and otherwise has the selected single-granule decode plus `O(S)` exact comparisons
+for `S` selected input rows; no page body from a pruned granule is touched.
 
-Deterministic properties compare part and granule selection with independent range models. Hostile
-tests corrupt pruned files and pruned page bodies, reject foreign/reordered images, and force budget
-and allocator failures. `chronos_cseg_scan_fuzz` varies ordinary/pruned decoding over hostile bytes.
+Deterministic properties compare part, granule, and exact row selection with independent range
+models. Hostile tests corrupt pruned files and pruned page bodies, reject foreign/reordered images,
+exercise successor-schema helper removal, and force budget and allocator failures.
+`chronos_cseg_scan_fuzz` varies ordinary and prune-then-exact decoding over hostile bytes.
 `benchmark_event_time_pruning` isolates metadata-plan cost, while
-`scan_one_selected_granule_among_many` measures one selected pull from 64 or 4,096 candidate
-granules under raw and Zstandard policies with source creation excluded from timing.
+`scan_one_selected_granule_among_many` and `scan_one_exact_row_among_many_granules` distinguish
+candidate decode from exact filtering under raw and Zstandard policies with source creation
+excluded from timing.
 
 ## Tradeoffs and next steps
 
@@ -113,8 +129,8 @@ physical `PartId` order is not a key merge. Compaction may change that physical 
 `ORDER BY` has no result-order guarantee. Owned file images are portable but copy selected files.
 
 A separate source now canonicalizes one exact mutable-head publication. A complete tablet source
-still needs shared hidden-system columns, all-head one-snapshot composition, exact predicate
-operators, row-version and base/delta merge rules, and a scalar differential oracle. Parallelism
+still needs shared hidden-system columns, all-head one-snapshot composition, exact head predicate
+lowering, row-version and base/delta merge rules, and a scalar differential oracle. Parallelism
 requires reviewed task ownership, bounded queues, terminal-error arbitration, and pin/credit
 transfer before replacing this serial source.
 
@@ -124,10 +140,10 @@ transfer before replacing this serial source.
 already proved disjointness for this snapshot. Selected authority remains fully reread and
 validated.
 
-**Does point pruning return only the matching row?** No. It returns complete intersecting
-granules. Pruning is work avoidance, not predicate evaluation. The exact
-[timestamp-range filter](exact-timestamp-range-filter.md) supplies the row-level primitive, but
-automatic scan projection/lowering is not implemented yet.
+**Does a point predicate return only one row?** It returns every row with that timestamp, which may
+be zero, one, or many. The low-level pruned child decodes complete intersecting granules; the
+aggregate factory's exact [timestamp-range filter](exact-timestamp-range-filter.md) removes all
+nonmatching rows before output.
 
 **Why validate projection on an empty selection?** Invalid query configuration must not become
 conditionally valid because current metadata happens to select no work.
