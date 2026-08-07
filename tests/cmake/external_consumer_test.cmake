@@ -102,6 +102,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/query/timestamp_range.hpp>
 #include <chronos/query/value.hpp>
 #include <chronos/query/vector_chunk.hpp>
+#include <chronos/query/vector_expression.hpp>
 #include <chronos/manifest/types.hpp>
 #include <chronos/manifest/validation.hpp>
 #include <chronos/wal/application.hpp>
@@ -339,6 +340,11 @@ int main() {
           std::vector<chronos::query::ColumnOutputPosition>, chronos::query::VectorChunkLimits);
   const CreateColumnOutputFunction create_column_output =
       &chronos::query::ColumnOutputOperator::create;
+  using CreateVectorExpressionFunction = chronos::common::Result<chronos::query::VectorExpression> (*)(
+      std::vector<chronos::query::VectorExpressionInstruction>,
+      chronos::query::VectorExpressionLimits);
+  const CreateVectorExpressionFunction create_vector_expression =
+      &chronos::query::VectorExpression::create;
   using CreateTimestampRangeFilterFunction =
       chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
           std::unique_ptr<chronos::query::PhysicalOperator>, std::size_t,
@@ -568,7 +574,7 @@ int main() {
                  query_resources->available_memory_bytes() == 1'024U &&
                  physical_end.kind() == chronos::query::PhysicalOperatorStepKind::kEnd &&
                  create_column_subset != nullptr && create_source_column_output != nullptr &&
-                 create_column_output != nullptr &&
+                 create_column_output != nullptr && create_vector_expression != nullptr &&
                  create_timestamp_range_filter != nullptr &&
                  timestamp_range.matches(0) && create_head_scan != nullptr &&
                  create_exact_head_scan != nullptr &&

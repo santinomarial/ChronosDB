@@ -343,6 +343,7 @@ add_library(
   src/query/statement_binder.cpp
   src/query/value.cpp
   src/query/vector_chunk.cpp
+  src/query/vector_expression.cpp
 )
 add_library(chronos::query ALIAS chronos_query)
 set_target_properties(chronos_query PROPERTIES EXPORT_NAME query CXX_EXTENSIONS OFF)
@@ -798,6 +799,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/value_test.cpp
     tests/query/vector_chunk_header_self_contained.cpp
     tests/query/vector_chunk_test.cpp
+    tests/query/vector_expression_header_self_contained.cpp
+    tests/query/vector_expression_test.cpp
   )
   set_target_properties(chronos_query_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_query_tests PRIVATE cxx_std_23)

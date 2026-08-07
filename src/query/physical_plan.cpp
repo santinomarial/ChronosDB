@@ -70,8 +70,19 @@ retained_bytes_for_configuration(const std::vector<PhysicalColumnShape>& input_c
         return total;
       for (const ColumnOutputPosition& position : mixed_output->positions) {
         const auto* constant = std::get_if<ConstantColumnOutputPosition>(&position);
-        if (constant == nullptr)
+        if (constant == nullptr) {
+          const auto* computed = std::get_if<ComputedColumnOutputPosition>(&position);
+          if (computed != nullptr) {
+            const std::optional<std::size_t> next =
+                common::checked_add(*total, computed->expression.retained_configuration_bytes());
+            if (!next.has_value()) {
+              return common::make_unexpected(
+                  exhausted("physical plan configuration size overflowed"));
+            }
+            total = *next;
+          }
           continue;
+        }
         if (const auto* text = std::get_if<std::string>(&constant->value.storage());
             text != nullptr) {
           total = add_capacity_bytes(*total, text->capacity(), sizeof(char));
@@ -280,16 +291,32 @@ PhysicalPipelinePlan::create(std::vector<PhysicalColumnShape> input_columns,
             continue;
           }
           const auto* constant = std::get_if<ConstantColumnOutputPosition>(&position);
-          if (constant == nullptr) {
-            return common::make_unexpected(
-                invalid("physical pipeline column output constant must have a logical type"));
+          if (constant != nullptr) {
+            const std::optional<schema::LogicalType>& constant_type = constant->value.type();
+            if (!constant_type.has_value()) {
+              return common::make_unexpected(
+                  invalid("physical pipeline column output constant must have a logical type"));
+            }
+            gathered.push_back({.type = *constant_type, .nullable = constant->value.is_null()});
+            continue;
           }
-          const std::optional<schema::LogicalType>& constant_type = constant->value.type();
-          if (!constant_type.has_value()) {
-            return common::make_unexpected(
-                invalid("physical pipeline column output constant must have a logical type"));
+          const auto* computed = std::get_if<ComputedColumnOutputPosition>(&position);
+          if (computed == nullptr)
+            return common::make_unexpected(invalid("physical pipeline output position is invalid"));
+          for (const VectorExpressionInstruction& instruction :
+               computed->expression.instructions()) {
+            const auto* input = std::get_if<VectorInputExpression>(&instruction);
+            if (input == nullptr)
+              continue;
+            if (input->input_column_ordinal >= output_columns.size() ||
+                output_columns[input->input_column_ordinal].type != input->type ||
+                output_columns[input->input_column_ordinal].nullable != input->nullable) {
+              return common::make_unexpected(
+                  invalid("physical pipeline computed output input shape is invalid"));
+            }
           }
-          gathered.push_back({.type = *constant_type, .nullable = constant->value.is_null()});
+          const VectorExpressionShape& shape = computed->expression.result_shape();
+          gathered.push_back({.type = shape.type, .nullable = shape.nullable});
         }
         output_columns = std::move(gathered);
         continue;

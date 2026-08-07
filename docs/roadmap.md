@@ -407,8 +407,12 @@ No phase passes because its code merely compiles. A phase passes only when its a
   consumer evidence. ADR 0034 and the seventeenth increment add mixed caller-ordered source and
   typed-constant output positions, canonical all-type and typed-NULL physical expansion without
   per-row scalar allocation, exact checked admission and plan shapes, and deterministic/property/
-  failure/fuzz/benchmark/consumer evidence. The durable and mutable sources still expose user
-  columns independently: bound-SQL lowering, computed typed vector expressions, optimizer rules,
+  failure/fuzz/benchmark/consumer evidence. ADR 0035 and the eighteenth increment add bounded
+  immutable numeric/Boolean physical expression DAGs, exact type/nullability inference, checked
+  integer/decimal and IEEE kernels, SQL NULL/NaN/short-circuit behavior, computed output positions,
+  fixed-stack allocation-free successful row evaluation, plan/accounting integration, and deterministic/
+  property/failure/fuzz/benchmark/consumer evidence. The durable and mutable sources still expose
+  user columns independently: remaining scalar operations, bound-SQL lowering, optimizer rules,
   hidden row-version columns, complete multi-part/head
   composition, base/delta merge and row-version resolution, mapped/asynchronous providers, shared
   pin credit, scheduling, spill, and full scalar-engine differential plan execution are

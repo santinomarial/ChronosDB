@@ -4,6 +4,7 @@
 #include "chronos/common/result.hpp"
 #include "chronos/query/physical_operator.hpp"
 #include "chronos/query/value.hpp"
+#include "chronos/query/vector_expression.hpp"
 
 #include <cstddef>
 #include <memory>
@@ -23,7 +24,12 @@ struct ConstantColumnOutputPosition {
   ScalarValue value;
 };
 
-using ColumnOutputPosition = std::variant<SourceColumnOutputPosition, ConstantColumnOutputPosition>;
+struct ComputedColumnOutputPosition {
+  VectorExpression expression;
+};
+
+using ColumnOutputPosition = std::variant<SourceColumnOutputPosition, ConstantColumnOutputPosition,
+                                          ComputedColumnOutputPosition>;
 
 // Materializes caller-ordered source columns into new canonical output positions. Reordering and
 // duplication are supported; selected nonempty rows are compacted into an identity selection.
@@ -47,9 +53,9 @@ private:
   bool ended_{};
 };
 
-// Materializes caller-ordered source columns and typed constants into canonical owned physical
-// columns. Source positions may be reordered or duplicated. Constants are expanded directly into
-// physical buffers without constructing a scalar object per row.
+// Materializes caller-ordered source columns, typed constants, and validated computed expressions
+// into canonical owned physical columns. Source positions may be reordered or duplicated.
+// Constants and successful expression rows are expanded without heap allocation per row.
 class ColumnOutputOperator final : public PhysicalOperator {
 public:
   [[nodiscard]] static common::Result<std::unique_ptr<PhysicalOperator>>

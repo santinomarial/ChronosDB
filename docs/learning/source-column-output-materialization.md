@@ -91,7 +91,9 @@ memory bandwidth and peak coexistence with the input. A later aliasing path must
 credit lifetime and should be adopted only with profile evidence. Typed constants now use the same
 ownership boundary through the separate
 [typed-constant output guide](typed-constant-output-materialization.md). Checked computed
-expressions and bound-SQL lowering remain next.
+numeric/Boolean expressions now share the boundary through the
+[vector-expression guide](vector-expression-programs.md); remaining scalar operations and
+bound-SQL lowering remain next.
 
 ## Likely review questions
 

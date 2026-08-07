@@ -163,6 +163,18 @@ private:
           {.type = type(schema::LogicalTypeKind::kBool), .nullable = true}};
 }
 
+[[nodiscard]] VectorExpression add_one_expression(const bool nullable = false) {
+  std::vector<VectorExpressionInstruction> instructions;
+  instructions.emplace_back(VectorInputExpression{.input_column_ordinal = 0U,
+                                                  .type = type(schema::LogicalTypeKind::kInt64),
+                                                  .nullable = nullable});
+  instructions.emplace_back(VectorConstantExpression{
+      ScalarValue::signed_value(type(schema::LogicalTypeKind::kInt64), 1).value()});
+  instructions.emplace_back(VectorBinaryExpression{
+      .operation = VectorBinaryOperation::kAdd, .left_instruction = 0U, .right_instruction = 1U});
+  return VectorExpression::create(std::move(instructions)).value();
+}
+
 TEST(PhysicalPipelinePlanTest, PropagatesExactShapesAcrossOrderedStages) {
   auto plan = PhysicalPipelinePlan::create(
       input_shape(), {BooleanFilterStage{.predicate_column = 1U},
@@ -204,15 +216,19 @@ TEST(PhysicalPipelinePlanTest, PropagatesExactShapesAcrossOrderedStages) {
           .positions = {SourceColumnOutputPosition{0U},
                         ConstantColumnOutputPosition{ScalarValue::boolean(true).value()},
                         ConstantColumnOutputPosition{
-                            ScalarValue::null(type(schema::LogicalTypeKind::kString))}}}});
+                            ScalarValue::null(type(schema::LogicalTypeKind::kString))},
+                        ComputedColumnOutputPosition{add_one_expression()}}}});
   ASSERT_TRUE(mixed_outputs.has_value()) << mixed_outputs.error().to_string();
-  ASSERT_EQ(mixed_outputs->output_columns().size(), 3U);
+  ASSERT_EQ(mixed_outputs->output_columns().size(), 4U);
   EXPECT_EQ(mixed_outputs->output_columns()[0], input_shape()[0U]);
   EXPECT_EQ(mixed_outputs->output_columns()[1],
             (PhysicalColumnShape{.type = type(schema::LogicalTypeKind::kBool), .nullable = false}));
   EXPECT_EQ(
       mixed_outputs->output_columns()[2],
       (PhysicalColumnShape{.type = type(schema::LogicalTypeKind::kString), .nullable = true}));
+  EXPECT_EQ(
+      mixed_outputs->output_columns()[3],
+      (PhysicalColumnShape{.type = type(schema::LogicalTypeKind::kInt64), .nullable = false}));
 }
 
 TEST(PhysicalPipelinePlanTest, ValidatesEveryStageAgainstItsCurrentShape) {
@@ -289,6 +305,12 @@ TEST(PhysicalPipelinePlanTest, ValidatesEveryStageAgainstItsCurrentShape) {
                 input_shape(), {ColumnOutputStage{.positions = {ConstantColumnOutputPosition{
                                                       ScalarValue::boolean(true).value()}},
                                                   .output_limits = {.maximum_columns = 0U}}})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(PhysicalPipelinePlan::create(
+                input_shape(), {ColumnOutputStage{.positions = {ComputedColumnOutputPosition{
+                                                      add_one_expression(true)}}}})
                 .error()
                 .code(),
             common::StatusCode::kInvalidArgument);
@@ -446,14 +468,15 @@ TEST(PhysicalPipelinePlanTest, InstantiatesMixedSourceAndConstantOutputsInPlanOr
                                                    .value()},
                                            SourceColumnOutputPosition{0U},
                                            ConstantColumnOutputPosition{ScalarValue::null(
-                                               type(schema::LogicalTypeKind::kString))}}}})
+                                               type(schema::LogicalTypeKind::kString))},
+                                           ComputedColumnOutputPosition{add_one_expression()}}}})
           .value();
   auto pipeline = plan.instantiate(std::make_unique<ChunkSource>(std::move(chunks))).value();
   auto step = pipeline->next(resources);
   ASSERT_TRUE(step.has_value()) << step.error().to_string();
   ASSERT_EQ(step->kind(), PhysicalOperatorStepKind::kChunk);
   const VectorChunk& chunk = step->chunk()->chunk();
-  ASSERT_EQ(chunk.column_count(), 3U);
+  ASSERT_EQ(chunk.column_count(), 4U);
   EXPECT_EQ(chunk.physical_row_count(), 2U);
   EXPECT_TRUE(chunk.selection().is_identity());
   const auto read_i64 = [&](const std::size_t column, const std::size_t row) {
@@ -470,6 +493,8 @@ TEST(PhysicalPipelinePlanTest, InstantiatesMixedSourceAndConstantOutputsInPlanOr
   EXPECT_EQ(read_i64(1U, 0U), 10);
   EXPECT_EQ(read_i64(1U, 1U), 12);
   EXPECT_TRUE(chunk.cell({.column_ordinal = 2U, .selected_row = 0U})->is_null());
+  EXPECT_EQ(read_i64(3U, 0U), 11);
+  EXPECT_EQ(read_i64(3U, 1U), 13);
 }
 
 TEST(PhysicalPipelinePlanTest, RejectsRuntimeSourceShapeMismatchAndReleasesCredit) {

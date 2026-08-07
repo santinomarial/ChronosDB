@@ -3,6 +3,7 @@
 #include "chronos/common/checked_math.hpp"
 #include "chronos/common/status.hpp"
 #include "chronos/schema/logical_type.hpp"
+#include "query/vector_expression_internal.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -334,6 +335,37 @@ add_source_column_bytes(const VectorChunk& input, const std::size_t ordinal, con
   return total;
 }
 
+[[nodiscard]] common::Result<std::size_t>
+add_expression_column_bytes(const VectorExpression& expression, const VectorChunk& input,
+                            const OutputPlan plan, const VectorChunkLimits limits,
+                            std::size_t total) {
+  const common::Result<void> valid = detail::validate_vector_expression_input(expression, input);
+  if (!valid.has_value())
+    return common::make_unexpected(valid.error());
+  const VectorExpressionShape& shape = expression.result_shape();
+  if (shape.nullable) {
+    common::Result<std::size_t> next = add(total, columnar::bitmap_size(plan.physical_row_count),
+                                           "computed column validity size overflowed");
+    if (!next.has_value())
+      return next;
+    total = *next;
+  }
+  common::Result<std::size_t> value_bytes =
+      shape.type.kind() == schema::LogicalTypeKind::kBool
+          ? common::Result<std::size_t>{columnar::bitmap_size(plan.physical_row_count)}
+          : bytes_for(plan.physical_row_count, fixed_width(shape.type.kind()),
+                      "computed column fixed size overflowed");
+  if (!value_bytes.has_value())
+    return common::make_unexpected(value_bytes.error());
+  common::Result<std::size_t> next =
+      add(total, *value_bytes, "computed column output size overflowed");
+  if (!next.has_value())
+    return next;
+  if (*next > limits.maximum_buffer_bytes)
+    return common::make_unexpected(exhausted("column output exceeds the buffer-byte limit"));
+  return *next;
+}
+
 [[nodiscard]] common::Result<OutputPlan>
 plan_output(const VectorChunk& input, const std::vector<std::size_t>& input_column_ordinals,
             const VectorChunkLimits limits) {
@@ -436,6 +468,9 @@ plan_output(const VectorChunk& input, const std::vector<ColumnOutputPosition>& p
     } else if (const auto* constant = std::get_if<ConstantColumnOutputPosition>(&position);
                constant != nullptr) {
       total = add_constant_column_bytes(constant->value, plan, limits, *total);
+    } else if (const auto* computed = std::get_if<ComputedColumnOutputPosition>(&position);
+               computed != nullptr) {
+      total = add_expression_column_bytes(computed->expression, input, plan, limits, *total);
     } else {
       return common::make_unexpected(internal("column output position is invalid"));
     }
@@ -720,6 +755,51 @@ materialize_constant(const ScalarValue& value, const OutputPlan plan) {
       std::move(buffers));
 }
 
+[[nodiscard]] common::Result<columnar::OwnedPhysicalColumn>
+materialize_expression(const VectorExpression& expression, const VectorChunk& input,
+                       const OutputPlan plan) {
+  const VectorExpressionShape& shape = expression.result_shape();
+  columnar::ColumnVectorBuffers buffers;
+  if (shape.nullable)
+    buffers.validity.resize(columnar::bitmap_size(plan.physical_row_count));
+  const std::size_t width = fixed_width(shape.type.kind());
+  if (shape.type.kind() == schema::LogicalTypeKind::kBool)
+    buffers.values.resize(columnar::bitmap_size(plan.physical_row_count));
+  else
+    buffers.values.resize(width * static_cast<std::size_t>(plan.physical_row_count));
+
+  std::uint32_t null_count = 0U;
+  for (std::uint32_t output_row = 0U; output_row < plan.physical_row_count; ++output_row) {
+    common::Result<ScalarValue> value = detail::evaluate_vector_expression_row(
+        expression, input, source_row(input, plan, output_row));
+    if (!value.has_value())
+      return common::make_unexpected(value.error());
+    if (value->is_null()) {
+      ++null_count;
+      continue;
+    }
+    if (shape.nullable)
+      set_bit(buffers.validity, output_row);
+    if (shape.type.kind() == schema::LogicalTypeKind::kBool) {
+      const auto* boolean = std::get_if<bool>(&value->storage());
+      if (boolean == nullptr)
+        return common::make_unexpected(internal("computed BOOL storage is inconsistent"));
+      if (*boolean)
+        set_bit(buffers.values, output_row);
+    } else {
+      common::Result<void> stored = store_constant_fixed_cell(
+          *value, buffers.values, static_cast<std::size_t>(output_row) * width);
+      if (!stored.has_value())
+        return common::make_unexpected(stored.error());
+    }
+  }
+  return columnar::OwnedPhysicalColumn::create({.type = shape.type,
+                                                .nullable = shape.nullable,
+                                                .row_count = plan.physical_row_count,
+                                                .null_count = null_count},
+                                               std::move(buffers));
+}
+
 [[nodiscard]] common::Result<AccountedVectorChunk>
 materialize_output(const QueryResourceContext& resources, const VectorChunk& input,
                    const std::vector<std::size_t>& input_column_ordinals,
@@ -782,6 +862,9 @@ materialize_output(const QueryResourceContext& resources, const VectorChunk& inp
       } else if (const auto* constant = std::get_if<ConstantColumnOutputPosition>(&position);
                  constant != nullptr) {
         column = materialize_constant(constant->value, *plan);
+      } else if (const auto* computed = std::get_if<ComputedColumnOutputPosition>(&position);
+                 computed != nullptr) {
+        column = materialize_expression(computed->expression, input, *plan);
       }
       if (!column.has_value())
         return common::make_unexpected(column.error());
@@ -819,8 +902,18 @@ validate_position_configuration(const std::vector<ColumnOutputPosition>& positio
   std::size_t retained = *vector_bytes;
   for (const ColumnOutputPosition& position : positions) {
     const auto* constant = std::get_if<ConstantColumnOutputPosition>(&position);
-    if (constant == nullptr)
+    if (constant == nullptr) {
+      const auto* computed = std::get_if<ComputedColumnOutputPosition>(&position);
+      if (computed == nullptr)
+        continue;
+      const std::optional<std::size_t> next =
+          common::checked_add(retained, computed->expression.retained_configuration_bytes());
+      if (!next.has_value()) {
+        return common::make_unexpected(exhausted("column output configuration size overflowed"));
+      }
+      retained = *next;
       continue;
+    }
     const common::Result<void> valid = validate_constant(constant->value);
     if (!valid.has_value())
       return common::make_unexpected(valid.error());

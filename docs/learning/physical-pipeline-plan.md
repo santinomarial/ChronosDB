@@ -6,11 +6,11 @@ The sixth Phase 9 increment turned the first independent vector operators into o
 reusable physical pipeline. The thirteenth increment adds exact timestamp-range truth.
 `PhysicalPipelinePlan` now composes Boolean filtering, timestamp-range filtering, stable column-
 subset projection, owned reordered/duplicate source-column output, mixed source/typed-constant
-output, and global LIMIT in explicit order and propagates the exact physical column shape through
-every stage.
+and computed numeric/Boolean output, and global LIMIT in explicit order and propagates the exact
+physical column shape through every stage.
 
-This is deliberately not the SQL physical planner. It does not lower a `BoundSqlSelect`, optimize
-stage order, scan CSEG/head storage, build computed vectors, aggregate, join, sort, schedule work,
+This is deliberately not the SQL physical planner. It does not lower a `BoundSqlSelect` into its
+computed programs, optimize stage order, scan CSEG/head storage, aggregate, join, sort, schedule work,
 spill, or materialize client results. Those paths need ownership and allocation contracts that do
 not exist yet.
 
@@ -36,7 +36,9 @@ parameters. A timestamp-range filter similarly requires exact `TIMESTAMP_NS` typ
 every column shape. A stable subset requires unique, strictly increasing current ordinals and
 compacts the shape in the same order. A source-column output validates caller-ordered ordinals and
 gathers the corresponding shapes, including reorder and duplicates. A mixed output additionally
-derives each typed constant's exact type and non-NULL/typed-NULL nullability. LIMIT preserves shape.
+derives each typed constant's exact type and non-NULL/typed-NULL nullability and validates every
+computed program source against the current shape before using its derived result. LIMIT preserves
+shape.
 
 Validation is sequential, so this is rejected:
 
@@ -65,10 +67,10 @@ stage list still validates every source chunk.
 
 The default plan limits are 4,096 input columns, 256 stages, and 2 MiB of retained configuration.
 The retained count includes vector capacities for input/output shapes, stage variants, and every
-subset/output-ordinal vector, mixed-position vector, and nested constant string/binary capacity.
-Capacity rather than logical size prevents a caller from moving an arbitrarily over-reserved vector
-into a small-looking plan. Checked multiplication and addition classify overflow as
-`RESOURCE_EXHAUSTED`.
+subset/output-ordinal vector, mixed-position vector, nested constant string/binary capacity, and
+each computed program's instruction/shape capacities. Capacity rather than logical size prevents a
+caller from moving an arbitrarily over-reserved vector into a small-looking plan. Checked
+multiplication and addition classify overflow as `RESOURCE_EXHAUSTED`.
 
 Plan/configuration memory and instantiated operator objects are not currently charged to the query
 resource budget. They are finitely bounded, coordinator-owned state. Complete allocation charging
@@ -109,7 +111,9 @@ Source-column output adds duplicate/reordered shape propagation, instantiated po
 all-frozen-type cell properties, and exhaustive allocation-failure cleanup; its detailed evidence
 is in the [output-materialization guide](source-column-output-materialization.md). Mixed output adds
 typed/nonnullable and typed-NULL shapes plus all-type scalar round trips; its contract is in the
-[typed-constant output guide](typed-constant-output-materialization.md).
+[typed-constant output guide](typed-constant-output-materialization.md). Computed positions add
+exact input/result shapes, checked runtime failure, short-circuit, and deterministic arithmetic
+properties described in the [vector-expression guide](vector-expression-programs.md).
 
 `chronos_physical_plan_fuzz` drives hostile stage configurations and valid end-to-end execution.
 `chronos_query_benchmarks` separately measures plan validation and instantiation at 1, 8, 64, and
@@ -119,7 +123,7 @@ typed/nonnullable and typed-NULL shapes plus all-type scalar round trips; its co
 
 The unary variant is easy to audit and sufficient for current differential execution. It cannot
 represent scans, branches, joins, exchanges, or sinks. The next increments should first settle
-checked computed expression execution and bound-SQL lowering on the now-accounted mixed-output
+remaining scalar expression execution and bound-SQL lowering on the now-accounted mixed-output
 baseline, while the storage path separately settles hidden versions and complete
 part/head merge. A later graph/optimizer can lower into or replace this pipeline while retaining
 its shape and differential guarantees.

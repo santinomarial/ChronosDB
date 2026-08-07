@@ -50,6 +50,16 @@ private:
   std::optional<chronos::query::AccountedVectorChunk> chunk_;
 };
 
+[[nodiscard]] chronos::query::VectorExpression bool_not_expression(const std::size_t ordinal,
+                                                                   const bool nullable) {
+  std::vector<chronos::query::VectorExpressionInstruction> instructions;
+  instructions.emplace_back(chronos::query::VectorInputExpression{
+      .input_column_ordinal = ordinal, .type = bool_type(), .nullable = nullable});
+  instructions.emplace_back(chronos::query::VectorUnaryExpression{
+      .operation = chronos::query::VectorUnaryOperation::kNot, .operand_instruction = 0U});
+  return chronos::query::VectorExpression::create(std::move(instructions)).value();
+}
+
 } // namespace
 
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_t size) {
@@ -105,15 +115,32 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
       break;
     case 5U: {
       std::vector<chronos::query::ColumnOutputPosition> positions;
-      if ((data[index] & 1U) != 0U) {
+      if ((data[index] & 3U) == 0U) {
         positions.emplace_back(chronos::query::SourceColumnOutputPosition{
             static_cast<std::size_t>((data[index] >> 1U) & 3U)});
-      } else if ((data[index] & 2U) != 0U) {
+      } else if ((data[index] & 3U) == 1U) {
         positions.emplace_back(chronos::query::ConstantColumnOutputPosition{
             chronos::query::ScalarValue::boolean((data[index] & 4U) != 0U).value()});
-      } else {
+      } else if ((data[index] & 3U) == 2U) {
         positions.emplace_back(chronos::query::ConstantColumnOutputPosition{
             chronos::query::ScalarValue::untyped_null()});
+      } else {
+        std::vector<chronos::query::VectorExpressionInstruction> instructions;
+        instructions.emplace_back(chronos::query::VectorInputExpression{
+            .input_column_ordinal = static_cast<std::size_t>((data[index] >> 2U) & 3U),
+            .type = bool_type(),
+            .nullable = (data[index] & 16U) != 0U});
+        instructions.emplace_back(chronos::query::VectorUnaryExpression{
+            .operation = static_cast<chronos::query::VectorUnaryOperation>(data[index] >> 5U),
+            .operand_instruction = static_cast<std::size_t>((data[index] >> 2U) & 3U)});
+        auto expression = chronos::query::VectorExpression::create(std::move(instructions));
+        if (expression.has_value()) {
+          positions.emplace_back(
+              chronos::query::ComputedColumnOutputPosition{std::move(*expression)});
+        } else {
+          positions.emplace_back(chronos::query::ConstantColumnOutputPosition{
+              chronos::query::ScalarValue::untyped_null()});
+        }
       }
       hostile_stages.emplace_back(chronos::query::ColumnOutputStage{
           .positions = std::move(positions),
@@ -158,9 +185,10 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
   stages.emplace_back(chronos::query::ColumnOutputStage{
       .positions = {chronos::query::SourceColumnOutputPosition{0U},
                     chronos::query::ConstantColumnOutputPosition{
-                        chronos::query::ScalarValue::boolean(true).value()}},
+                        chronos::query::ScalarValue::boolean(true).value()},
+                    chronos::query::ComputedColumnOutputPosition{bool_not_expression(0U, false)}},
       .output_limits = {.maximum_rows = 256U,
-                        .maximum_columns = 2U,
+                        .maximum_columns = 3U,
                         .maximum_buffer_bytes = 4'096U,
                         .maximum_retained_buffer_bytes = 8'192U}});
   if (size >= 3U && (data[2] & 1U) != 0U)

@@ -5,10 +5,12 @@
 
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <gtest/gtest.h>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -91,6 +93,20 @@ accounted_chunk(const QueryResourceContext& resources,
                           VectorSelection::from_indices(4U, std::move(selection)).value())
           .value();
   return AccountedVectorChunk::create(std::move(chunk), resources.reserve(charge).value(),
+                                      resources)
+      .value();
+}
+
+[[nodiscard]] AccountedVectorChunk
+accounted_int64_chunk(const QueryResourceContext& resources,
+                      const std::span<const std::int64_t> values) {
+  std::vector<columnar::OwnedPhysicalColumn> columns;
+  columns.push_back(int64_column(values));
+  VectorChunk chunk =
+      VectorChunk::create(std::move(columns),
+                          VectorSelection::all(static_cast<std::uint32_t>(values.size())).value())
+          .value();
+  return AccountedVectorChunk::create(std::move(chunk), resources.reserve(16'384U).value(),
                                       resources)
       .value();
 }
@@ -192,6 +208,80 @@ public:
   if (!logical_type.has_value())
     std::abort();
   return *logical_type;
+}
+
+[[nodiscard]] VectorExpression add_five_expression() {
+  std::vector<VectorExpressionInstruction> instructions;
+  instructions.emplace_back(VectorInputExpression{.input_column_ordinal = 0U,
+                                                  .type = type(schema::LogicalTypeKind::kInt64),
+                                                  .nullable = false});
+  instructions.emplace_back(VectorConstantExpression{
+      ScalarValue::signed_value(type(schema::LogicalTypeKind::kInt64), 5).value()});
+  instructions.emplace_back(VectorBinaryExpression{
+      .operation = VectorBinaryOperation::kAdd, .left_instruction = 0U, .right_instruction = 1U});
+  return VectorExpression::create(std::move(instructions)).value();
+}
+
+[[nodiscard]] VectorExpression null_add_expression() {
+  std::vector<VectorExpressionInstruction> instructions;
+  instructions.emplace_back(VectorInputExpression{.input_column_ordinal = 0U,
+                                                  .type = type(schema::LogicalTypeKind::kInt64),
+                                                  .nullable = false});
+  instructions.emplace_back(
+      VectorConstantExpression{ScalarValue::null(type(schema::LogicalTypeKind::kInt64))});
+  instructions.emplace_back(VectorBinaryExpression{
+      .operation = VectorBinaryOperation::kAdd, .left_instruction = 0U, .right_instruction = 1U});
+  return VectorExpression::create(std::move(instructions)).value();
+}
+
+[[nodiscard]] VectorExpression short_circuit_expression() {
+  std::vector<VectorExpressionInstruction> instructions;
+  instructions.emplace_back(VectorConstantExpression{ScalarValue::boolean(false).value()});
+  instructions.emplace_back(VectorConstantExpression{
+      ScalarValue::signed_value(type(schema::LogicalTypeKind::kInt64), 1).value()});
+  instructions.emplace_back(VectorConstantExpression{
+      ScalarValue::signed_value(type(schema::LogicalTypeKind::kInt64), 0).value()});
+  instructions.emplace_back(VectorBinaryExpression{.operation = VectorBinaryOperation::kDivide,
+                                                   .left_instruction = 1U,
+                                                   .right_instruction = 2U});
+  instructions.emplace_back(VectorBinaryExpression{.operation = VectorBinaryOperation::kGreater,
+                                                   .left_instruction = 3U,
+                                                   .right_instruction = 2U});
+  instructions.emplace_back(VectorBinaryExpression{
+      .operation = VectorBinaryOperation::kAnd, .left_instruction = 0U, .right_instruction = 4U});
+  return VectorExpression::create(std::move(instructions)).value();
+}
+
+[[nodiscard]] VectorExpression source_constant_expression(const VectorBinaryOperation operation,
+                                                          const std::int64_t constant) {
+  std::vector<VectorExpressionInstruction> instructions;
+  instructions.emplace_back(VectorInputExpression{.input_column_ordinal = 0U,
+                                                  .type = type(schema::LogicalTypeKind::kInt64),
+                                                  .nullable = false});
+  instructions.emplace_back(VectorConstantExpression{
+      ScalarValue::signed_value(type(schema::LogicalTypeKind::kInt64), constant).value()});
+  instructions.emplace_back(VectorBinaryExpression{
+      .operation = operation, .left_instruction = 0U, .right_instruction = 1U});
+  return VectorExpression::create(std::move(instructions)).value();
+}
+
+[[nodiscard]] VectorExpression constant_binary_expression(ScalarValue left, ScalarValue right,
+                                                          const VectorBinaryOperation operation) {
+  std::vector<VectorExpressionInstruction> instructions;
+  instructions.emplace_back(VectorConstantExpression{std::move(left)});
+  instructions.emplace_back(VectorConstantExpression{std::move(right)});
+  instructions.emplace_back(VectorBinaryExpression{
+      .operation = operation, .left_instruction = 0U, .right_instruction = 1U});
+  return VectorExpression::create(std::move(instructions)).value();
+}
+
+[[nodiscard]] VectorExpression constant_unary_expression(ScalarValue operand,
+                                                         const VectorUnaryOperation operation) {
+  std::vector<VectorExpressionInstruction> instructions;
+  instructions.emplace_back(VectorConstantExpression{std::move(operand)});
+  instructions.emplace_back(
+      VectorUnaryExpression{.operation = operation, .operand_instruction = 0U});
+  return VectorExpression::create(std::move(instructions)).value();
 }
 
 TEST(SourceColumnOutputOperatorTest, ReordersDuplicatesAndCompactsSelectedRows) {
@@ -386,6 +476,184 @@ TEST(ColumnOutputOperatorTest, InterleavesSourceAndTypedConstantsAndCompactsSpar
   step = PhysicalOperatorStep::end();
   EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
   EXPECT_EQ(output->next(resources)->kind(), PhysicalOperatorStepKind::kEnd);
+}
+
+TEST(ColumnOutputOperatorTest, MaterializesCheckedComputedExpressionsWithSqlNullAndShortCircuit) {
+  QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+  std::vector<ColumnOutputPosition> positions;
+  positions.emplace_back(ComputedColumnOutputPosition{add_five_expression()});
+  positions.emplace_back(ComputedColumnOutputPosition{null_add_expression()});
+  positions.emplace_back(ComputedColumnOutputPosition{short_circuit_expression()});
+  auto output = ColumnOutputOperator::create(std::make_unique<OneChunkSource>(accounted_chunk(
+                                                 resources, sample_columns(), {0U, 2U, 3U})),
+                                             std::move(positions))
+                    .value();
+
+  auto step = output->next(resources);
+  ASSERT_TRUE(step.has_value()) << step.error().to_string();
+  const VectorChunk& chunk = step->chunk()->chunk();
+  ASSERT_EQ(chunk.column_count(), 3U);
+  EXPECT_TRUE(chunk.selection().is_identity());
+  EXPECT_EQ(i64(chunk, 0U, 0U), 15);
+  EXPECT_EQ(i64(chunk, 0U, 1U), 35);
+  EXPECT_EQ(i64(chunk, 0U, 2U), 45);
+  EXPECT_FALSE(chunk.column(0U)->nullable());
+  EXPECT_TRUE(chunk.column(1U)->nullable());
+  EXPECT_EQ(chunk.column(1U)->null_count(), 3U);
+  EXPECT_TRUE(chunk.cell({.column_ordinal = 1U, .selected_row = 1U})->is_null());
+  EXPECT_FALSE(chunk.column(2U)->nullable());
+  EXPECT_FALSE(chunk.cell({.column_ordinal = 2U, .selected_row = 0U})->boolean().value());
+  EXPECT_FALSE(chunk.cell({.column_ordinal = 2U, .selected_row = 2U})->boolean().value());
+}
+
+TEST(ColumnOutputOperatorTest, RejectsComputedShapeMismatchAndRuntimeArithmeticFailure) {
+  {
+    std::vector<VectorExpressionInstruction> instructions;
+    instructions.emplace_back(VectorInputExpression{.input_column_ordinal = 0U,
+                                                    .type = type(schema::LogicalTypeKind::kInt64),
+                                                    .nullable = true});
+    VectorExpression expression = VectorExpression::create(std::move(instructions)).value();
+    QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+    auto output =
+        ColumnOutputOperator::create(
+            std::make_unique<OneChunkSource>(accounted_chunk(resources, sample_columns(), {0U})),
+            {ComputedColumnOutputPosition{std::move(expression)}})
+            .value();
+    const auto failed = output->next(resources);
+    ASSERT_FALSE(failed.has_value());
+    EXPECT_EQ(failed.error().code(), common::StatusCode::kInvalidArgument);
+    EXPECT_TRUE(resources.is_cancelled());
+    EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  }
+  {
+    std::vector<VectorExpressionInstruction> instructions;
+    instructions.emplace_back(
+        VectorConstantExpression{ScalarValue::signed_value(type(schema::LogicalTypeKind::kInt64),
+                                                           std::numeric_limits<std::int64_t>::max())
+                                     .value()});
+    instructions.emplace_back(VectorConstantExpression{
+        ScalarValue::signed_value(type(schema::LogicalTypeKind::kInt64), 1).value()});
+    instructions.emplace_back(VectorBinaryExpression{
+        .operation = VectorBinaryOperation::kAdd, .left_instruction = 0U, .right_instruction = 1U});
+    QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+    auto output =
+        ColumnOutputOperator::create(
+            std::make_unique<OneChunkSource>(accounted_chunk(resources, sample_columns(), {0U})),
+            {ComputedColumnOutputPosition{
+                VectorExpression::create(std::move(instructions)).value()}})
+            .value();
+    const auto failed = output->next(resources);
+    ASSERT_FALSE(failed.has_value());
+    EXPECT_EQ(failed.error().code(), common::StatusCode::kOutOfRange);
+    EXPECT_TRUE(resources.is_cancelled());
+    EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  }
+}
+
+TEST(ColumnOutputOperatorPropertyTest, CheckedSignedKernelsMatchDeterministicScalarModel) {
+  std::vector<std::int64_t> values;
+  values.reserve(257U);
+  std::uint64_t state = 0x9e3779b97f4a7c15ULL;
+  for (std::size_t index = 0U; index < 257U; ++index) {
+    state = state * 6'364'136'223'846'793'005ULL + 1'442'695'040'888'963'407ULL;
+    values.push_back(static_cast<std::int64_t>(state % 2'000'001U) - 1'000'000);
+  }
+
+  std::vector<ColumnOutputPosition> positions;
+  positions.emplace_back(
+      ComputedColumnOutputPosition{source_constant_expression(VectorBinaryOperation::kAdd, 17)});
+  positions.emplace_back(ComputedColumnOutputPosition{
+      source_constant_expression(VectorBinaryOperation::kSubtract, -23)});
+  positions.emplace_back(ComputedColumnOutputPosition{
+      source_constant_expression(VectorBinaryOperation::kMultiply, 3)});
+  positions.emplace_back(
+      ComputedColumnOutputPosition{source_constant_expression(VectorBinaryOperation::kDivide, 7)});
+  positions.emplace_back(ComputedColumnOutputPosition{
+      source_constant_expression(VectorBinaryOperation::kRemainder, 11)});
+  positions.emplace_back(
+      ComputedColumnOutputPosition{source_constant_expression(VectorBinaryOperation::kLess, 0)});
+
+  QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+  auto output = ColumnOutputOperator::create(
+                    std::make_unique<OneChunkSource>(accounted_int64_chunk(resources, values)),
+                    std::move(positions),
+                    {.maximum_rows = 512U,
+                     .maximum_columns = 8U,
+                     .maximum_buffer_bytes = 1U << 20U,
+                     .maximum_retained_buffer_bytes = 1U << 20U})
+                    .value();
+  auto step = output->next(resources);
+  ASSERT_TRUE(step.has_value()) << step.error().to_string();
+  const VectorChunk& chunk = step->chunk()->chunk();
+  ASSERT_EQ(chunk.selected_row_count(), values.size());
+  for (std::size_t row = 0U; row < values.size(); ++row) {
+    EXPECT_EQ(i64(chunk, 0U, row), values[row] + 17);
+    EXPECT_EQ(i64(chunk, 1U, row), values[row] - -23);
+    EXPECT_EQ(i64(chunk, 2U, row), values[row] * 3);
+    EXPECT_EQ(i64(chunk, 3U, row), values[row] / 7);
+    EXPECT_EQ(i64(chunk, 4U, row), values[row] % 11);
+    EXPECT_EQ(chunk.cell({.column_ordinal = 5U, .selected_row = row})->boolean().value(),
+              values[row] < 0);
+  }
+}
+
+TEST(ColumnOutputOperatorTest, MaterializesUnsignedIeeeDecimalAndThreeValuedKernels) {
+  const schema::LogicalType uint64_type = type(schema::LogicalTypeKind::kUInt64);
+  const schema::LogicalType decimal_type = schema::LogicalType::decimal(10U, 0U).value();
+  Decimal128Value decimal_seven;
+  decimal_seven.coefficient.front() = std::byte{7U};
+  Decimal128Value decimal_five;
+  decimal_five.coefficient.front() = std::byte{5U};
+
+  std::vector<ColumnOutputPosition> positions;
+  positions.emplace_back(ComputedColumnOutputPosition{constant_binary_expression(
+      ScalarValue::unsigned_value(uint64_type, 9U).value(),
+      ScalarValue::unsigned_value(uint64_type, 7U).value(), VectorBinaryOperation::kMultiply)});
+  positions.emplace_back(ComputedColumnOutputPosition{constant_binary_expression(
+      ScalarValue::float32(1.5F).value(), ScalarValue::float32(2.25F).value(),
+      VectorBinaryOperation::kAdd)});
+  positions.emplace_back(ComputedColumnOutputPosition{constant_binary_expression(
+      ScalarValue::float64(1.0).value(), ScalarValue::float64(0.0).value(),
+      VectorBinaryOperation::kDivide)});
+  positions.emplace_back(ComputedColumnOutputPosition{constant_binary_expression(
+      ScalarValue::decimal(decimal_type, decimal_seven).value(),
+      ScalarValue::decimal(decimal_type, decimal_five).value(), VectorBinaryOperation::kAdd)});
+  positions.emplace_back(ComputedColumnOutputPosition{constant_unary_expression(
+      ScalarValue::decimal(decimal_type, decimal_five).value(), VectorUnaryOperation::kNegative)});
+  positions.emplace_back(ComputedColumnOutputPosition{constant_binary_expression(
+      ScalarValue::null(type(schema::LogicalTypeKind::kBool)), ScalarValue::boolean(false).value(),
+      VectorBinaryOperation::kAnd)});
+  positions.emplace_back(ComputedColumnOutputPosition{
+      constant_binary_expression(ScalarValue::null(type(schema::LogicalTypeKind::kBool)),
+                                 ScalarValue::boolean(false).value(), VectorBinaryOperation::kOr)});
+  positions.emplace_back(ComputedColumnOutputPosition{constant_binary_expression(
+      ScalarValue::float64(std::numeric_limits<double>::quiet_NaN()).value(),
+      ScalarValue::float64(1.0).value(), VectorBinaryOperation::kLess)});
+
+  QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+  auto output =
+      ColumnOutputOperator::create(
+          std::make_unique<OneChunkSource>(accounted_chunk(resources, sample_columns(), {0U})),
+          std::move(positions))
+          .value();
+  auto step = output->next(resources);
+  ASSERT_TRUE(step.has_value()) << step.error().to_string();
+  const VectorChunk& chunk = step->chunk()->chunk();
+  const auto decoded = [&](const std::size_t column) {
+    const columnar::PhysicalColumnView* output_column = chunk.column(column);
+    return ScalarValue::from_column_cell(
+               output_column->type(),
+               chunk.cell({.column_ordinal = column, .selected_row = 0U}).value())
+        .value();
+  };
+  EXPECT_EQ(std::get<std::uint64_t>(decoded(0U).storage()), 63U);
+  EXPECT_FLOAT_EQ(std::get<float>(decoded(1U).storage()), 3.75F);
+  EXPECT_TRUE(std::isinf(std::get<double>(decoded(2U).storage())));
+  EXPECT_EQ(std::get<Decimal128Value>(decoded(3U).storage()).coefficient.front(), std::byte{12U});
+  EXPECT_EQ(std::get<Decimal128Value>(decoded(4U).storage()).coefficient.front(), std::byte{0xfbU});
+  EXPECT_FALSE(std::get<bool>(decoded(5U).storage()));
+  EXPECT_TRUE(decoded(6U).is_null());
+  EXPECT_FALSE(std::get<bool>(decoded(7U).storage()));
 }
 
 TEST(ColumnOutputOperatorPropertyTest, MaterializesEveryFrozenTypedConstantAndTypedNull) {

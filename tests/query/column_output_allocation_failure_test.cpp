@@ -87,6 +87,40 @@ public:
       .value();
 }
 
+[[nodiscard]] VectorExpression constant_expression() {
+  std::vector<VectorExpressionInstruction> instructions;
+  instructions.emplace_back(VectorConstantExpression{
+      ScalarValue::signed_value(type(schema::LogicalTypeKind::kInt64), 7).value()});
+  instructions.emplace_back(VectorConstantExpression{
+      ScalarValue::signed_value(type(schema::LogicalTypeKind::kInt64), 5).value()});
+  instructions.emplace_back(VectorBinaryExpression{.operation = VectorBinaryOperation::kMultiply,
+                                                   .left_instruction = 0U,
+                                                   .right_instruction = 1U});
+  return VectorExpression::create(std::move(instructions)).value();
+}
+
+TEST(VectorExpressionAllocationFailureTest, CreationClassifiesEveryOwnedAllocationFailure) {
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 16U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    std::vector<VectorExpressionInstruction> instructions;
+    instructions.emplace_back(VectorConstantExpression{
+        ScalarValue::signed_value(type(schema::LogicalTypeKind::kInt64), 7).value()});
+    instructions.emplace_back(VectorUnaryExpression{.operation = VectorUnaryOperation::kAbsolute,
+                                                    .operand_instruction = 0U});
+    std::size_t observed = 0U;
+    auto expression = run_with_output_allocation_failure(
+        fail_after, observed, [&] { return VectorExpression::create(std::move(instructions)); });
+    EXPECT_GT(observed, 0U);
+    if (expression.has_value()) {
+      reached_success = true;
+      break;
+    }
+    EXPECT_EQ(expression.error().code(), common::StatusCode::kResourceExhausted);
+  }
+  EXPECT_TRUE(reached_success);
+}
+
 TEST(SourceColumnOutputAllocationFailureTest, CreationClassifiesOperatorAllocationFailure) {
   bool reached_success = false;
   for (std::size_t fail_after = 0U; fail_after < 8U; ++fail_after) {
@@ -170,6 +204,7 @@ TEST(ColumnOutputAllocationFailureTest,
         ScalarValue::text(type(schema::LogicalTypeKind::kString), "constant").value()});
     positions.emplace_back(
         ConstantColumnOutputPosition{ScalarValue::null(type(schema::LogicalTypeKind::kBinary))});
+    positions.emplace_back(ComputedColumnOutputPosition{constant_expression()});
     auto output = ColumnOutputOperator::create(std::make_unique<OneChunkSource>(chunk(resources)),
                                                std::move(positions))
                       .value();

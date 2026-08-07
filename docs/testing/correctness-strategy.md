@@ -128,7 +128,12 @@
 > all 18 frozen logical types, sparse/empty selection behavior, checked retained configuration and
 > output admission, exact physical-plan shapes, exhaustive allocation failure, hostile plan
 > fuzzing, sanitizer coverage, external-consumer linkage, and fixed/string/NULL measurement.
-> Computed expressions and bound-SQL lowering remain outside this claim.
+> Checked numeric/Boolean computed outputs add bounded hostile-program validation, exact source and
+> intermediate shapes, signed/unsigned/IEEE/decimal kernels, SQL NULL/NaN/short-circuit behavior,
+> fixed-seed scalar-model properties, runtime error/cancellation cleanup, physical-plan integration,
+> allocation failure, hostile fuzzing, sanitizer and installed-consumer coverage, and isolated
+> expression measurement. Remaining scalar operations and bound-SQL lowering remain outside this
+> claim.
 
 ## Test types
 

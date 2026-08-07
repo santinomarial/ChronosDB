@@ -99,9 +99,10 @@ consumer and self-contained-header checks protect the public boundary.
 
 Repeating a variable constant spends memory bandwidth but produces the one canonical vector format
 understood by all current operators. A dictionary or shared-scalar encoding could reduce bytes only
-after its ownership, accounting, and consumer semantics are accepted and measured. The immediate
-semantic next step is checked computed vector expressions, followed by lowering exact bound SELECT
-items into ordered output positions and expressions.
+after its ownership, accounting, and consumer semantics are accepted and measured. Checked numeric
+and Boolean expressions now use the same ordered output boundary through the
+[vector-expression guide](vector-expression-programs.md). Remaining scalar operations and lowering
+exact bound SELECT items are next.
 
 ## Likely review questions
 
