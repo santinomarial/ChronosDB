@@ -60,13 +60,18 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_t size) {
   if (size == 0U)
     return 0;
-  static constexpr std::array<std::string_view, 19> kSql{
+  static constexpr std::array<std::string_view, 23> kSql{
       "SELECT value + 1 AS v FROM metrics",
       "SELECT value FROM metrics WHERE value BETWEEN 1 AND 9 LIMIT 2",
       "SELECT value IN (1, NULL, 3) AS v FROM metrics",
       "SELECT CAST(value AS FLOAT64) AS v FROM metrics",
       "SELECT value FROM metrics ORDER BY value",
       "SELECT sum(value) AS v FROM metrics",
+      "SELECT count(*), count(value), sum(value), avg(value), min(value), max(value), "
+      "var_pop(value), var_samp(value) FROM metrics WHERE value > 0",
+      "SELECT sum(value + 2) + count(*) AS v FROM metrics",
+      "SELECT count(*) AS v FROM metrics WHERE value < 0 LIMIT 0",
+      "SELECT sum(value) AS v FROM metrics GROUP BY ts",
       "SELECT coalesce(value, 0) AS v FROM metrics",
       "SELECT CAST(value AS FLOAT64) AS v FROM metrics",
       "SELECT coalesce(CAST(NULL AS INT8), value) AS v FROM metrics",
@@ -89,9 +94,12 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
     return 0;
   const std::size_t instructions = size > 1U ? static_cast<std::size_t>(data[1]) + 1U
                                              : chronos::query::kMaximumVectorExpressionInstructions;
+  const std::size_t aggregates = size > 2U ? static_cast<std::size_t>(data[2] % 8U) + 1U
+                                           : chronos::query::kMaximumUngroupedAggregateWidth;
   auto lowered = chronos::query::lower_bound_sql_select(
       *bound, {.expression_limits = {.maximum_instructions = instructions,
-                                     .maximum_retained_configuration_bytes = 256U * 1024U}});
+                                     .maximum_retained_configuration_bytes = 256U * 1024U},
+               .aggregate_limits = {.maximum_aggregates = aggregates}});
   if (lowered.has_value() && lowered->output_columns().empty())
     __builtin_trap();
   return 0;

@@ -153,8 +153,12 @@
 > selection boundaries, empty/NULL/NaN behavior, exact unsigned/DECIMAL sums, final overflow,
 > variable-width COUNT, query ownership and cancellation, exact plan shapes, a 257-row independent
 > aggregate model, exhaustive allocation failure, hostile plan fuzzing, sanitizers, installed
-> consumers, and dense/sparse multi-chunk measurements. Bound-SQL aggregate lowering, grouped state,
-> and variable-width extrema remain outside this claim.
+> consumers, and dense/sparse multi-chunk measurements. Bound-SQL global aggregate lowering adds
+> WHERE-before-aggregate stage order, direct and computed arguments, final aggregate expressions,
+> empty/LIMIT semantics, exact binder-to-kernel shapes, all-type forced-nullable materialization,
+> allocation failure, hostile lowering fuzzing, sanitizer coverage, installed consumption, and a
+> retained-plan lowering benchmark. Grouped state and variable-width extrema remain outside this
+> claim.
 
 ## Test types
 

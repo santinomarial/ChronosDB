@@ -52,34 +52,37 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
 }
 
 TEST(PhysicalSelectLoweringAllocationFailureTest, ClassifiesEveryOwnedAllocationFailure) {
-  BoundSqlSelect select =
-      bind_sql_v1_select(
-          parse_sql_v1_select("SELECT coalesce(CAST(NULL AS INT8), CAST(value AS INT64)) AS v, "
-                              "time_bucket(INTERVAL '1 second', ts) AS bucket FROM metrics "
-                              "WHERE value BETWEEN 1 AND 9 LIMIT 2")
-              .value(),
-          catalog())
-          .value();
-  bool reached_success = false;
-  for (std::size_t fail_after = 0U; fail_after < 256U; ++fail_after) {
-    SCOPED_TRACE(fail_after);
-    std::optional<SqlResult<PhysicalPipelinePlan>> result;
-    std::size_t observed = 0U;
-    {
-      ::chronos::test::ScopedAllocationFailure failure{fail_after};
-      result.emplace(lower_bound_sql_select(select));
-      observed = failure.observed_allocations();
-      failure.disable();
+  const std::vector<std::string> statements{
+      "SELECT coalesce(CAST(NULL AS INT8), CAST(value AS INT64)) AS v, "
+      "time_bucket(INTERVAL '1 second', ts) AS bucket FROM metrics "
+      "WHERE value BETWEEN 1 AND 9 LIMIT 2",
+      "SELECT sum(value + 2) + count(*) AS total, avg(value) AS mean FROM metrics "
+      "WHERE value BETWEEN 1 AND 9 LIMIT 1"};
+  for (const std::string& statement : statements) {
+    SCOPED_TRACE(statement);
+    BoundSqlSelect select =
+        bind_sql_v1_select(parse_sql_v1_select(statement).value(), catalog()).value();
+    bool reached_success = false;
+    for (std::size_t fail_after = 0U; fail_after < 256U; ++fail_after) {
+      SCOPED_TRACE(fail_after);
+      std::optional<SqlResult<PhysicalPipelinePlan>> result;
+      std::size_t observed = 0U;
+      {
+        ::chronos::test::ScopedAllocationFailure failure{fail_after};
+        result.emplace(lower_bound_sql_select(select));
+        observed = failure.observed_allocations();
+        failure.disable();
+      }
+      EXPECT_GT(observed, 0U);
+      if (result->has_value()) {
+        reached_success = true;
+        break;
+      }
+      EXPECT_EQ(result->error().code(), SqlDiagnosticCode::kResourceLimit);
+      EXPECT_EQ(result->error().status().code(), common::StatusCode::kResourceExhausted);
     }
-    EXPECT_GT(observed, 0U);
-    if (result->has_value()) {
-      reached_success = true;
-      break;
-    }
-    EXPECT_EQ(result->error().code(), SqlDiagnosticCode::kResourceLimit);
-    EXPECT_EQ(result->error().status().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_TRUE(reached_success);
   }
-  EXPECT_TRUE(reached_success);
 }
 
 } // namespace

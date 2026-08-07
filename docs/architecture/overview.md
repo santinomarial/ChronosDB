@@ -234,7 +234,10 @@ output, borrowed text comparisons/NULL predicates, and LIMIT into the unary pipe
 [0039](../adr/0039-borrowed-text-predicate-vector-kernels.md). One fixed-state streaming global
 aggregate stage now consumes accounted chunks and emits a canonical one-row COUNT/SUM/AVG/MIN/MAX/
 variance result under [ADR 0040](../adr/0040-streaming-ungrouped-vector-aggregates.md). Bound-SQL
-aggregate lowering, grouped/dynamic aggregate state, general relational lowering, complete
+global aggregates now lower WHERE, direct or computed arguments, the fixed-state aggregate stage,
+final expressions, and LIMIT under
+[ADR 0041](../adr/0041-bound-global-aggregate-physical-lowering.md). Grouped/dynamic aggregate
+state, general relational lowering, complete
 part/head visibility, parallel scheduling,
 spilling, adaptive behavior, and join algorithms remain deferred. Implemented reservations and
 accounted chunks provide the admission/ownership invariant, but future operators must reserve every

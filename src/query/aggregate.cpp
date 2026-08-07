@@ -265,6 +265,11 @@ struct AggregateState {
 
 class UngroupedAggregateOperator::Impl {
 public:
+  struct Result {
+    ScalarValue value;
+    bool nullable;
+  };
+
   explicit Impl(std::vector<AggregateState> states) noexcept : states_(std::move(states)) {}
 
   [[nodiscard]] common::Result<void> consume(const VectorChunk& chunk,
@@ -319,15 +324,19 @@ public:
     return {};
   }
 
-  [[nodiscard]] common::Result<std::vector<ScalarValue>> finish_all() const {
+  [[nodiscard]] common::Result<std::vector<Result>> finish_all() const {
     try {
-      std::vector<ScalarValue> results;
+      std::vector<Result> results;
       results.reserve(states_.size());
       for (const AggregateState& state : states_) {
         common::Result<ScalarValue> value = finish(state);
         if (!value.has_value())
           return common::make_unexpected(value.error());
-        results.push_back(std::move(*value));
+        common::Result<VectorAggregateOutputShape> shape =
+            vector_aggregate_output_shape(state.definition);
+        if (!shape.has_value())
+          return common::make_unexpected(shape.error());
+        results.push_back({.value = std::move(*value), .nullable = shape->nullable});
       }
       return results;
     } catch (const std::bad_alloc&) {
@@ -472,7 +481,7 @@ UngroupedAggregateOperator::next(const QueryResourceContext& resources) {
     }
   }
 
-  common::Result<std::vector<ScalarValue>> values = impl_->finish_all();
+  common::Result<std::vector<Impl::Result>> values = impl_->finish_all();
   if (!values.has_value()) {
     static_cast<void>(resources.request_cancel());
     return common::make_unexpected(values.error());
@@ -485,8 +494,10 @@ UngroupedAggregateOperator::next(const QueryResourceContext& resources) {
   try {
     std::vector<ColumnOutputPosition> positions;
     positions.reserve(values->size());
-    for (ScalarValue& value : *values)
-      positions.emplace_back(ConstantColumnOutputPosition{std::move(value)});
+    for (Impl::Result& result : *values) {
+      positions.emplace_back(ConstantColumnOutputPosition{.value = std::move(result.value),
+                                                          .force_nullable = result.nullable});
+    }
 
     common::Result<QueryMemoryReservation> reservation = resources.reserve(sizeof(std::uint32_t));
     if (!reservation.has_value())

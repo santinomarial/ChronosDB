@@ -390,6 +390,9 @@ int main() {
       chronos::query::vector_aggregate_output_shape(installed_count);
   const auto installed_aggregate_plan = chronos::query::PhysicalPipelinePlan::create(
       {}, {chronos::query::UngroupedAggregateStage{.definitions = {installed_count}}});
+  const chronos::query::ConstantColumnOutputPosition installed_nullable_constant{
+      .value = chronos::query::ScalarValue::signed_value(installed_expression_type, 1).value(),
+      .force_nullable = true};
   const auto vector_chunk = chronos::query::VectorChunk::create(
       {}, chronos::query::VectorSelection::all(1U).value());
   const auto backed_vector_chunk = chronos::query::VectorChunk::create_backed(
@@ -615,6 +618,7 @@ int main() {
                  installed_count_shape.has_value() && !installed_count_shape->nullable &&
                  installed_aggregate_plan.has_value() &&
                  installed_aggregate_plan->output_columns().size() == 1U &&
+                 installed_nullable_constant.force_nullable &&
                  lower_select != nullptr &&
                  create_timestamp_range_filter != nullptr &&
                  timestamp_range.matches(0) && create_head_scan != nullptr &&

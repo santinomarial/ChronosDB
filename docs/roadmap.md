@@ -428,7 +428,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
   streaming global aggregate stage for COUNT/SUM/AVG/MIN/MAX/variance, exact scalar-oracle numeric,
   NULL, empty-input, and NaN semantics, checked plan shapes/configuration, cancellation and query-
   owned canonical output, plus property/failure/fuzz/benchmark/consumer evidence. Bound-SQL
-  aggregate lowering, grouped and variable-width aggregate state, broader relational lowering,
+  global aggregate lowering follows in ADR 0041 and the twenty-fourth increment with exact
+  WHERE/input/aggregate/final-output/LIMIT order, direct and computed arguments, final aggregate
+  expressions, empty-input semantics, binder-to-kernel shape agreement, bounded limits, and
+  failure/fuzz/benchmark/consumer evidence. Grouped and variable-width aggregate state, broader relational lowering,
   optimizer rules, hidden row-version columns, complete multi-part/head composition, base/delta
   merge and row-version resolution, mapped/asynchronous providers, shared pin credit, scheduling,
   spill, and full scalar-engine differential plan execution are unimplemented.

@@ -20,9 +20,10 @@ this increment.
 
 `ColumnOutputStage` in `chronos/query/physical_plan.hpp` stores the same ordered representation and
 limits. Plan creation validates source ordinals against the shape at that exact stage. A source
-position copies its current shape. A non-NULL constant contributes its exact logical type and
-`nullable=false`; a typed NULL contributes the same type and `nullable=true`. Untyped NULL cannot
-be materialized and is rejected before source execution.
+position copies its current shape. A non-NULL constant normally contributes its exact logical type
+and `nullable=false`; `force_nullable=true` preserves a declared nullable shape and writes a
+validity bitmap with every materialized row present. A typed NULL contributes the same type and
+`nullable=true`. Untyped NULL cannot be materialized and is rejected before source execution.
 
 The source-only operator and stage remain available for callers whose configuration is naturally a
 plain ordinal vector.
@@ -39,7 +40,9 @@ canonical copy path. Constants are written without a per-row scalar:
 - UUID repeats the uninterpreted 16-byte UUID order;
 - STRING, SYMBOL, and BINARY repeat the payload and write monotonic 32-bit offsets; and
 - typed NULL writes an all-zero validity bitmap, canonical empty/null slots, and a null count equal
-  to the physical row count.
+  to the physical row count; and
+- a forced-nullable present constant writes the same value representation plus an all-valid bitmap
+  and a zero null count.
 
 A nonempty selection is stable-compacted into an identity domain. An empty selection remains a
 progress chunk over the input physical domain; its columns are physically valid, but no selected
@@ -89,8 +92,9 @@ allocations describe only materialization and are not end-to-end SQL claims.
 
 Deterministic tests cover mixed ordering, sparse compaction, empty progress, exact plan shapes,
 invalid ordinals/types/limits, query ownership, and resource release. A property materializes a
-non-NULL representative and typed NULL for every frozen logical type code, converts every produced
-cell through the independent scalar decoder, and compares type and storage. Exhaustive injected
+non-NULL representative, forced-nullable representative, and typed NULL for every frozen logical
+type code, converts every produced cell through the independent scalar decoder, and compares type,
+storage, nullability, and null count. Exhaustive injected
 allocation failure covers construction and mixed source/fixed/variable/NULL pulls. The physical-plan
 fuzzer exercises hostile untyped/typed constants and valid execution under sanitizers. Installed
 consumer and self-contained-header checks protect the public boundary.
@@ -109,8 +113,10 @@ exact bound SELECT items are next.
 **Why must NULL be typed?** A physical column must know its logical type and canonical buffer rules;
 `std::monostate` alone contains neither.
 
-**Why is a constant nonnullable?** A non-NULL constant cannot produce NULL in any row. Exact
-nullability improves shape checks and avoids a redundant validity bitmap.
+**Why is a constant normally nonnullable?** A non-NULL constant cannot produce NULL in any row.
+Exact nullability improves shape checks and avoids a redundant validity bitmap. The explicit
+forced-nullable form exists when the value is one execution of an operation whose declared result
+can be NULL on another execution, such as a present `SUM` result.
 
 **Why not retain one scalar and expose it as a vector?** Current operators consume canonical
 physical columns. A scalar/dictionary view would introduce a new encoding and backing lifetime.

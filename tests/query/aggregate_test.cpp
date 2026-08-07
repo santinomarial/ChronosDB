@@ -274,6 +274,12 @@ TEST(UngroupedAggregateOperatorTest, AccumulatesEveryOperationAcrossChunksAndSel
   ASSERT_EQ(result.physical_row_count(), 1U);
   ASSERT_EQ(result.selected_row_count(), 1U);
   ASSERT_EQ(result.column_count(), 8U);
+  EXPECT_FALSE(result.column(0U)->nullable());
+  EXPECT_FALSE(result.column(1U)->nullable());
+  for (std::size_t column = 2U; column < result.column_count(); ++column) {
+    EXPECT_TRUE(result.column(column)->nullable());
+    EXPECT_EQ(result.column(column)->null_count(), 0U);
+  }
   EXPECT_EQ(std::get<std::int64_t>(cell(result, 0U).storage()), 5);
   EXPECT_EQ(std::get<std::int64_t>(cell(result, 1U).storage()), 4);
   EXPECT_EQ(std::get<std::int64_t>(cell(result, 2U).storage()), 16);
@@ -295,6 +301,9 @@ TEST(UngroupedAggregateOperatorTest, ImplementsEmptyInputAndFloatingNanSemantics
       UngroupedAggregateOperator::create(std::make_unique<EmptySource>(), empty_definitions)
           .value();
   auto empty_step = empty->next(empty_resources).value();
+  EXPECT_FALSE(empty_step.chunk()->chunk().column(0U)->nullable());
+  EXPECT_TRUE(empty_step.chunk()->chunk().column(1U)->nullable());
+  EXPECT_TRUE(empty_step.chunk()->chunk().column(2U)->nullable());
   EXPECT_EQ(std::get<std::int64_t>(cell(empty_step.chunk()->chunk(), 0U).storage()), 0);
   EXPECT_TRUE(cell(empty_step.chunk()->chunk(), 1U).is_null());
   EXPECT_TRUE(cell(empty_step.chunk()->chunk(), 2U).is_null());

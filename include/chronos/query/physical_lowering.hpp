@@ -11,14 +11,15 @@ namespace chronos::query {
 
 struct PhysicalSelectLoweringLimits {
   VectorExpressionLimits expression_limits{};
+  UngroupedAggregateLimits aggregate_limits{};
   VectorChunkLimits output_limits{};
   PhysicalPipelinePlanLimits plan_limits{};
 };
 
-// Lowers the executable single-source, nonaggregate SQL v1 subset into one immutable physical
-// pipeline. The input shape is the primary source's exact schema-ordinal physical shape.
-// Unsupported relational or scalar features fail with a source-span SQL diagnostic; there is no
-// scalar fallback.
+// Lowers the executable single-source SQL v1 subset, including global aggregation, into one
+// immutable physical pipeline. The input shape is the primary source's exact schema-ordinal
+// physical shape. Unsupported relational or scalar features fail with a source-span SQL
+// diagnostic; there is no scalar fallback.
 [[nodiscard]] SqlResult<PhysicalPipelinePlan>
 lower_bound_sql_select(const BoundSqlSelect& select, PhysicalSelectLoweringLimits limits = {});
 

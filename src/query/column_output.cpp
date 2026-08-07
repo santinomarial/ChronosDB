@@ -273,6 +273,7 @@ add_source_column_bytes(const VectorChunk& input, const std::size_t ordinal, con
 }
 
 [[nodiscard]] common::Result<std::size_t> add_constant_column_bytes(const ScalarValue& value,
+                                                                    const bool force_nullable,
                                                                     const OutputPlan& plan,
                                                                     const VectorChunkLimits limits,
                                                                     std::size_t total) {
@@ -283,7 +284,7 @@ add_source_column_bytes(const VectorChunk& input, const std::size_t ordinal, con
   if (type_ptr == nullptr)
     return common::make_unexpected(internal("column output constant lost its logical type"));
   const schema::LogicalType& type = *type_ptr;
-  if (value.is_null()) {
+  if (value.is_null() || force_nullable) {
     common::Result<std::size_t> next = add(total, columnar::bitmap_size(plan.physical_row_count),
                                            "constant column output validity size overflowed");
     if (!next.has_value())
@@ -516,7 +517,8 @@ plan_output(const VectorChunk& input, const std::vector<ColumnOutputPosition>& p
           add_source_column_bytes(input, source->input_column_ordinal, plan.output, limits, *total);
     } else if (const auto* constant = std::get_if<ConstantColumnOutputPosition>(&position);
                constant != nullptr) {
-      total = add_constant_column_bytes(constant->value, plan.output, limits, *total);
+      total = add_constant_column_bytes(constant->value, constant->force_nullable, plan.output,
+                                        limits, *total);
     } else if (const auto* computed = std::get_if<ComputedColumnOutputPosition>(&position);
                computed != nullptr) {
       total = add_expression_column_bytes(computed->expression, input, plan.output, limits, *total,
@@ -738,7 +740,7 @@ materialize_column(const VectorChunk& input, const std::size_t input_column_ordi
 }
 
 [[nodiscard]] common::Result<columnar::OwnedPhysicalColumn>
-materialize_constant(const ScalarValue& value, const OutputPlan& plan) {
+materialize_constant(const ScalarValue& value, const bool force_nullable, const OutputPlan& plan) {
   const common::Result<void> valid = validate_constant(value);
   if (!valid.has_value())
     return common::make_unexpected(valid.error());
@@ -746,21 +748,27 @@ materialize_constant(const ScalarValue& value, const OutputPlan& plan) {
   if (type_ptr == nullptr)
     return common::make_unexpected(internal("column output constant lost its logical type"));
   const schema::LogicalType& type = *type_ptr;
-  const bool nullable = value.is_null();
+  const bool is_null = value.is_null();
+  const bool nullable = is_null || force_nullable;
   columnar::ColumnVectorBuffers buffers;
-  if (nullable)
+  if (nullable) {
     buffers.validity.resize(columnar::bitmap_size(plan.physical_row_count));
+    if (!is_null) {
+      for (std::uint32_t row = 0U; row < plan.physical_row_count; ++row)
+        set_bit(buffers.validity, row);
+    }
+  }
 
   if (type.kind() == schema::LogicalTypeKind::kBool) {
     buffers.values.resize(columnar::bitmap_size(plan.physical_row_count));
-    if (!nullable && std::get<bool>(value.storage())) {
+    if (!is_null && std::get<bool>(value.storage())) {
       for (std::uint32_t row = 0U; row < plan.physical_row_count; ++row)
         set_bit(buffers.values, row);
     }
   } else if (type.is_variable_width()) {
     const std::size_t offset_count = static_cast<std::size_t>(plan.physical_row_count) + 1U;
     buffers.offsets.resize(offset_count * sizeof(std::uint32_t));
-    if (!nullable) {
+    if (!is_null) {
       if (const auto* text = std::get_if<std::string>(&value.storage()); text != nullptr) {
         buffers.values.resize(text->size() * static_cast<std::size_t>(plan.physical_row_count));
         for (std::uint32_t row = 0U; row < plan.physical_row_count; ++row) {
@@ -786,7 +794,7 @@ materialize_constant(const ScalarValue& value, const OutputPlan& plan) {
   } else {
     const std::size_t width = fixed_width(type.kind());
     buffers.values.resize(width * static_cast<std::size_t>(plan.physical_row_count));
-    if (!nullable && plan.physical_row_count != 0U) {
+    if (!is_null && plan.physical_row_count != 0U) {
       common::Result<void> stored = store_constant_fixed_cell(value, buffers.values, 0U);
       if (!stored.has_value())
         return common::make_unexpected(stored.error());
@@ -801,7 +809,7 @@ materialize_constant(const ScalarValue& value, const OutputPlan& plan) {
       {.type = type,
        .nullable = nullable,
        .row_count = plan.physical_row_count,
-       .null_count = nullable ? plan.physical_row_count : 0U},
+       .null_count = is_null ? plan.physical_row_count : 0U},
       std::move(buffers));
 }
 
@@ -952,7 +960,7 @@ materialize_output(const QueryResourceContext& resources, const VectorChunk& inp
         column = materialize_column(input, source->input_column_ordinal, plan->output);
       } else if (const auto* constant = std::get_if<ConstantColumnOutputPosition>(&position);
                  constant != nullptr) {
-        column = materialize_constant(constant->value, plan->output);
+        column = materialize_constant(constant->value, constant->force_nullable, plan->output);
       } else if (const auto* computed = std::get_if<ComputedColumnOutputPosition>(&position);
                  computed != nullptr) {
         column = materialize_expression(computed->expression, input, plan->output,

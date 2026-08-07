@@ -6,9 +6,9 @@ The twenty-third Phase 9 increment adds the first vector aggregate: one bounded 
 group. It consumes `AccountedVectorChunk` inputs, updates fixed state, releases each input chunk,
 and emits one query-accounted canonical row.
 
-This is physical operator and plan substrate. Bound SQL still rejects aggregate lowering, and this
-operator does not implement GROUP BY, variable-width MIN/MAX, ordering, joins, partial-state merge,
-spill, parallel scheduling, or storage visibility composition.
+Bound single-source SQL now lowers global aggregate expressions through this substrate. It does not
+implement GROUP BY, variable-width MIN/MAX, ordering, joins, partial-state merge, spill, parallel
+scheduling, or storage visibility composition.
 
 ## Public interface
 
@@ -64,7 +64,9 @@ fixed state vector, including its copied definitions, with a default 2 MiB confi
 The caller's definition vector is read synchronously and is not retained. This bounded coordinator-
 owned memory is not charged again to `QueryResourceContext`. Result
 materialization creates a one-row cardinality chunk and uses `ColumnOutputOperator`, so selection
-and column buffers are admitted and charged through the existing exact output path.
+and column buffers are admitted and charged through the existing exact output path. Nullable
+aggregate definitions remain physically nullable even when their result is present: the one-row
+column carries an all-valid bitmap and zero nulls. COUNT outputs remain nonnullable.
 
 Cancellation is checked before draining, by every child, and every 256 selected rows during the
 aggregate loop. A foreign query chunk, runtime shape mismatch, child error, state error, or output
@@ -114,9 +116,9 @@ Such a change needs a profile and differential tests for error order, floating b
 cancellation latency.
 
 The next aggregate decisions are dynamic state ownership: grouped key encoding, variable-width
-extremum payloads, finite group admission, and spill/merge behavior. Bound SQL lowering can use this
-stage for ungrouped queries before grouped aggregation exists, provided projected/order-only
-aggregate identity and expression-input materialization are handled exactly.
+extremum payloads, finite group admission, and spill/merge behavior. Bound SQL uses this stage for
+ungrouped queries with exact source-span aggregate identity, optional expression-input
+materialization, and final one-row vector expressions.
 
 ## Likely interview questions
 

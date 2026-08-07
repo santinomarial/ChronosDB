@@ -303,7 +303,8 @@ PhysicalPipelinePlan::create(std::vector<PhysicalColumnShape> input_columns,
               return common::make_unexpected(
                   invalid("physical pipeline column output constant must have a logical type"));
             }
-            gathered.push_back({.type = *constant_type, .nullable = constant->value.is_null()});
+            gathered.push_back({.type = *constant_type,
+                                .nullable = constant->value.is_null() || constant->force_nullable});
             continue;
           }
           const auto* computed = std::get_if<ComputedColumnOutputPosition>(&position);

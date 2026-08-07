@@ -22,6 +22,10 @@ struct SourceColumnOutputPosition {
 
 struct ConstantColumnOutputPosition {
   ScalarValue value;
+  // Preserve a nullable physical shape even when this particular constant is present. This is
+  // required when materializing a present result from an operation whose declared result remains
+  // nullable (for example SUM over a nonempty input).
+  bool force_nullable{};
 };
 
 struct ComputedColumnOutputPosition {

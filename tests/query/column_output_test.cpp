@@ -814,13 +814,19 @@ TEST(ColumnOutputOperatorTest, MaterializesFixedWidthCastsCoalesceAndTimeBucket)
 TEST(ColumnOutputOperatorPropertyTest, MaterializesEveryFrozenTypedConstantAndTypedNull) {
   std::vector<ColumnOutputPosition> positions;
   std::vector<ScalarValue> expected;
+  std::vector<bool> expected_nullable;
   for (std::uint16_t code = 1U; code <= 18U; ++code) {
     const schema::LogicalTypeKind kind = schema::logical_type_kind_from_code(code).value();
     ScalarValue value = representative_constant(kind);
     positions.emplace_back(ConstantColumnOutputPosition{value});
     expected.push_back(value);
+    expected_nullable.push_back(false);
+    positions.emplace_back(ConstantColumnOutputPosition{.value = value, .force_nullable = true});
+    expected.push_back(value);
+    expected_nullable.push_back(true);
     positions.emplace_back(ConstantColumnOutputPosition{ScalarValue::null(required_type(value))});
     expected.push_back(ScalarValue::null(required_type(value)));
+    expected_nullable.push_back(true);
   }
 
   QueryResourceContext resources = QueryResourceContext::create(16U << 20U).value();
@@ -838,7 +844,8 @@ TEST(ColumnOutputOperatorPropertyTest, MaterializesEveryFrozenTypedConstantAndTy
   ASSERT_EQ(chunk.column_count(), expected.size());
   for (std::size_t column = 0U; column < expected.size(); ++column) {
     ASSERT_EQ(chunk.column(column)->type(), required_type(expected[column]));
-    EXPECT_EQ(chunk.column(column)->nullable(), expected[column].is_null());
+    EXPECT_EQ(chunk.column(column)->nullable(), expected_nullable[column]);
+    EXPECT_EQ(chunk.column(column)->null_count(), expected[column].is_null() ? 3U : 0U);
     for (std::size_t row = 0U; row < chunk.selected_row_count(); ++row) {
       const columnar::ColumnCellView cell =
           chunk.cell({.column_ordinal = column, .selected_row = row}).value();
