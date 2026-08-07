@@ -128,6 +128,46 @@ source_charge(const head::HeadSnapshot& snapshot, const schema::TableSchema& des
              : overhead;
 }
 
+[[nodiscard]] common::Result<std::shared_ptr<const schema::TableSchema>> validate_head_scan_request(
+    const head::HeadSnapshot& snapshot, const schema::SchemaLineage& lineage,
+    const schema::SchemaId destination_schema_id, const schema::TabletId& target_tablet,
+    const std::vector<std::uint32_t>& destination_column_ordinals, const HeadScanLimits limits) {
+  if (limits.chunk.maximum_rows == 0U || limits.chunk.maximum_columns == 0U ||
+      limits.chunk.maximum_buffer_bytes == 0U || limits.chunk.maximum_retained_buffer_bytes == 0U) {
+    return common::make_unexpected(invalid("head scan chunk limits must be nonzero"));
+  }
+  if (snapshot.tablet_id() != target_tablet)
+    return common::make_unexpected(invalid("head scan snapshot belongs to another tablet"));
+  const std::shared_ptr<const schema::TableSchema> source_schema =
+      lineage.find(snapshot.schema_ptr()->schema_id());
+  if (source_schema == nullptr)
+    return common::make_unexpected(not_found("head scan source schema is not retained"));
+  if (*source_schema != *snapshot.schema_ptr() ||
+      source_schema->table_id() != snapshot.table_id()) {
+    return common::make_unexpected(
+        invalid("head scan snapshot disagrees with its retained schema"));
+  }
+  std::shared_ptr<const schema::TableSchema> destination_schema =
+      lineage.find(destination_schema_id);
+  if (destination_schema == nullptr)
+    return common::make_unexpected(not_found("head scan destination schema is not retained"));
+  if (destination_schema->table_id() != snapshot.table_id()) {
+    return common::make_unexpected(
+        invalid("head scan destination schema belongs to another table"));
+  }
+  if (destination_column_ordinals.size() > limits.chunk.maximum_columns)
+    return common::make_unexpected(exhausted("head scan projection exceeds its column limit"));
+  std::bitset<schema::kMaximumSchemaColumnCount> seen;
+  for (const std::uint32_t ordinal : destination_column_ordinals) {
+    if (ordinal >= destination_schema->columns().size())
+      return common::make_unexpected(invalid("head scan projection ordinal is outside the schema"));
+    if (seen[ordinal])
+      return common::make_unexpected(invalid("head scan projection ordinals are not unique"));
+    seen[ordinal] = true;
+  }
+  return destination_schema;
+}
+
 [[nodiscard]] common::Status validate_column_shape(const head::HeadSnapshot& snapshot,
                                                    const std::size_t ordinal) {
   common::Result<head::HeadColumnView> view = snapshot.column(ordinal);
@@ -461,36 +501,12 @@ common::Result<std::unique_ptr<PhysicalOperator>> HeadScanOperator::create(
     const schema::SchemaLineage& lineage, const schema::SchemaId destination_schema_id,
     const schema::TabletId& target_tablet, std::vector<std::uint32_t> destination_column_ordinals,
     const HeadScanLimits limits) {
-  if (limits.chunk.maximum_rows == 0U || limits.chunk.maximum_columns == 0U ||
-      limits.chunk.maximum_buffer_bytes == 0U || limits.chunk.maximum_retained_buffer_bytes == 0U) {
-    return common::make_unexpected(invalid("head scan chunk limits must be nonzero"));
-  }
-  if (snapshot.tablet_id() != target_tablet)
-    return common::make_unexpected(invalid("head scan snapshot belongs to another tablet"));
-  const std::shared_ptr<const schema::TableSchema> source_schema =
-      lineage.find(snapshot.schema_ptr()->schema_id());
-  if (source_schema == nullptr)
-    return common::make_unexpected(not_found("head scan source schema is not retained"));
-  if (*source_schema != *snapshot.schema_ptr() || source_schema->table_id() != snapshot.table_id())
-    return common::make_unexpected(
-        invalid("head scan snapshot disagrees with its retained schema"));
-  std::shared_ptr<const schema::TableSchema> destination_schema =
-      lineage.find(destination_schema_id);
-  if (destination_schema == nullptr)
-    return common::make_unexpected(not_found("head scan destination schema is not retained"));
-  if (destination_schema->table_id() != snapshot.table_id())
-    return common::make_unexpected(
-        invalid("head scan destination schema belongs to another table"));
-  if (destination_column_ordinals.size() > limits.chunk.maximum_columns)
-    return common::make_unexpected(exhausted("head scan projection exceeds its column limit"));
-  std::bitset<schema::kMaximumSchemaColumnCount> seen;
-  for (const std::uint32_t ordinal : destination_column_ordinals) {
-    if (ordinal >= destination_schema->columns().size())
-      return common::make_unexpected(invalid("head scan projection ordinal is outside the schema"));
-    if (seen[ordinal])
-      return common::make_unexpected(invalid("head scan projection ordinals are not unique"));
-    seen[ordinal] = true;
-  }
+  common::Result<std::shared_ptr<const schema::TableSchema>> destination =
+      validate_head_scan_request(snapshot, lineage, destination_schema_id, target_tablet,
+                                 destination_column_ordinals, limits);
+  if (!destination.has_value())
+    return common::make_unexpected(destination.error());
+  std::shared_ptr<const schema::TableSchema> destination_schema = std::move(*destination);
 
   common::Result<std::size_t> charge =
       source_charge(snapshot, *destination_schema, destination_column_ordinals);
@@ -518,6 +534,62 @@ common::Result<std::unique_ptr<PhysicalOperator>> HeadScanOperator::create(
     return common::make_unexpected(exhausted("head scan source allocation failed"));
   } catch (const std::length_error&) {
     return common::make_unexpected(exhausted("head scan source exceeds container limits"));
+  }
+}
+
+common::Result<std::unique_ptr<PhysicalOperator>> HeadScanOperator::create_event_time_filtered(
+    const QueryResourceContext& resources, head::HeadSnapshot snapshot,
+    const schema::SchemaLineage& lineage, const schema::SchemaId destination_schema_id,
+    const schema::TabletId& target_tablet, std::vector<std::uint32_t> destination_column_ordinals,
+    TimestampRangePredicate predicate, const HeadScanLimits limits) {
+  common::Result<std::shared_ptr<const schema::TableSchema>> destination =
+      validate_head_scan_request(snapshot, lineage, destination_schema_id, target_tablet,
+                                 destination_column_ordinals, limits);
+  if (!destination.has_value())
+    return common::make_unexpected(destination.error());
+  const std::optional<std::size_t> event_time_destination_ordinal =
+      (*destination)->column_ordinal((*destination)->event_time_column());
+  if (!event_time_destination_ordinal.has_value())
+    return common::make_unexpected(
+        invalid("head scan destination schema has no event-time column"));
+
+  const std::uint32_t event_time_ordinal =
+      static_cast<std::uint32_t>(*event_time_destination_ordinal);
+  const auto requested = std::ranges::find(destination_column_ordinals, event_time_ordinal);
+  const bool append_event_time_helper = requested == destination_column_ordinals.end();
+  const std::size_t event_time_output_ordinal =
+      append_event_time_helper
+          ? destination_column_ordinals.size()
+          : static_cast<std::size_t>(requested - destination_column_ordinals.begin());
+  if (append_event_time_helper &&
+      destination_column_ordinals.size() >= limits.chunk.maximum_columns) {
+    return common::make_unexpected(
+        exhausted("head scan exact predicate helper exceeds its column limit"));
+  }
+
+  try {
+    if (append_event_time_helper)
+      destination_column_ordinals.push_back(event_time_ordinal);
+    common::Result<std::unique_ptr<PhysicalOperator>> source =
+        create(resources, std::move(snapshot), lineage, destination_schema_id, target_tablet,
+               std::move(destination_column_ordinals), limits);
+    if (!source.has_value())
+      return common::make_unexpected(source.error());
+    source = TimestampRangeFilterOperator::create(std::move(*source), event_time_output_ordinal,
+                                                  predicate);
+    if (!source.has_value())
+      return common::make_unexpected(source.error());
+    if (!append_event_time_helper)
+      return source;
+
+    std::vector<std::size_t> visible_columns(event_time_output_ordinal);
+    for (std::size_t ordinal = 0U; ordinal < visible_columns.size(); ++ordinal)
+      visible_columns[ordinal] = ordinal;
+    return ColumnSubsetOperator::create(std::move(*source), std::move(visible_columns));
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("head scan exact source allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("head scan exact source exceeds container limits"));
   }
 }
 

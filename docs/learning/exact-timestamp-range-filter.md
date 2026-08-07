@@ -142,9 +142,10 @@ later be faster. Neither cost justifies weakening exact comparisons or memory ow
 
 The aggregate snapshot CSEG factory now performs the first storage integration: it retains the
 event-time column, uses identical bounds for conservative Manifest/CSEG pruning and exact filtering,
-then removes an unrequested helper column. Bound-SQL lowering and exact mutable-head integration
-remain separate. Complete part/head composition still requires accepted hidden-system-column and
-row-version semantics first.
+then removes an unrequested helper column. The mutable-head factory performs the corresponding
+exact-only integration after canonical materialization because heads have no zone-map pruning.
+Bound-SQL lowering remains separate. Complete part/head composition still requires accepted hidden-
+system-column and row-version semantics first.
 
 ## Likely review questions
 

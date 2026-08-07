@@ -282,6 +282,14 @@ int main() {
           const chronos::schema::TabletId&, std::vector<std::uint32_t>,
           chronos::query::HeadScanLimits);
   const CreateHeadScanFunction create_head_scan = &chronos::query::HeadScanOperator::create;
+  using CreateExactHeadScanFunction =
+      chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
+          const chronos::query::QueryResourceContext&, chronos::head::HeadSnapshot,
+          const chronos::schema::SchemaLineage&, chronos::schema::SchemaId,
+          const chronos::schema::TabletId&, std::vector<std::uint32_t>,
+          chronos::query::TimestampRangePredicate, chronos::query::HeadScanLimits);
+  const CreateExactHeadScanFunction create_exact_head_scan =
+      &chronos::query::HeadScanOperator::create_event_time_filtered;
   chronos::columnar::ColumnarBatchLimits limits;
   std::array<std::byte, 0> empty{};
   const auto decoded = chronos::columnar::decode_columnar_batch_v1_exact(empty);
@@ -548,6 +556,7 @@ int main() {
                  physical_end.kind() == chronos::query::PhysicalOperatorStepKind::kEnd &&
                  create_column_subset != nullptr && create_timestamp_range_filter != nullptr &&
                  timestamp_range.matches(0) && create_head_scan != nullptr &&
+                 create_exact_head_scan != nullptr &&
                  create_limit != nullptr &&
                  physical_plan.has_value() && physical_plan->output_columns().empty() &&
                  vector_chunk.has_value() && vector_chunk->selected_row_count() == 1U &&

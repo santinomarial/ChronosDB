@@ -179,11 +179,10 @@ deliberate pre-measurement choices.
 
 The snapshot-bound adapter joins canonical selected durable parts from one exact aggregate database
 epoch with safe event-time pruning, while the head source independently canonicalizes one pinned
-generation. Exact timestamp filtering can consume either source's canonical chunks, but automatic
-lowering must retain the timestamp column through filtering before projection. The next storage
-increment must define shared hidden columns and explicit part/head merge semantics before claiming
-complete tablet visibility. Typed physical expression/output building is the other immediate
-dependency.
+generation. Both source factories now retain an omitted event-time helper through exact filtering
+and remove it before output. The next storage increment must define shared hidden columns and
+explicit part/head merge semantics before claiming complete tablet visibility. Typed physical
+expression/output building is the other immediate dependency.
 Parallel scheduling should follow only after task ownership, queue capacity, terminal-error
 arbitration, and cancellation release are specified.
 

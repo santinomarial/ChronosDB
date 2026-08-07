@@ -57,6 +57,37 @@ TEST(HeadScanAllocationFailureTest, CreationClassifiesEveryRetainedAllocationFai
   EXPECT_TRUE(reached_success);
 }
 
+TEST(HeadScanAllocationFailureTest, ExactFactoryClassifiesHelperAndWrapperAllocationFailures) {
+  test::HeadFixture fixture{4U};
+  fixture.publish({.range = {.first_row = 0U, .row_count = 4U}, .record_sequence = 1U});
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 64U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    QueryResourceContext resources =
+        QueryResourceContext::create(std::size_t{16U} * 1024U * 1024U).value();
+    std::vector<std::uint32_t> ordinals{4U};
+    std::size_t observed = 0U;
+    auto source = run_with_head_allocation_failure(fail_after, observed, [&] {
+      return HeadScanOperator::create_event_time_filtered(
+          resources, fixture.snapshot(), fixture.schemas(),
+          columnar::test::id<schema::SchemaId>(test::kSuccessorSchemaId),
+          columnar::test::id<schema::TabletId>(test::kTabletId), std::move(ordinals),
+          {.lower = TimestampRangeBound{.value = 10, .inclusive = true},
+           .upper = TimestampRangeBound{.value = 10, .inclusive = true}});
+    });
+    EXPECT_GT(observed, 0U);
+    if (source.has_value()) {
+      reached_success = true;
+      source->reset();
+      EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+      break;
+    }
+    EXPECT_EQ(source.error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  }
+  EXPECT_TRUE(reached_success);
+}
+
 TEST(HeadScanAllocationFailureTest, PullClassifiesEveryCanonicalOutputAllocationFailure) {
   test::HeadFixture fixture{4U};
   fixture.publish({.range = {.first_row = 0U, .row_count = 4U}, .record_sequence = 1U});

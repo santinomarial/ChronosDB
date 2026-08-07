@@ -5,13 +5,14 @@
 `HeadScanOperator` converts one acquire-observed `HeadSnapshot` into bounded canonical physical
 chunks. It is the query bridge for one active or sealed mutable-head generation: exact snapshot
 row boundaries stay pinned, schema evolution is projected, memory is admitted before allocation,
-and output can flow through the existing filter/projection/LIMIT operators.
+and output can flow through the existing filter/projection/LIMIT operators. The exact event-time
+factory automatically retains and removes an unrequested event-time helper.
 
 This is not yet a complete tablet scan. It exposes projected user columns only. Hidden WAL
 position, row ordinal, operation, and row-version identity remain inside the head until one common
 CSEG/head system-column and merge contract is accepted. The source does not concatenate multiple
-heads, combine heads with parts, resolve versions, filter SQL predicates, schedule parallel work,
-or spill.
+heads, combine heads with parts, resolve versions, evaluate non-event-time SQL predicates, schedule
+parallel work, or spill.
 
 ## Public interface
 
@@ -19,11 +20,16 @@ or spill.
 
 - `HeadScanLimits`, currently containing the finite `VectorChunkLimits`; and
 - `HeadScanOperator::create(resources, snapshot, lineage, destination_schema_id, tablet_id,
-  destination_ordinals, limits)`.
+  destination_ordinals, limits)` for raw physical chunks; and
+- `HeadScanOperator::create_event_time_filtered(...)`, which additionally accepts an exact
+  `TimestampRangePredicate`.
 
 Destination ordinals are unique but may appear in any caller order. The exact source schema must be
 retained in the lineage. The destination must be that schema or a v1 descendant, so retained
 columns preserve type/nullability and newly appended nullable columns can be synthesized as NULL.
+The exact factory filters at the requested event-time output position. If event time was omitted,
+it appends that destination ordinal for materialization and removes the final helper after exact
+selection. Caller output order and zero-column cardinality are preserved.
 
 ## Why materialization is required
 
@@ -59,6 +65,11 @@ and validates owned columns and an identity selection. Output owns every byte an
 no head pin. On the final successful pull, source state and its generation charge are released
 before the chunk is returned.
 
+The exact factory wraps this source with `TimestampRangeFilterOperator` and, when needed,
+`ColumnSubsetOperator`. Filtering may return an empty progress chunk; it never skips a later head
+chunk. Helper removal releases direct-owned helper buffers while the existing output reservation
+remains a conservative charge until the result is destroyed.
+
 An empty projection still emits identity selections with the correct cardinality. An empty head
 validates normally and returns sticky end on its first pull. Wrong-query use, local validation or
 allocation failure, and output-limit failure return no chunk and request cooperative cancellation.
@@ -83,6 +94,9 @@ budget and logical/retained chunk limits fail before canonical buffer allocation
 shape contradictions return `INTERNAL`; allocation/container failures return
 `RESOURCE_EXHAUSTED`.
 
+An exact request validates the caller projection first, then checks the effective projection with a
+possible helper against `maximum_columns`. A missing helper slot fails before query reservation.
+
 All paths are in-memory and side-effect free. No failure changes the head, its publication, WAL,
 Manifest, schema lineage, or reclamation state.
 
@@ -92,14 +106,17 @@ For `C` requested columns, `R` visible rows, and chunk width `W`:
 
 - source validation is `O(C)` plus lineage projection construction;
 - each pull is `O(C × W + copied variable bytes)` and owns canonical output bytes;
+- exact event-time filtering adds `O(S)` comparisons for `S` selected input rows;
 - the source retains the complete head generation; and
 - at most one output chunk is produced per pull, so downstream demand bounds in-flight output.
 
 Properties compare all frozen logical types and varied row/chunk boundaries with `HeadSnapshot`
 cells. Exhaustive allocator injection covers source and pull allocations. The head-scan fuzzer
-varies projections, limits, schema tails, cancellation, and pulls. `materialize_one_head_chunk`
-measures four-column canonicalization at 64, 1,024, and 65,536 rows and reports allocations and
-bytes; it is a microbenchmark, not a product throughput claim.
+varies raw/exact factories, projections, limits, bounds, schema tails, cancellation, and pulls.
+`materialize_one_head_chunk` measures four-column canonicalization, while
+`materialize_and_exact_filter_one_head_chunk` measures label/event-time materialization, a point
+predicate, and helper removal at 64, 1,024, and 65,536 rows. Both report allocations and bytes and
+are microbenchmarks, not product throughput claims.
 
 ## Tradeoffs and next steps
 
@@ -126,3 +143,6 @@ no returned view points into head storage.
 
 **Does this make the ADR 0028 scan complete?** No. Multiple heads, hidden row versions, and
 part/head merge semantics are still missing.
+
+**Does head filtering prune materialization work?** No. The head has no accepted zone map. Exact
+truth runs on bounded canonical chunks after materialization.

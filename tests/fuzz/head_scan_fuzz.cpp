@@ -31,14 +31,29 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
       input.size() < 4U ? 1U : static_cast<std::size_t>(input[3]) * 256U + 1U;
   hostile_limits.chunk.maximum_retained_buffer_bytes =
       input.size() < 5U ? 1U : static_cast<std::size_t>(input[4]) * 512U + 1U;
-  auto hostile = chronos::query::HeadScanOperator::create(
-      hostile_resources, fixture.snapshot(), fixture.schemas(),
+  const chronos::schema::SchemaId hostile_schema =
       chronos::columnar::test::id<chronos::schema::SchemaId>(
           (input.size() >= 6U && (input[5] & 1U) != 0U) ? chronos::query::test::kSuccessorSchemaId
-                                                        : chronos::query::test::kInitialSchemaId),
+                                                        : chronos::query::test::kInitialSchemaId);
+  const chronos::schema::TabletId hostile_tablet =
       chronos::columnar::test::id<chronos::schema::TabletId>(
-          input.size() >= 7U && (input[6] & 1U) != 0U ? 999U : chronos::query::test::kTabletId),
-      std::move(hostile_projection), hostile_limits);
+          input.size() >= 7U && (input[6] & 1U) != 0U ? 999U : chronos::query::test::kTabletId);
+  auto hostile = input.size() >= 9U && (input[8] & 1U) != 0U
+                     ? chronos::query::HeadScanOperator::create_event_time_filtered(
+                           hostile_resources, fixture.snapshot(), fixture.schemas(), hostile_schema,
+                           hostile_tablet, std::move(hostile_projection),
+                           {.lower =
+                                chronos::query::TimestampRangeBound{
+                                    .value = static_cast<std::int8_t>(input.front()) * 10,
+                                    .inclusive = (input.front() & 2U) != 0U},
+                            .upper =
+                                chronos::query::TimestampRangeBound{
+                                    .value = static_cast<std::int8_t>(input.back()) * 10,
+                                    .inclusive = (input.back() & 2U) != 0U}},
+                           hostile_limits)
+                     : chronos::query::HeadScanOperator::create(
+                           hostile_resources, fixture.snapshot(), fixture.schemas(), hostile_schema,
+                           hostile_tablet, std::move(hostile_projection), hostile_limits);
   if (hostile.has_value()) {
     if (input.size() >= 8U && (input[7] & 1U) != 0U)
       static_cast<void>(hostile_resources.request_cancel());
@@ -75,6 +90,38 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
     observed_rows += step->chunk()->chunk().selected_row_count();
   }
   if (observed_rows != rows)
+    std::abort();
+
+  auto exact_resources =
+      chronos::query::QueryResourceContext::create(std::size_t{32U} * 1024U * 1024U).value();
+  const std::uint32_t selected_row = input.empty() ? 0U : input.back() % rows;
+  const std::int64_t selected_time = static_cast<std::int64_t>(selected_row) * 10;
+  const bool lower_inclusive = input.empty() || (input.front() & 2U) != 0U;
+  const bool upper_inclusive = input.empty() || (input.back() & 2U) != 0U;
+  auto exact = chronos::query::HeadScanOperator::create_event_time_filtered(
+      exact_resources, fixture.snapshot(), fixture.schemas(),
+      chronos::columnar::test::id<chronos::schema::SchemaId>(
+          chronos::query::test::kSuccessorSchemaId),
+      chronos::columnar::test::id<chronos::schema::TabletId>(chronos::query::test::kTabletId), {4U},
+      {.lower = chronos::query::TimestampRangeBound{.value = selected_time,
+                                                    .inclusive = lower_inclusive},
+       .upper = chronos::query::TimestampRangeBound{.value = selected_time,
+                                                    .inclusive = upper_inclusive}},
+      limits);
+  if (!exact.has_value())
+    return 0;
+  std::size_t exact_rows = 0U;
+  for (;;) {
+    auto step = (*exact)->next(exact_resources);
+    if (!step.has_value())
+      return 0;
+    if (step->kind() == chronos::query::PhysicalOperatorStepKind::kEnd)
+      break;
+    if (step->chunk()->chunk().column_count() != 1U)
+      std::abort();
+    exact_rows += step->chunk()->chunk().selected_row_count();
+  }
+  if (exact_rows != (lower_inclusive && upper_inclusive ? 1U : 0U))
     std::abort();
   return 0;
 }

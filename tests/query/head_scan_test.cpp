@@ -144,6 +144,145 @@ TEST(HeadScanOperatorTest, SupportsEmptyHeadAndZeroColumnCardinality) {
   EXPECT_EQ(rows_resources.reserved_memory_bytes(), 0U);
 }
 
+TEST(HeadScanOperatorTest, ExactEventTimeFilteringPreservesBoundsAcrossChunkBoundaries) {
+  test::HeadFixture fixture{8U};
+  fixture.publish({.range = {.first_row = 0U, .row_count = 8U}, .record_sequence = 1U});
+  QueryResourceContext resources =
+      QueryResourceContext::create(std::size_t{32U} * 1024U * 1024U).value();
+  HeadScanLimits limits;
+  limits.chunk.maximum_rows = 3U;
+  auto source = HeadScanOperator::create_event_time_filtered(
+      resources, fixture.snapshot(), fixture.schemas(),
+      columnar::test::id<schema::SchemaId>(test::kInitialSchemaId),
+      columnar::test::id<schema::TabletId>(test::kTabletId), {1U, 0U},
+      {.lower = TimestampRangeBound{.value = 10, .inclusive = false},
+       .upper = TimestampRangeBound{.value = 50, .inclusive = false}},
+      limits);
+  ASSERT_TRUE(source.has_value()) << source.error().to_string();
+
+  std::vector<std::int64_t> event_times;
+  std::vector<std::size_t> chunk_cardinalities;
+  for (;;) {
+    common::Result<PhysicalOperatorStep> step = (*source)->next(resources);
+    ASSERT_TRUE(step.has_value()) << step.error().to_string();
+    if (step->kind() == PhysicalOperatorStepKind::kEnd)
+      break;
+    const VectorChunk& chunk = step->chunk()->chunk();
+    ASSERT_EQ(chunk.column_count(), 2U);
+    chunk_cardinalities.push_back(chunk.selected_row_count());
+    for (std::size_t row = 0U; row < chunk.selected_row_count(); ++row)
+      event_times.push_back(i64_cell(chunk, 1U, row));
+  }
+  EXPECT_EQ(chunk_cardinalities, (std::vector<std::size_t>{1U, 2U, 0U}));
+  EXPECT_EQ(event_times, (std::vector<std::int64_t>{20, 30, 40}));
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
+TEST(HeadScanOperatorTest, RemovesAnUnrequestedEventTimeHelperIncludingZeroColumnOutput) {
+  test::HeadFixture fixture{5U};
+  fixture.publish({.range = {.first_row = 0U, .row_count = 5U}, .record_sequence = 1U});
+  QueryResourceContext resources =
+      QueryResourceContext::create(std::size_t{32U} * 1024U * 1024U).value();
+  auto nullable_tail = HeadScanOperator::create_event_time_filtered(
+      resources, fixture.snapshot(), fixture.schemas(),
+      columnar::test::id<schema::SchemaId>(test::kSuccessorSchemaId),
+      columnar::test::id<schema::TabletId>(test::kTabletId), {4U},
+      {.lower = TimestampRangeBound{.value = 30, .inclusive = true},
+       .upper = TimestampRangeBound{.value = 30, .inclusive = true}});
+  ASSERT_TRUE(nullable_tail.has_value()) << nullable_tail.error().to_string();
+  common::Result<PhysicalOperatorStep> step = (*nullable_tail)->next(resources);
+  ASSERT_TRUE(step.has_value()) << step.error().to_string();
+  ASSERT_EQ(step->kind(), PhysicalOperatorStepKind::kChunk);
+  ASSERT_EQ(step->chunk()->chunk().column_count(), 1U);
+  ASSERT_EQ(step->chunk()->chunk().selected_row_count(), 1U);
+  EXPECT_TRUE(step->chunk()->chunk().cell({.column_ordinal = 0U, .selected_row = 0U})->is_null());
+  step = (*nullable_tail)->next(resources);
+  ASSERT_TRUE(step.has_value()) << step.error().to_string();
+  EXPECT_EQ(step->kind(), PhysicalOperatorStepKind::kEnd);
+  nullable_tail->reset();
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+
+  auto zero_columns = HeadScanOperator::create_event_time_filtered(
+      resources, fixture.snapshot(), fixture.schemas(),
+      columnar::test::id<schema::SchemaId>(test::kInitialSchemaId),
+      columnar::test::id<schema::TabletId>(test::kTabletId), {},
+      {.lower = TimestampRangeBound{.value = 20, .inclusive = true},
+       .upper = TimestampRangeBound{.value = 20, .inclusive = true}});
+  ASSERT_TRUE(zero_columns.has_value()) << zero_columns.error().to_string();
+  step = (*zero_columns)->next(resources);
+  ASSERT_TRUE(step.has_value()) << step.error().to_string();
+  ASSERT_EQ(step->kind(), PhysicalOperatorStepKind::kChunk);
+  EXPECT_EQ(step->chunk()->chunk().column_count(), 0U);
+  EXPECT_EQ(step->chunk()->chunk().selected_row_count(), 1U);
+}
+
+TEST(HeadScanOperatorTest, ExactFactoryValidatesTheEffectiveProjectionBeforeReservation) {
+  test::HeadFixture fixture{2U};
+  fixture.publish({.range = {.first_row = 0U, .row_count = 2U}, .record_sequence = 1U});
+  QueryResourceContext resources =
+      QueryResourceContext::create(std::size_t{8U} * 1024U * 1024U).value();
+  HeadScanLimits limits;
+  limits.chunk.maximum_columns = 1U;
+  EXPECT_EQ(HeadScanOperator::create_event_time_filtered(
+                resources, fixture.snapshot(), fixture.schemas(),
+                columnar::test::id<schema::SchemaId>(test::kSuccessorSchemaId),
+                columnar::test::id<schema::TabletId>(test::kTabletId), {4U}, {}, limits)
+                .error()
+                .code(),
+            common::StatusCode::kResourceExhausted);
+  EXPECT_EQ(HeadScanOperator::create_event_time_filtered(
+                resources, fixture.snapshot(), fixture.schemas(),
+                columnar::test::id<schema::SchemaId>(test::kInitialSchemaId),
+                columnar::test::id<schema::TabletId>(test::kTabletId), {9U}, {}, limits)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  auto event_only = HeadScanOperator::create_event_time_filtered(
+      resources, fixture.snapshot(), fixture.schemas(),
+      columnar::test::id<schema::SchemaId>(test::kInitialSchemaId),
+      columnar::test::id<schema::TabletId>(test::kTabletId), {0U}, {}, limits);
+  ASSERT_TRUE(event_only.has_value()) << event_only.error().to_string();
+  event_only->reset();
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
+TEST(HeadScanOperatorPropertyTest, ExactPointFilteringMatchesThePublishedHeadModel) {
+  constexpr std::uint32_t kRows = 17U;
+  test::HeadFixture fixture{kRows};
+  fixture.publish({.range = {.first_row = 0U, .row_count = kRows}, .record_sequence = 1U});
+  for (const std::uint32_t chunk_rows : {1U, 2U, 5U, 32U}) {
+    for (std::int64_t point = -10; point <= 170; point += 10) {
+      SCOPED_TRACE(chunk_rows);
+      SCOPED_TRACE(point);
+      QueryResourceContext resources =
+          QueryResourceContext::create(std::size_t{32U} * 1024U * 1024U).value();
+      HeadScanLimits limits;
+      limits.chunk.maximum_rows = chunk_rows;
+      auto source = HeadScanOperator::create_event_time_filtered(
+          resources, fixture.snapshot(), fixture.schemas(),
+          columnar::test::id<schema::SchemaId>(test::kInitialSchemaId),
+          columnar::test::id<schema::TabletId>(test::kTabletId), {1U},
+          {.lower = TimestampRangeBound{.value = point, .inclusive = true},
+           .upper = TimestampRangeBound{.value = point, .inclusive = true}},
+          limits);
+      ASSERT_TRUE(source.has_value()) << source.error().to_string();
+
+      std::size_t matches = 0U;
+      for (;;) {
+        common::Result<PhysicalOperatorStep> step = (*source)->next(resources);
+        ASSERT_TRUE(step.has_value()) << step.error().to_string();
+        if (step->kind() == PhysicalOperatorStepKind::kEnd)
+          break;
+        ASSERT_EQ(step->chunk()->chunk().column_count(), 1U);
+        matches += step->chunk()->chunk().selected_row_count();
+      }
+      const bool present = point >= 0 && point < static_cast<std::int64_t>(kRows) * 10;
+      EXPECT_EQ(matches, present ? 1U : 0U);
+      EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+    }
+  }
+}
+
 TEST(HeadScanOperatorTest, PinsTheExactOldPublicationAcrossLaterAppends) {
   test::HeadFixture fixture{4U};
   fixture.publish({.range = {.first_row = 0U, .row_count = 2U}, .record_sequence = 1U});

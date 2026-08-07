@@ -397,7 +397,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
   linkage. ADR 0031 and the fourteenth increment automatically compose conservative Manifest/CSEG
   pruning with exact row truth in aggregate snapshot CSEG scans, retain and remove an unrequested
   event-time helper column, preserve caller projection order, enforce effective projection limits,
-  and add deterministic/property/failure/fuzz/benchmark evidence. The durable and mutable sources
+  and add deterministic/property/failure/fuzz/benchmark evidence. ADR 0032 and the fifteenth
+  increment add an exact event-time mutable-head factory, projection-aware helper materialization
+  and removal including zero-column output, chunk-boundary truth, effective-limit validation, and
+  deterministic/property/failure/fuzz/benchmark/consumer evidence. The durable and mutable sources
   still expose user columns independently: bound-SQL lowering, general typed vector expressions
   and output builders, optimizer rules, hidden row-version columns, complete multi-part/head
   composition, base/delta merge and row-version resolution, mapped/asynchronous providers, shared
