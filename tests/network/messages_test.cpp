@@ -97,5 +97,65 @@ TEST(ProtocolMessageTest, RejectsCorruptReservedAndLengthFields) {
   EXPECT_FALSE(decode_ingest_acknowledgement(acknowledgement).has_value());
 }
 
+TEST(ProtocolMessageTest, QueryResultBatchRoundTripsTypesNullsAndZeroRows) {
+  const schema::LogicalType int64 =
+      schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
+  const schema::LogicalType string =
+      schema::LogicalType::create(schema::LogicalTypeKind::kString).value();
+  const std::array<QueryResultColumn, 2> columns{
+      QueryResultColumn{.name = "count", .type = int64, .nullable = false},
+      QueryResultColumn{.name = "label", .type = string, .nullable = true}};
+  const std::array<std::byte, 8> one{std::byte{1}};
+  const std::array<std::byte, 8> two{std::byte{2}};
+  const auto alpha = std::as_bytes(std::span{"alpha", 5U});
+  const std::array<QueryResultCell, 4> cells{
+      QueryResultCell{.value = one}, QueryResultCell{.value = alpha}, QueryResultCell{.value = two},
+      QueryResultCell{.is_null = true}};
+  const auto encoded = encode_query_result_batch(2U, columns, cells);
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  const auto decoded = decode_query_result_batch(*encoded);
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  EXPECT_EQ(decoded->row_count(), 2U);
+  ASSERT_EQ(decoded->columns().size(), 2U);
+  EXPECT_EQ(decoded->columns()[1].type.kind(), schema::LogicalTypeKind::kString);
+  ASSERT_NE(decoded->cell(1U, 1U), nullptr);
+  EXPECT_TRUE(decoded->cell(1U, 1U)->is_null);
+  EXPECT_TRUE(std::ranges::equal(decoded->cell(0U, 1U)->value, alpha));
+  EXPECT_EQ(decoded->cell(2U, 0U), nullptr);
+
+  const auto empty = encode_query_result_batch(0U, columns, {});
+  ASSERT_TRUE(empty.has_value());
+  EXPECT_EQ(decode_query_result_batch(*empty)->row_count(), 0U);
+}
+
+TEST(ProtocolMessageTest, QueryResultRejectsHostileShapesAndNoncanonicalCells) {
+  const schema::LogicalType boolean =
+      schema::LogicalType::create(schema::LogicalTypeKind::kBool).value();
+  const std::array<QueryResultColumn, 1> columns{
+      QueryResultColumn{.name = "ok", .type = boolean, .nullable = false}};
+  const std::array<std::byte, 1> invalid_bool{std::byte{2}};
+  EXPECT_FALSE(encode_query_result_batch(1U, columns, {}).has_value());
+  EXPECT_FALSE(
+      encode_query_result_batch(1U, columns, std::array{QueryResultCell{.value = invalid_bool}})
+          .has_value());
+  const std::array<std::byte, 1> valid_bool{std::byte{1}};
+  std::vector<std::byte> encoded =
+      *encode_query_result_batch(1U, columns, std::array{QueryResultCell{.value = valid_bool}});
+  encoded.push_back(std::byte{0});
+  EXPECT_FALSE(decode_query_result_batch(encoded).has_value());
+  encoded.pop_back();
+  encoded[12] = std::byte{0xff};
+  EXPECT_FALSE(decode_query_result_batch(encoded).has_value());
+
+  const schema::LogicalType decimal = schema::LogicalType::decimal(1U, 0U).value();
+  const std::array<QueryResultColumn, 1> decimal_column{
+      QueryResultColumn{.name = "d", .type = decimal, .nullable = false}};
+  std::array<std::byte, 16> ten{};
+  ten.front() = std::byte{10};
+  EXPECT_FALSE(
+      encode_query_result_batch(1U, decimal_column, std::array{QueryResultCell{.value = ten}})
+          .has_value());
+}
+
 } // namespace
 } // namespace chronos::network

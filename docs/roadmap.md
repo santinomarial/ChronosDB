@@ -546,6 +546,11 @@ rejection, Linux-free public API, startup allocation classification, and Linux s
 wakeups, complete query-result payloads and the test client/server adapter, authentication/TLS
 boundary, fuzzing, and Phase 10 measurement gates remain next.
 
+The sixth increment assigns bounded self-describing query-result batches without fabricating table
+identity: ordered names/types/nullability, canonical row-major cells, zero-row schema, exact NULL and
+UTF-8 rules, independent decoding, allocation classification, and reactor response validation.
+The test client/server adapter, authentication/TLS boundary, packet fuzzing, and measurements remain.
+
 ## Phase 11 — Subscriptions and incremental materialized views
 
 - **Scope:** committed change model; gap-free snapshot-to-stream handoff; deterministic versioned resume tokens; bounded subscriber policies; supported incremental operators; materialized-view progress/recovery and late-event corrections.

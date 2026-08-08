@@ -171,6 +171,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   handoff, acquire/release publication and reuse proof, saturation, and lifecycle rules.
 - [Bounded Linux epoll reactor](learning/bounded-epoll-reactor.md): single-owner readiness,
   admission, response identity, overload, timeout, and disconnect cleanup.
+- [Native query result batches](learning/native-query-result-batches.md): self-describing SQL output
+  schema, canonical row-major cells, borrowing, limits, and completion semantics.
 - [Shared snapshot publication credit](learning/shared-snapshot-publication-credit.md): implemented
   one-query/one-epoch publication admission across part images, backed chunks, complete tablet scans,
   and ASOF aliases while retaining exact local image/output credit and last-owner cleanup.

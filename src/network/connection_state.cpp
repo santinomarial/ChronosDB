@@ -26,9 +26,11 @@ namespace {
 
 ServerConnectionState::ServerConnectionState(ConnectionStateConfig config,
                                              std::vector<std::uint64_t> active_requests,
-                                             std::vector<MessageType> active_request_types) noexcept
+                                             std::vector<MessageType> active_request_types,
+                                             std::vector<bool> query_result_ended) noexcept
     : config_(config), active_requests_(std::move(active_requests)),
-      active_request_types_(std::move(active_request_types)) {}
+      active_request_types_(std::move(active_request_types)),
+      query_result_ended_(std::move(query_result_ended)) {}
 
 common::Result<ServerConnectionState>
 ServerConnectionState::create(const ConnectionStateConfig& config) {
@@ -39,9 +41,12 @@ ServerConnectionState::create(const ConnectionStateConfig& config) {
   try {
     std::vector<std::uint64_t> active;
     std::vector<MessageType> active_types;
+    std::vector<bool> result_ended;
     active.reserve(config.maximum_in_flight_requests);
     active_types.reserve(config.maximum_in_flight_requests);
-    return ServerConnectionState{config, std::move(active), std::move(active_types)};
+    result_ended.reserve(config.maximum_in_flight_requests);
+    return ServerConnectionState{config, std::move(active), std::move(active_types),
+                                 std::move(result_ended)};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("connection state allocation failed"));
   }
@@ -89,9 +94,7 @@ common::Result<InboundAction> ServerConnectionState::accept(const Frame& frame) 
     const bool active = found != active_requests_.end();
     if (active) {
       const auto offset = static_cast<std::size_t>(found - active_requests_.begin());
-      active_requests_.erase(found);
-      active_request_types_.erase(active_request_types_.begin() +
-                                  static_cast<std::ptrdiff_t>(offset));
+      erase_active(offset);
     }
     return InboundAction{.kind = InboundActionKind::kCancel,
                          .request_id = frame.header.request_id,
@@ -117,6 +120,7 @@ common::Result<InboundAction> ServerConnectionState::accept(const Frame& frame) 
   }
   active_requests_.push_back(frame.header.request_id);
   active_request_types_.push_back(frame.header.message_type);
+  query_result_ended_.push_back(false);
   last_request_id_ = frame.header.request_id;
   return InboundAction{.kind = frame.header.message_type == MessageType::kIngestRequest
                                    ? InboundActionKind::kIngest
@@ -124,19 +128,56 @@ common::Result<InboundAction> ServerConnectionState::accept(const Frame& frame) 
                        .request_id = frame.header.request_id};
 }
 
+common::Status ServerConnectionState::accept_response(const Frame& frame) {
+  const auto found = std::ranges::find(active_requests_, frame.header.request_id);
+  if (phase_ != ConnectionPhase::kActive || found == active_requests_.end())
+    return invalid("response does not name an active request");
+  const auto offset = static_cast<std::size_t>(found - active_requests_.begin());
+  const MessageType request_type = active_request_types_[offset];
+  switch (frame.header.message_type) {
+  case MessageType::kQueryResult:
+    if (request_type != MessageType::kQueryRequest || query_result_ended_[offset] ||
+        (frame.header.flags & ~kFrameFlagEndStream) != 0U)
+      return invalid("QUERY_RESULT response state is invalid");
+    query_result_ended_[offset] = (frame.header.flags & kFrameFlagEndStream) != 0U;
+    return common::Status::ok();
+  case MessageType::kQueryEnd:
+    if (request_type != MessageType::kQueryRequest || !query_result_ended_[offset])
+      return invalid("QUERY_END requires a completed result stream");
+    erase_active(offset);
+    return common::Status::ok();
+  case MessageType::kIngestAcknowledgement:
+    if (request_type != MessageType::kIngestRequest)
+      return invalid("ingest acknowledgement response state is invalid");
+    erase_active(offset);
+    return common::Status::ok();
+  case MessageType::kError:
+    erase_active(offset);
+    return common::Status::ok();
+  default:
+    return invalid("message type is not a shard response");
+  }
+}
+
+void ServerConnectionState::erase_active(const std::size_t offset) noexcept {
+  active_requests_.erase(active_requests_.begin() + static_cast<std::ptrdiff_t>(offset));
+  active_request_types_.erase(active_request_types_.begin() + static_cast<std::ptrdiff_t>(offset));
+  query_result_ended_.erase(query_result_ended_.begin() + static_cast<std::ptrdiff_t>(offset));
+}
+
 bool ServerConnectionState::complete(const std::uint64_t request_id) noexcept {
   const auto found = std::ranges::find(active_requests_, request_id);
   if (found == active_requests_.end())
     return false;
   const auto offset = static_cast<std::size_t>(found - active_requests_.begin());
-  active_requests_.erase(found);
-  active_request_types_.erase(active_request_types_.begin() + static_cast<std::ptrdiff_t>(offset));
+  erase_active(offset);
   return true;
 }
 
 void ServerConnectionState::close() noexcept {
   active_requests_.clear();
   active_request_types_.clear();
+  query_result_ended_.clear();
   phase_ = ConnectionPhase::kClosed;
 }
 

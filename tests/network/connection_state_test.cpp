@@ -75,5 +75,22 @@ TEST(ServerConnectionStateTest, RejectsWrongDirectionRepeatedHelloAndPostCloseIn
   EXPECT_FALSE(state.accept(frame(MessageType::kPing, 0U)).has_value());
 }
 
+TEST(ServerConnectionStateTest, RequiresExactQueryResponseStreamCompletion) {
+  ServerConnectionState state = ServerConnectionState::create().value();
+  ASSERT_TRUE(
+      state.accept(frame(MessageType::kClientHello, 0U, *encode_client_hello({}))).has_value());
+  ASSERT_TRUE(state.accept(frame(MessageType::kQueryRequest, 1U, *encode_query_request("SELECT 1")))
+                  .has_value());
+  EXPECT_FALSE(state.accept_response(frame(MessageType::kQueryEnd, 1U)).is_ok());
+  EXPECT_TRUE(state
+                  .accept_response({.header = {.message_type = MessageType::kQueryResult,
+                                               .flags = kFrameFlagEndStream,
+                                               .request_id = 1U}})
+                  .is_ok());
+  EXPECT_FALSE(state.accept_response(frame(MessageType::kQueryResult, 1U)).is_ok());
+  EXPECT_TRUE(state.accept_response(frame(MessageType::kQueryEnd, 1U)).is_ok());
+  EXPECT_EQ(state.in_flight_requests(), 0U);
+}
+
 } // namespace
 } // namespace chronos::network

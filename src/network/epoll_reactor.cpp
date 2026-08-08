@@ -316,24 +316,21 @@ public:
       if (found == connections.end())
         continue;
       Frame& frame = task->frame;
-      const auto request_type = found->second.state.active_request_type(frame.header.request_id);
-      const bool is_query_response = frame.header.message_type == MessageType::kQueryResult ||
-                                     frame.header.message_type == MessageType::kQueryEnd;
       const bool is_ingest_response =
           frame.header.message_type == MessageType::kIngestAcknowledgement;
       const bool is_terminal_error = frame.header.message_type == MessageType::kError;
-      const bool response_matches =
-          request_type.has_value() &&
-          ((is_query_response && *request_type == MessageType::kQueryRequest) ||
-           (is_ingest_response && *request_type == MessageType::kIngestRequest) ||
-           is_terminal_error);
       const bool payload_is_valid =
-          (frame.header.message_type == MessageType::kQueryResult) ||
+          (frame.header.message_type == MessageType::kQueryResult &&
+           decode_query_result_batch(frame.payload, {.protocol = config.buffers.protocol,
+                                                     .maximum_rows = 1'048'576U,
+                                                     .maximum_columns = 4096U,
+                                                     .maximum_column_name_bytes = 1024U})
+               .has_value()) ||
           (frame.header.message_type == MessageType::kQueryEnd && frame.payload.empty()) ||
           (is_ingest_response && decode_ingest_acknowledgement(frame.payload).has_value()) ||
           (is_terminal_error &&
            decode_error_message(frame.payload, config.buffers.protocol).has_value());
-      if (!response_matches || !payload_is_valid) {
+      if (!payload_is_valid || !found->second.state.accept_response(frame).is_ok()) {
         ++stats.dropped_responses;
         continue;
       }
@@ -345,9 +342,6 @@ public:
         close_connection(found->first, false);
         continue;
       }
-      if (is_ingest_response || frame.header.message_type == MessageType::kQueryEnd ||
-          is_terminal_error)
-        static_cast<void>(found->second.state.complete(frame.header.request_id));
       update_interest(found->second);
     }
   }

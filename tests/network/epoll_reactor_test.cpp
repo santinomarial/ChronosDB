@@ -106,6 +106,22 @@ TEST(EpollReactorTest, RealSocketsHandshakeDispatchRespondAndExposeQueueOverload
   ASSERT_TRUE(dispatched.has_value());
   EXPECT_EQ(dispatched->frame.header.request_id, 1U); // NOLINT(bugprone-unchecked-optional-access)
 
+  const schema::LogicalType result_type =
+      schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
+  const std::array<QueryResultColumn, 1> result_columns{
+      QueryResultColumn{.name = "value", .type = result_type, .nullable = false}};
+  ASSERT_TRUE(responses.try_push(
+      {.connection_id = dispatched->connection_id,
+       .frame = {.header = {.message_type = MessageType::kQueryResult,
+                            .flags = kFrameFlagEndStream,
+                            .request_id = 1U},
+                 .payload = *encode_query_result_batch(0U, result_columns, {})}}));
+  for (std::size_t attempt = 0U; attempt < 4U; ++attempt)
+    ASSERT_TRUE(reactor.poll_once(std::chrono::milliseconds{1}).is_ok());
+  const auto result = decode_frame(receive_available(client));
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->header.message_type, MessageType::kQueryResult);
+
   ASSERT_TRUE(responses.try_push(
       {.connection_id = dispatched->connection_id,
        .frame = {.header = {.message_type = MessageType::kQueryEnd, .request_id = 1U},

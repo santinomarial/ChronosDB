@@ -780,6 +780,8 @@ int main() {
   const auto connection_buffers = chronos::network::ConnectionBuffers::create();
   const auto network_queue = chronos::network::SpscNetworkTaskQueue::create(4U);
   const chronos::network::EpollServerConfig epoll_config;
+  const auto installed_result_type = chronos::schema::LogicalType::create(
+      chronos::schema::LogicalTypeKind::kInt64);
   return event_time_match != nullptr && execute != nullptr && recover != nullptr &&
                  reclaim_recovered_wal != nullptr && inspect_wal_suffix != nullptr &&
                  recover_wal_checkpoint != nullptr && open_wal_checkpoint != nullptr &&
@@ -868,6 +870,7 @@ int main() {
                  connection_buffers.has_value() &&
                  network_queue.has_value() && network_queue->capacity() == 4U &&
                  epoll_config.maximum_connections == 1024U &&
+                 installed_result_type.has_value() &&
                  manifest_name.has_value() &&
                  *manifest_name == "manifest-00000000000000000001.cman" &&
                  decode_manifest != nullptr && validate_manifest_transition != nullptr &&

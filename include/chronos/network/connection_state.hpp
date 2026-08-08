@@ -36,6 +36,7 @@ public:
   create(const ConnectionStateConfig& config = {});
 
   [[nodiscard]] common::Result<InboundAction> accept(const Frame& frame);
+  [[nodiscard]] common::Status accept_response(const Frame& frame);
   [[nodiscard]] bool complete(std::uint64_t request_id) noexcept;
   void close() noexcept;
 
@@ -50,11 +51,14 @@ public:
 private:
   explicit ServerConnectionState(ConnectionStateConfig config,
                                  std::vector<std::uint64_t> active_requests,
-                                 std::vector<MessageType> active_request_types) noexcept;
+                                 std::vector<MessageType> active_request_types,
+                                 std::vector<bool> query_result_ended) noexcept;
+  void erase_active(std::size_t offset) noexcept;
 
   ConnectionStateConfig config_;
   std::vector<std::uint64_t> active_requests_;
   std::vector<MessageType> active_request_types_;
+  std::vector<bool> query_result_ended_;
   ConnectionPhase phase_{ConnectionPhase::kAwaitingHello};
   std::uint64_t last_request_id_{};
   std::uint32_t negotiated_maximum_payload_size_{};

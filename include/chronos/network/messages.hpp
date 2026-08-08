@@ -4,9 +4,11 @@
 #include "chronos/common/bytes.hpp"
 #include "chronos/common/result.hpp"
 #include "chronos/network/protocol.hpp"
+#include "chronos/schema/logical_type.hpp"
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string_view>
 #include <vector>
 
@@ -19,6 +21,9 @@ inline constexpr std::size_t kIngestEnvelopeSize = 8U;
 inline constexpr std::size_t kIngestAcknowledgementSize = 32U;
 inline constexpr std::size_t kQueryEnvelopeSize = 8U;
 inline constexpr std::size_t kErrorEnvelopeSize = 8U;
+inline constexpr std::size_t kQueryResultEnvelopeSize = 16U;
+inline constexpr std::size_t kQueryResultColumnEnvelopeSize = 16U;
+inline constexpr std::uint32_t kQueryResultNullCellLength = 0xffff'ffffU;
 
 enum class DurabilityMode : std::uint8_t { kAsync = 1, kLocalSync = 2 };
 enum class IngestOutcome : std::uint8_t { kApplied = 1, kMatchingRetry = 2 };
@@ -72,6 +77,44 @@ struct ErrorMessageView {
   common::ByteView message;
 };
 
+struct QueryResultLimits {
+  ProtocolLimits protocol;
+  std::uint32_t maximum_rows{1'048'576U};
+  std::uint32_t maximum_columns{4096U};
+  std::uint32_t maximum_column_name_bytes{1024U};
+};
+
+struct QueryResultColumn {
+  std::string_view name;
+  schema::LogicalType type;
+  bool nullable{};
+};
+
+struct QueryResultCell {
+  bool is_null{};
+  common::ByteView value;
+};
+
+class QueryResultBatchView {
+public:
+  QueryResultBatchView() = delete;
+
+  [[nodiscard]] std::uint32_t row_count() const noexcept;
+  [[nodiscard]] std::span<const QueryResultColumn> columns() const noexcept;
+  [[nodiscard]] const QueryResultCell* cell(std::uint32_t row, std::size_t column) const noexcept;
+
+private:
+  QueryResultBatchView(std::uint32_t rows, std::vector<QueryResultColumn> columns,
+                       std::vector<QueryResultCell> cells) noexcept;
+
+  std::uint32_t rows_{};
+  std::vector<QueryResultColumn> columns_;
+  std::vector<QueryResultCell> cells_;
+
+  friend common::Result<QueryResultBatchView> decode_query_result_batch(common::ByteView,
+                                                                        const QueryResultLimits&);
+};
+
 [[nodiscard]] common::Result<std::vector<std::byte>> encode_client_hello(const ClientHello& hello);
 [[nodiscard]] common::Result<ClientHello> decode_client_hello(common::ByteView payload);
 [[nodiscard]] common::Result<std::vector<std::byte>> encode_server_hello(const ServerHello& hello);
@@ -94,6 +137,12 @@ encode_error_message(ProtocolErrorCode code, std::string_view message,
                      const ProtocolLimits& limits = {});
 [[nodiscard]] common::Result<ErrorMessageView>
 decode_error_message(common::ByteView payload, const ProtocolLimits& limits = {});
+[[nodiscard]] common::Result<std::vector<std::byte>>
+encode_query_result_batch(std::uint32_t rows, std::span<const QueryResultColumn> columns,
+                          std::span<const QueryResultCell> cells,
+                          const QueryResultLimits& limits = {});
+[[nodiscard]] common::Result<QueryResultBatchView>
+decode_query_result_batch(common::ByteView payload, const QueryResultLimits& limits = {});
 
 } // namespace chronos::network
 

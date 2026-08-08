@@ -128,7 +128,19 @@ offset as u64 values. Applied acknowledgements require nonzero record and segmen
 Matching retries encode all three position fields as zero because no new WAL operation occurred.
 
 `QUERY_REQUEST` begins with format u16, reserved u16 zero, SQL byte length u32, and exact nonempty
-Unicode-scalar UTF-8 SQL. Query result batches remain a subsequent Phase 10 payload assignment.
+Unicode-scalar UTF-8 SQL.
+
+`QUERY_RESULT` begins with format u16 `1`, flags u16 zero, row count u32, column count u32, and
+descriptor-byte length u32. Column count is nonzero and at most 4096; row count may be zero. The
+descriptor region contains exactly `column_count` entries, each: logical type u16, type parameters
+u16/u16, nullable u8 (0/1), reserved u8 zero, nonempty UTF-8 name length u32, reserved u32 zero, and
+exact name bytes. Types and parameters use the frozen Columnar Batch v1 registry.
+
+Cells follow row-major. Each is a u32 length plus exact bytes. Length `0xffffffff` is NULL, carries
+no bytes, and requires a nullable descriptor. Non-NULL fixed-width cells have the registry width;
+Boolean is one byte 0/1. STRING/SYMBOL cells are valid Unicode-scalar UTF-8; BINARY is uninterpreted.
+No trailing bytes are allowed. A zero-row batch carries descriptors and no cells. `END_STREAM`
+forbids a later result batch, while an empty `QUERY_END` separately confirms successful execution.
 
 `ERROR` begins with format u16, stable error code u16, message length u32, and an exact nonempty
 Unicode-scalar UTF-8 diagnostic. Codes cover malformed frames, unsupported version, invalid state,

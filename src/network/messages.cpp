@@ -5,8 +5,11 @@
 #include "chronos/common/checked_math.hpp"
 #include "chronos/schema/utf8.hpp"
 
+#include <array>
 #include <limits>
 #include <new>
+#include <optional>
+#include <span>
 #include <string>
 #include <utility>
 
@@ -28,6 +31,104 @@ namespace {
 [[nodiscard]] bool valid_durability(const std::uint8_t value) noexcept {
   return value == static_cast<std::uint8_t>(DurabilityMode::kAsync) ||
          value == static_cast<std::uint8_t>(DurabilityMode::kLocalSync);
+}
+
+[[nodiscard]] std::optional<std::size_t>
+fixed_query_cell_size(const schema::LogicalTypeKind kind) noexcept {
+  switch (kind) {
+  case schema::LogicalTypeKind::kBool:
+  case schema::LogicalTypeKind::kInt8:
+  case schema::LogicalTypeKind::kUInt8:
+    return 1U;
+  case schema::LogicalTypeKind::kInt16:
+  case schema::LogicalTypeKind::kUInt16:
+    return 2U;
+  case schema::LogicalTypeKind::kInt32:
+  case schema::LogicalTypeKind::kUInt32:
+  case schema::LogicalTypeKind::kFloat32:
+  case schema::LogicalTypeKind::kDate:
+    return 4U;
+  case schema::LogicalTypeKind::kInt64:
+  case schema::LogicalTypeKind::kUInt64:
+  case schema::LogicalTypeKind::kFloat64:
+  case schema::LogicalTypeKind::kTimestampNs:
+    return 8U;
+  case schema::LogicalTypeKind::kDecimal:
+  case schema::LogicalTypeKind::kUuid:
+    return 16U;
+  case schema::LogicalTypeKind::kSymbol:
+  case schema::LogicalTypeKind::kString:
+  case schema::LogicalTypeKind::kBinary:
+    return std::nullopt;
+  }
+  return std::nullopt;
+}
+
+[[nodiscard]] bool decimal_fits_precision(const common::ByteView bytes,
+                                          const std::uint16_t precision) noexcept {
+  if (bytes.size() != 16U)
+    return false;
+  std::array<std::uint8_t, 16> magnitude{};
+  for (std::size_t index = 0U; index < magnitude.size(); ++index)
+    magnitude[index] = std::to_integer<std::uint8_t>(bytes[index]);
+  if ((magnitude.back() & 0x80U) != 0U) {
+    std::uint16_t carry = 1U;
+    for (std::uint8_t& byte : magnitude) {
+      const auto inverted = static_cast<std::uint8_t>(~static_cast<unsigned int>(byte));
+      const std::uint16_t value = static_cast<std::uint16_t>(inverted) + carry;
+      byte = static_cast<std::uint8_t>(value & 0xffU);
+      carry = static_cast<std::uint16_t>(value >> 8U);
+    }
+  }
+  std::array<std::uint8_t, 16> limit{};
+  limit.front() = 1U;
+  for (std::uint16_t digit = 0U; digit < precision; ++digit) {
+    std::uint16_t carry = 0U;
+    for (std::uint8_t& byte : limit) {
+      const std::uint16_t value = static_cast<std::uint16_t>(byte) * 10U + carry;
+      byte = static_cast<std::uint8_t>(value & 0xffU);
+      carry = static_cast<std::uint16_t>(value >> 8U);
+    }
+  }
+  for (std::size_t index = magnitude.size(); index > 0U; --index) {
+    if (magnitude[index - 1U] != limit[index - 1U])
+      return magnitude[index - 1U] < limit[index - 1U];
+  }
+  return false;
+}
+
+[[nodiscard]] common::Status validate_query_cell(const QueryResultColumn& column,
+                                                 const QueryResultCell& cell) {
+  if (cell.is_null)
+    return column.nullable && cell.value.empty()
+               ? common::Status::ok()
+               : invalid("query result NULL cell is not canonical");
+  if (const auto fixed = fixed_query_cell_size(column.type.kind()); fixed.has_value()) {
+    if (cell.value.size() != *fixed)
+      return invalid("query result fixed-width cell size is invalid");
+    if (column.type.kind() == schema::LogicalTypeKind::kBool &&
+        cell.value.front() != std::byte{0} && cell.value.front() != std::byte{1})
+      return invalid("query result Boolean cell is not canonical");
+    if (column.type.kind() == schema::LogicalTypeKind::kDecimal &&
+        !decimal_fits_precision(cell.value, column.type.parameter_0()))
+      return invalid("query result decimal exceeds its declared precision");
+  } else if ((column.type.kind() == schema::LogicalTypeKind::kString ||
+              column.type.kind() == schema::LogicalTypeKind::kSymbol) &&
+             !schema::is_valid_utf8(cell.value)) {
+    return invalid("query result text cell is not valid UTF-8");
+  }
+  if (cell.value.size() >= kQueryResultNullCellLength)
+    return invalid("query result cell is too large");
+  return common::Status::ok();
+}
+
+[[nodiscard]] common::Status validate_query_result_limits(const QueryResultLimits& limits) {
+  if (const common::Status status = validate_protocol_limits(limits.protocol); !status.is_ok())
+    return status;
+  if (limits.maximum_rows == 0U || limits.maximum_columns == 0U || limits.maximum_columns > 4096U ||
+      limits.maximum_column_name_bytes == 0U || limits.maximum_column_name_bytes > 65'536U)
+    return invalid("query result limits are invalid");
+  return common::Status::ok();
 }
 
 [[nodiscard]] common::Result<std::vector<std::byte>> allocated(const std::size_t size) {
@@ -85,6 +186,24 @@ validate_acknowledgement(const IngestAcknowledgement& acknowledgement) {
 }
 
 } // namespace
+
+QueryResultBatchView::QueryResultBatchView(std::uint32_t rows,
+                                           std::vector<QueryResultColumn> columns,
+                                           std::vector<QueryResultCell> cells) noexcept
+    : rows_(rows), columns_(std::move(columns)), cells_(std::move(cells)) {}
+
+std::uint32_t QueryResultBatchView::row_count() const noexcept {
+  return rows_;
+}
+std::span<const QueryResultColumn> QueryResultBatchView::columns() const noexcept {
+  return columns_;
+}
+const QueryResultCell* QueryResultBatchView::cell(const std::uint32_t row,
+                                                  const std::size_t column) const noexcept {
+  if (row >= rows_ || column >= columns_.size())
+    return nullptr;
+  return &cells_[static_cast<std::size_t>(row) * columns_.size() + column];
+}
 
 common::Result<std::vector<std::byte>> encode_client_hello(const ClientHello& hello) {
   if (const common::Status status = validate_hello_range(hello); !status.is_ok())
@@ -389,6 +508,152 @@ common::Result<ErrorMessageView> decode_error_message(const common::ByteView pay
   if (!schema::is_valid_utf8(message))
     return common::make_unexpected(corrupt("ERROR message is invalid UTF-8"));
   return ErrorMessageView{.code = static_cast<ProtocolErrorCode>(*code), .message = message};
+}
+
+common::Result<std::vector<std::byte>> encode_query_result_batch(
+    const std::uint32_t rows, const std::span<const QueryResultColumn> columns,
+    const std::span<const QueryResultCell> cells, const QueryResultLimits& limits) {
+  if (const common::Status status = validate_query_result_limits(limits); !status.is_ok())
+    return common::make_unexpected(status);
+  const auto cell_count = common::checked_multiply(static_cast<std::size_t>(rows), columns.size());
+  if (rows > limits.maximum_rows || columns.empty() || columns.size() > limits.maximum_columns ||
+      !cell_count.has_value() || *cell_count != cells.size())
+    return common::make_unexpected(invalid("query result batch shape is invalid"));
+
+  std::size_t descriptor_bytes = 0U;
+  std::size_t total = kQueryResultEnvelopeSize;
+  for (const QueryResultColumn& column : columns) {
+    const common::ByteView name = std::as_bytes(std::span{column.name.data(), column.name.size()});
+    if (name.empty() || name.size() > limits.maximum_column_name_bytes ||
+        !schema::is_valid_utf8(name))
+      return common::make_unexpected(invalid("query result column name is invalid"));
+    const auto next_descriptors =
+        common::checked_add(descriptor_bytes, kQueryResultColumnEnvelopeSize + name.size());
+    if (!next_descriptors.has_value())
+      return common::make_unexpected(invalid("query result descriptor size overflowed"));
+    descriptor_bytes = *next_descriptors;
+  }
+  const auto after_descriptors = common::checked_add(total, descriptor_bytes);
+  if (!after_descriptors.has_value())
+    return common::make_unexpected(invalid("query result descriptor size overflowed"));
+  total = *after_descriptors;
+  for (std::size_t index = 0U; index < cells.size(); ++index) {
+    const QueryResultColumn& column = columns[index % columns.size()];
+    if (const common::Status status = validate_query_cell(column, cells[index]); !status.is_ok())
+      return common::make_unexpected(status);
+    const auto next = common::checked_add(total, std::size_t{4U} + cells[index].value.size());
+    if (!next.has_value())
+      return common::make_unexpected(invalid("query result cell size overflowed"));
+    total = *next;
+  }
+  if (descriptor_bytes > std::numeric_limits<std::uint32_t>::max() ||
+      total > limits.protocol.maximum_payload_size)
+    return common::make_unexpected(invalid("query result batch exceeds the payload limit"));
+  auto bytes = allocated(total);
+  if (!bytes.has_value())
+    return common::make_unexpected(bytes.error());
+  common::ByteWriter writer{*bytes};
+  if (!writer.write_u16_le(kMessagePayloadFormat).is_ok() || !writer.write_u16_le(0U).is_ok() ||
+      !writer.write_u32_le(rows).is_ok() ||
+      !writer.write_u32_le(static_cast<std::uint32_t>(columns.size())).is_ok() ||
+      !writer.write_u32_le(static_cast<std::uint32_t>(descriptor_bytes)).is_ok())
+    return common::make_unexpected(invalid("query result batch planning mismatch"));
+  for (const QueryResultColumn& column : columns) {
+    const common::ByteView name = std::as_bytes(std::span{column.name.data(), column.name.size()});
+    if (!writer.write_u16_le(column.type.code()).is_ok() ||
+        !writer.write_u16_le(column.type.parameter_0()).is_ok() ||
+        !writer.write_u16_le(column.type.parameter_1()).is_ok() ||
+        !writer.write_u8(column.nullable ? 1U : 0U).is_ok() || !writer.write_u8(0U).is_ok() ||
+        !writer.write_u32_le(static_cast<std::uint32_t>(name.size())).is_ok() ||
+        !writer.write_u32_le(0U).is_ok() || !writer.write_exact(name).is_ok())
+      return common::make_unexpected(invalid("query result descriptor planning mismatch"));
+  }
+  for (const QueryResultCell& cell : cells) {
+    const std::uint32_t length =
+        cell.is_null ? kQueryResultNullCellLength : static_cast<std::uint32_t>(cell.value.size());
+    if (!writer.write_u32_le(length).is_ok() || !writer.write_exact(cell.value).is_ok())
+      return common::make_unexpected(invalid("query result cell planning mismatch"));
+  }
+  return bytes;
+}
+
+common::Result<QueryResultBatchView> decode_query_result_batch(const common::ByteView payload,
+                                                               const QueryResultLimits& limits) {
+  if (const common::Status status = validate_query_result_limits(limits); !status.is_ok())
+    return common::make_unexpected(status);
+  if (payload.size() < kQueryResultEnvelopeSize ||
+      payload.size() > limits.protocol.maximum_payload_size)
+    return common::make_unexpected(corrupt("QUERY_RESULT payload size is invalid"));
+  common::ByteReader reader{payload};
+  const auto format = reader.read_u16_le();
+  const auto flags = reader.read_u16_le();
+  const auto rows = reader.read_u32_le();
+  const auto column_count = reader.read_u32_le();
+  const auto descriptor_bytes = reader.read_u32_le();
+  if (!format.has_value() || !flags.has_value() || !rows.has_value() || !column_count.has_value() ||
+      !descriptor_bytes.has_value() || *format != kMessagePayloadFormat || *flags != 0U ||
+      *rows > limits.maximum_rows || *column_count == 0U ||
+      *column_count > limits.maximum_columns || *descriptor_bytes > reader.remaining())
+    return common::make_unexpected(corrupt("QUERY_RESULT envelope is invalid"));
+  auto descriptors = reader.read_subreader(*descriptor_bytes);
+  if (!descriptors.has_value())
+    return common::make_unexpected(corrupt("QUERY_RESULT descriptors are truncated"));
+  try {
+    std::vector<QueryResultColumn> columns;
+    columns.reserve(*column_count);
+    for (std::uint32_t index = 0U; index < *column_count; ++index) {
+      const auto code = descriptors->read_u16_le();
+      const auto parameter_0 = descriptors->read_u16_le();
+      const auto parameter_1 = descriptors->read_u16_le();
+      const auto nullable = descriptors->read_u8();
+      const auto reserved_0 = descriptors->read_u8();
+      const auto name_size = descriptors->read_u32_le();
+      const auto reserved_1 = descriptors->read_u32_le();
+      if (!code.has_value() || !parameter_0.has_value() || !parameter_1.has_value() ||
+          !nullable.has_value() || !reserved_0.has_value() || !name_size.has_value() ||
+          !reserved_1.has_value() || *nullable > 1U || *reserved_0 != 0U || *reserved_1 != 0U ||
+          *name_size == 0U || *name_size > limits.maximum_column_name_bytes)
+        return common::make_unexpected(corrupt("QUERY_RESULT column descriptor is invalid"));
+      const auto kind = schema::logical_type_kind_from_code(*code);
+      if (!kind.has_value())
+        return common::make_unexpected(corrupt("QUERY_RESULT logical type is unassigned"));
+      const auto type = schema::LogicalType::create(*kind, *parameter_0, *parameter_1);
+      const auto name = descriptors->read_exact(*name_size);
+      if (!type.has_value() || !name.has_value() || !schema::is_valid_utf8(*name))
+        return common::make_unexpected(corrupt("QUERY_RESULT column descriptor is invalid"));
+      // Character bytes may be inspected through char by the C++ aliasing rules.
+      // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+      const std::string_view name_view{reinterpret_cast<const char*>(name->data()), name->size()};
+      columns.push_back({.name = name_view, .type = *type, .nullable = *nullable == 1U});
+    }
+    if (!descriptors->empty())
+      return common::make_unexpected(corrupt("QUERY_RESULT descriptor length is not canonical"));
+    const auto cell_count = common::checked_multiply(static_cast<std::size_t>(*rows),
+                                                     static_cast<std::size_t>(*column_count));
+    if (!cell_count.has_value())
+      return common::make_unexpected(corrupt("QUERY_RESULT cell count overflowed"));
+    const std::size_t number_of_cells = cell_count.value();
+    std::vector<QueryResultCell> cells;
+    cells.reserve(number_of_cells);
+    for (std::size_t index = 0U; index < number_of_cells; ++index) {
+      const auto length = reader.read_u32_le();
+      if (!length.has_value())
+        return common::make_unexpected(corrupt("QUERY_RESULT cell is truncated"));
+      const bool is_null = *length == kQueryResultNullCellLength;
+      const auto value = reader.read_exact(is_null ? 0U : *length);
+      if (!value.has_value())
+        return common::make_unexpected(corrupt("QUERY_RESULT cell is truncated"));
+      QueryResultCell cell{.is_null = is_null, .value = *value};
+      if (!validate_query_cell(columns[index % columns.size()], cell).is_ok())
+        return common::make_unexpected(corrupt("QUERY_RESULT cell is not canonical"));
+      cells.push_back(cell);
+    }
+    if (!reader.empty())
+      return common::make_unexpected(corrupt("QUERY_RESULT payload has trailing bytes"));
+    return QueryResultBatchView{*rows, std::move(columns), std::move(cells)};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted());
+  }
 }
 
 } // namespace chronos::network

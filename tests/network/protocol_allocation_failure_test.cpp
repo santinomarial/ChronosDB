@@ -83,6 +83,16 @@ TEST(ProtocolAllocationFailureTest, MessageEncodersClassifyEveryOwnedAllocation)
   expect_owned_allocation_is_classified([&] { return encode_query_request("SELECT 1"); });
   expect_owned_allocation_is_classified(
       [&] { return encode_error_message(ProtocolErrorCode::kOverloaded, "full"); });
+  const schema::LogicalType type =
+      schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
+  const std::array<QueryResultColumn, 1> columns{
+      QueryResultColumn{.name = "value", .type = type, .nullable = false}};
+  const std::array<std::byte, 8> value{};
+  const std::array<QueryResultCell, 1> cells{QueryResultCell{.value = value}};
+  expect_owned_allocation_is_classified(
+      [&] { return encode_query_result_batch(1U, columns, cells); });
+  const std::vector<std::byte> encoded = *encode_query_result_batch(1U, columns, cells);
+  expect_owned_allocation_is_classified([&] { return decode_query_result_batch(encoded); });
 }
 
 TEST(ProtocolAllocationFailureTest, ConnectionCreationClassifiesItsOwnedRequestStorage) {
