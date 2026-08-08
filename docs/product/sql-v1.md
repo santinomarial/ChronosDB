@@ -12,13 +12,15 @@
 > unsupported because vector sources do not expose that identity. The exact bounded two-input ASOF
 > operator, checked left-deep binary plan, bound multi-source lowering, and same-epoch snapshot
 > instantiation are implemented. Checked adapters now
-> instantiates those supported physical pipelines over one exact complete append-only tablet
+> instantiate those supported physical pipelines over one exact complete append-only tablet
 > snapshot while preserving automatic row-version shape and hidden-column removal. Global and
 > grouped vector aggregation now implements STRING/SYMBOL/BINARY `MIN` and `MAX` with unsigned byte
 > order and bounded query-accounted winner storage. Group lookup uses bounded query-accounted
 > canonical hashing with exact collision comparison; this changes no grouping or output-order
 > semantics. Independent physical pipelines may now use a bounded unordered parallel merge. It is
 > not selected by SQL lowering yet and never supplies ORDER BY, LATEST, ASOF, or LIMIT order.
+> A bounded checksummed external sort is available as a physical primitive, but SQL planning still
+> selects the in-memory sort until the cost and temporary-directory policy is accepted.
 > SQL v1 is deliberately smaller than the SQL
 > standard. Unsupported syntax must produce a clear bind or
 > parse error; it must not be accepted with different semantics.

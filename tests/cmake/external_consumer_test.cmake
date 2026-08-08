@@ -107,6 +107,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/query/snapshot.hpp>
 #include <chronos/query/snapshot_pipeline.hpp>
 #include <chronos/query/sort.hpp>
+#include <chronos/query/spill_sort.hpp>
 #include <chronos/query/statement_binder.hpp>
 #include <chronos/query/timestamp_range.hpp>
 #include <chronos/query/value.hpp>
@@ -463,6 +464,9 @@ int main() {
                         .maximum_retained_buffer_bytes = 8'192U}};
   const auto installed_sort_state_bytes =
       chronos::query::sort_state_reservation_bytes(installed_sort_limits);
+  const auto installed_spill_state_bytes =
+      chronos::query::spill_sort_configuration_reservation_bytes(
+          chronos::query::SpillSortLimits{});
   const auto installed_sort_plan = chronos::query::PhysicalPipelinePlan::create(
       {{.type = installed_expression_type, .nullable = false}},
       {chronos::query::SortStage{
@@ -714,6 +718,7 @@ int main() {
                  installed_grouped_plan.has_value() &&
                  installed_grouped_plan->output_columns().size() == 2U &&
                  installed_sort_state_bytes.has_value() &&
+                 installed_spill_state_bytes.has_value() &&
                  installed_sort_plan.has_value() &&
                  installed_sort_plan->output_columns().size() == 1U &&
                  create_latest != nullptr &&

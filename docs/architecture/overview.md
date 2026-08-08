@@ -273,13 +273,19 @@ query credit and a bounded unordered merge for independent pipelines. Each worke
 thread-affine pipeline, a fixed ring release/acquire-publishes complete accounted chunks, and
 terminal failure cancels and joins every sibling before returning a deterministic status. SQL
 ordering remains the responsibility of explicit complete physical keys, never queue arrival.
+[ADR 0057](../adr/0057-bounded-checksummed-external-sort.md) adds a finite external-sort baseline:
+contiguous stable in-memory runs use an ephemeral versioned and per-row-checksummed format, while a
+bounded pull merge preserves exact physical comparisons and cross-run ties under explicit memory,
+record, run-count, and disk quotas. Temporary files are caller-namespaced, exclusively created, and
+removed on completion or ownership unwinding; they are not durable or recoverable state.
 [ADR 0048](../adr/0048-snapshot-tablet-physical-pipeline-instantiation.md) now validates a lowered
 plan's complete schema and optional suffix input, loads one held snapshot's durable images, composes
 every current source, and instantiates the checked pipeline without collapsing SQL diagnostics.
 Future correction/delete version resolution remains separate work. Variable-width aggregate
 extrema now use exact unsigned byte order and reserve-before-copy query accounting under
-[ADR 0049](../adr/0049-query-accounted-variable-width-extrema.md). Optimizer selection of parallel
-strategies, spilling, adaptive behavior, and additional join algorithms remain deferred.
+[ADR 0049](../adr/0049-query-accounted-variable-width-extrema.md). Optimizer selection of in-memory
+versus spill and parallel strategies, adaptive behavior, and additional join algorithms remains
+deferred.
 Implemented reservations and accounted chunks provide the admission/ownership invariant, but
 future operators must reserve every retained allocation and release snapshot pins and memory by
 cooperative cancellation unwinding.

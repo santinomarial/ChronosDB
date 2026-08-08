@@ -91,3 +91,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0054](0054-bound-asof-select-physical-lowering.md) | Bound ASOF SELECT physical lowering | accepted |
 | [0055](0055-snapshot-bound-multi-source-asof-instantiation.md) | Snapshot-bound multi-source ASOF instantiation | accepted |
 | [0056](0056-shared-query-credit-and-bounded-parallel-scheduling.md) | Shared query credit and bounded parallel scheduling | accepted |
+| [0057](0057-bounded-checksummed-external-sort.md) | Bounded checksummed external sort | accepted |

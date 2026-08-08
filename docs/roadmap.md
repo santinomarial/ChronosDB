@@ -481,9 +481,13 @@ No phase passes because its code merely compiles. A phase passes only when its a
   shared query credit plus a bounded parallel merge for independent unordered pipelines: complete
   task thread affinity, a fixed-capacity accounted-chunk queue, explicit release/acquire
   publication, deterministic failure arbitration, cooperative join cleanup, and concurrency/
-  failure/fuzz/benchmark/consumer evidence. Optimizer rules, future correction/delete row-version
-  resolution, mapped/asynchronous providers, publication-pin credit deduplication, spill, and full
-  scalar-engine differential plan execution are unimplemented.
+  failure/fuzz/benchmark/consumer evidence. ADR 0057 and the fortieth increment add finite external
+  sorting over contiguous stable runs: an ephemeral versioned/checksummed identity-free row format,
+  exact cross-run tie recovery, bounded record/file/disk/configuration ownership, canonical
+  pull-based output, corruption and early-cleanup behavior, and failure/fuzz/benchmark/consumer
+  evidence. Optimizer rules, future correction/delete row-version resolution, mapped/asynchronous
+  providers, publication-pin credit deduplication, and full scalar-engine differential plan
+  execution are unimplemented.
 
 - **Scope:** bounded vectors, vectorized scans/expressions/aggregates/joins, physical planning, memory accounting, cancellation, parallel scheduling, and spill for explicitly supported operators.
 - **Explicit non-scope:** distributed fragments, GPU novelty, unbounded query memory, or optimizer rules lacking semantic/differential validation.

@@ -194,14 +194,19 @@
 > hidden-column removal, allocation sweeps, lowering fuzzing, and measured lowering overhead.
 > Snapshot-bound ASOF execution additionally covers same-epoch three-source execution, exact
 > per-source shape/suffix inference, hostile late-source cleanup, allocation sweeps, authenticated
-> fuzzing, and connector-plus-execution measurement. Generated-identity base ordering and spill
-> remain outside this claim.
+> fuzzing, and connector-plus-execution measurement. Generated-identity base ordering remains
+> outside this claim.
 > Bounded parallel scheduling adds single-charge shared-credit lifetime, whole-task thread
 > affinity, forced simultaneous starts, one-slot producer backpressure, serial-multiset
 > equivalence, deterministic racing-error arbitration, early-destruction joins, hostile limits,
 > caller and worker allocation failure classification, scheduler fuzzing, sanitizer/consumer
 > coverage, and one-to-four-worker overhead profiles. It makes no SQL-order or optimizer-selection
 > claim.
+> Bounded external sort adds forced contiguous runs and output batches, exact direction/NULL and
+> stable cross-run ties, an independent random model, finite row/run/record/disk/configuration
+> limits, per-row/header corruption detection, early and failure cleanup, exhaustive allocation
+> failure, spill fuzzing, sanitizer/consumer coverage, and profiles that report actual bytes read
+> and written. Automatic optimizer selection and crash-orphan scavenging remain outside this claim.
 > Complete append-only tablet scanning now composes the exact durable, sealed-head, and active-head
 > publications from one aggregate epoch. Deterministic multiset and suffix checks, head-only exact
 > predicate/helper-removal coverage, hostile finite limits, allocation-failure injection, public

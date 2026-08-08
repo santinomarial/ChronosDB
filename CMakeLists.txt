@@ -349,6 +349,7 @@ add_library(
   src/query/snapshot.cpp
   src/query/snapshot_pipeline.cpp
   src/query/sort.cpp
+  src/query/spill_sort.cpp
   src/query/statement_binder.cpp
   src/query/value.cpp
   src/query/vector_chunk.cpp
@@ -366,7 +367,7 @@ target_include_directories(
 )
 target_link_libraries(
   chronos_query
-  PUBLIC chronos::columnar chronos::common chronos::cseg chronos::head chronos::manifest
+  PUBLIC chronos::columnar chronos::common chronos::cseg chronos::head chronos::io chronos::manifest
          chronos::schema
   PRIVATE Threads::Threads
 )
@@ -820,6 +821,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/snapshot_test.cpp
     tests/query/sort_header_self_contained.cpp
     tests/query/sort_test.cpp
+    tests/query/spill_sort_header_self_contained.cpp
+    tests/query/spill_sort_test.cpp
     tests/query/statement_binder_header_self_contained.cpp
     tests/query/statement_binder_test.cpp
     tests/query/timestamp_range_header_self_contained.cpp
@@ -854,6 +857,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/physical_lowering_allocation_failure_test.cpp
     tests/query/relational_plan_allocation_failure_test.cpp
     tests/query/sort_allocation_failure_test.cpp
+    tests/query/spill_sort_allocation_failure_test.cpp
     tests/support/failing_allocator.cpp
   )
   set_target_properties(chronos_query_allocation_failure_tests PROPERTIES CXX_EXTENSIONS OFF)
@@ -1072,6 +1076,7 @@ if(CHRONOS_BUILD_BENCHMARKS)
     benchmarks/query/relational_plan_benchmark.cpp
     benchmarks/query/resource_context_benchmark.cpp
     benchmarks/query/sort_benchmark.cpp
+    benchmarks/query/spill_sort_benchmark.cpp
     benchmarks/query/vector_chunk_benchmark.cpp
     benchmarks/support/counting_allocator.cpp
   )
@@ -1310,6 +1315,16 @@ if(CHRONOS_BUILD_FUZZERS)
   chronos_set_project_warnings(chronos_parallel_scheduler_fuzz)
   chronos_enable_sanitizers(chronos_parallel_scheduler_fuzz)
   chronos_enable_static_analysis(chronos_parallel_scheduler_fuzz)
+
+  add_executable(chronos_spill_sort_fuzz tests/fuzz/spill_sort_fuzz.cpp)
+  set_target_properties(chronos_spill_sort_fuzz PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_spill_sort_fuzz PRIVATE cxx_std_23)
+  target_link_libraries(chronos_spill_sort_fuzz PRIVATE chronos::query)
+  target_compile_options(chronos_spill_sort_fuzz PRIVATE -fsanitize=fuzzer)
+  target_link_options(chronos_spill_sort_fuzz PRIVATE -fsanitize=fuzzer)
+  chronos_set_project_warnings(chronos_spill_sort_fuzz)
+  chronos_enable_sanitizers(chronos_spill_sort_fuzz)
+  chronos_enable_static_analysis(chronos_spill_sort_fuzz)
 
   add_executable(chronos_cseg_scan_fuzz tests/fuzz/cseg_scan_fuzz.cpp)
   set_target_properties(chronos_cseg_scan_fuzz PROPERTIES CXX_EXTENSIONS OFF)

@@ -146,6 +146,9 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Bounded parallel query scheduling](learning/bounded-parallel-query-scheduling.md): implemented
   whole-pipeline thread affinity, a fixed-capacity accounted-chunk merge, deterministic failure
   arbitration, cooperative join cleanup, hostile/failure/fuzz coverage, and overhead measurement.
+- [Bounded external sort](learning/bounded-external-sort.md): implemented contiguous stable runs,
+  ephemeral checksummed row bytes, exact cross-run ties, finite memory/disk ownership, corruption
+  handling, cleanup, fuzzing, and I/O measurement boundaries.
 - [Physical operator foundation](learning/physical-operator-foundation.md): implemented accounted
   chunk ownership, explicit pull/end/error lifecycle, allocation-free SQL Boolean filtering,
   allocation-free stable column-subset projection and global LIMIT, scalar-differential and
