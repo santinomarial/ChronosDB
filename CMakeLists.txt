@@ -1182,6 +1182,24 @@ if(CHRONOS_BUILD_BENCHMARKS)
   chronos_set_project_warnings(chronos_query_benchmarks)
   chronos_enable_sanitizers(chronos_query_benchmarks)
   chronos_enable_static_analysis(chronos_query_benchmarks)
+
+  add_executable(
+    chronos_network_benchmarks
+    benchmarks/network/network_benchmark.cpp
+    benchmarks/support/counting_allocator.cpp
+  )
+  set_target_properties(chronos_network_benchmarks PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_network_benchmarks PRIVATE cxx_std_23)
+  target_include_directories(
+    chronos_network_benchmarks PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks"
+  )
+  target_link_libraries(
+    chronos_network_benchmarks
+    PRIVATE chronos::network benchmark::benchmark_main Threads::Threads
+  )
+  chronos_set_project_warnings(chronos_network_benchmarks)
+  chronos_enable_sanitizers(chronos_network_benchmarks)
+  chronos_enable_static_analysis(chronos_network_benchmarks)
 endif()
 
 if(CHRONOS_BUILD_FUZZERS)
