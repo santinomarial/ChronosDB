@@ -305,6 +305,15 @@ int main() {
           chronos::query::SnapshotTabletPipelineLimits);
   const InstantiateSnapshotTabletPipelineFunction instantiate_snapshot_tablet_pipeline =
       &chronos::query::instantiate_snapshot_tablet_pipeline;
+  using InstantiateSnapshotAsofPlanFunction =
+      chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
+          const chronos::query::QueryResourceContext&,
+          const chronos::manifest::ManifestStorage&,
+          const chronos::manifest::DatabaseStorageSnapshot&,
+          std::span<const chronos::query::SnapshotTabletSourceBinding>,
+          const chronos::query::PhysicalAsofPlan&);
+  const InstantiateSnapshotAsofPlanFunction instantiate_snapshot_asof_plan =
+      &chronos::query::instantiate_snapshot_asof_plan;
   using CreateHeadScanFunction =
       chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
           const chronos::query::QueryResourceContext&, chronos::head::HeadSnapshot,
@@ -763,6 +772,7 @@ int main() {
                  create_snapshot_cseg_part_scan != nullptr &&
                  create_snapshot_tablet_scan != nullptr &&
                  instantiate_snapshot_tablet_pipeline != nullptr &&
+                 instantiate_snapshot_asof_plan != nullptr &&
                  !cseg_metadata.has_value() &&
                  cseg_metadata.error().kind() ==
                      chronos::cseg::CsegMetadataDecodeErrorKind::kIncomplete &&

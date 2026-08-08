@@ -4,6 +4,7 @@
 #include "chronos/manifest/storage.hpp"
 #include "chronos/query/database_cseg_scan.hpp"
 #include "chronos/query/physical_plan.hpp"
+#include "chronos/query/row_version.hpp"
 #include "chronos/query/snapshot_pipeline.hpp"
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/schema_lineage.hpp"
@@ -209,6 +210,48 @@ template <typename Operation>
   return std::move(*result);
 }
 
+[[nodiscard]] PhysicalAsofPlan
+allocation_asof_plan(const test::SnapshotTabletScanFixture& fixture) {
+  std::vector<PhysicalColumnShape> source_shape{
+      {.type = fixture.schema_ptr()->columns().front().type(), .nullable = false}};
+  for (const VectorRowVersionColumnKind kind :
+       {VectorRowVersionColumnKind::kWalId, VectorRowVersionColumnKind::kRecordSequence,
+        VectorRowVersionColumnKind::kRowOrdinal, VectorRowVersionColumnKind::kOperation}) {
+    source_shape.push_back(
+        {.type = vector_row_version_column_type(kind).value(), .nullable = false});
+  }
+  std::vector<VectorAsofColumnShape> asof_shape;
+  std::vector<std::size_t> outputs;
+  for (std::size_t ordinal = 0U; ordinal < source_shape.size(); ++ordinal) {
+    asof_shape.push_back(
+        {.type = source_shape[ordinal].type, .nullable = source_shape[ordinal].nullable});
+    outputs.push_back(ordinal);
+  }
+  VectorAsofJoinDefinition definition{
+      .left_input_columns = asof_shape,
+      .right_input_columns = asof_shape,
+      .equality_keys = {{.left_column_ordinal = 0U, .right_column_ordinal = 0U}},
+      .left_timestamp_column_ordinal = 0U,
+      .right_timestamp_column_ordinal = 0U,
+      .right_physical_ordering_key_ordinals = {0U},
+      .right_row_version_first_column_ordinal = 1U,
+      .left_output_column_ordinals = outputs,
+      .right_output_column_ordinals = outputs};
+  std::vector<PhysicalColumnShape> joined_shape;
+  for (const VectorAsofColumnShape& column : vector_asof_join_output_shape(definition).value())
+    joined_shape.push_back({.type = column.type, .nullable = column.nullable});
+  std::vector<PhysicalAsofPlanJoin> joins;
+  joins.push_back({.left_preparation = PhysicalPipelinePlan::create(source_shape, {}).value(),
+                   .right_preparation = PhysicalPipelinePlan::create(source_shape, {}).value(),
+                   .definition = std::move(definition)});
+  return PhysicalAsofPlan::create(
+             std::move(joins),
+             PhysicalPipelinePlan::create(std::move(joined_shape),
+                                          {ColumnSubsetStage{.column_ordinals = {5U}}})
+                 .value())
+      .value();
+}
+
 TEST(DatabaseCsegScanAllocationFailureTest, PlannerClassifiesEveryOwnedAllocationFailure) {
   const AggregateAllocationFixture fixture = aggregate_allocation_fixture();
   bool reached_success = false;
@@ -308,6 +351,38 @@ TEST(DatabaseCsegScanAllocationFailureTest,
                                                   test::SnapshotTabletScanFixture::tablet_id(),
                                                   fixture.lineage(),
                                                   fixture.schema_ptr()->schema_id(), pipeline);
+    });
+    EXPECT_GT(observed, 0U);
+    if (instantiated.has_value()) {
+      reached_success = true;
+      instantiated->reset();
+      EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+      break;
+    }
+    EXPECT_EQ(instantiated.error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  }
+  EXPECT_TRUE(reached_success);
+}
+
+TEST(DatabaseCsegScanAllocationFailureTest,
+     SnapshotAsofInstantiationClassifiesEveryNewAllocationAndReleasesCredit) {
+  const test::SnapshotTabletScanFixture fixture{4U};
+  const PhysicalAsofPlan plan = allocation_asof_plan(fixture);
+  const SnapshotTabletSourceBinding source{
+      .target_tablet = test::SnapshotTabletScanFixture::tablet_id(),
+      .lineage = std::cref(fixture.lineage()),
+      .destination_schema_id = fixture.schema_ptr()->schema_id()};
+  const std::array sources{source, source};
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 256U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    QueryResourceContext resources =
+        QueryResourceContext::create(std::size_t{32U} * 1024U * 1024U).value();
+    std::size_t observed = 0U;
+    auto instantiated = run_aggregate_with_allocation_failure(fail_after, observed, [&] {
+      return instantiate_snapshot_asof_plan(resources, fixture.storage(), fixture.snapshot(),
+                                            sources, plan);
     });
     EXPECT_GT(observed, 0U);
     if (instantiated.has_value()) {

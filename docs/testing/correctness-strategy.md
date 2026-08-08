@@ -192,8 +192,10 @@
 > Bound ASOF lowering adds computed and widened equality preparation, ASOF LEFT nullability,
 > prior-source chains, post-join WHERE/aggregate/ORDER/LIMIT composition, joined identity keys,
 > hidden-column removal, allocation sweeps, lowering fuzzing, and measured lowering overhead.
-> Generated-identity base ordering, bound/multi-source ASOF execution, and spill remain outside this
-> claim.
+> Snapshot-bound ASOF execution additionally covers same-epoch three-source execution, exact
+> per-source shape/suffix inference, hostile late-source cleanup, allocation sweeps, authenticated
+> fuzzing, and connector-plus-execution measurement. Generated-identity base ordering and spill
+> remain outside this claim.
 > Complete append-only tablet scanning now composes the exact durable, sealed-head, and active-head
 > publications from one aggregate epoch. Deterministic multiset and suffix checks, head-only exact
 > predicate/helper-removal coverage, hostile finite limits, allocation-failure injection, public

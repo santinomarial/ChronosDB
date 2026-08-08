@@ -10,8 +10,10 @@
 #include "cseg/cseg_test_fixture.hpp"
 #include "query/snapshot_tablet_scan_test_fixture.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -230,6 +232,83 @@ void exercise_snapshot_pipeline(const std::span<const std::uint8_t> input) {
   }
 }
 
+[[nodiscard]] chronos::query::PhysicalAsofPlan
+snapshot_asof_plan(const chronos::query::test::SnapshotTabletScanFixture& fixture) {
+  using namespace chronos::query;
+  std::vector<PhysicalColumnShape> source_shape{
+      {.type = fixture.schema_ptr()->columns().front().type(), .nullable = false}};
+  for (const VectorRowVersionColumnKind kind :
+       {VectorRowVersionColumnKind::kWalId, VectorRowVersionColumnKind::kRecordSequence,
+        VectorRowVersionColumnKind::kRowOrdinal, VectorRowVersionColumnKind::kOperation}) {
+    source_shape.push_back(
+        {.type = vector_row_version_column_type(kind).value(), .nullable = false});
+  }
+  std::vector<VectorAsofColumnShape> asof_shape;
+  std::vector<std::size_t> outputs;
+  for (std::size_t ordinal = 0U; ordinal < source_shape.size(); ++ordinal) {
+    asof_shape.push_back(
+        {.type = source_shape[ordinal].type, .nullable = source_shape[ordinal].nullable});
+    outputs.push_back(ordinal);
+  }
+  VectorAsofJoinDefinition definition{
+      .left_input_columns = asof_shape,
+      .right_input_columns = asof_shape,
+      .equality_keys = {{.left_column_ordinal = 0U, .right_column_ordinal = 0U}},
+      .left_timestamp_column_ordinal = 0U,
+      .right_timestamp_column_ordinal = 0U,
+      .right_physical_ordering_key_ordinals = {0U},
+      .right_row_version_first_column_ordinal = 1U,
+      .left_output_column_ordinals = outputs,
+      .right_output_column_ordinals = outputs,
+      .left_outer = true};
+  std::vector<PhysicalColumnShape> joined_shape;
+  for (const VectorAsofColumnShape& column : vector_asof_join_output_shape(definition).value())
+    joined_shape.push_back({.type = column.type, .nullable = column.nullable});
+  std::vector<PhysicalAsofPlanJoin> joins;
+  joins.push_back({.left_preparation = PhysicalPipelinePlan::create(source_shape, {}).value(),
+                   .right_preparation = PhysicalPipelinePlan::create(source_shape, {}).value(),
+                   .definition = std::move(definition)});
+  return PhysicalAsofPlan::create(
+             std::move(joins),
+             PhysicalPipelinePlan::create(std::move(joined_shape),
+                                          {ColumnSubsetStage{.column_ordinals = {5U}}})
+                 .value())
+      .value();
+}
+
+void exercise_snapshot_asof(const std::span<const std::uint8_t> input) {
+  using namespace chronos::query;
+  // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+  static const test::SnapshotTabletScanFixture fixture{17U};
+  // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+  static const PhysicalAsofPlan plan = snapshot_asof_plan(fixture);
+  auto resources = QueryResourceContext::create(std::size_t{16U} * 1024U * 1024U);
+  if (!resources.has_value())
+    return;
+  SnapshotTabletSourceBinding left{.target_tablet = test::SnapshotTabletScanFixture::tablet_id(),
+                                   .lineage = std::cref(fixture.lineage()),
+                                   .destination_schema_id = fixture.schema_ptr()->schema_id()};
+  SnapshotTabletSourceBinding right = left;
+  if (input.size() > 1U && (input[1] & 1U) != 0U)
+    right.destination_schema_id = chronos::cseg::test::identifier<chronos::schema::SchemaId>(0x77U);
+  right.limits.scan.maximum_heads = input.size() < 3U || (input[2] & 1U) != 0U ? 1U : 0U;
+  const std::array sources{left, right};
+  std::span<const SnapshotTabletSourceBinding> selected{sources};
+  if (!input.empty() && (input.front() & 1U) != 0U)
+    selected = selected.first(1U);
+  auto pipeline = instantiate_snapshot_asof_plan(*resources, fixture.storage(), fixture.snapshot(),
+                                                 selected, plan);
+  if (!pipeline.has_value())
+    return;
+  if (input.size() > 3U && (input[3] & 1U) != 0U)
+    static_cast<void>(resources->request_cancel());
+  for (std::size_t pull = 0U; pull < 32U; ++pull) {
+    auto step = (*pipeline)->next(*resources);
+    if (!step.has_value() || step->kind() == PhysicalOperatorStepKind::kEnd)
+      break;
+  }
+}
+
 } // namespace
 
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_t size) {
@@ -257,5 +336,6 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
   exercise_exact_prune_filter(std::move(mutated_owner), input);
   exercise_complete_snapshot(input);
   exercise_snapshot_pipeline(input);
+  exercise_snapshot_asof(input);
   return 0;
 }

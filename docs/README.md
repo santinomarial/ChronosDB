@@ -174,6 +174,9 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Snapshot physical pipeline instantiation](learning/snapshot-physical-pipeline.md): implemented
   checked schema/suffix source selection, snapshot-bound image loading and complete-source
   composition for reusable physical plans, with end-to-end SQL execution and failure evidence.
+- [Snapshot-bound ASOF execution](learning/snapshot-bound-asof-execution.md): implemented exact
+  same-epoch multi-source binding, source-shape inference, partial-construction cleanup, and
+  end-to-end checked ASOF plan execution.
 - [Mutable-head scan source](learning/mutable-head-scan-source.md): implemented exact-publication
   head pinning, bounded canonical bitmap/offset materialization, schema-tail NULL synthesis,
   query-accounted pull ownership, and exact event-time filtering.

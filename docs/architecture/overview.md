@@ -265,13 +265,15 @@ handoffs plus fail-closed sibling ownership.
 [ADR 0054](../adr/0054-bound-asof-select-physical-lowering.md) lowers bound source-aware join
 expressions, post-join filtering and aggregation, and exact joined ORDER BY identities into that
 plan while widening ASOF LEFT right-source nullability.
+[ADR 0055](../adr/0055-snapshot-bound-multi-source-asof-instantiation.md) binds every SQL source of
+that plan, in source order, to complete tablet publications from one held aggregate database epoch;
+partial construction owns and releases all earlier sources, pins, and query credit on failure.
 [ADR 0048](../adr/0048-snapshot-tablet-physical-pipeline-instantiation.md) now validates a lowered
 plan's complete schema and optional suffix input, loads one held snapshot's durable images, composes
 every current source, and instantiates the checked pipeline without collapsing SQL diagnostics.
 Future correction/delete version resolution remains separate work. Variable-width aggregate
 extrema now use exact unsigned byte order and reserve-before-copy query accounting under
-[ADR 0049](../adr/0049-query-accounted-variable-width-extrema.md). Multi-source snapshot
-instantiation, parallel scheduling,
+[ADR 0049](../adr/0049-query-accounted-variable-width-extrema.md). Parallel scheduling,
 spilling, adaptive behavior, and join algorithms remain deferred. Implemented reservations and
 accounted chunks provide the admission/ownership invariant, but future operators must reserve every
 retained allocation and release snapshot pins and memory by cooperative cancellation unwinding.

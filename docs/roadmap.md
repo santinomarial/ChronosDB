@@ -474,8 +474,10 @@ No phase passes because its code merely compiles. A phase passes only when its a
   fuzzing, and instantiation benchmarks. ADR 0054 and the thirty-seventh increment add bound ASOF
   lowering for computed and widened keys, prior-source expressions, ASOF LEFT nullability, exact
   joined identity ties, post-join WHERE/aggregation/ORDER/LIMIT order, hidden-column removal,
-  failure injection, fuzzing, and lowering benchmarks. Multi-source snapshot instantiation,
-  optimizer rules, future correction/delete row-version resolution,
+  failure injection, fuzzing, and lowering benchmarks. ADR 0055 and the thirty-eighth increment
+  bind every checked ASOF source to one exact aggregate snapshot epoch, infer each source's suffix
+  from its preparation shape, clean up partial construction, execute three-source SQL plans, and add
+  failure/fuzz/benchmark/consumer evidence. Optimizer rules, future correction/delete row-version resolution,
   mapped/asynchronous providers, shared pin credit, scheduling, spill, and full scalar-engine
   differential plan execution are unimplemented.
 

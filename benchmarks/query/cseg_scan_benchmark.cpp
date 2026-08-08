@@ -1,5 +1,9 @@
 #include "chronos/cseg/part_codec.hpp"
+#include "chronos/query/binder.hpp"
+#include "chronos/query/catalog.hpp"
 #include "chronos/query/cseg_scan.hpp"
+#include "chronos/query/parser.hpp"
+#include "chronos/query/physical_lowering.hpp"
 #include "chronos/query/physical_plan.hpp"
 #include "chronos/query/snapshot_pipeline.hpp"
 #include "chronos/schema/column_definition.hpp"
@@ -9,6 +13,7 @@
 #include "query/snapshot_tablet_scan_test_fixture.hpp"
 #include "support/counting_allocator.hpp"
 
+#include <array>
 #include <benchmark/benchmark.h>
 #include <cstddef>
 #include <cstdint>
@@ -373,5 +378,63 @@ void instantiate_and_execute_snapshot_pipeline(benchmark::State& state) {
 // NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 BENCHMARK(instantiate_and_execute_snapshot_pipeline)->Arg(64)->Arg(1'024)->Arg(65'536);
 
+[[nodiscard]] PhysicalAsofPlan lower_snapshot_asof(const test::SnapshotTabletScanFixture& fixture) {
+  const std::vector<QueryCatalogTableInput> tables{
+      {.name = "metrics", .quoted = false, .schema = fixture.schema_ptr()}};
+  auto catalog = std::make_shared<const QueryCatalogSnapshot>(
+      QueryCatalogSnapshot::create(1U, tables).value());
+  auto parsed =
+      parse_sql_v1_select("SELECT r.event_time FROM metrics AS l ASOF JOIN metrics AS r "
+                          "ON l.event_time = r.event_time AND r.event_time <= l.event_time");
+  auto bound = bind_sql_v1_select(std::move(parsed).value(), std::move(catalog));
+  return std::move(lower_bound_sql_asof_select(*bound)).value();
+}
+
+void instantiate_and_execute_snapshot_asof(benchmark::State& state) {
+  const auto rows = static_cast<std::uint32_t>(state.range(0));
+  const test::SnapshotTabletScanFixture fixture{rows};
+  const PhysicalAsofPlan plan = lower_snapshot_asof(fixture);
+  const SnapshotTabletSourceBinding source{
+      .target_tablet = test::SnapshotTabletScanFixture::tablet_id(),
+      .lineage = std::cref(fixture.lineage()),
+      .destination_schema_id = fixture.schema_ptr()->schema_id()};
+  const std::array sources{source, source};
+  QueryResourceContext resources =
+      QueryResourceContext::create(std::size_t{1U} * 1024U * 1024U * 1024U).value();
+  std::size_t observed_rows = 0U;
+  for ([[maybe_unused]] auto iteration : state) {
+    auto pipeline = instantiate_snapshot_asof_plan(resources, fixture.storage(), fixture.snapshot(),
+                                                   sources, plan);
+    if (!pipeline.has_value()) {
+      const std::string message = pipeline.error().to_string();
+      state.SkipWithError(message);
+      return;
+    }
+    std::size_t iteration_rows = 0U;
+    while (true) {
+      auto step = (*pipeline)->next(resources);
+      if (!step.has_value()) {
+        const std::string message = step.error().to_string();
+        state.SkipWithError(message);
+        return;
+      }
+      if (step->kind() == PhysicalOperatorStepKind::kEnd)
+        break;
+      iteration_rows += step->chunk()->chunk().selected_row_count();
+    }
+    observed_rows = iteration_rows;
+    benchmark::DoNotOptimize(observed_rows);
+  }
+  state.SetItemsProcessed(static_cast<std::int64_t>(state.iterations()) *
+                          static_cast<std::int64_t>(observed_rows));
+  state.counters["source_rows"] = static_cast<double>(rows) * 2.0;
+  state.counters["joined_rows"] = static_cast<double>(observed_rows);
+  state.SetLabel("one held aggregate epoch; two complete sources; bounded ASOF execution");
+}
+
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+BENCHMARK(instantiate_and_execute_snapshot_asof)->Arg(64)->Arg(1'024);
+
 } // namespace
 } // namespace chronos::query
+#include <functional>

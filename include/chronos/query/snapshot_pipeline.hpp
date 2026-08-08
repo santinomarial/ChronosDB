@@ -6,11 +6,14 @@
 #include "chronos/query/database_cseg_scan.hpp"
 #include "chronos/query/physical_operator.hpp"
 #include "chronos/query/physical_plan.hpp"
+#include "chronos/query/relational_plan.hpp"
 #include "chronos/query/resource_context.hpp"
 #include "chronos/schema/identity.hpp"
 #include "chronos/schema/schema_lineage.hpp"
 
+#include <functional>
 #include <memory>
+#include <span>
 
 namespace chronos::query {
 
@@ -18,6 +21,15 @@ struct SnapshotTabletPipelineLimits {
   SnapshotCsegPartScanPlanLimits planning{};
   manifest::ReferencedPartValidationLimits validation{};
   SnapshotTabletScanLimits scan{};
+};
+
+// One SQL source binding for a checked multi-source ASOF plan. The lineage is borrowed only for
+// instantiation; returned operators own or pin all state needed by later pulls.
+struct SnapshotTabletSourceBinding {
+  schema::TabletId target_tablet;
+  std::reference_wrapper<const schema::SchemaLineage> lineage;
+  schema::SchemaId destination_schema_id;
+  SnapshotTabletPipelineLimits limits{};
 };
 
 // Instantiates a checked unary physical pipeline over one exact append-only tablet snapshot.
@@ -31,6 +43,14 @@ instantiate_snapshot_tablet_pipeline(
     const manifest::DatabaseStorageSnapshot& snapshot, const schema::TabletId& target_tablet,
     const schema::SchemaLineage& lineage, schema::SchemaId destination_schema_id,
     const PhysicalPipelinePlan& pipeline, SnapshotTabletPipelineLimits limits = {});
+
+// Instantiates every SQL source of a checked left-deep ASOF plan from the same exact aggregate
+// database epoch. Bindings are in SQL source order and must match the plan's exact per-source input
+// shapes. A failure destroys all partially created sources and releases their query credit.
+[[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>> instantiate_snapshot_asof_plan(
+    const QueryResourceContext& resources, const manifest::ManifestStorage& storage,
+    const manifest::DatabaseStorageSnapshot& snapshot,
+    std::span<const SnapshotTabletSourceBinding> sources, const PhysicalAsofPlan& plan);
 
 } // namespace chronos::query
 

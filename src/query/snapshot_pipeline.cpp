@@ -26,9 +26,8 @@ namespace {
 }
 
 [[nodiscard]] common::Result<RowVersionScanMode>
-validate_input_shape(const PhysicalPipelinePlan& pipeline,
+validate_input_shape(const std::span<const PhysicalColumnShape> input,
                      const schema::TableSchema& destination_schema) {
-  const std::span<const PhysicalColumnShape> input = pipeline.input_columns();
   const std::span<const schema::ColumnDefinition> columns = destination_schema.columns();
   common::Result<std::size_t> appended_count =
       scan_output_column_count(columns.size(), RowVersionScanMode::kAppend);
@@ -67,13 +66,11 @@ validate_input_shape(const PhysicalPipelinePlan& pipeline,
   return RowVersionScanMode::kAppend;
 }
 
-} // namespace
-
-common::Result<std::unique_ptr<PhysicalOperator>> instantiate_snapshot_tablet_pipeline(
+[[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>> create_snapshot_tablet_source(
     const QueryResourceContext& resources, const manifest::ManifestStorage& storage,
     const manifest::DatabaseStorageSnapshot& snapshot, const schema::TabletId& target_tablet,
     const schema::SchemaLineage& lineage, const schema::SchemaId destination_schema_id,
-    const PhysicalPipelinePlan& pipeline, SnapshotTabletPipelineLimits limits) {
+    const std::span<const PhysicalColumnShape> input_shape, SnapshotTabletPipelineLimits limits) {
   const std::shared_ptr<const schema::TableSchema> destination_schema =
       lineage.find(destination_schema_id);
   if (destination_schema == nullptr) {
@@ -85,7 +82,7 @@ common::Result<std::unique_ptr<PhysicalOperator>> instantiate_snapshot_tablet_pi
         invalid("snapshot pipeline destination schema disagrees with its lineage"));
   }
   common::Result<RowVersionScanMode> row_version_mode =
-      validate_input_shape(pipeline, *destination_schema);
+      validate_input_shape(input_shape, *destination_schema);
   if (!row_version_mode.has_value())
     return common::make_unexpected(row_version_mode.error());
   limits.scan.cseg.row_version_columns = *row_version_mode;
@@ -105,14 +102,25 @@ common::Result<std::unique_ptr<PhysicalOperator>> instantiate_snapshot_tablet_pi
   if (!images.has_value())
     return common::make_unexpected(images.error());
 
+  std::vector<std::uint32_t> ordinals;
+  ordinals.reserve(destination_schema->columns().size());
+  for (std::size_t ordinal = 0U; ordinal < destination_schema->columns().size(); ++ordinal)
+    ordinals.push_back(static_cast<std::uint32_t>(ordinal));
+  return create_snapshot_tablet_scan(resources, snapshot, *scan_plan, std::move(*images), lineage,
+                                     destination_schema_id, ordinals, limits.scan);
+}
+
+} // namespace
+
+common::Result<std::unique_ptr<PhysicalOperator>> instantiate_snapshot_tablet_pipeline(
+    const QueryResourceContext& resources, const manifest::ManifestStorage& storage,
+    const manifest::DatabaseStorageSnapshot& snapshot, const schema::TabletId& target_tablet,
+    const schema::SchemaLineage& lineage, const schema::SchemaId destination_schema_id,
+    const PhysicalPipelinePlan& pipeline, SnapshotTabletPipelineLimits limits) {
   try {
-    std::vector<std::uint32_t> ordinals;
-    ordinals.reserve(destination_schema->columns().size());
-    for (std::size_t ordinal = 0U; ordinal < destination_schema->columns().size(); ++ordinal)
-      ordinals.push_back(static_cast<std::uint32_t>(ordinal));
     common::Result<std::unique_ptr<PhysicalOperator>> source =
-        create_snapshot_tablet_scan(resources, snapshot, *scan_plan, std::move(*images), lineage,
-                                    destination_schema_id, ordinals, limits.scan);
+        create_snapshot_tablet_source(resources, storage, snapshot, target_tablet, lineage,
+                                      destination_schema_id, pipeline.input_columns(), limits);
     if (!source.has_value())
       return common::make_unexpected(source.error());
     return pipeline.instantiate(std::move(*source));
@@ -120,6 +128,36 @@ common::Result<std::unique_ptr<PhysicalOperator>> instantiate_snapshot_tablet_pi
     return common::make_unexpected(exhausted("snapshot pipeline allocation failed"));
   } catch (const std::length_error&) {
     return common::make_unexpected(exhausted("snapshot pipeline exceeds container limits"));
+  }
+}
+
+common::Result<std::unique_ptr<PhysicalOperator>> instantiate_snapshot_asof_plan(
+    const QueryResourceContext& resources, const manifest::ManifestStorage& storage,
+    const manifest::DatabaseStorageSnapshot& snapshot,
+    const std::span<const SnapshotTabletSourceBinding> sources, const PhysicalAsofPlan& plan) {
+  if (sources.size() != plan.source_count())
+    return common::make_unexpected(invalid("snapshot ASOF source count mismatch"));
+  try {
+    std::vector<std::unique_ptr<PhysicalOperator>> operators;
+    operators.reserve(sources.size());
+    const std::span<const PhysicalAsofPlanJoin> joins = plan.joins();
+    for (std::size_t ordinal = 0U; ordinal < sources.size(); ++ordinal) {
+      const SnapshotTabletSourceBinding& source = sources[ordinal];
+      const std::span<const PhysicalColumnShape> expected =
+          ordinal == 0U ? joins.front().left_preparation.input_columns()
+                        : joins[ordinal - 1U].right_preparation.input_columns();
+      common::Result<std::unique_ptr<PhysicalOperator>> created = create_snapshot_tablet_source(
+          resources, storage, snapshot, source.target_tablet, source.lineage.get(),
+          source.destination_schema_id, expected, source.limits);
+      if (!created.has_value())
+        return common::make_unexpected(created.error());
+      operators.push_back(std::move(*created));
+    }
+    return plan.instantiate(std::move(operators));
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("snapshot ASOF plan allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("snapshot ASOF plan exceeds container limits"));
   }
 }
 

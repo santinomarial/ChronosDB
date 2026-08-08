@@ -39,6 +39,24 @@ namespace {
   return std::move(*lowered);
 }
 
+[[nodiscard]] PhysicalAsofPlan lower_asof(const test::SnapshotTabletScanFixture& fixture,
+                                          const std::string_view sql) {
+  const std::vector<QueryCatalogTableInput> tables{
+      {.name = "metrics", .quoted = false, .schema = fixture.schema_ptr()}};
+  auto catalog = std::make_shared<const QueryCatalogSnapshot>(
+      QueryCatalogSnapshot::create(1U, tables).value());
+  SqlResult<ParsedSqlSelect> parsed = parse_sql_v1_select(sql);
+  if (!parsed.has_value())
+    throw std::runtime_error{parsed.error().status().to_string()};
+  SqlResult<BoundSqlSelect> bound = bind_sql_v1_select(std::move(*parsed), std::move(catalog));
+  if (!bound.has_value())
+    throw std::runtime_error{bound.error().status().to_string()};
+  SqlResult<PhysicalAsofPlan> lowered = lower_bound_sql_asof_select(*bound);
+  if (!lowered.has_value())
+    throw std::runtime_error{lowered.error().status().to_string()};
+  return std::move(*lowered);
+}
+
 [[nodiscard]] std::int64_t signed_cell(const VectorChunk& chunk, const std::size_t row) {
   const columnar::ColumnCellView cell =
       chunk.cell({.column_ordinal = 0U, .selected_row = row}).value();
@@ -170,6 +188,71 @@ TEST(SnapshotPipelineTest, PropagatesFinitePlanningAndSourceLimitsWithoutLeaking
       test::SnapshotTabletScanFixture::tablet_id(), fixture.lineage(),
       fixture.schema_ptr()->schema_id(), plan,
       {.scan = {.maximum_heads = 0U, .maximum_retained_configuration_bytes = 4'096U}});
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kResourceExhausted);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
+TEST(SnapshotAsofPlanTest, InstantiatesEverySourceFromOneEpochAndExecutesHiddenIdentityOrder) {
+  test::SnapshotTabletScanFixture fixture{6U};
+  PhysicalAsofPlan plan =
+      lower_asof(fixture, "SELECT x.event_time FROM metrics AS l "
+                          "ASOF JOIN metrics AS r ON l.event_time = r.event_time "
+                          "AND r.event_time <= l.event_time "
+                          "ASOF JOIN metrics AS x ON r.event_time = x.event_time "
+                          "AND x.event_time <= r.event_time "
+                          "ORDER BY x.event_time DESC LIMIT 3");
+  ASSERT_EQ(plan.source_count(), 3U);
+  const SnapshotTabletSourceBinding source{
+      .target_tablet = test::SnapshotTabletScanFixture::tablet_id(),
+      .lineage = std::cref(fixture.lineage()),
+      .destination_schema_id = fixture.schema_ptr()->schema_id()};
+  const std::array sources{source, source, source};
+  QueryResourceContext resources =
+      QueryResourceContext::create(std::size_t{32U} * 1024U * 1024U).value();
+  auto pipeline = instantiate_snapshot_asof_plan(resources, fixture.storage(), fixture.snapshot(),
+                                                 sources, plan);
+  ASSERT_TRUE(pipeline.has_value()) << pipeline.error().to_string();
+  EXPECT_EQ(drain_signed(**pipeline, resources), (std::vector<std::int64_t>{-95, -96, -97}));
+  pipeline->reset();
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
+TEST(SnapshotAsofPlanTest, RejectsSourceCountSchemaAndLateLimitsWithoutLeakingCredit) {
+  test::SnapshotTabletScanFixture fixture{2U};
+  PhysicalAsofPlan plan =
+      lower_asof(fixture, "SELECT r.event_time FROM metrics AS l ASOF JOIN metrics AS r "
+                          "ON l.event_time = r.event_time AND r.event_time <= l.event_time");
+  QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+  const SnapshotTabletSourceBinding source{
+      .target_tablet = test::SnapshotTabletScanFixture::tablet_id(),
+      .lineage = std::cref(fixture.lineage()),
+      .destination_schema_id = fixture.schema_ptr()->schema_id()};
+
+  const std::array too_few{source};
+  auto rejected = instantiate_snapshot_asof_plan(resources, fixture.storage(), fixture.snapshot(),
+                                                 too_few, plan);
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kInvalidArgument);
+
+  const std::array wrong_schema{
+      source, SnapshotTabletSourceBinding{
+                  .target_tablet = test::SnapshotTabletScanFixture::tablet_id(),
+                  .lineage = std::cref(fixture.lineage()),
+                  .destination_schema_id = cseg::test::identifier<schema::SchemaId>(0x77U)}};
+  rejected = instantiate_snapshot_asof_plan(resources, fixture.storage(), fixture.snapshot(),
+                                            wrong_schema, plan);
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kInvalidArgument);
+
+  const std::array late_limit{
+      source,
+      SnapshotTabletSourceBinding{.target_tablet = test::SnapshotTabletScanFixture::tablet_id(),
+                                  .lineage = std::cref(fixture.lineage()),
+                                  .destination_schema_id = fixture.schema_ptr()->schema_id(),
+                                  .limits = {.scan = {.maximum_heads = 0U}}}};
+  rejected = instantiate_snapshot_asof_plan(resources, fixture.storage(), fixture.snapshot(),
+                                            late_limit, plan);
   ASSERT_FALSE(rejected.has_value());
   EXPECT_EQ(rejected.error().code(), common::StatusCode::kResourceExhausted);
   EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
