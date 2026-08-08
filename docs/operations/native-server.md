@@ -8,7 +8,8 @@ Set finite connection, event, frame, buffered-byte, queued-frame, in-flight requ
 idle limits. Defaults are development bounds, not capacity guidance. Monitor accepted, rejected,
 active, closed, and timed-out connections; decoded/dispatched frames; overloads; dropped responses;
 protocol errors; and bytes. Sustained rejects, overloads, or drops indicate inadequate capacity or
-shard latency. Do not raise a bound without measuring retained memory. Plaintext binds only to IPv4
+shard latency. Accepted sockets use `TCP_NODELAY`; failure to set it rejects admission. Do not raise
+a bound without measuring retained memory. Plaintext binds only to IPv4
 loopback. `TLS_REQUIRED` currently fails startup rather than downgrading, so remote serving is not an
 implemented deployment mode.
 

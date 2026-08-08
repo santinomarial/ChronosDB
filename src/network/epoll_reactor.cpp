@@ -12,6 +12,7 @@
 #include <arpa/inet.h>
 #include <cerrno>
 #include <cstring>
+#include <netinet/tcp.h>
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
 #include <sys/socket.h>
@@ -204,6 +205,12 @@ public:
         return;
       }
       if (connections.size() == config.maximum_connections || next_connection_id == 0U) {
+        ++stats.rejected_connections;
+        ::close(fd);
+        continue;
+      }
+      const int no_delay = 1;
+      if (::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &no_delay, sizeof(no_delay)) != 0) {
         ++stats.rejected_connections;
         ::close(fd);
         continue;

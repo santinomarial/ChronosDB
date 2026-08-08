@@ -26,6 +26,8 @@ deadline/EOF/error -> detach -> clear -> close
 
 Reads continue until would-block or a short read. Data accompanying half-close is read first; EOF
 then performs disconnect cleanup. Writes retain immutable encoded bytes plus a monotonic offset.
+Accepted sockets use `TCP_NODELAY`: adjacent result and terminal frames remain separately owned,
+and the terminal must not wait for a delayed-ACK/Nagle interaction after the preceding short write.
 
 ## Bounds and failures
 

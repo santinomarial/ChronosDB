@@ -34,6 +34,12 @@ the active set. Responses for a closed connection, cancelled/completed request, 
 kind, or invalid terminal payload are dropped and counted. Output-buffer saturation closes the
 connection because another error frame cannot be admitted within the same bound.
 
+Accepted sockets enable `TCP_NODELAY` before they become observable to epoll. Protocol terminal
+frames are distinct bounded buffers and may require distinct `send` calls; allowing Nagle to hold a
+small `QUERY_END` behind its preceding result introduced an observed delayed-ACK-sized completion
+penalty. If the socket option cannot be established, admission fails and is counted rather than
+silently changing the declared latency behavior.
+
 Readable data is consumed before a simultaneous half-close notification. EOF then closes the
 connection. Closing detaches active requests, clears retained bytes, removes the descriptor, and
 best-effort enqueues cancellations in request-ID order until the request ring is full. Later
@@ -64,6 +70,8 @@ mutation is outside the contract.
 Linux real-socket tests cover fragmented reads, response routing, queue overload, admission, and
 slow-handshake expiry. Portable tests prove the non-Linux boundary and self-contained public header.
 Startup allocations are exhaustively failed; queue concurrency is covered separately under TSan.
+The Phase 10 Linux benchmark compares equal-work query rounds across 1, 8, and 32 connections and
+retains the pre-decision delayed-terminal observation as the evidence for `TCP_NODELAY`.
 
 ## References
 
