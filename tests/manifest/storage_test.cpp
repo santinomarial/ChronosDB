@@ -425,7 +425,8 @@ TEST(ManifestStorageTest, InstallsExactNextManifestAfterRevalidatingReferencedPa
                               .schema_bindings = bindings,
                               .nonce = manifest_nonce,
                               .decode_limits = {},
-                              .part_validation_limits = {}});
+                              .part_validation_limits = {},
+                              .compaction_equivalence_limits = {}});
   ASSERT_TRUE(installed.has_value()) << installed.error().to_string();
   EXPECT_EQ(installed->file_name, *manifest_file_name(2U));
   EXPECT_EQ(installed->generation, 2U);
@@ -486,7 +487,8 @@ TEST(ManifestStorageTest, LoadsSnapshotBoundPartAfterNewerManifestBecomesSelecte
                                      .schema_bindings = bindings,
                                      .nonce = PartFixture::make_nonce(0xc1U),
                                      .decode_limits = {},
-                                     .part_validation_limits = {}})
+                                     .part_validation_limits = {},
+                                     .compaction_equivalence_limits = {}})
                   .has_value());
   auto selected_two = std::make_shared<const LoadedManifestGeneration>(
       owner
@@ -560,7 +562,8 @@ TEST(ManifestStorageTest, CompactionAuthorityReprovesDiskImagesBeforeAtomicRepla
                                  .schema = std::cref(fixture.schema_value),
                                  .tablet_id = fixture.tablet_id,
                                  .wal_id = fixture.wal_id,
-                                 .output_part_id = id<cseg::PartId>(9U)});
+                                 .output_part_id = id<cseg::PartId>(9U),
+                                 .limits = {}});
   ASSERT_TRUE(merged.has_value()) << merged.error().to_string();
   const auto bindings = fixture.bindings();
   const DecodedManifestView predecessor =
@@ -588,7 +591,8 @@ TEST(ManifestStorageTest, CompactionAuthorityReprovesDiskImagesBeforeAtomicRepla
                                    .schema_bindings = bindings,
                                    .nonce = PartFixture::make_nonce(0xd1U),
                                    .decode_limits = {},
-                                   .part_validation_limits = {}})
+                                   .part_validation_limits = {},
+                                   .compaction_equivalence_limits = {}})
                 .error()
                 .code(),
             common::StatusCode::kInvalidArgument);
@@ -726,7 +730,8 @@ TEST(ManifestStorageTest, RejectsStaleTransitionAndMissingPartBeforeManifestMuta
                                    .schema_bindings = bindings,
                                    .nonce = stale_nonce,
                                    .decode_limits = {},
-                                   .part_validation_limits = {}})
+                                   .part_validation_limits = {},
+                                   .compaction_equivalence_limits = {}})
                 .error()
                 .code(),
             common::StatusCode::kInvalidArgument);
@@ -740,7 +745,8 @@ TEST(ManifestStorageTest, RejectsStaleTransitionAndMissingPartBeforeManifestMuta
                                    .schema_bindings = bindings,
                                    .nonce = missing_nonce,
                                    .decode_limits = {},
-                                   .part_validation_limits = {}})
+                                   .part_validation_limits = {},
+                                   .compaction_equivalence_limits = {}})
                 .error()
                 .code(),
             common::StatusCode::kCorruption);
@@ -776,7 +782,8 @@ TEST(ManifestStorageTest, RejectsCorruptSelectedManifestWithoutFallingBackOrWrit
                                    .schema_bindings = bindings,
                                    .nonce = nonce,
                                    .decode_limits = {},
-                                   .part_validation_limits = {}})
+                                   .part_validation_limits = {},
+                                   .compaction_equivalence_limits = {}})
                 .error()
                 .code(),
             common::StatusCode::kCorruption);
@@ -811,7 +818,8 @@ TEST(ManifestStorageTest, CorruptManifestReadbackFailsBeforeSyncAndLeavesOnlyTem
                                    .schema_bindings = bindings,
                                    .nonce = nonce,
                                    .decode_limits = {},
-                                   .part_validation_limits = {}})
+                                   .part_validation_limits = {},
+                                   .compaction_equivalence_limits = {}})
                 .error()
                 .code(),
             common::StatusCode::kCorruption);
@@ -849,7 +857,8 @@ TEST(ManifestStorageTest, ManifestDirectorySyncFailurePoisonsOwnerAfterFinalRena
                               .schema_bindings = bindings,
                               .nonce = nonce,
                               .decode_limits = {},
-                              .part_validation_limits = {}});
+                              .part_validation_limits = {},
+                              .compaction_equivalence_limits = {}});
   ASSERT_FALSE(installed.has_value());
   EXPECT_EQ(installed.error().code(), common::StatusCode::kIoError);
   EXPECT_FALSE(owner.is_usable());
@@ -864,7 +873,8 @@ TEST(ManifestStorageTest, ManifestDirectorySyncFailurePoisonsOwnerAfterFinalRena
                                    .schema_bindings = bindings,
                                    .nonce = PartFixture::make_nonce(0xc6U),
                                    .decode_limits = {},
-                                   .part_validation_limits = {}})
+                                   .part_validation_limits = {},
+                                   .compaction_equivalence_limits = {}})
                 .error()
                 .code(),
             common::StatusCode::kUnavailable);

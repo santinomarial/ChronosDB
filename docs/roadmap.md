@@ -584,6 +584,14 @@ identified a delayed terminal-frame interaction and justified `TCP_NODELAY` befo
 clean-commit Ubuntu 24.04/LinuxKit aarch64 baseline retains three raw repetitions, unfavorable
 outliers, exact configuration, and evidence limits. Final phase audit gates remain.
 
+The Phase 10 exit audit closes the remaining Linux gate with an Ubuntu 24.04 GCC warnings-as-errors
+build and complete test run, plus an explicit real-socket networking run. Malformed-input bounds,
+partial I/O, slow peers, churn, queue saturation, shard wakeup/stall, cancellation, half-close,
+large short writes, allocation classification, security fail-closed behavior, and the measured
+`TCP_NODELAY` decision are covered. **Phase 10 exit gates are complete for the bounded embeddable
+native-network library.** A packaged production daemon, remote plaintext, TLS record backend,
+`io_uring`, distributed routing, and storage/query service adapter remain outside this phase.
+
 ## Phase 11 — Subscriptions and incremental materialized views
 
 - **Scope:** committed change model; gap-free snapshot-to-stream handoff; deterministic versioned resume tokens; bounded subscriber policies; supported incremental operators; materialized-view progress/recovery and late-event corrections.

@@ -52,7 +52,9 @@ template <typename Integer> [[nodiscard]] Integer load_le(const common::ByteView
   using Unsigned = std::make_unsigned_t<Integer>;
   Unsigned value{};
   for (std::size_t index = 0U; index < sizeof(Integer); ++index) {
-    value |= static_cast<Unsigned>(std::to_integer<std::uint8_t>(bytes[index])) << (index * 8U);
+    const Unsigned byte = static_cast<Unsigned>(std::to_integer<std::uint8_t>(bytes[index]));
+    const Unsigned shifted = static_cast<Unsigned>(byte << (index * 8U));
+    value = static_cast<Unsigned>(value | shifted);
   }
   return std::bit_cast<Integer>(value);
 }

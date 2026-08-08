@@ -313,8 +313,9 @@ Linux `epoll` is the first server backend under [ADR 0009](../adr/0009-network-r
 
 The implemented portable Protocol v1 frame under [ADR 0060](../adr/0060-native-protocol-v1-framing.md)
 uses a fixed checksummed header and an independently checksummed payload. It validates the header
-and finite body requirement before payload allocation; state-machine payloads and the Linux reactor
-remain separately staged Phase 10 work.
+and finite body requirement before payload allocation. The implemented payload registry covers
+handshake, ingest, durability acknowledgement, query, cancellation, errors, bounded query-result
+batches, and terminal completion with exact connection-state validation.
 
 Portable bounded connection buffers retain partial input and immutable short-write output. A
 fixed-capacity SPSC ring then transfers complete owned tasks from exactly one reactor to exactly one
@@ -324,9 +325,14 @@ covers safe cell reuse under [ADR 0063](../adr/0063-bounded-reactor-shard-spsc-r
 The Linux owner under [ADR 0064](../adr/0064-bounded-linux-epoll-reactor.md) contains descriptors and
 epoll types behind a portable PIMPL. It applies finite admission/deadlines, reads before simultaneous
 half-close cleanup, routes only matching active responses, and detaches work before dropping late
-responses.
+An `eventfd` wakeup transfers shard-response availability to the blocked reactor without polling;
+finite event and I/O budgets preserve fairness. Accepted sockets require `TCP_NODELAY`, a measured
+decision that prevents separately owned result and terminal frames from incurring delayed-ACK
+latency. The portable client session enforces the same partial-I/O and request lifecycle contracts.
 
-An `io_uring` backend is optional and may be accepted only after the epoll path is correct, profiled, and reproducibly benchmarked. TLS and cryptography will use maintained external libraries behind a defined interface; ChronosDB will not implement cryptographic primitives.
+An `io_uring` backend remains unimplemented and may be accepted only after an equal-semantics Phase
+12 comparison. TLS and cryptography will use maintained external libraries behind a defined
+interface; ChronosDB will not implement cryptographic primitives.
 
 Under [ADR 0066](../adr/0066-authentication-and-tls-integration-boundary.md), plaintext is confined
 to loopback, a borrowed authenticator attaches stable principal identity to shard work, and

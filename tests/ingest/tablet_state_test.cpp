@@ -111,7 +111,8 @@ renamed_successor(const std::shared_ptr<const schema::TableSchema>& predecessor,
                                                  .variable_value_bytes = {0U, string_bytes, 0U}},
       .maximum_schema_versions = schema_versions,
       .maximum_sealed_generations = sealed,
-      .maximum_retry_entries = retries};
+      .maximum_retry_entries = retries,
+      .flush_queue = nullptr};
 }
 
 [[nodiscard]] TabletState tablet(const TabletStateConfig& limits = config()) {

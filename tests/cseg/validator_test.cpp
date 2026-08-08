@@ -209,7 +209,10 @@ void append_offset(std::vector<std::byte>& offsets, const std::uint32_t value) {
                                                const bool reversed) {
   OrderingBuffers result{.logical_type = kind == schema::LogicalTypeKind::kDecimal
                                              ? schema::LogicalType::decimal(10U, 2U).value()
-                                             : type(kind)};
+                                             : type(kind),
+                         .validity = {},
+                         .offsets = {},
+                         .values = {}};
   const auto first = [reversed]<typename Value>(const Value low, const Value high) {
     return reversed ? high : low;
   };
@@ -540,7 +543,10 @@ TEST(CsegValidatorTest, OrdersNullFloatingZeroInfinityAndNanExactly) {
   EXPECT_EQ(validate_ordering_buffers(nullable).code(), common::StatusCode::kCorruption);
 
   const auto floating = [](const std::uint64_t left, const std::uint64_t right) {
-    OrderingBuffers buffers{.logical_type = type(schema::LogicalTypeKind::kFloat64)};
+    OrderingBuffers buffers{.logical_type = type(schema::LogicalTypeKind::kFloat64),
+                            .validity = {},
+                            .offsets = {},
+                            .values = {}};
     append_le(buffers.values, left);
     append_le(buffers.values, right);
     return buffers;

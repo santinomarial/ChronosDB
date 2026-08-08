@@ -218,7 +218,8 @@ TEST(AppendOnlyCompactionCoordinatorTest, ResumesExactDurableButUnpublishedSucce
                                  .schema = std::cref(fixture.schema),
                                  .tablet_id = fixture.tablet_id,
                                  .wal_id = fixture.wal_id,
-                                 .output_part_id = output});
+                                 .output_part_id = output,
+                                 .limits = {}});
   ASSERT_TRUE(merged.has_value());
   const DecodedManifestView predecessor =
       decode_manifest_v1_exact(fixture.generation_one->bytes()).value();

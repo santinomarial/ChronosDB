@@ -125,10 +125,11 @@ TEST(SpillSortAllocationFailureTest, CreationClassifiesEveryOwnedAllocationFailu
     std::unique_ptr<PhysicalOperator> source = std::make_unique<EmptySource>();
     std::vector<VectorSortKey> keys{{.column_ordinal = 0U}};
     io::PosixDirectory directory = io::PosixDirectory::open(temporary.path().string()).value();
+    std::string file_prefix{"allocation-create"};
     std::size_t observed = 0U;
     auto sorted = run_with_allocation_failure(fail_after, observed, [&] {
       return SpillSortOperator::create(std::move(source), std::move(keys), std::move(directory),
-                                       "allocation-create", limits());
+                                       std::move(file_prefix), limits());
     });
     EXPECT_GT(observed, 0U);
     if (sorted.has_value()) {

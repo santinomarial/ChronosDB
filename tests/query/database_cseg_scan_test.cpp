@@ -254,7 +254,8 @@ void publish_live_heads(MultiPartSnapshot& fixture) {
           {.head_capacity = {.row_capacity = 2U, .variable_value_bytes = {0U}},
            .maximum_schema_versions = 1U,
            .maximum_sealed_generations = 2U,
-           .maximum_retry_entries = 8U})
+           .maximum_retry_entries = 8U,
+           .flush_queue = nullptr})
           .value());
   wal::WalId wal_id{};
   wal_id.bytes = cseg::test::identifier<schema::SchemaId>(0x70U).bytes();

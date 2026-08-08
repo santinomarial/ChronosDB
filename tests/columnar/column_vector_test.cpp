@@ -46,7 +46,7 @@ TEST(ColumnVectorTest, ValidatesEveryFixedWidthRegistryTypeAndPreservesCanonical
       {LogicalTypeKind::kBool, 0U},
   }};
 
-  for (const auto [kind, width] : kTypes) {
+  for (const auto& [kind, width] : kTypes) {
     SCOPED_TRACE(schema::logical_type_kind_name(kind));
     const schema::LogicalType logical_type = kind == LogicalTypeKind::kDecimal
                                                  ? schema::LogicalType::decimal(38U, 10U).value()

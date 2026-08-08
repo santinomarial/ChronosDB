@@ -1132,7 +1132,8 @@ TEST(PhysicalSelectLoweringPropertyTest, FixedWidthKernelsMatchTheScalarOracle) 
         ScalarValue::text(type(schema::LogicalTypeKind::kString), "x").value()};
     const std::array<ScalarSourceRow, 1> sources{
         ScalarSourceRow{std::span<const ScalarValue>{source_values}}};
-    const ScalarEvaluationContext context{.sources = sources};
+    const ScalarEvaluationContext context{
+        .sources = sources, .projected_outputs = {}, .overrides = {}};
     for (std::size_t output = 0U; output < select.syntax().items().size(); ++output) {
       const SqlExpression* expression = select.syntax().items()[output].expression();
       ASSERT_NE(expression, nullptr);

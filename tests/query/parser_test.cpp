@@ -173,7 +173,8 @@ TEST(SqlParserTest, RejectsMalformedCreateTableAndInsertStatements) {
     SCOPED_TRACE(sql);
     EXPECT_FALSE(parse_sql_v1_insert(sql).has_value());
   }
-  EXPECT_EQ(parse_sql_v1_insert("INSERT INTO t VALUES (1), (2)", {.maximum_list_elements = 1U})
+  EXPECT_EQ(parse_sql_v1_insert("INSERT INTO t VALUES (1), (2)",
+                                {.lexer = {}, .maximum_list_elements = 1U})
                 .error()
                 .code(),
             SqlDiagnosticCode::kResourceLimit);
@@ -203,24 +204,28 @@ TEST(SqlParserTest, RejectsClauseOrderMissingSyntaxAndUnsupportedStatementsDeter
 }
 
 TEST(SqlParserTest, EnforcesAstDepthNodeAndListLimits) {
-  EXPECT_EQ(parse_sql_v1_select("SELECT a FROM t", {.maximum_ast_nodes = 2U}).error().code(),
-            SqlDiagnosticCode::kResourceLimit);
-  EXPECT_EQ(parse_sql_v1_select("SELECT a, b FROM t", {.maximum_list_elements = 1U}).error().code(),
+  EXPECT_EQ(
+      parse_sql_v1_select("SELECT a FROM t", {.lexer = {}, .maximum_ast_nodes = 2U}).error().code(),
+      SqlDiagnosticCode::kResourceLimit);
+  EXPECT_EQ(parse_sql_v1_select("SELECT a, b FROM t", {.lexer = {}, .maximum_list_elements = 1U})
+                .error()
+                .code(),
             SqlDiagnosticCode::kResourceLimit);
   std::string deep{"SELECT "};
   for (std::size_t index = 0U; index < 16U; ++index) {
     deep.append("NOT ");
   }
   deep.append("TRUE FROM t");
-  EXPECT_EQ(parse_sql_v1_select(deep, {.maximum_expression_depth = 8U}).error().code(),
+  EXPECT_EQ(parse_sql_v1_select(deep, {.lexer = {}, .maximum_expression_depth = 8U}).error().code(),
             SqlDiagnosticCode::kResourceLimit);
   std::string nested{"SELECT "};
   nested.append(32U, '(');
   nested.append("1");
   nested.append(32U, ')');
   nested.append(" FROM t");
-  EXPECT_EQ(parse_sql_v1_select(nested, {.maximum_expression_depth = 8U}).error().code(),
-            SqlDiagnosticCode::kResourceLimit);
+  EXPECT_EQ(
+      parse_sql_v1_select(nested, {.lexer = {}, .maximum_expression_depth = 8U}).error().code(),
+      SqlDiagnosticCode::kResourceLimit);
 }
 
 TEST(SqlParserPropertyTest, ParenthesesPreserveGeneratedArithmeticTreeShape) {

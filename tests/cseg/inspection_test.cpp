@@ -78,13 +78,13 @@ TEST(CsegInspectionTest, DistinguishesIncompleteCorruptionAndResourceLimits) {
   ASSERT_FALSE(corruption.has_value());
   EXPECT_EQ(corruption.error().kind(), CsegInspectionErrorKind::kCorruption);
 
-  const CsegInspectionResult limited =
-      inspect_cseg_v1_part(encoded.bytes(), {.decode = {.max_file_length = encoded.size() - 1U}});
+  const CsegInspectionResult limited = inspect_cseg_v1_part(
+      encoded.bytes(), {.decode = {.max_file_length = encoded.size() - 1U}, .validation = {}});
   ASSERT_FALSE(limited.has_value());
   EXPECT_EQ(limited.error().kind(), CsegInspectionErrorKind::kResourceLimit);
 
-  const CsegInspectionResult invalid =
-      inspect_cseg_v1_part(encoded.bytes(), {.validation = {.max_working_bytes = 0U}});
+  const CsegInspectionResult invalid = inspect_cseg_v1_part(
+      encoded.bytes(), {.decode = {}, .validation = {.max_working_bytes = 0U}});
   ASSERT_FALSE(invalid.has_value());
   EXPECT_EQ(invalid.error().kind(), CsegInspectionErrorKind::kInvalidArgument);
 }

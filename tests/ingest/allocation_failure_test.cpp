@@ -98,7 +98,8 @@ deduplication_batch(const std::shared_ptr<const schema::TableSchema>& schema) {
                                                              .variable_value_bytes = {0U, 2U, 0U}},
                                .maximum_schema_versions = 1U,
                                .maximum_sealed_generations = 2U,
-                               .maximum_retry_entries = 8U})
+                               .maximum_retry_entries = 8U,
+                               .flush_queue = nullptr})
       .value();
 }
 

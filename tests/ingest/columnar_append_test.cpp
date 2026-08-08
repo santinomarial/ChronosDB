@@ -129,7 +129,7 @@ TEST(ColumnarAppendCodecTest, PrefixExactAndRecordAdaptersPreserveClassification
 TEST(ColumnarAppendCodecTest, EnforcesApplicationAndNestedBatchLimits) {
   const wal::EncodedApplicationPayload encoded = test::encoded_command();
   for (const ColumnarAppendDecodeLimits limits : {
-           ColumnarAppendDecodeLimits{.max_application_payload_length = 575U},
+           ColumnarAppendDecodeLimits{.max_application_payload_length = 575U, .batch = {}},
            ColumnarAppendDecodeLimits{
                .max_application_payload_length = 576U,
                .batch = {.max_batch_length = 399U, .max_rows = 2U, .max_columns = 3U}},

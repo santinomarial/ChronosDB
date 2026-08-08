@@ -262,7 +262,10 @@ snapshot_asof_plan(const chronos::query::test::SnapshotTabletScanFixture& fixtur
       .right_output_column_ordinals = outputs,
       .left_outer = true};
   std::vector<PhysicalColumnShape> joined_shape;
-  for (const VectorAsofColumnShape& column : vector_asof_join_output_shape(definition).value())
+  const std::vector<VectorAsofColumnShape> joined_shapes =
+      vector_asof_join_output_shape(definition).value();
+  joined_shape.reserve(joined_shapes.size());
+  for (const VectorAsofColumnShape& column : joined_shapes)
     joined_shape.push_back({.type = column.type, .nullable = column.nullable});
   std::vector<PhysicalAsofPlanJoin> joins;
   joins.push_back({.left_preparation = PhysicalPipelinePlan::create(source_shape, {}).value(),

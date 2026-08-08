@@ -106,6 +106,7 @@ command(const std::uint8_t seed, const schema::TabletId target,
       .maximum_schema_versions = schema_versions,
       .maximum_sealed_generations = 4U,
       .maximum_retry_entries = 8U,
+      .flush_queue = nullptr,
   };
 }
 
@@ -126,11 +127,13 @@ recovery_config(const std::vector<schema::TabletId>& tablet_ids,
         ColumnarRecoveryTabletConfig{.schema = columnar::test::batch_schema(),
                                      .tablet_id = target,
                                      .state = tablet_config(retain_successor ? 2U : 1U),
-                                     .successors = std::move(successors)});
+                                     .successors = std::move(successors),
+                                     .durable_seed = std::nullopt});
   }
   return ColumnarAppendRecoveryConfig{.retry_directory = {.maximum_entries = 16U},
                                       .tablets = std::move(tablets),
-                                      .decode_limits = {}};
+                                      .decode_limits = {},
+                                      .checkpoint = std::nullopt};
 }
 
 struct ReplayTargets {
@@ -548,9 +551,12 @@ TEST(ColumnarAppendRecoveryTest, ExactRetryPrecedesRowDedupButNewIdentityConflic
                                           .row_capacity = 8U, .variable_value_bytes = {0U, 8U, 0U}},
                                   .maximum_schema_versions = 1U,
                                   .maximum_sealed_generations = 2U,
-                                  .maximum_retry_entries = 4U},
-            .successors = {}}},
-        .decode_limits = {}};
+                                  .maximum_retry_entries = 4U,
+                                  .flush_queue = nullptr},
+            .successors = {},
+            .durable_seed = std::nullopt}},
+        .decode_limits = {},
+        .checkpoint = std::nullopt};
     return recover_columnar_append_wal(writer_config, {}, std::move(config));
   };
 

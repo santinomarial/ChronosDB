@@ -77,6 +77,7 @@ struct ExplainFixtures {
       .columns = {ScalarValue::signed_value(type(schema::LogicalTypeKind::kTimestampNs), timestamp)
                       .value(),
                   ScalarValue::signed_value(type(schema::LogicalTypeKind::kInt64), value).value()},
+      .generated_logical_identity = {},
       .wal_id = common::Uuid{wal},
       .record_sequence = sequence,
       .system_commit_position = sequence,

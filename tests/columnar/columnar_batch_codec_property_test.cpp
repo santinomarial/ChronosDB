@@ -31,7 +31,7 @@ namespace {
     const bool present = (generator() % 5U) != 0U;
     if (present) {
       validity[static_cast<std::size_t>(row) / 8U] |= static_cast<std::byte>(1U << (row % 8U));
-      const std::uint32_t length = generator() % 9U;
+      const std::uint32_t length = static_cast<std::uint32_t>(generator() % 9U);
       for (std::uint32_t index = 0U; index < length; ++index) {
         strings.push_back(static_cast<std::byte>('a' + (generator() % 26U)));
       }
@@ -103,7 +103,7 @@ TEST(ColumnarBatchCodecPropertyTest, DeterministicGeneratedBatchesRoundTripEvery
   // NOLINTNEXTLINE(bugprone-random-generator-seed)
   std::mt19937 generator{kSeed};
   for (std::uint32_t trial = 0U; trial < 150U; ++trial) {
-    const std::uint32_t rows = 1U + generator() % 257U;
+    const std::uint32_t rows = static_cast<std::uint32_t>(1U + generator() % 257U);
     const OwnedColumnarBatch batch =
         OwnedColumnarBatch::create(test::batch_schema(), generated_columns(rows, generator))
             .value();

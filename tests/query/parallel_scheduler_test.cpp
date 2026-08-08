@@ -73,7 +73,7 @@ public:
 };
 
 struct StartGate {
-  explicit StartGate(const std::size_t expected) : expected(expected) {}
+  explicit StartGate(const std::size_t expected_count) : expected(expected_count) {}
 
   void arrive_and_wait() {
     std::unique_lock lock{mutex};

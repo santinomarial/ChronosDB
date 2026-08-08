@@ -54,7 +54,7 @@ TEST(ColumnVectorPropertyTest, DeterministicPackedBitmapsRoundTripEveryGenerated
   // NOLINTNEXTLINE(bugprone-random-generator-seed)
   std::mt19937 generator{kSeed};
   for (std::uint32_t trial = 0; trial < 200U; ++trial) {
-    const std::uint32_t rows = 1U + (generator() % 257U);
+    const std::uint32_t rows = static_cast<std::uint32_t>(1U + (generator() % 257U));
     std::vector<std::byte> validity(bitmap_size(rows), std::byte{0});
     std::vector<std::byte> values(bitmap_size(rows), std::byte{0});
     std::uint32_t nulls = 0U;
@@ -100,7 +100,7 @@ TEST(ColumnVectorPropertyTest, DeterministicVariableOffsetsReturnExactGeneratedS
   // NOLINTNEXTLINE(bugprone-random-generator-seed)
   std::mt19937 generator{kSeed};
   for (std::uint32_t trial = 0; trial < 100U; ++trial) {
-    const std::uint32_t rows = 1U + (generator() % 64U);
+    const std::uint32_t rows = static_cast<std::uint32_t>(1U + (generator() % 64U));
     std::vector<std::byte> validity(bitmap_size(rows), std::byte{0});
     std::vector<std::byte> offsets;
     std::vector<std::byte> values;
@@ -114,7 +114,7 @@ TEST(ColumnVectorPropertyTest, DeterministicVariableOffsetsReturnExactGeneratedS
       if (present) {
         const std::size_t byte = static_cast<std::size_t>(row) / 8U;
         validity[byte] |= static_cast<std::byte>(1U << (row % 8U));
-        length = generator() % 12U;
+        length = static_cast<std::uint32_t>(generator() % 12U);
         for (std::uint32_t index = 0; index < length; ++index) {
           values.push_back(static_cast<std::byte>('a' + (generator() % 26U)));
         }

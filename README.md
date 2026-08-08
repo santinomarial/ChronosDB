@@ -1,9 +1,10 @@
 # ChronosDB
 
-> **Pre-alpha — foundation phase.** Phase 1A's build/tooling and Phase 1B's portable binary
-> foundations are implemented. The WAL v1 physical codec and its minimal POSIX I/O primitives
-> exist; no WAL writer/recovery state machine, database engine, server, client, or network protocol
-> is implemented yet.
+> **Pre-alpha — architecture-phase implementation.** The accepted single-node foundation through
+> Phase 10 is implemented and tested, including WAL/recovery, columnar storage, the supported SQL
+> and vectorized-query surface, and a bounded native networking library. ChronosDB is not a
+> production server: there is no packaged daemon, maintained TLS backend, distributed execution,
+> replication, or Phase 11 live-query implementation.
 
 ChronosDB is a greenfield, Linux-first distributed real-time analytical database planned primarily in C++23. It is intended to unite durable, low-latency ingestion of event-heavy data with historical columnar SQL, event-time-aware live analytics, system-time history, and resumable subscriptions—through purpose-built storage, query, networking, and replication subsystems rather than an existing database engine hidden behind a new interface.
 
@@ -42,15 +43,15 @@ The diagram is an accepted architectural direction, not a diagram of implemented
 
 ## Current status
 
-Phase 0 established the initial architecture and specification baseline. Phase 1 has begun. Phase
-1A provides the build/tooling foundation and version-reporting proof executable. Phase 1B provides
-operational status/result values, non-owning byte views, checked unsigned arithmetic, bounded
-little-endian readers and writers, and portable incremental CRC32C, with unit/property-style tests,
-an optional fuzz target, and local-only microbenchmarks. The repository also implements the WAL v1
-in-memory physical codec and a narrow blocking POSIX layer for explicit-offset regular-file I/O,
-sync, directory-relative creation/rename, truncation, and advisory locking. This does not satisfy the
-full Phase 1 exit gates: the WAL writer/recovery state machine, time, general identity, logging, and
-broader test utilities remain planned. The repository publishes no database benchmark results.
+Phases 0 through 10 have reached their documented development boundaries. The current tree
+contains the checksummed WAL and recovery path, append-only mutable and immutable columnar storage,
+manifest/checkpoint/compaction machinery, the explicitly supported SQL v1 and bounded vectorized
+execution surface, and Protocol v1 with a portable client/session layer plus the Linux `epoll`
+reactor. The networking layer is embeddable library code: plaintext is loopback-only and
+`TLS_REQUIRED` fails closed because no maintained TLS record backend is implemented. Published
+measurements are reproducible subsystem baselines, not production capacity or service-level claims.
+See the [roadmap](docs/roadmap.md) and [Phase 10 exit review](docs/reviews/phase-10-network-review.md)
+for the exact implemented and deferred boundaries.
 
 ## Build and test
 

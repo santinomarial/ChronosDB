@@ -60,7 +60,8 @@ batch(const std::byte timestamp_tail = std::byte{0U}) {
                                                              .variable_value_bytes = {0U, 8U, 0U}},
                                .maximum_schema_versions = schema_versions,
                                .maximum_sealed_generations = 2U,
-                               .maximum_retry_entries = 8U})
+                               .maximum_retry_entries = 8U,
+                               .flush_queue = nullptr})
       .value();
 }
 

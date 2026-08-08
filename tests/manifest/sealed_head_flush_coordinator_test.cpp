@@ -275,7 +275,8 @@ struct FlushFixture {
                                         .schema_bindings = schema_bindings,
                                         .nonce = nonce(0xb0U),
                                         .decode_limits = {},
-                                        .part_validation_limits = {}})
+                                        .part_validation_limits = {},
+                                        .compaction_equivalence_limits = {}})
                     .has_value());
   }
 

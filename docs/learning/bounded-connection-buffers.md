@@ -13,5 +13,6 @@ finite queued-frame count. The output vector is reserved at creation so result m
 steady-state queue admission do not acquire hidden deque storage.
 
 Tests enumerate every two-part split, multiple coalesced frames with a partial successor, exact
-short-write offsets, hostile limits, cleanup, and owned allocation failures. Later epoll tests apply
-the same state through real nonblocking sockets.
+short-write offsets, hostile limits, cleanup, and owned allocation failures. Linux epoll tests apply
+the same state through real nonblocking sockets, including an 8 MiB response forced through short
+writes with exact result-before-terminal ordering.

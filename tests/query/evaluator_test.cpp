@@ -94,7 +94,8 @@ template <typename Value>
 [[nodiscard]] ScalarEvaluationContext context(const std::vector<ScalarValue>& values,
                                               ScalarSourceRow& source) {
   source = ScalarSourceRow{values};
-  return ScalarEvaluationContext{.sources = {&source, 1U}};
+  return ScalarEvaluationContext{
+      .sources = {&source, 1U}, .projected_outputs = {}, .overrides = {}};
 }
 
 [[nodiscard]] std::int64_t small_decimal_coefficient(const ScalarValue& value) {
@@ -249,7 +250,8 @@ TEST(ScalarEvaluatorTest, EvaluatesCastsAliasesAndAggregateOverrides) {
           .value());
   EXPECT_EQ(*std::get_if<std::uint64_t>(&outputs[0].storage()), 7U);
   EXPECT_EQ(*std::get_if<std::int64_t>(&outputs[1].storage()), 86'400'000'000'000LL);
-  const ScalarEvaluationContext order_input{.sources = {&source, 1U}, .projected_outputs = outputs};
+  const ScalarEvaluationContext order_input{
+      .sources = {&source, 1U}, .projected_outputs = outputs, .overrides = {}};
   const auto order = evaluate_sql_v1_expression(
       cast_plan, cast_plan.syntax().order_by()[0].expression, order_input);
   ASSERT_TRUE(order.has_value());
@@ -260,8 +262,8 @@ TEST(ScalarEvaluatorTest, EvaluatesCastsAliasesAndAggregateOverrides) {
       ScalarValue::signed_value(type(schema::LogicalTypeKind::kInt64), 12).value();
   const ScalarExpressionOverride replacement{
       .expression_span = aggregate.syntax().items()[0].expression()->span(), .value = &count};
-  const ScalarEvaluationContext aggregate_input{.sources = {&source, 1U},
-                                                .overrides = {&replacement, 1U}};
+  const ScalarEvaluationContext aggregate_input{
+      .sources = {&source, 1U}, .projected_outputs = {}, .overrides = {&replacement, 1U}};
   const auto result = evaluate_sql_v1_expression(
       aggregate, *aggregate.syntax().items()[0].expression(), aggregate_input);
   ASSERT_TRUE(result.has_value());

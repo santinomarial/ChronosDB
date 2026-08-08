@@ -179,6 +179,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   authenticator ownership, principal propagation, and fail-closed TLS mode.
 - [Native client session](learning/native-client-session.md): bounded portable partial I/O,
   monotonic request generation, response validation, cancellation, and cleanup.
+- [Phase 10 network exit review](reviews/phase-10-network-review.md): implemented transport
+  boundary, Linux portability and validation evidence, nonblocking risks, and the phase decision.
 - [Shared snapshot publication credit](learning/shared-snapshot-publication-credit.md): implemented
   one-query/one-epoch publication admission across part images, backed chunks, complete tablet scans,
   and ASOF aliases while retaining exact local image/output credit and last-owner cleanup.

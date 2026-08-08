@@ -112,6 +112,7 @@ struct Fixtures {
                   .value(),
               ScalarValue::float64(value).value(),
           },
+      .generated_logical_identity = {},
       .wal_id = common::Uuid{wal},
       .record_sequence = sequence,
       .system_commit_position = sequence,

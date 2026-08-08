@@ -201,11 +201,11 @@ TEST(TimestampRangePredicateTest, HandlesOpenClosedEmptyAndSignedDomainEdgesWith
   EXPECT_FALSE(closed.is_empty());
 
   const TimestampRangePredicate open_min{
-      .lower = TimestampRangeBound{.value = kMinimum, .inclusive = false}};
+      .lower = TimestampRangeBound{.value = kMinimum, .inclusive = false}, .upper = std::nullopt};
   EXPECT_FALSE(open_min.matches(kMinimum));
   EXPECT_TRUE(open_min.matches(kMinimum + 1));
   const TimestampRangePredicate open_max{
-      .upper = TimestampRangeBound{.value = kMaximum, .inclusive = false}};
+      .lower = std::nullopt, .upper = TimestampRangeBound{.value = kMaximum, .inclusive = false}};
   EXPECT_FALSE(open_max.matches(kMaximum));
   EXPECT_TRUE(open_max.matches(kMaximum - 1));
 
@@ -570,10 +570,10 @@ TEST(TimestampRangeFilterOperatorPropertyTest,
   constexpr std::int64_t kMaximum = std::numeric_limits<std::int64_t>::max();
   const std::array<TimestampRangePredicate, 11> predicates{{
       {},
-      {.lower = TimestampRangeBound{.value = kMinimum, .inclusive = true}},
-      {.lower = TimestampRangeBound{.value = kMinimum, .inclusive = false}},
-      {.upper = TimestampRangeBound{.value = kMaximum, .inclusive = true}},
-      {.upper = TimestampRangeBound{.value = kMaximum, .inclusive = false}},
+      {.lower = TimestampRangeBound{.value = kMinimum, .inclusive = true}, .upper = std::nullopt},
+      {.lower = TimestampRangeBound{.value = kMinimum, .inclusive = false}, .upper = std::nullopt},
+      {.lower = std::nullopt, .upper = TimestampRangeBound{.value = kMaximum, .inclusive = true}},
+      {.lower = std::nullopt, .upper = TimestampRangeBound{.value = kMaximum, .inclusive = false}},
       {.lower = TimestampRangeBound{.value = -2, .inclusive = true},
        .upper = TimestampRangeBound{.value = 2, .inclusive = true}},
       {.lower = TimestampRangeBound{.value = -2, .inclusive = false},

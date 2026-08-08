@@ -33,7 +33,9 @@ header byte corruption, payload corruption, exact-length behavior, invalid types
 limits, and empty frames. A dedicated allocator executable sweeps every owned encode/decode
 allocation. Source-controlled valid/truncated/corrupt packet fixtures and the dedicated network
 fuzzer now exercise exact framing, fragmented buffers, payload decoders, server state, and client
-fail-closed behavior under ASan/UBSan. Codec throughput profiles are measured at the Phase 10 exit.
+fail-closed behavior under ASan/UBSan. The retained Phase 10 codec, buffering, queue, churn, and
+equal-work Linux measurements are published in the
+[native-network baseline](../benchmarks/native-network-phase-10.md).
 
 ## Review questions
 

@@ -210,7 +210,8 @@ private:
                                 .schema_bindings = bindings,
                                 .nonce = crash_nonce(0xb0U),
                                 .decode_limits = {},
-                                .part_validation_limits = {}});
+                                .part_validation_limits = {},
+                                .compaction_equivalence_limits = {}});
   return manifest.has_value() ? 0 : 7;
 }
 

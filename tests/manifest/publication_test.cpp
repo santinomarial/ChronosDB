@@ -141,7 +141,8 @@ struct PublishedTabletFixture {
                   {.head_capacity = {.row_capacity = 2U, .variable_value_bytes = {0U}},
                    .maximum_schema_versions = 1U,
                    .maximum_sealed_generations = 1U,
-                   .maximum_retry_entries = 8U})
+                   .maximum_retry_entries = 8U,
+                   .flush_queue = nullptr})
                   .value()) {
     const std::array first_values{std::int64_t{-5}, std::int64_t{10}};
     first_identity = {.client_id = id<ingest::ClientId>(0x11U),
@@ -261,7 +262,8 @@ struct DurableFixture {
                                         .schema_bindings = bindings,
                                         .nonce = id<DatabaseId>(0xb0U).uuid(),
                                         .decode_limits = {},
-                                        .part_validation_limits = {}})
+                                        .part_validation_limits = {},
+                                        .compaction_equivalence_limits = {}})
                     .has_value());
     generation_two = std::make_shared<const LoadedManifestGeneration>(
         storage
@@ -413,7 +415,8 @@ TEST(DatabaseStoragePublicationTest, CompactionPublishesOneEpochAndRetainsOldSna
                                    .schema = std::cref(*fixture.tablet.schema_value),
                                    .tablet_id = fixture.tablet.latest.tablet_id(),
                                    .wal_id = wal_id(),
-                                   .output_part_id = id<cseg::PartId>(10U)});
+                                   .output_part_id = id<cseg::PartId>(10U),
+                                   .limits = {}});
     ASSERT_TRUE(merged.has_value()) << merged.error().to_string();
     const DecodedManifestView predecessor =
         decode_manifest_v1_exact(fixture.generation_two_bytes->bytes()).value();

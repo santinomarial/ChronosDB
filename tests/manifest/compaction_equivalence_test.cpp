@@ -177,28 +177,38 @@ void store_little_endian(std::vector<std::byte>& bytes, const std::size_t offset
        .storage_kind = cseg::StorageKind::kUser,
        .logical_type = floating,
        .nullable = true,
-       .schema_ordinal = 1U},
+       .schema_ordinal = 1U,
+       .ordering_ordinal = std::nullopt},
       {.column_id = fixture.payload_id,
        .storage_kind = cseg::StorageKind::kUser,
        .logical_type = binary,
        .nullable = true,
-       .schema_ordinal = 2U},
+       .schema_ordinal = 2U,
+       .ordering_ordinal = std::nullopt},
       {.column_id = std::nullopt,
        .storage_kind = cseg::StorageKind::kWalId,
        .logical_type = uuid,
-       .nullable = false},
+       .nullable = false,
+       .schema_ordinal = std::nullopt,
+       .ordering_ordinal = std::nullopt},
       {.column_id = std::nullopt,
        .storage_kind = cseg::StorageKind::kRecordSequence,
        .logical_type = uint64,
-       .nullable = false},
+       .nullable = false,
+       .schema_ordinal = std::nullopt,
+       .ordering_ordinal = std::nullopt},
       {.column_id = std::nullopt,
        .storage_kind = cseg::StorageKind::kRowOrdinal,
        .logical_type = uint32,
-       .nullable = false},
+       .nullable = false,
+       .schema_ordinal = std::nullopt,
+       .ordering_ordinal = std::nullopt},
       {.column_id = std::nullopt,
        .storage_kind = cseg::StorageKind::kOperation,
        .logical_type = uint8,
-       .nullable = false},
+       .nullable = false,
+       .schema_ordinal = std::nullopt,
+       .ordering_ordinal = std::nullopt},
   };
   const std::vector<cseg::CsegGranuleDescriptor> granules{{
       .first_row = 0U,
@@ -327,10 +337,14 @@ TEST(CompactionEquivalenceTest, RejectsChangedCellMissingRowWrongWalAndReusedIde
                                                      fixture.tablet_id, fixture.wal_id)
                 .code(),
             common::StatusCode::kInvalidArgument);
-  EXPECT_EQ(validate_append_only_cseg_v1_equivalence(
-                inputs.images, exact_output.images, fixture.schema, fixture.tablet_id,
-                fixture.wal_id,
-                {.max_parts_per_side = 1U, .max_rows_per_side = 4U, .max_resident_page_bytes = 1U})
+  EXPECT_EQ(validate_append_only_cseg_v1_equivalence(inputs.images, exact_output.images,
+                                                     fixture.schema, fixture.tablet_id,
+                                                     fixture.wal_id,
+                                                     {.decode = {},
+                                                      .validation = {},
+                                                      .max_parts_per_side = 1U,
+                                                      .max_rows_per_side = 4U,
+                                                      .max_resident_page_bytes = 1U})
                 .code(),
             common::StatusCode::kResourceExhausted);
 }
@@ -395,10 +409,11 @@ TEST(CompactionEquivalenceTest, DeterministicPartitionPropertyMatrix) {
         make_images(fixture, input_partitions, 0x10U, cseg::PageCompression::kNone);
     const ImageSet outputs =
         make_images(fixture, output_partitions, 0x80U, cseg::PageCompression::kZstd);
-    ASSERT_TRUE(validate_append_only_cseg_v1_equivalence(
-                    inputs.images, outputs.images, fixture.schema, fixture.tablet_id,
-                    fixture.wal_id, {.max_parts_per_side = 4U, .max_rows_per_side = 12U})
-                    .is_ok())
+    ASSERT_TRUE(
+        validate_append_only_cseg_v1_equivalence(
+            inputs.images, outputs.images, fixture.schema, fixture.tablet_id, fixture.wal_id,
+            {.decode = {}, .validation = {}, .max_parts_per_side = 4U, .max_rows_per_side = 12U})
+            .is_ok())
         << "seed=" << seed;
   }
 }

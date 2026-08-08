@@ -142,7 +142,10 @@ join_definition(const std::span<const PhysicalColumnShape> left_shape,
   const std::vector<PhysicalColumnShape> input_shape = source_shape();
   VectorAsofJoinDefinition definition = join_definition(input_shape, 0U, 1U);
   std::vector<PhysicalColumnShape> joined_shape;
-  for (const VectorAsofColumnShape& shape : vector_asof_join_output_shape(definition).value())
+  const std::vector<VectorAsofColumnShape> joined_shapes =
+      vector_asof_join_output_shape(definition).value();
+  joined_shape.reserve(joined_shapes.size());
+  for (const VectorAsofColumnShape& shape : joined_shapes)
     joined_shape.push_back({.type = shape.type, .nullable = shape.nullable});
   joins.push_back({.left_preparation = PhysicalPipelinePlan::create(source_shape(), {}).value(),
                    .right_preparation = PhysicalPipelinePlan::create(source_shape(), {}).value(),
@@ -160,7 +163,10 @@ join_definition(const std::span<const PhysicalColumnShape> left_shape,
   const std::vector<PhysicalColumnShape> input_shape = source_shape();
   VectorAsofJoinDefinition first = join_definition(input_shape, 0U, 1U);
   std::vector<PhysicalColumnShape> first_output;
-  for (const VectorAsofColumnShape& shape : vector_asof_join_output_shape(first).value())
+  const std::vector<VectorAsofColumnShape> first_shapes =
+      vector_asof_join_output_shape(first).value();
+  first_output.reserve(first_shapes.size());
+  for (const VectorAsofColumnShape& shape : first_shapes)
     first_output.push_back({.type = shape.type, .nullable = shape.nullable});
   joins.push_back({.left_preparation = PhysicalPipelinePlan::create(source_shape(), {}).value(),
                    .right_preparation = PhysicalPipelinePlan::create(source_shape(), {}).value(),
@@ -168,7 +174,10 @@ join_definition(const std::span<const PhysicalColumnShape> left_shape,
 
   VectorAsofJoinDefinition second = join_definition(first_output, 7U, 8U);
   std::vector<PhysicalColumnShape> second_output;
-  for (const VectorAsofColumnShape& shape : vector_asof_join_output_shape(second).value())
+  const std::vector<VectorAsofColumnShape> second_shapes =
+      vector_asof_join_output_shape(second).value();
+  second_output.reserve(second_shapes.size());
+  for (const VectorAsofColumnShape& shape : second_shapes)
     second_output.push_back({.type = shape.type, .nullable = shape.nullable});
   joins.push_back({.left_preparation = PhysicalPipelinePlan::create(first_output, {}).value(),
                    .right_preparation = PhysicalPipelinePlan::create(source_shape(), {}).value(),

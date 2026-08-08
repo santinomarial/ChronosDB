@@ -98,19 +98,27 @@ struct Fixture {
       {.column_id = std::nullopt,
        .storage_kind = cseg::StorageKind::kWalId,
        .logical_type = uuid,
-       .nullable = false},
+       .nullable = false,
+       .schema_ordinal = std::nullopt,
+       .ordering_ordinal = std::nullopt},
       {.column_id = std::nullopt,
        .storage_kind = cseg::StorageKind::kRecordSequence,
        .logical_type = uint64,
-       .nullable = false},
+       .nullable = false,
+       .schema_ordinal = std::nullopt,
+       .ordering_ordinal = std::nullopt},
       {.column_id = std::nullopt,
        .storage_kind = cseg::StorageKind::kRowOrdinal,
        .logical_type = uint32,
-       .nullable = false},
+       .nullable = false,
+       .schema_ordinal = std::nullopt,
+       .ordering_ordinal = std::nullopt},
       {.column_id = std::nullopt,
        .storage_kind = cseg::StorageKind::kOperation,
        .logical_type = uint8,
-       .nullable = false}};
+       .nullable = false,
+       .schema_ordinal = std::nullopt,
+       .ordering_ordinal = std::nullopt}};
   const std::vector<cseg::CsegGranuleDescriptor> granules{{
       .first_row = 0U,
       .row_count = kRows,
@@ -174,6 +182,7 @@ TEST(AppendOnlyCompactionTest, DeterministicallyMergesInterleavedPartsAndProvesO
       .wal_id = fixture.wal_id,
       .output_part_id = output_id,
       .compression = cseg::PageCompression::kZstd,
+      .limits = {},
   };
   const common::Result<EncodedCompactionPart> first = merge_append_only_cseg_v1(request);
   const common::Result<EncodedCompactionPart> second = merge_append_only_cseg_v1(request);
@@ -207,6 +216,7 @@ TEST(AppendOnlyCompactionTest, RejectsDuplicateTupleFreshnessCorruptionAndLimits
       .tablet_id = fixture.tablet_id,
       .wal_id = fixture.wal_id,
       .output_part_id = identifier<cseg::PartId>(0x80U),
+      .limits = {},
   };
   request.output_part_id = inputs.images.front().part_id;
   EXPECT_EQ(merge_append_only_cseg_v1(request).error().code(),
@@ -279,6 +289,7 @@ TEST(AppendOnlyCompactionTest, BuildsExactReplacementManifestOnlyAfterFullEquiva
       .tablet_id = fixture.tablet_id,
       .wal_id = fixture.wal_id,
       .output_part_id = identifier<cseg::PartId>(0x80U),
+      .limits = {},
   };
   const common::Result<EncodedCompactionPart> merged = merge_append_only_cseg_v1(merge_request);
   ASSERT_TRUE(merged.has_value());

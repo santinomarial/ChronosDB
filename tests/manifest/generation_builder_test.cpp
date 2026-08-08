@@ -481,6 +481,7 @@ TEST(ManifestGenerationBuilderTest, InstallsPartThenGeneratedManifestWithoutTran
       .nonce = nonce(0xb0U),
       .decode_limits = {},
       .part_validation_limits = {},
+      .compaction_equivalence_limits = {},
   });
   ASSERT_TRUE(installed_manifest.has_value()) << installed_manifest.error().to_string();
   EXPECT_EQ(installed_manifest->generation, 2U);

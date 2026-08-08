@@ -67,7 +67,10 @@ public:
 [[nodiscard]] common::Result<PhysicalAsofPlan> create_plan() {
   VectorAsofJoinDefinition configured = definition();
   std::vector<PhysicalColumnShape> joined;
-  for (const VectorAsofColumnShape& column : vector_asof_join_output_shape(configured).value())
+  const std::vector<VectorAsofColumnShape> joined_shapes =
+      vector_asof_join_output_shape(configured).value();
+  joined.reserve(joined_shapes.size());
+  for (const VectorAsofColumnShape& column : joined_shapes)
     joined.push_back({.type = column.type, .nullable = column.nullable});
   std::vector<PhysicalAsofPlanJoin> joins;
   joins.push_back({.left_preparation = PhysicalPipelinePlan::create(input_shape(), {}).value(),
@@ -82,7 +85,10 @@ TEST(PhysicalAsofPlanAllocationFailureTest, CreationClassifiesEveryOwnedAllocati
   for (std::size_t fail_after = 0U; fail_after < 128U; ++fail_after) {
     VectorAsofJoinDefinition configured = definition();
     std::vector<PhysicalColumnShape> joined;
-    for (const VectorAsofColumnShape& column : vector_asof_join_output_shape(configured).value())
+    const std::vector<VectorAsofColumnShape> joined_shapes =
+        vector_asof_join_output_shape(configured).value();
+    joined.reserve(joined_shapes.size());
+    for (const VectorAsofColumnShape& column : joined_shapes)
       joined.push_back({.type = column.type, .nullable = column.nullable});
     std::vector<PhysicalAsofPlanJoin> joins;
     joins.push_back({.left_preparation = PhysicalPipelinePlan::create(input_shape(), {}).value(),

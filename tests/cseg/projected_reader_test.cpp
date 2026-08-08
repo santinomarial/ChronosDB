@@ -545,7 +545,7 @@ TEST(CsegProjectedReaderTest, RejectsCatalogBindingProjectionAndRequestErrorsPre
 
   const auto reader = open_cseg_v1_projected_reader_exact(
       fixture.encoded.bytes(), lineage, fixture.schemas.v2_id, fixture.tablet_id,
-      {.max_decoded_buffer_bytes = 1U, .max_projected_columns = 1U});
+      {.metadata = {}, .max_decoded_buffer_bytes = 1U, .max_projected_columns = 1U});
   ASSERT_TRUE(reader.has_value());
   EXPECT_EQ(reader->read_granule(1U, {}).error().code(), common::StatusCode::kOutOfRange);
   EXPECT_EQ(reader->read_granule(0U, {}).error().code(), common::StatusCode::kResourceExhausted);
@@ -563,9 +563,9 @@ TEST(CsegProjectedReaderTest, RejectsCatalogBindingProjectionAndRequestErrorsPre
   EXPECT_EQ(ordinary_reader->read_granule(0U, outside).error().code(),
             common::StatusCode::kInvalidArgument);
 
-  const auto invalid_limits =
-      open_cseg_v1_projected_reader_exact(fixture.encoded.bytes(), lineage, fixture.schemas.v1_id,
-                                          fixture.tablet_id, {.max_decoded_buffer_bytes = 0U});
+  const auto invalid_limits = open_cseg_v1_projected_reader_exact(
+      fixture.encoded.bytes(), lineage, fixture.schemas.v1_id, fixture.tablet_id,
+      {.metadata = {}, .max_decoded_buffer_bytes = 0U});
   ASSERT_FALSE(invalid_limits.has_value());
   EXPECT_EQ(invalid_limits.error().kind(), CsegProjectedReaderOpenErrorKind::kInvalidArgument);
 }

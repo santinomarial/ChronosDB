@@ -79,7 +79,9 @@ template <typename Unsigned>
   }
   Unsigned value = 0U;
   for (std::size_t index = 0U; index < bytes.size(); ++index) {
-    value |= static_cast<Unsigned>(std::to_integer<std::uint8_t>(bytes[index])) << (index * 8U);
+    const Unsigned byte = static_cast<Unsigned>(std::to_integer<std::uint8_t>(bytes[index]));
+    const Unsigned shifted = static_cast<Unsigned>(byte << (index * 8U));
+    value = static_cast<Unsigned>(value | shifted);
   }
   return value;
 }

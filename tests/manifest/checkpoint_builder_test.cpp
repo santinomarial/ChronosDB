@@ -343,7 +343,7 @@ private:
 
 TEST(ManifestCheckpointBuilderTest, ProvesExactRowsAndAdvancesToThePhysicalRecordEnd) {
   const std::array<std::int64_t, 3> values{30, -4, 20};
-  const Fixture fixture{{.command_values = values}};
+  const Fixture fixture{{.command_values = values, .stored_values = {}}};
   const common::Result<CheckpointedManifestGeneration> built =
       build_manifest_v1_checkpointed_generation(fixture.input());
   ASSERT_TRUE(built.has_value()) << built.error().to_string();
@@ -374,7 +374,7 @@ TEST(ManifestCheckpointBuilderTest, RejectsCsegValuesThatDoNotMatchTheWalCommand
 }
 
 TEST(ManifestCheckpointBuilderTest, ProvesNullableVariableAndPackedBooleanCellsExactly) {
-  const Fixture fixture{{.rich_batch = true}};
+  const Fixture fixture{{.command_values = {}, .stored_values = {}, .rich_batch = true}};
   const auto built = build_manifest_v1_checkpointed_generation(fixture.input());
   ASSERT_TRUE(built.has_value()) << built.error().to_string();
   EXPECT_EQ(built->reclaim_checkpoint.record_sequence, 1U);
@@ -383,7 +383,7 @@ TEST(ManifestCheckpointBuilderTest, ProvesNullableVariableAndPackedBooleanCellsE
 
 TEST(ManifestCheckpointBuilderTest, RejectsProtectedRetryDigestDisagreement) {
   const std::array<std::int64_t, 2> values{1, 2};
-  const Fixture fixture{{.command_values = values}};
+  const Fixture fixture{{.command_values = values, .stored_values = {}}};
   RetryDescriptor changed = fixture.retry();
   ingest::Sha256Digest::Bytes digest = changed.request_digest.bytes();
   digest.front() ^= std::byte{0x80U};
@@ -408,7 +408,7 @@ TEST(ManifestCheckpointBuilderTest, RejectsProtectedRetryDigestDisagreement) {
 
 TEST(ManifestCheckpointBuilderTest, RejectsAnIncompleteFinalWalRecordWithoutPublishingBytes) {
   const std::array<std::int64_t, 2> values{1, 2};
-  const Fixture fixture{{.command_values = values}};
+  const Fixture fixture{{.command_values = values, .stored_values = {}}};
   const std::filesystem::path segment = fixture.directory() / "wal-00000000000000000001.cwal";
   ASSERT_NO_THROW(
       std::filesystem::resize_file(segment, fixture.append().record_end.byte_offset - 1U));
@@ -419,7 +419,7 @@ TEST(ManifestCheckpointBuilderTest, RejectsAnIncompleteFinalWalRecordWithoutPubl
 
 TEST(ManifestCheckpointBuilderTest, RejectsPhysicalWalCorruptionBeforeCoverageReplay) {
   const std::array<std::int64_t, 2> values{1, 2};
-  const Fixture fixture{{.command_values = values}};
+  const Fixture fixture{{.command_values = values, .stored_values = {}}};
   const std::filesystem::path segment = fixture.directory() / "wal-00000000000000000001.cwal";
   std::vector<std::byte> bytes = read_file(segment);
   ASSERT_GT(bytes.size(), wal::kSegmentHeaderSize + wal::kRecordHeaderSize);
@@ -432,7 +432,7 @@ TEST(ManifestCheckpointBuilderTest, RejectsPhysicalWalCorruptionBeforeCoverageRe
 
 TEST(ManifestCheckpointBuilderTest, RejectsTabletBoundaryThatIsAbsentFromTheWalSuffix) {
   const std::array<std::int64_t, 2> values{1, 2};
-  const Fixture fixture{{.command_values = values}};
+  const Fixture fixture{{.command_values = values, .stored_values = {}}};
   std::vector<TabletDescriptor> tablets{fixture.candidate().tablets().begin(),
                                         fixture.candidate().tablets().end()};
   tablets.front().durable_record_sequence = 2U;
@@ -466,7 +466,7 @@ TEST(ManifestCheckpointBuilderPropertyTest, GeneratedExactRowsAdvanceDeterminist
       state = state * multiplier + increment;
       values.push_back(std::bit_cast<std::int64_t>(state));
     }
-    const Fixture fixture{{.command_values = values}};
+    const Fixture fixture{{.command_values = values, .stored_values = {}}};
     const auto first = build_manifest_v1_checkpointed_generation(fixture.input());
     const auto second = build_manifest_v1_checkpointed_generation(fixture.input());
     ASSERT_TRUE(first.has_value()) << first.error().to_string();
@@ -479,7 +479,8 @@ TEST(ManifestCheckpointBuilderPropertyTest, GeneratedExactRowsAdvanceDeterminist
 
 TEST(ManifestCheckpointBuilderTest, MissingEarlierTabletCoverageKeepsTheGlobalPrefixClosed) {
   const std::array<std::int64_t, 2> values{7, 8};
-  const Fixture fixture{{.command_values = values, .shape = WalShape::kPrependUnclaimed}};
+  const Fixture fixture{
+      {.command_values = values, .stored_values = {}, .shape = WalShape::kPrependUnclaimed}};
   ASSERT_EQ(fixture.append().record_sequence, 2U);
   const auto built = build_manifest_v1_checkpointed_generation(fixture.input());
   ASSERT_TRUE(built.has_value()) << built.error().to_string();
@@ -490,7 +491,8 @@ TEST(ManifestCheckpointBuilderTest, MissingEarlierTabletCoverageKeepsTheGlobalPr
 
 TEST(ManifestCheckpointBuilderTest, ExactRetryDuplicateAdvancesWithoutDuplicateCsegRows) {
   const std::array<std::int64_t, 2> values{7, 8};
-  const Fixture fixture{{.command_values = values, .shape = WalShape::kDuplicate}};
+  const Fixture fixture{
+      {.command_values = values, .stored_values = {}, .shape = WalShape::kDuplicate}};
   ASSERT_TRUE(fixture.final_append().has_value());
   const auto built = build_manifest_v1_checkpointed_generation(fixture.input());
   ASSERT_TRUE(built.has_value()) << built.error().to_string();
@@ -503,7 +505,8 @@ TEST(ManifestCheckpointBuilderTest, ExactRetryDuplicateAdvancesWithoutDuplicateC
 
 TEST(ManifestCheckpointBuilderTest, UnsupportedSuffixKindPreventsAnyCheckpointProof) {
   const std::array<std::int64_t, 1> values{9};
-  const Fixture fixture{{.command_values = values, .shape = WalShape::kTrailingUnsupported}};
+  const Fixture fixture{
+      {.command_values = values, .stored_values = {}, .shape = WalShape::kTrailingUnsupported}};
   const auto built = build_manifest_v1_checkpointed_generation(fixture.input());
   ASSERT_FALSE(built.has_value());
   EXPECT_EQ(built.error().code(), common::StatusCode::kNotSupported);
@@ -511,7 +514,7 @@ TEST(ManifestCheckpointBuilderTest, UnsupportedSuffixKindPreventsAnyCheckpointPr
 
 TEST(ManifestCheckpointBuilderTest, RejectsNewRetryAtAnAlreadyCheckpointedTabletBoundary) {
   const std::array<std::int64_t, 2> values{4, 5};
-  const Fixture fixture{{.command_values = values}};
+  const Fixture fixture{{.command_values = values, .stored_values = {}}};
   ManifestCheckpointBuildInput fixture_input = fixture.input();
   auto checkpointed_result = build_manifest_v1_checkpointed_generation(fixture_input);
   ASSERT_TRUE(checkpointed_result.has_value()) << checkpointed_result.error().to_string();
@@ -546,7 +549,7 @@ TEST(ManifestCheckpointBuilderTest, RejectsNewRetryAtAnAlreadyCheckpointedTablet
 
 TEST(ManifestCheckpointBuilderTest, InstallsAndSelectsTheProvenCoordinateWithoutTranslation) {
   const std::array<std::int64_t, 2> values{4, 5};
-  const Fixture fixture{{.command_values = values}};
+  const Fixture fixture{{.command_values = values, .stored_values = {}}};
   const auto checkpointed = build_manifest_v1_checkpointed_generation(fixture.input());
   ASSERT_TRUE(checkpointed.has_value()) << checkpointed.error().to_string();
 
@@ -589,6 +592,7 @@ TEST(ManifestCheckpointBuilderTest, InstallsAndSelectsTheProvenCoordinateWithout
       .nonce = common::Uuid{nonce_bytes},
       .decode_limits = {},
       .part_validation_limits = {},
+      .compaction_equivalence_limits = {},
   });
   ASSERT_TRUE(installed_manifest.has_value()) << installed_manifest.error().to_string();
   EXPECT_EQ(installed_manifest->reclaim_checkpoint, checkpointed->reclaim_checkpoint);

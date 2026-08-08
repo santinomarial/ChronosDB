@@ -141,7 +141,7 @@ output_charge(const CsegPartPin& part, const cseg::CsegProjectedGranuleReadPlan&
     return next;
   total = *next;
 
-  for (const auto [count, element_size] :
+  for (const auto& [count, element_size] :
        {std::pair{plan.decoded_page_count(), sizeof(cseg::DecodedCsegPage)},
         std::pair{plan.synthesized_column_count(), sizeof(columnar::OwnedColumnVector)},
         std::pair{plan.destination_column_ordinals().size(), sizeof(cseg::CsegProjectedColumnView)},

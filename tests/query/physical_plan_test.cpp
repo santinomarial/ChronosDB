@@ -197,7 +197,8 @@ TEST(PhysicalPipelinePlanTest, PropagatesExactShapesAcrossOrderedStages) {
       {{.type = type(schema::LogicalTypeKind::kTimestampNs), .nullable = false}},
       {TimestampRangeFilterStage{
           .timestamp_column = 0U,
-          .predicate = {.lower = TimestampRangeBound{.value = 0, .inclusive = true}}}});
+          .predicate = {.lower = TimestampRangeBound{.value = 0, .inclusive = true},
+                        .upper = std::nullopt}}});
   ASSERT_TRUE(timestamp_plan.has_value());
   ASSERT_EQ(timestamp_plan->output_columns().size(), 1U);
   EXPECT_EQ(timestamp_plan->output_columns()[0].type.kind(), schema::LogicalTypeKind::kTimestampNs);

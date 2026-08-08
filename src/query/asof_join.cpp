@@ -771,7 +771,7 @@ common::Result<PhysicalOperatorStep> AsofJoinOperator::next(const QueryResourceC
     state_->right_rows.reserve(limits_.maximum_right_rows);
     state_->joined_rows.reserve(limits_.maximum_left_rows);
     std::size_t retained_state = 0U;
-    for (const auto [capacity, width] : {
+    for (const auto& [capacity, width] : {
              std::pair{state_->left_chunks.capacity(), sizeof(AccountedVectorChunk)},
              std::pair{state_->right_chunks.capacity(), sizeof(AccountedVectorChunk)},
              std::pair{state_->left_rows.capacity(), sizeof(BufferedRow)},
