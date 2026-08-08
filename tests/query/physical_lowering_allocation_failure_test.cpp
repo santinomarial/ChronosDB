@@ -86,5 +86,39 @@ TEST(PhysicalSelectLoweringAllocationFailureTest, ClassifiesEveryOwnedAllocation
   }
 }
 
+TEST(PhysicalAsofLoweringAllocationFailureTest, ClassifiesEveryOwnedAllocationFailure) {
+  BoundSqlSelect select =
+      bind_sql_v1_select(
+          parse_sql_v1_select("SELECT r.value AS grp, count(*) AS n FROM metrics AS l "
+                              "LATEST BY (value) ON l.ts "
+                              "ASOF LEFT JOIN metrics AS r "
+                              "ON l.value + 0 = r.value + 0 AND r.ts <= l.ts "
+                              "WHERE l.value > 0 GROUP BY r.value "
+                              "ORDER BY n DESC, grp ASC LIMIT 2")
+              .value(),
+          catalog())
+          .value();
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 1024U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    std::optional<SqlResult<PhysicalAsofPlan>> result;
+    std::size_t observed = 0U;
+    {
+      ::chronos::test::ScopedAllocationFailure failure{fail_after};
+      result.emplace(lower_bound_sql_asof_select(select));
+      observed = failure.observed_allocations();
+      failure.disable();
+    }
+    EXPECT_GT(observed, 0U);
+    if (result->has_value()) {
+      reached_success = true;
+      break;
+    }
+    EXPECT_EQ(result->error().code(), SqlDiagnosticCode::kResourceLimit);
+    EXPECT_EQ(result->error().status().code(), common::StatusCode::kResourceExhausted);
+  }
+  EXPECT_TRUE(reached_success);
+}
+
 } // namespace
 } // namespace chronos::query

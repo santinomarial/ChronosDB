@@ -262,12 +262,15 @@ canonical left null extension, and an explicit match bit for later joined identi
 [ADR 0053](../adr/0053-checked-left-deep-asof-physical-plan.md) composes those primitives in a
 finite immutable left-deep plan with exact preparation, binary-output, and final-pipeline shape
 handoffs plus fail-closed sibling ownership.
+[ADR 0054](../adr/0054-bound-asof-select-physical-lowering.md) lowers bound source-aware join
+expressions, post-join filtering and aggregation, and exact joined ORDER BY identities into that
+plan while widening ASOF LEFT right-source nullability.
 [ADR 0048](../adr/0048-snapshot-tablet-physical-pipeline-instantiation.md) now validates a lowered
 plan's complete schema and optional suffix input, loads one held snapshot's durable images, composes
 every current source, and instantiates the checked pipeline without collapsing SQL diagnostics.
 Future correction/delete version resolution remains separate work. Variable-width aggregate
 extrema now use exact unsigned byte order and reserve-before-copy query accounting under
-[ADR 0049](../adr/0049-query-accounted-variable-width-extrema.md). Bound ASOF lowering and snapshot
+[ADR 0049](../adr/0049-query-accounted-variable-width-extrema.md). Multi-source snapshot
 instantiation, parallel scheduling,
 spilling, adaptive behavior, and join algorithms remain deferred. Implemented reservations and
 accounted chunks provide the admission/ownership invariant, but future operators must reserve every

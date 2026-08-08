@@ -471,8 +471,11 @@ No phase passes because its code merely compiles. A phase passes only when its a
   injection, hostile fuzzing, and cardinality benchmarks. ADR 0053 and the thirty-sixth increment
   add a finite immutable left-deep ASOF plan with exact preparation/join/final shape handoffs,
   retained-configuration accounting, source ownership, allocation-failure cleanup, hostile
-  fuzzing, and instantiation benchmarks. Bound ASOF lowering, optimizer rules, future
-  correction/delete row-version resolution,
+  fuzzing, and instantiation benchmarks. ADR 0054 and the thirty-seventh increment add bound ASOF
+  lowering for computed and widened keys, prior-source expressions, ASOF LEFT nullability, exact
+  joined identity ties, post-join WHERE/aggregation/ORDER/LIMIT order, hidden-column removal,
+  failure injection, fuzzing, and lowering benchmarks. Multi-source snapshot instantiation,
+  optimizer rules, future correction/delete row-version resolution,
   mapped/asynchronous providers, shared pin credit, scheduling, spill, and full scalar-engine
   differential plan execution are unimplemented.
 

@@ -202,6 +202,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   extension, and explicit match presence.
 - [Checked ASOF physical plans](learning/checked-asof-physical-plan.md): implemented exact
   left-deep preparation, binary handoff, final-pipeline shape, ownership, and configuration bounds.
+- [Bound ASOF physical lowering](learning/bound-asof-physical-lowering.md): implemented source-aware
+  join-expression preparation, nullable left joins, post-join stages, and exact joined identities.
 - [Streaming ungrouped vector aggregates](learning/streaming-ungrouped-aggregates.md): implemented
   fixed-state global COUNT/SUM/AVG/MIN/MAX/variance over accounted chunk streams with exact empty,
   NULL, numeric, ownership, cancellation, and canonical-output behavior.

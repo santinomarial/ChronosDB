@@ -158,6 +158,24 @@ TEST(SqlBinderTest, RecordsExecutableLatestAndAsofShapes) {
             SqlDiagnosticCode::kTypeMismatch);
 }
 
+TEST(SqlBinderTest, WidensOnlyAsofLeftRightSourceNullability) {
+  SqlResult<BoundSqlSelect> left = bind("SELECT q.ts FROM trades AS t ASOF LEFT JOIN quotes AS q "
+                                        "ON t.symbol = q.symbol AND q.ts <= t.ts");
+  ASSERT_TRUE(left.has_value()) << left.error().status().to_string();
+  ASSERT_EQ(left->outputs().size(), 1U);
+  EXPECT_TRUE(left->outputs()[0].nullable);
+  ASSERT_TRUE(left->outputs()[0].expression_span.has_value());
+  const BoundColumnReference* left_reference = left->find_column_reference(
+      left->outputs()[0].expression_span.value()); // NOLINT(bugprone-unchecked-optional-access)
+  ASSERT_NE(left_reference, nullptr);
+  EXPECT_TRUE(left_reference->nullable);
+
+  SqlResult<BoundSqlSelect> inner = bind("SELECT q.ts FROM trades AS t ASOF JOIN quotes AS q "
+                                         "ON t.symbol = q.symbol AND q.ts <= t.ts");
+  ASSERT_TRUE(inner.has_value()) << inner.error().status().to_string();
+  EXPECT_FALSE(inner->outputs()[0].nullable);
+}
+
 TEST(SqlBinderTest, RejectsForwardAsofReferencesAndAllowsPriorJoinSources) {
   const SqlResult<BoundSqlSelect> prior =
       bind("SELECT t.symbol FROM trades AS t "

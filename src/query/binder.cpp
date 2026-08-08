@@ -267,6 +267,11 @@ private:
     bool contains_aggregate{};
   };
 
+  [[nodiscard]] bool source_is_null_extended(const std::size_t source) const noexcept {
+    return source != 0U && source - 1U < syntax_.asof_joins().size() &&
+           syntax_.asof_joins()[source - 1U].left;
+  }
+
   [[nodiscard]] static SqlDiagnostic make_diagnostic(const SqlDiagnosticCode code,
                                                      const SourceSpan span,
                                                      const common::StatusCode status,
@@ -360,7 +365,7 @@ private:
         .table_id = sources_[found_source].schema_ptr()->table_id(),
         .column_id = found_column->id(),
         .type = found_column->type(),
-        .nullable = found_column->nullable(),
+        .nullable = found_column->nullable() || source_is_null_extended(found_source),
     });
     return column_references_.back();
   }
@@ -801,7 +806,7 @@ private:
         }
         name.append(column.name());
         append_output(std::move(name), false, column.type(), std::nullopt, source, column_ordinal,
-                      column.nullable(), false, span);
+                      column.nullable() || source_is_null_extended(source), false, span);
         ++column_ordinal;
       }
     }
@@ -817,7 +822,7 @@ private:
       }
       name.append(column.name());
       append_output(std::move(name), false, column.type(), std::nullopt, source, column_ordinal,
-                    column.nullable(), false, span);
+                    column.nullable() || source_is_null_extended(source), false, span);
       ++column_ordinal;
     }
   }

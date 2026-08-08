@@ -108,6 +108,17 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
       .value();
 }
 
+[[nodiscard]] BoundSqlSelect benchmark_asof_select() {
+  return bind_sql_v1_select(
+             parse_sql_v1_select(
+                 "SELECT r.value AS matched FROM metrics AS l LATEST BY (value) ON l.ts "
+                 "ASOF LEFT JOIN metrics AS r ON l.value + 0 = r.value + 0 AND r.ts <= l.ts "
+                 "WHERE l.value > 0 ORDER BY r.ts DESC, matched ASC LIMIT 32")
+                 .value(),
+             benchmark_catalog())
+      .value();
+}
+
 class EmptySource final : public PhysicalOperator {
 public:
   [[nodiscard]] common::Result<PhysicalOperatorStep> next(const QueryResourceContext&) override {
@@ -243,6 +254,20 @@ void lower_bound_latest_pipeline(benchmark::State& state) {
   state.SetLabel("bound LATEST BY plus ORDER BY retained; parse and bind excluded");
 }
 
+void lower_bound_asof_pipeline(benchmark::State& state) {
+  const BoundSqlSelect select = benchmark_asof_select();
+  for (auto iteration : state) {
+    static_cast<void>(iteration);
+    auto plan = lower_bound_sql_asof_select(select);
+    benchmark::DoNotOptimize(plan);
+  }
+  state.SetItemsProcessed(static_cast<std::int64_t>(state.iterations()) * 6);
+  state.counters["asof_keys"] = 1.0;
+  state.counters["order_keys"] = 2.0;
+  state.counters["outputs"] = 1.0;
+  state.SetLabel("bound LATEST/ASOF/WHERE/ORDER/LIMIT; parse and bind excluded");
+}
+
 BENCHMARK(validate_physical_pipeline_plan)->Arg(1)->Arg(8)->Arg(64)->Arg(256);
 BENCHMARK(instantiate_physical_pipeline_plan)->Arg(1)->Arg(8)->Arg(64)->Arg(256);
 BENCHMARK(lower_bound_select_pipeline);
@@ -251,6 +276,7 @@ BENCHMARK(lower_bound_grouped_aggregate_pipeline);
 BENCHMARK(lower_bound_ordered_pipeline);
 BENCHMARK(lower_bound_ordered_grouped_pipeline);
 BENCHMARK(lower_bound_latest_pipeline);
+BENCHMARK(lower_bound_asof_pipeline);
 
 } // namespace
 } // namespace chronos::query

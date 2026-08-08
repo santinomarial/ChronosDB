@@ -64,7 +64,7 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_t size) {
   if (size == 0U)
     return 0;
-  static constexpr std::array<std::string_view, 29> kSql{
+  static constexpr std::array<std::string_view, 32> kSql{
       "SELECT value + 1 AS v FROM metrics",
       "SELECT value FROM metrics WHERE value BETWEEN 1 AND 9 LIMIT 2",
       "SELECT value IN (1, NULL, 3) AS v FROM metrics",
@@ -96,6 +96,13 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
       "SELECT upper(CAST(NULL AS STRING)) IS NULL AS v FROM metrics",
       "SELECT lower('B') BETWEEN 'a' AND 'c' AS v FROM metrics",
       "SELECT CAST('x' AS SYMBOL) IN (CAST('a' AS SYMBOL), CAST('x' AS SYMBOL)) AS v FROM metrics",
+      "SELECT r.value FROM metrics AS l ASOF JOIN metrics AS r "
+      "ON l.value = r.value AND r.ts <= l.ts",
+      "SELECT r.label AS x FROM metrics AS l ASOF LEFT JOIN metrics AS r "
+      "ON l.value + 0 = r.value + 0 AND r.ts <= l.ts ORDER BY r.ts DESC LIMIT 2",
+      "SELECT r.value AS grp, count(*) AS n FROM metrics AS l "
+      "ASOF LEFT JOIN metrics AS r ON l.value = r.value AND r.ts <= l.ts "
+      "GROUP BY r.value ORDER BY n DESC, grp ASC",
       "EXPLAIN SELECT value FROM metrics",
       "EXPLAIN ANALYZE SELECT value FROM metrics"};
   auto parsed = chronos::query::parse_sql_v1_select(kSql[data[0] % kSql.size()]);
@@ -108,15 +115,21 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
                                              : chronos::query::kMaximumVectorExpressionInstructions;
   const std::size_t aggregates = size > 2U ? static_cast<std::size_t>(data[2] % 8U) + 1U
                                            : chronos::query::kMaximumUngroupedAggregateWidth;
-  auto lowered = chronos::query::lower_bound_sql_select(
-      *bound,
-      {.expression_limits = {.maximum_instructions = instructions,
-                             .maximum_retained_configuration_bytes = 256U * 1024U},
-       .aggregate_limits = {.maximum_aggregates = aggregates,
-                            .maximum_variable_extremum_bytes = size > 3U ? data[3] : 1U},
-       .grouped_aggregate_limits = {.maximum_aggregates = aggregates,
-                                    .maximum_variable_extremum_bytes = size > 3U ? data[3] : 1U}});
-  if (lowered.has_value() && lowered->output_columns().empty())
-    __builtin_trap();
+  const chronos::query::PhysicalSelectLoweringLimits limits{
+      .expression_limits = {.maximum_instructions = instructions,
+                            .maximum_retained_configuration_bytes = 256U * 1024U},
+      .aggregate_limits = {.maximum_aggregates = aggregates,
+                           .maximum_variable_extremum_bytes = size > 3U ? data[3] : 1U},
+      .grouped_aggregate_limits = {.maximum_aggregates = aggregates,
+                                   .maximum_variable_extremum_bytes = size > 3U ? data[3] : 1U}};
+  if (bound->asof_joins().empty()) {
+    auto lowered = chronos::query::lower_bound_sql_select(*bound, limits);
+    if (lowered.has_value() && lowered->output_columns().empty())
+      __builtin_trap();
+  } else {
+    auto lowered = chronos::query::lower_bound_sql_asof_select(*bound, limits);
+    if (lowered.has_value() && lowered->final_pipeline().output_columns().empty())
+      __builtin_trap();
+  }
   return 0;
 }

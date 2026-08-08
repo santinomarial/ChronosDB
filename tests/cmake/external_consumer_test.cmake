@@ -398,6 +398,10 @@ int main() {
   using LowerSelectFunction = chronos::query::SqlResult<chronos::query::PhysicalPipelinePlan> (*)(
       const chronos::query::BoundSqlSelect&, chronos::query::PhysicalSelectLoweringLimits);
   const LowerSelectFunction lower_select = &chronos::query::lower_bound_sql_select;
+  using LowerAsofSelectFunction = chronos::query::SqlResult<chronos::query::PhysicalAsofPlan> (*)(
+      const chronos::query::BoundSqlSelect&, chronos::query::PhysicalSelectLoweringLimits);
+  const LowerAsofSelectFunction lower_asof_select =
+      &chronos::query::lower_bound_sql_asof_select;
   const chronos::query::PhysicalSelectLoweringLimits installed_lowering_limits{};
   const auto installed_order_key_limit = installed_lowering_limits.sort_limits.maximum_keys;
   using CreateTimestampRangeFilterFunction =
@@ -692,6 +696,7 @@ int main() {
                  installed_asof_state_bytes.has_value() &&
                  chronos::query::kDefaultAsofJoinKeyLimit == 256U &&
                  chronos::query::kDefaultPhysicalAsofPlanJoinLimit == 63U &&
+                 lower_asof_select != nullptr &&
                  installed_nullable_constant.force_nullable &&
                  installed_lowering_limits.grouped_aggregate_limits.maximum_groups ==
                      chronos::query::kMaximumGroupedAggregateGroups &&

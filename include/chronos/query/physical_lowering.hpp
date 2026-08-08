@@ -4,6 +4,7 @@
 #include "chronos/query/binder.hpp"
 #include "chronos/query/diagnostic.hpp"
 #include "chronos/query/physical_plan.hpp"
+#include "chronos/query/relational_plan.hpp"
 #include "chronos/query/vector_chunk.hpp"
 #include "chronos/query/vector_expression.hpp"
 
@@ -17,6 +18,8 @@ struct PhysicalSelectLoweringLimits {
   SortLimits sort_limits{};
   VectorChunkLimits output_limits{};
   PhysicalPipelinePlanLimits plan_limits{};
+  PhysicalAsofPlanLimits asof_plan_limits{};
+  AsofJoinLimits asof_join_limits{};
 };
 
 // Lowers the executable single-source SQL v1 subset, including global and grouped aggregation,
@@ -28,6 +31,12 @@ struct PhysicalSelectLoweringLimits {
 // diagnostic; there is no scalar fallback.
 [[nodiscard]] SqlResult<PhysicalPipelinePlan>
 lower_bound_sql_select(const BoundSqlSelect& select, PhysicalSelectLoweringLimits limits = {});
+
+// Lowers the bound SQL v1 ASOF surface into a checked left-deep physical plan. Every source uses
+// the shared row-version suffix. Join-key and timestamp expressions are prepared on the exact side
+// where they are bound; WHERE, aggregation, final output, ORDER BY, and LIMIT follow all joins.
+[[nodiscard]] SqlResult<PhysicalAsofPlan>
+lower_bound_sql_asof_select(const BoundSqlSelect& select, PhysicalSelectLoweringLimits limits = {});
 
 } // namespace chronos::query
 

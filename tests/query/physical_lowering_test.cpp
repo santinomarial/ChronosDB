@@ -393,6 +393,153 @@ TEST(PhysicalSelectLoweringTest, LowersWhereProjectionAndLimitIntoExactStageOrde
   EXPECT_EQ(cell_i64(step.chunk()->chunk(), 1U, 1U), 7);
 }
 
+TEST(PhysicalAsofLoweringTest, LowersAliasesHiddenOrderKeysWhereAndLimitInExactOrder) {
+  BoundSqlSelect select = bind("SELECT l.value AS lv, r.label AS rl FROM metrics AS l "
+                               "ASOF LEFT JOIN metrics AS r ON l.value = r.value AND r.ts <= l.ts "
+                               "WHERE l.flag ORDER BY r.ts DESC NULLS LAST, lv ASC LIMIT 3");
+  SqlResult<PhysicalAsofPlan> lowered = lower_bound_sql_asof_select(select);
+  ASSERT_TRUE(lowered.has_value()) << lowered.error().status().to_string();
+  PhysicalAsofPlan plan = std::move(*lowered);
+  ASSERT_EQ(plan.source_count(), 2U);
+  ASSERT_EQ(plan.joins().size(), 1U);
+  EXPECT_TRUE(plan.joins()[0].definition.left_outer);
+  EXPECT_EQ(plan.joins()[0].definition.equality_keys.size(), 1U);
+  ASSERT_EQ(plan.final_pipeline().output_columns().size(), 2U);
+  EXPECT_TRUE(plan.final_pipeline().output_columns()[1].nullable);
+  const auto stages = plan.final_pipeline().stages();
+  ASSERT_EQ(stages.size(), 6U);
+  EXPECT_TRUE(std::holds_alternative<ColumnOutputStage>(stages[0]));
+  EXPECT_TRUE(std::holds_alternative<BooleanFilterStage>(stages[1]));
+  EXPECT_TRUE(std::holds_alternative<ColumnOutputStage>(stages[2]));
+  EXPECT_TRUE(std::holds_alternative<SortStage>(stages[3]));
+  EXPECT_TRUE(std::holds_alternative<ColumnSubsetStage>(stages[4]));
+  EXPECT_TRUE(std::holds_alternative<LimitStage>(stages[5]));
+  const auto& sort = std::get<SortStage>(stages[3]);
+  ASSERT_EQ(sort.keys.size(), 11U);
+  EXPECT_EQ(sort.keys[0].direction, PhysicalSortDirection::kDescending);
+  EXPECT_EQ(sort.keys[0].null_placement, ScalarNullPlacement::kLast);
+
+  QueryResourceContext resources = QueryResourceContext::create(32U << 20U).value();
+  std::vector<std::unique_ptr<PhysicalOperator>> sources;
+  sources.push_back(std::make_unique<OneChunkSource>(ordered_input(resources)));
+  sources.push_back(std::make_unique<OneChunkSource>(ordered_input(resources)));
+  auto pipeline = plan.instantiate(std::move(sources));
+  ASSERT_TRUE(pipeline.has_value()) << pipeline.error().message();
+  auto step = (*pipeline)->next(resources);
+  ASSERT_TRUE(step.has_value()) << step.error().message();
+  ASSERT_EQ(step->kind(), PhysicalOperatorStepKind::kChunk);
+  const VectorChunk& output = step->chunk()->chunk();
+  ASSERT_EQ(output.column_count(), 2U);
+  ASSERT_EQ(output.selected_row_count(), 3U);
+  EXPECT_EQ(cell_i64(output, 0U, 0U), 9);
+  EXPECT_EQ(cell_text(output, 1U, 0U), "high");
+  EXPECT_EQ(cell_i64(output, 0U, 1U), 2);
+  EXPECT_TRUE(output.cell({1U, 1U}).value().is_null());
+  EXPECT_EQ(cell_i64(output, 0U, 2U), 7);
+  EXPECT_EQ(cell_text(output, 1U, 2U), "late");
+  OneSnapshotProvider scalar_source{ordered_scalar_snapshot()};
+  SqlResult<ScalarQueryResult> scalar = execute_sql_v1_select(select, scalar_source);
+  ASSERT_TRUE(scalar.has_value()) << scalar.error().status().to_string();
+  ASSERT_EQ(scalar->rows().size(), output.selected_row_count());
+  for (std::size_t row = 0U; row < scalar->rows().size(); ++row) {
+    ASSERT_EQ(scalar->rows()[row].size(), output.column_count());
+    for (std::size_t column = 0U; column < scalar->rows()[row].size(); ++column)
+      EXPECT_EQ(compare_scalar_values(cell_value(output, column, row), scalar->rows()[row][column],
+                                      ScalarNullPlacement::kLast)
+                    .value(),
+                0);
+  }
+  step = PhysicalOperatorStep::end();
+  (*pipeline).reset();
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
+TEST(PhysicalAsofLoweringTest, LowersGroupedAggregateAndMultiplePriorSourceJoin) {
+  auto grouped_parsed =
+      parse_sql_v1_select("SELECT r.value AS grp, count(*) AS n, max(r.label) AS high "
+                          "FROM metrics AS l ASOF LEFT JOIN metrics AS r "
+                          "ON l.value = r.value AND r.ts <= l.ts "
+                          "GROUP BY r.value ORDER BY n DESC, grp ASC");
+  ASSERT_TRUE(grouped_parsed.has_value()) << grouped_parsed.error().status().to_string();
+  SqlResult<BoundSqlSelect> grouped_bound =
+      bind_sql_v1_select(std::move(*grouped_parsed), catalog());
+  ASSERT_TRUE(grouped_bound.has_value()) << grouped_bound.error().status().to_string();
+  BoundSqlSelect grouped = std::move(*grouped_bound);
+  SqlResult<PhysicalAsofPlan> grouped_lowered = lower_bound_sql_asof_select(grouped);
+  ASSERT_TRUE(grouped_lowered.has_value()) << grouped_lowered.error().status().to_string();
+  const auto grouped_stages = grouped_lowered->final_pipeline().stages();
+  ASSERT_EQ(grouped_stages.size(), 5U);
+  EXPECT_TRUE(std::holds_alternative<GroupedAggregateStage>(grouped_stages[1]));
+  EXPECT_TRUE(std::holds_alternative<SortStage>(grouped_stages[3]));
+
+  QueryResourceContext resources = QueryResourceContext::create(32U << 20U).value();
+  std::vector<std::unique_ptr<PhysicalOperator>> sources;
+  sources.push_back(std::make_unique<OneChunkSource>(ordered_input(resources)));
+  sources.push_back(std::make_unique<OneChunkSource>(ordered_input(resources)));
+  auto pipeline = grouped_lowered->instantiate(std::move(sources)).value();
+  auto step = pipeline->next(resources).value();
+  ASSERT_EQ(step.kind(), PhysicalOperatorStepKind::kChunk);
+  const VectorChunk& output = step.chunk()->chunk();
+  ASSERT_EQ(output.column_count(), 3U);
+  ASSERT_EQ(output.selected_row_count(), 3U);
+  EXPECT_EQ(cell_i64(output, 0U, 0U), 7);
+  EXPECT_EQ(cell_i64(output, 1U, 0U), 4);
+  EXPECT_EQ(cell_text(output, 2U, 0U), "seq2");
+  step = PhysicalOperatorStep::end();
+  pipeline.reset();
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+
+  auto chained_parsed =
+      parse_sql_v1_select("SELECT x.label FROM metrics AS l "
+                          "ASOF JOIN metrics AS r ON l.value = r.value AND r.ts <= l.ts "
+                          "ASOF JOIN metrics AS x ON r.value = x.value AND x.ts <= r.ts");
+  ASSERT_TRUE(chained_parsed.has_value()) << chained_parsed.error().status().to_string();
+  SqlResult<BoundSqlSelect> chained_bound =
+      bind_sql_v1_select(std::move(*chained_parsed), catalog());
+  ASSERT_TRUE(chained_bound.has_value()) << chained_bound.error().status().to_string();
+  BoundSqlSelect chained = std::move(*chained_bound);
+  SqlResult<PhysicalAsofPlan> chained_lowered = lower_bound_sql_asof_select(chained);
+  ASSERT_TRUE(chained_lowered.has_value()) << chained_lowered.error().status().to_string();
+  EXPECT_EQ(chained_lowered->source_count(), 3U);
+  EXPECT_EQ(chained_lowered->joins().size(), 2U);
+
+  BoundSqlSelect computed = bind("SELECT r.ts FROM metrics AS l ASOF JOIN metrics AS r "
+                                 "ON l.value + 0 = r.value + 0 AND l.flag = r.flag "
+                                 "AND time_bucket(INTERVAL '1 nanosecond', r.ts) <= "
+                                 "time_bucket(INTERVAL '1 nanosecond', l.ts)");
+  SqlResult<PhysicalAsofPlan> computed_lowered = lower_bound_sql_asof_select(computed);
+  ASSERT_TRUE(computed_lowered.has_value()) << computed_lowered.error().status().to_string();
+  ASSERT_EQ(computed_lowered->joins()[0].definition.equality_keys.size(), 2U);
+  EXPECT_FALSE(computed_lowered->final_pipeline().output_columns()[0].nullable);
+}
+
+TEST(PhysicalAsofLoweringTest, RejectsUnavailableJoinedIdentityAndHostileLimits) {
+  const std::vector<QueryCatalogTableInput> tables{
+      {.name = "metrics", .quoted = false, .schema = schema(false)}};
+  auto no_identity_catalog = std::make_shared<const QueryCatalogSnapshot>(
+      QueryCatalogSnapshot::create(1U, tables).value());
+  BoundSqlSelect no_identity =
+      bind_sql_v1_select(
+          parse_sql_v1_select("SELECT r.value FROM metrics AS l ASOF JOIN metrics AS r "
+                              "ON l.value = r.value AND r.ts <= l.ts ORDER BY r.value")
+              .value(),
+          no_identity_catalog)
+          .value();
+  SqlResult<PhysicalAsofPlan> rejected = lower_bound_sql_asof_select(no_identity);
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), SqlDiagnosticCode::kUnsupportedSyntax);
+
+  BoundSqlSelect valid = bind("SELECT r.value FROM metrics AS l ASOF JOIN metrics AS r "
+                              "ON l.value = r.value AND r.ts <= l.ts");
+  SqlResult<PhysicalAsofPlan> limited =
+      lower_bound_sql_asof_select(valid, {.output_limits = {.maximum_rows = 1U,
+                                                            .maximum_columns = 1U,
+                                                            .maximum_buffer_bytes = 1U,
+                                                            .maximum_retained_buffer_bytes = 1U}});
+  ASSERT_FALSE(limited.has_value());
+  EXPECT_EQ(limited.error().code(), SqlDiagnosticCode::kResourceLimit);
+}
+
 TEST(PhysicalSelectLoweringTest, PreservesStarOrderAndVariableConstantShape) {
   BoundSqlSelect select = bind("SELECT *, 'fixed' AS fixed_label FROM metrics");
   SqlResult<PhysicalPipelinePlan> plan = lower_bound_sql_select(select);
