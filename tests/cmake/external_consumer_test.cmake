@@ -21,7 +21,7 @@ cmake_minimum_required(VERSION 3.25)
 project(ChronosIngestConsumer LANGUAGES CXX)
 find_package(ChronosDB 0.1 CONFIG REQUIRED)
 add_executable(consumer main.cpp)
-target_link_libraries(consumer PRIVATE chronos::cseg chronos::head chronos::ingest chronos::manifest chronos::query)
+target_link_libraries(consumer PRIVATE chronos::cseg chronos::head chronos::ingest chronos::manifest chronos::query chronos::network)
 target_compile_features(consumer PRIVATE cxx_std_23)
 set(consumer_sanitizers "")
 if(CHRONOS_TEST_ENABLE_ASAN)
@@ -116,6 +116,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/query/vector_expression.hpp>
 #include <chronos/manifest/types.hpp>
 #include <chronos/manifest/validation.hpp>
+#include <chronos/network/protocol.hpp>
 #include <chronos/wal/application.hpp>
 
 #include <array>
@@ -768,6 +769,8 @@ int main() {
           chronos::manifest::ManifestColumnarStartupConfig);
   const RecoverManifestColumnarFunction recover_manifest_columnar =
       &chronos::manifest::recover_manifest_columnar_database;
+  const auto protocol_ping = chronos::network::encode_frame(
+      {.message_type = chronos::network::MessageType::kPing, .request_id = 1U}, {});
   return event_time_match != nullptr && execute != nullptr && recover != nullptr &&
                  reclaim_recovered_wal != nullptr && inspect_wal_suffix != nullptr &&
                  recover_wal_checkpoint != nullptr && open_wal_checkpoint != nullptr &&
@@ -850,6 +853,8 @@ int main() {
                  create_scalar_snapshot != nullptr &&
                  execute_select != nullptr && explain_select != nullptr &&
                  execute_analyze != nullptr &&
+                 protocol_ping.has_value() &&
+                 protocol_ping->size() == chronos::network::kFrameHeaderSize &&
                  manifest_name.has_value() &&
                  *manifest_name == "manifest-00000000000000000001.cman" &&
                  decode_manifest != nullptr && validate_manifest_transition != nullptr &&

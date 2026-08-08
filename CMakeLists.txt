@@ -376,6 +376,21 @@ chronos_set_project_warnings(chronos_query)
 chronos_enable_sanitizers(chronos_query)
 chronos_enable_static_analysis(chronos_query)
 
+add_library(chronos_network src/network/protocol.cpp)
+add_library(chronos::network ALIAS chronos_network)
+set_target_properties(chronos_network PROPERTIES EXPORT_NAME network CXX_EXTENSIONS OFF)
+target_compile_features(chronos_network PUBLIC cxx_std_23)
+target_include_directories(
+  chronos_network
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+)
+target_link_libraries(chronos_network PUBLIC chronos::common)
+chronos_set_project_warnings(chronos_network)
+chronos_enable_sanitizers(chronos_network)
+chronos_enable_static_analysis(chronos_network)
+
 add_executable(chronosctl tools/chronosctl/main.cpp)
 set_target_properties(chronosctl PROPERTIES CXX_EXTENSIONS OFF)
 target_compile_features(chronosctl PRIVATE cxx_std_23)
@@ -447,6 +462,37 @@ if(CHRONOS_BUILD_TESTS)
   chronos_enable_sanitizers(chronos_common_tests)
   chronos_enable_static_analysis(chronos_common_tests)
   gtest_discover_tests(chronos_common_tests DISCOVERY_TIMEOUT 30)
+
+  add_executable(
+    chronos_network_tests
+    tests/network/protocol_header_self_contained.cpp
+    tests/network/protocol_test.cpp
+  )
+  set_target_properties(chronos_network_tests PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_network_tests PRIVATE cxx_std_23)
+  target_link_libraries(chronos_network_tests PRIVATE chronos::network GTest::gtest_main)
+  chronos_set_project_warnings(chronos_network_tests)
+  chronos_enable_sanitizers(chronos_network_tests)
+  chronos_enable_static_analysis(chronos_network_tests)
+  gtest_discover_tests(chronos_network_tests DISCOVERY_TIMEOUT 30)
+
+  add_executable(
+    chronos_network_allocation_failure_tests
+    tests/network/protocol_allocation_failure_test.cpp
+    tests/support/failing_allocator.cpp
+  )
+  set_target_properties(chronos_network_allocation_failure_tests PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_network_allocation_failure_tests PRIVATE cxx_std_23)
+  target_include_directories(
+    chronos_network_allocation_failure_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+  )
+  target_link_libraries(
+    chronos_network_allocation_failure_tests PRIVATE chronos::network GTest::gtest_main
+  )
+  chronos_set_project_warnings(chronos_network_allocation_failure_tests)
+  chronos_enable_sanitizers(chronos_network_allocation_failure_tests)
+  chronos_enable_static_analysis(chronos_network_allocation_failure_tests)
+  gtest_discover_tests(chronos_network_allocation_failure_tests DISCOVERY_TIMEOUT 30)
 
   add_executable(
     chronos_schema_tests

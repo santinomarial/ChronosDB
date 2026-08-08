@@ -52,6 +52,11 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Production dependencies](dependencies/README.md): maintained external-library boundaries,
   version sources, licenses, and update/security ownership.
 
+## Network protocols
+
+- [Native Protocol v1](protocol/native-v1.md): accepted fixed checksummed framing, assigned message
+  types, finite limits, compatibility, and rejection rules.
+
 ## Delivery
 
 - [Roadmap](roadmap.md): implementation phases and evidence-based exit gates.
@@ -155,6 +160,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Phase 9 vectorized query exit](learning/phase-9-vectorized-query-exit.md): accepted executable
   boundary, full-plan scalar/vector differential oracle, ownership and limit closure, deferred
   contracts, and reproducible end-to-end profile methodology.
+- [Native Protocol v1 framing](learning/native-protocol-v1-framing.md): portable checksummed frame
+  interfaces, validation-before-allocation, ownership, failure behavior, and verification strategy.
 - [Shared snapshot publication credit](learning/shared-snapshot-publication-credit.md): implemented
   one-query/one-epoch publication admission across part images, backed chunks, complete tablet scans,
   and ASOF aliases while retaining exact local image/output credit and last-owner cleanup.

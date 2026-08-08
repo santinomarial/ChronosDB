@@ -311,6 +311,11 @@ cooperative cancellation unwinding.
 
 Linux `epoll` is the first server backend under [ADR 0009](../adr/0009-network-reactor-strategy.md). Reactors use nonblocking sockets, bounded frame sizes, explicit connection state machines, and bounded queues to shard workers. Thread-per-connection is excluded. Network formats are versioned from their first implementation and all lengths, offsets, compression envelopes, and state transitions are validated before allocation or access.
 
+The implemented portable Protocol v1 frame under [ADR 0060](../adr/0060-native-protocol-v1-framing.md)
+uses a fixed checksummed header and an independently checksummed payload. It validates the header
+and finite body requirement before payload allocation; state-machine payloads and the Linux reactor
+remain separately staged Phase 10 work.
+
 An `io_uring` backend is optional and may be accepted only after the epoll path is correct, profiled, and reproducibly benchmarked. TLS and cryptography will use maintained external libraries behind a defined interface; ChronosDB will not implement cryptographic primitives.
 
 ## Future distribution: tablets and Raft

@@ -520,6 +520,12 @@ No phase passes because its code merely compiles. A phase passes only when its a
 - **Testing exit gate:** protocol fuzzing, partial read/write, slowloris, connection churn, queue saturation, shard stall, cancellation, TLS-boundary tests if enabled, and sanitizers pass.
 - **Measurement exit gate:** characterize connections, batch/request latency, throughput, CPU, allocations, fairness, and overload behavior across frame and queue sizes on declared Linux configurations.
 
+Implementation progress: the first Phase 10 increment accepts Protocol v1's fixed 40-byte
+checksummed frame, permanent message-type registry, compatibility/rejection rules, 16 MiB ceiling,
+portable bounded codec, golden/corruption/boundary tests, allocation-failure classification, and
+installed public target. Handshake payloads and connection/reactor behavior remain subsequent
+increments.
+
 ## Phase 11 — Subscriptions and incremental materialized views
 
 - **Scope:** committed change model; gap-free snapshot-to-stream handoff; deterministic versioned resume tokens; bounded subscriber policies; supported incremental operators; materialized-view progress/recovery and late-event corrections.
