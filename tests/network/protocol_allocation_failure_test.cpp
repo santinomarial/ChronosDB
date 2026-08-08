@@ -1,3 +1,4 @@
+#include "chronos/network/connection_buffers.hpp"
 #include "chronos/network/connection_state.hpp"
 #include "chronos/network/messages.hpp"
 #include "chronos/network/protocol.hpp"
@@ -84,6 +85,24 @@ TEST(ProtocolAllocationFailureTest, MessageEncodersClassifyEveryOwnedAllocation)
 
 TEST(ProtocolAllocationFailureTest, ConnectionCreationClassifiesItsOwnedRequestStorage) {
   expect_owned_allocation_is_classified([&] { return ServerConnectionState::create(); });
+}
+
+TEST(ProtocolAllocationFailureTest, ConnectionBuffersClassifyCreationAndReceiveAllocations) {
+  expect_owned_allocation_is_classified([&] { return ConnectionBuffers::create(); });
+  const std::vector<std::byte> encoded =
+      *encode_frame({.message_type = MessageType::kQueryRequest, .request_id = 1U},
+                    *encode_query_request("SELECT 1"));
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 16U; ++fail_after) {
+    ConnectionBuffers buffers = ConnectionBuffers::create().value();
+    auto result = run_failure(fail_after, [&] { return buffers.receive(encoded); });
+    if (result.has_value()) {
+      reached_success = true;
+      break;
+    }
+    EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted);
+  }
+  EXPECT_TRUE(reached_success);
 }
 
 } // namespace

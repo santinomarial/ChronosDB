@@ -165,6 +165,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Native protocol request lifecycle](learning/native-protocol-request-lifecycle.md): negotiated
   limits, bounded active requests, monotonic identities, cancellation, and durability-explicit
   acknowledgements.
+- [Bounded connection buffers](learning/bounded-connection-buffers.md): fragmented/coalesced input,
+  immutable short-write ownership, finite admission, overload, and cleanup.
 - [Shared snapshot publication credit](learning/shared-snapshot-publication-credit.md): implemented
   one-query/one-epoch publication admission across part images, backed chunks, complete tablet scans,
   and ASOF aliases while retaining exact local image/output credit and last-owner cleanup.

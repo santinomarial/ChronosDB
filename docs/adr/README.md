@@ -96,3 +96,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0059](0059-bounded-physical-strategy-selection.md) | Bounded physical strategy selection | accepted |
 | [0060](0060-native-protocol-v1-framing.md) | Native Protocol v1 framing | accepted |
 | [0061](0061-native-protocol-handshake-and-request-lifecycle.md) | Native protocol handshake and request lifecycle | accepted |
+| [0062](0062-bounded-connection-buffer-ownership.md) | Bounded connection buffer ownership | accepted |

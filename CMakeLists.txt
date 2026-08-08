@@ -378,6 +378,7 @@ chronos_enable_static_analysis(chronos_query)
 
 add_library(
   chronos_network
+  src/network/connection_buffers.cpp
   src/network/connection_state.cpp
   src/network/messages.cpp
   src/network/protocol.cpp
@@ -470,6 +471,8 @@ if(CHRONOS_BUILD_TESTS)
 
   add_executable(
     chronos_network_tests
+    tests/network/connection_buffers_header_self_contained.cpp
+    tests/network/connection_buffers_test.cpp
     tests/network/connection_state_header_self_contained.cpp
     tests/network/connection_state_test.cpp
     tests/network/messages_header_self_contained.cpp

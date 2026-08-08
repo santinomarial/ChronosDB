@@ -532,6 +532,11 @@ non-reusable request identities, finite in-flight admission, idempotent cancella
 close behavior, UTF-8 validation, and allocation-failure classification. Streaming transport and
 reactor-to-shard routing remain next.
 
+The third increment adds bounded portable connection buffers: arbitrary partial/coalesced reads,
+exact ordered frame extraction, immutable partial-write ownership, independent inbound/outbound
+byte and frame-count limits, deterministic overload, clear-on-disconnect, allocation sweeps, and
+installed consumption. Linux readiness and shard handoff remain separate.
+
 ## Phase 11 — Subscriptions and incremental materialized views
 
 - **Scope:** committed change model; gap-free snapshot-to-stream handoff; deterministic versioned resume tokens; bounded subscriber policies; supported incremental operators; materialized-view progress/recovery and late-event corrections.
