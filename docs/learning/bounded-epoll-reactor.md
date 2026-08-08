@@ -38,6 +38,11 @@ Startup allocation failure returns `RESOURCE_EXHAUSTED` after closing descriptor
 Disconnect cancellation publication is best effort because the request ring may be full.
 Detachment is unconditional: identities are removed and late results dropped.
 
+The Linux hostile suite uses real loopback sockets for slow partial hello, admission saturation,
+explicit cancellation, simultaneous data/half-close, 128 descriptor-reuse cycles, a blocked poll
+wakeup, and an 8 MiB result with a constrained receive window. The last case proves partial writes
+retain exact bytes and preserve `QUERY_RESULT` before `QUERY_END`.
+
 ## Complexity
 
 I/O and queue work is linear in handled bytes/frames. Response routing and deadline scanning are

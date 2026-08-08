@@ -567,6 +567,12 @@ interrupts blocked epoll waits without polling, preserves the SPSC release/acqui
 has a narrow cross-thread lifetime plus a real blocking-wakeup test. Hostile lifecycle, packet fuzz,
 and measurement gates remain.
 
+The tenth increment closes the hostile Linux transport matrix with explicit-cancel publication and
+late-result rejection, readable-before-half-close dispatch followed by deterministic detach cancel,
+128-connection descriptor churn, slow-handshake and admission bounds, request-queue shard stall,
+and an 8 MiB real result forced through short writes with exact terminal ordering. Packet fuzz and
+measurement gates remain.
+
 ## Phase 11 — Subscriptions and incremental materialized views
 
 - **Scope:** committed change model; gap-free snapshot-to-stream handoff; deterministic versioned resume tokens; bounded subscriber policies; supported incremental operators; materialized-view progress/recovery and late-event corrections.

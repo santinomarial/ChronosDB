@@ -87,6 +87,20 @@ void send_client_pending(const int socket, NativeClientSession& client) {
   return bytes;
 }
 
+void drive_handshake(EpollReactor& reactor, const int socket, NativeClientSession& client) {
+  ASSERT_TRUE(client.queue_handshake().is_ok());
+  send_client_pending(socket, client);
+  for (std::size_t attempt = 0U; attempt < 32U && client.phase() != ClientSessionPhase::kActive;
+       ++attempt) {
+    ASSERT_TRUE(reactor.poll_once(std::chrono::milliseconds{1}).is_ok());
+    const std::vector<std::byte> available = receive_available(socket);
+    if (!available.empty()) {
+      ASSERT_TRUE(client.receive(available).has_value());
+    }
+  }
+  ASSERT_EQ(client.phase(), ClientSessionPhase::kActive);
+}
+
 TEST(EpollReactorTest, RealSocketsHandshakeDispatchRespondAndExposeQueueOverload) {
   SpscNetworkTaskQueue requests = SpscNetworkTaskQueue::create(1U).value();
   SpscNetworkTaskQueue responses = SpscNetworkTaskQueue::create(4U).value();
@@ -233,7 +247,8 @@ TEST(EpollReactorTest, PortableClientSessionInteroperatesWithRealSocketServer) {
                                     .payload = *encode_query_result_batch(0U, columns, {})}}));
   ASSERT_TRUE(responses.try_push(
       {.connection_id = request->connection_id,
-       .frame = {.header = {.message_type = MessageType::kQueryEnd, .request_id = request_id}}}));
+       .frame = {.header = {.message_type = MessageType::kQueryEnd, .request_id = request_id},
+                 .payload = {}}}));
   std::size_t received_frames = 0U;
   for (std::size_t attempt = 0U; attempt < 64U && client.in_flight_requests() != 0U; ++attempt) {
     ASSERT_TRUE(reactor.poll_once(std::chrono::milliseconds{1}).is_ok());
@@ -264,6 +279,155 @@ TEST(EpollReactorTest, ResponseProducerWakeupInterruptsBlockedPoll) {
   EXPECT_TRUE(poll_status.is_ok());
   EXPECT_LT(std::chrono::steady_clock::now() - started, std::chrono::milliseconds{500});
   EXPECT_EQ(reactor.metrics().response_wakeups, 1U);
+  EXPECT_TRUE(reactor.shutdown().is_ok());
+}
+
+TEST(EpollReactorTest, ExplicitCancelAndHalfCloseDetachWorkDeterministically) {
+  SpscNetworkTaskQueue requests = SpscNetworkTaskQueue::create(8U).value();
+  SpscNetworkTaskQueue responses = SpscNetworkTaskQueue::create(8U).value();
+  EpollReactor reactor =
+      EpollReactor::start({}, {.requests = &requests, .responses = &responses}).value();
+
+  int socket = connect_client(reactor.bound_port());
+  ASSERT_GE(socket, 0);
+  ASSERT_TRUE(reactor.poll_once(std::chrono::milliseconds{1}).is_ok());
+  NativeClientSession client = NativeClientSession::create().value();
+  drive_handshake(reactor, socket, client);
+  const std::uint64_t cancelled_id = client.queue_query("SELECT 1").value();
+  send_client_pending(socket, client);
+  for (std::size_t attempt = 0U; attempt < 128U && requests.empty(); ++attempt)
+    ASSERT_TRUE(reactor.poll_once(std::chrono::milliseconds{1}).is_ok());
+  const auto original = requests.try_pop();
+  ASSERT_TRUE(original.has_value());
+  ASSERT_TRUE(client.queue_cancel(cancelled_id).is_ok());
+  send_client_pending(socket, client);
+  for (std::size_t attempt = 0U; attempt < 128U && requests.empty(); ++attempt)
+    ASSERT_TRUE(reactor.poll_once(std::chrono::milliseconds{1}).is_ok());
+  const auto cancellation = requests.try_pop();
+  ASSERT_TRUE(cancellation.has_value());
+  EXPECT_EQ(cancellation->frame.header.message_type, MessageType::kCancel);
+  EXPECT_EQ(cancellation->connection_id, original->connection_id);
+  const schema::LogicalType type =
+      schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
+  const std::array<QueryResultColumn, 1> columns{
+      QueryResultColumn{.name = "value", .type = type, .nullable = false}};
+  ASSERT_TRUE(
+      responses.try_push({.connection_id = original->connection_id,
+                          .frame = {.header = {.message_type = MessageType::kQueryResult,
+                                               .flags = kFrameFlagEndStream,
+                                               .request_id = cancelled_id},
+                                    .payload = *encode_query_result_batch(0U, columns, {})}}));
+  ASSERT_TRUE(reactor.notify_response_ready().is_ok());
+  ASSERT_TRUE(reactor.poll_once(std::chrono::milliseconds{1}).is_ok());
+  EXPECT_EQ(reactor.metrics().dropped_responses, 1U);
+  EXPECT_TRUE(receive_available(socket).empty());
+  ::close(socket);
+
+  socket = connect_client(reactor.bound_port());
+  ASSERT_GE(socket, 0);
+  ASSERT_TRUE(reactor.poll_once(std::chrono::milliseconds{1}).is_ok());
+  NativeClientSession half_closed = NativeClientSession::create().value();
+  drive_handshake(reactor, socket, half_closed);
+  const std::uint64_t detached_id = half_closed.queue_query("SELECT 2").value();
+  send_client_pending(socket, half_closed);
+  ASSERT_EQ(::shutdown(socket, SHUT_WR), 0);
+  for (std::size_t attempt = 0U; attempt < 32U && requests.empty(); ++attempt)
+    ASSERT_TRUE(reactor.poll_once(std::chrono::milliseconds{1}).is_ok());
+  const auto dispatched = requests.try_pop();
+  ASSERT_TRUE(dispatched.has_value());
+  EXPECT_EQ(dispatched->frame.header.message_type, MessageType::kQueryRequest);
+  for (std::size_t attempt = 0U; attempt < 32U && requests.empty(); ++attempt)
+    ASSERT_TRUE(reactor.poll_once(std::chrono::milliseconds{1}).is_ok());
+  const auto detached = requests.try_pop();
+  ASSERT_TRUE(detached.has_value());
+  EXPECT_EQ(detached->frame.header.message_type, MessageType::kCancel);
+  EXPECT_EQ(detached->frame.header.request_id, detached_id);
+  EXPECT_EQ(detached->connection_id, dispatched->connection_id);
+  ::close(socket);
+  EXPECT_TRUE(reactor.shutdown().is_ok());
+}
+
+TEST(EpollReactorTest, ConnectionChurnReleasesEveryAdmittedSocket) {
+  SpscNetworkTaskQueue requests = SpscNetworkTaskQueue::create(8U).value();
+  SpscNetworkTaskQueue responses = SpscNetworkTaskQueue::create(8U).value();
+  EpollServerConfig config;
+  config.maximum_connections = 8U;
+  EpollReactor reactor =
+      EpollReactor::start(config, {.requests = &requests, .responses = &responses}).value();
+  constexpr std::size_t kConnections = 128U;
+  for (std::size_t index = 0U; index < kConnections; ++index) {
+    const int socket = connect_client(reactor.bound_port());
+    ASSERT_GE(socket, 0);
+    ASSERT_TRUE(reactor.poll_once(std::chrono::milliseconds{1}).is_ok());
+    ::close(socket);
+    for (std::size_t attempt = 0U; attempt < 16U && reactor.metrics().active_connections != 0U;
+         ++attempt)
+      ASSERT_TRUE(reactor.poll_once(std::chrono::milliseconds{1}).is_ok());
+    ASSERT_EQ(reactor.metrics().active_connections, 0U);
+  }
+  EXPECT_EQ(reactor.metrics().accepted_connections, kConnections);
+  EXPECT_EQ(reactor.metrics().closed_connections, kConnections);
+  EXPECT_TRUE(reactor.shutdown().is_ok());
+}
+
+TEST(EpollReactorTest, RealSocketShortWritesPreserveLargeResultAndTerminalOrder) {
+  SpscNetworkTaskQueue requests = SpscNetworkTaskQueue::create(4U).value();
+  SpscNetworkTaskQueue responses = SpscNetworkTaskQueue::create(4U).value();
+  EpollServerConfig config;
+  config.maximum_io_operations_per_event = 1U;
+  EpollReactor reactor =
+      EpollReactor::start(config, {.requests = &requests, .responses = &responses}).value();
+  const int socket = connect_client(reactor.bound_port());
+  ASSERT_GE(socket, 0);
+  int receive_buffer = 65'536;
+  ASSERT_EQ(::setsockopt(socket, SOL_SOCKET, SO_RCVBUF, &receive_buffer, sizeof(receive_buffer)),
+            0);
+  ASSERT_TRUE(reactor.poll_once(std::chrono::milliseconds{1}).is_ok());
+  NativeClientSession client = NativeClientSession::create().value();
+  drive_handshake(reactor, socket, client);
+  const std::uint64_t request_id = client.queue_query("SELECT payload").value();
+  send_client_pending(socket, client);
+  for (std::size_t attempt = 0U; attempt < 16U && requests.empty(); ++attempt)
+    ASSERT_TRUE(reactor.poll_once(std::chrono::milliseconds{1}).is_ok());
+  const auto request = requests.try_pop();
+  ASSERT_TRUE(request.has_value());
+
+  const schema::LogicalType binary =
+      schema::LogicalType::create(schema::LogicalTypeKind::kBinary).value();
+  const std::array<QueryResultColumn, 1> columns{
+      QueryResultColumn{.name = "payload", .type = binary, .nullable = false}};
+  const std::vector<std::byte> value(std::size_t{8U} * 1024U * 1024U, std::byte{0x5a});
+  const std::array<QueryResultCell, 1> cells{QueryResultCell{.value = value}};
+  const std::vector<std::byte> batch = *encode_query_result_batch(1U, columns, cells);
+  ASSERT_TRUE(responses.try_push({.connection_id = request->connection_id,
+                                  .frame = {.header = {.message_type = MessageType::kQueryResult,
+                                                       .flags = kFrameFlagEndStream,
+                                                       .request_id = request_id},
+                                            .payload = batch}}));
+  ASSERT_TRUE(responses.try_push(
+      {.connection_id = request->connection_id,
+       .frame = {.header = {.message_type = MessageType::kQueryEnd, .request_id = request_id},
+                 .payload = {}}}));
+  const std::uint64_t bytes_before = reactor.metrics().bytes_written;
+  ASSERT_TRUE(reactor.notify_response_ready().is_ok());
+  ASSERT_TRUE(reactor.poll_once(std::chrono::milliseconds{0}).is_ok());
+  const std::uint64_t first_write = reactor.metrics().bytes_written - bytes_before;
+  EXPECT_GT(first_write, 0U);
+  EXPECT_LT(first_write, batch.size() + 2U * kFrameHeaderSize);
+
+  std::size_t received_frames = 0U;
+  for (std::size_t attempt = 0U; attempt < 5'000U && client.in_flight_requests() != 0U; ++attempt) {
+    ASSERT_TRUE(reactor.poll_once(std::chrono::milliseconds{1}).is_ok());
+    const std::vector<std::byte> available = receive_available(socket);
+    if (!available.empty()) {
+      const auto decoded = client.receive(available);
+      ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+      received_frames += decoded->size();
+    }
+  }
+  EXPECT_EQ(received_frames, 2U);
+  EXPECT_EQ(client.in_flight_requests(), 0U);
+  ::close(socket);
   EXPECT_TRUE(reactor.shutdown().is_ok());
 }
 #endif

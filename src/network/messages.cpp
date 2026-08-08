@@ -85,7 +85,7 @@ fixed_query_cell_size(const schema::LogicalTypeKind kind) noexcept {
   for (std::uint16_t digit = 0U; digit < precision; ++digit) {
     std::uint16_t carry = 0U;
     for (std::uint8_t& byte : limit) {
-      const std::uint16_t value = static_cast<std::uint16_t>(byte) * 10U + carry;
+      const unsigned int value = static_cast<unsigned int>(byte) * 10U + carry;
       byte = static_cast<std::uint8_t>(value & 0xffU);
       carry = static_cast<std::uint16_t>(value >> 8U);
     }

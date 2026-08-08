@@ -365,6 +365,19 @@ image, epoch memory charge, and reclamation pin after source destruction.
 
 The scalar executor is the primary ChronosDB oracle for vector execution. Random plans vary chunk size, selection density, morsel scheduling, NULL, overflow, NaN, ASOF ties, grouping, and cancellation. The conventional supported SQL intersection is also compared with pinned DuckDB or PostgreSQL test versions; ChronosDB-specific temporal/live behavior uses its own model.
 
+### Native protocol and reactor
+
+Protocol tests independently cover golden bytes, every header/payload truncation and corruption
+class, negotiated and retained limits, wrong direction/state, request identity, explicit durability,
+query batch types/NULL/UTF-8, cancellation, and allocation failure. The portable client is a second
+lifecycle implementation rather than a packet echo of the server.
+
+Linux-only real-socket tests require fragmented and coalesced input, partial output, slow handshake,
+connection admission/churn, request-queue stall and overload, eventfd response wakeup, explicit and
+disconnect cancellation, readable half-close handling, late-response drop, and exact query terminal
+order. Sanitizer evidence must include this Linux branch; portable non-Linux builds prove only the
+explicit `NOT_SUPPORTED` transport boundary.
+
 ### Subscription handoff
 
 The harness inserts a commit at every step of the [handoff protocol](../product/live-query-semantics.md#handoff-protocol), then disconnects during snapshot, buffer transfer, delivery, and token persistence. After sequence deduplication, no matching post-boundary source change may be absent. Slow-consumer tests prove bounded memory and explicit resume/expiry outcomes.

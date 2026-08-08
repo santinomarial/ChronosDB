@@ -85,7 +85,8 @@ TEST(ServerConnectionStateTest, RequiresExactQueryResponseStreamCompletion) {
   EXPECT_TRUE(state
                   .accept_response({.header = {.message_type = MessageType::kQueryResult,
                                                .flags = kFrameFlagEndStream,
-                                               .request_id = 1U}})
+                                               .request_id = 1U},
+                                    .payload = {}})
                   .is_ok());
   EXPECT_FALSE(state.accept_response(frame(MessageType::kQueryResult, 1U)).is_ok());
   EXPECT_TRUE(state.accept_response(frame(MessageType::kQueryEnd, 1U)).is_ok());

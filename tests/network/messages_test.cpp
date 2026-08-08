@@ -110,7 +110,7 @@ TEST(ProtocolMessageTest, QueryResultBatchRoundTripsTypesNullsAndZeroRows) {
   const auto alpha = std::as_bytes(std::span{"alpha", 5U});
   const std::array<QueryResultCell, 4> cells{
       QueryResultCell{.value = one}, QueryResultCell{.value = alpha}, QueryResultCell{.value = two},
-      QueryResultCell{.is_null = true}};
+      QueryResultCell{.is_null = true, .value = {}}};
   const auto encoded = encode_query_result_batch(2U, columns, cells);
   ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
   const auto decoded = decode_query_result_batch(*encoded);
