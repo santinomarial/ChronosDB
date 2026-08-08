@@ -64,7 +64,7 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_t size) {
   if (size == 0U)
     return 0;
-  static constexpr std::array<std::string_view, 32> kSql{
+  static constexpr std::array<std::string_view, 34> kSql{
       "SELECT value + 1 AS v FROM metrics",
       "SELECT value FROM metrics WHERE value BETWEEN 1 AND 9 LIMIT 2",
       "SELECT value IN (1, NULL, 3) AS v FROM metrics",
@@ -82,6 +82,10 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
       "WHERE value > 0 GROUP BY value % 3 LIMIT 2",
       "SELECT value % 3 AS bucket, count(*) AS rows FROM metrics GROUP BY value % 3 "
       "ORDER BY rows DESC, sum(value) ASC LIMIT 2",
+      "SELECT value, max(label) AS maximum_label FROM metrics LATEST BY (value) ON ts "
+      "GROUP BY value ORDER BY maximum_label ASC NULLS LAST, value DESC LIMIT 8",
+      "SELECT count(*) AS rows, sum(value) AS total, min(label) AS minimum_label FROM metrics "
+      "WHERE value >= -10 ORDER BY total DESC LIMIT 1",
       "SELECT 1 AS one FROM metrics ORDER BY count(*)",
       "SELECT min(label), max(label) FROM metrics",
       "SELECT coalesce(value, 0) AS v FROM metrics",

@@ -234,6 +234,12 @@ source composition only under an explicit whole-pipeline order-independence proo
 deterministic work cost. The snapshot connector supports optimizer-selected external SQL ordering
 but deliberately keeps each complete tablet as one source.
 
+The accepted Phase 9 boundary is closed by a reproducible full-plan differential oracle spanning
+base, aggregate, LATEST, and ASOF pipelines, exact ordered output, system-time ties, changing batch
+widths, and matched runtime failures. This validates the complete current append-only path without
+inventing correction/delete semantics or treating future asynchronous and parallel provider work as
+already implemented.
+
 Accounted column output now supports arbitrary source order/duplicates, typed constants, and bounded
 checked expression programs. One exact single-source, nonaggregate bound-SELECT subset lowers
 WHERE, ordered projection, fixed-width scalar expressions, STRING/SYMBOL casts and ASCII case

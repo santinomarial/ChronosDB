@@ -22,6 +22,10 @@
 > LIMIT order. A bounded strategy selector chooses external SQL ORDER BY only when authoritative
 > finite bounds exclude in-memory sort and an exact stage-indexed spill capability plus runtime
 > directory are supplied. Both strategies reuse the same checked SQL keys and hidden tie columns.
+> Phase 9 is complete for this explicitly accepted vector-lowered surface: deterministic randomized
+> full-plan tests compare it with the scalar engine across base, aggregate, LATEST, and ASOF
+> compositions, batch boundaries, result order, NULLs, system ties, and runtime failures. This does
+> not make an unsupported SQL construct executable.
 > SQL v1 is deliberately smaller than the SQL
 > standard. Unsupported syntax must produce a clear bind or
 > parse error; it must not be accepted with different semantics.

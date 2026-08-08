@@ -152,6 +152,9 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Bounded physical strategy selection](learning/bounded-physical-strategy-selection.md):
   authoritative finite sort estimates, exact in-memory/external decisions, explicit source-order
   proof obligations, bounded serial/parallel composition, ownership, failure, and profiles.
+- [Phase 9 vectorized query exit](learning/phase-9-vectorized-query-exit.md): accepted executable
+  boundary, full-plan scalar/vector differential oracle, ownership and limit closure, deferred
+  contracts, and reproducible end-to-end profile methodology.
 - [Shared snapshot publication credit](learning/shared-snapshot-publication-credit.md): implemented
   one-query/one-epoch publication admission across part images, backed chunks, complete tablet scans,
   and ASOF aliases while retaining exact local image/output credit and last-owner cleanup.

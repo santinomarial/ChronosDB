@@ -1,7 +1,8 @@
 # Roadmap and Phase Gates
 
 ChronosDB has implemented correctness-first subsystem slices through the Phase 8 scalar SQL oracle
-and the first Phase 9 vector, resource-control, and physical-pipeline foundations.
+and the accepted Phase 9 vectorized query, resource-control, physical-planning, spill, and bounded
+scheduling boundary.
 That statement does not declare every Phase 1–8 exit gate complete: each section below records its
 remaining implementation, integration, measurement, or platform evidence. Phase 1A/1B provide the
 build/tooling and portable binary foundations but the broader Phase 1 utility surface remains
@@ -494,8 +495,14 @@ No phase passes because its code merely compiles. A phase passes only when its a
   keys, and chooses serial or bounded parallel source composition only under an explicit complete-
   pipeline order-independence proof and lower deterministic work cost. The complete snapshot
   adapter executes optimizer-selected external SQL ORDER BY without inventing parallel tablet
-  splitting. Future correction/delete row-version resolution, mapped/asynchronous providers, and
-  full scalar-engine differential plan execution are unimplemented.
+  splitting. The forty-third increment closes the accepted Phase 9 boundary with 192 deterministic
+  randomized full-plan scalar/vector comparisons across base, aggregate, LATEST, and ASOF plans,
+  variable batch boundaries, exact result order and system ties, matched runtime failures and
+  credit cleanup, expanded lowering fuzzing, and end-to-end batch/memory/tail profiles. **Phase 9
+  exit gates are complete for the explicitly supported append-only SQL surface.** Future
+  correction/delete row-version resolution awaits an accepted operation/visibility contract;
+  mapped/asynchronous providers, parallel tablet morsels, adaptive rewrites, and additional join
+  algorithms remain future optimizations rather than weaker substitutes in this phase.
 
 - **Scope:** bounded vectors, vectorized scans/expressions/aggregates/joins, physical planning, memory accounting, cancellation, parallel scheduling, and spill for explicitly supported operators.
 - **Explicit non-scope:** distributed fragments, GPU novelty, unbounded query memory, or optimizer rules lacking semantic/differential validation.

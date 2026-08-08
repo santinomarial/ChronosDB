@@ -84,9 +84,9 @@ Aggregate-definition and sort-key capacities are included in the plan total. Eac
 stateful operator also applies its own finite width/state bound; result buffers use normal query
 resource credit.
 
-Plan/configuration memory and instantiated operator objects are not currently charged to the query
-resource budget. They are finitely bounded, coordinator-owned state. Complete allocation charging
-remains required before Phase 9 is complete.
+Plan/configuration memory and instantiated operator objects are finitely bounded coordinator-owned
+state rather than query-retained row buffers. Every chunk and stateful operator allocation that can
+grow with data remains charged to query resources; the Phase 9 exit preserves this ownership split.
 
 ## Failure and ownership behavior
 

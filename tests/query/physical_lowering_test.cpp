@@ -196,6 +196,24 @@ private:
   std::optional<AccountedVectorChunk> chunk_;
 };
 
+class ChunkSequenceSource final : public PhysicalOperator {
+public:
+  explicit ChunkSequenceSource(std::vector<AccountedVectorChunk> chunks)
+      : chunks_(std::move(chunks)) {}
+
+  [[nodiscard]] common::Result<PhysicalOperatorStep> next(const QueryResourceContext&) override {
+    if (next_ == chunks_.size()) {
+      std::vector<AccountedVectorChunk>{}.swap(chunks_);
+      return PhysicalOperatorStep::end();
+    }
+    return PhysicalOperatorStep::chunk(std::move(chunks_[next_++]));
+  }
+
+private:
+  std::vector<AccountedVectorChunk> chunks_;
+  std::size_t next_{};
+};
+
 class OneSnapshotProvider final : public ScalarSnapshotProvider {
 public:
   explicit OneSnapshotProvider(std::shared_ptr<const ScalarTableSnapshot> snapshot)
@@ -336,6 +354,164 @@ private:
   }
   return std::make_shared<const ScalarTableSnapshot>(
       ScalarTableSnapshot::create(schema(), 10U, std::move(rows)).value());
+}
+
+struct DifferentialInput {
+  std::vector<std::int64_t> timestamps;
+  std::vector<std::int64_t> values;
+  std::vector<std::uint8_t> flags;
+  std::vector<std::optional<std::string>> labels;
+  std::vector<std::uint64_t> record_sequences;
+  std::vector<std::uint32_t> row_ordinals;
+};
+
+[[nodiscard]] DifferentialInput differential_input(std::uint64_t state) {
+  constexpr std::size_t kRows = 48U;
+  DifferentialInput input;
+  input.timestamps.reserve(kRows);
+  input.values.reserve(kRows);
+  input.flags.reserve(kRows);
+  input.labels.reserve(kRows);
+  input.record_sequences.reserve(kRows);
+  input.row_ordinals.reserve(kRows);
+  constexpr std::array<std::string_view, 5> kLabels{"a", "bb", "same", "zz", "chronos"};
+  for (std::size_t row = 0U; row < kRows; ++row) {
+    state = state * 6'364'136'223'846'793'005ULL + 1'442'695'040'888'963'407ULL;
+    input.timestamps.push_back(static_cast<std::int64_t>((state >> 9U) % 17U) - 8);
+    state = state * 2'862'933'555'777'941'757ULL + 3'037'000'493ULL;
+    input.values.push_back(static_cast<std::int64_t>((state >> 13U) % 41U) - 20);
+    input.flags.push_back(static_cast<std::uint8_t>((state >> 5U) & 1U));
+    const std::size_t label = static_cast<std::size_t>((state >> 21U) % 7U);
+    if (label >= kLabels.size())
+      input.labels.emplace_back(std::nullopt);
+    else
+      input.labels.emplace_back(kLabels[label]);
+    input.record_sequences.push_back(static_cast<std::uint64_t>(row / 3U) + 1U);
+    input.row_ordinals.push_back(static_cast<std::uint32_t>(row % 3U));
+  }
+  return input;
+}
+
+[[nodiscard]] columnar::OwnedPhysicalColumn
+differential_bool_column(const std::span<const std::uint8_t> values) {
+  columnar::ColumnVectorBuffers buffers;
+  buffers.values.resize(columnar::bitmap_size(static_cast<std::uint32_t>(values.size())));
+  for (std::size_t row = 0U; row < values.size(); ++row) {
+    if (values[row] != 0U)
+      buffers.values[row / 8U] |= static_cast<std::byte>(1U << (row % 8U));
+  }
+  return columnar::OwnedPhysicalColumn::create(
+             {.type = type(schema::LogicalTypeKind::kBool),
+              .nullable = false,
+              .row_count = static_cast<std::uint32_t>(values.size()),
+              .null_count = 0U},
+             std::move(buffers))
+      .value();
+}
+
+[[nodiscard]] std::vector<AccountedVectorChunk>
+differential_chunks(const QueryResourceContext& resources, const DifferentialInput& input,
+                    const std::size_t batch_rows, const bool append_row_version) {
+  std::vector<AccountedVectorChunk> chunks;
+  const common::Uuid wal{common::Uuid::Bytes{
+      std::byte{9}, std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0},
+      std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0},
+      std::byte{0}, std::byte{0}, std::byte{0}, std::byte{1}}};
+  for (std::size_t offset = 0U; offset < input.values.size(); offset += batch_rows) {
+    const std::size_t rows = std::min(batch_rows, input.values.size() - offset);
+    std::vector<columnar::OwnedPhysicalColumn> columns;
+    columns.reserve(append_row_version ? 8U : 4U);
+    columns.push_back(signed_column(schema::LogicalTypeKind::kTimestampNs,
+                                    std::span{input.timestamps}.subspan(offset, rows)));
+    columns.push_back(signed_column(schema::LogicalTypeKind::kInt64,
+                                    std::span{input.values}.subspan(offset, rows)));
+    columns.push_back(differential_bool_column(std::span{input.flags}.subspan(offset, rows)));
+    columns.push_back(string_column(std::span{input.labels}.subspan(offset, rows)));
+    if (append_row_version) {
+      const std::vector<common::Uuid> wal_ids(rows, wal);
+      const std::vector<std::uint8_t> operations(rows, 1U);
+      columns.push_back(uuid_column(wal_ids));
+      columns.push_back(unsigned_column(schema::LogicalTypeKind::kUInt64,
+                                        std::span{input.record_sequences}.subspan(offset, rows)));
+      columns.push_back(unsigned_column(schema::LogicalTypeKind::kUInt32,
+                                        std::span{input.row_ordinals}.subspan(offset, rows)));
+      columns.push_back(unsigned_column(schema::LogicalTypeKind::kUInt8,
+                                        std::span<const std::uint8_t>{operations}));
+    }
+    VectorChunk chunk =
+        VectorChunk::create(std::move(columns),
+                            VectorSelection::all(static_cast<std::uint32_t>(rows)).value())
+            .value();
+    chunks.push_back(
+        AccountedVectorChunk::create(std::move(chunk),
+                                     resources.reserve(std::size_t{32U} * 1024U).value(), resources)
+            .value());
+  }
+  return chunks;
+}
+
+[[nodiscard]] std::shared_ptr<const ScalarTableSnapshot>
+differential_snapshot(const DifferentialInput& input) {
+  const common::Uuid wal{common::Uuid::Bytes{
+      std::byte{9}, std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0},
+      std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0}, std::byte{0},
+      std::byte{0}, std::byte{0}, std::byte{0}, std::byte{1}}};
+  std::vector<ScalarInputRow> rows;
+  rows.reserve(input.values.size());
+  for (std::size_t row = 0U; row < input.values.size(); ++row) {
+    std::vector<ScalarValue> columns;
+    columns.push_back(ScalarValue::signed_value(type(schema::LogicalTypeKind::kTimestampNs),
+                                                input.timestamps[row])
+                          .value());
+    columns.push_back(
+        ScalarValue::signed_value(type(schema::LogicalTypeKind::kInt64), input.values[row])
+            .value());
+    columns.push_back(ScalarValue::boolean(input.flags[row] != 0U).value());
+    if (input.labels[row].has_value()) {
+      columns.push_back(
+          ScalarValue::text(type(schema::LogicalTypeKind::kString),
+                            input.labels[row].value()) // NOLINT(bugprone-unchecked-optional-access)
+              .value());
+    } else {
+      columns.push_back(ScalarValue::null(type(schema::LogicalTypeKind::kString)));
+    }
+    rows.push_back({.columns = std::move(columns),
+                    .generated_logical_identity = {},
+                    .wal_id = wal,
+                    .record_sequence = input.record_sequences[row],
+                    .system_commit_position = input.record_sequences[row],
+                    .row_ordinal = input.row_ordinals[row]});
+  }
+  return std::make_shared<const ScalarTableSnapshot>(
+      ScalarTableSnapshot::create(schema(), 19U, std::move(rows)).value());
+}
+
+[[nodiscard]] ScalarValue cell_value(const VectorChunk& chunk, std::size_t column, std::size_t row);
+
+[[nodiscard]] std::vector<std::vector<ScalarValue>>
+collect_differential_output(std::unique_ptr<PhysicalOperator> pipeline,
+                            const QueryResourceContext& resources) {
+  std::vector<std::vector<ScalarValue>> rows;
+  for (;;) {
+    common::Result<PhysicalOperatorStep> pulled = pipeline->next(resources);
+    EXPECT_TRUE(pulled.has_value()) << pulled.error().to_string();
+    if (!pulled.has_value())
+      return {};
+    PhysicalOperatorStep step = std::move(*pulled);
+    if (step.kind() == PhysicalOperatorStepKind::kEnd)
+      break;
+    const VectorChunk& chunk = step.chunk()->chunk();
+    for (std::size_t row = 0U; row < chunk.selected_row_count(); ++row) {
+      std::vector<ScalarValue> columns;
+      columns.reserve(chunk.column_count());
+      for (std::size_t column = 0U; column < chunk.column_count(); ++column)
+        columns.push_back(cell_value(chunk, column, row));
+      rows.push_back(std::move(columns));
+    }
+  }
+  pipeline.reset();
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  return rows;
 }
 
 [[nodiscard]] std::int64_t cell_i64(const VectorChunk& chunk, const std::size_t column,
@@ -1278,6 +1454,128 @@ TEST(PhysicalSelectLoweringTest, RejectsUnsupportedRelationalAndScalarSurfaces) 
   EXPECT_EQ(lower_bound_sql_select(explain).error().code(), SqlDiagnosticCode::kUnsupportedSyntax);
   BoundSqlSelect analyze = bind("EXPLAIN ANALYZE SELECT value FROM metrics");
   EXPECT_EQ(lower_bound_sql_select(analyze).error().code(), SqlDiagnosticCode::kUnsupportedSyntax);
+}
+
+TEST(PhysicalPlanDifferentialPropertyTest,
+     RandomizedSupportedPlansMatchTheScalarOracleAcrossBatchBoundaries) {
+  struct QueryCase {
+    std::string_view sql;
+    bool asof;
+  };
+  static constexpr std::array<QueryCase, 8> kQueries{{
+      {.sql = "SELECT value + 3 AS shifted, lower(coalesce(label, 'missing')) AS normalized "
+              "FROM metrics WHERE flag AND value BETWEEN -15 AND 15 LIMIT 17",
+       .asof = false},
+      {.sql = "SELECT label AS name, flag FROM metrics WHERE value >= -10 "
+              "ORDER BY value DESC, name ASC NULLS LAST LIMIT 19",
+       .asof = false},
+      {.sql = "SELECT count(*) AS rows, sum(value) AS total, min(label) AS minimum_label "
+              "FROM metrics WHERE flag ORDER BY total DESC LIMIT 1",
+       .asof = false},
+      {.sql = "SELECT flag, value % 5 AS bucket, count(*) AS rows, sum(value) AS total, "
+              "max(label) AS maximum_label FROM metrics WHERE value < 18 "
+              "GROUP BY flag, value % 5 ORDER BY rows DESC, maximum_label ASC NULLS LAST, "
+              "bucket DESC LIMIT 11",
+       .asof = false},
+      {.sql = "SELECT flag, count(*) AS rows, max(label) AS latest_label FROM metrics "
+              "LATEST BY (flag, value) ON ts WHERE value >= -20 GROUP BY flag "
+              "ORDER BY rows DESC, flag ASC LIMIT 2",
+       .asof = false},
+      {.sql = "SELECT upper(coalesce(label, 'none')) AS label_text, value FROM metrics "
+              "WHERE label IS NULL OR label >= 'bb' "
+              "ORDER BY label_text DESC, value ASC LIMIT 23",
+       .asof = false},
+      {.sql = "SELECT l.value AS left_value, r.label AS matched FROM metrics AS l "
+              "ASOF LEFT JOIN metrics AS r ON l.flag = r.flag AND r.ts <= l.ts "
+              "WHERE l.value >= -12 ORDER BY r.ts DESC NULLS LAST, left_value ASC LIMIT 21",
+       .asof = true},
+      {.sql = "SELECT r.value AS matched, count(*) AS rows FROM metrics AS l "
+              "ASOF LEFT JOIN metrics AS r ON l.flag = r.flag AND r.ts <= l.ts "
+              "GROUP BY r.value ORDER BY rows DESC, matched ASC NULLS LAST LIMIT 13",
+       .asof = true},
+  }};
+  static constexpr std::array<std::size_t, 8> kBatchRows{1U, 2U, 3U, 5U, 7U, 11U, 16U, 48U};
+
+  std::uint64_t state = 0x243f6a8885a308d3ULL;
+  for (std::size_t iteration = 0U; iteration < 192U; ++iteration) {
+    state = state * 6'364'136'223'846'793'005ULL + 1'442'695'040'888'963'407ULL;
+    const QueryCase& query = kQueries[(state >> 17U) % kQueries.size()];
+    const std::size_t batch_rows = kBatchRows[(state >> 29U) % kBatchRows.size()];
+    SCOPED_TRACE(iteration);
+    SCOPED_TRACE(query.sql);
+    SCOPED_TRACE(batch_rows);
+
+    const DifferentialInput input_rows = differential_input(state ^ iteration);
+    SqlResult<ParsedSqlSelect> parsed = parse_sql_v1_select(query.sql);
+    ASSERT_TRUE(parsed.has_value()) << parsed.error().status().to_string();
+    SqlResult<BoundSqlSelect> bound = bind_sql_v1_select(std::move(*parsed), catalog());
+    ASSERT_TRUE(bound.has_value()) << bound.error().status().to_string();
+    BoundSqlSelect select = std::move(*bound);
+    OneSnapshotProvider provider{differential_snapshot(input_rows)};
+    SqlResult<ScalarQueryResult> scalar = execute_sql_v1_select(select, provider);
+    ASSERT_TRUE(scalar.has_value()) << scalar.error().status().to_string();
+
+    QueryResourceContext resources = QueryResourceContext::create(64U << 20U).value();
+    std::unique_ptr<PhysicalOperator> pipeline;
+    if (query.asof) {
+      SqlResult<PhysicalAsofPlan> lowered = lower_bound_sql_asof_select(select);
+      ASSERT_TRUE(lowered.has_value()) << lowered.error().status().to_string();
+      PhysicalAsofPlan plan = std::move(*lowered);
+      std::vector<std::unique_ptr<PhysicalOperator>> sources;
+      sources.reserve(plan.source_count());
+      for (std::size_t source = 0U; source < plan.source_count(); ++source) {
+        sources.push_back(std::make_unique<ChunkSequenceSource>(
+            differential_chunks(resources, input_rows, batch_rows, true)));
+      }
+      common::Result<std::unique_ptr<PhysicalOperator>> instantiated =
+          plan.instantiate(std::move(sources));
+      ASSERT_TRUE(instantiated.has_value()) << instantiated.error().to_string();
+      pipeline = std::move(*instantiated);
+    } else {
+      SqlResult<PhysicalPipelinePlan> lowered = lower_bound_sql_select(select);
+      ASSERT_TRUE(lowered.has_value()) << lowered.error().status().to_string();
+      PhysicalPipelinePlan plan = std::move(*lowered);
+      ASSERT_TRUE(plan.input_columns().size() == 4U || plan.input_columns().size() == 8U);
+      common::Result<std::unique_ptr<PhysicalOperator>> instantiated =
+          plan.instantiate(std::make_unique<ChunkSequenceSource>(differential_chunks(
+              resources, input_rows, batch_rows, plan.input_columns().size() == 8U)));
+      ASSERT_TRUE(instantiated.has_value()) << instantiated.error().to_string();
+      pipeline = std::move(*instantiated);
+    }
+    const std::vector<std::vector<ScalarValue>> physical =
+        collect_differential_output(std::move(pipeline), resources);
+    ASSERT_EQ(physical.size(), scalar->rows().size());
+    for (std::size_t row = 0U; row < physical.size(); ++row) {
+      ASSERT_EQ(physical[row].size(), scalar->rows()[row].size());
+      for (std::size_t column = 0U; column < physical[row].size(); ++column) {
+        EXPECT_EQ(physical[row][column].type(), scalar->rows()[row][column].type());
+        EXPECT_EQ(physical[row][column].storage(), scalar->rows()[row][column].storage());
+      }
+    }
+  }
+}
+
+TEST(PhysicalPlanDifferentialPropertyTest, RuntimeErrorsMatchTheScalarOracleAndReleaseEveryBatch) {
+  DifferentialInput input_rows = differential_input(0x13198a2e03707344ULL);
+  input_rows.values.front() = 20;
+  BoundSqlSelect select = bind("SELECT CAST(value * 100 AS INT8) AS narrowed FROM metrics");
+  OneSnapshotProvider provider{differential_snapshot(input_rows)};
+  SqlResult<ScalarQueryResult> scalar = execute_sql_v1_select(select, provider);
+  ASSERT_FALSE(scalar.has_value());
+  EXPECT_EQ(scalar.error().code(), SqlDiagnosticCode::kExecutionFailure);
+
+  PhysicalPipelinePlan plan = lower_bound_sql_select(select).value();
+  QueryResourceContext resources = QueryResourceContext::create(8U << 20U).value();
+  std::unique_ptr<PhysicalOperator> pipeline =
+      plan.instantiate(std::make_unique<ChunkSequenceSource>(
+                           differential_chunks(resources, input_rows, 3U, false)))
+          .value();
+  common::Result<PhysicalOperatorStep> physical = pipeline->next(resources);
+  ASSERT_FALSE(physical.has_value());
+  EXPECT_EQ(physical.error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_TRUE(resources.is_cancelled());
+  pipeline.reset();
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
 }
 
 TEST(PhysicalSelectLoweringTest, EnforcesExpressionAndPlanLimitsBeforeExecution) {

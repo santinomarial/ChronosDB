@@ -83,8 +83,9 @@
 > The bounded physical pipeline adds sequential shape-transition failures, exact runtime source
 > shape and query-identity enforcement, finite retained configuration, composed filter/subset/LIMIT
 > differential execution across randomized selections and chunk boundaries, hostile plan fuzzing,
-> sanitizer coverage, and plan-overhead measurement. Bound-SQL/full scalar-engine plan differential
-> and distributed query harnesses remain planned for their roadmap phases.
+> sanitizer coverage, and plan-overhead measurement. The Phase 9 exit suite now adds bound-SQL/full
+> scalar-engine plan differential coverage; distributed query harnesses remain in their later
+> roadmap phase.
 > Lifetime-pinned vector backing adds missing/shape/underreporting failures, caller-handle and
 > accounted-credit destruction checks, conservative projection accounting, direct-versus-backed
 > fixed-seed equivalence, backed-path fuzzing, sanitizer coverage, and attachment-overhead
@@ -210,6 +211,11 @@
 > threshold boundaries, external SQL ORDER BY execution, explicit order-independent parallel
 > selection, hostile source/target shapes, allocation sweeps, fuzzing, sanitizer coverage, and
 > selection/instantiation profiles. Runtime operators continue to enforce every admitted limit.
+> Phase 9 exit differential coverage generates 192 reproducible complete bound plans over changing
+> rows and 1/2/3/5/7/11/16/48-row batches, then compares exact scalar/vector types, values, NULLs,
+> order, LATEST/ASOF system ties, hidden output, and LIMIT. A matched overflow case proves scalar and
+> vector failure plus cancellation/credit cleanup. End-to-end profiles vary batch width and report
+> query-credit peak and measured p50/p95/p99 execution latency beside the scalar reference.
 > Shared snapshot publication credit adds multi-part/multi-chunk last-owner accounting, copied-head
 > release checks, foreign and insufficient credit rejection, complete tablet/ASOF composition,
 > allocation sweeps, split-credit fuzzing, installed consumption, sanitizer coverage, and fanout
