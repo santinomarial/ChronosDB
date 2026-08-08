@@ -8,7 +8,9 @@ unwritten suffix of the front frame.
 Inbound capacity, outbound retained bytes, and outbound frame count are independently bounded.
 Admission never blocks and never creates a fallback queue. `clear()` releases all peer-controlled
 bytes on disconnect. Receive cost is linear in accepted bytes plus retained-suffix compaction;
-partial write consumption is constant time.
+partial write offset advancement is constant time and completed-frame removal is linear in the
+finite queued-frame count. The output vector is reserved at creation so result moves and
+steady-state queue admission do not acquire hidden deque storage.
 
 Tests enumerate every two-part split, multiple coalesced frames with a partial successor, exact
 short-write offsets, hostile limits, cleanup, and owned allocation failures. Later epoll tests apply

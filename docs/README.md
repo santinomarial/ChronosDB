@@ -169,6 +169,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   immutable short-write ownership, finite admission, overload, and cleanup.
 - [Reactor-to-shard SPSC routing](learning/reactor-shard-spsc-routing.md): single-owner ring
   handoff, acquire/release publication and reuse proof, saturation, and lifecycle rules.
+- [Bounded Linux epoll reactor](learning/bounded-epoll-reactor.md): single-owner readiness,
+  admission, response identity, overload, timeout, and disconnect cleanup.
 - [Shared snapshot publication credit](learning/shared-snapshot-publication-credit.md): implemented
   one-query/one-epoch publication admission across part images, backed chunks, complete tablet scans,
   and ASOF aliases while retaining exact local image/output credit and last-owner cleanup.

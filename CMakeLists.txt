@@ -45,6 +45,15 @@ chronos_validate_standard_library()
 find_package(Threads REQUIRED)
 find_package(OpenSSL 3.0...<4.0 REQUIRED COMPONENTS Crypto)
 find_package(zstd 1.5.5...<2.0 CONFIG REQUIRED)
+if(NOT TARGET zstd::libzstd)
+  if(TARGET zstd::libzstd_shared)
+    add_library(zstd::libzstd ALIAS zstd::libzstd_shared)
+  elseif(TARGET zstd::libzstd_static)
+    add_library(zstd::libzstd ALIAS zstd::libzstd_static)
+  else()
+    message(FATAL_ERROR "The resolved zstd package exports no supported library target")
+  endif()
+endif()
 
 set(CHRONOS_BUILD_TYPE "${CMAKE_BUILD_TYPE}")
 if(CHRONOS_BUILD_TYPE STREQUAL "")
@@ -380,6 +389,7 @@ add_library(
   chronos_network
   src/network/connection_buffers.cpp
   src/network/connection_state.cpp
+  src/network/epoll_reactor.cpp
   src/network/messages.cpp
   src/network/protocol.cpp
   src/network/spsc_queue.cpp
@@ -476,6 +486,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/network/connection_buffers_test.cpp
     tests/network/connection_state_header_self_contained.cpp
     tests/network/connection_state_test.cpp
+    tests/network/epoll_reactor_header_self_contained.cpp
+    tests/network/epoll_reactor_test.cpp
     tests/network/messages_header_self_contained.cpp
     tests/network/messages_test.cpp
     tests/network/protocol_header_self_contained.cpp

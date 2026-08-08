@@ -7,6 +7,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
+#include <span>
 #include <vector>
 
 namespace chronos::network {
@@ -41,13 +43,18 @@ public:
   [[nodiscard]] std::size_t in_flight_requests() const noexcept;
   [[nodiscard]] std::uint64_t last_request_id() const noexcept;
   [[nodiscard]] std::uint32_t negotiated_maximum_payload_size() const noexcept;
+  [[nodiscard]] std::span<const std::uint64_t> active_request_ids() const noexcept;
+  [[nodiscard]] std::optional<MessageType>
+  active_request_type(std::uint64_t request_id) const noexcept;
 
 private:
   explicit ServerConnectionState(ConnectionStateConfig config,
-                                 std::vector<std::uint64_t> active_requests) noexcept;
+                                 std::vector<std::uint64_t> active_requests,
+                                 std::vector<MessageType> active_request_types) noexcept;
 
   ConnectionStateConfig config_;
   std::vector<std::uint64_t> active_requests_;
+  std::vector<MessageType> active_request_types_;
   ConnectionPhase phase_{ConnectionPhase::kAwaitingHello};
   std::uint64_t last_request_id_{};
   std::uint32_t negotiated_maximum_payload_size_{};

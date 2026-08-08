@@ -26,8 +26,9 @@ TEST(ConnectionBuffersTest, ReassemblesEveryTwoPartFragmentationBoundary) {
     auto second = buffers.receive(common::ByteView{encoded}.subspan(split));
     ASSERT_TRUE(second.has_value()) << split;
     ASSERT_EQ(second->size(), split == encoded.size() ? 0U : 1U) << split;
-    if (!second->empty())
+    if (!second->empty()) {
       EXPECT_EQ(second->front().header.request_id, 1U);
+    }
     EXPECT_EQ(buffers.inbound_buffer_bytes(), 0U);
   }
 }

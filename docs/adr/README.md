@@ -98,3 +98,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0061](0061-native-protocol-handshake-and-request-lifecycle.md) | Native protocol handshake and request lifecycle | accepted |
 | [0062](0062-bounded-connection-buffer-ownership.md) | Bounded connection buffer ownership | accepted |
 | [0063](0063-bounded-reactor-shard-spsc-routing.md) | Bounded reactor-to-shard SPSC routing | accepted |
+| [0064](0064-bounded-linux-epoll-reactor.md) | Bounded Linux epoll reactor ownership and overload | accepted |

@@ -121,6 +121,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/network/messages.hpp>
 #include <chronos/network/connection_state.hpp>
 #include <chronos/network/connection_buffers.hpp>
+#include <chronos/network/epoll_reactor.hpp>
 #include <chronos/wal/application.hpp>
 
 #include <array>
@@ -778,6 +779,7 @@ int main() {
   const auto connection_state = chronos::network::ServerConnectionState::create();
   const auto connection_buffers = chronos::network::ConnectionBuffers::create();
   const auto network_queue = chronos::network::SpscNetworkTaskQueue::create(4U);
+  const chronos::network::EpollServerConfig epoll_config;
   return event_time_match != nullptr && execute != nullptr && recover != nullptr &&
                  reclaim_recovered_wal != nullptr && inspect_wal_suffix != nullptr &&
                  recover_wal_checkpoint != nullptr && open_wal_checkpoint != nullptr &&
@@ -865,6 +867,7 @@ int main() {
                  connection_state.has_value() &&
                  connection_buffers.has_value() &&
                  network_queue.has_value() && network_queue->capacity() == 4U &&
+                 epoll_config.maximum_connections == 1024U &&
                  manifest_name.has_value() &&
                  *manifest_name == "manifest-00000000000000000001.cman" &&
                  decode_manifest != nullptr && validate_manifest_transition != nullptr &&

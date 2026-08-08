@@ -7,7 +7,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <deque>
 #include <vector>
 
 namespace chronos::network {
@@ -36,11 +35,11 @@ public:
   [[nodiscard]] std::size_t outbound_frames() const noexcept;
 
 private:
-  explicit ConnectionBuffers(ConnectionBufferConfig config) noexcept;
+  explicit ConnectionBuffers(ConnectionBufferConfig config);
 
   ConnectionBufferConfig config_;
   std::vector<std::byte> inbound_;
-  std::deque<std::vector<std::byte>> outbound_;
+  std::vector<std::vector<std::byte>> outbound_;
   std::size_t outbound_offset_{};
   std::size_t outbound_bytes_{};
 };

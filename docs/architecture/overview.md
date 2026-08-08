@@ -321,6 +321,11 @@ fixed-capacity SPSC ring then transfers complete owned tasks from exactly one re
 shard; release publication and acquire consumption cover initialization, while the reverse pair
 covers safe cell reuse under [ADR 0063](../adr/0063-bounded-reactor-shard-spsc-routing.md).
 
+The Linux owner under [ADR 0064](../adr/0064-bounded-linux-epoll-reactor.md) contains descriptors and
+epoll types behind a portable PIMPL. It applies finite admission/deadlines, reads before simultaneous
+half-close cleanup, routes only matching active responses, and detaches work before dropping late
+responses.
+
 An `io_uring` backend is optional and may be accepted only after the epoll path is correct, profiled, and reproducibly benchmarked. TLS and cryptography will use maintained external libraries behind a defined interface; ChronosDB will not implement cryptographic primitives.
 
 ## Future distribution: tablets and Raft

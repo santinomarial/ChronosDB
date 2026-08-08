@@ -19,7 +19,7 @@ namespace {
 
 } // namespace
 
-ConnectionBuffers::ConnectionBuffers(ConnectionBufferConfig config) noexcept : config_(config) {}
+ConnectionBuffers::ConnectionBuffers(ConnectionBufferConfig config) : config_(config) {}
 
 common::Result<ConnectionBuffers> ConnectionBuffers::create(const ConnectionBufferConfig& config) {
   if (const common::Status status = validate_protocol_limits(config.protocol); !status.is_ok())
@@ -30,11 +30,12 @@ common::Result<ConnectionBuffers> ConnectionBuffers::create(const ConnectionBuff
     return common::make_unexpected(maximum_frame.error());
   if (config.maximum_inbound_buffer_bytes < *maximum_frame ||
       config.maximum_outbound_buffer_bytes < kFrameHeaderSize ||
-      config.maximum_outbound_frames == 0U)
+      config.maximum_outbound_frames == 0U || config.maximum_outbound_frames > 65'536U)
     return common::make_unexpected(invalid("connection buffer limits cannot hold required frames"));
   try {
     ConnectionBuffers result{config};
     result.inbound_.reserve(std::min(config.maximum_inbound_buffer_bytes, *maximum_frame));
+    result.outbound_.reserve(config.maximum_outbound_frames);
     return result;
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("connection buffer allocation failed"));
@@ -101,7 +102,7 @@ common::Status ConnectionBuffers::consume_written(const std::size_t bytes) noexc
   outbound_offset_ += bytes;
   outbound_bytes_ -= bytes;
   if (outbound_offset_ == outbound_.front().size()) {
-    outbound_.pop_front();
+    outbound_.erase(outbound_.begin());
     outbound_offset_ = 0U;
   }
   return common::Status::ok();

@@ -540,7 +540,11 @@ installed consumption. Linux readiness and shard handoff remain separate.
 The fourth increment adds the finite reactor-to-shard SPSC task ring with an accepted ownership and
 acquire/release proof, explicit saturation, allocation-free steady-state push/pop, FIFO/wrap tests,
 a 100,000-task concurrency check, allocation failure, installed consumption, and TSan evidence.
-Shard wakeups, response routing, and the epoll owner remain next.
+The fifth increment adds the Linux nonblocking epoll owner, real socket I/O and response routing,
+bounded admission, handshake/idle expiry, deterministic disconnect detachment, late-response
+rejection, Linux-free public API, startup allocation classification, and Linux socket tests. Worker
+wakeups, complete query-result payloads and the test client/server adapter, authentication/TLS
+boundary, fuzzing, and Phase 10 measurement gates remain next.
 
 ## Phase 11 — Subscriptions and incremental materialized views
 

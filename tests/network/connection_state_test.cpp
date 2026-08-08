@@ -32,10 +32,13 @@ TEST(ServerConnectionStateTest, RequiresHelloNegotiatesLimitsAndAcceptsLifecycle
                                    *encode_ingest_request(DurabilityMode::kLocalSync, {})));
   ASSERT_TRUE(ingest.has_value());
   EXPECT_EQ(state.in_flight_requests(), 2U);
+  EXPECT_EQ(state.active_request_type(1U), MessageType::kQueryRequest);
+  EXPECT_EQ(state.active_request_type(2U), MessageType::kIngestRequest);
   EXPECT_FALSE(
       state.accept(frame(MessageType::kQueryRequest, 3U, *encode_query_request("SELECT 2")))
           .has_value());
   EXPECT_TRUE(state.complete(1U));
+  EXPECT_FALSE(state.active_request_type(1U).has_value());
   EXPECT_FALSE(state.complete(1U));
   EXPECT_TRUE(state.accept(frame(MessageType::kQueryRequest, 3U, *encode_query_request("SELECT 2")))
                   .has_value());

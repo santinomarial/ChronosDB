@@ -1,5 +1,6 @@
 #include "chronos/network/connection_buffers.hpp"
 #include "chronos/network/connection_state.hpp"
+#include "chronos/network/epoll_reactor.hpp"
 #include "chronos/network/messages.hpp"
 #include "chronos/network/protocol.hpp"
 #include "chronos/network/spsc_queue.hpp"
@@ -109,6 +110,29 @@ TEST(ProtocolAllocationFailureTest, ConnectionBuffersClassifyCreationAndReceiveA
 TEST(ProtocolAllocationFailureTest, SpscQueueClassifiesItsSingleOwnedAllocation) {
   expect_owned_allocation_is_classified([&] { return SpscNetworkTaskQueue::create(64U); });
 }
+
+#if defined(__linux__)
+TEST(ProtocolAllocationFailureTest, EpollReactorClassifiesEveryStartupAllocation) {
+  SpscNetworkTaskQueue requests = SpscNetworkTaskQueue::create(4U).value();
+  SpscNetworkTaskQueue responses = SpscNetworkTaskQueue::create(4U).value();
+  EpollServerConfig config;
+  config.maximum_connections = 4U;
+  config.maximum_events_per_poll = 4U;
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 32U; ++fail_after) {
+    auto result = run_failure(fail_after, [&] {
+      return EpollReactor::start(config, {.requests = &requests, .responses = &responses});
+    });
+    if (result.has_value()) {
+      reached_success = true;
+      EXPECT_TRUE(result->shutdown().is_ok());
+      break;
+    }
+    EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted);
+  }
+  EXPECT_TRUE(reached_success);
+}
+#endif
 
 } // namespace
 } // namespace chronos::network

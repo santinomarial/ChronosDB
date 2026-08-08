@@ -25,8 +25,10 @@ namespace {
 } // namespace
 
 ServerConnectionState::ServerConnectionState(ConnectionStateConfig config,
-                                             std::vector<std::uint64_t> active_requests) noexcept
-    : config_(config), active_requests_(std::move(active_requests)) {}
+                                             std::vector<std::uint64_t> active_requests,
+                                             std::vector<MessageType> active_request_types) noexcept
+    : config_(config), active_requests_(std::move(active_requests)),
+      active_request_types_(std::move(active_request_types)) {}
 
 common::Result<ServerConnectionState>
 ServerConnectionState::create(const ConnectionStateConfig& config) {
@@ -36,8 +38,10 @@ ServerConnectionState::create(const ConnectionStateConfig& config) {
     return common::make_unexpected(invalid("connection in-flight request limit is invalid"));
   try {
     std::vector<std::uint64_t> active;
+    std::vector<MessageType> active_types;
     active.reserve(config.maximum_in_flight_requests);
-    return ServerConnectionState{config, std::move(active)};
+    active_types.reserve(config.maximum_in_flight_requests);
+    return ServerConnectionState{config, std::move(active), std::move(active_types)};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("connection state allocation failed"));
   }
@@ -83,8 +87,12 @@ common::Result<InboundAction> ServerConnectionState::accept(const Frame& frame) 
       return common::make_unexpected(invalid("CANCEL request identity is invalid"));
     const auto found = std::ranges::find(active_requests_, frame.header.request_id);
     const bool active = found != active_requests_.end();
-    if (active)
+    if (active) {
+      const auto offset = static_cast<std::size_t>(found - active_requests_.begin());
       active_requests_.erase(found);
+      active_request_types_.erase(active_request_types_.begin() +
+                                  static_cast<std::ptrdiff_t>(offset));
+    }
     return InboundAction{.kind = InboundActionKind::kCancel,
                          .request_id = frame.header.request_id,
                          .cancellation_was_active = active};
@@ -108,6 +116,7 @@ common::Result<InboundAction> ServerConnectionState::accept(const Frame& frame) 
     return common::make_unexpected(invalid("QUERY_REQUEST payload is invalid"));
   }
   active_requests_.push_back(frame.header.request_id);
+  active_request_types_.push_back(frame.header.message_type);
   last_request_id_ = frame.header.request_id;
   return InboundAction{.kind = frame.header.message_type == MessageType::kIngestRequest
                                    ? InboundActionKind::kIngest
@@ -119,12 +128,15 @@ bool ServerConnectionState::complete(const std::uint64_t request_id) noexcept {
   const auto found = std::ranges::find(active_requests_, request_id);
   if (found == active_requests_.end())
     return false;
+  const auto offset = static_cast<std::size_t>(found - active_requests_.begin());
   active_requests_.erase(found);
+  active_request_types_.erase(active_request_types_.begin() + static_cast<std::ptrdiff_t>(offset));
   return true;
 }
 
 void ServerConnectionState::close() noexcept {
   active_requests_.clear();
+  active_request_types_.clear();
   phase_ = ConnectionPhase::kClosed;
 }
 
@@ -139,6 +151,16 @@ std::uint64_t ServerConnectionState::last_request_id() const noexcept {
 }
 std::uint32_t ServerConnectionState::negotiated_maximum_payload_size() const noexcept {
   return negotiated_maximum_payload_size_;
+}
+std::span<const std::uint64_t> ServerConnectionState::active_request_ids() const noexcept {
+  return active_requests_;
+}
+std::optional<MessageType>
+ServerConnectionState::active_request_type(const std::uint64_t request_id) const noexcept {
+  const auto found = std::ranges::find(active_requests_, request_id);
+  if (found == active_requests_.end())
+    return std::nullopt;
+  return active_request_types_[static_cast<std::size_t>(found - active_requests_.begin())];
 }
 
 } // namespace chronos::network
