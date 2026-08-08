@@ -1,3 +1,5 @@
+#include "chronos/network/connection_state.hpp"
+#include "chronos/network/messages.hpp"
 #include "chronos/network/protocol.hpp"
 #include "support/failing_allocator.hpp"
 
@@ -52,6 +54,36 @@ TEST(ProtocolAllocationFailureTest, DecodeClassifiesEveryOwnedAllocation) {
     EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted);
   }
   EXPECT_TRUE(reached_success);
+}
+
+template <typename Operation> void expect_owned_allocation_is_classified(Operation&& operation) {
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 16U; ++fail_after) {
+    auto result = run_failure(fail_after, operation);
+    if (result.has_value()) {
+      reached_success = true;
+      break;
+    }
+    EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted);
+  }
+  EXPECT_TRUE(reached_success);
+}
+
+TEST(ProtocolAllocationFailureTest, MessageEncodersClassifyEveryOwnedAllocation) {
+  const std::array<std::byte, 8> body{};
+  expect_owned_allocation_is_classified([&] { return encode_client_hello({}); });
+  expect_owned_allocation_is_classified([&] { return encode_server_hello({}); });
+  expect_owned_allocation_is_classified(
+      [&] { return encode_ingest_request(DurabilityMode::kAsync, body); });
+  expect_owned_allocation_is_classified(
+      [&] { return encode_ingest_acknowledgement({.outcome = IngestOutcome::kMatchingRetry}); });
+  expect_owned_allocation_is_classified([&] { return encode_query_request("SELECT 1"); });
+  expect_owned_allocation_is_classified(
+      [&] { return encode_error_message(ProtocolErrorCode::kOverloaded, "full"); });
+}
+
+TEST(ProtocolAllocationFailureTest, ConnectionCreationClassifiesItsOwnedRequestStorage) {
+  expect_owned_allocation_is_classified([&] { return ServerConnectionState::create(); });
 }
 
 } // namespace

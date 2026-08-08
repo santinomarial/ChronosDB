@@ -376,7 +376,12 @@ chronos_set_project_warnings(chronos_query)
 chronos_enable_sanitizers(chronos_query)
 chronos_enable_static_analysis(chronos_query)
 
-add_library(chronos_network src/network/protocol.cpp)
+add_library(
+  chronos_network
+  src/network/connection_state.cpp
+  src/network/messages.cpp
+  src/network/protocol.cpp
+)
 add_library(chronos::network ALIAS chronos_network)
 set_target_properties(chronos_network PROPERTIES EXPORT_NAME network CXX_EXTENSIONS OFF)
 target_compile_features(chronos_network PUBLIC cxx_std_23)
@@ -386,7 +391,7 @@ target_include_directories(
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
 )
-target_link_libraries(chronos_network PUBLIC chronos::common)
+target_link_libraries(chronos_network PUBLIC chronos::common chronos::schema)
 chronos_set_project_warnings(chronos_network)
 chronos_enable_sanitizers(chronos_network)
 chronos_enable_static_analysis(chronos_network)
@@ -465,6 +470,10 @@ if(CHRONOS_BUILD_TESTS)
 
   add_executable(
     chronos_network_tests
+    tests/network/connection_state_header_self_contained.cpp
+    tests/network/connection_state_test.cpp
+    tests/network/messages_header_self_contained.cpp
+    tests/network/messages_test.cpp
     tests/network/protocol_header_self_contained.cpp
     tests/network/protocol_test.cpp
   )

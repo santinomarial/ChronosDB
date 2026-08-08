@@ -526,6 +526,12 @@ portable bounded codec, golden/corruption/boundary tests, allocation-failure cla
 installed public target. Handshake payloads and connection/reactor behavior remain subsequent
 increments.
 
+The second increment accepts exact hello, ingest, durability acknowledgement, query, and error
+payloads plus a bounded server connection state machine. It proves negotiated limits, strict
+non-reusable request identities, finite in-flight admission, idempotent cancellation, direction,
+close behavior, UTF-8 validation, and allocation-failure classification. Streaming transport and
+reactor-to-shard routing remain next.
+
 ## Phase 11 — Subscriptions and incremental materialized views
 
 - **Scope:** committed change model; gap-free snapshot-to-stream handoff; deterministic versioned resume tokens; bounded subscriber policies; supported incremental operators; materialized-view progress/recovery and late-event corrections.

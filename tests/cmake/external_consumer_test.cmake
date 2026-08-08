@@ -117,6 +117,8 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/manifest/types.hpp>
 #include <chronos/manifest/validation.hpp>
 #include <chronos/network/protocol.hpp>
+#include <chronos/network/messages.hpp>
+#include <chronos/network/connection_state.hpp>
 #include <chronos/wal/application.hpp>
 
 #include <array>
@@ -771,6 +773,7 @@ int main() {
       &chronos::manifest::recover_manifest_columnar_database;
   const auto protocol_ping = chronos::network::encode_frame(
       {.message_type = chronos::network::MessageType::kPing, .request_id = 1U}, {});
+  const auto connection_state = chronos::network::ServerConnectionState::create();
   return event_time_match != nullptr && execute != nullptr && recover != nullptr &&
                  reclaim_recovered_wal != nullptr && inspect_wal_suffix != nullptr &&
                  recover_wal_checkpoint != nullptr && open_wal_checkpoint != nullptr &&
@@ -855,6 +858,7 @@ int main() {
                  execute_analyze != nullptr &&
                  protocol_ping.has_value() &&
                  protocol_ping->size() == chronos::network::kFrameHeaderSize &&
+                 connection_state.has_value() &&
                  manifest_name.has_value() &&
                  *manifest_name == "manifest-00000000000000000001.cman" &&
                  decode_manifest != nullptr && validate_manifest_transition != nullptr &&

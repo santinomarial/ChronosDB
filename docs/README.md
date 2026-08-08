@@ -162,6 +162,9 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   contracts, and reproducible end-to-end profile methodology.
 - [Native Protocol v1 framing](learning/native-protocol-v1-framing.md): portable checksummed frame
   interfaces, validation-before-allocation, ownership, failure behavior, and verification strategy.
+- [Native protocol request lifecycle](learning/native-protocol-request-lifecycle.md): negotiated
+  limits, bounded active requests, monotonic identities, cancellation, and durability-explicit
+  acknowledgements.
 - [Shared snapshot publication credit](learning/shared-snapshot-publication-credit.md): implemented
   one-query/one-epoch publication admission across part images, backed chunks, complete tablet scans,
   and ASOF aliases while retaining exact local image/output credit and last-owner cleanup.

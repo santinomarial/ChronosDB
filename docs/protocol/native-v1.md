@@ -1,6 +1,6 @@
 # ChronosDB Native Protocol v1
 
-> **Status: accepted specification; fixed framing implemented.** This document controls the
+> **Status: accepted specification; fixed framing, message payloads, and request state implemented.** This document controls the
 > Protocol v1 byte layout and compatibility rules. Payload and connection-state sections identify
 > their implementation status independently. ADR 0060 accepts the frame contract.
 
@@ -93,3 +93,44 @@ golden compatibility fixtures before acceptance.
 CRC32C is accidental-corruption coverage, not authentication. A peer able to modify bytes can
 recompute it. Authentication and confidentiality belong to the maintained TLS/authenticator
 boundary later in Phase 10.
+
+## Handshake and request lifecycle
+
+The first client frame MUST be `CLIENT_HELLO` with request ID zero. Its fixed 24-byte payload is:
+
+| Offset | Width | Field |
+| ---: | ---: | --- |
+| 0 | 2 | payload format `1` |
+| 2 | 2 | minimum major |
+| 4 | 2 | maximum major |
+| 6 | 2 | maximum minor |
+| 8 | 8 | requested feature bits; zero in v1 |
+| 16 | 4 | requested maximum payload |
+| 20 | 4 | reserved zero |
+
+`SERVER_HELLO` uses the same size with selected major at offset 2, selected minor at 4, zero at 6,
+accepted feature bits at 8, effective maximum payload at 16, and reserved zero at 20. No request is
+admitted before a compatible 1.0 handshake.
+
+Ingest/query IDs are positive and strictly increase per connection. They cannot be reused after
+completion or cancellation. The configured active-request limit fails immediately with overload.
+`CANCEL` has an empty payload and names an already issued ID; repeating cancellation is a successful
+no-op. PING has request ID zero and an empty payload.
+
+## Ingest and query payloads
+
+`INGEST_REQUEST` begins with payload format u16 `1`, durability u8 (`1` ASYNC, `2` LOCAL_SYNC),
+reserved u8 zero, canonical Columnar Append length u32, then exactly those bytes.
+
+`INGEST_ACKNOWLEDGEMENT` is 32 bytes: format u16, requested/effective durability u8 each, outcome u8
+(`1` applied, `2` matching retry), three zero bytes, then record sequence, segment number, and byte
+offset as u64 values. Applied acknowledgements require nonzero record and segment identities.
+Matching retries encode all three position fields as zero because no new WAL operation occurred.
+
+`QUERY_REQUEST` begins with format u16, reserved u16 zero, SQL byte length u32, and exact nonempty
+Unicode-scalar UTF-8 SQL. Query result batches remain a subsequent Phase 10 payload assignment.
+
+`ERROR` begins with format u16, stable error code u16, message length u32, and an exact nonempty
+Unicode-scalar UTF-8 diagnostic. Codes cover malformed frames, unsupported version, invalid state,
+duplicate/unknown requests, overload, cancellation, invalid request, execution failure,
+unauthorized access, and internal failure.
