@@ -74,6 +74,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Benchmark contract](benchmarks/benchmark-contract.md): mandatory run metadata, metrics, and comparison rules.
 - [WAL benchmarks](benchmarks/wal-benchmarks.md): production-path WAL measurement harness, safety
   controls, correctness gate, artifact schema, and evidence limitations.
+- [Phase 10 native-network baseline](benchmarks/native-network-phase-10.md): clean-commit portable
+  codec/queue and Ubuntu epoll measurements with raw repetitions and applicability limits.
 - [ChronosBench](benchmarks/chronosbench.md): planned correctness-checked workload scenarios.
 
 ## Reviews

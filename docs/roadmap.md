@@ -577,6 +577,13 @@ The eleventh increment adds source-controlled valid, truncated, and bad-checksum
 plus a dedicated protocol/stream/message/server-state/client-state libFuzzer target. A 100,000-input
 ASan/UBSan campaign passes with finite 128 KiB inputs. Measurement and final phase audit gates remain.
 
+The twelfth increment adds a portable and Linux-only native-network benchmark suite covering frame
+and result-batch codecs, allocation counts, partial-read shapes, queue capacities and explicit
+saturation, connection churn, and equal-work 1/8/32-connection request rounds. The first Linux run
+identified a delayed terminal-frame interaction and justified `TCP_NODELAY` before admission. A
+clean-commit Ubuntu 24.04/LinuxKit aarch64 baseline retains three raw repetitions, unfavorable
+outliers, exact configuration, and evidence limits. Final phase audit gates remain.
+
 ## Phase 11 — Subscriptions and incremental materialized views
 
 - **Scope:** committed change model; gap-free snapshot-to-stream handoff; deterministic versioned resume tokens; bounded subscriber policies; supported incremental operators; materialized-view progress/recovery and late-event corrections.

@@ -1,9 +1,11 @@
 # Benchmark Publication Contract
 
-> **Status: contract implemented by focused WAL and Manifest-flush harnesses; no result is published
-> here.** The [WAL](wal-benchmarks.md) and [flush](flush-benchmarks.md) harnesses emit reviewable
-> local measurement artifacts. The broader ChronosBench suite remains unimplemented. This contract
-> governs every measurement under
+> **Status: contract implemented by focused WAL, Manifest-flush, and native-network harnesses; no
+> result is published here.** The [WAL](wal-benchmarks.md) and [flush](flush-benchmarks.md) harnesses
+> emit reviewable local measurement artifacts. The
+> [Phase 10 native-network baseline](native-network-phase-10.md) publishes a deliberately limited
+> containerized microbenchmark result. The broader ChronosBench suite remains unimplemented. This
+> contract governs every measurement under
 > [ADR 0012](../adr/0012-correctness-testing-and-performance-evidence.md).
 
 ## Required run manifest
