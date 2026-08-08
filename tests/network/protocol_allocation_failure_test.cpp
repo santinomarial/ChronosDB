@@ -2,6 +2,7 @@
 #include "chronos/network/connection_state.hpp"
 #include "chronos/network/messages.hpp"
 #include "chronos/network/protocol.hpp"
+#include "chronos/network/spsc_queue.hpp"
 #include "support/failing_allocator.hpp"
 
 #include <array>
@@ -103,6 +104,10 @@ TEST(ProtocolAllocationFailureTest, ConnectionBuffersClassifyCreationAndReceiveA
     EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted);
   }
   EXPECT_TRUE(reached_success);
+}
+
+TEST(ProtocolAllocationFailureTest, SpscQueueClassifiesItsSingleOwnedAllocation) {
+  expect_owned_allocation_is_classified([&] { return SpscNetworkTaskQueue::create(64U); });
 }
 
 } // namespace

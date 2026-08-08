@@ -382,6 +382,7 @@ add_library(
   src/network/connection_state.cpp
   src/network/messages.cpp
   src/network/protocol.cpp
+  src/network/spsc_queue.cpp
 )
 add_library(chronos::network ALIAS chronos_network)
 set_target_properties(chronos_network PROPERTIES EXPORT_NAME network CXX_EXTENSIONS OFF)
@@ -479,6 +480,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/network/messages_test.cpp
     tests/network/protocol_header_self_contained.cpp
     tests/network/protocol_test.cpp
+    tests/network/spsc_queue_header_self_contained.cpp
+    tests/network/spsc_queue_test.cpp
   )
   set_target_properties(chronos_network_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_network_tests PRIVATE cxx_std_23)

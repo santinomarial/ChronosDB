@@ -316,6 +316,11 @@ uses a fixed checksummed header and an independently checksummed payload. It val
 and finite body requirement before payload allocation; state-machine payloads and the Linux reactor
 remain separately staged Phase 10 work.
 
+Portable bounded connection buffers retain partial input and immutable short-write output. A
+fixed-capacity SPSC ring then transfers complete owned tasks from exactly one reactor to exactly one
+shard; release publication and acquire consumption cover initialization, while the reverse pair
+covers safe cell reuse under [ADR 0063](../adr/0063-bounded-reactor-shard-spsc-routing.md).
+
 An `io_uring` backend is optional and may be accepted only after the epoll path is correct, profiled, and reproducibly benchmarked. TLS and cryptography will use maintained external libraries behind a defined interface; ChronosDB will not implement cryptographic primitives.
 
 ## Future distribution: tablets and Raft

@@ -537,6 +537,11 @@ exact ordered frame extraction, immutable partial-write ownership, independent i
 byte and frame-count limits, deterministic overload, clear-on-disconnect, allocation sweeps, and
 installed consumption. Linux readiness and shard handoff remain separate.
 
+The fourth increment adds the finite reactor-to-shard SPSC task ring with an accepted ownership and
+acquire/release proof, explicit saturation, allocation-free steady-state push/pop, FIFO/wrap tests,
+a 100,000-task concurrency check, allocation failure, installed consumption, and TSan evidence.
+Shard wakeups, response routing, and the epoll owner remain next.
+
 ## Phase 11 — Subscriptions and incremental materialized views
 
 - **Scope:** committed change model; gap-free snapshot-to-stream handoff; deterministic versioned resume tokens; bounded subscriber policies; supported incremental operators; materialized-view progress/recovery and late-event corrections.

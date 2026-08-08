@@ -117,6 +117,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/manifest/types.hpp>
 #include <chronos/manifest/validation.hpp>
 #include <chronos/network/protocol.hpp>
+#include <chronos/network/spsc_queue.hpp>
 #include <chronos/network/messages.hpp>
 #include <chronos/network/connection_state.hpp>
 #include <chronos/network/connection_buffers.hpp>
@@ -776,6 +777,7 @@ int main() {
       {.message_type = chronos::network::MessageType::kPing, .request_id = 1U}, {});
   const auto connection_state = chronos::network::ServerConnectionState::create();
   const auto connection_buffers = chronos::network::ConnectionBuffers::create();
+  const auto network_queue = chronos::network::SpscNetworkTaskQueue::create(4U);
   return event_time_match != nullptr && execute != nullptr && recover != nullptr &&
                  reclaim_recovered_wal != nullptr && inspect_wal_suffix != nullptr &&
                  recover_wal_checkpoint != nullptr && open_wal_checkpoint != nullptr &&
@@ -862,6 +864,7 @@ int main() {
                  protocol_ping->size() == chronos::network::kFrameHeaderSize &&
                  connection_state.has_value() &&
                  connection_buffers.has_value() &&
+                 network_queue.has_value() && network_queue->capacity() == 4U &&
                  manifest_name.has_value() &&
                  *manifest_name == "manifest-00000000000000000001.cman" &&
                  decode_manifest != nullptr && validate_manifest_transition != nullptr &&
