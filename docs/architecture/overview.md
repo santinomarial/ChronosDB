@@ -268,15 +268,21 @@ plan while widening ASOF LEFT right-source nullability.
 [ADR 0055](../adr/0055-snapshot-bound-multi-source-asof-instantiation.md) binds every SQL source of
 that plan, in source order, to complete tablet publications from one held aggregate database epoch;
 partial construction owns and releases all earlier sources, pins, and query credit on failure.
+[ADR 0056](../adr/0056-shared-query-credit-and-bounded-parallel-scheduling.md) adds last-owner shared
+query credit and a bounded unordered merge for independent pipelines. Each worker owns a whole
+thread-affine pipeline, a fixed ring release/acquire-publishes complete accounted chunks, and
+terminal failure cancels and joins every sibling before returning a deterministic status. SQL
+ordering remains the responsibility of explicit complete physical keys, never queue arrival.
 [ADR 0048](../adr/0048-snapshot-tablet-physical-pipeline-instantiation.md) now validates a lowered
 plan's complete schema and optional suffix input, loads one held snapshot's durable images, composes
 every current source, and instantiates the checked pipeline without collapsing SQL diagnostics.
 Future correction/delete version resolution remains separate work. Variable-width aggregate
 extrema now use exact unsigned byte order and reserve-before-copy query accounting under
-[ADR 0049](../adr/0049-query-accounted-variable-width-extrema.md). Parallel scheduling,
-spilling, adaptive behavior, and join algorithms remain deferred. Implemented reservations and
-accounted chunks provide the admission/ownership invariant, but future operators must reserve every
-retained allocation and release snapshot pins and memory by cooperative cancellation unwinding.
+[ADR 0049](../adr/0049-query-accounted-variable-width-extrema.md). Optimizer selection of parallel
+strategies, spilling, adaptive behavior, and additional join algorithms remain deferred.
+Implemented reservations and accounted chunks provide the admission/ownership invariant, but
+future operators must reserve every retained allocation and release snapshot pins and memory by
+cooperative cancellation unwinding.
 
 ## Networking
 
@@ -312,8 +318,9 @@ Deferred design areas include the server durability default and production tunin
 group-commit parameters; additional WAL application record kinds; row identities and correction
 syntax; additional CSEG encodings; manifest-generation and installed-part garbage collection; SQL
 grammar and type system; optimizer rules; subscription result/change model; watermark
-finalization; scheduler and memory limits; authentication/TLS integration; Raft protocol details;
-multi-Raft log layout; distributed snapshot coordination; and object-tier policy. The WAL v1
+finalization; optimizer scheduling rules and production memory-limit tuning; authentication/TLS
+integration; Raft protocol details; multi-Raft log layout; distributed snapshot coordination; and
+object-tier policy. The WAL v1
 physical bytes, synchronization ordering, recovery-tail classification, CSEG v1 codecs, and
 Manifest v1/checkpoint installation design are no longer deferred.
 Each remaining area becomes accepted only through its phase artifacts, validation evidence, and any

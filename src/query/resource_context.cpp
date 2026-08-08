@@ -100,6 +100,32 @@ private:
   std::atomic<bool> cancelled_;
 };
 
+class QuerySharedReservationState {
+public:
+  QuerySharedReservationState(std::shared_ptr<QueryResourceState> state,
+                              const std::size_t bytes) noexcept
+      : state_(std::move(state)), bytes_(bytes) {}
+
+  ~QuerySharedReservationState() {
+    state_->release(bytes_);
+  }
+
+  QuerySharedReservationState(const QuerySharedReservationState&) = delete;
+  QuerySharedReservationState& operator=(const QuerySharedReservationState&) = delete;
+
+  [[nodiscard]] const std::shared_ptr<QueryResourceState>& resource_state() const noexcept {
+    return state_;
+  }
+
+  [[nodiscard]] std::size_t bytes() const noexcept {
+    return bytes_;
+  }
+
+private:
+  std::shared_ptr<QueryResourceState> state_;
+  std::size_t bytes_;
+};
+
 } // namespace detail
 
 QueryMemoryReservation::QueryMemoryReservation(std::shared_ptr<detail::QueryResourceState> state,
@@ -138,6 +164,22 @@ void QueryMemoryReservation::release() noexcept {
   }
 }
 
+QuerySharedMemoryReservation::QuerySharedMemoryReservation(
+    std::shared_ptr<detail::QuerySharedReservationState> state) noexcept
+    : state_(std::move(state)) {}
+
+bool QuerySharedMemoryReservation::is_valid() const noexcept {
+  return state_ != nullptr;
+}
+
+std::size_t QuerySharedMemoryReservation::bytes() const noexcept {
+  return state_ == nullptr ? 0U : state_->bytes();
+}
+
+void QuerySharedMemoryReservation::reset() noexcept {
+  state_.reset();
+}
+
 QueryResourceContext::QueryResourceContext(
     std::shared_ptr<detail::QueryResourceState> state) noexcept
     : state_(std::move(state)) {}
@@ -164,8 +206,29 @@ QueryResourceContext::reserve(const std::size_t bytes) const {
   return QueryMemoryReservation{state_, bytes};
 }
 
+common::Result<QuerySharedMemoryReservation>
+QueryResourceContext::reserve_shared(const std::size_t bytes) const {
+  if (bytes == 0U)
+    return common::make_unexpected(invalid_reservation());
+  const common::Result<void> reserved = state_->reserve(bytes);
+  if (!reserved.has_value())
+    return common::make_unexpected(reserved.error());
+  try {
+    return QuerySharedMemoryReservation{
+        std::make_shared<detail::QuerySharedReservationState>(state_, bytes)};
+  } catch (const std::bad_alloc&) {
+    state_->release(bytes);
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                  "query shared reservation allocation failed"});
+  }
+}
+
 bool QueryResourceContext::owns(const QueryMemoryReservation& reservation) const noexcept {
   return reservation.state_ == state_;
+}
+
+bool QueryResourceContext::owns(const QuerySharedMemoryReservation& reservation) const noexcept {
+  return reservation.state_ != nullptr && reservation.state_->resource_state() == state_;
 }
 
 bool QueryResourceContext::request_cancel() const noexcept {

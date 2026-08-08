@@ -88,6 +88,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/query/latest.hpp>
 #include <chronos/query/literal.hpp>
 #include <chronos/query/parser.hpp>
+#include <chronos/query/parallel_scheduler.hpp>
 #include <chronos/query/aggregate.hpp>
 #include <chronos/query/column_output.hpp>
 #include <chronos/query/cseg_scan.hpp>
@@ -359,6 +360,18 @@ int main() {
   const auto query_catalog = chronos::query::QueryCatalogSnapshot::create(1U, {});
   const auto query_scalar = chronos::query::ScalarValue::float64(1.0);
   const auto query_resources = chronos::query::QueryResourceContext::create(1'024U);
+  using ReserveSharedFunction =
+      chronos::common::Result<chronos::query::QuerySharedMemoryReservation> (
+          chronos::query::QueryResourceContext::*)(std::size_t) const;
+  const ReserveSharedFunction reserve_shared =
+      &chronos::query::QueryResourceContext::reserve_shared;
+  using CreateParallelMergeFunction =
+      chronos::common::Result<std::unique_ptr<chronos::query::ParallelMergeOperator>> (*)(
+          const chronos::query::QueryResourceContext&,
+          std::vector<std::unique_ptr<chronos::query::PhysicalOperator>>,
+          chronos::query::ParallelSchedulerLimits);
+  const CreateParallelMergeFunction create_parallel_merge =
+      &chronos::query::ParallelMergeOperator::create;
   const auto physical_end = chronos::query::PhysicalOperatorStep::end();
   const auto row_version_layout = chronos::query::vector_row_version_layout(2U);
   const auto row_version_type = chronos::query::vector_row_version_column_type(
@@ -679,6 +692,9 @@ int main() {
                  query_scalar.has_value() && !query_scalar->is_null() &&
                  query_resources.has_value() &&
                  query_resources->available_memory_bytes() == 1'024U &&
+                 reserve_shared != nullptr && create_parallel_merge != nullptr &&
+                 chronos::query::kDefaultParallelSchedulerTaskLimit == 256U &&
+                 chronos::query::kDefaultParallelSchedulerWorkerLimit == 16U &&
                  physical_end.kind() == chronos::query::PhysicalOperatorStepKind::kEnd &&
                  row_version_layout.has_value() &&
                  row_version_layout->wal_id_column_ordinal() == 2U &&

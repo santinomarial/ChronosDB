@@ -196,6 +196,12 @@
 > per-source shape/suffix inference, hostile late-source cleanup, allocation sweeps, authenticated
 > fuzzing, and connector-plus-execution measurement. Generated-identity base ordering and spill
 > remain outside this claim.
+> Bounded parallel scheduling adds single-charge shared-credit lifetime, whole-task thread
+> affinity, forced simultaneous starts, one-slot producer backpressure, serial-multiset
+> equivalence, deterministic racing-error arbitration, early-destruction joins, hostile limits,
+> caller and worker allocation failure classification, scheduler fuzzing, sanitizer/consumer
+> coverage, and one-to-four-worker overhead profiles. It makes no SQL-order or optimizer-selection
+> claim.
 > Complete append-only tablet scanning now composes the exact durable, sealed-head, and active-head
 > publications from one aggregate epoch. Deterministic multiset and suffix checks, head-only exact
 > predicate/helper-removal coverage, hostile finite limits, allocation-failure injection, public

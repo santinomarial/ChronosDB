@@ -124,6 +124,10 @@ A file or memory region cannot be reclaimed, unmapped, overwritten, or reused wh
 - **How it could be violated:** deleting compacted inputs immediately after manifest swap, reusing a head arena while a scan holds spans, failing to release or acquire a pin atomically, or losing a pin during cancellation.
 - **Eventual tests:** pause readers at every dereference boundary while sealing, compacting, canceling, evicting, and reclaiming; use sanitizers and deterministic scheduling; assert deletion/reuse occurs only after the final pin is released.
 
+The bounded query scheduler retains one shared configuration credit until its final worker/root
+owner releases it, while queued chunks keep independent move-only credit. Cancellation clears the
+queue, wakes blocked producers, and joins every worker before terminal ownership is released.
+
 ## 12. Resume tokens name deterministic committed boundaries
 
 A subscription resume position identifies one deterministic committed boundary and enough database, query/definition, tablet-set, epoch, and format identity to reject ambiguous or incompatible resumption.

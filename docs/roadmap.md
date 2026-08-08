@@ -477,9 +477,13 @@ No phase passes because its code merely compiles. A phase passes only when its a
   failure injection, fuzzing, and lowering benchmarks. ADR 0055 and the thirty-eighth increment
   bind every checked ASOF source to one exact aggregate snapshot epoch, infer each source's suffix
   from its preparation shape, clean up partial construction, execute three-source SQL plans, and add
-  failure/fuzz/benchmark/consumer evidence. Optimizer rules, future correction/delete row-version resolution,
-  mapped/asynchronous providers, shared pin credit, scheduling, spill, and full scalar-engine
-  differential plan execution are unimplemented.
+  failure/fuzz/benchmark/consumer evidence. ADR 0056 and the thirty-ninth increment add one-copy
+  shared query credit plus a bounded parallel merge for independent unordered pipelines: complete
+  task thread affinity, a fixed-capacity accounted-chunk queue, explicit release/acquire
+  publication, deterministic failure arbitration, cooperative join cleanup, and concurrency/
+  failure/fuzz/benchmark/consumer evidence. Optimizer rules, future correction/delete row-version
+  resolution, mapped/asynchronous providers, publication-pin credit deduplication, spill, and full
+  scalar-engine differential plan execution are unimplemented.
 
 - **Scope:** bounded vectors, vectorized scans/expressions/aggregates/joins, physical planning, memory accounting, cancellation, parallel scheduling, and spill for explicitly supported operators.
 - **Explicit non-scope:** distributed fragments, GPU novelty, unbounded query memory, or optimizer rules lacking semantic/differential validation.

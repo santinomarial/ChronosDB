@@ -90,3 +90,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0053](0053-checked-left-deep-asof-physical-plan.md) | Checked left-deep ASOF physical plan | accepted |
 | [0054](0054-bound-asof-select-physical-lowering.md) | Bound ASOF SELECT physical lowering | accepted |
 | [0055](0055-snapshot-bound-multi-source-asof-instantiation.md) | Snapshot-bound multi-source ASOF instantiation | accepted |
+| [0056](0056-shared-query-credit-and-bounded-parallel-scheduling.md) | Shared query credit and bounded parallel scheduling | accepted |

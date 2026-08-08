@@ -20,6 +20,7 @@ TEST(QueryResourceContextTest, RejectsZeroLimitsAndReservations) {
   EXPECT_EQ(QueryResourceContext::create(0U).error().code(), common::StatusCode::kInvalidArgument);
   const auto context = QueryResourceContext::create(64U).value();
   EXPECT_EQ(context.reserve(0U).error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(context.reserve_shared(0U).error().code(), common::StatusCode::kInvalidArgument);
   EXPECT_EQ(context.maximum_memory_bytes(), 64U);
   EXPECT_EQ(context.reserved_memory_bytes(), 0U);
   EXPECT_EQ(context.available_memory_bytes(), 64U);
@@ -80,6 +81,34 @@ TEST(QueryResourceContextTest, SharedCopiesEnforceOneLimitWithoutOverflow) {
   exact->release();
   EXPECT_EQ(worker.available_memory_bytes(), 64U);
   EXPECT_EQ(worker.peak_reserved_memory_bytes(), 64U);
+}
+
+TEST(QueryResourceContextTest, SharedReservationsChargeOnceAndReleaseAfterTheLastWorkerCopy) {
+  const auto context = QueryResourceContext::create(128U).value();
+  QuerySharedMemoryReservation empty;
+  EXPECT_FALSE(context.owns(empty));
+  EXPECT_EQ(context.reserve_shared(129U).error().code(), common::StatusCode::kResourceExhausted);
+  QuerySharedMemoryReservation owner = context.reserve_shared(96U).value();
+  EXPECT_TRUE(owner.is_valid());
+  EXPECT_TRUE(context.owns(owner));
+  EXPECT_EQ(owner.bytes(), 96U);
+  EXPECT_EQ(context.reserved_memory_bytes(), 96U);
+
+  std::vector<QuerySharedMemoryReservation> worker_copies(16U, owner);
+  EXPECT_EQ(context.reserved_memory_bytes(), 96U);
+  owner.reset();
+  EXPECT_FALSE(owner.is_valid());
+  EXPECT_EQ(owner.bytes(), 0U);
+  EXPECT_EQ(context.reserved_memory_bytes(), 96U);
+  worker_copies.erase(worker_copies.begin(), worker_copies.end() - 1);
+  EXPECT_EQ(context.reserved_memory_bytes(), 96U);
+  worker_copies.clear();
+  EXPECT_EQ(context.reserved_memory_bytes(), 0U);
+
+  const auto unrelated = QueryResourceContext::create(128U).value();
+  auto unrelated_credit = unrelated.reserve_shared(1U).value();
+  EXPECT_FALSE(context.owns(unrelated_credit));
+  unrelated_credit.reset();
 }
 
 TEST(QueryResourceContextTest, CancellationIsSharedIdempotentAndCooperative) {

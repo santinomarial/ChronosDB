@@ -141,8 +141,11 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   canonical physical owners, explicit order-preserving selections, checked chunk bounds, ownership,
   failure, fuzzing, and measurement boundaries for the first Phase 9 increment.
 - [Query resource control](learning/query-resource-control.md): implemented query-wide memory
-  reservations, cooperative cancellation, concurrency and memory-ordering arguments, ownership,
-  failure, race testing, and measurement boundaries for the second Phase 9 increment.
+  reservations including shared last-owner credit, cooperative cancellation, concurrency and
+  memory-ordering arguments, ownership, failure, race testing, and measurement boundaries.
+- [Bounded parallel query scheduling](learning/bounded-parallel-query-scheduling.md): implemented
+  whole-pipeline thread affinity, a fixed-capacity accounted-chunk merge, deterministic failure
+  arbitration, cooperative join cleanup, hostile/failure/fuzz coverage, and overhead measurement.
 - [Physical operator foundation](learning/physical-operator-foundation.md): implemented accounted
   chunk ownership, explicit pull/end/error lifecycle, allocation-free SQL Boolean filtering,
   allocation-free stable column-subset projection and global LIMIT, scalar-differential and

@@ -9,12 +9,15 @@ schedule a task, spill data, or enforce a cancellation deadline.
 
 ## Public interfaces
 
-`chronos/query/resource_context.hpp` exposes two types:
+`chronos/query/resource_context.hpp` exposes three types:
 
 - `QueryResourceContext` is a copyable handle to one shared state. Its factory requires an explicit
   nonzero maximum. Copies observe the same current/peak counters and cancellation state.
 - `QueryMemoryReservation` is a move-only RAII credit. `reserve(bytes)` creates it after atomically
   charging the shared budget. Destruction or `release()` returns the credit.
+- `QuerySharedMemoryReservation` is a copyable RAII credit for one immutable allocation or
+  lifetime. `reserve_shared(bytes)` charges once; copies retain the same release obligation and the
+  last copy returns it.
 
 `reserve(0)` and a zero maximum are `INVALID_ARGUMENT`. A request beyond available credit is
 `RESOURCE_EXHAUSTED`. `check_cancelled()` and reservations attempted after observed cancellation
@@ -45,9 +48,14 @@ Context copies share the state through reference-counted ownership. A reservatio
 state, allowing its destructor to return credit after all contexts disappear. The default-constructed
 reservation is an invalid empty holder for optional/container use; releasing it is harmless.
 
-Moving a reservation transfers its state and byte count. Move assignment first releases any credit
+Moving a move-only reservation transfers its state and byte count. Move assignment first releases any credit
 already owned by the destination. No copy operation exists, so one credit cannot acquire two release
 obligations.
+
+A shared reservation instead owns a reference-counted release state. Copying it does not touch the
+query counter. `reset()` drops one reference, and only destruction of the final release state
+returns the exact bytes. The token does not make the associated payload immutable or thread-safe;
+the owner still supplies a separate publication edge.
 
 ## Cooperative cancellation
 
@@ -69,8 +77,8 @@ atomic variables.
 Current bytes, peak bytes, and cancellation are independent atomic control values. They do not
 publish a constructed chunk, transfer an owner, or guard mutable query data, so their operations use
 relaxed ordering. Reference counting keeps the state object alive but is not a task handoff protocol.
-A future scheduler queue must release-publish a complete task/owner and acquire-observe it before
-execution.
+The bounded parallel scheduler queue release-publishes a complete task/owner by mutex unlock and
+acquire-observes it after locking before execution.
 
 Concurrent reservation may use an internal lock on platforms where the standard atomic is not lock
 free; the API makes no lock-free or wait-free claim. Cancellation has no bounded wall-clock latency
@@ -79,13 +87,16 @@ until every operator defines its poll granularity and blocking-I/O behavior.
 ## Failure behavior and complexity
 
 Context creation allocates one shared state and maps allocation failure to `RESOURCE_EXHAUSTED`.
-Reservation and release allocate nothing and are expected `O(1)` atomic operations, though
+Move-only reservation and release allocate nothing. Shared reservation creation allocates one
+reference-counted release state after charging and rolls the charge back if that allocation fails.
+All are expected `O(1)` operations, though
 contention can retry compare/exchange. Cancellation request and polling are `O(1)`. Failure changes
 no durable or external state.
 
 ## Verification and measurement
 
 Tests cover exact counters, peak behavior, over-limit and maximum-sized requests, move ownership,
+single-charge shared copies and last-owner release,
 idempotent release/cancellation, live credit after cancellation, shared contexts, a deterministic
 2,000-step reference model, concurrent exact saturation, and concurrent polling. The race cases run
 under ThreadSanitizer in addition to the ordinary sanitizer matrix.
@@ -99,9 +110,9 @@ establish query throughput, scheduler scalability, or a product latency claim.
 One root budget is auditable but does not attribute bytes to individual operators or decide when to
 spill. Callback-free cancellation is ownership-safe but requires explicit poll coverage. The
 [physical operator foundation](physical-operator-foundation.md) now couples chunk credit to a
-pull/end/error lifecycle and Boolean-filter cancellation. Snapshot pins, parallel task ownership,
-hierarchical accounts, and spill credit should follow actual operator needs rather than precede
-them.
+pull/end/error lifecycle and Boolean-filter cancellation. The bounded parallel scheduler now uses
+shared credit for its immutable configuration lifetime. Snapshot-pin deduplication, hierarchical
+accounts, and spill credit remain tied to later concrete operator ownership.
 
 ## Likely review questions
 

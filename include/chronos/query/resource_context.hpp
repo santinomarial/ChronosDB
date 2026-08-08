@@ -10,6 +10,7 @@ namespace chronos::query {
 
 namespace detail {
 class QueryResourceState;
+class QuerySharedReservationState;
 } // namespace detail
 
 // Move-only credit against one query-wide memory limit. Destruction or release() returns the exact
@@ -37,6 +38,31 @@ private:
   friend class QueryResourceContext;
 };
 
+// Copyable credit for one immutable allocation/lifetime published to multiple query workers.
+// Copies do not reserve again. The exact charge is returned only after the last copy is destroyed
+// or reset, so every worker may safely retain the shared owner without double accounting.
+class QuerySharedMemoryReservation {
+public:
+  QuerySharedMemoryReservation() noexcept = default;
+  QuerySharedMemoryReservation(const QuerySharedMemoryReservation&) noexcept = default;
+  QuerySharedMemoryReservation& operator=(const QuerySharedMemoryReservation&) noexcept = default;
+  QuerySharedMemoryReservation(QuerySharedMemoryReservation&&) noexcept = default;
+  QuerySharedMemoryReservation& operator=(QuerySharedMemoryReservation&&) noexcept = default;
+  ~QuerySharedMemoryReservation() = default;
+
+  [[nodiscard]] bool is_valid() const noexcept;
+  [[nodiscard]] std::size_t bytes() const noexcept;
+  void reset() noexcept;
+
+private:
+  explicit QuerySharedMemoryReservation(
+      std::shared_ptr<detail::QuerySharedReservationState> state) noexcept;
+
+  std::shared_ptr<detail::QuerySharedReservationState> state_;
+
+  friend class QueryResourceContext;
+};
+
 // A copyable handle to one query's shared memory and cancellation state. Copies are intended for
 // worker-task handoff. request_cancel() is idempotent; existing owners release reservations and
 // snapshot pins by observing cancellation at explicit poll points and unwinding normally.
@@ -52,7 +78,10 @@ public:
   create(std::size_t maximum_memory_bytes);
 
   [[nodiscard]] common::Result<QueryMemoryReservation> reserve(std::size_t bytes) const;
+  [[nodiscard]] common::Result<QuerySharedMemoryReservation>
+  reserve_shared(std::size_t bytes) const;
   [[nodiscard]] bool owns(const QueryMemoryReservation& reservation) const noexcept;
+  [[nodiscard]] bool owns(const QuerySharedMemoryReservation& reservation) const noexcept;
 
   // Returns true only for the call that first changes the shared state to cancelled.
   [[nodiscard]] bool request_cancel() const noexcept;

@@ -339,6 +339,7 @@ add_library(
   src/query/latest.cpp
   src/query/literal.cpp
   src/query/parser.cpp
+  src/query/parallel_scheduler.cpp
   src/query/physical_operator.cpp
   src/query/physical_lowering.cpp
   src/query/physical_plan.cpp
@@ -367,6 +368,7 @@ target_link_libraries(
   chronos_query
   PUBLIC chronos::columnar chronos::common chronos::cseg chronos::head chronos::manifest
          chronos::schema
+  PRIVATE Threads::Threads
 )
 chronos_set_project_warnings(chronos_query)
 chronos_enable_sanitizers(chronos_query)
@@ -798,6 +800,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/literal_test.cpp
     tests/query/parser_header_self_contained.cpp
     tests/query/parser_test.cpp
+    tests/query/parallel_scheduler_header_self_contained.cpp
+    tests/query/parallel_scheduler_test.cpp
     tests/query/physical_operator_header_self_contained.cpp
     tests/query/physical_operator_test.cpp
     tests/query/physical_lowering_header_self_contained.cpp
@@ -846,6 +850,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/database_cseg_scan_allocation_failure_test.cpp
     tests/query/head_scan_allocation_failure_test.cpp
     tests/query/latest_allocation_failure_test.cpp
+    tests/query/parallel_scheduler_allocation_failure_test.cpp
     tests/query/physical_lowering_allocation_failure_test.cpp
     tests/query/relational_plan_allocation_failure_test.cpp
     tests/query/sort_allocation_failure_test.cpp
@@ -858,7 +863,7 @@ if(CHRONOS_BUILD_TESTS)
   )
   target_link_libraries(
     chronos_query_allocation_failure_tests
-    PRIVATE chronos::query GTest::gtest_main zstd::libzstd
+    PRIVATE chronos::query GTest::gtest_main Threads::Threads zstd::libzstd
   )
   chronos_set_project_warnings(chronos_query_allocation_failure_tests)
   chronos_enable_sanitizers(chronos_query_allocation_failure_tests)
@@ -1062,6 +1067,7 @@ if(CHRONOS_BUILD_BENCHMARKS)
     benchmarks/query/head_scan_benchmark.cpp
     benchmarks/query/lexer_benchmark.cpp
     benchmarks/query/latest_benchmark.cpp
+    benchmarks/query/parallel_scheduler_benchmark.cpp
     benchmarks/query/physical_plan_benchmark.cpp
     benchmarks/query/relational_plan_benchmark.cpp
     benchmarks/query/resource_context_benchmark.cpp
@@ -1077,7 +1083,7 @@ if(CHRONOS_BUILD_BENCHMARKS)
   )
   target_link_libraries(
     chronos_query_benchmarks
-    PRIVATE chronos::query benchmark::benchmark_main zstd::libzstd
+    PRIVATE chronos::query benchmark::benchmark_main Threads::Threads zstd::libzstd
   )
   chronos_set_project_warnings(chronos_query_benchmarks)
   chronos_enable_sanitizers(chronos_query_benchmarks)
@@ -1294,6 +1300,16 @@ if(CHRONOS_BUILD_FUZZERS)
   chronos_set_project_warnings(chronos_physical_lowering_fuzz)
   chronos_enable_sanitizers(chronos_physical_lowering_fuzz)
   chronos_enable_static_analysis(chronos_physical_lowering_fuzz)
+
+  add_executable(chronos_parallel_scheduler_fuzz tests/fuzz/parallel_scheduler_fuzz.cpp)
+  set_target_properties(chronos_parallel_scheduler_fuzz PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_parallel_scheduler_fuzz PRIVATE cxx_std_23)
+  target_link_libraries(chronos_parallel_scheduler_fuzz PRIVATE chronos::query Threads::Threads)
+  target_compile_options(chronos_parallel_scheduler_fuzz PRIVATE -fsanitize=fuzzer)
+  target_link_options(chronos_parallel_scheduler_fuzz PRIVATE -fsanitize=fuzzer)
+  chronos_set_project_warnings(chronos_parallel_scheduler_fuzz)
+  chronos_enable_sanitizers(chronos_parallel_scheduler_fuzz)
+  chronos_enable_static_analysis(chronos_parallel_scheduler_fuzz)
 
   add_executable(chronos_cseg_scan_fuzz tests/fuzz/cseg_scan_fuzz.cpp)
   set_target_properties(chronos_cseg_scan_fuzz PROPERTIES CXX_EXTENSIONS OFF)

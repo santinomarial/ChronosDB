@@ -17,7 +17,9 @@
 > grouped vector aggregation now implements STRING/SYMBOL/BINARY `MIN` and `MAX` with unsigned byte
 > order and bounded query-accounted winner storage. Group lookup uses bounded query-accounted
 > canonical hashing with exact collision comparison; this changes no grouping or output-order
-> semantics. SQL v1 is deliberately smaller than the SQL
+> semantics. Independent physical pipelines may now use a bounded unordered parallel merge. It is
+> not selected by SQL lowering yet and never supplies ORDER BY, LATEST, ASOF, or LIMIT order.
+> SQL v1 is deliberately smaller than the SQL
 > standard. Unsupported syntax must produce a clear bind or
 > parse error; it must not be accepted with different semantics.
 
