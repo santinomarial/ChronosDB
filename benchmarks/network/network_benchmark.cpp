@@ -7,10 +7,9 @@
 #include "chronos/schema/logical_type.hpp"
 #include "support/counting_allocator.hpp"
 
-#include <benchmark/benchmark.h>
-
 #include <algorithm>
 #include <array>
+#include <benchmark/benchmark.h>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -42,11 +41,11 @@ void frame_round_trip(benchmark::State& state) {
   std::size_t measured_allocated_bytes = 0U;
   {
     benchmark_support::ScopedAllocationCounting counting;
-    auto encoded = encode_frame({.message_type = MessageType::kQueryResult, .request_id = 7U},
-                                source);
-    auto decoded = encoded.has_value() ? decode_frame(*encoded) : common::Result<Frame>{
-                                                                  common::make_unexpected(
-                                                                      encoded.error())};
+    auto encoded =
+        encode_frame({.message_type = MessageType::kQueryResult, .request_id = 7U}, source);
+    auto decoded = encoded.has_value()
+                       ? decode_frame(*encoded)
+                       : common::Result<Frame>{common::make_unexpected(encoded.error())};
     const benchmark_support::AllocationCounts counts = counting.stop();
     measured_allocations = counts.allocations;
     measured_allocated_bytes = counts.allocated_bytes;
@@ -56,8 +55,8 @@ void frame_round_trip(benchmark::State& state) {
     }
   }
   for ([[maybe_unused]] auto iteration : state) {
-    auto encoded = encode_frame({.message_type = MessageType::kQueryResult, .request_id = 7U},
-                                source);
+    auto encoded =
+        encode_frame({.message_type = MessageType::kQueryResult, .request_id = 7U}, source);
     if (!encoded.has_value()) {
       state.SkipWithError(encoded.error().to_string());
       return;
@@ -82,8 +81,8 @@ void frame_round_trip(benchmark::State& state) {
   cells.reserve(static_cast<std::size_t>(rows) * 2U);
   for (std::uint32_t row = 0U; row < rows; ++row) {
     cells.push_back({.is_null = false, .value = value});
-    cells.push_back({.is_null = (row % 8U) == 0U,
-                     .value = (row % 8U) == 0U ? common::ByteView{} : value});
+    cells.push_back(
+        {.is_null = (row % 8U) == 0U, .value = (row % 8U) == 0U ? common::ByteView{} : value});
   }
   return cells;
 }
@@ -107,9 +106,10 @@ void query_result_round_trip(benchmark::State& state) {
   {
     benchmark_support::ScopedAllocationCounting counting;
     auto encoded = encode_query_result_batch(rows, columns, cells);
-    auto decoded = encoded.has_value() ? decode_query_result_batch(*encoded)
-                                       : common::Result<QueryResultBatchView>{
-                                             common::make_unexpected(encoded.error())};
+    auto decoded =
+        encoded.has_value()
+            ? decode_query_result_batch(*encoded)
+            : common::Result<QueryResultBatchView>{common::make_unexpected(encoded.error())};
     const benchmark_support::AllocationCounts counts = counting.stop();
     measured_allocations = counts.allocations;
     measured_allocated_bytes = counts.allocated_bytes;
@@ -173,11 +173,11 @@ void fragmented_connection_receive(benchmark::State& state) {
 }
 
 [[nodiscard]] NetworkTask queue_task(const std::uint64_t request_id) {
-  return {.connection_id = 1U,
-          .principal_id = 2U,
-          .frame = {.header = {.message_type = MessageType::kQueryRequest,
-                              .request_id = request_id},
-                    .payload = {}}};
+  return {
+      .connection_id = 1U,
+      .principal_id = 2U,
+      .frame = {.header = {.message_type = MessageType::kQueryRequest, .request_id = request_id},
+                .payload = {}}};
 }
 
 void spsc_push_pop(benchmark::State& state) {
@@ -257,10 +257,11 @@ public:
   }
   SocketHandle(const SocketHandle&) = delete;
   SocketHandle& operator=(const SocketHandle&) = delete;
-  SocketHandle(SocketHandle&& other) noexcept
-      : descriptor_(std::exchange(other.descriptor_, -1)) {}
+  SocketHandle(SocketHandle&& other) noexcept : descriptor_(std::exchange(other.descriptor_, -1)) {}
   SocketHandle& operator=(SocketHandle&&) = delete;
-  [[nodiscard]] int get() const noexcept { return descriptor_; }
+  [[nodiscard]] int get() const noexcept {
+    return descriptor_;
+  }
 
 private:
   int descriptor_;
@@ -305,8 +306,7 @@ private:
           common::Status{common::StatusCode::kIoError, "loopback receive failed"});
     if (count == 0)
       return bytes;
-    bytes.insert(bytes.end(), buffer.begin(),
-                 buffer.begin() + static_cast<std::ptrdiff_t>(count));
+    bytes.insert(bytes.end(), buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(count));
   }
 }
 
@@ -378,7 +378,8 @@ struct LoopbackClient {
 
   std::vector<NetworkTask> dispatched;
   dispatched.reserve(clients.size());
-  for (std::size_t attempt = 0U; attempt < 4'096U && dispatched.size() < clients.size(); ++attempt) {
+  for (std::size_t attempt = 0U; attempt < 4'096U && dispatched.size() < clients.size();
+       ++attempt) {
     if (!reactor.poll_once(std::chrono::milliseconds{0}).is_ok())
       return {common::StatusCode::kInternal, "reactor failed while dispatching queries"};
     while (auto task = requests.try_pop())
@@ -389,17 +390,15 @@ struct LoopbackClient {
 
   for (NetworkTask& request : dispatched) {
     const std::uint64_t request_id = request.frame.header.request_id;
-    if (!responses.try_push(
-            {.connection_id = request.connection_id,
-             .frame = {.header = {.message_type = MessageType::kQueryResult,
-                                  .flags = kFrameFlagEndStream,
-                                  .request_id = request_id},
-                       .payload = std::vector<std::byte>{result_payload.begin(),
-                                                         result_payload.end()}}}) ||
+    if (!responses.try_push({.connection_id = request.connection_id,
+                             .frame = {.header = {.message_type = MessageType::kQueryResult,
+                                                  .flags = kFrameFlagEndStream,
+                                                  .request_id = request_id},
+                                       .payload = std::vector<std::byte>{result_payload.begin(),
+                                                                         result_payload.end()}}}) ||
         !responses.try_push(
             {.connection_id = request.connection_id,
-             .frame = {.header = {.message_type = MessageType::kQueryEnd,
-                                  .request_id = request_id},
+             .frame = {.header = {.message_type = MessageType::kQueryEnd, .request_id = request_id},
                        .payload = {}}}))
       return {common::StatusCode::kInternal, "response queue rejected a query terminal pair"};
   }
@@ -452,8 +451,7 @@ void epoll_equal_connection_round(benchmark::State& state) {
       schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
   const std::array<QueryResultColumn, 1> columns{
       QueryResultColumn{.name = "value", .type = type, .nullable = false}};
-  const std::vector<std::byte> result_payload =
-      encode_query_result_batch(0U, columns, {}).value();
+  const std::vector<std::byte> result_payload = encode_query_result_batch(0U, columns, {}).value();
 
   for ([[maybe_unused]] auto iteration : state) {
     const common::Status status =
