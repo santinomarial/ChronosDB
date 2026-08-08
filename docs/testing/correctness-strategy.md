@@ -183,7 +183,11 @@
 > physical-key and WAL/sequence/row ties, pre-WHERE aggregate/order/LIMIT stage order, scalar-oracle
 > differential execution, hidden-column removal, hostile shape/cancellation cleanup, allocation
 > failure, plan fuzzing, sanitizers, installation, and lowering/execution measurements.
-> Generated-identity base ordering, ASOF, and spill remain outside this claim.
+> The bounded ASOF primitive adds direct SQL NULL/NaN equality, timestamp and complete right-row
+> winner ties, inner/left miss behavior, explicit match presence, hostile input shapes, sibling
+> cancellation, exhaustive owned-allocation failure, definition fuzzing, and cardinality profiles.
+> Generated-identity base ordering, bound/multi-source ASOF execution, and spill remain outside this
+> claim.
 > Complete append-only tablet scanning now composes the exact durable, sealed-head, and active-head
 > publications from one aggregate epoch. Deterministic multiset and suffix checks, head-only exact
 > predicate/helper-removal coverage, hostile finite limits, allocation-failure injection, public

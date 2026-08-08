@@ -197,6 +197,9 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Bounded physical LATEST BY](learning/bounded-latest-by.md): implemented exact typed grouping,
   timestamp, physical-key, and row-version winner ties before WHERE with bounded accounted sort
   ownership and allocation-free adjacent compaction.
+- [Bounded physical ASOF join](learning/bounded-asof-join.md): implemented an exact two-input,
+  query-accounted temporal lookup primitive with SQL equality, complete winner ties, left null
+  extension, and explicit match presence.
 - [Streaming ungrouped vector aggregates](learning/streaming-ungrouped-aggregates.md): implemented
   fixed-state global COUNT/SUM/AVG/MIN/MAX/variance over accounted chunk streams with exact empty,
   NULL, numeric, ownership, cancellation, and canonical-output behavior.

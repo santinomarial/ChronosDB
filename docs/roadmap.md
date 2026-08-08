@@ -465,7 +465,11 @@ No phase passes because its code merely compiles. A phase passes only when its a
   before WHERE, typed multiple/NULL groups, explicit physical-ordering and WAL/record/row winner
   ties, allocation-free adjacent winner compaction, suffix/helper hiding, aggregate/ORDER/LIMIT
   composition, scalar differential tests, and hostile/failure/fuzz/benchmark/consumer evidence.
-  ASOF and broader relational lowering, optimizer rules, future correction/delete row-version resolution,
+  ADR 0052 and the thirty-fifth increment add a bounded two-input physical ASOF primitive with SQL
+  NULL/NaN equality, exact timestamp/physical-key/row-version winners, ASOF LEFT null extension,
+  explicit match presence, conservative state/output credit, sibling cancellation, failure
+  injection, hostile fuzzing, and cardinality benchmarks. Bound ASOF and broader relational
+  planning/lowering, optimizer rules, future correction/delete row-version resolution,
   mapped/asynchronous providers, shared pin credit, scheduling, spill, and full scalar-engine
   differential plan execution are unimplemented.
 

@@ -9,7 +9,9 @@
 > identity. Exact bounded `ORDER BY` lowering composes
 > the physical sort and shared source row-version suffix for DEDUP-keyed base rows and aggregate
 > results. Base-row vector ordering for schemas that require a generated logical identity remains
-> unsupported because vector sources do not expose that identity. A checked adapter now
+> unsupported because vector sources do not expose that identity. The exact bounded two-input ASOF
+> operator is implemented; bound multi-source plan lowering and snapshot instantiation remain in
+> progress. A checked adapter now
 > instantiates those supported physical pipelines over one exact complete append-only tablet
 > snapshot while preserving automatic row-version shape and hidden-column removal. Global and
 > grouped vector aggregation now implements STRING/SYMBOL/BINARY `MIN` and `MAX` with unsigned byte

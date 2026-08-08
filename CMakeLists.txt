@@ -321,6 +321,7 @@ chronos_enable_static_analysis(chronos_manifest)
 
 add_library(
   chronos_query
+  src/query/asof_join.cpp
   src/query/aggregate.cpp
   src/query/ast.cpp
   src/query/binder.cpp
@@ -764,6 +765,8 @@ if(CHRONOS_BUILD_TESTS)
 
   add_executable(
     chronos_query_tests
+    tests/query/asof_join_header_self_contained.cpp
+    tests/query/asof_join_test.cpp
     tests/query/aggregate_header_self_contained.cpp
     tests/query/aggregate_test.cpp
     tests/query/cseg_scan_header_self_contained.cpp
@@ -833,6 +836,7 @@ if(CHRONOS_BUILD_TESTS)
 
   add_executable(
     chronos_query_allocation_failure_tests
+    tests/query/asof_join_allocation_failure_test.cpp
     tests/query/aggregate_allocation_failure_test.cpp
     tests/query/cseg_scan_allocation_failure_test.cpp
     tests/query/column_output_allocation_failure_test.cpp
@@ -1048,6 +1052,7 @@ if(CHRONOS_BUILD_BENCHMARKS)
   add_executable(
     chronos_query_benchmarks
     benchmarks/query/aggregate_benchmark.cpp
+    benchmarks/query/asof_join_benchmark.cpp
     benchmarks/query/column_output_benchmark.cpp
     benchmarks/query/cseg_scan_benchmark.cpp
     benchmarks/query/head_scan_benchmark.cpp
@@ -1244,6 +1249,16 @@ if(CHRONOS_BUILD_FUZZERS)
   chronos_set_project_warnings(chronos_grouped_aggregate_fuzz)
   chronos_enable_sanitizers(chronos_grouped_aggregate_fuzz)
   chronos_enable_static_analysis(chronos_grouped_aggregate_fuzz)
+
+  add_executable(chronos_asof_join_fuzz tests/fuzz/asof_join_fuzz.cpp)
+  set_target_properties(chronos_asof_join_fuzz PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_asof_join_fuzz PRIVATE cxx_std_23)
+  target_link_libraries(chronos_asof_join_fuzz PRIVATE chronos::query)
+  target_compile_options(chronos_asof_join_fuzz PRIVATE -fsanitize=fuzzer)
+  target_link_options(chronos_asof_join_fuzz PRIVATE -fsanitize=fuzzer)
+  chronos_set_project_warnings(chronos_asof_join_fuzz)
+  chronos_enable_sanitizers(chronos_asof_join_fuzz)
+  chronos_enable_static_analysis(chronos_asof_join_fuzz)
 
   add_executable(chronos_physical_plan_fuzz tests/fuzz/physical_plan_fuzz.cpp)
   set_target_properties(chronos_physical_plan_fuzz PROPERTIES CXX_EXTENSIONS OFF)

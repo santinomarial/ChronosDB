@@ -86,3 +86,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0049](0049-query-accounted-variable-width-extrema.md) | Query-accounted variable-width extrema | accepted |
 | [0050](0050-canonical-query-accounted-group-hashing.md) | Canonical query-accounted group hashing | accepted |
 | [0051](0051-exact-bounded-latest-by-physical-lowering.md) | Exact bounded LATEST BY physical lowering | accepted |
+| [0052](0052-query-accounted-bounded-asof-join.md) | Query-accounted bounded ASOF join | accepted |
