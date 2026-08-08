@@ -13,6 +13,7 @@
 #include <cerrno>
 #include <cstring>
 #include <sys/epoll.h>
+#include <sys/eventfd.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <unordered_map>
@@ -54,11 +55,11 @@ public:
   // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
   Impl(EpollServerConfig configured, SpscNetworkTaskQueue& request_queue,
        SpscNetworkTaskQueue& response_queue, int epoll_descriptor, int listener,
-       std::uint16_t actual_port, std::vector<epoll_event> events,
+       int wake_descriptor, std::uint16_t actual_port, std::vector<epoll_event> events,
        std::vector<std::byte> scratch) noexcept
       : config(std::move(configured)), requests(&request_queue), responses(&response_queue),
-        epoll_fd(epoll_descriptor), listen_fd(listener), port(actual_port),
-        events_(std::move(events)), scratch_(std::move(scratch)) {}
+        epoll_fd(epoll_descriptor), listen_fd(listener), wake_fd(wake_descriptor),
+        port(actual_port), events_(std::move(events)), scratch_(std::move(scratch)) {}
 
   ~Impl() {
     static_cast<void>(stop());
@@ -72,6 +73,10 @@ public:
     if (listen_fd >= 0) {
       ::close(listen_fd);
       listen_fd = -1;
+    }
+    if (wake_fd >= 0) {
+      ::close(wake_fd);
+      wake_fd = -1;
     }
     if (epoll_fd >= 0) {
       ::close(epoll_fd);
@@ -365,6 +370,20 @@ public:
     }
   }
 
+  void drain_wakeup() noexcept {
+    std::uint64_t value{};
+    for (;;) {
+      const ssize_t count = ::read(wake_fd, &value, sizeof(value));
+      if (count == static_cast<ssize_t>(sizeof(value))) {
+        ++stats.response_wakeups;
+        continue;
+      }
+      if (count < 0 && errno == EINTR)
+        continue;
+      return;
+    }
+  }
+
   void expire_connections() {
     const auto now = std::chrono::steady_clock::now();
     for (auto iterator = connections.begin(); iterator != connections.end();) {
@@ -384,6 +403,7 @@ public:
   SpscNetworkTaskQueue* responses;
   int epoll_fd{-1};
   int listen_fd{-1};
+  int wake_fd{-1};
   std::uint16_t port{};
   std::vector<epoll_event> events_;
   std::vector<std::byte> scratch_;
@@ -461,14 +481,30 @@ common::Result<EpollReactor> EpollReactor::start(const EpollServerConfig& config
     ::close(epoll_fd);
     return common::make_unexpected(io_error("epoll_ctl listener failed"));
   }
+  const int wake_fd = ::eventfd(0U, EFD_NONBLOCK | EFD_CLOEXEC);
+  if (wake_fd < 0) {
+    ::close(listener);
+    ::close(epoll_fd);
+    return common::make_unexpected(io_error("eventfd failed"));
+  }
+  event = {};
+  event.events = EPOLLIN;
+  event.data.fd = wake_fd;
+  if (::epoll_ctl(epoll_fd, EPOLL_CTL_ADD, wake_fd, &event) != 0) {
+    ::close(wake_fd);
+    ::close(listener);
+    ::close(epoll_fd);
+    return common::make_unexpected(io_error("epoll_ctl eventfd failed"));
+  }
   try {
     auto implementation = std::make_unique<Impl>(
-        config, *queues.requests, *queues.responses, epoll_fd, listener, ntohs(address.sin_port),
-        std::vector<epoll_event>(config.maximum_events_per_poll),
+        config, *queues.requests, *queues.responses, epoll_fd, listener, wake_fd,
+        ntohs(address.sin_port), std::vector<epoll_event>(config.maximum_events_per_poll),
         std::vector<std::byte>(config.read_chunk_bytes));
     implementation->connections.reserve(config.maximum_connections);
     return EpollReactor{std::move(implementation)};
   } catch (const std::bad_alloc&) {
+    ::close(wake_fd);
     ::close(listener);
     ::close(epoll_fd);
     return common::make_unexpected(exhausted("epoll reactor allocation failed"));
@@ -500,6 +536,11 @@ common::Status EpollReactor::poll_once(const std::chrono::milliseconds maximum_w
       implementation_->accept_ready();
       continue;
     }
+    if (event.data.fd == implementation_->wake_fd) {
+      implementation_->drain_wakeup();
+      implementation_->drain_responses();
+      continue;
+    }
     if ((event.events & EPOLLIN) != 0U)
       implementation_->read_ready(event.data.fd);
     if ((event.events & EPOLLOUT) != 0U)
@@ -511,6 +552,27 @@ common::Status EpollReactor::poll_once(const std::chrono::milliseconds maximum_w
   return common::Status::ok();
 #else
   static_cast<void>(maximum_wait);
+  return common::Status{common::StatusCode::kNotSupported, "epoll reactor requires Linux"};
+#endif
+}
+
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
+common::Status EpollReactor::notify_response_ready() noexcept {
+#if defined(__linux__)
+  if (!implementation_ || implementation_->wake_fd < 0)
+    return invalid("epoll reactor is not running");
+  constexpr std::uint64_t kSignal = 1U;
+  for (;;) {
+    const ssize_t written = ::write(implementation_->wake_fd, &kSignal, sizeof(kSignal));
+    if (written == static_cast<ssize_t>(sizeof(kSignal)))
+      return common::Status::ok();
+    if (written < 0 && errno == EINTR)
+      continue;
+    if (written < 0 && errno == EAGAIN)
+      return common::Status::ok();
+    return io_error("eventfd write failed");
+  }
+#else
   return common::Status{common::StatusCode::kNotSupported, "epoll reactor requires Linux"};
 #endif
 }

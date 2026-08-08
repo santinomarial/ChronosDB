@@ -562,6 +562,11 @@ negotiation, monotonic requests, query and ingest terminal rules, cancellation, 
 allocation sweeps, installation, and Linux sockets. Packet fixtures/fuzzing, expanded hostile Linux
 lifecycle coverage, and measurements remain.
 
+The ninth increment adds a response-side Linux `eventfd` wakeup. It coalesces shard notifications,
+interrupts blocked epoll waits without polling, preserves the SPSC release/acquire data edge, and
+has a narrow cross-thread lifetime plus a real blocking-wakeup test. Hostile lifecycle, packet fuzz,
+and measurement gates remain.
+
 ## Phase 11 — Subscriptions and incremental materialized views
 
 - **Scope:** committed change model; gap-free snapshot-to-stream handoff; deterministic versioned resume tokens; bounded subscriber policies; supported incremental operators; materialized-view progress/recovery and late-event corrections.

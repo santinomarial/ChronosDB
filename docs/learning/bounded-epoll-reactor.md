@@ -10,6 +10,9 @@ One thread owns a reactor. It accepts sockets, performs nonblocking I/O, mutates
 changes readiness interest, drains responses, and expires deadlines. Each connection owns its
 buffers and state. Decoded `Frame` ownership crosses the request SPSC ring. A shard returns another
 owned frame; encoding copies it into bounded connection output storage.
+After publishing a response, the shard signals a coalescing `eventfd`, so an owner blocked in
+`epoll_wait` does not wait for its timeout. The queue release/acquire pair publishes data; eventfd
+publishes only readiness.
 
 Connection IDs, not file descriptors, authenticate returned work. IDs increase without reuse.
 Disconnect erases state and bytes, so later responses have no destination and are dropped.

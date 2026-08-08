@@ -21,6 +21,12 @@ producer of one request SPSC ring and sole consumer of one response SPSC ring. A
 increasing nonzero connection ID disambiguates descriptor reuse; exhaustion rejects admission
 rather than reusing an identity.
 
+After publishing a response, the single response producer calls `notify_response_ready()`. A
+nonblocking close-on-exec `eventfd` coalesces notifications and interrupts `epoll_wait`; the owner
+drains it before the response ring. The producer may call only this method concurrently and must be
+joined before shutdown. SPSC release/acquire remains the data-visibility edge; eventfd is readiness,
+not shared-memory synchronization.
+
 Admission is bounded by configured connection, readiness-event, and per-event I/O-operation limits,
 so a continuously ready listener or peer must yield to another poll. Per-connection bounds remain those
 of ADRs 0061 and 0062. Request-ring saturation produces `OVERLOADED` and removes that request from
@@ -49,7 +55,7 @@ descriptors and returns `RESOURCE_EXHAUSTED`.
 
 ## Consequences
 
-The baseline is single-owner and bounded. Wakeups, TLS record I/O, and worker scheduling may be
+The baseline is single-owner and bounded. TLS record I/O and worker scheduling may be
 added behind the boundary but cannot weaken overload, identity, or cleanup. Concurrent reactor
 mutation is outside the contract.
 

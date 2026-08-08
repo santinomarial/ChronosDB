@@ -35,6 +35,8 @@ TEST(EpollReactorTest, PlatformBoundaryIsExplicit) {
 #else
   ASSERT_FALSE(reactor.has_value());
   EXPECT_EQ(reactor.error().code(), common::StatusCode::kNotSupported);
+  EpollReactor empty;
+  EXPECT_EQ(empty.notify_response_ready().code(), common::StatusCode::kNotSupported);
 #endif
 }
 
@@ -245,6 +247,23 @@ TEST(EpollReactorTest, PortableClientSessionInteroperatesWithRealSocketServer) {
   EXPECT_EQ(received_frames, 2U);
   EXPECT_EQ(client.in_flight_requests(), 0U);
   ::close(socket);
+  EXPECT_TRUE(reactor.shutdown().is_ok());
+}
+
+TEST(EpollReactorTest, ResponseProducerWakeupInterruptsBlockedPoll) {
+  SpscNetworkTaskQueue requests = SpscNetworkTaskQueue::create(4U).value();
+  SpscNetworkTaskQueue responses = SpscNetworkTaskQueue::create(4U).value();
+  EpollReactor reactor =
+      EpollReactor::start({}, {.requests = &requests, .responses = &responses}).value();
+  common::Status poll_status;
+  const auto started = std::chrono::steady_clock::now();
+  std::thread owner([&] { poll_status = reactor.poll_once(std::chrono::milliseconds{2000}); });
+  std::this_thread::sleep_for(std::chrono::milliseconds{20});
+  EXPECT_TRUE(reactor.notify_response_ready().is_ok());
+  owner.join();
+  EXPECT_TRUE(poll_status.is_ok());
+  EXPECT_LT(std::chrono::steady_clock::now() - started, std::chrono::milliseconds{500});
+  EXPECT_EQ(reactor.metrics().response_wakeups, 1U);
   EXPECT_TRUE(reactor.shutdown().is_ok());
 }
 #endif

@@ -41,6 +41,7 @@ struct EpollServerMetrics {
   std::uint64_t protocol_errors{};
   std::uint64_t dropped_responses{};
   std::uint64_t authentication_rejections{};
+  std::uint64_t response_wakeups{};
   std::uint64_t bytes_read{};
   std::uint64_t bytes_written{};
   std::size_t active_connections{};
@@ -63,6 +64,9 @@ public:
   [[nodiscard]] static common::Result<EpollReactor> start(const EpollServerConfig& config,
                                                           const EpollReactorQueues& queues);
   [[nodiscard]] common::Status poll_once(std::chrono::milliseconds maximum_wait);
+  // The single response producer may call this while the owner is inside poll_once. It must be
+  // joined before shutdown or destruction.
+  [[nodiscard]] common::Status notify_response_ready() noexcept;
   [[nodiscard]] common::Status shutdown() noexcept;
   [[nodiscard]] std::uint16_t bound_port() const noexcept;
   [[nodiscard]] EpollServerMetrics metrics() const noexcept;
