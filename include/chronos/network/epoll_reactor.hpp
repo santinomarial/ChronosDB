@@ -4,6 +4,7 @@
 #include "chronos/common/result.hpp"
 #include "chronos/network/connection_buffers.hpp"
 #include "chronos/network/connection_state.hpp"
+#include "chronos/network/security.hpp"
 #include "chronos/network/spsc_queue.hpp"
 
 #include <array>
@@ -26,6 +27,7 @@ struct EpollServerConfig {
   std::chrono::milliseconds idle_timeout{60'000};
   ConnectionBufferConfig buffers;
   ConnectionStateConfig state;
+  NetworkSecurityConfig security;
 };
 
 struct EpollServerMetrics {
@@ -38,6 +40,7 @@ struct EpollServerMetrics {
   std::uint64_t queue_overloads{};
   std::uint64_t protocol_errors{};
   std::uint64_t dropped_responses{};
+  std::uint64_t authentication_rejections{};
   std::uint64_t bytes_read{};
   std::uint64_t bytes_written{};
   std::size_t active_connections{};

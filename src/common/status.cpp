@@ -28,6 +28,8 @@ std::string_view status_code_name(const StatusCode code) noexcept {
     return "unavailable";
   case StatusCode::kNotSupported:
     return "not_supported";
+  case StatusCode::kUnauthenticated:
+    return "unauthenticated";
   case StatusCode::kInternal:
     return "internal";
   }

@@ -32,7 +32,7 @@ TEST(StatusTest, OkStatusCannotCarryContradictoryText) {
 }
 
 TEST(StatusTest, ProvidesStableNamesForEveryCode) {
-  constexpr std::array<std::pair<StatusCode, std::string_view>, 12> kCases{{
+  constexpr std::array<std::pair<StatusCode, std::string_view>, 13> kCases{{
       {StatusCode::kOk, "ok"},
       {StatusCode::kCancelled, "cancelled"},
       {StatusCode::kInvalidArgument, "invalid_argument"},
@@ -44,6 +44,7 @@ TEST(StatusTest, ProvidesStableNamesForEveryCode) {
       {StatusCode::kResourceExhausted, "resource_exhausted"},
       {StatusCode::kUnavailable, "unavailable"},
       {StatusCode::kNotSupported, "not_supported"},
+      {StatusCode::kUnauthenticated, "unauthenticated"},
       {StatusCode::kInternal, "internal"},
   }};
 

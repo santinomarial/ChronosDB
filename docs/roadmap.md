@@ -551,6 +551,11 @@ identity: ordered names/types/nullability, canonical row-major cells, zero-row s
 UTF-8 rules, independent decoding, allocation classification, and reactor response validation.
 The test client/server adapter, authentication/TLS boundary, packet fuzzing, and measurements remain.
 
+The seventh increment accepts the fail-closed security boundary: loopback-only plaintext, a borrowed
+single-owner authenticator, stable principal propagation through request/cancel tasks, explicit
+rejection metrics, and `TLS_REQUIRED` rejection until a maintained backend exists. The test
+client/server adapter, packet fuzzing, hostile Linux lifecycle matrix, and measurements remain.
+
 ## Phase 11 — Subscriptions and incremental materialized views
 
 - **Scope:** committed change model; gap-free snapshot-to-stream handoff; deterministic versioned resume tokens; bounded subscriber policies; supported incremental operators; materialized-view progress/recovery and late-event corrections.

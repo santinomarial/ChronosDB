@@ -43,6 +43,7 @@ public:
   struct Connection {
     int socket{-1};
     std::uint64_t id{};
+    std::uint64_t principal_id{};
     ConnectionBuffers buffers;
     ServerConnectionState state;
     std::chrono::steady_clock::time_point accepted_at;
@@ -97,7 +98,9 @@ public:
     for (const std::uint64_t request_id : connection.state.active_request_ids()) {
       Frame cancel{.header = {.message_type = MessageType::kCancel, .request_id = request_id},
                    .payload = {}};
-      if (!requests->try_push({.connection_id = connection.id, .frame = std::move(cancel)}))
+      if (!requests->try_push({.connection_id = connection.id,
+                               .principal_id = connection.principal_id,
+                               .frame = std::move(cancel)}))
         break;
     }
     connection.state.close();
@@ -171,7 +174,9 @@ public:
     case InboundActionKind::kQuery:
       break;
     }
-    if (!requests->try_push({.connection_id = connection.id, .frame = std::move(frame)})) {
+    if (!requests->try_push({.connection_id = connection.id,
+                             .principal_id = connection.principal_id,
+                             .frame = std::move(frame)})) {
       ++stats.queue_overloads;
       static_cast<void>(connection.state.complete(action->request_id));
       enqueue_error(connection, action->request_id, ProtocolErrorCode::kOverloaded,
@@ -198,6 +203,19 @@ public:
         ::close(fd);
         continue;
       }
+      const std::uint32_t peer_address = ntohl(peer.sin_addr.s_addr);
+      const std::array<std::uint8_t, 4> peer_bytes{
+          static_cast<std::uint8_t>((peer_address >> 24U) & 0xffU),
+          static_cast<std::uint8_t>((peer_address >> 16U) & 0xffU),
+          static_cast<std::uint8_t>((peer_address >> 8U) & 0xffU),
+          static_cast<std::uint8_t>(peer_address & 0xffU)};
+      auto authentication = authenticate_peer(
+          config.security, {.ipv4_address = peer_bytes, .transport_authenticated = false});
+      if (!authentication.has_value() || !authentication->authorized) {
+        ++stats.authentication_rejections;
+        ::close(fd);
+        continue;
+      }
       auto buffers = ConnectionBuffers::create(config.buffers);
       auto state = ServerConnectionState::create(config.state);
       if (!buffers.has_value() || !state.has_value()) {
@@ -216,6 +234,7 @@ public:
       try {
         connections.emplace(fd, Connection{.socket = fd,
                                            .id = next_connection_id++,
+                                           .principal_id = authentication->principal_id,
                                            .buffers = std::move(*buffers),
                                            .state = std::move(*state),
                                            .accepted_at = now,
@@ -398,6 +417,10 @@ common::Result<EpollReactor> EpollReactor::start(const EpollServerConfig& config
       config.handshake_timeout.count() <= 0 || config.idle_timeout.count() <= 0 ||
       config.buffers.protocol.maximum_payload_size != config.state.limits.maximum_payload_size)
     return common::make_unexpected(invalid("epoll server configuration is invalid"));
+  if (const common::Status status =
+          validate_network_security_config(config.security, config.bind_address);
+      !status.is_ok())
+    return common::make_unexpected(status);
   int epoll_fd = ::epoll_create1(EPOLL_CLOEXEC);
   if (epoll_fd < 0)
     return common::make_unexpected(io_error("epoll_create1 failed"));

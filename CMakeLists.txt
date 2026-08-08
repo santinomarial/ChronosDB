@@ -392,6 +392,7 @@ add_library(
   src/network/epoll_reactor.cpp
   src/network/messages.cpp
   src/network/protocol.cpp
+  src/network/security.cpp
   src/network/spsc_queue.cpp
 )
 add_library(chronos::network ALIAS chronos_network)
@@ -492,6 +493,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/network/messages_test.cpp
     tests/network/protocol_header_self_contained.cpp
     tests/network/protocol_test.cpp
+    tests/network/security_header_self_contained.cpp
+    tests/network/security_test.cpp
     tests/network/spsc_queue_header_self_contained.cpp
     tests/network/spsc_queue_test.cpp
   )

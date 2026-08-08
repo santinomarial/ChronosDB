@@ -328,6 +328,10 @@ responses.
 
 An `io_uring` backend is optional and may be accepted only after the epoll path is correct, profiled, and reproducibly benchmarked. TLS and cryptography will use maintained external libraries behind a defined interface; ChronosDB will not implement cryptographic primitives.
 
+Under [ADR 0066](../adr/0066-authentication-and-tls-integration-boundary.md), plaintext is confined
+to loopback, a borrowed authenticator attaches stable principal identity to shard work, and
+`TLS_REQUIRED` fails startup until the maintained TLS backend exists.
+
 ## Future distribution: tablets and Raft
 
 Tablets are the distribution and replication unit from the data model's beginning, but [ADR 0003](../adr/0003-single-node-first-development-order.md) defers replication until the single-node engine passes its gates. Under [ADR 0010](../adr/0010-tablets-raft-and-multiplexed-log-storage.md), each future tablet maps to one logical Raft group with deterministic state-machine application, while a small metadata group owns schemas, placement, membership, and cluster metadata. Readers may observe only committed and applied entries under an explicitly selected consistency level. Leader leases, read index, membership changes, snapshot transfer, and bounded-stale policies need lower-level ADRs and deterministic simulation.

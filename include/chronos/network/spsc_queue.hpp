@@ -14,6 +14,7 @@ namespace chronos::network {
 
 struct NetworkTask {
   std::uint64_t connection_id{};
+  std::uint64_t principal_id{};
   Frame frame;
 };
 

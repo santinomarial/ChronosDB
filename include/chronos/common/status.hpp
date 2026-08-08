@@ -19,6 +19,7 @@ enum class StatusCode : std::uint8_t {
   kResourceExhausted,
   kUnavailable,
   kNotSupported,
+  kUnauthenticated,
   kInternal,
 };
 

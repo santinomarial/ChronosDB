@@ -91,8 +91,9 @@ golden compatibility fixtures before acceptance.
 ## Security boundary
 
 CRC32C is accidental-corruption coverage, not authentication. A peer able to modify bytes can
-recompute it. Authentication and confidentiality belong to the maintained TLS/authenticator
-boundary later in Phase 10.
+recompute it. The baseline permits plaintext only on IPv4 loopback and can attach an
+authenticator-issued principal before handshake. `TLS_REQUIRED` fails closed until a maintained TLS
+record backend is integrated; it never downgrades to plaintext.
 
 ## Handshake and request lifecycle
 

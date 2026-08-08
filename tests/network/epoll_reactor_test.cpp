@@ -15,6 +15,13 @@
 namespace chronos::network {
 namespace {
 
+class TestAuthenticator final : public ConnectionAuthenticator {
+public:
+  common::Result<PeerAuthenticationResult> authenticate(const PeerAuthenticationRequest&) override {
+    return PeerAuthenticationResult{.authorized = true, .principal_id = 77U};
+  }
+};
+
 TEST(EpollReactorTest, PlatformBoundaryIsExplicit) {
   SpscNetworkTaskQueue requests = SpscNetworkTaskQueue::create(4U).value();
   SpscNetworkTaskQueue responses = SpscNetworkTaskQueue::create(4U).value();
@@ -78,6 +85,8 @@ TEST(EpollReactorTest, RealSocketsHandshakeDispatchRespondAndExposeQueueOverload
   config.read_chunk_bytes = 3U;
   config.maximum_connections = 4U;
   config.maximum_events_per_poll = 16U;
+  TestAuthenticator authenticator;
+  config.security.authenticator = &authenticator;
   EpollReactor reactor =
       EpollReactor::start(config, {.requests = &requests, .responses = &responses}).value();
   const int client = connect_client(reactor.bound_port());
@@ -105,6 +114,7 @@ TEST(EpollReactorTest, RealSocketsHandshakeDispatchRespondAndExposeQueueOverload
   auto dispatched = requests.try_pop();
   ASSERT_TRUE(dispatched.has_value());
   EXPECT_EQ(dispatched->frame.header.request_id, 1U); // NOLINT(bugprone-unchecked-optional-access)
+  EXPECT_EQ(dispatched->principal_id, 77U);           // NOLINT(bugprone-unchecked-optional-access)
 
   const schema::LogicalType result_type =
       schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();

@@ -117,6 +117,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/manifest/types.hpp>
 #include <chronos/manifest/validation.hpp>
 #include <chronos/network/protocol.hpp>
+#include <chronos/network/security.hpp>
 #include <chronos/network/spsc_queue.hpp>
 #include <chronos/network/messages.hpp>
 #include <chronos/network/connection_state.hpp>
@@ -782,6 +783,7 @@ int main() {
   const chronos::network::EpollServerConfig epoll_config;
   const auto installed_result_type = chronos::schema::LogicalType::create(
       chronos::schema::LogicalTypeKind::kInt64);
+  const chronos::network::NetworkSecurityConfig installed_security;
   return event_time_match != nullptr && execute != nullptr && recover != nullptr &&
                  reclaim_recovered_wal != nullptr && inspect_wal_suffix != nullptr &&
                  recover_wal_checkpoint != nullptr && open_wal_checkpoint != nullptr &&
@@ -871,6 +873,8 @@ int main() {
                  network_queue.has_value() && network_queue->capacity() == 4U &&
                  epoll_config.maximum_connections == 1024U &&
                  installed_result_type.has_value() &&
+                 installed_security.mode ==
+                     chronos::network::TransportSecurityMode::kLoopbackPlaintext &&
                  manifest_name.has_value() &&
                  *manifest_name == "manifest-00000000000000000001.cman" &&
                  decode_manifest != nullptr && validate_manifest_transition != nullptr &&
