@@ -494,6 +494,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/network/epoll_reactor_test.cpp
     tests/network/messages_header_self_contained.cpp
     tests/network/messages_test.cpp
+    tests/network/packet_fixture_test.cpp
     tests/network/protocol_header_self_contained.cpp
     tests/network/protocol_test.cpp
     tests/network/security_header_self_contained.cpp
@@ -504,6 +505,10 @@ if(CHRONOS_BUILD_TESTS)
   set_target_properties(chronos_network_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_network_tests PRIVATE cxx_std_23)
   target_link_libraries(chronos_network_tests PRIVATE chronos::network GTest::gtest_main)
+  target_compile_definitions(
+    chronos_network_tests
+    PRIVATE CHRONOS_NETWORK_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/network"
+  )
   chronos_set_project_warnings(chronos_network_tests)
   chronos_enable_sanitizers(chronos_network_tests)
   chronos_enable_static_analysis(chronos_network_tests)
@@ -1226,6 +1231,16 @@ if(CHRONOS_BUILD_FUZZERS)
   chronos_set_project_warnings(chronos_wal_codec_fuzz)
   chronos_enable_sanitizers(chronos_wal_codec_fuzz)
   chronos_enable_static_analysis(chronos_wal_codec_fuzz)
+
+  add_executable(chronos_network_protocol_fuzz tests/fuzz/network_protocol_fuzz.cpp)
+  set_target_properties(chronos_network_protocol_fuzz PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_network_protocol_fuzz PRIVATE cxx_std_23)
+  target_link_libraries(chronos_network_protocol_fuzz PRIVATE chronos::network)
+  target_compile_options(chronos_network_protocol_fuzz PRIVATE -fsanitize=fuzzer)
+  target_link_options(chronos_network_protocol_fuzz PRIVATE -fsanitize=fuzzer)
+  chronos_set_project_warnings(chronos_network_protocol_fuzz)
+  chronos_enable_sanitizers(chronos_network_protocol_fuzz)
+  chronos_enable_static_analysis(chronos_network_protocol_fuzz)
 
   add_executable(chronos_columnar_batch_codec_fuzz tests/fuzz/columnar_batch_codec_fuzz.cpp)
   set_target_properties(chronos_columnar_batch_codec_fuzz PROPERTIES CXX_EXTENSIONS OFF)

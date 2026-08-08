@@ -573,6 +573,10 @@ late-result rejection, readable-before-half-close dispatch followed by determini
 and an 8 MiB real result forced through short writes with exact terminal ordering. Packet fuzz and
 measurement gates remain.
 
+The eleventh increment adds source-controlled valid, truncated, and bad-checksum packet fixtures
+plus a dedicated protocol/stream/message/server-state/client-state libFuzzer target. A 100,000-input
+ASan/UBSan campaign passes with finite 128 KiB inputs. Measurement and final phase audit gates remain.
+
 ## Phase 11 — Subscriptions and incremental materialized views
 
 - **Scope:** committed change model; gap-free snapshot-to-stream handoff; deterministic versioned resume tokens; bounded subscriber policies; supported incremental operators; materialized-view progress/recovery and late-event corrections.

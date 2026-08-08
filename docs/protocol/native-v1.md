@@ -147,3 +147,10 @@ forbids a later result batch, while an empty `QUERY_END` separately confirms suc
 Unicode-scalar UTF-8 diagnostic. Codes cover malformed frames, unsupported version, invalid state,
 duplicate/unknown requests, overload, cancellation, invalid request, execution failure,
 unauthorized access, and internal failure.
+
+## Compatibility fixtures and fuzzing
+
+Source-controlled hexadecimal packet fixtures under `tests/fixtures/network` include the accepted
+golden frame plus exact truncated-header and corrupted-header-checksum cases. The network protocol
+fuzzer drives exact decoding/re-encoding, fragmented stream reassembly, every assigned message
+decoder, server state, and client fail-closed input under finite limits.

@@ -31,7 +31,9 @@ deliberately not a security primitive; TLS/authentication remains a separate bou
 Golden bytes freeze field order and endianness. Unit tests enumerate every truncation boundary and
 header byte corruption, payload corruption, exact-length behavior, invalid types/flags, configured
 limits, and empty frames. A dedicated allocator executable sweeps every owned encode/decode
-allocation. Protocol fuzzing and codec throughput profiles are added before the Phase 10 exit.
+allocation. Source-controlled valid/truncated/corrupt packet fixtures and the dedicated network
+fuzzer now exercise exact framing, fragmented buffers, payload decoders, server state, and client
+fail-closed behavior under ASan/UBSan. Codec throughput profiles are measured at the Phase 10 exit.
 
 ## Review questions
 
