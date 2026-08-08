@@ -227,6 +227,13 @@ ChronosDB plans a custom parser, binder, optimizer, and execution engine under [
 publication per query across selected images, borrowed CSEG chunks, tablet children, and same-epoch
 ASOF aliases while keeping independently owned buffers locally accounted.
 
+[ADR 0059](../adr/0059-bounded-physical-strategy-selection.md) owns each exact checked pipeline with
+authoritative finite sort estimates, prefers in-memory sort when admitted, otherwise requires an
+exact stage-indexed external-sort capability and runtime directory, and selects bounded parallel
+source composition only under an explicit whole-pipeline order-independence proof and lower
+deterministic work cost. The snapshot connector supports optimizer-selected external SQL ordering
+but deliberately keeps each complete tablet as one source.
+
 Accounted column output now supports arbitrary source order/duplicates, typed constants, and bounded
 checked expression programs. One exact single-source, nonaggregate bound-SELECT subset lowers
 WHERE, ordered projection, fixed-width scalar expressions, STRING/SYMBOL casts and ASCII case
@@ -287,9 +294,9 @@ plan's complete schema and optional suffix input, loads one held snapshot's dura
 every current source, and instantiates the checked pipeline without collapsing SQL diagnostics.
 Future correction/delete version resolution remains separate work. Variable-width aggregate
 extrema now use exact unsigned byte order and reserve-before-copy query accounting under
-[ADR 0049](../adr/0049-query-accounted-variable-width-extrema.md). Optimizer selection of in-memory
-versus spill and parallel strategies, adaptive behavior, and additional join algorithms remains
-deferred.
+[ADR 0049](../adr/0049-query-accounted-variable-width-extrema.md). The bounded selector described
+above chooses the accepted sort and source-merge implementations without rewriting this graph;
+statistics derivation, adaptive behavior, and additional join algorithms remain deferred.
 Implemented reservations and accounted chunks provide the admission/ownership invariant, but
 future operators must reserve every retained allocation and release snapshot pins and memory by
 cooperative cancellation unwinding.
@@ -327,8 +334,9 @@ The following are accepted project constraints:
 Deferred design areas include the server durability default and production tuning of the bounded
 group-commit parameters; additional WAL application record kinds; row identities and correction
 syntax; additional CSEG encodings; manifest-generation and installed-part garbage collection; SQL
-grammar and type system; optimizer rules; subscription result/change model; watermark
-finalization; optimizer scheduling rules and production memory-limit tuning; authentication/TLS
+grammar and type system; statistics derivation, relational rewrites, and join costing; subscription
+result/change model; watermark finalization; parallel tablet morsels, worker-pool admission, and
+production memory-limit tuning; authentication/TLS
 integration; Raft protocol details; multi-Raft log layout; distributed snapshot coordination; and
 object-tier policy. The WAL v1
 physical bytes, synchronization ordering, recovery-tail classification, CSEG v1 codecs, and

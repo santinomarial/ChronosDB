@@ -147,6 +147,36 @@ common::Result<std::unique_ptr<PhysicalOperator>> instantiate_snapshot_tablet_pi
   }
 }
 
+common::Result<std::unique_ptr<PhysicalOperator>> instantiate_optimized_snapshot_tablet_pipeline(
+    const QueryResourceContext& resources, const manifest::ManifestStorage& storage,
+    const manifest::DatabaseStorageSnapshot& snapshot, const schema::TabletId& target_tablet,
+    const schema::SchemaLineage& lineage, const schema::SchemaId destination_schema_id,
+    const OptimizedPhysicalPipelinePlan& pipeline,
+    std::vector<ExternalSortExecutionTarget> external_sort_targets,
+    SnapshotTabletPipelineLimits limits) {
+  if (pipeline.source_task_count() != 1U) {
+    return common::make_unexpected(
+        invalid("optimized snapshot tablet pipeline requires exactly one complete source"));
+  }
+  try {
+    common::Result<std::unique_ptr<PhysicalOperator>> source = create_snapshot_tablet_source(
+        resources, storage, snapshot, target_tablet, lineage, destination_schema_id,
+        pipeline.pipeline().input_columns(), QuerySharedMemoryReservation{}, limits);
+    if (!source.has_value())
+      return common::make_unexpected(source.error());
+    std::vector<std::unique_ptr<PhysicalOperator>> sources;
+    sources.reserve(1U);
+    sources.push_back(std::move(*source));
+    return pipeline.instantiate(resources, std::move(sources), std::move(external_sort_targets));
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        exhausted("optimized snapshot pipeline instantiation allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("optimized snapshot pipeline instantiation exceeds container limits"));
+  }
+}
+
 common::Result<std::unique_ptr<PhysicalOperator>> instantiate_snapshot_asof_plan(
     const QueryResourceContext& resources, const manifest::ManifestStorage& storage,
     const manifest::DatabaseStorageSnapshot& snapshot,

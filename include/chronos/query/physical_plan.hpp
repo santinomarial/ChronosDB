@@ -7,12 +7,14 @@
 #include "chronos/query/latest.hpp"
 #include "chronos/query/physical_operator.hpp"
 #include "chronos/query/sort.hpp"
+#include "chronos/query/spill_sort.hpp"
 #include "chronos/schema/logical_type.hpp"
 
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <string>
 #include <variant>
 #include <vector>
 
@@ -89,6 +91,15 @@ struct PhysicalPipelinePlanLimits {
   std::size_t maximum_retained_configuration_bytes{kDefaultPhysicalPipelineConfigurationByteLimit};
 };
 
+// One explicit runtime target for replacing a checked SortStage with SpillSortOperator. Targets
+// are matched by exact stage index and consumed during instantiation.
+struct ExternalSortStageRuntime {
+  std::size_t stage_index;
+  io::PosixDirectory spill_directory;
+  std::string file_prefix;
+  SpillSortLimits limits{};
+};
+
 // An immutable, reusable plan for the currently supported unary vector stages. Creation validates
 // and propagates exact physical shapes; instantiate() adds a source-shape boundary before wrapping
 // the source in stage order. Plan objects are safe for concurrent const access. Each instantiated
@@ -112,6 +123,9 @@ public:
 
   [[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>>
   instantiate(std::unique_ptr<PhysicalOperator> source) const;
+  [[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>>
+  instantiate(std::unique_ptr<PhysicalOperator> source,
+              std::vector<ExternalSortStageRuntime> external_sorts) const;
 
 private:
   PhysicalPipelinePlan(std::vector<PhysicalColumnShape> input_columns,

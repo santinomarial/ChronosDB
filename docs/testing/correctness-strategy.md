@@ -200,13 +200,16 @@
 > affinity, forced simultaneous starts, one-slot producer backpressure, serial-multiset
 > equivalence, deterministic racing-error arbitration, early-destruction joins, hostile limits,
 > caller and worker allocation failure classification, scheduler fuzzing, sanitizer/consumer
-> coverage, and one-to-four-worker overhead profiles. It makes no SQL-order or optimizer-selection
-> claim.
+> coverage, and one-to-four-worker overhead profiles. It makes no SQL-order claim by itself.
 > Bounded external sort adds forced contiguous runs and output batches, exact direction/NULL and
 > stable cross-run ties, an independent random model, finite row/run/record/disk/configuration
 > limits, per-row/header corruption detection, early and failure cleanup, exhaustive allocation
 > failure, spill fuzzing, sanitizer/consumer coverage, and profiles that report actual bytes read
-> and written. Automatic optimizer selection and crash-orphan scavenging remain outside this claim.
+> and written. Crash-orphan scavenging remains outside this claim.
+> Bounded physical strategy selection adds exact per-sort estimate/capability matching, in-memory
+> threshold boundaries, external SQL ORDER BY execution, explicit order-independent parallel
+> selection, hostile source/target shapes, allocation sweeps, fuzzing, sanitizer coverage, and
+> selection/instantiation profiles. Runtime operators continue to enforce every admitted limit.
 > Shared snapshot publication credit adds multi-part/multi-chunk last-owner accounting, copied-head
 > release checks, foreign and insufficient credit rejection, complete tablet/ASOF composition,
 > allocation sweeps, split-credit fuzzing, installed consumption, sanitizer coverage, and fanout

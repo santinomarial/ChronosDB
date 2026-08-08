@@ -5,6 +5,7 @@
 #include "chronos/manifest/storage.hpp"
 #include "chronos/query/database_cseg_scan.hpp"
 #include "chronos/query/physical_operator.hpp"
+#include "chronos/query/physical_optimizer.hpp"
 #include "chronos/query/physical_plan.hpp"
 #include "chronos/query/relational_plan.hpp"
 #include "chronos/query/resource_context.hpp"
@@ -14,6 +15,7 @@
 #include <functional>
 #include <memory>
 #include <span>
+#include <vector>
 
 namespace chronos::query {
 
@@ -43,6 +45,15 @@ instantiate_snapshot_tablet_pipeline(
     const manifest::DatabaseStorageSnapshot& snapshot, const schema::TabletId& target_tablet,
     const schema::SchemaLineage& lineage, schema::SchemaId destination_schema_id,
     const PhysicalPipelinePlan& pipeline, SnapshotTabletPipelineLimits limits = {});
+
+[[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>>
+instantiate_optimized_snapshot_tablet_pipeline(
+    const QueryResourceContext& resources, const manifest::ManifestStorage& storage,
+    const manifest::DatabaseStorageSnapshot& snapshot, const schema::TabletId& target_tablet,
+    const schema::SchemaLineage& lineage, schema::SchemaId destination_schema_id,
+    const OptimizedPhysicalPipelinePlan& pipeline,
+    std::vector<ExternalSortExecutionTarget> external_sort_targets = {},
+    SnapshotTabletPipelineLimits limits = {});
 
 // Instantiates every SQL source of a checked left-deep ASOF plan from the same exact aggregate
 // database epoch. Bindings are in SQL source order and must match the plan's exact per-source input

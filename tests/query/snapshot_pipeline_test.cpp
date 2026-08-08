@@ -11,15 +11,42 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <filesystem>
 #include <gtest/gtest.h>
 #include <memory>
 #include <span>
 #include <stdexcept>
+#include <string>
 #include <string_view>
+#include <system_error>
+#include <unistd.h>
 #include <vector>
 
 namespace chronos::query {
 namespace {
+
+class TemporaryDirectory {
+public:
+  TemporaryDirectory() {
+    std::string pattern =
+        (std::filesystem::temp_directory_path() / "chronos-snapshot-optimizer-XXXXXX").string();
+    if (char* const created = ::mkdtemp(pattern.data()); created != nullptr)
+      path_ = created;
+  }
+
+  ~TemporaryDirectory() {
+    std::error_code ignored;
+    std::filesystem::remove_all(path_, ignored);
+  }
+
+  [[nodiscard]] const std::filesystem::path& path() const noexcept {
+    return path_;
+  }
+
+private:
+  std::filesystem::path path_;
+};
 
 [[nodiscard]] PhysicalPipelinePlan lower(const test::SnapshotTabletScanFixture& fixture,
                                          const std::string_view sql) {
@@ -137,6 +164,69 @@ TEST(SnapshotPipelineTest, InfersLatestSuffixAndExecutesComputedTimestampBeforeO
   ASSERT_TRUE(pipeline.has_value()) << pipeline.error().to_string();
   EXPECT_EQ(drain_signed(**pipeline, resources), (std::vector<std::int64_t>{-95, -96}));
   pipeline->reset();
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
+TEST(SnapshotPipelineTest, ExecutesOptimizerSelectedExternalSqlOrderFromTheExactSnapshot) {
+  test::SnapshotTabletScanFixture fixture{6U};
+  PhysicalPipelinePlan plan =
+      lower(fixture, "SELECT event_time FROM metrics ORDER BY event_time DESC LIMIT 2");
+  const auto sort = std::ranges::find_if(plan.stages(), [](const PhysicalPipelineStage& stage) {
+    return std::holds_alternative<SortStage>(stage);
+  });
+  ASSERT_NE(sort, plan.stages().end());
+  const std::size_t sort_index = static_cast<std::size_t>(sort - plan.stages().begin());
+
+  SpillSortLimits spill;
+  spill.maximum_rows = 64U;
+  spill.maximum_runs = 16U;
+  spill.maximum_spill_bytes = 1U << 20U;
+  spill.maximum_serialized_record_bytes = 1U << 10U;
+  spill.maximum_configuration_bytes = 1U << 20U;
+  spill.run_sort_limits.maximum_rows = 3U;
+  spill.run_sort_limits.output_limits.maximum_rows = 3U;
+  spill.merge_output_limits.maximum_rows = 2U;
+  spill.merge_output_limits.output_limits.maximum_rows = 2U;
+  PhysicalExecutionCapabilities capabilities;
+  capabilities.spill_sorts.push_back({.stage_index = sort_index, .limits = spill});
+  PhysicalOptimizerPolicy policy;
+  policy.maximum_in_memory_sort_rows = 2U;
+  auto optimized = OptimizedPhysicalPipelinePlan::create(
+      std::move(plan),
+      {.source_task_count = 1U,
+       .maximum_source_rows = 6U,
+       .estimated_source_work_units = 4'096U,
+       .source_merge_requirement = PhysicalSourceMergeRequirement::kPreserveTaskOrder,
+       .sort_stages = {{.stage_index = sort_index,
+                        .maximum_rows = 6U,
+                        .maximum_input_chunk_rows = 3U,
+                        .maximum_output_logical_bytes = 4'096U,
+                        .maximum_output_retained_bytes = 8'192U,
+                        .maximum_spill_bytes = 16'384U,
+                        .maximum_serialized_record_bytes = 512U}}},
+      std::move(capabilities), policy);
+  ASSERT_TRUE(optimized.has_value()) << optimized.error().to_string();
+  ASSERT_EQ(optimized->sort_decisions().front().strategy, PhysicalSortStrategy::kExternal);
+
+  TemporaryDirectory temporary;
+  ASSERT_FALSE(temporary.path().empty());
+  std::vector<ExternalSortExecutionTarget> targets;
+  targets.push_back({.stage_index = sort_index,
+                     .spill_directory = io::PosixDirectory::open(temporary.path().string()).value(),
+                     .file_prefix = "snapshot-order"});
+  QueryResourceContext resources =
+      QueryResourceContext::create(std::size_t{32U} * 1024U * 1024U).value();
+  SnapshotTabletPipelineLimits limits;
+  limits.scan.cseg.chunk.maximum_rows = 3U;
+  limits.scan.head.chunk.maximum_rows = 3U;
+  auto pipeline = instantiate_optimized_snapshot_tablet_pipeline(
+      resources, fixture.storage(), fixture.snapshot(),
+      test::SnapshotTabletScanFixture::tablet_id(), fixture.lineage(),
+      fixture.schema_ptr()->schema_id(), *optimized, std::move(targets), limits);
+  ASSERT_TRUE(pipeline.has_value()) << pipeline.error().to_string();
+  EXPECT_EQ(drain_signed(**pipeline, resources), (std::vector<std::int64_t>{-95, -96}));
+  pipeline->reset();
+  EXPECT_TRUE(io::PosixDirectory::open(temporary.path().string())->list_entries()->empty());
   EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
 }
 

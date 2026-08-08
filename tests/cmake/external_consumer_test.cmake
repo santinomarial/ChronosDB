@@ -96,6 +96,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/query/head_scan.hpp>
 #include <chronos/query/physical_operator.hpp>
 #include <chronos/query/physical_lowering.hpp>
+#include <chronos/query/physical_optimizer.hpp>
 #include <chronos/query/physical_plan.hpp>
 #include <chronos/query/resource_context.hpp>
 #include <chronos/query/row_version.hpp>
@@ -351,6 +352,19 @@ int main() {
           chronos::query::SnapshotTabletPipelineLimits);
   const InstantiateSnapshotTabletPipelineFunction instantiate_snapshot_tablet_pipeline =
       &chronos::query::instantiate_snapshot_tablet_pipeline;
+  using InstantiateOptimizedSnapshotTabletPipelineFunction =
+      chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
+          const chronos::query::QueryResourceContext&,
+          const chronos::manifest::ManifestStorage&,
+          const chronos::manifest::DatabaseStorageSnapshot&,
+          const chronos::schema::TabletId&, const chronos::schema::SchemaLineage&,
+          chronos::schema::SchemaId,
+          const chronos::query::OptimizedPhysicalPipelinePlan&,
+          std::vector<chronos::query::ExternalSortExecutionTarget>,
+          chronos::query::SnapshotTabletPipelineLimits);
+  const InstantiateOptimizedSnapshotTabletPipelineFunction
+      instantiate_optimized_snapshot_tablet_pipeline =
+          &chronos::query::instantiate_optimized_snapshot_tablet_pipeline;
   using InstantiateSnapshotAsofPlanFunction =
       chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
           const chronos::query::QueryResourceContext&,
@@ -543,6 +557,14 @@ int main() {
                     .direction = chronos::query::PhysicalSortDirection::kDescending,
                     .null_placement = chronos::query::ScalarNullPlacement::kFirst}},
           .limits = installed_sort_limits}});
+  using CreateOptimizedPipelineFunction =
+      chronos::common::Result<chronos::query::OptimizedPhysicalPipelinePlan> (*)(
+          chronos::query::PhysicalPipelinePlan,
+          chronos::query::PhysicalExecutionStatistics,
+          chronos::query::PhysicalExecutionCapabilities,
+          chronos::query::PhysicalOptimizerPolicy);
+  const CreateOptimizedPipelineFunction create_optimized_pipeline =
+      &chronos::query::OptimizedPhysicalPipelinePlan::create;
   using CreateLatestFunction = chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
       std::unique_ptr<chronos::query::PhysicalOperator>,
       chronos::query::VectorLatestByDefinition, chronos::query::LatestByLimits);
@@ -795,6 +817,8 @@ int main() {
                  installed_spill_state_bytes.has_value() &&
                  installed_sort_plan.has_value() &&
                  installed_sort_plan->output_columns().size() == 1U &&
+                 create_optimized_pipeline != nullptr &&
+                 chronos::query::kDefaultPhysicalOptimizerSortLimit == 256U &&
                  create_latest != nullptr &&
                  chronos::query::kDefaultLatestByKeyLimit == 256U &&
                  installed_asof_state_bytes.has_value() &&
@@ -871,6 +895,7 @@ int main() {
                  create_snapshot_tablet_scan != nullptr &&
                  create_shared_snapshot_tablet_scan != nullptr &&
                  instantiate_snapshot_tablet_pipeline != nullptr &&
+                 instantiate_optimized_snapshot_tablet_pipeline != nullptr &&
                  instantiate_snapshot_asof_plan != nullptr &&
                  !cseg_metadata.has_value() &&
                  cseg_metadata.error().kind() ==

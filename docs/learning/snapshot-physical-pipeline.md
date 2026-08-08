@@ -9,7 +9,9 @@ separate so their source-spanned SQL diagnostics survive unchanged.
 
 The call takes query resources, Manifest storage, the held aggregate snapshot, tablet and schema
 lineage identities, the physical plan, and `SnapshotTabletPipelineLimits`. It returns one
-thread-affine pull operator or an explicit status.
+thread-affine pull operator or an explicit status. The optimized overload accepts an
+`OptimizedPhysicalPipelinePlan`, requires its exact one-source shape, and consumes runtime spill
+targets for any selected external sort.
 
 ## Shape and stage invariants
 
@@ -70,8 +72,9 @@ bounded full-head execution.
 
 The eager full-column design is deliberately simple and exact. It leaves CPU/I/O opportunities on
 the table, but predicate/projection pushdown needs explicit equivalence and required-column
-contracts. One aggregate-publication charge is now shared across the source graph; parallel source
-scheduling and automatic spill selection still need explicit plan decisions.
+contracts. One aggregate-publication charge is now shared across the source graph. The optimized
+connector can select external spill for SQL ORDER BY, but does not split one tablet into parallel
+tasks; that requires an accepted morsel and ordering contract.
 
 ## Review questions
 

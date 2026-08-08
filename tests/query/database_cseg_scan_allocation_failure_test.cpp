@@ -3,6 +3,7 @@
 #include "chronos/manifest/publication.hpp"
 #include "chronos/manifest/storage.hpp"
 #include "chronos/query/database_cseg_scan.hpp"
+#include "chronos/query/physical_optimizer.hpp"
 #include "chronos/query/physical_plan.hpp"
 #include "chronos/query/row_version.hpp"
 #include "chronos/query/snapshot_pipeline.hpp"
@@ -351,6 +352,47 @@ TEST(DatabaseCsegScanAllocationFailureTest,
                                                   test::SnapshotTabletScanFixture::tablet_id(),
                                                   fixture.lineage(),
                                                   fixture.schema_ptr()->schema_id(), pipeline);
+    });
+    EXPECT_GT(observed, 0U);
+    if (instantiated.has_value()) {
+      reached_success = true;
+      instantiated->reset();
+      EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+      break;
+    }
+    EXPECT_EQ(instantiated.error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  }
+  EXPECT_TRUE(reached_success);
+}
+
+TEST(DatabaseCsegScanAllocationFailureTest,
+     OptimizedSnapshotPipelineInstantiationClassifiesEveryNewAllocation) {
+  const test::SnapshotTabletScanFixture fixture{4U};
+  PhysicalPipelinePlan pipeline =
+      PhysicalPipelinePlan::create(
+          {{.type = fixture.schema_ptr()->columns().front().type(), .nullable = false}}, {})
+          .value();
+  const OptimizedPhysicalPipelinePlan optimized =
+      OptimizedPhysicalPipelinePlan::create(
+          std::move(pipeline),
+          {.source_task_count = 1U,
+           .maximum_source_rows = 4U,
+           .estimated_source_work_units = 4U,
+           .source_merge_requirement = PhysicalSourceMergeRequirement::kPreserveTaskOrder,
+           .sort_stages = {}})
+          .value();
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 160U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    QueryResourceContext resources =
+        QueryResourceContext::create(std::size_t{32U} * 1024U * 1024U).value();
+    std::size_t observed = 0U;
+    auto instantiated = run_aggregate_with_allocation_failure(fail_after, observed, [&] {
+      return instantiate_optimized_snapshot_tablet_pipeline(
+          resources, fixture.storage(), fixture.snapshot(),
+          test::SnapshotTabletScanFixture::tablet_id(), fixture.lineage(),
+          fixture.schema_ptr()->schema_id(), optimized);
     });
     EXPECT_GT(observed, 0U);
     if (instantiated.has_value()) {

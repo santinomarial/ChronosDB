@@ -9,6 +9,7 @@
 #include <memory>
 #include <new>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <variant>
@@ -590,15 +591,37 @@ std::size_t PhysicalPipelinePlan::retained_configuration_bytes() const noexcept 
 
 common::Result<std::unique_ptr<PhysicalOperator>>
 PhysicalPipelinePlan::instantiate(std::unique_ptr<PhysicalOperator> source) const {
+  return instantiate(std::move(source), {});
+}
+
+common::Result<std::unique_ptr<PhysicalOperator>>
+PhysicalPipelinePlan::instantiate(std::unique_ptr<PhysicalOperator> source,
+                                  std::vector<ExternalSortStageRuntime> external_sorts) const {
   if (source == nullptr)
     return common::make_unexpected(invalid("physical pipeline source must be non-null"));
+  for (std::size_t index = 0U; index < external_sorts.size(); ++index) {
+    const ExternalSortStageRuntime& runtime = external_sorts[index];
+    if (runtime.stage_index >= stages_.size() ||
+        std::get_if<SortStage>(&stages_[runtime.stage_index]) == nullptr) {
+      return common::make_unexpected(
+          invalid("external sort runtime does not name a physical sort stage"));
+    }
+    if (index != 0U && external_sorts[index - 1U].stage_index >= runtime.stage_index) {
+      return common::make_unexpected(
+          invalid("external sort runtimes must have unique increasing stage indices"));
+    }
+    if (!runtime.spill_directory.is_open())
+      return common::make_unexpected(invalid("external sort runtime directory is not open"));
+  }
   try {
     common::Result<std::unique_ptr<PhysicalOperator>> checked =
         SourceShapeOperator::create(std::move(source), input_columns_);
     if (!checked.has_value())
       return common::make_unexpected(checked.error());
     std::unique_ptr<PhysicalOperator> pipeline = std::move(*checked);
-    for (const PhysicalPipelineStage& stage : stages_) {
+    std::size_t next_external_sort = 0U;
+    for (std::size_t stage_index = 0U; stage_index < stages_.size(); ++stage_index) {
+      const PhysicalPipelineStage& stage = stages_[stage_index];
       common::Result<std::unique_ptr<PhysicalOperator>> next =
           common::make_unexpected(invalid("physical pipeline stage is not supported"));
       if (const auto* filter = std::get_if<BooleanFilterStage>(&stage); filter != nullptr) {
@@ -626,7 +649,16 @@ PhysicalPipelinePlan::instantiate(std::unique_ptr<PhysicalOperator> source) cons
         next = GroupedAggregateOperator::create(std::move(pipeline), grouped->keys,
                                                 grouped->definitions, grouped->limits);
       } else if (const auto* sort = std::get_if<SortStage>(&stage); sort != nullptr) {
-        next = SortOperator::create(std::move(pipeline), sort->keys, sort->limits);
+        if (next_external_sort < external_sorts.size() &&
+            external_sorts[next_external_sort].stage_index == stage_index) {
+          ExternalSortStageRuntime& runtime = external_sorts[next_external_sort];
+          next = SpillSortOperator::create(std::move(pipeline), sort->keys,
+                                           std::move(runtime.spill_directory),
+                                           std::move(runtime.file_prefix), runtime.limits);
+          ++next_external_sort;
+        } else {
+          next = SortOperator::create(std::move(pipeline), sort->keys, sort->limits);
+        }
       } else if (const auto* latest = std::get_if<LatestByStage>(&stage); latest != nullptr) {
         next = LatestByOperator::create(std::move(pipeline), latest->definition, latest->limits);
       } else if (const auto* limit = std::get_if<LimitStage>(&stage); limit != nullptr) {
@@ -639,6 +671,9 @@ PhysicalPipelinePlan::instantiate(std::unique_ptr<PhysicalOperator> source) cons
     return pipeline;
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("physical pipeline instantiation allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("physical pipeline instantiation exceeds container limits"));
   }
 }
 

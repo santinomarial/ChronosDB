@@ -341,6 +341,7 @@ add_library(
   src/query/parser.cpp
   src/query/parallel_scheduler.cpp
   src/query/physical_operator.cpp
+  src/query/physical_optimizer.cpp
   src/query/physical_lowering.cpp
   src/query/physical_plan.cpp
   src/query/relational_plan.cpp
@@ -805,6 +806,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/parallel_scheduler_test.cpp
     tests/query/physical_operator_header_self_contained.cpp
     tests/query/physical_operator_test.cpp
+    tests/query/physical_optimizer_header_self_contained.cpp
+    tests/query/physical_optimizer_test.cpp
     tests/query/physical_lowering_header_self_contained.cpp
     tests/query/physical_lowering_test.cpp
     tests/query/physical_plan_header_self_contained.cpp
@@ -854,6 +857,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/head_scan_allocation_failure_test.cpp
     tests/query/latest_allocation_failure_test.cpp
     tests/query/parallel_scheduler_allocation_failure_test.cpp
+    tests/query/physical_optimizer_allocation_failure_test.cpp
     tests/query/physical_lowering_allocation_failure_test.cpp
     tests/query/relational_plan_allocation_failure_test.cpp
     tests/query/sort_allocation_failure_test.cpp
@@ -1072,6 +1076,7 @@ if(CHRONOS_BUILD_BENCHMARKS)
     benchmarks/query/lexer_benchmark.cpp
     benchmarks/query/latest_benchmark.cpp
     benchmarks/query/parallel_scheduler_benchmark.cpp
+    benchmarks/query/physical_optimizer_benchmark.cpp
     benchmarks/query/physical_plan_benchmark.cpp
     benchmarks/query/relational_plan_benchmark.cpp
     benchmarks/query/resource_context_benchmark.cpp
@@ -1295,6 +1300,16 @@ if(CHRONOS_BUILD_FUZZERS)
   chronos_set_project_warnings(chronos_physical_plan_fuzz)
   chronos_enable_sanitizers(chronos_physical_plan_fuzz)
   chronos_enable_static_analysis(chronos_physical_plan_fuzz)
+
+  add_executable(chronos_physical_optimizer_fuzz tests/fuzz/physical_optimizer_fuzz.cpp)
+  set_target_properties(chronos_physical_optimizer_fuzz PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_physical_optimizer_fuzz PRIVATE cxx_std_23)
+  target_link_libraries(chronos_physical_optimizer_fuzz PRIVATE chronos::query)
+  target_compile_options(chronos_physical_optimizer_fuzz PRIVATE -fsanitize=fuzzer)
+  target_link_options(chronos_physical_optimizer_fuzz PRIVATE -fsanitize=fuzzer)
+  chronos_set_project_warnings(chronos_physical_optimizer_fuzz)
+  chronos_enable_sanitizers(chronos_physical_optimizer_fuzz)
+  chronos_enable_static_analysis(chronos_physical_optimizer_fuzz)
 
   add_executable(chronos_physical_lowering_fuzz tests/fuzz/physical_lowering_fuzz.cpp)
   set_target_properties(chronos_physical_lowering_fuzz PROPERTIES CXX_EXTENSIONS OFF)

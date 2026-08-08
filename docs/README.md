@@ -149,6 +149,9 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Bounded external sort](learning/bounded-external-sort.md): implemented contiguous stable runs,
   ephemeral checksummed row bytes, exact cross-run ties, finite memory/disk ownership, corruption
   handling, cleanup, fuzzing, and I/O measurement boundaries.
+- [Bounded physical strategy selection](learning/bounded-physical-strategy-selection.md):
+  authoritative finite sort estimates, exact in-memory/external decisions, explicit source-order
+  proof obligations, bounded serial/parallel composition, ownership, failure, and profiles.
 - [Shared snapshot publication credit](learning/shared-snapshot-publication-credit.md): implemented
   one-query/one-epoch publication admission across part images, backed chunks, complete tablet scans,
   and ASOF aliases while retaining exact local image/output credit and last-owner cleanup.

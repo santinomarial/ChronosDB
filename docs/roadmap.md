@@ -488,9 +488,14 @@ No phase passes because its code merely compiles. A phase passes only when its a
   evidence. ADR 0058 and the forty-first increment split exact aggregate-publication bytes from
   per-image ownership and use one last-owner query reservation across complete tablet scans,
   surviving CSEG chunks, mutable heads, and same-epoch ASOF aliases, with hostile ownership,
-  failure, fuzz, benchmark, and consumer evidence. Optimizer rules, future correction/delete
-  row-version resolution, mapped/asynchronous providers, and full scalar-engine differential plan
-  execution are unimplemented.
+  failure, fuzz, benchmark, and consumer evidence. ADR 0059 and the forty-second increment add a
+  bounded physical strategy selector that owns its exact checked pipeline, consumes authoritative
+  finite per-sort bounds, selects in-memory or stage-indexed external sort without changing SQL
+  keys, and chooses serial or bounded parallel source composition only under an explicit complete-
+  pipeline order-independence proof and lower deterministic work cost. The complete snapshot
+  adapter executes optimizer-selected external SQL ORDER BY without inventing parallel tablet
+  splitting. Future correction/delete row-version resolution, mapped/asynchronous providers, and
+  full scalar-engine differential plan execution are unimplemented.
 
 - **Scope:** bounded vectors, vectorized scans/expressions/aggregates/joins, physical planning, memory accounting, cancellation, parallel scheduling, and spill for explicitly supported operators.
 - **Explicit non-scope:** distributed fragments, GPU novelty, unbounded query memory, or optimizer rules lacking semantic/differential validation.

@@ -17,10 +17,11 @@
 > grouped vector aggregation now implements STRING/SYMBOL/BINARY `MIN` and `MAX` with unsigned byte
 > order and bounded query-accounted winner storage. Group lookup uses bounded query-accounted
 > canonical hashing with exact collision comparison; this changes no grouping or output-order
-> semantics. Independent physical pipelines may now use a bounded unordered parallel merge. It is
-> not selected by SQL lowering yet and never supplies ORDER BY, LATEST, ASOF, or LIMIT order.
-> A bounded checksummed external sort is available as a physical primitive, but SQL planning still
-> selects the in-memory sort until the cost and temporary-directory policy is accepted.
+> semantics. Independent physical pipelines may use a bounded parallel merge only under an
+> explicit complete-pipeline order-independence proof; it never supplies ORDER BY, LATEST, ASOF, or
+> LIMIT order. A bounded strategy selector chooses external SQL ORDER BY only when authoritative
+> finite bounds exclude in-memory sort and an exact stage-indexed spill capability plus runtime
+> directory are supplied. Both strategies reuse the same checked SQL keys and hidden tie columns.
 > SQL v1 is deliberately smaller than the SQL
 > standard. Unsupported syntax must produce a clear bind or
 > parse error; it must not be accepted with different semantics.

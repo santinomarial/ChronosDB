@@ -93,3 +93,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0056](0056-shared-query-credit-and-bounded-parallel-scheduling.md) | Shared query credit and bounded parallel scheduling | accepted |
 | [0057](0057-bounded-checksummed-external-sort.md) | Bounded checksummed external sort | accepted |
 | [0058](0058-shared-snapshot-publication-query-credit.md) | Shared snapshot publication query credit | accepted |
+| [0059](0059-bounded-physical-strategy-selection.md) | Bounded physical strategy selection | accepted |

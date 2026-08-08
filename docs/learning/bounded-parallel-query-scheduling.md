@@ -66,7 +66,8 @@ and worker failures.
 `merge_independent_chunks` measures scheduler creation, bounded publication, root consumption, and
 join for one and four tasks across one, two, and four workers. Setup chunks are built while timing is
 paused. Results describe scheduler overhead in the current debug/release configuration; they are
-not a scalability or optimizer-selection claim.
+not a scalability claim. The bounded physical selector separately measures its selection and
+requires an explicit complete-pipeline order-independence proof before choosing this scheduler.
 
 ## Likely review questions
 

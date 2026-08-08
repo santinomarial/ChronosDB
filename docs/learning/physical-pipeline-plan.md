@@ -13,7 +13,9 @@ in explicit order and propagates the exact physical column shape through every s
 This remains deliberately smaller than a general SQL physical planner. The single-source,
 nonaggregate subset now lowers through the separate
 [bound-SELECT lowering boundary](bound-select-physical-lowering.md), but the plan does not optimize
-stage order, create storage scans, join, schedule work, spill, or materialize client results. Exact
+stage order, create storage scans, join, or materialize client results. A separate bounded strategy
+selector can choose serial/parallel source composition and in-memory/external implementations for
+the plan's already checked sort stages. Exact
 bounded SQL ordering is now lowered separately for DEDUP-keyed base rows and aggregate results; its
 temporary order/identity columns remain ordinary checked stage shapes and are removed before output.
 
@@ -139,9 +141,8 @@ ownership/order evidence is in the
 The unary stage variant is easy to audit and sufficient for current differential execution. It
 cannot represent scans, branches, joins, exchanges, or sinks. Bound single-source projection,
 global/grouped aggregation, and exact bounded ordering use the accounted stage baseline. Generated-
-identity base ordering, SQL selection of the complete append-only tablet source, future
-correction/delete merging, joins, scheduling, and
-spill remain. A later graph/optimizer can lower into or replace this
+identity base ordering, future correction/delete merging, joins, and general relational
+optimization remain. A later graph optimizer can lower into or replace this
 pipeline while retaining its shape and differential guarantees.
 
 ## Likely interview questions
@@ -156,5 +157,6 @@ nullability assumptions.
 **Why count vector capacity?** Moving a vector with one element and a huge reserved allocation would
 otherwise bypass a size-only configuration bound.
 
-**Why is this not an optimizer?** Stage order is explicit and preserved. No semantic equivalence,
-cost, statistics, or reordering rule has been accepted or measured yet.
+**Why is this not the strategy selector?** This type fixes semantic stage order and exact shapes.
+`OptimizedPhysicalPipelinePlan` owns it and chooses only accepted implementation strategies; it
+does not mutate or reorder this stage graph.
