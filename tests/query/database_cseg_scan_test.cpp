@@ -415,6 +415,11 @@ TEST(DatabaseCsegScanTest, SnapshotImageAndChunkRetainTheExactEpochIndependently
     ASSERT_TRUE(pin.has_value()) << pin.error().to_string();
     EXPECT_EQ(pin->bytes().size(), loaded.image->bytes().size());
     EXPECT_EQ(pin->retained_buffer_bytes(), loaded.image->retained_buffer_bytes());
+    EXPECT_EQ(pin->shared_retained_buffer_bytes(),
+              loaded.image->publication_retained_buffer_bytes());
+    EXPECT_EQ(loaded.image->retained_buffer_bytes(),
+              loaded.image->publication_retained_buffer_bytes() +
+                  loaded.image->owned_retained_buffer_bytes());
   }
 
   common::Result<std::unique_ptr<PhysicalOperator>> created = create_snapshot_cseg_scan(
@@ -779,6 +784,46 @@ TEST(DatabaseCsegPartScanTest, EmitsEverySelectedPartInCanonicalPhysicalOrder) {
                 static_cast<std::int64_t>(first) + static_cast<std::int64_t>(row));
   }
   EXPECT_EQ((*created)->next(resources)->kind(), PhysicalOperatorStepKind::kEnd);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
+TEST(DatabaseCsegPartScanTest, ChargesOnePublicationAcrossAllSurvivingPartChunks) {
+  const std::unique_ptr<MultiPartSnapshot> fixture = load_multi_part_snapshot();
+  common::Result<SnapshotCsegPartScanPlan> planned = plan_snapshot_cseg_part_scan(
+      *fixture->snapshot, cseg::test::identifier<schema::TabletId>(3U));
+  ASSERT_TRUE(planned.has_value()) << planned.error().to_string();
+  auto loaded = load_snapshot_cseg_part_scan_images(*fixture->storage, *fixture->snapshot, *planned,
+                                                    fixture->schemas)
+                    .value();
+  ASSERT_EQ(loaded.size(), 3U);
+  const std::size_t publication_bytes = loaded.front()->publication_retained_buffer_bytes();
+  ASSERT_GT(publication_bytes, 0U);
+  for (const std::shared_ptr<const manifest::SnapshotPartImage>& image : loaded)
+    EXPECT_EQ(image->publication_retained_buffer_bytes(), publication_bytes);
+
+  QueryResourceContext resources =
+      QueryResourceContext::create(std::size_t{64U} * 1024U * 1024U).value();
+  auto created =
+      create_snapshot_cseg_part_scan(resources, *planned, std::move(loaded), fixture->schemas,
+                                     cseg::test::identifier<schema::SchemaId>(4U), {0U});
+  ASSERT_TRUE(created.has_value()) << created.error().to_string();
+
+  std::vector<AccountedVectorChunk> chunks;
+  for (;;) {
+    common::Result<PhysicalOperatorStep> step = (*created)->next(resources);
+    ASSERT_TRUE(step.has_value()) << step.error().to_string();
+    if (step->kind() == PhysicalOperatorStepKind::kEnd)
+      break;
+    chunks.push_back(std::move(*step).take_chunk().value());
+  }
+  ASSERT_EQ(chunks.size(), 6U);
+  std::size_t independently_covered_bytes = 0U;
+  for (const AccountedVectorChunk& chunk : chunks)
+    independently_covered_bytes += chunk.charged_memory_bytes();
+  ASSERT_GE(independently_covered_bytes, resources.reserved_memory_bytes());
+  EXPECT_EQ(independently_covered_bytes - resources.reserved_memory_bytes(),
+            publication_bytes * (chunks.size() - 1U));
+  chunks.clear();
   EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
 }
 

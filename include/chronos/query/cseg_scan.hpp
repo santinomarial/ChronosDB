@@ -24,6 +24,11 @@ inline constexpr std::size_t kDefaultCsegScanLogicalByteLimit =
     static_cast<std::size_t>(cseg::format::kMaximumGranuleRowCount) * sizeof(std::uint32_t);
 inline constexpr std::size_t kDefaultCsegScanRetainedByteLimit = std::size_t{512U} * 1024U * 1024U;
 
+struct CsegPartPinRetainedBytes {
+  std::size_t complete;
+  std::size_t shared;
+};
+
 // Trusted immutable ownership pin for one complete in-memory CSEG image. The opaque owner must
 // keep every byte in bytes() alive and immutable. retained_buffer_bytes() conservatively includes
 // the complete owner allocation and any external storage/snapshot pin represented by that owner.
@@ -38,6 +43,9 @@ public:
   [[nodiscard]] static common::Result<CsegPartPin> create(std::shared_ptr<const void> owner,
                                                           common::ByteView bytes,
                                                           std::size_t retained_buffer_bytes);
+  [[nodiscard]] static common::Result<CsegPartPin>
+  create_with_shared_retained_bytes(std::shared_ptr<const void> owner, common::ByteView bytes,
+                                    CsegPartPinRetainedBytes retained_bytes);
 
   [[nodiscard]] constexpr common::ByteView bytes() const noexcept {
     return bytes_;
@@ -45,14 +53,18 @@ public:
   [[nodiscard]] constexpr std::size_t retained_buffer_bytes() const noexcept {
     return retained_buffer_bytes_;
   }
+  [[nodiscard]] constexpr std::size_t shared_retained_buffer_bytes() const noexcept {
+    return shared_retained_buffer_bytes_;
+  }
 
 private:
   CsegPartPin(std::shared_ptr<const void> owner, common::ByteView bytes,
-              std::size_t retained_buffer_bytes) noexcept;
+              std::size_t retained_buffer_bytes, std::size_t shared_retained_buffer_bytes) noexcept;
 
   std::shared_ptr<const void> owner_;
   common::ByteView bytes_;
   std::size_t retained_buffer_bytes_;
+  std::size_t shared_retained_buffer_bytes_;
 
   friend class CsegScanOperator;
 };
@@ -80,6 +92,12 @@ public:
          const schema::TabletId& target_tablet,
          std::vector<std::uint32_t> destination_column_ordinals, CsegScanLimits limits = {});
 
+  [[nodiscard]] static common::Result<std::unique_ptr<PhysicalOperator>> create_with_shared_pin(
+      const QueryResourceContext& resources, CsegPartPin part,
+      QuerySharedMemoryReservation shared_pin_reservation, const schema::SchemaLineage& lineage,
+      schema::SchemaId destination_schema_id, const schema::TabletId& target_tablet,
+      std::vector<std::uint32_t> destination_column_ordinals, CsegScanLimits limits = {});
+
   // Uses authenticated part/granule event-time extrema only to skip provably disjoint granules.
   // Selected granules are still emitted in full; an exact predicate operator remains authoritative.
   [[nodiscard]] static common::Result<std::unique_ptr<PhysicalOperator>> create_event_time_pruned(
@@ -87,6 +105,16 @@ public:
       schema::SchemaId destination_schema_id, const schema::TabletId& target_tablet,
       std::vector<std::uint32_t> destination_column_ordinals, cseg::EventTimePredicate predicate,
       CsegScanLimits limits = {});
+
+  [[nodiscard]] static common::Result<std::unique_ptr<PhysicalOperator>>
+  create_event_time_pruned_with_shared_pin(const QueryResourceContext& resources, CsegPartPin part,
+                                           QuerySharedMemoryReservation shared_pin_reservation,
+                                           const schema::SchemaLineage& lineage,
+                                           schema::SchemaId destination_schema_id,
+                                           const schema::TabletId& target_tablet,
+                                           std::vector<std::uint32_t> destination_column_ordinals,
+                                           cseg::EventTimePredicate predicate,
+                                           CsegScanLimits limits = {});
 
   [[nodiscard]] common::Result<PhysicalOperatorStep>
   next(const QueryResourceContext& resources) override;
@@ -99,7 +127,8 @@ private:
               const schema::SchemaLineage& lineage, schema::SchemaId destination_schema_id,
               const schema::TabletId& target_tablet,
               std::vector<std::uint32_t> destination_column_ordinals,
-              std::optional<cseg::EventTimePredicate> predicate, CsegScanLimits limits);
+              std::optional<cseg::EventTimePredicate> predicate,
+              QuerySharedMemoryReservation shared_pin_reservation, CsegScanLimits limits);
 
   explicit CsegScanOperator(std::unique_ptr<State> state) noexcept;
 

@@ -485,8 +485,11 @@ No phase passes because its code merely compiles. A phase passes only when its a
   sorting over contiguous stable runs: an ephemeral versioned/checksummed identity-free row format,
   exact cross-run tie recovery, bounded record/file/disk/configuration ownership, canonical
   pull-based output, corruption and early-cleanup behavior, and failure/fuzz/benchmark/consumer
-  evidence. Optimizer rules, future correction/delete row-version resolution, mapped/asynchronous
-  providers, publication-pin credit deduplication, and full scalar-engine differential plan
+  evidence. ADR 0058 and the forty-first increment split exact aggregate-publication bytes from
+  per-image ownership and use one last-owner query reservation across complete tablet scans,
+  surviving CSEG chunks, mutable heads, and same-epoch ASOF aliases, with hostile ownership,
+  failure, fuzz, benchmark, and consumer evidence. Optimizer rules, future correction/delete
+  row-version resolution, mapped/asynchronous providers, and full scalar-engine differential plan
   execution are unimplemented.
 
 - **Scope:** bounded vectors, vectorized scans/expressions/aggregates/joins, physical planning, memory accounting, cancellation, parallel scheduling, and spill for explicitly supported operators.

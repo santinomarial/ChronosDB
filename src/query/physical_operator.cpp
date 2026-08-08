@@ -18,12 +18,21 @@ namespace {
 
 } // namespace
 
-AccountedVectorChunk::AccountedVectorChunk(VectorChunk chunk,
-                                           QueryMemoryReservation reservation) noexcept
-    : chunk_(std::move(chunk)), reservation_(std::move(reservation)) {}
+AccountedVectorChunk::AccountedVectorChunk(VectorChunk chunk, QueryMemoryReservation reservation,
+                                           QuerySharedMemoryReservation shared_reservation) noexcept
+    : chunk_(std::move(chunk)), reservation_(std::move(reservation)),
+      shared_reservation_(std::move(shared_reservation)) {}
 
 common::Result<AccountedVectorChunk>
 AccountedVectorChunk::create(VectorChunk chunk, QueryMemoryReservation reservation,
+                             const QueryResourceContext& resources) {
+  return create(std::move(chunk), std::move(reservation), QuerySharedMemoryReservation{},
+                resources);
+}
+
+common::Result<AccountedVectorChunk>
+AccountedVectorChunk::create(VectorChunk chunk, QueryMemoryReservation reservation,
+                             QuerySharedMemoryReservation shared_reservation,
                              const QueryResourceContext& resources) {
   if (!reservation.is_valid())
     return common::make_unexpected(invalid("accounted vector chunk requires a valid reservation"));
@@ -31,11 +40,19 @@ AccountedVectorChunk::create(VectorChunk chunk, QueryMemoryReservation reservati
     return common::make_unexpected(
         invalid("vector chunk reservation belongs to a different query resource context"));
   }
-  if (reservation.bytes() < chunk.retained_buffer_bytes()) {
+  if (shared_reservation.is_valid() && !resources.owns(shared_reservation)) {
     return common::make_unexpected(
-        invalid("vector chunk reservation is smaller than retained buffers"));
+        invalid("vector chunk shared reservation belongs to a different query resource context"));
   }
-  return AccountedVectorChunk{std::move(chunk), std::move(reservation)};
+  const std::size_t retained = chunk.retained_buffer_bytes();
+  const std::size_t local = reservation.bytes();
+  const std::size_t shared = shared_reservation.bytes();
+  if (local < retained && shared < retained - local) {
+    return common::make_unexpected(
+        invalid("vector chunk reservations are smaller than retained buffers"));
+  }
+  return AccountedVectorChunk{std::move(chunk), std::move(reservation),
+                              std::move(shared_reservation)};
 }
 
 common::Result<AccountedVectorChunk>
@@ -44,7 +61,8 @@ AccountedVectorChunk::where_true(AccountedVectorChunk input, const std::size_t p
       VectorChunk::where_true(std::move(input.chunk_), predicate_column);
   if (!filtered.has_value())
     return common::make_unexpected(filtered.error());
-  return AccountedVectorChunk{std::move(*filtered), std::move(input.reservation_)};
+  return AccountedVectorChunk{std::move(*filtered), std::move(input.reservation_),
+                              std::move(input.shared_reservation_)};
 }
 
 common::Result<AccountedVectorChunk>
@@ -55,7 +73,8 @@ AccountedVectorChunk::where_timestamp_in_range(AccountedVectorChunk input,
       VectorChunk::where_timestamp_in_range(std::move(input.chunk_), timestamp_column, predicate);
   if (!filtered.has_value())
     return common::make_unexpected(filtered.error());
-  return AccountedVectorChunk{std::move(*filtered), std::move(input.reservation_)};
+  return AccountedVectorChunk{std::move(*filtered), std::move(input.reservation_),
+                              std::move(input.shared_reservation_)};
 }
 
 common::Result<AccountedVectorChunk>
@@ -65,7 +84,8 @@ AccountedVectorChunk::project_columns(AccountedVectorChunk input,
       VectorChunk::project_columns(std::move(input.chunk_), column_ordinals);
   if (!projected.has_value())
     return common::make_unexpected(projected.error());
-  return AccountedVectorChunk{std::move(*projected), std::move(input.reservation_)};
+  return AccountedVectorChunk{std::move(*projected), std::move(input.reservation_),
+                              std::move(input.shared_reservation_)};
 }
 
 AccountedVectorChunk AccountedVectorChunk::take_first(AccountedVectorChunk input,
@@ -79,11 +99,12 @@ const VectorChunk& AccountedVectorChunk::chunk() const noexcept {
 }
 
 std::size_t AccountedVectorChunk::charged_memory_bytes() const noexcept {
-  return reservation_.bytes();
+  return reservation_.bytes() + shared_reservation_.bytes();
 }
 
 bool AccountedVectorChunk::belongs_to(const QueryResourceContext& resources) const noexcept {
-  return resources.owns(reservation_);
+  return resources.owns(reservation_) &&
+         (!shared_reservation_.is_valid() || resources.owns(shared_reservation_));
 }
 
 PhysicalOperatorStep::PhysicalOperatorStep(const PhysicalOperatorStepKind kind,

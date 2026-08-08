@@ -32,6 +32,9 @@ public:
   create(VectorChunk chunk, QueryMemoryReservation reservation,
          const QueryResourceContext& resources);
   [[nodiscard]] static common::Result<AccountedVectorChunk>
+  create(VectorChunk chunk, QueryMemoryReservation reservation,
+         QuerySharedMemoryReservation shared_reservation, const QueryResourceContext& resources);
+  [[nodiscard]] static common::Result<AccountedVectorChunk>
   where_true(AccountedVectorChunk input, std::size_t predicate_column);
   [[nodiscard]] static common::Result<AccountedVectorChunk>
   where_timestamp_in_range(AccountedVectorChunk input, std::size_t timestamp_column,
@@ -46,10 +49,12 @@ public:
   [[nodiscard]] bool belongs_to(const QueryResourceContext& resources) const noexcept;
 
 private:
-  AccountedVectorChunk(VectorChunk chunk, QueryMemoryReservation reservation) noexcept;
+  AccountedVectorChunk(VectorChunk chunk, QueryMemoryReservation reservation,
+                       QuerySharedMemoryReservation shared_reservation) noexcept;
 
   VectorChunk chunk_;
   QueryMemoryReservation reservation_;
+  QuerySharedMemoryReservation shared_reservation_;
 
   friend class LatestByOperator;
 };

@@ -31,6 +31,14 @@ public:
          const schema::SchemaLineage& lineage, schema::SchemaId destination_schema_id,
          const schema::TabletId& target_tablet,
          std::vector<std::uint32_t> destination_column_ordinals, HeadScanLimits limits = {});
+  [[nodiscard]] static common::Result<std::unique_ptr<PhysicalOperator>>
+  create_with_shared_publication(const QueryResourceContext& resources, head::HeadSnapshot snapshot,
+                                 QuerySharedMemoryReservation shared_publication_reservation,
+                                 const schema::SchemaLineage& lineage,
+                                 schema::SchemaId destination_schema_id,
+                                 const schema::TabletId& target_tablet,
+                                 std::vector<std::uint32_t> destination_column_ordinals,
+                                 HeadScanLimits limits = {});
 
   // Materializes the event-time column if necessary, applies exact open/closed row truth, and
   // removes an unrequested final helper before returning caller-visible chunks. Unlike CSEG range
@@ -40,12 +48,35 @@ public:
       const schema::SchemaLineage& lineage, schema::SchemaId destination_schema_id,
       const schema::TabletId& target_tablet, std::vector<std::uint32_t> destination_column_ordinals,
       TimestampRangePredicate predicate, HeadScanLimits limits = {});
+  [[nodiscard]] static common::Result<std::unique_ptr<PhysicalOperator>>
+  create_event_time_filtered_with_shared_publication(
+      const QueryResourceContext& resources, head::HeadSnapshot snapshot,
+      QuerySharedMemoryReservation shared_publication_reservation,
+      const schema::SchemaLineage& lineage, schema::SchemaId destination_schema_id,
+      const schema::TabletId& target_tablet, std::vector<std::uint32_t> destination_column_ordinals,
+      TimestampRangePredicate predicate, HeadScanLimits limits = {});
 
   [[nodiscard]] common::Result<PhysicalOperatorStep>
   next(const QueryResourceContext& resources) override;
 
 private:
   class State;
+
+  [[nodiscard]] static common::Result<std::unique_ptr<PhysicalOperator>>
+  create_impl(const QueryResourceContext& resources, head::HeadSnapshot snapshot,
+              QuerySharedMemoryReservation shared_publication_reservation,
+              const schema::SchemaLineage& lineage, schema::SchemaId destination_schema_id,
+              const schema::TabletId& target_tablet,
+              std::vector<std::uint32_t> destination_column_ordinals, HeadScanLimits limits);
+  [[nodiscard]] static common::Result<std::unique_ptr<PhysicalOperator>>
+  create_event_time_filtered_impl(const QueryResourceContext& resources,
+                                  head::HeadSnapshot snapshot,
+                                  QuerySharedMemoryReservation shared_publication_reservation,
+                                  const schema::SchemaLineage& lineage,
+                                  schema::SchemaId destination_schema_id,
+                                  const schema::TabletId& target_tablet,
+                                  std::vector<std::uint32_t> destination_column_ordinals,
+                                  TimestampRangePredicate predicate, HeadScanLimits limits);
 
   explicit HeadScanOperator(std::unique_ptr<State> state) noexcept;
 

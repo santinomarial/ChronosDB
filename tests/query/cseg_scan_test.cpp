@@ -126,6 +126,56 @@ TEST(CsegPartPinTest, RejectsMissingEmptyAndUnderreportedOwners) {
             common::StatusCode::kInvalidArgument);
   EXPECT_EQ(CsegPartPin::create(owner, *owner, 0U).error().code(),
             common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(CsegPartPin::create_with_shared_retained_bytes(
+                owner, *owner, {.complete = owner->size(), .shared = owner->size() + 1U})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+}
+
+TEST(CsegScanOperatorTest, SharedPinCreditRequiresExactQueryOwnedCoverageAndSurvivesOutput) {
+  auto owner = std::make_shared<const PartOwner>(
+      cseg::test::make_valid_part(cseg::PageCompression::kNone), nullptr);
+  const std::size_t complete = owner->part.retained_buffer_bytes() + sizeof(PartOwner) + 64U;
+  constexpr std::size_t kSharedBytes = 128U;
+  const CsegPartPin part =
+      CsegPartPin::create_with_shared_retained_bytes(owner, owner->part.bytes(),
+                                                     {.complete = complete, .shared = kSharedBytes})
+          .value();
+  const schema::SchemaLineage lineage = valid_lineage();
+  auto resources = QueryResourceContext::create(std::size_t{4U} * 1024U * 1024U).value();
+  auto foreign = QueryResourceContext::create(std::size_t{4U} * 1024U * 1024U).value();
+  EXPECT_EQ(CsegScanOperator::create_with_shared_pin(
+                resources, part, foreign.reserve_shared(kSharedBytes).value(), lineage,
+                cseg::test::identifier<schema::SchemaId>(4U),
+                cseg::test::identifier<schema::TabletId>(3U), {0U})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(CsegScanOperator::create_with_shared_pin(
+                resources, part, resources.reserve_shared(kSharedBytes - 1U).value(), lineage,
+                cseg::test::identifier<schema::SchemaId>(4U),
+                cseg::test::identifier<schema::TabletId>(3U), {0U})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  EXPECT_EQ(foreign.reserved_memory_bytes(), 0U);
+
+  QuerySharedMemoryReservation shared = resources.reserve_shared(kSharedBytes).value();
+  auto source = CsegScanOperator::create_with_shared_pin(
+      resources, part, shared, lineage, cseg::test::identifier<schema::SchemaId>(4U),
+      cseg::test::identifier<schema::TabletId>(3U), {0U});
+  ASSERT_TRUE(source.has_value()) << source.error().to_string();
+  shared.reset();
+  common::Result<PhysicalOperatorStep> step = (*source)->next(resources);
+  ASSERT_TRUE(step.has_value()) << step.error().to_string();
+  ASSERT_EQ(step->kind(), PhysicalOperatorStepKind::kChunk);
+  source->reset();
+  EXPECT_GT(resources.reserved_memory_bytes(), 0U);
+  EXPECT_GE(step->chunk()->charged_memory_bytes(), step->chunk()->chunk().retained_buffer_bytes());
+  step = PhysicalOperatorStep::end();
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
 }
 
 TEST(CsegScanOperatorTest, ReturnsPinnedRawGranuleAndReleasesSourceAtLastOutput) {

@@ -70,8 +70,8 @@ bounded full-head execution.
 
 The eager full-column design is deliberately simple and exact. It leaves CPU/I/O opportunities on
 the table, but predicate/projection pushdown needs explicit equivalence and required-column
-contracts. Parallel source scheduling, shared publication credit, and spill likewise need their own
-ownership decisions.
+contracts. One aggregate-publication charge is now shared across the source graph; parallel source
+scheduling and automatic spill selection still need explicit plan decisions.
 
 ## Review questions
 

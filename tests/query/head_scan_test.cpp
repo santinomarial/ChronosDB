@@ -196,6 +196,42 @@ TEST(HeadScanOperatorTest, AppendsCanonicalRowVersionColumnsAcrossChunkBoundarie
   EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
 }
 
+TEST(HeadScanOperatorTest, SharesPublicationCreditButKeepsMaterializedOutputIndependent) {
+  test::HeadFixture fixture{4U};
+  fixture.publish({.range = {.first_row = 0U, .row_count = 4U}, .record_sequence = 7U});
+  const head::HeadSnapshot snapshot = fixture.snapshot();
+  ASSERT_GT(snapshot.retained_buffer_bytes(), 0U);
+  QueryResourceContext resources =
+      QueryResourceContext::create(std::size_t{16U} * 1024U * 1024U).value();
+  auto shared = resources.reserve_shared(snapshot.retained_buffer_bytes());
+  ASSERT_TRUE(shared.has_value()) << shared.error().to_string();
+  auto source = HeadScanOperator::create_with_shared_publication(
+      resources, snapshot, std::move(*shared), fixture.schemas(),
+      columnar::test::id<schema::SchemaId>(test::kInitialSchemaId), snapshot.tablet_id(), {0U});
+  ASSERT_TRUE(source.has_value()) << source.error().to_string();
+  EXPECT_GT(resources.reserved_memory_bytes(), snapshot.retained_buffer_bytes());
+
+  common::Result<PhysicalOperatorStep> step = (*source)->next(resources);
+  ASSERT_TRUE(step.has_value()) << step.error().to_string();
+  ASSERT_EQ(step->kind(), PhysicalOperatorStepKind::kChunk);
+  EXPECT_EQ(resources.reserved_memory_bytes(), step->chunk()->charged_memory_bytes());
+  EXPECT_EQ(step->chunk()->chunk().selected_row_count(), 4U);
+  step = common::make_unexpected(common::Status{common::StatusCode::kInternal, "drop chunk"});
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+
+  QueryResourceContext foreign =
+      QueryResourceContext::create(std::size_t{16U} * 1024U * 1024U).value();
+  auto foreign_shared = foreign.reserve_shared(snapshot.retained_buffer_bytes());
+  ASSERT_TRUE(foreign_shared.has_value()) << foreign_shared.error().to_string();
+  auto rejected = HeadScanOperator::create_with_shared_publication(
+      resources, snapshot, std::move(*foreign_shared), fixture.schemas(),
+      columnar::test::id<schema::SchemaId>(test::kInitialSchemaId), snapshot.tablet_id(), {0U});
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  EXPECT_EQ(foreign.reserved_memory_bytes(), 0U);
+}
+
 TEST(HeadScanOperatorTest, ExactEventTimeFilteringPreservesBoundsAcrossChunkBoundaries) {
   test::HeadFixture fixture{8U};
   fixture.publish({.range = {.first_row = 0U, .row_count = 8U}, .record_sequence = 1U});

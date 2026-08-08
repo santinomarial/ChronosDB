@@ -198,8 +198,10 @@ public:
   [[nodiscard]] std::uint64_t snapshot_generation() const noexcept;
   [[nodiscard]] const PartDescriptor& descriptor() const noexcept;
   [[nodiscard]] common::ByteView bytes() const noexcept;
-  // Conservative complete publication pin plus owned image/object/allocation bytes. Separate
-  // images from one snapshot intentionally report the shared epoch independently.
+  [[nodiscard]] std::size_t publication_retained_buffer_bytes() const noexcept;
+  [[nodiscard]] std::size_t owned_retained_buffer_bytes() const noexcept;
+  // Conservative complete publication pin plus owned image/object/allocation bytes. The explicit
+  // split permits one query-shared publication reservation without weakening this standalone sum.
   [[nodiscard]] std::size_t retained_buffer_bytes() const noexcept;
 
 private:

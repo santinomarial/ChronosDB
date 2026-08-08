@@ -67,8 +67,11 @@ add_allocation_overhead(const AllocationOverheadInput input, const char* const m
 [[nodiscard]] common::Result<std::size_t>
 source_charge(const CsegPartPin& part, const schema::TableSchema& destination_schema,
               const std::vector<std::uint32_t>& destination_column_ordinals,
-              const CsegScanLimits limits, const bool event_time_pruned) {
+              const CsegScanLimits limits, const bool event_time_pruned,
+              const bool shared_pin_accounted) {
   std::size_t total = part.retained_buffer_bytes();
+  if (shared_pin_accounted)
+    total -= part.shared_retained_buffer_bytes();
   common::Result<std::size_t> next =
       add(total, part.bytes().size(), "CSEG scan source byte accounting overflowed");
   if (!next.has_value())
@@ -103,8 +106,8 @@ source_charge(const CsegPartPin& part, const schema::TableSchema& destination_sc
   constexpr std::size_t source_objects =
       sizeof(CsegPartPin) + sizeof(cseg::CsegProjectedReaderView) +
       sizeof(std::vector<std::uint32_t>) + sizeof(CsegScanLimits) + sizeof(QueryMemoryReservation) +
-      sizeof(std::optional<cseg::CsegEventTimePruningPlan>) + sizeof(std::size_t) +
-      sizeof(CsegScanOperator);
+      sizeof(QuerySharedMemoryReservation) + sizeof(std::optional<cseg::CsegEventTimePruningPlan>) +
+      sizeof(std::size_t) + sizeof(CsegScanOperator);
   next = add(*next, source_objects, "CSEG scan source object accounting overflowed");
   if (!next.has_value())
     return next;
@@ -126,10 +129,12 @@ source_charge(const CsegPartPin& part, const schema::TableSchema& destination_sc
 
 [[nodiscard]] common::Result<std::size_t>
 output_charge(const CsegPartPin& part, const cseg::CsegProjectedGranuleReadPlan& plan,
-              const std::size_t exposed_column_count) {
+              const std::size_t exposed_column_count, const bool shared_pin_accounted) {
   if (plan.owned_buffer_bytes() > std::numeric_limits<std::size_t>::max())
     return common::make_unexpected(exhausted("CSEG scan decoded output does not fit size_t"));
   std::size_t total = part.retained_buffer_bytes();
+  if (shared_pin_accounted)
+    total -= part.shared_retained_buffer_bytes();
   common::Result<std::size_t> next = add(total, static_cast<std::size_t>(plan.owned_buffer_bytes()),
                                          "CSEG scan output byte accounting overflowed");
   if (!next.has_value())
@@ -240,10 +245,12 @@ public:
   State(CsegPartPin part_value, cseg::CsegProjectedReaderView reader_value,
         std::vector<std::uint32_t> destination_column_ordinals_value, CsegScanLimits limits_value,
         std::optional<cseg::CsegEventTimePruningPlan> pruning_value,
+        QuerySharedMemoryReservation shared_pin_reservation_value,
         QueryMemoryReservation source_reservation_value) noexcept
       : part(std::move(part_value)), reader(std::move(reader_value)),
         destination_column_ordinals(std::move(destination_column_ordinals_value)),
         limits(limits_value), pruning(std::move(pruning_value)),
+        shared_pin_reservation(std::move(shared_pin_reservation_value)),
         source_reservation(std::move(source_reservation_value)) {}
 
   [[nodiscard]] std::size_t granule_count() const noexcept {
@@ -260,28 +267,46 @@ public:
   std::vector<std::uint32_t> destination_column_ordinals;
   CsegScanLimits limits;
   std::optional<cseg::CsegEventTimePruningPlan> pruning;
+  QuerySharedMemoryReservation shared_pin_reservation;
   QueryMemoryReservation source_reservation;
   std::size_t next_granule{};
 };
 
 CsegScanOperator::~CsegScanOperator() = default;
 
+// The named retained-byte arguments distinguish complete ownership from its shared subset.
+// NOLINTBEGIN(bugprone-easily-swappable-parameters)
 CsegPartPin::CsegPartPin(std::shared_ptr<const void> owner, const common::ByteView bytes,
-                         const std::size_t retained_buffer_bytes) noexcept
-    : owner_(std::move(owner)), bytes_(bytes), retained_buffer_bytes_(retained_buffer_bytes) {}
+                         const std::size_t retained_buffer_bytes,
+                         const std::size_t shared_retained_buffer_bytes) noexcept
+    : owner_(std::move(owner)), bytes_(bytes), retained_buffer_bytes_(retained_buffer_bytes),
+      shared_retained_buffer_bytes_(shared_retained_buffer_bytes) {}
+// NOLINTEND(bugprone-easily-swappable-parameters)
 
 common::Result<CsegPartPin> CsegPartPin::create(std::shared_ptr<const void> owner,
                                                 const common::ByteView bytes,
                                                 const std::size_t retained_buffer_bytes) {
+  return create_with_shared_retained_bytes(std::move(owner), bytes,
+                                           {.complete = retained_buffer_bytes, .shared = 0U});
+}
+
+common::Result<CsegPartPin>
+CsegPartPin::create_with_shared_retained_bytes(std::shared_ptr<const void> owner,
+                                               const common::ByteView bytes,
+                                               const CsegPartPinRetainedBytes retained_bytes) {
   if (owner == nullptr)
     return common::make_unexpected(invalid("CSEG part pin owner must be non-null"));
   if (bytes.empty())
     return common::make_unexpected(invalid("CSEG part pin bytes must be nonempty"));
-  if (retained_buffer_bytes < bytes.size()) {
+  if (retained_bytes.complete < bytes.size()) {
     return common::make_unexpected(
         invalid("CSEG part pin retained bytes are smaller than its encoded image"));
   }
-  return CsegPartPin{std::move(owner), bytes, retained_buffer_bytes};
+  if (retained_bytes.shared > retained_bytes.complete) {
+    return common::make_unexpected(
+        invalid("CSEG part pin shared retained bytes exceed its complete retained bytes"));
+  }
+  return CsegPartPin{std::move(owner), bytes, retained_bytes.complete, retained_bytes.shared};
 }
 
 CsegScanOperator::CsegScanOperator(std::unique_ptr<State> state) noexcept
@@ -292,7 +317,18 @@ common::Result<std::unique_ptr<PhysicalOperator>> CsegScanOperator::create(
     const schema::SchemaId destination_schema_id, const schema::TabletId& target_tablet,
     std::vector<std::uint32_t> destination_column_ordinals, const CsegScanLimits limits) {
   return create_impl(resources, std::move(part), lineage, destination_schema_id, target_tablet,
-                     std::move(destination_column_ordinals), std::nullopt, limits);
+                     std::move(destination_column_ordinals), std::nullopt,
+                     QuerySharedMemoryReservation{}, limits);
+}
+
+common::Result<std::unique_ptr<PhysicalOperator>> CsegScanOperator::create_with_shared_pin(
+    const QueryResourceContext& resources, CsegPartPin part,
+    QuerySharedMemoryReservation shared_pin_reservation, const schema::SchemaLineage& lineage,
+    const schema::SchemaId destination_schema_id, const schema::TabletId& target_tablet,
+    std::vector<std::uint32_t> destination_column_ordinals, const CsegScanLimits limits) {
+  return create_impl(resources, std::move(part), lineage, destination_schema_id, target_tablet,
+                     std::move(destination_column_ordinals), std::nullopt,
+                     std::move(shared_pin_reservation), limits);
 }
 
 common::Result<std::unique_ptr<PhysicalOperator>> CsegScanOperator::create_event_time_pruned(
@@ -301,14 +337,28 @@ common::Result<std::unique_ptr<PhysicalOperator>> CsegScanOperator::create_event
     std::vector<std::uint32_t> destination_column_ordinals, cseg::EventTimePredicate predicate,
     const CsegScanLimits limits) {
   return create_impl(resources, std::move(part), lineage, destination_schema_id, target_tablet,
-                     std::move(destination_column_ordinals), predicate, limits);
+                     std::move(destination_column_ordinals), predicate,
+                     QuerySharedMemoryReservation{}, limits);
+}
+
+common::Result<std::unique_ptr<PhysicalOperator>>
+CsegScanOperator::create_event_time_pruned_with_shared_pin(
+    const QueryResourceContext& resources, CsegPartPin part,
+    QuerySharedMemoryReservation shared_pin_reservation, const schema::SchemaLineage& lineage,
+    const schema::SchemaId destination_schema_id, const schema::TabletId& target_tablet,
+    std::vector<std::uint32_t> destination_column_ordinals, cseg::EventTimePredicate predicate,
+    const CsegScanLimits limits) {
+  return create_impl(resources, std::move(part), lineage, destination_schema_id, target_tablet,
+                     std::move(destination_column_ordinals), predicate,
+                     std::move(shared_pin_reservation), limits);
 }
 
 common::Result<std::unique_ptr<PhysicalOperator>> CsegScanOperator::create_impl(
     const QueryResourceContext& resources, CsegPartPin part, const schema::SchemaLineage& lineage,
     const schema::SchemaId destination_schema_id, const schema::TabletId& target_tablet,
     std::vector<std::uint32_t> destination_column_ordinals,
-    std::optional<cseg::EventTimePredicate> predicate, const CsegScanLimits limits) {
+    std::optional<cseg::EventTimePredicate> predicate,
+    QuerySharedMemoryReservation shared_pin_reservation, const CsegScanLimits limits) {
   const std::shared_ptr<const schema::TableSchema> destination_schema =
       lineage.find(destination_schema_id);
   if (destination_schema == nullptr) {
@@ -320,6 +370,13 @@ common::Result<std::unique_ptr<PhysicalOperator>> CsegScanOperator::create_impl(
       limits.chunk.maximum_buffer_bytes == 0U || limits.chunk.maximum_retained_buffer_bytes == 0U) {
     return common::make_unexpected(invalid("CSEG scan chunk limits must be nonzero"));
   }
+  const bool shared_pin_accounted = shared_pin_reservation.is_valid();
+  if (shared_pin_accounted &&
+      (!resources.owns(shared_pin_reservation) ||
+       shared_pin_reservation.bytes() != part.shared_retained_buffer_bytes())) {
+    return common::make_unexpected(
+        invalid("CSEG scan shared pin reservation does not cover this part publication"));
+  }
   common::Result<std::size_t> exposed_columns =
       scan_output_column_count(destination_column_ordinals.size(), limits.row_version_columns);
   if (!exposed_columns.has_value())
@@ -329,8 +386,9 @@ common::Result<std::unique_ptr<PhysicalOperator>> CsegScanOperator::create_impl(
     return common::make_unexpected(
         invalid("CSEG scan pruning granule limit is outside the v1 format domain"));
   }
-  common::Result<std::size_t> charge = source_charge(
-      part, *destination_schema, destination_column_ordinals, limits, predicate.has_value());
+  common::Result<std::size_t> charge =
+      source_charge(part, *destination_schema, destination_column_ordinals, limits,
+                    predicate.has_value(), shared_pin_accounted);
   if (!charge.has_value())
     return common::make_unexpected(charge.error());
   common::Result<QueryMemoryReservation> source_reservation = resources.reserve(*charge);
@@ -355,9 +413,9 @@ common::Result<std::unique_ptr<PhysicalOperator>> CsegScanOperator::create_impl(
       pruning.emplace(std::move(*planned));
     }
 
-    auto state = std::make_unique<State>(std::move(part), std::move(*reader),
-                                         std::move(destination_column_ordinals), limits,
-                                         std::move(pruning), std::move(*source_reservation));
+    auto state = std::make_unique<State>(
+        std::move(part), std::move(*reader), std::move(destination_column_ordinals), limits,
+        std::move(pruning), std::move(shared_pin_reservation), std::move(*source_reservation));
     return std::unique_ptr<PhysicalOperator>{new CsegScanOperator{std::move(state)}};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("CSEG scan source allocation failed"));
@@ -424,7 +482,8 @@ common::Result<PhysicalOperatorStep> CsegScanOperator::next(const QueryResourceC
     return common::make_unexpected(
         exhausted("CSEG scan planned output exceeds the chunk logical-byte limit"));
   }
-  common::Result<std::size_t> charge = output_charge(state_->part, *plan, *exposed_columns);
+  common::Result<std::size_t> charge = output_charge(state_->part, *plan, *exposed_columns,
+                                                     state_->shared_pin_reservation.is_valid());
   if (!charge.has_value()) {
     static_cast<void>(resources.request_cancel());
     return common::make_unexpected(charge.error());
@@ -463,8 +522,8 @@ common::Result<PhysicalOperatorStep> CsegScanOperator::next(const QueryResourceC
       static_cast<void>(resources.request_cancel());
       return common::make_unexpected(chunk.error());
     }
-    common::Result<AccountedVectorChunk> accounted =
-        AccountedVectorChunk::create(std::move(*chunk), std::move(*reservation), resources);
+    common::Result<AccountedVectorChunk> accounted = AccountedVectorChunk::create(
+        std::move(*chunk), std::move(*reservation), state_->shared_pin_reservation, resources);
     if (!accounted.has_value()) {
       static_cast<void>(resources.request_cancel());
       return common::make_unexpected(accounted.error());

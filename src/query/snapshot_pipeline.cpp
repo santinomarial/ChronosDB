@@ -1,6 +1,7 @@
 #include "chronos/query/snapshot_pipeline.hpp"
 
 #include "chronos/common/status.hpp"
+#include "chronos/manifest/publication.hpp"
 #include "chronos/query/row_version.hpp"
 #include "chronos/schema/table_schema.hpp"
 
@@ -70,7 +71,8 @@ validate_input_shape(const std::span<const PhysicalColumnShape> input,
     const QueryResourceContext& resources, const manifest::ManifestStorage& storage,
     const manifest::DatabaseStorageSnapshot& snapshot, const schema::TabletId& target_tablet,
     const schema::SchemaLineage& lineage, const schema::SchemaId destination_schema_id,
-    const std::span<const PhysicalColumnShape> input_shape, SnapshotTabletPipelineLimits limits) {
+    const std::span<const PhysicalColumnShape> input_shape,
+    QuerySharedMemoryReservation publication_reservation, SnapshotTabletPipelineLimits limits) {
   const std::shared_ptr<const schema::TableSchema> destination_schema =
       lineage.find(destination_schema_id);
   if (destination_schema == nullptr) {
@@ -106,8 +108,22 @@ validate_input_shape(const std::span<const PhysicalColumnShape> input,
   ordinals.reserve(destination_schema->columns().size());
   for (std::size_t ordinal = 0U; ordinal < destination_schema->columns().size(); ++ordinal)
     ordinals.push_back(static_cast<std::uint32_t>(ordinal));
-  return create_snapshot_tablet_scan(resources, snapshot, *scan_plan, std::move(*images), lineage,
-                                     destination_schema_id, ordinals, limits.scan);
+  if (publication_reservation.is_valid()) {
+    if (!resources.owns(publication_reservation) ||
+        publication_reservation.bytes() != snapshot.retained_buffer_bytes()) {
+      return common::make_unexpected(
+          invalid("snapshot pipeline shared publication reservation is invalid"));
+    }
+  } else {
+    common::Result<QuerySharedMemoryReservation> shared =
+        resources.reserve_shared(snapshot.retained_buffer_bytes());
+    if (!shared.has_value())
+      return common::make_unexpected(shared.error());
+    publication_reservation = std::move(*shared);
+  }
+  return create_snapshot_tablet_scan_with_shared_publication(
+      resources, std::move(publication_reservation), snapshot, *scan_plan, std::move(*images),
+      lineage, destination_schema_id, ordinals, limits.scan);
 }
 
 } // namespace
@@ -118,9 +134,9 @@ common::Result<std::unique_ptr<PhysicalOperator>> instantiate_snapshot_tablet_pi
     const schema::SchemaLineage& lineage, const schema::SchemaId destination_schema_id,
     const PhysicalPipelinePlan& pipeline, SnapshotTabletPipelineLimits limits) {
   try {
-    common::Result<std::unique_ptr<PhysicalOperator>> source =
-        create_snapshot_tablet_source(resources, storage, snapshot, target_tablet, lineage,
-                                      destination_schema_id, pipeline.input_columns(), limits);
+    common::Result<std::unique_ptr<PhysicalOperator>> source = create_snapshot_tablet_source(
+        resources, storage, snapshot, target_tablet, lineage, destination_schema_id,
+        pipeline.input_columns(), QuerySharedMemoryReservation{}, limits);
     if (!source.has_value())
       return common::make_unexpected(source.error());
     return pipeline.instantiate(std::move(*source));
@@ -138,6 +154,10 @@ common::Result<std::unique_ptr<PhysicalOperator>> instantiate_snapshot_asof_plan
   if (sources.size() != plan.source_count())
     return common::make_unexpected(invalid("snapshot ASOF source count mismatch"));
   try {
+    common::Result<QuerySharedMemoryReservation> publication_reservation =
+        resources.reserve_shared(snapshot.retained_buffer_bytes());
+    if (!publication_reservation.has_value())
+      return common::make_unexpected(publication_reservation.error());
     std::vector<std::unique_ptr<PhysicalOperator>> operators;
     operators.reserve(sources.size());
     const std::span<const PhysicalAsofPlanJoin> joins = plan.joins();
@@ -148,7 +168,7 @@ common::Result<std::unique_ptr<PhysicalOperator>> instantiate_snapshot_asof_plan
                         : joins[ordinal - 1U].right_preparation.input_columns();
       common::Result<std::unique_ptr<PhysicalOperator>> created = create_snapshot_tablet_source(
           resources, storage, snapshot, source.target_tablet, source.lineage.get(),
-          source.destination_schema_id, expected, source.limits);
+          source.destination_schema_id, expected, *publication_reservation, source.limits);
       if (!created.has_value())
         return common::make_unexpected(created.error());
       operators.push_back(std::move(*created));

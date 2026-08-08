@@ -207,6 +207,10 @@
 > limits, per-row/header corruption detection, early and failure cleanup, exhaustive allocation
 > failure, spill fuzzing, sanitizer/consumer coverage, and profiles that report actual bytes read
 > and written. Automatic optimizer selection and crash-orphan scavenging remain outside this claim.
+> Shared snapshot publication credit adds multi-part/multi-chunk last-owner accounting, copied-head
+> release checks, foreign and insufficient credit rejection, complete tablet/ASOF composition,
+> allocation sweeps, split-credit fuzzing, installed consumption, sanitizer coverage, and fanout
+> profiles. Per-image, decoded, materialized, and output bytes remain independently charged.
 > Complete append-only tablet scanning now composes the exact durable, sealed-head, and active-head
 > publications from one aggregate epoch. Deterministic multiset and suffix checks, head-only exact
 > predicate/helper-removal coverage, hostile finite limits, allocation-failure injection, public

@@ -174,8 +174,11 @@ exact_timestamp_predicate(const cseg::EventTimePredicate& predicate) noexcept {
 class SequentialSnapshotScan final : public PhysicalOperator {
 public:
   SequentialSnapshotScan(std::vector<std::unique_ptr<PhysicalOperator>> children,
+                         QuerySharedMemoryReservation shared_publication_reservation,
                          QueryMemoryReservation reservation) noexcept
-      : children_(std::move(children)), reservation_(std::move(reservation)) {}
+      : children_(std::move(children)),
+        shared_publication_reservation_(std::move(shared_publication_reservation)),
+        reservation_(std::move(reservation)) {}
 
   [[nodiscard]] common::Result<PhysicalOperatorStep>
   next(const QueryResourceContext& resources) override {
@@ -187,6 +190,12 @@ public:
     if (!resources.owns(reservation_)) {
       static_cast<void>(resources.request_cancel());
       return common::make_unexpected(invalid("sequential snapshot scan belongs to another query"));
+    }
+    if (shared_publication_reservation_.is_valid() &&
+        !resources.owns(shared_publication_reservation_)) {
+      static_cast<void>(resources.request_cancel());
+      return common::make_unexpected(
+          invalid("sequential snapshot publication belongs to another query"));
     }
     while (next_child_ < children_.size()) {
       common::Result<PhysicalOperatorStep> step = children_[next_child_]->next(resources);
@@ -207,6 +216,7 @@ public:
       return step;
     }
     std::vector<std::unique_ptr<PhysicalOperator>>{}.swap(children_);
+    shared_publication_reservation_.reset();
     reservation_.release();
     ended_ = true;
     return PhysicalOperatorStep::end();
@@ -214,6 +224,7 @@ public:
 
 private:
   std::vector<std::unique_ptr<PhysicalOperator>> children_;
+  QuerySharedMemoryReservation shared_publication_reservation_;
   QueryMemoryReservation reservation_;
   std::size_t next_child_{};
   bool ended_{};
@@ -447,8 +458,10 @@ pin_snapshot_cseg_part(std::shared_ptr<const manifest::SnapshotPartImage> image)
   }
   const common::ByteView bytes = image->bytes();
   const std::size_t retained = image->retained_buffer_bytes();
+  const std::size_t shared = image->publication_retained_buffer_bytes();
   std::shared_ptr<const void> owner = std::move(image);
-  return CsegPartPin::create(std::move(owner), bytes, retained);
+  return CsegPartPin::create_with_shared_retained_bytes(std::move(owner), bytes,
+                                                        {.complete = retained, .shared = shared});
 }
 
 common::Result<std::unique_ptr<PhysicalOperator>> create_snapshot_cseg_scan(
@@ -478,18 +491,28 @@ common::Result<std::unique_ptr<PhysicalOperator>> create_snapshot_cseg_scan(
     return common::make_unexpected(
         invalid("snapshot CSEG descriptor disagrees with its retained schema lineage"));
   }
+  common::Result<QuerySharedMemoryReservation> publication_reservation =
+      resources.reserve_shared(image->publication_retained_buffer_bytes());
+  if (!publication_reservation.has_value())
+    return common::make_unexpected(publication_reservation.error());
   common::Result<CsegPartPin> part = pin_snapshot_cseg_part(std::move(image));
   if (!part.has_value())
     return common::make_unexpected(part.error());
-  return CsegScanOperator::create(resources, std::move(*part), lineage, destination_schema_id,
-                                  target_tablet, std::move(destination_column_ordinals), limits);
+  return CsegScanOperator::create_with_shared_pin(
+      resources, std::move(*part), std::move(*publication_reservation), lineage,
+      destination_schema_id, target_tablet, std::move(destination_column_ordinals), limits);
 }
 
-common::Result<std::unique_ptr<PhysicalOperator>> create_snapshot_cseg_part_scan(
-    const QueryResourceContext& resources, const SnapshotCsegPartScanPlan& plan,
+common::Result<std::unique_ptr<PhysicalOperator>> create_snapshot_cseg_part_scan_impl(
+    const QueryResourceContext& resources, QuerySharedMemoryReservation publication_reservation,
+    const SnapshotCsegPartScanPlan& plan,
     std::vector<std::shared_ptr<const manifest::SnapshotPartImage>> images,
     const schema::SchemaLineage& lineage, const schema::SchemaId destination_schema_id,
     const std::vector<std::uint32_t>& destination_column_ordinals, const CsegScanLimits limits) {
+  if (publication_reservation.is_valid() && !resources.owns(publication_reservation)) {
+    return common::make_unexpected(
+        invalid("snapshot CSEG shared publication belongs to another query"));
+  }
   const std::shared_ptr<const schema::TableSchema> destination_schema =
       lineage.find(destination_schema_id);
   if (destination_schema == nullptr)
@@ -555,8 +578,29 @@ common::Result<std::unique_ptr<PhysicalOperator>> create_snapshot_cseg_part_scan
       return common::make_unexpected(
           invalid("snapshot CSEG image has no exact retained source schema"));
     }
+    if (index != 0U && images[index]->publication_retained_buffer_bytes() !=
+                           images.front()->publication_retained_buffer_bytes()) {
+      return common::make_unexpected(
+          invalid("snapshot CSEG images disagree on their shared publication charge"));
+    }
   }
 
+  if (!images.empty()) {
+    const std::size_t publication_bytes = images.front()->publication_retained_buffer_bytes();
+    if (publication_reservation.is_valid()) {
+      if (!resources.owns(publication_reservation) ||
+          publication_reservation.bytes() != publication_bytes) {
+        return common::make_unexpected(
+            invalid("snapshot CSEG shared publication reservation is invalid"));
+      }
+    } else {
+      common::Result<QuerySharedMemoryReservation> shared =
+          resources.reserve_shared(publication_bytes);
+      if (!shared.has_value())
+        return common::make_unexpected(shared.error());
+      publication_reservation = std::move(*shared);
+    }
+  }
   common::Result<std::size_t> charge = sequential_source_charge(images.size());
   if (!charge.has_value())
     return common::make_unexpected(charge.error());
@@ -575,23 +619,25 @@ common::Result<std::unique_ptr<PhysicalOperator>> create_snapshot_cseg_part_scan
         if (append_event_time_helper)
           child_ordinals.push_back(event_time_destination_ordinal);
         common::Result<std::unique_ptr<PhysicalOperator>> child =
-            CsegScanOperator::create_event_time_pruned(
-                resources, std::move(*part), lineage, destination_schema_id, plan.tablet_id(),
-                std::move(child_ordinals), predicate.value(), limits);
+            CsegScanOperator::create_event_time_pruned_with_shared_pin(
+                resources, std::move(*part), publication_reservation, lineage,
+                destination_schema_id, plan.tablet_id(), std::move(child_ordinals),
+                predicate.value(), limits);
         if (!child.has_value())
           return common::make_unexpected(child.error());
         children.push_back(std::move(*child));
       } else {
         common::Result<std::unique_ptr<PhysicalOperator>> child =
-            CsegScanOperator::create(resources, std::move(*part), lineage, destination_schema_id,
-                                     plan.tablet_id(), std::move(child_ordinals), limits);
+            CsegScanOperator::create_with_shared_pin(
+                resources, std::move(*part), publication_reservation, lineage,
+                destination_schema_id, plan.tablet_id(), std::move(child_ordinals), limits);
         if (!child.has_value())
           return common::make_unexpected(child.error());
         children.push_back(std::move(*child));
       }
     }
-    std::unique_ptr<PhysicalOperator> pipeline{
-        new SequentialSnapshotScan{std::move(children), std::move(*reservation)}};
+    std::unique_ptr<PhysicalOperator> pipeline{new SequentialSnapshotScan{
+        std::move(children), std::move(publication_reservation), std::move(*reservation)}};
     if (predicate.has_value()) {
       common::Result<std::unique_ptr<PhysicalOperator>> filtered =
           TimestampRangeFilterOperator::create(std::move(pipeline), *event_time_output_ordinal,
@@ -633,9 +679,36 @@ common::Result<std::unique_ptr<PhysicalOperator>> create_snapshot_cseg_part_scan
   }
 }
 
-common::Result<std::unique_ptr<PhysicalOperator>> create_snapshot_tablet_scan(
-    const QueryResourceContext& resources, const manifest::DatabaseStorageSnapshot& snapshot,
+common::Result<std::unique_ptr<PhysicalOperator>> create_snapshot_cseg_part_scan(
+    const QueryResourceContext& resources, const SnapshotCsegPartScanPlan& plan,
+    std::vector<std::shared_ptr<const manifest::SnapshotPartImage>> images,
+    const schema::SchemaLineage& lineage, const schema::SchemaId destination_schema_id,
+    const std::vector<std::uint32_t>& destination_column_ordinals, const CsegScanLimits limits) {
+  return create_snapshot_cseg_part_scan_impl(resources, QuerySharedMemoryReservation{}, plan,
+                                             std::move(images), lineage, destination_schema_id,
+                                             destination_column_ordinals, limits);
+}
+
+common::Result<std::unique_ptr<PhysicalOperator>>
+create_snapshot_cseg_part_scan_with_shared_publication(
+    const QueryResourceContext& resources,
+    QuerySharedMemoryReservation shared_publication_reservation,
     const SnapshotCsegPartScanPlan& plan,
+    std::vector<std::shared_ptr<const manifest::SnapshotPartImage>> images,
+    const schema::SchemaLineage& lineage, const schema::SchemaId destination_schema_id,
+    const std::vector<std::uint32_t>& destination_column_ordinals, const CsegScanLimits limits) {
+  if (!shared_publication_reservation.is_valid()) {
+    return common::make_unexpected(
+        invalid("snapshot CSEG shared publication reservation must be valid"));
+  }
+  return create_snapshot_cseg_part_scan_impl(
+      resources, std::move(shared_publication_reservation), plan, std::move(images), lineage,
+      destination_schema_id, destination_column_ordinals, limits);
+}
+
+common::Result<std::unique_ptr<PhysicalOperator>> create_snapshot_tablet_scan_impl(
+    const QueryResourceContext& resources, const manifest::DatabaseStorageSnapshot& snapshot,
+    QuerySharedMemoryReservation publication_reservation, const SnapshotCsegPartScanPlan& plan,
     std::vector<std::shared_ptr<const manifest::SnapshotPartImage>> images,
     const schema::SchemaLineage& lineage, const schema::SchemaId destination_schema_id,
     const std::vector<std::uint32_t>& destination_column_ordinals,
@@ -676,6 +749,21 @@ common::Result<std::unique_ptr<PhysicalOperator>> create_snapshot_tablet_scan(
         exhausted("snapshot tablet scan exceeds the configured retained configuration limit"));
   }
 
+  const std::size_t publication_bytes = snapshot.retained_buffer_bytes();
+  if (publication_reservation.is_valid()) {
+    if (!resources.owns(publication_reservation) ||
+        publication_reservation.bytes() != publication_bytes) {
+      return common::make_unexpected(
+          invalid("snapshot tablet shared publication reservation is invalid"));
+    }
+  } else {
+    common::Result<QuerySharedMemoryReservation> shared =
+        resources.reserve_shared(publication_bytes);
+    if (!shared.has_value())
+      return common::make_unexpected(shared.error());
+    publication_reservation = std::move(*shared);
+  }
+
   const std::optional<cseg::EventTimePredicate>& predicate = plan.event_time_predicate();
   common::Result<std::size_t> charge = sequential_source_charge(head_count + 1U);
   if (!charge.has_value())
@@ -686,9 +774,10 @@ common::Result<std::unique_ptr<PhysicalOperator>> create_snapshot_tablet_scan(
   try {
     std::vector<std::unique_ptr<PhysicalOperator>> children;
     children.reserve(head_count + 1U);
-    common::Result<std::unique_ptr<PhysicalOperator>> durable = create_snapshot_cseg_part_scan(
-        resources, plan, std::move(images), lineage, destination_schema_id,
-        destination_column_ordinals, limits.cseg);
+    common::Result<std::unique_ptr<PhysicalOperator>> durable =
+        create_snapshot_cseg_part_scan_with_shared_publication(
+            resources, publication_reservation, plan, std::move(images), lineage,
+            destination_schema_id, destination_column_ordinals, limits.cseg);
     if (!durable.has_value())
       return common::make_unexpected(durable.error());
     children.push_back(std::move(*durable));
@@ -701,13 +790,14 @@ common::Result<std::unique_ptr<PhysicalOperator>> create_snapshot_tablet_scan(
       }
       common::Result<std::unique_ptr<PhysicalOperator>> child =
           predicate.has_value()
-              ? HeadScanOperator::create_event_time_filtered(
-                    resources, std::move(head_snapshot), lineage, destination_schema_id,
-                    plan.tablet_id(), destination_column_ordinals,
+              ? HeadScanOperator::create_event_time_filtered_with_shared_publication(
+                    resources, std::move(head_snapshot), publication_reservation, lineage,
+                    destination_schema_id, plan.tablet_id(), destination_column_ordinals,
                     exact_timestamp_predicate(*predicate), limits.head)
-              : HeadScanOperator::create(resources, std::move(head_snapshot), lineage,
-                                         destination_schema_id, plan.tablet_id(),
-                                         destination_column_ordinals, limits.head);
+              : HeadScanOperator::create_with_shared_publication(
+                    resources, std::move(head_snapshot), publication_reservation, lineage,
+                    destination_schema_id, plan.tablet_id(), destination_column_ordinals,
+                    limits.head);
       if (!child.has_value())
         return common::make_unexpected(child.error());
       children.push_back(std::move(*child));
@@ -725,13 +815,43 @@ common::Result<std::unique_ptr<PhysicalOperator>> create_snapshot_tablet_scan(
           return common::make_unexpected(appended.error());
       }
     }
-    return std::unique_ptr<PhysicalOperator>{
-        new SequentialSnapshotScan{std::move(children), std::move(*reservation)}};
+    return std::unique_ptr<PhysicalOperator>{new SequentialSnapshotScan{
+        std::move(children), std::move(publication_reservation), std::move(*reservation)}};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("snapshot tablet scan allocation failed"));
   } catch (const std::length_error&) {
     return common::make_unexpected(exhausted("snapshot tablet scan exceeds container limits"));
   }
+}
+
+common::Result<std::unique_ptr<PhysicalOperator>> create_snapshot_tablet_scan(
+    const QueryResourceContext& resources, const manifest::DatabaseStorageSnapshot& snapshot,
+    const SnapshotCsegPartScanPlan& plan,
+    std::vector<std::shared_ptr<const manifest::SnapshotPartImage>> images,
+    const schema::SchemaLineage& lineage, const schema::SchemaId destination_schema_id,
+    const std::vector<std::uint32_t>& destination_column_ordinals,
+    const SnapshotTabletScanLimits limits) {
+  return create_snapshot_tablet_scan_impl(resources, snapshot, QuerySharedMemoryReservation{}, plan,
+                                          std::move(images), lineage, destination_schema_id,
+                                          destination_column_ordinals, limits);
+}
+
+common::Result<std::unique_ptr<PhysicalOperator>>
+create_snapshot_tablet_scan_with_shared_publication(
+    const QueryResourceContext& resources,
+    QuerySharedMemoryReservation shared_publication_reservation,
+    const manifest::DatabaseStorageSnapshot& snapshot, const SnapshotCsegPartScanPlan& plan,
+    std::vector<std::shared_ptr<const manifest::SnapshotPartImage>> images,
+    const schema::SchemaLineage& lineage, const schema::SchemaId destination_schema_id,
+    const std::vector<std::uint32_t>& destination_column_ordinals,
+    const SnapshotTabletScanLimits limits) {
+  if (!shared_publication_reservation.is_valid()) {
+    return common::make_unexpected(
+        invalid("snapshot tablet shared publication reservation must be valid"));
+  }
+  return create_snapshot_tablet_scan_impl(
+      resources, snapshot, std::move(shared_publication_reservation), plan, std::move(images),
+      lineage, destination_schema_id, destination_column_ordinals, limits);
 }
 
 } // namespace chronos::query

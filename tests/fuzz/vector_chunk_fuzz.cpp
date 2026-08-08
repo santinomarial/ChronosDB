@@ -1,3 +1,4 @@
+#include "chronos/query/physical_operator.hpp"
 #include "chronos/query/vector_chunk.hpp"
 #include "chronos/schema/logical_type.hpp"
 
@@ -199,6 +200,30 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, const std::size_
         if (cell.has_value())
           static_cast<void>(cell->kind());
       }
+    }
+  }
+
+  auto shared_backing = std::make_shared<const SingleColumnBacking>(make_bool_column(rows, input));
+  auto shared_chunk = chronos::query::VectorChunk::create_backed(
+      std::move(shared_backing), chronos::query::VectorSelection::all(rows).value(),
+      {.maximum_rows = 256U,
+       .maximum_columns = 1U,
+       .maximum_buffer_bytes = 4'096U,
+       .maximum_retained_buffer_bytes = 4'096U});
+  if (shared_chunk.has_value() && shared_chunk->retained_buffer_bytes() > 1U) {
+    const std::size_t retained = shared_chunk->retained_buffer_bytes();
+    const std::size_t shared_bytes =
+        1U + (size == 0U ? 0U : static_cast<std::size_t>(data[0]) % (retained - 1U));
+    const std::size_t local_bytes = retained - shared_bytes;
+    auto resources = chronos::query::QueryResourceContext::create(8'192U).value();
+    auto shared = resources.reserve_shared(shared_bytes).value();
+    auto local = resources.reserve(local_bytes).value();
+    auto accounted = chronos::query::AccountedVectorChunk::create(
+        std::move(*shared_chunk), std::move(local), std::move(shared), resources);
+    if (accounted.has_value()) {
+      auto filtered = chronos::query::AccountedVectorChunk::where_true(std::move(*accounted), 0U);
+      if (filtered.has_value())
+        static_cast<void>(filtered->charged_memory_bytes());
     }
   }
   return 0;

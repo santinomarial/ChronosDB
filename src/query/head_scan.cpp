@@ -94,8 +94,9 @@ bytes_for(const std::size_t count, const std::size_t width, const char* const me
 
 [[nodiscard]] common::Result<std::size_t>
 source_charge(const head::HeadSnapshot& snapshot, const schema::TableSchema& destination_schema,
-              const std::vector<std::uint32_t>& destination_column_ordinals) {
-  std::size_t total = snapshot.retained_buffer_bytes();
+              const std::vector<std::uint32_t>& destination_column_ordinals,
+              const bool shared_publication_accounted) {
+  std::size_t total = shared_publication_accounted ? 0U : snapshot.retained_buffer_bytes();
   common::Result<std::size_t> projection =
       bytes_for(destination_schema.columns().size(), sizeof(schema::ProjectionEntry),
                 "head scan schema-projection accounting overflowed");
@@ -116,7 +117,8 @@ source_charge(const head::HeadSnapshot& snapshot, const schema::TableSchema& des
   constexpr std::size_t objects =
       sizeof(head::HeadSnapshot) + sizeof(std::shared_ptr<const schema::TableSchema>) +
       sizeof(schema::SchemaProjection) + sizeof(std::vector<std::uint32_t>) +
-      sizeof(HeadScanLimits) + sizeof(QueryMemoryReservation) + sizeof(HeadScanOperator) + 128U;
+      sizeof(HeadScanLimits) + sizeof(QuerySharedMemoryReservation) +
+      sizeof(QueryMemoryReservation) + sizeof(HeadScanOperator) + 128U;
   next = add(*next, objects, "head scan source accounting overflowed");
   if (!next.has_value())
     return next;
@@ -552,18 +554,23 @@ public:
         std::shared_ptr<const schema::TableSchema> destination_schema_value,
         schema::SchemaProjection projection_value,
         std::vector<std::uint32_t> destination_column_ordinals_value,
-        const HeadScanLimits limits_value, QueryMemoryReservation reservation_value) noexcept
+        const HeadScanLimits limits_value,
+        QuerySharedMemoryReservation shared_publication_reservation_value,
+        QueryMemoryReservation reservation_value) noexcept
       : snapshot(std::move(snapshot_value)),
         destination_schema(std::move(destination_schema_value)),
         projection(std::move(projection_value)),
         destination_column_ordinals(std::move(destination_column_ordinals_value)),
-        limits(limits_value), reservation(std::move(reservation_value)) {}
+        limits(limits_value),
+        shared_publication_reservation(std::move(shared_publication_reservation_value)),
+        reservation(std::move(reservation_value)) {}
 
   head::HeadSnapshot snapshot;
   std::shared_ptr<const schema::TableSchema> destination_schema;
   schema::SchemaProjection projection;
   std::vector<std::uint32_t> destination_column_ordinals;
   HeadScanLimits limits;
+  QuerySharedMemoryReservation shared_publication_reservation;
   QueryMemoryReservation reservation;
   std::uint32_t next_row{};
 };
@@ -578,6 +585,28 @@ common::Result<std::unique_ptr<PhysicalOperator>> HeadScanOperator::create(
     const schema::SchemaLineage& lineage, const schema::SchemaId destination_schema_id,
     const schema::TabletId& target_tablet, std::vector<std::uint32_t> destination_column_ordinals,
     const HeadScanLimits limits) {
+  return create_impl(resources, std::move(snapshot), QuerySharedMemoryReservation{}, lineage,
+                     destination_schema_id, target_tablet, std::move(destination_column_ordinals),
+                     limits);
+}
+
+common::Result<std::unique_ptr<PhysicalOperator>> HeadScanOperator::create_with_shared_publication(
+    const QueryResourceContext& resources, head::HeadSnapshot snapshot,
+    QuerySharedMemoryReservation shared_publication_reservation,
+    const schema::SchemaLineage& lineage, const schema::SchemaId destination_schema_id,
+    const schema::TabletId& target_tablet, std::vector<std::uint32_t> destination_column_ordinals,
+    const HeadScanLimits limits) {
+  return create_impl(resources, std::move(snapshot), std::move(shared_publication_reservation),
+                     lineage, destination_schema_id, target_tablet,
+                     std::move(destination_column_ordinals), limits);
+}
+
+common::Result<std::unique_ptr<PhysicalOperator>> HeadScanOperator::create_impl(
+    const QueryResourceContext& resources, head::HeadSnapshot snapshot,
+    QuerySharedMemoryReservation shared_publication_reservation,
+    const schema::SchemaLineage& lineage, const schema::SchemaId destination_schema_id,
+    const schema::TabletId& target_tablet, std::vector<std::uint32_t> destination_column_ordinals,
+    const HeadScanLimits limits) {
   common::Result<std::shared_ptr<const schema::TableSchema>> destination =
       validate_head_scan_request(snapshot, lineage, destination_schema_id, target_tablet,
                                  destination_column_ordinals, limits);
@@ -585,8 +614,16 @@ common::Result<std::unique_ptr<PhysicalOperator>> HeadScanOperator::create(
     return common::make_unexpected(destination.error());
   std::shared_ptr<const schema::TableSchema> destination_schema = std::move(*destination);
 
-  common::Result<std::size_t> charge =
-      source_charge(snapshot, *destination_schema, destination_column_ordinals);
+  const bool shared_publication_accounted = shared_publication_reservation.is_valid();
+  if (shared_publication_accounted &&
+      (!resources.owns(shared_publication_reservation) ||
+       shared_publication_reservation.bytes() < snapshot.retained_buffer_bytes())) {
+    return common::make_unexpected(
+        invalid("head scan shared publication reservation is invalid or insufficient"));
+  }
+
+  common::Result<std::size_t> charge = source_charge(
+      snapshot, *destination_schema, destination_column_ordinals, shared_publication_accounted);
   if (!charge.has_value())
     return common::make_unexpected(charge.error());
   common::Result<QueryMemoryReservation> reservation = resources.reserve(*charge);
@@ -605,7 +642,8 @@ common::Result<std::unique_ptr<PhysicalOperator>> HeadScanOperator::create(
       return common::make_unexpected(std::move(valid));
     auto state = std::make_unique<State>(
         std::move(snapshot), std::move(destination_schema), std::move(*projection),
-        std::move(destination_column_ordinals), limits, std::move(*reservation));
+        std::move(destination_column_ordinals), limits, std::move(shared_publication_reservation),
+        std::move(*reservation));
     return std::unique_ptr<PhysicalOperator>{new HeadScanOperator{std::move(state)}};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("head scan source allocation failed"));
@@ -616,6 +654,31 @@ common::Result<std::unique_ptr<PhysicalOperator>> HeadScanOperator::create(
 
 common::Result<std::unique_ptr<PhysicalOperator>> HeadScanOperator::create_event_time_filtered(
     const QueryResourceContext& resources, head::HeadSnapshot snapshot,
+    const schema::SchemaLineage& lineage, const schema::SchemaId destination_schema_id,
+    const schema::TabletId& target_tablet, std::vector<std::uint32_t> destination_column_ordinals,
+    TimestampRangePredicate predicate, const HeadScanLimits limits) {
+  return create_event_time_filtered_impl(resources, std::move(snapshot),
+                                         QuerySharedMemoryReservation{}, lineage,
+                                         destination_schema_id, target_tablet,
+                                         std::move(destination_column_ordinals), predicate, limits);
+}
+
+common::Result<std::unique_ptr<PhysicalOperator>>
+HeadScanOperator::create_event_time_filtered_with_shared_publication(
+    const QueryResourceContext& resources, head::HeadSnapshot snapshot,
+    QuerySharedMemoryReservation shared_publication_reservation,
+    const schema::SchemaLineage& lineage, const schema::SchemaId destination_schema_id,
+    const schema::TabletId& target_tablet, std::vector<std::uint32_t> destination_column_ordinals,
+    TimestampRangePredicate predicate, const HeadScanLimits limits) {
+  return create_event_time_filtered_impl(resources, std::move(snapshot),
+                                         std::move(shared_publication_reservation), lineage,
+                                         destination_schema_id, target_tablet,
+                                         std::move(destination_column_ordinals), predicate, limits);
+}
+
+common::Result<std::unique_ptr<PhysicalOperator>> HeadScanOperator::create_event_time_filtered_impl(
+    const QueryResourceContext& resources, head::HeadSnapshot snapshot,
+    QuerySharedMemoryReservation shared_publication_reservation,
     const schema::SchemaLineage& lineage, const schema::SchemaId destination_schema_id,
     const schema::TabletId& target_tablet, std::vector<std::uint32_t> destination_column_ordinals,
     TimestampRangePredicate predicate, const HeadScanLimits limits) {
@@ -658,9 +721,9 @@ common::Result<std::unique_ptr<PhysicalOperator>> HeadScanOperator::create_event
   try {
     if (append_event_time_helper)
       destination_column_ordinals.push_back(event_time_ordinal);
-    common::Result<std::unique_ptr<PhysicalOperator>> source =
-        create(resources, std::move(snapshot), lineage, destination_schema_id, target_tablet,
-               std::move(destination_column_ordinals), limits);
+    common::Result<std::unique_ptr<PhysicalOperator>> source = create_impl(
+        resources, std::move(snapshot), std::move(shared_publication_reservation), lineage,
+        destination_schema_id, target_tablet, std::move(destination_column_ordinals), limits);
     if (!source.has_value())
       return common::make_unexpected(source.error());
     source = TimestampRangeFilterOperator::create(std::move(*source), event_time_output_ordinal,
@@ -706,6 +769,12 @@ common::Result<PhysicalOperatorStep> HeadScanOperator::next(const QueryResourceC
   if (!resources.owns(state_->reservation)) {
     static_cast<void>(resources.request_cancel());
     return common::make_unexpected(invalid("head scan source belongs to another query"));
+  }
+  if (state_->shared_publication_reservation.is_valid() &&
+      !resources.owns(state_->shared_publication_reservation)) {
+    static_cast<void>(resources.request_cancel());
+    return common::make_unexpected(
+        invalid("head scan shared publication belongs to another query"));
   }
   if (state_->next_row >= state_->snapshot.row_count()) {
     ended_ = true;

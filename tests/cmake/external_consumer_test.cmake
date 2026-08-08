@@ -248,6 +248,12 @@ int main() {
   using CreateCsegPartPinFunction = chronos::common::Result<chronos::query::CsegPartPin> (*)(
       std::shared_ptr<const void>, chronos::common::ByteView, std::size_t);
   const CreateCsegPartPinFunction create_cseg_part_pin = &chronos::query::CsegPartPin::create;
+  using CreateSharedCsegPartPinFunction =
+      chronos::common::Result<chronos::query::CsegPartPin> (*)(
+          std::shared_ptr<const void>, chronos::common::ByteView,
+          chronos::query::CsegPartPinRetainedBytes);
+  const CreateSharedCsegPartPinFunction create_shared_cseg_part_pin =
+      &chronos::query::CsegPartPin::create_with_shared_retained_bytes;
   using PinSnapshotCsegPartFunction = chronos::common::Result<chronos::query::CsegPartPin> (*)(
       std::shared_ptr<const chronos::manifest::SnapshotPartImage>);
   const PinSnapshotCsegPartFunction pin_snapshot_cseg_part =
@@ -260,6 +266,23 @@ int main() {
           chronos::cseg::EventTimePredicate, chronos::query::CsegScanLimits);
   const CreatePrunedCsegScanFunction create_pruned_cseg_scan =
       &chronos::query::CsegScanOperator::create_event_time_pruned;
+  using CreateSharedCsegScanFunction =
+      chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
+          const chronos::query::QueryResourceContext&, chronos::query::CsegPartPin,
+          chronos::query::QuerySharedMemoryReservation, const chronos::schema::SchemaLineage&,
+          chronos::schema::SchemaId, const chronos::schema::TabletId&,
+          std::vector<std::uint32_t>, chronos::query::CsegScanLimits);
+  const CreateSharedCsegScanFunction create_shared_cseg_scan =
+      &chronos::query::CsegScanOperator::create_with_shared_pin;
+  using CreateSharedPrunedCsegScanFunction =
+      chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
+          const chronos::query::QueryResourceContext&, chronos::query::CsegPartPin,
+          chronos::query::QuerySharedMemoryReservation, const chronos::schema::SchemaLineage&,
+          chronos::schema::SchemaId, const chronos::schema::TabletId&,
+          std::vector<std::uint32_t>, chronos::cseg::EventTimePredicate,
+          chronos::query::CsegScanLimits);
+  const CreateSharedPrunedCsegScanFunction create_shared_pruned_cseg_scan =
+      &chronos::query::CsegScanOperator::create_event_time_pruned_with_shared_pin;
   using PlanSnapshotCsegPartScanFunction =
       chronos::common::Result<chronos::query::SnapshotCsegPartScanPlan> (*)(
           const chronos::manifest::DatabaseStorageSnapshot&,
@@ -287,6 +310,16 @@ int main() {
           const std::vector<std::uint32_t>&, chronos::query::CsegScanLimits);
   const CreateSnapshotCsegPartScanFunction create_snapshot_cseg_part_scan =
       &chronos::query::create_snapshot_cseg_part_scan;
+  using CreateSharedSnapshotCsegPartScanFunction =
+      chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
+          const chronos::query::QueryResourceContext&,
+          chronos::query::QuerySharedMemoryReservation,
+          const chronos::query::SnapshotCsegPartScanPlan&,
+          std::vector<std::shared_ptr<const chronos::manifest::SnapshotPartImage>>,
+          const chronos::schema::SchemaLineage&, chronos::schema::SchemaId,
+          const std::vector<std::uint32_t>&, chronos::query::CsegScanLimits);
+  const CreateSharedSnapshotCsegPartScanFunction create_shared_snapshot_cseg_part_scan =
+      &chronos::query::create_snapshot_cseg_part_scan_with_shared_publication;
   using CreateSnapshotTabletScanFunction =
       chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
           const chronos::query::QueryResourceContext&,
@@ -297,6 +330,17 @@ int main() {
           const std::vector<std::uint32_t>&, chronos::query::SnapshotTabletScanLimits);
   const CreateSnapshotTabletScanFunction create_snapshot_tablet_scan =
       &chronos::query::create_snapshot_tablet_scan;
+  using CreateSharedSnapshotTabletScanFunction =
+      chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
+          const chronos::query::QueryResourceContext&,
+          chronos::query::QuerySharedMemoryReservation,
+          const chronos::manifest::DatabaseStorageSnapshot&,
+          const chronos::query::SnapshotCsegPartScanPlan&,
+          std::vector<std::shared_ptr<const chronos::manifest::SnapshotPartImage>>,
+          const chronos::schema::SchemaLineage&, chronos::schema::SchemaId,
+          const std::vector<std::uint32_t>&, chronos::query::SnapshotTabletScanLimits);
+  const CreateSharedSnapshotTabletScanFunction create_shared_snapshot_tablet_scan =
+      &chronos::query::create_snapshot_tablet_scan_with_shared_publication;
   using InstantiateSnapshotTabletPipelineFunction =
       chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
           const chronos::query::QueryResourceContext&,
@@ -323,6 +367,15 @@ int main() {
           const chronos::schema::TabletId&, std::vector<std::uint32_t>,
           chronos::query::HeadScanLimits);
   const CreateHeadScanFunction create_head_scan = &chronos::query::HeadScanOperator::create;
+  using CreateSharedHeadScanFunction =
+      chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
+          const chronos::query::QueryResourceContext&, chronos::head::HeadSnapshot,
+          chronos::query::QuerySharedMemoryReservation,
+          const chronos::schema::SchemaLineage&, chronos::schema::SchemaId,
+          const chronos::schema::TabletId&, std::vector<std::uint32_t>,
+          chronos::query::HeadScanLimits);
+  const CreateSharedHeadScanFunction create_shared_head_scan =
+      &chronos::query::HeadScanOperator::create_with_shared_publication;
   using CreateExactHeadScanFunction =
       chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
           const chronos::query::QueryResourceContext&, chronos::head::HeadSnapshot,
@@ -331,6 +384,15 @@ int main() {
           chronos::query::TimestampRangePredicate, chronos::query::HeadScanLimits);
   const CreateExactHeadScanFunction create_exact_head_scan =
       &chronos::query::HeadScanOperator::create_event_time_filtered;
+  using CreateSharedExactHeadScanFunction =
+      chronos::common::Result<std::unique_ptr<chronos::query::PhysicalOperator>> (*)(
+          const chronos::query::QueryResourceContext&, chronos::head::HeadSnapshot,
+          chronos::query::QuerySharedMemoryReservation,
+          const chronos::schema::SchemaLineage&, chronos::schema::SchemaId,
+          const chronos::schema::TabletId&, std::vector<std::uint32_t>,
+          chronos::query::TimestampRangePredicate, chronos::query::HeadScanLimits);
+  const CreateSharedExactHeadScanFunction create_shared_exact_head_scan =
+      &chronos::query::HeadScanOperator::create_event_time_filtered_with_shared_publication;
   chronos::columnar::ColumnarBatchLimits limits;
   std::array<std::byte, 0> empty{};
   const auto decoded = chronos::columnar::decode_columnar_batch_v1_exact(empty);
@@ -366,6 +428,13 @@ int main() {
           chronos::query::QueryResourceContext::*)(std::size_t) const;
   const ReserveSharedFunction reserve_shared =
       &chronos::query::QueryResourceContext::reserve_shared;
+  using CreateSharedAccountedChunkFunction =
+      chronos::common::Result<chronos::query::AccountedVectorChunk> (*)(
+          chronos::query::VectorChunk, chronos::query::QueryMemoryReservation,
+          chronos::query::QuerySharedMemoryReservation,
+          const chronos::query::QueryResourceContext&);
+  const CreateSharedAccountedChunkFunction create_shared_accounted_chunk =
+      &chronos::query::AccountedVectorChunk::create;
   using CreateParallelMergeFunction =
       chronos::common::Result<std::unique_ptr<chronos::query::ParallelMergeOperator>> (*)(
           const chronos::query::QueryResourceContext&,
@@ -620,6 +689,10 @@ int main() {
           chronos::manifest::ReferencedPartValidationLimits) const;
   const LoadSnapshotPartImagesFunction load_snapshot_part_images =
       &chronos::manifest::ManifestStorage::load_snapshot_part_images;
+  using SnapshotPublicationBytesFunction =
+      std::size_t (chronos::manifest::SnapshotPartImage::*)() const noexcept;
+  const SnapshotPublicationBytesFunction snapshot_publication_bytes =
+      &chronos::manifest::SnapshotPartImage::publication_retained_buffer_bytes;
   using FlushSealedHeadFunction =
       chronos::common::Result<chronos::manifest::EncodedSealedHeadPart> (*)(
           const chronos::manifest::SealedHeadFlushRequest&);
@@ -696,7 +769,8 @@ int main() {
                  query_scalar.has_value() && !query_scalar->is_null() &&
                  query_resources.has_value() &&
                  query_resources->available_memory_bytes() == 1'024U &&
-                 reserve_shared != nullptr && create_parallel_merge != nullptr &&
+                 reserve_shared != nullptr && create_shared_accounted_chunk != nullptr &&
+                 create_parallel_merge != nullptr &&
                  chronos::query::kDefaultParallelSchedulerTaskLimit == 256U &&
                  chronos::query::kDefaultParallelSchedulerWorkerLimit == 16U &&
                  physical_end.kind() == chronos::query::PhysicalOperatorStepKind::kEnd &&
@@ -739,7 +813,8 @@ int main() {
                  lower_select != nullptr &&
                  create_timestamp_range_filter != nullptr &&
                  timestamp_range.matches(0) && create_head_scan != nullptr &&
-                 create_exact_head_scan != nullptr &&
+                 create_shared_head_scan != nullptr &&
+                 create_exact_head_scan != nullptr && create_shared_exact_head_scan != nullptr &&
                  create_limit != nullptr &&
                  physical_plan.has_value() && physical_plan->output_columns().empty() &&
                  vector_chunk.has_value() && vector_chunk->selected_row_count() == 1U &&
@@ -765,7 +840,7 @@ int main() {
                  reclaim_retired_parts != nullptr &&
                  install_manifest != nullptr && manifest_metrics != nullptr &&
                  load_selected_manifest != nullptr && load_selected_part_images != nullptr &&
-                 load_snapshot_part_images != nullptr &&
+                 load_snapshot_part_images != nullptr && snapshot_publication_bytes != nullptr &&
                  flush_sealed_head != nullptr &&
                  build_manifest != nullptr && build_checkpoint != nullptr &&
                  create_storage_publisher != nullptr && publish_compaction != nullptr &&
@@ -785,13 +860,16 @@ int main() {
                  inspect_cseg_part != nullptr &&
                  open_projected_reader != nullptr &&
                  plan_projected_granule != nullptr &&
-                 create_cseg_part_pin != nullptr &&
+                 create_cseg_part_pin != nullptr && create_shared_cseg_part_pin != nullptr &&
                  pin_snapshot_cseg_part != nullptr &&
-                 create_pruned_cseg_scan != nullptr &&
+                 create_pruned_cseg_scan != nullptr && create_shared_cseg_scan != nullptr &&
+                 create_shared_pruned_cseg_scan != nullptr &&
                  plan_snapshot_cseg_part_scan != nullptr &&
                  load_snapshot_cseg_part_scan_images != nullptr &&
                  create_snapshot_cseg_part_scan != nullptr &&
+                 create_shared_snapshot_cseg_part_scan != nullptr &&
                  create_snapshot_tablet_scan != nullptr &&
+                 create_shared_snapshot_tablet_scan != nullptr &&
                  instantiate_snapshot_tablet_pipeline != nullptr &&
                  instantiate_snapshot_asof_plan != nullptr &&
                  !cseg_metadata.has_value() &&

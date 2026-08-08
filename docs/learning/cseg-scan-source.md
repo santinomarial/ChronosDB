@@ -77,9 +77,10 @@ reports all requested, synthesized, and hidden system logical buffers. Its retai
 part pin, owned capacities, result containers, and backing overhead. `VectorChunk::create_backed`
 and `AccountedVectorChunk::create` repeat the lower-bound and credit checks before ownership escapes.
 
-The same part pin is conservatively charged by the source and every live output. This can overcount
-while both are live, but never lets a chunk outlive its pin credit. A future shared-credit mechanism
-must preserve that property before reducing the charge.
+Standalone factories conservatively charge the same complete part pin through the source and every
+live output. Snapshot composition instead declares the exact publication portion and carries one
+last-owner shared reservation through the source and every borrowed output; independently owned
+image and decoded bytes remain local. Both modes prevent a chunk from outliving its pin credit.
 
 ## Pull, failure, and cancellation behavior
 
@@ -128,17 +129,16 @@ observed allocations. `scan_one_selected_granule_among_many` measures one select
 
 ## Tradeoffs and next steps
 
-The source is deliberately single-part and sequential. Duplicate pin charging is conservative;
+The source is deliberately single-part and sequential. Standalone pin charging is conservative;
 granule-sized physical domains can be wider than an eventual execution morsel; and an opaque pin is
 only as truthful as its trusted storage provider. These choices keep the first real storage/source
 ownership path auditable.
 
-The snapshot-bound multi-part adapter now chooses several validated Manifest images in canonical
-order, composes event-time-pruned children while retaining every exact aggregate owner, and wraps
-the aggregate with exact timestamp truth plus projection-aware helper removal. The next storage
-integration must add mutable-head physical backing and real part/head merge semantics, then
-decide whether epoch-wide pin credit can be shared without allowing any output to retain uncharged
-state.
+The snapshot-bound multi-part adapter chooses several validated Manifest images in canonical order,
+composes event-time-pruned children while retaining every exact aggregate owner, wraps the aggregate
+with exact timestamp truth plus projection-aware helper removal, and shares one aggregate-publication
+credit without detaching any output backing. Complete append-only tablet composition also includes
+sealed and active heads; future correction/delete merge semantics remain separate.
 
 ## Likely review questions
 
@@ -146,8 +146,9 @@ state.
 the source through LIMIT, cancellation, or caller retention. A bare view into source state would be
 a use-after-free risk.
 
-**Why charge the part more than once?** Each output has an independent sufficient reservation. This
-is conservative but safe until shared reservation transfer has a reviewed lifetime model.
+**Why can standalone scans charge the part more than once?** They have no authoritative aggregate
+snapshot split, so each output keeps an independently sufficient reservation. Snapshot factories use
+the reviewed shared-publication path instead.
 
 **Why are system pages charged when append mode is off?** They are decoded and retained to validate
 row identity and operation semantics before any user row is exposed. Visibility does not weaken

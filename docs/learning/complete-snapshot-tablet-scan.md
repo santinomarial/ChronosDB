@@ -41,9 +41,10 @@ ordering and future merge work, but it is not used to discard rows in this sourc
 ## Ownership, failure, and complexity
 
 The sequential parent reserves its container and allocation allowance before constructing children.
-Every child independently reserves its source pin and output chunks. Completed children are
-destroyed immediately; final end swaps out the container and releases parent credit. Returned chunks
-own their exact credit and backing and may outlive the source.
+One last-owner reservation covers the exact aggregate publication across the parent, every child,
+and borrowed CSEG output. Each child independently reserves image/source and output bytes. Completed
+children are destroyed immediately; final end swaps out the container and releases parent credit.
+Returned chunks own their exact local/shared credit and backing and may outlive the source.
 
 Construction is `O(P + H)` for selected parts `P` and published heads `H`, in addition to storage
 validation. Pull cost is the current child's page decode or head materialization. An error requests
@@ -61,9 +62,9 @@ cancellation, and pull boundaries over an authenticated head-only snapshot.
 active-head rows with source construction excluded from timing.
 
 Bound-SQL source selection is now connected through
-[snapshot physical pipeline instantiation](snapshot-physical-pipeline.md). Shared publication
-credit, asynchronous/mapped part providers, parallel morsel scheduling, spill, and future
-correction/delete resolution remain separate work.
+[snapshot physical pipeline instantiation](snapshot-physical-pipeline.md). Shared publication credit
+is now implemented. Asynchronous/mapped part providers, parallel morsel scheduling, spill selection,
+and future correction/delete resolution remain separate work.
 
 ## Review questions
 

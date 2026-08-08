@@ -86,10 +86,11 @@ loader intentionally does not fall back to a different descriptor or generation.
 
 ## Query admission and failure behavior
 
-The image's retained count conservatively includes the complete aggregate epoch, Manifest decoded
-state, mutable-head arenas, part-pin bookkeeping, owned file image, objects, and allocator
-allowances. Multiple images and chunks independently repeat the shared epoch charge. This can
-over-admit less work but prevents any one result from retaining uncharged storage memory.
+The image reports the complete aggregate-publication bytes separately from its owned file image,
+objects, and allocator allowances. Its legacy complete count remains their conservative sum.
+Snapshot query composition reserves the publication once and copies that last-owner credit through
+every source and borrowed chunk; each image and decoded output remains independently charged. No
+result can retain storage memory without both its lifetime token and sufficient local/shared credit.
 
 The query adapter validates selected descriptor length, target tablet, source schema identity and
 version, and destination table before calling `CsegScanOperator`. A mismatch is `INVALID_ARGUMENT`
@@ -113,9 +114,9 @@ measuring.
 
 ## Tradeoffs and next steps
 
-Owned reads are portable and auditable but copy the complete selected file. Full-epoch charging is
-safe but pessimistic. Per-part pins add one shared lifetime object per newly selected part and one
-shared pointer per publication descriptor.
+Owned reads are portable and auditable but copy the complete selected file. The aggregate epoch is
+still charged conservatively in full, but only once per query snapshot. Per-part pins add one shared
+lifetime object per newly selected part and one shared pointer per publication descriptor.
 
 The storage execution layer now accepts several `SnapshotPartImage` values from one epoch, applies
 conservative part/granule pruning, and defines deterministic physical part order. Mutable heads
@@ -131,9 +132,9 @@ reader.
 **Why not watch the predecessor publication pointer?** Older tablet-refresh publications can name
 the same part without retaining that exact object. They do share the part's lifetime identity.
 
-**Why repeat the whole snapshot charge per image?** Current query credit is independently RAII-owned
-and cannot be shared safely across arbitrary surviving chunks. Conservative duplication preserves
-the lower-bound invariant.
+**Why does each image still report the whole snapshot in its complete count?** It remains a safe
+standalone lower bound and preserves compatibility. The snapshot query adapter uses the explicit
+publication/owned split and one last-owner reservation across arbitrary surviving chunks.
 
 **Does the image prove page integrity forever?** It proves the complete bytes at load time and owns
 immutable copies. The selective reader still verifies every requested and mandatory system page at

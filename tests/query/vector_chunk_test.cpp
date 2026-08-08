@@ -301,6 +301,45 @@ TEST(VectorChunkBackingTest, AccountedOwnershipKeepsThePinAndCreditCoupled) {
   EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
 }
 
+TEST(VectorChunkBackingTest, SharedCreditCoversOnePinAcrossIndependentChunkOwners) {
+  const auto resources = QueryResourceContext::create(4'096U).value();
+  auto destroyed = std::make_shared<bool>(false);
+  std::vector<columnar::OwnedPhysicalColumn> columns;
+  columns.push_back(int64_column({1, 2, 3}));
+  std::shared_ptr<const VectorChunkBacking> backing = test_backing(std::move(columns), destroyed);
+  auto chunk = VectorChunk::create_backed(backing, VectorSelection::all(3U).value()).value();
+  const std::size_t retained = chunk.retained_buffer_bytes();
+  const std::size_t shared_bytes = retained / 2U;
+  const std::size_t local_bytes = retained - shared_bytes;
+  QuerySharedMemoryReservation shared = resources.reserve_shared(shared_bytes).value();
+  {
+    auto accounted = AccountedVectorChunk::create(
+        std::move(chunk), resources.reserve(local_bytes).value(), shared, resources);
+    ASSERT_TRUE(accounted.has_value()) << accounted.error().to_string();
+    backing.reset();
+    shared.reset();
+    EXPECT_FALSE(*destroyed);
+    EXPECT_EQ(accounted->charged_memory_bytes(), retained);
+    EXPECT_EQ(resources.reserved_memory_bytes(), retained);
+    EXPECT_TRUE(accounted->belongs_to(resources));
+  }
+  EXPECT_TRUE(*destroyed);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+
+  std::vector<columnar::OwnedPhysicalColumn> insufficient_columns;
+  insufficient_columns.push_back(int64_column({1, 2, 3}));
+  auto insufficient = VectorChunk::create_backed(test_backing(std::move(insufficient_columns)),
+                                                 VectorSelection::all(3U).value())
+                          .value();
+  const std::size_t required = insufficient.retained_buffer_bytes();
+  QuerySharedMemoryReservation too_small = resources.reserve_shared(1U).value();
+  auto rejected = AccountedVectorChunk::create(
+      std::move(insufficient), resources.reserve(required - 2U).value(), too_small, resources);
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kInvalidArgument);
+  too_small.reset();
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
 TEST(VectorChunkTest, EnforcesShapeLogicalAndRetainedBoundsBeforeRetention) {
   {
     std::vector<columnar::OwnedPhysicalColumn> columns;

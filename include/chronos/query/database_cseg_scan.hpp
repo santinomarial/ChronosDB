@@ -134,6 +134,14 @@ pin_snapshot_cseg_part(std::shared_ptr<const manifest::SnapshotPartImage> image)
     std::vector<std::shared_ptr<const manifest::SnapshotPartImage>> images,
     const schema::SchemaLineage& lineage, schema::SchemaId destination_schema_id,
     const std::vector<std::uint32_t>& destination_column_ordinals, CsegScanLimits limits = {});
+[[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>>
+create_snapshot_cseg_part_scan_with_shared_publication(
+    const QueryResourceContext& resources,
+    QuerySharedMemoryReservation shared_publication_reservation,
+    const SnapshotCsegPartScanPlan& plan,
+    std::vector<std::shared_ptr<const manifest::SnapshotPartImage>> images,
+    const schema::SchemaLineage& lineage, schema::SchemaId destination_schema_id,
+    const std::vector<std::uint32_t>& destination_column_ordinals, CsegScanLimits limits = {});
 
 // Creates the complete currently supported append-only row multiset for one tablet in one exact
 // aggregate database epoch. Durable parts are followed by sealed heads in publication order and
@@ -143,6 +151,15 @@ pin_snapshot_cseg_part(std::shared_ptr<const manifest::SnapshotPartImage> image)
 [[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>> create_snapshot_tablet_scan(
     const QueryResourceContext& resources, const manifest::DatabaseStorageSnapshot& snapshot,
     const SnapshotCsegPartScanPlan& plan,
+    std::vector<std::shared_ptr<const manifest::SnapshotPartImage>> images,
+    const schema::SchemaLineage& lineage, schema::SchemaId destination_schema_id,
+    const std::vector<std::uint32_t>& destination_column_ordinals,
+    SnapshotTabletScanLimits limits = {});
+[[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>>
+create_snapshot_tablet_scan_with_shared_publication(
+    const QueryResourceContext& resources,
+    QuerySharedMemoryReservation shared_publication_reservation,
+    const manifest::DatabaseStorageSnapshot& snapshot, const SnapshotCsegPartScanPlan& plan,
     std::vector<std::shared_ptr<const manifest::SnapshotPartImage>> images,
     const schema::SchemaLineage& lineage, schema::SchemaId destination_schema_id,
     const std::vector<std::uint32_t>& destination_column_ordinals,

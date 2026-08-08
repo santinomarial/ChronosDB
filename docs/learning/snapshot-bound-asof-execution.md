@@ -33,15 +33,17 @@ chain. Construction is eager and serial; if source `i` fails, the local owner ve
 sources `0..i-1` before returning the original status. Allocation and container-limit exceptions at
 the connector boundary become resource exhaustion.
 
-Returned chunks retain their own pins and reservations and may outlive the root operator. Shared
-cancellation reaches both ASOF inputs through the existing operator contract.
+Returned chunks retain their own pins and reservations and may outlive the root operator. One exact
+shared reservation covers the aggregate publication across every source alias and surviving backed
+CSEG chunk; per-source images and outputs remain local. Shared cancellation reaches both ASOF inputs
+through the existing operator contract.
 
 ## Complexity and tradeoffs
 
 For `S` sources with `C_i` schema columns, `P_i` selected parts, and `H_i` heads, connector setup is
 `O(sum(C_i + P_i + H_i))` plus synchronous authenticated part I/O. ASOF execution retains the
-bounded right-side state specified by each join. Repeated aliases may conservatively repeat pin
-charges; shared publication accounting is deliberately deferred.
+bounded right-side state specified by each join. Repeated aliases share one aggregate-publication
+charge but retain independent source, image, preparation, join-state, and output credit.
 
 ## Evidence
 

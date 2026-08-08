@@ -210,9 +210,11 @@ TEST(SnapshotAsofPlanTest, InstantiatesEverySourceFromOneEpochAndExecutesHiddenI
   const std::array sources{source, source, source};
   QueryResourceContext resources =
       QueryResourceContext::create(std::size_t{32U} * 1024U * 1024U).value();
-  auto pipeline = instantiate_snapshot_asof_plan(resources, fixture.storage(), fixture.snapshot(),
-                                                 sources, plan);
+  const manifest::DatabaseStorageSnapshot& snapshot = fixture.snapshot();
+  auto pipeline =
+      instantiate_snapshot_asof_plan(resources, fixture.storage(), snapshot, sources, plan);
   ASSERT_TRUE(pipeline.has_value()) << pipeline.error().to_string();
+  EXPECT_GE(resources.reserved_memory_bytes(), snapshot.retained_buffer_bytes());
   EXPECT_EQ(drain_signed(**pipeline, resources), (std::vector<std::int64_t>{-95, -96, -97}));
   pipeline->reset();
   EXPECT_EQ(resources.reserved_memory_bytes(), 0U);

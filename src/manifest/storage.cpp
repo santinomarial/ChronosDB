@@ -365,11 +365,18 @@ common::ByteView SnapshotPartImage::bytes() const noexcept {
   return bytes_;
 }
 
-std::size_t SnapshotPartImage::retained_buffer_bytes() const noexcept {
-  std::size_t total = snapshot_retained_buffer_bytes_;
-  total = saturating_size_add(total, bytes_.capacity());
+std::size_t SnapshotPartImage::publication_retained_buffer_bytes() const noexcept {
+  return snapshot_retained_buffer_bytes_;
+}
+
+std::size_t SnapshotPartImage::owned_retained_buffer_bytes() const noexcept {
+  std::size_t total = bytes_.capacity();
   total = saturating_size_add(total, sizeof(SnapshotPartImage));
   return saturating_size_add(total, 128U);
+}
+
+std::size_t SnapshotPartImage::retained_buffer_bytes() const noexcept {
+  return saturating_size_add(publication_retained_buffer_bytes(), owned_retained_buffer_bytes());
 }
 
 class ManifestStorage::Impl {
