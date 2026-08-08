@@ -56,6 +56,12 @@ struct AsofJoinLimits {
 // Returns the conservative state credit acquired before either input is retained.
 [[nodiscard]] common::Result<std::size_t> asof_join_state_reservation_bytes(AsofJoinLimits limits);
 
+// Validates the complete definition and returns its exact physical output shape, including the
+// final match-presence column. This is the checked planning boundary used by relational plans.
+[[nodiscard]] common::Result<std::vector<VectorAsofColumnShape>>
+vector_asof_join_output_shape(const VectorAsofJoinDefinition& definition,
+                              AsofJoinLimits limits = {});
+
 // Blocking bounded ASOF join over two finite inputs. For each left row, equality keys use SQL
 // equality and the right timestamp must be non-NULL and no greater than the non-NULL left
 // timestamp. The greatest eligible timestamp wins; exact ties use the right physical-ordering key

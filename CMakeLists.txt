@@ -342,6 +342,7 @@ add_library(
   src/query/physical_operator.cpp
   src/query/physical_lowering.cpp
   src/query/physical_plan.cpp
+  src/query/relational_plan.cpp
   src/query/resource_context.cpp
   src/query/row_version.cpp
   src/query/snapshot.cpp
@@ -803,6 +804,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/physical_lowering_test.cpp
     tests/query/physical_plan_header_self_contained.cpp
     tests/query/physical_plan_test.cpp
+    tests/query/relational_plan_header_self_contained.cpp
+    tests/query/relational_plan_test.cpp
     tests/query/resource_context_header_self_contained.cpp
     tests/query/resource_context_test.cpp
     tests/query/row_version_header_self_contained.cpp
@@ -844,6 +847,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/head_scan_allocation_failure_test.cpp
     tests/query/latest_allocation_failure_test.cpp
     tests/query/physical_lowering_allocation_failure_test.cpp
+    tests/query/relational_plan_allocation_failure_test.cpp
     tests/query/sort_allocation_failure_test.cpp
     tests/support/failing_allocator.cpp
   )
@@ -1059,6 +1063,7 @@ if(CHRONOS_BUILD_BENCHMARKS)
     benchmarks/query/lexer_benchmark.cpp
     benchmarks/query/latest_benchmark.cpp
     benchmarks/query/physical_plan_benchmark.cpp
+    benchmarks/query/relational_plan_benchmark.cpp
     benchmarks/query/resource_context_benchmark.cpp
     benchmarks/query/sort_benchmark.cpp
     benchmarks/query/vector_chunk_benchmark.cpp
@@ -1259,6 +1264,16 @@ if(CHRONOS_BUILD_FUZZERS)
   chronos_set_project_warnings(chronos_asof_join_fuzz)
   chronos_enable_sanitizers(chronos_asof_join_fuzz)
   chronos_enable_static_analysis(chronos_asof_join_fuzz)
+
+  add_executable(chronos_relational_plan_fuzz tests/fuzz/relational_plan_fuzz.cpp)
+  set_target_properties(chronos_relational_plan_fuzz PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_relational_plan_fuzz PRIVATE cxx_std_23)
+  target_link_libraries(chronos_relational_plan_fuzz PRIVATE chronos::query)
+  target_compile_options(chronos_relational_plan_fuzz PRIVATE -fsanitize=fuzzer)
+  target_link_options(chronos_relational_plan_fuzz PRIVATE -fsanitize=fuzzer)
+  chronos_set_project_warnings(chronos_relational_plan_fuzz)
+  chronos_enable_sanitizers(chronos_relational_plan_fuzz)
+  chronos_enable_static_analysis(chronos_relational_plan_fuzz)
 
   add_executable(chronos_physical_plan_fuzz tests/fuzz/physical_plan_fuzz.cpp)
   set_target_properties(chronos_physical_plan_fuzz PROPERTIES CXX_EXTENSIONS OFF)

@@ -83,6 +83,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/manifest/startup_recovery.hpp>
 #include <chronos/manifest/storage.hpp>
 #include <chronos/query/asof_join.hpp>
+#include <chronos/query/relational_plan.hpp>
 #include <chronos/query/lexer.hpp>
 #include <chronos/query/latest.hpp>
 #include <chronos/query/literal.hpp>
@@ -690,6 +691,7 @@ int main() {
                  chronos::query::kDefaultLatestByKeyLimit == 256U &&
                  installed_asof_state_bytes.has_value() &&
                  chronos::query::kDefaultAsofJoinKeyLimit == 256U &&
+                 chronos::query::kDefaultPhysicalAsofPlanJoinLimit == 63U &&
                  installed_nullable_constant.force_nullable &&
                  installed_lowering_limits.grouped_aggregate_limits.maximum_groups ==
                      chronos::query::kMaximumGroupedAggregateGroups &&

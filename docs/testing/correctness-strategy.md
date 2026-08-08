@@ -186,6 +186,9 @@
 > The bounded ASOF primitive adds direct SQL NULL/NaN equality, timestamp and complete right-row
 > winner ties, inner/left miss behavior, explicit match presence, hostile input shapes, sibling
 > cancellation, exhaustive owned-allocation failure, definition fuzzing, and cardinality profiles.
+> Checked left-deep ASOF plans additionally cover exact preparation/join/final shape continuity,
+> multiple prior-source handoffs, source-count ownership, allocation failure, fuzzing, and measured
+> instantiation overhead.
 > Generated-identity base ordering, bound/multi-source ASOF execution, and spill remain outside this
 > claim.
 > Complete append-only tablet scanning now composes the exact durable, sealed-head, and active-head

@@ -468,8 +468,11 @@ No phase passes because its code merely compiles. A phase passes only when its a
   ADR 0052 and the thirty-fifth increment add a bounded two-input physical ASOF primitive with SQL
   NULL/NaN equality, exact timestamp/physical-key/row-version winners, ASOF LEFT null extension,
   explicit match presence, conservative state/output credit, sibling cancellation, failure
-  injection, hostile fuzzing, and cardinality benchmarks. Bound ASOF and broader relational
-  planning/lowering, optimizer rules, future correction/delete row-version resolution,
+  injection, hostile fuzzing, and cardinality benchmarks. ADR 0053 and the thirty-sixth increment
+  add a finite immutable left-deep ASOF plan with exact preparation/join/final shape handoffs,
+  retained-configuration accounting, source ownership, allocation-failure cleanup, hostile
+  fuzzing, and instantiation benchmarks. Bound ASOF lowering, optimizer rules, future
+  correction/delete row-version resolution,
   mapped/asynchronous providers, shared pin credit, scheduling, spill, and full scalar-engine
   differential plan execution are unimplemented.
 

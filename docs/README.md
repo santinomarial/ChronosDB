@@ -200,6 +200,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Bounded physical ASOF join](learning/bounded-asof-join.md): implemented an exact two-input,
   query-accounted temporal lookup primitive with SQL equality, complete winner ties, left null
   extension, and explicit match presence.
+- [Checked ASOF physical plans](learning/checked-asof-physical-plan.md): implemented exact
+  left-deep preparation, binary handoff, final-pipeline shape, ownership, and configuration bounds.
 - [Streaming ungrouped vector aggregates](learning/streaming-ungrouped-aggregates.md): implemented
   fixed-state global COUNT/SUM/AVG/MIN/MAX/variance over accounted chunk streams with exact empty,
   NULL, numeric, ownership, cancellation, and canonical-output behavior.

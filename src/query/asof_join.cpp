@@ -683,6 +683,28 @@ common::Result<std::size_t> asof_join_state_reservation_bytes(const AsofJoinLimi
   return state_charge(limits);
 }
 
+common::Result<std::vector<VectorAsofColumnShape>>
+vector_asof_join_output_shape(const VectorAsofJoinDefinition& definition,
+                              const AsofJoinLimits limits) {
+  common::Result<void> valid = validate_definition(definition, limits);
+  if (!valid.has_value())
+    return common::make_unexpected(valid.error());
+  common::Result<std::vector<OutputColumn>> planned = output_columns(definition);
+  if (!planned.has_value())
+    return common::make_unexpected(planned.error());
+  try {
+    std::vector<VectorAsofColumnShape> result;
+    result.reserve(planned->size());
+    for (const OutputColumn& column : *planned)
+      result.push_back(column.shape);
+    return result;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("ASOF output-shape allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("ASOF output shape exceeds container limits"));
+  }
+}
+
 class AsofJoinOperator::State {
 public:
   std::vector<AccountedVectorChunk> left_chunks;
