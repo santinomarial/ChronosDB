@@ -85,7 +85,7 @@ common::Result<StoredPage> compress_cseg_page_v1(const common::ByteView page,
   if (!context) {
     return common::make_unexpected(exhausted("Zstandard compression context allocation failed"));
   }
-  for (const auto [parameter, value] :
+  for (const auto& [parameter, value] :
        {std::pair{ZSTD_c_compressionLevel, 3}, std::pair{ZSTD_c_contentSizeFlag, 1},
         std::pair{ZSTD_c_checksumFlag, 1}, std::pair{ZSTD_c_dictIDFlag, 0},
         std::pair{ZSTD_c_nbWorkers, 0}}) {
@@ -136,7 +136,7 @@ decompress_cseg_page_v1(const common::ByteView stored, const PageCompression com
     return common::make_unexpected(corrupt("Zstandard CSEG page is not canonically smaller"));
   }
 
-  ZSTD_FrameHeader header{};
+  ZSTD_frameHeader header{};
   const std::size_t header_result = ZSTD_getFrameHeader(&header, stored.data(), stored.size());
   if (ZSTD_isError(header_result) != 0 || header_result != 0U) {
     return common::make_unexpected(corrupt("CSEG Zstandard frame header is invalid or incomplete"));

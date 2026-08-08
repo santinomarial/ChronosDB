@@ -61,7 +61,7 @@ TEST(CsegCompressionTest, ZstdUsesDeterministicCanonicalFramePropertiesAndRoundT
   EXPECT_LT(first->size(), input.size());
   EXPECT_TRUE(std::ranges::equal(first->bytes(), second->bytes()));
 
-  ZSTD_FrameHeader header{};
+  ZSTD_frameHeader header{};
   ASSERT_EQ(ZSTD_getFrameHeader(&header, first->bytes().data(), first->size()), 0U);
   EXPECT_EQ(header.frameType, ZSTD_frame);
   EXPECT_EQ(header.frameContentSize, input.size());
