@@ -1,3 +1,4 @@
+#include "chronos/network/client_session.hpp"
 #include "chronos/network/connection_buffers.hpp"
 #include "chronos/network/connection_state.hpp"
 #include "chronos/network/epoll_reactor.hpp"
@@ -119,6 +120,27 @@ TEST(ProtocolAllocationFailureTest, ConnectionBuffersClassifyCreationAndReceiveA
 
 TEST(ProtocolAllocationFailureTest, SpscQueueClassifiesItsSingleOwnedAllocation) {
   expect_owned_allocation_is_classified([&] { return SpscNetworkTaskQueue::create(64U); });
+}
+
+TEST(ProtocolAllocationFailureTest, ClientSessionClassifiesCreationAndQueuedRequestAllocations) {
+  expect_owned_allocation_is_classified([&] { return NativeClientSession::create(); });
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 32U; ++fail_after) {
+    NativeClientSession client = NativeClientSession::create().value();
+    ASSERT_TRUE(client.queue_handshake().is_ok());
+    static_cast<void>(client.consume_written(client.pending_write().size()));
+    const std::vector<std::byte> hello =
+        *encode_frame({.message_type = MessageType::kServerHello}, *encode_server_hello({}));
+    ASSERT_TRUE(client.receive(hello).has_value());
+    auto result = run_failure(fail_after, [&] { return client.queue_query("SELECT 1"); });
+    if (result.has_value()) {
+      reached_success = true;
+      break;
+    }
+    EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(client.in_flight_requests(), 0U);
+  }
+  EXPECT_TRUE(reached_success);
 }
 
 #if defined(__linux__)

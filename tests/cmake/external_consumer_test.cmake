@@ -122,6 +122,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/network/messages.hpp>
 #include <chronos/network/connection_state.hpp>
 #include <chronos/network/connection_buffers.hpp>
+#include <chronos/network/client_session.hpp>
 #include <chronos/network/epoll_reactor.hpp>
 #include <chronos/wal/application.hpp>
 
@@ -784,6 +785,7 @@ int main() {
   const auto installed_result_type = chronos::schema::LogicalType::create(
       chronos::schema::LogicalTypeKind::kInt64);
   const chronos::network::NetworkSecurityConfig installed_security;
+  const auto installed_client = chronos::network::NativeClientSession::create();
   return event_time_match != nullptr && execute != nullptr && recover != nullptr &&
                  reclaim_recovered_wal != nullptr && inspect_wal_suffix != nullptr &&
                  recover_wal_checkpoint != nullptr && open_wal_checkpoint != nullptr &&
@@ -875,6 +877,7 @@ int main() {
                  installed_result_type.has_value() &&
                  installed_security.mode ==
                      chronos::network::TransportSecurityMode::kLoopbackPlaintext &&
+                 installed_client.has_value() &&
                  manifest_name.has_value() &&
                  *manifest_name == "manifest-00000000000000000001.cman" &&
                  decode_manifest != nullptr && validate_manifest_transition != nullptr &&

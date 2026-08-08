@@ -101,3 +101,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0064](0064-bounded-linux-epoll-reactor.md) | Bounded Linux epoll reactor ownership and overload | accepted |
 | [0065](0065-self-describing-query-result-batches.md) | Self-describing Protocol v1 query result batches | accepted |
 | [0066](0066-authentication-and-tls-integration-boundary.md) | Authentication and TLS integration boundary | accepted |
+| [0067](0067-bounded-native-client-session.md) | Bounded native client session | accepted |

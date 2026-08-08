@@ -1,3 +1,4 @@
+#include "chronos/network/client_session.hpp"
 #include "chronos/network/epoll_reactor.hpp"
 #include "chronos/network/messages.hpp"
 
@@ -62,6 +63,12 @@ void send_all(const int socket, const common::ByteView bytes) {
     ASSERT_GT(count, 0);
     offset += static_cast<std::size_t>(count);
   }
+}
+
+void send_client_pending(const int socket, NativeClientSession& client) {
+  const common::ByteView pending = client.pending_write();
+  send_all(socket, pending);
+  ASSERT_TRUE(client.consume_written(pending.size()).is_ok());
 }
 
 [[nodiscard]] std::vector<std::byte> receive_available(const int socket) {
@@ -187,6 +194,57 @@ TEST(EpollReactorTest, SlowHandshakeTimesOutAndConnectionAdmissionIsBounded) {
   EXPECT_EQ(reactor.metrics().timed_out_connections, 1U);
   EXPECT_EQ(reactor.metrics().active_connections, 0U);
   ::close(slow);
+  EXPECT_TRUE(reactor.shutdown().is_ok());
+}
+
+TEST(EpollReactorTest, PortableClientSessionInteroperatesWithRealSocketServer) {
+  SpscNetworkTaskQueue requests = SpscNetworkTaskQueue::create(4U).value();
+  SpscNetworkTaskQueue responses = SpscNetworkTaskQueue::create(4U).value();
+  EpollReactor reactor =
+      EpollReactor::start({}, {.requests = &requests, .responses = &responses}).value();
+  const int socket = connect_client(reactor.bound_port());
+  ASSERT_GE(socket, 0);
+  ASSERT_TRUE(reactor.poll_once(std::chrono::milliseconds{1}).is_ok());
+  NativeClientSession client = NativeClientSession::create().value();
+  ASSERT_TRUE(client.queue_handshake().is_ok());
+  send_client_pending(socket, client);
+  for (std::size_t attempt = 0U; attempt < 8U; ++attempt)
+    ASSERT_TRUE(reactor.poll_once(std::chrono::milliseconds{1}).is_ok());
+  ASSERT_TRUE(client.receive(receive_available(socket)).has_value());
+  ASSERT_EQ(client.phase(), ClientSessionPhase::kActive);
+
+  const std::uint64_t request_id = client.queue_query("SELECT 1").value();
+  send_client_pending(socket, client);
+  for (std::size_t attempt = 0U; attempt < 8U && requests.empty(); ++attempt)
+    ASSERT_TRUE(reactor.poll_once(std::chrono::milliseconds{1}).is_ok());
+  const auto request = requests.try_pop();
+  ASSERT_TRUE(request.has_value());
+  const schema::LogicalType type =
+      schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
+  const std::array<QueryResultColumn, 1> columns{
+      QueryResultColumn{.name = "value", .type = type, .nullable = false}};
+  ASSERT_TRUE(
+      responses.try_push({.connection_id = request->connection_id,
+                          .frame = {.header = {.message_type = MessageType::kQueryResult,
+                                               .flags = kFrameFlagEndStream,
+                                               .request_id = request_id},
+                                    .payload = *encode_query_result_batch(0U, columns, {})}}));
+  ASSERT_TRUE(responses.try_push(
+      {.connection_id = request->connection_id,
+       .frame = {.header = {.message_type = MessageType::kQueryEnd, .request_id = request_id}}}));
+  std::size_t received_frames = 0U;
+  for (std::size_t attempt = 0U; attempt < 64U && client.in_flight_requests() != 0U; ++attempt) {
+    ASSERT_TRUE(reactor.poll_once(std::chrono::milliseconds{1}).is_ok());
+    const std::vector<std::byte> available = receive_available(socket);
+    if (!available.empty()) {
+      const auto server_frames = client.receive(available);
+      ASSERT_TRUE(server_frames.has_value());
+      received_frames += server_frames->size();
+    }
+  }
+  EXPECT_EQ(received_frames, 2U);
+  EXPECT_EQ(client.in_flight_requests(), 0U);
+  ::close(socket);
   EXPECT_TRUE(reactor.shutdown().is_ok());
 }
 #endif

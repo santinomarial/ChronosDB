@@ -175,6 +175,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   schema, canonical row-major cells, borrowing, limits, and completion semantics.
 - [Network security boundary](learning/network-security-boundary.md): loopback plaintext restriction,
   authenticator ownership, principal propagation, and fail-closed TLS mode.
+- [Native client session](learning/native-client-session.md): bounded portable partial I/O,
+  monotonic request generation, response validation, cancellation, and cleanup.
 - [Shared snapshot publication credit](learning/shared-snapshot-publication-credit.md): implemented
   one-query/one-epoch publication admission across part images, backed chunks, complete tablet scans,
   and ASOF aliases while retaining exact local image/output credit and last-owner cleanup.

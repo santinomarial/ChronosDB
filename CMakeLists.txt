@@ -387,6 +387,7 @@ chronos_enable_static_analysis(chronos_query)
 
 add_library(
   chronos_network
+  src/network/client_session.cpp
   src/network/connection_buffers.cpp
   src/network/connection_state.cpp
   src/network/epoll_reactor.cpp
@@ -483,6 +484,8 @@ if(CHRONOS_BUILD_TESTS)
 
   add_executable(
     chronos_network_tests
+    tests/network/client_session_header_self_contained.cpp
+    tests/network/client_session_test.cpp
     tests/network/connection_buffers_header_self_contained.cpp
     tests/network/connection_buffers_test.cpp
     tests/network/connection_state_header_self_contained.cpp

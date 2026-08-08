@@ -75,7 +75,10 @@ common::Result<std::vector<Frame>> ConnectionBuffers::receive(const common::Byte
 }
 
 common::Status ConnectionBuffers::enqueue(std::vector<std::byte> encoded_frame) {
-  if (!decode_frame(encoded_frame, config_.protocol).has_value())
+  const auto decoded = decode_frame(encoded_frame, config_.protocol);
+  if (!decoded.has_value() && decoded.error().code() == common::StatusCode::kResourceExhausted)
+    return decoded.error();
+  if (!decoded.has_value())
     return invalid("outbound bytes are not one canonical Protocol v1 frame");
   const auto total = common::checked_add(outbound_bytes_, encoded_frame.size());
   if (!total.has_value() || *total > config_.maximum_outbound_buffer_bytes ||
