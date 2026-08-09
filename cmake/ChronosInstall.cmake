@@ -18,6 +18,8 @@ function(chronos_configure_installation)
       chronos_query
       chronos_network
       chronos_live
+      chronos_raft
+      chronos_tiering
       chronosctl
       chronos-csegdump
       chronos-flushbench

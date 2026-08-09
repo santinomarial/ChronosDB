@@ -340,6 +340,7 @@ add_library(
   src/query/database_cseg_scan.cpp
   src/query/decimal_internal.cpp
   src/query/diagnostic.cpp
+  src/query/distributed.cpp
   src/query/evaluator.cpp
   src/query/executor.cpp
   src/query/explain.cpp
@@ -361,6 +362,7 @@ add_library(
   src/query/sort.cpp
   src/query/spill_sort.cpp
   src/query/statement_binder.cpp
+  src/query/temporal_snapshot.cpp
   src/query/value.cpp
   src/query/vector_chunk.cpp
   src/query/vector_expression.cpp
@@ -434,6 +436,49 @@ target_link_libraries(
 chronos_set_project_warnings(chronos_live)
 chronos_enable_sanitizers(chronos_live)
 chronos_enable_static_analysis(chronos_live)
+
+add_library(
+  chronos_raft
+  src/raft/multi_raft.cpp
+  src/raft/multiplexed_log.cpp
+  src/raft/node.cpp
+  src/raft/rebalancing.cpp
+)
+add_library(chronos::raft ALIAS chronos_raft)
+set_target_properties(chronos_raft PROPERTIES EXPORT_NAME raft CXX_EXTENSIONS OFF)
+target_compile_features(chronos_raft PUBLIC cxx_std_23)
+target_include_directories(
+  chronos_raft
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+)
+target_link_libraries(chronos_raft PUBLIC chronos::common)
+chronos_set_project_warnings(chronos_raft)
+chronos_enable_sanitizers(chronos_raft)
+chronos_enable_static_analysis(chronos_raft)
+
+add_library(
+  chronos_tiering
+  src/tiering/object_store.cpp
+  src/tiering/tiered_parts.cpp
+)
+add_library(chronos::tiering ALIAS chronos_tiering)
+set_target_properties(chronos_tiering PROPERTIES EXPORT_NAME tiering CXX_EXTENSIONS OFF)
+target_compile_features(chronos_tiering PUBLIC cxx_std_23)
+target_include_directories(
+  chronos_tiering
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+)
+target_link_libraries(
+  chronos_tiering
+  PUBLIC chronos::common chronos::cseg chronos::ingest chronos::manifest chronos::schema
+)
+chronos_set_project_warnings(chronos_tiering)
+chronos_enable_sanitizers(chronos_tiering)
+chronos_enable_static_analysis(chronos_tiering)
 
 add_executable(chronosctl tools/chronosctl/main.cpp)
 set_target_properties(chronosctl PROPERTIES CXX_EXTENSIONS OFF)
@@ -575,6 +620,41 @@ if(CHRONOS_BUILD_TESTS)
   chronos_enable_sanitizers(chronos_live_tests)
   chronos_enable_static_analysis(chronos_live_tests)
   gtest_discover_tests(chronos_live_tests DISCOVERY_TIMEOUT 30)
+
+  add_executable(
+    chronos_raft_tests
+    tests/raft/node_header_self_contained.cpp
+    tests/raft/node_test.cpp
+    tests/raft/rebalancing_header_self_contained.cpp
+    tests/raft/rebalancing_test.cpp
+    tests/raft/multi_raft_header_self_contained.cpp
+    tests/raft/multi_raft_test.cpp
+    tests/raft/multiplexed_log_header_self_contained.cpp
+    tests/raft/multiplexed_log_test.cpp
+    tests/raft/types_header_self_contained.cpp
+  )
+  set_target_properties(chronos_raft_tests PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_raft_tests PRIVATE cxx_std_23)
+  target_link_libraries(chronos_raft_tests PRIVATE chronos::raft GTest::gtest_main)
+  chronos_set_project_warnings(chronos_raft_tests)
+  chronos_enable_sanitizers(chronos_raft_tests)
+  chronos_enable_static_analysis(chronos_raft_tests)
+  gtest_discover_tests(chronos_raft_tests DISCOVERY_TIMEOUT 30)
+
+  add_executable(
+    chronos_tiering_tests
+    tests/tiering/object_store_header_self_contained.cpp
+    tests/tiering/object_store_test.cpp
+    tests/tiering/tiered_parts_header_self_contained.cpp
+    tests/tiering/tiered_parts_test.cpp
+  )
+  set_target_properties(chronos_tiering_tests PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_tiering_tests PRIVATE cxx_std_23)
+  target_link_libraries(chronos_tiering_tests PRIVATE chronos::tiering GTest::gtest_main)
+  chronos_set_project_warnings(chronos_tiering_tests)
+  chronos_enable_sanitizers(chronos_tiering_tests)
+  chronos_enable_static_analysis(chronos_tiering_tests)
+  gtest_discover_tests(chronos_tiering_tests DISCOVERY_TIMEOUT 30)
 
   add_executable(
     chronos_schema_tests
@@ -907,6 +987,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/database_cseg_scan_header_self_contained.cpp
     tests/query/database_cseg_scan_test.cpp
     tests/query/diagnostic_header_self_contained.cpp
+    tests/query/distributed_header_self_contained.cpp
+    tests/query/distributed_test.cpp
     tests/query/evaluator_header_self_contained.cpp
     tests/query/evaluator_test.cpp
     tests/query/executor_header_self_contained.cpp
@@ -956,6 +1038,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/spill_sort_test.cpp
     tests/query/statement_binder_header_self_contained.cpp
     tests/query/statement_binder_test.cpp
+    tests/query/temporal_snapshot_header_self_contained.cpp
+    tests/query/temporal_snapshot_test.cpp
     tests/query/timestamp_range_header_self_contained.cpp
     tests/query/value_header_self_contained.cpp
     tests/query/value_test.cpp

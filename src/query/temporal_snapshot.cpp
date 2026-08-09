@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -56,11 +57,7 @@ public:
 TemporalSnapshotProvider::TemporalSnapshotProvider(std::unique_ptr<Impl> impl) noexcept
     : impl_(std::move(impl)) {}
 TemporalSnapshotProvider::~TemporalSnapshotProvider() = default;
-TemporalSnapshotProvider::TemporalSnapshotProvider(TemporalSnapshotProvider&&) noexcept = default;
-TemporalSnapshotProvider&
-TemporalSnapshotProvider::operator=(TemporalSnapshotProvider&&) noexcept = default;
-
-common::Result<TemporalSnapshotProvider>
+common::Result<std::unique_ptr<TemporalSnapshotProvider>>
 TemporalSnapshotProvider::create(std::shared_ptr<const schema::TableSchema> schema,
                                  const TemporalStoreLimits limits) {
   if (schema == nullptr) {
@@ -71,7 +68,8 @@ TemporalSnapshotProvider::create(std::shared_ptr<const schema::TableSchema> sche
       limits.maximum_logical_rows > limits.maximum_versions) {
     return common::make_unexpected(invalid("temporal store limits are invalid"));
   }
-  return TemporalSnapshotProvider{std::make_unique<Impl>(std::move(schema), limits)};
+  return std::unique_ptr<TemporalSnapshotProvider>{new TemporalSnapshotProvider{
+      std::make_unique<Impl>(std::move(schema), limits)}};
 }
 
 common::Status TemporalSnapshotProvider::apply_committed(
@@ -112,9 +110,12 @@ common::Status TemporalSnapshotProvider::apply_committed(
       return invalid("an existing temporal identity requires correction or replacement semantics");
     }
     if (mutation.kind != TemporalMutationKind::kTombstone) {
+      const std::vector<std::byte> generated_identity =
+          impl_->schema->deduplication_key().empty() ? mutation.logical_identity
+                                                     : std::vector<std::byte>{};
       auto validated = ScalarTableSnapshot::create(impl_->schema, system_commit_position,
                                                    {ScalarInputRow{mutation.columns,
-                                                                   mutation.logical_identity,
+                                                                   generated_identity,
                                                                    mutation.wal_id,
                                                                    mutation.record_sequence,
                                                                    system_commit_position,
@@ -177,7 +178,9 @@ TemporalSnapshotProvider::resolve(
       continue;
     }
     visible.push_back(ScalarInputRow{version.mutation.columns,
-                                     identity,
+                                     impl_->schema->deduplication_key().empty()
+                                         ? identity
+                                         : std::vector<std::byte>{},
                                      version.mutation.wal_id,
                                      version.mutation.record_sequence,
                                      version.commit_position,
@@ -187,7 +190,9 @@ TemporalSnapshotProvider::resolve(
   if (!snapshot.has_value()) {
     return common::make_unexpected(snapshot.error());
   }
-  return std::make_shared<const ScalarTableSnapshot>(std::move(*snapshot));
+  std::shared_ptr<const ScalarTableSnapshot> output =
+      std::make_shared<const ScalarTableSnapshot>(std::move(*snapshot));
+  return output;
 }
 
 common::Status TemporalSnapshotProvider::compact_history(

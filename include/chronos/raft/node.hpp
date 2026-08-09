@@ -1,0 +1,63 @@
+#ifndef CHRONOS_RAFT_NODE_HPP_
+#define CHRONOS_RAFT_NODE_HPP_
+
+#include "chronos/common/result.hpp"
+#include "chronos/raft/types.hpp"
+
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <span>
+#include <vector>
+
+namespace chronos::raft {
+
+struct RaftLimits {
+  std::size_t maximum_voters{31U};
+  std::size_t maximum_log_entries{1U << 20U};
+  std::size_t maximum_entry_bytes{16U * 1024U * 1024U};
+  std::size_t maximum_append_entries{1024U};
+};
+
+class RaftNode {
+public:
+  RaftNode() = delete;
+  ~RaftNode();
+  RaftNode(const RaftNode&) = delete;
+  RaftNode& operator=(const RaftNode&) = delete;
+  RaftNode(RaftNode&&) noexcept;
+  RaftNode& operator=(RaftNode&&) noexcept;
+
+  [[nodiscard]] static common::Result<RaftNode>
+  create(NodeId node_id, std::vector<NodeId> voters, PersistentState persistent = {},
+         RaftLimits limits = {});
+
+  // Called by the timer runtime after its randomized election deadline. The core itself owns no
+  // clock or random source.
+  [[nodiscard]] common::Result<Transition> start_election();
+  [[nodiscard]] common::Result<Transition> receive(NodeId source, Message message);
+  [[nodiscard]] common::Result<Transition> propose(std::uint8_t type,
+                                                   std::vector<std::byte> payload);
+  [[nodiscard]] common::Result<Transition> heartbeat();
+
+  [[nodiscard]] common::Status mark_applied(LogIndex index);
+  [[nodiscard]] std::span<const LogEntry> committed_unapplied() const noexcept;
+
+  [[nodiscard]] NodeId node_id() const noexcept;
+  [[nodiscard]] Role role() const noexcept;
+  [[nodiscard]] Term current_term() const noexcept;
+  [[nodiscard]] std::optional<NodeId> leader_id() const noexcept;
+  [[nodiscard]] LogIndex last_log_index() const noexcept;
+  [[nodiscard]] LogIndex commit_index() const noexcept;
+  [[nodiscard]] LogIndex applied_index() const noexcept;
+  [[nodiscard]] const PersistentState& persistent_state() const noexcept;
+
+private:
+  class Impl;
+  explicit RaftNode(std::unique_ptr<Impl> impl) noexcept;
+  std::unique_ptr<Impl> impl_;
+};
+
+} // namespace chronos::raft
+
+#endif // CHRONOS_RAFT_NODE_HPP_

@@ -1,0 +1,69 @@
+#ifndef CHRONOS_TIERING_OBJECT_STORE_HPP_
+#define CHRONOS_TIERING_OBJECT_STORE_HPP_
+
+#include "chronos/common/bytes.hpp"
+#include "chronos/common/result.hpp"
+#include "chronos/ingest/sha256.hpp"
+
+#include <cstddef>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace chronos::tiering {
+
+struct ObjectMetadata {
+  std::string key;
+  std::size_t size{};
+  ingest::Sha256Digest checksum;
+
+  friend bool operator==(const ObjectMetadata&, const ObjectMetadata&) = default;
+};
+
+// S3-compatible semantic boundary. Implementations must make put_if_absent idempotent for one
+// immutable key and must never report success for a different existing body.
+class ObjectStore {
+public:
+  ObjectStore() = default;
+  ObjectStore(const ObjectStore&) = delete;
+  ObjectStore& operator=(const ObjectStore&) = delete;
+  ObjectStore(ObjectStore&&) = delete;
+  ObjectStore& operator=(ObjectStore&&) = delete;
+  virtual ~ObjectStore() = default;
+
+  [[nodiscard]] virtual common::Result<ObjectMetadata>
+  put_if_absent(std::string_view key, common::ByteView bytes,
+                const ingest::Sha256Digest& checksum) = 0;
+  [[nodiscard]] virtual common::Result<ObjectMetadata> stat(std::string_view key) const = 0;
+  [[nodiscard]] virtual common::Result<std::vector<std::byte>>
+  get_range(std::string_view key, std::size_t offset, std::size_t length) const = 0;
+};
+
+// Deterministic reference backend for focused tests and embedded deployments. It follows the same
+// immutable-key contract as a remote S3 implementation but does not claim remote durability.
+class MemoryObjectStore final : public ObjectStore {
+public:
+  MemoryObjectStore();
+  ~MemoryObjectStore() override;
+  MemoryObjectStore(const MemoryObjectStore&) = delete;
+  MemoryObjectStore& operator=(const MemoryObjectStore&) = delete;
+  MemoryObjectStore(MemoryObjectStore&&) = delete;
+  MemoryObjectStore& operator=(MemoryObjectStore&&) = delete;
+
+  [[nodiscard]] common::Result<ObjectMetadata>
+  put_if_absent(std::string_view key, common::ByteView bytes,
+                const ingest::Sha256Digest& checksum) override;
+  [[nodiscard]] common::Result<ObjectMetadata> stat(std::string_view key) const override;
+  [[nodiscard]] common::Result<std::vector<std::byte>>
+  get_range(std::string_view key, std::size_t offset, std::size_t length) const override;
+  [[nodiscard]] std::size_t object_count() const noexcept;
+
+private:
+  class Impl;
+  std::unique_ptr<Impl> impl_;
+};
+
+} // namespace chronos::tiering
+
+#endif // CHRONOS_TIERING_OBJECT_STORE_HPP_

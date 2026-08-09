@@ -46,10 +46,10 @@ public:
   ~TemporalSnapshotProvider() override;
   TemporalSnapshotProvider(const TemporalSnapshotProvider&) = delete;
   TemporalSnapshotProvider& operator=(const TemporalSnapshotProvider&) = delete;
-  TemporalSnapshotProvider(TemporalSnapshotProvider&&) noexcept;
-  TemporalSnapshotProvider& operator=(TemporalSnapshotProvider&&) noexcept;
+  TemporalSnapshotProvider(TemporalSnapshotProvider&&) = delete;
+  TemporalSnapshotProvider& operator=(TemporalSnapshotProvider&&) = delete;
 
-  [[nodiscard]] static common::Result<TemporalSnapshotProvider>
+  [[nodiscard]] static common::Result<std::unique_ptr<TemporalSnapshotProvider>>
   create(std::shared_ptr<const schema::TableSchema> schema, TemporalStoreLimits limits = {});
 
   [[nodiscard]] common::Status apply_committed(
