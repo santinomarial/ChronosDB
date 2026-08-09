@@ -310,6 +310,7 @@ add_library(
   src/manifest/sealed_head_flush_coordinator.cpp
   src/manifest/startup_recovery.cpp
   src/manifest/storage.cpp
+  src/manifest/temporal_layout.cpp
   src/manifest/validation.cpp
 )
 add_library(chronos::manifest ALIAS chronos_manifest)
@@ -1033,6 +1034,10 @@ if(CHRONOS_BUILD_TESTS)
     tests/manifest/startup_recovery_test.cpp
     tests/manifest/storage_header_self_contained.cpp
     tests/manifest/storage_test.cpp
+    tests/manifest/temporal_format_header_self_contained.cpp
+    tests/manifest/temporal_format_test.cpp
+    tests/manifest/temporal_layout_header_self_contained.cpp
+    tests/manifest/temporal_layout_test.cpp
     tests/manifest/types_header_self_contained.cpp
     tests/manifest/types_test.cpp
     tests/manifest/validation_header_self_contained.cpp

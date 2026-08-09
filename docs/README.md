@@ -54,6 +54,9 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Manifest v1](formats/manifest-v1.md): accepted immutable database-wide generation bytes,
   installed-name grammar, tablet/part/retry recovery state, and checkpoint-aware WAL suffix contract;
   implementation is pending.
+- [Manifest v2](formats/manifest-v2.md): accepted source-neutral WAL/Raft tablet boundaries, exact
+  CSEG format/source/content binding, generalized retries, optional global WAL reclamation, and
+  checked canonical layout; byte codecs and installation remain in progress.
 - [Resume Token v1](formats/resume-token-v1.md): authenticated live-subscription resume identity,
   compatibility, limits, and rejection rules.
 - [Multiplexed Raft Persistent-State Record v1](formats/multiplexed-raft-log-v1.md): checksummed,

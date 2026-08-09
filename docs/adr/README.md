@@ -116,3 +116,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0079](0079-temporal-mutation-command-v1.md) | Temporal Mutation Command v1 | accepted |
 | [0080](0080-cseg-v2-temporal-system-columns.md) | CSEG v2 temporal system columns | accepted |
 | [0081](0081-cseg-v2-temporal-snapshot-resolution.md) | CSEG v2 temporal snapshot resolution | accepted |
+| [0082](0082-source-neutral-manifest-v2-layout.md) | Source-neutral Manifest v2 layout | accepted |

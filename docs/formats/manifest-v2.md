@@ -1,0 +1,105 @@
+# ChronosDB Manifest v2
+
+> **Status: accepted source-neutral registry and checked canonical layout are implemented; byte
+> codec, transition validation, installation, recovery, and reclamation integration remain
+> pending.**
+
+Manifest v2 is the immutable database storage generation that can authorize CSEG v1 or v2 parts
+whose authoritative application source is WAL or Raft. It retains Manifest v1's magic, 256-byte
+header envelope, generation naming/selection, one-GiB limit, full-file CRC32C trailer, descriptor
+sort order, immutable-generation installation, and no-fallback recovery rule. Unless overridden
+here, [Manifest v1](manifest-v1.md) remains normative.
+
+## Header and layout
+
+Header format major/minor is `2/0`. Tablet, part, and retry descriptors are respectively 128, 224,
+and 144 bytes. Canonical offsets use those sizes and the unchanged eight-byte trailer. Every
+arithmetic operation is checked, every descriptor table is contiguous, and the total length is
+eight-byte aligned and no greater than one GiB.
+
+Header fields through `database_id` and descriptor offsets retain their v1 offsets. File flag bit 0
+is `HAS_WAL_RECLAIM_CHECKPOINT`; all other bits are unsupported. With the bit set, bytes 88–127
+retain the v1 `wal_id`, record sequence, segment number, and byte offset meanings and prove one
+database-wide removable WAL prefix. Without it, those bytes are zero. This optional global
+coordinate remains necessary because independently advanced WAL tablets cannot authorize deletion
+of gaps that targeted another tablet. Raft reclamation is per tablet.
+
+## Tablet descriptor
+
+| Offset | Size | Field |
+| ---: | ---: | --- |
+| 0 | 16 | table ID |
+| 16 | 16 | tablet ID |
+| 32 | 16 | recovery schema ID |
+| 48 | 8 | recovery schema version |
+| 56 | 16 | source ID: WAL ID or Raft group UUID |
+| 72 | 8 | durable applied position |
+| 80 | 8 | reclaim position |
+| 88 | 8 | first part index |
+| 96 | 8 | part count |
+| 104 | 8 | durable physical version count |
+| 112 | 1 | commit source: WAL 1 or Raft 2 |
+| 113 | 3 | zero |
+| 116 | 4 | flags, currently zero |
+| 120 | 8 | zero |
+
+The source ID is nonzero and the durable position is the highest application command completely
+represented by this tablet snapshot. Source lineage cannot change inside a tablet history without
+an accepted migration. For WAL tablets, `reclaim_position` is zero and the optional global header
+coordinate controls deletion. For Raft tablets it is no greater than the durable position and is
+the installed application-snapshot boundary through which retained log entries may be discarded.
+It is zero until such a snapshot is durably installed. The version count is the exact sum of part
+row counts and includes corrections and tombstones; it is not a current-visible row count.
+
+## Part descriptor
+
+| Offset | Size | Field |
+| ---: | ---: | --- |
+| 0 | 64 | part, table, tablet, and schema UUIDs |
+| 64 | 8 | schema version |
+| 72 | 8 | exact file length |
+| 80 | 8 | physical row/version count |
+| 88 | 8 | minimum commit position |
+| 96 | 8 | maximum commit position |
+| 104 | 8 | minimum event time |
+| 112 | 8 | maximum event time |
+| 120 | 8 | minimum system commit time |
+| 128 | 8 | maximum system commit time |
+| 136 | 16 | source ID |
+| 152 | 32 | SHA-256 of exact installed CSEG bytes |
+| 184 | 2 | CSEG format major |
+| 186 | 2 | CSEG format minor |
+| 188 | 1 | commit source |
+| 189 | 3 | zero |
+| 192 | 4 | flags, currently zero |
+| 196 | 28 | zero |
+
+Identity/schema/length/count/time fields bind the exact validated CSEG image. The content digest
+prevents an object or local file with the same part identity but different bytes from satisfying a
+descriptor; CSEG checksums still provide internal framing and page corruption detection. CSEG v1
+parts are WAL source only and use system-time extrema equal to the application commit-time range
+recorded during conversion. CSEG v2 accepts WAL or Raft but every row must match the descriptor and
+owning tablet source. Commit extrema are nonzero, ordered, and no greater than the tablet durable
+position. System and event extrema are ordered and recomputed from decoded pages before admission.
+
+## Retry descriptor
+
+The first 96 bytes retain v1 client/batch/table/tablet/request-digest fields. Bytes 96–111 are the
+nonzero source ID, 112–119 the nonzero commit position, 120–123 the applied row count, byte 124 the
+commit source, bytes 125–127 zero, bytes 128–131 flags (zero), and bytes 132–143 zero. Retry source
+must match the target tablet and its position cannot exceed the durable applied boundary.
+
+## Installation, transition, and recovery boundary
+
+V2 preserves v1's part-before-manifest sync/rename/directory-sync order and immutable snapshot
+publication. A byte codec alone cannot authorize visibility. Complete admission must exact-decode
+the declared CSEG version, bind schema/tablet/source and digest, validate temporal semantics, and
+recompute all extrema. Transitions are monotonic within each source lineage; they cannot regress an
+application/reclaim boundary, mutate an installed descriptor, or remove history without the
+accepted compaction/retention proof.
+
+Startup selects the highest final generation and fails closed rather than falling back. WAL suffix
+recovery begins after the optional global coordinate. Each Raft tablet rebuilds or installs state at
+its durable application snapshot before replaying committed entries after its reclaim position.
+Neither coordinate permits deletion until its exact manifest generation is durable and the
+corresponding application state is recoverable.
