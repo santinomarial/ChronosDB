@@ -136,3 +136,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0099](0099-multi-tablet-subscription-checkpoint-v1.md) | Multi-tablet Subscription Checkpoint v1 | accepted |
 | [0100](0100-durable-subscription-checkpoint-generations.md) | Durable multi-tablet subscription checkpoint generations | accepted |
 | [0101](0101-durable-multi-tablet-subscription-owner.md) | Durable multi-tablet subscription owner | accepted |
+| [0102](0102-exact-multi-tablet-subscription-snapshot.md) | Exact multi-tablet subscription snapshots | accepted |

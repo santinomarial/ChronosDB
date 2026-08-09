@@ -34,6 +34,12 @@ sequence. The owner exposes checkpoint expiry components to a future retention m
 the generation file and directory have synchronized. If installation fails, the prior durable
 frontier remains unchanged even though newer state is still live in memory.
 
+For the historical half, `MultiTabletSnapshotSubscription` validates every registered vector
+component against one aggregate storage publication. Raw tablet scans are concatenated before the
+physical plan is instantiated, so a global aggregate, sort, latest, or limit observes the complete
+source set rather than one independently finalized result per tablet. READY is impossible until
+that global pipeline has ended and END_STREAM has been emitted.
+
 The manager owns no threads and is not internally synchronized. Returned delivery records share
 immutable change ownership. Memory is bounded globally for retention and independently per
 subscriber. A slow subscriber overflows without rejecting a committed source change. A topology or

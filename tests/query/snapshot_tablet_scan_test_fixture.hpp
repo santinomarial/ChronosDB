@@ -37,7 +37,9 @@ namespace chronos::query::test {
 
 class SnapshotTabletScanFixture {
 public:
-  explicit SnapshotTabletScanFixture(const std::uint32_t rows)
+  explicit SnapshotTabletScanFixture(
+      const std::uint32_t rows,
+      const std::optional<std::uint32_t> second_tablet_rows = std::nullopt)
       : schema_(make_schema()), lineage_(schema::SchemaLineage::create(*schema_).value()),
         state_(ingest::TabletState::create(schema_, tablet_id(),
                                            {.head_capacity = {.row_capacity = std::max(rows, 1U),
@@ -59,15 +61,24 @@ public:
 
     wal::WalId wal{};
     wal.bytes = cseg::test::identifier<schema::SchemaId>(0x70U).bytes();
-    const std::array tablets{
-        manifest::TabletDescriptor{.table_id = schema_->table_id(),
-                                   .tablet_id = tablet_id(),
-                                   .recovery_schema_id = schema_->schema_id(),
-                                   .recovery_schema_version = schema_->version(),
-                                   .durable_record_sequence = 0U,
-                                   .first_part_index = 0U,
-                                   .part_count = 0U,
-                                   .durable_row_count = 0U}};
+    std::vector<manifest::TabletDescriptor> tablets{{.table_id = schema_->table_id(),
+                                                     .tablet_id = tablet_id(),
+                                                     .recovery_schema_id = schema_->schema_id(),
+                                                     .recovery_schema_version = schema_->version(),
+                                                     .durable_record_sequence = 0U,
+                                                     .first_part_index = 0U,
+                                                     .part_count = 0U,
+                                                     .durable_row_count = 0U}};
+    if (second_tablet_rows.has_value()) {
+      tablets.push_back({.table_id = schema_->table_id(),
+                         .tablet_id = second_tablet_id(),
+                         .recovery_schema_id = schema_->schema_id(),
+                         .recovery_schema_version = schema_->version(),
+                         .durable_record_sequence = 0U,
+                         .first_part_index = 0U,
+                         .part_count = 0U,
+                         .durable_row_count = 0U});
+    }
     manifest::EncodedManifest encoded =
         manifest::encode_manifest_v1(
             {.generation = 1U,
@@ -84,8 +95,10 @@ public:
                 encoded.bytes());
     storage_ = std::make_unique<manifest::ManifestStorage>(
         manifest::ManifestStorage::open_existing({.database_root = directory_.string()}).value());
-    const std::array bindings{
-        manifest::TabletSchemaBinding{.tablet_id = tablet_id(), .lineage = std::cref(lineage_)}};
+    std::vector<manifest::TabletSchemaBinding> bindings{
+        {.tablet_id = tablet_id(), .lineage = std::cref(lineage_)}};
+    if (second_tablet_rows.has_value())
+      bindings.push_back({.tablet_id = second_tablet_id(), .lineage = std::cref(lineage_)});
     auto selected = std::make_shared<const manifest::LoadedManifestGeneration>(
         storage_
             ->load_selected_manifest(
@@ -115,7 +128,39 @@ public:
         throw std::runtime_error{"snapshot tablet scan fixture WAL transition failed"};
       tablet_snapshot = prepared.publish({.wal_id = wal, .record_sequence = 1U}).value().snapshot;
     }
-    const std::array input{manifest::DatabaseStorageTabletInput{.snapshot = tablet_snapshot}};
+    std::vector<manifest::DatabaseStorageTabletInput> input{{.snapshot = tablet_snapshot}};
+    if (second_tablet_rows.has_value()) {
+      second_state_ = std::make_unique<ingest::TabletState>(
+          ingest::TabletState::create(
+              schema_, second_tablet_id(),
+              {.head_capacity = {.row_capacity = std::max(*second_tablet_rows, 1U),
+                                 .variable_value_bytes = {0U}},
+               .maximum_schema_versions = 1U,
+               .maximum_sealed_generations = 1U,
+               .maximum_retry_entries = 4U,
+               .flush_queue = {}})
+              .value());
+      ingest::TabletSnapshot second_snapshot = second_state_->snapshot().value();
+      if (*second_tablet_rows != 0U) {
+        std::vector<std::int64_t> values(*second_tablet_rows);
+        for (std::uint32_t row = 0U; row < *second_tablet_rows; ++row)
+          values[row] = 100 + static_cast<std::int64_t>(row);
+        auto prepared =
+            second_state_
+                ->prepare_append(
+                    {.client_id = cseg::test::identifier<ingest::ClientId>(0x21U),
+                     .client_batch_id = cseg::test::identifier<ingest::ClientBatchId>(0x22U)},
+                    {.table_id = schema_->table_id(),
+                     .tablet_id = second_tablet_id(),
+                     .request_digest = digest(0x23U)},
+                    batch(values))
+                .value();
+        if (!prepared.mark_wal_started().is_ok())
+          throw std::runtime_error{"second snapshot tablet WAL transition failed"};
+        second_snapshot = prepared.publish({.wal_id = wal, .record_sequence = 1U}).value().snapshot;
+      }
+      input.push_back({.snapshot = second_snapshot});
+    }
     publisher_ = std::make_unique<manifest::DatabaseStoragePublisher>(
         manifest::DatabaseStoragePublisher::create(std::move(selected), input).value());
     snapshot_ = std::make_unique<manifest::DatabaseStorageSnapshot>(publisher_->snapshot().value());
@@ -154,6 +199,10 @@ public:
 
   [[nodiscard]] static schema::TabletId tablet_id() {
     return cseg::test::identifier<schema::TabletId>(3U);
+  }
+
+  [[nodiscard]] static schema::TabletId second_tablet_id() {
+    return cseg::test::identifier<schema::TabletId>(8U);
   }
 
   [[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>>
@@ -233,6 +282,7 @@ private:
   std::shared_ptr<const schema::TableSchema> schema_;
   schema::SchemaLineage lineage_;
   ingest::TabletState state_;
+  std::unique_ptr<ingest::TabletState> second_state_;
   std::unique_ptr<manifest::ManifestStorage> storage_;
   std::unique_ptr<manifest::DatabaseStoragePublisher> publisher_;
   std::unique_ptr<manifest::DatabaseStorageSnapshot> snapshot_;

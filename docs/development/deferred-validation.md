@@ -25,8 +25,8 @@
   migration, and compatibility review when the supported incremental SQL surface expands.
 - Plan-bound subscription snapshot execution: forced-allocation sweeps, cancellation at every
   pull/END_STREAM/READY transition, multi-chunk socket backpressure, reactor worker dispatch, and
-  real concurrent publication scheduling. Extend the owner to Raft and multi-tablet snapshot
-  vectors only after their exact snapshot acquisition contract is integrated.
+  real concurrent publication scheduling. Exercise every global operator over multi-tablet source
+  vectors and extend the exact snapshot boundary to Raft-backed publications.
 - Commits injected at every historical-to-live handoff step across real snapshot execution.
 - Cross-tablet-owner wiring around the implemented canonical vector/admission-order coordinator,
   topology transitions, retention pins, service SQL/plan-to-input suffix replay, concurrent

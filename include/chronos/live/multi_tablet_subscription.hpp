@@ -102,6 +102,7 @@ public:
   status(const common::Uuid& subscription_id) const;
   [[nodiscard]] common::Result<std::vector<SourcePosition>> latest_positions() const;
   [[nodiscard]] common::Result<MultiTabletSubscriptionCheckpoint> checkpoint() const;
+  [[nodiscard]] const MultiTabletSubscriptionSource& source() const noexcept;
 
 private:
   class Impl;

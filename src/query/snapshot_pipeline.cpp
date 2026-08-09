@@ -1,5 +1,6 @@
 #include "chronos/query/snapshot_pipeline.hpp"
 
+#include "chronos/common/checked_math.hpp"
 #include "chronos/common/status.hpp"
 #include "chronos/manifest/publication.hpp"
 #include "chronos/query/row_version.hpp"
@@ -10,6 +11,7 @@
 #include <cstdint>
 #include <memory>
 #include <new>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -24,6 +26,82 @@ namespace {
 
 [[nodiscard]] common::Status exhausted(std::string message) {
   return common::Status{common::StatusCode::kResourceExhausted, std::move(message)};
+}
+
+class SequentialTabletSources final : public PhysicalOperator {
+public:
+  SequentialTabletSources(std::vector<std::unique_ptr<PhysicalOperator>> sources,
+                          QuerySharedMemoryReservation publication,
+                          QueryMemoryReservation reservation) noexcept
+      : sources_(std::move(sources)), publication_(std::move(publication)),
+        reservation_(std::move(reservation)) {}
+
+  [[nodiscard]] common::Result<PhysicalOperatorStep>
+  next(const QueryResourceContext& resources) override {
+    if (ended_)
+      return PhysicalOperatorStep::end();
+    auto active = resources.check_cancelled();
+    if (!active.has_value())
+      return common::make_unexpected(active.error());
+    if (!resources.owns(publication_) || !resources.owns(reservation_)) {
+      static_cast<void>(resources.request_cancel());
+      return common::make_unexpected(
+          invalid("multi-tablet snapshot source belongs to another query"));
+    }
+    while (next_source_ < sources_.size()) {
+      auto step = sources_[next_source_]->next(resources);
+      if (!step.has_value()) {
+        static_cast<void>(resources.request_cancel());
+        return common::make_unexpected(step.error());
+      }
+      if (step->kind() == PhysicalOperatorStepKind::kEnd) {
+        sources_[next_source_].reset();
+        ++next_source_;
+        continue;
+      }
+      if (step->chunk() == nullptr || !step->chunk()->belongs_to(resources)) {
+        static_cast<void>(resources.request_cancel());
+        return common::make_unexpected(
+            invalid("multi-tablet snapshot source returned a foreign or missing chunk"));
+      }
+      return step;
+    }
+    std::vector<std::unique_ptr<PhysicalOperator>>{}.swap(sources_);
+    publication_.reset();
+    reservation_.release();
+    ended_ = true;
+    return PhysicalOperatorStep::end();
+  }
+
+private:
+  std::vector<std::unique_ptr<PhysicalOperator>> sources_;
+  QuerySharedMemoryReservation publication_;
+  QueryMemoryReservation reservation_;
+  std::size_t next_source_{};
+  bool ended_{};
+};
+
+[[nodiscard]] common::Result<std::size_t>
+sequential_tablet_source_charge(const std::size_t source_count) {
+  auto slots =
+      common::checked_multiply(source_count, sizeof(std::unique_ptr<PhysicalOperator>) + 256U);
+  if (!slots.has_value())
+    return common::make_unexpected(exhausted("multi-tablet source accounting overflows"));
+  auto charge = common::checked_add(sizeof(SequentialTabletSources) + 256U, *slots);
+  if (!charge.has_value())
+    return common::make_unexpected(exhausted("multi-tablet source accounting overflows"));
+  return *charge;
+}
+
+[[nodiscard]] common::Status
+validate_tablet_vector(const std::span<const schema::TabletId> tablets) {
+  if (tablets.empty() || tablets.size() > kDefaultSnapshotMultiTabletLimit)
+    return invalid("multi-tablet snapshot source count is invalid");
+  for (std::size_t index = 0U; index < tablets.size(); ++index) {
+    if (tablets[index].uuid().is_nil() || (index != 0U && tablets[index - 1U] >= tablets[index]))
+      return invalid("multi-tablet snapshot vector is not canonical");
+  }
+  return common::Status::ok();
 }
 
 [[nodiscard]] common::Result<RowVersionScanMode>
@@ -144,6 +222,45 @@ common::Result<std::unique_ptr<PhysicalOperator>> instantiate_snapshot_tablet_pi
     return common::make_unexpected(exhausted("snapshot pipeline allocation failed"));
   } catch (const std::length_error&) {
     return common::make_unexpected(exhausted("snapshot pipeline exceeds container limits"));
+  }
+}
+
+common::Result<std::unique_ptr<PhysicalOperator>> instantiate_snapshot_tablets_pipeline(
+    const QueryResourceContext& resources, const manifest::ManifestStorage& storage,
+    const manifest::DatabaseStorageSnapshot& snapshot,
+    const std::span<const schema::TabletId> target_tablets, const schema::SchemaLineage& lineage,
+    const schema::SchemaId destination_schema_id, const PhysicalPipelinePlan& pipeline,
+    const SnapshotTabletPipelineLimits limits) {
+  common::Status canonical = validate_tablet_vector(target_tablets);
+  if (!canonical.is_ok())
+    return common::make_unexpected(std::move(canonical));
+  try {
+    auto publication = resources.reserve_shared(snapshot.retained_buffer_bytes());
+    if (!publication.has_value())
+      return common::make_unexpected(publication.error());
+    auto charge = sequential_tablet_source_charge(target_tablets.size());
+    if (!charge.has_value())
+      return common::make_unexpected(charge.error());
+    auto reservation = resources.reserve(*charge);
+    if (!reservation.has_value())
+      return common::make_unexpected(reservation.error());
+    std::vector<std::unique_ptr<PhysicalOperator>> sources;
+    sources.reserve(target_tablets.size());
+    for (const schema::TabletId& tablet : target_tablets) {
+      auto source = create_snapshot_tablet_source(resources, storage, snapshot, tablet, lineage,
+                                                  destination_schema_id, pipeline.input_columns(),
+                                                  *publication, limits);
+      if (!source.has_value())
+        return common::make_unexpected(source.error());
+      sources.push_back(std::move(*source));
+    }
+    std::unique_ptr<PhysicalOperator> combined{new SequentialTabletSources{
+        std::move(sources), std::move(*publication), std::move(*reservation)}};
+    return pipeline.instantiate(std::move(combined));
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("multi-tablet snapshot allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("multi-tablet snapshot exceeds container limits"));
   }
 }
 

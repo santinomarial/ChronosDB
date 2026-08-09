@@ -39,8 +39,9 @@ manager owns the continuing live state independently.
 
 This slice executes an already-lowered single-tablet physical plan. ADR 0097 now supplies SQL
 parsing, binding, lowering, and canonical plan fingerprint construction. Durable plan lookup on
-resume, multi-tablet snapshot execution, and reactor worker dispatch remain later service work.
-Raft-backed snapshot positions also remain outside this WAL-bound owner and fail closed.
+resume and reactor worker dispatch remain later service work. ADR 0102 extends the same guarded
+transition to one exact multi-tablet storage epoch and a global physical pipeline. Raft-backed
+snapshot positions remain outside these WAL-bound owners and fail closed.
 
 Acquiring the storage snapshot before registration was rejected because a commit between those
 operations could be omitted. Accepting a storage position lower or higher than the manager boundary
@@ -54,5 +55,5 @@ Invariants 4, 8, 11, 12, 15, and 17 apply. Focused tests execute an ordered SQL 
 real aggregate storage publication, publish the next committed change while the historical query is
 open, verify it is unavailable before READY and present afterward, decode every emitted protocol
 payload, and reject/cancel an exact-boundary mismatch. Disconnect races, resource-failure sweeps,
-multi-chunk socket backpressure, real reactor dispatch, and multi-tablet snapshots remain in the
-Phase 18 ledger.
+multi-chunk socket backpressure, real reactor dispatch, and broader multi-tablet operator/schedule
+matrices remain in the Phase 18 ledger; ADR 0102 adds the focused multi-tablet correctness evidence.

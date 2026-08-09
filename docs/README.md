@@ -236,6 +236,9 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Durable multi-tablet subscription owner](adr/0101-durable-multi-tablet-subscription-owner.md):
   exact coordinator recovery, checkpoint generation ownership, post-checkpoint replay boundary,
   and retention-frontier publication only after durable install.
+- [Exact multi-tablet subscription snapshots](adr/0102-exact-multi-tablet-subscription-snapshot.md):
+  complete vector/storage boundary validation, one global physical pipeline, and guarded
+  QUERY_RESULT/END_STREAM/READY transition.
 - [Durable metadata Raft state](learning/durable-metadata-state.md): checksummed commands,
   commit-order catalog application, quorum proof, and retained-log reconstruction.
 - [Phase 10 network exit review](reviews/phase-10-network-review.md): implemented transport

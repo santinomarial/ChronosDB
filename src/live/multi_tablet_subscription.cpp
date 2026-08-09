@@ -565,4 +565,8 @@ MultiTabletSubscriptionManager::checkpoint() const {
   }
 }
 
+const MultiTabletSubscriptionSource& MultiTabletSubscriptionManager::source() const noexcept {
+  return impl_->source;
+}
+
 } // namespace chronos::live

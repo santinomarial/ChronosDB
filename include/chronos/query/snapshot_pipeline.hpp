@@ -12,12 +12,15 @@
 #include "chronos/schema/identity.hpp"
 #include "chronos/schema/schema_lineage.hpp"
 
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <span>
 #include <vector>
 
 namespace chronos::query {
+
+inline constexpr std::size_t kDefaultSnapshotMultiTabletLimit = 256U;
 
 struct SnapshotTabletPipelineLimits {
   SnapshotCsegPartScanPlanLimits planning{};
@@ -45,6 +48,19 @@ instantiate_snapshot_tablet_pipeline(
     const manifest::DatabaseStorageSnapshot& snapshot, const schema::TabletId& target_tablet,
     const schema::SchemaLineage& lineage, schema::SchemaId destination_schema_id,
     const PhysicalPipelinePlan& pipeline, SnapshotTabletPipelineLimits limits = {});
+
+// Instantiates one physical pipeline over the concatenated raw scans of a canonical tablet vector
+// from one aggregate database epoch. Unary SQL stages run once above the combined source, so global
+// aggregate, sort, latest, and limit semantics are not evaluated independently per tablet.
+[[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>>
+instantiate_snapshot_tablets_pipeline(const QueryResourceContext& resources,
+                                      const manifest::ManifestStorage& storage,
+                                      const manifest::DatabaseStorageSnapshot& snapshot,
+                                      std::span<const schema::TabletId> target_tablets,
+                                      const schema::SchemaLineage& lineage,
+                                      schema::SchemaId destination_schema_id,
+                                      const PhysicalPipelinePlan& pipeline,
+                                      SnapshotTabletPipelineLimits limits = {});
 
 [[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>>
 instantiate_optimized_snapshot_tablet_pipeline(
