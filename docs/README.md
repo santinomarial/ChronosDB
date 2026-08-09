@@ -56,7 +56,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   implementation is pending.
 - [Manifest v2](formats/manifest-v2.md): accepted source-neutral WAL/Raft tablet boundaries, exact
   CSEG format/source/content binding, generalized retries, optional global WAL reclamation, and
-  checked canonical layout; byte codecs and installation remain in progress.
+  checked canonical layout with a strict checksummed codec; transition validation, exact CSEG
+  admission, and installation remain in progress.
 - [Resume Token v1](formats/resume-token-v1.md): authenticated live-subscription resume identity,
   compatibility, limits, and rejection rules.
 - [Multiplexed Raft Persistent-State Record v1](formats/multiplexed-raft-log-v1.md): checksummed,

@@ -47,9 +47,9 @@
 - Mixed `COLUMNAR_APPEND`/temporal recovery dispatch and application checkpoints; Manifest-backed
   multi-part/vector winner resolution beyond the implemented single-lineage scalar reference,
   strict metadata, full-part, bounded semantic-validation, and projected-granule paths;
-- Manifest v2 byte codecs, hostile decode, exact CSEG/digest admission, monotonic transitions,
-  v1 migration, filesystem/object-store installation, recovery, and source-specific reclamation
-  beyond the accepted source-neutral registry and checked layout.
+- Manifest v2 expanded hostile decode, exact CSEG/digest admission, monotonic transitions, v1
+  migration, filesystem/object-store installation, recovery, and source-specific reclamation beyond
+  the implemented source-neutral registry, checked layout, and strict byte codec.
   live-executor fault injection plus crash and migration tests.
 - Expand CSEG v2 projected-reader and semantic validation with golden bytes, hostile metadata/page
   matrices,

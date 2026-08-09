@@ -1,10 +1,10 @@
 # ChronosDB Manifest v2
 
-> **Status: accepted source-neutral registry and checked canonical layout are implemented; byte
-> codec, transition validation, installation, recovery, and reclamation integration remain
-> pending.**
+> **Status: accepted source-neutral registry, checked canonical layout, and strict checksummed byte
+> codec are implemented; transition validation, exact CSEG admission, installation, recovery, and
+> reclamation integration remain pending.**
 
-Manifest v2 is the immutable database storage generation that can authorize CSEG v1 or v2 parts
+Manifest v2 is the immutable database storage generation that can authorize CSEG v2 temporal parts
 whose authoritative application source is WAL or Raft. It retains Manifest v1's magic, 256-byte
 header envelope, generation naming/selection, one-GiB limit, full-file CRC32C trailer, descriptor
 sort order, immutable-generation installation, and no-fallback recovery rule. Unless overridden
@@ -16,6 +16,11 @@ Header format major/minor is `2/0`. Tablet, part, and retry descriptors are resp
 and 144 bytes. Canonical offsets use those sizes and the unchanged eight-byte trailer. Every
 arithmetic operation is checked, every descriptor table is contiguous, and the total length is
 eight-byte aligned and no greater than one GiB.
+
+The owned encoder and borrowed prefix/exact decoder implement canonical descriptor bytes, the early
+header CRC32C and complete-file CRC32C, exact truncation requirements, runtime allocation limits,
+reserved/flag validation, and corrupt-versus-unsupported registry classification. V1 and v2 entry
+points are version-strict and never reinterpret each other's descriptor tables.
 
 Header fields through `database_id` and descriptor offsets retain their v1 offsets. File flag bit 0
 is `HAS_WAL_RECLAIM_CHECKPOINT`; all other bits are unsupported. With the bit set, bytes 88–127
@@ -76,11 +81,13 @@ row counts and includes corrections and tombstones; it is not a current-visible 
 
 Identity/schema/length/count/time fields bind the exact validated CSEG image. The content digest
 prevents an object or local file with the same part identity but different bytes from satisfying a
-descriptor; CSEG checksums still provide internal framing and page corruption detection. CSEG v1
-parts are WAL source only and use system-time extrema equal to the application commit-time range
-recorded during conversion. CSEG v2 accepts WAL or Raft but every row must match the descriptor and
-owning tablet source. Commit extrema are nonzero, ordered, and no greater than the tablet durable
-position. System and event extrema are ordered and recomputed from decoded pages before admission.
+descriptor; CSEG checksums still provide internal framing and page corruption detection. Version
+2.0 currently admits only CSEG `2/0`; the explicit version fields make that rejection auditable and
+leave future format assignment unambiguous. Existing CSEG v1 parts require conversion to fresh v2
+part identities because they do not carry logical identity or system commit time. Every v2 row must
+match the descriptor and owning tablet source. Commit extrema are nonzero, ordered, and no greater
+than the tablet durable position. System and event extrema are ordered and recomputed from decoded
+pages before admission.
 
 ## Retry descriptor
 

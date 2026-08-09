@@ -643,9 +643,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   pages while touching only requested user pages. A bounded scalar CSEG resolver now provides
   current/as-of winners for one explicit authoritative WAL/Raft source lineage, including tombstone
   removal and deterministic timestamp/position ties. Manifest v2 now has an accepted source-neutral
-  registry and checked layout with exact CSEG content binding, but its codec/installation and
-  snapshot integration, vector output, and compaction integration remain deferred, so the phase
-  exit gate is not claimed.
+  registry, checked layout, and strict checksummed codec with exact CSEG content fields, but its
+  transition/admission/installation and snapshot integration, vector output, and compaction
+  integration remain deferred, so the phase exit gate is not claimed.
 
 - **Scope:** formal bitemporal row-version model; SQL system-time clauses; history retention; correction/cancellation semantics; compaction and index support; audit visibility.
 - **Explicit non-scope:** general distributed transactions, legal/compliance certification, retroactive mutation of immutable history, and distribution before the model is validated locally.

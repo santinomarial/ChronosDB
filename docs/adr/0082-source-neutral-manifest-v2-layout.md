@@ -40,7 +40,8 @@ internally valid part with matching metadata.
 ## Affected invariants and validation
 
 Invariants 1–8, 10, 11, 13, 14, 16, and 18 apply. Implemented focused tests freeze every descriptor
-size/offset and prove checked canonical layout without changing v1. Codec goldens, hostile decode,
-transition rules, exact CSEG/digest admission, v1-to-v2 migration, filesystem/object-store crash
-matrices, Raft snapshot recovery, fuzzing, and performance evidence remain required implementation
-work.
+size/offset, prove checked canonical layout, round-trip WAL and Raft generations, enforce exact
+source relationships and limits, classify every truncation, and preserve strict v1 rejection.
+Independent golden bytes, expanded hostile decode, transition rules, exact CSEG/digest admission,
+v1-to-v2 migration, filesystem/object-store crash matrices, Raft snapshot recovery, fuzzing, and
+performance evidence remain required implementation work.
