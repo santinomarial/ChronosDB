@@ -619,4 +619,12 @@ bool EpollReactor::is_running() const noexcept {
 #endif
 }
 
+int EpollReactor::native_poll_descriptor() const noexcept {
+#if defined(__linux__)
+  return implementation_ ? implementation_->epoll_fd : -1;
+#else
+  return -1;
+#endif
+}
+
 } // namespace chronos::network

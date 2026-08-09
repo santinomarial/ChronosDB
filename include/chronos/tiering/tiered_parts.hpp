@@ -25,7 +25,7 @@ struct ColdPartDescriptor {
 
 struct TieringLimits {
   std::size_t maximum_parts{1U << 20U};
-  std::size_t maximum_object_bytes{4U * 1024U * 1024U * 1024U};
+  std::size_t maximum_object_bytes{std::size_t{4U} * 1024U * 1024U * 1024U};
   std::size_t maximum_cache_bytes{256U * 1024U * 1024U};
   std::size_t maximum_cache_entries{1024U};
 };
@@ -35,8 +35,7 @@ struct TieringReceipt {
   bool local_source_may_be_released{};
 };
 
-using ColdManifestInstaller =
-    std::function<common::Status(const ColdPartDescriptor& descriptor)>;
+using ColdManifestInstaller = std::function<common::Status(const ColdPartDescriptor& descriptor)>;
 
 // Single-owner cold-tier coordinator. Upload and remote verification happen before the caller's
 // atomic manifest installer. The local source becomes releasable only after that callback succeeds.
@@ -49,8 +48,8 @@ public:
   TieredPartManager(TieredPartManager&&) noexcept;
   TieredPartManager& operator=(TieredPartManager&&) noexcept;
 
-  [[nodiscard]] static common::Result<TieredPartManager>
-  create(ObjectStore& store, TieringLimits limits = {});
+  [[nodiscard]] static common::Result<TieredPartManager> create(ObjectStore& store,
+                                                                TieringLimits limits = {});
 
   [[nodiscard]] common::Result<TieringReceipt>
   upload_and_install(ColdPartDescriptor descriptor, common::ByteView local_cseg,

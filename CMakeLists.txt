@@ -395,6 +395,7 @@ add_library(
   src/network/epoll_reactor.cpp
   src/network/messages.cpp
   src/network/protocol.cpp
+  src/network/reactor.cpp
   src/network/security.cpp
   src/network/spsc_queue.cpp
 )
@@ -411,6 +412,31 @@ target_link_libraries(chronos_network PUBLIC chronos::common chronos::schema)
 chronos_set_project_warnings(chronos_network)
 chronos_enable_sanitizers(chronos_network)
 chronos_enable_static_analysis(chronos_network)
+if(CHRONOS_ENABLE_IO_URING)
+  if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR "CHRONOS_ENABLE_IO_URING requires Linux")
+  endif()
+  find_path(CHRONOS_LIBURING_INCLUDE_DIR liburing.h REQUIRED)
+  find_library(CHRONOS_LIBURING_LIBRARY uring REQUIRED)
+  target_include_directories(chronos_network PRIVATE "${CHRONOS_LIBURING_INCLUDE_DIR}")
+  target_link_libraries(chronos_network PRIVATE "${CHRONOS_LIBURING_LIBRARY}")
+  target_compile_definitions(chronos_network PUBLIC CHRONOS_HAS_LIBURING=1)
+endif()
+
+add_library(chronos_runtime src/runtime/thread_placement.cpp)
+add_library(chronos::runtime ALIAS chronos_runtime)
+set_target_properties(chronos_runtime PROPERTIES EXPORT_NAME runtime CXX_EXTENSIONS OFF)
+target_compile_features(chronos_runtime PUBLIC cxx_std_23)
+target_include_directories(
+  chronos_runtime
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+)
+target_link_libraries(chronos_runtime PUBLIC chronos::common)
+chronos_set_project_warnings(chronos_runtime)
+chronos_enable_sanitizers(chronos_runtime)
+chronos_enable_static_analysis(chronos_runtime)
 
 add_library(
   chronos_live
@@ -439,6 +465,7 @@ chronos_enable_static_analysis(chronos_live)
 
 add_library(
   chronos_raft
+  src/raft/metadata.cpp
   src/raft/multi_raft.cpp
   src/raft/multiplexed_log.cpp
   src/raft/node.cpp
@@ -567,6 +594,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/network/packet_fixture_test.cpp
     tests/network/protocol_header_self_contained.cpp
     tests/network/protocol_test.cpp
+    tests/network/reactor_header_self_contained.cpp
+    tests/network/reactor_test.cpp
     tests/network/security_header_self_contained.cpp
     tests/network/security_test.cpp
     tests/network/spsc_queue_header_self_contained.cpp
@@ -583,6 +612,19 @@ if(CHRONOS_BUILD_TESTS)
   chronos_enable_sanitizers(chronos_network_tests)
   chronos_enable_static_analysis(chronos_network_tests)
   gtest_discover_tests(chronos_network_tests DISCOVERY_TIMEOUT 30)
+
+  add_executable(
+    chronos_runtime_tests
+    tests/runtime/thread_placement_header_self_contained.cpp
+    tests/runtime/thread_placement_test.cpp
+  )
+  set_target_properties(chronos_runtime_tests PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_runtime_tests PRIVATE cxx_std_23)
+  target_link_libraries(chronos_runtime_tests PRIVATE chronos::runtime GTest::gtest_main)
+  chronos_set_project_warnings(chronos_runtime_tests)
+  chronos_enable_sanitizers(chronos_runtime_tests)
+  chronos_enable_static_analysis(chronos_runtime_tests)
+  gtest_discover_tests(chronos_runtime_tests DISCOVERY_TIMEOUT 30)
 
   add_executable(
     chronos_network_allocation_failure_tests
@@ -629,6 +671,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/raft/rebalancing_test.cpp
     tests/raft/multi_raft_header_self_contained.cpp
     tests/raft/multi_raft_test.cpp
+    tests/raft/metadata_header_self_contained.cpp
+    tests/raft/metadata_test.cpp
     tests/raft/multiplexed_log_header_self_contained.cpp
     tests/raft/multiplexed_log_test.cpp
     tests/raft/types_header_self_contained.cpp
@@ -655,6 +699,18 @@ if(CHRONOS_BUILD_TESTS)
   chronos_enable_sanitizers(chronos_tiering_tests)
   chronos_enable_static_analysis(chronos_tiering_tests)
   gtest_discover_tests(chronos_tiering_tests DISCOVERY_TIMEOUT 30)
+
+  add_executable(chronos_feature_smoke_tests tests/integration/feature_smoke_test.cpp)
+  set_target_properties(chronos_feature_smoke_tests PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_feature_smoke_tests PRIVATE cxx_std_23)
+  target_link_libraries(
+    chronos_feature_smoke_tests
+    PRIVATE chronos::live chronos::query chronos::raft chronos::tiering GTest::gtest_main
+  )
+  chronos_set_project_warnings(chronos_feature_smoke_tests)
+  chronos_enable_sanitizers(chronos_feature_smoke_tests)
+  chronos_enable_static_analysis(chronos_feature_smoke_tests)
+  gtest_discover_tests(chronos_feature_smoke_tests DISCOVERY_TIMEOUT 30)
 
   add_executable(
     chronos_schema_tests

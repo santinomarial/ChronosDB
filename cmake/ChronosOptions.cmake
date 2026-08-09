@@ -8,3 +8,4 @@ option(CHRONOS_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer on ChronosDB targ
 option(CHRONOS_ENABLE_TSAN "Enable ThreadSanitizer on ChronosDB targets" OFF)
 option(CHRONOS_ENABLE_CLANG_TIDY "Run clang-tidy while compiling ChronosDB targets" OFF)
 option(CHRONOS_WARNINGS_AS_ERRORS "Treat ChronosDB target warnings as errors" OFF)
+option(CHRONOS_ENABLE_IO_URING "Build the optional Linux liburing reactor backend" OFF)

@@ -102,3 +102,6 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0065](0065-self-describing-query-result-batches.md) | Self-describing Protocol v1 query result batches | accepted |
 | [0066](0066-authentication-and-tls-integration-boundary.md) | Authentication and TLS integration boundary | accepted |
 | [0067](0067-bounded-native-client-session.md) | Bounded native client session | accepted |
+| [0068](0068-live-handoff-and-resume-token-v1.md) | Bounded live handoff and Resume Token v1 | accepted |
+| [0069](0069-deterministic-raft-and-multiplexed-state-record.md) | Deterministic Raft and multiplexed state records | accepted |
+| [0070](0070-feature-pass-logical-boundaries.md) | Temporal, distributed, cold-tier, and runtime feature-pass boundaries | accepted |

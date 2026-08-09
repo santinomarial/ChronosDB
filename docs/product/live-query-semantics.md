@@ -1,6 +1,10 @@
 # Live Query Semantics
 
-> **Status: specified, not implemented.** This is the logical contract for planned `SUBSCRIBE SELECT`. It provides database-side gap-free snapshot-to-stream handoff and at-least-once external delivery, not general exactly-once effects in a consumer.
+> **Status: logical single-source core implemented; service integration incomplete.** Resume Token
+> v1, bounded register-before-boundary buffering, poll/acknowledge/resume, overflow, incremental
+> numeric state, and tumbling/sliding materialized-view windows are implemented. SQL snapshot
+> execution, native-protocol delivery, multi-tablet ordering, and durable view recovery are not yet
+> wired. The contract provides at-least-once external delivery, not exactly-once consumer effects.
 
 Eligible SQL and row visibility follow [SQL v1](sql-v1.md), the [data model](data-model.md), and the [consistency contract](consistency-and-durability.md).
 

@@ -15,6 +15,8 @@
 
 namespace chronos::network {
 
+class Reactor;
+
 struct EpollServerConfig {
   std::array<std::uint8_t, 4> bind_address{127U, 0U, 0U, 1U};
   std::uint16_t port{};
@@ -75,7 +77,10 @@ public:
 private:
   class Impl;
   explicit EpollReactor(std::unique_ptr<Impl> implementation) noexcept;
+  [[nodiscard]] int native_poll_descriptor() const noexcept;
   std::unique_ptr<Impl> implementation_;
+
+  friend class Reactor;
 };
 
 } // namespace chronos::network

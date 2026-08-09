@@ -330,23 +330,38 @@ finite event and I/O budgets preserve fairness. Accepted sockets require `TCP_NO
 decision that prevents separately owned result and terminal frames from incurring delayed-ACK
 latency. The portable client session enforces the same partial-I/O and request lifecycle contracts.
 
-An `io_uring` backend remains unimplemented and may be accepted only after an equal-semantics Phase
-12 comparison. TLS and cryptography will use maintained external libraries behind a defined
-interface; ChronosDB will not implement cryptographic primitives.
+An optional Linux liburing readiness pilot now exists behind explicit portable backend selection.
+It reuses the proven epoll connection engine and therefore preserves its partial-I/O, cancellation,
+and shutdown state. It is not yet a full socket-operation io_uring backend and has no comparison or
+performance claim. TLS and cryptography use maintained external libraries behind defined
+interfaces; ChronosDB does not implement cryptographic primitives.
 
 Under [ADR 0066](../adr/0066-authentication-and-tls-integration-boundary.md), plaintext is confined
 to loopback, a borrowed authenticator attaches stable principal identity to shard work, and
 `TLS_REQUIRED` fails startup until the maintained TLS backend exists.
 
-## Future distribution: tablets and Raft
+## Distribution foundations: tablets and Raft
 
-Tablets are the distribution and replication unit from the data model's beginning, but [ADR 0003](../adr/0003-single-node-first-development-order.md) defers replication until the single-node engine passes its gates. Under [ADR 0010](../adr/0010-tablets-raft-and-multiplexed-log-storage.md), each future tablet maps to one logical Raft group with deterministic state-machine application, while a small metadata group owns schemas, placement, membership, and cluster metadata. Readers may observe only committed and applied entries under an explicitly selected consistency level. Leader leases, read index, membership changes, snapshot transfer, and bounded-stale policies need lower-level ADRs and deterministic simulation.
+Tablets are the distribution and replication unit from the data model's beginning. Under [ADR
+0010](../adr/0010-tablets-raft-and-multiplexed-log-storage.md), each tablet maps to one logical Raft
+group, while a small metadata group owns schemas, placement, nodes, leader hints, retention, and
+cluster metadata. The deterministic Raft and bounded Multi-Raft logical cores, metadata application,
+full-state physical record codec, distributed aggregate primitives, and safe movement state machine
+are implemented. Readers may observe only committed and applied entries under an explicitly
+selected consistency level. Production timers, transport, segmented persistence, application to
+tablet storage, snapshot installation, membership protocol, read index/staleness proof, and a
+packaged cluster runtime remain unimplemented.
 
 Multi-Raft will multiplex many groups over shared threads, network connections, timers, and a physical log without conflating their logical indexes. Distributed queries will acquire compatible per-tablet snapshot boundaries and report consistency; rebalancing must preserve identities, resume positions, and retention pins.
 
-## Future hot/cold tiering
+## Hot/cold tiering foundation
 
-Local storage remains the initial source of truth. A later tiering phase may move eligible immutable CSEG parts to object storage while retaining manifest identity, integrity validation, cache coherence, snapshot safety, and query observability. Object-store listings cannot be treated as the authoritative manifest. Upload/install ordering, local cache eviction, remote deletion, encryption, failure recovery, and interoperability exports remain deferred.
+Local storage remains the initial source of truth. The implemented logical tiering coordinator moves
+eligible immutable identities through verified idempotent object upload, a caller-owned atomic
+manifest-install callback, bounded content caching, and range reads. Object-store listings are not
+metadata truth. Manifest v1 has no cold-location fields, so production manifest persistence, safe
+local/remote deletion, crash recovery, S3 transport, encryption, and Arrow/Parquet exports remain
+deferred.
 
 ## Accepted direction and deferred design
 

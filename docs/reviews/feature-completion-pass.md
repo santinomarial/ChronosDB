@@ -1,0 +1,224 @@
+# Feature Completion Pass Review
+
+## Repository state
+
+- **Starting HEAD:** `7c46d1427a0c0b1cc4cfbe7a864b140b7ae17a0b` (`build: close phase 10 Linux portability gate`).
+- **Starting tree:** `main...origin/main` with two pre-existing untracked headers:
+  `include/chronos/live/subscription.hpp` and `include/chronos/live/resume_token.hpp`.
+- **Concurrent owner activity:** while this pass was running, the repository owner created and
+  pushed `f35c140` and `30ba6bd42f84aae821f426cc194f344b32114de9`, committing the Phase 11 and
+  Phase 13–17 files produced during the pass. The agent did not run `git commit` or `git push`.
+- **Reviewed ending HEAD:** `30ba6bd42f84aae821f426cc194f344b32114de9`. The final uncommitted tree
+  contains Phase 12, metadata, integration, documentation, and one tiering-limit correctness fix.
+
+This is a truthful feature-architecture checkpoint, not a declaration that Phases 11–17 have passed
+their full roadmap exit gates or that ChronosDB is a production three-node database.
+
+## Implemented phase slices
+
+### Phase 11 — live subscriptions and materialized views
+
+`chronos_live` implements:
+
+- Resume Token v1 with fixed versioned bytes, HMAC-SHA256, constant-time MAC comparison, and bound
+  database/subscription/plan/schema/tablet/WAL/sequence identity;
+- single-source register-before-boundary handoff, snapshot-phase buffering, live transition,
+  at-least-once poll, acknowledgment checkpoints, retained-suffix resume, cancellation, and bounded
+  fail-closed overflow that never rejects an already committed source change;
+- removable count, sum, min, max, VWAP, OHLC, and Welford population/sample variance state; and
+- tumbling/sliding window materialized state, watermark finalization, corrections/tombstones,
+  revisions, consecutive committed progress, and finite row/window bounds.
+
+Not wired: SQL plan execution into subscription changes, multi-tablet merge, Protocol v1 messages,
+durable view state/recovery, schema-change terminal representation, and service lifecycle.
+
+### Phase 12 — performance architecture and io_uring
+
+Portable `ReactorBackend` selection retains epoll as the reference. An opt-in Linux/liburing path
+uses io_uring to wait on the proven epoll readiness descriptor, preserving the existing connection
+state and partial-I/O semantics without public Linux types. Unsupported builds fail explicitly.
+`ThreadPlacement` adds optional CPU and NUMA hooks; empty configuration is correctness-neutral and
+unsupported NUMA/portable affinity fails explicitly.
+
+This is a readiness pilot, not a full io_uring socket-operation backend. It was not compiled or run
+on Linux in this pass. No epoll/io_uring, SIMD, NUMA, allocation, or performance comparison ran.
+
+### Phase 13 — system-time history and corrections
+
+The existing SQL parser/binder/executor already carried `FOR SYSTEM_TIME AS OF` into a snapshot
+provider. `TemporalSnapshotProvider` now supplies real committed logical history for one exact
+schema: atomic commit batches, distinct event/receive/system time, original/correction/replacement/
+tombstone versions, current and historical winner selection, copied stable snapshots, finite state,
+and precise history-expired failure.
+
+CSEG v1 remains correctly frozen to `APPEND_ROWS`. No correction WAL kind, CSEG v2, mutable-head
+correction representation, durable restart, vector row-version resolution, or compaction retention
+integration was invented. Therefore durable Phase 13 is incomplete.
+
+### Phase 14 — deterministic Raft
+
+`RaftNode` implements follower/candidate/leader roles, term/vote/log/snapshot/commit/applied state,
+runtime-triggered elections, log freshness, RequestVote, heartbeat/AppendEntries, log match,
+conflict hints/rewind, next/match indexes, majority commit with current-term restriction, stale-term
+rejection, leader demotion, bounded proposals, and committed-unapplied exposure. Transitions carry
+an explicit persist-before-send state copy.
+
+The focused minimum gate passes for 3-node election, one committed command, leader loss, replacement
+leader, a second command, stale-leader rejection, and restarted follower catch-up. Disk persistence,
+runtime timers, network encoding, tablet application, snapshot transfer/install, membership/read
+index, and randomized simulation remain incomplete.
+
+### Phase 15 — Multi-Raft tablets and metadata
+
+`MultiRaftRuntime` multiplexes bounded logical groups on one owner with group-tagged messages,
+node-global physical persistence sequences, persist-before-send batches, independent application,
+and reopen state. The checksummed Multiplexed Raft Persistent-State Record v1 encodes group identity,
+term, vote, logical log, commit/applied indexes, manifest generation, and part-set checksum without
+native struct serialization.
+
+`MetadataStateMachine` applies nodes, schema identities, tablet placement/replicas/epochs/leader
+hints, and retention only at consecutive committed metadata-group indexes. Focused tests cover
+different leaders, group isolation, one-node loss, reopen, metadata order, and record corruption.
+
+No segmented file/fsync owner, batching worker pool, fairness policy, physical-log recovery scan,
+tablet state-machine adapter, membership protocol, or QUORUM_SYNC exists. QUORUM_SYNC is not aliased
+to LOCAL_SYNC or exposed.
+
+### Phase 16 — distributed query and rebalancing
+
+The query target implements event-time tablet pruning, explicit read-consistency enum values,
+mergeable COUNT/SUM/MIN/MAX/Welford partial state, bounded MPMC exchange, backpressure, cancellation,
+duplicate detection, worker failure, and a coordinator that refuses partial success.
+
+`TabletMovement` enforces add target as learner, bounded checksummed retryable snapshot transfer,
+catch-up through the snapshot index, placement-epoch-checked target promotion, and only then source
+removal. Corrupt, gapped, or conflicting retry chunks fail closed.
+
+General vector-plan fragment serialization, exchange wire protocol, final grouping/order/top-N/
+LIMIT, real consistency proofs, routing, durable transfer, joint Raft membership, and production
+multi-node execution remain incomplete.
+
+### Phase 17 — object storage and interoperability
+
+`chronos_tiering` defines S3-compatible immutable `put_if_absent`/`stat`/`get_range` semantics and a
+deterministic memory implementation. `TieredPartManager` checks SHA-256 content, verifies remote
+metadata, calls the atomic manifest installer before allowing local release, rejects part/key
+identity conflicts, caches bounded complete objects with eviction, and supports authenticated range
+reads for larger objects. A smoke test exposed and fixed a 32-bit constant-expression overflow that
+made the default 4 GiB object limit zero.
+
+Manifest v1 remains unchanged. No production S3 transport, credentials/retry/multipart policy,
+Manifest v2 cold descriptor, safe deletion/recovery, CSEG pre-upload validator connection, cache
+concurrency, or Arrow/Parquet import/export provider is implemented.
+
+## End-to-end integration state
+
+`chronos_feature_smoke_tests` connects committed metadata, temporal visibility, live handoff,
+distributed partial aggregation, a committed single-group Raft command, verified object upload,
+manifest callback, cache/range read, and byte-identical result in one process. Separate deterministic
+tests cover the requested 3-node Raft failover and Multi-Raft different-leader cases.
+
+A packaged daemon and the requested real three-process/socket workflow do not exist. The smoke does
+not start three server processes, execute SQL through the native protocol, kill a process, apply a
+Raft command to mutable/CSEG storage, move a real replica, or query a real remote CSEG. Those are
+high-priority Phase 18/integration tasks, not passed checks.
+
+## Public APIs and formats
+
+Important new public targets are `chronos::live`, `chronos::runtime`, `chronos::raft`, and
+`chronos::tiering`; `chronos::query` gained temporal/distributed APIs and `chronos::network` gained
+explicit backend selection.
+
+Important APIs include `SubscriptionManager`, `WindowedMaterializedView`,
+`IncrementalAggregateSet`, `TemporalSnapshotProvider`, `RaftNode`, `MultiRaftRuntime`,
+`MetadataStateMachine`, `TabletMovement`, `BoundedExchange`, `DistributedAggregateCoordinator`,
+`ObjectStore`, `TieredPartManager`, `Reactor`, and `apply_current_thread_placement`.
+
+New bytes are limited to authenticated Resume Token v1 and Multiplexed Raft Persistent-State Record
+v1, specified under `docs/formats/`. WAL v1, Columnar Batch v1, CSEG v1, Manifest v1, and native
+Protocol v1 bytes were not changed. No Raft wire, distributed exchange wire, correction/CSEG v2, or
+cold Manifest v2 bytes are claimed.
+
+## Checks actually performed
+
+Targeted configure/build commands used the existing `dev` preset and `--parallel 4`:
+
+- `cmake --preset dev`
+- `cmake --build --preset dev --target chronos_live_tests --parallel 4`
+- `cmake --build --preset dev --target chronos_query_tests --parallel 4`
+- `cmake --build --preset dev --target chronos_raft_tests --parallel 4`
+- `cmake --build --preset dev --target chronos_tiering_tests --parallel 4`
+- `cmake --build --preset dev --target chronos_network_tests chronos_runtime_tests --parallel 4`
+- `cmake --build --preset dev --target chronos_feature_smoke_tests --parallel 4`
+
+Focused executions passed:
+
+- `chronos_live_tests`: 10 tests;
+- `chronos_query_tests --gtest_filter=TemporalSnapshotTest.*:DistributedQueryTest.*`: 4 tests;
+- `chronos_raft_tests`: 8 tests after metadata integration;
+- `chronos_tiering_tests`: 3 tests;
+- `chronos_network_tests --gtest_filter=ReactorBackendTest.*`: 1 test;
+- `chronos_runtime_tests`: 1 test; and
+- `chronos_feature_smoke_tests`: 1 test.
+
+Changed C++ files were formatted with Homebrew clang-format 22. Full-suite, sanitizer, fuzz,
+cross-compiler, Linux/liburing, benchmark, profile, and chaos checks were deliberately not run.
+
+## Known risks and limitations
+
+### Correctness
+
+- The feature graph is not service-integrated; several APIs accept already-committed/validated data
+  and rely on an absent adapter to preserve that precondition.
+- Temporal corrections are not durable and are not resolved in vector CSEG/head scans.
+- The distributed implementation covers numeric global aggregate state, not arbitrary plans,
+  grouping, order, top-N, limits, or exchange retries.
+- The movement state machine is not the Raft membership protocol itself.
+- Cold upload does not independently parse/validate the candidate as CSEG before upload.
+- Raft hostile-message validation, snapshot boundaries, and membership need broader model evidence.
+
+### Concurrency
+
+- Live/materialized-view, Multi-Raft, metadata, movement, and tiering owners are intentionally
+  single-thread-affine but are not yet scheduled by production worker pools.
+- BoundedExchange and MemoryObjectStore use mutexes but have no TSan evidence in this pass.
+- io_uring cancellation and shutdown have no Linux execution evidence.
+- Cache/tiering catalog access is single-owner and unsafe for concurrent query access without the
+  planned owner/locking integration.
+
+### Durability
+
+- No persistent materialized-view checkpoint, temporal correction log/part, Raft segmented writer,
+  metadata command codec/file, durable movement receipt, Manifest v2 cold location, or cache index.
+- Multiplexed records are codecs only; no append/sync/recovery/reclamation owner exists.
+- QUORUM_SYNC is unavailable.
+- The in-memory object store explicitly makes no remote durability claim; production S3 semantics
+  have not been exercised.
+
+### Performance
+
+- Full-state Raft persistence is intentionally simple and may amplify writes.
+- Ordered maps/multisets and copied snapshots favor correctness over throughput.
+- Live fan-out, temporal history, exchange, cache, and movement have no scale measurements.
+- The io_uring pilot may be slower than epoll; no comparison was run.
+- No SIMD/NUMA optimization, allocation profile, flame graph, or tail-latency campaign ran.
+
+## Deferred validation and recommended Phase 18 order
+
+The exact subsystem/category ledger is
+[`deferred-validation.md`](../development/deferred-validation.md). Recommended order:
+
+1. Audit/fix deterministic Raft transition safety, add persistent file owner and crash recovery,
+   then run bounded deterministic simulation before building more distribution on it.
+2. Connect committed Raft application to tablet ingest/head/CSEG state and metadata command codecs;
+   only then define and test QUORUM_SYNC.
+3. Accept/version correction WAL and CSEG v2 plus Manifest v2 cold descriptors; implement recovery,
+   compaction, and scalar/vector temporal equivalence.
+4. Build real coordinator/worker fragment and exchange protocols with consistency proofs, then wire
+   safe Raft membership and durable snapshot movement.
+5. Add production S3 and Arrow/Parquet providers with dependency/security/compatibility review.
+6. Build the packaged three-node daemon/service adapter and run the complete small end-to-end path.
+7. Run full compiler/Debug/Release/install suites, then ASan/UBSan/TSan, fuzz/corruption/crash,
+   deterministic/chaos campaigns, SQL differential tests, and only afterward benchmarks/profiling/
+   epoll-io_uring/SIMD/NUMA comparison and final tuning.
+

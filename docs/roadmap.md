@@ -594,6 +594,13 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
 
 ## Phase 11 — Subscriptions and incremental materialized views
 
+- **Feature-pass status:** the `chronos_live` target implements authenticated Resume Token v1,
+  single-source register-before-boundary handoff, bounded retained/buffered committed changes,
+  at-least-once poll/acknowledge/resume, fail-closed overflow/cancellation, removable count/sum/
+  min/max/VWAP/OHLC/Welford state, tumbling/sliding windows, watermarks, corrections, and logical
+  materialized-view progress. Native-protocol delivery, multi-tablet ordering, durable view state,
+  restart recovery, and the full exit evidence remain deferred; the phase exit gate is not claimed.
+
 - **Scope:** committed change model; gap-free snapshot-to-stream handoff; deterministic versioned resume tokens; bounded subscriber policies; supported incremental operators; materialized-view progress/recovery and late-event corrections.
 - **Explicit non-scope:** unqualified end-to-end exactly-once claims, unlimited retention, every SQL operator, cross-cluster delivery, and external-sink transactions not explicitly integrated.
 - **Required artifacts:** subscription/delivery protocol; resume-token and retention specifications; handoff ADR; watermark/lateness and view-correction contracts; incremental engine; recovery metadata; learning documents.
@@ -602,6 +609,12 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
 - **Measurement exit gate:** measure handoff delay, update latency, operator state, replay/recovery cost, fan-out scaling, memory bounds, and ingestion impact under lateness and slow-consumer distributions.
 
 ## Phase 12 — Performance engineering and io_uring comparison
+
+- **Feature-pass status:** explicit portable backend selection and optional thread placement hooks
+  are implemented. An opt-in Linux liburing readiness pilot waits on the proven epoll connection
+  engine without leaking Linux types. It has not been compiled on Linux or compared with epoll in
+  this pass. Full socket-operation parity, SIMD variants, NUMA placement, profiling, and performance
+  evidence remain deferred; no speed claim or phase exit is declared.
 
 - **Scope:** profile verified single-node paths; remove measured bottlenecks; establish reproducible benchmark governance; compare an optional `io_uring` prototype with epoll under equal semantics.
 - **Explicit non-scope:** weakened durability/checksums/visibility, selective publication of favorable runs, a mandatory `io_uring` migration, distribution, and novel allocators or lock-free rewrites without evidence.
@@ -612,6 +625,13 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
 
 ## Phase 13 — System-time history
 
+- **Feature-pass status:** the existing parser/binder/executor `FOR SYSTEM_TIME AS OF` path now has
+  a real committed in-memory temporal snapshot provider. It atomically appends originals,
+  corrections, replacements, and tombstones, distinguishes event/receive/system time, resolves the
+  latest visible version at a system boundary, and fails closed after retention expiry. Frozen CSEG
+  v1 remains append-only; durable correction/WAL/CSEG bytes, vector storage resolution, recovery,
+  and compaction integration remain deferred, so the phase exit gate is not claimed.
+
 - **Scope:** formal bitemporal row-version model; SQL system-time clauses; history retention; correction/cancellation semantics; compaction and index support; audit visibility.
 - **Explicit non-scope:** general distributed transactions, legal/compliance certification, retroactive mutation of immutable history, and distribution before the model is validated locally.
 - **Required artifacts:** temporal model and SQL specification; retention/GC ADR; storage and query changes; migration plan; bitemporal oracle; learning document.
@@ -620,6 +640,13 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
 - **Measurement exit gate:** quantify history space/write amplification, as-of scan cost, compaction overhead, and retention-policy sensitivity on declared version distributions.
 
 ## Phase 14 — Deterministic Raft
+
+- **Feature-pass status:** `chronos_raft` implements a deterministic follower/candidate/leader core,
+  persistent term/vote/log/commit/apply/snapshot metadata, RequestVote log freshness, AppendEntries
+  validation/conflict rewind, next/match indexes, current-term majority commit, stale-term rejection,
+  and explicit persist-before-send transitions. Focused 3-node election, commit, failover, stale
+  leader, and restart catch-up tests pass. Disk/runtime/transport, snapshot installation, membership,
+  randomized simulation, and the full exit evidence remain deferred.
 
 - **Scope:** implement a deterministic Raft core for one logical group: elections, replication, commit, membership protocol as scoped by ADR, snapshots, read consistency mechanisms, and simulated transport/storage/time.
 - **Explicit non-scope:** multi-group multiplexing, production network integration, distributed queries, hidden third-party Raft implementation, and serving uncommitted or merely appended entries.
@@ -630,6 +657,13 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
 
 ## Phase 15 — Multi-Raft tablets
 
+- **Feature-pass status:** a bounded node-local Multi-Raft owner multiplexes independent logical
+  groups, node-global persistence sequences, outbound batches, and application indexes. A versioned
+  checksummed full-state physical record codec and committed-order metadata state machine are
+  implemented. Focused tests cover different group leaders, isolation, node loss, reopen, metadata
+  order, and corruption. The segmented file/fsync owner, worker scheduling/fairness, command
+  application, snapshots, and QUORUM_SYNC are not implemented; the phase exit gate is not claimed.
+
 - **Scope:** map tablets to Raft groups; multiplex logical records over physical logs, threads, timers, and connections; lifecycle, placement, snapshot transfer, fairness, and safe per-group reclamation.
 - **Explicit non-scope:** globally ordered logs, cross-tablet atomic transactions, distributed query execution, automatic rebalancing beyond scoped placement mechanics, and conflating physical offsets with logical indexes.
 - **Required artifacts:** tablet/multi-Raft architecture and log format; scheduling/fairness/reclamation ADRs; placement metadata; production integration; deterministic cluster harness; operations and learning documents.
@@ -639,6 +673,14 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
 
 ## Phase 16 — Distributed query execution and rebalancing
 
+- **Feature-pass status:** bounded event-time tablet pruning, explicit consistency-mode values,
+  mergeable partial aggregates, bounded exchange backpressure/cancellation, and a coordinator that
+  rejects missing/failed fragments are implemented. Tablet movement enforces learner-first,
+  checksummed retryable snapshot, catch-up, epoch-checked promotion, then source removal. General
+  vector-plan fragments/exchange wire bytes, read-index/staleness proof, Raft membership integration,
+  durable transfer, and multi-node failure validation remain deferred; the phase exit gate is not
+  claimed.
+
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.
 - **Explicit non-scope:** general cross-tablet write transactions, silent consistency downgrade, unlimited shuffle, and topology changes that invalidate tokens without an explicit error/mapping protocol.
 - **Required artifacts:** distributed query and consistency specifications; exchange protocol; snapshot-coordination and rebalancing ADRs; planner/scheduler; fault recovery; observability and learning documents.
@@ -647,6 +689,13 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
 - **Measurement exit gate:** measure scale-out efficiency, exchange bytes, coordination latency, skew/straggler impact, movement duration, foreground interference, and consistency-level costs in declared topologies.
 
 ## Phase 17 — Object-storage tiering and interoperability
+
+- **Feature-pass status:** `chronos_tiering` provides an S3-compatible immutable put/stat/range
+  abstraction, a deterministic memory backend, verified idempotent SHA-256 upload before a caller's
+  atomic manifest-install callback, bounded full-object cache/eviction, and authenticated large
+  range reads. Manifest v1 is unchanged. A production S3 transport, Manifest v2 cold descriptors,
+  safe deletion/recovery, and Arrow/Parquet implementations remain deferred; the phase exit gate is
+  not claimed.
 
 - **Scope:** immutable-part upload/install/cache/eviction; remote integrity and retry; authoritative manifest references; safe remote deletion; selected documented import/export or ecosystem formats.
 - **Explicit non-scope:** treating bucket listings as metadata truth, mutating remote parts in place, claiming object storage has local-disk latency, custom cloud APIs when standard clients suffice, and compatibility claims without fixtures.
