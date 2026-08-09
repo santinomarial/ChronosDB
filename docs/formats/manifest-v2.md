@@ -145,5 +145,7 @@ retain that generation, reprove the requested descriptor and CSEG bytes, and can
 tablet resolver. The resolver conservatively prunes parts whose minimum system time is later than
 the requested boundary, then validates and decodes every candidate before applying exact row-level
 winner rules. A boundary before all retained versions returns `NOT_FOUND`; it is not represented as
-a proven empty table. Application replay, Raft snapshot reconstruction, and complete query-epoch
-publication remain pending.
+a proven empty table. A complete pinned part set can also be decoded into canonical cross-part
+version order and atomically seed a fresh temporal provider when the caller supplies an independent
+tablet-wide retained-system-time proof. Application suffix replay, Raft snapshot reconstruction,
+and complete query-epoch publication remain pending.

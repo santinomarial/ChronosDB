@@ -238,39 +238,97 @@ TEST(TemporalManifestCsegSnapshotTest, ResolvesGenerationPartViewsWithPruningAnd
       TemporalManifestCsegPartView{.descriptor = &*descriptor, .bytes = fixture.encoded.bytes()}};
   const TemporalCsegSourceLineage source{cseg::temporal_format::CommitSource::kWal,
                                          fixture.source_id};
+  const manifest::TemporalTabletDescriptor tablet{
+      .table_id = fixture.table_id,
+      .tablet_id = fixture.tablet_id,
+      .recovery_schema_id = fixture.schema_id,
+      .recovery_schema_version = schema::SchemaVersion::initial(),
+      .source_id = fixture.source_id,
+      .durable_position = descriptor->maximum_commit_position,
+      .reclaim_position = 0U,
+      .first_part_index = 0U,
+      .part_count = 1U,
+      .durable_version_count = descriptor->row_count,
+      .commit_source = cseg::temporal_format::CommitSource::kWal};
 
-  const auto current = resolve_manifest_v2_temporal_tablet_snapshot(
-      fixture.schema, lineage, fixture.tablet_id, parts, source, std::nullopt);
+  const auto current = resolve_manifest_v2_temporal_tablet_snapshot(fixture.schema, lineage, tablet,
+                                                                    parts, source, std::nullopt);
   ASSERT_TRUE(current.has_value()) << current.error().to_string();
   ASSERT_EQ((*current)->rows().size(), 1U);
   EXPECT_EQ(event_time((*current)->rows()[0]), 30);
 
-  const auto historical = resolve_manifest_v2_temporal_tablet_snapshot(
-      fixture.schema, lineage, fixture.tablet_id, parts, source, 115);
+  const auto historical = resolve_manifest_v2_temporal_tablet_snapshot(fixture.schema, lineage,
+                                                                       tablet, parts, source, 115);
   ASSERT_TRUE(historical.has_value()) << historical.error().to_string();
   ASSERT_EQ((*historical)->rows().size(), 2U);
   EXPECT_EQ(event_time((*historical)->rows()[0]), 10);
   EXPECT_EQ(event_time((*historical)->rows()[1]), 20);
 
+  auto restored = restore_manifest_v2_temporal_tablet_history(
+      fixture.schema, lineage, tablet, parts, source, descriptor->minimum_system_time);
+  ASSERT_TRUE(restored.has_value()) << restored.error().to_string();
+  EXPECT_EQ((*restored)->version_count(), 4U);
+  EXPECT_EQ((*restored)->latest_commit_position(), 4U);
+  const auto restored_current = (*restored)->resolve(fixture.schema, std::nullopt);
+  ASSERT_TRUE(restored_current.has_value());
+  ASSERT_EQ((*restored_current)->rows().size(), 1U);
+  EXPECT_EQ(event_time((*restored_current)->rows()[0]), 30);
+  const auto restored_historical = (*restored)->resolve(fixture.schema, 115);
+  ASSERT_TRUE(restored_historical.has_value());
+  ASSERT_EQ((*restored_historical)->rows().size(), 2U);
+  EXPECT_EQ(event_time((*restored_historical)->rows()[0]), 10);
+  EXPECT_EQ(event_time((*restored_historical)->rows()[1]), 20);
+  const auto restored_expired =
+      (*restored)->resolve(fixture.schema, descriptor->minimum_system_time - 1);
+  ASSERT_FALSE(restored_expired.has_value());
+  EXPECT_EQ(restored_expired.error().code(), common::StatusCode::kNotFound);
+
   const auto pruned = resolve_manifest_v2_temporal_tablet_snapshot(
-      fixture.schema, lineage, fixture.tablet_id, parts, source,
-      descriptor->minimum_system_time - 1);
+      fixture.schema, lineage, tablet, parts, source, descriptor->minimum_system_time - 1);
   ASSERT_FALSE(pruned.has_value());
   EXPECT_EQ(pruned.error().code(), common::StatusCode::kNotFound);
 
   TemporalManifestCsegResolutionLimits limits;
   limits.maximum_decoded_buffer_bytes = 1U;
-  EXPECT_EQ(resolve_manifest_v2_temporal_tablet_snapshot(fixture.schema, lineage, fixture.tablet_id,
-                                                         parts, source, std::nullopt, limits)
+  EXPECT_EQ(resolve_manifest_v2_temporal_tablet_snapshot(fixture.schema, lineage, tablet, parts,
+                                                         source, std::nullopt, limits)
                 .error()
                 .code(),
             common::StatusCode::kResourceExhausted);
+
+  TemporalManifestCsegResolutionLimits restore_limits;
+  restore_limits.resolution.maximum_versions = 3U;
+  EXPECT_EQ(restore_manifest_v2_temporal_tablet_history(fixture.schema, lineage, tablet, parts,
+                                                        source, descriptor->minimum_system_time, {},
+                                                        restore_limits)
+                .error()
+                .code(),
+            common::StatusCode::kResourceExhausted);
+  EXPECT_EQ(restore_manifest_v2_temporal_tablet_history(fixture.schema, lineage, tablet, parts,
+                                                        source, descriptor->maximum_system_time + 1)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+
+  manifest::TemporalTabletDescriptor incomplete_tablet = tablet;
+  ++incomplete_tablet.durable_version_count;
+  EXPECT_EQ(resolve_manifest_v2_temporal_tablet_snapshot(fixture.schema, lineage, incomplete_tablet,
+                                                         parts, source, std::nullopt)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(restore_manifest_v2_temporal_tablet_history(fixture.schema, lineage, incomplete_tablet,
+                                                        parts, source,
+                                                        descriptor->minimum_system_time)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
 
   manifest::TemporalPartDescriptor foreign = *descriptor;
   foreign.source_id = common::Uuid{id<schema::SchemaId>(99U).bytes()};
   const std::array foreign_parts{
       TemporalManifestCsegPartView{.descriptor = &foreign, .bytes = fixture.encoded.bytes()}};
-  EXPECT_EQ(resolve_manifest_v2_temporal_tablet_snapshot(fixture.schema, lineage, fixture.tablet_id,
+  EXPECT_EQ(resolve_manifest_v2_temporal_tablet_snapshot(fixture.schema, lineage, tablet,
                                                          foreign_parts, source, std::nullopt)
                 .error()
                 .code(),

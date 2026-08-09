@@ -27,10 +27,17 @@ row-version fields. The row oracle does not merge independent tablet lineages, d
 state, or infer Raft authority.
 
 Manifest integration requires one held generation, exact descriptors and their revalidated CSEG
-images. It may prune a part only when the descriptor's recomputed minimum system time exceeds the
-requested boundary. Every candidate is exact-opened and projected with bounded part, granule, and
-decoded-byte ownership before the row oracle runs. The returned scalar snapshot owns its values;
+images. The tablet descriptor must prove complete canonical part/version coverage before either
+resolution or restore. Resolution may prune a part only when the descriptor's recomputed minimum
+system time exceeds the requested boundary. Every candidate is exact-opened and projected with
+bounded part, granule, and decoded-byte ownership before the row oracle runs. The returned scalar
+snapshot owns its values;
 the borrowed images and their generation owner need only outlive the resolution call.
+
+The same complete-image projection path may reconstruct a fresh `TemporalSnapshotProvider`. It
+copies every physical version, canonicalizes cross-part source-position/row-ordinal order, and uses
+the provider's atomic retained-history seed. The caller supplies the proven tablet-wide retention
+boundary; Manifest extrema are not silently promoted into a stronger retention claim.
 
 ## Consequences and alternatives
 
@@ -50,6 +57,6 @@ Invariants 4–8, 11, 13, 14, and 18 apply. Focused tests compare current and as
 existing scalar model, cover corrections and tombstones, retain the visible commit boundary, reject
 foreign lineages, and enforce version limits. Generation-pinned Manifest part loading and bounded
 single-tablet composition cover exact image revalidation, conservative pruning, resource limits,
-and foreign descriptor lineage rejection. Multi-part generated histories, schema evolution, active
-database snapshot publication, allocation failure, fuzzing, compaction equivalence, and performance
-evidence remain required follow-up validation.
+foreign descriptor lineage rejection, and retained-provider reconstruction. Multi-part generated
+histories, schema evolution, active database snapshot publication, allocation failure, fuzzing,
+compaction equivalence, and performance evidence remain required follow-up validation.

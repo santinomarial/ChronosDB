@@ -15,8 +15,8 @@ Mixed command dispatch, application checkpoints, and Raft application are not hi
 interfaces. CSEG v2 now has strict metadata/part codecs, semantic and projected reading, plus a
 bounded single-lineage scalar resolver that provides a differential current/as-of winner oracle.
 Manifest v2 discovery, generation-pinned part loading, and bounded multi-part scalar resolution are
-implemented. Provider reconstruction from those physical rows, vector output, and compaction
-integration remain pending.
+implemented. Complete retained part sets can now reconstruct a fresh scalar provider; vector output,
+WAL/Raft suffix composition, and compaction integration remain pending.
 
 ## Public interfaces and data structures
 
@@ -41,6 +41,16 @@ Earlier as-of requests return `NOT_FOUND` rather than inventing an empty table.
 `RecoveredTemporalState` owns one provider per configured table and the locked reopened
 `WalWriter`. `release_writer()` transfers that writer exactly once to the later live coordinator.
 Provider pointers remain valid for the lifetime of the recovered owner.
+
+`restore_manifest_v2_temporal_tablet_history` exact-opens and fully projects every supplied
+generation-pinned CSEG v2 image after the owning tablet descriptor proves exact part count,
+canonical identities, source/durable bounds, and total physical-version coverage. It copies user
+cells plus all source/version/operation/identity/time metadata and sorts rows by source position and
+row ordinal across parts. It then invokes the atomic
+provider seed with the caller-proven retained-system-time boundary. Duplicate or impossible
+cross-part mutation history is durable corruption; caller lineage/boundary mistakes remain explicit
+input errors. Decoded parts are borrowed only during reconstruction and the returned provider owns
+every scalar value.
 
 ## Application and recovery sequence
 
