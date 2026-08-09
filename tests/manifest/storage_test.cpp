@@ -652,12 +652,11 @@ TEST(TemporalManifestStorageTest, LoadsHighestValidatedGenerationAndReportsNames
   const auto bindings = fixture.bindings();
   const auto sources = fixture.source_bindings();
 
-  const auto loaded =
-      owner.load_selected_temporal_manifest({.expected_database_id = fixture.database_id,
-                                             .schema_bindings = bindings,
-                                             .source_bindings = sources,
-                                             .decode_limits = {},
-                                             .part_validation_limits = {}});
+  auto loaded = owner.load_selected_temporal_manifest({.expected_database_id = fixture.database_id,
+                                                       .schema_bindings = bindings,
+                                                       .source_bindings = sources,
+                                                       .decode_limits = {},
+                                                       .part_validation_limits = {}});
   ASSERT_TRUE(loaded.has_value()) << loaded.error().to_string();
   EXPECT_EQ(loaded->generation(), 1U);
   EXPECT_EQ(loaded->previous_generation(), 0U);
@@ -672,6 +671,21 @@ TEST(TemporalManifestStorageTest, LoadsHighestValidatedGenerationAndReportsNames
   EXPECT_EQ(loaded->temporary_parts().size(), 1U);
   EXPECT_EQ(loaded->temporary_manifests().size(), 1U);
   EXPECT_GT(loaded->retained_buffer_bytes(), loaded->encoded_bytes().size());
+
+  auto selected_owner =
+      std::make_shared<const LoadedTemporalManifestGeneration>(std::move(*loaded));
+  const std::array part_ids{fixture.part_id};
+  const auto images = owner.load_temporal_part_images(selected_owner, part_ids, bindings, {});
+  ASSERT_TRUE(images.has_value()) << images.error().to_string();
+  ASSERT_EQ(images->size(), 1U);
+  EXPECT_EQ(images->front().generation(), 1U);
+  EXPECT_EQ(images->front().descriptor(), fixture.descriptor);
+  EXPECT_TRUE(std::ranges::equal(images->front().bytes(), fixture.encoded.bytes()));
+  EXPECT_GT(images->front().retained_buffer_bytes(), images->front().bytes().size());
+  const std::array duplicate_ids{fixture.part_id, fixture.part_id};
+  EXPECT_EQ(
+      owner.load_temporal_part_images(selected_owner, duplicate_ids, bindings, {}).error().code(),
+      common::StatusCode::kInvalidArgument);
 
   auto wrong_sources = sources;
   wrong_sources[0].source_id = common::Uuid{id<schema::SchemaId>(97U).bytes()};

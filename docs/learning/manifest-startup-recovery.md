@@ -10,8 +10,11 @@ Manifest v2 now has a lower-level local selection boundary alongside this v1 col
 It exact-decodes only the highest generation without fallback, binds the expected database,
 retained schemas, and exact configured WAL/Raft source owners, validates every referenced CSEG 2/0
 image, and returns an owning unpublished generation plus orphan/temporary observations. It does not
-yet replay WAL or Raft application state, install a Raft application snapshot, or publish a temporal
-query epoch; those steps must be composed before v2 service activation.
+yet replay WAL or Raft application state, install a Raft application snapshot, or publish a complete
+temporal query epoch; those steps must be composed before v2 service activation. A held v2 result
+can now load a strictly sorted requested part subset as owned, fully revalidated images. Each image
+retains the selected generation and is suitable for the bounded current/as-of tablet resolver, so a
+newer selected generation cannot silently change an already pinned read.
 
 ## Purpose and boundary
 

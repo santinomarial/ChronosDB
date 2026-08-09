@@ -3,7 +3,8 @@
 > **Status: accepted source-neutral registry, checked canonical layout, strict checksummed byte
 > codec, exact single-part CSEG admission, and add-only generation transition validation are
 > implemented. Complete referenced-part coverage and crash-ordered local filesystem installation
-> are also implemented. Highest-generation fail-closed local recovery selection is implemented;
+> are also implemented. Highest-generation fail-closed local recovery selection and
+> generation-pinned temporal part loading for bounded current/as-of resolution are implemented;
 > application replay/publication, v1 migration, authorized retention/compaction, and reclamation
 > integration remain pending.**
 
@@ -139,5 +140,10 @@ The v2 installer requires the selected predecessor to already be Manifest v2. It
 reinterpret or automatically migrate a v1 predecessor. The local recovery loader selects only the
 highest consecutive final generation, exact-decodes without fallback, binds the expected database,
 retained schemas, and exact per-tablet WAL/Raft owners, and streams full validation over every
-referenced CSEG v2 object before returning an owning unpublished generation. Application replay,
-Raft snapshot reconstruction, and query publication remain pending.
+referenced CSEG v2 object before returning an owning unpublished generation. Exact part-image loads
+retain that generation, reprove the requested descriptor and CSEG bytes, and can feed the bounded
+tablet resolver. The resolver conservatively prunes parts whose minimum system time is later than
+the requested boundary, then validates and decodes every candidate before applying exact row-level
+winner rules. A boundary before all retained versions returns `NOT_FOUND`; it is not represented as
+a proven empty table. Application replay, Raft snapshot reconstruction, and complete query-epoch
+publication remain pending.

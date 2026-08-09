@@ -432,6 +432,30 @@ common::ByteView LoadedPartImage::bytes() const noexcept {
   return bytes_;
 }
 
+LoadedTemporalPartImage::LoadedTemporalPartImage(
+    std::shared_ptr<const LoadedTemporalManifestGeneration> generation,
+    const TemporalPartDescriptor descriptor, std::vector<std::byte> bytes) noexcept
+    : generation_(std::move(generation)), descriptor_(descriptor), bytes_(std::move(bytes)) {}
+
+std::uint64_t LoadedTemporalPartImage::generation() const noexcept {
+  return generation_->generation();
+}
+
+const TemporalPartDescriptor& LoadedTemporalPartImage::descriptor() const noexcept {
+  return descriptor_;
+}
+
+common::ByteView LoadedTemporalPartImage::bytes() const noexcept {
+  return bytes_;
+}
+
+std::size_t LoadedTemporalPartImage::retained_buffer_bytes() const noexcept {
+  std::size_t total = sizeof(LoadedTemporalPartImage);
+  total = saturating_size_add(total, bytes_.capacity());
+  total = saturating_size_add(total, generation_->retained_buffer_bytes());
+  return saturating_size_add(total, 2U * kConservativeAllocationOverheadBytes);
+}
+
 SnapshotPartImage::SnapshotPartImage(const DatabaseId database_id, const wal::WalId wal_id,
                                      const std::uint64_t snapshot_generation,
                                      const PartDescriptor descriptor, std::vector<std::byte> bytes,
@@ -1626,6 +1650,75 @@ ManifestStorage::load_selected_temporal_manifest(const TemporalManifestLoadReque
     return common::make_unexpected(
         common::Status{common::StatusCode::kResourceExhausted,
                        "Loaded Manifest v2 generation exceeds container limits"});
+  }
+}
+
+common::Result<std::vector<LoadedTemporalPartImage>> ManifestStorage::load_temporal_part_images(
+    std::shared_ptr<const LoadedTemporalManifestGeneration> selected,
+    const std::span<const cseg::PartId> part_ids,
+    const std::span<const TabletSchemaBinding> schema_bindings,
+    const TemporalPartValidationLimits limits) const {
+  if (selected == nullptr || part_ids.empty()) {
+    return common::make_unexpected(
+        invalid("Temporal part-image request requires a generation and part identities"));
+  }
+  for (std::size_t index = 1U; index < part_ids.size(); ++index) {
+    if (!(part_ids[index - 1U] < part_ids[index])) {
+      return common::make_unexpected(
+          invalid("Temporal part-image identities are not strictly sorted"));
+    }
+  }
+  common::Result<ManifestNamespaceSnapshot> snapshot = scan_namespace();
+  if (!snapshot.has_value()) {
+    return common::make_unexpected(snapshot.error());
+  }
+  if (!std::ranges::binary_search(snapshot->generations, selected->generation())) {
+    return common::make_unexpected(
+        invalid("Temporal part-image generation is absent from the Manifest namespace"));
+  }
+
+  try {
+    std::vector<LoadedTemporalPartImage> images;
+    images.reserve(part_ids.size());
+    for (const cseg::PartId& part_id : part_ids) {
+      const auto descriptor =
+          std::ranges::find(selected->parts(), part_id, &TemporalPartDescriptor::part_id);
+      if (descriptor == selected->parts().end()) {
+        return common::make_unexpected(
+            invalid("Temporal part-image identity is not referenced by its generation"));
+      }
+      const TemporalTabletDescriptor* owner =
+          find_temporal_tablet(selected->tablets(), descriptor->tablet_id);
+      const TabletSchemaBinding* binding = find_binding(schema_bindings, descriptor->tablet_id);
+      const std::shared_ptr<const schema::TableSchema> schema_value =
+          binding == nullptr ? nullptr : binding->lineage.get().find(descriptor->schema_id);
+      if (owner == nullptr || schema_value == nullptr) {
+        return common::make_unexpected(
+            invalid("Temporal part image has no exact tablet/schema binding"));
+      }
+      const std::string file_name = part_file_name(part_id);
+      common::Result<std::vector<std::byte>> bytes = read_final_file(
+          implementation_->parts_, {.name = file_name,
+                                    .maximum_length = limits.decode.max_file_length,
+                                    .exact_length = descriptor->file_length,
+                                    .description = "generation-pinned temporal CSEG part image"});
+      if (!bytes.has_value()) {
+        return common::make_unexpected(bytes.error());
+      }
+      common::Status validation = validate_manifest_v2_temporal_part_image(
+          *descriptor, *owner, *bytes, *schema_value, limits);
+      if (!validation.is_ok()) {
+        return common::make_unexpected(std::move(validation));
+      }
+      images.push_back(LoadedTemporalPartImage{selected, *descriptor, std::move(*bytes)});
+    }
+    return images;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                  "Cannot allocate temporal part images"});
+  } catch (const std::length_error&) {
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                  "Temporal part images exceed container limits"});
   }
 }
 

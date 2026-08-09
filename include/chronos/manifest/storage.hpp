@@ -225,6 +225,30 @@ private:
   friend class ManifestStorage;
 };
 
+class LoadedTemporalPartImage {
+public:
+  LoadedTemporalPartImage() = delete;
+  LoadedTemporalPartImage(const LoadedTemporalPartImage&) = delete;
+  LoadedTemporalPartImage& operator=(const LoadedTemporalPartImage&) = delete;
+  LoadedTemporalPartImage(LoadedTemporalPartImage&&) noexcept = default;
+  LoadedTemporalPartImage& operator=(LoadedTemporalPartImage&&) noexcept = default;
+
+  [[nodiscard]] std::uint64_t generation() const noexcept;
+  [[nodiscard]] const TemporalPartDescriptor& descriptor() const noexcept;
+  [[nodiscard]] common::ByteView bytes() const noexcept;
+  [[nodiscard]] std::size_t retained_buffer_bytes() const noexcept;
+
+private:
+  LoadedTemporalPartImage(std::shared_ptr<const LoadedTemporalManifestGeneration> generation,
+                          TemporalPartDescriptor descriptor, std::vector<std::byte> bytes) noexcept;
+
+  std::shared_ptr<const LoadedTemporalManifestGeneration> generation_;
+  TemporalPartDescriptor descriptor_;
+  std::vector<std::byte> bytes_;
+
+  friend class ManifestStorage;
+};
+
 // One fully validated in-memory CSEG image selected by an exact aggregate database snapshot. The
 // move-only owner pins that publication epoch, so compaction reclamation cannot unlink this part
 // while its bytes or descriptor may still be used by a query.
@@ -402,6 +426,14 @@ public:
   // through full validation before this owning unpublished result is returned.
   [[nodiscard]] common::Result<LoadedTemporalManifestGeneration>
   load_selected_temporal_manifest(const TemporalManifestLoadRequest& request) const;
+
+  // Loads exact strictly sorted temporal parts from one held v2 generation. Each result pins that
+  // generation owner and independently owns its fully revalidated CSEG bytes.
+  [[nodiscard]] common::Result<std::vector<LoadedTemporalPartImage>>
+  load_temporal_part_images(std::shared_ptr<const LoadedTemporalManifestGeneration> selected,
+                            std::span<const cseg::PartId> part_ids,
+                            std::span<const TabletSchemaBinding> schema_bindings,
+                            TemporalPartValidationLimits limits) const;
 
   // Rereads exact strictly sorted part identities from the currently selected generation and
   // returns owning validated images. The supplied generation must still be the namespace maximum.

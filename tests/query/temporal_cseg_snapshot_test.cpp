@@ -1,6 +1,7 @@
 #include "chronos/columnar/column_vector.hpp"
 #include "chronos/cseg/part_codec.hpp"
 #include "chronos/cseg/projected_reader.hpp"
+#include "chronos/manifest/temporal_part_validation.hpp"
 #include "chronos/query/temporal_cseg_snapshot.hpp"
 #include "chronos/schema/schema_lineage.hpp"
 
@@ -224,6 +225,56 @@ TEST(TemporalCsegSnapshotTest, RejectsForeignLineageAndResourceExcess) {
       {.maximum_versions = 3U, .maximum_output_rows = 2U, .maximum_identity_bytes = 1U});
   ASSERT_FALSE(limited.has_value());
   EXPECT_EQ(limited.error().code(), common::StatusCode::kResourceExhausted);
+}
+
+TEST(TemporalManifestCsegSnapshotTest, ResolvesGenerationPartViewsWithPruningAndBounds) {
+  Fixture fixture;
+  const schema::SchemaLineage lineage = schema::SchemaLineage::create(*fixture.schema).value();
+  const auto descriptor = manifest::describe_manifest_v2_temporal_part_image(
+      fixture.encoded.bytes(), *fixture.schema, fixture.tablet_id,
+      cseg::temporal_format::CommitSource::kWal, fixture.source_id);
+  ASSERT_TRUE(descriptor.has_value()) << descriptor.error().to_string();
+  const std::array parts{
+      TemporalManifestCsegPartView{.descriptor = &*descriptor, .bytes = fixture.encoded.bytes()}};
+  const TemporalCsegSourceLineage source{cseg::temporal_format::CommitSource::kWal,
+                                         fixture.source_id};
+
+  const auto current = resolve_manifest_v2_temporal_tablet_snapshot(
+      fixture.schema, lineage, fixture.tablet_id, parts, source, std::nullopt);
+  ASSERT_TRUE(current.has_value()) << current.error().to_string();
+  ASSERT_EQ((*current)->rows().size(), 1U);
+  EXPECT_EQ(event_time((*current)->rows()[0]), 30);
+
+  const auto historical = resolve_manifest_v2_temporal_tablet_snapshot(
+      fixture.schema, lineage, fixture.tablet_id, parts, source, 115);
+  ASSERT_TRUE(historical.has_value()) << historical.error().to_string();
+  ASSERT_EQ((*historical)->rows().size(), 2U);
+  EXPECT_EQ(event_time((*historical)->rows()[0]), 10);
+  EXPECT_EQ(event_time((*historical)->rows()[1]), 20);
+
+  const auto pruned = resolve_manifest_v2_temporal_tablet_snapshot(
+      fixture.schema, lineage, fixture.tablet_id, parts, source,
+      descriptor->minimum_system_time - 1);
+  ASSERT_FALSE(pruned.has_value());
+  EXPECT_EQ(pruned.error().code(), common::StatusCode::kNotFound);
+
+  TemporalManifestCsegResolutionLimits limits;
+  limits.maximum_decoded_buffer_bytes = 1U;
+  EXPECT_EQ(resolve_manifest_v2_temporal_tablet_snapshot(fixture.schema, lineage, fixture.tablet_id,
+                                                         parts, source, std::nullopt, limits)
+                .error()
+                .code(),
+            common::StatusCode::kResourceExhausted);
+
+  manifest::TemporalPartDescriptor foreign = *descriptor;
+  foreign.source_id = common::Uuid{id<schema::SchemaId>(99U).bytes()};
+  const std::array foreign_parts{
+      TemporalManifestCsegPartView{.descriptor = &foreign, .bytes = fixture.encoded.bytes()}};
+  EXPECT_EQ(resolve_manifest_v2_temporal_tablet_snapshot(fixture.schema, lineage, fixture.tablet_id,
+                                                         foreign_parts, source, std::nullopt)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
 }
 
 } // namespace

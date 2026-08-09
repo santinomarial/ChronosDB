@@ -124,7 +124,13 @@ durably installs validated candidates with exact readback, file sync, no-replace
 directory sync. They become generation-authorized durable objects after the corresponding v2
 Manifest installation boundary. The v2 recovery loader now rereads and validates them before
 returning an owning selected-generation result; application recovery and query publication are
-still pending.
+still pending. The generation-pinned part loader can now reread a strictly sorted requested subset,
+reprove each descriptor/image/schema/source binding, and return independently owned images. The
+Manifest temporal tablet resolver borrows those images for one call, uses descriptor system-time
+minima only for conservative pruning, exact-opens and page-validates every candidate, enforces
+part/granule/decoded-byte limits, and materializes an owned scalar snapshot with the row-level CSEG
+oracle. An as-of boundary before every retained version is `NOT_FOUND`, because this generation
+cannot prove that earlier state was empty.
 
 ## Complexity
 

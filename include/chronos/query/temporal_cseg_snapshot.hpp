@@ -5,7 +5,9 @@
 #include "chronos/common/uuid.hpp"
 #include "chronos/cseg/projected_reader.hpp"
 #include "chronos/cseg/temporal_format.hpp"
+#include "chronos/manifest/temporal_codec.hpp"
 #include "chronos/query/snapshot.hpp"
+#include "chronos/schema/schema_lineage.hpp"
 #include "chronos/schema/table_schema.hpp"
 
 #include <cstddef>
@@ -27,6 +29,19 @@ struct TemporalCsegResolutionLimits {
   std::size_t maximum_identity_bytes{cseg::temporal_format::kMaximumLogicalIdentityBytes};
 };
 
+struct TemporalManifestCsegPartView {
+  const manifest::TemporalPartDescriptor* descriptor{};
+  common::ByteView bytes;
+};
+
+struct TemporalManifestCsegResolutionLimits {
+  std::size_t maximum_parts{1U << 16U};
+  std::size_t maximum_granules{1U << 20U};
+  std::uint64_t maximum_decoded_buffer_bytes{1ULL << 30U};
+  cseg::CsegProjectedReaderLimits reader;
+  TemporalCsegResolutionLimits resolution;
+};
+
 // Resolves current or system-time-visible winners from already schema-bound projected CSEG v2
 // granules. Every input row must belong to the one authoritative source lineage supplied here;
 // unrelated WAL/Raft sources are rejected rather than assigned an invented order. The caller must
@@ -37,6 +52,19 @@ resolve_cseg_v2_temporal_snapshot(std::shared_ptr<const schema::TableSchema> sch
                                   TemporalCsegSourceLineage lineage,
                                   std::optional<std::int64_t> as_of_system_time_ns,
                                   TemporalCsegResolutionLimits limits = {});
+
+// Composes Manifest v2 part descriptors and exact CSEG images into one scalar current/as-of tablet
+// snapshot. Descriptor system-time minima conservatively prune future-only parts; every retained
+// candidate is schema-projected and page-validated before the exact row-version resolver decides
+// winners. Image owners must outlive this call (generation-pinned storage images satisfy that).
+[[nodiscard]] common::Result<std::shared_ptr<const ScalarTableSnapshot>>
+resolve_manifest_v2_temporal_tablet_snapshot(std::shared_ptr<const schema::TableSchema> schema,
+                                             const schema::SchemaLineage& lineage,
+                                             const schema::TabletId& tablet_id,
+                                             std::span<const TemporalManifestCsegPartView> parts,
+                                             TemporalCsegSourceLineage source,
+                                             std::optional<std::int64_t> as_of_system_time_ns,
+                                             TemporalManifestCsegResolutionLimits limits = {});
 
 } // namespace chronos::query
 

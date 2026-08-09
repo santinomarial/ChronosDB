@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <limits>
 #include <new>
+#include <numeric>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -189,6 +190,10 @@ resolve_cseg_v2_temporal_snapshot(std::shared_ptr<const schema::TableSchema> sch
     }
 
     std::vector<ScalarInputRow> rows;
+    if (visible_position == 0U && as_of_system_time_ns.has_value()) {
+      return common::make_unexpected(
+          status(common::StatusCode::kNotFound, "requested system history is not retained"));
+    }
     rows.reserve(winners.size());
     for (const Winner& winner : winners) {
       if (winner.operation == cseg::temporal_format::Operation::kTombstone) {
@@ -230,6 +235,88 @@ resolve_cseg_v2_temporal_snapshot(std::shared_ptr<const schema::TableSchema> sch
   } catch (const std::length_error&) {
     return common::make_unexpected(status(common::StatusCode::kResourceExhausted,
                                           "temporal CSEG resolution exceeded container limits"));
+  }
+}
+
+common::Result<std::shared_ptr<const ScalarTableSnapshot>>
+resolve_manifest_v2_temporal_tablet_snapshot(
+    std::shared_ptr<const schema::TableSchema> schema_value, const schema::SchemaLineage& lineage,
+    const schema::TabletId& tablet_id, const std::span<const TemporalManifestCsegPartView> parts,
+    const TemporalCsegSourceLineage source, const std::optional<std::int64_t> as_of_system_time_ns,
+    const TemporalManifestCsegResolutionLimits limits) {
+  if (schema_value == nullptr || schema_value->table_id() != lineage.table_id() ||
+      parts.size() > limits.maximum_parts || limits.maximum_parts == 0U ||
+      limits.maximum_granules == 0U || limits.maximum_decoded_buffer_bytes == 0U) {
+    return common::make_unexpected(
+        invalid("Manifest temporal CSEG resolution input or limits are invalid"));
+  }
+  try {
+    std::vector<std::uint32_t> projection(schema_value->columns().size());
+    std::iota(projection.begin(), projection.end(), std::uint32_t{0U});
+    std::vector<cseg::ProjectedCsegGranule> decoded_granules;
+    decoded_granules.reserve(std::min(parts.size(), limits.maximum_granules));
+    std::uint64_t decoded_buffer_bytes = 0U;
+
+    for (const TemporalManifestCsegPartView& image : parts) {
+      if (image.descriptor == nullptr || image.bytes.empty()) {
+        return common::make_unexpected(
+            invalid("Manifest temporal CSEG part image is missing its descriptor or bytes"));
+      }
+      const manifest::TemporalPartDescriptor& descriptor = *image.descriptor;
+      if (descriptor.table_id != schema_value->table_id() || descriptor.tablet_id != tablet_id ||
+          descriptor.commit_source != source.source || descriptor.source_id != source.source_id) {
+        return common::make_unexpected(
+            invalid("Manifest temporal CSEG part belongs to another table, tablet, or source"));
+      }
+      if (as_of_system_time_ns.has_value() &&
+          descriptor.minimum_system_time > *as_of_system_time_ns) {
+        continue;
+      }
+      cseg::CsegProjectedReaderOpenResult reader =
+          cseg::open_cseg_v2_temporal_projected_reader_exact(
+              image.bytes, lineage, schema_value->schema_id(), tablet_id, limits.reader);
+      if (!reader.has_value()) {
+        return common::make_unexpected(reader.error().status());
+      }
+      for (std::size_t granule = 0U; granule < reader->metadata().granules().size(); ++granule) {
+        if (decoded_granules.size() >= limits.maximum_granules) {
+          return common::make_unexpected(
+              status(common::StatusCode::kResourceExhausted,
+                     "Manifest temporal CSEG granule limit is exhausted"));
+        }
+        const common::Result<cseg::CsegProjectedGranuleReadPlan> plan =
+            reader->plan_granule(granule, projection);
+        if (!plan.has_value()) {
+          return common::make_unexpected(plan.error());
+        }
+        if (plan->decoded_buffer_bytes() >
+            limits.maximum_decoded_buffer_bytes - decoded_buffer_bytes) {
+          return common::make_unexpected(
+              status(common::StatusCode::kResourceExhausted,
+                     "Manifest temporal CSEG decoded-byte limit is exhausted"));
+        }
+        common::Result<cseg::ProjectedCsegGranule> decoded = reader->read_granule(*plan);
+        if (!decoded.has_value()) {
+          return common::make_unexpected(decoded.error());
+        }
+        decoded_buffer_bytes += plan->decoded_buffer_bytes();
+        decoded_granules.push_back(std::move(*decoded));
+      }
+    }
+
+    std::vector<const cseg::ProjectedCsegGranule*> granule_views;
+    granule_views.reserve(decoded_granules.size());
+    for (const cseg::ProjectedCsegGranule& granule : decoded_granules) {
+      granule_views.push_back(&granule);
+    }
+    return resolve_cseg_v2_temporal_snapshot(std::move(schema_value), granule_views, source,
+                                             as_of_system_time_ns, limits.resolution);
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        status(common::StatusCode::kResourceExhausted, "Manifest temporal CSEG allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(status(common::StatusCode::kResourceExhausted,
+                                          "Manifest temporal CSEG container limit was exceeded"));
   }
 }
 
