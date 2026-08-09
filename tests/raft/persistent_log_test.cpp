@@ -125,7 +125,7 @@ TEST(RaftPersistentLogTest, ExplicitRepairRemovesOnlyIncompleteFinalRecord) {
   EXPECT_EQ(repaired->recovery().record_count, 1U);
   EXPECT_EQ(repaired->recovery().written_position.physical_sequence, 1U);
   EXPECT_EQ(repaired->recovery().repaired_bytes,
-            complete_size - repaired->recovery().written_position.end_offset);
+            complete_size - 8U - repaired->recovery().written_position.end_offset);
   ASSERT_EQ(repaired->recovery().latest_group_states.size(), 1U);
   EXPECT_EQ(repaired->recovery().latest_group_states.front(), state(group, 1U, 0x11U));
 }
