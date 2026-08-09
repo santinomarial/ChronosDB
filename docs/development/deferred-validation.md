@@ -69,6 +69,8 @@
 - Extend the implemented segmented node-level writer, rotation, complete recovery scan, explicit
   tail repair, corruption rejection, and caller-batched sync with injected I/O failures, per-group
   reclamation/checkpointing, process-crash testing, and metrics.
+- Exercise the v1.1 snapshot membership checkpoint with golden minor-0/minor-1 fixtures,
+  mixed-version processes, hostile voter counts, snapshot-install crash points, and reclamation.
 - Put `DurableMultiRaftRuntime` behind a bounded asynchronous worker pool; batch transport and
   application alongside its implemented persistence release, and prove fairness/no starvation
   under hot/cold skew.

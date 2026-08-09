@@ -30,6 +30,8 @@ struct SnapshotMetadata {
   Term last_included_term{};
   std::uint64_t manifest_generation{};
   std::array<std::byte, 32U> part_set_checksum{};
+  LogIndex configuration_index{};
+  std::vector<NodeId> voters;
 
   friend bool operator==(const SnapshotMetadata&, const SnapshotMetadata&) = default;
 };

@@ -171,6 +171,7 @@ TEST(RaftNodeTest, RejectsIndexExhaustionBeforeNextIndexCanWrap) {
   state.current_term = 1U;
   state.snapshot.last_included_index = std::numeric_limits<LogIndex>::max() - 1U;
   state.snapshot.last_included_term = 1U;
+  state.snapshot.voters = {1U};
   state.commit_index = state.snapshot.last_included_index;
   state.applied_index = state.snapshot.last_included_index;
   auto node = RaftNode::create(1U, {1U}, state);
@@ -302,6 +303,24 @@ TEST(RaftNodeTest, LaggingNewVoterAcceptsConfigurationFromNewOnlyLeader) {
   EXPECT_TRUE(std::ranges::equal(node->voters(), std::vector<NodeId>{3U, 4U, 5U}));
   ASSERT_EQ(caught_up->outbound.size(), 1U);
   EXPECT_TRUE(std::get<AppendEntriesResponse>(caught_up->outbound.front().message).success);
+}
+
+TEST(RaftNodeTest, SnapshotMembershipCheckpointSupersedesBootstrapConfiguration) {
+  PersistentState state{};
+  state.current_term = 2U;
+  state.snapshot.last_included_index = 5U;
+  state.snapshot.last_included_term = 2U;
+  state.snapshot.configuration_index = 4U;
+  state.snapshot.voters = {2U, 3U, 4U};
+  state.commit_index = 5U;
+  state.applied_index = 5U;
+  auto recovered = RaftNode::create(4U, {1U, 2U, 3U}, state);
+  ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
+  EXPECT_TRUE(std::ranges::equal(recovered->voters(), std::vector<NodeId>{2U, 3U, 4U}));
+
+  state.snapshot.voters = {2U, 2U, 4U};
+  EXPECT_EQ(RaftNode::create(4U, {1U, 2U, 3U}, state).error().code(),
+            common::StatusCode::kInvalidArgument);
 }
 
 } // namespace

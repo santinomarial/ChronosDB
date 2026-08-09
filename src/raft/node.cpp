@@ -300,6 +300,10 @@ common::Result<RaftNode> RaftNode::create(const NodeId node_id, std::vector<Node
       persistent.snapshot.last_included_term != 0U) {
     return common::make_unexpected(invalid("Raft snapshot zero index must have zero term"));
   }
+  if (persistent.snapshot.last_included_index == 0U &&
+      (persistent.snapshot.configuration_index != 0U || !persistent.snapshot.voters.empty())) {
+    return common::make_unexpected(invalid("Raft empty snapshot has a membership checkpoint"));
+  }
   if (persistent.snapshot.last_included_index == std::numeric_limits<LogIndex>::max()) {
     return common::make_unexpected(
         invalid("Raft maximum log index is reserved for exhaustion detection"));
@@ -321,8 +325,20 @@ common::Result<RaftNode> RaftNode::create(const NodeId node_id, std::vector<Node
   }
   const LogIndex last = persistent.log.empty() ? persistent.snapshot.last_included_index
                                                : persistent.log.back().index;
-  auto membership =
-      derive_membership(voters, persistent.log, persistent.commit_index, limits.maximum_voters);
+  std::vector<NodeId> base_voters = voters;
+  if (persistent.snapshot.last_included_index != 0U) {
+    if (persistent.snapshot.voters.empty()) {
+      persistent.snapshot.voters = voters;
+    } else {
+      base_voters = persistent.snapshot.voters;
+    }
+    if (!valid_voters(base_voters, limits.maximum_voters) ||
+        persistent.snapshot.configuration_index > persistent.snapshot.last_included_index) {
+      return common::make_unexpected(invalid("Raft snapshot membership checkpoint is invalid"));
+    }
+  }
+  auto membership = derive_membership(base_voters, persistent.log, persistent.commit_index,
+                                      limits.maximum_voters);
   if (!membership.has_value()) {
     return common::make_unexpected(membership.error());
   }
@@ -333,7 +349,7 @@ common::Result<RaftNode> RaftNode::create(const NodeId node_id, std::vector<Node
       (persistent.voted_for.has_value() && *persistent.voted_for == 0U)) {
     return common::make_unexpected(invalid("Raft persistent commit, apply, or vote state invalid"));
   }
-  return RaftNode{std::make_unique<Impl>(node_id, std::move(voters), std::move(*membership),
+  return RaftNode{std::make_unique<Impl>(node_id, std::move(base_voters), std::move(*membership),
                                          std::move(persistent), limits)};
 }
 

@@ -12,7 +12,7 @@
 namespace chronos::raft {
 
 inline constexpr std::uint16_t kMultiplexedLogFormatMajor = 1U;
-inline constexpr std::uint16_t kMultiplexedLogFormatMinor = 0U;
+inline constexpr std::uint16_t kMultiplexedLogFormatMinor = 1U;
 inline constexpr std::size_t kMultiplexedLogHeaderSize = 64U;
 inline constexpr std::size_t kMultiplexedLogTrailerSize = 4U;
 inline constexpr std::size_t kMaximumMultiplexedLogRecordSize = 16U * 1024U * 1024U;
@@ -27,6 +27,7 @@ struct MultiplexedLogRecordHeader {
   std::size_t payload_size{};
   std::uint64_t physical_sequence{};
   GroupId group_id;
+  std::uint16_t format_minor{};
 };
 
 // Validates the complete fixed header, including its checksum, before returning allocation-driving

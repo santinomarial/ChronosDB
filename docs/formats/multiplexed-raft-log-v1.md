@@ -1,6 +1,6 @@
 # Multiplexed Raft Persistent-State Record v1
 
-> **Status: codec and single-owner segmented append/sync/recovery are implemented.**
+> **Status: minor 1 codec and single-owner segmented append/sync/recovery are implemented.**
 > This format does not alter WAL v1, CSEG v1, or Manifest v1.
 
 The record is a node-level physical envelope for one logical Raft group checkpoint. Groups may be
@@ -13,7 +13,7 @@ group's logical term/index. All integers are little-endian and native structs ar
 | ---: | ---: | --- |
 | 0 | 8 | Magic `43 48 52 4e 4d 52 4c 00` (`CHRNMRL\0`) |
 | 8 | 2 | Major `1` |
-| 10 | 2 | Minor `0` |
+| 10 | 2 | Minor `1` (`0` remains readable) |
 | 12 | 4 | Header size `64` |
 | 16 | 4 | Total record size including 4-byte trailer |
 | 20 | 4 | Persistent-state payload size |
@@ -27,15 +27,25 @@ The trailer is CRC32C over header plus payload. The maximum complete record is 1
 
 ## Persistent-state payload
 
-The fixed 96-byte prefix contains current term, voted-for node (`0` means none), commit index,
-applied index, snapshot last index/term, manifest generation, 32-byte immutable-part-set checksum,
-log-entry count, and four required-zero bytes. Each entry then contains logical index (8), term (8),
-type (1), seven required-zero bytes, payload length (4), four required-zero bytes, and payload.
+The common first 88 bytes contain current term, voted-for node (`0` means none), commit index,
+applied index, snapshot last index/term, manifest generation, and the 32-byte immutable-part-set
+checksum. Minor 0 then stores log-entry count and four required-zero bytes, producing its historical
+96-byte fixed prefix.
+
+Minor 1 instead appends snapshot configuration index (8), snapshot voter count (4), four
+required-zero bytes, and ascending unique nonzero voter IDs (8 each), followed by log-entry count
+and four required-zero bytes. Its fixed portion is 112 bytes before voter IDs. An empty snapshot has
+configuration index zero and no voters. A nonempty snapshot checkpoint supplies the stable
+membership base for suffix validation.
+
+Each log entry contains logical index (8), term (8), type (1), seven required-zero bytes, payload
+length (4), four required-zero bytes, and payload.
 
 The decoder validates header integrity before trusting lengths, then exact size relationships,
 payload and full-record integrity, required-zero bytes, bounded entry count, and exact exhaustion.
 `RaftNode::create` performs the semantic validation: contiguous logical indexes, bounded entries,
-valid term/vote/snapshot state, and `applied <= commit <= last`.
+valid term/vote/snapshot state, canonical bounded checkpoint voters, and
+`applied <= commit <= last`.
 
 ## Segment v1 envelope
 

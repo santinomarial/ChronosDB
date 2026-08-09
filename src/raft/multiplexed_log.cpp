@@ -21,7 +21,8 @@ inline constexpr std::array<std::byte, 8U> kMagic{
     std::byte{0x43}, std::byte{0x48}, std::byte{0x52}, std::byte{0x4e},
     std::byte{0x4d}, std::byte{0x52}, std::byte{0x4c}, std::byte{0x00},
 };
-inline constexpr std::size_t kStateFixedSize = 96U;
+inline constexpr std::size_t kStateFixedSizeV1_0 = 96U;
+inline constexpr std::size_t kStateFixedSizeV1_1 = 112U;
 inline constexpr std::size_t kEntryFixedSize = 32U;
 
 [[nodiscard]] common::Status corrupt(const char* message) {
@@ -29,7 +30,12 @@ inline constexpr std::size_t kEntryFixedSize = 32U;
 }
 
 [[nodiscard]] common::Result<std::size_t> payload_size(const PersistentState& state) {
-  std::optional<std::size_t> size{kStateFixedSize};
+  std::optional<std::size_t> size{kStateFixedSizeV1_1};
+  const auto voter_bytes = common::checked_multiply(state.snapshot.voters.size(), sizeof(NodeId));
+  if (!voter_bytes.has_value())
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kOutOfRange, "snapshot voter size overflows"});
+  size = common::checked_add(*size, *voter_bytes);
   for (const LogEntry& entry : state.log) {
     size = common::checked_add(*size, kEntryFixedSize);
     if (size.has_value()) {
@@ -59,6 +65,16 @@ inline constexpr std::size_t kEntryFixedSize = 32U;
     status = writer.write_u64_le(state.snapshot.manifest_generation);
   if (status.is_ok())
     status = writer.write_exact(state.snapshot.part_set_checksum);
+  if (status.is_ok())
+    status = writer.write_u64_le(state.snapshot.configuration_index);
+  if (status.is_ok())
+    status = writer.write_u32_le(static_cast<std::uint32_t>(state.snapshot.voters.size()));
+  if (status.is_ok())
+    status = writer.write_u32_le(0U);
+  for (const NodeId voter : state.snapshot.voters) {
+    if (status.is_ok())
+      status = writer.write_u64_le(voter);
+  }
   if (status.is_ok())
     status = writer.write_u32_le(static_cast<std::uint32_t>(state.log.size()));
   if (status.is_ok())
@@ -134,13 +150,15 @@ inspect_multiplexed_log_record_header_v1(const common::ByteView encoded_header) 
   if (group_id.is_nil()) {
     return common::make_unexpected(corrupt("multiplexed log group is nil"));
   }
-  return MultiplexedLogRecordHeader{*total_size, *payload_length, *physical_sequence, group_id};
+  return MultiplexedLogRecordHeader{*total_size, *payload_length, *physical_sequence, group_id,
+                                    *minor};
 }
 
 common::Result<std::vector<std::byte>>
 encode_multiplexed_log_record_v1(const GroupPersistentState& persistent) {
   if (persistent.group_id.is_nil() || persistent.physical_sequence == 0U ||
-      persistent.state.log.size() > std::numeric_limits<std::uint32_t>::max()) {
+      persistent.state.log.size() > std::numeric_limits<std::uint32_t>::max() ||
+      persistent.state.snapshot.voters.size() > std::numeric_limits<std::uint32_t>::max()) {
     return common::make_unexpected(common::Status{common::StatusCode::kInvalidArgument,
                                                   "multiplexed log identity or state is invalid"});
   }
@@ -236,6 +254,10 @@ decode_multiplexed_log_record_v1(const common::ByteView encoded) {
   }
   const common::ByteView payload =
       encoded.subspan(kMultiplexedLogHeaderSize, inspected->payload_size);
+  const std::size_t minimum_payload =
+      inspected->format_minor == 0U ? kStateFixedSizeV1_0 : kStateFixedSizeV1_1;
+  if (payload.size() < minimum_payload)
+    return common::make_unexpected(corrupt("multiplexed log state prefix is truncated"));
   if (common::crc32c(payload) != *payload_crc) {
     return common::make_unexpected(corrupt("multiplexed log payload checksum mismatch"));
   }
@@ -255,6 +277,29 @@ decode_multiplexed_log_record_v1(const common::ByteView encoded) {
   auto snapshot_term = reader.read_u64_le();
   auto manifest_generation = reader.read_u64_le();
   auto checksum = reader.read_exact(32U);
+  std::uint64_t configuration_index = 0U;
+  std::uint32_t voter_count = 0U;
+  if (inspected->format_minor >= 1U) {
+    auto decoded_configuration_index = reader.read_u64_le();
+    auto decoded_voter_count = reader.read_u32_le();
+    auto snapshot_reserved = reader.read_u32_le();
+    if (!decoded_configuration_index || !decoded_voter_count || !snapshot_reserved ||
+        *snapshot_reserved != 0U) {
+      return common::make_unexpected(corrupt("multiplexed log snapshot checkpoint is invalid"));
+    }
+    configuration_index = *decoded_configuration_index;
+    voter_count = *decoded_voter_count;
+  }
+  if (voter_count > reader.remaining() / sizeof(NodeId))
+    return common::make_unexpected(corrupt("multiplexed log snapshot voter count is invalid"));
+  std::vector<NodeId> snapshot_voters;
+  snapshot_voters.reserve(voter_count);
+  for (std::uint32_t index = 0U; index < voter_count; ++index) {
+    auto voter = reader.read_u64_le();
+    if (!voter)
+      return common::make_unexpected(corrupt("multiplexed log snapshot voters are truncated"));
+    snapshot_voters.push_back(*voter);
+  }
   auto log_count = reader.read_u32_le();
   auto state_reserved = reader.read_u32_le();
   if (!term || !voted || !commit || !applied || !snapshot_index || !snapshot_term ||
@@ -271,6 +316,8 @@ decode_multiplexed_log_record_v1(const common::ByteView encoded) {
   state.snapshot.last_included_term = *snapshot_term;
   state.snapshot.manifest_generation = *manifest_generation;
   std::copy(checksum->begin(), checksum->end(), state.snapshot.part_set_checksum.begin());
+  state.snapshot.configuration_index = configuration_index;
+  state.snapshot.voters = std::move(snapshot_voters);
   if (*log_count > reader.remaining() / kEntryFixedSize) {
     return common::make_unexpected(corrupt("multiplexed log entry count exceeds payload"));
   }

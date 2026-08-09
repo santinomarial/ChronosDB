@@ -21,7 +21,9 @@ Only the final entry switches the committed configuration to `new`.
 
 ## Ownership, recovery, and failure behavior
 
-`RaftNode` owns the derived membership and its leader replication indexes. The caller owns clocks,
+`RaftNode` owns the derived membership and its leader replication indexes. A nonempty snapshot
+persists the stable voter set and its configuration index; that checkpoint becomes the base for
+retained-suffix replay. The caller owns clocks,
 transport, and persistence. A returned persistent transition must be synchronized before outbound
 messages are released. Followers preflight the complete candidate log and prospective commit before
 mutating persistent state, so damaged or impossible membership histories fail without a partial
@@ -39,7 +41,8 @@ applied index only after the whole batch succeeds.
 
 Quorum checks are linear in the bounded voter count. Membership derivation is linear in retained
 log entries and decodes only reserved membership entries. Full replay is intentionally simple and
-auditable; snapshot membership checkpoints will be necessary before shared-log reclamation.
+auditable; the implemented snapshot membership checkpoint now makes later shared-log reclamation
+possible once application snapshot installation is wired.
 Joint consensus temporarily reduces availability because both configurations must form majorities.
 ChronosDB accepts that cost in preference to unsafe direct replacement.
 
