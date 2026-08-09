@@ -35,8 +35,9 @@
   migration, process restart integration, packaged reactor lifecycle, and obsolete-generation
   reclamation.
 - Real-socket Protocol 1.1 partial delivery, disconnect/reconnect, duplicate replay, schema-change
-  termination, cancellation races, allocation faults, mixed-version peers, and sustained network
-  backpressure integration around the implemented subscription messages and lifecycle.
+  termination and coordinator replacement, cancellation races, allocation faults, checkpoint
+  minor-0/minor-1 mixed-version peers, and sustained network backpressure integration around the
+  implemented subscription messages and lifecycle.
 - Full unit/property coverage for token hostile sizes/versions, retention expiry disclosure,
   subscriber fan-out, slow consumers, window expiration, negative event times, overflow, NaN,
   floating reproducibility, integer/decimal overflow, VWAP zero weight, OHLC endpoint removal,

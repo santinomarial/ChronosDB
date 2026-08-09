@@ -214,5 +214,46 @@ TEST(MultiTabletSubscriptionTest, CheckpointsAndRestoresExactAdmissionOrderForRe
       MultiTabletSubscriptionManager::restore(fixture.source(2U, 2U), corrupted).has_value());
 }
 
+TEST(MultiTabletSubscriptionTest, PersistsTerminalSchemaChangeAndExpiresOldPlanSuffix) {
+  Fixture fixture;
+  auto manager = MultiTabletSubscriptionManager::create(fixture.source());
+  ASSERT_TRUE(manager.has_value());
+  const auto registration = manager->register_subscription(fixture.request());
+  ASSERT_TRUE(registration.has_value());
+  ASSERT_TRUE(manager->complete_snapshot(fixture.subscription_id).is_ok());
+  ASSERT_TRUE(
+      manager->publish_committed(fixture.change(fixture.tablet_a, fixture.wal_a, 1U)).is_ok());
+  ASSERT_TRUE(
+      manager->publish_committed(fixture.change(fixture.tablet_b, fixture.wal_b, 1U)).is_ok());
+
+  CommittedChange incompatible = fixture.change(fixture.tablet_a, fixture.wal_a, 2U);
+  incompatible.schema_id = identifier<schema::SchemaId>(std::byte{12});
+  ASSERT_TRUE(manager->publish_committed(std::move(incompatible)).is_ok());
+  const auto status = manager->status(fixture.subscription_id);
+  ASSERT_TRUE(status.has_value());
+  EXPECT_EQ(status->phase, SubscriptionPhase::kSchemaChanged);
+  EXPECT_EQ(manager->poll(fixture.subscription_id, 1U).error().code(),
+            common::StatusCode::kNotSupported);
+
+  const auto checkpoint = manager->checkpoint();
+  ASSERT_TRUE(checkpoint.has_value());
+  EXPECT_FALSE(checkpoint->plan_schema_compatible);
+  EXPECT_TRUE(checkpoint->retained_changes.empty());
+  ASSERT_EQ(checkpoint->sources.size(), 2U);
+  EXPECT_EQ(checkpoint->sources[0].latest_position.record_sequence, 2U);
+  EXPECT_EQ(checkpoint->sources[0].expired_through_sequence, 2U);
+  EXPECT_EQ(checkpoint->sources[1].latest_position.record_sequence, 1U);
+  EXPECT_EQ(checkpoint->sources[1].expired_through_sequence, 1U);
+
+  auto restored = MultiTabletSubscriptionManager::restore(fixture.source(2U, 1U), *checkpoint);
+  ASSERT_TRUE(restored.has_value()) << restored.error().to_string();
+  EXPECT_EQ(restored->resume_subscription(registration->initial_resume_token).error().code(),
+            common::StatusCode::kNotSupported);
+  SubscriptionRequest replacement = fixture.request();
+  replacement.subscription_id = uuid(std::byte{13});
+  EXPECT_EQ(restored->register_subscription(replacement).error().code(),
+            common::StatusCode::kNotSupported);
+}
+
 } // namespace
 } // namespace chronos::live

@@ -70,6 +70,20 @@ public:
     state.buffered_bytes = 0U;
   }
 
+  void invalidate_plan_schema() noexcept {
+    plan_schema_compatible = false;
+    retained_changes.clear();
+    retained_change_bytes = 0U;
+    for (auto& [identity, state] : subscriptions) {
+      static_cast<void>(identity);
+      if (state.phase != SubscriptionPhase::kSnapshot && state.phase != SubscriptionPhase::kLive)
+        continue;
+      state.phase = SubscriptionPhase::kSchemaChanged;
+      state.buffered.clear();
+      state.buffered_bytes = 0U;
+    }
+  }
+
   void append(State& state, const std::shared_ptr<const CommittedChange>& change) const {
     const std::size_t bytes = retained_bytes(*change);
     if (state.last_assigned_sequence == std::numeric_limits<std::uint64_t>::max() ||
@@ -85,6 +99,7 @@ public:
   SubscriptionSource source;
   SubscriptionLimits limits;
   SourcePosition latest_position;
+  bool plan_schema_compatible{true};
   std::size_t retained_change_bytes{};
   std::deque<std::shared_ptr<const CommittedChange>> retained_changes;
   mutable std::map<common::Uuid, State> subscriptions;
@@ -125,6 +140,10 @@ SubscriptionManager::register_subscription(const SubscriptionRequest& request) {
       request.schema_version != impl_->source.schema_version) {
     return common::make_unexpected(
         invalid("subscription request does not match the manager plan and schema"));
+  }
+  if (!impl_->plan_schema_compatible) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kNotSupported, "subscription plan schema has changed"});
   }
   if (impl_->subscriptions.contains(request.subscription_id)) {
     return common::make_unexpected(common::Status{common::StatusCode::kAlreadyExists,
@@ -167,6 +186,10 @@ SubscriptionManager::resume_subscription(const common::ByteView encoded_token) {
     return common::make_unexpected(
         common::Status{common::StatusCode::kInvalidArgument,
                        "resume token belongs to another source, plan, or schema lineage"});
+  }
+  if (!impl_->plan_schema_compatible) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kNotSupported, "resume token plan schema has changed"});
   }
   const auto existing_subscription = impl_->subscriptions.find(token->subscription_id);
   if (existing_subscription != impl_->subscriptions.end()) {
@@ -236,7 +259,7 @@ common::Status SubscriptionManager::complete_snapshot(const common::Uuid& subscr
     return iterator->second.phase == SubscriptionPhase::kLive
                ? common::Status::ok()
                : common::Status{common::StatusCode::kUnavailable,
-                                "subscription cannot complete an overflowed or cancelled snapshot"};
+                                "subscription cannot complete a terminal snapshot"};
   }
   iterator->second.phase = SubscriptionPhase::kLive;
   return common::Status::ok();
@@ -248,6 +271,10 @@ common::Status SubscriptionManager::publish_committed(CommittedChange change) {
       change.position.record_sequence != impl_->latest_position.record_sequence + 1U) {
     return invalid("committed changes must follow the exact source lineage and sequence");
   }
+  if (!impl_->plan_schema_compatible) {
+    return common::Status{common::StatusCode::kNotSupported,
+                          "subscription plan schema has already changed"};
+  }
   if ((change.operation != LogicalChangeOperation::kUpsert &&
        change.operation != LogicalChangeOperation::kDelete) ||
       change.result_key.empty() ||
@@ -258,6 +285,13 @@ common::Status SubscriptionManager::publish_committed(CommittedChange change) {
   if (bytes > impl_->limits.maximum_change_bytes || bytes > impl_->limits.maximum_retained_bytes) {
     return common::Status{common::StatusCode::kResourceExhausted,
                           "committed change exceeds configured retention bound"};
+  }
+
+  if (change.schema_id != impl_->source.schema_id ||
+      change.schema_version != impl_->source.schema_version) {
+    impl_->latest_position = change.position;
+    impl_->invalidate_plan_schema();
+    return common::Status::ok();
   }
 
   auto owned = std::make_shared<const CommittedChange>(std::move(change));
@@ -273,11 +307,6 @@ common::Status SubscriptionManager::publish_committed(CommittedChange change) {
   for (auto& [identity, state] : impl_->subscriptions) {
     static_cast<void>(identity);
     if (state.phase != SubscriptionPhase::kSnapshot && state.phase != SubscriptionPhase::kLive) {
-      continue;
-    }
-    if (owned->schema_id != state.request.schema_id ||
-        owned->schema_version != state.request.schema_version) {
-      impl_->overflow(state);
       continue;
     }
     impl_->append(state, owned);
@@ -304,6 +333,10 @@ SubscriptionManager::poll(const common::Uuid& subscription_id,
   if (state.phase == SubscriptionPhase::kOverflowed) {
     return common::make_unexpected(common::Status{
         common::StatusCode::kResourceExhausted, "subscription buffer overflowed; resume required"});
+  }
+  if (state.phase == SubscriptionPhase::kSchemaChanged) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kNotSupported, "subscription plan schema has changed"});
   }
   if (state.phase == SubscriptionPhase::kCancelled) {
     return common::make_unexpected(
@@ -332,9 +365,11 @@ SubscriptionManager::acknowledge(const common::Uuid& subscription_id,
         common::Status{common::StatusCode::kNotFound, "subscription is not registered"});
   }
   Impl::State& state = iterator->second;
-  if (delivery_sequence < state.last_acknowledged_sequence ||
+  if (state.phase != SubscriptionPhase::kLive ||
+      delivery_sequence < state.last_acknowledged_sequence ||
       delivery_sequence > state.last_polled_sequence) {
-    return common::make_unexpected(invalid("acknowledgment is outside the delivered sequence"));
+    return common::make_unexpected(
+        invalid("acknowledgment is outside live delivered state"));
   }
   while (!state.buffered.empty() && state.buffered.front().delivery_sequence <= delivery_sequence) {
     state.safe_position = state.buffered.front().change->position;

@@ -138,3 +138,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0101](0101-durable-multi-tablet-subscription-owner.md) | Durable multi-tablet subscription owner | accepted |
 | [0102](0102-exact-multi-tablet-subscription-snapshot.md) | Exact multi-tablet subscription snapshots | accepted |
 | [0103](0103-durable-subscription-plan-registry.md) | Durable subscription plan registry | accepted |
+| [0104](0104-schema-change-subscription-boundary.md) | Schema-change subscription terminal boundary | accepted |

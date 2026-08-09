@@ -2,10 +2,12 @@
 
 ## Status and byte order
 
-This document freezes major version 1, minor version 0. Every integer is fixed-width little-endian.
-UUID and WAL identities use their canonical 16 bytes. No native C++ object representation is
-serialized. The complete file is bounded by the decoder configuration and ends in a CRC32C over
-every preceding byte.
+This document freezes major version 1. Minor 0 is the initial layout and minor 1 adds terminal plan-
+schema state in a previously reserved header byte. Every integer is fixed-width little-endian. UUID
+and WAL identities use their canonical 16 bytes. No native C++ object representation is serialized.
+The complete file is bounded by the decoder configuration and ends in a CRC32C over every preceding
+byte. Compatible checkpoints continue to encode byte-identical minor-0 files; only a terminal
+schema-invalidated checkpoint emits minor 1.
 
 ## Header
 
@@ -25,7 +27,13 @@ The header is exactly 128 bytes.
 | 64 | 32 | plan fingerprint |
 | 96 | 16 | schema UUID |
 | 112 | 8 | schema version |
-| 120 | 8 | reserved zero |
+| 120 | 1 | schema-state flags: minor 0 requires `0`; minor 1 requires `1` (plan schema invalidated) |
+| 121 | 7 | reserved zero |
+
+A plan-schema-invalidated checkpoint is terminal for its plan. It contains no retained changes and
+every source has `expired_through == latest`; old-plan registration and resume must fail as
+incompatible after recovery. Unknown minor versions or schema-state flag values fail as unsupported
+or corrupt, respectively.
 
 ## Canonical source vector
 
@@ -73,7 +81,7 @@ unsupported; malformed or checksum-invalid bytes fail as corruption.
 
 ## Durable generation envelope
 
-Filesystem generations wrap one complete checkpoint in a second v1 envelope so renaming older
+Filesystem generations wrap one complete checkpoint in a second v1.0 envelope so renaming older
 bytes to a newer filename cannot change selected state. The envelope has magic `CHSUBCG1`, the same
 major/minor fields, a 64-byte header, exact total size, nonzero 64-bit checkpoint generation, exact
 nested byte size, and 24 reserved zero bytes. The nested Checkpoint v1 bytes follow, then a second

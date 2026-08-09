@@ -63,6 +63,9 @@ struct MultiTabletSubscriptionCheckpoint {
   schema::SchemaVersion schema_version;
   std::vector<MultiTabletSubscriptionCheckpointSource> sources;
   std::vector<CommittedChange> retained_changes;
+  // False after the first committed change from a schema other than the plan-bound schema. Such a
+  // checkpoint is terminal, retains no replay suffix, and rejects new or resumed subscribers.
+  bool plan_schema_compatible{true};
 
   friend bool operator==(const MultiTabletSubscriptionCheckpoint&,
                          const MultiTabletSubscriptionCheckpoint&) = default;

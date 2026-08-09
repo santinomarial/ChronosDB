@@ -107,6 +107,24 @@ public:
     state.buffered_bytes = 0U;
   }
 
+  void invalidate_plan_schema(const std::size_t changed_source,
+                              const std::uint64_t committed_sequence) noexcept {
+    sources[changed_source].latest_sequence = committed_sequence;
+    plan_schema_compatible = false;
+    retained_changes.clear();
+    retained_change_bytes = 0U;
+    for (SourceState& state : sources)
+      state.expired_through_sequence = state.latest_sequence;
+    for (auto& [identity, state] : subscriptions) {
+      static_cast<void>(identity);
+      if (state.phase != SubscriptionPhase::kSnapshot && state.phase != SubscriptionPhase::kLive)
+        continue;
+      state.phase = SubscriptionPhase::kSchemaChanged;
+      state.buffered.clear();
+      state.buffered_bytes = 0U;
+    }
+  }
+
   [[nodiscard]] bool append(State& state, const std::shared_ptr<const CommittedChange>& change,
                             const std::size_t bytes) const noexcept {
     if (state.last_assigned_sequence == std::numeric_limits<std::uint64_t>::max() ||
@@ -141,6 +159,7 @@ public:
   SubscriptionLimits limits;
   std::vector<SourceState> sources;
   std::map<schema::TabletId, std::size_t> source_indexes;
+  bool plan_schema_compatible{true};
   std::size_t retained_change_bytes{};
   std::deque<std::shared_ptr<const CommittedChange>> retained_changes;
   mutable std::map<common::Uuid, State> subscriptions;
@@ -204,6 +223,9 @@ MultiTabletSubscriptionManager::restore(MultiTabletSubscriptionSource source,
       checkpoint.retained_changes.size() > limits.maximum_retained_changes)
     return common::make_unexpected(
         invalid("subscription checkpoint identity, source count, or retention count is invalid"));
+  if (!checkpoint.plan_schema_compatible && !checkpoint.retained_changes.empty())
+    return common::make_unexpected(
+        invalid("schema-incompatible subscription checkpoint retains replay changes"));
 
   try {
     std::vector<std::uint64_t> expected_sequences;
@@ -258,6 +280,7 @@ MultiTabletSubscriptionManager::restore(MultiTabletSubscriptionSource source,
     }
     impl.retained_changes = std::move(retained);
     impl.retained_change_bytes = retained_bytes;
+    impl.plan_schema_compatible = checkpoint.plan_schema_compatible;
     return restored;
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("subscription checkpoint restore allocation failed"));
@@ -275,6 +298,9 @@ MultiTabletSubscriptionManager::register_subscription(const SubscriptionRequest&
     return common::make_unexpected(
         invalid("subscription request does not match the coordinator plan and schema"));
   }
+  if (!impl_->plan_schema_compatible)
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kNotSupported, "subscription coordinator plan schema has changed"});
   if (impl_->subscriptions.contains(request.subscription_id))
     return common::make_unexpected(common::Status{common::StatusCode::kAlreadyExists,
                                                   "subscription identity is already registered"});
@@ -315,6 +341,9 @@ MultiTabletSubscriptionManager::resume_subscription(const common::ByteView encod
     return common::make_unexpected(
         invalid("resume token does not match the coordinator plan, schema, or source set"));
   }
+  if (!impl_->plan_schema_compatible)
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kNotSupported, "resume token plan schema has changed"});
   const auto existing = impl_->subscriptions.find(token->subscription_id);
   if (existing != impl_->subscriptions.end() &&
       (existing->second.phase == SubscriptionPhase::kSnapshot ||
@@ -380,7 +409,7 @@ MultiTabletSubscriptionManager::complete_snapshot(const common::Uuid& subscripti
     return common::Status::ok();
   if (iterator->second.phase != SubscriptionPhase::kSnapshot)
     return common::Status{common::StatusCode::kUnavailable,
-                          "subscription cannot complete after overflow or cancellation"};
+                          "subscription cannot complete after terminal state"};
   iterator->second.phase = SubscriptionPhase::kLive;
   return common::Status::ok();
 }
@@ -394,6 +423,9 @@ common::Status MultiTabletSubscriptionManager::publish_committed(CommittedChange
       source_state.latest_sequence == std::numeric_limits<std::uint64_t>::max() ||
       change.position.record_sequence != source_state.latest_sequence + 1U)
     return invalid("committed change does not follow its exact source lineage and sequence");
+  if (!impl_->plan_schema_compatible)
+    return common::Status{common::StatusCode::kNotSupported,
+                          "subscription coordinator plan schema has already changed"};
   if ((change.operation != LogicalChangeOperation::kUpsert &&
        change.operation != LogicalChangeOperation::kDelete) ||
       change.result_key.empty() ||
@@ -404,6 +436,12 @@ common::Status MultiTabletSubscriptionManager::publish_committed(CommittedChange
     return bytes.error();
   if (*bytes > impl_->limits.maximum_change_bytes || *bytes > impl_->limits.maximum_retained_bytes)
     return exhausted("committed change exceeds configured retention bound");
+
+  if (change.schema_id != impl_->source.schema_id ||
+      change.schema_version != impl_->source.schema_version) {
+    impl_->invalidate_plan_schema(source->second, change.position.record_sequence);
+    return common::Status::ok();
+  }
 
   std::shared_ptr<const CommittedChange> owned;
   try {
@@ -428,11 +466,6 @@ common::Status MultiTabletSubscriptionManager::publish_committed(CommittedChange
     static_cast<void>(identity);
     if (state.phase != SubscriptionPhase::kSnapshot && state.phase != SubscriptionPhase::kLive)
       continue;
-    if (owned->schema_id != impl_->source.schema_id ||
-        owned->schema_version != impl_->source.schema_version) {
-      Impl::overflow(state);
-      continue;
-    }
     static_cast<void>(impl_->append(state, owned, *bytes));
   }
   return common::Status::ok();
@@ -454,6 +487,9 @@ MultiTabletSubscriptionManager::poll(const common::Uuid& subscription_id,
   if (state.phase == SubscriptionPhase::kOverflowed)
     return common::make_unexpected(common::Status{
         common::StatusCode::kResourceExhausted, "subscription buffer overflowed; resume required"});
+  if (state.phase == SubscriptionPhase::kSchemaChanged)
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kNotSupported, "subscription plan schema has changed"});
   if (state.phase == SubscriptionPhase::kCancelled)
     return common::make_unexpected(
         common::Status{common::StatusCode::kCancelled, "subscription is cancelled"});
@@ -567,6 +603,7 @@ MultiTabletSubscriptionManager::checkpoint() const {
     checkpoint.retained_changes.reserve(impl_->retained_changes.size());
     for (const auto& change : impl_->retained_changes)
       checkpoint.retained_changes.push_back(*change);
+    checkpoint.plan_schema_compatible = impl_->plan_schema_compatible;
     return checkpoint;
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("subscription checkpoint allocation failed"));

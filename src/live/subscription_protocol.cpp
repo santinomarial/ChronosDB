@@ -21,6 +21,23 @@ wire_operation(const LogicalChangeOperation operation) {
   return common::make_unexpected(invalid("logical subscription operation is unassigned"));
 }
 
+[[nodiscard]] common::Status validate_terminal_reason(
+    const SubscriptionPhase phase, const network::SubscriptionEndReason reason) {
+  if (phase == SubscriptionPhase::kSchemaChanged &&
+      reason != network::SubscriptionEndReason::kSchemaChanged)
+    return invalid("schema-changed subscription requires SCHEMA_CHANGED termination");
+  if (phase != SubscriptionPhase::kSchemaChanged &&
+      reason == network::SubscriptionEndReason::kSchemaChanged)
+    return invalid("SCHEMA_CHANGED termination requires schema-changed subscription state");
+  if (phase == SubscriptionPhase::kOverflowed &&
+      reason != network::SubscriptionEndReason::kOverflowed)
+    return invalid("overflowed subscription requires OVERFLOWED termination");
+  if (phase != SubscriptionPhase::kOverflowed &&
+      reason == network::SubscriptionEndReason::kOverflowed)
+    return invalid("OVERFLOWED termination requires overflowed subscription state");
+  return common::Status::ok();
+}
+
 } // namespace
 
 common::Result<std::vector<std::byte>>
@@ -79,6 +96,9 @@ terminate_subscription(SubscriptionManager& manager, const common::Uuid& subscri
   const auto current = manager.status(subscription_id);
   if (!current.has_value())
     return common::make_unexpected(current.error());
+  if (const common::Status status = validate_terminal_reason(current->phase, reason);
+      !status.is_ok())
+    return common::make_unexpected(status);
   auto token = manager.cancel(subscription_id);
   if (!token.has_value())
     return common::make_unexpected(token.error());
@@ -96,6 +116,9 @@ terminate_subscription(MultiTabletSubscriptionManager& manager, const common::Uu
   const auto current = manager.status(subscription_id);
   if (!current.has_value())
     return common::make_unexpected(current.error());
+  if (const common::Status status = validate_terminal_reason(current->phase, reason);
+      !status.is_ok())
+    return common::make_unexpected(status);
   auto token = manager.cancel(subscription_id);
   if (!token.has_value())
     return common::make_unexpected(token.error());

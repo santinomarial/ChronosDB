@@ -37,10 +37,11 @@ their full roadmap exit gates or that ChronosDB is a production three-node datab
   durable coordinator owner that publishes retention frontiers only after synchronized install;
   plus exact multi-tablet historical execution through one global physical pipeline, started
   directly from a durably recovered executable without mutable-manager escape. Snapshot teardown
-  abandons state without token allocation, while client cancellation still returns a safe token.
+  abandons state without token allocation, while client cancellation still returns a safe token;
+  and committed schema incompatibility has a distinct terminal phase, precise Protocol 1.1 reason,
+  invalidated resume state, and durable checkpoint/reopen representation.
 
-Still incomplete: topology/retention owner integration, schema-change terminal representation, and
-packaged reactor service lifecycle.
+Still incomplete: topology/retention owner integration and packaged reactor service lifecycle.
 
 ### Phase 12 — performance architecture and io_uring
 

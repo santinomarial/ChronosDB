@@ -207,6 +207,40 @@ TEST(DurableMultiTabletSubscriptionTest, DoesNotAdvanceFrontierWhenInstallationF
   EXPECT_FALSE(frontiers->has_value());
 }
 
+TEST(DurableMultiTabletSubscriptionTest, RecoversTerminalSchemaInvalidation) {
+  TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  Fixture fixture;
+  std::vector<std::byte> initial_token;
+  {
+    auto owner = DurableMultiTabletSubscription::create_new(fixture.config(directory.path()));
+    ASSERT_TRUE(owner.has_value()) << owner.error().to_string();
+    const auto registration = owner->register_subscription(fixture.request());
+    ASSERT_TRUE(registration.has_value());
+    initial_token = registration->initial_resume_token;
+    CommittedChange incompatible = fixture.change(fixture.tablet_a, fixture.wal_a, 1U);
+    incompatible.schema_id = identifier<schema::SchemaId>(std::byte{15});
+    ASSERT_TRUE(owner->publish_committed(std::move(incompatible)).is_ok());
+    const auto status = owner->status(fixture.subscription_id);
+    ASSERT_TRUE(status.has_value());
+    EXPECT_EQ(status->phase, SubscriptionPhase::kSchemaChanged);
+    const auto installed = owner->checkpoint();
+    ASSERT_TRUE(installed.has_value()) << installed.error().to_string();
+    const auto frontiers = owner->durable_retention_frontiers();
+    ASSERT_TRUE(frontiers.has_value());
+    ASSERT_TRUE(frontiers->has_value());
+    EXPECT_EQ((**frontiers)[0].record_sequence, 1U);
+    EXPECT_EQ((**frontiers)[1].record_sequence, 0U);
+  }
+
+  auto reopened = DurableMultiTabletSubscription::open_existing(fixture.config(directory.path()));
+  ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+  EXPECT_EQ(reopened->resume_subscription(initial_token).error().code(),
+            common::StatusCode::kNotSupported);
+  EXPECT_EQ(reopened->register_subscription(fixture.request()).error().code(),
+            common::StatusCode::kNotSupported);
+}
+
 TEST(DurableMultiTabletSubscriptionTest, StartsExactSnapshotFromRecoveredExecutablePlan) {
   TemporaryDirectory plan_directory;
   TemporaryDirectory checkpoint_directory;

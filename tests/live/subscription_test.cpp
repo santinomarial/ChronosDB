@@ -1,5 +1,6 @@
 #include "chronos/common/status.hpp"
 #include "chronos/live/subscription.hpp"
+#include "chronos/live/subscription_protocol.hpp"
 
 #include <cstddef>
 #include <gtest/gtest.h>
@@ -131,6 +132,47 @@ TEST(SubscriptionTest, SlowSubscriberOverflowDoesNotRejectCommittedChange) {
   ASSERT_TRUE(status.has_value());
   EXPECT_EQ(status->phase, SubscriptionPhase::kOverflowed);
   EXPECT_EQ(status->buffered_changes, 0U);
+}
+
+TEST(SubscriptionTest, SchemaChangeTerminatesPlanAndRejectsResumePrecisely) {
+  Fixture fixture;
+  auto manager = SubscriptionManager::create(fixture.source());
+  ASSERT_TRUE(manager.has_value());
+  const auto registration = manager->register_subscription(fixture.request());
+  ASSERT_TRUE(registration.has_value());
+  ASSERT_TRUE(manager->complete_snapshot(fixture.subscription_id).is_ok());
+  ASSERT_TRUE(manager->publish_committed(fixture.change(1U)).is_ok());
+  ASSERT_TRUE(manager->poll(fixture.subscription_id, 1U).has_value());
+  const auto safe_token = manager->acknowledge(fixture.subscription_id, 1U);
+  ASSERT_TRUE(safe_token.has_value());
+
+  CommittedChange incompatible = fixture.change(2U);
+  incompatible.schema_id = identifier<schema::SchemaId>(std::byte{9});
+  ASSERT_TRUE(manager->publish_committed(std::move(incompatible)).is_ok());
+  const auto status = manager->status(fixture.subscription_id);
+  ASSERT_TRUE(status.has_value());
+  EXPECT_EQ(status->phase, SubscriptionPhase::kSchemaChanged);
+  EXPECT_EQ(manager->poll(fixture.subscription_id, 1U).error().code(),
+            common::StatusCode::kNotSupported);
+  EXPECT_FALSE(manager->acknowledge(fixture.subscription_id, 1U).has_value());
+  EXPECT_FALSE(terminate_subscription(*manager, fixture.subscription_id,
+                                     network::SubscriptionEndReason::kOverflowed)
+                   .has_value());
+
+  const auto terminal = terminate_subscription(
+      *manager, fixture.subscription_id, network::SubscriptionEndReason::kSchemaChanged);
+  ASSERT_TRUE(terminal.has_value());
+  const auto decoded = network::decode_subscription_end(*terminal);
+  ASSERT_TRUE(decoded.has_value());
+  EXPECT_EQ(decoded->reason, network::SubscriptionEndReason::kSchemaChanged);
+  EXPECT_EQ(decoded->safe_delivery_sequence, 1U);
+  EXPECT_EQ(manager->resume_subscription(*safe_token).error().code(),
+            common::StatusCode::kNotSupported);
+
+  SubscriptionRequest replacement = fixture.request();
+  replacement.subscription_id = uuid(std::byte{10});
+  EXPECT_EQ(manager->register_subscription(replacement).error().code(),
+            common::StatusCode::kNotSupported);
 }
 
 } // namespace

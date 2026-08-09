@@ -43,6 +43,7 @@ enum class SubscriptionPhase : std::uint8_t {
   kSnapshot,
   kLive,
   kOverflowed,
+  kSchemaChanged,
   kCancelled,
 };
 

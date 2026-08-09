@@ -27,6 +27,12 @@ the same admission order. Restore does not attempt to infer an interleaving: it 
 per-source retained suffix is consecutive through the declared latest vector, then reinstalls the
 recorded order. Subscriber buffers are reconstructed only from an authenticated safe Resume Token.
 
+A schema change is not retention overflow. The first consecutive committed change from a different
+schema terminally invalidates the old plan, clears its complete cross-tablet suffix, and expires each
+source through its current latest position. Checkpoint minor 1 records that state explicitly, so a
+restart cannot accidentally reactivate the old fingerprint. Existing sessions end with
+`SCHEMA_CHANGED`; all old tokens and new registrations require a newly prepared plan and snapshot.
+
 `DurableMultiTabletSubscription` couples that logical state to a lock-owning immutable-generation
 store. Reopen treats the latest installed checkpoint vector as the authoritative replay boundary;
 committed log entries after it must be fed back through `publish_committed` in each source's exact

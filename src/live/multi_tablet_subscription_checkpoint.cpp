@@ -27,7 +27,10 @@ constexpr std::array<std::byte, 8U> kMagic{std::byte{'C'}, std::byte{'H'}, std::
                                            std::byte{'U'}, std::byte{'B'}, std::byte{'C'},
                                            std::byte{'P'}, std::byte{'1'}};
 constexpr std::uint16_t kMajor = 1U;
-constexpr std::uint16_t kMinor = 0U;
+constexpr std::uint16_t kCheckpointMinorInitial = 0U;
+constexpr std::uint16_t kCheckpointMinorSchemaState = 1U;
+constexpr std::uint16_t kBoundMinor = 0U;
+constexpr std::uint8_t kPlanSchemaInvalidated = 1U;
 constexpr std::array<std::byte, 8U> kBoundMagic{std::byte{'C'}, std::byte{'H'}, std::byte{'S'},
                                                 std::byte{'U'}, std::byte{'B'}, std::byte{'C'},
                                                 std::byte{'G'}, std::byte{'1'}};
@@ -79,6 +82,9 @@ validate_and_size(const MultiTabletSubscriptionCheckpoint& checkpoint,
       checkpoint.retained_changes.size() > limits.maximum_retained_changes)
     return common::make_unexpected(
         invalid("subscription checkpoint identity or counts are invalid"));
+  if (!checkpoint.plan_schema_compatible && !checkpoint.retained_changes.empty())
+    return common::make_unexpected(
+        invalid("schema-incompatible subscription checkpoint retains replay changes"));
   try {
     std::map<schema::TabletId, std::size_t> indexes;
     std::vector<std::uint64_t> expected;
@@ -190,7 +196,9 @@ common::Result<std::vector<std::byte>> encode_multi_tablet_subscription_checkpoi
     if (status.is_ok())
       status = writer.write_u16_le(kMajor);
     if (status.is_ok())
-      status = writer.write_u16_le(kMinor);
+      status = writer.write_u16_le(checkpoint.plan_schema_compatible
+                                       ? kCheckpointMinorInitial
+                                       : kCheckpointMinorSchemaState);
     if (status.is_ok())
       status = writer.write_u32_le(kMultiTabletSubscriptionCheckpointHeaderSize);
     if (status.is_ok())
@@ -210,7 +218,9 @@ common::Result<std::vector<std::byte>> encode_multi_tablet_subscription_checkpoi
     if (status.is_ok())
       status = writer.write_u64_le(checkpoint.schema_version.value());
     if (status.is_ok())
-      status = writer.zero_fill(8U);
+      status = writer.write_u8(checkpoint.plan_schema_compatible ? 0U : kPlanSchemaInvalidated);
+    if (status.is_ok())
+      status = writer.zero_fill(7U);
     for (const auto& source : checkpoint.sources) {
       if (status.is_ok())
         status = writer.write_exact(source.latest_position.tablet_id.bytes());
@@ -262,7 +272,7 @@ common::Result<MultiTabletSubscriptionCheckpoint> decode_multi_tablet_subscripti
   if (!major.has_value() || !minor.has_value() || !header_size.has_value() ||
       !total_size.has_value() || !source_count.has_value() || !change_count.has_value())
     return common::make_unexpected(corruption("subscription checkpoint header is truncated"));
-  if (*major != kMajor || *minor != kMinor)
+  if (*major != kMajor || *minor > kCheckpointMinorSchemaState)
     return common::make_unexpected(unsupported("subscription checkpoint version is unsupported"));
   if (*header_size != kMultiTabletSubscriptionCheckpointHeaderSize || *total_size != bytes.size() ||
       *source_count == 0U || *source_count > limits.maximum_sources ||
@@ -284,10 +294,15 @@ common::Result<MultiTabletSubscriptionCheckpoint> decode_multi_tablet_subscripti
     auto schema_version = reader.read_u64_le();
     auto reserved = reader.read_exact(8U);
     if (!database_bytes.has_value() || !table_bytes.has_value() || !plan.has_value() ||
-        !schema_bytes.has_value() || !schema_version.has_value() || !reserved.has_value() ||
-        !std::ranges::all_of(*reserved,
-                             [](const std::byte value) { return value == std::byte{0}; }))
+        !schema_bytes.has_value() || !schema_version.has_value() || !reserved.has_value())
       return common::make_unexpected(corruption("subscription checkpoint identity is invalid"));
+    const std::uint8_t schema_flags = std::to_integer<std::uint8_t>((*reserved)[0]);
+    if ((*minor == kCheckpointMinorInitial && schema_flags != 0U) ||
+        (*minor == kCheckpointMinorSchemaState && schema_flags != kPlanSchemaInvalidated) ||
+        !std::ranges::all_of(reserved->subspan(1U),
+                             [](const std::byte value) { return value == std::byte{0}; }))
+      return common::make_unexpected(
+          corruption("subscription checkpoint schema-state flags are invalid"));
     common::Uuid::Bytes database_array{};
     common::Uuid::Bytes table_array{};
     common::Uuid::Bytes schema_array{};
@@ -305,6 +320,7 @@ common::Result<MultiTabletSubscriptionCheckpoint> decode_multi_tablet_subscripti
     std::ranges::copy(*plan, plan_array.begin());
     MultiTabletSubscriptionCheckpoint checkpoint{database_id, *table_id, plan_array, *schema_id,
                                                  *version,    {},        {}};
+    checkpoint.plan_schema_compatible = schema_flags == 0U;
     checkpoint.sources.reserve(*source_count);
     for (std::uint32_t index = 0U; index < *source_count; ++index) {
       auto tablet_bytes = reader.read_exact(16U);
@@ -406,7 +422,7 @@ common::Result<std::vector<std::byte>> encode_bound_multi_tablet_subscription_ch
     if (status.is_ok())
       status = writer.write_u16_le(kMajor);
     if (status.is_ok())
-      status = writer.write_u16_le(kMinor);
+      status = writer.write_u16_le(kBoundMinor);
     if (status.is_ok())
       status = writer.write_u32_le(kBoundMultiTabletSubscriptionCheckpointHeaderSize);
     if (status.is_ok())
@@ -463,7 +479,7 @@ decode_bound_multi_tablet_subscription_checkpoint_v1(
       !total_size.has_value() || !generation.has_value() || !nested_size.has_value() ||
       !reserved.has_value())
     return common::make_unexpected(corruption("bound subscription checkpoint header is truncated"));
-  if (*major != kMajor || *minor != kMinor)
+  if (*major != kMajor || *minor != kBoundMinor)
     return common::make_unexpected(
         unsupported("bound subscription checkpoint version is unsupported"));
   const std::size_t expected_nested = bytes.size() -

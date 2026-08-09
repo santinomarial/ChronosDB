@@ -101,5 +101,23 @@ TEST(MultiTabletSubscriptionCheckpointTest, BindsDurableGenerationAroundNestedSt
             common::StatusCode::kCorruption);
 }
 
+TEST(MultiTabletSubscriptionCheckpointTest, MinorOnePersistsTerminalSchemaState) {
+  MultiTabletSubscriptionCheckpoint checkpoint = fixture();
+  checkpoint.retained_changes.clear();
+  for (auto& source : checkpoint.sources)
+    source.expired_through_sequence = source.latest_position.record_sequence;
+  checkpoint.plan_schema_compatible = false;
+
+  const auto encoded = encode_multi_tablet_subscription_checkpoint_v1(checkpoint);
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  ASSERT_GT(encoded->size(), 120U);
+  EXPECT_EQ((*encoded)[10], std::byte{1});
+  EXPECT_EQ((*encoded)[11], std::byte{0});
+  EXPECT_EQ((*encoded)[120], std::byte{1});
+  const auto decoded = decode_multi_tablet_subscription_checkpoint_v1(*encoded);
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  EXPECT_EQ(*decoded, checkpoint);
+}
+
 } // namespace
 } // namespace chronos::live
