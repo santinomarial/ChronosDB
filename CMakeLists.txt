@@ -313,6 +313,7 @@ add_library(
   src/manifest/temporal_codec.cpp
   src/manifest/temporal_layout.cpp
   src/manifest/temporal_part_validation.cpp
+  src/manifest/temporal_validation.cpp
   src/manifest/validation.cpp
 )
 add_library(chronos::manifest ALIAS chronos_manifest)
@@ -1044,6 +1045,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/manifest/temporal_layout_test.cpp
     tests/manifest/temporal_part_validation_header_self_contained.cpp
     tests/manifest/temporal_part_validation_test.cpp
+    tests/manifest/temporal_validation_header_self_contained.cpp
+    tests/manifest/temporal_validation_test.cpp
     tests/manifest/types_header_self_contained.cpp
     tests/manifest/types_test.cpp
     tests/manifest/validation_header_self_contained.cpp

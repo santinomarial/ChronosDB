@@ -1,8 +1,9 @@
 # ChronosDB Manifest v2
 
 > **Status: accepted source-neutral registry, checked canonical layout, strict checksummed byte
-> codec, and exact single-part CSEG admission are implemented; generation transition validation,
-> installation, recovery, and reclamation integration remain pending.**
+> codec, exact single-part CSEG admission, and add-only generation transition validation are
+> implemented; installation, recovery, authorized retention/compaction, and reclamation integration
+> remain pending.**
 
 Manifest v2 is the immutable database storage generation that can authorize CSEG v2 temporal parts
 whose authoritative application source is WAL or Raft. It retains Manifest v1's magic, 256-byte
@@ -112,6 +113,15 @@ bytes with SHA-256, and derives commit/event/system extrema. The companion valid
 requires byte-for-byte descriptor equality with that derived result and checks the owning tablet's
 durable boundary. Whole-generation coverage and durable filesystem installation remain separate
 pending work.
+
+The implemented ordinary transition validator requires an exact successor generation and database
+identity, retained schema bindings, immutable tablet WAL/Raft source lineage, monotonic application
+and reclaim boundaries, forward-only recovery schemas, exact preservation of every prior part, and
+exact preservation of every protected retry outcome. Fresh parts and retries on an existing tablet
+must begin strictly after its predecessor durable boundary. It permits new tablets, parts, and
+retries that satisfy those rules and the codec model. It deliberately cannot authorize part
+removal: temporal compaction or retention needs an independent history-equivalence/expiry proof
+before a specialized transition may remove any version.
 
 Startup selects the highest final generation and fails closed rather than falling back. WAL suffix
 recovery begins after the optional global coordinate. Each Raft tablet rebuilds or installs state at

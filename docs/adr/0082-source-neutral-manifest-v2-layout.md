@@ -44,6 +44,9 @@ size/offset, prove checked canonical layout, round-trip WAL and Raft generations
 source relationships and limits, classify every truncation, and preserve strict v1 rejection. The
 single-part admission boundary exact-decodes CSEG 2/0, validates all temporal semantics and schema
 bindings, requires uniform source lineage, recomputes commit/event/system extrema, and binds exact
-SHA-256 bytes. Independent golden Manifest bytes, expanded hostile decode, transition rules,
-whole-generation coverage, v1-to-v2 migration, filesystem/object-store crash matrices, Raft
-snapshot recovery, fuzzing, and performance evidence remain required implementation work.
+SHA-256 bytes. The ordinary successor validator now preserves source identity, advances application,
+reclaim, and schema boundaries monotonically, and retains every prior part and retry descriptor
+exactly. Independent golden Manifest bytes, expanded hostile decode, authorized retention and
+compaction transitions, whole-generation coverage, v1-to-v2 migration, filesystem/object-store
+crash matrices, Raft snapshot recovery, fuzzing, and performance evidence remain required
+implementation work.
