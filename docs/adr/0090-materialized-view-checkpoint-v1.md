@@ -5,6 +5,7 @@
 - **Owners:** ChronosDB live-query and durability maintainers
 - **Extends:** [ADR 0089](0089-exact-logical-materialized-view-checkpoints.md)
 - **Extended by:** [ADR 0091](0091-durable-materialized-view-checkpoint-storage.md)
+  and [ADR 0092](0092-materialized-view-checkpoint-generations.md)
 
 ## Context
 

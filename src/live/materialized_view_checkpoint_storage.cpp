@@ -22,10 +22,12 @@ namespace chronos::live {
 namespace {
 
 constexpr std::string_view kLockFileName = "LOCK";
-constexpr std::string_view kPrefix = "checkpoint-";
-constexpr std::string_view kSuffix = ".mvcp";
+constexpr std::string_view kLegacyPrefix = "checkpoint-";
+constexpr std::string_view kLegacySuffix = ".mvcp";
+constexpr std::string_view kGenerationPrefix = "generation-";
+constexpr std::string_view kGenerationSuffix = ".mvcg";
 constexpr std::string_view kTemporarySuffix = ".tmp";
-constexpr std::size_t kSequenceDigits = 20U;
+constexpr std::size_t kCoordinateDigits = 20U;
 
 [[nodiscard]] common::Status invalid(std::string message) {
   return common::Status{common::StatusCode::kInvalidArgument, std::move(message)};
@@ -74,26 +76,37 @@ constexpr std::size_t kSequenceDigits = 20U;
 }
 
 [[nodiscard]] common::Result<std::uint64_t> parse_name(const std::string_view name,
+                                                       const std::string_view prefix,
+                                                       const std::string_view suffix,
                                                        const bool temporary) {
-  const std::size_t expected = kPrefix.size() + kSequenceDigits + kSuffix.size() +
+  const std::size_t expected = prefix.size() + kCoordinateDigits + suffix.size() +
                                (temporary ? kTemporarySuffix.size() : 0U);
-  if (name.size() != expected || !name.starts_with(kPrefix) ||
-      !name.substr(kPrefix.size() + kSequenceDigits).starts_with(kSuffix) ||
+  if (name.size() != expected || !name.starts_with(prefix) ||
+      !name.substr(prefix.size() + kCoordinateDigits).starts_with(suffix) ||
       (temporary && !name.ends_with(kTemporarySuffix))) {
     return common::make_unexpected(invalid("materialized-view checkpoint name is noncanonical"));
   }
-  std::uint64_t sequence{};
-  const std::string_view digits = name.substr(kPrefix.size(), kSequenceDigits);
-  const auto parsed = std::from_chars(digits.data(), digits.data() + digits.size(), sequence);
+  std::uint64_t coordinate{};
+  const std::string_view digits = name.substr(prefix.size(), kCoordinateDigits);
+  const auto parsed = std::from_chars(digits.data(), digits.data() + digits.size(), coordinate);
   if (parsed.ec != std::errc{} || parsed.ptr != digits.data() + digits.size()) {
     return common::make_unexpected(invalid("materialized-view checkpoint sequence is invalid"));
   }
-  auto canonical = materialized_view_checkpoint_file_name(sequence);
-  if (!canonical.has_value() || !name.starts_with(*canonical)) {
+  std::array<char, kCoordinateDigits> encoded{};
+  const auto converted = std::to_chars(encoded.data(), encoded.data() + encoded.size(), coordinate);
+  if (converted.ec != std::errc{}) {
+    return common::make_unexpected(invalid("checkpoint coordinate is not representable"));
+  }
+  const std::size_t written = static_cast<std::size_t>(converted.ptr - encoded.data());
+  std::string canonical{prefix};
+  canonical.append(kCoordinateDigits - written, '0');
+  canonical.append(encoded.data(), written);
+  canonical.append(suffix);
+  if (!name.starts_with(canonical)) {
     return common::make_unexpected(
         invalid("materialized-view checkpoint sequence name is noncanonical"));
   }
-  return sequence;
+  return coordinate;
 }
 
 } // namespace
@@ -124,10 +137,14 @@ public:
     }
     bool removed = false;
     for (const io::DirectoryEntry& entry : *entries) {
-      if (!entry.name.starts_with(kPrefix) || !entry.name.ends_with(kTemporarySuffix)) {
+      if (!entry.name.ends_with(kTemporarySuffix) ||
+          (!entry.name.starts_with(kLegacyPrefix) && !entry.name.starts_with(kGenerationPrefix))) {
         continue;
       }
-      if (!parse_name(entry.name, true).has_value() ||
+      const bool generation = entry.name.starts_with(kGenerationPrefix);
+      if (!parse_name(entry.name, generation ? kGenerationPrefix : kLegacyPrefix,
+                      generation ? kGenerationSuffix : kLegacySuffix, true)
+               .has_value() ||
           entry.type != io::DirectoryEntryType::kRegularFile) {
         return corruption("recognized materialized-view temporary is noncanonical");
       }
@@ -141,7 +158,8 @@ public:
   }
 
   [[nodiscard]] common::Result<LoadedMaterializedViewCheckpoint>
-  load_file(const std::string& file_name, const std::uint64_t expected_sequence) const {
+  load_file(const std::string& file_name, const std::optional<std::uint64_t> expected_sequence,
+            const std::uint64_t expected_generation) const {
     common::Status usable = check_usable();
     if (!usable.is_ok()) {
       return common::make_unexpected(std::move(usable));
@@ -174,7 +192,9 @@ public:
         return common::make_unexpected(decoded.error());
       }
       if (decoded->identity != config_.identity ||
-          decoded->state.position.record_sequence != expected_sequence) {
+          decoded->checkpoint_generation != expected_generation ||
+          (expected_sequence.has_value() &&
+           decoded->state.position.record_sequence != *expected_sequence)) {
         return common::make_unexpected(
             corruption("installed materialized-view checkpoint disagrees with owner or name"));
       }
@@ -197,17 +217,36 @@ public:
 
 common::Result<std::string>
 materialized_view_checkpoint_file_name(const std::uint64_t record_sequence) {
-  std::array<char, kSequenceDigits> digits{};
+  std::array<char, kCoordinateDigits> digits{};
   const auto converted =
       std::to_chars(digits.data(), digits.data() + digits.size(), record_sequence);
   if (converted.ec != std::errc{}) {
     return common::make_unexpected(invalid("checkpoint sequence is not representable"));
   }
   const std::size_t written = static_cast<std::size_t>(converted.ptr - digits.data());
-  std::string result{kPrefix};
-  result.append(kSequenceDigits - written, '0');
+  std::string result{kLegacyPrefix};
+  result.append(kCoordinateDigits - written, '0');
   result.append(digits.data(), written);
-  result.append(kSuffix);
+  result.append(kLegacySuffix);
+  return result;
+}
+
+common::Result<std::string>
+materialized_view_checkpoint_generation_file_name(const std::uint64_t checkpoint_generation) {
+  if (checkpoint_generation == 0U) {
+    return common::make_unexpected(invalid("checkpoint generation must be nonzero"));
+  }
+  std::array<char, kCoordinateDigits> digits{};
+  const auto converted =
+      std::to_chars(digits.data(), digits.data() + digits.size(), checkpoint_generation);
+  if (converted.ec != std::errc{}) {
+    return common::make_unexpected(invalid("checkpoint generation is not representable"));
+  }
+  const std::size_t written = static_cast<std::size_t>(converted.ptr - digits.data());
+  std::string result{kGenerationPrefix};
+  result.append(kCoordinateDigits - written, '0');
+  result.append(digits.data(), written);
+  result.append(kGenerationSuffix);
   return result;
 }
 
@@ -286,21 +325,43 @@ MaterializedViewCheckpointStorage::install(const BoundMaterializedViewCheckpoint
     return common::make_unexpected(encoded.error());
   }
   const std::uint64_t sequence = checkpoint.state.position.record_sequence;
-  auto final_name = materialized_view_checkpoint_file_name(sequence);
+  auto final_name =
+      checkpoint.checkpoint_generation == 0U
+          ? materialized_view_checkpoint_file_name(sequence)
+          : materialized_view_checkpoint_generation_file_name(checkpoint.checkpoint_generation);
   if (!final_name.has_value()) {
     return common::make_unexpected(final_name.error());
   }
-  auto existing = impl_->load_file(*final_name, sequence);
+  auto existing = impl_->load_file(*final_name,
+                                   checkpoint.checkpoint_generation == 0U
+                                       ? std::optional<std::uint64_t>{sequence}
+                                       : std::nullopt,
+                                   checkpoint.checkpoint_generation);
   if (existing.has_value()) {
     if (existing->bytes != *encoded) {
       return common::make_unexpected(
           corruption("checkpoint sequence already has different durable bytes"));
     }
-    return InstalledMaterializedViewCheckpoint{
-        .record_sequence = sequence, .file_name = *final_name, .already_present = true};
+    return InstalledMaterializedViewCheckpoint{.checkpoint_generation =
+                                                   checkpoint.checkpoint_generation,
+                                               .record_sequence = sequence,
+                                               .file_name = *final_name,
+                                               .already_present = true};
   }
   if (existing.error().code() != common::StatusCode::kNotFound) {
     return common::make_unexpected(existing.error());
+  }
+  auto latest = load_latest();
+  if (!latest.has_value()) {
+    return common::make_unexpected(latest.error());
+  }
+  if (latest->has_value() &&
+      ((checkpoint.checkpoint_generation == 0U &&
+        (*latest)->checkpoint.checkpoint_generation != 0U) ||
+       (checkpoint.checkpoint_generation != 0U &&
+        (*latest)->checkpoint.checkpoint_generation > checkpoint.checkpoint_generation))) {
+    return common::make_unexpected(
+        invalid("materialized-view checkpoint generation would move durable state backward"));
   }
 
   const std::string temp_name = temporary_name(*final_name);
@@ -361,8 +422,11 @@ MaterializedViewCheckpointStorage::install(const BoundMaterializedViewCheckpoint
     return common::make_unexpected(
         impl_->fail(with_context("synchronize checkpoint directory", operation), true));
   }
-  return InstalledMaterializedViewCheckpoint{
-      .record_sequence = sequence, .file_name = *final_name, .already_present = false};
+  return InstalledMaterializedViewCheckpoint{.checkpoint_generation =
+                                                 checkpoint.checkpoint_generation,
+                                             .record_sequence = sequence,
+                                             .file_name = *final_name,
+                                             .already_present = false};
 }
 
 common::Result<LoadedMaterializedViewCheckpoint>
@@ -374,7 +438,19 @@ MaterializedViewCheckpointStorage::load(const std::uint64_t record_sequence) con
   if (!name.has_value()) {
     return common::make_unexpected(name.error());
   }
-  return impl_->load_file(*name, record_sequence);
+  return impl_->load_file(*name, record_sequence, 0U);
+}
+
+common::Result<LoadedMaterializedViewCheckpoint> MaterializedViewCheckpointStorage::load_generation(
+    const std::uint64_t checkpoint_generation) const {
+  if (impl_ == nullptr) {
+    return common::make_unexpected(invalid("materialized-view checkpoint storage was moved from"));
+  }
+  auto name = materialized_view_checkpoint_generation_file_name(checkpoint_generation);
+  if (!name.has_value()) {
+    return common::make_unexpected(name.error());
+  }
+  return impl_->load_file(*name, std::nullopt, checkpoint_generation);
 }
 
 common::Result<std::optional<LoadedMaterializedViewCheckpoint>>
@@ -390,23 +466,35 @@ MaterializedViewCheckpointStorage::load_latest() const {
   if (!entries.has_value()) {
     return common::make_unexpected(entries.error());
   }
-  std::optional<std::uint64_t> latest;
+  std::optional<std::uint64_t> latest_generation;
+  std::optional<std::uint64_t> latest_legacy_sequence;
   for (const io::DirectoryEntry& entry : *entries) {
-    if (entry.name == kLockFileName || !entry.name.starts_with(kPrefix)) {
+    if (entry.name == kLockFileName ||
+        (!entry.name.starts_with(kLegacyPrefix) && !entry.name.starts_with(kGenerationPrefix))) {
       continue;
     }
-    auto parsed = parse_name(entry.name, false);
+    const bool generation = entry.name.starts_with(kGenerationPrefix);
+    auto parsed = parse_name(entry.name, generation ? kGenerationPrefix : kLegacyPrefix,
+                             generation ? kGenerationSuffix : kLegacySuffix, false);
     if (!parsed.has_value() || entry.type != io::DirectoryEntryType::kRegularFile) {
       return common::make_unexpected(corruption("checkpoint directory is noncanonical"));
     }
+    auto& latest = generation ? latest_generation : latest_legacy_sequence;
     if (!latest.has_value() || *parsed > *latest) {
       latest = *parsed;
     }
   }
-  if (!latest.has_value()) {
+  if (latest_generation.has_value()) {
+    auto loaded = load_generation(*latest_generation);
+    if (!loaded.has_value()) {
+      return common::make_unexpected(loaded.error());
+    }
+    return std::optional<LoadedMaterializedViewCheckpoint>{std::move(*loaded)};
+  }
+  if (!latest_legacy_sequence.has_value()) {
     return std::optional<LoadedMaterializedViewCheckpoint>{};
   }
-  auto loaded = load(*latest);
+  auto loaded = load(*latest_legacy_sequence);
   if (!loaded.has_value()) {
     return common::make_unexpected(loaded.error());
   }

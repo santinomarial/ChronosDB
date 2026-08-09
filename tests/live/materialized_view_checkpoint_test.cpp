@@ -118,7 +118,8 @@ TEST(MaterializedViewCheckpointTest, RejectsCorruptionUnknownVersionAndDecodeLim
 }
 
 TEST(MaterializedViewCheckpointTest, BoundEnvelopeRejectsCrossViewIdentityLoss) {
-  const auto original = bound_checkpoint();
+  auto original = bound_checkpoint();
+  original.checkpoint_generation = 7U;
   auto encoded = encode_bound_materialized_view_checkpoint_v1(original);
   ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
   auto decoded = decode_bound_materialized_view_checkpoint_v1(*encoded);

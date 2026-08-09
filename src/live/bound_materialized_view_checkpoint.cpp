@@ -22,7 +22,8 @@ constexpr std::array<std::byte, 8U> kBoundMagic{std::byte{'C'}, std::byte{'H'}, 
                                                 std::byte{'V'}, std::byte{'C'}, std::byte{'B'},
                                                 std::byte{'1'}, std::byte{0U}};
 constexpr std::uint16_t kBoundMajor = 1U;
-constexpr std::uint16_t kBoundMinor = 0U;
+constexpr std::uint16_t kBoundMinorLegacy = 0U;
+constexpr std::uint16_t kBoundMinorGeneration = 1U;
 constexpr std::size_t kTotalSizeOffset = 24U;
 constexpr std::size_t kDatabaseIdOffset = 32U;
 constexpr std::size_t kViewIdOffset = 48U;
@@ -32,7 +33,8 @@ constexpr std::size_t kSchemaVersionOffset = 96U;
 constexpr std::size_t kPlanFingerprintOffset = 104U;
 constexpr std::size_t kPayloadSizeOffset = 136U;
 constexpr std::size_t kHeaderCrcOffset = 144U;
-constexpr std::size_t kReservedOffset = 148U;
+constexpr std::size_t kGenerationOffset = 148U;
+constexpr std::size_t kGenerationReservedOffset = 156U;
 
 [[nodiscard]] common::Status invalid(std::string message) {
   return common::Status{common::StatusCode::kInvalidArgument, std::move(message)};
@@ -138,7 +140,8 @@ encode_bound_materialized_view_checkpoint_v1(const BoundMaterializedViewCheckpoi
     if (status.is_ok())
       status = writer.write_u16_le(kBoundMajor);
     if (status.is_ok())
-      status = writer.write_u16_le(kBoundMinor);
+      status = writer.write_u16_le(checkpoint.checkpoint_generation == 0U ? kBoundMinorLegacy
+                                                                          : kBoundMinorGeneration);
     if (status.is_ok())
       status = writer.write_u32_le(kBoundMaterializedViewCheckpointHeaderSize);
     if (status.is_ok())
@@ -164,7 +167,9 @@ encode_bound_materialized_view_checkpoint_v1(const BoundMaterializedViewCheckpoi
     if (status.is_ok())
       status = writer.write_u32_le(0U);
     if (status.is_ok())
-      status = writer.zero_fill(12U);
+      status = writer.write_u64_le(checkpoint.checkpoint_generation);
+    if (status.is_ok())
+      status = writer.zero_fill(4U);
     if (status.is_ok())
       status = writer.write_exact(*payload);
     if (status.is_ok())
@@ -215,13 +220,15 @@ decode_bound_materialized_view_checkpoint_v1(const common::ByteView bytes,
     return common::make_unexpected(
         unsupported("bound materialized-view magic or major is unknown"));
   }
-  if (load_u16(bytes, 10U) != kBoundMinor ||
+  const std::uint16_t minor = load_u16(bytes, 10U);
+  if ((minor != kBoundMinorLegacy && minor != kBoundMinorGeneration) ||
       load_u32(bytes, 12U) != kBoundMaterializedViewCheckpointHeaderSize) {
     return common::make_unexpected(
         unsupported("bound materialized-view minor or header is unknown"));
   }
   const std::uint64_t total_size = load_u64(bytes, kTotalSizeOffset);
   const std::uint64_t payload_size = load_u64(bytes, kPayloadSizeOffset);
+  const std::uint64_t checkpoint_generation = load_u64(bytes, kGenerationOffset);
   const auto framed = payload_size <= std::numeric_limits<std::size_t>::max()
                           ? common::checked_add(kBoundMaterializedViewCheckpointHeaderSize,
                                                 static_cast<std::size_t>(payload_size))
@@ -231,7 +238,9 @@ decode_bound_materialized_view_checkpoint_v1(const common::ByteView bytes,
                          : std::nullopt;
   if (total_size != bytes.size() || !exact_size.has_value() || *exact_size != bytes.size() ||
       load_u32(bytes, 16U) != 0U || load_u32(bytes, 20U) != 0U ||
-      std::ranges::any_of(bytes.subspan(kReservedOffset, 12U),
+      ((minor == kBoundMinorLegacy && checkpoint_generation != 0U) ||
+       (minor == kBoundMinorGeneration && checkpoint_generation == 0U)) ||
+      std::ranges::any_of(bytes.subspan(kGenerationReservedOffset, 4U),
                           [](const std::byte value) { return value != std::byte{0U}; }) ||
       common::crc32c(bytes.first(bytes.size() - kBoundMaterializedViewCheckpointTrailerSize)) !=
           load_u32(bytes, bytes.size() - kBoundMaterializedViewCheckpointTrailerSize)) {
@@ -266,7 +275,8 @@ decode_bound_materialized_view_checkpoint_v1(const common::ByteView bytes,
   if (!state.has_value()) {
     return common::make_unexpected(state.error());
   }
-  return BoundMaterializedViewCheckpoint{std::move(identity), std::move(*state)};
+  return BoundMaterializedViewCheckpoint{std::move(identity), checkpoint_generation,
+                                         std::move(*state)};
 }
 
 } // namespace chronos::live

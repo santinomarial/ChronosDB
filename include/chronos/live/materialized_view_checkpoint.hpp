@@ -39,6 +39,7 @@ struct MaterializedViewCheckpointIdentity {
 
 struct BoundMaterializedViewCheckpoint {
   MaterializedViewCheckpointIdentity identity;
+  std::uint64_t checkpoint_generation{};
   WindowedMaterializedViewCheckpoint state;
 
   friend bool operator==(const BoundMaterializedViewCheckpoint&,

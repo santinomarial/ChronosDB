@@ -4,6 +4,7 @@
 - **Date:** 2026-08-09
 - **Owners:** ChronosDB live-query and durability maintainers
 - **Extends:** [ADR 0090](0090-materialized-view-checkpoint-v1.md)
+- **Extended by:** [ADR 0092](0092-materialized-view-checkpoint-generations.md)
 
 ## Context
 
@@ -15,9 +16,10 @@ a source suffix can eventually be released.
 ## Accepted decision
 
 `MaterializedViewCheckpointStorage` owns one existing directory and one exact database/view/table/
-schema/version/plan identity under a nonblocking exclusive advisory `LOCK`. Immutable files are
-named `checkpoint-<20-digit-WAL-sequence>.mvcp`; the same name plus `.tmp` is the sole recognized
-installation temporary. Sequence zero is valid for an initial logical boundary.
+schema/version/plan identity under a nonblocking exclusive advisory `LOCK`. Legacy minor-0 files are
+named `checkpoint-<20-digit-WAL-sequence>.mvcp`; ADR 0092 adds generated production files. Either
+name plus `.tmp` is a recognized installation temporary. Sequence zero remains valid for an initial
+legacy logical boundary.
 
 Installation validates and encodes the bound checkpoint, exact-loads any existing final file for an
 idempotent same-byte retry, removes and directory-synchronizes a recognized prior temporary, creates

@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <gtest/gtest.h>
+#include <optional>
 #include <string>
 #include <system_error>
 #include <unistd.h>
@@ -54,8 +55,10 @@ private:
           .plan_fingerprint = plan};
 }
 
-[[nodiscard]] BoundMaterializedViewCheckpoint checkpoint(const std::uint64_t sequence,
-                                                         const double value_bias = 0.0) {
+[[nodiscard]] BoundMaterializedViewCheckpoint
+checkpoint(const std::uint64_t sequence, const double value_bias = 0.0,
+           const std::uint64_t generation = 0U,
+           const std::optional<std::int64_t> watermark = std::nullopt) {
   const auto tablet = schema::TabletId::from_uuid(uuid(5U)).value();
   wal::WalId wal;
   wal.bytes.fill(std::byte{0x62U});
@@ -69,7 +72,12 @@ private:
                                                     false})
             .has_value());
   }
-  return {.identity = identity(), .state = std::move(view->checkpoint().value())};
+  if (watermark.has_value()) {
+    EXPECT_TRUE(view->advance_watermark(*watermark).has_value());
+  }
+  return {.identity = identity(),
+          .checkpoint_generation = generation,
+          .state = std::move(view->checkpoint().value())};
 }
 
 [[nodiscard]] MaterializedViewCheckpointStorageConfig config(const TemporaryDirectory& directory) {
@@ -98,10 +106,21 @@ TEST(MaterializedViewCheckpointStorageTest, InstallsIdempotentlyAndSelectsLatest
     const auto conflicting = checkpoint(1U, 10.0);
     EXPECT_EQ(storage->install(conflicting).error().code(), common::StatusCode::kCorruption);
     ASSERT_TRUE(storage->install(checkpoint(2U)).has_value());
+    const auto generated = checkpoint(2U, 0.0, 1U);
+    auto installed_generation = storage->install(generated);
+    ASSERT_TRUE(installed_generation.has_value()) << installed_generation.error().to_string();
+    EXPECT_EQ(installed_generation->file_name, "generation-00000000000000000001.mvcg");
+    const auto watermarked = checkpoint(2U, 0.0, 2U, 12);
+    ASSERT_TRUE(storage->install(watermarked).has_value());
+    auto stale_retry = storage->install(generated);
+    ASSERT_TRUE(stale_retry.has_value()) << stale_retry.error().to_string();
+    EXPECT_TRUE(stale_retry->already_present);
+    EXPECT_EQ(storage->install(checkpoint(3U)).error().code(),
+              common::StatusCode::kInvalidArgument);
     auto latest = storage->load_latest();
     ASSERT_TRUE(latest.has_value()) << latest.error().to_string();
     ASSERT_TRUE(latest->has_value());
-    EXPECT_EQ((*latest)->checkpoint, checkpoint(2U));
+    EXPECT_EQ((*latest)->checkpoint, watermarked);
   }
 
   auto reopened = MaterializedViewCheckpointStorage::open_existing(config(directory));
@@ -109,7 +128,7 @@ TEST(MaterializedViewCheckpointStorageTest, InstallsIdempotentlyAndSelectsLatest
   auto latest = reopened->load_latest();
   ASSERT_TRUE(latest.has_value()) << latest.error().to_string();
   ASSERT_TRUE(latest->has_value());
-  EXPECT_EQ((*latest)->checkpoint, checkpoint(2U));
+  EXPECT_EQ((*latest)->checkpoint, checkpoint(2U, 0.0, 2U, 12));
 }
 
 TEST(MaterializedViewCheckpointStorageTest, CleansTemporaryAndRejectsCorruptInstalledBytes) {

@@ -23,7 +23,9 @@ floating bits, authenticated counts, header/file CRC32C, and complete logical va
 has a bound envelope adding database/view/table/schema/version/plan identity around the source-state
 bytes so a valid file cannot be adopted by a different view. The lock-protected storage owner now
 installs immutable sequence files with readback, file sync, no-replace rename, and directory sync,
-then exact-validates them during recovery. External delivery remains at least once, and the
+then exact-validates them during recovery. A separate monotonic checkpoint generation permits
+watermark-only states at the same source sequence; it never replaces the embedded source boundary.
+External delivery remains at least once, and the
 subscription manager remains a separate single-source retention/handoff owner. Source retention
 release must still follow the fully installed checkpoint.
 

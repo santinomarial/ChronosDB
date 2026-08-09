@@ -20,6 +20,7 @@ struct MaterializedViewCheckpointStorageConfig {
 };
 
 struct InstalledMaterializedViewCheckpoint {
+  std::uint64_t checkpoint_generation{};
   std::uint64_t record_sequence{};
   std::string file_name;
   bool already_present{false};
@@ -33,6 +34,8 @@ struct LoadedMaterializedViewCheckpoint {
 
 [[nodiscard]] common::Result<std::string>
 materialized_view_checkpoint_file_name(std::uint64_t record_sequence);
+[[nodiscard]] common::Result<std::string>
+materialized_view_checkpoint_generation_file_name(std::uint64_t checkpoint_generation);
 
 // One lock-protected directory for one exact database/view/table/schema/plan identity. Installation
 // exact-validates before and after writing, synchronizes the file, no-replace renames immutable
@@ -56,6 +59,8 @@ public:
   install(const BoundMaterializedViewCheckpoint& checkpoint);
   [[nodiscard]] common::Result<LoadedMaterializedViewCheckpoint>
   load(std::uint64_t record_sequence) const;
+  [[nodiscard]] common::Result<LoadedMaterializedViewCheckpoint>
+  load_generation(std::uint64_t checkpoint_generation) const;
   [[nodiscard]] common::Result<std::optional<LoadedMaterializedViewCheckpoint>> load_latest() const;
 
   [[nodiscard]] bool is_usable() const noexcept;

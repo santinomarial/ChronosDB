@@ -603,7 +603,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   Materialized View Checkpoint v1 now preserves that state in bounded, versioned, checksummed exact
   bytes, with a bound envelope for database/view/table/schema/version/plan identity. A view-scoped
   locked owner exact-validates, file-syncs, no-replace installs, directory-syncs, reopens, and selects
-  those immutable checkpoints. Application-owner checkpoint scheduling/suffix recovery,
+  those immutable checkpoints. Backward-compatible bound-envelope generations preserve multiple
+  watermark/revision states at one source sequence. Application-owner scheduling/suffix recovery,
   native-protocol delivery, multi-tablet ordering, service restart integration, and the full exit
   evidence remain deferred; the phase exit gate is not claimed.
 

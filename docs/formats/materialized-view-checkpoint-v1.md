@@ -1,7 +1,7 @@
 # Materialized View Checkpoint v1
 
-> **Status:** format 1.0 codec is implemented. Durable filesystem installation is specified by a
-> lock-protected owner; successful encoding alone is not a durability claim.
+> **Status:** logical format 1.0 and bound-envelope minors 0–1 are implemented. Durable filesystem
+> installation is supplied by a lock-protected owner; successful encoding alone is not durability.
 
 All integers are fixed-width little-endian. Floating values are stored as their exact IEEE-754
 binary64 bits in little-endian byte order. The format contains no native structs, pointers, or ABI-
@@ -106,3 +106,10 @@ Local durable envelopes use `checkpoint-<20-digit-WAL-sequence>.mvcp`. Installat
 exact-validates a deterministic `.tmp`, synchronizes it, atomically renames without replacement,
 then synchronizes the directory. Existing identical bytes are an idempotent retry; different bytes
 at one sequence are corruption. Recovery selects only a completely revalidated canonical file.
+
+Bound-envelope minor 1 assigns bytes 148–155 to a nonzero monotonic checkpoint generation and keeps
+bytes 156–159 reserved zero. Minor 0 requires all twelve bytes zero and represents generation zero.
+Production generation files use `generation-<20-digit-generation>.mvcg`; their embedded generation
+must equal the filename. Recovery prefers the highest valid generated file, falling back to the
+highest legacy sequence file only when no generated file exists. This permits watermark/revision
+state to advance durably without requiring a new source WAL record.
