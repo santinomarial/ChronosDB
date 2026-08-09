@@ -1,6 +1,8 @@
 #include "chronos/live/incremental_aggregate.hpp"
 
 #include <gtest/gtest.h>
+#include <limits>
+#include <utility>
 
 namespace chronos::live {
 namespace {
@@ -39,6 +41,15 @@ TEST(IncrementalAggregateTest, MaintainsCountSumExtremaVwapOhlcAndWelfordState) 
   EXPECT_DOUBLE_EQ(value.sum, 30.0);
   EXPECT_FALSE(value.variance_sample.has_value());
   EXPECT_DOUBLE_EQ(*value.variance_population, 0.0);
+
+  auto checkpoint = state.checkpoint();
+  ASSERT_TRUE(checkpoint.has_value()) << checkpoint.error().to_string();
+  auto restored = IncrementalAggregateSet::restore(std::move(*checkpoint));
+  ASSERT_TRUE(restored.has_value()) << restored.error().to_string();
+  EXPECT_EQ(restored->snapshot(), state.snapshot());
+  ASSERT_TRUE(restored->upsert(AggregateInput{3U, 300, 30U, 40.0, 1.0}).is_ok());
+  ASSERT_TRUE(state.upsert(AggregateInput{3U, 300, 30U, 40.0, 1.0}).is_ok());
+  EXPECT_EQ(restored->snapshot(), state.snapshot());
 }
 
 TEST(IncrementalAggregateTest, TombstoneIsIdempotent) {
@@ -46,6 +57,24 @@ TEST(IncrementalAggregateTest, TombstoneIsIdempotent) {
   EXPECT_TRUE(state.erase(99U).is_ok());
   EXPECT_EQ(state.snapshot().count, 0U);
   EXPECT_EQ(state.retained_rows(), 0U);
+}
+
+TEST(IncrementalAggregateTest, RejectsNonFiniteInputAndNonCanonicalCheckpoint) {
+  IncrementalAggregateSet state;
+  EXPECT_EQ(
+      state.upsert(AggregateInput{1U, 1, 1U, std::numeric_limits<double>::quiet_NaN(), 1.0}).code(),
+      common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(state.upsert(AggregateInput{1U, 1, 0U, 1.0, 1.0}).code(),
+            common::StatusCode::kInvalidArgument);
+  IncrementalAggregateCheckpoint corrupt{.rows = {{2U, 1, 1U, 1.0, 1.0}, {1U, 2, 2U, 2.0, 1.0}},
+                                         .count = 2U,
+                                         .sum = 3.0,
+                                         .weighted_sum = 3.0,
+                                         .weight_sum = 2.0,
+                                         .mean = 1.5,
+                                         .m2 = 0.5};
+  EXPECT_EQ(IncrementalAggregateSet::restore(std::move(corrupt)).error().code(),
+            common::StatusCode::kCorruption);
 }
 
 } // namespace

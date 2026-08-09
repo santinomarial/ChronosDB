@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <gtest/gtest.h>
+#include <utility>
 
 namespace chronos::live {
 namespace {
@@ -56,6 +57,23 @@ TEST(MaterializedViewTest, AppliesCorrectionsAndFinalizesTumblingWindow) {
   EXPECT_EQ(correction->front().status, WindowResultStatus::kCorrected);
   EXPECT_DOUBLE_EQ(correction->front().value.sum, 50.0);
   EXPECT_EQ(view->applied_position().record_sequence, 3U);
+
+  auto checkpoint = view->checkpoint();
+  ASSERT_TRUE(checkpoint.has_value()) << checkpoint.error().to_string();
+  auto restored = WindowedMaterializedView::restore(std::move(*checkpoint));
+  ASSERT_TRUE(restored.has_value()) << restored.error().to_string();
+  EXPECT_EQ(restored->applied_position(), view->applied_position());
+  EXPECT_EQ(restored->watermark(), view->watermark());
+  EXPECT_EQ(restored->retained_rows(), view->retained_rows());
+  EXPECT_EQ(restored->open_windows(), view->open_windows());
+
+  const SourcePosition fourth{tablet, wal, 4U};
+  const MaterializedViewInput tombstone{{1U, 1, 1U, 0.0, 1.0}, true};
+  auto original_change = view->apply_committed(fourth, tombstone);
+  auto restored_change = restored->apply_committed(fourth, tombstone);
+  ASSERT_TRUE(original_change.has_value());
+  ASSERT_TRUE(restored_change.has_value());
+  EXPECT_EQ(*restored_change, *original_change);
 }
 
 TEST(MaterializedViewTest, SlidingWindowUpdatesEveryOverlappingWindow) {
@@ -69,6 +87,21 @@ TEST(MaterializedViewTest, SlidingWindowUpdatesEveryOverlappingWindow) {
   ASSERT_EQ(changes->size(), 2U);
   EXPECT_EQ((*changes)[0].window, (WindowKey{0, 10}));
   EXPECT_EQ((*changes)[1].window, (WindowKey{5, 15}));
+}
+
+TEST(MaterializedViewTest, RejectsCheckpointWhoseWindowRowsDisagree) {
+  const auto tablet = tablet_id();
+  const auto wal = wal_id();
+  auto view = WindowedMaterializedView::create(tablet, wal, WindowDefinition{10, 10, 0, 16U, 16U});
+  ASSERT_TRUE(view.has_value());
+  ASSERT_TRUE(view->apply_committed(SourcePosition{tablet, wal, 1U},
+                                    MaterializedViewInput{{1U, 1, 1U, 5.0, 1.0}, false})
+                  .has_value());
+  auto checkpoint = view->checkpoint();
+  ASSERT_TRUE(checkpoint.has_value());
+  checkpoint->windows.front().aggregate.rows.clear();
+  EXPECT_EQ(WindowedMaterializedView::restore(std::move(*checkpoint)).error().code(),
+            common::StatusCode::kCorruption);
 }
 
 } // namespace

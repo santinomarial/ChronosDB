@@ -9,6 +9,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -123,6 +124,96 @@ WindowedMaterializedView::create(schema::TabletId tablet_id, wal::WalId wal_id,
   return WindowedMaterializedView{std::make_unique<Impl>(tablet_id, wal_id, definition)};
 }
 
+common::Result<WindowedMaterializedView>
+WindowedMaterializedView::restore(WindowedMaterializedViewCheckpoint checkpoint) {
+  auto restored =
+      create(checkpoint.position.tablet_id, checkpoint.position.wal_id, checkpoint.definition);
+  if (!restored.has_value()) {
+    return common::make_unexpected(
+        restored.error().code() == common::StatusCode::kInvalidArgument
+            ? common::Status{common::StatusCode::kCorruption,
+                             "materialized-view checkpoint configuration is invalid"}
+            : restored.error());
+  }
+  if (checkpoint.rows.size() > checkpoint.definition.maximum_rows ||
+      checkpoint.windows.size() > checkpoint.definition.maximum_windows) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kCorruption, "materialized-view checkpoint exceeds declared bounds"});
+  }
+
+  std::map<std::uint64_t, AggregateInput> rows;
+  std::map<WindowKey, std::vector<AggregateInput>> expected_window_rows;
+  try {
+    std::uint64_t prior_identity = 0U;
+    for (const AggregateInput& input : checkpoint.rows) {
+      if (input.row_identity <= prior_identity || input.source_order == 0U ||
+          !std::isfinite(input.value) || !std::isfinite(input.weight) ||
+          !std::isfinite(input.value * input.weight)) {
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kCorruption,
+                           "materialized-view checkpoint rows are not canonical"});
+      }
+      prior_identity = input.row_identity;
+      rows.emplace(input.row_identity, input);
+      auto row_windows = windows_for(input.event_time, checkpoint.definition);
+      if (!row_windows.has_value()) {
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kCorruption,
+                           "materialized-view checkpoint row has invalid window coordinates"});
+      }
+      for (const WindowKey window : *row_windows) {
+        expected_window_rows[window].push_back(input);
+      }
+    }
+
+    std::optional<WindowKey> prior_window;
+    for (MaterializedWindowCheckpoint& window : checkpoint.windows) {
+      const auto expected_end = add_nonnegative(window.window.start, checkpoint.definition.width);
+      if ((prior_window.has_value() && window.window <= *prior_window) ||
+          !expected_end.has_value() || *expected_end != window.window.end ||
+          window.window.start % checkpoint.definition.slide != 0 || window.revision == 0U ||
+          !window.emitted ||
+          window.finalized != final_at(window.window, checkpoint.watermark,
+                                       checkpoint.definition.allowed_lateness)) {
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kCorruption,
+                           "materialized-view checkpoint window metadata is inconsistent"});
+      }
+      prior_window = window.window;
+      const auto expected = expected_window_rows.find(window.window);
+      const std::span<const AggregateInput> expected_rows =
+          expected == expected_window_rows.end()
+              ? std::span<const AggregateInput>{}
+              : std::span<const AggregateInput>{expected->second};
+      if (!std::ranges::equal(window.aggregate.rows, expected_rows)) {
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kCorruption,
+                           "materialized-view checkpoint window rows disagree with visible rows"});
+      }
+      auto aggregate = IncrementalAggregateSet::restore(std::move(window.aggregate));
+      if (!aggregate.has_value()) {
+        return common::make_unexpected(aggregate.error());
+      }
+      restored->impl_->windows.emplace(window.window,
+                                       Impl::WindowState{std::move(*aggregate), window.revision,
+                                                         window.emitted, window.finalized});
+      expected_window_rows.erase(window.window);
+    }
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "materialized-view checkpoint restore allocation failed"});
+  }
+  if (!expected_window_rows.empty()) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kCorruption, "materialized-view checkpoint omits a populated window"});
+  }
+  restored->impl_->position = checkpoint.position;
+  restored->impl_->current_watermark = checkpoint.watermark;
+  restored->impl_->rows = std::move(rows);
+  return restored;
+}
+
 common::Result<std::vector<MaterializedViewChange>>
 WindowedMaterializedView::apply_committed(const SourcePosition position,
                                           MaterializedViewInput input) {
@@ -133,7 +224,10 @@ WindowedMaterializedView::apply_committed(const SourcePosition position,
                                                   "materialized-view input is not consecutive"});
   }
   if (input.aggregate.row_identity == 0U ||
-      (!input.tombstone && !std::isfinite(input.aggregate.weight))) {
+      (!input.tombstone &&
+       (input.aggregate.source_order == 0U || !std::isfinite(input.aggregate.value) ||
+        !std::isfinite(input.aggregate.weight) ||
+        !std::isfinite(input.aggregate.value * input.aggregate.weight)))) {
     return common::make_unexpected(common::Status{common::StatusCode::kInvalidArgument,
                                                   "materialized-view row input is invalid"});
   }
@@ -171,6 +265,22 @@ WindowedMaterializedView::apply_committed(const SourcePosition position,
   if (missing > impl_->definition.maximum_windows - impl_->windows.size()) {
     return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
                                                   "materialized-view window bound is exhausted"});
+  }
+
+  for (const WindowKey window : affected) {
+    const auto current = impl_->windows.find(window);
+    if (current == impl_->windows.end()) {
+      continue;
+    }
+    common::Status status = common::Status::ok();
+    if (std::ranges::find(new_windows, window) != new_windows.end()) {
+      status = current->second.aggregate.validate_upsert(input.aggregate);
+    } else if (std::ranges::find(old_windows, window) != old_windows.end()) {
+      status = current->second.aggregate.validate_erase(input.aggregate.row_identity);
+    }
+    if (!status.is_ok()) {
+      return common::make_unexpected(status);
+    }
   }
 
   std::map<WindowKey, bool> previously_emitted;
@@ -262,6 +372,32 @@ std::size_t WindowedMaterializedView::retained_rows() const noexcept {
 
 std::size_t WindowedMaterializedView::open_windows() const noexcept {
   return impl_->windows.size();
+}
+
+common::Result<WindowedMaterializedViewCheckpoint> WindowedMaterializedView::checkpoint() const {
+  try {
+    WindowedMaterializedViewCheckpoint checkpoint{.definition = impl_->definition,
+                                                  .position = impl_->position,
+                                                  .watermark = impl_->current_watermark};
+    checkpoint.rows.reserve(impl_->rows.size());
+    for (const auto& [identity, input] : impl_->rows) {
+      static_cast<void>(identity);
+      checkpoint.rows.push_back(input);
+    }
+    checkpoint.windows.reserve(impl_->windows.size());
+    for (const auto& [window, state] : impl_->windows) {
+      auto aggregate = state.aggregate.checkpoint();
+      if (!aggregate.has_value()) {
+        return common::make_unexpected(aggregate.error());
+      }
+      checkpoint.windows.push_back(MaterializedWindowCheckpoint{
+          window, state.revision, state.emitted, state.finalized, std::move(*aggregate)});
+    }
+    return checkpoint;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kResourceExhausted, "materialized-view checkpoint allocation failed"});
+  }
 }
 
 } // namespace chronos::live

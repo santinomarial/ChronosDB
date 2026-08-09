@@ -123,3 +123,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0086](0086-durable-raft-tablet-snapshot-installation.md) | Durable Raft tablet application-snapshot installation | accepted |
 | [0087](0087-raft-tablet-snapshot-recovery-composition.md) | Raft tablet application-snapshot recovery composition | accepted |
 | [0088](0088-owned-raft-tablet-snapshot-compaction.md) | Owned Raft tablet snapshot creation and compaction | accepted |
+| [0089](0089-exact-logical-materialized-view-checkpoints.md) | Exact logical materialized-view checkpoints | accepted |

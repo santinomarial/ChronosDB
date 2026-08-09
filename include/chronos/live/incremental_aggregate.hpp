@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <vector>
 
 namespace chronos::live {
 
@@ -16,6 +17,18 @@ struct AggregateInput {
   std::uint64_t source_order{};
   double value{};
   double weight{1.0};
+
+  friend bool operator==(const AggregateInput&, const AggregateInput&) = default;
+};
+
+struct IncrementalAggregateCheckpoint {
+  std::vector<AggregateInput> rows;
+  std::uint64_t count{};
+  double sum{};
+  double weighted_sum{};
+  double weight_sum{};
+  double mean{};
+  double m2{};
 };
 
 struct OhlcValue {
@@ -36,6 +49,8 @@ struct AggregateSnapshot {
   std::optional<OhlcValue> ohlc;
   std::optional<double> variance_population;
   std::optional<double> variance_sample;
+
+  friend bool operator==(const AggregateSnapshot&, const AggregateSnapshot&) = default;
 };
 
 // Single-owner exact removable state for the Phase 11 numeric aggregate family. Each logical row
@@ -51,9 +66,14 @@ public:
   IncrementalAggregateSet(IncrementalAggregateSet&&) noexcept;
   IncrementalAggregateSet& operator=(IncrementalAggregateSet&&) noexcept;
 
+  [[nodiscard]] common::Status validate_upsert(const AggregateInput& input) const;
+  [[nodiscard]] common::Status validate_erase(std::uint64_t row_identity) const;
   [[nodiscard]] common::Status upsert(AggregateInput input);
   [[nodiscard]] common::Status erase(std::uint64_t row_identity);
   [[nodiscard]] AggregateSnapshot snapshot() const;
+  [[nodiscard]] common::Result<IncrementalAggregateCheckpoint> checkpoint() const;
+  [[nodiscard]] static common::Result<IncrementalAggregateSet>
+  restore(IncrementalAggregateCheckpoint checkpoint);
   [[nodiscard]] std::size_t retained_rows() const noexcept;
 
 private:

@@ -598,7 +598,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   single-source register-before-boundary handoff, bounded retained/buffered committed changes,
   at-least-once poll/acknowledge/resume, fail-closed overflow/cancellation, removable count/sum/
   min/max/VWAP/OHLC/Welford state, tumbling/sliding windows, watermarks, corrections, and logical
-  materialized-view progress. Native-protocol delivery, multi-tablet ordering, durable view state,
+  materialized-view progress. Exact bounded logical checkpoints now preserve rows, aggregate running
+  state, revisions, finalization, watermark, and committed progress across owner reconstruction.
+  Durable checkpoint bytes/installation, native-protocol delivery, multi-tablet ordering, service
   restart recovery, and the full exit evidence remain deferred; the phase exit gate is not claimed.
 
 - **Scope:** committed change model; gap-free snapshot-to-stream handoff; deterministic versioned resume tokens; bounded subscriber policies; supported incremental operators; materialized-view progress/recovery and late-event corrections.

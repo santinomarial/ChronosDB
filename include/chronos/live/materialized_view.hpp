@@ -20,6 +20,8 @@ struct WindowDefinition {
   std::int64_t allowed_lateness{};
   std::size_t maximum_windows{4096U};
   std::size_t maximum_rows{65'536U};
+
+  friend bool operator==(const WindowDefinition&, const WindowDefinition&) = default;
 };
 
 struct WindowKey {
@@ -46,6 +48,24 @@ struct MaterializedViewChange {
   std::uint64_t revision{};
   WindowResultStatus status{WindowResultStatus::kProvisional};
   AggregateSnapshot value;
+
+  friend bool operator==(const MaterializedViewChange&, const MaterializedViewChange&) = default;
+};
+
+struct MaterializedWindowCheckpoint {
+  WindowKey window;
+  std::uint64_t revision{};
+  bool emitted{};
+  bool finalized{};
+  IncrementalAggregateCheckpoint aggregate;
+};
+
+struct WindowedMaterializedViewCheckpoint {
+  WindowDefinition definition;
+  SourcePosition position;
+  std::int64_t watermark{};
+  std::vector<AggregateInput> rows;
+  std::vector<MaterializedWindowCheckpoint> windows;
 };
 
 // Deterministic single-owner window state driven only by consecutive committed source positions.
@@ -62,6 +82,8 @@ public:
 
   [[nodiscard]] static common::Result<WindowedMaterializedView>
   create(schema::TabletId tablet_id, wal::WalId wal_id, WindowDefinition definition);
+  [[nodiscard]] static common::Result<WindowedMaterializedView>
+  restore(WindowedMaterializedViewCheckpoint checkpoint);
 
   [[nodiscard]] common::Result<std::vector<MaterializedViewChange>>
   apply_committed(SourcePosition position, MaterializedViewInput input);
@@ -73,6 +95,7 @@ public:
   [[nodiscard]] std::int64_t watermark() const noexcept;
   [[nodiscard]] std::size_t retained_rows() const noexcept;
   [[nodiscard]] std::size_t open_windows() const noexcept;
+  [[nodiscard]] common::Result<WindowedMaterializedViewCheckpoint> checkpoint() const;
 
 private:
   class Impl;

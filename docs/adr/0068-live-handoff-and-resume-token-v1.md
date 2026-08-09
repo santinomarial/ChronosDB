@@ -3,6 +3,7 @@
 - **Status:** accepted
 - **Date:** 2026-08-08
 - **Owners:** ChronosDB live-query maintainers
+- **Extended by:** [ADR 0089](0089-exact-logical-materialized-view-checkpoints.md)
 
 ## Context
 
@@ -24,9 +25,9 @@ retains exact removable extrema and endpoints; watermarks never determine commit
 ## Consequences and alternatives
 
 The current manager is single-source and in-memory. A wall-clock-only token and lossy overflow were
-rejected because both violate continuity. Exactly-once external effects are not claimed. Durable
-view checkpoints and multi-tablet merge ordering require later integration without changing v1
-bytes silently.
+rejected because both violate continuity. Exactly-once external effects are not claimed. ADR 0089
+defines exact logical view checkpoint state; durable bytes/installation and multi-tablet merge
+ordering require later integration without changing v1 bytes silently.
 
 ## Affected invariants and validation
 
@@ -34,4 +35,3 @@ Invariants 4, 8, 11–13, 15, and 17 apply. Focused tests cover token round trip
 buffering, acknowledgment/resume, retained replay, overflow, removable aggregates, sliding/tumbling
 windows, corrections, and finalization. Restart, network delivery, fan-out, and sustained retention
 campaigns are deferred in `docs/development/deferred-validation.md`.
-
