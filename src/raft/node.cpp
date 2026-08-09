@@ -83,13 +83,12 @@ public:
     std::vector<LogEntry> entries;
     if (next <= last_index()) {
       const std::size_t begin = offset_for(next);
-      const std::size_t count =
-          std::min(limits.maximum_append_entries, state.log.size() - begin);
+      const std::size_t count = std::min(limits.maximum_append_entries, state.log.size() - begin);
       entries.insert(entries.end(), state.log.begin() + static_cast<std::ptrdiff_t>(begin),
                      state.log.begin() + static_cast<std::ptrdiff_t>(begin + count));
     }
-    return AppendEntriesRequest{state.current_term, id, previous, previous_term,
-                                std::move(entries), state.commit_index};
+    return AppendEntriesRequest{state.current_term, id, previous, previous_term, std::move(entries),
+                                state.commit_index};
   }
 
   void append_to_all(Transition& transition) const {
@@ -112,7 +111,8 @@ public:
     append_to_all(transition);
   }
 
-  [[nodiscard]] bool candidate_log_is_current(const LogIndex index, const Term term) const noexcept {
+  [[nodiscard]] bool candidate_log_is_current(const LogIndex index,
+                                              const Term term) const noexcept {
     return term > last_term() || (term == last_term() && index >= last_index());
   }
 
@@ -154,7 +154,7 @@ RaftNode::RaftNode(RaftNode&&) noexcept = default;
 RaftNode& RaftNode::operator=(RaftNode&&) noexcept = default;
 
 common::Result<RaftNode> RaftNode::create(const NodeId node_id, std::vector<NodeId> voters,
-                                         PersistentState persistent, const RaftLimits limits) {
+                                          PersistentState persistent, const RaftLimits limits) {
   if (node_id == 0U || voters.empty() || voters.size() > limits.maximum_voters ||
       limits.maximum_voters == 0U || limits.maximum_log_entries == 0U ||
       limits.maximum_entry_bytes == 0U || limits.maximum_append_entries == 0U) {
@@ -163,15 +163,21 @@ common::Result<RaftNode> RaftNode::create(const NodeId node_id, std::vector<Node
   std::ranges::sort(voters);
   if (!std::binary_search(voters.begin(), voters.end(), node_id) || voters.front() == 0U ||
       std::adjacent_find(voters.begin(), voters.end()) != voters.end()) {
-    return common::make_unexpected(invalid("Raft voters must be unique, nonzero, and include self"));
+    return common::make_unexpected(
+        invalid("Raft voters must be unique, nonzero, and include self"));
   }
   if (persistent.snapshot.last_included_index == 0U &&
       persistent.snapshot.last_included_term != 0U) {
     return common::make_unexpected(invalid("Raft snapshot zero index must have zero term"));
   }
+  if (persistent.snapshot.last_included_index == std::numeric_limits<LogIndex>::max()) {
+    return common::make_unexpected(
+        invalid("Raft maximum log index is reserved for exhaustion detection"));
+  }
   LogIndex expected = persistent.snapshot.last_included_index + 1U;
   for (const LogEntry& entry : persistent.log) {
-    if (entry.index != expected || entry.term == 0U || entry.term > persistent.current_term ||
+    if (entry.index != expected || entry.index == std::numeric_limits<LogIndex>::max() ||
+        entry.term == 0U || entry.term > persistent.current_term || entry.type == 0U ||
         entry.payload.size() > limits.maximum_entry_bytes) {
       return common::make_unexpected(invalid("Raft persistent log is not contiguous or bounded"));
     }
@@ -184,7 +190,7 @@ common::Result<RaftNode> RaftNode::create(const NodeId node_id, std::vector<Node
     return common::make_unexpected(invalid("Raft persistent log exceeds configured capacity"));
   }
   const LogIndex last = persistent.log.empty() ? persistent.snapshot.last_included_index
-                                                : persistent.log.back().index;
+                                               : persistent.log.back().index;
   if (persistent.commit_index < persistent.snapshot.last_included_index ||
       persistent.commit_index > last ||
       persistent.applied_index < persistent.snapshot.last_included_index ||
@@ -198,9 +204,10 @@ common::Result<RaftNode> RaftNode::create(const NodeId node_id, std::vector<Node
 }
 
 common::Result<Transition> RaftNode::start_election() {
-  if (impl_->state.current_term == std::numeric_limits<Term>::max()) {
+  if (impl_->state.current_term == std::numeric_limits<Term>::max() ||
+      impl_->last_index() == std::numeric_limits<LogIndex>::max()) {
     return common::make_unexpected(
-        common::Status{common::StatusCode::kOutOfRange, "Raft term is exhausted"});
+        common::Status{common::StatusCode::kOutOfRange, "Raft term or log index is exhausted"});
   }
   ++impl_->state.current_term;
   impl_->role = Role::kCandidate;
@@ -227,6 +234,86 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
   if (!impl_->voter(source) || source == impl_->id) {
     return common::make_unexpected(invalid("Raft message source is not a remote voter"));
   }
+
+  // Validate every fallible, message-local condition before observing a newer term. Otherwise a
+  // hostile higher-term message could change current_term and then return an error without giving
+  // the runtime the persistence state required by the persist-before-send contract.
+  const common::Status validation = std::visit(
+      [&](const auto& value) -> common::Status {
+        using T = std::remove_cvref_t<decltype(value)>;
+        if constexpr (std::is_same_v<T, RequestVoteRequest>) {
+          return value.candidate_id == source
+                     ? common::Status::ok()
+                     : invalid("RequestVote candidate does not match message source");
+        } else if constexpr (std::is_same_v<T, AppendEntriesRequest>) {
+          if (value.term == 0U || value.leader_id != source ||
+              value.entries.size() > impl_->limits.maximum_append_entries) {
+            return invalid("AppendEntries leader identity or batch bound is invalid");
+          }
+          if (value.previous_log_index == std::numeric_limits<LogIndex>::max()) {
+            return invalid("AppendEntries log index overflows");
+          }
+          LogIndex expected = value.previous_log_index;
+          for (const LogEntry& entry : value.entries) {
+            if (expected == std::numeric_limits<LogIndex>::max()) {
+              return invalid("AppendEntries log index overflows");
+            }
+            ++expected;
+            if (entry.index != expected || entry.index == std::numeric_limits<LogIndex>::max() ||
+                entry.term == 0U || entry.term > value.term || entry.type == 0U ||
+                entry.payload.size() > impl_->limits.maximum_entry_bytes) {
+              return invalid("AppendEntries contains an invalid log entry");
+            }
+          }
+          if (value.term < impl_->state.current_term) {
+            return common::Status::ok();
+          }
+          const auto previous_term = impl_->term_at(value.previous_log_index);
+          if (!previous_term.has_value() || *previous_term != value.previous_log_term) {
+            return common::Status::ok();
+          }
+          std::optional<std::size_t> first_conflict;
+          for (std::size_t index = 0U; index < value.entries.size(); ++index) {
+            const LogEntry& entry = value.entries[index];
+            const auto local_term = impl_->term_at(entry.index);
+            if (local_term.has_value() && *local_term == entry.term) {
+              const LogEntry& local = impl_->state.log[impl_->offset_for(entry.index)];
+              if (local != entry) {
+                return common::Status{common::StatusCode::kCorruption,
+                                      "matching Raft term and index have different entry bytes"};
+              }
+              continue;
+            }
+            if (local_term.has_value() && entry.index <= impl_->state.commit_index) {
+              return common::Status{common::StatusCode::kCorruption,
+                                    "leader attempted to overwrite a committed Raft entry"};
+            }
+            first_conflict = index;
+            break;
+          }
+          if (first_conflict.has_value()) {
+            const LogIndex conflict_index = value.entries[*first_conflict].index;
+            const std::size_t retained = conflict_index <= impl_->last_index()
+                                             ? impl_->offset_for(conflict_index)
+                                             : impl_->state.log.size();
+            if (retained + (value.entries.size() - *first_conflict) >
+                impl_->limits.maximum_log_entries) {
+              return common::Status{common::StatusCode::kResourceExhausted,
+                                    "Raft log capacity is exhausted"};
+            }
+          }
+        } else if constexpr (std::is_same_v<T, AppendEntriesResponse>) {
+          if (value.success && value.match_index > impl_->last_index()) {
+            return invalid("AppendEntries response exceeds the local log");
+          }
+        }
+        return common::Status::ok();
+      },
+      message);
+  if (!validation.is_ok()) {
+    return common::make_unexpected(validation);
+  }
+
   Transition transition;
   bool persistence_changed = false;
 
@@ -240,9 +327,6 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
       [&](auto&& value) -> common::Status {
         using T = std::remove_cvref_t<decltype(value)>;
         if constexpr (std::is_same_v<T, RequestVoteRequest>) {
-          if (value.candidate_id != source) {
-            return invalid("RequestVote candidate does not match message source");
-          }
           bool granted = false;
           if (value.term == impl_->state.current_term &&
               (!impl_->state.voted_for.has_value() || *impl_->state.voted_for == source) &&
@@ -269,9 +353,6 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
           }
           return common::Status::ok();
         } else if constexpr (std::is_same_v<T, AppendEntriesRequest>) {
-          if (value.leader_id != source || value.entries.size() > impl_->limits.maximum_append_entries) {
-            return invalid("AppendEntries leader identity or batch bound is invalid");
-          }
           if (value.term < impl_->state.current_term) {
             transition.outbound.push_back(OutboundMessage{
                 source, AppendEntriesResponse{impl_->state.current_term, false, impl_->last_index(),
@@ -297,46 +378,30 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
             return common::Status::ok();
           }
 
-          LogIndex expected = value.previous_log_index + 1U;
-          for (const LogEntry& entry : value.entries) {
-            if (entry.index != expected || entry.term == 0U || entry.term > value.term ||
-                entry.payload.size() > impl_->limits.maximum_entry_bytes) {
-              return invalid("AppendEntries contains an invalid log entry");
-            }
-            ++expected;
-          }
           for (const LogEntry& entry : value.entries) {
             const auto local_term = impl_->term_at(entry.index);
             if (local_term.has_value() && *local_term != entry.term) {
-              if (entry.index <= impl_->state.commit_index) {
-                return common::Status{common::StatusCode::kCorruption,
-                                      "leader attempted to overwrite a committed Raft entry"};
-              }
-              impl_->state.log.erase(
-                  impl_->state.log.begin() + static_cast<std::ptrdiff_t>(impl_->offset_for(entry.index)),
-                  impl_->state.log.end());
+              impl_->state.log.erase(impl_->state.log.begin() + static_cast<std::ptrdiff_t>(
+                                                                    impl_->offset_for(entry.index)),
+                                     impl_->state.log.end());
               persistence_changed = true;
             }
             if (!impl_->term_at(entry.index).has_value()) {
-              if (impl_->state.log.size() >= impl_->limits.maximum_log_entries) {
-                return common::Status{common::StatusCode::kResourceExhausted,
-                                      "Raft log capacity is exhausted"};
-              }
               impl_->state.log.push_back(entry);
               persistence_changed = true;
             }
           }
-          const LogIndex accepted = value.entries.empty() ? value.previous_log_index
-                                                          : value.entries.back().index;
+          const LogIndex accepted =
+              value.entries.empty() ? value.previous_log_index : value.entries.back().index;
           const LogIndex new_commit = std::min(value.leader_commit, impl_->last_index());
           if (new_commit > impl_->state.commit_index) {
             impl_->state.commit_index = new_commit;
             transition.advanced_commit_index = new_commit;
             persistence_changed = true;
           }
-          transition.outbound.push_back(OutboundMessage{
-              source, AppendEntriesResponse{impl_->state.current_term, true, accepted,
-                                            std::nullopt, 0U}});
+          transition.outbound.push_back(
+              OutboundMessage{source, AppendEntriesResponse{impl_->state.current_term, true,
+                                                            accepted, std::nullopt, 0U}});
           return common::Status::ok();
         } else {
           if (value.term < impl_->state.current_term || impl_->role != Role::kLeader ||
@@ -363,7 +428,8 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
                 }
               }
             }
-            impl_->next_index[source] = std::max<LogIndex>(1U, std::min(next, impl_->last_index() + 1U));
+            impl_->next_index[source] =
+                std::max<LogIndex>(1U, std::min(next, impl_->last_index() + 1U));
             transition.outbound.push_back(OutboundMessage{source, impl_->append_for(source)});
           }
           return common::Status::ok();
@@ -380,14 +446,14 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
 }
 
 common::Result<Transition> RaftNode::propose(const std::uint8_t type,
-                                            std::vector<std::byte> payload) {
+                                             std::vector<std::byte> payload) {
   if (impl_->role != Role::kLeader) {
-    return common::make_unexpected(common::Status{common::StatusCode::kUnavailable,
-                                                   "Raft proposal requires current leader"});
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kUnavailable, "Raft proposal requires current leader"});
   }
   if (type == 0U || payload.size() > impl_->limits.maximum_entry_bytes ||
       impl_->state.log.size() >= impl_->limits.maximum_log_entries ||
-      impl_->last_index() == std::numeric_limits<LogIndex>::max()) {
+      impl_->last_index() >= std::numeric_limits<LogIndex>::max() - 1U) {
     return common::make_unexpected(invalid("Raft proposal type, size, or log bound invalid"));
   }
   const LogIndex index = impl_->last_index() + 1U;
@@ -406,8 +472,8 @@ common::Result<Transition> RaftNode::propose(const std::uint8_t type,
 
 common::Result<Transition> RaftNode::heartbeat() {
   if (impl_->role != Role::kLeader) {
-    return common::make_unexpected(common::Status{common::StatusCode::kUnavailable,
-                                                   "Raft heartbeat requires current leader"});
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kUnavailable, "Raft heartbeat requires current leader"});
   }
   Transition transition;
   impl_->append_to_all(transition);
@@ -433,13 +499,29 @@ std::span<const LogEntry> RaftNode::committed_unapplied() const noexcept {
   return std::span<const LogEntry>{impl_->state.log}.subspan(begin, count);
 }
 
-NodeId RaftNode::node_id() const noexcept { return impl_->id; }
-Role RaftNode::role() const noexcept { return impl_->role; }
-Term RaftNode::current_term() const noexcept { return impl_->state.current_term; }
-std::optional<NodeId> RaftNode::leader_id() const noexcept { return impl_->leader_id; }
-LogIndex RaftNode::last_log_index() const noexcept { return impl_->last_index(); }
-LogIndex RaftNode::commit_index() const noexcept { return impl_->state.commit_index; }
-LogIndex RaftNode::applied_index() const noexcept { return impl_->state.applied_index; }
-const PersistentState& RaftNode::persistent_state() const noexcept { return impl_->state; }
+NodeId RaftNode::node_id() const noexcept {
+  return impl_->id;
+}
+Role RaftNode::role() const noexcept {
+  return impl_->role;
+}
+Term RaftNode::current_term() const noexcept {
+  return impl_->state.current_term;
+}
+std::optional<NodeId> RaftNode::leader_id() const noexcept {
+  return impl_->leader_id;
+}
+LogIndex RaftNode::last_log_index() const noexcept {
+  return impl_->last_index();
+}
+LogIndex RaftNode::commit_index() const noexcept {
+  return impl_->state.commit_index;
+}
+LogIndex RaftNode::applied_index() const noexcept {
+  return impl_->state.applied_index;
+}
+const PersistentState& RaftNode::persistent_state() const noexcept {
+  return impl_->state;
+}
 
 } // namespace chronos::raft

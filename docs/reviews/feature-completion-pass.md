@@ -6,10 +6,11 @@
 - **Starting tree:** `main...origin/main` with two pre-existing untracked headers:
   `include/chronos/live/subscription.hpp` and `include/chronos/live/resume_token.hpp`.
 - **Concurrent owner activity:** while this pass was running, the repository owner created and
-  pushed `f35c140` and `30ba6bd42f84aae821f426cc194f344b32114de9`, committing the Phase 11 and
-  Phase 13–17 files produced during the pass. The agent did not run `git commit` or `git push`.
-- **Reviewed ending HEAD:** `30ba6bd42f84aae821f426cc194f344b32114de9`. The final uncommitted tree
-  contains Phase 12, metadata, integration, documentation, and one tiering-limit correctness fix.
+  pushed `f35c140`, `30ba6bd42f84aae821f426cc194f344b32114de9`, and
+  `034273eb74b0040820be4e82587797c77b217fac`, committing the Phase 11–17, runtime, integration, and
+  documentation files produced during the pass. The agent did not run `git commit` or `git push`.
+- **Reviewed ending HEAD:** `034273eb74b0040820be4e82587797c77b217fac`. The final uncommitted tree
+  contains the last Raft safety fixes, documentation reconciliation, and formatting corrections.
 
 This is a truthful feature-architecture checkpoint, not a declaration that Phases 11–17 have passed
 their full roadmap exit gates or that ChronosDB is a production three-node database.
@@ -155,13 +156,13 @@ Focused executions passed:
 
 - `chronos_live_tests`: 10 tests;
 - `chronos_query_tests --gtest_filter=TemporalSnapshotTest.*:DistributedQueryTest.*`: 4 tests;
-- `chronos_raft_tests`: 8 tests after metadata integration;
+- `chronos_raft_tests`: 12 tests after metadata integration and final hostile-input audit fixes;
 - `chronos_tiering_tests`: 3 tests;
-- `chronos_network_tests --gtest_filter=ReactorBackendTest.*`: 1 test;
+- `chronos_network_tests`: 31 tests, including the backend-selection test;
 - `chronos_runtime_tests`: 1 test; and
 - `chronos_feature_smoke_tests`: 1 test.
 
-Changed C++ files were formatted with Homebrew clang-format 22. Full-suite, sanitizer, fuzz,
+The final C++ tree passed the repository-pinned clang-format 18 check. Full-suite, sanitizer, fuzz,
 cross-compiler, Linux/liburing, benchmark, profile, and chaos checks were deliberately not run.
 
 ## Known risks and limitations
@@ -175,7 +176,8 @@ cross-compiler, Linux/liburing, benchmark, profile, and chaos checks were delibe
   grouping, order, top-N, limits, or exchange retries.
 - The movement state machine is not the Raft membership protocol itself.
 - Cold upload does not independently parse/validate the candidate as CSEG before upload.
-- Raft hostile-message validation, snapshot boundaries, and membership need broader model evidence.
+- Raft now prevalidates malformed higher-term messages and divergent matching-term entries, but
+  snapshot boundaries, response-state combinations, and membership still need broader model evidence.
 
 ### Concurrency
 
@@ -221,4 +223,3 @@ The exact subsystem/category ledger is
 7. Run full compiler/Debug/Release/install suites, then ASan/UBSan/TSan, fuzz/corruption/crash,
    deterministic/chaos campaigns, SQL differential tests, and only afterward benchmarks/profiling/
    epoll-io_uring/SIMD/NUMA comparison and final tuning.
-

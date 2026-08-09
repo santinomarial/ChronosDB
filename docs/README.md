@@ -49,6 +49,10 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Manifest v1](formats/manifest-v1.md): accepted immutable database-wide generation bytes,
   installed-name grammar, tablet/part/retry recovery state, and checkpoint-aware WAL suffix contract;
   implementation is pending.
+- [Resume Token v1](formats/resume-token-v1.md): authenticated live-subscription resume identity,
+  compatibility, limits, and rejection rules.
+- [Multiplexed Raft Persistent-State Record v1](formats/multiplexed-raft-log-v1.md): checksummed,
+  group-tagged full-state records for the current Multi-Raft codec boundary.
 - [Production dependencies](dependencies/README.md): maintained external-library boundaries,
   version sources, licenses, and update/security ownership.
 
@@ -62,6 +66,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Roadmap](roadmap.md): implementation phases and evidence-based exit gates.
 - [Building](development/building.md): supported toolchains, presets, tests, and sanitizer workflows.
 - [Tooling](development/tooling.md): formatting, static analysis, dependencies, and the CI matrix.
+- [Deferred validation](development/deferred-validation.md): exact feature-pass validation and
+  integration ledger by subsystem and category.
 - [Architecture Decision Records](adr/README.md): decision process and index.
 - [ADR template](adr/template.md): required structure for new decisions.
 
@@ -181,6 +187,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   monotonic request generation, response validation, cancellation, and cleanup.
 - [Phase 10 network exit review](reviews/phase-10-network-review.md): implemented transport
   boundary, Linux portability and validation evidence, nonblocking risks, and the phase decision.
+- [Feature completion pass review](reviews/feature-completion-pass.md): truthful Phase 11–17
+  architecture slices, focused evidence, limitations, risks, and recommended next order.
 - [Shared snapshot publication credit](learning/shared-snapshot-publication-credit.md): implemented
   one-query/one-epoch publication admission across part images, backed chunks, complete tablet scans,
   and ASOF aliases while retaining exact local image/output credit and last-owner cleanup.

@@ -23,16 +23,16 @@ namespace {
   return value + amount;
 }
 
-[[nodiscard]] std::optional<std::int64_t> subtract_nonnegative(
-    const std::int64_t value, const std::int64_t amount) noexcept {
+[[nodiscard]] std::optional<std::int64_t> subtract_nonnegative(const std::int64_t value,
+                                                               const std::int64_t amount) noexcept {
   if (amount < 0 || value < std::numeric_limits<std::int64_t>::min() + amount) {
     return std::nullopt;
   }
   return value - amount;
 }
 
-[[nodiscard]] std::optional<std::int64_t> multiply_nonnegative(
-    const std::int64_t left, const std::int64_t right) noexcept {
+[[nodiscard]] std::optional<std::int64_t> multiply_nonnegative(const std::int64_t left,
+                                                               const std::int64_t right) noexcept {
   if (left < 0 || right < 0 ||
       (left != 0 && right > std::numeric_limits<std::int64_t>::max() / left)) {
     return std::nullopt;
@@ -46,8 +46,8 @@ windows_for(const std::int64_t event_time, const WindowDefinition& definition) {
   if (event_time < 0 && event_time % definition.slide != 0) {
     const auto adjusted = subtract_nonnegative(last_start, definition.slide);
     if (!adjusted.has_value()) {
-      return common::make_unexpected(common::Status{common::StatusCode::kOutOfRange,
-                                                     "event time cannot be aligned safely"});
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kOutOfRange, "event time cannot be aligned safely"});
     }
     last_start = *adjusted;
   }
@@ -56,13 +56,12 @@ windows_for(const std::int64_t event_time, const WindowDefinition& definition) {
   windows.reserve(static_cast<std::size_t>(window_count));
   for (std::int64_t index = 0; index < window_count; ++index) {
     const auto offset = multiply_nonnegative(index, definition.slide);
-    const auto start = offset.has_value() ? subtract_nonnegative(last_start, *offset)
-                                          : std::nullopt;
-    const auto end = start.has_value() ? add_nonnegative(*start, definition.width)
-                                       : std::nullopt;
+    const auto start =
+        offset.has_value() ? subtract_nonnegative(last_start, *offset) : std::nullopt;
+    const auto end = start.has_value() ? add_nonnegative(*start, definition.width) : std::nullopt;
     if (!start.has_value() || !end.has_value()) {
-      return common::make_unexpected(common::Status{common::StatusCode::kOutOfRange,
-                                                     "window boundary overflows int64"});
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kOutOfRange, "window boundary overflows int64"});
     }
     windows.push_back(WindowKey{*start, *end});
   }
@@ -108,42 +107,42 @@ WindowedMaterializedView::create(schema::TabletId tablet_id, wal::WalId wal_id,
                                  const WindowDefinition definition) {
   if (tablet_id.uuid().is_nil() || !wal_id.is_valid()) {
     return common::make_unexpected(common::Status{common::StatusCode::kInvalidArgument,
-                                                   "materialized-view source identity is invalid"});
+                                                  "materialized-view source identity is invalid"});
   }
   if (definition.width <= 0 || definition.slide <= 0 || definition.allowed_lateness < 0 ||
       definition.width < definition.slide || definition.width % definition.slide != 0 ||
       definition.maximum_windows == 0U || definition.maximum_rows == 0U) {
     return common::make_unexpected(common::Status{common::StatusCode::kInvalidArgument,
-                                                   "window definition is invalid or unbounded"});
+                                                  "window definition is invalid or unbounded"});
   }
   const auto windows_per_row = static_cast<std::uint64_t>(definition.width / definition.slide);
   if (windows_per_row > definition.maximum_windows) {
     return common::make_unexpected(common::Status{common::StatusCode::kInvalidArgument,
-                                                   "one row exceeds the configured window bound"});
+                                                  "one row exceeds the configured window bound"});
   }
-  return WindowedMaterializedView{
-      std::make_unique<Impl>(tablet_id, wal_id, definition)};
+  return WindowedMaterializedView{std::make_unique<Impl>(tablet_id, wal_id, definition)};
 }
 
 common::Result<std::vector<MaterializedViewChange>>
 WindowedMaterializedView::apply_committed(const SourcePosition position,
                                           MaterializedViewInput input) {
-  if (position.tablet_id != impl_->position.tablet_id || position.wal_id != impl_->position.wal_id ||
+  if (position.tablet_id != impl_->position.tablet_id ||
+      position.wal_id != impl_->position.wal_id ||
       position.record_sequence != impl_->position.record_sequence + 1U) {
     return common::make_unexpected(common::Status{common::StatusCode::kInvalidArgument,
-                                                   "materialized-view input is not consecutive"});
+                                                  "materialized-view input is not consecutive"});
   }
   if (input.aggregate.row_identity == 0U ||
       (!input.tombstone && !std::isfinite(input.aggregate.weight))) {
     return common::make_unexpected(common::Status{common::StatusCode::kInvalidArgument,
-                                                   "materialized-view row input is invalid"});
+                                                  "materialized-view row input is invalid"});
   }
 
   const auto existing = impl_->rows.find(input.aggregate.row_identity);
   if (!input.tombstone && existing == impl_->rows.end() &&
       impl_->rows.size() >= impl_->definition.maximum_rows) {
     return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
-                                                   "materialized-view row bound is exhausted"});
+                                                  "materialized-view row bound is exhausted"});
   }
 
   std::vector<WindowKey> old_windows;
@@ -171,7 +170,7 @@ WindowedMaterializedView::apply_committed(const SourcePosition position,
   }
   if (missing > impl_->definition.maximum_windows - impl_->windows.size()) {
     return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
-                                                   "materialized-view window bound is exhausted"});
+                                                  "materialized-view window bound is exhausted"});
   }
 
   std::map<WindowKey, bool> previously_emitted;
@@ -211,12 +210,12 @@ WindowedMaterializedView::apply_committed(const SourcePosition position,
     const AggregateSnapshot value = state.aggregate.snapshot();
     const bool was_emitted = previously_emitted.at(window);
     const WindowResultStatus status =
-        was_emitted ? WindowResultStatus::kCorrected
-                    : (state.finalized ? WindowResultStatus::kFinalized
-                                       : WindowResultStatus::kProvisional);
-    changes.push_back(MaterializedViewChange{
-        value.count == 0U ? LogicalChangeOperation::kDelete : LogicalChangeOperation::kUpsert,
-        window, state.revision, status, value});
+        was_emitted
+            ? WindowResultStatus::kCorrected
+            : (state.finalized ? WindowResultStatus::kFinalized : WindowResultStatus::kProvisional);
+    changes.push_back(MaterializedViewChange{value.count == 0U ? LogicalChangeOperation::kDelete
+                                                               : LogicalChangeOperation::kUpsert,
+                                             window, state.revision, status, value});
     state.emitted = true;
   }
   impl_->position = position;
@@ -226,14 +225,13 @@ WindowedMaterializedView::apply_committed(const SourcePosition position,
 common::Result<std::vector<MaterializedViewChange>>
 WindowedMaterializedView::advance_watermark(const std::int64_t watermark) {
   if (watermark < impl_->current_watermark) {
-    return common::make_unexpected(common::Status{common::StatusCode::kInvalidArgument,
-                                                   "watermark cannot move backward"});
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInvalidArgument, "watermark cannot move backward"});
   }
   impl_->current_watermark = watermark;
   std::vector<MaterializedViewChange> changes;
   for (auto& [window, state] : impl_->windows) {
-    if (state.finalized ||
-        !final_at(window, watermark, impl_->definition.allowed_lateness)) {
+    if (state.finalized || !final_at(window, watermark, impl_->definition.allowed_lateness)) {
       continue;
     }
     state.finalized = true;

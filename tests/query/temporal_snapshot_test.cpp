@@ -1,6 +1,5 @@
-#include "chronos/query/temporal_snapshot.hpp"
-
 #include "chronos/common/uuid.hpp"
+#include "chronos/query/temporal_snapshot.hpp"
 #include "chronos/query/value.hpp"
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/logical_type.hpp"
@@ -36,21 +35,22 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
   columns.push_back(schema::ColumnDefinition::create(
                         timestamp, "ts", type(schema::LogicalTypeKind::kTimestampNs), false)
                         .value());
-  columns.push_back(schema::ColumnDefinition::create(
-                        value, "value", type(schema::LogicalTypeKind::kInt64), false)
-                        .value());
-  columns.push_back(schema::ColumnDefinition::create(
-                        key, "key", type(schema::LogicalTypeKind::kString), false)
-                        .value());
-  return std::make_shared<const schema::TableSchema>(schema::TableSchema::create(
-      id<schema::TableId>(1U), id<schema::SchemaId>(2U), schema::SchemaVersion::initial(),
-      std::nullopt, std::move(columns),
-      {.event_time_column = timestamp,
-       .physical_ordering_key = {key, timestamp},
-       .partition_columns = {timestamp},
-       .shard_key = {key},
-       .deduplication_key = {key}})
-                                                        .value());
+  columns.push_back(
+      schema::ColumnDefinition::create(value, "value", type(schema::LogicalTypeKind::kInt64), false)
+          .value());
+  columns.push_back(
+      schema::ColumnDefinition::create(key, "key", type(schema::LogicalTypeKind::kString), false)
+          .value());
+  return std::make_shared<const schema::TableSchema>(
+      schema::TableSchema::create(id<schema::TableId>(1U), id<schema::SchemaId>(2U),
+                                  schema::SchemaVersion::initial(), std::nullopt,
+                                  std::move(columns),
+                                  {.event_time_column = timestamp,
+                                   .physical_ordering_key = {key, timestamp},
+                                   .partition_columns = {timestamp},
+                                   .shard_key = {key},
+                                   .deduplication_key = {key}})
+          .value());
 }
 
 [[nodiscard]] common::Uuid wal_id() {
@@ -59,8 +59,7 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
   return common::Uuid{bytes};
 }
 
-[[nodiscard]] TemporalMutation mutation(const std::int64_t value,
-                                        const TemporalMutationKind kind,
+[[nodiscard]] TemporalMutation mutation(const std::int64_t value, const TemporalMutationKind kind,
                                         const std::uint64_t sequence) {
   return TemporalMutation{
       .logical_identity = {std::byte{1U}},
@@ -86,10 +85,11 @@ TEST(TemporalSnapshotTest, ResolvesOriginalCorrectionAndTombstoneAtSystemTime) {
   const auto schema = table_schema();
   auto provider = TemporalSnapshotProvider::create(schema);
   ASSERT_TRUE(provider.has_value());
-  ASSERT_TRUE((*provider)->apply_committed(1U, 1000, {mutation(10, TemporalMutationKind::kOriginal, 1U)})
+  ASSERT_TRUE((*provider)
+                  ->apply_committed(1U, 1000, {mutation(10, TemporalMutationKind::kOriginal, 1U)})
                   .is_ok());
-  ASSERT_TRUE((*provider)->apply_committed(
-                          2U, 2000, {mutation(20, TemporalMutationKind::kCorrection, 2U)})
+  ASSERT_TRUE((*provider)
+                  ->apply_committed(2U, 2000, {mutation(20, TemporalMutationKind::kCorrection, 2U)})
                   .is_ok());
 
   auto before = (*provider)->resolve(schema, 1500);
@@ -100,8 +100,8 @@ TEST(TemporalSnapshotTest, ResolvesOriginalCorrectionAndTombstoneAtSystemTime) {
   ASSERT_TRUE(current.has_value());
   EXPECT_EQ(visible_value(**current), 20);
 
-  ASSERT_TRUE((*provider)->apply_committed(
-                          3U, 3000, {mutation(20, TemporalMutationKind::kTombstone, 3U)})
+  ASSERT_TRUE((*provider)
+                  ->apply_committed(3U, 3000, {mutation(20, TemporalMutationKind::kTombstone, 3U)})
                   .is_ok());
   current = (*provider)->resolve(schema, std::nullopt);
   ASSERT_TRUE(current.has_value());
@@ -115,10 +115,11 @@ TEST(TemporalSnapshotTest, RetentionFailsClosedForExpiredHistory) {
   const auto schema = table_schema();
   auto provider = TemporalSnapshotProvider::create(schema);
   ASSERT_TRUE(provider.has_value());
-  ASSERT_TRUE((*provider)->apply_committed(1U, 1000, {mutation(10, TemporalMutationKind::kOriginal, 1U)})
+  ASSERT_TRUE((*provider)
+                  ->apply_committed(1U, 1000, {mutation(10, TemporalMutationKind::kOriginal, 1U)})
                   .is_ok());
-  ASSERT_TRUE((*provider)->apply_committed(
-                          2U, 2000, {mutation(20, TemporalMutationKind::kCorrection, 2U)})
+  ASSERT_TRUE((*provider)
+                  ->apply_committed(2U, 2000, {mutation(20, TemporalMutationKind::kCorrection, 2U)})
                   .is_ok());
   ASSERT_TRUE((*provider)->compact_history(2U, 1500).is_ok());
   const auto expired = (*provider)->resolve(schema, 1000);

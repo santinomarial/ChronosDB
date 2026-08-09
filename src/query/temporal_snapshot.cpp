@@ -68,13 +68,13 @@ TemporalSnapshotProvider::create(std::shared_ptr<const schema::TableSchema> sche
       limits.maximum_logical_rows > limits.maximum_versions) {
     return common::make_unexpected(invalid("temporal store limits are invalid"));
   }
-  return std::unique_ptr<TemporalSnapshotProvider>{new TemporalSnapshotProvider{
-      std::make_unique<Impl>(std::move(schema), limits)}};
+  return std::unique_ptr<TemporalSnapshotProvider>{
+      new TemporalSnapshotProvider{std::make_unique<Impl>(std::move(schema), limits)}};
 }
 
-common::Status TemporalSnapshotProvider::apply_committed(
-    const std::uint64_t system_commit_position, const std::int64_t system_commit_time_ns,
-    std::vector<TemporalMutation> mutations) {
+common::Status TemporalSnapshotProvider::apply_committed(const std::uint64_t system_commit_position,
+                                                         const std::int64_t system_commit_time_ns,
+                                                         std::vector<TemporalMutation> mutations) {
   if (system_commit_position == 0U || mutations.empty()) {
     return invalid("temporal commit position and mutation batch must be nonzero");
   }
@@ -110,16 +110,13 @@ common::Status TemporalSnapshotProvider::apply_committed(
       return invalid("an existing temporal identity requires correction or replacement semantics");
     }
     if (mutation.kind != TemporalMutationKind::kTombstone) {
-      const std::vector<std::byte> generated_identity =
-          impl_->schema->deduplication_key().empty() ? mutation.logical_identity
-                                                     : std::vector<std::byte>{};
-      auto validated = ScalarTableSnapshot::create(impl_->schema, system_commit_position,
-                                                   {ScalarInputRow{mutation.columns,
-                                                                   generated_identity,
-                                                                   mutation.wal_id,
-                                                                   mutation.record_sequence,
-                                                                   system_commit_position,
-                                                                   mutation.row_ordinal}});
+      const std::vector<std::byte> generated_identity = impl_->schema->deduplication_key().empty()
+                                                            ? mutation.logical_identity
+                                                            : std::vector<std::byte>{};
+      auto validated = ScalarTableSnapshot::create(
+          impl_->schema, system_commit_position,
+          {ScalarInputRow{mutation.columns, generated_identity, mutation.wal_id,
+                          mutation.record_sequence, system_commit_position, mutation.row_ordinal}});
       if (!validated.has_value()) {
         return validated.error();
       }
@@ -132,8 +129,8 @@ common::Status TemporalSnapshotProvider::apply_committed(
 
   for (TemporalMutation& mutation : mutations) {
     auto& history = impl_->histories[mutation.logical_identity];
-    history.push_back(Impl::Version{std::move(mutation), system_commit_position,
-                                    system_commit_time_ns});
+    history.push_back(
+        Impl::Version{std::move(mutation), system_commit_position, system_commit_time_ns});
     ++impl_->versions;
   }
   impl_->latest_position = system_commit_position;
@@ -143,9 +140,8 @@ common::Status TemporalSnapshotProvider::apply_committed(
 }
 
 common::Result<std::shared_ptr<const ScalarTableSnapshot>>
-TemporalSnapshotProvider::resolve(
-    const std::shared_ptr<const schema::TableSchema>& bound_schema,
-    const std::optional<std::int64_t> as_of_system_time_ns) const {
+TemporalSnapshotProvider::resolve(const std::shared_ptr<const schema::TableSchema>& bound_schema,
+                                  const std::optional<std::int64_t> as_of_system_time_ns) const {
   if (bound_schema == nullptr || bound_schema->schema_id() != impl_->schema->schema_id() ||
       bound_schema->version() != impl_->schema->version()) {
     return common::make_unexpected(invalid("temporal snapshot schema is incompatible"));
@@ -153,8 +149,8 @@ TemporalSnapshotProvider::resolve(
   std::scoped_lock lock{impl_->mutex};
   if (as_of_system_time_ns.has_value() && impl_->earliest_retained_time.has_value() &&
       *as_of_system_time_ns < *impl_->earliest_retained_time) {
-    return common::make_unexpected(common::Status{common::StatusCode::kNotFound,
-                                                   "requested system history has expired"});
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kNotFound, "requested system history has expired"});
   }
 
   std::uint64_t boundary = impl_->latest_position;
@@ -165,11 +161,11 @@ TemporalSnapshotProvider::resolve(
   std::vector<ScalarInputRow> visible;
   visible.reserve(impl_->histories.size());
   for (const auto& [identity, history] : impl_->histories) {
-    const auto later = std::upper_bound(
-        history.begin(), history.end(), boundary,
-        [](const std::uint64_t position, const Impl::Version& version) {
-          return position < version.commit_position;
-        });
+    const auto later =
+        std::upper_bound(history.begin(), history.end(), boundary,
+                         [](const std::uint64_t position, const Impl::Version& version) {
+                           return position < version.commit_position;
+                         });
     if (later == history.begin()) {
       continue;
     }
@@ -177,14 +173,11 @@ TemporalSnapshotProvider::resolve(
     if (version.mutation.kind == TemporalMutationKind::kTombstone) {
       continue;
     }
-    visible.push_back(ScalarInputRow{version.mutation.columns,
-                                     impl_->schema->deduplication_key().empty()
-                                         ? identity
-                                         : std::vector<std::byte>{},
-                                     version.mutation.wal_id,
-                                     version.mutation.record_sequence,
-                                     version.commit_position,
-                                     version.mutation.row_ordinal});
+    visible.push_back(ScalarInputRow{
+        version.mutation.columns,
+        impl_->schema->deduplication_key().empty() ? identity : std::vector<std::byte>{},
+        version.mutation.wal_id, version.mutation.record_sequence, version.commit_position,
+        version.mutation.row_ordinal});
   }
   auto snapshot = ScalarTableSnapshot::create(impl_->schema, boundary, std::move(visible));
   if (!snapshot.has_value()) {
@@ -195,9 +188,9 @@ TemporalSnapshotProvider::resolve(
   return output;
 }
 
-common::Status TemporalSnapshotProvider::compact_history(
-    const std::uint64_t oldest_observable_commit_position,
-    const std::int64_t retained_system_time_ns) {
+common::Status
+TemporalSnapshotProvider::compact_history(const std::uint64_t oldest_observable_commit_position,
+                                          const std::int64_t retained_system_time_ns) {
   std::scoped_lock lock{impl_->mutex};
   if (oldest_observable_commit_position > impl_->latest_position ||
       retained_system_time_ns > impl_->latest_time) {
@@ -205,19 +198,21 @@ common::Status TemporalSnapshotProvider::compact_history(
   }
   for (auto& [identity, history] : impl_->histories) {
     static_cast<void>(identity);
-    const auto keep = std::lower_bound(
-        history.begin(), history.end(), oldest_observable_commit_position,
-        [](const Impl::Version& version, const std::uint64_t position) {
-          return version.commit_position < position;
-        });
+    const auto keep =
+        std::lower_bound(history.begin(), history.end(), oldest_observable_commit_position,
+                         [](const Impl::Version& version, const std::uint64_t position) {
+                           return version.commit_position < position;
+                         });
     if (keep == history.begin()) {
       continue;
     }
     auto predecessor = std::prev(keep);
-    while (predecessor != history.begin() && predecessor->commit_time_ns >= retained_system_time_ns) {
+    while (predecessor != history.begin() &&
+           predecessor->commit_time_ns >= retained_system_time_ns) {
       --predecessor;
     }
-    const std::size_t removed = static_cast<std::size_t>(std::distance(history.begin(), predecessor));
+    const std::size_t removed =
+        static_cast<std::size_t>(std::distance(history.begin(), predecessor));
     history.erase(history.begin(), predecessor);
     impl_->versions -= removed;
   }

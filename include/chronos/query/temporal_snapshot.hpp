@@ -52,9 +52,9 @@ public:
   [[nodiscard]] static common::Result<std::unique_ptr<TemporalSnapshotProvider>>
   create(std::shared_ptr<const schema::TableSchema> schema, TemporalStoreLimits limits = {});
 
-  [[nodiscard]] common::Status apply_committed(
-      std::uint64_t system_commit_position, std::int64_t system_commit_time_ns,
-      std::vector<TemporalMutation> mutations);
+  [[nodiscard]] common::Status apply_committed(std::uint64_t system_commit_position,
+                                               std::int64_t system_commit_time_ns,
+                                               std::vector<TemporalMutation> mutations);
 
   [[nodiscard]] common::Result<std::shared_ptr<const ScalarTableSnapshot>>
   resolve(const std::shared_ptr<const schema::TableSchema>& bound_schema,

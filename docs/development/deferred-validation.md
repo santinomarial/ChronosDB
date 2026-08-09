@@ -53,8 +53,9 @@
 
 ## Phase 14 — deterministic Raft
 
-- Pre-validation audit for every hostile higher-term message and persistence-before-response path;
-  committed-log overwrite, sequence exhaustion, payload identity, and snapshot-boundary properties.
+- Extend the implemented hostile higher-term/payload-identity regression checks into exhaustive
+  persistence-before-response, committed-log overwrite, sequence-exhaustion, response-state, and
+  snapshot-boundary properties.
 - Persistent file owner, vote/log fsync ordering, crash/restart at every transition, idempotent
   recovery, application to tablet state, snapshot creation/install, log compaction, and read index.
 - Membership protocol, leader leases if ever proposed, real transport framing/versioning, timer
@@ -113,4 +114,3 @@
   failover ingest/query, movement/query, tier/query, restart, and result reconciliation.
 - Full reproducible demo, operations/runbooks, observability, backup/restore, security review, and
   final documentation/API/dead-code reconciliation.
-

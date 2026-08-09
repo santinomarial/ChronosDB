@@ -62,8 +62,7 @@ public:
 
   [[nodiscard]] static common::Result<TabletMovement>
   begin(schema::TabletId tablet_id, std::uint64_t placement_epoch, NodeId source_node,
-        NodeId target_node, std::vector<NodeId> voting_replicas,
-        TabletMovementLimits limits = {});
+        NodeId target_node, std::vector<NodeId> voting_replicas, TabletMovementLimits limits = {});
 
   [[nodiscard]] common::Status begin_snapshot(SnapshotTransferMetadata metadata);
   [[nodiscard]] common::Status accept_snapshot_chunk(std::size_t offset, common::ByteView bytes,
@@ -72,8 +71,7 @@ public:
   [[nodiscard]] common::Status mark_caught_up(LogIndex target_applied_index);
   [[nodiscard]] common::Status promote_target(std::uint64_t expected_epoch,
                                               std::uint64_t new_epoch);
-  [[nodiscard]] common::Status remove_source(std::uint64_t expected_epoch,
-                                             std::uint64_t new_epoch);
+  [[nodiscard]] common::Status remove_source(std::uint64_t expected_epoch, std::uint64_t new_epoch);
   [[nodiscard]] common::Status restart_snapshot_transfer();
 
   [[nodiscard]] TabletMovementRecord record() const;

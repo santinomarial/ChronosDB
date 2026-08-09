@@ -1,6 +1,5 @@
-#include "chronos/tiering/object_store.hpp"
-
 #include "chronos/ingest/sha256.hpp"
+#include "chronos/tiering/object_store.hpp"
 
 #include <cstddef>
 #include <gtest/gtest.h>

@@ -126,7 +126,7 @@ common::Status Reactor::poll_once(const std::chrono::milliseconds maximum_wait) 
     }
     io_uring_prep_cancel64(cancel, operation, 0U);
     io_uring_sqe_set_data64(cancel, operation + (std::uint64_t{1U} << 63U));
-    if (io_uring_submit(&impl_->ring) < 0) {
+    if (io_uring_submit(&impl_->ring) != 1) {
       return common::Status{common::StatusCode::kIoError, "io_uring cancellation failed"};
     }
     for (std::size_t pending = 0U; pending < 2U; ++pending) {

@@ -53,8 +53,8 @@ public:
   MultiRaftRuntime(MultiRaftRuntime&&) noexcept;
   MultiRaftRuntime& operator=(MultiRaftRuntime&&) noexcept;
 
-  [[nodiscard]] static common::Result<MultiRaftRuntime>
-  create(NodeId local_node_id, MultiRaftLimits limits = {});
+  [[nodiscard]] static common::Result<MultiRaftRuntime> create(NodeId local_node_id,
+                                                               MultiRaftLimits limits = {});
 
   [[nodiscard]] common::Status add_group(GroupId group_id, std::vector<NodeId> voters,
                                          PersistentState persistent = {},
@@ -62,8 +62,8 @@ public:
   [[nodiscard]] common::Status remove_group(const GroupId& group_id);
 
   [[nodiscard]] common::Result<MultiRaftTransition> start_election(const GroupId& group_id);
-  [[nodiscard]] common::Result<MultiRaftTransition>
-  receive(const GroupId& group_id, NodeId source, Message message);
+  [[nodiscard]] common::Result<MultiRaftTransition> receive(const GroupId& group_id, NodeId source,
+                                                            Message message);
   [[nodiscard]] common::Result<MultiRaftTransition>
   propose(const GroupId& group_id, std::uint8_t type, std::vector<std::byte> payload);
   [[nodiscard]] common::Result<MultiRaftTransition> heartbeat(const GroupId& group_id);

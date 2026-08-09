@@ -2,8 +2,8 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <map>
 #include <limits>
+#include <map>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -25,16 +25,16 @@ public:
 
   Impl(const NodeId id, const MultiRaftLimits configured) : local_node_id(id), limits(configured) {}
 
-  [[nodiscard]] common::Result<MultiRaftTransition>
-  wrap(const GroupId& group_id, common::Result<Transition> transition) {
+  [[nodiscard]] common::Result<MultiRaftTransition> wrap(const GroupId& group_id,
+                                                         common::Result<Transition> transition) {
     if (!transition.has_value()) {
       return common::make_unexpected(transition.error());
     }
     if (transition->outbound.size() > limits.maximum_queued_outbound) {
       failed_state = true;
-      return common::make_unexpected(common::Status{
-          common::StatusCode::kResourceExhausted,
-          "one Multi-Raft transition exceeds the bounded outbound batch"});
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kResourceExhausted,
+                         "one Multi-Raft transition exceeds the bounded outbound batch"});
     }
     auto group = groups.find(group_id);
     if (group == groups.end()) {
@@ -57,8 +57,7 @@ public:
     }
     output.outbound.reserve(transition->outbound.size());
     for (OutboundMessage& message : transition->outbound) {
-      output.outbound.push_back(
-          GroupOutboundMessage{group_id, local_node_id, std::move(message)});
+      output.outbound.push_back(GroupOutboundMessage{group_id, local_node_id, std::move(message)});
     }
     return output;
   }
@@ -75,10 +74,9 @@ MultiRaftRuntime::~MultiRaftRuntime() = default;
 MultiRaftRuntime::MultiRaftRuntime(MultiRaftRuntime&&) noexcept = default;
 MultiRaftRuntime& MultiRaftRuntime::operator=(MultiRaftRuntime&&) noexcept = default;
 
-common::Result<MultiRaftRuntime>
-MultiRaftRuntime::create(const NodeId local_node_id, const MultiRaftLimits limits) {
-  if (local_node_id == 0U || limits.maximum_groups == 0U ||
-      limits.maximum_queued_outbound == 0U) {
+common::Result<MultiRaftRuntime> MultiRaftRuntime::create(const NodeId local_node_id,
+                                                          const MultiRaftLimits limits) {
+  if (local_node_id == 0U || limits.maximum_groups == 0U || limits.maximum_queued_outbound == 0U) {
     return common::make_unexpected(invalid("Multi-Raft node identity or limits are invalid"));
   }
   return MultiRaftRuntime{std::make_unique<Impl>(local_node_id, limits)};
@@ -111,14 +109,20 @@ common::Status MultiRaftRuntime::add_group(const GroupId group_id, std::vector<N
 }
 
 common::Status MultiRaftRuntime::remove_group(const GroupId& group_id) {
+  if (impl_->failed_state) {
+    return common::Status{common::StatusCode::kUnavailable, "Multi-Raft runtime has failed closed"};
+  }
   if (impl_->groups.erase(group_id) == 0U) {
     return common::Status{common::StatusCode::kNotFound, "Multi-Raft group does not exist"};
   }
   return common::Status::ok();
 }
 
-common::Result<MultiRaftTransition>
-MultiRaftRuntime::start_election(const GroupId& group_id) {
+common::Result<MultiRaftTransition> MultiRaftRuntime::start_election(const GroupId& group_id) {
+  if (impl_->failed_state) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kUnavailable, "Multi-Raft runtime has failed closed"});
+  }
   const auto group = impl_->groups.find(group_id);
   if (group == impl_->groups.end()) {
     return common::make_unexpected(
@@ -129,6 +133,10 @@ MultiRaftRuntime::start_election(const GroupId& group_id) {
 
 common::Result<MultiRaftTransition>
 MultiRaftRuntime::receive(const GroupId& group_id, const NodeId source, Message message) {
+  if (impl_->failed_state) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kUnavailable, "Multi-Raft runtime has failed closed"});
+  }
   const auto group = impl_->groups.find(group_id);
   if (group == impl_->groups.end()) {
     return common::make_unexpected(
@@ -137,9 +145,13 @@ MultiRaftRuntime::receive(const GroupId& group_id, const NodeId source, Message 
   return impl_->wrap(group_id, group->second.node.receive(source, std::move(message)));
 }
 
-common::Result<MultiRaftTransition>
-MultiRaftRuntime::propose(const GroupId& group_id, const std::uint8_t type,
-                          std::vector<std::byte> payload) {
+common::Result<MultiRaftTransition> MultiRaftRuntime::propose(const GroupId& group_id,
+                                                              const std::uint8_t type,
+                                                              std::vector<std::byte> payload) {
+  if (impl_->failed_state) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kUnavailable, "Multi-Raft runtime has failed closed"});
+  }
   const auto group = impl_->groups.find(group_id);
   if (group == impl_->groups.end()) {
     return common::make_unexpected(
@@ -148,8 +160,11 @@ MultiRaftRuntime::propose(const GroupId& group_id, const std::uint8_t type,
   return impl_->wrap(group_id, group->second.node.propose(type, std::move(payload)));
 }
 
-common::Result<MultiRaftTransition>
-MultiRaftRuntime::heartbeat(const GroupId& group_id) {
+common::Result<MultiRaftTransition> MultiRaftRuntime::heartbeat(const GroupId& group_id) {
+  if (impl_->failed_state) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kUnavailable, "Multi-Raft runtime has failed closed"});
+  }
   const auto group = impl_->groups.find(group_id);
   if (group == impl_->groups.end()) {
     return common::make_unexpected(
@@ -159,6 +174,9 @@ MultiRaftRuntime::heartbeat(const GroupId& group_id) {
 }
 
 common::Status MultiRaftRuntime::mark_applied(const GroupId& group_id, const LogIndex index) {
+  if (impl_->failed_state) {
+    return common::Status{common::StatusCode::kUnavailable, "Multi-Raft runtime has failed closed"};
+  }
   const auto group = impl_->groups.find(group_id);
   if (group == impl_->groups.end()) {
     return common::Status{common::StatusCode::kNotFound, "Multi-Raft group does not exist"};
@@ -171,7 +189,11 @@ const RaftNode* MultiRaftRuntime::find_group(const GroupId& group_id) const noex
   return group == impl_->groups.end() ? nullptr : &group->second.node;
 }
 
-std::size_t MultiRaftRuntime::group_count() const noexcept { return impl_->groups.size(); }
-bool MultiRaftRuntime::failed() const noexcept { return impl_->failed_state; }
+std::size_t MultiRaftRuntime::group_count() const noexcept {
+  return impl_->groups.size();
+}
+bool MultiRaftRuntime::failed() const noexcept {
+  return impl_->failed_state;
+}
 
 } // namespace chronos::raft

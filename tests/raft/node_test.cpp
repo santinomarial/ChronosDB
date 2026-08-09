@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <deque>
 #include <gtest/gtest.h>
+#include <limits>
 #include <map>
 #include <set>
 #include <utility>
@@ -27,7 +28,9 @@ public:
     }
   }
 
-  [[nodiscard]] RaftNode& node(const NodeId id) { return nodes_.at(id); }
+  [[nodiscard]] RaftNode& node(const NodeId id) {
+    return nodes_.at(id);
+  }
 
   void enqueue(const NodeId source, Transition transition) {
     for (OutboundMessage& outbound : transition.outbound) {
@@ -114,8 +117,7 @@ TEST(RaftNodeTest, ElectsReplicatesFailsOverRejectsStaleLeaderAndCatchesUpRestar
   cluster.drain();
   EXPECT_EQ(cluster.node(1U).last_log_index(), 2U);
   EXPECT_EQ(cluster.node(1U).commit_index(), 2U);
-  EXPECT_EQ(cluster.node(1U).persistent_state().log,
-            cluster.node(2U).persistent_state().log);
+  EXPECT_EQ(cluster.node(1U).persistent_state().log, cluster.node(2U).persistent_state().log);
 }
 
 TEST(RaftNodeTest, RejectsStaleVoteAndCandidateWithOlderLog) {
@@ -131,6 +133,53 @@ TEST(RaftNodeTest, RejectsStaleVoteAndCandidateWithOlderLog) {
   auto older = node->receive(2U, RequestVoteRequest{3U, 2U, 0U, 0U});
   ASSERT_TRUE(older.has_value());
   EXPECT_FALSE(std::get<RequestVoteResponse>(older->outbound.front().message).granted);
+}
+
+TEST(RaftNodeTest, RejectsMalformedHigherTermWithoutChangingPersistentState) {
+  auto node = RaftNode::create(1U, {1U, 2U, 3U});
+  ASSERT_TRUE(node.has_value());
+  const PersistentState before = node->persistent_state();
+
+  auto malformed = node->receive(2U, RequestVoteRequest{9U, 3U, 0U, 0U});
+
+  ASSERT_FALSE(malformed.has_value());
+  EXPECT_EQ(malformed.error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(node->persistent_state(), before);
+}
+
+TEST(RaftNodeTest, RejectsDivergentBytesAtMatchingTermAndIndex) {
+  PersistentState state{};
+  state.current_term = 1U;
+  state.log.push_back(LogEntry{1U, 1U, 1U, {std::byte{0x11}}});
+  auto node = RaftNode::create(1U, {1U, 2U, 3U}, state);
+  ASSERT_TRUE(node.has_value());
+
+  auto divergent = node->receive(
+      2U, AppendEntriesRequest{1U, 2U, 0U, 0U, {LogEntry{1U, 1U, 1U, {std::byte{0x22}}}}, 0U});
+
+  ASSERT_FALSE(divergent.has_value());
+  EXPECT_EQ(divergent.error().code(), common::StatusCode::kCorruption);
+  EXPECT_EQ(node->persistent_state(), state);
+}
+
+TEST(RaftNodeTest, RejectsIndexExhaustionBeforeNextIndexCanWrap) {
+  PersistentState state{};
+  state.current_term = 1U;
+  state.snapshot.last_included_index = std::numeric_limits<LogIndex>::max() - 1U;
+  state.snapshot.last_included_term = 1U;
+  state.commit_index = state.snapshot.last_included_index;
+  state.applied_index = state.snapshot.last_included_index;
+  auto node = RaftNode::create(1U, {1U}, state);
+  ASSERT_TRUE(node.has_value());
+  auto election = node->start_election();
+  ASSERT_TRUE(election.has_value());
+  ASSERT_EQ(node->role(), Role::kLeader);
+
+  auto exhausted = node->propose(1U, {std::byte{0x11}});
+
+  ASSERT_FALSE(exhausted.has_value());
+  EXPECT_EQ(exhausted.error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(node->last_log_index(), std::numeric_limits<LogIndex>::max() - 1U);
 }
 
 } // namespace

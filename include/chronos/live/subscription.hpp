@@ -96,8 +96,8 @@ public:
   SubscriptionManager(SubscriptionManager&&) noexcept;
   SubscriptionManager& operator=(SubscriptionManager&&) noexcept;
 
-  [[nodiscard]] static common::Result<SubscriptionManager>
-  create(SubscriptionSource source, SubscriptionLimits limits = {});
+  [[nodiscard]] static common::Result<SubscriptionManager> create(SubscriptionSource source,
+                                                                  SubscriptionLimits limits = {});
 
   // Atomically registers state and selects the manager's latest committed boundary. Changes
   // published after the call are owned before this subscription can leave snapshot phase.
@@ -123,8 +123,7 @@ public:
   [[nodiscard]] common::Result<std::vector<std::byte>>
   acknowledge(const common::Uuid& subscription_id, std::uint64_t delivery_sequence);
 
-  [[nodiscard]] common::Result<std::vector<std::byte>>
-  cancel(const common::Uuid& subscription_id);
+  [[nodiscard]] common::Result<std::vector<std::byte>> cancel(const common::Uuid& subscription_id);
 
   [[nodiscard]] common::Result<SubscriptionStatus>
   status(const common::Uuid& subscription_id) const;

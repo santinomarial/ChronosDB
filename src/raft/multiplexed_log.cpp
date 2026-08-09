@@ -37,33 +37,48 @@ inline constexpr std::size_t kEntryFixedSize = 32U;
     }
     if (!size.has_value()) {
       return common::make_unexpected(common::Status{common::StatusCode::kOutOfRange,
-                                                     "multiplexed log payload size overflows"});
+                                                    "multiplexed log payload size overflows"});
     }
   }
   return *size;
 }
 
-[[nodiscard]] common::Status write_state(common::ByteWriter& writer,
-                                         const PersistentState& state) {
+[[nodiscard]] common::Status write_state(common::ByteWriter& writer, const PersistentState& state) {
   common::Status status = writer.write_u64_le(state.current_term);
-  if (status.is_ok()) status = writer.write_u64_le(state.voted_for.value_or(0U));
-  if (status.is_ok()) status = writer.write_u64_le(state.commit_index);
-  if (status.is_ok()) status = writer.write_u64_le(state.applied_index);
-  if (status.is_ok()) status = writer.write_u64_le(state.snapshot.last_included_index);
-  if (status.is_ok()) status = writer.write_u64_le(state.snapshot.last_included_term);
-  if (status.is_ok()) status = writer.write_u64_le(state.snapshot.manifest_generation);
-  if (status.is_ok()) status = writer.write_exact(state.snapshot.part_set_checksum);
-  if (status.is_ok()) status = writer.write_u32_le(static_cast<std::uint32_t>(state.log.size()));
-  if (status.is_ok()) status = writer.write_u32_le(0U);
+  if (status.is_ok())
+    status = writer.write_u64_le(state.voted_for.value_or(0U));
+  if (status.is_ok())
+    status = writer.write_u64_le(state.commit_index);
+  if (status.is_ok())
+    status = writer.write_u64_le(state.applied_index);
+  if (status.is_ok())
+    status = writer.write_u64_le(state.snapshot.last_included_index);
+  if (status.is_ok())
+    status = writer.write_u64_le(state.snapshot.last_included_term);
+  if (status.is_ok())
+    status = writer.write_u64_le(state.snapshot.manifest_generation);
+  if (status.is_ok())
+    status = writer.write_exact(state.snapshot.part_set_checksum);
+  if (status.is_ok())
+    status = writer.write_u32_le(static_cast<std::uint32_t>(state.log.size()));
+  if (status.is_ok())
+    status = writer.write_u32_le(0U);
   for (const LogEntry& entry : state.log) {
-    if (!status.is_ok()) break;
+    if (!status.is_ok())
+      break;
     status = writer.write_u64_le(entry.index);
-    if (status.is_ok()) status = writer.write_u64_le(entry.term);
-    if (status.is_ok()) status = writer.write_u8(entry.type);
-    if (status.is_ok()) status = writer.zero_fill(7U);
-    if (status.is_ok()) status = writer.write_u32_le(static_cast<std::uint32_t>(entry.payload.size()));
-    if (status.is_ok()) status = writer.write_u32_le(0U);
-    if (status.is_ok()) status = writer.write_exact(entry.payload);
+    if (status.is_ok())
+      status = writer.write_u64_le(entry.term);
+    if (status.is_ok())
+      status = writer.write_u8(entry.type);
+    if (status.is_ok())
+      status = writer.zero_fill(7U);
+    if (status.is_ok())
+      status = writer.write_u32_le(static_cast<std::uint32_t>(entry.payload.size()));
+    if (status.is_ok())
+      status = writer.write_u32_le(0U);
+    if (status.is_ok())
+      status = writer.write_exact(entry.payload);
   }
   return status;
 }
@@ -75,7 +90,7 @@ encode_multiplexed_log_record_v1(const GroupPersistentState& persistent) {
   if (persistent.group_id.is_nil() || persistent.physical_sequence == 0U ||
       persistent.state.log.size() > std::numeric_limits<std::uint32_t>::max()) {
     return common::make_unexpected(common::Status{common::StatusCode::kInvalidArgument,
-                                                   "multiplexed log identity or state is invalid"});
+                                                  "multiplexed log identity or state is invalid"});
   }
   auto payload = payload_size(persistent.state);
   if (!payload.has_value() || *payload > std::numeric_limits<std::uint32_t>::max()) {
@@ -85,16 +100,17 @@ encode_multiplexed_log_record_v1(const GroupPersistentState& persistent) {
                                        : payload.error());
   }
   auto total = common::checked_add(kMultiplexedLogHeaderSize, *payload);
-  if (total.has_value()) total = common::checked_add(*total, kMultiplexedLogTrailerSize);
+  if (total.has_value())
+    total = common::checked_add(*total, kMultiplexedLogTrailerSize);
   if (!total.has_value() || *total > kMaximumMultiplexedLogRecordSize ||
       *total > std::numeric_limits<std::uint32_t>::max()) {
     return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
-                                                   "multiplexed log record is too large"});
+                                                  "multiplexed log record is too large"});
   }
 
   std::vector<std::byte> encoded(*total);
-  common::ByteWriter payload_writer{common::MutableByteView{
-      encoded.data() + kMultiplexedLogHeaderSize, *payload}};
+  common::ByteWriter payload_writer{
+      common::MutableByteView{encoded.data() + kMultiplexedLogHeaderSize, *payload}};
   common::Status status = write_state(payload_writer, persistent.state);
   if (!status.is_ok() || !payload_writer.full()) {
     return common::make_unexpected(status.is_ok()
@@ -102,21 +118,31 @@ encode_multiplexed_log_record_v1(const GroupPersistentState& persistent) {
                                                         "multiplexed log payload layout mismatch"}
                                        : std::move(status));
   }
-  const std::uint32_t payload_crc = common::crc32c(common::ByteView{
-      encoded.data() + kMultiplexedLogHeaderSize, *payload});
+  const std::uint32_t payload_crc =
+      common::crc32c(common::ByteView{encoded.data() + kMultiplexedLogHeaderSize, *payload});
 
   common::ByteWriter header{common::MutableByteView{encoded.data(), kMultiplexedLogHeaderSize}};
   status = header.write_exact(kMagic);
-  if (status.is_ok()) status = header.write_u16_le(kMultiplexedLogFormatMajor);
-  if (status.is_ok()) status = header.write_u16_le(kMultiplexedLogFormatMinor);
-  if (status.is_ok()) status = header.write_u32_le(static_cast<std::uint32_t>(kMultiplexedLogHeaderSize));
-  if (status.is_ok()) status = header.write_u32_le(static_cast<std::uint32_t>(*total));
-  if (status.is_ok()) status = header.write_u32_le(static_cast<std::uint32_t>(*payload));
-  if (status.is_ok()) status = header.write_u64_le(persistent.physical_sequence);
-  if (status.is_ok()) status = header.write_exact(persistent.group_id.bytes());
-  if (status.is_ok()) status = header.write_u32_le(payload_crc);
-  if (status.is_ok()) status = header.write_u32_le(0U);
-  if (status.is_ok()) status = header.zero_fill(8U);
+  if (status.is_ok())
+    status = header.write_u16_le(kMultiplexedLogFormatMajor);
+  if (status.is_ok())
+    status = header.write_u16_le(kMultiplexedLogFormatMinor);
+  if (status.is_ok())
+    status = header.write_u32_le(static_cast<std::uint32_t>(kMultiplexedLogHeaderSize));
+  if (status.is_ok())
+    status = header.write_u32_le(static_cast<std::uint32_t>(*total));
+  if (status.is_ok())
+    status = header.write_u32_le(static_cast<std::uint32_t>(*payload));
+  if (status.is_ok())
+    status = header.write_u64_le(persistent.physical_sequence);
+  if (status.is_ok())
+    status = header.write_exact(persistent.group_id.bytes());
+  if (status.is_ok())
+    status = header.write_u32_le(payload_crc);
+  if (status.is_ok())
+    status = header.write_u32_le(0U);
+  if (status.is_ok())
+    status = header.zero_fill(8U);
   if (!status.is_ok() || !header.full()) {
     return common::make_unexpected(status.is_ok()
                                        ? common::Status{common::StatusCode::kInternal,
@@ -126,13 +152,15 @@ encode_multiplexed_log_record_v1(const GroupPersistentState& persistent) {
   const std::uint32_t header_crc = common::crc32c(common::ByteView{encoded.data(), 64U});
   common::ByteWriter header_crc_writer{common::MutableByteView{encoded.data() + 52U, 4U}};
   status = header_crc_writer.write_u32_le(header_crc);
-  if (!status.is_ok()) return common::make_unexpected(status);
+  if (!status.is_ok())
+    return common::make_unexpected(status);
   const std::uint32_t record_crc =
       common::crc32c(common::ByteView{encoded.data(), kMultiplexedLogHeaderSize + *payload});
   common::ByteWriter trailer{common::MutableByteView{
       encoded.data() + kMultiplexedLogHeaderSize + *payload, kMultiplexedLogTrailerSize}};
   status = trailer.write_u32_le(record_crc);
-  if (!status.is_ok()) return common::make_unexpected(status);
+  if (!status.is_ok())
+    return common::make_unexpected(status);
   return encoded;
 }
 
@@ -170,7 +198,7 @@ decode_multiplexed_log_record_v1(const common::ByteView encoded) {
   }
   if (*major != kMultiplexedLogFormatMajor || *minor > kMultiplexedLogFormatMinor) {
     return common::make_unexpected(common::Status{common::StatusCode::kNotSupported,
-                                                   "multiplexed log version is unsupported"});
+                                                  "multiplexed log version is unsupported"});
   }
   if (*header_size != kMultiplexedLogHeaderSize || *physical_sequence == 0U ||
       *total_size != encoded.size() || *total_size > kMaximumMultiplexedLogRecordSize ||
@@ -192,7 +220,8 @@ decode_multiplexed_log_record_v1(const common::ByteView encoded) {
   common::Uuid::Bytes group_array{};
   std::copy(group_bytes->begin(), group_bytes->end(), group_array.begin());
   const GroupId group_id{group_array};
-  if (group_id.is_nil()) return common::make_unexpected(corrupt("multiplexed log group is nil"));
+  if (group_id.is_nil())
+    return common::make_unexpected(corrupt("multiplexed log group is nil"));
   common::ByteReader reader{payload};
   auto term = reader.read_u64_le();
   auto voted = reader.read_u64_le();
@@ -210,7 +239,8 @@ decode_multiplexed_log_record_v1(const common::ByteView encoded) {
   }
   PersistentState state{};
   state.current_term = *term;
-  if (*voted != 0U) state.voted_for = *voted;
+  if (*voted != 0U)
+    state.voted_for = *voted;
   state.commit_index = *commit;
   state.applied_index = *applied;
   state.snapshot.last_included_index = *snapshot_index;
@@ -229,17 +259,20 @@ decode_multiplexed_log_record_v1(const common::ByteView encoded) {
     auto payload_size = reader.read_u32_le();
     auto payload_reserved = reader.read_u32_le();
     if (!log_index || !log_term || !type || !entry_reserved || !payload_size || !payload_reserved ||
-        *payload_reserved != 0U ||
-        std::ranges::any_of(*entry_reserved,
-                            [](const std::byte value) { return value != std::byte{0}; })) {
+        *payload_reserved != 0U || std::ranges::any_of(*entry_reserved, [](const std::byte value) {
+          return value != std::byte{0};
+        })) {
       return common::make_unexpected(corrupt("multiplexed log entry header is invalid"));
     }
     auto entry_payload = reader.read_exact(*payload_size);
-    if (!entry_payload) return common::make_unexpected(corrupt("multiplexed log entry is truncated"));
-    state.log.push_back(LogEntry{*log_index, *log_term, *type,
-                                 std::vector<std::byte>{entry_payload->begin(), entry_payload->end()}});
+    if (!entry_payload)
+      return common::make_unexpected(corrupt("multiplexed log entry is truncated"));
+    state.log.push_back(
+        LogEntry{*log_index, *log_term, *type,
+                 std::vector<std::byte>{entry_payload->begin(), entry_payload->end()}});
   }
-  if (!reader.empty()) return common::make_unexpected(corrupt("multiplexed log has trailing payload"));
+  if (!reader.empty())
+    return common::make_unexpected(corrupt("multiplexed log has trailing payload"));
   return DecodedGroupPersistentState{
       GroupPersistentState{group_id, *physical_sequence, std::move(state)}, encoded.size()};
 }

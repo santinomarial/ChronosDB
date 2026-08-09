@@ -1,6 +1,5 @@
-#include "chronos/raft/multiplexed_log.hpp"
-
 #include "chronos/common/status.hpp"
+#include "chronos/raft/multiplexed_log.hpp"
 
 #include <cstddef>
 #include <gtest/gtest.h>

@@ -95,12 +95,13 @@ SubscriptionManager::~SubscriptionManager() = default;
 SubscriptionManager::SubscriptionManager(SubscriptionManager&&) noexcept = default;
 SubscriptionManager& SubscriptionManager::operator=(SubscriptionManager&&) noexcept = default;
 
-common::Result<SubscriptionManager>
-SubscriptionManager::create(SubscriptionSource source, const SubscriptionLimits limits) {
+common::Result<SubscriptionManager> SubscriptionManager::create(SubscriptionSource source,
+                                                                const SubscriptionLimits limits) {
   if (source.database_id.is_nil() || source.table_id.uuid().is_nil() ||
       source.tablet_id.uuid().is_nil() || !source.wal_id.is_valid() ||
       key_is_zero(source.token_key)) {
-    return common::make_unexpected(invalid("subscription source identities and MAC key must be valid"));
+    return common::make_unexpected(
+        invalid("subscription source identities and MAC key must be valid"));
   }
   if (limits.maximum_subscriptions == 0U || limits.maximum_retained_changes == 0U ||
       limits.maximum_retained_bytes == 0U ||
@@ -120,15 +121,22 @@ SubscriptionManager::register_subscription(const SubscriptionRequest& request) {
   }
   if (impl_->subscriptions.contains(request.subscription_id)) {
     return common::make_unexpected(common::Status{common::StatusCode::kAlreadyExists,
-                                                   "subscription identity is already registered"});
+                                                  "subscription identity is already registered"});
   }
   if (impl_->subscriptions.size() >= impl_->limits.maximum_subscriptions) {
     return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
-                                                   "subscription capacity is exhausted"});
+                                                  "subscription capacity is exhausted"});
   }
 
-  Impl::State state{request, SubscriptionPhase::kSnapshot, impl_->latest_position,
-                    impl_->latest_position, 0U, 0U, 0U, 0U, {}};
+  Impl::State state{request,
+                    SubscriptionPhase::kSnapshot,
+                    impl_->latest_position,
+                    impl_->latest_position,
+                    0U,
+                    0U,
+                    0U,
+                    0U,
+                    {}};
   auto token = impl_->encode_token(state);
   if (!token.has_value()) {
     return common::make_unexpected(token.error());
@@ -146,32 +154,32 @@ SubscriptionManager::resume_subscription(const common::ByteView encoded_token) {
   if (token->database_id != impl_->source.database_id || token->source_positions.size() != 1U ||
       token->source_positions.front().tablet_id != impl_->source.tablet_id ||
       token->source_positions.front().wal_id != impl_->source.wal_id) {
-    return common::make_unexpected(common::Status{common::StatusCode::kInvalidArgument,
-                                                   "resume token belongs to another source lineage"});
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kInvalidArgument, "resume token belongs to another source lineage"});
   }
   const auto existing_subscription = impl_->subscriptions.find(token->subscription_id);
   if (existing_subscription != impl_->subscriptions.end()) {
     if (existing_subscription->second.phase == SubscriptionPhase::kSnapshot ||
         existing_subscription->second.phase == SubscriptionPhase::kLive) {
       return common::make_unexpected(common::Status{common::StatusCode::kAlreadyExists,
-                                                     "subscription identity is already active"});
+                                                    "subscription identity is already active"});
     }
     impl_->subscriptions.erase(existing_subscription);
   }
   if (impl_->subscriptions.size() >= impl_->limits.maximum_subscriptions) {
     return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
-                                                   "subscription capacity is exhausted"});
+                                                  "subscription capacity is exhausted"});
   }
   const SourcePosition safe = token->source_positions.front();
   if (safe.record_sequence > impl_->latest_position.record_sequence) {
-    return common::make_unexpected(common::Status{common::StatusCode::kOutOfRange,
-                                                   "resume token is ahead of committed source state"});
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kOutOfRange, "resume token is ahead of committed source state"});
   }
   if (safe.record_sequence < impl_->latest_position.record_sequence &&
       (impl_->retained_changes.empty() ||
        impl_->retained_changes.front()->position.record_sequence > safe.record_sequence + 1U)) {
-    return common::make_unexpected(common::Status{common::StatusCode::kNotFound,
-                                                   "resume token committed suffix has expired"});
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kNotFound, "resume token committed suffix has expired"});
   }
 
   SubscriptionRequest request{token->subscription_id, token->plan_fingerprint, token->schema_id,
@@ -192,11 +200,11 @@ SubscriptionManager::resume_subscription(const common::ByteView encoded_token) {
     if (change->schema_id != state.request.schema_id ||
         change->schema_version != state.request.schema_version) {
       return common::make_unexpected(common::Status{common::StatusCode::kNotSupported,
-                                                     "resume token plan schema is incompatible"});
+                                                    "resume token plan schema is incompatible"});
     }
     if (!impl_->can_buffer(state, retained_bytes(*change))) {
       return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
-                                                     "retained suffix exceeds subscriber buffer"});
+                                                    "retained suffix exceeds subscriber buffer"});
     }
     impl_->append(state, change);
   }
@@ -268,17 +276,17 @@ SubscriptionManager::poll(const common::Uuid& subscription_id,
   }
   const auto iterator = impl_->subscriptions.find(subscription_id);
   if (iterator == impl_->subscriptions.end()) {
-    return common::make_unexpected(common::Status{common::StatusCode::kNotFound,
-                                                   "subscription is not registered"});
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kNotFound, "subscription is not registered"});
   }
   Impl::State& state = iterator->second;
   if (state.phase == SubscriptionPhase::kSnapshot) {
-    return common::make_unexpected(common::Status{common::StatusCode::kUnavailable,
-                                                   "historical snapshot is not complete"});
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kUnavailable, "historical snapshot is not complete"});
   }
   if (state.phase == SubscriptionPhase::kOverflowed) {
-    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
-                                                   "subscription buffer overflowed; resume required"});
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kResourceExhausted, "subscription buffer overflowed; resume required"});
   }
   if (state.phase == SubscriptionPhase::kCancelled) {
     return common::make_unexpected(
@@ -292,8 +300,8 @@ SubscriptionManager::poll(const common::Uuid& subscription_id,
     output.push_back(state.buffered[index]);
   }
   if (!output.empty()) {
-    state.last_polled_sequence = std::max(state.last_polled_sequence,
-                                          output.back().delivery_sequence);
+    state.last_polled_sequence =
+        std::max(state.last_polled_sequence, output.back().delivery_sequence);
   }
   return output;
 }
@@ -303,16 +311,15 @@ SubscriptionManager::acknowledge(const common::Uuid& subscription_id,
                                  const std::uint64_t delivery_sequence) {
   const auto iterator = impl_->subscriptions.find(subscription_id);
   if (iterator == impl_->subscriptions.end()) {
-    return common::make_unexpected(common::Status{common::StatusCode::kNotFound,
-                                                   "subscription is not registered"});
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kNotFound, "subscription is not registered"});
   }
   Impl::State& state = iterator->second;
   if (delivery_sequence < state.last_acknowledged_sequence ||
       delivery_sequence > state.last_polled_sequence) {
     return common::make_unexpected(invalid("acknowledgment is outside the delivered sequence"));
   }
-  while (!state.buffered.empty() &&
-         state.buffered.front().delivery_sequence <= delivery_sequence) {
+  while (!state.buffered.empty() && state.buffered.front().delivery_sequence <= delivery_sequence) {
     state.safe_position = state.buffered.front().change->position;
     state.buffered_bytes -= retained_bytes(*state.buffered.front().change);
     state.buffered.pop_front();
@@ -325,8 +332,8 @@ common::Result<std::vector<std::byte>>
 SubscriptionManager::cancel(const common::Uuid& subscription_id) {
   const auto iterator = impl_->subscriptions.find(subscription_id);
   if (iterator == impl_->subscriptions.end()) {
-    return common::make_unexpected(common::Status{common::StatusCode::kNotFound,
-                                                   "subscription is not registered"});
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kNotFound, "subscription is not registered"});
   }
   Impl::State& state = iterator->second;
   auto token = impl_->encode_token(state);
@@ -343,8 +350,8 @@ common::Result<SubscriptionStatus>
 SubscriptionManager::status(const common::Uuid& subscription_id) const {
   const auto iterator = impl_->subscriptions.find(subscription_id);
   if (iterator == impl_->subscriptions.end()) {
-    return common::make_unexpected(common::Status{common::StatusCode::kNotFound,
-                                                   "subscription is not registered"});
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kNotFound, "subscription is not registered"});
   }
   const Impl::State& state = iterator->second;
   return SubscriptionStatus{state.phase,

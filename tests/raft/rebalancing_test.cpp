@@ -1,6 +1,5 @@
-#include "chronos/raft/rebalancing.hpp"
-
 #include "chronos/common/crc32c.hpp"
+#include "chronos/raft/rebalancing.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -19,11 +18,9 @@ namespace {
 TEST(TabletMovementTest, TransfersRetryablyCatchesUpAndRemovesSourceOnlyAfterPromotion) {
   auto movement = TabletMovement::begin(tablet_id(), 7U, 1U, 4U, {1U, 2U, 3U});
   ASSERT_TRUE(movement.has_value()) << movement.error().to_string();
-  const std::vector<std::byte> snapshot{std::byte{1U}, std::byte{2U}, std::byte{3U},
-                                        std::byte{4U}};
-  ASSERT_TRUE(movement
-                  ->begin_snapshot({9U, 20U, 3U, snapshot.size(), common::crc32c(snapshot)})
-                  .is_ok());
+  const std::vector<std::byte> snapshot{std::byte{1U}, std::byte{2U}, std::byte{3U}, std::byte{4U}};
+  ASSERT_TRUE(
+      movement->begin_snapshot({9U, 20U, 3U, snapshot.size(), common::crc32c(snapshot)}).is_ok());
   const common::ByteView first{snapshot.data(), 2U};
   EXPECT_TRUE(movement->accept_snapshot_chunk(0U, first, common::crc32c(first)).is_ok());
   EXPECT_TRUE(movement->accept_snapshot_chunk(0U, first, common::crc32c(first)).is_ok());
@@ -50,9 +47,8 @@ TEST(TabletMovementTest, RejectsCorruptAndGappedSnapshotChunks) {
   auto movement = TabletMovement::begin(tablet_id(), 1U, 1U, 4U, {1U, 2U, 3U});
   ASSERT_TRUE(movement.has_value());
   const std::vector<std::byte> snapshot{std::byte{1U}, std::byte{2U}};
-  ASSERT_TRUE(movement
-                  ->begin_snapshot({1U, 1U, 1U, snapshot.size(), common::crc32c(snapshot)})
-                  .is_ok());
+  ASSERT_TRUE(
+      movement->begin_snapshot({1U, 1U, 1U, snapshot.size(), common::crc32c(snapshot)}).is_ok());
   EXPECT_FALSE(movement->accept_snapshot_chunk(1U, snapshot, common::crc32c(snapshot)).is_ok());
   EXPECT_FALSE(movement->accept_snapshot_chunk(0U, snapshot, 0U).is_ok());
 }

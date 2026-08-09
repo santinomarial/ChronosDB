@@ -33,8 +33,10 @@ public:
   }
 
   void enqueue(MultiRaftTransition transition) {
-    for (auto& message : transition.outbound) queue_.push_back(Envelope{std::move(message)});
-    if (transition.persistence.has_value()) latest_persistence_ = *transition.persistence;
+    for (auto& message : transition.outbound)
+      queue_.push_back(Envelope{std::move(message)});
+    if (transition.persistence.has_value())
+      latest_persistence_ = *transition.persistence;
   }
 
   void drain(const std::set<NodeId>& available = {1U, 2U, 3U}) {
@@ -44,7 +46,8 @@ public:
       Envelope envelope = std::move(queue_.front());
       queue_.pop_front();
       if (!available.contains(envelope.message.source) ||
-          !available.contains(envelope.message.outbound.destination)) continue;
+          !available.contains(envelope.message.outbound.destination))
+        continue;
       auto result = runtimes_.at(envelope.message.outbound.destination)
                         .receive(envelope.message.group_id, envelope.message.source,
                                  std::move(envelope.message.outbound.message));
@@ -53,8 +56,12 @@ public:
     }
   }
 
-  [[nodiscard]] MultiRaftRuntime& runtime(const NodeId id) { return runtimes_.at(id); }
-  [[nodiscard]] const GroupPersistentState& latest_persistence() const { return latest_persistence_; }
+  [[nodiscard]] MultiRaftRuntime& runtime(const NodeId id) {
+    return runtimes_.at(id);
+  }
+  [[nodiscard]] const GroupPersistentState& latest_persistence() const {
+    return latest_persistence_;
+  }
 
   GroupId group_a{group_id(std::byte{1})};
   GroupId group_b{group_id(std::byte{2})};
@@ -116,6 +123,25 @@ TEST(MultiRaftTest, ReopensPersistedGroupStateAtSharedPhysicalSequence) {
                   .is_ok());
   EXPECT_EQ(reopened->find_group(group)->commit_index(), 1U);
   EXPECT_EQ(reopened->find_group(group)->last_log_index(), 1U);
+}
+
+TEST(MultiRaftTest, OutboundOverflowFailsRuntimeClosed) {
+  MultiRaftLimits limits{};
+  limits.maximum_queued_outbound = 1U;
+  auto runtime = MultiRaftRuntime::create(1U, limits);
+  ASSERT_TRUE(runtime.has_value());
+  const GroupId group = group_id(std::byte{7});
+  ASSERT_TRUE(runtime->add_group(group, {1U, 2U, 3U}).is_ok());
+
+  auto overflow = runtime->start_election(group);
+
+  ASSERT_FALSE(overflow.has_value());
+  EXPECT_EQ(overflow.error().code(), common::StatusCode::kResourceExhausted);
+  EXPECT_TRUE(runtime->failed());
+  auto repeated = runtime->start_election(group);
+  ASSERT_FALSE(repeated.has_value());
+  EXPECT_EQ(repeated.error().code(), common::StatusCode::kUnavailable);
+  EXPECT_EQ(runtime->group_count(), 1U);
 }
 
 } // namespace

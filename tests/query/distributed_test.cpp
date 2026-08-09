@@ -1,6 +1,5 @@
-#include "chronos/query/distributed.hpp"
-
 #include "chronos/common/status.hpp"
+#include "chronos/query/distributed.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -28,12 +27,12 @@ TEST(DistributedQueryTest, PrunesTabletsMergesPartialStateAndRequiresEveryFragme
       {tablet(3U), 100, 199, 2U, 10U},
       {tablet(4U), 200, 299, 3U, 10U},
   };
-  auto plan = plan_distributed_aggregation(
-      query_id, tablets, DistributedEventTimePredicate{50, 250});
+  auto plan =
+      plan_distributed_aggregation(query_id, tablets, DistributedEventTimePredicate{50, 250});
   ASSERT_TRUE(plan.has_value()) << plan.error().to_string();
   ASSERT_EQ(plan->fragments.size(), 3U);
-  auto pruned = plan_distributed_aggregation(
-      query_id, tablets, DistributedEventTimePredicate{100, 200});
+  auto pruned =
+      plan_distributed_aggregation(query_id, tablets, DistributedEventTimePredicate{100, 200});
   ASSERT_TRUE(pruned.has_value());
   ASSERT_EQ(pruned->fragments.size(), 1U);
   EXPECT_EQ(pruned->fragments.front().tablet_id, tablet(3U));
@@ -62,8 +61,7 @@ TEST(DistributedQueryTest, PrunesTabletsMergesPartialStateAndRequiresEveryFragme
 
 TEST(DistributedQueryTest, BackpressureCancellationAndWorkerFailureFailClosed) {
   const common::Uuid query_id = uuid(1U);
-  auto exchange = BoundedExchange::create(
-      query_id, ExchangeLimits{1U, sizeof(ExchangeMessage)});
+  auto exchange = BoundedExchange::create(query_id, ExchangeLimits{1U, sizeof(ExchangeMessage)});
   ASSERT_TRUE(exchange.has_value());
   MergeableAggregateState partial;
   ASSERT_TRUE(partial.add(1.0).is_ok());
@@ -74,8 +72,7 @@ TEST(DistributedQueryTest, BackpressureCancellationAndWorkerFailureFailClosed) {
   EXPECT_EQ(exchange->queued_messages(), 0U);
   EXPECT_EQ(exchange->try_pop().error().code(), common::StatusCode::kCancelled);
 
-  auto plan = plan_distributed_aggregation(
-      query_id, {{tablet(2U), 0, 1, 1U, 1U}}, {});
+  auto plan = plan_distributed_aggregation(query_id, {{tablet(2U), 0, 1, 1U, 1U}}, {});
   ASSERT_TRUE(plan.has_value());
   auto coordinator = DistributedAggregateCoordinator::create(std::move(*plan));
   ASSERT_TRUE(coordinator.has_value());

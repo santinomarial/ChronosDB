@@ -28,9 +28,9 @@ public:
   RaftNode(RaftNode&&) noexcept;
   RaftNode& operator=(RaftNode&&) noexcept;
 
-  [[nodiscard]] static common::Result<RaftNode>
-  create(NodeId node_id, std::vector<NodeId> voters, PersistentState persistent = {},
-         RaftLimits limits = {});
+  [[nodiscard]] static common::Result<RaftNode> create(NodeId node_id, std::vector<NodeId> voters,
+                                                       PersistentState persistent = {},
+                                                       RaftLimits limits = {});
 
   // Called by the timer runtime after its randomized election deadline. The core itself owns no
   // clock or random source.

@@ -9,9 +9,9 @@
 #include <cstddef>
 #include <cstring>
 #include <limits>
-#include <optional>
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -28,17 +28,17 @@ inline constexpr std::array<std::byte, 8U> kMagic{
   return common::Status{common::StatusCode::kInvalidArgument, std::string{message}};
 }
 
-[[nodiscard]] common::Result<ResumeTokenMacKey>
-compute_mac(const common::ByteView bytes, const ResumeTokenMacKey& key) {
+[[nodiscard]] common::Result<ResumeTokenMacKey> compute_mac(const common::ByteView bytes,
+                                                            const ResumeTokenMacKey& key) {
   ResumeTokenMacKey output{};
   std::size_t output_size = 0U;
   if (EVP_Q_mac(nullptr, "HMAC", nullptr, "SHA256", nullptr, key.data(), key.size(),
                 reinterpret_cast<const unsigned char*>(bytes.data()), bytes.size(),
-                reinterpret_cast<unsigned char*>(output.data()), output.size(), &output_size) ==
-          nullptr ||
+                reinterpret_cast<unsigned char*>(output.data()), output.size(),
+                &output_size) == nullptr ||
       output_size != output.size()) {
-    return common::make_unexpected(common::Status{common::StatusCode::kInternal,
-                                                   "OpenSSL HMAC-SHA256 failed"});
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInternal, "OpenSSL HMAC-SHA256 failed"});
   }
   return output;
 }
@@ -48,14 +48,14 @@ compute_mac(const common::ByteView bytes, const ResumeTokenMacKey& key) {
 }
 
 [[nodiscard]] common::Status write_identifier(common::ByteWriter& writer,
-                                               const common::Uuid::Bytes& bytes) {
+                                              const common::Uuid::Bytes& bytes) {
   return writer.write_exact(bytes);
 }
 
 } // namespace
 
-common::Result<std::vector<std::byte>>
-encode_resume_token_v1(const ResumeToken& token, const ResumeTokenMacKey& key) {
+common::Result<std::vector<std::byte>> encode_resume_token_v1(const ResumeToken& token,
+                                                              const ResumeTokenMacKey& key) {
   if (token.database_id.is_nil() || token.subscription_id.is_nil() ||
       token.schema_id.uuid().is_nil()) {
     return common::make_unexpected(invalid("resume token identities must be nonzero"));
@@ -73,8 +73,8 @@ encode_resume_token_v1(const ResumeToken& token, const ResumeTokenMacKey& key) {
     }
   }
 
-  const auto positions_size = common::checked_multiply<std::size_t>(
-      token.source_positions.size(), kResumeTokenPositionSize);
+  const auto positions_size = common::checked_multiply<std::size_t>(token.source_positions.size(),
+                                                                    kResumeTokenPositionSize);
   if (!positions_size.has_value()) {
     return common::make_unexpected(invalid("resume token size overflows"));
   }
@@ -141,23 +141,24 @@ encode_resume_token_v1(const ResumeToken& token, const ResumeTokenMacKey& key) {
     }
   }
   if (!status.is_ok() || !writer.full()) {
-    return common::make_unexpected(status.is_ok()
-                                       ? common::Status{common::StatusCode::kInternal,
-                                                        "resume token layout was not filled"}
-                                       : std::move(status));
+    return common::make_unexpected(
+        status.is_ok()
+            ? common::Status{common::StatusCode::kInternal, "resume token layout was not filled"}
+            : std::move(status));
   }
 
   auto mac = compute_mac(common::ByteView{encoded.data(), *authenticated_size}, key);
   if (!mac.has_value()) {
     return common::make_unexpected(mac.error());
   }
-  std::copy(mac->begin(), mac->end(), encoded.begin() + static_cast<std::ptrdiff_t>(*authenticated_size));
+  std::copy(mac->begin(), mac->end(),
+            encoded.begin() + static_cast<std::ptrdiff_t>(*authenticated_size));
   return encoded;
 }
 
-common::Result<ResumeToken>
-decode_resume_token_v1(const common::ByteView encoded, const ResumeTokenMacKey& key,
-                       const std::size_t maximum_sources) {
+common::Result<ResumeToken> decode_resume_token_v1(const common::ByteView encoded,
+                                                   const ResumeTokenMacKey& key,
+                                                   const std::size_t maximum_sources) {
   if (key_is_zero(key)) {
     return common::make_unexpected(invalid("resume token MAC key must be nonzero"));
   }
@@ -176,8 +177,8 @@ decode_resume_token_v1(const common::ByteView encoded, const ResumeTokenMacKey& 
   }
   if (CRYPTO_memcmp(expected_mac->data(), encoded.data() + authenticated_size,
                     kResumeTokenMacSize) != 0) {
-    return common::make_unexpected(common::Status{common::StatusCode::kUnauthenticated,
-                                                   "resume token authentication failed"});
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kUnauthenticated, "resume token authentication failed"});
   }
 
   common::ByteReader reader{encoded.first(authenticated_size)};
@@ -196,8 +197,8 @@ decode_resume_token_v1(const common::ByteView encoded, const ResumeTokenMacKey& 
         common::Status{common::StatusCode::kCorruption, "resume token header is truncated"});
   }
   if (*major != kResumeTokenFormatMajor || *minor > kResumeTokenFormatMinor) {
-    return common::make_unexpected(common::Status{common::StatusCode::kNotSupported,
-                                                   "resume token version is unsupported"});
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kNotSupported, "resume token version is unsupported"});
   }
   if (*header_size != kResumeTokenHeaderSize || *total_size != encoded.size() ||
       *source_count == 0U || *source_count > maximum_sources) {
@@ -206,10 +207,10 @@ decode_resume_token_v1(const common::ByteView encoded, const ResumeTokenMacKey& 
   }
   const auto positions_size =
       common::checked_multiply<std::size_t>(*source_count, kResumeTokenPositionSize);
-  const auto expected_authenticated = positions_size.has_value()
-                                          ? common::checked_add<std::size_t>(
-                                                kResumeTokenHeaderSize, *positions_size)
-                                          : std::nullopt;
+  const auto expected_authenticated =
+      positions_size.has_value()
+          ? common::checked_add<std::size_t>(kResumeTokenHeaderSize, *positions_size)
+          : std::nullopt;
   if (!expected_authenticated.has_value() || *expected_authenticated != authenticated_size) {
     return common::make_unexpected(
         common::Status{common::StatusCode::kCorruption, "resume token size is inconsistent"});
@@ -227,10 +228,9 @@ decode_resume_token_v1(const common::ByteView encoded, const ResumeTokenMacKey& 
     return common::make_unexpected(
         common::Status{common::StatusCode::kCorruption, "resume token header is incomplete"});
   }
-  if (std::ranges::any_of(*reserved,
-                          [](const std::byte value) { return value != std::byte{0}; })) {
+  if (std::ranges::any_of(*reserved, [](const std::byte value) { return value != std::byte{0}; })) {
     return common::make_unexpected(common::Status{common::StatusCode::kNotSupported,
-                                                   "resume token required flags are unsupported"});
+                                                  "resume token required flags are unsupported"});
   }
 
   common::Uuid::Bytes database_array{};
@@ -242,12 +242,17 @@ decode_resume_token_v1(const common::ByteView encoded, const ResumeTokenMacKey& 
   auto schema_id = schema::SchemaId::from_bytes(schema_array);
   auto schema_version = schema::SchemaVersion::from_value(*schema_version_value);
   if (!schema_id || !schema_version) {
-    return common::make_unexpected(common::Status{common::StatusCode::kCorruption,
-                                                   "resume token schema identity is invalid"});
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kCorruption, "resume token schema identity is invalid"});
   }
 
-  ResumeToken token{common::Uuid{database_array}, common::Uuid{subscription_array}, *schema_id,
-                    *schema_version, *safe_sequence, {}, {}};
+  ResumeToken token{common::Uuid{database_array},
+                    common::Uuid{subscription_array},
+                    *schema_id,
+                    *schema_version,
+                    *safe_sequence,
+                    {},
+                    {}};
   std::copy(plan->begin(), plan->end(), token.plan_fingerprint.begin());
   token.source_positions.reserve(*source_count);
   for (std::uint32_t index = 0U; index < *source_count; ++index) {
@@ -265,13 +270,13 @@ decode_resume_token_v1(const common::ByteView encoded, const ResumeTokenMacKey& 
     auto tablet_id = schema::TabletId::from_bytes(tablet_array);
     if (!tablet_id || !wal_id.is_valid()) {
       return common::make_unexpected(common::Status{common::StatusCode::kCorruption,
-                                                     "resume token source identity is invalid"});
+                                                    "resume token source identity is invalid"});
     }
     token.source_positions.push_back(SourcePosition{*tablet_id, wal_id, *record_sequence});
   }
   if (!reader.empty() || token.database_id.is_nil() || token.subscription_id.is_nil()) {
-    return common::make_unexpected(common::Status{common::StatusCode::kCorruption,
-                                                   "resume token identity or trailing bytes invalid"});
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kCorruption, "resume token identity or trailing bytes invalid"});
   }
   return token;
 }

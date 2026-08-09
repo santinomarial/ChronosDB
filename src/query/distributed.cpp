@@ -5,10 +5,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
-#include <limits>
 #include <optional>
 #include <set>
 #include <utility>
@@ -45,7 +45,8 @@ common::Result<DistributedAggregatePlan> plan_distributed_aggregation(
       tablets.size() > limits.maximum_tablets ||
       (predicate.lower_inclusive.has_value() && predicate.upper_exclusive.has_value() &&
        *predicate.lower_inclusive >= *predicate.upper_exclusive)) {
-    return common::make_unexpected(invalid("distributed query identity, limits, or predicate invalid"));
+    return common::make_unexpected(
+        invalid("distributed query identity, limits, or predicate invalid"));
   }
   switch (consistency) {
   case DistributedReadConsistency::kLeaderLinearizable:
@@ -65,7 +66,7 @@ common::Result<DistributedAggregatePlan> plan_distributed_aggregation(
     if (intersects(tablet, predicate)) {
       if (plan.fragments.size() >= limits.maximum_fragments) {
         return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
-                                                       "distributed fragment bound is exhausted"});
+                                                      "distributed fragment bound is exhausted"});
       }
       plan.fragments.push_back(tablet);
     }
@@ -88,7 +89,8 @@ common::Status MergeableAggregateState::add(const double value) {
 }
 
 common::Status MergeableAggregateState::merge(const MergeableAggregateState& other) {
-  if (other.count == 0U) return common::Status::ok();
+  if (other.count == 0U)
+    return common::Status::ok();
   if (!other.minimum.has_value() || !other.maximum.has_value() ||
       (count != 0U && (!minimum.has_value() || !maximum.has_value()))) {
     return invalid("distributed partial aggregate state is inconsistent");
@@ -102,8 +104,8 @@ common::Status MergeableAggregateState::merge(const MergeableAggregateState& oth
   }
   const std::uint64_t combined = count + other.count;
   const double delta = other.mean - mean;
-  m2 += other.m2 + delta * delta * static_cast<double>(count) *
-                       static_cast<double>(other.count) / static_cast<double>(combined);
+  m2 += other.m2 + delta * delta * static_cast<double>(count) * static_cast<double>(other.count) /
+                       static_cast<double>(combined);
   mean += delta * static_cast<double>(other.count) / static_cast<double>(combined);
   count = combined;
   sum += other.sum;
@@ -165,7 +167,8 @@ common::Result<std::optional<ExchangeMessage>> BoundedExchange::try_pop() {
     return common::make_unexpected(
         common::Status{common::StatusCode::kCancelled, "exchange is cancelled"});
   }
-  if (impl_->messages.empty()) return std::optional<ExchangeMessage>{};
+  if (impl_->messages.empty())
+    return std::optional<ExchangeMessage>{};
   ExchangeMessage message = std::move(impl_->messages.front());
   impl_->messages.pop_front();
   impl_->charged_bytes -= kExchangeMessageCharge;
@@ -192,7 +195,8 @@ std::size_t BoundedExchange::queued_messages() const noexcept {
 class DistributedAggregateCoordinator::Impl {
 public:
   explicit Impl(DistributedAggregatePlan value) : plan(std::move(value)) {
-    for (const auto& fragment : plan.fragments) expected.insert(fragment.tablet_id);
+    for (const auto& fragment : plan.fragments)
+      expected.insert(fragment.tablet_id);
   }
   DistributedAggregatePlan plan;
   std::set<schema::TabletId> expected;
@@ -200,13 +204,14 @@ public:
   std::optional<common::Status> failure;
 };
 
-DistributedAggregateCoordinator::DistributedAggregateCoordinator(std::unique_ptr<Impl> impl) noexcept
+DistributedAggregateCoordinator::DistributedAggregateCoordinator(
+    std::unique_ptr<Impl> impl) noexcept
     : impl_(std::move(impl)) {}
 DistributedAggregateCoordinator::~DistributedAggregateCoordinator() = default;
 DistributedAggregateCoordinator::DistributedAggregateCoordinator(
     DistributedAggregateCoordinator&&) noexcept = default;
-DistributedAggregateCoordinator& DistributedAggregateCoordinator::operator=(
-    DistributedAggregateCoordinator&&) noexcept = default;
+DistributedAggregateCoordinator&
+DistributedAggregateCoordinator::operator=(DistributedAggregateCoordinator&&) noexcept = default;
 
 common::Result<DistributedAggregateCoordinator>
 DistributedAggregateCoordinator::create(DistributedAggregatePlan plan) {
@@ -217,7 +222,8 @@ DistributedAggregateCoordinator::create(DistributedAggregatePlan plan) {
 }
 
 common::Status DistributedAggregateCoordinator::accept(const ExchangeMessage& message) {
-  if (impl_->failure.has_value()) return *impl_->failure;
+  if (impl_->failure.has_value())
+    return *impl_->failure;
   if (message.query_id != impl_->plan.query_id || !message.terminal ||
       !impl_->expected.contains(message.tablet_id)) {
     return invalid("distributed fragment result is not an expected terminal message");
@@ -229,8 +235,8 @@ common::Status DistributedAggregateCoordinator::accept(const ExchangeMessage& me
   return common::Status::ok();
 }
 
-common::Status DistributedAggregateCoordinator::worker_failed(
-    const schema::TabletId& tablet_id, common::Status failure) {
+common::Status DistributedAggregateCoordinator::worker_failed(const schema::TabletId& tablet_id,
+                                                              common::Status failure) {
   if (!impl_->expected.contains(tablet_id) || failure.is_ok()) {
     return invalid("distributed worker failure is invalid or belongs to another plan");
   }
@@ -239,16 +245,18 @@ common::Status DistributedAggregateCoordinator::worker_failed(
 }
 
 common::Result<MergeableAggregateState> DistributedAggregateCoordinator::finish() const {
-  if (impl_->failure.has_value()) return common::make_unexpected(*impl_->failure);
+  if (impl_->failure.has_value())
+    return common::make_unexpected(*impl_->failure);
   if (impl_->completed.size() != impl_->expected.size()) {
     return common::make_unexpected(common::Status{common::StatusCode::kUnavailable,
-                                                   "distributed query has incomplete fragments"});
+                                                  "distributed query has incomplete fragments"});
   }
   MergeableAggregateState merged;
   for (const auto& [tablet, partial] : impl_->completed) {
     static_cast<void>(tablet);
     const common::Status status = merged.merge(partial);
-    if (!status.is_ok()) return common::make_unexpected(status);
+    if (!status.is_ok())
+      return common::make_unexpected(status);
   }
   return merged;
 }

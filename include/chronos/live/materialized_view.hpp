@@ -6,8 +6,8 @@
 #include "chronos/live/resume_token.hpp"
 #include "chronos/live/subscription.hpp"
 
-#include <cstddef>
 #include <compare>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <vector>

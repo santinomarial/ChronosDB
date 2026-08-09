@@ -20,7 +20,10 @@ namespace {
 
 class MemoryObjectStore::Impl {
 public:
-  struct Object { std::vector<std::byte> bytes; ingest::Sha256Digest checksum; };
+  struct Object {
+    std::vector<std::byte> bytes;
+    ingest::Sha256Digest checksum;
+  };
   mutable std::mutex mutex;
   std::map<std::string, Object, std::less<>> objects;
 };
@@ -31,9 +34,11 @@ MemoryObjectStore::~MemoryObjectStore() = default;
 common::Result<ObjectMetadata>
 MemoryObjectStore::put_if_absent(const std::string_view key, const common::ByteView bytes,
                                  const ingest::Sha256Digest& checksum) {
-  if (key.empty()) return common::make_unexpected(invalid("object key must be nonempty"));
+  if (key.empty())
+    return common::make_unexpected(invalid("object key must be nonempty"));
   auto actual = ingest::sha256(bytes);
-  if (!actual.has_value()) return common::make_unexpected(actual.error());
+  if (!actual.has_value())
+    return common::make_unexpected(actual.error());
   if (*actual != checksum) {
     return common::make_unexpected(invalid("object checksum does not match upload bytes"));
   }
@@ -42,7 +47,7 @@ MemoryObjectStore::put_if_absent(const std::string_view key, const common::ByteV
   if (existing != impl_->objects.end()) {
     if (existing->second.checksum != checksum || existing->second.bytes.size() != bytes.size()) {
       return common::make_unexpected(common::Status{common::StatusCode::kAlreadyExists,
-                                                     "immutable object key has different content"});
+                                                    "immutable object key has different content"});
     }
     return ObjectMetadata{std::string{key}, existing->second.bytes.size(), checksum};
   }

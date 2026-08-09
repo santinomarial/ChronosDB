@@ -1,6 +1,5 @@
-#include "chronos/live/subscription.hpp"
-
 #include "chronos/common/status.hpp"
+#include "chronos/live/subscription.hpp"
 
 #include <cstddef>
 #include <gtest/gtest.h>
@@ -14,8 +13,7 @@ namespace {
   return common::Uuid{bytes};
 }
 
-template <typename Identifier>
-[[nodiscard]] Identifier identifier(const std::byte seed) {
+template <typename Identifier> [[nodiscard]] Identifier identifier(const std::byte seed) {
   auto value = Identifier::from_uuid(uuid(seed));
   EXPECT_TRUE(value.has_value());
   return *value;
@@ -46,8 +44,7 @@ struct Fixture {
     return SubscriptionSource{database_id, table_id, tablet_id, wal, key()};
   }
   [[nodiscard]] SubscriptionRequest request() const {
-    return SubscriptionRequest{subscription_id, plan, schema_id,
-                               schema::SchemaVersion::initial()};
+    return SubscriptionRequest{subscription_id, plan, schema_id, schema::SchemaVersion::initial()};
   }
   [[nodiscard]] CommittedChange change(const std::uint64_t sequence) const {
     return CommittedChange{SourcePosition{tablet_id, wal, sequence},

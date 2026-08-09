@@ -91,8 +91,8 @@ public:
   BoundedExchange(BoundedExchange&&) noexcept;
   BoundedExchange& operator=(BoundedExchange&&) noexcept;
 
-  [[nodiscard]] static common::Result<BoundedExchange>
-  create(common::Uuid query_id, ExchangeLimits limits = {});
+  [[nodiscard]] static common::Result<BoundedExchange> create(common::Uuid query_id,
+                                                              ExchangeLimits limits = {});
   [[nodiscard]] common::Status push(ExchangeMessage message);
   [[nodiscard]] common::Result<std::optional<ExchangeMessage>> try_pop();
   [[nodiscard]] common::Status cancel();
