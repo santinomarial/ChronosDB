@@ -40,7 +40,9 @@ public:
                                                    std::vector<std::byte> payload);
   [[nodiscard]] common::Result<Transition> heartbeat();
 
-  [[nodiscard]] common::Status mark_applied(LogIndex index);
+  // Advancing application state is itself persistent state. The returned transition must cross the
+  // same persistence boundary as term, vote, log, and commit changes.
+  [[nodiscard]] common::Result<Transition> mark_applied(LogIndex index);
   [[nodiscard]] std::span<const LogEntry> committed_unapplied() const noexcept;
 
   [[nodiscard]] NodeId node_id() const noexcept;

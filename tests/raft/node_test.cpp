@@ -85,7 +85,9 @@ TEST(RaftNodeTest, ElectsReplicatesFailsOverRejectsStaleLeaderAndCatchesUpRestar
     EXPECT_EQ(cluster.node(id).commit_index(), 1U);
   }
   ASSERT_EQ(cluster.node(1U).committed_unapplied().size(), 1U);
-  EXPECT_TRUE(cluster.node(1U).mark_applied(1U).is_ok());
+  auto applied = cluster.node(1U).mark_applied(1U);
+  ASSERT_TRUE(applied.has_value());
+  EXPECT_TRUE(applied->persistent_state.has_value());
 
   auto replacement_election = cluster.node(2U).start_election();
   ASSERT_TRUE(replacement_election.has_value());

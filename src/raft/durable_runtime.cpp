@@ -1,0 +1,213 @@
+#include "chronos/raft/durable_runtime.hpp"
+
+#include <cstddef>
+#include <map>
+#include <memory>
+#include <type_traits>
+#include <utility>
+#include <variant>
+#include <vector>
+
+namespace chronos::raft {
+namespace {
+
+[[nodiscard]] common::Status invalid(const char* message) {
+  return common::Status{common::StatusCode::kInvalidArgument, message};
+}
+
+[[nodiscard]] common::Result<MultiRaftRuntime>
+restore_runtime(const NodeId local_node_id, const DurableMultiRaftLimits& limits,
+                std::vector<RaftGroupConfiguration> groups,
+                const std::vector<GroupPersistentState>& recovered) {
+  if (groups.size() > limits.runtime.maximum_groups) {
+    return common::make_unexpected(invalid("durable Multi-Raft group count exceeds limits"));
+  }
+  std::map<GroupId, GroupPersistentState> recovered_by_group;
+  for (const GroupPersistentState& persistent : recovered) {
+    if (!recovered_by_group.emplace(persistent.group_id, persistent).second) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kCorruption, "duplicate recovered Raft group state"});
+    }
+  }
+  auto runtime = MultiRaftRuntime::create(local_node_id, limits.runtime);
+  if (!runtime.has_value())
+    return common::make_unexpected(runtime.error());
+  std::map<GroupId, bool> configured;
+  for (RaftGroupConfiguration& group : groups) {
+    if (group.group_id.is_nil() || !configured.emplace(group.group_id, true).second) {
+      return common::make_unexpected(invalid("durable Multi-Raft group configuration is invalid"));
+    }
+    auto state = recovered_by_group.find(group.group_id);
+    common::Status status =
+        state == recovered_by_group.end()
+            ? runtime->add_group(group.group_id, std::move(group.voters))
+            : runtime->add_group(group.group_id, std::move(group.voters), state->second.state,
+                                 state->second.physical_sequence);
+    if (!status.is_ok())
+      return common::make_unexpected(status);
+    if (state != recovered_by_group.end())
+      recovered_by_group.erase(state);
+  }
+  if (!recovered_by_group.empty()) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kCorruption, "recovered Raft group has no membership configuration"});
+  }
+  return runtime;
+}
+
+} // namespace
+
+class DurableMultiRaftRuntime::Impl {
+public:
+  Impl(MultiRaftRuntime runtime_value, RaftPersistentLog log_value,
+       const DurableMultiRaftLimits configured)
+      : runtime(std::move(runtime_value)), log(std::move(log_value)), limits(configured) {}
+
+  [[nodiscard]] common::Status fail(common::Status status) {
+    if (failure.is_ok())
+      failure = std::move(status);
+    return failure;
+  }
+
+  MultiRaftRuntime runtime;
+  RaftPersistentLog log;
+  DurableMultiRaftLimits limits;
+  common::Status failure;
+};
+
+DurableMultiRaftRuntime::DurableMultiRaftRuntime(std::unique_ptr<Impl> impl) noexcept
+    : impl_(std::move(impl)) {}
+DurableMultiRaftRuntime::~DurableMultiRaftRuntime() = default;
+DurableMultiRaftRuntime::DurableMultiRaftRuntime(DurableMultiRaftRuntime&&) noexcept = default;
+DurableMultiRaftRuntime&
+DurableMultiRaftRuntime::operator=(DurableMultiRaftRuntime&&) noexcept = default;
+
+common::Result<DurableMultiRaftRuntime> DurableMultiRaftRuntime::create_new(
+    const NodeId local_node_id, const RaftPersistentLogConfig& log_config,
+    std::vector<RaftGroupConfiguration> groups, const DurableMultiRaftLimits limits) {
+  if (limits.maximum_batch_operations == 0U || limits.maximum_batch_outbound == 0U) {
+    return common::make_unexpected(invalid("durable Multi-Raft batch limits are invalid"));
+  }
+  auto runtime = restore_runtime(local_node_id, limits, std::move(groups), {});
+  if (!runtime.has_value())
+    return common::make_unexpected(runtime.error());
+  auto log = RaftPersistentLog::create_new(log_config);
+  if (!log.has_value())
+    return common::make_unexpected(log.error());
+  return DurableMultiRaftRuntime{
+      std::make_unique<Impl>(std::move(*runtime), std::move(*log), limits)};
+}
+
+common::Result<DurableMultiRaftRuntime> DurableMultiRaftRuntime::open_existing(
+    const NodeId local_node_id, const RaftPersistentLogConfig& log_config,
+    const RaftPersistentLogOpenOptions& open_options, std::vector<RaftGroupConfiguration> groups,
+    const DurableMultiRaftLimits limits) {
+  if (limits.maximum_batch_operations == 0U || limits.maximum_batch_outbound == 0U) {
+    return common::make_unexpected(invalid("durable Multi-Raft batch limits are invalid"));
+  }
+  auto log = RaftPersistentLog::open_existing(log_config, open_options);
+  if (!log.has_value())
+    return common::make_unexpected(log.error());
+  auto runtime = restore_runtime(local_node_id, limits, std::move(groups),
+                                 log->recovery().latest_group_states);
+  if (!runtime.has_value())
+    return common::make_unexpected(runtime.error());
+  return DurableMultiRaftRuntime{
+      std::make_unique<Impl>(std::move(*runtime), std::move(*log), limits)};
+}
+
+common::Result<std::vector<DurableRaftResult>>
+DurableMultiRaftRuntime::execute_batch(std::vector<DurableRaftRequest> requests) {
+  if (!impl_->failure.is_ok())
+    return common::make_unexpected(impl_->failure);
+  if (impl_->runtime.failed()) {
+    return common::make_unexpected(impl_->fail(common::Status{
+        common::StatusCode::kUnavailable, "durable Multi-Raft runtime has failed closed"}));
+  }
+  if (requests.empty() || requests.size() > impl_->limits.maximum_batch_operations) {
+    return common::make_unexpected(invalid("durable Multi-Raft batch size is invalid"));
+  }
+  std::vector<DurableRaftResult> results;
+  results.reserve(requests.size());
+  std::size_t outbound_count = 0U;
+  bool needs_sync = false;
+  for (DurableRaftRequest& request : requests) {
+    common::Result<MultiRaftTransition> transition = std::visit(
+        [&](auto&& operation) -> common::Result<MultiRaftTransition> {
+          using T = std::remove_cvref_t<decltype(operation)>;
+          if constexpr (std::is_same_v<T, StartElectionOperation>) {
+            return impl_->runtime.start_election(request.group_id);
+          } else if constexpr (std::is_same_v<T, ReceiveOperation>) {
+            return impl_->runtime.receive(request.group_id, operation.source,
+                                          std::move(operation.message));
+          } else if constexpr (std::is_same_v<T, ProposeOperation>) {
+            return impl_->runtime.propose(request.group_id, operation.type,
+                                          std::move(operation.payload));
+          } else if constexpr (std::is_same_v<T, HeartbeatOperation>) {
+            return impl_->runtime.heartbeat(request.group_id);
+          } else {
+            return impl_->runtime.mark_applied(request.group_id, operation.index);
+          }
+        },
+        std::move(request.operation));
+    if (!transition.has_value()) {
+      if (impl_->runtime.failed())
+        return common::make_unexpected(impl_->fail(transition.error()));
+      results.push_back(DurableRaftResult{transition.error(), std::nullopt});
+      continue;
+    }
+    if (transition->outbound.size() > impl_->limits.maximum_batch_outbound - outbound_count) {
+      return common::make_unexpected(impl_->fail(
+          common::Status{common::StatusCode::kResourceExhausted,
+                         "durable Multi-Raft batch exceeds its outbound-message bound"}));
+    }
+    outbound_count += transition->outbound.size();
+    if (transition->persistence.has_value()) {
+      auto appended = impl_->log.append(*transition->persistence);
+      if (!appended.has_value())
+        return common::make_unexpected(impl_->fail(appended.error()));
+      needs_sync = true;
+    }
+    results.push_back(DurableRaftResult{common::Status::ok(), std::move(*transition)});
+  }
+  if (needs_sync) {
+    auto synchronized = impl_->log.synchronize();
+    if (!synchronized.has_value())
+      return common::make_unexpected(impl_->fail(synchronized.error()));
+  }
+  return results;
+}
+
+const RaftNode* DurableMultiRaftRuntime::find_group(const GroupId& group_id) const noexcept {
+  return impl_->runtime.find_group(group_id);
+}
+
+RaftPhysicalPosition DurableMultiRaftRuntime::written_position() const noexcept {
+  return impl_->log.written_position();
+}
+
+std::uint64_t DurableMultiRaftRuntime::durable_physical_sequence() const noexcept {
+  return impl_->log.durable_physical_sequence();
+}
+
+bool DurableMultiRaftRuntime::failed() const noexcept {
+  return !impl_->failure.is_ok() || impl_->runtime.failed() || impl_->log.is_failed();
+}
+
+common::Status DurableMultiRaftRuntime::failure_status() const {
+  if (!impl_->failure.is_ok())
+    return impl_->failure;
+  if (impl_->log.is_failed())
+    return impl_->log.failure_status();
+  if (impl_->runtime.failed()) {
+    return common::Status{common::StatusCode::kUnavailable,
+                          "durable Multi-Raft runtime has failed closed"};
+  }
+  return common::Status::ok();
+}
+
+common::Status DurableMultiRaftRuntime::close() {
+  return impl_->log.close();
+}
+
+} // namespace chronos::raft

@@ -67,7 +67,8 @@ public:
   [[nodiscard]] common::Result<MultiRaftTransition>
   propose(const GroupId& group_id, std::uint8_t type, std::vector<std::byte> payload);
   [[nodiscard]] common::Result<MultiRaftTransition> heartbeat(const GroupId& group_id);
-  [[nodiscard]] common::Status mark_applied(const GroupId& group_id, LogIndex index);
+  [[nodiscard]] common::Result<MultiRaftTransition> mark_applied(const GroupId& group_id,
+                                                                 LogIndex index);
 
   [[nodiscard]] const RaftNode* find_group(const GroupId& group_id) const noexcept;
   [[nodiscard]] std::size_t group_count() const noexcept;

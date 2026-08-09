@@ -67,10 +67,11 @@
 ## Phase 15 — Multi-Raft tablets and metadata
 
 - Extend the implemented segmented node-level writer, rotation, complete recovery scan, explicit
-  tail repair, and corruption rejection with group-commit/fsync batches, injected I/O failures,
-  per-group reclamation/checkpointing, process-crash testing, and metrics.
-- Wire `MultiRaftRuntime` persistence before outbound transport in a bounded worker pool; batch
-  persistence/messages/application and prove fairness/no starvation under hot/cold skew.
+  tail repair, corruption rejection, and caller-batched sync with injected I/O failures, per-group
+  reclamation/checkpointing, process-crash testing, and metrics.
+- Put `DurableMultiRaftRuntime` behind a bounded asynchronous worker pool; batch transport and
+  application alongside its implemented persistence release, and prove fairness/no starvation
+  under hot/cold skew.
 - Encode/decode metadata commands through the metadata Raft group; durable schemas, nodes, tablet
   placement, membership, leader hints, retention, cluster epochs, and metadata snapshots.
 - Apply committed tablet commands to existing ingestion/table-state machinery; prove uncommitted

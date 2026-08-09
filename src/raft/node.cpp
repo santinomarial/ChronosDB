@@ -480,12 +480,17 @@ common::Result<Transition> RaftNode::heartbeat() {
   return transition;
 }
 
-common::Status RaftNode::mark_applied(const LogIndex index) {
+common::Result<Transition> RaftNode::mark_applied(const LogIndex index) {
   if (index < impl_->state.applied_index || index > impl_->state.commit_index) {
-    return invalid("Raft applied index must advance within the committed prefix");
+    return common::make_unexpected(
+        invalid("Raft applied index must advance within the committed prefix"));
   }
+  Transition transition;
+  if (index == impl_->state.applied_index)
+    return transition;
   impl_->state.applied_index = index;
-  return common::Status::ok();
+  transition.persistent_state = impl_->state;
+  return transition;
 }
 
 std::span<const LogEntry> RaftNode::committed_unapplied() const noexcept {

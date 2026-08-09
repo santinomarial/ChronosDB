@@ -75,7 +75,8 @@ fail closed.
 
 ## Remaining limitation
 
-`MultiRaftRuntime` returns this full logical state with a persist-before-send contract, and
-`RaftPersistentLog` can append and synchronize it. No current coordinator batches runtime
-transitions through the owner, reclaims checkpoint-covered segments, or proves majority durability.
-`QUORUM_SYNC` therefore remains unavailable.
+`MultiRaftRuntime` returns this full logical state with a persist-before-send contract.
+`DurableMultiRaftRuntime` can execute a bounded caller-provided operation batch, append all resulting
+persistent states through `RaftPersistentLog`, cover them with one local sync, and then release the
+outbound messages. No current asynchronous worker reclaims checkpoint-covered segments or proves
+majority durability. `QUORUM_SYNC` therefore remains unavailable.

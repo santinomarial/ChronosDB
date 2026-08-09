@@ -173,15 +173,18 @@ common::Result<MultiRaftTransition> MultiRaftRuntime::heartbeat(const GroupId& g
   return impl_->wrap(group_id, group->second.node.heartbeat());
 }
 
-common::Status MultiRaftRuntime::mark_applied(const GroupId& group_id, const LogIndex index) {
+common::Result<MultiRaftTransition> MultiRaftRuntime::mark_applied(const GroupId& group_id,
+                                                                   const LogIndex index) {
   if (impl_->failed_state) {
-    return common::Status{common::StatusCode::kUnavailable, "Multi-Raft runtime has failed closed"};
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kUnavailable, "Multi-Raft runtime has failed closed"});
   }
   const auto group = impl_->groups.find(group_id);
   if (group == impl_->groups.end()) {
-    return common::Status{common::StatusCode::kNotFound, "Multi-Raft group does not exist"};
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kNotFound, "Multi-Raft group does not exist"});
   }
-  return group->second.node.mark_applied(index);
+  return impl_->wrap(group_id, group->second.node.mark_applied(index));
 }
 
 const RaftNode* MultiRaftRuntime::find_group(const GroupId& group_id) const noexcept {

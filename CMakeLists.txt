@@ -465,6 +465,7 @@ chronos_enable_static_analysis(chronos_live)
 
 add_library(
   chronos_raft
+  src/raft/durable_runtime.cpp
   src/raft/metadata.cpp
   src/raft/multi_raft.cpp
   src/raft/multiplexed_log.cpp
@@ -666,6 +667,8 @@ if(CHRONOS_BUILD_TESTS)
 
   add_executable(
     chronos_raft_tests
+    tests/raft/durable_runtime_header_self_contained.cpp
+    tests/raft/durable_runtime_test.cpp
     tests/raft/node_header_self_contained.cpp
     tests/raft/node_test.cpp
     tests/raft/rebalancing_header_self_contained.cpp

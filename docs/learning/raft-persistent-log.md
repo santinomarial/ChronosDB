@@ -30,8 +30,9 @@ poisons the owner; later I/O is rejected with the retained root cause.
 `append` completes all bytes but makes no power-loss claim. `synchronize` data-synchronizes the
 active file and advances the durable physical sequence. Rotation synchronizes the predecessor and
 durably installs the successor header before using it, so records never enter an ambiguously named
-segment. A later persistence coordinator may append several groups and call one synchronization,
-but must withhold all associated outbound messages until the required boundary completes.
+segment. `DurableMultiRaftRuntime` appends several groups from a bounded caller-provided batch, calls
+one synchronization, and withholds every associated transition and outbound message until that
+boundary completes. The same rule now covers persisted `applied_index` advancement.
 
 ## Recovery and failure behavior
 

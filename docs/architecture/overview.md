@@ -350,7 +350,9 @@ full-state physical record codec, segmented append/sync/recovery owner, distribu
 primitives, and safe movement state machine are implemented. Readers may observe only committed and
 applied entries under an explicitly selected consistency level. Production timers, transport,
 persistence batching, application to tablet storage, snapshot installation, membership protocol,
-read index/staleness proof, and a packaged cluster runtime remain unimplemented.
+read index/staleness proof, and a packaged cluster runtime remain unimplemented. The
+single-thread-affine durable runtime already accepts bounded operation batches, persists every
+state-changing transition under one local sync, and exposes outbound messages only afterward.
 
 Multi-Raft will multiplex many groups over shared threads, network connections, timers, and a
 physical log without conflating their logical indexes. The physical-log boundary now supplies

@@ -186,7 +186,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Native client session](learning/native-client-session.md): bounded portable partial I/O,
   monotonic request generation, response validation, cancellation, and cleanup.
 - [Segmented Multi-Raft persistent log](learning/raft-persistent-log.md): shared physical segments,
-  append/sync frontiers, rotation, recovery, repair, ownership, and reclamation boundary.
+  append/sync frontiers, durable runtime batching, rotation, recovery, repair, ownership, and
+  reclamation boundary.
 - [Phase 10 network exit review](reviews/phase-10-network-review.md): implemented transport
   boundary, Linux portability and validation evidence, nonblocking risks, and the phase decision.
 - [Feature completion pass review](reviews/feature-completion-pass.md): truthful Phase 11–17
