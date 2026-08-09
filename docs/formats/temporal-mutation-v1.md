@@ -47,5 +47,7 @@ actual WAL source position. Any post-admission uncertainty fails the provider cl
 `recover_temporal_wal` verifies and preflights the complete command-specific WAL before replaying
 records in physical order into fresh multi-table providers; any failure discards the fresh owner.
 It returns the locked reopened writer at the next sequence for subsequent coordination. A combined
-database recovery dispatcher, application checkpoints, and CSEG history remain later integration
-boundaries.
+database-kind dispatcher and general application checkpoints remain later integration boundaries.
+For one WAL tablet, `recover_manifest_temporal_wal` now restores complete Manifest-authorized CSEG
+v2 history and replays commands strictly after an exact equal tablet/global checkpoint before
+returning the same writer ownership. Broader checkpoint overlap and routing remain unsupported.

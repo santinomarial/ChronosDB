@@ -661,8 +661,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   retained-history seed boundary that permits compacted correction/tombstone predecessors and
   leaves no partial state on validation or allocation failure. Complete generation-pinned CSEG part
   sets can now be exact-decoded, copied, canonicalized across parts, and atomically restored into a
-  provider under a caller-proven tablet-wide retention boundary. Application suffix replay,
-  complete snapshot-epoch publication, v1 migration, vector output, and authorized
+  provider under a caller-proven tablet-wide retention boundary. One fail-closed startup owner now
+  composes that state with a verified WAL suffix when a single tablet's durable position exactly
+  equals the global physical checkpoint, retains both locks and the selected generation, and
+  returns the writer at the next sequence. Multi-tablet checkpoint overlap, Raft application
+  snapshots, complete query-epoch publication, v1 migration, vector output, and authorized
   retention/compaction integration remain deferred, so the phase exit gate is not claimed.
 
 - **Scope:** formal bitemporal row-version model; SQL system-time clauses; history retention; correction/cancellation semantics; compaction and index support; audit visibility.

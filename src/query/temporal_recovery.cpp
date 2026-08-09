@@ -37,6 +37,10 @@ namespace {
   return common::Status{common::StatusCode::kInternal, std::move(message)};
 }
 
+[[nodiscard]] common::Status unsupported(std::string message) {
+  return common::Status{common::StatusCode::kNotSupported, std::move(message)};
+}
+
 [[nodiscard]] common::Status replay_error(const common::Status& status) {
   switch (status.code()) {
   case common::StatusCode::kInvalidArgument:
@@ -163,6 +167,22 @@ public:
   std::optional<wal::WalWriter> writer_;
 };
 
+class RecoveredManifestTemporalState::Impl {
+public:
+  Impl(manifest::ManifestStorage storage, RecoveredTemporalState temporal,
+       std::shared_ptr<const manifest::LoadedTemporalManifestGeneration> selected,
+       const schema::TableId table_id, TemporalManifestWalStartupReport report) noexcept
+      : storage_(std::move(storage)), temporal_(std::move(temporal)),
+        selected_(std::move(selected)), table_id_(table_id), report_(std::move(report)) {}
+
+  // Reverse destruction releases the selected/provider state and WAL lock before Manifest storage.
+  manifest::ManifestStorage storage_;
+  RecoveredTemporalState temporal_;
+  std::shared_ptr<const manifest::LoadedTemporalManifestGeneration> selected_;
+  schema::TableId table_id_;
+  TemporalManifestWalStartupReport report_;
+};
+
 RecoveredTemporalState::RecoveredTemporalState(std::unique_ptr<Impl> implementation) noexcept
     : implementation_(std::move(implementation)) {}
 RecoveredTemporalState::~RecoveredTemporalState() = default;
@@ -237,6 +257,200 @@ recover_temporal_wal(const wal::WalWriterConfig& writer_config,
   } catch (const std::length_error&) {
     return common::make_unexpected(
         exhausted("temporal recovery configuration exceeded container limits"));
+  }
+}
+
+RecoveredManifestTemporalState::RecoveredManifestTemporalState(
+    std::unique_ptr<Impl> implementation) noexcept
+    : implementation_(std::move(implementation)) {}
+RecoveredManifestTemporalState::~RecoveredManifestTemporalState() = default;
+RecoveredManifestTemporalState::RecoveredManifestTemporalState(
+    RecoveredManifestTemporalState&&) noexcept = default;
+RecoveredManifestTemporalState&
+RecoveredManifestTemporalState::operator=(RecoveredManifestTemporalState&&) noexcept = default;
+
+const TemporalManifestWalStartupReport& RecoveredManifestTemporalState::report() const noexcept {
+  return implementation_->report_;
+}
+
+TemporalSnapshotProvider* RecoveredManifestTemporalState::provider() noexcept {
+  return implementation_->temporal_.provider(implementation_->table_id_);
+}
+
+const TemporalSnapshotProvider* RecoveredManifestTemporalState::provider() const noexcept {
+  return implementation_->temporal_.provider(implementation_->table_id_);
+}
+
+manifest::ManifestStorage& RecoveredManifestTemporalState::manifest_storage() noexcept {
+  return implementation_->storage_;
+}
+
+const manifest::LoadedTemporalManifestGeneration&
+RecoveredManifestTemporalState::selected_manifest() const noexcept {
+  return *implementation_->selected_;
+}
+
+common::Result<wal::WalWriter> RecoveredManifestTemporalState::release_writer() {
+  return implementation_->temporal_.release_writer();
+}
+
+common::Result<RecoveredManifestTemporalState>
+recover_manifest_temporal_wal(TemporalManifestWalStartupConfig config) {
+  try {
+    common::Result<manifest::ManifestStorage> storage =
+        manifest::ManifestStorage::open_existing(config.manifest_storage);
+    if (!storage.has_value()) {
+      return common::make_unexpected(storage.error());
+    }
+    common::Result<manifest::LoadedTemporalManifestGeneration> loaded =
+        storage->load_selected_temporal_manifest(config.manifest_load);
+    if (!loaded.has_value()) {
+      return common::make_unexpected(loaded.error());
+    }
+    auto selected =
+        std::make_shared<const manifest::LoadedTemporalManifestGeneration>(std::move(*loaded));
+    if (selected->tablets().size() != 1U) {
+      return common::make_unexpected(unsupported(
+          "Manifest temporal WAL startup currently requires exactly one routed tablet"));
+    }
+    const manifest::TemporalTabletDescriptor& tablet = selected->tablets().front();
+    if (tablet.commit_source != cseg::temporal_format::CommitSource::kWal) {
+      return common::make_unexpected(
+          unsupported("Manifest temporal WAL startup cannot replay a Raft tablet"));
+    }
+    if (!selected->wal_reclaim_checkpoint().has_value()) {
+      return common::make_unexpected(unsupported(
+          "Manifest temporal WAL startup requires one durable global replay checkpoint"));
+    }
+    const manifest::TemporalWalReclaimCheckpoint& manifest_checkpoint =
+        *selected->wal_reclaim_checkpoint();
+    if (manifest_checkpoint.coordinate.record_sequence != tablet.durable_position) {
+      return common::make_unexpected(unsupported(
+          "Manifest temporal WAL startup requires checkpoint and tablet boundaries to match"));
+    }
+    const wal::WalReplayCheckpoint checkpoint{
+        .wal_id = manifest_checkpoint.wal_id,
+        .record_sequence = manifest_checkpoint.coordinate.record_sequence,
+        .segment_number = manifest_checkpoint.coordinate.segment_number,
+        .byte_offset = manifest_checkpoint.coordinate.byte_offset};
+
+    const auto binding = std::ranges::find(config.manifest_load.schema_bindings, tablet.tablet_id,
+                                           &manifest::TabletSchemaBinding::tablet_id);
+    if (binding == config.manifest_load.schema_bindings.end()) {
+      return common::make_unexpected(
+          not_found("Manifest temporal tablet has no configured recovery lineage"));
+    }
+    std::shared_ptr<const schema::TableSchema> recovery_schema =
+        binding->lineage.get().find(tablet.recovery_schema_id);
+    if (recovery_schema == nullptr ||
+        recovery_schema->version() != tablet.recovery_schema_version) {
+      return common::make_unexpected(
+          corruption("Manifest temporal recovery schema disappeared after validation"));
+    }
+
+    std::unique_ptr<TemporalSnapshotProvider> provider;
+    if (tablet.part_count == 0U) {
+      common::Result<std::unique_ptr<TemporalSnapshotProvider>> fresh =
+          TemporalSnapshotProvider::create(recovery_schema, config.store_limits);
+      if (!fresh.has_value()) {
+        return common::make_unexpected(fresh.error());
+      }
+      provider = std::move(*fresh);
+    } else {
+      if (!config.retained_system_time_ns.has_value()) {
+        return common::make_unexpected(invalid(
+            "Manifest temporal WAL startup requires an explicit retained history boundary"));
+      }
+      if (tablet.first_part_index > selected->parts().size() ||
+          tablet.part_count > selected->parts().size() - tablet.first_part_index) {
+        return common::make_unexpected(
+            corruption("Manifest temporal tablet part range became inaccessible"));
+      }
+      const std::span<const manifest::TemporalPartDescriptor> descriptors =
+          selected->parts().subspan(static_cast<std::size_t>(tablet.first_part_index),
+                                    static_cast<std::size_t>(tablet.part_count));
+      std::vector<cseg::PartId> part_ids;
+      part_ids.reserve(descriptors.size());
+      for (const manifest::TemporalPartDescriptor& descriptor : descriptors) {
+        part_ids.push_back(descriptor.part_id);
+      }
+      common::Result<std::vector<manifest::LoadedTemporalPartImage>> images =
+          storage->load_temporal_part_images(selected, part_ids,
+                                             config.manifest_load.schema_bindings,
+                                             config.manifest_load.part_validation_limits);
+      if (!images.has_value()) {
+        return common::make_unexpected(images.error());
+      }
+      std::vector<TemporalManifestCsegPartView> views;
+      views.reserve(images->size());
+      for (const manifest::LoadedTemporalPartImage& image : *images) {
+        views.push_back(TemporalManifestCsegPartView{.descriptor = &image.descriptor(),
+                                                     .bytes = image.bytes()});
+      }
+      common::Result<std::unique_ptr<TemporalSnapshotProvider>> restored =
+          restore_manifest_v2_temporal_tablet_history(
+              recovery_schema, binding->lineage.get(), tablet, views,
+              {cseg::temporal_format::CommitSource::kWal, tablet.source_id},
+              *config.retained_system_time_ns, config.store_limits, config.cseg_limits);
+      if (!restored.has_value()) {
+        return common::make_unexpected(restored.error());
+      }
+      provider = std::move(*restored);
+    }
+
+    std::vector<RecoveredTemporalState::Impl::TableEntry> tables;
+    tables.push_back(RecoveredTemporalState::Impl::TableEntry{.schema = recovery_schema,
+                                                              .provider = std::move(provider)});
+    auto temporal_implementation =
+        std::make_unique<RecoveredTemporalState::Impl>(std::move(tables), config.command_limits);
+    RecoveredTemporalState::Impl::ReplaySink sink{*temporal_implementation};
+    common::Result<wal::WalWriter> writer = wal::WalWriter::open_existing_from_checkpoint(
+        config.wal_writer, config.wal_recovery, checkpoint, sink);
+    if (!writer.has_value()) {
+      return common::make_unexpected(writer.error());
+    }
+    temporal_implementation->writer_.emplace(std::move(*writer));
+    RecoveredTemporalState temporal{std::move(temporal_implementation)};
+
+    common::Result<manifest::TemporaryCleanupReport> cleanup = storage->cleanup_temporaries();
+    if (!cleanup.has_value()) {
+      return common::make_unexpected(cleanup.error());
+    }
+    std::optional<wal::WalSegmentReclamationReport> wal_reclamation;
+    if (config.reclaim_checkpointed_wal_segments) {
+      common::Result<wal::WalSegmentReclamationReport> reclaimed =
+          temporal.implementation_->writer_->reclaim_checkpointed_segments(checkpoint);
+      if (!reclaimed.has_value()) {
+        return common::make_unexpected(reclaimed.error());
+      }
+      wal_reclamation = *reclaimed;
+    }
+
+    TemporalManifestWalStartupReport report{.selected_generation = selected->generation(),
+                                            .checkpoint = checkpoint,
+                                            .tablet_id = tablet.tablet_id,
+                                            .part_count = tablet.part_count,
+                                            .durable_version_count = tablet.durable_version_count,
+                                            .retained_system_time_ns =
+                                                config.retained_system_time_ns,
+                                            .orphan_part_count = selected->orphan_parts().size(),
+                                            .temporary_cleanup = *cleanup,
+                                            .wal_reclamation = wal_reclamation};
+    auto implementation = std::make_unique<RecoveredManifestTemporalState::Impl>(
+        std::move(*storage), std::move(temporal), std::move(selected), tablet.table_id,
+        std::move(report));
+    return RecoveredManifestTemporalState{std::move(implementation)};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("Manifest temporal WAL startup allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("Manifest temporal WAL startup exceeded container limits"));
+  } catch (const std::exception& error) {
+    return common::make_unexpected(
+        internal(std::string{"Manifest temporal WAL startup threw: "} + error.what()));
+  } catch (...) {
+    return common::make_unexpected(
+        internal("Manifest temporal WAL startup threw an unknown exception"));
   }
 }
 

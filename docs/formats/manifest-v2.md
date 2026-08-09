@@ -5,7 +5,8 @@
 > implemented. Complete referenced-part coverage and crash-ordered local filesystem installation
 > are also implemented. Highest-generation fail-closed local recovery selection and
 > generation-pinned temporal part loading for bounded current/as-of resolution are implemented;
-> application replay/publication, v1 migration, authorized retention/compaction, and reclamation
+> exact-checkpoint single-WAL-tablet provider reconstruction and suffix replay are implemented.
+> Multi-tablet/Raft publication, v1 migration, authorized retention/compaction, and reclamation
 > integration remain pending.**
 
 Manifest v2 is the immutable database storage generation that can authorize CSEG v2 temporal parts
@@ -147,5 +148,10 @@ the requested boundary, then validates and decodes every candidate before applyi
 winner rules. A boundary before all retained versions returns `NOT_FOUND`; it is not represented as
 a proven empty table. A complete pinned part set can also be decoded into canonical cross-part
 version order and atomically seed a fresh temporal provider when the caller supplies an independent
-tablet-wide retained-system-time proof. Application suffix replay, Raft snapshot reconstruction,
-and complete query-epoch publication remain pending.
+tablet-wide retained-system-time proof. General multi-tablet application replay, Raft snapshot
+reconstruction, and complete query-epoch publication remain pending. The implemented WAL startup
+composition owns
+the selected generation and locks while restoring one tablet whose global checkpoint exactly equals
+its durable boundary, then verifies and applies only the suffix after that physical coordinate.
+Checkpoint/tablet overlap, multiple tablets, and Raft sources fail explicitly until covered-command
+verification and application-snapshot routing exist.

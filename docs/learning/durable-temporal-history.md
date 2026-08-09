@@ -4,19 +4,22 @@
 
 ChronosDB preserves corrections rather than overwriting an earlier business fact. Each logical row
 therefore has event time, receive time, and an ordered sequence of system-time versions. The current
-subsystem supplies three concrete layers:
+subsystem supplies five concrete layers:
 
 1. Temporal Mutation Command v1 stores schema-shaped values and row-aligned temporal metadata.
 2. `apply_committed_temporal_command` converts one already durable WAL command into owned history.
 3. `execute_temporal_command` performs validated live WAL admission and acknowledged publication.
 4. `recover_temporal_wal` rebuilds fresh multi-table scalar providers from verified WAL order.
+5. `recover_manifest_temporal_wal` composes selected CSEG history with one exact WAL suffix.
 
 Mixed command dispatch, application checkpoints, and Raft application are not hidden inside these
 interfaces. CSEG v2 now has strict metadata/part codecs, semantic and projected reading, plus a
 bounded single-lineage scalar resolver that provides a differential current/as-of winner oracle.
 Manifest v2 discovery, generation-pinned part loading, and bounded multi-part scalar resolution are
 implemented. Complete retained part sets can now reconstruct a fresh scalar provider; vector output,
-WAL/Raft suffix composition, and compaction integration remain pending.
+general multi-tablet/Raft suffix composition, and compaction integration remain pending. An exact
+single-WAL-tablet Manifest checkpoint can now compose CSEG reconstruction with verified suffix
+replay.
 
 ## Public interfaces and data structures
 
@@ -42,12 +45,20 @@ Earlier as-of requests return `NOT_FOUND` rather than inventing an empty table.
 `WalWriter`. `release_writer()` transfers that writer exactly once to the later live coordinator.
 Provider pointers remain valid for the lifetime of the recovered owner.
 
+`RecoveredManifestTemporalState` is the first complete durable startup owner. It requires one WAL
+tablet and a global checkpoint exactly at that tablet's durable boundary, restores its pinned CSEG
+history, opens and preflights the WAL strictly after that coordinate, applies the suffix, cleans
+recognized temporaries, and returns the provider plus locked writer. Manifest storage outlives WAL
+ownership during destruction. A missing retention proof or any validation/replay failure destroys
+all fresh state. Broader checkpoint overlap is rejected until recovery can compare every covered
+command with retained history.
+
 `restore_manifest_v2_temporal_tablet_history` exact-opens and fully projects every supplied
 generation-pinned CSEG v2 image after the owning tablet descriptor proves exact part count,
 canonical identities, source/durable bounds, and total physical-version coverage. It copies user
 cells plus all source/version/operation/identity/time metadata and sorts rows by source position and
-row ordinal across parts. It then invokes the atomic
-provider seed with the caller-proven retained-system-time boundary. Duplicate or impossible
+row ordinal across parts. It then invokes the atomic provider seed with the caller-proven
+retained-system-time boundary. Duplicate or impossible
 cross-part mutation history is durable corruption; caller lineage/boundary mistakes remain explicit
 input errors. Decoded parts are borrowed only during reconstruction and the returned provider owns
 every scalar value.

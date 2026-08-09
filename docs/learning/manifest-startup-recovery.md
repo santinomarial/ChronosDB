@@ -16,6 +16,13 @@ can now load a strictly sorted requested part subset as owned, fully revalidated
 retains the selected generation and is suitable for the bounded current/as-of tablet resolver, so a
 newer selected generation cannot silently change an already pinned read.
 
+The query layer now composes that boundary for one WAL tablet when the Manifest global checkpoint
+exactly equals its durable position. It restores complete CSEG history under an explicit retention
+proof, verifies and replays only the WAL suffix, cleans recognized temporaries, and returns one
+owner holding the selected generation, provider, writer, and Manifest/WAL locks. Multi-tablet
+checkpoint overlap and Raft application snapshots remain explicit unsupported shapes rather than
+being silently skipped.
+
 ## Purpose and boundary
 
 Startup must not expose a valid-looking subset assembled from unrelated recovery passes. The public
