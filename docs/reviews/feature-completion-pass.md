@@ -29,15 +29,16 @@ their full roadmap exit gates or that ChronosDB is a production three-node datab
 - removable count, sum, min, max, VWAP, OHLC, and Welford population/sample variance state; and
 - tumbling/sliding window materialized state, watermark finalization, corrections/tombstones,
   revisions, consecutive committed progress, and finite row/window bounds;
-- plan-bound single-tablet snapshot execution and schema-bound `SUBSCRIBE SELECT` identity;
+- plan-bound single-tablet snapshot execution, schema-bound `SUBSCRIBE SELECT` identity, and a
+  durable exact-SQL registry that reprepares and verifies executable fingerprints after restart;
 - canonical multi-tablet delivery order, exact logical checkpoint/restore, and frozen checksummed
   checkpoint-generation bytes; and
 - lock-owning, exact-next-generation filesystem installation, fail-closed latest selection, and a
   durable coordinator owner that publishes retention frontiers only after synchronized install;
   plus exact multi-tablet historical execution through one global physical pipeline.
 
-Still incomplete: durable plan lookup, topology/retention owner integration, schema-change terminal
-representation, and complete service lifecycle.
+Still incomplete: topology/retention owner integration, schema-change terminal representation, and
+complete service lifecycle.
 
 ### Phase 12 — performance architecture and io_uring
 

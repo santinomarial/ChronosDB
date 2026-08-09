@@ -21,8 +21,9 @@
   token/checkpoint race scheduling, obsolete-generation reclamation, cross-compiler golden
   verification, and retained-state size/recovery measurements.
 - Subscription plan identity: cross-process golden vectors, forced-allocation/provider-failure
-  sweeps, hostile SQL/catalog limits, durable fingerprint-to-plan registry recovery, schema
-  migration, and compatibility review when the supported incremental SQL surface expands.
+  sweeps, hostile SQL/catalog limits, registry crash/fault cut points, planner-upgrade compatibility,
+  obsolete-definition reclamation, schema migration, and compatibility review when the supported
+  incremental SQL surface expands.
 - Plan-bound subscription snapshot execution: forced-allocation sweeps, cancellation at every
   pull/END_STREAM/READY transition, multi-chunk socket backpressure, reactor worker dispatch, and
   real concurrent publication scheduling. Exercise every global operator over multi-tablet source

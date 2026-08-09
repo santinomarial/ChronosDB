@@ -239,6 +239,10 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Exact multi-tablet subscription snapshots](adr/0102-exact-multi-tablet-subscription-snapshot.md):
   complete vector/storage boundary validation, one global physical pipeline, and guarded
   QUERY_RESULT/END_STREAM/READY transition.
+- [Subscription Plan Definition v1](formats/subscription-plan-definition-v1.md): exact SQL and
+  database/table/schema/fingerprint bytes, CRC32C, immutable naming, and recovery validation.
+- [Durable subscription plan registry](adr/0103-durable-subscription-plan-registry.md): synchronized
+  definition installation and exact catalog-bound reprepare before resumed execution.
 - [Durable metadata Raft state](learning/durable-metadata-state.md): checksummed commands,
   commit-order catalog application, quorum proof, and retained-log reconstruction.
 - [Phase 10 network exit review](reviews/phase-10-network-review.md): implemented transport

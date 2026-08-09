@@ -35,10 +35,9 @@ resume tokens for any other plan/schema. This matches the already plan-bound mul
 
 ## Consequences and alternatives
 
-Plan lookup across process restart must persist or deterministically reconstruct the SQL/catalog
-binding associated with a fingerprint; that registry remains separate work. This fingerprint is an
-identity and compatibility guard, not a signature. Resume Token authentication continues to use its
-MAC key.
+ADR 0103 persists the exact SQL/catalog binding associated with a fingerprint and reprepares it
+fail-closed after restart. This fingerprint is an identity and compatibility guard, not a signature.
+Resume Token authentication continues to use its MAC key.
 
 Hashing only raw SQL was rejected because a name can bind to a new schema. Hashing catalog
 generation was rejected because unrelated catalog changes would invalidate a stable binding.
@@ -50,5 +49,5 @@ semantic format without a current need.
 Invariants 10, 12, 14, 15, and 17 apply. Focused tests prove repeatable identity, different identity
 for textually different SQL, exact output/schema ownership, rejection of non-subscription,
 historical, and multi-source statements, and manager rejection of a mismatched plan. Cross-process
-goldens, hostile allocation sweeps, catalog migration, and durable plan registry recovery remain in
-the Phase 18 ledger.
+goldens, hostile allocation sweeps, catalog migration, and planner-upgrade compatibility remain in
+the Phase 18 ledger; ADR 0103 adds durable registry recovery evidence.

@@ -623,8 +623,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   resumes token suffixes, accepts consecutive post-checkpoint replay, and publishes source-retention
   frontiers only after installation succeeds. Multi-tablet historical execution now validates the
   complete registered vector against one aggregate storage epoch and runs one global physical plan
-  before END_STREAM and READY. Durable plan lookup, topology-aware source deletion, complete service
-  ownership, and the full exit evidence remain deferred; the phase exit gate is not claimed.
+  before END_STREAM and READY. A locked durable plan registry preserves exact SQL definitions and
+  returns an executable fingerprint only after exact catalog-bound reprepare. Topology-aware source
+  deletion, complete service ownership, and the full exit evidence remain deferred; the phase exit
+  gate is not claimed.
 
 - **Scope:** committed change model; gap-free snapshot-to-stream handoff; deterministic versioned resume tokens; bounded subscriber policies; supported incremental operators; materialized-view progress/recovery and late-event corrections.
 - **Explicit non-scope:** unqualified end-to-end exactly-once claims, unlimited retention, every SQL operator, cross-cluster delivery, and external-sink transactions not explicitly integrated.

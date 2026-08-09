@@ -471,6 +471,8 @@ add_library(
   src/live/snapshot_subscription.cpp
   src/live/subscription.cpp
   src/live/subscription_plan.cpp
+  src/live/subscription_plan_definition.cpp
+  src/live/subscription_plan_storage.cpp
   src/live/subscription_protocol.cpp
 )
 add_library(chronos::live ALIAS chronos_live)
@@ -712,6 +714,10 @@ if(CHRONOS_BUILD_TESTS)
     tests/live/snapshot_subscription_test.cpp
     tests/live/subscription_header_self_contained.cpp
     tests/live/subscription_plan_header_self_contained.cpp
+    tests/live/subscription_plan_definition_header_self_contained.cpp
+    tests/live/subscription_plan_definition_test.cpp
+    tests/live/subscription_plan_storage_header_self_contained.cpp
+    tests/live/subscription_plan_storage_test.cpp
     tests/live/subscription_plan_test.cpp
     tests/live/subscription_protocol_header_self_contained.cpp
     tests/live/subscription_protocol_test.cpp
