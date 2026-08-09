@@ -2,6 +2,7 @@
 #include "chronos/network/connection_state.hpp"
 #include "chronos/network/messages.hpp"
 #include "chronos/network/protocol.hpp"
+#include "chronos/network/subscription_messages.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -32,6 +33,24 @@ void exercise_message(const chronos::network::Frame& frame) {
   case MessageType::kQueryResult:
     static_cast<void>(decode_query_result_batch(frame.payload));
     break;
+  case MessageType::kSubscribeRequest:
+    static_cast<void>(decode_subscription_request(frame.payload));
+    break;
+  case MessageType::kSubscriptionReady:
+    static_cast<void>(decode_subscription_ready(frame.payload));
+    break;
+  case MessageType::kSubscriptionChange:
+    static_cast<void>(decode_subscription_change(frame.payload));
+    break;
+  case MessageType::kSubscriptionAcknowledge:
+    static_cast<void>(decode_subscription_acknowledgement(frame.payload));
+    break;
+  case MessageType::kSubscriptionCheckpoint:
+    static_cast<void>(decode_subscription_checkpoint(frame.payload));
+    break;
+  case MessageType::kSubscriptionEnd:
+    static_cast<void>(decode_subscription_end(frame.payload));
+    break;
   case MessageType::kError:
     static_cast<void>(decode_error_message(frame.payload));
     break;
@@ -48,7 +67,8 @@ void exercise(const chronos::common::ByteView bytes) {
   constexpr ProtocolLimits kLimits{.maximum_payload_size = 65'536U};
   const auto decoded = decode_frame(bytes, kLimits);
   if (decoded.has_value()) {
-    const auto encoded = encode_frame({.message_type = decoded->header.message_type,
+    const auto encoded = encode_frame({.protocol_minor = decoded->header.protocol_minor,
+                                       .message_type = decoded->header.message_type,
                                        .flags = decoded->header.flags,
                                        .request_id = decoded->header.request_id},
                                       decoded->payload, kLimits);

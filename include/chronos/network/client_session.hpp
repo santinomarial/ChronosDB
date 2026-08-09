@@ -3,6 +3,7 @@
 
 #include "chronos/network/connection_buffers.hpp"
 #include "chronos/network/messages.hpp"
+#include "chronos/network/subscription_messages.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -15,6 +16,8 @@ enum class ClientSessionPhase : std::uint8_t { kCreated, kAwaitingServerHello, k
 struct NativeClientConfig {
   ConnectionBufferConfig buffers;
   std::size_t maximum_in_flight_requests{64U};
+  std::uint16_t maximum_protocol_minor{kProtocolMinor};
+  std::uint64_t requested_feature_bits{};
 };
 
 class NativeClientSession {
@@ -31,6 +34,12 @@ public:
   [[nodiscard]] common::Status queue_handshake();
   [[nodiscard]] common::Result<std::uint64_t> queue_query(std::string_view sql);
   [[nodiscard]] common::Result<std::uint64_t>
+  queue_subscription(const common::Uuid& subscription_id, std::string_view sql);
+  [[nodiscard]] common::Result<std::uint64_t>
+  queue_subscription_resume(const common::Uuid& subscription_id, common::ByteView resume_token);
+  [[nodiscard]] common::Status queue_subscription_acknowledgement(std::uint64_t request_id,
+                                                                  std::uint64_t delivery_sequence);
+  [[nodiscard]] common::Result<std::uint64_t>
   queue_ingest(DurabilityMode durability, common::ByteView encoded_columnar_append);
   [[nodiscard]] common::Status queue_cancel(std::uint64_t request_id);
   [[nodiscard]] common::Status queue_ping();
@@ -42,6 +51,8 @@ public:
   [[nodiscard]] ClientSessionPhase phase() const noexcept;
   [[nodiscard]] std::size_t in_flight_requests() const noexcept;
   [[nodiscard]] std::uint32_t negotiated_maximum_payload_size() const noexcept;
+  [[nodiscard]] std::uint16_t negotiated_minor() const noexcept;
+  [[nodiscard]] std::uint64_t negotiated_feature_bits() const noexcept;
 
 private:
   struct ActiveRequest {
@@ -49,6 +60,11 @@ private:
     MessageType type{MessageType::kQueryRequest};
     DurabilityMode durability{DurabilityMode::kAsync};
     bool query_result_ended{};
+    bool subscription_ready{};
+    bool cancellation_requested{};
+    std::uint64_t subscription_last_delivery{};
+    std::uint64_t subscription_last_acknowledged{};
+    std::uint64_t subscription_last_checkpoint{};
   };
 
   NativeClientSession(NativeClientConfig config, ConnectionBuffers buffers,
@@ -64,6 +80,8 @@ private:
   ClientSessionPhase phase_{ClientSessionPhase::kCreated};
   std::uint64_t last_request_id_{};
   std::uint32_t negotiated_maximum_payload_size_{};
+  std::uint16_t negotiated_minor_{};
+  std::uint64_t negotiated_feature_bits_{};
 };
 
 } // namespace chronos::network

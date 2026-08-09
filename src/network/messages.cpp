@@ -156,14 +156,17 @@ fixed_query_cell_size(const schema::LogicalTypeKind kind) noexcept {
 [[nodiscard]] common::Status validate_hello_range(const ClientHello& hello) {
   if (hello.minimum_major == 0U || hello.minimum_major > hello.maximum_major)
     return invalid("CLIENT_HELLO protocol range is invalid");
-  if ((hello.feature_bits & ~kProtocolV1FeatureBits) != 0U)
+  if ((hello.feature_bits & ~kProtocolV1SupportedFeatureBits) != 0U)
     return invalid("CLIENT_HELLO requests unknown feature bits");
+  if (hello.maximum_minor == 0U && hello.feature_bits != 0U)
+    return invalid("CLIENT_HELLO Protocol 1.0 cannot request extension features");
   return validate_protocol_limits({.maximum_payload_size = hello.maximum_payload_size});
 }
 
 [[nodiscard]] common::Status validate_server_hello(const ServerHello& hello) {
-  if (hello.selected_major != kProtocolMajor || hello.selected_minor != kProtocolMinor ||
-      hello.feature_bits != kProtocolV1FeatureBits)
+  if (hello.selected_major != kProtocolMajor || hello.selected_minor > kProtocolLatestMinor ||
+      (hello.feature_bits & ~kProtocolV1SupportedFeatureBits) != 0U ||
+      (hello.selected_minor == 0U && hello.feature_bits != 0U))
     return invalid("SERVER_HELLO selection is unsupported");
   return validate_protocol_limits({.maximum_payload_size = hello.maximum_payload_size});
 }

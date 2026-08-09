@@ -1,10 +1,10 @@
 # Live Query Semantics
 
-> **Status: logical single-source core implemented; service integration incomplete.** Resume Token
-> v1, bounded register-before-boundary buffering, poll/acknowledge/resume, overflow, incremental
-> numeric state, and tumbling/sliding materialized-view windows are implemented. SQL snapshot
-> execution, native-protocol delivery, multi-tablet ordering, and durable view recovery are not yet
-> wired. The contract provides at-least-once external delivery, not exactly-once consumer effects.
+> **Status: single-source core, durable views, and Protocol 1.1 delivery implemented; service
+> integration incomplete.** Resume Token v1, bounded register-before-boundary buffering,
+> poll/acknowledge/resume, overflow, incremental windows, exact durable view recovery, and negotiated
+> native subscription delivery are implemented. SQL snapshot execution and multi-tablet ordering are
+> not yet wired. The contract provides at-least-once external delivery, not exactly-once effects.
 
 Eligible SQL and row visibility follow [SQL v1](sql-v1.md), the [data model](data-model.md), and the [consistency contract](consistency-and-durability.md).
 
@@ -26,7 +26,10 @@ Releasing the post-`C` pin before buffered changes are safely owned is forbidden
 ## Delivery records
 
 - **Snapshot row:** one row of the finite result at `C`, tagged `SNAPSHOT_ROW`. Snapshot order follows SQL `ORDER BY` when present; otherwise order has no relational meaning even if transport ordinals are stable.
-- **Change record:** a versioned envelope containing subscription/query-plan identity, schema identity, sequence number, committed source position, operation, result key, payload where applicable, window status, and a resumable checkpoint.
+- **Change record:** a versioned envelope containing schema identity, sequence number, committed
+  source position, operation, result key, and payload where applicable. The active request and its
+  bound resume token carry subscription/query-plan identity; an explicit acknowledgement returns a
+  new resumable checkpoint.
 - **`UPSERT`:** replace or create the current result value for a result key. Reapplying the same or an older sequence is an idempotent consumer no-op.
 - **`DELETE`:** remove the current result value for a result key. Deleting an absent key is an idempotent no-op.
 - **Result key:** source logical row identity for row subscriptions, or the encoded grouping keys plus window bounds for aggregates.
@@ -89,4 +92,7 @@ A resume token is opaque, versioned, integrity-protected, and scoped to database
 - **Cancellation:** idempotently stop new output, release buffers/pins, and return the last safe token if available. It does not roll back committed source writes.
 - **Schema change:** v1 terminates an affected subscription at a committed boundary with `SCHEMA_CHANGED`. The old token cannot bind to a different plan; the client registers a new plan/snapshot. A future compatibility analysis may allow provably irrelevant additive changes.
 
-Plan fingerprint encoding, merged multi-tablet ordering, token bytes, acknowledgment protocol, state-retention defaults, window trigger cadence, spill, and the exact eligible incremental SQL subset remain deferred. Every choice must preserve [invariant 17](../architecture/invariants.md).
+Merged multi-tablet ordering, service plan binding, state-retention defaults, window trigger cadence,
+spill, and the exact eligible incremental SQL subset remain deferred. Resume Token v1 bytes and the
+Protocol 1.1 acknowledgement/checkpoint lifecycle are implemented. Every later choice must preserve
+[invariant 17](../architecture/invariants.md).

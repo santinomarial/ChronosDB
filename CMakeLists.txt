@@ -413,6 +413,7 @@ add_library(
   src/network/reactor.cpp
   src/network/security.cpp
   src/network/spsc_queue.cpp
+  src/network/subscription_messages.cpp
 )
 add_library(chronos::network ALIAS chronos_network)
 set_target_properties(chronos_network PROPERTIES EXPORT_NAME network CXX_EXTENSIONS OFF)
@@ -463,6 +464,7 @@ add_library(
   src/live/materialized_view_checkpoint_storage.cpp
   src/live/resume_token.cpp
   src/live/subscription.cpp
+  src/live/subscription_protocol.cpp
 )
 add_library(chronos::live ALIAS chronos_live)
 set_target_properties(chronos_live PROPERTIES EXPORT_NAME live CXX_EXTENSIONS OFF)
@@ -475,7 +477,7 @@ target_include_directories(
 )
 target_link_libraries(
   chronos_live
-  PUBLIC chronos::common chronos::schema chronos::wal
+  PUBLIC chronos::common chronos::network chronos::schema chronos::wal
   PRIVATE OpenSSL::Crypto
 )
 chronos_set_project_warnings(chronos_live)
@@ -624,6 +626,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/network/security_test.cpp
     tests/network/spsc_queue_header_self_contained.cpp
     tests/network/spsc_queue_test.cpp
+    tests/network/subscription_messages_header_self_contained.cpp
+    tests/network/subscription_messages_test.cpp
   )
   set_target_properties(chronos_network_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_network_tests PRIVATE cxx_std_23)
@@ -683,6 +687,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/live/resume_token_header_self_contained.cpp
     tests/live/resume_token_test.cpp
     tests/live/subscription_header_self_contained.cpp
+    tests/live/subscription_protocol_header_self_contained.cpp
+    tests/live/subscription_protocol_test.cpp
     tests/live/subscription_test.cpp
   )
   set_target_properties(chronos_live_tests PROPERTIES CXX_EXTENSIONS OFF)

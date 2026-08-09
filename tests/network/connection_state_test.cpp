@@ -1,16 +1,28 @@
 #include "chronos/network/connection_state.hpp"
 
+#include <array>
 #include <gtest/gtest.h>
 
 namespace chronos::network {
 namespace {
 
 [[nodiscard]] Frame frame(const MessageType type, const std::uint64_t id,
-                          std::vector<std::byte> payload = {}) {
-  return {.header = {.message_type = type,
+                          std::vector<std::byte> payload = {}, const std::uint16_t minor = 0U) {
+  return {.header = {.protocol_minor = minor,
+                     .message_type = type,
                      .request_id = id,
                      .payload_size = static_cast<std::uint32_t>(payload.size())},
           .payload = std::move(payload)};
+}
+
+[[nodiscard]] common::Uuid uuid(const std::byte seed) {
+  common::Uuid::Bytes bytes{};
+  bytes.fill(seed);
+  return common::Uuid{bytes};
+}
+
+template <typename Identifier> [[nodiscard]] Identifier identifier(const std::byte seed) {
+  return Identifier::from_uuid(uuid(seed)).value();
 }
 
 TEST(ServerConnectionStateTest, RequiresHelloNegotiatesLimitsAndAcceptsLifecycles) {
@@ -91,6 +103,87 @@ TEST(ServerConnectionStateTest, RequiresExactQueryResponseStreamCompletion) {
   EXPECT_FALSE(state.accept_response(frame(MessageType::kQueryResult, 1U)).is_ok());
   EXPECT_TRUE(state.accept_response(frame(MessageType::kQueryEnd, 1U)).is_ok());
   EXPECT_EQ(state.in_flight_requests(), 0U);
+}
+
+TEST(ServerConnectionStateTest, NegotiatesAndEnforcesSubscriptionLifecycle) {
+  ServerConnectionState state = ServerConnectionState::create().value();
+  const auto handshake = state.accept(frame(
+      MessageType::kClientHello, 0U,
+      *encode_client_hello({.maximum_minor = 1U, .feature_bits = kProtocolV1SubscriptionFeature})));
+  ASSERT_TRUE(handshake.has_value()) << handshake.error().to_string();
+  EXPECT_EQ(handshake->negotiated_minor, 1U);
+  EXPECT_EQ(handshake->negotiated_feature_bits, kProtocolV1SubscriptionFeature);
+
+  const auto subscription = state.accept(
+      frame(MessageType::kSubscribeRequest, 1U,
+            *encode_subscription_request({.mode = SubscriptionStartMode::kNewQuery,
+                                          .subscription_id = uuid(std::byte{1}),
+                                          .body = std::as_bytes(std::span{"SELECT 1", 8U})}),
+            1U));
+  ASSERT_TRUE(subscription.has_value()) << subscription.error().to_string();
+  EXPECT_EQ(subscription->kind, InboundActionKind::kSubscribe);
+
+  EXPECT_TRUE(state
+                  .accept_response({.header = {.message_type = MessageType::kQueryResult,
+                                               .flags = kFrameFlagEndStream,
+                                               .request_id = 1U},
+                                    .payload = {}})
+                  .is_ok());
+  const std::array<std::byte, 1> token{std::byte{9}};
+  EXPECT_TRUE(state
+                  .accept_response(
+                      frame(MessageType::kSubscriptionReady, 1U, *encode_subscription_ready(token)))
+                  .is_ok());
+
+  SubscriptionLogId log{};
+  log.fill(std::byte{4});
+  const std::array<std::byte, 1> key{std::byte{5}};
+  const std::array<std::byte, 1> body{std::byte{6}};
+  const auto change = encode_subscription_change({SubscriptionChangeOperation::kUpsert, 7U,
+                                                  identifier<schema::TabletId>(std::byte{2}), log,
+                                                  3U, identifier<schema::SchemaId>(std::byte{3}),
+                                                  schema::SchemaVersion::initial(), key, body});
+  ASSERT_TRUE(change.has_value());
+  EXPECT_TRUE(state.accept_response(frame(MessageType::kSubscriptionChange, 1U, *change)).is_ok());
+  const auto acknowledgement = state.accept(frame(MessageType::kSubscriptionAcknowledge, 1U,
+                                                  *encode_subscription_acknowledgement({7U}), 1U));
+  ASSERT_TRUE(acknowledgement.has_value()) << acknowledgement.error().to_string();
+  EXPECT_EQ(acknowledgement->kind, InboundActionKind::kSubscriptionAcknowledge);
+  EXPECT_EQ(acknowledgement->acknowledged_delivery_sequence, 7U);
+  EXPECT_TRUE(state
+                  .accept_response(
+                      frame(MessageType::kSubscriptionCheckpoint, 1U,
+                            *encode_subscription_checkpoint(
+                                {.acknowledged_delivery_sequence = 7U, .resume_token = token})))
+                  .is_ok());
+
+  const auto cancellation = state.accept(frame(MessageType::kCancel, 1U, {}, 1U));
+  ASSERT_TRUE(cancellation.has_value());
+  EXPECT_TRUE(cancellation->cancellation_was_active);
+  EXPECT_TRUE(state.active_request_type(1U).has_value());
+  EXPECT_FALSE(state.accept(frame(MessageType::kCancel, 1U, {}, 1U))->cancellation_was_active);
+  EXPECT_TRUE(state
+                  .accept_response(
+                      frame(MessageType::kSubscriptionEnd, 1U,
+                            *encode_subscription_end({.reason = SubscriptionEndReason::kCancelled,
+                                                      .safe_delivery_sequence = 7U,
+                                                      .resume_token = token})))
+                  .is_ok());
+  EXPECT_EQ(state.in_flight_requests(), 0U);
+}
+
+TEST(ServerConnectionStateTest, RejectsSubscriptionWithoutNegotiatedMinorAndFeature) {
+  ServerConnectionState state = ServerConnectionState::create().value();
+  ASSERT_TRUE(
+      state.accept(frame(MessageType::kClientHello, 0U, *encode_client_hello({}))).has_value());
+  EXPECT_FALSE(state
+                   .accept(frame(MessageType::kSubscribeRequest, 1U,
+                                 *encode_subscription_request(
+                                     {.mode = SubscriptionStartMode::kNewQuery,
+                                      .subscription_id = uuid(std::byte{1}),
+                                      .body = std::as_bytes(std::span{"SELECT 1", 8U})}),
+                                 1U))
+                   .has_value());
 }
 
 } // namespace

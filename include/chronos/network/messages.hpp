@@ -15,6 +15,8 @@
 namespace chronos::network {
 
 inline constexpr std::uint16_t kMessagePayloadFormat = 1U;
+// Zero remains the Protocol 1.0 feature set. Minor-1 features are declared by their owning
+// extension headers and validated against the complete supported mask in messages.cpp.
 inline constexpr std::uint64_t kProtocolV1FeatureBits = 0U;
 inline constexpr std::size_t kHelloPayloadSize = 24U;
 inline constexpr std::size_t kIngestEnvelopeSize = 8U;

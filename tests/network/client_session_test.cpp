@@ -17,8 +17,40 @@ namespace {
 
 [[nodiscard]] std::vector<std::byte> server_frame(const MessageType type, const std::uint64_t id,
                                                   const common::ByteView payload = {},
-                                                  const std::uint32_t flags = 0U) {
-  return encode_frame({.message_type = type, .flags = flags, .request_id = id}, payload).value();
+                                                  const std::uint32_t flags = 0U,
+                                                  const std::uint16_t minor = 0U) {
+  return encode_frame(
+             {.protocol_minor = minor, .message_type = type, .flags = flags, .request_id = id},
+             payload)
+      .value();
+}
+
+void complete_subscription_handshake(NativeClientSession& client) {
+  ASSERT_TRUE(client.queue_handshake().is_ok());
+  const auto hello_frame = decode_frame(take_pending(client));
+  ASSERT_TRUE(hello_frame.has_value());
+  const auto hello = decode_client_hello(hello_frame->payload);
+  ASSERT_TRUE(hello.has_value());
+  ASSERT_EQ(hello->maximum_minor, 1U);
+  ASSERT_EQ(hello->feature_bits, kProtocolV1SubscriptionFeature);
+  ASSERT_TRUE(client
+                  .receive(server_frame(
+                      MessageType::kServerHello, 0U,
+                      *encode_server_hello(
+                          {.selected_minor = 1U, .feature_bits = kProtocolV1SubscriptionFeature})))
+                  .has_value());
+  ASSERT_EQ(client.negotiated_minor(), 1U);
+  ASSERT_EQ(client.negotiated_feature_bits(), kProtocolV1SubscriptionFeature);
+}
+
+[[nodiscard]] common::Uuid uuid(const std::byte seed) {
+  common::Uuid::Bytes bytes{};
+  bytes.fill(seed);
+  return common::Uuid{bytes};
+}
+
+template <typename Identifier> [[nodiscard]] Identifier identifier(const std::byte seed) {
+  return Identifier::from_uuid(uuid(seed)).value();
 }
 
 void complete_handshake(NativeClientSession& client) {
@@ -97,6 +129,81 @@ TEST(NativeClientSessionTest, FailsClosedOnWrongDirectionOrPrematureQueryEnd) {
   complete_handshake(wrong_direction);
   EXPECT_FALSE(wrong_direction.receive(server_frame(MessageType::kClientHello, 0U)).has_value());
   EXPECT_EQ(wrong_direction.phase(), ClientSessionPhase::kClosed);
+}
+
+TEST(NativeClientSessionTest, DrivesNegotiatedAtLeastOnceSubscriptionLifecycle) {
+  NativeClientSession client =
+      NativeClientSession::create(
+          {.maximum_protocol_minor = 1U, .requested_feature_bits = kProtocolV1SubscriptionFeature})
+          .value();
+  complete_subscription_handshake(client);
+  const std::uint64_t request_id =
+      client.queue_subscription(uuid(std::byte{1}), "SELECT * FROM trades").value();
+  const auto request_frame = decode_frame(take_pending(client));
+  ASSERT_TRUE(request_frame.has_value());
+  EXPECT_EQ(request_frame->header.protocol_minor, 1U);
+  EXPECT_EQ(request_frame->header.message_type, MessageType::kSubscribeRequest);
+  EXPECT_EQ(decode_subscription_request(request_frame->payload)->mode,
+            SubscriptionStartMode::kNewQuery);
+
+  const schema::LogicalType type =
+      schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
+  const std::array<QueryResultColumn, 1> columns{
+      QueryResultColumn{.name = "value", .type = type, .nullable = false}};
+  const auto empty_snapshot = encode_query_result_batch(0U, columns, {}).value();
+  ASSERT_TRUE(client
+                  .receive(server_frame(MessageType::kQueryResult, request_id, empty_snapshot,
+                                        kFrameFlagEndStream, 1U))
+                  .has_value());
+  const std::array<std::byte, 2> token{std::byte{8}, std::byte{9}};
+  ASSERT_TRUE(client
+                  .receive(server_frame(MessageType::kSubscriptionReady, request_id,
+                                        *encode_subscription_ready(token), 0U, 1U))
+                  .has_value());
+
+  SubscriptionLogId log{};
+  log.fill(std::byte{4});
+  const std::array<std::byte, 1> key{std::byte{5}};
+  const std::array<std::byte, 1> body{std::byte{6}};
+  const auto change = encode_subscription_change({SubscriptionChangeOperation::kUpsert, 1U,
+                                                  identifier<schema::TabletId>(std::byte{2}), log,
+                                                  3U, identifier<schema::SchemaId>(std::byte{3}),
+                                                  schema::SchemaVersion::initial(), key, body});
+  ASSERT_TRUE(change.has_value());
+  ASSERT_TRUE(
+      client.receive(server_frame(MessageType::kSubscriptionChange, request_id, *change, 0U, 1U))
+          .has_value());
+  EXPECT_TRUE(client.queue_subscription_acknowledgement(request_id, 1U).is_ok());
+  const auto acknowledge_frame = decode_frame(take_pending(client));
+  ASSERT_TRUE(acknowledge_frame.has_value());
+  EXPECT_EQ(acknowledge_frame->header.message_type, MessageType::kSubscriptionAcknowledge);
+  EXPECT_EQ(decode_subscription_acknowledgement(acknowledge_frame->payload)->delivery_sequence, 1U);
+  ASSERT_TRUE(
+      client
+          .receive(server_frame(MessageType::kSubscriptionCheckpoint, request_id,
+                                *encode_subscription_checkpoint(
+                                    {.acknowledged_delivery_sequence = 1U, .resume_token = token}),
+                                0U, 1U))
+          .has_value());
+
+  EXPECT_TRUE(client.queue_cancel(request_id).is_ok());
+  EXPECT_EQ(client.in_flight_requests(), 1U);
+  static_cast<void>(take_pending(client));
+  EXPECT_TRUE(client
+                  .receive(server_frame(
+                      MessageType::kSubscriptionEnd, request_id,
+                      *encode_subscription_end({.reason = SubscriptionEndReason::kCancelled,
+                                                .safe_delivery_sequence = 1U,
+                                                .resume_token = token}),
+                      0U, 1U))
+                  .has_value());
+  EXPECT_EQ(client.in_flight_requests(), 0U);
+}
+
+TEST(NativeClientSessionTest, RefusesSubscriptionWithoutNegotiation) {
+  NativeClientSession client = NativeClientSession::create().value();
+  complete_handshake(client);
+  EXPECT_FALSE(client.queue_subscription(uuid(std::byte{1}), "SELECT 1").has_value());
 }
 
 } // namespace

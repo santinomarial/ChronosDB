@@ -38,6 +38,12 @@ constexpr std::size_t kHeaderCrcOffset = 36U;
   case MessageType::kQueryRequest:
   case MessageType::kQueryResult:
   case MessageType::kQueryEnd:
+  case MessageType::kSubscribeRequest:
+  case MessageType::kSubscriptionReady:
+  case MessageType::kSubscriptionChange:
+  case MessageType::kSubscriptionAcknowledge:
+  case MessageType::kSubscriptionCheckpoint:
+  case MessageType::kSubscriptionEnd:
   case MessageType::kCancel:
   case MessageType::kError:
   case MessageType::kPing:
@@ -45,6 +51,20 @@ constexpr std::size_t kHeaderCrcOffset = 36U;
     return true;
   }
   return false;
+}
+
+[[nodiscard]] std::uint16_t minimum_minor(const MessageType type) noexcept {
+  switch (type) {
+  case MessageType::kSubscribeRequest:
+  case MessageType::kSubscriptionReady:
+  case MessageType::kSubscriptionChange:
+  case MessageType::kSubscriptionAcknowledge:
+  case MessageType::kSubscriptionCheckpoint:
+  case MessageType::kSubscriptionEnd:
+    return 1U;
+  default:
+    return 0U;
+  }
 }
 
 [[nodiscard]] common::Status validate_flags(const MessageType type, const std::uint32_t flags) {
@@ -84,6 +104,11 @@ common::Result<std::vector<std::byte>> encode_frame(const FrameDescriptor& descr
                                                     const ProtocolLimits& limits) {
   const MessageType message_type = descriptor.message_type;
   const std::uint32_t flags = descriptor.flags;
+  if (descriptor.protocol_minor > kProtocolLatestMinor ||
+      descriptor.protocol_minor < minimum_minor(message_type)) {
+    return common::make_unexpected(
+        invalid("protocol message is unavailable in this minor version"));
+  }
   if (!is_known_message_type(static_cast<std::uint16_t>(message_type)))
     return common::make_unexpected(invalid("protocol message type is unassigned"));
   if (const common::Status status = validate_flags(message_type, flags); !status.is_ok())
@@ -98,7 +123,8 @@ common::Result<std::vector<std::byte>> encode_frame(const FrameDescriptor& descr
       return common::make_unexpected(status);
     if (const common::Status status = writer.write_u16_le(kProtocolMajor); !status.is_ok())
       return common::make_unexpected(status);
-    if (const common::Status status = writer.write_u16_le(kProtocolMinor); !status.is_ok())
+    if (const common::Status status = writer.write_u16_le(descriptor.protocol_minor);
+        !status.is_ok())
       return common::make_unexpected(status);
     if (const common::Status status =
             writer.write_u16_le(static_cast<std::uint16_t>(kFrameHeaderSize));
@@ -157,7 +183,7 @@ common::Result<FrameHeader> decode_frame_header(const common::ByteView bytes,
   }
   if (*magic != kProtocolMagic)
     return common::make_unexpected(corrupt("protocol frame magic does not match Protocol v1"));
-  if (*major != kProtocolMajor || *minor > kProtocolMinor)
+  if (*major != kProtocolMajor || *minor > kProtocolLatestMinor)
     return common::make_unexpected(corrupt("protocol frame version is unsupported"));
   if (*header_size != kFrameHeaderSize)
     return common::make_unexpected(corrupt("protocol frame header size is unsupported"));
@@ -165,13 +191,15 @@ common::Result<FrameHeader> decode_frame_header(const common::ByteView bytes,
     return common::make_unexpected(corrupt("protocol frame message type is unassigned"));
   if (*reserved != 0U)
     return common::make_unexpected(corrupt("protocol frame reserved field is nonzero"));
-  if (*payload_size > limits.maximum_payload_size)
-    return common::make_unexpected(corrupt("protocol payload exceeds the configured frame limit"));
-  if (common::crc32c(bytes.first(kHeaderCrcOffset)) != *stored_header_crc)
-    return common::make_unexpected(corrupt("protocol frame header CRC32C does not match"));
   const MessageType type = static_cast<MessageType>(*raw_type);
+  if (*minor < minimum_minor(type))
+    return common::make_unexpected(corrupt("protocol message requires a newer minor version"));
   if (const common::Status status = validate_flags(type, *flags); !status.is_ok())
     return common::make_unexpected(status);
+  if (common::crc32c(bytes.first(kHeaderCrcOffset)) != *stored_header_crc)
+    return common::make_unexpected(corrupt("protocol frame header CRC32C does not match"));
+  if (*payload_size > limits.maximum_payload_size)
+    return common::make_unexpected(corrupt("protocol payload exceeds the configured frame limit"));
   return FrameHeader{.protocol_major = *major,
                      .protocol_minor = *minor,
                      .message_type = type,

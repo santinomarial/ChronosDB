@@ -1,6 +1,7 @@
 #include "chronos/network/epoll_reactor.hpp"
 
 #include "chronos/network/messages.hpp"
+#include "chronos/network/subscription_messages.hpp"
 
 #include <algorithm>
 #include <limits>
@@ -124,8 +125,11 @@ public:
                                        const std::uint64_t request_id,
                                        const common::ByteView payload,
                                        const std::uint32_t flags = 0U) {
-    auto encoded = encode_frame({.message_type = type, .flags = flags, .request_id = request_id},
-                                payload, config.buffers.protocol);
+    const std::uint16_t minor =
+        type == MessageType::kServerHello ? 0U : connection.state.negotiated_minor();
+    auto encoded = encode_frame(
+        {.protocol_minor = minor, .message_type = type, .flags = flags, .request_id = request_id},
+        payload, config.buffers.protocol);
     if (!encoded.has_value())
       return encoded.error();
     const common::Status status = connection.buffers.enqueue(std::move(*encoded));
@@ -160,7 +164,9 @@ public:
     switch (action->kind) {
     case InboundActionKind::kHandshake: {
       auto hello =
-          encode_server_hello({.maximum_payload_size = action->negotiated_maximum_payload_size});
+          encode_server_hello({.selected_minor = action->negotiated_minor,
+                               .feature_bits = action->negotiated_feature_bits,
+                               .maximum_payload_size = action->negotiated_maximum_payload_size});
       if (!hello.has_value() ||
           !enqueue(connection, MessageType::kServerHello, 0U,
                    hello.has_value() ? common::ByteView{*hello} : common::ByteView{})
@@ -178,6 +184,8 @@ public:
       break;
     case InboundActionKind::kIngest:
     case InboundActionKind::kQuery:
+    case InboundActionKind::kSubscribe:
+    case InboundActionKind::kSubscriptionAcknowledge:
       break;
     }
     if (!requests->try_push({.connection_id = connection.id,
@@ -350,6 +358,7 @@ public:
       const bool is_ingest_response =
           frame.header.message_type == MessageType::kIngestAcknowledgement;
       const bool is_terminal_error = frame.header.message_type == MessageType::kError;
+      const SubscriptionMessageLimits subscription_limits{.protocol = config.buffers.protocol};
       const bool payload_is_valid =
           (frame.header.message_type == MessageType::kQueryResult &&
            decode_query_result_batch(frame.payload, {.protocol = config.buffers.protocol,
@@ -359,13 +368,22 @@ public:
                .has_value()) ||
           (frame.header.message_type == MessageType::kQueryEnd && frame.payload.empty()) ||
           (is_ingest_response && decode_ingest_acknowledgement(frame.payload).has_value()) ||
+          (frame.header.message_type == MessageType::kSubscriptionReady &&
+           decode_subscription_ready(frame.payload, subscription_limits).has_value()) ||
+          (frame.header.message_type == MessageType::kSubscriptionChange &&
+           decode_subscription_change(frame.payload, subscription_limits).has_value()) ||
+          (frame.header.message_type == MessageType::kSubscriptionCheckpoint &&
+           decode_subscription_checkpoint(frame.payload, subscription_limits).has_value()) ||
+          (frame.header.message_type == MessageType::kSubscriptionEnd &&
+           decode_subscription_end(frame.payload, subscription_limits).has_value()) ||
           (is_terminal_error &&
            decode_error_message(frame.payload, config.buffers.protocol).has_value());
       if (!payload_is_valid || !found->second.state.accept_response(frame).is_ok()) {
         ++stats.dropped_responses;
         continue;
       }
-      auto encoded = encode_frame({.message_type = frame.header.message_type,
+      auto encoded = encode_frame({.protocol_minor = found->second.state.negotiated_minor(),
+                                   .message_type = frame.header.message_type,
                                    .flags = frame.header.flags,
                                    .request_id = frame.header.request_id},
                                   frame.payload, config.buffers.protocol);

@@ -88,5 +88,33 @@ TEST(ProtocolFrameTest, EmptyPayloadHasAnExactBoundedFrame) {
   EXPECT_EQ(decoded->header.payload_crc32c, common::crc32c({}));
 }
 
+TEST(ProtocolFrameTest, GatesSubscriptionTypesOnMinorOneWithoutChangingMinorZero) {
+  EXPECT_FALSE(encode_frame({.message_type = MessageType::kSubscribeRequest}, {}).has_value());
+  const auto encoded = encode_frame(
+      {.protocol_minor = 1U, .message_type = MessageType::kSubscribeRequest, .request_id = 1U}, {});
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  const auto decoded = decode_frame(*encoded);
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  EXPECT_EQ(decoded->header.protocol_minor, 1U);
+  EXPECT_EQ(decoded->header.message_type, MessageType::kSubscribeRequest);
+  EXPECT_FALSE(
+      encode_frame(
+          {.protocol_minor = kProtocolLatestMinor + 1U, .message_type = MessageType::kPing}, {})
+          .has_value());
+}
+
+TEST(ProtocolFrameTest, RejectsUnassignedU16TypeThatAliasesAnAssignedLowByte) {
+  std::vector<std::byte> encoded =
+      *encode_frame({.protocol_minor = 1U, .message_type = MessageType::kSubscribeRequest}, {});
+  encoded[10] = std::byte{0x17};
+  encoded[11] = std::byte{0x01}; // 279 must not truncate to assigned type 23.
+  const std::uint32_t crc = common::crc32c(common::ByteView{encoded}.first(36U));
+  encoded[36] = static_cast<std::byte>(crc & 0xffU);
+  encoded[37] = static_cast<std::byte>((crc >> 8U) & 0xffU);
+  encoded[38] = static_cast<std::byte>((crc >> 16U) & 0xffU);
+  encoded[39] = static_cast<std::byte>((crc >> 24U) & 0xffU);
+  EXPECT_FALSE(decode_frame(encoded).has_value());
+}
+
 } // namespace
 } // namespace chronos::network

@@ -77,8 +77,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 
 ## Network protocols
 
-- [Native Protocol v1](protocol/native-v1.md): accepted fixed checksummed framing, assigned message
-  types, finite limits, compatibility, and rejection rules.
+- [Native Protocol v1](protocol/native-v1.md): fixed checksummed 1.0 framing plus negotiated 1.1
+  subscription delivery, finite limits, compatibility, and rejection rules.
 
 ## Delivery
 

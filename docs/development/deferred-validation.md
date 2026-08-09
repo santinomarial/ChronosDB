@@ -20,8 +20,9 @@
 - Multi-tablet registration/merge ordering, topology epochs, retention pins, service plan-to-input
   suffix replay, physical source deletion after the implemented durable owner frontier, schema
   migration, process restart integration, and obsolete-generation reclamation.
-- Native-protocol subscription messages, partial delivery, disconnect/reconnect, duplicate replay,
-  schema-change termination, cancellation races, and network backpressure integration.
+- Real-socket Protocol 1.1 partial delivery, disconnect/reconnect, duplicate replay, schema-change
+  termination, cancellation races, allocation faults, mixed-version peers, and sustained network
+  backpressure integration around the implemented subscription messages and lifecycle.
 - Full unit/property coverage for token hostile sizes/versions, retention expiry disclosure,
   subscriber fan-out, slow consumers, window expiration, negative event times, overflow, NaN,
   floating reproducibility, integer/decimal overflow, VWAP zero weight, OHLC endpoint removal,

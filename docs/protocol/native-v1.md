@@ -1,8 +1,8 @@
 # ChronosDB Native Protocol v1
 
-> **Status: accepted specification; fixed framing, message payloads, and request state implemented.** This document controls the
-> Protocol v1 byte layout and compatibility rules. Payload and connection-state sections identify
-> their implementation status independently. ADR 0060 accepts the frame contract.
+> **Status: accepted specification; Protocol 1.0 and feature-gated 1.1 subscriptions implemented.**
+> This document controls the Protocol v1 byte layout and compatibility rules. ADR 0060 accepts the
+> frame contract and ADR 0094 accepts the minor-1 subscription extension.
 
 ## Scope and normative language
 
@@ -11,15 +11,16 @@ little-endian values of the stated width. Byte ranges are half-open. Encoders wr
 individually and never dump a native structure. CRC32C uses the Castagnoli parameters defined by
 WAL v1 and is serialized as a little-endian u32.
 
-Protocol v1 frames handshake, ingest, query, cancellation, error, and liveness messages. It does
-not define subscriptions, resume tokens, distributed routing, compression, or TLS records.
+Protocol v1 frames handshake, ingest, query, subscriptions, cancellation, error, and liveness
+messages. It does not define distributed routing, compression, or TLS records. Resume tokens remain
+opaque independently authenticated bytes carried by the subscription extension.
 
 ## Limits
 
 | Name | Value |
 | --- | ---: |
 | Header size | 40 bytes |
-| Protocol major/minor | 1/0 |
+| Protocol baseline/latest minor | 1.0 / 1.1 |
 | Maximum payload | 16,777,216 bytes |
 | Maximum complete frame | 16,777,256 bytes |
 
@@ -32,7 +33,7 @@ allocation. A peer cannot negotiate above the Protocol v1 ceiling.
 | ---: | ---: | --- | --- |
 | 0 | 4 | `magic` | bytes `43 44 42 31` (`CDB1`) |
 | 4 | 2 | `protocol_major` | `1` |
-| 6 | 2 | `protocol_minor` | emitted as `0` |
+| 6 | 2 | `protocol_minor` | selected session minor; hello frames use `0` |
 | 8 | 2 | `header_size` | `40` |
 | 10 | 2 | `message_type` | assigned below |
 | 12 | 4 | `flags` | assigned below |
@@ -57,6 +58,12 @@ length.
 | 20 | `QUERY_REQUEST` | client to server |
 | 21 | `QUERY_RESULT` | server to client |
 | 22 | `QUERY_END` | server to client |
+| 23 | `SUBSCRIBE_REQUEST` | client to server, negotiated 1.1 only |
+| 24 | `SUBSCRIPTION_READY` | server to client, negotiated 1.1 only |
+| 25 | `SUBSCRIPTION_CHANGE` | server to client, negotiated 1.1 only |
+| 26 | `SUBSCRIPTION_ACKNOWLEDGE` | client to server, negotiated 1.1 only |
+| 27 | `SUBSCRIPTION_CHECKPOINT` | server to client, negotiated 1.1 only |
+| 28 | `SUBSCRIPTION_END` | server to client, negotiated 1.1 only |
 | 30 | `CANCEL` | client to server |
 | 31 | `ERROR` | server to client |
 | 40 | `PING` | either direction after handshake |
@@ -83,10 +90,11 @@ protocol error and never permits partial dispatch.
 
 ## Compatibility
 
-An implementation emits major 1/minor 0. Before handshake negotiation exists, it accepts major 1
-and a minor not greater than 0. Unknown major versions, newer minor versions, header extensions,
-types, or flags fail closed. Later compatible minors require explicit handshake negotiation and
-golden compatibility fixtures before acceptance.
+The default frame encoder and every Protocol 1.0 session emit major 1/minor 0. Implementations also
+accept minor 1; a session emits it only after the hello payload selects 1.1. Hello frames themselves
+use 1.0 framing so both versions can parse negotiation. Every post-handshake frame uses the selected
+minor exactly. Types 23–28 require selected minor 1 and feature bit 0. Unknown major versions, newer
+minor versions, header extensions, types, flags, or feature bits fail closed.
 
 ## Security boundary
 
@@ -105,18 +113,21 @@ The first client frame MUST be `CLIENT_HELLO` with request ID zero. Its fixed 24
 | 2 | 2 | minimum major |
 | 4 | 2 | maximum major |
 | 6 | 2 | maximum minor |
-| 8 | 8 | requested feature bits; zero in v1 |
+| 8 | 8 | requested feature bits; zero in 1.0, subscription bit 0 in 1.1 |
 | 16 | 4 | requested maximum payload |
 | 20 | 4 | reserved zero |
 
 `SERVER_HELLO` uses the same size with selected major at offset 2, selected minor at 4, zero at 6,
-accepted feature bits at 8, effective maximum payload at 16, and reserved zero at 20. No request is
-admitted before a compatible 1.0 handshake.
+accepted feature bits at 8, effective maximum payload at 16, and reserved zero at 20. Protocol 1.0
+has zero feature bits. Protocol 1.1 assigns bit 0 to subscriptions. The server selects the highest
+common minor and the intersection of requested and supported features. No request is admitted before
+a compatible handshake.
 
-Ingest/query IDs are positive and strictly increase per connection. They cannot be reused after
-completion or cancellation. The configured active-request limit fails immediately with overload.
-`CANCEL` has an empty payload and names an already issued ID; repeating cancellation is a successful
-no-op. PING has request ID zero and an empty payload.
+Ingest/query/subscription IDs are positive and strictly increase per connection. They cannot be
+reused after completion or cancellation. The configured active-request limit fails immediately with
+overload. `CANCEL` has an empty payload and names an already issued ID; repeating cancellation is a
+successful no-op. Ingest/query ownership ends immediately; subscription ownership remains only for
+its terminal token response. PING has request ID zero and an empty payload.
 
 ## Ingest and query payloads
 
@@ -147,6 +158,53 @@ forbids a later result batch, while an empty `QUERY_END` separately confirms suc
 Unicode-scalar UTF-8 diagnostic. Codes cover malformed frames, unsupported version, invalid state,
 duplicate/unknown requests, overload, cancellation, invalid request, execution failure,
 unauthorized access, and internal failure.
+
+## Protocol 1.1 subscription payloads
+
+All payloads below use format u16 `1`. Variable lengths are u32 and must exactly consume the
+remaining payload within negotiated limits.
+
+`SUBSCRIBE_REQUEST` has a 28-byte envelope: format at 0, start mode u8 at 2 (`1` new query, `2`
+resume), zero u8 at 3, subscription UUID at 4, body length at 20, zero u32 at 24, then the body. A
+new body is nonempty Unicode-scalar UTF-8 SQL. A resume body is one nonempty opaque Resume Token.
+
+The historical result uses ordinary `QUERY_RESULT` batches. Its final batch carries `END_STREAM`.
+`SUBSCRIPTION_READY` then begins live state with format, zero u16, token length, and one nonempty
+initial Resume Token in an 8-byte envelope.
+
+`SUBSCRIPTION_CHANGE` has an 84-byte envelope:
+
+| Offset | Width | Field |
+| ---: | ---: | --- |
+| 0 | 2 | payload format `1` |
+| 2 | 1 | operation (`1` UPSERT, `2` DELETE) |
+| 3 | 1 | zero |
+| 4 | 8 | nonzero delivery sequence |
+| 12 | 16 | tablet UUID |
+| 28 | 16 | WAL/log identity |
+| 44 | 8 | nonzero committed record sequence |
+| 52 | 16 | schema UUID |
+| 68 | 8 | schema version |
+| 76 | 4 | nonzero result-key length |
+| 80 | 4 | result payload length |
+| 84 | variable | result key followed by payload |
+
+DELETE requires an empty result payload. UPSERT payload interpretation belongs to the bound plan.
+The full source position and schema identity make replay validation explicit; the delivery sequence
+is the at-least-once deduplication order, not event time.
+
+`SUBSCRIPTION_ACKNOWLEDGE` is 12 bytes: format, zero u16, and nonzero delivery sequence. It uses the
+active subscription request ID and does not consume a new request ID. The sequence cannot move
+backward or exceed delivered state.
+
+`SUBSCRIPTION_CHECKPOINT` has a 20-byte envelope: format, zero u16, acknowledged sequence u64,
+token length u32, zero u32, and the exact Resume Token. It confirms logical acknowledgement; socket
+write completion is not acknowledgement.
+
+`SUBSCRIPTION_END` has a 24-byte envelope: format, reason u16 (`1` cancelled, `2` schema changed,
+`3` state expired, `4` overflowed, `5` server shutdown), zero u32, safe sequence u64, token length
+u32, zero u32, and the final Resume Token. Client cancellation keeps the request active until this
+frame or `ERROR`, so the safe token is not lost. External delivery remains at least once.
 
 ## Compatibility fixtures and fuzzing
 

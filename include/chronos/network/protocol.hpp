@@ -12,11 +12,16 @@ namespace chronos::network {
 
 inline constexpr std::uint32_t kProtocolMagic = 0x31424443U;
 inline constexpr std::uint16_t kProtocolMajor = 1U;
+// Minor 0 is the frozen baseline emitted by callers that do not explicitly negotiate an
+// extension. Minor 1 adds the feature-gated subscription message family.
 inline constexpr std::uint16_t kProtocolMinor = 0U;
+inline constexpr std::uint16_t kProtocolLatestMinor = 1U;
+inline constexpr std::uint64_t kProtocolV1SubscriptionFeature = std::uint64_t{1U} << 0U;
+inline constexpr std::uint64_t kProtocolV1SupportedFeatureBits = kProtocolV1SubscriptionFeature;
 inline constexpr std::size_t kFrameHeaderSize = 40U;
 inline constexpr std::uint32_t kDefaultMaximumPayloadSize = 16U * 1024U * 1024U;
 
-enum class MessageType : std::uint8_t {
+enum class MessageType : std::uint16_t {
   kClientHello = 1,
   kServerHello = 2,
   kIngestRequest = 10,
@@ -24,6 +29,12 @@ enum class MessageType : std::uint8_t {
   kQueryRequest = 20,
   kQueryResult = 21,
   kQueryEnd = 22,
+  kSubscribeRequest = 23,
+  kSubscriptionReady = 24,
+  kSubscriptionChange = 25,
+  kSubscriptionAcknowledge = 26,
+  kSubscriptionCheckpoint = 27,
+  kSubscriptionEnd = 28,
   kCancel = 30,
   kError = 31,
   kPing = 40,
@@ -57,6 +68,7 @@ struct Frame {
 };
 
 struct FrameDescriptor {
+  std::uint16_t protocol_minor{kProtocolMinor};
   MessageType message_type{MessageType::kPing};
   std::uint32_t flags{};
   std::uint64_t request_id{};

@@ -237,6 +237,12 @@ common::Status SubscriptionManager::publish_committed(CommittedChange change) {
       change.position.record_sequence != impl_->latest_position.record_sequence + 1U) {
     return invalid("committed changes must follow the exact source lineage and sequence");
   }
+  if ((change.operation != LogicalChangeOperation::kUpsert &&
+       change.operation != LogicalChangeOperation::kDelete) ||
+      change.result_key.empty() ||
+      (change.operation == LogicalChangeOperation::kDelete && !change.payload.empty())) {
+    return invalid("committed logical change is not canonical");
+  }
   const std::size_t bytes = retained_bytes(change);
   if (bytes > impl_->limits.maximum_change_bytes || bytes > impl_->limits.maximum_retained_bytes) {
     return common::Status{common::StatusCode::kResourceExhausted,

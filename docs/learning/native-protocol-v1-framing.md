@@ -9,7 +9,9 @@ fuzzers, and the Linux reactor. `encode_frame` produces canonical owned bytes;
 
 ## Invariants and ownership
 
-- Every frame inherits major/minor version 1/0 and has one 40-byte header.
+- Every frame has one 40-byte header. Protocol 1.0 remains the default and hello framing; a
+  negotiated 1.1 session uses minor 1 exactly for all later frames and gates subscription types on
+  feature bit 0.
 - Header CRC32C is checked before a payload length can authorize allocation.
 - Payload size is bounded by both the 16 MiB protocol ceiling and a smaller deployment limit.
 - Decoded payload ownership is independent of the socket input buffer.
