@@ -349,7 +349,8 @@ common::Status SealedHeadFlushWork::complete(const SealedGenerationRetirementRec
     if (!metadata.has_value()) {
       return metadata.error();
     }
-    if (metadata->commit_position.wal_id != receipt.wal_id()) {
+    if (metadata->commit_position.source != head::CommitSource::kWal ||
+        metadata->commit_position.wal_id != receipt.wal_id()) {
       return invalid("sealed-head flush completion receipt belongs to a different WAL history");
     }
     minimum_sequence = std::min(minimum_sequence, metadata->commit_position.record_sequence);

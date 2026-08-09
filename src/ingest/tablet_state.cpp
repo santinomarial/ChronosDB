@@ -321,13 +321,13 @@ detail::TabletStateCore::register_schema(std::shared_ptr<const schema::TableSche
 
 common::Status detail::TabletStateCore::validate_position(const head::HeadCommitPosition& position,
                                                           const TabletPublication& base) {
-  if (!position.wal_id.is_valid() || position.record_sequence == 0U) {
-    return invalid("tablet append requires a nonzero WAL identity and record sequence");
+  if (!position.is_valid()) {
+    return invalid("tablet append requires a valid commit-log identity and position");
   }
   if (base.applied_position_.has_value()) {
     const head::HeadCommitPosition& applied = *base.applied_position_;
-    if (position.wal_id != applied.wal_id || position.record_sequence <= applied.record_sequence) {
-      return invalid("tablet append position must advance within one WAL history");
+    if (!position.same_log(applied) || position.record_sequence <= applied.record_sequence) {
+      return invalid("tablet append position must advance within one commit-log history");
     }
   }
   return common::Status::ok();
@@ -450,6 +450,7 @@ detail::TabletStateCore::prepare(const RetryIdentity& retry_identity,
 
     auto outcome_mutable = std::make_shared<ColumnarAppendRetryOutcome>(
         ColumnarAppendRetryOutcome{.mutation = mutation,
+                                   .commit_source = head::CommitSource::kWal,
                                    .wal_id = wal::WalId{},
                                    .record_sequence = 0U,
                                    .applied_row_count = row_count});
@@ -568,7 +569,8 @@ common::Result<TabletAppendResult> detail::TabletStateCore::publish(
   const auto retry = next->retries_->find(retry_identity);
   if (next.get() != next_mutable.get() || outcome.get() != outcome_mutable.get() ||
       retry == next->retries_->end() || retry->second != outcome ||
-      outcome_mutable->record_sequence != 0U || outcome_mutable->wal_id.is_valid()) {
+      outcome_mutable->record_sequence != 0U || outcome_mutable->wal_id.is_valid() ||
+      !outcome_mutable->raft_group_id.is_nil()) {
     failed_.store(true, std::memory_order_release);
     append_active_ = false;
     return common::make_unexpected(internal("tablet prepared publication state is inconsistent"));
@@ -590,7 +592,9 @@ common::Result<TabletAppendResult> detail::TabletStateCore::publish(
     publication_hook_(publication_hook_context_);
   }
 
+  outcome_mutable->commit_source = position.source;
   outcome_mutable->wal_id = position.wal_id;
+  outcome_mutable->raft_group_id = position.raft_group_id;
   outcome_mutable->record_sequence = position.record_sequence;
   next_mutable->active_generation_ = *head_snapshot;
   next_mutable->applied_position_ = position;
@@ -640,8 +644,9 @@ common::Result<TabletSnapshot> detail::TabletStateCore::advance_recovered_retry(
         invalid("recovered retry outcome is not the tablet's exact published object"));
   }
   const std::optional<head::HeadCommitPosition> applied_position = current->applied_position_;
-  if (position.wal_id.is_valid() && applied_position.has_value() && recovery_skip_through_ != 0U &&
-      position.wal_id == applied_position->wal_id &&
+  if (position.source == head::CommitSource::kWal && position.wal_id.is_valid() &&
+      applied_position.has_value() && recovery_skip_through_ != 0U &&
+      position.same_log(*applied_position) &&
       position.record_sequence >= outcome->record_sequence &&
       position.record_sequence <= recovery_skip_through_) {
     std::shared_ptr<TabletStateCore> self = weak_from_this().lock();
@@ -720,7 +725,9 @@ common::Status detail::TabletStateCore::seed_recovered_prefix(
     for (std::size_t index = 0U; index < identities.size(); ++index) {
       const std::shared_ptr<const ColumnarAppendRetryOutcome>& outcome = outcomes[index];
       if (outcome == nullptr || outcome->mutation.table_id != schemas_.front().schema->table_id() ||
-          outcome->mutation.tablet_id != tablet_id_ || outcome->wal_id != durable_position.wal_id ||
+          outcome->mutation.tablet_id != tablet_id_ ||
+          outcome->commit_source != head::CommitSource::kWal ||
+          outcome->wal_id != durable_position.wal_id || !outcome->raft_group_id.is_nil() ||
           outcome->record_sequence == 0U ||
           outcome->record_sequence > durable_position.record_sequence ||
           outcome->applied_row_count == 0U) {

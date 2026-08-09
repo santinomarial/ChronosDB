@@ -364,13 +364,13 @@ common::Status detail::MutableHeadState::validate_append(
 
 common::Status detail::MutableHeadState::validate_position(const HeadCommitPosition& position,
                                                            const HeadPublication& base) {
-  if (!position.wal_id.is_valid() || position.record_sequence == 0U) {
-    return invalid("mutable-head append requires a nonzero WAL identity and record sequence");
+  if (!position.is_valid()) {
+    return invalid("mutable-head append requires a valid commit-log identity and position");
   }
   if (base.applied_position_.has_value()) {
     const HeadCommitPosition& applied = *base.applied_position_;
-    if (position.wal_id != applied.wal_id || position.record_sequence <= applied.record_sequence) {
-      return invalid("mutable-head append position must advance within one WAL history");
+    if (!position.same_log(applied) || position.record_sequence <= applied.record_sequence) {
+      return invalid("mutable-head append position must advance within one commit-log history");
     }
   }
   return common::Status::ok();
@@ -690,7 +690,9 @@ detail::MutableHeadState::row_version_identity(const HeadPublication& publicatio
   }
   return RowVersionIdentity{.table_id = schema_->table_id(),
                             .tablet_id = tablet_id_,
+                            .commit_source = metadata->commit_position.source,
                             .wal_id = metadata->commit_position.wal_id,
+                            .raft_group_id = metadata->commit_position.raft_group_id,
                             .record_sequence = metadata->commit_position.record_sequence,
                             .row_ordinal = metadata->row_ordinal};
 }

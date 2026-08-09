@@ -106,7 +106,8 @@ validate_head_rows_after_durable(const head::HeadSnapshot& head, const wal::WalI
     if (!metadata.has_value()) {
       return metadata.error();
     }
-    if (metadata->commit_position.wal_id != wal_id ||
+    if (metadata->commit_position.source != head::CommitSource::kWal ||
+        metadata->commit_position.wal_id != wal_id ||
         metadata->commit_position.record_sequence <= durable_sequence) {
       return corruption(
           "query-visible head row is duplicated by or predates its durable Manifest boundary");
@@ -218,9 +219,9 @@ copy_tablet(const ingest::TabletSnapshot& snapshot, const LoadedManifestGenerati
   const std::optional<head::HeadCommitPosition> previous_position = previous.applied_position();
   const std::optional<head::HeadCommitPosition> next_position = next.applied_position();
   if (previous_position.has_value()) {
-    if (!next_position.has_value() || next_position->wal_id != previous_position->wal_id ||
+    if (!next_position.has_value() || !next_position->same_log(*previous_position) ||
         next_position->record_sequence < previous_position->record_sequence) {
-      return invalid("tablet publication regresses its applied WAL position");
+      return invalid("tablet publication regresses its applied commit-log position");
     }
   }
   for (const head::HeadSnapshot& old_sealed : previous.sealed_heads()) {
@@ -315,9 +316,10 @@ struct HeadBounds {
     if (!metadata.has_value()) {
       return common::make_unexpected(metadata.error());
     }
-    if (metadata->commit_position.wal_id != wal_id) {
+    if (metadata->commit_position.source != head::CommitSource::kWal ||
+        metadata->commit_position.wal_id != wal_id) {
       return common::make_unexpected(
-          corruption("sealed replacement head belongs to a different WAL history"));
+          corruption("sealed replacement head is not in the required WAL history"));
     }
     bounds.minimum_sequence =
         std::min(bounds.minimum_sequence, metadata->commit_position.record_sequence);

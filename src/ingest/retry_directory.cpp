@@ -57,8 +57,11 @@ validate_outcome(const ColumnarAppendMutationIdentity& expected,
   if (outcome->mutation != expected) {
     return invalid_argument("published retry outcome does not match its reserved mutation");
   }
-  if (!outcome->wal_id.is_valid() || outcome->record_sequence == 0U ||
-      outcome->applied_row_count == 0U) {
+  const head::HeadCommitPosition position{.source = outcome->commit_source,
+                                          .wal_id = outcome->wal_id,
+                                          .raft_group_id = outcome->raft_group_id,
+                                          .record_sequence = outcome->record_sequence};
+  if (!position.is_valid() || outcome->applied_row_count == 0U) {
     return invalid_argument("published retry outcome has an invalid commit position or row count");
   }
   return common::Status::ok();

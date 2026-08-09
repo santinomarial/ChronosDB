@@ -4,6 +4,7 @@
 #include "chronos/columnar/columnar_batch.hpp"
 #include "chronos/common/bytes.hpp"
 #include "chronos/common/result.hpp"
+#include "chronos/common/uuid.hpp"
 #include "chronos/schema/identity.hpp"
 #include "chronos/schema/logical_type.hpp"
 #include "chronos/schema/table_schema.hpp"
@@ -18,9 +19,44 @@
 
 namespace chronos::head {
 
+enum class CommitSource : std::uint8_t {
+  kWal = 1,
+  kRaft = 2,
+};
+
 struct HeadCommitPosition {
+  CommitSource source{CommitSource::kWal};
   wal::WalId wal_id;
+  common::Uuid raft_group_id;
   std::uint64_t record_sequence{};
+
+  [[nodiscard]] static HeadCommitPosition wal(wal::WalId id,
+                                               std::uint64_t sequence) noexcept {
+    return HeadCommitPosition{.source = CommitSource::kWal,
+                              .wal_id = id,
+                              .record_sequence = sequence};
+  }
+
+  [[nodiscard]] static HeadCommitPosition raft(common::Uuid group_id,
+                                                std::uint64_t log_index) noexcept {
+    return HeadCommitPosition{.source = CommitSource::kRaft,
+                              .raft_group_id = group_id,
+                              .record_sequence = log_index};
+  }
+
+  [[nodiscard]] bool is_valid() const noexcept {
+    if (record_sequence == 0U)
+      return false;
+    if (source == CommitSource::kWal)
+      return wal_id.is_valid() && raft_group_id.is_nil();
+    return source == CommitSource::kRaft && !raft_group_id.is_nil() && !wal_id.is_valid();
+  }
+
+  [[nodiscard]] bool same_log(const HeadCommitPosition& other) const noexcept {
+    return source == other.source &&
+           (source == CommitSource::kWal ? wal_id == other.wal_id
+                                         : raft_group_id == other.raft_group_id);
+  }
 
   friend bool operator==(const HeadCommitPosition&, const HeadCommitPosition&) = default;
 };
@@ -40,7 +76,9 @@ struct HeadRowMetadata {
 struct RowVersionIdentity {
   schema::TableId table_id;
   schema::TabletId tablet_id;
+  CommitSource commit_source{CommitSource::kWal};
   wal::WalId wal_id;
+  common::Uuid raft_group_id;
   std::uint64_t record_sequence{};
   std::uint32_t row_ordinal{};
 

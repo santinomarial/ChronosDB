@@ -4,6 +4,7 @@
 #include "chronos/common/result.hpp"
 #include "chronos/ingest/identity.hpp"
 #include "chronos/ingest/sha256.hpp"
+#include "chronos/head/mutable_head.hpp"
 #include "chronos/schema/identity.hpp"
 #include "chronos/wal/types.hpp"
 
@@ -32,10 +33,13 @@ struct ColumnarAppendMutationIdentity {
 };
 
 // One immutable logical APPLIED outcome. Durability and response delivery are attempt metadata and
-// deliberately do not belong here. wal_id plus record_sequence is the logical commit position.
+// deliberately do not belong here. The source-specific log identity plus record_sequence is the
+// logical commit position. Manifest v1 retry descriptors remain WAL-only.
 struct ColumnarAppendRetryOutcome {
   ColumnarAppendMutationIdentity mutation;
+  head::CommitSource commit_source{head::CommitSource::kWal};
   wal::WalId wal_id;
+  common::Uuid raft_group_id;
   std::uint64_t record_sequence;
   std::uint32_t applied_row_count;
 
