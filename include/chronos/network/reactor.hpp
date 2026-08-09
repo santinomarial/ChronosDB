@@ -16,10 +16,10 @@ enum class ReactorBackend : std::uint8_t { kEpoll = 1, kIoUring = 2 };
 [[nodiscard]] std::string_view reactor_backend_name(ReactorBackend backend) noexcept;
 [[nodiscard]] bool reactor_backend_compiled(ReactorBackend backend) noexcept;
 
-// Explicit portable backend owner. The optional io_uring implementation uses liburing to wait on
-// the reference epoll readiness descriptor, preserving the already-tested connection state,
-// partial-I/O, cancellation, and shutdown machinery without exposing Linux types. It is a bounded
-// readiness pilot, not evidence that io_uring is faster.
+// Explicit portable backend owner. Epoll remains the reference; the optional Linux backend owns
+// accept, receive, send, and response-wakeup operations through liburing. Both preserve the same
+// portable protocol, bounded queue, connection-state, partial-I/O, cancellation, and shutdown
+// contracts. Backend availability is explicit and makes no relative performance claim.
 class Reactor {
 public:
   Reactor() = delete;

@@ -21,9 +21,10 @@ v1 do not assign correction, cold-location, distributed-exchange, or Raft-wire b
   placement-epoch checks at both membership changes.
 - Keep object storage behind S3-compatible immutable put/stat/range semantics. Verify whole-object
   SHA-256 before the caller's atomic manifest-install callback; only then may local source release.
-- Keep epoll as the reference connection engine. The optional liburing build is a Linux-isolated
-  readiness pilot and receives no performance claim. CPU/NUMA hooks are optional and fail explicitly
-  when unsupported.
+- Keep epoll as the reference connection engine. The optional Linux-isolated liburing build received
+  a readiness pilot in this decision and no performance claim. Its later full socket-operation
+  ownership is defined by [ADR 0107](0107-bounded-io-uring-socket-reactor.md). CPU/NUMA hooks are
+  optional and fail explicitly when unsupported.
 
 ## Consequences and alternatives
 
@@ -38,4 +39,3 @@ Invariants 2–8, 10–14, 17, and 18 apply. Focused tests cover temporal visibi
 merge, pruning, exchange failure, movement order/checksums, immutable object identity/cache/ranges,
 and one cross-module smoke. All production durability, network, cloud, compatibility, sanitizer,
 chaos, and performance evidence is deferred in the ledger.
-

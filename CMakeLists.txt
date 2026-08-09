@@ -408,6 +408,7 @@ add_library(
   src/network/connection_buffers.cpp
   src/network/connection_state.cpp
   src/network/epoll_reactor.cpp
+  src/network/io_uring_reactor.cpp
   src/network/messages.cpp
   src/network/protocol.cpp
   src/network/reactor.cpp
@@ -632,6 +633,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/network/connection_state_test.cpp
     tests/network/epoll_reactor_header_self_contained.cpp
     tests/network/epoll_reactor_test.cpp
+    tests/network/io_uring_reactor_header_self_contained.cpp
+    tests/network/io_uring_reactor_test.cpp
     tests/network/messages_header_self_contained.cpp
     tests/network/messages_test.cpp
     tests/network/packet_fixture_test.cpp

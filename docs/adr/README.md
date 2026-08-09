@@ -141,3 +141,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0104](0104-schema-change-subscription-boundary.md) | Schema-change subscription terminal boundary | accepted |
 | [0105](0105-bounded-subscription-service-lifecycle.md) | Bounded reactor-facing subscription service lifecycle | accepted |
 | [0106](0106-topology-bound-subscription-retention.md) | Topology-bound subscription retention authority | accepted |
+| [0107](0107-bounded-io-uring-socket-reactor.md) | Bounded io_uring socket reactor ownership | accepted |

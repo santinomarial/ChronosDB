@@ -47,10 +47,11 @@
 
 ## Phase 12 — io_uring, SIMD, affinity, NUMA, and allocation
 
-- Linux liburing configure/build/install and unsupported-kernel, queue-full, timeout, cancellation,
-  shutdown, response wakeup, partial read/write, connection churn, and sanitizer parity tests.
-- Replace or validate the readiness pilot with a full socket-operation io_uring backend before any
-  production-backend claim; run equal-semantics epoll/io_uring comparison with unfavorable runs.
+- Linux liburing install/export and broader unsupported-kernel, queue-full, timeout, cancellation,
+  shutdown-race, response-wakeup, partial-write, connection-churn, and sanitizer parity tests beyond
+  the focused Ubuntu build and fragmented socket lifecycle executed during the feature pass.
+- Run an equal-semantics epoll/io_uring comparison with unfavorable runs before considering any
+  default-backend change or relative performance claim.
 - AVX2, AVX-512, and ARM NEON kernel implementations/comparisons beyond existing portable vector
   operators; scalar/vector equivalence under every supported CPU feature set.
 - Reactor/query/shard affinity integration, NUMA provider and local allocation policy, invalid CPU/

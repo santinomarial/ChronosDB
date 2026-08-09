@@ -330,11 +330,14 @@ finite event and I/O budgets preserve fairness. Accepted sockets require `TCP_NO
 decision that prevents separately owned result and terminal frames from incurring delayed-ACK
 latency. The portable client session enforces the same partial-I/O and request lifecycle contracts.
 
-An optional Linux liburing readiness pilot now exists behind explicit portable backend selection.
-It reuses the proven epoll connection engine and therefore preserves its partial-I/O, cancellation,
-and shutdown state. It is not yet a full socket-operation io_uring backend and has no comparison or
-performance claim. TLS and cryptography use maintained external libraries behind defined
-interfaces; ChronosDB does not implement cryptographic primitives.
+An optional Linux liburing backend now exists behind explicit portable backend selection under
+[ADR 0107](../adr/0107-bounded-io-uring-socket-reactor.md). It owns accept, receive, send, and
+response-wakeup operations directly through io_uring while reusing the portable protocol,
+connection-state, bounded-buffer, and shard-routing contracts. One outstanding operation per
+connection keeps buffer reclamation completion-bound; unsupported builds, kernels, and host policies
+fail explicitly. Epoll remains the reference and no relative performance claim exists. TLS and
+cryptography use maintained external libraries behind defined interfaces; ChronosDB does not
+implement cryptographic primitives.
 
 Under [ADR 0066](../adr/0066-authentication-and-tls-integration-boundary.md), plaintext is confined
 to loopback, a borrowed authenticator attaches stable principal identity to shard work, and

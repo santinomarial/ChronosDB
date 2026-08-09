@@ -1,36 +1,24 @@
 #include "chronos/network/reactor.hpp"
 
-#include <chrono>
-#include <cstdint>
-#include <limits>
-#include <memory>
-#include <utility>
+#include "chronos/network/io_uring_reactor.hpp"
 
-#if defined(CHRONOS_HAS_LIBURING)
-#include <cerrno>
-#include <liburing.h>
-#include <poll.h>
-#endif
+#include <chrono>
+#include <memory>
+#include <optional>
+#include <utility>
 
 namespace chronos::network {
 
 class Reactor::Impl {
 public:
-  Impl(const ReactorBackend selected, EpollReactor reactor) noexcept
-      : selected_backend(selected), epoll(std::move(reactor)) {}
-  ~Impl() {
-#if defined(CHRONOS_HAS_LIBURING)
-    if (ring_initialized)
-      io_uring_queue_exit(&ring);
-#endif
-  }
+  explicit Impl(EpollReactor reactor) noexcept
+      : selected_backend(ReactorBackend::kEpoll), epoll(std::move(reactor)) {}
+  explicit Impl(IoUringReactor reactor) noexcept
+      : selected_backend(ReactorBackend::kIoUring), io_uring(std::move(reactor)) {}
+
   ReactorBackend selected_backend;
-  EpollReactor epoll;
-#if defined(CHRONOS_HAS_LIBURING)
-  io_uring ring{};
-  bool ring_initialized{};
-  std::uint64_t next_operation{1U};
-#endif
+  std::optional<EpollReactor> epoll;
+  std::optional<IoUringReactor> io_uring;
 };
 
 std::string_view reactor_backend_name(const ReactorBackend backend) noexcept {
@@ -69,108 +57,60 @@ common::Result<Reactor> Reactor::start(const ReactorBackend backend,
     return common::make_unexpected(common::Status{common::StatusCode::kNotSupported,
                                                   "requested reactor backend is not compiled"});
   }
-  auto epoll = EpollReactor::start(config, queues);
-  if (!epoll.has_value())
-    return common::make_unexpected(epoll.error());
-  auto impl = std::make_unique<Impl>(backend, std::move(*epoll));
-#if defined(CHRONOS_HAS_LIBURING)
-  if (backend == ReactorBackend::kIoUring) {
-    const int result = io_uring_queue_init(8U, &impl->ring, 0U);
-    if (result < 0) {
-      static_cast<void>(impl->epoll.shutdown());
-      return common::make_unexpected(common::Status{result == -ENOSYS || result == -EINVAL
-                                                        ? common::StatusCode::kNotSupported
-                                                        : common::StatusCode::kIoError,
-                                                    "io_uring initialization failed"});
-    }
-    impl->ring_initialized = true;
+  if (backend == ReactorBackend::kEpoll) {
+    auto epoll = EpollReactor::start(config, queues);
+    if (!epoll.has_value())
+      return common::make_unexpected(epoll.error());
+    return Reactor{std::make_unique<Impl>(std::move(*epoll))};
   }
-#endif
-  return Reactor{std::move(impl)};
+  auto io_uring = IoUringReactor::start(config, queues);
+  if (!io_uring.has_value())
+    return common::make_unexpected(io_uring.error());
+  return Reactor{std::make_unique<Impl>(std::move(*io_uring))};
 }
 
 common::Status Reactor::poll_once(const std::chrono::milliseconds maximum_wait) {
-  if (!impl_ || maximum_wait.count() < 0 ||
-      maximum_wait.count() > std::numeric_limits<std::int32_t>::max()) {
-    return common::Status{common::StatusCode::kInvalidArgument,
-                          "reactor is not running or wait is invalid"};
+  if (!impl_) {
+    return common::Status{common::StatusCode::kInvalidArgument, "reactor is not running"};
   }
-  if (impl_->selected_backend == ReactorBackend::kEpoll) {
-    return impl_->epoll.poll_once(maximum_wait);
-  }
-#if defined(CHRONOS_HAS_LIBURING)
-  io_uring_sqe* poll = io_uring_get_sqe(&impl_->ring);
-  if (poll == nullptr) {
-    return common::Status{common::StatusCode::kResourceExhausted,
-                          "io_uring submission queue is full"};
-  }
-  if (impl_->next_operation >= (std::uint64_t{1U} << 63U)) {
-    return common::Status{common::StatusCode::kOutOfRange,
-                          "io_uring operation identity is exhausted"};
-  }
-  const std::uint64_t operation = impl_->next_operation++;
-  io_uring_prep_poll_add(poll, impl_->epoll.native_poll_descriptor(), POLLIN);
-  io_uring_sqe_set_data64(poll, operation);
-  const int submitted = io_uring_submit(&impl_->ring);
-  if (submitted != 1) {
-    return common::Status{common::StatusCode::kIoError, "io_uring poll submission failed"};
-  }
-  __kernel_timespec timeout{maximum_wait.count() / 1000, (maximum_wait.count() % 1000) * 1'000'000};
-  io_uring_cqe* completion = nullptr;
-  const int waited = io_uring_wait_cqe_timeout(&impl_->ring, &completion, &timeout);
-  if (waited == -ETIME) {
-    io_uring_sqe* cancel = io_uring_get_sqe(&impl_->ring);
-    if (cancel == nullptr) {
-      return common::Status{common::StatusCode::kResourceExhausted,
-                            "io_uring cancellation queue is full"};
-    }
-    io_uring_prep_cancel64(cancel, operation, 0U);
-    io_uring_sqe_set_data64(cancel, operation + (std::uint64_t{1U} << 63U));
-    if (io_uring_submit(&impl_->ring) != 1) {
-      return common::Status{common::StatusCode::kIoError, "io_uring cancellation failed"};
-    }
-    for (std::size_t pending = 0U; pending < 2U; ++pending) {
-      io_uring_cqe* cancelled = nullptr;
-      if (io_uring_wait_cqe(&impl_->ring, &cancelled) != 0 || cancelled == nullptr) {
-        return common::Status{common::StatusCode::kIoError,
-                              "io_uring cancellation completion failed"};
-      }
-      io_uring_cqe_seen(&impl_->ring, cancelled);
-    }
-    return impl_->epoll.poll_once(std::chrono::milliseconds{0});
-  }
-  if (waited < 0 || completion == nullptr) {
-    return common::Status{common::StatusCode::kIoError, "io_uring readiness wait failed"};
-  }
-  const int result = completion->res;
-  io_uring_cqe_seen(&impl_->ring, completion);
-  if (result < 0) {
-    return common::Status{common::StatusCode::kIoError, "io_uring readiness operation failed"};
-  }
-  return impl_->epoll.poll_once(std::chrono::milliseconds{0});
-#else
-  return common::Status{common::StatusCode::kNotSupported, "io_uring backend is unavailable"};
-#endif
+  return impl_->selected_backend == ReactorBackend::kEpoll
+             ? impl_->epoll->poll_once(maximum_wait)
+             : impl_->io_uring->poll_once(maximum_wait);
 }
 
 common::Status Reactor::notify_response_ready() noexcept {
-  return impl_ ? impl_->epoll.notify_response_ready()
-               : common::Status{common::StatusCode::kInvalidArgument, "reactor is not running"};
+  if (!impl_)
+    return common::Status{common::StatusCode::kInvalidArgument, "reactor is not running"};
+  return impl_->selected_backend == ReactorBackend::kEpoll
+             ? impl_->epoll->notify_response_ready()
+             : impl_->io_uring->notify_response_ready();
 }
 common::Status Reactor::shutdown() noexcept {
-  return impl_ ? impl_->epoll.shutdown() : common::Status::ok();
+  if (!impl_)
+    return common::Status::ok();
+  return impl_->selected_backend == ReactorBackend::kEpoll ? impl_->epoll->shutdown()
+                                                           : impl_->io_uring->shutdown();
 }
 std::uint16_t Reactor::bound_port() const noexcept {
-  return impl_ ? impl_->epoll.bound_port() : 0U;
+  if (!impl_)
+    return 0U;
+  return impl_->selected_backend == ReactorBackend::kEpoll ? impl_->epoll->bound_port()
+                                                           : impl_->io_uring->bound_port();
 }
 EpollServerMetrics Reactor::metrics() const noexcept {
-  return impl_ ? impl_->epoll.metrics() : EpollServerMetrics{};
+  if (!impl_)
+    return {};
+  return impl_->selected_backend == ReactorBackend::kEpoll ? impl_->epoll->metrics()
+                                                           : impl_->io_uring->metrics();
 }
 bool Reactor::is_running() const noexcept {
-  return impl_ && impl_->epoll.is_running();
+  if (!impl_)
+    return false;
+  return impl_->selected_backend == ReactorBackend::kEpoll ? impl_->epoll->is_running()
+                                                           : impl_->io_uring->is_running();
 }
 ReactorBackend Reactor::backend() const noexcept {
-  return impl_->selected_backend;
+  return impl_ ? impl_->selected_backend : ReactorBackend::kEpoll;
 }
 
 } // namespace chronos::network

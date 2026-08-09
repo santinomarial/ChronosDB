@@ -53,14 +53,18 @@ and dynamic plan-owner retirement remain coupled to the Phase 15 physical-log li
 
 ### Phase 12 — performance architecture and io_uring
 
-Portable `ReactorBackend` selection retains epoll as the reference. An opt-in Linux/liburing path
-uses io_uring to wait on the proven epoll readiness descriptor, preserving the existing connection
-state and partial-I/O semantics without public Linux types. Unsupported builds fail explicitly.
+Portable `ReactorBackend` selection retains epoll as the reference. The opt-in Linux/liburing owner
+now submits accept, receive, send, and response-wakeup operations directly through io_uring while
+preserving the portable connection state, bounded buffers, shard queues, and partial-I/O semantics.
+One operation per connection and CQE-before-reclamation ownership keep native references bounded;
+unsupported builds, kernels, or host policies fail explicitly without fallback.
 `ThreadPlacement` adds optional CPU and NUMA hooks; empty configuration is correctness-neutral and
 unsupported NUMA/portable affinity fails explicitly.
 
-This is a readiness pilot, not a full io_uring socket-operation backend. It was not compiled or run
-on Linux in this pass. No epoll/io_uring, SIMD, NUMA, allocation, or performance comparison ran.
+A focused Ubuntu 24.04/GCC/liburing 2.5 production build passed with warnings as errors. Focused
+Linux 6.12 tests passed for fragmented accept/read, handshake/query routing, response wakeup,
+ordered result/terminal sends, and shutdown. No epoll/io_uring comparison, SIMD/NUMA experiment,
+allocation profile, or performance campaign ran.
 
 ### Phase 13 — system-time history and corrections
 
@@ -169,6 +173,7 @@ Targeted configure/build commands used the existing `dev` preset and `--parallel
 - `cmake --build --preset dev --target chronos_tiering_tests --parallel 4`
 - `cmake --build --preset dev --target chronos_network_tests chronos_runtime_tests --parallel 4`
 - `cmake --build --preset dev --target chronos_feature_smoke_tests --parallel 4`
+- Ubuntu 24.04/GCC 13: `chronos_network` with `CHRONOS_ENABLE_IO_URING=ON` and warnings as errors.
 
 Focused executions passed:
 
@@ -179,9 +184,10 @@ Focused executions passed:
 - `chronos_network_tests`: 31 tests, including the backend-selection test;
 - `chronos_runtime_tests`: 1 test; and
 - `chronos_feature_smoke_tests`: 1 test.
+- Linux 6.12/liburing 2.5 `IoUringReactorTest.*`: 2 focused tests.
 
 The final C++ tree passed the repository-pinned clang-format 18 check. Full-suite, sanitizer, fuzz,
-cross-compiler, Linux/liburing, benchmark, profile, and chaos checks were deliberately not run.
+broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were deliberately not run.
 
 ## Known risks and limitations
 
@@ -202,7 +208,8 @@ cross-compiler, Linux/liburing, benchmark, profile, and chaos checks were delibe
 - Live/materialized-view, Multi-Raft, metadata, movement, and tiering owners are intentionally
   single-thread-affine but are not yet scheduled by production worker pools.
 - BoundedExchange and MemoryObjectStore use mutexes but have no TSan evidence in this pass.
-- io_uring cancellation and shutdown have no Linux execution evidence.
+- io_uring protocol cancellation, forced in-flight shutdown, and close/completion races lack broad
+  Linux and TSan evidence beyond the focused clean-shutdown lifecycle.
 - Cache/tiering catalog access is single-owner and unsafe for concurrent query access without the
   planned owner/locking integration.
 
@@ -220,7 +227,7 @@ cross-compiler, Linux/liburing, benchmark, profile, and chaos checks were delibe
 - Full-state Raft persistence is intentionally simple and may amplify writes.
 - Ordered maps/multisets and copied snapshots favor correctness over throughput.
 - Live fan-out, temporal history, exchange, cache, and movement have no scale measurements.
-- The io_uring pilot may be slower than epoll; no comparison was run.
+- The io_uring socket backend may be slower than epoll; no comparison was run.
 - No SIMD/NUMA optimization, allocation profile, flame graph, or tail-latency campaign ran.
 
 ## Deferred validation and recommended Phase 18 order

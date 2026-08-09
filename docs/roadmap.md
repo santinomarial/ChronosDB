@@ -645,10 +645,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
 ## Phase 12 — Performance engineering and io_uring comparison
 
 - **Feature-pass status:** explicit portable backend selection and optional thread placement hooks
-  are implemented. An opt-in Linux liburing readiness pilot waits on the proven epoll connection
-  engine without leaking Linux types. It has not been compiled on Linux or compared with epoll in
-  this pass. Full socket-operation parity, SIMD variants, NUMA placement, profiling, and performance
-  evidence remain deferred; no speed claim or phase exit is declared.
+  are implemented. The opt-in Linux liburing backend now owns accept, receive, send, and response
+  wakeup socket operations without leaking Linux types. A focused Ubuntu/GCC/liburing build and
+  Linux 6.12 fragmented-I/O lifecycle test passed. Epoll remains the reference. Broader parity,
+  SIMD variants, NUMA placement, profiling, and performance evidence remain deferred; no speed claim
+  or phase measurement exit is declared.
 
 - **Scope:** profile verified single-node paths; remove measured bottlenecks; establish reproducible benchmark governance; compare an optional `io_uring` prototype with epoll under equal semantics.
 - **Explicit non-scope:** weakened durability/checksums/visibility, selective publication of favorable runs, a mandatory `io_uring` migration, distribution, and novel allocators or lock-free rewrites without evidence.
