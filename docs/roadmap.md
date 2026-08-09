@@ -673,6 +673,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   implemented. A fixed-membership leader can now produce a checked quorum-sync receipt after
   majority-derived durable commit, and tablet application composes it with visibility; native
   client mode exposure and end-to-end crash evidence remain. The phase exit gate is not claimed.
+  The dedicated metadata group now has canonical versioned/checksummed command bytes and committed
+  application/reopen recovery for nodes, schema identities, tablet placement epochs, leader hints,
+  and retention. Complete schema definitions, metadata snapshots, and membership integration remain.
 
 - **Scope:** map tablets to Raft groups; multiplex logical records over physical logs, threads, timers, and connections; lifecycle, placement, snapshot transfer, fairness, and safe per-group reclamation.
 - **Explicit non-scope:** globally ordered logs, cross-tablet atomic transactions, distributed query execution, automatic rebalancing beyond scoped placement mechanics, and conflating physical offsets with logical indexes.

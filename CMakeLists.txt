@@ -469,6 +469,8 @@ add_library(
   chronos_raft
   src/raft/durable_runtime.cpp
   src/raft/metadata.cpp
+  src/raft/metadata_codec.cpp
+  src/raft/metadata_runtime.cpp
   src/raft/multi_raft.cpp
   src/raft/multiplexed_log.cpp
   src/raft/node.cpp
@@ -484,7 +486,7 @@ target_include_directories(
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
 )
-target_link_libraries(chronos_raft PUBLIC chronos::common PRIVATE chronos::io)
+target_link_libraries(chronos_raft PUBLIC chronos::common chronos::schema PRIVATE chronos::io)
 chronos_set_project_warnings(chronos_raft)
 chronos_enable_sanitizers(chronos_raft)
 chronos_enable_static_analysis(chronos_raft)
@@ -679,6 +681,10 @@ if(CHRONOS_BUILD_TESTS)
     tests/raft/multi_raft_test.cpp
     tests/raft/metadata_header_self_contained.cpp
     tests/raft/metadata_test.cpp
+    tests/raft/metadata_codec_header_self_contained.cpp
+    tests/raft/metadata_codec_test.cpp
+    tests/raft/metadata_runtime_header_self_contained.cpp
+    tests/raft/metadata_runtime_test.cpp
     tests/raft/multiplexed_log_header_self_contained.cpp
     tests/raft/multiplexed_log_test.cpp
     tests/raft/persistent_log_header_self_contained.cpp

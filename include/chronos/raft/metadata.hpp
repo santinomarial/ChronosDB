@@ -19,12 +19,16 @@ namespace chronos::raft {
 struct ClusterNodeMetadata {
   NodeId node_id{};
   std::string endpoint;
+
+  friend bool operator==(const ClusterNodeMetadata&, const ClusterNodeMetadata&) = default;
 };
 
 struct SchemaMetadata {
   schema::TableId table_id;
   schema::SchemaId schema_id;
   schema::SchemaVersion schema_version;
+
+  friend bool operator==(const SchemaMetadata&, const SchemaMetadata&) = default;
 };
 
 struct TabletPlacementMetadata {
@@ -33,12 +37,16 @@ struct TabletPlacementMetadata {
   std::uint64_t placement_epoch{};
   std::vector<NodeId> replicas;
   std::optional<NodeId> leader_hint;
+
+  friend bool operator==(const TabletPlacementMetadata&, const TabletPlacementMetadata&) = default;
 };
 
 struct RetentionMetadata {
   schema::TableId table_id;
   std::int64_t system_history_ns{};
   std::uint64_t retry_retention_positions{};
+
+  friend bool operator==(const RetentionMetadata&, const RetentionMetadata&) = default;
 };
 
 using MetadataCommand =

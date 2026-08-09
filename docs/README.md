@@ -55,6 +55,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   group-tagged full-state records plus the implemented segmented append/sync/recovery envelope.
 - [Raft Tablet Command v1](formats/raft-tablet-command-v1.md): exact committed
   `COLUMNAR_APPEND` payload, group/index identity, ordering, and retained-log recovery contract.
+- [Metadata Command v1](formats/metadata-command-v1.md): canonical checksummed metadata-group
+  commands for nodes, schema identities, placement, leader hints, and retention.
 - [Production dependencies](dependencies/README.md): maintained external-library boundaries,
   version sources, licenses, and update/security ownership.
 
@@ -192,6 +194,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   reclamation boundary.
 - [Committed Raft tablet application](learning/raft-tablet-application.md): committed-only command
   decoding, shared row/retry publication, applied-index ordering, and retained-log reconstruction.
+- [Durable metadata Raft state](learning/durable-metadata-state.md): checksummed commands,
+  commit-order catalog application, quorum proof, and retained-log reconstruction.
 - [Phase 10 network exit review](reviews/phase-10-network-review.md): implemented transport
   boundary, Linux portability and validation evidence, nonblocking risks, and the phase decision.
 - [Feature completion pass review](reviews/feature-completion-pass.md): truthful Phase 11–17

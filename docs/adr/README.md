@@ -109,3 +109,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0072](0072-explicit-wal-and-raft-commit-identities.md) | Explicit WAL and Raft commit identities | accepted |
 | [0073](0073-committed-raft-tablet-application.md) | Committed Raft tablet application and retained-log recovery | accepted |
 | [0074](0074-quorum-sync-proof-boundary.md) | Raft quorum-synchronization proof boundary | accepted |
+| [0075](0075-durable-metadata-raft-commands.md) | Durable metadata Raft commands and recovery | accepted |

@@ -345,7 +345,8 @@ to loopback, a borrowed authenticator attaches stable principal identity to shar
 Tablets are the distribution and replication unit from the data model's beginning. Under [ADR
 0010](../adr/0010-tablets-raft-and-multiplexed-log-storage.md), each tablet maps to one logical Raft
 group, while a small metadata group owns schemas, placement, nodes, leader hints, retention, and
-cluster metadata. The deterministic Raft and bounded Multi-Raft logical cores, metadata application,
+cluster metadata. The deterministic Raft and bounded Multi-Raft logical cores, versioned/checksummed
+metadata commands with committed application and retained-log recovery,
 full-state physical record codec, segmented append/sync/recovery owner, distributed aggregate
 primitives, and safe movement state machine are implemented. Readers may observe only committed and
 applied entries under an explicitly selected consistency level. The tablet state machine now

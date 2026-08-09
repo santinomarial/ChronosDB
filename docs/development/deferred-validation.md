@@ -72,8 +72,9 @@
 - Put `DurableMultiRaftRuntime` behind a bounded asynchronous worker pool; batch transport and
   application alongside its implemented persistence release, and prove fairness/no starvation
   under hot/cold skew.
-- Encode/decode metadata commands through the metadata Raft group; durable schemas, nodes, tablet
-  placement, membership, leader hints, retention, cluster epochs, and metadata snapshots.
+- Extend the implemented metadata Raft codec/application/reopen path with complete schema
+  definitions, cluster epochs, application snapshots, safe membership commands, golden fixtures,
+  fuzzing, crash injection, and large-catalog limits/measurements.
 - Extend the implemented committed-only tablet command application and full retained-log rebuild
   with crash injection around publication/applied-index persistence. Version CSEG/Manifest row
   identities and an application snapshot for Raft source/group positions; cover compacted-prefix
