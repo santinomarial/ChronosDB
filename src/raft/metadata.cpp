@@ -104,6 +104,13 @@ common::Status MetadataStateMachine::apply_committed(const LogIndex index,
   return status;
 }
 
+common::Status MetadataStateMachine::apply_internal_noop(const LogIndex index) {
+  if (impl_ == nullptr || index == 0U || index != impl_->applied + 1U)
+    return invalid("metadata internal entry must follow committed Raft log order");
+  impl_->applied = index;
+  return common::Status::ok();
+}
+
 LogIndex MetadataStateMachine::applied_index() const noexcept {
   return impl_->applied;
 }

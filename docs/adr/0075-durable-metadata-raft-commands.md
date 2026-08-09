@@ -33,13 +33,15 @@ integrity. Treating local metadata as last-writer-wins was rejected because it b
 committed cluster order.
 
 This command carries schema identity/version, not a complete `TableSchema` definition; the durable
-schema-definition catalog and application snapshot remain follow-up work. Membership changes still
-require a safe Raft membership protocol rather than merely changing placement metadata.
+schema-definition catalog and application snapshot remain follow-up work. Membership changes use
+the separate joint-consensus protocol from ADR 0076 rather than merely changing placement metadata;
+orchestration between those two state machines remains follow-up work.
 
 ## Affected invariants and validation
 
 Invariants 4, 8, 9, 10, 11, 13, 14, and 18 apply. Tests cover all command kinds, canonical replica
 ordering, deterministic re-encoding, checksum/version/limit rejection, committed application,
 applied quorum proof, and full reconstruction after durable log reopen. Golden fixtures, fuzzing,
-application snapshots, catalog-definition persistence, joint membership, crash injection, and
+application snapshots, catalog-definition persistence, placement-driven membership orchestration,
+crash injection, and
 large-catalog measurements remain required.

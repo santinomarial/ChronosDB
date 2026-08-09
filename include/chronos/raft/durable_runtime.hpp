@@ -28,14 +28,19 @@ struct ProposeOperation {
   std::uint8_t type{};
   std::vector<std::byte> payload;
 };
+struct BeginMembershipChangeOperation {
+  std::vector<NodeId> new_voters;
+};
+struct FinalizeMembershipChangeOperation {};
 struct HeartbeatOperation {};
 struct MarkAppliedOperation {
   LogIndex index{};
 };
 
 using DurableRaftOperation =
-    std::variant<StartElectionOperation, ReceiveOperation, ProposeOperation, HeartbeatOperation,
-                 MarkAppliedOperation>;
+    std::variant<StartElectionOperation, ReceiveOperation, ProposeOperation,
+                 BeginMembershipChangeOperation, FinalizeMembershipChangeOperation,
+                 HeartbeatOperation, MarkAppliedOperation>;
 
 struct DurableRaftRequest {
   GroupId group_id;
@@ -54,9 +59,9 @@ struct DurableMultiRaftLimits {
 };
 
 // Proof available only on the current leader after a locally synchronized commit transition.
-// Under DurableMultiRaftRuntime's persist-before-response contract, commit implies that a voting
-// majority has durably stored the entry. This is a storage-durability proof; callers must
-// separately require state-machine application before returning a query-visible write
+// Under DurableMultiRaftRuntime's persist-before-response contract, commit implies that the stable
+// majority, or both joint majorities, durably stored the entry. This is a storage-durability proof;
+// callers must separately require state-machine application before returning a query-visible write
 // acknowledgement.
 struct QuorumSyncReceipt {
   GroupId group_id;

@@ -38,6 +38,8 @@ public:
   [[nodiscard]] common::Result<Transition> receive(NodeId source, Message message);
   [[nodiscard]] common::Result<Transition> propose(std::uint8_t type,
                                                    std::vector<std::byte> payload);
+  [[nodiscard]] common::Result<Transition> begin_membership_change(std::vector<NodeId> new_voters);
+  [[nodiscard]] common::Result<Transition> finalize_membership_change();
   [[nodiscard]] common::Result<Transition> heartbeat();
 
   // Advancing application state is itself persistent state. The returned transition must cross the
@@ -52,6 +54,8 @@ public:
   [[nodiscard]] LogIndex last_log_index() const noexcept;
   [[nodiscard]] LogIndex commit_index() const noexcept;
   [[nodiscard]] LogIndex applied_index() const noexcept;
+  [[nodiscard]] std::span<const NodeId> voters() const noexcept;
+  [[nodiscard]] bool joint_membership_active() const noexcept;
   [[nodiscard]] const PersistentState& persistent_state() const noexcept;
 
 private:

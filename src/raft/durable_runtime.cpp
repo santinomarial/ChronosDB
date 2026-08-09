@@ -147,6 +147,11 @@ DurableMultiRaftRuntime::execute_batch(std::vector<DurableRaftRequest> requests)
           } else if constexpr (std::is_same_v<T, ProposeOperation>) {
             return impl_->runtime.propose(request.group_id, operation.type,
                                           std::move(operation.payload));
+          } else if constexpr (std::is_same_v<T, BeginMembershipChangeOperation>) {
+            return impl_->runtime.begin_membership_change(request.group_id,
+                                                          std::move(operation.new_voters));
+          } else if constexpr (std::is_same_v<T, FinalizeMembershipChangeOperation>) {
+            return impl_->runtime.finalize_membership_change(request.group_id);
           } else if constexpr (std::is_same_v<T, HeartbeatOperation>) {
             return impl_->runtime.heartbeat(request.group_id);
           } else {

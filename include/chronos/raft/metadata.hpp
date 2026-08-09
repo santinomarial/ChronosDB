@@ -74,6 +74,7 @@ public:
 
   [[nodiscard]] static common::Result<MetadataStateMachine> create(MetadataLimits limits = {});
   [[nodiscard]] common::Status apply_committed(LogIndex index, MetadataCommand command);
+  [[nodiscard]] common::Status apply_internal_noop(LogIndex index);
 
   [[nodiscard]] LogIndex applied_index() const noexcept;
   [[nodiscard]] const ClusterNodeMetadata* find_node(NodeId node_id) const noexcept;

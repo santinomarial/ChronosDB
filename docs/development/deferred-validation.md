@@ -73,14 +73,14 @@
   application alongside its implemented persistence release, and prove fairness/no starvation
   under hot/cold skew.
 - Extend the implemented metadata Raft codec/application/reopen path with complete schema
-  definitions, cluster epochs, application snapshots, safe membership commands, golden fixtures,
+  definitions, cluster epochs, application snapshots, golden fixtures,
   fuzzing, crash injection, and large-catalog limits/measurements.
 - Extend the implemented committed-only tablet command application and full retained-log rebuild
   with crash injection around publication/applied-index persistence. Version CSEG/Manifest row
   identities and an application snapshot for Raft source/group positions; cover compacted-prefix
-  restart, query row-version columns, and compaction migration. Carry the implemented fixed-
+  restart, query row-version columns, and compaction migration. Carry the implemented joint-
   membership quorum-sync/application receipt through authenticated transport, protocol negotiation,
-  metrics, timeouts, minority-loss crash reconciliation, and safe joint membership before exposing
+  explicit configuration identity, metrics, timeouts, and minority-loss crash reconciliation before exposing
   the client mode.
 - Thousands-of-groups simulation, one-node loss, group lifecycle, persisted reopen, noisy-neighbor,
   TSan/chaos, physical amplification, group density, memory, and tail benchmarks.
@@ -94,7 +94,7 @@
   multi-tablet snapshots, routing/placement epochs, and no silent consistency downgrade.
 - Shard-key pruning and statistics in addition to event-time pruning; multi-node scalar/distributed
   differential SQL and partial-aggregation equivalence.
-- Integrate movement with joint/safe Raft membership, resumable durable snapshot files, manifest/
+- Integrate movement with the joint-consensus Raft operations, resumable durable snapshot files, manifest/
   CSEG install, source/target/leader failures, source switching, bandwidth limits, and stale metadata.
 - Partitions, duplicate/lost exchanges, skew, chaos, movement at every state, foreground interference,
   scale-out/exchange/coordination/failover benchmarks, and sanitizer/fuzz/property coverage.

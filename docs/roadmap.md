@@ -644,9 +644,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
 - **Feature-pass status:** `chronos_raft` implements a deterministic follower/candidate/leader core,
   persistent term/vote/log/commit/apply/snapshot metadata, RequestVote log freshness, AppendEntries
   validation/conflict rewind, next/match indexes, current-term majority commit, stale-term rejection,
-  and explicit persist-before-send transitions. Focused 3-node election, commit, failover, stale
-  leader, and restart catch-up tests pass. Disk/runtime/transport, snapshot installation, membership,
-  randomized simulation, and the full exit evidence remain deferred.
+  and explicit persist-before-send transitions. Canonical joint/final membership commands enforce
+  old-and-new election and commit quorums, recover from the retained log, and safely remove leaders.
+  Focused 3-node election, commit, failover, stale leader, restart catch-up, and membership tests
+  pass. Production transport, snapshot installation, randomized simulation, and the full exit
+  evidence remain deferred.
 
 - **Scope:** implement a deterministic Raft core for one logical group: elections, replication, commit, membership protocol as scoped by ADR, snapshots, read consistency mechanisms, and simulated transport/storage/time.
 - **Explicit non-scope:** multi-group multiplexing, production network integration, distributed queries, hidden third-party Raft implementation, and serving uncommitted or merely appended entries.
@@ -669,13 +671,14 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   committed command application now decodes exact COLUMNAR_APPEND bytes, preserves uncommitted
   invisibility, durably advances applied indexes after publication, and rebuilds fresh tablet state
   from the complete retained committed log. Asynchronous worker scheduling/fairness, a versioned
-  replicated durable-row/application-snapshot format, reclamation, and membership are not
-  implemented. A fixed-membership leader can now produce a checked quorum-sync receipt after
+  replicated durable-row/application-snapshot format and reclamation are not implemented. A leader
+  under stable or joint membership can now produce a checked quorum-sync receipt after
   majority-derived durable commit, and tablet application composes it with visibility; native
   client mode exposure and end-to-end crash evidence remain. The phase exit gate is not claimed.
   The dedicated metadata group now has canonical versioned/checksummed command bytes and committed
   application/reopen recovery for nodes, schema identities, tablet placement epochs, leader hints,
-  and retention. Complete schema definitions, metadata snapshots, and membership integration remain.
+  and retention. Complete schema definitions and metadata snapshots remain; placement-driven
+  membership orchestration is not yet integrated.
 
 - **Scope:** map tablets to Raft groups; multiplex logical records over physical logs, threads, timers, and connections; lifecycle, placement, snapshot transfer, fairness, and safe per-group reclamation.
 - **Explicit non-scope:** globally ordered logs, cross-tablet atomic transactions, distributed query execution, automatic rebalancing beyond scoped placement mechanics, and conflating physical offsets with logical indexes.
@@ -690,7 +693,7 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   mergeable partial aggregates, bounded exchange backpressure/cancellation, and a coordinator that
   rejects missing/failed fragments are implemented. Tablet movement enforces learner-first,
   checksummed retryable snapshot, catch-up, epoch-checked promotion, then source removal. General
-  vector-plan fragments/exchange wire bytes, read-index/staleness proof, Raft membership integration,
+  vector-plan fragments/exchange wire bytes, read-index/staleness proof, placement-to-membership integration,
   durable transfer, and multi-node failure validation remain deferred; the phase exit gate is not
   claimed.
 

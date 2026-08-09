@@ -14,7 +14,8 @@ index to those facts and, separately, to tablet state-machine application.
 
 ## Accepted decision
 
-For the current fixed voting configuration and non-Byzantine authenticated transport model, a
+For the current active committed or joint voting configuration and non-Byzantine authenticated
+transport model, a
 successful `AppendEntriesResponse` released by `DurableMultiRaftRuntime` proves that the follower's
 full persistent state containing that entry crossed its local synchronization frontier. A leader
 that advances and locally synchronizes `commit_index` after enough such responses may issue a
@@ -33,11 +34,11 @@ composed proof succeeds and must report the requested and effective mode without
 
 ## Assumptions and exclusions
 
-The proof assumes fixed, correctly configured voter identities; crash-fault, not Byzantine,
-behavior; authenticated message source identity; and the local persistence contract of each
-runtime. Forged responses, correlated storage loss, a lying device/controller, unsafe membership
-change, or loss of a majority are outside the guarantee. Joint-consensus membership must carry an
-explicit configuration identity before this proof can be used across membership transitions.
+The proof assumes correctly configured voter identities; the joint-consensus transition from
+[ADR 0076](0076-joint-consensus-raft-membership.md); crash-fault, not Byzantine, behavior;
+authenticated message source identity; and the local persistence contract of each runtime. Forged
+responses, correlated storage loss, a lying device/controller, bypassing the membership protocol,
+or loss of a required old/new majority are outside the guarantee.
 
 The receipt is currently an internal API. Native protocol negotiation, response fields, metrics,
 timeouts, cancellation, and end-to-end client exposure remain separate integration work and must
@@ -57,5 +58,5 @@ Invariants 1, 4, 5, 8, 9, 10, 14, and 18 apply. A focused three-runtime test pro
 cannot produce a receipt after only local append, that a follower response is released after its
 durability frontier advances, that the synchronized leader commit unlocks the receipt, and that a
 follower cannot issue it. Tablet tests prove that the composed application receipt is unavailable
-before publication. Authenticated production transport, fixed-membership identity, crash matrices,
-minority-loss recovery reconciliation, and client protocol exposure remain required.
+before publication. Authenticated production transport, explicit receipt configuration identity,
+crash matrices, minority-loss recovery reconciliation, and client protocol exposure remain required.

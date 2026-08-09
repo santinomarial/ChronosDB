@@ -66,6 +66,10 @@ public:
                                                             Message message);
   [[nodiscard]] common::Result<MultiRaftTransition>
   propose(const GroupId& group_id, std::uint8_t type, std::vector<std::byte> payload);
+  [[nodiscard]] common::Result<MultiRaftTransition>
+  begin_membership_change(const GroupId& group_id, std::vector<NodeId> new_voters);
+  [[nodiscard]] common::Result<MultiRaftTransition>
+  finalize_membership_change(const GroupId& group_id);
   [[nodiscard]] common::Result<MultiRaftTransition> heartbeat(const GroupId& group_id);
   [[nodiscard]] common::Result<MultiRaftTransition> mark_applied(const GroupId& group_id,
                                                                  LogIndex index);

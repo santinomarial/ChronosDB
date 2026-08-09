@@ -196,5 +196,45 @@ TEST(DurableMultiRaftRuntimeTest, RejectsRecoveredGroupWithoutMembershipConfigur
   EXPECT_EQ(missing.error().code(), common::StatusCode::kCorruption);
 }
 
+TEST(DurableMultiRaftRuntimeTest, PersistsAndRecoversCompletedMembershipChange) {
+  TemporaryDirectory directory;
+  const RaftPersistentLogConfig log_config{.directory_path = directory.path().string()};
+  const GroupId group = group_id(std::byte{9U});
+  const std::vector<RaftGroupConfiguration> groups{{group, {1U}}};
+  auto runtime = DurableMultiRaftRuntime::create_new(1U, log_config, groups);
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  ASSERT_TRUE(runtime->execute_batch({{group, StartElectionOperation{}}}).has_value());
+
+  auto joint =
+      runtime->execute_batch({{group, BeginMembershipChangeOperation{.new_voters = {1U, 2U}}}});
+  ASSERT_TRUE(joint.has_value()) << joint.error().to_string();
+  EXPECT_TRUE(runtime->find_group(group)->joint_membership_active());
+  EXPECT_EQ(runtime->find_group(group)->commit_index(), 0U);
+  auto joint_commit = runtime->execute_batch(
+      {{group, ReceiveOperation{2U, AppendEntriesResponse{1U, true, 1U, std::nullopt, 0U}}}});
+  ASSERT_TRUE(joint_commit.has_value()) << joint_commit.error().to_string();
+  EXPECT_EQ(runtime->find_group(group)->commit_index(), 1U);
+
+  auto final = runtime->execute_batch({{group, FinalizeMembershipChangeOperation{}}});
+  ASSERT_TRUE(final.has_value()) << final.error().to_string();
+  auto final_commit = runtime->execute_batch(
+      {{group, ReceiveOperation{2U, AppendEntriesResponse{1U, true, 2U, std::nullopt, 0U}}}});
+  ASSERT_TRUE(final_commit.has_value()) << final_commit.error().to_string();
+  ASSERT_EQ(runtime->find_group(group)->commit_index(), 2U);
+  EXPECT_FALSE(runtime->find_group(group)->joint_membership_active());
+  EXPECT_TRUE(
+      std::ranges::equal(runtime->find_group(group)->voters(), std::vector<NodeId>{1U, 2U}));
+  const std::uint64_t durable_sequence = runtime->durable_physical_sequence();
+  ASSERT_TRUE(runtime->close().is_ok());
+
+  auto reopened = DurableMultiRaftRuntime::open_existing(1U, log_config, {}, groups);
+  ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+  EXPECT_EQ(reopened->find_group(group)->commit_index(), 2U);
+  EXPECT_FALSE(reopened->find_group(group)->joint_membership_active());
+  EXPECT_TRUE(
+      std::ranges::equal(reopened->find_group(group)->voters(), std::vector<NodeId>{1U, 2U}));
+  EXPECT_EQ(reopened->durable_physical_sequence(), durable_sequence);
+}
+
 } // namespace
 } // namespace chronos::raft

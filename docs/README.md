@@ -56,7 +56,9 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Raft Tablet Command v1](formats/raft-tablet-command-v1.md): exact committed
   `COLUMNAR_APPEND` payload, group/index identity, ordering, and retained-log recovery contract.
 - [Metadata Command v1](formats/metadata-command-v1.md): canonical checksummed metadata-group
-  commands for nodes, schema identities, placement, leader hints, and retention.
+  commands for nodes, schemas, placements, and retention.
+- [Raft Membership Command v1](formats/raft-membership-command-v1.md): canonical joint and final
+  configuration entries with old/new quorum semantics.
 - [Production dependencies](dependencies/README.md): maintained external-library boundaries,
   version sources, licenses, and update/security ownership.
 
@@ -192,6 +194,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Segmented Multi-Raft persistent log](learning/raft-persistent-log.md): shared physical segments,
   append/sync frontiers, durable runtime batching, rotation, recovery, repair, ownership, and
   reclamation boundary.
+- [Joint-consensus membership](learning/joint-consensus-membership.md): canonical membership
+  commands, dual-quorum elections and commits, learner behavior, recovery, and application no-ops.
 - [Committed Raft tablet application](learning/raft-tablet-application.md): committed-only command
   decoding, shared row/retry publication, applied-index ordering, and retained-log reconstruction.
 - [Durable metadata Raft state](learning/durable-metadata-state.md): checksummed commands,

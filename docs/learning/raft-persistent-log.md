@@ -34,10 +34,11 @@ segment. `DurableMultiRaftRuntime` appends several groups from a bounded caller-
 one synchronization, and withholds every associated transition and outbound message until that
 boundary completes. The same rule now covers persisted `applied_index` advancement.
 
-For fixed membership, a leader may issue a `QuorumSyncReceipt` after its synchronized commit index
-covers an entry. Raft commit embodies a voting majority, and every counted follower response was
-withheld until that follower synchronized its persistent transition. Tablet application adds a
-separate coverage check before the proof can authorize a query-visible write acknowledgment.
+For a committed or joint configuration, a leader may issue a `QuorumSyncReceipt` after its
+synchronized commit index covers an entry. Raft commit embodies either the committed majority or
+both old and new majorities, and every counted follower response was withheld until that follower
+synchronized its persistent transition. Tablet application adds a separate coverage check before
+the proof can authorize a query-visible write acknowledgment.
 
 ## Recovery and failure behavior
 

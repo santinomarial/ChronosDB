@@ -1,6 +1,7 @@
 #include "chronos/ingest/raft_tablet_state_machine.hpp"
 
 #include "chronos/ingest/committed_columnar_append.hpp"
+#include "chronos/raft/membership.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -95,6 +96,8 @@ public:
 
   [[nodiscard]] common::Status preflight(const std::span<const raft::LogEntry> entries) const {
     for (const raft::LogEntry& entry : entries) {
+      if (raft::is_membership_entry_type(entry.type))
+        continue;
       auto command = decode(entry);
       if (!command.has_value()) {
         return command.error();
@@ -129,6 +132,10 @@ public:
     }
     report.first_applied_index = entries.front().index;
     for (const raft::LogEntry& entry : entries) {
+      if (raft::is_membership_entry_type(entry.type)) {
+        report.last_applied_index = entry.index;
+        continue;
+      }
       auto command = decode(entry);
       if (!command.has_value()) {
         return common::make_unexpected(fail(command.error()));

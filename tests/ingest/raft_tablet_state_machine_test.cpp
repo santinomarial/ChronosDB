@@ -218,5 +218,58 @@ TEST(RaftTabletStateMachineTest, FailsClosedOnCorruptCommittedCommandBytes) {
   EXPECT_EQ(durable.find_group(group_id())->applied_index(), 0U);
 }
 
+TEST(RaftTabletStateMachineTest, AdvancesAcrossCommittedMembershipEntries) {
+  TemporaryDirectory directory;
+  const raft::RaftPersistentLogConfig log_config{.directory_path = directory.path().string()};
+  raft::DurableMultiRaftRuntime durable = runtime(log_config, {1U, 2U});
+  auto machine =
+      RaftTabletStateMachine::recover(group_id(), durable, retry_directory(), tablet(), schemas());
+  ASSERT_TRUE(machine.has_value()) << machine.error().to_string();
+  ASSERT_TRUE(durable.execute_batch({{group_id(), raft::StartElectionOperation{}}}).has_value());
+  ASSERT_TRUE(
+      durable
+          .execute_batch(
+              {{group_id(), raft::ReceiveOperation{2U, raft::RequestVoteResponse{1U, true}}}})
+          .has_value());
+  ASSERT_TRUE(durable.execute_batch({{group_id(), raft::BeginMembershipChangeOperation{{1U}}}})
+                  .has_value());
+  ASSERT_TRUE(durable
+                  .execute_batch({{group_id(),
+                                   raft::ReceiveOperation{
+                                       2U, raft::AppendEntriesResponse{.term = 1U,
+                                                                       .success = true,
+                                                                       .match_index = 1U}}}})
+                  .has_value());
+  ASSERT_TRUE(
+      durable.execute_batch({{group_id(), raft::FinalizeMembershipChangeOperation{}}}).has_value());
+  ASSERT_TRUE(durable
+                  .execute_batch({{group_id(),
+                                   raft::ReceiveOperation{
+                                       2U, raft::AppendEntriesResponse{.term = 1U,
+                                                                       .success = true,
+                                                                       .match_index = 2U}}}})
+                  .has_value());
+
+  auto membership = machine->apply_committed();
+  ASSERT_TRUE(membership.has_value()) << membership.error().to_string();
+  EXPECT_EQ(membership->first_applied_index, 1U);
+  EXPECT_EQ(membership->last_applied_index, 2U);
+  EXPECT_EQ(membership->applied_entries, 0U);
+  EXPECT_EQ(durable.find_group(group_id())->applied_index(), 2U);
+  EXPECT_EQ(machine->tablet().snapshot()->visible_row_count(), 0U);
+
+  ASSERT_TRUE(durable
+                  .execute_batch({{group_id(), raft::ProposeOperation{kRaftColumnarAppendEntryType,
+                                                                      command()}}})
+                  .has_value());
+  auto appended = machine->apply_committed();
+  ASSERT_TRUE(appended.has_value()) << appended.error().to_string();
+  EXPECT_EQ(appended->first_applied_index, 3U);
+  EXPECT_EQ(appended->last_applied_index, 3U);
+  EXPECT_EQ(appended->applied_entries, 1U);
+  EXPECT_EQ(machine->tablet().snapshot()->applied_position(),
+            head::HeadCommitPosition::raft(group_id(), 3U));
+}
+
 } // namespace
 } // namespace chronos::ingest

@@ -48,7 +48,7 @@ batch mutates state. Allocation and state-capacity errors return their precise s
 after committed application begins fails the owned tablet closed; restart rebuilds from the retained
 log.
 
-`prove_applied_quorum_sync` composes the leader's fixed-membership majority-durability receipt with
+`prove_applied_quorum_sync` composes the leader's committed/joint-membership durability receipt with
 the Raft applied index and tablet group/index publication frontier. Client protocol exposure,
 application snapshots, and physical-log reclamation remain absent.
 

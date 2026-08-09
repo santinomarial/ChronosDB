@@ -1,7 +1,10 @@
 #include "chronos/raft/metadata_runtime.hpp"
 
+#include "chronos/raft/membership.hpp"
+
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -47,9 +50,13 @@ public:
     MetadataApplicationReport report;
     if (entries.empty())
       return report;
-    std::vector<MetadataCommand> commands;
+    std::vector<std::optional<MetadataCommand>> commands;
     commands.reserve(entries.size());
     for (const LogEntry& entry : entries) {
+      if (is_membership_entry_type(entry.type)) {
+        commands.emplace_back(std::nullopt);
+        continue;
+      }
       if (entry.type != kRaftMetadataCommandEntryType) {
         return common::make_unexpected(
             fail(unsupported("committed metadata Raft entry type is unsupported")));
@@ -57,15 +64,19 @@ public:
       auto decoded = decode_metadata_command_v1(entry.payload, codec_limits);
       if (!decoded.has_value())
         return common::make_unexpected(fail(decoded.error()));
-      commands.push_back(std::move(*decoded));
+      commands.emplace_back(std::move(*decoded));
     }
     report.first_applied_index = entries.front().index;
     for (std::size_t ordinal = 0U; ordinal < entries.size(); ++ordinal) {
       common::Status status =
-          metadata.apply_committed(entries[ordinal].index, std::move(commands[ordinal]));
+          commands[ordinal].has_value()
+              ? metadata.apply_committed(entries[ordinal].index, std::move(*commands[ordinal]))
+              : metadata.apply_internal_noop(entries[ordinal].index);
       if (!status.is_ok())
         return common::make_unexpected(fail(status));
-      ++report.applied_commands;
+      if (commands[ordinal].has_value()) {
+        ++report.applied_commands;
+      }
       report.last_applied_index = entries[ordinal].index;
     }
     if (!persist_applied)

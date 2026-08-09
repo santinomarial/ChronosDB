@@ -1,5 +1,7 @@
+#include "chronos/raft/membership.hpp"
 #include "chronos/raft/node.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -182,6 +184,124 @@ TEST(RaftNodeTest, RejectsIndexExhaustionBeforeNextIndexCanWrap) {
   ASSERT_FALSE(exhausted.has_value());
   EXPECT_EQ(exhausted.error().code(), common::StatusCode::kInvalidArgument);
   EXPECT_EQ(node->last_log_index(), std::numeric_limits<LogIndex>::max() - 1U);
+}
+
+TEST(RaftNodeTest, CommitsMembershipChangeUnderJointQuorumsAndRemovesLeader) {
+  auto node = RaftNode::create(1U, {1U, 2U, 3U});
+  ASSERT_TRUE(node.has_value());
+  ASSERT_TRUE(node->start_election().has_value());
+  auto elected = node->receive(2U, RequestVoteResponse{1U, true});
+  ASSERT_TRUE(elected.has_value()) << elected.error().to_string();
+  ASSERT_EQ(node->role(), Role::kLeader);
+
+  auto joint = node->begin_membership_change({2U, 3U, 4U});
+  ASSERT_TRUE(joint.has_value()) << joint.error().to_string();
+  EXPECT_TRUE(joint->persistent_state.has_value());
+  EXPECT_TRUE(node->joint_membership_active());
+  EXPECT_TRUE(std::ranges::equal(node->voters(), std::vector<NodeId>{1U, 2U, 3U, 4U}));
+  EXPECT_EQ(node->commit_index(), 0U);
+  EXPECT_FALSE(node->finalize_membership_change().has_value());
+
+  auto old_majority = node->receive(2U, AppendEntriesResponse{1U, true, 1U, std::nullopt, 0U});
+  ASSERT_TRUE(old_majority.has_value()) << old_majority.error().to_string();
+  EXPECT_EQ(node->commit_index(), 0U);
+  auto both_majorities = node->receive(4U, AppendEntriesResponse{1U, true, 1U, std::nullopt, 0U});
+  ASSERT_TRUE(both_majorities.has_value()) << both_majorities.error().to_string();
+  EXPECT_EQ(node->commit_index(), 1U);
+
+  auto final = node->finalize_membership_change();
+  ASSERT_TRUE(final.has_value()) << final.error().to_string();
+  EXPECT_EQ(node->commit_index(), 1U);
+  auto final_old = node->receive(2U, AppendEntriesResponse{1U, true, 2U, std::nullopt, 0U});
+  ASSERT_TRUE(final_old.has_value()) << final_old.error().to_string();
+  EXPECT_EQ(node->commit_index(), 1U);
+  auto final_both = node->receive(4U, AppendEntriesResponse{1U, true, 2U, std::nullopt, 0U});
+  ASSERT_TRUE(final_both.has_value()) << final_both.error().to_string();
+  EXPECT_EQ(node->commit_index(), 2U);
+  EXPECT_FALSE(node->joint_membership_active());
+  EXPECT_TRUE(std::ranges::equal(node->voters(), std::vector<NodeId>{2U, 3U, 4U}));
+  EXPECT_EQ(node->role(), Role::kFollower);
+  EXPECT_FALSE(node->start_election().has_value());
+
+  auto recovered = RaftNode::create(4U, {1U, 2U, 3U}, node->persistent_state());
+  ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
+  EXPECT_TRUE(std::ranges::equal(recovered->voters(), std::vector<NodeId>{2U, 3U, 4U}));
+  EXPECT_FALSE(recovered->joint_membership_active());
+}
+
+TEST(RaftNodeTest, JointElectionRequiresOldAndNewMajorities) {
+  auto node = RaftNode::create(1U, {1U, 2U, 3U});
+  ASSERT_TRUE(node.has_value());
+  ASSERT_TRUE(node->start_election().has_value());
+  ASSERT_TRUE(node->receive(2U, RequestVoteResponse{1U, true}).has_value());
+  ASSERT_EQ(node->role(), Role::kLeader);
+  ASSERT_TRUE(node->begin_membership_change({2U, 3U, 4U}).has_value());
+
+  const PersistentState joint_state = node->persistent_state();
+  auto restarted = RaftNode::create(1U, {1U, 2U, 3U}, joint_state);
+  ASSERT_TRUE(restarted.has_value()) << restarted.error().to_string();
+  auto election = restarted->start_election();
+  ASSERT_TRUE(election.has_value()) << election.error().to_string();
+  ASSERT_EQ(restarted->role(), Role::kCandidate);
+  ASSERT_TRUE(restarted->receive(2U, RequestVoteResponse{2U, true}).has_value());
+  EXPECT_EQ(restarted->role(), Role::kCandidate);
+  ASSERT_TRUE(restarted->receive(4U, RequestVoteResponse{2U, true}).has_value());
+  EXPECT_EQ(restarted->role(), Role::kLeader);
+}
+
+TEST(RaftNodeTest, RejectsReservedProposalsLearnerElectionsAndInvalidMembershipHistory) {
+  auto learner = RaftNode::create(4U, {1U, 2U, 3U});
+  ASSERT_TRUE(learner.has_value());
+  EXPECT_EQ(learner->start_election().error().code(), common::StatusCode::kUnavailable);
+
+  auto leader = RaftNode::create(1U, {1U});
+  ASSERT_TRUE(leader.has_value());
+  ASSERT_TRUE(leader->start_election().has_value());
+  EXPECT_EQ(leader->propose(kJointMembershipEntryType, {}).error().code(),
+            common::StatusCode::kInvalidArgument);
+
+  auto final_payload = encode_membership_command_v1(
+      FinalMembershipCommand{.joint_index = 1U, .new_voters = {1U, 2U, 3U}});
+  ASSERT_TRUE(final_payload.has_value());
+  const PersistentState before = learner->persistent_state();
+  auto malformed = learner->receive(
+      1U,
+      AppendEntriesRequest{1U,
+                           1U,
+                           0U,
+                           0U,
+                           {LogEntry{1U, 1U, kFinalMembershipEntryType, std::move(*final_payload)}},
+                           0U});
+  ASSERT_FALSE(malformed.has_value());
+  EXPECT_EQ(malformed.error().code(), common::StatusCode::kCorruption);
+  EXPECT_EQ(learner->persistent_state(), before);
+}
+
+TEST(RaftNodeTest, LaggingNewVoterAcceptsConfigurationFromNewOnlyLeader) {
+  auto node = RaftNode::create(3U, {1U, 2U, 3U});
+  ASSERT_TRUE(node.has_value());
+  auto joint = encode_membership_command_v1(
+      JointMembershipCommand{.old_voters = {1U, 2U, 3U}, .new_voters = {3U, 4U, 5U}});
+  auto final = encode_membership_command_v1(
+      FinalMembershipCommand{.joint_index = 1U, .new_voters = {3U, 4U, 5U}});
+  ASSERT_TRUE(joint.has_value());
+  ASSERT_TRUE(final.has_value());
+
+  auto caught_up = node->receive(
+      4U, AppendEntriesRequest{2U,
+                               4U,
+                               0U,
+                               0U,
+                               {LogEntry{1U, 2U, kJointMembershipEntryType, std::move(*joint)},
+                                LogEntry{2U, 2U, kFinalMembershipEntryType, std::move(*final)}},
+                               2U});
+
+  ASSERT_TRUE(caught_up.has_value()) << caught_up.error().to_string();
+  EXPECT_EQ(node->commit_index(), 2U);
+  EXPECT_FALSE(node->joint_membership_active());
+  EXPECT_TRUE(std::ranges::equal(node->voters(), std::vector<NodeId>{3U, 4U, 5U}));
+  ASSERT_EQ(caught_up->outbound.size(), 1U);
+  EXPECT_TRUE(std::get<AppendEntriesResponse>(caught_up->outbound.front().message).success);
 }
 
 } // namespace

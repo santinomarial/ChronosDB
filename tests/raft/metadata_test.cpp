@@ -35,6 +35,9 @@ TEST(MetadataStateMachineTest, AppliesSchemaPlacementNodesAndRetentionOnlyInComm
   EXPECT_EQ(metadata->find_retention(table)->system_history_ns, 1000);
   EXPECT_FALSE(metadata->apply_committed(6U, ClusterNodeMetadata{2U, "node-2"}).is_ok());
   EXPECT_EQ(metadata->applied_index(), 4U);
+  EXPECT_TRUE(metadata->apply_internal_noop(5U).is_ok());
+  EXPECT_TRUE(metadata->apply_committed(6U, ClusterNodeMetadata{2U, "node-2"}).is_ok());
+  EXPECT_EQ(metadata->applied_index(), 6U);
 }
 
 } // namespace

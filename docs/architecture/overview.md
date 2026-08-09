@@ -356,7 +356,7 @@ tablet commit positions
 now distinguish a WAL identity from a Raft group/index identity, while frozen CSEG/Manifest v1
 writers reject Raft identities rather than aliasing them into WAL fields. Production timers,
 transport, a replicated durable-row/application-snapshot format, snapshot installation,
-membership protocol, read index/staleness proof, and a packaged cluster runtime remain
+placement-driven membership orchestration, read index/staleness proof, and a packaged cluster runtime remain
 unimplemented. The
 single-thread-affine durable runtime already accepts bounded operation batches, persists every
 state-changing transition under one local sync, and exposes outbound messages only afterward.
