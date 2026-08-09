@@ -457,6 +457,7 @@ add_library(
   chronos_live
   src/live/incremental_aggregate.cpp
   src/live/materialized_view.cpp
+  src/live/materialized_view_checkpoint.cpp
   src/live/resume_token.cpp
   src/live/subscription.cpp
 )
@@ -670,6 +671,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/live/incremental_aggregate_test.cpp
     tests/live/materialized_view_header_self_contained.cpp
     tests/live/materialized_view_test.cpp
+    tests/live/materialized_view_checkpoint_header_self_contained.cpp
+    tests/live/materialized_view_checkpoint_test.cpp
     tests/live/resume_token_header_self_contained.cpp
     tests/live/resume_token_test.cpp
     tests/live/subscription_header_self_contained.cpp

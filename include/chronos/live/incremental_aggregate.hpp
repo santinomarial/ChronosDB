@@ -29,6 +29,9 @@ struct IncrementalAggregateCheckpoint {
   double weight_sum{};
   double mean{};
   double m2{};
+
+  friend bool operator==(const IncrementalAggregateCheckpoint&,
+                         const IncrementalAggregateCheckpoint&) = default;
 };
 
 struct OhlcValue {

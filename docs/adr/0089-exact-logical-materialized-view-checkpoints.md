@@ -4,6 +4,7 @@
 - **Date:** 2026-08-09
 - **Owners:** ChronosDB live-query maintainers
 - **Extends:** [ADR 0068](0068-live-handoff-and-resume-token-v1.md)
+- **Extended by:** [ADR 0090](0090-materialized-view-checkpoint-v1.md)
 
 ## Context
 
@@ -32,9 +33,9 @@ owner.
 
 ## Consequences and alternatives
 
-The checkpoint is an owned logical contract, not yet a durable byte format or filesystem owner.
-That separation permits the durable format to validate a stable public state rather than encode
-private maps. It also makes process-local handoff and focused continuation tests possible now.
+The checkpoint is an owned logical contract. ADR 0090 encodes that contract without exposing private
+maps; a filesystem installation owner remains separate. The logical layer also makes process-local
+handoff and focused continuation tests possible independently of I/O.
 
 Rebuilding numeric fields from rows in an arbitrary canonical order was rejected because floating
 addition and Welford updates are order-sensitive. Storing only aggregate output was rejected because

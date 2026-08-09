@@ -17,9 +17,9 @@
 ## Phase 11 — live subscriptions and materialized views
 
 - Commits injected at every historical-to-live handoff step across real snapshot execution.
-- Multi-tablet registration/merge ordering, topology epochs, retention pins, versioned durable
-  encoding/installation of the implemented exact logical materialized-view checkpoints, and service
-  restart recovery.
+- Multi-tablet registration/merge ordering, topology epochs, retention pins, durable filesystem
+  installation of the implemented versioned/checksummed exact materialized-view checkpoints, and
+  service restart recovery.
 - Native-protocol subscription messages, partial delivery, disconnect/reconnect, duplicate replay,
   schema-change termination, cancellation races, and network backpressure integration.
 - Full unit/property coverage for token hostile sizes/versions, retention expiry disclosure,

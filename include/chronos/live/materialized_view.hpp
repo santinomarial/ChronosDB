@@ -58,6 +58,9 @@ struct MaterializedWindowCheckpoint {
   bool emitted{};
   bool finalized{};
   IncrementalAggregateCheckpoint aggregate;
+
+  friend bool operator==(const MaterializedWindowCheckpoint&,
+                         const MaterializedWindowCheckpoint&) = default;
 };
 
 struct WindowedMaterializedViewCheckpoint {
@@ -66,6 +69,9 @@ struct WindowedMaterializedViewCheckpoint {
   std::int64_t watermark{};
   std::vector<AggregateInput> rows;
   std::vector<MaterializedWindowCheckpoint> windows;
+
+  friend bool operator==(const WindowedMaterializedViewCheckpoint&,
+                         const WindowedMaterializedViewCheckpoint&) = default;
 };
 
 // Deterministic single-owner window state driven only by consecutive committed source positions.

@@ -18,10 +18,11 @@ indexes, verifies window membership from event times, preserves revisions/finali
 at the next consecutive committed position. Exact running fields matter because rebuilding floating
 aggregates in a different order can change later output bits.
 
-The checkpoint currently has no durable encoding or installation owner. External delivery remains
-at least once, and the subscription manager remains a separate single-source retention/handoff
-owner. Durable checkpoint installation must order source retention release after the checkpoint is
-fully validated and synchronized.
+Materialized View Checkpoint v1 now encodes that state with fixed little-endian fields, exact
+floating bits, authenticated counts, header/file CRC32C, and complete logical validation. It still
+has no installation owner. External delivery remains at least once, and the subscription manager
+remains a separate single-source retention/handoff owner. Durable checkpoint installation must
+order source retention release after the checkpoint is fully validated and synchronized.
 
 Update and correction work is proportional to the number of overlapping windows plus ordered-map
 costs. Checkpoint size includes global rows and per-window contribution rows; this favors a simple

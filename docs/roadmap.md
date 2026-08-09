@@ -600,7 +600,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   min/max/VWAP/OHLC/Welford state, tumbling/sliding windows, watermarks, corrections, and logical
   materialized-view progress. Exact bounded logical checkpoints now preserve rows, aggregate running
   state, revisions, finalization, watermark, and committed progress across owner reconstruction.
-  Durable checkpoint bytes/installation, native-protocol delivery, multi-tablet ordering, service
+  Materialized View Checkpoint v1 now preserves that state in bounded, versioned, checksummed exact
+  bytes. Durable filesystem installation, native-protocol delivery, multi-tablet ordering, service
   restart recovery, and the full exit evidence remain deferred; the phase exit gate is not claimed.
 
 - **Scope:** committed change model; gap-free snapshot-to-stream handoff; deterministic versioned resume tokens; bounded subscriber policies; supported incremental operators; materialized-view progress/recovery and late-event corrections.

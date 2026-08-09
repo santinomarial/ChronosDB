@@ -60,6 +60,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   admission, and installation remain in progress.
 - [Resume Token v1](formats/resume-token-v1.md): authenticated live-subscription resume identity,
   compatibility, limits, and rejection rules.
+- [Materialized View Checkpoint v1](formats/materialized-view-checkpoint-v1.md): bounded exact
+  window/aggregate state, committed progress, IEEE-754 preservation, and CRC32C rejection rules.
 - [Multiplexed Raft Persistent-State Record v1](formats/multiplexed-raft-log-v1.md): checksummed,
   group-tagged full-state records plus the implemented segmented append/sync/recovery envelope.
 - [Raft Tablet Command v1](formats/raft-tablet-command-v1.md): exact committed
@@ -212,6 +214,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   commands, dual-quorum elections and commits, learner behavior, recovery, and application no-ops.
 - [Committed Raft tablet application](learning/raft-tablet-application.md): committed-only command
   decoding, shared row/retry publication, applied-index ordering, and retained-log reconstruction.
+- [Windowed materialized-view state](learning/windowed-materialized-view.md): committed/event-time
+  separation, corrections, watermarks, exact logical checkpoints, and durable codec boundary.
 - [Durable metadata Raft state](learning/durable-metadata-state.md): checksummed commands,
   commit-order catalog application, quorum proof, and retained-log reconstruction.
 - [Phase 10 network exit review](reviews/phase-10-network-review.md): implemented transport
