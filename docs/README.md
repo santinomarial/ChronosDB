@@ -218,6 +218,9 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   separation, corrections, watermarks, exact checkpoints, durable recovery, and retention frontier.
 - [Multi-tablet subscription order](learning/multi-tablet-subscription-order.md): canonical source
   vectors, coordinator admission order, component-wise acknowledgement, replay, and expiry.
+- [Plan-bound subscription snapshot execution](adr/0096-plan-bound-subscription-snapshot-execution.md):
+  exact manager/storage boundary validation, physical snapshot batches, END_STREAM/READY ordering,
+  and fail-closed cancellation.
 - [Durable metadata Raft state](learning/durable-metadata-state.md): checksummed commands,
   commit-order catalog application, quorum proof, and retained-log reconstruction.
 - [Phase 10 network exit review](reviews/phase-10-network-review.md): implemented transport

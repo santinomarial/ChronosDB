@@ -148,6 +148,10 @@ public:
     return *snapshot_;
   }
 
+  [[nodiscard]] const manifest::DatabaseStoragePublisher& publisher() const noexcept {
+    return *publisher_;
+  }
+
   [[nodiscard]] static schema::TabletId tablet_id() {
     return cseg::test::identifier<schema::TabletId>(3U);
   }

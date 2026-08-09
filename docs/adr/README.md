@@ -130,3 +130,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0093](0093-durable-windowed-materialized-view-owner.md) | Durable windowed materialized-view owner | accepted |
 | [0094](0094-native-protocol-1-1-subscriptions.md) | Native Protocol 1.1 subscriptions | accepted |
 | [0095](0095-multi-tablet-subscription-delivery-order.md) | Multi-tablet subscription delivery order | accepted |
+| [0096](0096-plan-bound-subscription-snapshot-execution.md) | Plan-bound subscription snapshot execution | accepted |

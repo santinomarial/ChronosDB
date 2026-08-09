@@ -370,4 +370,8 @@ SubscriptionManager::status(const common::Uuid& subscription_id) const {
                             state.buffered_bytes};
 }
 
+const SubscriptionSource& SubscriptionManager::source() const noexcept {
+  return impl_->source;
+}
+
 } // namespace chronos::live

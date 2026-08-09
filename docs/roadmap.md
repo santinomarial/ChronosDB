@@ -611,8 +611,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   acknowledgements, checkpoints, resumable termination, and manager-backed delivery. A plan-bound
   multi-tablet coordinator now captures canonical source vectors, enforces each log independently,
   records cross-tablet delivery admission, and resumes the exact retained component-wise suffix.
-  Service SQL/plan execution, durable coordinator restart, topology/retention integration, and the
-  full exit evidence remain deferred; the phase exit gate is not claimed.
+  A single-tablet service owner now executes an already-lowered physical plan against the exact
+  registered aggregate-storage boundary, encodes snapshot batches and END_STREAM, then opens READY
+  without exposing buffered changes early. SQL request planning, multi-tablet snapshot execution,
+  durable coordinator restart, topology/retention integration, and the full exit evidence remain
+  deferred; the phase exit gate is not claimed.
 
 - **Scope:** committed change model; gap-free snapshot-to-stream handoff; deterministic versioned resume tokens; bounded subscriber policies; supported incremental operators; materialized-view progress/recovery and late-event corrections.
 - **Explicit non-scope:** unqualified end-to-end exactly-once claims, unlimited retention, every SQL operator, cross-cluster delivery, and external-sink transactions not explicitly integrated.

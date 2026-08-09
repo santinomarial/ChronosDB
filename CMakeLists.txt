@@ -464,6 +464,7 @@ add_library(
   src/live/materialized_view_checkpoint_storage.cpp
   src/live/multi_tablet_subscription.cpp
   src/live/resume_token.cpp
+  src/live/snapshot_subscription.cpp
   src/live/subscription.cpp
   src/live/subscription_protocol.cpp
 )
@@ -478,7 +479,12 @@ target_include_directories(
 )
 target_link_libraries(
   chronos_live
-  PUBLIC chronos::common chronos::network chronos::schema chronos::wal
+  PUBLIC chronos::common
+         chronos::manifest
+         chronos::network
+         chronos::query
+         chronos::schema
+         chronos::wal
   PRIVATE OpenSSL::Crypto
 )
 chronos_set_project_warnings(chronos_live)
@@ -689,6 +695,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/live/materialized_view_checkpoint_storage_test.cpp
     tests/live/resume_token_header_self_contained.cpp
     tests/live/resume_token_test.cpp
+    tests/live/snapshot_subscription_header_self_contained.cpp
+    tests/live/snapshot_subscription_test.cpp
     tests/live/subscription_header_self_contained.cpp
     tests/live/subscription_protocol_header_self_contained.cpp
     tests/live/subscription_protocol_test.cpp
@@ -696,7 +704,8 @@ if(CHRONOS_BUILD_TESTS)
   )
   set_target_properties(chronos_live_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_live_tests PRIVATE cxx_std_23)
-  target_link_libraries(chronos_live_tests PRIVATE chronos::live GTest::gtest_main)
+  target_include_directories(chronos_live_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+  target_link_libraries(chronos_live_tests PRIVATE chronos::live GTest::gtest_main zstd::libzstd)
   chronos_set_project_warnings(chronos_live_tests)
   chronos_enable_sanitizers(chronos_live_tests)
   chronos_enable_static_analysis(chronos_live_tests)

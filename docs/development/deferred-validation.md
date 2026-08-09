@@ -16,6 +16,10 @@
 
 ## Phase 11 — live subscriptions and materialized views
 
+- Plan-bound subscription snapshot execution: forced-allocation sweeps, cancellation at every
+  pull/END_STREAM/READY transition, multi-chunk socket backpressure, reactor worker dispatch, and
+  real concurrent publication scheduling. Extend the owner to Raft and multi-tablet snapshot
+  vectors only after their exact snapshot acquisition contract is integrated.
 - Commits injected at every historical-to-live handoff step across real snapshot execution.
 - Cross-tablet-owner wiring around the implemented canonical vector/admission-order coordinator,
   durable admission-order restart, topology transitions, retention pins, service SQL/plan-to-input

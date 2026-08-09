@@ -128,6 +128,8 @@ public:
   [[nodiscard]] common::Result<SubscriptionStatus>
   status(const common::Uuid& subscription_id) const;
 
+  [[nodiscard]] const SubscriptionSource& source() const noexcept;
+
 private:
   class Impl;
   explicit SubscriptionManager(std::unique_ptr<Impl> impl) noexcept;
