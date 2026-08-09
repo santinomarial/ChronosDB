@@ -4,6 +4,7 @@
 - **Date:** 2026-08-09
 - **Owners:** ChronosDB live-query and durability maintainers
 - **Extends:** [ADR 0089](0089-exact-logical-materialized-view-checkpoints.md)
+- **Extended by:** [ADR 0091](0091-durable-materialized-view-checkpoint-storage.md)
 
 ## Context
 
@@ -40,9 +41,9 @@ Serializing private containers or native structs was rejected as ABI-dependent. 
 snapshots was rejected because corrections require row contributions. A checksum only at the end was
 rejected because hostile counts must be authenticated before they influence allocation.
 
-This ADR freezes bytes and codec behavior only. A successful encode is not a durability claim. The
-filesystem owner must still use lock, write/readback validation, file and directory synchronization,
-atomic immutable installation, exact recovery selection, and explicit source-retention ordering.
+This ADR freezes bytes and codec behavior only. A successful encode is not a durability claim.
+ADR 0091 supplies lock, write/readback validation, file and directory synchronization, atomic
+immutable installation, and exact recovery selection; source-retention ordering remains separate.
 
 ## Affected invariants and validation
 

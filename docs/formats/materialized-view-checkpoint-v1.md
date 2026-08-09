@@ -1,7 +1,7 @@
 # Materialized View Checkpoint v1
 
 > **Status:** format 1.0 codec is implemented. Durable filesystem installation is specified by a
-> later owner and is not implied by successful encoding.
+> lock-protected owner; successful encoding alone is not a durability claim.
 
 All integers are fixed-width little-endian. Floating values are stored as their exact IEEE-754
 binary64 bits in little-endian byte order. The format contains no native structs, pointers, or ABI-
@@ -101,3 +101,8 @@ view/schema/plan binding and nested size before parsing. The nested checkpoint r
 header/file checksums and source tablet/WAL binding. A storage owner must exact-match the envelope
 identity against its configured database/view definition; merely decoding a valid envelope never
 selects it as authority.
+
+Local durable envelopes use `checkpoint-<20-digit-WAL-sequence>.mvcp`. Installation writes and
+exact-validates a deterministic `.tmp`, synchronizes it, atomically renames without replacement,
+then synchronizes the directory. Existing identical bytes are an idempotent retry; different bytes
+at one sequence are corruption. Recovery selects only a completely revalidated canonical file.
