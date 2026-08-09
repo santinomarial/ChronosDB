@@ -138,6 +138,9 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Columnar append recovery](learning/columnar-append-recovery.md): implemented retained-lineage
   whole-WAL preflight/replay into fresh schema-bound tablet and retry state, ancestor duplicate
   handling, failure isolation, deterministic reopen, and continued writer ownership.
+- [Durable temporal history](learning/durable-temporal-history.md): implemented mutation bytes,
+  committed physical-to-scalar application, atomic in-memory history, whole-WAL recovery, ownership,
+  failure behavior, complexity, and remaining integration boundaries.
 - [Manifest columnar startup recovery](learning/manifest-startup-recovery.md): implemented
   caller-catalog selected-state validation, Manifest-derived durable-prefix recovery, temporary
   cleanup, optional checkpoint-covered WAL reclamation, aggregate publication, and owning startup

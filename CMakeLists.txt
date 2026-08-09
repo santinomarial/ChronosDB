@@ -338,6 +338,7 @@ add_library(
   src/query/binder.cpp
   src/query/catalog.cpp
   src/query/column_output.cpp
+  src/query/committed_temporal_command.cpp
   src/query/cseg_scan.cpp
   src/query/database_cseg_scan.cpp
   src/query/decimal_internal.cpp
@@ -365,6 +366,7 @@ add_library(
   src/query/spill_sort.cpp
   src/query/statement_binder.cpp
   src/query/temporal_command.cpp
+  src/query/temporal_recovery.cpp
   src/query/temporal_snapshot.cpp
   src/query/value.cpp
   src/query/vector_chunk.cpp
@@ -1081,6 +1083,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/catalog_test.cpp
     tests/query/column_output_header_self_contained.cpp
     tests/query/column_output_test.cpp
+    tests/query/committed_temporal_command_header_self_contained.cpp
+    tests/query/committed_temporal_command_test.cpp
     tests/query/lexer_header_self_contained.cpp
     tests/query/lexer_test.cpp
     tests/query/latest_header_self_contained.cpp
@@ -1117,6 +1121,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/statement_binder_test.cpp
     tests/query/temporal_command_header_self_contained.cpp
     tests/query/temporal_command_test.cpp
+    tests/query/temporal_recovery_header_self_contained.cpp
+    tests/query/temporal_recovery_test.cpp
     tests/query/temporal_snapshot_header_self_contained.cpp
     tests/query/temporal_snapshot_test.cpp
     tests/query/timestamp_range_header_self_contained.cpp

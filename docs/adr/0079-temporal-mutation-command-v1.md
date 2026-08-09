@@ -33,11 +33,16 @@ was rejected because that frozen command promises append/dedup behavior rather t
 replacement semantics. JSON or native variants were rejected for noncanonical layout and unsafe
 bounded recovery.
 
-WAL append/acknowledgment, recovery replay, vector/CSEG history persistence, retention pins, and
-Raft application remain subsequent integration tasks; the codec alone does not claim Phase 13.
+The implemented command-specific recovery owner validates retained schemas, applies enclosing WAL
+identity/order, rejects impossible committed mutation history, and returns the locked reopened
+writer. Live WAL admission/acknowledgment, a mixed database application dispatcher, checkpoints,
+vector/CSEG history persistence, retention pins, and Raft application remain subsequent integration
+tasks; these boundaries do not yet claim Phase 13.
 
 ## Affected invariants and validation
 
-Invariants 4, 6–10, 13, 14, and 18 apply. Focused tests cover exact round trip, nested schema
-identity, correction metadata, checksum damage, and duplicate-identity rejection. Golden fixtures,
-fuzzing, broad hostile-length matrices, and mixed-version recovery are deferred to Phase 18.
+Invariants 1, 4, 6–10, 13, 14, and 18 apply. Focused tests cover exact round trip, nested schema
+identity, correction metadata, checksum damage, duplicate-identity rejection, physical-cell
+application, ordered original/correction replay, next-sequence reopen, and impossible-history
+rejection. Golden fixtures, fuzzing, broad hostile-length matrices, mixed-version recovery, and
+crash injection are deferred to Phase 18.

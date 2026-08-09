@@ -7,8 +7,10 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <optional>
 #include <set>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -78,65 +80,81 @@ common::Status TemporalSnapshotProvider::apply_committed(const std::uint64_t sys
   if (system_commit_position == 0U || mutations.empty()) {
     return invalid("temporal commit position and mutation batch must be nonzero");
   }
-  std::scoped_lock lock{impl_->mutex};
-  if (system_commit_position <= impl_->latest_position ||
-      (impl_->latest_position != 0U && system_commit_time_ns < impl_->latest_time)) {
-    return invalid("temporal commits must advance position and nondecreasing system time");
-  }
-  if (mutations.size() > impl_->limits.maximum_versions - impl_->versions) {
-    return common::Status{common::StatusCode::kResourceExhausted,
-                          "temporal version capacity is exhausted"};
-  }
+  try {
+    std::scoped_lock lock{impl_->mutex};
+    if (system_commit_position <= impl_->latest_position ||
+        (impl_->latest_position != 0U && system_commit_time_ns < impl_->latest_time)) {
+      return invalid("temporal commits must advance position and nondecreasing system time");
+    }
+    if (mutations.size() > impl_->limits.maximum_versions - impl_->versions) {
+      return common::Status{common::StatusCode::kResourceExhausted,
+                            "temporal version capacity is exhausted"};
+    }
 
-  std::set<std::vector<std::byte>, ByteVectorLess> batch_identities;
-  std::size_t new_identities = 0U;
-  for (const TemporalMutation& mutation : mutations) {
-    if (mutation.logical_identity.empty() ||
-        mutation.logical_identity.size() > impl_->limits.maximum_identity_bytes ||
-        mutation.wal_id.is_nil() || mutation.record_sequence == 0U ||
-        mutation.columns.size() != impl_->schema->columns().size()) {
-      return invalid("temporal mutation identity, source position, or row shape is invalid");
-    }
-    if (!batch_identities.insert(mutation.logical_identity).second) {
-      return invalid("one temporal commit batch contains duplicate logical identities");
-    }
-    const bool exists = impl_->histories.contains(mutation.logical_identity);
-    if (!exists) {
-      ++new_identities;
-      if (mutation.kind != TemporalMutationKind::kOriginal) {
-        return invalid("correction, replacement, or tombstone requires an existing identity");
+    std::set<std::vector<std::byte>, ByteVectorLess> batch_identities;
+    std::size_t new_identities = 0U;
+    for (const TemporalMutation& mutation : mutations) {
+      if (mutation.logical_identity.empty() ||
+          mutation.logical_identity.size() > impl_->limits.maximum_identity_bytes ||
+          mutation.wal_id.is_nil() || mutation.record_sequence == 0U ||
+          mutation.columns.size() != impl_->schema->columns().size()) {
+        return invalid("temporal mutation identity, source position, or row shape is invalid");
       }
-    } else if (mutation.kind == TemporalMutationKind::kOriginal) {
-      return invalid("an existing temporal identity requires correction or replacement semantics");
-    }
-    if (mutation.kind != TemporalMutationKind::kTombstone) {
-      const std::vector<std::byte> generated_identity = impl_->schema->deduplication_key().empty()
-                                                            ? mutation.logical_identity
-                                                            : std::vector<std::byte>{};
-      auto validated = ScalarTableSnapshot::create(
-          impl_->schema, system_commit_position,
-          {ScalarInputRow{mutation.columns, generated_identity, mutation.wal_id,
-                          mutation.record_sequence, system_commit_position, mutation.row_ordinal}});
-      if (!validated.has_value()) {
-        return validated.error();
+      if (!batch_identities.insert(mutation.logical_identity).second) {
+        return invalid("one temporal commit batch contains duplicate logical identities");
+      }
+      const bool exists = impl_->histories.contains(mutation.logical_identity);
+      if (!exists) {
+        ++new_identities;
+        if (mutation.kind != TemporalMutationKind::kOriginal) {
+          return invalid("correction, replacement, or tombstone requires an existing identity");
+        }
+      } else if (mutation.kind == TemporalMutationKind::kOriginal) {
+        return invalid(
+            "an existing temporal identity requires correction or replacement semantics");
+      }
+      if (mutation.kind != TemporalMutationKind::kTombstone) {
+        const std::vector<std::byte> generated_identity = impl_->schema->deduplication_key().empty()
+                                                              ? mutation.logical_identity
+                                                              : std::vector<std::byte>{};
+        auto validated = ScalarTableSnapshot::create(
+            impl_->schema, system_commit_position,
+            {ScalarInputRow{mutation.columns, generated_identity, mutation.wal_id,
+                            mutation.record_sequence, system_commit_position,
+                            mutation.row_ordinal}});
+        if (!validated.has_value()) {
+          return validated.error();
+        }
       }
     }
-  }
-  if (new_identities > impl_->limits.maximum_logical_rows - impl_->histories.size()) {
-    return common::Status{common::StatusCode::kResourceExhausted,
-                          "temporal logical-row capacity is exhausted"};
-  }
+    if (new_identities > impl_->limits.maximum_logical_rows - impl_->histories.size()) {
+      return common::Status{common::StatusCode::kResourceExhausted,
+                            "temporal logical-row capacity is exhausted"};
+    }
 
-  for (TemporalMutation& mutation : mutations) {
-    auto& history = impl_->histories[mutation.logical_identity];
-    history.push_back(
-        Impl::Version{std::move(mutation), system_commit_position, system_commit_time_ns});
-    ++impl_->versions;
+    // Stage the complete next state before publication. Copy-on-commit is intentionally preferred
+    // over a partially installed history if any allocation fails; profiling and a persistent
+    // copy-on-write representation remain later optimization work.
+    auto staged_histories = impl_->histories;
+    auto staged_time_to_position = impl_->time_to_position;
+    for (TemporalMutation& mutation : mutations) {
+      staged_histories[mutation.logical_identity].push_back(
+          Impl::Version{std::move(mutation), system_commit_position, system_commit_time_ns});
+    }
+    staged_time_to_position.insert_or_assign(system_commit_time_ns, system_commit_position);
+    impl_->histories.swap(staged_histories);
+    impl_->time_to_position.swap(staged_time_to_position);
+    impl_->versions += mutations.size();
+    impl_->latest_position = system_commit_position;
+    impl_->latest_time = system_commit_time_ns;
+    return common::Status::ok();
+  } catch (const std::bad_alloc&) {
+    return common::Status{common::StatusCode::kResourceExhausted,
+                          "temporal commit staging allocation failed"};
+  } catch (const std::length_error&) {
+    return common::Status{common::StatusCode::kResourceExhausted,
+                          "temporal commit staging exceeded container limits"};
   }
-  impl_->latest_position = system_commit_position;
-  impl_->latest_time = system_commit_time_ns;
-  impl_->time_to_position.insert_or_assign(system_commit_time_ns, system_commit_position);
-  return common::Status::ok();
 }
 
 common::Result<std::shared_ptr<const ScalarTableSnapshot>>
