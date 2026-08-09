@@ -20,9 +20,11 @@ aggregates in a different order can change later output bits.
 
 Materialized View Checkpoint v1 now encodes that state with fixed little-endian fields, exact
 floating bits, authenticated counts, header/file CRC32C, and complete logical validation. It still
-has no installation owner. External delivery remains at least once, and the subscription manager
-remains a separate single-source retention/handoff owner. Durable checkpoint installation must
-order source retention release after the checkpoint is fully validated and synchronized.
+has no installation owner. Its bound envelope adds database/view/table/schema/version/plan identity
+around the source-state bytes so a valid file cannot be adopted by a different view. External
+delivery remains at least once, and the subscription manager remains a separate single-source
+retention/handoff owner. Durable checkpoint installation must order source retention release after
+the checkpoint is fully validated and synchronized.
 
 Update and correction work is proportional to the number of overlapping windows plus ordered-map
 costs. Checkpoint size includes global rows and per-window contribution rows; this favors a simple

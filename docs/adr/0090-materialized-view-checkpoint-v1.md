@@ -25,6 +25,10 @@ revision/finalization state and the count/sum/VWAP/Welford running fields as IEE
 sizes are checked from authenticated counts before allocation. Decoding reconstructs the logical
 owner, runs the complete ADR 0089 semantic validation, and exports canonical state.
 
+A second 160-byte Bound Materialized View Checkpoint v1 envelope binds the nested state to exact
+database, view, table, schema/version, and plan-fingerprint identity. Filesystem owners accept only
+this envelope, preventing a valid source-state file from being silently adopted by another view.
+
 ## Consequences and alternatives
 
 Per-window contributions duplicate global row fields. The duplication is bounded and permits direct

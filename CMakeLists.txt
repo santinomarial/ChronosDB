@@ -455,6 +455,7 @@ chronos_enable_static_analysis(chronos_runtime)
 
 add_library(
   chronos_live
+  src/live/bound_materialized_view_checkpoint.cpp
   src/live/incremental_aggregate.cpp
   src/live/materialized_view.cpp
   src/live/materialized_view_checkpoint.cpp

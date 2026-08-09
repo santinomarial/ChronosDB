@@ -1,6 +1,7 @@
 #include "chronos/common/crc32c.hpp"
 #include "chronos/live/materialized_view_checkpoint.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
@@ -61,6 +62,19 @@ void refresh_checksums(std::vector<std::byte>& bytes) {
   return std::move(view->checkpoint().value());
 }
 
+[[nodiscard]] BoundMaterializedViewCheckpoint bound_checkpoint() {
+  PlanFingerprint plan{};
+  plan.fill(std::byte{0x77U});
+  return BoundMaterializedViewCheckpoint{
+      .identity = {.database_id = uuid(std::byte{0x51U}),
+                   .view_id = uuid(std::byte{0x52U}),
+                   .table_id = schema::TableId::from_uuid(uuid(std::byte{0x53U})).value(),
+                   .schema_id = schema::SchemaId::from_uuid(uuid(std::byte{0x54U})).value(),
+                   .schema_version = schema::SchemaVersion::initial(),
+                   .plan_fingerprint = plan},
+      .state = checkpoint()};
+}
+
 TEST(MaterializedViewCheckpointTest, RoundTripsExactStateAndContinuation) {
   const auto original = checkpoint();
   auto encoded = encode_windowed_materialized_view_checkpoint_v1(original);
@@ -101,6 +115,20 @@ TEST(MaterializedViewCheckpointTest, RejectsCorruptionUnknownVersionAndDecodeLim
   limits.maximum_rows = 1U;
   EXPECT_EQ(decode_windowed_materialized_view_checkpoint_v1(encoded, limits).error().code(),
             common::StatusCode::kResourceExhausted);
+}
+
+TEST(MaterializedViewCheckpointTest, BoundEnvelopeRejectsCrossViewIdentityLoss) {
+  const auto original = bound_checkpoint();
+  auto encoded = encode_bound_materialized_view_checkpoint_v1(original);
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  auto decoded = decode_bound_materialized_view_checkpoint_v1(*encoded);
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  EXPECT_EQ(*decoded, original);
+
+  std::fill_n(encoded->begin() + 32, 16U, std::byte{0U});
+  refresh_checksums(*encoded);
+  EXPECT_EQ(decode_bound_materialized_view_checkpoint_v1(*encoded).error().code(),
+            common::StatusCode::kCorruption);
 }
 
 } // namespace

@@ -86,3 +86,18 @@ Unknown magic or major is unsupported. Any minor or header size other than 1.0/1
 Checksum, reserved-field, canonical-order, nested-state, or exact-size disagreement is corruption.
 Caller size/count limits return resource exhaustion. Encoders reject noncanonical logical state and
 emit only 1.0.
+
+## Bound durable envelope
+
+Filesystem owners use the Bound Materialized View Checkpoint v1 envelope rather than storing a bare
+logical checkpoint. Its 160-byte header uses magic `CHMVCB1\0`, version 1.0, flags/reserved/total
+fields at the same framing offsets, and then stores database ID at 32, view ID at 48, table ID at 64,
+schema ID at 80, schema version at 96, the 32-byte plan fingerprint at 104, nested payload size at
+136, header CRC32C at 144, and twelve reserved zero bytes at 148. The exact bare v1 checkpoint
+follows, then a four-byte whole-envelope CRC32C.
+
+All four durable identities and schema version must be nonzero. The outer header authenticates the
+view/schema/plan binding and nested size before parsing. The nested checkpoint retains its own
+header/file checksums and source tablet/WAL binding. A storage owner must exact-match the envelope
+identity against its configured database/view definition; merely decoding a valid envelope never
+selects it as authority.
