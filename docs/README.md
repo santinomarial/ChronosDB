@@ -52,7 +52,7 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Resume Token v1](formats/resume-token-v1.md): authenticated live-subscription resume identity,
   compatibility, limits, and rejection rules.
 - [Multiplexed Raft Persistent-State Record v1](formats/multiplexed-raft-log-v1.md): checksummed,
-  group-tagged full-state records for the current Multi-Raft codec boundary.
+  group-tagged full-state records plus the implemented segmented append/sync/recovery envelope.
 - [Production dependencies](dependencies/README.md): maintained external-library boundaries,
   version sources, licenses, and update/security ownership.
 
@@ -185,6 +185,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   authenticator ownership, principal propagation, and fail-closed TLS mode.
 - [Native client session](learning/native-client-session.md): bounded portable partial I/O,
   monotonic request generation, response validation, cancellation, and cleanup.
+- [Segmented Multi-Raft persistent log](learning/raft-persistent-log.md): shared physical segments,
+  append/sync frontiers, rotation, recovery, repair, ownership, and reclamation boundary.
 - [Phase 10 network exit review](reviews/phase-10-network-review.md): implemented transport
   boundary, Linux portability and validation evidence, nonblocking risks, and the phase decision.
 - [Feature completion pass review](reviews/feature-completion-pass.md): truthful Phase 11–17

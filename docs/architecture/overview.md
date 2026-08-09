@@ -346,13 +346,18 @@ Tablets are the distribution and replication unit from the data model's beginnin
 0010](../adr/0010-tablets-raft-and-multiplexed-log-storage.md), each tablet maps to one logical Raft
 group, while a small metadata group owns schemas, placement, nodes, leader hints, retention, and
 cluster metadata. The deterministic Raft and bounded Multi-Raft logical cores, metadata application,
-full-state physical record codec, distributed aggregate primitives, and safe movement state machine
-are implemented. Readers may observe only committed and applied entries under an explicitly
-selected consistency level. Production timers, transport, segmented persistence, application to
-tablet storage, snapshot installation, membership protocol, read index/staleness proof, and a
-packaged cluster runtime remain unimplemented.
+full-state physical record codec, segmented append/sync/recovery owner, distributed aggregate
+primitives, and safe movement state machine are implemented. Readers may observe only committed and
+applied entries under an explicitly selected consistency level. Production timers, transport,
+persistence batching, application to tablet storage, snapshot installation, membership protocol,
+read index/staleness proof, and a packaged cluster runtime remain unimplemented.
 
-Multi-Raft will multiplex many groups over shared threads, network connections, timers, and a physical log without conflating their logical indexes. Distributed queries will acquire compatible per-tablet snapshot boundaries and report consistency; rebalancing must preserve identities, resume positions, and retention pins.
+Multi-Raft will multiplex many groups over shared threads, network connections, timers, and a
+physical log without conflating their logical indexes. The physical-log boundary now supplies
+versioned shared segments, append/sync frontiers, rotation, locked bounded recovery, and explicit
+incomplete-tail repair; batching, reclamation, and runtime transport integration remain.
+Distributed queries will acquire compatible per-tablet snapshot boundaries and report consistency;
+rebalancing must preserve identities, resume positions, and retention pins.
 
 ## Hot/cold tiering foundation
 

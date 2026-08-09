@@ -484,12 +484,16 @@ RaftPersistentLog::append(const GroupPersistentState& persistent) {
                                                   "Raft record exceeds segment target size"});
   }
   auto& position = impl_->recovered.written_position;
-  if (position.end_offset > impl_->config.target_segment_size - encoded->size()) {
-    if (impl_->recovered.segment_count >= impl_->config.maximum_segments ||
-        position.segment_number == std::numeric_limits<std::uint64_t>::max()) {
-      return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
-                                                    "Raft segment capacity is exhausted"});
-    }
+  const bool rotate = position.end_offset > impl_->config.target_segment_size - encoded->size();
+  if (rotate && (impl_->recovered.segment_count >= impl_->config.maximum_segments ||
+                 position.segment_number == std::numeric_limits<std::uint64_t>::max())) {
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                  "Raft segment capacity is exhausted"});
+  }
+  // Allocate group bookkeeping before the first syscall. If later I/O fails the owner is poisoned,
+  // so an in-memory entry for an unpersisted group can never influence another append.
+  impl_->known_groups.insert(persistent.group_id);
+  if (rotate) {
     common::Status status = impl_->active_file.sync_data();
     if (status.is_ok()) {
       impl_->recovered.durable_physical_sequence = position.physical_sequence;
@@ -512,7 +516,6 @@ RaftPersistentLog::append(const GroupPersistentState& persistent) {
   position.end_offset += encoded->size();
   position.physical_sequence = persistent.physical_sequence;
   ++impl_->recovered.record_count;
-  impl_->known_groups.insert(persistent.group_id);
   return position;
 }
 

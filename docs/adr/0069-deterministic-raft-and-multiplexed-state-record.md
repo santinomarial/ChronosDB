@@ -24,15 +24,17 @@ metadata state machine consumes only consecutive committed metadata-group indexe
 
 ## Consequences and alternatives
 
-Timers, transport, segmented file installation, fsync batching, snapshots, and application wiring
-remain outside the pure core. An external Raft library and one physical fsync stream per tablet were
-rejected under ADRs 0010–0011. Full-state records favor recoverability and auditability over space;
-delta records may be a compatible future record type, not an unversioned reinterpretation.
+Timers, transport, fsync batching, snapshots, and application wiring remain outside the pure core.
+[ADR 0071](0071-segmented-multi-raft-persistence.md) now owns segmented installation, append/sync
+frontiers, and recovery around these records. An external Raft library and one physical fsync stream
+per tablet were rejected under ADR 0010. Full-state records favor recoverability and auditability
+over space; delta records may be a compatible future record type, not an unversioned reinterpretation.
 
 ## Affected invariants and validation
 
 Invariants 1, 4–6, 8, 10–12, 14, and 17 apply. Focused deterministic tests cover 3-node election,
 replication/commit, failover, stale-term rejection, restart catch-up, independent groups with
-different leaders, node loss, reopen, metadata order, record round trip, and corruption. Disk,
-randomized simulation, partitions, snapshots, membership changes, and QUORUM_SYNC are deferred.
-
+different leaders, node loss, reopen, metadata order, record round trip, and corruption. Focused disk
+tests additionally cover rotation, reopen, explicit incomplete-tail repair, and corruption
+rejection. Randomized simulation, partitions, snapshots, membership changes, coordinated fsync
+batching/crash testing, and QUORUM_SYNC are deferred.

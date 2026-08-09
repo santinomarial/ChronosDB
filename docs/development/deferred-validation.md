@@ -66,8 +66,9 @@
 
 ## Phase 15 — Multi-Raft tablets and metadata
 
-- Segmented node-level physical log writer, group-commit/fsync batches, complete recovery scan,
-  corruption isolation, per-group reclamation, checkpointing, rotation, crash testing, and metrics.
+- Extend the implemented segmented node-level writer, rotation, complete recovery scan, explicit
+  tail repair, and corruption rejection with group-commit/fsync batches, injected I/O failures,
+  per-group reclamation/checkpointing, process-crash testing, and metrics.
 - Wire `MultiRaftRuntime` persistence before outbound transport in a bounded worker pool; batch
   persistence/messages/application and prove fairness/no starvation under hot/cold skew.
 - Encode/decode metadata commands through the metadata Raft group; durable schemas, nodes, tablet
