@@ -33,14 +33,18 @@ TEST(SubscriptionProtocolTest, BridgesManagerDeliveryAcknowledgementAndTerminati
   const common::Uuid subscription_id = uuid(std::byte{6});
   const schema::TabletId tablet_id = identifier<schema::TabletId>(std::byte{3});
   const schema::SchemaId schema_id = identifier<schema::SchemaId>(std::byte{7});
+  const PlanFingerprint plan{};
   auto manager = SubscriptionManager::create({.database_id = uuid(std::byte{1}),
                                               .table_id = identifier<schema::TableId>(std::byte{2}),
                                               .tablet_id = tablet_id,
                                               .wal_id = wal_id(),
+                                              .plan_fingerprint = plan,
+                                              .schema_id = schema_id,
+                                              .schema_version = schema::SchemaVersion::initial(),
                                               .token_key = key()});
   ASSERT_TRUE(manager.has_value()) << manager.error().to_string();
-  const SubscriptionRequest request{
-      subscription_id, {}, schema_id, schema::SchemaVersion::initial()};
+  const SubscriptionRequest request{subscription_id, plan, schema_id,
+                                    schema::SchemaVersion::initial()};
   const auto registration = manager->register_subscription(request);
   ASSERT_TRUE(registration.has_value());
   const auto ready_payload = encode_subscription_registration(*registration);
@@ -95,6 +99,9 @@ TEST(SubscriptionProtocolTest, ManagerRejectsNoncanonicalDeleteBeforeWireDeliver
                                               .table_id = identifier<schema::TableId>(std::byte{2}),
                                               .tablet_id = tablet_id,
                                               .wal_id = wal_id(),
+                                              .plan_fingerprint = {},
+                                              .schema_id = schema_id,
+                                              .schema_version = schema::SchemaVersion::initial(),
                                               .token_key = key()});
   ASSERT_TRUE(manager.has_value());
   EXPECT_FALSE(manager

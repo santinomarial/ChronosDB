@@ -101,6 +101,7 @@ common::Result<SubscriptionManager> SubscriptionManager::create(SubscriptionSour
                                                                 const SubscriptionLimits limits) {
   if (source.database_id.is_nil() || source.table_id.uuid().is_nil() ||
       source.tablet_id.uuid().is_nil() || !source.wal_id.is_valid() ||
+      source.schema_id.uuid().is_nil() || source.schema_version.value() == 0U ||
       key_is_zero(source.token_key)) {
     return common::make_unexpected(
         invalid("subscription source identities and MAC key must be valid"));
@@ -118,8 +119,12 @@ common::Result<SubscriptionManager> SubscriptionManager::create(SubscriptionSour
 
 common::Result<SubscriptionRegistration>
 SubscriptionManager::register_subscription(const SubscriptionRequest& request) {
-  if (request.subscription_id.is_nil() || request.schema_id.uuid().is_nil()) {
-    return common::make_unexpected(invalid("subscription and schema identities must be nonzero"));
+  if (request.subscription_id.is_nil() ||
+      request.plan_fingerprint != impl_->source.plan_fingerprint ||
+      request.schema_id != impl_->source.schema_id ||
+      request.schema_version != impl_->source.schema_version) {
+    return common::make_unexpected(
+        invalid("subscription request does not match the manager plan and schema"));
   }
   if (impl_->subscriptions.contains(request.subscription_id)) {
     return common::make_unexpected(common::Status{common::StatusCode::kAlreadyExists,
@@ -155,9 +160,13 @@ SubscriptionManager::resume_subscription(const common::ByteView encoded_token) {
   }
   if (token->database_id != impl_->source.database_id || token->source_positions.size() != 1U ||
       token->source_positions.front().tablet_id != impl_->source.tablet_id ||
-      token->source_positions.front().wal_id != impl_->source.wal_id) {
-    return common::make_unexpected(common::Status{
-        common::StatusCode::kInvalidArgument, "resume token belongs to another source lineage"});
+      token->source_positions.front().wal_id != impl_->source.wal_id ||
+      token->plan_fingerprint != impl_->source.plan_fingerprint ||
+      token->schema_id != impl_->source.schema_id ||
+      token->schema_version != impl_->source.schema_version) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInvalidArgument,
+                       "resume token belongs to another source, plan, or schema lineage"});
   }
   const auto existing_subscription = impl_->subscriptions.find(token->subscription_id);
   if (existing_subscription != impl_->subscriptions.end()) {

@@ -58,6 +58,9 @@ struct SubscriptionSource {
   schema::TableId table_id;
   schema::TabletId tablet_id;
   wal::WalId wal_id;
+  PlanFingerprint plan_fingerprint{};
+  schema::SchemaId schema_id;
+  schema::SchemaVersion schema_version;
   ResumeTokenMacKey token_key{};
 };
 

@@ -613,9 +613,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   records cross-tablet delivery admission, and resumes the exact retained component-wise suffix.
   A single-tablet service owner now executes an already-lowered physical plan against the exact
   registered aggregate-storage boundary, encodes snapshot batches and END_STREAM, then opens READY
-  without exposing buffered changes early. SQL request planning, multi-tablet snapshot execution,
-  durable coordinator restart, topology/retention integration, and the full exit evidence remain
-  deferred; the phase exit gate is not claimed.
+  without exposing buffered changes early. `SUBSCRIBE SELECT` now has bounded parse/bind/lowering,
+  exact schema-bound SHA-256 plan identity, and plan-bound single-tablet registration/resume.
+  Durable plan lookup, multi-tablet snapshot execution, durable coordinator restart,
+  topology/retention integration, and the full exit evidence remain deferred; the phase exit gate
+  is not claimed.
 
 - **Scope:** committed change model; gap-free snapshot-to-stream handoff; deterministic versioned resume tokens; bounded subscriber policies; supported incremental operators; materialized-view progress/recovery and late-event corrections.
 - **Explicit non-scope:** unqualified end-to-end exactly-once claims, unlimited retention, every SQL operator, cross-cluster delivery, and external-sink transactions not explicitly integrated.

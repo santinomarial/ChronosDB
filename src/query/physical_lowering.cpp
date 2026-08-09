@@ -881,11 +881,12 @@ SqlResult<PhysicalPipelinePlan> lower_bound_sql_select(const BoundSqlSelect& sel
                                         common::StatusCode::kInvalidArgument,
                                         "Physical expression limits are invalid"));
     }
-    if (select.syntax().mode() != SqlSelectMode::kSelect) {
+    if (select.syntax().mode() != SqlSelectMode::kSelect &&
+        select.syntax().mode() != SqlSelectMode::kSubscribe) {
       return std::unexpected(
           diagnostic(SqlDiagnosticCode::kUnsupportedSyntax, select.syntax().span(),
                      common::StatusCode::kInvalidArgument,
-                     "Only ordinary SELECT has an executable physical pipeline"));
+                     "Only SELECT and SUBSCRIBE SELECT have executable physical pipelines"));
     }
     if (select.sources().size() != 1U || !select.asof_joins().empty()) {
       return std::unexpected(diagnostic(SqlDiagnosticCode::kUnsupportedSyntax,

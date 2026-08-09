@@ -41,7 +41,14 @@ struct Fixture {
   PlanFingerprint plan{};
 
   [[nodiscard]] SubscriptionSource source() const {
-    return SubscriptionSource{database_id, table_id, tablet_id, wal, key()};
+    return {.database_id = database_id,
+            .table_id = table_id,
+            .tablet_id = tablet_id,
+            .wal_id = wal,
+            .plan_fingerprint = plan,
+            .schema_id = schema_id,
+            .schema_version = schema::SchemaVersion::initial(),
+            .token_key = key()};
   }
   [[nodiscard]] SubscriptionRequest request() const {
     return SubscriptionRequest{subscription_id, plan, schema_id, schema::SchemaVersion::initial()};
@@ -60,6 +67,9 @@ TEST(SubscriptionTest, BuffersEveryPostBoundaryCommitUntilSnapshotCompletes) {
   Fixture fixture;
   auto manager = SubscriptionManager::create(fixture.source());
   ASSERT_TRUE(manager.has_value()) << manager.error().to_string();
+  SubscriptionRequest wrong_plan = fixture.request();
+  wrong_plan.plan_fingerprint.front() ^= std::byte{1};
+  EXPECT_FALSE(manager->register_subscription(wrong_plan).has_value());
   auto registration = manager->register_subscription(fixture.request());
   ASSERT_TRUE(registration.has_value());
   EXPECT_EQ(registration->snapshot_boundary.record_sequence, 0U);

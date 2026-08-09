@@ -47,13 +47,17 @@ struct BoundPlan {
   return {std::move(*plan), std::move(columns)};
 }
 
-[[nodiscard]] SubscriptionSource source(const query::test::SnapshotTabletScanFixture& fixture) {
+[[nodiscard]] SubscriptionSource source(const query::test::SnapshotTabletScanFixture& fixture,
+                                        const PlanFingerprint& plan) {
   ResumeTokenMacKey key{};
   key.fill(std::byte{9});
   return {.database_id = fixture.snapshot().database_id().uuid(),
           .table_id = fixture.schema_ptr()->table_id(),
           .tablet_id = query::test::SnapshotTabletScanFixture::tablet_id(),
           .wal_id = fixture.snapshot().wal_id(),
+          .plan_fingerprint = plan,
+          .schema_id = fixture.schema_ptr()->schema_id(),
+          .schema_version = fixture.schema_ptr()->version(),
           .token_key = key};
 }
 
@@ -78,7 +82,7 @@ struct BoundPlan {
 TEST(SnapshotSubscriptionTest, ExecutesExactSnapshotThenOpensBufferedLiveSuffix) {
   query::test::SnapshotTabletScanFixture fixture{3U};
   const SubscriptionRequest subscription_request = request(fixture);
-  SubscriptionSource configured = source(fixture);
+  SubscriptionSource configured = source(fixture, subscription_request.plan_fingerprint);
   auto manager = SubscriptionManager::create(std::move(configured));
   ASSERT_TRUE(manager.has_value());
   ASSERT_TRUE(manager->publish_committed(change(fixture, 1U)).is_ok());
@@ -126,7 +130,8 @@ TEST(SnapshotSubscriptionTest, ExecutesExactSnapshotThenOpensBufferedLiveSuffix)
 TEST(SnapshotSubscriptionTest, RejectsAndCancelsAStorageBoundaryMismatch) {
   query::test::SnapshotTabletScanFixture fixture{1U};
   const SubscriptionRequest subscription_request = request(fixture);
-  auto manager = SubscriptionManager::create(source(fixture));
+  auto manager =
+      SubscriptionManager::create(source(fixture, subscription_request.plan_fingerprint));
   ASSERT_TRUE(manager.has_value());
   BoundPlan bound = lower(fixture, "SELECT event_time FROM metrics");
   query::QueryResourceContext resources = query::QueryResourceContext::create(1U << 20U).value();

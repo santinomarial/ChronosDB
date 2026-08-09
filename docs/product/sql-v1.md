@@ -2,8 +2,9 @@
 
 > **Status: implemented as the Phase 8 bounded scalar reference engine.** The custom lexer,
 > parser, schema-version-stable binder, CREATE TABLE/INSERT statement binding, scalar SELECT
-> execution, and EXPLAIN paths are implemented. `SUBSCRIBE` is parsed and bound but remains a Phase
-> 11 execution concern. Phase 9 now lowers the supported single-source projection and global/grouped
+> execution, and EXPLAIN paths are implemented. `SUBSCRIBE SELECT` is now parsed, bound,
+> schema-fingerprinted, and lowered for the supported single-source live snapshot surface; live
+> incremental eligibility remains a Phase 11 concern. Phase 9 lowers the supported single-source projection and global/grouped
 > aggregate subset into bounded vector operators. Exact bounded `LATEST BY` lowering now executes
 > before WHERE using the bound timestamp, schema physical-ordering key, and shared row-version
 > identity. Exact bounded `ORDER BY` lowering composes

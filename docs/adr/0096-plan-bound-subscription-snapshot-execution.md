@@ -37,10 +37,10 @@ manager owns the continuing live state independently.
 
 ## Consequences and alternatives
 
-This slice executes an already-lowered single-tablet physical plan. Parsing a `SUBSCRIBE_REQUEST`,
-canonical plan fingerprint construction, plan lookup on resume, multi-tablet snapshot execution,
-and reactor worker dispatch remain later service work. Raft-backed snapshot positions also remain
-outside this WAL-bound owner and fail closed.
+This slice executes an already-lowered single-tablet physical plan. ADR 0097 now supplies SQL
+parsing, binding, lowering, and canonical plan fingerprint construction. Durable plan lookup on
+resume, multi-tablet snapshot execution, and reactor worker dispatch remain later service work.
+Raft-backed snapshot positions also remain outside this WAL-bound owner and fail closed.
 
 Acquiring the storage snapshot before registration was rejected because a commit between those
 operations could be omitted. Accepting a storage position lower or higher than the manager boundary

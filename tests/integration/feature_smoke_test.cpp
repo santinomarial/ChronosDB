@@ -112,10 +112,16 @@ TEST(FeatureCompletionSmokeTest, CommittedDataFlowsAcrossTemporalLiveDistributed
 
   live::ResumeTokenMacKey token_key{};
   token_key.fill(std::byte{0xa5});
-  auto subscriptions = live::SubscriptionManager::create(
-      {uuid(10U), table_schema->table_id(), tablet, wal_id(), token_key});
-  ASSERT_TRUE(subscriptions.has_value());
   live::PlanFingerprint fingerprint{};
+  auto subscriptions = live::SubscriptionManager::create({.database_id = uuid(10U),
+                                                          .table_id = table_schema->table_id(),
+                                                          .tablet_id = tablet,
+                                                          .wal_id = wal_id(),
+                                                          .plan_fingerprint = fingerprint,
+                                                          .schema_id = table_schema->schema_id(),
+                                                          .schema_version = table_schema->version(),
+                                                          .token_key = token_key});
+  ASSERT_TRUE(subscriptions.has_value());
   const common::Uuid subscription_id = uuid(11U);
   ASSERT_TRUE(subscriptions
                   ->register_subscription({subscription_id, fingerprint, table_schema->schema_id(),

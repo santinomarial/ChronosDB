@@ -16,6 +16,9 @@
 
 ## Phase 11 — live subscriptions and materialized views
 
+- Subscription plan identity: cross-process golden vectors, forced-allocation/provider-failure
+  sweeps, hostile SQL/catalog limits, durable fingerprint-to-plan registry recovery, schema
+  migration, and compatibility review when the supported incremental SQL surface expands.
 - Plan-bound subscription snapshot execution: forced-allocation sweeps, cancellation at every
   pull/END_STREAM/READY transition, multi-chunk socket backpressure, reactor worker dispatch, and
   real concurrent publication scheduling. Extend the owner to Raft and multi-tablet snapshot
