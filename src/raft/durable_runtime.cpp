@@ -15,6 +15,10 @@ namespace {
   return common::Status{common::StatusCode::kInvalidArgument, message};
 }
 
+[[nodiscard]] common::Status unavailable(const char* message) {
+  return common::Status{common::StatusCode::kUnavailable, message};
+}
+
 [[nodiscard]] common::Result<MultiRaftRuntime>
 restore_runtime(const NodeId local_node_id, const DurableMultiRaftLimits& limits,
                 std::vector<RaftGroupConfiguration> groups,
@@ -180,6 +184,50 @@ DurableMultiRaftRuntime::execute_batch(std::vector<DurableRaftRequest> requests)
 
 const RaftNode* DurableMultiRaftRuntime::find_group(const GroupId& group_id) const noexcept {
   return impl_->runtime.find_group(group_id);
+}
+
+common::Result<QuorumSyncReceipt>
+DurableMultiRaftRuntime::prove_quorum_sync(const GroupId& group_id, const LogIndex index) const {
+  if (failed()) {
+    return common::make_unexpected(failure_status());
+  }
+  const RaftNode* const node = impl_->runtime.find_group(group_id);
+  if (node == nullptr) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kNotFound, "Raft group does not exist"});
+  }
+  if (node->role() != Role::kLeader) {
+    return common::make_unexpected(
+        unavailable("QUORUM_SYNC proof is available only on the current leader"));
+  }
+  if (index == 0U || index > node->commit_index()) {
+    return common::make_unexpected(
+        unavailable("Raft entry has not reached a quorum-synchronized commit"));
+  }
+  const PersistentState& state = node->persistent_state();
+  Term entry_term = 0U;
+  if (index == state.snapshot.last_included_index) {
+    entry_term = state.snapshot.last_included_term;
+  } else if (index > state.snapshot.last_included_index) {
+    const LogIndex relative = index - state.snapshot.last_included_index - 1U;
+    if (relative >= state.log.size() ||
+        state.log[static_cast<std::size_t>(relative)].index != index) {
+      return common::make_unexpected(common::Status{
+          common::StatusCode::kCorruption, "committed Raft entry is absent from persistent state"});
+    }
+    entry_term = state.log[static_cast<std::size_t>(relative)].term;
+  }
+  if (entry_term == 0U || impl_->log.durable_physical_sequence() == 0U) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kCorruption, "committed Raft entry has no durable term or frontier"});
+  }
+  return QuorumSyncReceipt{.group_id = group_id,
+                           .leader_node_id = node->node_id(),
+                           .leader_term = node->current_term(),
+                           .log_index = index,
+                           .entry_term = entry_term,
+                           .local_durable_physical_sequence =
+                               impl_->log.durable_physical_sequence()};
 }
 
 RaftPhysicalPosition DurableMultiRaftRuntime::written_position() const noexcept {

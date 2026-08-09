@@ -243,6 +243,30 @@ common::Result<RaftTabletApplicationReport> RaftTabletStateMachine::apply_commit
   return impl_->apply_entries(node->committed_unapplied(), true);
 }
 
+common::Result<raft::QuorumSyncReceipt>
+RaftTabletStateMachine::prove_applied_quorum_sync(const raft::LogIndex index) const {
+  if (!impl_->failure.is_ok()) {
+    return common::make_unexpected(impl_->failure);
+  }
+  const raft::RaftNode* const node = impl_->runtime->find_group(impl_->group_id);
+  if (node == nullptr || node->applied_index() < index) {
+    return common::make_unexpected(
+        unavailable("QUORUM_SYNC entry has not been applied by the tablet state machine"));
+  }
+  auto snapshot = impl_->tablet.snapshot();
+  if (!snapshot.has_value()) {
+    return common::make_unexpected(snapshot.error());
+  }
+  if (!snapshot->applied_position().has_value() ||
+      snapshot->applied_position()->source != head::CommitSource::kRaft ||
+      snapshot->applied_position()->raft_group_id != impl_->group_id ||
+      snapshot->applied_position()->record_sequence < index) {
+    return common::make_unexpected(
+        corruption("Raft applied index is not covered by the tablet publication frontier"));
+  }
+  return impl_->runtime->prove_quorum_sync(impl_->group_id, index);
+}
+
 RetryDirectory& RaftTabletStateMachine::retry_directory() noexcept {
   return impl_->retry_directory;
 }

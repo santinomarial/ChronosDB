@@ -111,6 +111,8 @@ TEST(RaftTabletStateMachineTest, AppliesCommittedEntriesOnceAndRebuildsFromRetai
     EXPECT_EQ(durable.find_group(group_id())->commit_index(), 1U);
     EXPECT_EQ(durable.find_group(group_id())->applied_index(), 0U);
     EXPECT_EQ(machine->tablet().snapshot()->visible_row_count(), 0U);
+    EXPECT_EQ(machine->prove_applied_quorum_sync(1U).error().code(),
+              common::StatusCode::kUnavailable);
 
     auto first = machine->apply_committed();
     ASSERT_TRUE(first.has_value()) << first.error().to_string();
@@ -122,6 +124,10 @@ TEST(RaftTabletStateMachineTest, AppliesCommittedEntriesOnceAndRebuildsFromRetai
     EXPECT_EQ(machine->tablet().snapshot()->applied_position(),
               head::HeadCommitPosition::raft(group_id(), 1U));
     EXPECT_EQ(durable.find_group(group_id())->applied_index(), 1U);
+    const auto acknowledged = machine->prove_applied_quorum_sync(1U);
+    ASSERT_TRUE(acknowledged.has_value()) << acknowledged.error().to_string();
+    EXPECT_EQ(acknowledged->log_index, 1U);
+    EXPECT_EQ(acknowledged->group_id, group_id());
 
     ASSERT_TRUE(
         durable

@@ -77,8 +77,10 @@
 - Extend the implemented committed-only tablet command application and full retained-log rebuild
   with crash injection around publication/applied-index persistence. Version CSEG/Manifest row
   identities and an application snapshot for Raft source/group positions; cover compacted-prefix
-  restart, query row-version columns, and compaction migration. Implement and validate true
-  QUORUM_SYNC before exposing the mode.
+  restart, query row-version columns, and compaction migration. Carry the implemented fixed-
+  membership quorum-sync/application receipt through authenticated transport, protocol negotiation,
+  metrics, timeouts, minority-loss crash reconciliation, and safe joint membership before exposing
+  the client mode.
 - Thousands-of-groups simulation, one-node loss, group lifecycle, persisted reopen, noisy-neighbor,
   TSan/chaos, physical amplification, group density, memory, and tail benchmarks.
 

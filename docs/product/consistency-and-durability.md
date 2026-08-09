@@ -1,13 +1,16 @@
 # Consistency and Durability Contract
 
-> **Status: contract specified; single-node WAL durability coordination implemented.** This document
+> **Status: contract specified; single-node WAL coordination and an internal replicated proof are
+> implemented.** This document
 > refines [ADR 0006](../adr/0006-wal-durability-and-group-commit.md),
 > [ADR 0013](../adr/0013-wal-v1-format-and-recovery.md), and the snapshot invariants. The writer and
 > recovery paths implement the physical write, synchronization, verification, repair, and reopen
 > boundaries. The bounded commit coordinator implements `ASYNC` and `LOCAL_SYNC` completion and
 > group commit. The already-routed single-tablet append executor now waits for that physical
 > boundary and completes logical tablet/retry publication. No query service, recovery application,
-> transport acknowledgment path, or distributed mode exists.
+> native transport acknowledgment path exists. The Raft runtime can prove fixed-membership majority
+> persistence, and the tablet state machine composes it with application, but no client request mode
+> exposes that proof yet.
 > This document does not strengthen guarantees beyond what a process, operating system, filesystem,
 > device, or future replica protocol can establish.
 
@@ -17,7 +20,7 @@
 | --- | --- | --- | --- | --- |
 | `ASYNC` | The complete WAL v1 record has been accepted successfully through the active WAL file write path after its segment installation boundary; acknowledgment does not wait for data synchronization. | Normal continued process operation; no crash-survival claim. | Process or OS crash, power loss, device loss, and any failure before bytes reach required stable media may lose acknowledged operations. It must never be described as durable. | Requests may share write and later sync work, but acknowledgment does not wait for that sync. |
 | `LOCAL_SYNC` | The complete record has finished the write path and is covered by a successful WAL data synchronization after any required synchronized segment installation. | Process termination and ordinary OS crashes on that local node under the documented filesystem/device assumptions. | Device loss, controller/firmware lies, incomplete power-loss protection, filesystem/kernel defects, operator destruction, or failures excluded by the platform contract. | Multiple requests may share one captured sync frontier; each acknowledgment waits for the successful sync covering its record end. |
-| `QUORUM_SYNC` | Available only in the future replicated system. A majority of the tablet's voting replicas, including the committed leader protocol state, satisfy the documented persistence condition before acknowledgment. | Loss of a minority of replicas under the stated membership, independence, storage, and Raft assumptions. | Correlated majority loss, faulty persistence below the stated assumptions, unsafe membership, Byzantine behavior, or disaster beyond the replica topology. | Entries from one or many groups may share physical synchronization, but each request waits for its own group to satisfy quorum persistence and commit. |
+| `QUORUM_SYNC` | Internal proof implemented for fixed membership; client exposure remains unavailable. A majority of the tablet's voting replicas synchronize persistent state containing the entry, the leader synchronizes the majority-derived commit, and tablet application covers the index before acknowledgment. | Loss of a minority of replicas under the stated membership, independence, storage, authenticated transport, and crash-fault Raft assumptions. | Correlated majority loss, faulty persistence below the stated assumptions, unsafe membership, forged/Byzantine behavior, or disaster beyond the replica topology. | Entries from one or many groups may share physical synchronization, but each request waits for its own group/index proof and application frontier. |
 
 The server must expose requested and effective mode in the acknowledgment. It must never silently downgrade. Required operational metrics are:
 
@@ -39,8 +42,11 @@ covering frontier subject to configured request, byte, and delay limits. Locked
 recovery verifies the complete physical history, permits only explicit synchronized final-tail
 repair, and reopens at the verified end after a startup synchronization barrier. The server's
 default mode and deployment-specific group-limit tuning remain deferred; the coordinator requires
-an explicit mode per request and never exposes `QUORUM_SYNC`. Future replica persistence also
-remains deferred. The [subprocess crash harness](../testing/wal-crash-harness.md) reconciles
+an explicit mode per request and never exposes `QUORUM_SYNC`. The fixed-membership Raft runtime now
+produces an internal immutable receipt only after majority-derived commit and local synchronization;
+tablet application supplies the additional visibility proof. Native request/response integration,
+joint membership, and replica crash reconciliation remain deferred. The [subprocess crash
+harness](../testing/wal-crash-harness.md) reconciles
 parent-received acknowledgments with recovered physical records after controlled process death; it
 does not extend this contract to unqualified power-loss or storage-stack failures. Benchmarks must follow the
 [benchmark contract](../benchmarks/benchmark-contract.md).

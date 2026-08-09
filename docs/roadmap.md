@@ -669,8 +669,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   committed command application now decodes exact COLUMNAR_APPEND bytes, preserves uncommitted
   invisibility, durably advances applied indexes after publication, and rebuilds fresh tablet state
   from the complete retained committed log. Asynchronous worker scheduling/fairness, a versioned
-  replicated durable-row/application-snapshot format, reclamation, membership, and QUORUM_SYNC are
-  not implemented; the phase exit gate is not claimed.
+  replicated durable-row/application-snapshot format, reclamation, and membership are not
+  implemented. A fixed-membership leader can now produce a checked quorum-sync receipt after
+  majority-derived durable commit, and tablet application composes it with visibility; native
+  client mode exposure and end-to-end crash evidence remain. The phase exit gate is not claimed.
 
 - **Scope:** map tablets to Raft groups; multiplex logical records over physical logs, threads, timers, and connections; lifecycle, placement, snapshot transfer, fairness, and safe per-group reclamation.
 - **Explicit non-scope:** globally ordered logs, cross-tablet atomic transactions, distributed query execution, automatic rebalancing beyond scoped placement mechanics, and conflating physical offsets with logical indexes.

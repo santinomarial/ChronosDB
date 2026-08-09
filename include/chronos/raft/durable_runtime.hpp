@@ -53,6 +53,22 @@ struct DurableMultiRaftLimits {
   MultiRaftLimits runtime;
 };
 
+// Proof available only on the current leader after a locally synchronized commit transition.
+// Under DurableMultiRaftRuntime's persist-before-response contract, commit implies that a voting
+// majority has durably stored the entry. This is a storage-durability proof; callers must
+// separately require state-machine application before returning a query-visible write
+// acknowledgement.
+struct QuorumSyncReceipt {
+  GroupId group_id;
+  NodeId leader_node_id{};
+  Term leader_term{};
+  LogIndex log_index{};
+  Term entry_term{};
+  std::uint64_t local_durable_physical_sequence{};
+
+  friend bool operator==(const QuorumSyncReceipt&, const QuorumSyncReceipt&) = default;
+};
+
 // Single-thread-affine composition of deterministic Multi-Raft and the shared physical log. A
 // successful execute_batch() returns outbound messages only after every persistent transition in
 // that batch has been appended and covered by one successful local synchronization.
@@ -77,6 +93,8 @@ public:
   execute_batch(std::vector<DurableRaftRequest> requests);
 
   [[nodiscard]] const RaftNode* find_group(const GroupId& group_id) const noexcept;
+  [[nodiscard]] common::Result<QuorumSyncReceipt> prove_quorum_sync(const GroupId& group_id,
+                                                                    LogIndex index) const;
   [[nodiscard]] RaftPhysicalPosition written_position() const noexcept;
   [[nodiscard]] std::uint64_t durable_physical_sequence() const noexcept;
   [[nodiscard]] bool failed() const noexcept;

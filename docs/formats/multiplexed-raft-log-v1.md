@@ -78,5 +78,7 @@ fail closed.
 `MultiRaftRuntime` returns this full logical state with a persist-before-send contract.
 `DurableMultiRaftRuntime` can execute a bounded caller-provided operation batch, append all resulting
 persistent states through `RaftPersistentLog`, cover them with one local sync, and then release the
-outbound messages. No current asynchronous worker reclaims checkpoint-covered segments or proves
-majority durability. `QUORUM_SYNC` therefore remains unavailable.
+outbound messages. On a fixed-membership leader, its checked quorum-sync receipt composes Raft
+majority commit with those durable follower-response and leader-commit boundaries. No current
+asynchronous worker reclaims checkpoint-covered segments, and native protocol/client acknowledgment
+does not yet expose the receipt as a requested durability mode.

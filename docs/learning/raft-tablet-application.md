@@ -48,9 +48,9 @@ batch mutates state. Allocation and state-capacity errors return their precise s
 after committed application begins fails the owned tablet closed; restart rebuilds from the retained
 log.
 
-Current local synchronization proves only that this node's applied index record is durable. It does
-not implement `QUORUM_SYNC`, majority acknowledgment, application snapshots, or physical-log
-reclamation.
+`prove_applied_quorum_sync` composes the leader's fixed-membership majority-durability receipt with
+the Raft applied index and tablet group/index publication frontier. Client protocol exposure,
+application snapshots, and physical-log reclamation remain absent.
 
 ## Complexity and likely interview questions
 

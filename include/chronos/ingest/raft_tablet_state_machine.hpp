@@ -44,6 +44,8 @@ public:
           ColumnarAppendDecodeLimits decode_limits = {});
 
   [[nodiscard]] common::Result<RaftTabletApplicationReport> apply_committed();
+  [[nodiscard]] common::Result<raft::QuorumSyncReceipt>
+  prove_applied_quorum_sync(raft::LogIndex index) const;
 
   [[nodiscard]] RetryDirectory& retry_directory() noexcept;
   [[nodiscard]] const RetryDirectory& retry_directory() const noexcept;
