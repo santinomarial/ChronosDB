@@ -410,6 +410,31 @@ chronos_set_project_warnings(chronos_network)
 chronos_enable_sanitizers(chronos_network)
 chronos_enable_static_analysis(chronos_network)
 
+add_library(
+  chronos_live
+  src/live/incremental_aggregate.cpp
+  src/live/materialized_view.cpp
+  src/live/resume_token.cpp
+  src/live/subscription.cpp
+)
+add_library(chronos::live ALIAS chronos_live)
+set_target_properties(chronos_live PROPERTIES EXPORT_NAME live CXX_EXTENSIONS OFF)
+target_compile_features(chronos_live PUBLIC cxx_std_23)
+target_include_directories(
+  chronos_live
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+)
+target_link_libraries(
+  chronos_live
+  PUBLIC chronos::common chronos::schema chronos::wal
+  PRIVATE OpenSSL::Crypto
+)
+chronos_set_project_warnings(chronos_live)
+chronos_enable_sanitizers(chronos_live)
+chronos_enable_static_analysis(chronos_live)
+
 add_executable(chronosctl tools/chronosctl/main.cpp)
 set_target_properties(chronosctl PROPERTIES CXX_EXTENSIONS OFF)
 target_compile_features(chronosctl PRIVATE cxx_std_23)
@@ -531,6 +556,25 @@ if(CHRONOS_BUILD_TESTS)
   chronos_enable_sanitizers(chronos_network_allocation_failure_tests)
   chronos_enable_static_analysis(chronos_network_allocation_failure_tests)
   gtest_discover_tests(chronos_network_allocation_failure_tests DISCOVERY_TIMEOUT 30)
+
+  add_executable(
+    chronos_live_tests
+    tests/live/incremental_aggregate_header_self_contained.cpp
+    tests/live/incremental_aggregate_test.cpp
+    tests/live/materialized_view_header_self_contained.cpp
+    tests/live/materialized_view_test.cpp
+    tests/live/resume_token_header_self_contained.cpp
+    tests/live/resume_token_test.cpp
+    tests/live/subscription_header_self_contained.cpp
+    tests/live/subscription_test.cpp
+  )
+  set_target_properties(chronos_live_tests PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_live_tests PRIVATE cxx_std_23)
+  target_link_libraries(chronos_live_tests PRIVATE chronos::live GTest::gtest_main)
+  chronos_set_project_warnings(chronos_live_tests)
+  chronos_enable_sanitizers(chronos_live_tests)
+  chronos_enable_static_analysis(chronos_live_tests)
+  gtest_discover_tests(chronos_live_tests DISCOVERY_TIMEOUT 30)
 
   add_executable(
     chronos_schema_tests
