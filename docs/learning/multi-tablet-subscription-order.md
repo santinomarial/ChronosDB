@@ -59,6 +59,11 @@ through END_STREAM, READY, live delivery, acknowledgement checkpoint, cancellati
 A full response ring retains one exact encoded task and freezes further service progress until the
 task transfers, so backpressure cannot create an invisible cursor advance.
 
+Upstream log deletion uses a separate `SubscriptionRetentionCoordinator`. It intersects the
+storage/Raft-safe vector with every registered plan owner's durably installed expiry, then verifies
+the committed metadata placement epoch and local replica membership before invoking the physical
+source reclaimer. The logical subscription coordinate is never guessed into a WAL byte offset.
+
 Work is linear in active subscribers per publish, in the retained suffix per resume, and in retained
 state size per checkpoint. Useful review questions are: why are tablet record sequences
 incomparable, what exactly makes replay order authoritative, why does acknowledgement update a

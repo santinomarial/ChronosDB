@@ -43,7 +43,13 @@ their full roadmap exit gates or that ChronosDB is a production three-node datab
   facing service owns SQL validation, snapshot/READY/live/ack/cancel/resume transitions, exact
   response-ring backpressure retry, disconnect cleanup, and resumable shutdown drain.
 
-Still incomplete: topology/retention owner integration.
+The source-retention boundary now component-wise intersects storage/Raft safety with every durable
+plan frontier and validates committed placement epochs and local replica membership before invoking
+a source-specific batch reclaimer. Logical subscription positions are not fabricated into physical
+WAL offsets.
+
+Still incomplete for production deployment: source-specific WAL/Raft physical prefix reclamation
+and dynamic plan-owner retirement remain coupled to the Phase 15 physical-log lifecycle.
 
 ### Phase 12 — performance architecture and io_uring
 

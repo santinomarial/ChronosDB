@@ -474,6 +474,7 @@ add_library(
   src/live/subscription_plan_definition.cpp
   src/live/subscription_plan_storage.cpp
   src/live/subscription_protocol.cpp
+  src/live/subscription_retention.cpp
   src/live/subscription_service.cpp
 )
 add_library(chronos::live ALIAS chronos_live)
@@ -491,6 +492,7 @@ target_link_libraries(
          chronos::manifest
          chronos::network
          chronos::query
+         chronos::raft
          chronos::schema
          chronos::wal
   PRIVATE OpenSSL::Crypto
@@ -722,6 +724,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/live/subscription_plan_test.cpp
     tests/live/subscription_protocol_header_self_contained.cpp
     tests/live/subscription_protocol_test.cpp
+    tests/live/subscription_retention_header_self_contained.cpp
+    tests/live/subscription_retention_test.cpp
     tests/live/subscription_service_header_self_contained.cpp
     tests/live/subscription_service_test.cpp
     tests/live/subscription_test.cpp

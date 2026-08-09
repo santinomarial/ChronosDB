@@ -30,10 +30,10 @@
   vectors and extend the exact snapshot boundary to Raft-backed publications.
 - Commits injected at every historical-to-live handoff step across real snapshot execution.
 - Cross-tablet-owner wiring around the implemented canonical vector/admission-order coordinator,
-  topology transitions, retention pins, service SQL/plan-to-input suffix replay, concurrent
-  post-checkpoint source-log replay, physical source deletion after durable owner frontiers, schema
-  migration, process restart integration, real-socket reactor/service threading, and obsolete-
-  generation reclamation.
+  topology transitions, multi-plan retention registration/retirement, service SQL/plan-to-input
+  suffix replay, concurrent post-checkpoint source-log replay, physical WAL/Raft coordinate mapping
+  behind the implemented topology-bound deletion authority, schema migration, process restart
+  integration, real-socket reactor/service threading, and obsolete-generation reclamation.
 - Real-socket Protocol 1.1 partial delivery, disconnect/reconnect, duplicate replay, schema-change
   termination and coordinator replacement, cancellation races, allocation faults, checkpoint
   minor-0/minor-1 mixed-version peers, and sustained network backpressure integration around the
