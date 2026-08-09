@@ -30,6 +30,8 @@ struct CommittedChange {
   LogicalChangeOperation operation{LogicalChangeOperation::kUpsert};
   std::vector<std::byte> result_key;
   std::vector<std::byte> payload;
+
+  friend bool operator==(const CommittedChange&, const CommittedChange&) = default;
 };
 
 struct DeliveryRecord {

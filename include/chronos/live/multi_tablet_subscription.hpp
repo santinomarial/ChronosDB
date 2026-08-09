@@ -48,6 +48,9 @@ struct MultiTabletSubscriptionStatus {
 struct MultiTabletSubscriptionCheckpointSource {
   SourcePosition latest_position;
   std::uint64_t expired_through_sequence{};
+
+  friend bool operator==(const MultiTabletSubscriptionCheckpointSource&,
+                         const MultiTabletSubscriptionCheckpointSource&) = default;
 };
 
 // Exact retained coordinator state in canonical source order and recorded cross-tablet admission
@@ -60,6 +63,9 @@ struct MultiTabletSubscriptionCheckpoint {
   schema::SchemaVersion schema_version;
   std::vector<MultiTabletSubscriptionCheckpointSource> sources;
   std::vector<CommittedChange> retained_changes;
+
+  friend bool operator==(const MultiTabletSubscriptionCheckpoint&,
+                         const MultiTabletSubscriptionCheckpoint&) = default;
 };
 
 // Single-thread-affine coordinator for one database/table/plan/schema and a fixed source set.

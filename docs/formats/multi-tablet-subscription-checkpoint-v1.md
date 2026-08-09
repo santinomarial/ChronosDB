@@ -1,0 +1,72 @@
+# Multi-tablet Subscription Checkpoint v1
+
+## Status and byte order
+
+This document freezes major version 1, minor version 0. Every integer is fixed-width little-endian.
+UUID and WAL identities use their canonical 16 bytes. No native C++ object representation is
+serialized. The complete file is bounded by the decoder configuration and ends in a CRC32C over
+every preceding byte.
+
+## Header
+
+The header is exactly 128 bytes.
+
+| Offset | Size | Field |
+| ---: | ---: | --- |
+| 0 | 8 | ASCII magic `CHSUBCP1` |
+| 8 | 2 | major version, `1` |
+| 10 | 2 | minor version, `0` |
+| 12 | 4 | header size, `128` |
+| 16 | 8 | exact total file size including trailer |
+| 24 | 4 | source count |
+| 28 | 4 | retained-change count |
+| 32 | 16 | database UUID |
+| 48 | 16 | table UUID |
+| 64 | 32 | plan fingerprint |
+| 96 | 16 | schema UUID |
+| 112 | 8 | schema version |
+| 120 | 8 | reserved zero |
+
+## Canonical source vector
+
+Exactly `source_count` 48-byte entries follow the header, strictly increasing by tablet UUID.
+
+| Relative offset | Size | Field |
+| ---: | ---: | --- |
+| 0 | 16 | tablet UUID |
+| 16 | 16 | WAL ID |
+| 32 | 8 | latest committed record sequence |
+| 40 | 8 | expired-through record sequence |
+
+The expiry frontier cannot exceed latest. It means all earlier positions for that source are no
+longer recoverable from this checkpoint.
+
+## Retained admission-order changes
+
+Exactly `retained_change_count` records follow in the coordinator's authoritative admission order.
+Each begins with an 80-byte envelope followed immediately by result-key bytes and payload bytes.
+
+| Relative offset | Size | Field |
+| ---: | ---: | --- |
+| 0 | 16 | tablet UUID |
+| 16 | 16 | WAL ID |
+| 32 | 8 | record sequence |
+| 40 | 16 | schema UUID |
+| 56 | 8 | schema version |
+| 64 | 1 | operation: `1` UPSERT, `2` DELETE |
+| 65 | 7 | reserved zero |
+| 72 | 4 | result-key byte length |
+| 76 | 4 | payload byte length |
+| 80 | variable | result-key then payload |
+
+Result keys are nonempty. DELETE payloads are empty. For each source independently, retained
+sequences are consecutive from `expired_through + 1` through `latest`; their cross-source order is
+the recorded delivery admission order and must not be reconstructed by sorting source positions.
+
+## Trailer and validation order
+
+The final 4 bytes are CRC32C of `[0, total_size - 4)`. A decoder validates outer size, magic,
+version, fixed header fields, configured counts, and CRC before allocating decoded state. It then
+checks reserved bytes, identities, canonical source order, operation/length rules, exact per-source
+suffix continuity, schema binding, and absence of trailing data. Unknown versions fail as
+unsupported; malformed or checksum-invalid bytes fail as corruption.

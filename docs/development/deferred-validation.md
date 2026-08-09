@@ -16,9 +16,9 @@
 
 ## Phase 11 — live subscriptions and materialized views
 
-- Multi-tablet logical coordinator checkpoints: durable versioned/checksummed codec, hostile
-  corruption and allocation sweeps, atomic generation installation/selection, process crash/reopen,
-  token/checkpoint race scheduling, and retained-state size/recovery measurements.
+- Multi-tablet coordinator checkpoints: broader hostile corruption and allocation sweeps, atomic
+  generation installation/selection, process crash/reopen, token/checkpoint race scheduling,
+  cross-compiler golden verification, and retained-state size/recovery measurements.
 - Subscription plan identity: cross-process golden vectors, forced-allocation/provider-failure
   sweeps, hostile SQL/catalog limits, durable fingerprint-to-plan registry recovery, schema
   migration, and compatibility review when the supported incremental SQL surface expands.
