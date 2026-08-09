@@ -3,6 +3,7 @@
 - **Status:** accepted
 - **Date:** 2026-08-01
 - **Owners:** ChronosDB distributed-systems maintainers
+- **Extended by:** [ADR 0095](0095-multi-tablet-subscription-delivery-order.md)
 
 ## Context
 

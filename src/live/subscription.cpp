@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <limits>
 #include <map>
 #include <memory>
 #include <utility>
@@ -71,7 +72,8 @@ public:
 
   void append(State& state, const std::shared_ptr<const CommittedChange>& change) const {
     const std::size_t bytes = retained_bytes(*change);
-    if (!can_buffer(state, bytes)) {
+    if (state.last_assigned_sequence == std::numeric_limits<std::uint64_t>::max() ||
+        !can_buffer(state, bytes)) {
       overflow(state);
       return;
     }

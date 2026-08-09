@@ -27,8 +27,9 @@ that complete prefix. The MAC key is deployment state and is never encoded in th
 ## Source positions
 
 Each source uses 40 bytes: tablet UUID (16), WAL identity (16), and committed record sequence (8).
-Positions follow the header in deterministic caller order. The current manager accepts exactly one
-source; the format reserves a bounded vector for the later distributed handoff.
+Positions follow the header in deterministic caller order. The single-tablet manager accepts
+exactly one source. The multi-tablet coordinator emits and exact-validates canonical tablet-identity
+order; other callers remain responsible for preserving their declared deterministic order.
 
 ## Validation and compatibility
 
@@ -37,4 +38,3 @@ validates magic, version, size relationships, source bound, required-zero bytes,
 identities. Unknown major versions and newer minor versions fail as unsupported. Modification fails
 as unauthenticated. A valid token is still rejected when database, tablet/WAL lineage, plan/schema,
 or retained suffix is incompatible. External delivery remains at least once.
-

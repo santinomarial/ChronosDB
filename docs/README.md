@@ -216,6 +216,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   decoding, shared row/retry publication, applied-index ordering, and retained-log reconstruction.
 - [Windowed materialized-view state](learning/windowed-materialized-view.md): committed/event-time
   separation, corrections, watermarks, exact checkpoints, durable recovery, and retention frontier.
+- [Multi-tablet subscription order](learning/multi-tablet-subscription-order.md): canonical source
+  vectors, coordinator admission order, component-wise acknowledgement, replay, and expiry.
 - [Durable metadata Raft state](learning/durable-metadata-state.md): checksummed commands,
   commit-order catalog application, quorum proof, and retained-log reconstruction.
 - [Phase 10 network exit review](reviews/phase-10-network-review.md): implemented transport

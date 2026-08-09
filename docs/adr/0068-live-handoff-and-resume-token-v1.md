@@ -4,7 +4,8 @@
 - **Date:** 2026-08-08
 - **Owners:** ChronosDB live-query maintainers
 - **Extended by:** [ADR 0089](0089-exact-logical-materialized-view-checkpoints.md) and
-  [ADR 0094](0094-native-protocol-1-1-subscriptions.md)
+  [ADR 0094](0094-native-protocol-1-1-subscriptions.md) and
+  [ADR 0095](0095-multi-tablet-subscription-delivery-order.md)
 
 ## Context
 

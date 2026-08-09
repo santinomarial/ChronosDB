@@ -462,6 +462,7 @@ add_library(
   src/live/materialized_view.cpp
   src/live/materialized_view_checkpoint.cpp
   src/live/materialized_view_checkpoint_storage.cpp
+  src/live/multi_tablet_subscription.cpp
   src/live/resume_token.cpp
   src/live/subscription.cpp
   src/live/subscription_protocol.cpp
@@ -680,6 +681,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/live/durable_materialized_view_test.cpp
     tests/live/materialized_view_header_self_contained.cpp
     tests/live/materialized_view_test.cpp
+    tests/live/multi_tablet_subscription_header_self_contained.cpp
+    tests/live/multi_tablet_subscription_test.cpp
     tests/live/materialized_view_checkpoint_header_self_contained.cpp
     tests/live/materialized_view_checkpoint_test.cpp
     tests/live/materialized_view_checkpoint_storage_header_self_contained.cpp

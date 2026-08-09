@@ -17,9 +17,10 @@
 ## Phase 11 — live subscriptions and materialized views
 
 - Commits injected at every historical-to-live handoff step across real snapshot execution.
-- Multi-tablet registration/merge ordering, topology epochs, retention pins, service plan-to-input
-  suffix replay, physical source deletion after the implemented durable owner frontier, schema
-  migration, process restart integration, and obsolete-generation reclamation.
+- Cross-tablet-owner wiring around the implemented canonical vector/admission-order coordinator,
+  durable admission-order restart, topology transitions, retention pins, service SQL/plan-to-input
+  suffix replay, physical source deletion after durable owner frontiers, schema migration, process
+  restart integration, and obsolete-generation reclamation.
 - Real-socket Protocol 1.1 partial delivery, disconnect/reconnect, duplicate replay, schema-change
   termination, cancellation races, allocation faults, mixed-version peers, and sustained network
   backpressure integration around the implemented subscription messages and lifecycle.

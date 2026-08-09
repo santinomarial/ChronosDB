@@ -2,6 +2,7 @@
 #define CHRONOS_LIVE_SUBSCRIPTION_PROTOCOL_HPP_
 
 #include "chronos/common/result.hpp"
+#include "chronos/live/multi_tablet_subscription.hpp"
 #include "chronos/live/subscription.hpp"
 #include "chronos/network/subscription_messages.hpp"
 
@@ -17,6 +18,9 @@ namespace chronos::live {
 [[nodiscard]] common::Result<std::vector<std::byte>>
 encode_subscription_registration(const SubscriptionRegistration& registration,
                                  const network::SubscriptionMessageLimits& limits = {});
+[[nodiscard]] common::Result<std::vector<std::byte>>
+encode_subscription_registration(const MultiTabletSubscriptionRegistration& registration,
+                                 const network::SubscriptionMessageLimits& limits = {});
 
 [[nodiscard]] common::Result<std::vector<std::byte>>
 encode_subscription_delivery(const DeliveryRecord& delivery,
@@ -26,9 +30,16 @@ encode_subscription_delivery(const DeliveryRecord& delivery,
 acknowledge_subscription_delivery(SubscriptionManager& manager, const common::Uuid& subscription_id,
                                   std::uint64_t delivery_sequence,
                                   const network::SubscriptionMessageLimits& limits = {});
+[[nodiscard]] common::Result<std::vector<std::byte>> acknowledge_subscription_delivery(
+    MultiTabletSubscriptionManager& manager, const common::Uuid& subscription_id,
+    std::uint64_t delivery_sequence, const network::SubscriptionMessageLimits& limits = {});
 
 [[nodiscard]] common::Result<std::vector<std::byte>>
 terminate_subscription(SubscriptionManager& manager, const common::Uuid& subscription_id,
+                       network::SubscriptionEndReason reason,
+                       const network::SubscriptionMessageLimits& limits = {});
+[[nodiscard]] common::Result<std::vector<std::byte>>
+terminate_subscription(MultiTabletSubscriptionManager& manager, const common::Uuid& subscription_id,
                        network::SubscriptionEndReason reason,
                        const network::SubscriptionMessageLimits& limits = {});
 

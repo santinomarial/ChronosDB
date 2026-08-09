@@ -3,8 +3,9 @@
 > **Status: single-source core, durable views, and Protocol 1.1 delivery implemented; service
 > integration incomplete.** Resume Token v1, bounded register-before-boundary buffering,
 > poll/acknowledge/resume, overflow, incremental windows, exact durable view recovery, and negotiated
-> native subscription delivery are implemented. SQL snapshot execution and multi-tablet ordering are
-> not yet wired. The contract provides at-least-once external delivery, not exactly-once effects.
+> native subscription delivery are implemented. A plan-bound multi-tablet coordinator records one
+> replayable delivery order over exact per-tablet positions. SQL snapshot/service execution is not
+> yet wired. The contract provides at-least-once external delivery, not exactly-once effects.
 
 Eligible SQL and row visibility follow [SQL v1](sql-v1.md), the [data model](data-model.md), and the [consistency contract](consistency-and-durability.md).
 
@@ -17,7 +18,9 @@ For a new subscription, ChronosDB logically performs these ordered steps:
 3. Pin or buffer the committed change stream strictly after `C` before any handoff race can open.
 4. Execute the historical query at exactly `C`.
 5. Deliver the finite snapshot as `SNAPSHOT_ROW` records, followed by `SNAPSHOT_END` containing `C` and an initial resume token.
-6. Deliver every matching committed change strictly after `C`, ordered by the deterministic merged source-position rule.
+6. Deliver every matching committed change strictly after its component of `C`, ordered by the
+   single coordinator's recorded admission order. This is a subscription delivery order, not a
+   fictional total commit order across tablets.
 7. Continue live delivery while retention, schema, resources, and client state permit.
 8. Issue resumable checkpoints tied to the query-plan identity, schema identity, committed source position vector, and last deterministic delivery sequence.
 
@@ -92,7 +95,8 @@ A resume token is opaque, versioned, integrity-protected, and scoped to database
 - **Cancellation:** idempotently stop new output, release buffers/pins, and return the last safe token if available. It does not roll back committed source writes.
 - **Schema change:** v1 terminates an affected subscription at a committed boundary with `SCHEMA_CHANGED`. The old token cannot bind to a different plan; the client registers a new plan/snapshot. A future compatibility analysis may allow provably irrelevant additive changes.
 
-Merged multi-tablet ordering, service plan binding, state-retention defaults, window trigger cadence,
-spill, and the exact eligible incremental SQL subset remain deferred. Resume Token v1 bytes and the
-Protocol 1.1 acknowledgement/checkpoint lifecycle are implemented. Every later choice must preserve
+Service SQL/plan execution, durable coordinator admission-order restart, topology transitions,
+state-retention defaults, window trigger cadence, spill, and the exact eligible incremental SQL
+subset remain deferred. Multi-tablet ordering, Resume Token v1 bytes, and the Protocol 1.1
+acknowledgement/checkpoint lifecycle are implemented. Every later choice must preserve
 [invariant 17](../architecture/invariants.md).
