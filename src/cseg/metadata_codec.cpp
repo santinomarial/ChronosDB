@@ -3,6 +3,7 @@
 #include "chronos/common/checked_math.hpp"
 #include "chronos/common/crc32c.hpp"
 #include "chronos/cseg/layout.hpp"
+#include "chronos/cseg/temporal_layout.hpp"
 
 #include <algorithm>
 #include <array>
@@ -141,13 +142,17 @@ template <typename Identifier>
 
 [[nodiscard]] std::optional<CsegMetadataDecodeError>
 validate_columns(const std::span<const CsegColumnDescriptor> columns,
-                 const std::uint32_t event_time_ordinal,
-                 const std::uint32_t ordering_column_count) {
-  if (columns.size() <= format::kSystemColumnCount ||
-      columns.size() > format::kMaximumStoredColumnCount) {
-    return corruption("CSEG stored column count is outside v1 bounds");
+                 const std::uint32_t event_time_ordinal, const std::uint32_t ordering_column_count,
+                 const std::uint16_t format_major) {
+  const bool temporal = format_major == temporal_format::kFormatMajor;
+  const std::size_t system_count =
+      temporal ? temporal_format::kSystemColumnCount : format::kSystemColumnCount;
+  const std::size_t maximum_stored =
+      temporal ? temporal_format::kMaximumStoredColumnCount : format::kMaximumStoredColumnCount;
+  if (columns.size() <= system_count || columns.size() > maximum_stored) {
+    return corruption("CSEG stored column count is outside format bounds");
   }
-  const std::size_t user_count = columns.size() - format::kSystemColumnCount;
+  const std::size_t user_count = columns.size() - system_count;
   if (event_time_ordinal >= user_count || ordering_column_count == 0U ||
       ordering_column_count > user_count) {
     return corruption("CSEG event-time or ordering column count is outside the user schema");
@@ -188,16 +193,29 @@ validate_columns(const std::span<const CsegColumnDescriptor> columns,
     }
 
     const std::size_t system_ordinal = ordinal - user_count;
-    constexpr std::array<StorageKind, format::kSystemColumnCount> kinds{
+    constexpr std::array<StorageKind, format::kSystemColumnCount> v1_kinds{
         StorageKind::kWalId, StorageKind::kRecordSequence, StorageKind::kRowOrdinal,
         StorageKind::kOperation};
-    constexpr std::array<schema::LogicalTypeKind, format::kSystemColumnCount> types{
+    constexpr std::array<schema::LogicalTypeKind, format::kSystemColumnCount> v1_types{
         schema::LogicalTypeKind::kUuid, schema::LogicalTypeKind::kUInt64,
         schema::LogicalTypeKind::kUInt32, schema::LogicalTypeKind::kUInt8};
-    if (column.column_id.has_value() || column.storage_kind != kinds[system_ordinal] ||
-        column.logical_type.kind() != types[system_ordinal] || column.nullable ||
-        column.event_time || column.schema_ordinal.has_value() ||
-        column.ordering_ordinal.has_value()) {
+    constexpr std::array<StorageKind, temporal_format::kSystemColumnCount> v2_kinds{
+        StorageKind::kCommitSource,      StorageKind::kSourceId,
+        StorageKind::kCommitPosition,    StorageKind::kTemporalRowOrdinal,
+        StorageKind::kTemporalOperation, StorageKind::kLogicalIdentity,
+        StorageKind::kReceiveTime,       StorageKind::kSystemCommitTime};
+    constexpr std::array<schema::LogicalTypeKind, temporal_format::kSystemColumnCount> v2_types{
+        schema::LogicalTypeKind::kUInt8,       schema::LogicalTypeKind::kUuid,
+        schema::LogicalTypeKind::kUInt64,      schema::LogicalTypeKind::kUInt32,
+        schema::LogicalTypeKind::kUInt8,       schema::LogicalTypeKind::kBinary,
+        schema::LogicalTypeKind::kTimestampNs, schema::LogicalTypeKind::kTimestampNs};
+    const StorageKind expected_kind =
+        temporal ? v2_kinds[system_ordinal] : v1_kinds[system_ordinal];
+    const schema::LogicalTypeKind expected_type =
+        temporal ? v2_types[system_ordinal] : v1_types[system_ordinal];
+    if (column.column_id.has_value() || column.storage_kind != expected_kind ||
+        column.logical_type.kind() != expected_type || column.nullable || column.event_time ||
+        column.schema_ordinal.has_value() || column.ordering_ordinal.has_value()) {
       return corruption("CSEG system column registry entry is invalid");
     }
   }
@@ -339,7 +357,7 @@ validate_pages(const std::span<const CsegPageDescriptor> pages,
 // This helper validates the named durable header fields as one frozen-format tuple.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 validate_model(
-    const std::uint64_t total_length,
+    const std::uint16_t format_major, const std::uint64_t total_length,
     const std::uint64_t metadata_length, // NOLINT(bugprone-easily-swappable-parameters)
     const std::uint64_t row_count, const std::uint32_t event_time_ordinal,
     const std::uint32_t ordering_column_count, // NOLINT(bugprone-easily-swappable-parameters)
@@ -347,7 +365,8 @@ validate_model(
     const std::span<const CsegColumnDescriptor> columns,
     const std::span<const CsegGranuleDescriptor> granules,
     const std::span<const CsegPageDescriptor> pages) {
-  if (const auto error = validate_columns(columns, event_time_ordinal, ordering_column_count);
+  if (const auto error =
+          validate_columns(columns, event_time_ordinal, ordering_column_count, format_major);
       error.has_value()) {
     return error;
   }
@@ -359,12 +378,16 @@ validate_model(
   return validate_pages(pages, columns, granules, metadata_length, total_length);
 }
 
-[[nodiscard]] common::Result<StorageKind> storage_kind_from_code(const std::uint16_t code) {
+[[nodiscard]] common::Result<StorageKind> storage_kind_from_code(const std::uint16_t code,
+                                                                 const std::uint16_t format_major) {
   if (code == 0U) {
     return common::make_unexpected(
         status(common::StatusCode::kCorruption, "CSEG storage-kind code zero is invalid"));
   }
-  if (code > format::kOperationStorageKind) {
+  const std::uint16_t maximum = format_major == temporal_format::kFormatMajor
+                                    ? temporal_format::kSystemCommitTimeStorageKind
+                                    : format::kOperationStorageKind;
+  if (code > maximum) {
     return common::make_unexpected(
         status(common::StatusCode::kNotSupported, "CSEG storage-kind code is unsupported"));
   }
@@ -413,15 +436,17 @@ CsegMetadataDecodeError::CsegMetadataDecodeError(const CsegMetadataDecodeErrorKi
 // The private constructor preserves the frozen header field order; callers use named accessors.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 DecodedCsegMetadataView::DecodedCsegMetadataView(
-    PartId part_id, schema::TableId table_id, schema::TabletId tablet_id,
-    schema::SchemaId schema_id, const schema::SchemaVersion schema_version,
+    const std::uint16_t format_major, const std::uint16_t format_minor, PartId part_id,
+    schema::TableId table_id, schema::TabletId tablet_id, schema::SchemaId schema_id,
+    const schema::SchemaVersion schema_version,
     const std::uint64_t total_length, // NOLINT(bugprone-easily-swappable-parameters)
     const std::uint64_t row_count, const std::uint32_t event_time_column_ordinal,
     const std::uint32_t ordering_column_count, const std::int64_t minimum_event_time,
     const std::int64_t maximum_event_time, std::vector<CsegColumnDescriptor> columns,
     std::vector<CsegGranuleDescriptor> granules, std::vector<CsegPageDescriptor> pages,
     const common::ByteView encoded_metadata) noexcept
-    : part_id_(part_id), table_id_(table_id), tablet_id_(tablet_id), schema_id_(schema_id),
+    : format_major_(format_major), format_minor_(format_minor), part_id_(part_id),
+      table_id_(table_id), tablet_id_(tablet_id), schema_id_(schema_id),
       schema_version_(schema_version), total_length_(total_length), row_count_(row_count),
       event_time_column_ordinal_(event_time_column_ordinal),
       ordering_column_count_(ordering_column_count), minimum_event_time_(minimum_event_time),
@@ -445,18 +470,25 @@ common::ByteView DecodedCsegMetadataView::encoded_metadata() const noexcept {
   return encoded_metadata_;
 }
 
-common::Result<EncodedCsegMetadata> encode_cseg_v1_metadata(const CsegMetadataEncodeInput& input) {
-  if (input.columns.size() <= format::kSystemColumnCount ||
-      input.columns.size() > format::kMaximumStoredColumnCount || input.granules.empty() ||
-      input.granules.size() > format::kMaximumGranuleCount) {
+[[nodiscard]] common::Result<EncodedCsegMetadata>
+encode_cseg_metadata(const CsegMetadataEncodeInput& input, const std::uint16_t format_major) {
+  const bool temporal = format_major == temporal_format::kFormatMajor;
+  const std::size_t system_count =
+      temporal ? temporal_format::kSystemColumnCount : format::kSystemColumnCount;
+  const std::size_t maximum_stored =
+      temporal ? temporal_format::kMaximumStoredColumnCount : format::kMaximumStoredColumnCount;
+  if (input.columns.size() <= system_count || input.columns.size() > maximum_stored ||
+      input.granules.empty() || input.granules.size() > format::kMaximumGranuleCount) {
     return common::make_unexpected(
         status(common::StatusCode::kInvalidArgument, "CSEG encoder descriptor counts are invalid"));
   }
-  const auto user_count =
-      static_cast<std::uint32_t>(input.columns.size() - format::kSystemColumnCount);
-  const common::Result<CsegMetadataLayout> metadata = plan_cseg_v1_metadata_layout(
-      {.user_column_count = user_count,
-       .granule_count = static_cast<std::uint32_t>(input.granules.size())});
+  const auto user_count = static_cast<std::uint32_t>(input.columns.size() - system_count);
+  const CsegMetadataLayoutInput layout_input{.user_column_count = user_count,
+                                             .granule_count =
+                                                 static_cast<std::uint32_t>(input.granules.size())};
+  const common::Result<CsegMetadataLayout> metadata =
+      temporal ? plan_cseg_v2_temporal_metadata_layout(layout_input)
+               : plan_cseg_v1_metadata_layout(layout_input);
   if (!metadata.has_value()) {
     return common::make_unexpected(metadata.error());
   }
@@ -479,7 +511,8 @@ common::Result<EncodedCsegMetadata> encode_cseg_v1_metadata(const CsegMetadataEn
                                             "CSEG uncompressed page length exceeds the v1 limit"));
     }
     const common::Result<CsegPageLayout> placement =
-        plan_cseg_v1_page_layout(cursor, page.stored_length);
+        temporal ? plan_cseg_v2_temporal_page_layout(cursor, page.stored_length)
+                 : plan_cseg_v1_page_layout(cursor, page.stored_length);
     if (!placement.has_value()) {
       return common::make_unexpected(placement.error());
     }
@@ -500,9 +533,9 @@ common::Result<EncodedCsegMetadata> encode_cseg_v1_metadata(const CsegMetadataEn
     cursor = placement->next_offset;
   }
   if (const auto error = validate_model(
-          cursor, metadata->metadata_length, input.row_count, input.event_time_column_ordinal,
-          input.ordering_column_count, input.minimum_event_time, input.maximum_event_time,
-          input.columns, input.granules, pages);
+          format_major, cursor, metadata->metadata_length, input.row_count,
+          input.event_time_column_ordinal, input.ordering_column_count, input.minimum_event_time,
+          input.maximum_event_time, input.columns, input.granules, pages);
       error.has_value()) {
     return common::make_unexpected(
         status(common::StatusCode::kInvalidArgument, error->status().message()));
@@ -515,8 +548,9 @@ common::Result<EncodedCsegMetadata> encode_cseg_v1_metadata(const CsegMetadataEn
   std::vector<std::byte> storage(static_cast<std::size_t>(metadata->metadata_length), std::byte{0});
   const common::MutableByteView bytes{storage};
   std::copy(format::kMagic.begin(), format::kMagic.end(), storage.begin());
-  store_u16_le(bytes, format::kFormatMajorOffset, format::kFormatMajor);
-  store_u16_le(bytes, format::kFormatMinorOffset, format::kFormatMinor);
+  store_u16_le(bytes, format::kFormatMajorOffset, format_major);
+  store_u16_le(bytes, format::kFormatMinorOffset,
+               temporal ? temporal_format::kFormatMinor : format::kFormatMinor);
   store_u32_le(bytes, format::kHeaderLengthOffset, format::kFileHeaderLength);
   store_u64_le(bytes, format::kTotalLengthOffset, cursor);
   store_u64_le(bytes, format::kMetadataLengthOffset, metadata->metadata_length);
@@ -611,10 +645,20 @@ common::Result<EncodedCsegMetadata> encode_cseg_v1_metadata(const CsegMetadataEn
   return EncodedCsegMetadata{std::move(storage), cursor};
 }
 
-CsegMetadataDecodeResult decode_cseg_v1_metadata_prefix(const common::ByteView bytes,
-                                                        const CsegMetadataDecodeLimits limits) {
+common::Result<EncodedCsegMetadata> encode_cseg_v1_metadata(const CsegMetadataEncodeInput& input) {
+  return encode_cseg_metadata(input, format::kFormatMajor);
+}
+
+common::Result<EncodedCsegMetadata>
+encode_cseg_v2_temporal_metadata(const CsegMetadataEncodeInput& input) {
+  return encode_cseg_metadata(input, temporal_format::kFormatMajor);
+}
+
+[[nodiscard]] CsegMetadataDecodeResult
+decode_cseg_metadata_prefix(const common::ByteView bytes, const CsegMetadataDecodeLimits limits,
+                            const std::uint16_t expected_major) {
   if (!valid_limits(limits)) {
-    return std::unexpected(resource_limit("CSEG metadata decode limits are outside v1 bounds"));
+    return std::unexpected(resource_limit("CSEG metadata decode limits are outside format bounds"));
   }
   if (bytes.size() < format::kMagic.size()) {
     return std::unexpected(
@@ -637,7 +681,10 @@ CsegMetadataDecodeResult decode_cseg_v1_metadata_prefix(const common::ByteView b
   if (major == 0U) {
     return std::unexpected(corruption("CSEG format major version zero is invalid"));
   }
-  if (major != format::kFormatMajor || minor != format::kFormatMinor) {
+  const std::uint16_t expected_minor = expected_major == temporal_format::kFormatMajor
+                                           ? temporal_format::kFormatMinor
+                                           : format::kFormatMinor;
+  if (major != expected_major || minor != expected_minor) {
     return std::unexpected(unsupported("CSEG format version is unsupported"));
   }
   if (load_u32_le(header, format::kFileFlagsOffset) != 0U) {
@@ -669,8 +716,12 @@ CsegMetadataDecodeResult decode_cseg_v1_metadata_prefix(const common::ByteView b
     return std::unexpected(resource_limit("CSEG metadata exceeds configured decode limits"));
   }
 
-  const common::Result<CsegMetadataLayout> layout = plan_cseg_v1_metadata_layout(
-      {.user_column_count = user_count, .granule_count = granule_count});
+  const CsegMetadataLayoutInput layout_input{.user_column_count = user_count,
+                                             .granule_count = granule_count};
+  const common::Result<CsegMetadataLayout> layout =
+      expected_major == temporal_format::kFormatMajor
+          ? plan_cseg_v2_temporal_metadata_layout(layout_input)
+          : plan_cseg_v1_metadata_layout(layout_input);
   if (!layout.has_value() || stored_count != layout->stored_column_count ||
       page_count != layout->page_count || metadata_length != layout->metadata_length ||
       load_u64_le(header, format::kColumnsOffsetFieldOffset) != layout->columns_offset ||
@@ -719,7 +770,7 @@ CsegMetadataDecodeResult decode_cseg_v1_metadata_prefix(const common::ByteView b
       return std::unexpected(corruption("CSEG column descriptor reserved bytes are nonzero"));
     }
     const common::Result<StorageKind> kind =
-        storage_kind_from_code(load_u16_le(descriptor, format::kStorageKindOffset));
+        storage_kind_from_code(load_u16_le(descriptor, format::kStorageKindOffset), expected_major);
     if (!kind.has_value()) {
       return std::unexpected(kind.error().code() == common::StatusCode::kNotSupported
                                  ? unsupported(kind.error().message())
@@ -848,12 +899,14 @@ CsegMetadataDecodeResult decode_cseg_v1_metadata_prefix(const common::ByteView b
   const std::int64_t minimum_event_time = load_i64_le(header, format::kMinimumEventTimeOffset);
   const std::int64_t maximum_event_time = load_i64_le(header, format::kMaximumEventTimeOffset);
   if (const auto error = validate_model(
-          total_length, metadata_length, row_count, event_time_ordinal, ordering_column_count,
-          minimum_event_time, maximum_event_time, columns, granules, pages);
+          expected_major, total_length, metadata_length, row_count, event_time_ordinal,
+          ordering_column_count, minimum_event_time, maximum_event_time, columns, granules, pages);
       error.has_value()) {
     return std::unexpected(*error);
   }
   return DecodedCsegMetadataView{
+      major,
+      minor,
       *part_id,
       *table_id,
       *tablet_id,
@@ -872,6 +925,17 @@ CsegMetadataDecodeResult decode_cseg_v1_metadata_prefix(const common::ByteView b
   };
 }
 
+CsegMetadataDecodeResult decode_cseg_v1_metadata_prefix(const common::ByteView bytes,
+                                                        const CsegMetadataDecodeLimits limits) {
+  return decode_cseg_metadata_prefix(bytes, limits, format::kFormatMajor);
+}
+
+CsegMetadataDecodeResult
+decode_cseg_v2_temporal_metadata_prefix(const common::ByteView bytes,
+                                        const CsegMetadataDecodeLimits limits) {
+  return decode_cseg_metadata_prefix(bytes, limits, temporal_format::kFormatMajor);
+}
+
 CsegMetadataDecodeResult decode_cseg_v1_metadata_exact(const common::ByteView bytes,
                                                        const CsegMetadataDecodeLimits limits) {
   CsegMetadataDecodeResult decoded = decode_cseg_v1_metadata_prefix(bytes, limits);
@@ -884,14 +948,30 @@ CsegMetadataDecodeResult decode_cseg_v1_metadata_exact(const common::ByteView by
   return decoded;
 }
 
-common::Status validate_cseg_v1_metadata_schema(const DecodedCsegMetadataView& metadata,
-                                                const schema::TableSchema& schema_value,
-                                                const schema::TabletId& target_tablet) {
-  if (metadata.table_id() != schema_value.table_id() ||
+CsegMetadataDecodeResult
+decode_cseg_v2_temporal_metadata_exact(const common::ByteView bytes,
+                                       const CsegMetadataDecodeLimits limits) {
+  CsegMetadataDecodeResult decoded = decode_cseg_v2_temporal_metadata_prefix(bytes, limits);
+  if (!decoded.has_value()) {
+    return decoded;
+  }
+  if (bytes.size() != decoded->encoded_metadata().size()) {
+    return std::unexpected(corruption("CSEG v2 metadata exact decoder rejects trailing bytes"));
+  }
+  return decoded;
+}
+
+[[nodiscard]] common::Status validate_cseg_metadata_schema(const DecodedCsegMetadataView& metadata,
+                                                           const schema::TableSchema& schema_value,
+                                                           const schema::TabletId& target_tablet,
+                                                           const std::uint16_t expected_major,
+                                                           const std::size_t system_column_count) {
+  if (metadata.format_major() != expected_major || metadata.format_minor() != 0U ||
+      metadata.table_id() != schema_value.table_id() ||
       metadata.schema_id() != schema_value.schema_id() ||
       metadata.schema_version() != schema_value.version() ||
       metadata.tablet_id() != target_tablet ||
-      metadata.columns().size() != schema_value.columns().size() + format::kSystemColumnCount) {
+      metadata.columns().size() != schema_value.columns().size() + system_column_count) {
     return status(common::StatusCode::kInvalidArgument,
                   "CSEG table, tablet, schema identity, version, or column count does not bind");
   }
@@ -922,6 +1002,21 @@ common::Status validate_cseg_v1_metadata_schema(const DecodedCsegMetadataView& m
                   "CSEG event-time or physical ordering header does not bind to the schema");
   }
   return common::Status::ok();
+}
+
+common::Status validate_cseg_v1_metadata_schema(const DecodedCsegMetadataView& metadata,
+                                                const schema::TableSchema& schema_value,
+                                                const schema::TabletId& target_tablet) {
+  return validate_cseg_metadata_schema(metadata, schema_value, target_tablet, format::kFormatMajor,
+                                       format::kSystemColumnCount);
+}
+
+common::Status validate_cseg_v2_temporal_metadata_schema(const DecodedCsegMetadataView& metadata,
+                                                         const schema::TableSchema& schema_value,
+                                                         const schema::TabletId& target_tablet) {
+  return validate_cseg_metadata_schema(metadata, schema_value, target_tablet,
+                                       temporal_format::kFormatMajor,
+                                       temporal_format::kSystemColumnCount);
 }
 
 } // namespace chronos::cseg

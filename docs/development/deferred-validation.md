@@ -45,9 +45,10 @@
 - Exercise Temporal Mutation Command v1 with golden fixtures, fuzzing, hostile length/count and
   nested-batch corruption matrices, mixed versions, allocation failure, and cross-compiler bytes.
 - Mixed `COLUMNAR_APPEND`/temporal recovery dispatch, application checkpoints, and complete CSEG v2
-  codecs for corrections, replacements, tombstones, receive time, and system commit time;
+  part/page codecs for corrections, replacements, tombstones, receive time, and system commit time
+  beyond the implemented strict metadata codec;
   live-executor fault injection plus crash and migration tests.
-- Complete CSEG v2 codec/reader/writer validation with golden bytes, hostile metadata/page matrices,
+- Complete CSEG v2 part/reader/writer validation with golden bytes, hostile metadata/page matrices,
   WAL/Raft source-lineage cases, allocation failure, fuzzing, cross-version conversion, and
   cross-compiler fixtures after the accepted temporal registry and layout planner.
 - Mutable-head and CSEG vector visibility resolution, physical-plan integration, current/as-of

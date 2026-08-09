@@ -6,6 +6,7 @@
 #include "chronos/common/status.hpp"
 #include "chronos/cseg/compression.hpp"
 #include "chronos/cseg/format.hpp"
+#include "chronos/cseg/temporal_format.hpp"
 #include "chronos/cseg/types.hpp"
 #include "chronos/schema/identity.hpp"
 #include "chronos/schema/logical_type.hpp"
@@ -29,6 +30,14 @@ enum class StorageKind : std::uint16_t {
   kRecordSequence = format::kRecordSequenceStorageKind,
   kRowOrdinal = format::kRowOrdinalStorageKind,
   kOperation = format::kOperationStorageKind,
+  kCommitSource = temporal_format::kCommitSourceStorageKind,
+  kSourceId = temporal_format::kSourceIdStorageKind,
+  kCommitPosition = temporal_format::kCommitPositionStorageKind,
+  kTemporalRowOrdinal = temporal_format::kRowOrdinalStorageKind,
+  kTemporalOperation = temporal_format::kOperationStorageKind,
+  kLogicalIdentity = temporal_format::kLogicalIdentityStorageKind,
+  kReceiveTime = temporal_format::kReceiveTimeStorageKind,
+  kSystemCommitTime = temporal_format::kSystemCommitTimeStorageKind,
 };
 
 struct CsegColumnDescriptor {
@@ -125,10 +134,16 @@ private:
 
   friend common::Result<EncodedCsegMetadata>
   encode_cseg_v1_metadata(const CsegMetadataEncodeInput& input);
+  friend common::Result<EncodedCsegMetadata>
+  encode_cseg_v2_temporal_metadata(const CsegMetadataEncodeInput& input);
+  friend common::Result<EncodedCsegMetadata>
+  encode_cseg_metadata(const CsegMetadataEncodeInput& input, std::uint16_t format_major);
 };
 
 [[nodiscard]] common::Result<EncodedCsegMetadata>
 encode_cseg_v1_metadata(const CsegMetadataEncodeInput& input);
+[[nodiscard]] common::Result<EncodedCsegMetadata>
+encode_cseg_v2_temporal_metadata(const CsegMetadataEncodeInput& input);
 
 struct CsegMetadataDecodeLimits {
   std::uint64_t max_file_length{format::kMaximumFileLength};
@@ -172,6 +187,13 @@ class DecodedCsegMetadataView {
 public:
   DecodedCsegMetadataView() = delete;
 
+  [[nodiscard]] constexpr std::uint16_t format_major() const noexcept {
+    return format_major_;
+  }
+  [[nodiscard]] constexpr std::uint16_t format_minor() const noexcept {
+    return format_minor_;
+  }
+
   [[nodiscard]] constexpr const PartId& part_id() const noexcept {
     return part_id_;
   }
@@ -211,17 +233,17 @@ public:
   [[nodiscard]] common::ByteView encoded_metadata() const noexcept;
 
 private:
-  DecodedCsegMetadataView(PartId part_id, schema::TableId table_id, schema::TabletId tablet_id,
-                          schema::SchemaId schema_id, schema::SchemaVersion schema_version,
-                          std::uint64_t total_length, std::uint64_t row_count,
-                          std::uint32_t event_time_column_ordinal,
-                          std::uint32_t ordering_column_count, std::int64_t minimum_event_time,
-                          std::int64_t maximum_event_time,
-                          std::vector<CsegColumnDescriptor> columns,
-                          std::vector<CsegGranuleDescriptor> granules,
-                          std::vector<CsegPageDescriptor> pages,
-                          common::ByteView encoded_metadata) noexcept;
+  DecodedCsegMetadataView(
+      std::uint16_t format_major, std::uint16_t format_minor, PartId part_id,
+      schema::TableId table_id, schema::TabletId tablet_id, schema::SchemaId schema_id,
+      schema::SchemaVersion schema_version, std::uint64_t total_length, std::uint64_t row_count,
+      std::uint32_t event_time_column_ordinal, std::uint32_t ordering_column_count,
+      std::int64_t minimum_event_time, std::int64_t maximum_event_time,
+      std::vector<CsegColumnDescriptor> columns, std::vector<CsegGranuleDescriptor> granules,
+      std::vector<CsegPageDescriptor> pages, common::ByteView encoded_metadata) noexcept;
 
+  std::uint16_t format_major_;
+  std::uint16_t format_minor_;
   PartId part_id_;
   schema::TableId table_id_;
   schema::TabletId tablet_id_;
@@ -240,6 +262,11 @@ private:
 
   friend std::expected<DecodedCsegMetadataView, CsegMetadataDecodeError>
   decode_cseg_v1_metadata_prefix(common::ByteView bytes, CsegMetadataDecodeLimits limits);
+  friend std::expected<DecodedCsegMetadataView, CsegMetadataDecodeError>
+  decode_cseg_v2_temporal_metadata_prefix(common::ByteView bytes, CsegMetadataDecodeLimits limits);
+  friend std::expected<DecodedCsegMetadataView, CsegMetadataDecodeError>
+  decode_cseg_metadata_prefix(common::ByteView bytes, CsegMetadataDecodeLimits limits,
+                              std::uint16_t expected_major);
 };
 
 using CsegMetadataDecodeResult = std::expected<DecodedCsegMetadataView, CsegMetadataDecodeError>;
@@ -252,12 +279,22 @@ decode_cseg_v1_metadata_prefix(common::ByteView bytes, CsegMetadataDecodeLimits 
 // Requires exactly the canonical metadata prefix and rejects page bytes or unrelated trailing data.
 [[nodiscard]] CsegMetadataDecodeResult
 decode_cseg_v1_metadata_exact(common::ByteView bytes, CsegMetadataDecodeLimits limits = {});
+[[nodiscard]] CsegMetadataDecodeResult
+decode_cseg_v2_temporal_metadata_prefix(common::ByteView bytes,
+                                        CsegMetadataDecodeLimits limits = {});
+[[nodiscard]] CsegMetadataDecodeResult
+decode_cseg_v2_temporal_metadata_exact(common::ByteView bytes,
+                                       CsegMetadataDecodeLimits limits = {});
 
 // Catalog-dependent second stage. Names, routing, admission, and installation are not consulted.
 [[nodiscard]] common::Status
 validate_cseg_v1_metadata_schema(const DecodedCsegMetadataView& metadata,
                                  const schema::TableSchema& schema,
                                  const schema::TabletId& target_tablet);
+[[nodiscard]] common::Status
+validate_cseg_v2_temporal_metadata_schema(const DecodedCsegMetadataView& metadata,
+                                          const schema::TableSchema& schema,
+                                          const schema::TabletId& target_tablet);
 
 } // namespace chronos::cseg
 

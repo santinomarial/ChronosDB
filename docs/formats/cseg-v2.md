@@ -1,7 +1,8 @@
 # ChronosDB CSEG v2
 
-> **Status: accepted temporal registry and checked layout are implemented; byte codecs, validators,
-> readers, writers, and Manifest v2 installation remain pending.**
+> **Status: accepted temporal registry, checked layout, and strict metadata byte codec are
+> implemented; full part/page readers, writers, semantic validation, and Manifest v2 installation
+> remain pending.**
 
 CSEG v2.0 is the immutable temporal-history part format. It retains CSEG v1's eight-byte magic,
 fixed 256-byte header, 96-byte column descriptors, 64-byte granule descriptors, 80-byte page
@@ -28,6 +29,12 @@ metadata_length = pages_offset + page_count * 80 + 8
 ```
 
 All arithmetic is checked and the metadata/file end remains canonically eight-byte aligned.
+
+The metadata encoder and borrowed decoder implement the compatible header prefix, descriptor
+tables, canonical offsets, metadata trailer, CRC32C coverage, runtime allocation limits, exact-file
+and prefix modes, and schema binding. They require exactly major 2/minor 0 and the registry below.
+The v1 entry points remain strict: they classify major 2 as unsupported and never reinterpret v2
+descriptors. This metadata milestone does not yet make a complete v2 part readable or installable.
 
 ## Column registry
 

@@ -124,6 +124,14 @@ template <typename Identifier>
     return "ROW_ORDINAL";
   case StorageKind::kOperation:
     return "OPERATION";
+  case StorageKind::kTemporalOperation:
+    return "TEMPORAL_OPERATION";
+  case StorageKind::kLogicalIdentity:
+    return "LOGICAL_IDENTITY";
+  case StorageKind::kReceiveTime:
+    return "RECEIVE_TIME";
+  case StorageKind::kSystemCommitTime:
+    return "SYSTEM_COMMIT_TIME";
   }
   return "INVALID";
 }
