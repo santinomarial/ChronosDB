@@ -1,7 +1,7 @@
 # Raft Tablet Application Snapshot v1
 
-> **Status: canonical owned codec implemented; durable installation and recovery integration are
-> pending.**
+> **Status: canonical owned codec and lock-protected local durable installation are implemented;
+> Raft/tablet recovery integration is pending.**
 
 All integers are unsigned little-endian. UUID fields use their canonical 16-byte durable order.
 The complete object is bounded by the caller and by the 1 GiB format maximum.
@@ -57,3 +57,8 @@ voters, entry headers, payloads, and zero padding. No trailing bytes are allowed
 The codec authenticates framing and entry bytes but deliberately does not reinterpret nested
 `COLUMNAR_APPEND v1` payloads. The tablet application installer performs exact command decoding,
 schema/tablet binding, retry validation, and ordered publication before accepting the snapshot.
+
+Local durable files use `snapshot-<20-digit-index>.rtas`. Installation writes and exact-validates a
+deterministic `.tmp`, synchronizes it, atomically renames without replacement, then synchronizes the
+directory. Existing identical bytes are an idempotent retry; changed bytes at one index are
+corruption.

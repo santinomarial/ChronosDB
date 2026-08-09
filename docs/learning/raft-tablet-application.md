@@ -42,8 +42,13 @@ binding, and included group/index before suffix replay can be safe.
 Raft Tablet Application Snapshot v1 now defines the first half of that boundary. Its owned codec
 binds one group/table/tablet and complete Raft snapshot metadata to the exact accepted application
 commands at their original term/index positions. Checksummed entry payloads preserve row and retry
-semantics for deterministic rebuild. Durable atomic installation and state-machine consumption are
+semantics for deterministic rebuild. State-machine consumption and exact Raft-metadata pairing are
 still required before this recovery model may accept a compacted prefix.
+
+`RaftTabletSnapshotStorage` now supplies the local durable half: one group-scoped directory lock,
+exact readback, file sync, immutable no-replace rename, directory sync, idempotent same-byte retry,
+temporary cleanup, and revalidated latest selection. State-machine consumption and the ordering that
+pairs these files with Raft snapshot metadata remain the next boundary.
 
 ## Failure behavior and limits
 

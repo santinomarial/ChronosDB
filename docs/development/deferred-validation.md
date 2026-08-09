@@ -93,10 +93,10 @@
   definitions, cluster epochs, metadata application snapshots, golden fixtures,
   fuzzing, crash injection, and large-catalog limits/measurements.
 - Extend the implemented committed-only tablet command application and full retained-log rebuild
-  with crash injection around publication/applied-index persistence. Durably install and recover the
-  implemented Raft tablet application-snapshot format, version CSEG/Manifest row identities for
-  Raft source/group positions, and cover compacted-prefix
-  restart, query row-version columns, and compaction migration. Carry the implemented joint-
+  with crash injection around publication/applied-index persistence. Integrate recovery from the
+  implemented durable Raft tablet application-snapshot storage, version CSEG/Manifest row
+  identities for Raft source/group positions, and cover compacted-prefix restart, query row-version
+  columns, and compaction migration. Carry the implemented joint-
   membership quorum-sync/application receipt through authenticated transport, protocol negotiation,
   explicit configuration identity, metrics, timeouts, and minority-loss crash reconciliation before exposing
   the client mode.

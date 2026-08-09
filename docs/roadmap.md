@@ -713,8 +713,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   invisibility, durably advances applied indexes after publication, and rebuilds fresh tablet state
   from the complete retained committed log. A versioned, checksummed Raft tablet
   application-snapshot codec now binds group/table/tablet identities and complete snapshot metadata
-  to exact original command positions. Durable snapshot installation/recovery and reclamation are
-  not implemented. Asynchronous worker scheduling/fairness also remains deferred. A leader
+  to exact original command positions. A group-locked local owner exact-validates, file-syncs,
+  no-replace installs, directory-syncs, reopens, and selects those immutable bytes. State-machine
+  snapshot recovery and reclamation are not implemented. Asynchronous worker scheduling/fairness
+  also remains deferred. A leader
   under stable or joint membership can now produce a checked quorum-sync receipt after
   majority-derived durable commit, and tablet application composes it with visibility; native
   client mode exposure and end-to-end crash evidence remain. The phase exit gate is not claimed.

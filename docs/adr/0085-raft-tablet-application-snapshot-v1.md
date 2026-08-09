@@ -5,6 +5,7 @@
 - **Owners:** ChronosDB ingestion, storage, and distributed-systems maintainers
 - **Extends:** [ADR 0073](0073-committed-raft-tablet-application.md) and
   [ADR 0078](0078-two-stage-raft-snapshot-installation.md)
+- **Extended by:** [ADR 0086](0086-durable-raft-tablet-snapshot-installation.md)
 
 ## Context
 
