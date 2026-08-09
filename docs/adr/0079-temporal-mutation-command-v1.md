@@ -37,9 +37,13 @@ The implemented command-specific recovery owner validates retained schemas, appl
 identity/order, rejects impossible committed mutation history, and returns the locked reopened
 writer. The live single-writer executor rejects invalid transitions before bounded coordinator
 admission, preserves requested `ASYNC`/`LOCAL_SYNC` semantics, publishes only after completion, and
-fails stale state closed after any post-admission uncertainty. A mixed database application
-dispatcher, checkpoints, vector/CSEG history persistence, retention pins, and Raft application
-remain subsequent integration tasks; these boundaries do not yet claim Phase 13.
+fails stale state closed after any post-admission uncertainty. A fresh provider can also atomically
+restore canonical retained history: its first observed identity version may be any mutation kind,
+because an earlier original can have expired, and the caller supplies an explicit proven
+table-wide retention boundary rather than inferring one from physical extrema. A mixed database
+application dispatcher, complete Manifest/WAL checkpoint
+composition, vector publication, retention pins, and Raft application remain subsequent
+integration tasks; these boundaries do not yet claim Phase 13.
 
 ## Affected invariants and validation
 

@@ -657,9 +657,12 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   part loads now pin that generation and revalidate its CSEG bytes. A bounded tablet resolver
   composes those images, prunes only future-only parts by Manifest system-time minima, validates and
   decodes every remaining page, and applies the exact scalar current/as-of oracle; requests before
-  retained history fail with `NOT_FOUND`. Application replay and complete snapshot-epoch
-  publication, v1 migration, vector output, and authorized retention/compaction integration remain
-  deferred, so the phase exit gate is not claimed.
+  retained history fail with `NOT_FOUND`. Fresh temporal providers now expose an atomic canonical
+  retained-history seed boundary that permits compacted correction/tombstone predecessors and
+  leaves no partial state on validation or allocation failure. CSEG-to-provider reconstruction,
+  application replay, complete snapshot-epoch publication, v1 migration, vector output, and
+  authorized retention/compaction integration remain deferred, so the phase exit gate is not
+  claimed.
 
 - **Scope:** formal bitemporal row-version model; SQL system-time clauses; history retention; correction/cancellation semantics; compaction and index support; audit visibility.
 - **Explicit non-scope:** general distributed transactions, legal/compliance certification, retroactive mutation of immutable history, and distribution before the model is validated locally.

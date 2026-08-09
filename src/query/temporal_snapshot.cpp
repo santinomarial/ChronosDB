@@ -51,7 +51,8 @@ public:
   [[nodiscard]] common::Status validate(const std::uint64_t system_commit_position,
                                         const std::int64_t system_commit_time_ns,
                                         const std::span<const TemporalMutation> mutations,
-                                        const bool require_source_position) const {
+                                        const bool require_source_position,
+                                        const bool allow_retained_predecessor = false) const {
     if (failed) {
       return common::Status{common::StatusCode::kUnavailable,
                             "temporal provider failed closed and requires recovery"};
@@ -84,7 +85,7 @@ public:
       const bool exists = histories.contains(mutation.logical_identity);
       if (!exists) {
         ++new_identities;
-        if (mutation.kind != TemporalMutationKind::kOriginal) {
+        if (!allow_retained_predecessor && mutation.kind != TemporalMutationKind::kOriginal) {
           return invalid("correction, replacement, or tombstone requires an existing identity");
         }
       } else if (mutation.kind == TemporalMutationKind::kOriginal) {
@@ -177,6 +178,83 @@ common::Status TemporalSnapshotProvider::apply_committed(const std::uint64_t sys
   } catch (const std::length_error&) {
     return common::Status{common::StatusCode::kResourceExhausted,
                           "temporal commit staging exceeded container limits"};
+  }
+}
+
+common::Status
+TemporalSnapshotProvider::restore_retained_history(const std::int64_t retained_system_time_ns,
+                                                   std::vector<RetainedTemporalVersion> versions) {
+  if (versions.empty()) {
+    return invalid("retained temporal restore requires at least one version");
+  }
+  try {
+    std::scoped_lock lock{impl_->mutex};
+    if (impl_->failed || impl_->latest_position != 0U || impl_->versions != 0U ||
+        !impl_->histories.empty() || !impl_->time_to_position.empty() ||
+        impl_->earliest_retained_time.has_value()) {
+      return invalid("retained temporal restore requires one fresh provider");
+    }
+
+    Impl staged{impl_->schema, impl_->limits};
+    const common::Uuid source_id = versions.front().mutation.wal_id;
+    std::size_t begin = 0U;
+    while (begin < versions.size()) {
+      const std::uint64_t position = versions[begin].system_commit_position;
+      const std::int64_t commit_time = versions[begin].system_commit_time_ns;
+      std::size_t end = begin + 1U;
+      while (end < versions.size() && versions[end].system_commit_position == position) {
+        ++end;
+      }
+      if (position == 0U || source_id.is_nil() ||
+          (begin != 0U && position <= versions[begin - 1U].system_commit_position) ||
+          (begin != 0U && commit_time < versions[begin - 1U].system_commit_time_ns)) {
+        return invalid("retained temporal commits are not in canonical order");
+      }
+
+      std::vector<TemporalMutation> mutations;
+      mutations.reserve(end - begin);
+      for (std::size_t index = begin; index < end; ++index) {
+        RetainedTemporalVersion& retained = versions[index];
+        if (retained.system_commit_time_ns != commit_time ||
+            retained.mutation.wal_id != source_id ||
+            retained.mutation.record_sequence != position ||
+            (index != begin &&
+             retained.mutation.row_ordinal <= versions[index - 1U].mutation.row_ordinal)) {
+          return invalid("retained temporal commit rows are not canonical");
+        }
+        mutations.push_back(std::move(retained.mutation));
+      }
+      common::Status validation = staged.validate(position, commit_time, mutations, true, true);
+      if (!validation.is_ok()) {
+        return validation;
+      }
+      for (TemporalMutation& mutation : mutations) {
+        staged.histories[mutation.logical_identity].push_back(
+            Impl::Version{std::move(mutation), position, commit_time});
+      }
+      staged.time_to_position.insert_or_assign(commit_time, position);
+      staged.versions += end - begin;
+      staged.latest_position = position;
+      staged.latest_time = commit_time;
+      begin = end;
+    }
+    if (retained_system_time_ns > staged.latest_time) {
+      return invalid("retained temporal boundary is ahead of restored history");
+    }
+    staged.earliest_retained_time = retained_system_time_ns;
+    impl_->histories.swap(staged.histories);
+    impl_->time_to_position.swap(staged.time_to_position);
+    impl_->latest_position = staged.latest_position;
+    impl_->latest_time = staged.latest_time;
+    impl_->earliest_retained_time = staged.earliest_retained_time;
+    impl_->versions = staged.versions;
+    return common::Status::ok();
+  } catch (const std::bad_alloc&) {
+    return common::Status{common::StatusCode::kResourceExhausted,
+                          "retained temporal restore allocation failed"};
+  } catch (const std::length_error&) {
+    return common::Status{common::StatusCode::kResourceExhausted,
+                          "retained temporal restore exceeded container limits"};
   }
 }
 

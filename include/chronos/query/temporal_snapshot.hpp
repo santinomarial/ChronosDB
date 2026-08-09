@@ -38,6 +38,12 @@ struct TemporalStoreLimits {
   std::size_t maximum_identity_bytes{1024U};
 };
 
+struct RetainedTemporalVersion {
+  std::uint64_t system_commit_position{};
+  std::int64_t system_commit_time_ns{};
+  TemporalMutation mutation;
+};
+
 // Thread-safe committed temporal state for one exact table schema. A commit batch is validated in
 // full and installed atomically at one monotonically increasing system commit position/time. The
 // provider returns copied immutable snapshots, so compaction cannot invalidate active readers.
@@ -56,6 +62,16 @@ public:
   [[nodiscard]] common::Status apply_committed(std::uint64_t system_commit_position,
                                                std::int64_t system_commit_time_ns,
                                                std::vector<TemporalMutation> mutations);
+
+  // Atomically seeds one fresh provider from immutable retained history. Input is canonical by
+  // increasing commit position and row ordinal; every row at one position has the same system
+  // time and source lineage. The first retained row for an identity may be any mutation kind
+  // because compaction can preserve a correction/tombstone predecessor after older history expires.
+  // retained_system_time_ns is the caller-proven table-wide boundary, not an extrema inferred from
+  // whichever physical row happens to be first.
+  [[nodiscard]] common::Status
+  restore_retained_history(std::int64_t retained_system_time_ns,
+                           std::vector<RetainedTemporalVersion> versions);
 
   // Single-writer pre-WAL validation for the next commit. Source WAL fields are deliberately
   // ignored because admission has not assigned them yet. The caller must serialize this check,

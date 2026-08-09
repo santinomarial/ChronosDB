@@ -47,17 +47,17 @@
 - Mixed `COLUMNAR_APPEND`/temporal recovery dispatch and application checkpoints; Manifest-backed
   multi-part/vector winner resolution beyond the implemented single-lineage scalar reference,
   strict metadata, full-part, bounded semantic-validation, and projected-granule paths;
-- Manifest v2 expanded hostile decode, exact CSEG/digest admission, monotonic transitions, v1
-  migration, filesystem/object-store installation, recovery, and source-specific reclamation beyond
-  the implemented source-neutral registry, checked layout, and strict byte codec.
-  live-executor fault injection plus crash and migration tests.
+- Manifest v2 expanded hostile decode, v1 migration, object-store installation, application
+  recovery/publication, authorized compaction, and source-specific reclamation beyond the
+  implemented local admission/install/selection and generation-pinned loading paths; live-executor
+  fault injection plus crash and migration tests.
 - Expand CSEG v2 projected-reader and semantic validation with golden bytes, hostile metadata/page
   matrices,
   WAL/Raft source-lineage cases, allocation failure, fuzzing, cross-version conversion, and
   cross-compiler fixtures after the accepted temporal registry and layout planner.
 - Mutable-head and CSEG vector visibility resolution, physical-plan integration, current/as-of
-  scalar-vector differential SQL, flush/restart recovery, compaction equivalence, active-snapshot
-  pins, tombstone/history retention, and audit interfaces.
+  scalar-vector differential SQL, CSEG-to-provider and checkpoint-suffix recovery composition,
+  compaction equivalence, active-snapshot pins, tombstone/history retention, and audit interfaces.
 - Generated multi-version property models, timestamp ties/boundaries, late corrections, crash/
   corruption testing, SQL differential testing, storage amplification, scan/compaction benchmarks,
   and retention sensitivity.

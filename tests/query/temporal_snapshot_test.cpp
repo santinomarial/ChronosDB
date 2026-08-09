@@ -127,5 +127,67 @@ TEST(TemporalSnapshotTest, RetentionFailsClosedForExpiredHistory) {
   EXPECT_EQ(expired.error().code(), common::StatusCode::kNotFound);
 }
 
+TEST(TemporalSnapshotTest, AtomicallyRestoresCanonicalCompactedHistory) {
+  const auto schema = table_schema();
+  auto provider = TemporalSnapshotProvider::create(schema);
+  ASSERT_TRUE(provider.has_value());
+  std::vector<RetainedTemporalVersion> ahead;
+  ahead.push_back({.system_commit_position = 2U,
+                   .system_commit_time_ns = 2000,
+                   .mutation = mutation(20, TemporalMutationKind::kOriginal, 2U)});
+  EXPECT_EQ((*provider)->restore_retained_history(3000, std::move(ahead)).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ((*provider)->latest_commit_position(), 0U);
+
+  std::vector<RetainedTemporalVersion> retained;
+  retained.push_back({.system_commit_position = 7U,
+                      .system_commit_time_ns = 7000,
+                      .mutation = mutation(70, TemporalMutationKind::kCorrection, 7U)});
+  retained.push_back({.system_commit_position = 9U,
+                      .system_commit_time_ns = 9000,
+                      .mutation = mutation(90, TemporalMutationKind::kReplacement, 9U)});
+  ASSERT_TRUE((*provider)->restore_retained_history(8000, std::move(retained)).is_ok());
+  EXPECT_EQ((*provider)->latest_commit_position(), 9U);
+  EXPECT_EQ((*provider)->version_count(), 2U);
+
+  const auto expired = (*provider)->resolve(schema, 7999);
+  ASSERT_FALSE(expired.has_value());
+  EXPECT_EQ(expired.error().code(), common::StatusCode::kNotFound);
+  const auto historical = (*provider)->resolve(schema, 8000);
+  ASSERT_TRUE(historical.has_value());
+  EXPECT_EQ(visible_value(**historical), 70);
+  const auto current = (*provider)->resolve(schema, std::nullopt);
+  ASSERT_TRUE(current.has_value());
+  EXPECT_EQ(visible_value(**current), 90);
+
+  EXPECT_TRUE(
+      (*provider)
+          ->apply_committed(10U, 10000, {mutation(90, TemporalMutationKind::kTombstone, 10U)})
+          .is_ok());
+  const auto tombstoned = (*provider)->resolve(schema, std::nullopt);
+  ASSERT_TRUE(tombstoned.has_value());
+  EXPECT_TRUE((*tombstoned)->rows().empty());
+}
+
+TEST(TemporalSnapshotTest, RejectsNoncanonicalRestoreWithoutPublishingPartialHistory) {
+  const auto schema = table_schema();
+  auto provider = TemporalSnapshotProvider::create(schema);
+  ASSERT_TRUE(provider.has_value());
+  std::vector<RetainedTemporalVersion> retained;
+  retained.push_back({.system_commit_position = 2U,
+                      .system_commit_time_ns = 2000,
+                      .mutation = mutation(20, TemporalMutationKind::kOriginal, 2U)});
+  retained.push_back({.system_commit_position = 1U,
+                      .system_commit_time_ns = 1000,
+                      .mutation = mutation(10, TemporalMutationKind::kCorrection, 1U)});
+  EXPECT_EQ((*provider)->restore_retained_history(1000, std::move(retained)).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ((*provider)->latest_commit_position(), 0U);
+  EXPECT_EQ((*provider)->version_count(), 0U);
+  EXPECT_TRUE((*provider)
+                  ->apply_committed(1U, 1000, {mutation(10, TemporalMutationKind::kOriginal, 1U)})
+                  .is_ok());
+}
+
 } // namespace
 } // namespace chronos::query

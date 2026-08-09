@@ -14,7 +14,9 @@ subsystem supplies three concrete layers:
 Mixed command dispatch, application checkpoints, and Raft application are not hidden inside these
 interfaces. CSEG v2 now has strict metadata/part codecs, semantic and projected reading, plus a
 bounded single-lineage scalar resolver that provides a differential current/as-of winner oracle.
-Manifest snapshot discovery, multi-part vector output, and compaction integration remain pending.
+Manifest v2 discovery, generation-pinned part loading, and bounded multi-part scalar resolution are
+implemented. Provider reconstruction from those physical rows, vector output, and compaction
+integration remain pending.
 
 ## Public interfaces and data structures
 
@@ -27,6 +29,14 @@ one command.
 identity; each value is a system-position-ordered vector containing the owned scalar row, mutation
 kind, event/receive time, WAL identity/sequence, and system commit time. A second ordered map turns
 an as-of system timestamp into the latest committed position visible at that time.
+
+`restore_retained_history` is the atomic seed boundary for future CSEG/Manifest recovery. It accepts
+rows in increasing source position and row-ordinal order, requires one source and one system time
+per commit, validates the entire history in disposable state, and publishes only after success. A
+first retained version may be a correction, replacement, or tombstone because compaction can remove
+its expired predecessor. The caller must supply the proven table-wide retained-system-time boundary;
+inferring it from the first physical row would be unsafe when identities have different histories.
+Earlier as-of requests return `NOT_FOUND` rather than inventing an empty table.
 
 `RecoveredTemporalState` owns one provider per configured table and the locked reopened
 `WalWriter`. `release_writer()` transfers that writer exactly once to the later live coordinator.
@@ -64,6 +74,8 @@ entire fresh owner. Successful reopen retains the process lock and continues at 
   transition fails closed. No partially recovered owner is returned.
 - The current recovery owner accepts Temporal Mutation Command records only. Mixed application-kind
   dispatch is an explicit subsequent database-runtime task.
+- Retained-history restore is valid only on a fresh provider. Failed ordering, lineage, transition,
+  schema, or capacity validation leaves that provider empty and usable.
 
 ## Complexity and tradeoffs
 
