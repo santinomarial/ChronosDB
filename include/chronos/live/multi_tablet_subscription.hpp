@@ -94,6 +94,8 @@ public:
   register_subscription(const SubscriptionRequest& request);
   [[nodiscard]] common::Result<MultiTabletSubscriptionRegistration>
   resume_subscription(common::ByteView encoded_token);
+  [[nodiscard]] common::Result<MultiTabletSubscriptionRegistration>
+  resume_subscription(const common::Uuid& expected_subscription_id, common::ByteView encoded_token);
   [[nodiscard]] common::Status complete_snapshot(const common::Uuid& subscription_id);
   [[nodiscard]] common::Status publish_committed(CommittedChange change);
   [[nodiscard]] common::Result<std::vector<DeliveryRecord>>

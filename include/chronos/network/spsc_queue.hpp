@@ -31,6 +31,9 @@ public:
 
   [[nodiscard]] static common::Result<SpscNetworkTaskQueue> create(std::size_t capacity);
   [[nodiscard]] bool try_push(NetworkTask task) noexcept;
+  // Checks capacity before moving from task. On false, task remains unchanged so a bounded
+  // producer can retain and retry an already-encoded response without copying its payload.
+  [[nodiscard]] bool try_push_preserving(NetworkTask& task) noexcept;
   [[nodiscard]] std::optional<NetworkTask> try_pop() noexcept;
   [[nodiscard]] std::size_t capacity() const noexcept;
   [[nodiscard]] bool empty() const noexcept;

@@ -35,6 +35,16 @@ bool SpscNetworkTaskQueue::try_push(NetworkTask task) noexcept {
   return true;
 }
 
+bool SpscNetworkTaskQueue::try_push_preserving(NetworkTask& task) noexcept {
+  const std::size_t producer = producer_index_.load(std::memory_order_relaxed);
+  const std::size_t next = (producer + 1U) % cells_.size();
+  if (next == consumer_index_.load(std::memory_order_acquire))
+    return false;
+  cells_[producer].emplace(std::move(task));
+  producer_index_.store(next, std::memory_order_release);
+  return true;
+}
+
 std::optional<NetworkTask> SpscNetworkTaskQueue::try_pop() noexcept {
   const std::size_t consumer = consumer_index_.load(std::memory_order_relaxed);
   if (consumer == producer_index_.load(std::memory_order_acquire))

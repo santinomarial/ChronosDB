@@ -329,10 +329,19 @@ MultiTabletSubscriptionManager::register_subscription(const SubscriptionRequest&
 
 common::Result<MultiTabletSubscriptionRegistration>
 MultiTabletSubscriptionManager::resume_subscription(const common::ByteView encoded_token) {
+  return resume_subscription(common::Uuid{}, encoded_token);
+}
+
+common::Result<MultiTabletSubscriptionRegistration>
+MultiTabletSubscriptionManager::resume_subscription(const common::Uuid& expected_subscription_id,
+                                                    const common::ByteView encoded_token) {
   auto token =
       decode_resume_token_v1(encoded_token, impl_->source.token_key, impl_->sources.size());
   if (!token.has_value())
     return common::make_unexpected(token.error());
+  if (!expected_subscription_id.is_nil() && token->subscription_id != expected_subscription_id)
+    return common::make_unexpected(
+        invalid("resume token does not match the requested subscription identity"));
   if (token->database_id != impl_->source.database_id ||
       token->schema_id != impl_->source.schema_id ||
       token->schema_version != impl_->source.schema_version ||
@@ -342,8 +351,8 @@ MultiTabletSubscriptionManager::resume_subscription(const common::ByteView encod
         invalid("resume token does not match the coordinator plan, schema, or source set"));
   }
   if (!impl_->plan_schema_compatible)
-    return common::make_unexpected(common::Status{
-        common::StatusCode::kNotSupported, "resume token plan schema has changed"});
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kNotSupported, "resume token plan schema has changed"});
   const auto existing = impl_->subscriptions.find(token->subscription_id);
   if (existing != impl_->subscriptions.end() &&
       (existing->second.phase == SubscriptionPhase::kSnapshot ||
@@ -488,8 +497,8 @@ MultiTabletSubscriptionManager::poll(const common::Uuid& subscription_id,
     return common::make_unexpected(common::Status{
         common::StatusCode::kResourceExhausted, "subscription buffer overflowed; resume required"});
   if (state.phase == SubscriptionPhase::kSchemaChanged)
-    return common::make_unexpected(common::Status{
-        common::StatusCode::kNotSupported, "subscription plan schema has changed"});
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kNotSupported, "subscription plan schema has changed"});
   if (state.phase == SubscriptionPhase::kCancelled)
     return common::make_unexpected(
         common::Status{common::StatusCode::kCancelled, "subscription is cancelled"});

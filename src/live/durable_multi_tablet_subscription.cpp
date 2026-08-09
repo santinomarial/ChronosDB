@@ -171,6 +171,12 @@ DurableMultiTabletSubscription::resume_subscription(const common::ByteView encod
   return impl_->manager.resume_subscription(encoded_token);
 }
 
+common::Result<MultiTabletSubscriptionRegistration>
+DurableMultiTabletSubscription::resume_subscription(const common::Uuid& expected_subscription_id,
+                                                    const common::ByteView encoded_token) {
+  return impl_->manager.resume_subscription(expected_subscription_id, encoded_token);
+}
+
 common::Status
 DurableMultiTabletSubscription::complete_snapshot(const common::Uuid& subscription_id) {
   return impl_->manager.complete_snapshot(subscription_id);
@@ -212,6 +218,10 @@ DurableMultiTabletSubscription::status(const common::Uuid& subscription_id) cons
 common::Result<std::vector<SourcePosition>>
 DurableMultiTabletSubscription::latest_positions() const {
   return impl_->manager.latest_positions();
+}
+
+const MultiTabletSubscriptionSource& DurableMultiTabletSubscription::source() const noexcept {
+  return impl_->manager.source();
 }
 
 common::Result<MultiTabletSnapshotSubscription> DurableMultiTabletSubscription::start_snapshot(

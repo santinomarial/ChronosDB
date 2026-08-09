@@ -12,3 +12,8 @@ written by the caller. Destruction occurs after both threads join.
 Push/pop are constant time; retained memory is linear in capacity and maximum task size. Tests
 cover wraparound, full/empty behavior, 100,000 concurrent frames, allocation failure, TSan, and
 public consumption.
+
+The subscription worker also needs to retry an already-encoded response. `try_push_preserving`
+checks capacity before moving from its lvalue task, so a full ring leaves the exact payload owned by
+the worker. A successful call follows the same cell initialization and release publication as
+ordinary push; the consumer path is unchanged.

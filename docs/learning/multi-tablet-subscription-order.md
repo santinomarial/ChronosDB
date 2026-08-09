@@ -52,6 +52,13 @@ immutable change ownership. Memory is bounded globally for retention and indepen
 subscriber. A slow subscriber overflows without rejecting a committed source change. A topology or
 source-lineage change requires a newly bound coordinator and snapshot.
 
+`SubscriptionService` packages the reactor-facing lifecycle for one durable coordinator. It
+revalidates new SQL to the configured fingerprint, validates the outer UUID before token resume,
+round-robins bounded active connection/request pairs, and owns every transition from snapshot
+through END_STREAM, READY, live delivery, acknowledgement checkpoint, cancellation, and shutdown.
+A full response ring retains one exact encoded task and freezes further service progress until the
+task transfers, so backpressure cannot create an invisible cursor advance.
+
 Work is linear in active subscribers per publish, in the retained suffix per resume, and in retained
 state size per checkpoint. Useful review questions are: why are tablet record sequences
 incomparable, what exactly makes replay order authoritative, why does acknowledgement update a

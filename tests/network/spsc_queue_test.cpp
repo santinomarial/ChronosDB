@@ -30,6 +30,22 @@ TEST(SpscNetworkTaskQueueTest, PreservesFifoAndMakesSaturationExplicit) {
   EXPECT_FALSE(queue.try_pop().has_value());
 }
 
+TEST(SpscNetworkTaskQueueTest, PreservingPushDoesNotConsumeAFullQueueRetry) {
+  SpscNetworkTaskQueue queue = SpscNetworkTaskQueue::create(1U).value();
+  EXPECT_TRUE(queue.try_push(task(1U)));
+  NetworkTask retained = task(2U);
+  retained.frame.payload = {std::byte{7}, std::byte{8}};
+  EXPECT_FALSE(queue.try_push_preserving(retained));
+  EXPECT_EQ(retained.connection_id, 2U);
+  EXPECT_EQ(retained.frame.payload.size(), 2U);
+  ASSERT_TRUE(queue.try_pop().has_value());
+  EXPECT_TRUE(queue.try_push_preserving(retained));
+  const auto delivered = queue.try_pop();
+  ASSERT_TRUE(delivered.has_value());
+  EXPECT_EQ(delivered->connection_id, 2U);
+  EXPECT_EQ(delivered->frame.payload.size(), 2U);
+}
+
 TEST(SpscNetworkTaskQueueTest, ReleaseAcquirePublishesCompleteOwnedFrames) {
   constexpr std::uint64_t kTasks = 100'000U;
   SpscNetworkTaskQueue queue = SpscNetworkTaskQueue::create(64U).value();

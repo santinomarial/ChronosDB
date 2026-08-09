@@ -628,9 +628,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   start exact global snapshots through the durable coordinator without exposing mutable manager
   state, and every pre-READY failure uses allocation-independent abandonment. A committed schema
   incompatibility now terminates the old plan distinctly, emits the precise Protocol 1.1 reason,
-  invalidates resume, and survives durable checkpoint/reopen. Topology-aware source deletion,
-  packaged service lifecycle, and the full exit evidence remain deferred; the phase exit gate is
-  not claimed.
+  invalidates resume, and survives durable checkpoint/reopen. A bounded reactor-facing owner now
+  drives new/resumed snapshots, READY, live delivery, acknowledgement, cancellation, exact
+  response-ring retry, and resumable shutdown. Topology-aware source deletion and the full exit
+  evidence remain deferred; the phase exit gate is not claimed.
 
 - **Scope:** committed change model; gap-free snapshot-to-stream handoff; deterministic versioned resume tokens; bounded subscriber policies; supported incremental operators; materialized-view progress/recovery and late-event corrections.
 - **Explicit non-scope:** unqualified end-to-end exactly-once claims, unlimited retention, every SQL operator, cross-cluster delivery, and external-sink transactions not explicitly integrated.

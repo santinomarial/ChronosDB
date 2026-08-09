@@ -44,6 +44,8 @@ public:
   register_subscription(const SubscriptionRequest& request);
   [[nodiscard]] common::Result<MultiTabletSubscriptionRegistration>
   resume_subscription(common::ByteView encoded_token);
+  [[nodiscard]] common::Result<MultiTabletSubscriptionRegistration>
+  resume_subscription(const common::Uuid& expected_subscription_id, common::ByteView encoded_token);
   [[nodiscard]] common::Status complete_snapshot(const common::Uuid& subscription_id);
   [[nodiscard]] common::Status publish_committed(CommittedChange change);
   [[nodiscard]] common::Result<std::vector<DeliveryRecord>>
@@ -55,6 +57,7 @@ public:
   [[nodiscard]] common::Result<MultiTabletSubscriptionStatus>
   status(const common::Uuid& subscription_id) const;
   [[nodiscard]] common::Result<std::vector<SourcePosition>> latest_positions() const;
+  [[nodiscard]] const MultiTabletSubscriptionSource& source() const noexcept;
 
   // Starts the exact historical half from a prepared or durably recovered plan without exposing
   // the mutable manager. This owner and the query resource context must outlive the returned

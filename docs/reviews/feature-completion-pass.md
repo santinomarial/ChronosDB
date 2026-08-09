@@ -39,9 +39,11 @@ their full roadmap exit gates or that ChronosDB is a production three-node datab
   directly from a durably recovered executable without mutable-manager escape. Snapshot teardown
   abandons state without token allocation, while client cancellation still returns a safe token;
   and committed schema incompatibility has a distinct terminal phase, precise Protocol 1.1 reason,
-  invalidated resume state, and durable checkpoint/reopen representation.
+  invalidated resume state, and durable checkpoint/reopen representation; and a bounded reactor-
+  facing service owns SQL validation, snapshot/READY/live/ack/cancel/resume transitions, exact
+  response-ring backpressure retry, disconnect cleanup, and resumable shutdown drain.
 
-Still incomplete: topology/retention owner integration and packaged reactor service lifecycle.
+Still incomplete: topology/retention owner integration.
 
 ### Phase 12 — performance architecture and io_uring
 

@@ -32,8 +32,8 @@
 - Cross-tablet-owner wiring around the implemented canonical vector/admission-order coordinator,
   topology transitions, retention pins, service SQL/plan-to-input suffix replay, concurrent
   post-checkpoint source-log replay, physical source deletion after durable owner frontiers, schema
-  migration, process restart integration, packaged reactor lifecycle, and obsolete-generation
-  reclamation.
+  migration, process restart integration, real-socket reactor/service threading, and obsolete-
+  generation reclamation.
 - Real-socket Protocol 1.1 partial delivery, disconnect/reconnect, duplicate replay, schema-change
   termination and coordinator replacement, cancellation races, allocation faults, checkpoint
   minor-0/minor-1 mixed-version peers, and sustained network backpressure integration around the
