@@ -70,3 +70,12 @@ version, fixed header fields, configured counts, and CRC before allocating decod
 checks reserved bytes, identities, canonical source order, operation/length rules, exact per-source
 suffix continuity, schema binding, and absence of trailing data. Unknown versions fail as
 unsupported; malformed or checksum-invalid bytes fail as corruption.
+
+## Durable generation envelope
+
+Filesystem generations wrap one complete checkpoint in a second v1 envelope so renaming older
+bytes to a newer filename cannot change selected state. The envelope has magic `CHSUBCG1`, the same
+major/minor fields, a 64-byte header, exact total size, nonzero 64-bit checkpoint generation, exact
+nested byte size, and 24 reserved zero bytes. The nested Checkpoint v1 bytes follow, then a second
+4-byte CRC32C over the complete envelope prefix. Both checksums and the generation/name binding are
+validated on load.

@@ -28,6 +28,9 @@ constexpr std::array<std::byte, 8U> kMagic{std::byte{'C'}, std::byte{'H'}, std::
                                            std::byte{'P'}, std::byte{'1'}};
 constexpr std::uint16_t kMajor = 1U;
 constexpr std::uint16_t kMinor = 0U;
+constexpr std::array<std::byte, 8U> kBoundMagic{std::byte{'C'}, std::byte{'H'}, std::byte{'S'},
+                                                std::byte{'U'}, std::byte{'B'}, std::byte{'C'},
+                                                std::byte{'G'}, std::byte{'1'}};
 
 [[nodiscard]] common::Status invalid(std::string message) {
   return {common::StatusCode::kInvalidArgument, std::move(message)};
@@ -378,6 +381,111 @@ common::Result<MultiTabletSubscriptionCheckpoint> decode_multi_tablet_subscripti
   } catch (const std::length_error&) {
     return common::make_unexpected(exhausted("subscription checkpoint exceeds container limits"));
   }
+}
+
+common::Result<std::vector<std::byte>> encode_bound_multi_tablet_subscription_checkpoint_v1(
+    const BoundMultiTabletSubscriptionCheckpoint& checkpoint,
+    const MultiTabletSubscriptionCheckpointCodecLimits limits) {
+  if (!valid_limits(limits) || checkpoint.checkpoint_generation == 0U)
+    return common::make_unexpected(
+        invalid("bound subscription checkpoint generation or limits are invalid"));
+  auto nested = encode_multi_tablet_subscription_checkpoint_v1(checkpoint.state, limits);
+  if (!nested.has_value())
+    return common::make_unexpected(nested.error());
+  auto total =
+      common::checked_add(kBoundMultiTabletSubscriptionCheckpointHeaderSize, nested->size());
+  total = total.has_value()
+              ? common::checked_add(*total, kBoundMultiTabletSubscriptionCheckpointTrailerSize)
+              : std::nullopt;
+  if (!total.has_value() || *total > limits.maximum_checkpoint_bytes)
+    return common::make_unexpected(exhausted("bound subscription checkpoint exceeds size limit"));
+  try {
+    std::vector<std::byte> bytes(*total, std::byte{0});
+    common::ByteWriter writer{bytes};
+    common::Status status = writer.write_exact(kBoundMagic);
+    if (status.is_ok())
+      status = writer.write_u16_le(kMajor);
+    if (status.is_ok())
+      status = writer.write_u16_le(kMinor);
+    if (status.is_ok())
+      status = writer.write_u32_le(kBoundMultiTabletSubscriptionCheckpointHeaderSize);
+    if (status.is_ok())
+      status = writer.write_u64_le(bytes.size());
+    if (status.is_ok())
+      status = writer.write_u64_le(checkpoint.checkpoint_generation);
+    if (status.is_ok())
+      status = writer.write_u64_le(nested->size());
+    if (status.is_ok())
+      status = writer.zero_fill(24U);
+    if (status.is_ok())
+      status = writer.write_exact(*nested);
+    if (!status.is_ok() || writer.remaining() != kBoundMultiTabletSubscriptionCheckpointTrailerSize)
+      return common::make_unexpected(common::Status{
+          common::StatusCode::kInternal, "bound subscription checkpoint layout mismatch"});
+    status = writer.write_u32_le(common::crc32c(common::ByteView{bytes}.first(
+        bytes.size() - kBoundMultiTabletSubscriptionCheckpointTrailerSize)));
+    if (!status.is_ok() || !writer.full())
+      return common::make_unexpected(common::Status{
+          common::StatusCode::kInternal, "bound subscription checkpoint trailer mismatch"});
+    return bytes;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        exhausted("bound subscription checkpoint encoding allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("bound subscription checkpoint exceeds container limits"));
+  }
+}
+
+common::Result<BoundMultiTabletSubscriptionCheckpoint>
+decode_bound_multi_tablet_subscription_checkpoint_v1(
+    const common::ByteView bytes, const MultiTabletSubscriptionCheckpointCodecLimits limits) {
+  if (!valid_limits(limits))
+    return common::make_unexpected(invalid("subscription checkpoint codec limits are invalid"));
+  if (bytes.size() < kBoundMultiTabletSubscriptionCheckpointHeaderSize +
+                         kMultiTabletSubscriptionCheckpointHeaderSize +
+                         kMultiTabletSubscriptionCheckpointTrailerSize +
+                         kBoundMultiTabletSubscriptionCheckpointTrailerSize ||
+      bytes.size() > limits.maximum_checkpoint_bytes)
+    return common::make_unexpected(corruption("bound subscription checkpoint size is invalid"));
+  if (!std::ranges::equal(bytes.first(kBoundMagic.size()), kBoundMagic))
+    return common::make_unexpected(corruption("bound subscription checkpoint magic is invalid"));
+  common::ByteReader reader{bytes};
+  static_cast<void>(reader.skip(kBoundMagic.size()));
+  auto major = reader.read_u16_le();
+  auto minor = reader.read_u16_le();
+  auto header_size = reader.read_u32_le();
+  auto total_size = reader.read_u64_le();
+  auto generation = reader.read_u64_le();
+  auto nested_size = reader.read_u64_le();
+  auto reserved = reader.read_exact(24U);
+  if (!major.has_value() || !minor.has_value() || !header_size.has_value() ||
+      !total_size.has_value() || !generation.has_value() || !nested_size.has_value() ||
+      !reserved.has_value())
+    return common::make_unexpected(corruption("bound subscription checkpoint header is truncated"));
+  if (*major != kMajor || *minor != kMinor)
+    return common::make_unexpected(
+        unsupported("bound subscription checkpoint version is unsupported"));
+  const std::size_t expected_nested = bytes.size() -
+                                      kBoundMultiTabletSubscriptionCheckpointHeaderSize -
+                                      kBoundMultiTabletSubscriptionCheckpointTrailerSize;
+  if (*header_size != kBoundMultiTabletSubscriptionCheckpointHeaderSize ||
+      *total_size != bytes.size() || *generation == 0U || *nested_size != expected_nested ||
+      !std::ranges::all_of(*reserved, [](const std::byte value) { return value == std::byte{0}; }))
+    return common::make_unexpected(corruption("bound subscription checkpoint header is invalid"));
+  const std::uint32_t stored_crc =
+      load_u32(bytes, bytes.size() - kBoundMultiTabletSubscriptionCheckpointTrailerSize);
+  if (stored_crc != common::crc32c(bytes.first(bytes.size() -
+                                               kBoundMultiTabletSubscriptionCheckpointTrailerSize)))
+    return common::make_unexpected(corruption("bound subscription checkpoint checksum is invalid"));
+  auto nested = reader.read_exact(expected_nested);
+  if (!nested.has_value() ||
+      reader.remaining() != kBoundMultiTabletSubscriptionCheckpointTrailerSize)
+    return common::make_unexpected(corruption("bound subscription checkpoint payload is invalid"));
+  auto decoded = decode_multi_tablet_subscription_checkpoint_v1(*nested, limits);
+  if (!decoded.has_value())
+    return common::make_unexpected(decoded.error());
+  return BoundMultiTabletSubscriptionCheckpoint{*generation, std::move(*decoded)};
 }
 
 } // namespace chronos::live

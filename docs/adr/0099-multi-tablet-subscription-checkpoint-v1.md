@@ -22,6 +22,10 @@ The decoder checks outer framing and CRC before decoded-state allocation, then r
 logical state and reruns exact semantic validation. Count, total-byte, key, and payload limits are
 finite and caller-configurable below an absolute 1 GiB ceiling.
 
+Durable storage generations use a second checksummed v1 envelope that binds a nonzero generation to
+one complete nested checkpoint. This prevents filename-only generation authority and independently
+detects envelope corruption before the nested state is selected.
+
 ## Consequences and alternatives
 
 The format deliberately excludes token MAC keys and active subscriber/socket state. The storage

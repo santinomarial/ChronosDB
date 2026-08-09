@@ -89,5 +89,17 @@ TEST(MultiTabletSubscriptionCheckpointTest, RejectsCorruptionAndDiscontinuousSta
   EXPECT_FALSE(encode_multi_tablet_subscription_checkpoint_v1(checkpoint).has_value());
 }
 
+TEST(MultiTabletSubscriptionCheckpointTest, BindsDurableGenerationAroundNestedState) {
+  const BoundMultiTabletSubscriptionCheckpoint checkpoint{3U, fixture()};
+  auto encoded = encode_bound_multi_tablet_subscription_checkpoint_v1(checkpoint);
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  const auto decoded = decode_bound_multi_tablet_subscription_checkpoint_v1(*encoded);
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  EXPECT_EQ(*decoded, checkpoint);
+  (*encoded)[24] ^= std::byte{1};
+  EXPECT_EQ(decode_bound_multi_tablet_subscription_checkpoint_v1(*encoded).error().code(),
+            common::StatusCode::kCorruption);
+}
+
 } // namespace
 } // namespace chronos::live
