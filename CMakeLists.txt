@@ -364,6 +364,7 @@ add_library(
   src/query/sort.cpp
   src/query/spill_sort.cpp
   src/query/statement_binder.cpp
+  src/query/temporal_command.cpp
   src/query/temporal_snapshot.cpp
   src/query/value.cpp
   src/query/vector_chunk.cpp
@@ -382,7 +383,7 @@ target_include_directories(
 target_link_libraries(
   chronos_query
   PUBLIC chronos::columnar chronos::common chronos::cseg chronos::head chronos::io chronos::manifest
-         chronos::schema
+         chronos::schema chronos::wal
   PRIVATE Threads::Threads
 )
 chronos_set_project_warnings(chronos_query)
@@ -1114,6 +1115,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/spill_sort_test.cpp
     tests/query/statement_binder_header_self_contained.cpp
     tests/query/statement_binder_test.cpp
+    tests/query/temporal_command_header_self_contained.cpp
+    tests/query/temporal_command_test.cpp
     tests/query/temporal_snapshot_header_self_contained.cpp
     tests/query/temporal_snapshot_test.cpp
     tests/query/timestamp_range_header_self_contained.cpp

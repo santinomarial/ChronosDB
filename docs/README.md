@@ -57,6 +57,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   `COLUMNAR_APPEND` payload, group/index identity, ordering, and retained-log recovery contract.
 - [Metadata Command v1](formats/metadata-command-v1.md): canonical checksummed metadata-group
   commands for nodes, schemas, placements, and retention.
+- [Temporal Mutation Command v1](formats/temporal-mutation-v1.md): checksummed columnar originals,
+  corrections, replacements, tombstones, and dual-time metadata.
 - [Raft Membership Command v1](formats/raft-membership-command-v1.md): canonical joint and final
   configuration entries with old/new quorum semantics.
 - [Production dependencies](dependencies/README.md): maintained external-library boundaries,

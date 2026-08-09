@@ -113,3 +113,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0076](0076-joint-consensus-raft-membership.md) | Joint-consensus Raft membership | accepted |
 | [0077](0077-snapshot-membership-checkpoints.md) | Raft snapshot membership checkpoints | accepted |
 | [0078](0078-two-stage-raft-snapshot-installation.md) | Two-stage Raft snapshot installation | accepted |
+| [0079](0079-temporal-mutation-command-v1.md) | Temporal Mutation Command v1 | accepted |

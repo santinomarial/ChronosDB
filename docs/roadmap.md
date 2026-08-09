@@ -629,7 +629,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   a real committed in-memory temporal snapshot provider. It atomically appends originals,
   corrections, replacements, and tombstones, distinguishes event/receive/system time, resolves the
   latest visible version at a system boundary, and fails closed after retention expiry. Frozen CSEG
-  v1 remains append-only; durable correction/WAL/CSEG bytes, vector storage resolution, recovery,
+  v1 remains append-only. A canonical checksummed Temporal Mutation Command now stores columnar
+  originals/corrections/replacements/tombstones and their event/receive/system times; WAL commit
+  application, CSEG history bytes, vector storage resolution, recovery,
   and compaction integration remain deferred, so the phase exit gate is not claimed.
 
 - **Scope:** formal bitemporal row-version model; SQL system-time clauses; history retention; correction/cancellation semantics; compaction and index support; audit visibility.
