@@ -344,6 +344,11 @@ struct TemporalStorageFixture {
   [[nodiscard]] std::array<TabletSchemaBinding, 1> bindings() const {
     return {TabletSchemaBinding{.tablet_id = tablet_id, .lineage = std::cref(lineage)}};
   }
+
+  [[nodiscard]] std::array<TemporalTabletSourceBinding, 1> source_bindings() const {
+    return {TemporalTabletSourceBinding{
+        .tablet_id = tablet_id, .commit_source = ManifestCommitSource::kWal, .source_id = source}};
+  }
 };
 
 TEST(ManifestStorageTest, RequiresExactExistingDirectoryAndLockLayout) {
@@ -619,6 +624,98 @@ TEST(TemporalManifestStorageTest, RejectsMissingFinalPartAndV1Predecessor) {
                 .error()
                 .code(),
             common::StatusCode::kNotSupported);
+}
+
+TEST(TemporalManifestStorageTest, LoadsHighestValidatedGenerationAndReportsNamespaceState) {
+  TemporaryDirectory temporary;
+  ASSERT_TRUE(temporary.valid());
+  establish_layout(temporary.path());
+  const TemporalStorageFixture fixture;
+  const EncodedTemporalManifest selected = fixture.manifest(1U);
+  create_entry(temporary.path(),
+               std::filesystem::path{kManifestDirectoryName} / *manifest_file_name(1U),
+               selected.bytes());
+  create_entry(temporary.path(),
+               std::filesystem::path{kPartsDirectoryName} / part_file_name(fixture.part_id),
+               fixture.encoded.bytes());
+  const cseg::PartId orphan = id<cseg::PartId>(99U);
+  create_entry(temporary.path(),
+               std::filesystem::path{kPartsDirectoryName} / part_file_name(orphan));
+  const common::Uuid temporary_nonce = PartFixture::make_nonce(0xe0U);
+  create_entry(temporary.path(),
+               std::filesystem::path{kPartsDirectoryName} /
+                   temporary_part_file_name(id<cseg::PartId>(98U), temporary_nonce));
+  create_entry(temporary.path(), std::filesystem::path{kManifestDirectoryName} /
+                                     *temporary_manifest_file_name(2U, temporary_nonce));
+  ManifestStorage owner =
+      ManifestStorage::open_existing({.database_root = temporary.path().string()}).value();
+  const auto bindings = fixture.bindings();
+  const auto sources = fixture.source_bindings();
+
+  const auto loaded =
+      owner.load_selected_temporal_manifest({.expected_database_id = fixture.database_id,
+                                             .schema_bindings = bindings,
+                                             .source_bindings = sources,
+                                             .decode_limits = {},
+                                             .part_validation_limits = {}});
+  ASSERT_TRUE(loaded.has_value()) << loaded.error().to_string();
+  EXPECT_EQ(loaded->generation(), 1U);
+  EXPECT_EQ(loaded->previous_generation(), 0U);
+  EXPECT_EQ(loaded->database_id(), fixture.database_id);
+  EXPECT_FALSE(loaded->wal_reclaim_checkpoint().has_value());
+  EXPECT_EQ(loaded->tablets().size(), 1U);
+  EXPECT_EQ(loaded->parts().size(), 1U);
+  EXPECT_TRUE(loaded->retries().empty());
+  EXPECT_TRUE(std::ranges::equal(loaded->encoded_bytes(), selected.bytes()));
+  ASSERT_EQ(loaded->orphan_parts().size(), 1U);
+  EXPECT_EQ(loaded->orphan_parts().front(), orphan);
+  EXPECT_EQ(loaded->temporary_parts().size(), 1U);
+  EXPECT_EQ(loaded->temporary_manifests().size(), 1U);
+  EXPECT_GT(loaded->retained_buffer_bytes(), loaded->encoded_bytes().size());
+
+  auto wrong_sources = sources;
+  wrong_sources[0].source_id = common::Uuid{id<schema::SchemaId>(97U).bytes()};
+  EXPECT_EQ(owner
+                .load_selected_temporal_manifest({.expected_database_id = fixture.database_id,
+                                                  .schema_bindings = bindings,
+                                                  .source_bindings = wrong_sources,
+                                                  .decode_limits = {},
+                                                  .part_validation_limits = {}})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+}
+
+TEST(TemporalManifestStorageTest, HighestCorruptionFailsWithoutFallback) {
+  TemporaryDirectory temporary;
+  ASSERT_TRUE(temporary.valid());
+  establish_layout(temporary.path());
+  const TemporalStorageFixture fixture;
+  const EncodedTemporalManifest generation_one = fixture.manifest(1U);
+  const EncodedTemporalManifest generation_two = fixture.manifest(2U);
+  create_entry(temporary.path(),
+               std::filesystem::path{kManifestDirectoryName} / *manifest_file_name(1U),
+               generation_one.bytes());
+  std::vector<std::byte> damaged(generation_two.bytes().begin(), generation_two.bytes().end());
+  damaged.back() ^= std::byte{1U};
+  create_entry(temporary.path(),
+               std::filesystem::path{kManifestDirectoryName} / *manifest_file_name(2U), damaged);
+  create_entry(temporary.path(),
+               std::filesystem::path{kPartsDirectoryName} / part_file_name(fixture.part_id),
+               fixture.encoded.bytes());
+  ManifestStorage owner =
+      ManifestStorage::open_existing({.database_root = temporary.path().string()}).value();
+  const auto bindings = fixture.bindings();
+  const auto sources = fixture.source_bindings();
+  EXPECT_EQ(owner
+                .load_selected_temporal_manifest({.expected_database_id = fixture.database_id,
+                                                  .schema_bindings = bindings,
+                                                  .source_bindings = sources,
+                                                  .decode_limits = {},
+                                                  .part_validation_limits = {}})
+                .error()
+                .code(),
+            common::StatusCode::kCorruption);
 }
 
 TEST(ManifestStorageTest, RejectsBeforeMutationAndNeverReplacesFinalIdentity) {

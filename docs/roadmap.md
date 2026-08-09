@@ -651,9 +651,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   exact descriptor-order object coverage, canonical names, retained schemas, and per-tablet source
   validation. The locked local filesystem owner now durably installs exact CSEG v2 parts and
   add-only Manifest v2 successors with prevalidation, readback validation, file sync, no-replace
-  rename, directory sync, and post-rename poisoning. V2 recovery/snapshot integration and v1
-  migration, vector output, and authorized retention/compaction integration remain deferred, so the
-  phase exit gate is not claimed.
+  rename, directory sync, and post-rename poisoning. Highest-generation v2 recovery selection now
+  exact-decodes without fallback, binds the database/schema/WAL-or-Raft owner registry, validates
+  every referenced temporal part, and returns an owning unpublished generation. Application replay
+  and snapshot publication, v1 migration, vector output, and authorized retention/compaction
+  integration remain deferred, so the phase exit gate is not claimed.
 
 - **Scope:** formal bitemporal row-version model; SQL system-time clauses; history retention; correction/cancellation semantics; compaction and index support; audit visibility.
 - **Explicit non-scope:** general distributed transactions, legal/compliance certification, retroactive mutation of immutable history, and distribution before the model is validated locally.

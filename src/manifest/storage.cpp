@@ -268,6 +268,23 @@ public:
   std::vector<std::string> temporary_manifests_;
 };
 
+class LoadedTemporalManifestGeneration::Impl {
+public:
+  Impl(std::vector<std::byte> encoded_bytes, DecodedTemporalManifestView decoded,
+       std::vector<cseg::PartId> orphan_parts, std::vector<std::string> temporary_parts,
+       std::vector<std::string> temporary_manifests) noexcept
+      : encoded_bytes_(std::move(encoded_bytes)), decoded_(std::move(decoded)),
+        orphan_parts_(std::move(orphan_parts)), temporary_parts_(std::move(temporary_parts)),
+        temporary_manifests_(std::move(temporary_manifests)) {}
+
+  // The decoded view borrows this allocation. Member order destroys the view before its bytes.
+  std::vector<std::byte> encoded_bytes_;
+  DecodedTemporalManifestView decoded_;
+  std::vector<cseg::PartId> orphan_parts_;
+  std::vector<std::string> temporary_parts_;
+  std::vector<std::string> temporary_manifests_;
+};
+
 LoadedManifestGeneration::LoadedManifestGeneration(std::unique_ptr<Impl> implementation) noexcept
     : implementation_(std::move(implementation)) {}
 
@@ -326,6 +343,75 @@ std::span<const std::string> LoadedManifestGeneration::temporary_manifests() con
 
 std::size_t LoadedManifestGeneration::retained_buffer_bytes() const noexcept {
   std::size_t total = sizeof(LoadedManifestGeneration) + sizeof(Impl);
+  total = saturating_size_add(total, retained_vector_bytes(implementation_->encoded_bytes_));
+  total = saturating_size_add(total, implementation_->decoded_.retained_buffer_bytes());
+  total = saturating_size_add(total, retained_vector_bytes(implementation_->orphan_parts_));
+  total = saturating_size_add(total, retained_strings_bytes(implementation_->temporary_parts_));
+  total = saturating_size_add(total, retained_strings_bytes(implementation_->temporary_manifests_));
+  constexpr std::size_t owner_allocation_count = 9U;
+  return saturating_size_add(total, owner_allocation_count * kConservativeAllocationOverheadBytes);
+}
+
+LoadedTemporalManifestGeneration::LoadedTemporalManifestGeneration(
+    std::unique_ptr<Impl> implementation) noexcept
+    : implementation_(std::move(implementation)) {}
+
+LoadedTemporalManifestGeneration::~LoadedTemporalManifestGeneration() = default;
+LoadedTemporalManifestGeneration::LoadedTemporalManifestGeneration(
+    LoadedTemporalManifestGeneration&&) noexcept = default;
+LoadedTemporalManifestGeneration&
+LoadedTemporalManifestGeneration::operator=(LoadedTemporalManifestGeneration&&) noexcept = default;
+
+std::uint64_t LoadedTemporalManifestGeneration::generation() const noexcept {
+  return implementation_->decoded_.generation();
+}
+
+std::uint64_t LoadedTemporalManifestGeneration::previous_generation() const noexcept {
+  return implementation_->decoded_.previous_generation();
+}
+
+const DatabaseId& LoadedTemporalManifestGeneration::database_id() const noexcept {
+  return implementation_->decoded_.database_id();
+}
+
+const std::optional<TemporalWalReclaimCheckpoint>&
+LoadedTemporalManifestGeneration::wal_reclaim_checkpoint() const noexcept {
+  return implementation_->decoded_.wal_reclaim_checkpoint();
+}
+
+std::span<const TemporalTabletDescriptor>
+LoadedTemporalManifestGeneration::tablets() const noexcept {
+  return implementation_->decoded_.tablets();
+}
+
+std::span<const TemporalPartDescriptor> LoadedTemporalManifestGeneration::parts() const noexcept {
+  return implementation_->decoded_.parts();
+}
+
+std::span<const TemporalRetryDescriptor>
+LoadedTemporalManifestGeneration::retries() const noexcept {
+  return implementation_->decoded_.retries();
+}
+
+common::ByteView LoadedTemporalManifestGeneration::encoded_bytes() const noexcept {
+  return implementation_->encoded_bytes_;
+}
+
+std::span<const cseg::PartId> LoadedTemporalManifestGeneration::orphan_parts() const noexcept {
+  return implementation_->orphan_parts_;
+}
+
+std::span<const std::string> LoadedTemporalManifestGeneration::temporary_parts() const noexcept {
+  return implementation_->temporary_parts_;
+}
+
+std::span<const std::string>
+LoadedTemporalManifestGeneration::temporary_manifests() const noexcept {
+  return implementation_->temporary_manifests_;
+}
+
+std::size_t LoadedTemporalManifestGeneration::retained_buffer_bytes() const noexcept {
+  std::size_t total = sizeof(LoadedTemporalManifestGeneration) + sizeof(Impl);
   total = saturating_size_add(total, retained_vector_bytes(implementation_->encoded_bytes_));
   total = saturating_size_add(total, implementation_->decoded_.retained_buffer_bytes());
   total = saturating_size_add(total, retained_vector_bytes(implementation_->orphan_parts_));
@@ -1428,6 +1514,118 @@ ManifestStorage::load_selected_manifest(const ManifestLoadRequest& request) cons
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
                                                   "Cannot allocate loaded Manifest generation"});
+  }
+}
+
+common::Result<LoadedTemporalManifestGeneration>
+ManifestStorage::load_selected_temporal_manifest(const TemporalManifestLoadRequest& request) const {
+  common::Result<ManifestNamespaceSnapshot> snapshot = scan_namespace();
+  if (!snapshot.has_value()) {
+    return common::make_unexpected(snapshot.error());
+  }
+  const std::uint64_t selected_generation = snapshot->generations.back();
+  const common::Result<std::string> selected_name = manifest_file_name(selected_generation);
+  if (!selected_name.has_value()) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kInternal, "Selected Manifest v2 generation cannot be formatted"});
+  }
+  common::Result<std::vector<std::byte>> encoded = read_final_file(
+      implementation_->manifests_, {.name = *selected_name,
+                                    .maximum_length = request.decode_limits.max_file_length,
+                                    .exact_length = std::nullopt,
+                                    .description = "selected final Manifest v2 generation"});
+  if (!encoded.has_value()) {
+    return common::make_unexpected(encoded.error());
+  }
+  TemporalManifestDecodeResult decoded =
+      decode_manifest_v2_temporal_exact(*encoded, request.decode_limits);
+  if (!decoded.has_value()) {
+    return common::make_unexpected(
+        manifest_decode_failure(decoded.error(), "selected final Manifest v2 generation"));
+  }
+  if (decoded->generation() != selected_generation) {
+    return common::make_unexpected(
+        corruption("Selected final Manifest v2 filename disagrees with its encoded generation"));
+  }
+  if (decoded->database_id() != request.expected_database_id) {
+    return common::make_unexpected(
+        invalid("Selected Manifest v2 database identity does not match recovery context"));
+  }
+  common::Status validation =
+      validate_manifest_v2_temporal_schema_binding(*decoded, request.schema_bindings);
+  if (!validation.is_ok()) {
+    return common::make_unexpected(
+        with_context("bind selected Manifest v2 to retained catalog", validation));
+  }
+  validation = validate_manifest_v2_temporal_source_binding(*decoded, request.source_bindings);
+  if (!validation.is_ok()) {
+    return common::make_unexpected(
+        with_context("bind selected Manifest v2 to configured sources", validation));
+  }
+
+  for (const TemporalPartDescriptor& descriptor : decoded->parts()) {
+    if (!std::ranges::binary_search(snapshot->final_parts, descriptor.part_id)) {
+      return common::make_unexpected(
+          corruption("Selected Manifest v2 references a missing final CSEG part"));
+    }
+    const TemporalTabletDescriptor* owner =
+        find_temporal_tablet(decoded->tablets(), descriptor.tablet_id);
+    const TabletSchemaBinding* binding =
+        find_binding(request.schema_bindings, descriptor.tablet_id);
+    if (owner == nullptr || binding == nullptr) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kInternal,
+                         "Validated Manifest v2 tablet or schema binding became inaccessible"});
+    }
+    const std::shared_ptr<const schema::TableSchema> schema_value =
+        binding->lineage.get().find(descriptor.schema_id);
+    if (!schema_value) {
+      return common::make_unexpected(common::Status{
+          common::StatusCode::kInternal, "Validated Manifest v2 part schema became inaccessible"});
+    }
+    const std::string file_name = part_file_name(descriptor.part_id);
+    common::Result<std::vector<std::byte>> part_bytes =
+        read_final_file(implementation_->parts_,
+                        {.name = file_name,
+                         .maximum_length = request.part_validation_limits.decode.max_file_length,
+                         .exact_length = descriptor.file_length,
+                         .description = "referenced final temporal CSEG part"});
+    if (!part_bytes.has_value()) {
+      return common::make_unexpected(part_bytes.error());
+    }
+    validation = validate_manifest_v2_temporal_part_image(
+        descriptor, *owner, *part_bytes, *schema_value, request.part_validation_limits);
+    if (!validation.is_ok()) {
+      return common::make_unexpected(
+          with_context("validate referenced final temporal CSEG part", validation));
+    }
+  }
+
+  try {
+    std::vector<cseg::PartId> referenced_parts;
+    referenced_parts.reserve(decoded->parts().size());
+    for (const TemporalPartDescriptor& descriptor : decoded->parts()) {
+      referenced_parts.push_back(descriptor.part_id);
+    }
+    std::ranges::sort(referenced_parts);
+    std::vector<cseg::PartId> orphan_parts;
+    orphan_parts.reserve(snapshot->final_parts.size());
+    for (const cseg::PartId& part_id : snapshot->final_parts) {
+      if (!std::ranges::binary_search(referenced_parts, part_id)) {
+        orphan_parts.push_back(part_id);
+      }
+    }
+    return LoadedTemporalManifestGeneration{
+        std::make_unique<LoadedTemporalManifestGeneration::Impl>(
+            std::move(*encoded), std::move(*decoded), std::move(orphan_parts),
+            std::move(snapshot->temporary_parts), std::move(snapshot->temporary_manifests))};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                  "Cannot allocate loaded Manifest v2 generation"});
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "Loaded Manifest v2 generation exceeds container limits"});
   }
 }
 

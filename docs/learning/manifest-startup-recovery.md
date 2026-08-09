@@ -6,6 +6,13 @@
 > aggregate database publication. It does not persist a catalog, start services, or dispatch future
 > application kinds.
 
+Manifest v2 now has a lower-level local selection boundary alongside this v1 columnar composition.
+It exact-decodes only the highest generation without fallback, binds the expected database,
+retained schemas, and exact configured WAL/Raft source owners, validates every referenced CSEG 2/0
+image, and returns an owning unpublished generation plus orphan/temporary observations. It does not
+yet replay WAL or Raft application state, install a Raft application snapshot, or publish a temporal
+query epoch; those steps must be composed before v2 service activation.
+
 ## Purpose and boundary
 
 Startup must not expose a valid-looking subset assembled from unrelated recovery passes. The public

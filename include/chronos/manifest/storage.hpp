@@ -33,6 +33,7 @@ class PosixSyscalls;
 namespace chronos::manifest {
 
 class LoadedManifestGeneration;
+class LoadedTemporalManifestGeneration;
 
 namespace detail {
 class ManifestStorageTestAccess;
@@ -196,6 +197,14 @@ struct ManifestLoadRequest {
   ReferencedPartValidationLimits part_validation_limits;
 };
 
+struct TemporalManifestLoadRequest {
+  DatabaseId expected_database_id;
+  std::span<const TabletSchemaBinding> schema_bindings;
+  std::span<const TemporalTabletSourceBinding> source_bindings;
+  ManifestDecodeLimits decode_limits;
+  TemporalPartValidationLimits part_validation_limits;
+};
+
 class LoadedPartImage {
 public:
   LoadedPartImage() = delete;
@@ -293,6 +302,41 @@ private:
   friend class ManifestStorage;
 };
 
+// Owns the exact selected Manifest v2 bytes and decoded source-neutral descriptor state. Every
+// referenced temporal CSEG has already been reread and validated before construction.
+class LoadedTemporalManifestGeneration {
+public:
+  LoadedTemporalManifestGeneration() = delete;
+  ~LoadedTemporalManifestGeneration();
+
+  LoadedTemporalManifestGeneration(const LoadedTemporalManifestGeneration&) = delete;
+  LoadedTemporalManifestGeneration& operator=(const LoadedTemporalManifestGeneration&) = delete;
+  LoadedTemporalManifestGeneration(LoadedTemporalManifestGeneration&&) noexcept;
+  LoadedTemporalManifestGeneration& operator=(LoadedTemporalManifestGeneration&&) noexcept;
+
+  [[nodiscard]] std::uint64_t generation() const noexcept;
+  [[nodiscard]] std::uint64_t previous_generation() const noexcept;
+  [[nodiscard]] const DatabaseId& database_id() const noexcept;
+  [[nodiscard]] const std::optional<TemporalWalReclaimCheckpoint>&
+  wal_reclaim_checkpoint() const noexcept;
+  [[nodiscard]] std::span<const TemporalTabletDescriptor> tablets() const noexcept;
+  [[nodiscard]] std::span<const TemporalPartDescriptor> parts() const noexcept;
+  [[nodiscard]] std::span<const TemporalRetryDescriptor> retries() const noexcept;
+  [[nodiscard]] common::ByteView encoded_bytes() const noexcept;
+  [[nodiscard]] std::span<const cseg::PartId> orphan_parts() const noexcept;
+  [[nodiscard]] std::span<const std::string> temporary_parts() const noexcept;
+  [[nodiscard]] std::span<const std::string> temporary_manifests() const noexcept;
+  [[nodiscard]] std::size_t retained_buffer_bytes() const noexcept;
+
+private:
+  class Impl;
+  explicit LoadedTemporalManifestGeneration(std::unique_ptr<Impl> implementation) noexcept;
+
+  std::unique_ptr<Impl> implementation_;
+
+  friend class ManifestStorage;
+};
+
 // A move-only, single-threaded owner of the existing database root, parts directory, manifest
 // directory, and manifest writer lock. open_existing() never creates missing directories or LOCK.
 // The deployment must prevent out-of-band mutation while the lock is held.
@@ -352,6 +396,12 @@ public:
   // an owned unpublished result. Recognized temporaries and unreferenced finals are only reported.
   [[nodiscard]] common::Result<LoadedManifestGeneration>
   load_selected_manifest(const ManifestLoadRequest& request) const;
+
+  // V2 recovery selection. The highest final generation is decoded without fallback, bound to the
+  // caller's exact database/schema/source registry, and every referenced CSEG v2 image is streamed
+  // through full validation before this owning unpublished result is returned.
+  [[nodiscard]] common::Result<LoadedTemporalManifestGeneration>
+  load_selected_temporal_manifest(const TemporalManifestLoadRequest& request) const;
 
   // Rereads exact strictly sorted part identities from the currently selected generation and
   // returns owning validated images. The supplied generation must still be the namespace maximum.

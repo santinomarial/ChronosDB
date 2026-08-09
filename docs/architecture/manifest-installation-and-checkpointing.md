@@ -16,8 +16,9 @@
 The same descriptor-relative part-before-manifest ordering is now implemented for CSEG 2/0 and
 Manifest 2/0 add-only successors. The v2 path additionally verifies exact SHA-256, temporal
 WAL/Raft lineage, and commit/event/system extrema before write and after part readback. It accepts
-only a selected v2 predecessor; v1-to-v2 migration, v2 startup publication, and temporal retention
-or compaction remain separate work.
+only a selected v2 predecessor. Highest-generation v2 startup selection now binds configured source
+owners and retained schemas and validates every part without fallback; v1-to-v2 migration, v2
+application replay/publication, and temporal retention or compaction remain separate work.
 
 ## Safety objective
 

@@ -152,6 +152,26 @@ validate_manifest_v2_temporal_schema_binding(const DecodedTemporalManifestView& 
   return validate_bindings(manifest, bindings, true);
 }
 
+common::Status validate_manifest_v2_temporal_source_binding(
+    const DecodedTemporalManifestView& manifest,
+    const std::span<const TemporalTabletSourceBinding> bindings) {
+  if (bindings.size() != manifest.tablets().size()) {
+    return invalid("Manifest v2 source bindings do not exactly cover its tablets");
+  }
+  for (std::size_t index = 0U; index < bindings.size(); ++index) {
+    if (index != 0U && !(bindings[index - 1U].tablet_id < bindings[index].tablet_id)) {
+      return invalid("Manifest v2 source bindings are not strictly sorted");
+    }
+    const TemporalTabletDescriptor& tablet = manifest.tablets()[index];
+    if (bindings[index].tablet_id != tablet.tablet_id ||
+        bindings[index].commit_source != tablet.commit_source ||
+        bindings[index].source_id != tablet.source_id) {
+      return invalid("Manifest v2 tablet does not match its configured source owner");
+    }
+  }
+  return common::Status::ok();
+}
+
 common::Status
 validate_manifest_v2_temporal_transition(const DecodedTemporalManifestView& predecessor,
                                          const DecodedTemporalManifestView& next,

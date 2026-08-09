@@ -3,7 +3,8 @@
 > **Status: accepted source-neutral registry, checked canonical layout, strict checksummed byte
 > codec, exact single-part CSEG admission, and add-only generation transition validation are
 > implemented. Complete referenced-part coverage and crash-ordered local filesystem installation
-> are also implemented; recovery, v1 migration, authorized retention/compaction, and reclamation
+> are also implemented. Highest-generation fail-closed local recovery selection is implemented;
+> application replay/publication, v1 migration, authorized retention/compaction, and reclamation
 > integration remain pending.**
 
 Manifest v2 is the immutable database storage generation that can authorize CSEG v2 temporal parts
@@ -135,6 +136,8 @@ Neither coordinate permits deletion until its exact manifest generation is durab
 corresponding application state is recoverable.
 
 The v2 installer requires the selected predecessor to already be Manifest v2. It does not
-reinterpret or automatically migrate a v1 predecessor. Recovery selection and publication of a
-loaded v2 generation remain pending even though its bytes and namespace ordering can now be made
-durable.
+reinterpret or automatically migrate a v1 predecessor. The local recovery loader selects only the
+highest consecutive final generation, exact-decodes without fallback, binds the expected database,
+retained schemas, and exact per-tablet WAL/Raft owners, and streams full validation over every
+referenced CSEG v2 object before returning an owning unpublished generation. Application replay,
+Raft snapshot reconstruction, and query publication remain pending.

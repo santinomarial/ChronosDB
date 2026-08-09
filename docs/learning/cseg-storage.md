@@ -122,7 +122,9 @@ digest, and recomputed temporal extrema. Its complete-generation validator addit
 exact descriptor-order image coverage and canonical names. The local Manifest v2 storage path now
 durably installs validated candidates with exact readback, file sync, no-replace rename, and
 directory sync. They become generation-authorized durable objects after the corresponding v2
-Manifest installation boundary; loaded recovery/query publication is still pending.
+Manifest installation boundary. The v2 recovery loader now rereads and validates them before
+returning an owning selected-generation result; application recovery and query publication are
+still pending.
 
 ## Complexity
 

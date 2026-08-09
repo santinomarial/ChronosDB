@@ -205,6 +205,16 @@ TEST(TemporalManifestSchemaBindingTest, RequiresExactRetainedLineageCoverage) {
   EXPECT_TRUE(validate_manifest_v2_temporal_schema_binding(manifest, bindings).is_ok());
   EXPECT_EQ(validate_manifest_v2_temporal_schema_binding(manifest, {}).code(),
             common::StatusCode::kInvalidArgument);
+
+  std::array sources{TemporalTabletSourceBinding{.tablet_id = fixture.tablet_id,
+                                                 .commit_source = ManifestCommitSource::kWal,
+                                                 .source_id = common::Uuid{fixture.wal.bytes}}};
+  EXPECT_TRUE(validate_manifest_v2_temporal_source_binding(manifest, sources).is_ok());
+  EXPECT_EQ(validate_manifest_v2_temporal_source_binding(manifest, {}).code(),
+            common::StatusCode::kInvalidArgument);
+  sources[0].commit_source = ManifestCommitSource::kRaft;
+  EXPECT_EQ(validate_manifest_v2_temporal_source_binding(manifest, sources).code(),
+            common::StatusCode::kInvalidArgument);
 }
 
 TEST(TemporalManifestTransitionTest, AcceptsAddOnlyMonotonicTemporalSuccessor) {
