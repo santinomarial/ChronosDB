@@ -22,6 +22,11 @@ retained change only when that change is already covered by its own source compo
 has evicted a required change from any one tablet, the whole resume fails; silently delivering a
 partial suffix would violate the snapshot-to-stream contract.
 
+The logical checkpoint copies each source's latest and expiry frontier plus that retained deque in
+the same admission order. Restore does not attempt to infer an interleaving: it proves every
+per-source retained suffix is consecutive through the declared latest vector, then reinstalls the
+recorded order. Subscriber buffers are reconstructed only from an authenticated safe Resume Token.
+
 The manager owns no threads and is not internally synchronized. Returned delivery records share
 immutable change ownership. Memory is bounded globally for retention and independently per
 subscriber. A slow subscriber overflows without rejecting a committed source change. A topology or

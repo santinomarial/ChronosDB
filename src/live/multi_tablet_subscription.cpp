@@ -9,6 +9,7 @@
 #include <memory>
 #include <new>
 #include <ranges>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -183,6 +184,85 @@ MultiTabletSubscriptionManager::create(MultiTabletSubscriptionSource source,
         std::make_unique<Impl>(std::move(source), limits, std::move(states), std::move(indexes))};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("multi-tablet subscription allocation failed"));
+  }
+}
+
+common::Result<MultiTabletSubscriptionManager>
+MultiTabletSubscriptionManager::restore(MultiTabletSubscriptionSource source,
+                                        const MultiTabletSubscriptionCheckpoint& checkpoint,
+                                        const SubscriptionLimits limits) {
+  auto restored = create(std::move(source), limits);
+  if (!restored.has_value())
+    return common::make_unexpected(restored.error());
+  Impl& impl = *restored->impl_;
+  if (checkpoint.database_id != impl.source.database_id ||
+      checkpoint.table_id != impl.source.table_id ||
+      checkpoint.plan_fingerprint != impl.source.plan_fingerprint ||
+      checkpoint.schema_id != impl.source.schema_id ||
+      checkpoint.schema_version != impl.source.schema_version ||
+      checkpoint.sources.size() != impl.sources.size() ||
+      checkpoint.retained_changes.size() > limits.maximum_retained_changes)
+    return common::make_unexpected(
+        invalid("subscription checkpoint identity, source count, or retention count is invalid"));
+
+  try {
+    std::vector<std::uint64_t> expected_sequences;
+    expected_sequences.reserve(impl.sources.size());
+    for (std::size_t index = 0U; index < impl.sources.size(); ++index) {
+      const MultiTabletSubscriptionCheckpointSource& saved = checkpoint.sources[index];
+      const Impl::SourceState& current = impl.sources[index];
+      if (saved.latest_position.tablet_id != current.tablet_id ||
+          saved.latest_position.wal_id != current.wal_id ||
+          saved.latest_position.record_sequence != current.latest_sequence ||
+          saved.expired_through_sequence > current.latest_sequence)
+        return common::make_unexpected(
+            invalid("subscription checkpoint source lineage or frontier is invalid"));
+      expected_sequences.push_back(saved.expired_through_sequence);
+    }
+
+    std::size_t retained_bytes = 0U;
+    std::deque<std::shared_ptr<const CommittedChange>> retained;
+    for (const CommittedChange& change : checkpoint.retained_changes) {
+      const auto source_index = impl.source_indexes.find(change.position.tablet_id);
+      if (source_index == impl.source_indexes.end())
+        return common::make_unexpected(
+            invalid("subscription checkpoint change has an unknown source"));
+      const std::size_t index = source_index->second;
+      if (change.position.wal_id != impl.sources[index].wal_id ||
+          expected_sequences[index] == std::numeric_limits<std::uint64_t>::max() ||
+          change.position.record_sequence != expected_sequences[index] + 1U ||
+          change.position.record_sequence > impl.sources[index].latest_sequence ||
+          change.schema_id != impl.source.schema_id ||
+          change.schema_version != impl.source.schema_version ||
+          (change.operation != LogicalChangeOperation::kUpsert &&
+           change.operation != LogicalChangeOperation::kDelete) ||
+          change.result_key.empty() ||
+          (change.operation == LogicalChangeOperation::kDelete && !change.payload.empty()))
+        return common::make_unexpected(
+            invalid("subscription checkpoint retained change is invalid or discontinuous"));
+      const auto bytes = change_bytes(change);
+      if (!bytes.has_value() || *bytes > limits.maximum_change_bytes ||
+          *bytes > limits.maximum_retained_bytes - retained_bytes)
+        return common::make_unexpected(
+            exhausted("subscription checkpoint retained bytes exceed configured limits"));
+      retained.push_back(std::make_shared<const CommittedChange>(change));
+      retained_bytes += *bytes;
+      expected_sequences[index] = change.position.record_sequence;
+    }
+    for (std::size_t index = 0U; index < impl.sources.size(); ++index) {
+      if (expected_sequences[index] != impl.sources[index].latest_sequence)
+        return common::make_unexpected(
+            invalid("subscription checkpoint omits a required retained source suffix"));
+      impl.sources[index].expired_through_sequence =
+          checkpoint.sources[index].expired_through_sequence;
+    }
+    impl.retained_changes = std::move(retained);
+    impl.retained_change_bytes = retained_bytes;
+    return restored;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("subscription checkpoint restore allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("subscription checkpoint exceeds container limits"));
   }
 }
 
@@ -456,6 +536,32 @@ MultiTabletSubscriptionManager::latest_positions() const {
     return impl_->positions();
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("subscription position allocation failed"));
+  }
+}
+
+common::Result<MultiTabletSubscriptionCheckpoint>
+MultiTabletSubscriptionManager::checkpoint() const {
+  try {
+    MultiTabletSubscriptionCheckpoint checkpoint{impl_->source.database_id,
+                                                 impl_->source.table_id,
+                                                 impl_->source.plan_fingerprint,
+                                                 impl_->source.schema_id,
+                                                 impl_->source.schema_version,
+                                                 {},
+                                                 {}};
+    checkpoint.sources.reserve(impl_->sources.size());
+    for (const Impl::SourceState& source : impl_->sources) {
+      checkpoint.sources.push_back({{source.tablet_id, source.wal_id, source.latest_sequence},
+                                    source.expired_through_sequence});
+    }
+    checkpoint.retained_changes.reserve(impl_->retained_changes.size());
+    for (const auto& change : impl_->retained_changes)
+      checkpoint.retained_changes.push_back(*change);
+    return checkpoint;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("subscription checkpoint allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("subscription checkpoint exceeds container limits"));
   }
 }
 

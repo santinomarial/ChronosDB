@@ -170,5 +170,49 @@ TEST(MultiTabletSubscriptionTest, FailsResumeWhenAnyRequiredSourceSuffixExpired)
   EXPECT_EQ(resumed.error().code(), common::StatusCode::kNotFound);
 }
 
+TEST(MultiTabletSubscriptionTest, CheckpointsAndRestoresExactAdmissionOrderForResume) {
+  Fixture fixture;
+  auto manager = MultiTabletSubscriptionManager::create(fixture.source());
+  ASSERT_TRUE(manager.has_value());
+  const auto registration = manager->register_subscription(fixture.request());
+  ASSERT_TRUE(registration.has_value());
+  ASSERT_TRUE(manager->complete_snapshot(fixture.subscription_id).is_ok());
+  ASSERT_TRUE(
+      manager->publish_committed(fixture.change(fixture.tablet_a, fixture.wal_a, 1U)).is_ok());
+  ASSERT_TRUE(
+      manager->publish_committed(fixture.change(fixture.tablet_b, fixture.wal_b, 1U)).is_ok());
+  const auto delivered = manager->poll(fixture.subscription_id, 8U);
+  ASSERT_TRUE(delivered.has_value());
+  const auto safe_token = manager->acknowledge(fixture.subscription_id, 1U);
+  ASSERT_TRUE(safe_token.has_value());
+  ASSERT_TRUE(
+      manager->publish_committed(fixture.change(fixture.tablet_a, fixture.wal_a, 2U)).is_ok());
+  ASSERT_TRUE(
+      manager->publish_committed(fixture.change(fixture.tablet_b, fixture.wal_b, 2U)).is_ok());
+
+  const auto checkpoint = manager->checkpoint();
+  ASSERT_TRUE(checkpoint.has_value()) << checkpoint.error().to_string();
+  ASSERT_EQ(checkpoint->retained_changes.size(), 4U);
+  MultiTabletSubscriptionSource restored_source = fixture.source(2U, 2U);
+  auto restored = MultiTabletSubscriptionManager::restore(std::move(restored_source), *checkpoint);
+  ASSERT_TRUE(restored.has_value()) << restored.error().to_string();
+  const auto resumed = restored->resume_subscription(*safe_token);
+  ASSERT_TRUE(resumed.has_value()) << resumed.error().to_string();
+  const auto replayed = restored->poll(fixture.subscription_id, 8U);
+  ASSERT_TRUE(replayed.has_value());
+  ASSERT_EQ(replayed->size(), 3U);
+  EXPECT_EQ((*replayed)[0].change->position.tablet_id, fixture.tablet_b);
+  EXPECT_EQ((*replayed)[0].change->position.record_sequence, 1U);
+  EXPECT_EQ((*replayed)[1].change->position.tablet_id, fixture.tablet_a);
+  EXPECT_EQ((*replayed)[1].change->position.record_sequence, 2U);
+  EXPECT_EQ((*replayed)[2].change->position.tablet_id, fixture.tablet_b);
+  EXPECT_EQ((*replayed)[2].change->position.record_sequence, 2U);
+
+  MultiTabletSubscriptionCheckpoint corrupted = *checkpoint;
+  corrupted.retained_changes.erase(corrupted.retained_changes.begin() + 1);
+  EXPECT_FALSE(
+      MultiTabletSubscriptionManager::restore(fixture.source(2U, 2U), corrupted).has_value());
+}
+
 } // namespace
 } // namespace chronos::live

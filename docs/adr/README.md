@@ -132,3 +132,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0095](0095-multi-tablet-subscription-delivery-order.md) | Multi-tablet subscription delivery order | accepted |
 | [0096](0096-plan-bound-subscription-snapshot-execution.md) | Plan-bound subscription snapshot execution | accepted |
 | [0097](0097-schema-bound-subscription-plan-identity.md) | Schema-bound subscription plan identity | accepted |
+| [0098](0098-exact-multi-tablet-subscription-checkpoints.md) | Exact multi-tablet subscription checkpoints | accepted |

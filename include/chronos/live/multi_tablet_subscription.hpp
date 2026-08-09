@@ -45,6 +45,23 @@ struct MultiTabletSubscriptionStatus {
   std::size_t buffered_bytes{};
 };
 
+struct MultiTabletSubscriptionCheckpointSource {
+  SourcePosition latest_position;
+  std::uint64_t expired_through_sequence{};
+};
+
+// Exact retained coordinator state in canonical source order and recorded cross-tablet admission
+// order. Token MAC keys and ephemeral subscriber buffers are deliberately external to this value.
+struct MultiTabletSubscriptionCheckpoint {
+  common::Uuid database_id;
+  schema::TableId table_id;
+  PlanFingerprint plan_fingerprint{};
+  schema::SchemaId schema_id;
+  schema::SchemaVersion schema_version;
+  std::vector<MultiTabletSubscriptionCheckpointSource> sources;
+  std::vector<CommittedChange> retained_changes;
+};
+
 // Single-thread-affine coordinator for one database/table/plan/schema and a fixed source set.
 // Per-tablet input must be consecutive committed log order. Cross-tablet call order becomes the
 // authoritative subscription delivery order and is retained for replay; it is not a database-wide
@@ -60,6 +77,9 @@ public:
 
   [[nodiscard]] static common::Result<MultiTabletSubscriptionManager>
   create(MultiTabletSubscriptionSource source, SubscriptionLimits limits = {});
+  [[nodiscard]] static common::Result<MultiTabletSubscriptionManager>
+  restore(MultiTabletSubscriptionSource source, const MultiTabletSubscriptionCheckpoint& checkpoint,
+          SubscriptionLimits limits = {});
 
   [[nodiscard]] common::Result<MultiTabletSubscriptionRegistration>
   register_subscription(const SubscriptionRequest& request);
@@ -75,6 +95,7 @@ public:
   [[nodiscard]] common::Result<MultiTabletSubscriptionStatus>
   status(const common::Uuid& subscription_id) const;
   [[nodiscard]] common::Result<std::vector<SourcePosition>> latest_positions() const;
+  [[nodiscard]] common::Result<MultiTabletSubscriptionCheckpoint> checkpoint() const;
 
 private:
   class Impl;

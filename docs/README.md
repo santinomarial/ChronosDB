@@ -224,6 +224,9 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Schema-bound subscription plan identity](adr/0097-schema-bound-subscription-plan-identity.md):
   bounded `SUBSCRIBE SELECT` parsing/lowering, deterministic schema-bound fingerprints, and exact
   manager registration/resume compatibility.
+- [Exact multi-tablet subscription checkpoints](adr/0098-exact-multi-tablet-subscription-checkpoints.md):
+  canonical latest/expiry vectors, retained admission-order capture, strict suffix validation, and
+  token-based replay after logical coordinator reconstruction.
 - [Durable metadata Raft state](learning/durable-metadata-state.md): checksummed commands,
   commit-order catalog application, quorum proof, and retained-log reconstruction.
 - [Phase 10 network exit review](reviews/phase-10-network-review.md): implemented transport
