@@ -666,8 +666,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   and withholds outbound messages until it completes. Mutable heads, tablet publications, row
   versions, and retry outcomes now distinguish WAL histories from Raft group/index histories;
   frozen CSEG/Manifest v1 boundaries reject Raft identities they cannot represent. Asynchronous
-  worker scheduling/fairness, command application, a versioned replicated durable-row format,
-  snapshots, reclamation, and QUORUM_SYNC are not implemented; the phase exit gate is not claimed.
+  committed command application now decodes exact COLUMNAR_APPEND bytes, preserves uncommitted
+  invisibility, durably advances applied indexes after publication, and rebuilds fresh tablet state
+  from the complete retained committed log. Asynchronous worker scheduling/fairness, a versioned
+  replicated durable-row/application-snapshot format, reclamation, membership, and QUORUM_SYNC are
+  not implemented; the phase exit gate is not claimed.
 
 - **Scope:** map tablets to Raft groups; multiplex logical records over physical logs, threads, timers, and connections; lifecycle, placement, snapshot transfer, fairness, and safe per-group reclamation.
 - **Explicit non-scope:** globally ordered logs, cross-tablet atomic transactions, distributed query execution, automatic rebalancing beyond scoped placement mechanics, and conflating physical offsets with logical indexes.

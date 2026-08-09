@@ -74,9 +74,10 @@
   under hot/cold skew.
 - Encode/decode metadata commands through the metadata Raft group; durable schemas, nodes, tablet
   placement, membership, leader hints, retention, cluster epochs, and metadata snapshots.
-- Apply committed tablet commands to existing ingestion/table-state machinery; prove uncommitted
-  invisibility. Version CSEG/Manifest row identities for Raft source/group positions and cover
-  flush, restart, query row-version columns, and compaction migration. Implement and validate true
+- Extend the implemented committed-only tablet command application and full retained-log rebuild
+  with crash injection around publication/applied-index persistence. Version CSEG/Manifest row
+  identities and an application snapshot for Raft source/group positions; cover compacted-prefix
+  restart, query row-version columns, and compaction migration. Implement and validate true
   QUORUM_SYNC before exposing the mode.
 - Thousands-of-groups simulation, one-node loss, group lifecycle, persisted reopen, noisy-neighbor,
   TSan/chaos, physical amplification, group density, memory, and tail benchmarks.

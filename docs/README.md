@@ -53,6 +53,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   compatibility, limits, and rejection rules.
 - [Multiplexed Raft Persistent-State Record v1](formats/multiplexed-raft-log-v1.md): checksummed,
   group-tagged full-state records plus the implemented segmented append/sync/recovery envelope.
+- [Raft Tablet Command v1](formats/raft-tablet-command-v1.md): exact committed
+  `COLUMNAR_APPEND` payload, group/index identity, ordering, and retained-log recovery contract.
 - [Production dependencies](dependencies/README.md): maintained external-library boundaries,
   version sources, licenses, and update/security ownership.
 
@@ -188,6 +190,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Segmented Multi-Raft persistent log](learning/raft-persistent-log.md): shared physical segments,
   append/sync frontiers, durable runtime batching, rotation, recovery, repair, ownership, and
   reclamation boundary.
+- [Committed Raft tablet application](learning/raft-tablet-application.md): committed-only command
+  decoding, shared row/retry publication, applied-index ordering, and retained-log reconstruction.
 - [Phase 10 network exit review](reviews/phase-10-network-review.md): implemented transport
   boundary, Linux portability and validation evidence, nonblocking risks, and the phase decision.
 - [Feature completion pass review](reviews/feature-completion-pass.md): truthful Phase 11–17
