@@ -617,9 +617,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   exact schema-bound SHA-256 plan identity, and plan-bound single-tablet registration/resume.
   Multi-tablet coordinators can now checkpoint and restore an exact validated retained admission
   order and per-source expiry vector before token-based replay. Multi-tablet Subscription Checkpoint
-  v1 now freezes bounded, checksummed portable bytes for that state. Atomic checkpoint generation
-  installation, durable plan lookup, multi-tablet snapshot execution, topology/retention
-  integration, and the full exit evidence remain deferred; the phase exit gate is not claimed.
+  v1 now freezes bounded, checksummed portable bytes for that state. A lock-owning filesystem owner
+  now exact-validates, synchronizes, no-replace installs, reopens, and selects contiguous immutable
+  coordinator checkpoint generations. Durable plan lookup, multi-tablet snapshot execution,
+  topology/retention integration, and the full exit evidence remain deferred; the phase exit gate
+  is not claimed.
 
 - **Scope:** committed change model; gap-free snapshot-to-stream handoff; deterministic versioned resume tokens; bounded subscriber policies; supported incremental operators; materialized-view progress/recovery and late-event corrections.
 - **Explicit non-scope:** unqualified end-to-end exactly-once claims, unlimited retention, every SQL operator, cross-cluster delivery, and external-sink transactions not explicitly integrated.

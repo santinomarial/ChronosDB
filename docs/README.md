@@ -230,6 +230,9 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Multi-tablet Subscription Checkpoint v1](formats/multi-tablet-subscription-checkpoint-v1.md):
   frozen portable coordinator bytes, exact identity/source/change layout, limits, CRC32C, and
   validation order.
+- [Durable multi-tablet subscription checkpoint generations](adr/0100-durable-subscription-checkpoint-generations.md):
+  lock ownership, exact next-generation installation, synchronized no-replace publication, and
+  fail-closed reopen/latest selection.
 - [Durable metadata Raft state](learning/durable-metadata-state.md): checksummed commands,
   commit-order catalog application, quorum proof, and retained-log reconstruction.
 - [Phase 10 network exit review](reviews/phase-10-network-review.md): implemented transport

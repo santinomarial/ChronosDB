@@ -134,3 +134,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0097](0097-schema-bound-subscription-plan-identity.md) | Schema-bound subscription plan identity | accepted |
 | [0098](0098-exact-multi-tablet-subscription-checkpoints.md) | Exact multi-tablet subscription checkpoints | accepted |
 | [0099](0099-multi-tablet-subscription-checkpoint-v1.md) | Multi-tablet Subscription Checkpoint v1 | accepted |
+| [0100](0100-durable-subscription-checkpoint-generations.md) | Durable multi-tablet subscription checkpoint generations | accepted |

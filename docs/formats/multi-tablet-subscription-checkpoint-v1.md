@@ -79,3 +79,12 @@ major/minor fields, a 64-byte header, exact total size, nonzero 64-bit checkpoin
 nested byte size, and 24 reserved zero bytes. The nested Checkpoint v1 bytes follow, then a second
 4-byte CRC32C over the complete envelope prefix. Both checksums and the generation/name binding are
 validated on load.
+
+## Filesystem generation namespace
+
+A lock-owning storage directory contains an advisory `LOCK` and immutable generation files named
+`generation-%020u.subc`. Generations begin at one and remain contiguous. Installation uses the
+corresponding `.tmp` name, exact readback validation, file synchronization, no-replace rename, and
+directory synchronization. Reopen removes only canonical temporaries. The latest generation is
+recoverable only after its filename, embedded generation, owner identity, canonical source set,
+checksums, and nested semantics all validate.

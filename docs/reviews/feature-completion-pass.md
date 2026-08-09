@@ -28,10 +28,14 @@ their full roadmap exit gates or that ChronosDB is a production three-node datab
   fail-closed overflow that never rejects an already committed source change;
 - removable count, sum, min, max, VWAP, OHLC, and Welford population/sample variance state; and
 - tumbling/sliding window materialized state, watermark finalization, corrections/tombstones,
-  revisions, consecutive committed progress, and finite row/window bounds.
+  revisions, consecutive committed progress, and finite row/window bounds;
+- plan-bound single-tablet snapshot execution and schema-bound `SUBSCRIBE SELECT` identity;
+- canonical multi-tablet delivery order, exact logical checkpoint/restore, and frozen checksummed
+  checkpoint-generation bytes; and
+- lock-owning, exact-next-generation filesystem installation and fail-closed latest selection.
 
-Not wired: SQL plan execution into subscription changes, multi-tablet merge, Protocol v1 messages,
-durable view state/recovery, schema-change terminal representation, and service lifecycle.
+Still incomplete: durable plan lookup, multi-tablet snapshot execution, topology/retention owner
+integration, schema-change terminal representation, and complete service lifecycle.
 
 ### Phase 12 — performance architecture and io_uring
 
