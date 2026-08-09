@@ -30,8 +30,8 @@ struct CsegPartEncodeInput {
   std::span<const EncodedCsegPage> pages;
 };
 
-// Owns exactly one canonical CSEG v1 file image. The bytes are immutable through this interface
-// and remain valid across moves of the owner.
+// Owns exactly one canonical CSEG v1 or v2 file image. The bytes are immutable through this
+// interface and remain valid across moves of the owner.
 class EncodedCsegPart {
 public:
   EncodedCsegPart() = delete;
@@ -50,11 +50,20 @@ private:
   std::vector<std::byte> bytes_;
 
   friend common::Result<EncodedCsegPart> encode_cseg_v1_part(const CsegPartEncodeInput& input);
+  friend common::Result<EncodedCsegPart>
+  encode_cseg_v2_temporal_part(const CsegPartEncodeInput& input);
+  friend common::Result<EncodedCsegPart> encode_cseg_part(const CsegPartEncodeInput& input,
+                                                          std::uint16_t format_major);
 };
 
 // Composes metadata followed by pages in granule-major, stored-column-major order. Pages must have
 // been produced by encode_cseg_v1_page(); metadata validation enforces their row/type shape.
 [[nodiscard]] common::Result<EncodedCsegPart> encode_cseg_v1_part(const CsegPartEncodeInput& input);
+
+// Composes a canonical CSEG v2 temporal part. Physical PLAIN and compression bytes are unchanged
+// from v1, while metadata requires the v2 eight-column temporal system suffix.
+[[nodiscard]] common::Result<EncodedCsegPart>
+encode_cseg_v2_temporal_part(const CsegPartEncodeInput& input);
 
 using CsegPartDecodeErrorKind = CsegMetadataDecodeErrorKind;
 using CsegPartDecodeError = CsegMetadataDecodeError;
@@ -85,6 +94,11 @@ private:
 
   friend std::expected<DecodedCsegPartView, CsegPartDecodeError>
   decode_cseg_v1_part_prefix(common::ByteView bytes, CsegMetadataDecodeLimits limits);
+  friend std::expected<DecodedCsegPartView, CsegPartDecodeError>
+  decode_cseg_v2_temporal_part_prefix(common::ByteView bytes, CsegMetadataDecodeLimits limits);
+  friend std::expected<DecodedCsegPartView, CsegPartDecodeError>
+  decode_cseg_part_prefix(common::ByteView bytes, CsegMetadataDecodeLimits limits,
+                          std::uint16_t expected_major);
 };
 
 using CsegPartDecodeResult = std::expected<DecodedCsegPartView, CsegPartDecodeError>;
@@ -98,6 +112,14 @@ using CsegPartDecodeResult = std::expected<DecodedCsegPartView, CsegPartDecodeEr
 // Requires exactly one complete CSEG part and rejects trailing bytes.
 [[nodiscard]] CsegPartDecodeResult decode_cseg_v1_part_exact(common::ByteView bytes,
                                                              CsegMetadataDecodeLimits limits = {});
+
+// Strict CSEG v2 equivalents. They reject v1 before interpreting its descriptors, validate every
+// stored-page CRC and PLAIN payload, and preserve the same prefix/exact ownership contract.
+[[nodiscard]] CsegPartDecodeResult
+decode_cseg_v2_temporal_part_prefix(common::ByteView bytes, CsegMetadataDecodeLimits limits = {});
+
+[[nodiscard]] CsegPartDecodeResult
+decode_cseg_v2_temporal_part_exact(common::ByteView bytes, CsegMetadataDecodeLimits limits = {});
 
 } // namespace chronos::cseg
 

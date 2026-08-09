@@ -635,10 +635,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   reopen the writer at the next sequence. Live single-writer admission validates before WAL,
   preserves `ASYNC`/`LOCAL_SYNC`, publishes after completion, and fails closed on post-admission
   uncertainty. CSEG v2 now has an accepted eight-column WAL/Raft temporal system registry, a checked
-  canonical layout planner, and a strict checksummed metadata codec with schema binding and v1/v2
-  rejection boundaries. Mixed-command recovery, complete v2 part/page bytes and semantic reading,
-  vector storage resolution, Manifest v2 installation, and compaction integration remain deferred,
-  so the phase exit gate is not claimed.
+  canonical layout planner, a strict checksummed metadata codec with schema binding and v1/v2
+  rejection boundaries, and deterministic full-part composition/structural decoding that validates
+  every stored page and alignment region. Mixed-command recovery, temporal value/order validation,
+  projected/vector storage resolution, Manifest v2 installation, and compaction integration remain
+  deferred, so the phase exit gate is not claimed.
 
 - **Scope:** formal bitemporal row-version model; SQL system-time clauses; history retention; correction/cancellation semantics; compaction and index support; audit visibility.
 - **Explicit non-scope:** general distributed transactions, legal/compliance certification, retroactive mutation of immutable history, and distribution before the model is validated locally.

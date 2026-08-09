@@ -58,14 +58,15 @@ std::size_t EncodedCsegPart::retained_buffer_bytes() const noexcept {
   return bytes_.capacity();
 }
 
-common::Result<EncodedCsegPart> encode_cseg_v1_part(const CsegPartEncodeInput& input) {
+common::Result<EncodedCsegPart> encode_cseg_part(const CsegPartEncodeInput& input,
+                                                 const std::uint16_t format_major) {
   std::vector<CsegPageMetadataInput> page_metadata;
   page_metadata.reserve(input.pages.size());
   for (const EncodedCsegPage& page : input.pages) {
     page_metadata.push_back(page.metadata());
   }
 
-  const common::Result<EncodedCsegMetadata> metadata = encode_cseg_v1_metadata({
+  const CsegMetadataEncodeInput metadata_input{
       .part_id = input.part_id,
       .table_id = input.table_id,
       .tablet_id = input.tablet_id,
@@ -79,7 +80,10 @@ common::Result<EncodedCsegPart> encode_cseg_v1_part(const CsegPartEncodeInput& i
       .columns = input.columns,
       .granules = input.granules,
       .pages = page_metadata,
-  });
+  };
+  const common::Result<EncodedCsegMetadata> metadata =
+      format_major == format::kFormatMajor ? encode_cseg_v1_metadata(metadata_input)
+                                           : encode_cseg_v2_temporal_metadata(metadata_input);
   if (!metadata.has_value()) {
     return common::make_unexpected(metadata.error());
   }
@@ -108,6 +112,14 @@ common::Result<EncodedCsegPart> encode_cseg_v1_part(const CsegPartEncodeInput& i
   return EncodedCsegPart{std::move(storage)};
 }
 
+common::Result<EncodedCsegPart> encode_cseg_v1_part(const CsegPartEncodeInput& input) {
+  return encode_cseg_part(input, format::kFormatMajor);
+}
+
+common::Result<EncodedCsegPart> encode_cseg_v2_temporal_part(const CsegPartEncodeInput& input) {
+  return encode_cseg_part(input, temporal_format::kFormatMajor);
+}
+
 DecodedCsegPartView::DecodedCsegPartView(DecodedCsegMetadataView metadata,
                                          const common::ByteView encoded_part) noexcept
     : metadata_(std::move(metadata)), encoded_part_(encoded_part) {}
@@ -132,9 +144,12 @@ DecodedCsegPartView::decode_page(const std::size_t page_index) const {
                              metadata_.columns()[page.stored_column_ordinal], page);
 }
 
-CsegPartDecodeResult decode_cseg_v1_part_prefix(const common::ByteView bytes,
-                                                const CsegMetadataDecodeLimits limits) {
-  CsegMetadataDecodeResult metadata = decode_cseg_v1_metadata_prefix(bytes, limits);
+CsegPartDecodeResult decode_cseg_part_prefix(const common::ByteView bytes,
+                                             const CsegMetadataDecodeLimits limits,
+                                             const std::uint16_t expected_major) {
+  CsegMetadataDecodeResult metadata = expected_major == format::kFormatMajor
+                                          ? decode_cseg_v1_metadata_prefix(bytes, limits)
+                                          : decode_cseg_v2_temporal_metadata_prefix(bytes, limits);
   if (!metadata.has_value()) {
     return std::unexpected(metadata.error());
   }
@@ -170,9 +185,31 @@ CsegPartDecodeResult decode_cseg_v1_part_prefix(const common::ByteView bytes,
   return DecodedCsegPartView{std::move(*metadata), part};
 }
 
+CsegPartDecodeResult decode_cseg_v1_part_prefix(const common::ByteView bytes,
+                                                const CsegMetadataDecodeLimits limits) {
+  return decode_cseg_part_prefix(bytes, limits, format::kFormatMajor);
+}
+
+CsegPartDecodeResult decode_cseg_v2_temporal_part_prefix(const common::ByteView bytes,
+                                                         const CsegMetadataDecodeLimits limits) {
+  return decode_cseg_part_prefix(bytes, limits, temporal_format::kFormatMajor);
+}
+
 CsegPartDecodeResult decode_cseg_v1_part_exact(const common::ByteView bytes,
                                                const CsegMetadataDecodeLimits limits) {
   CsegPartDecodeResult decoded = decode_cseg_v1_part_prefix(bytes, limits);
+  if (!decoded.has_value()) {
+    return decoded;
+  }
+  if (bytes.size() != decoded->encoded_part().size()) {
+    return std::unexpected(corruption("CSEG part exact decoder rejects trailing bytes"));
+  }
+  return decoded;
+}
+
+CsegPartDecodeResult decode_cseg_v2_temporal_part_exact(const common::ByteView bytes,
+                                                        const CsegMetadataDecodeLimits limits) {
+  CsegPartDecodeResult decoded = decode_cseg_v2_temporal_part_prefix(bytes, limits);
   if (!decoded.has_value()) {
     return decoded;
   }
