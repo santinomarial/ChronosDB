@@ -119,3 +119,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0082](0082-source-neutral-manifest-v2-layout.md) | Source-neutral Manifest v2 layout | accepted |
 | [0083](0083-manifest-v2-temporal-wal-recovery.md) | Manifest v2 temporal WAL recovery composition | accepted |
 | [0084](0084-verified-temporal-checkpoint-overlap.md) | Verified temporal checkpoint overlap | accepted |
+| [0085](0085-raft-tablet-application-snapshot-v1.md) | Raft Tablet Application Snapshot v1 | accepted |

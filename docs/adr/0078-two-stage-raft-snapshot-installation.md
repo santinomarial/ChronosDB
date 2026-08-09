@@ -3,6 +3,7 @@
 - **Status:** accepted
 - **Date:** 2026-08-08
 - **Owners:** ChronosDB distributed-systems and storage maintainers
+- **Extended by:** [ADR 0085](0085-raft-tablet-application-snapshot-v1.md)
 
 ## Context
 

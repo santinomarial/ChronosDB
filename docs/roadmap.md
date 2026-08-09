@@ -711,8 +711,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   frozen CSEG/Manifest v1 boundaries reject Raft identities they cannot represent. Asynchronous
   committed command application now decodes exact COLUMNAR_APPEND bytes, preserves uncommitted
   invisibility, durably advances applied indexes after publication, and rebuilds fresh tablet state
-  from the complete retained committed log. Asynchronous worker scheduling/fairness, a versioned
-  replicated durable-row/application-snapshot format and reclamation are not implemented. A leader
+  from the complete retained committed log. A versioned, checksummed Raft tablet
+  application-snapshot codec now binds group/table/tablet identities and complete snapshot metadata
+  to exact original command positions. Durable snapshot installation/recovery and reclamation are
+  not implemented. Asynchronous worker scheduling/fairness also remains deferred. A leader
   under stable or joint membership can now produce a checked quorum-sync receipt after
   majority-derived durable commit, and tablet application composes it with visibility; native
   client mode exposure and end-to-end crash evidence remain. The phase exit gate is not claimed.

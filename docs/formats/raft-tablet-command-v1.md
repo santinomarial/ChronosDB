@@ -1,7 +1,8 @@
 # Raft Tablet Command v1
 
 > **Status: implemented for committed `COLUMNAR_APPEND` application.**
-> Application snapshots and a replicated durable-row format are not part of this version.
+> Application commands retain these exact bytes inside the separate versioned
+> [Raft Tablet Application Snapshot v1](raft-tablet-application-snapshot-v1.md).
 
 One logical tablet Raft group stores application commands in the `LogEntry` values embedded by the
 [Multiplexed Raft Persistent-State Record v1](multiplexed-raft-log-v1.md). Logical entry type `1`

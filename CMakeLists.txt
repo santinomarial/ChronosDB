@@ -268,6 +268,7 @@ add_library(
   src/ingest/columnar_append_recovery.cpp
   src/ingest/committed_columnar_append.cpp
   src/ingest/deduplication_key.cpp
+  src/ingest/raft_tablet_snapshot.cpp
   src/ingest/raft_tablet_state_machine.cpp
   src/ingest/retry_directory.cpp
   src/ingest/sealed_head_flush_queue.cpp
@@ -957,6 +958,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/ingest/identity_test.cpp
     tests/ingest/raft_tablet_state_machine_header_self_contained.cpp
     tests/ingest/raft_tablet_state_machine_test.cpp
+    tests/ingest/raft_tablet_snapshot_header_self_contained.cpp
+    tests/ingest/raft_tablet_snapshot_test.cpp
     tests/ingest/retry_directory_header_self_contained.cpp
     tests/ingest/retry_directory_test.cpp
     tests/ingest/sealed_head_flush_queue_header_self_contained.cpp
