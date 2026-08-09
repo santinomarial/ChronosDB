@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <gtest/gtest.h>
 #include <string>
 #include <system_error>
@@ -128,6 +129,32 @@ TEST(RaftPersistentLogTest, ExplicitRepairRemovesOnlyIncompleteFinalRecord) {
             complete_size - 8U - repaired->recovery().written_position.end_offset);
   ASSERT_EQ(repaired->recovery().latest_group_states.size(), 1U);
   EXPECT_EQ(repaired->recovery().latest_group_states.front(), state(group, 1U, 0x11U));
+}
+
+TEST(RaftPersistentLogTest, CompleteRecordCorruptionIsNeverTailRepaired) {
+  TemporaryDirectory directory;
+  const RaftPersistentLogConfig config{.directory_path = directory.path().string()};
+  auto log = RaftPersistentLog::create_new(config);
+  ASSERT_TRUE(log.has_value());
+  ASSERT_TRUE(log->append(state(group_id(std::byte{4U}), 1U, 0x44U)).has_value());
+  ASSERT_TRUE(log->synchronize().has_value());
+  ASSERT_TRUE(log->close().is_ok());
+  const std::filesystem::path segment = highest_segment(directory.path());
+  std::fstream bytes(segment, std::ios::in | std::ios::out | std::ios::binary);
+  ASSERT_TRUE(bytes.is_open());
+  bytes.seekg(-5, std::ios::end);
+  char value{};
+  bytes.read(&value, 1);
+  value ^= 1;
+  bytes.seekp(-5, std::ios::end);
+  bytes.write(&value, 1);
+  bytes.close();
+
+  auto corrupted = RaftPersistentLog::open_existing(
+      config, RaftPersistentLogOpenOptions{.repair_incomplete_final_tail = true});
+
+  ASSERT_FALSE(corrupted.has_value());
+  EXPECT_EQ(corrupted.error().code(), common::StatusCode::kCorruption);
 }
 
 } // namespace
