@@ -159,6 +159,11 @@ columnar command is supported and statelessly valid before table mutation begins
 the global sequence to fresh unpublished state and uses each record's actual WAL identity and
 sequence as the commit position.
 
+The shared in-memory state now tags the commit source explicitly. Single-node replay uses a WAL ID
+and record sequence; committed replicated application uses a Raft group ID and log index. A head
+may advance only within one such history. CSEG v1 and Manifest v1 remain WAL-only and fail before
+serializing a Raft identity until a new durable format is accepted.
+
 The reference state for one tablet is conceptually:
 
 ```text

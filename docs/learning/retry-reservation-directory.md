@@ -93,8 +93,9 @@ after WAL start modify an existing entry and assign one shared pointer; they do 
 The eventual ingestion coordinator must still reserve tablet/head/publication resources before WAL
 admission as required by the architecture.
 
-Invalid outcome pointers, mismatched mutation identities, zero commit positions, zero row counts,
-and invalid or stale handles fail without changing the owned entry. A dropped WAL-started handle is
+Invalid outcome pointers, mismatched mutation identities, invalid source-specific commit positions,
+zero row counts, and invalid or stale handles fail without changing the owned entry. A committed
+outcome retains either its WAL ID or its Raft group ID, never both. A dropped WAL-started handle is
 intentionally fail-closed: the entry remains in-flight until the whole process-local state is
 discarded and reconstructed by future recovery. This primitive does not pretend that it can infer
 whether an ambiguous WAL operation became durable.

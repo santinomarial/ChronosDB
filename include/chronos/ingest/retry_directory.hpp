@@ -2,9 +2,9 @@
 #define CHRONOS_INGEST_RETRY_DIRECTORY_HPP_
 
 #include "chronos/common/result.hpp"
+#include "chronos/head/mutable_head.hpp"
 #include "chronos/ingest/identity.hpp"
 #include "chronos/ingest/sha256.hpp"
-#include "chronos/head/mutable_head.hpp"
 #include "chronos/schema/identity.hpp"
 #include "chronos/wal/types.hpp"
 

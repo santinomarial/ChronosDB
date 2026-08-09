@@ -663,9 +663,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   committed-order metadata state machine are implemented. Focused tests cover different group
   leaders, isolation, node loss, reopen, metadata order, rotation, tail repair, and corruption.
   A single-thread-affine durable runtime now batches caller-provided operations behind one local sync
-  and withholds outbound messages until it completes. Asynchronous worker scheduling/fairness,
-  command application, snapshots, reclamation, and QUORUM_SYNC are not implemented; the phase exit
-  gate is not claimed.
+  and withholds outbound messages until it completes. Mutable heads, tablet publications, row
+  versions, and retry outcomes now distinguish WAL histories from Raft group/index histories;
+  frozen CSEG/Manifest v1 boundaries reject Raft identities they cannot represent. Asynchronous
+  worker scheduling/fairness, command application, a versioned replicated durable-row format,
+  snapshots, reclamation, and QUORUM_SYNC are not implemented; the phase exit gate is not claimed.
 
 - **Scope:** map tablets to Raft groups; multiplex logical records over physical logs, threads, timers, and connections; lifecycle, placement, snapshot transfer, fairness, and safe per-group reclamation.
 - **Explicit non-scope:** globally ordered logs, cross-tablet atomic transactions, distributed query execution, automatic rebalancing beyond scoped placement mechanics, and conflating physical offsets with logical indexes.

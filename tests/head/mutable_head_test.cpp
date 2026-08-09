@@ -30,6 +30,12 @@ namespace {
   return id;
 }
 
+[[nodiscard]] common::Uuid raft_group_id(const std::uint8_t seed = 9U) {
+  common::Uuid::Bytes bytes{};
+  bytes.back() = static_cast<std::byte>(seed);
+  return common::Uuid{bytes};
+}
+
 [[nodiscard]] HeadCommitPosition position(const std::uint64_t sequence,
                                           const std::uint8_t wal_seed = 1U) {
   return HeadCommitPosition{.wal_id = wal_id(wal_seed), .record_sequence = sequence};
@@ -200,6 +206,30 @@ TEST(MutableHeadTest, PublishesTheCompleteBatchAndHiddenMetadataAtOneBoundary) {
   EXPECT_EQ(metrics.published_rows, 2U);
   EXPECT_EQ(metrics.published_variable_bytes, 1U);
   EXPECT_FALSE(metrics.failed);
+}
+
+TEST(MutableHeadTest, PreservesRaftGroupAndIndexAsTheRowVersionIdentity) {
+  MutableHead target = head(4U, 2U);
+  const auto input = batch();
+  PreparedHeadAppend prepared = prepare(target, input);
+  ASSERT_TRUE(prepared.mark_wal_started().is_ok());
+  const HeadCommitPosition raft = HeadCommitPosition::raft(raft_group_id(), 11U);
+  const common::Result<HeadSnapshot> published = prepared.publish(raft);
+  ASSERT_TRUE(published.has_value()) << published.error().to_string();
+  EXPECT_EQ(published->applied_position(), raft);
+  EXPECT_EQ(published->row_metadata(0U)->commit_position, raft);
+  EXPECT_EQ(published->row_version_identity(1U).value(),
+            (RowVersionIdentity{.table_id = input->schema().table_id(),
+                                .tablet_id = tablet_id(),
+                                .commit_source = CommitSource::kRaft,
+                                .raft_group_id = raft_group_id(),
+                                .record_sequence = 11U,
+                                .row_ordinal = 1U}));
+
+  PreparedHeadAppend mixed = prepare(target, input);
+  ASSERT_TRUE(mixed.mark_wal_started().is_ok());
+  EXPECT_EQ(mixed.publish(position(12U)).error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_TRUE(target.metrics().failed);
 }
 
 TEST(MutableHeadTest, OldSnapshotsKeepExactBoundariesAndStableStorageAcrossLaterAppends) {

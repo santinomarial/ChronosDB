@@ -44,6 +44,12 @@ namespace {
   return id;
 }
 
+[[nodiscard]] common::Uuid raft_group_id(const std::uint8_t seed = 11U) {
+  common::Uuid::Bytes bytes{};
+  bytes.back() = static_cast<std::byte>(seed);
+  return common::Uuid{bytes};
+}
+
 [[nodiscard]] std::shared_ptr<const ColumnarAppendRetryOutcome>
 outcome(const ColumnarAppendMutationIdentity& identity, const std::uint64_t sequence = 7U,
         const std::uint32_t rows = 3U) {
@@ -207,6 +213,25 @@ TEST(RetryDirectoryTest, CommitsOnlyAValidPublishedOutcomeAfterWalStarts) {
   ColumnarAppendMutationIdentity other_target = request;
   other_target.tablet_id = columnar::test::id<schema::TabletId>(999U);
   EXPECT_EQ(directory.try_reserve(key, other_target)->kind(), RetryDecisionKind::kConflict);
+}
+
+TEST(RetryDirectoryTest, CommitsAnExactRaftSourcedOutcome) {
+  RetryDirectory directory = RetryDirectory::create({.maximum_entries = 1U}).value();
+  const RetryIdentity key = retry_identity(1U);
+  const ColumnarAppendMutationIdentity request = mutation(1U);
+  RetryDecision decision = directory.try_reserve(key, request).value();
+  RetryReservation reservation = take_reservation(decision);
+  ASSERT_TRUE(reservation.mark_wal_started().is_ok());
+  const auto published = std::make_shared<const ColumnarAppendRetryOutcome>(
+      ColumnarAppendRetryOutcome{.mutation = request,
+                                 .commit_source = head::CommitSource::kRaft,
+                                 .raft_group_id = raft_group_id(),
+                                 .record_sequence = 17U,
+                                 .applied_row_count = 3U});
+  const auto committed = reservation.commit_published(published);
+  ASSERT_TRUE(committed.has_value()) << committed.error().to_string();
+  EXPECT_EQ(*committed, published);
+  EXPECT_EQ(directory.try_reserve(key, request)->committed_outcome().get(), published.get());
 }
 
 TEST(RetryDirectoryTest, IdentityScopeIncludesBothNominalComponents) {

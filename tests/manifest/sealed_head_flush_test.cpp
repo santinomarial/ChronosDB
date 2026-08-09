@@ -40,6 +40,12 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint16_t v
   return value;
 }
 
+[[nodiscard]] common::Uuid raft_group_id() {
+  common::Uuid::Bytes bytes{};
+  bytes.back() = std::byte{0x72U};
+  return common::Uuid{bytes};
+}
+
 template <typename Integer> void append_le(std::vector<std::byte>& bytes, const Integer value) {
   using Unsigned = std::make_unsigned_t<Integer>;
   const Unsigned encoded = std::bit_cast<Unsigned>(value);
@@ -188,6 +194,23 @@ TEST(SealedHeadFlushTest, RejectsActiveAndEmptySealedGenerations) {
   EXPECT_EQ(
       encode_sealed_head_v1({.snapshot = empty_snapshot, .part_id = part_id()}).error().code(),
       common::StatusCode::kInvalidArgument);
+}
+
+TEST(SealedHeadFlushTest, RejectsRaftIdentityThatCsegV1CannotRepresent) {
+  const std::shared_ptr<const schema::TableSchema> schema = columnar::test::batch_schema();
+  head::MutableHead target =
+      head::MutableHead::create(schema, id<schema::TabletId>(70U), 3U,
+                                {.row_capacity = 2U, .variable_value_bytes = {0U, 2U, 0U}})
+          .value();
+  head::PreparedHeadAppend prepared =
+      target.prepare_append(batch(schema, {30, 10}, {'c', 'a'}, {true, false})).value();
+  ASSERT_TRUE(prepared.mark_wal_started().is_ok());
+  ASSERT_TRUE(prepared.publish(head::HeadCommitPosition::raft(raft_group_id(), 7U)).has_value());
+  const head::HeadSnapshot snapshot = target.seal().value();
+  const auto encoded = encode_sealed_head_v1({.snapshot = snapshot, .part_id = part_id()});
+  ASSERT_FALSE(encoded.has_value());
+  EXPECT_EQ(encoded.error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_NE(encoded.error().message().find("CSEG v1"), std::string::npos);
 }
 
 TEST(SealedHeadFlushTest, DeterministicallySortsMaterializesAndDescribesOneGeneration) {

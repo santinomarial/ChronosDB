@@ -106,3 +106,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0069](0069-deterministic-raft-and-multiplexed-state-record.md) | Deterministic Raft and multiplexed state records | accepted |
 | [0070](0070-feature-pass-logical-boundaries.md) | Temporal, distributed, cold-tier, and runtime feature-pass boundaries | accepted |
 | [0071](0071-segmented-multi-raft-persistence.md) | Segmented Multi-Raft persistence and recovery | accepted |
+| [0072](0072-explicit-wal-and-raft-commit-identities.md) | Explicit WAL and Raft commit identities | accepted |

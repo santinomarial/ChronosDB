@@ -29,6 +29,12 @@ namespace {
   return id;
 }
 
+[[nodiscard]] common::Uuid raft_group_id(const std::uint8_t seed = 9U) {
+  common::Uuid::Bytes bytes{};
+  bytes.back() = static_cast<std::byte>(seed);
+  return common::Uuid{bytes};
+}
+
 [[nodiscard]] head::HeadCommitPosition position(const std::uint64_t sequence,
                                                 const std::uint8_t wal_seed = 1U) {
   return head::HeadCommitPosition{.wal_id = wal_id(wal_seed), .record_sequence = sequence};
@@ -356,6 +362,22 @@ TEST(TabletStateTest, PublishesRowsPositionAndExactRetryOutcomeTogether) {
   const TabletSnapshot reacquired = target.snapshot().value();
   EXPECT_EQ(reacquired.retry_outcome(retry_identity(1U)).get(), result.outcome.get());
   EXPECT_EQ(reacquired.active_generation().row_count(), 2U);
+}
+
+TEST(TabletStateTest, PublishesRaftCommitIdentityIntoRowsAndRetryOutcome) {
+  TabletState target = tablet();
+  const auto input = batch();
+  PreparedTabletAppend prepared = prepare(target, 1U, input);
+  ASSERT_TRUE(prepared.mark_wal_started().is_ok());
+  const head::HeadCommitPosition raft = head::HeadCommitPosition::raft(raft_group_id(), 13U);
+  const common::Result<TabletAppendResult> result = prepared.publish(raft);
+  ASSERT_TRUE(result.has_value()) << result.error().to_string();
+  EXPECT_EQ(result->snapshot.applied_position(), raft);
+  EXPECT_EQ(result->outcome->commit_source, head::CommitSource::kRaft);
+  EXPECT_FALSE(result->outcome->wal_id.is_valid());
+  EXPECT_EQ(result->outcome->raft_group_id, raft_group_id());
+  EXPECT_EQ(result->outcome->record_sequence, 13U);
+  EXPECT_EQ(result->snapshot.active_generation().row_metadata(1U)->commit_position, raft);
 }
 
 TEST(TabletStateTest, MatchingRecoveredRetryAdvancesOnlyTheOuterAppliedPosition) {

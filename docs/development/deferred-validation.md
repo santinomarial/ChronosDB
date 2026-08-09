@@ -75,7 +75,9 @@
 - Encode/decode metadata commands through the metadata Raft group; durable schemas, nodes, tablet
   placement, membership, leader hints, retention, cluster epochs, and metadata snapshots.
 - Apply committed tablet commands to existing ingestion/table-state machinery; prove uncommitted
-  invisibility. Implement and validate true QUORUM_SYNC before exposing the mode.
+  invisibility. Version CSEG/Manifest row identities for Raft source/group positions and cover
+  flush, restart, query row-version columns, and compaction migration. Implement and validate true
+  QUORUM_SYNC before exposing the mode.
 - Thousands-of-groups simulation, one-node loss, group lifecycle, persisted reopen, noisy-neighbor,
   TSan/chaos, physical amplification, group density, memory, and tail benchmarks.
 

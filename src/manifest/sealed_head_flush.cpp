@@ -236,8 +236,7 @@ struct WalBounds {
       return common::make_unexpected(metadata.error());
     }
     if (metadata->commit_position.source != head::CommitSource::kWal) {
-      return common::make_unexpected(
-          invalid("CSEG v1 cannot encode a non-WAL commit position"));
+      return common::make_unexpected(invalid("CSEG v1 cannot encode a non-WAL commit position"));
     }
     if (row == 0U) {
       result.wal_id = metadata->commit_position.wal_id;

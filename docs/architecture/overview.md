@@ -348,9 +348,12 @@ group, while a small metadata group owns schemas, placement, nodes, leader hints
 cluster metadata. The deterministic Raft and bounded Multi-Raft logical cores, metadata application,
 full-state physical record codec, segmented append/sync/recovery owner, distributed aggregate
 primitives, and safe movement state machine are implemented. Readers may observe only committed and
-applied entries under an explicitly selected consistency level. Production timers, transport,
-persistence batching, application to tablet storage, snapshot installation, membership protocol,
-read index/staleness proof, and a packaged cluster runtime remain unimplemented. The
+applied entries under an explicitly selected consistency level. In-memory tablet commit positions
+now distinguish a WAL identity from a Raft group/index identity, while frozen CSEG/Manifest v1
+writers reject Raft identities rather than aliasing them into WAL fields. Production timers,
+transport, application to tablet storage, a replicated durable-row format, snapshot installation,
+membership protocol, read index/staleness proof, and a packaged cluster runtime remain
+unimplemented. The
 single-thread-affine durable runtime already accepts bounded operation batches, persists every
 state-changing transition under one local sync, and exposes outbound messages only afterward.
 
