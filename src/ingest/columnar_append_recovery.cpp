@@ -1,8 +1,8 @@
 #include "chronos/ingest/columnar_append_recovery.hpp"
 
-#include "chronos/columnar/column_vector.hpp"
 #include "chronos/common/bytes.hpp"
 #include "chronos/head/mutable_head.hpp"
+#include "chronos/ingest/committed_columnar_append.hpp"
 #include "chronos/schema/schema_lineage.hpp"
 #include "chronos/wal/codec.hpp"
 #include "chronos/wal/wal_replay_sink.hpp"
@@ -50,51 +50,6 @@ namespace {
     return corruption(context + ": " + status.message());
   default:
     return status;
-  }
-}
-
-[[nodiscard]] common::Result<std::shared_ptr<const columnar::OwnedColumnarBatch>>
-own_batch(const columnar::DecodedColumnarBatchView& decoded,
-          std::shared_ptr<const schema::TableSchema> schema,
-          const ColumnarAppendDecodeLimits& limits) {
-  try {
-    std::vector<columnar::OwnedColumnVector> columns;
-    columns.reserve(decoded.columns().size());
-    for (const columnar::ColumnVectorView& view : decoded.columns()) {
-      columnar::ColumnVectorBuffers buffers{
-          .validity = std::vector<std::byte>{view.validity().begin(), view.validity().end()},
-          .offsets = std::vector<std::byte>{view.offsets().begin(), view.offsets().end()},
-          .values = std::vector<std::byte>{view.values().begin(), view.values().end()},
-      };
-      common::Result<columnar::OwnedColumnVector> column = columnar::OwnedColumnVector::create(
-          columnar::ColumnVectorMetadata{.column_id = view.column_id(),
-                                         .type = view.type(),
-                                         .nullable = view.nullable(),
-                                         .row_count = view.row_count(),
-                                         .null_count = view.null_count()},
-          std::move(buffers));
-      if (!column.has_value()) {
-        return common::make_unexpected(
-            replay_inconsistency(column.error(), "decoded column could not become owned"));
-      }
-      columns.push_back(std::move(*column));
-    }
-
-    common::Result<columnar::OwnedColumnarBatch> batch = columnar::OwnedColumnarBatch::create(
-        std::move(schema), std::move(columns),
-        columnar::ColumnarBatchLimits{.max_rows = limits.batch.max_rows,
-                                      .max_columns = limits.batch.max_columns,
-                                      .max_buffer_bytes = limits.batch.max_batch_length,
-                                      .max_retained_buffer_bytes = limits.batch.max_batch_length});
-    if (!batch.has_value()) {
-      return common::make_unexpected(
-          replay_inconsistency(batch.error(), "decoded batch could not become owned"));
-    }
-    return std::make_shared<const columnar::OwnedColumnarBatch>(std::move(*batch));
-  } catch (const std::bad_alloc&) {
-    return common::make_unexpected(exhausted("recovered batch allocation failed"));
-  } catch (const std::length_error&) {
-    return common::make_unexpected(exhausted("recovered batch exceeds container limits"));
   }
 }
 
@@ -260,34 +215,17 @@ public:
       return internal("preflighted recovery tablet disappeared before replay");
     }
 
-    const RetryIdentity retry_identity{.client_id = command->client_id(),
-                                       .client_batch_id = command->client_batch_id()};
-    const ColumnarAppendMutationIdentity mutation{.table_id = command->table_id(),
-                                                  .tablet_id = command->tablet_id(),
-                                                  .request_digest = command->request_digest()};
-    common::Result<RetryDecision> decision = retry_directory_.try_reserve(retry_identity, mutation);
-    if (!decision.has_value()) {
-      return decision.error();
-    }
     const head::HeadCommitPosition position{.wal_id = record.record_start.wal_id,
                                             .record_sequence = record.header.record_sequence};
-    switch (decision->kind()) {
-    case RetryDecisionKind::kConflict:
-      return corruption("WAL history reuses a client batch identity for a different mutation");
-    case RetryDecisionKind::kInFlight:
-      return corruption("WAL replay encountered an impossible in-flight retry identity");
-    case RetryDecisionKind::kMatchingCommitted: {
-      const std::shared_ptr<const ColumnarAppendRetryOutcome>& outcome =
-          decision->committed_outcome();
-      if (outcome == nullptr || outcome->applied_row_count != command->row_count()) {
-        return corruption("matching recovered retry disagrees with its published outcome");
-      }
-      common::Result<TabletSnapshot> advanced =
-          target->state.advance_recovered_retry(retry_identity, mutation, outcome, position);
-      if (!advanced.has_value()) {
-        return replay_inconsistency(advanced.error(),
-                                    "matching recovered retry could not advance tablet position");
-      }
+    auto applied = apply_committed_columnar_append(*command, std::move(*retained_schema), position,
+                                                   retry_directory_, target->state, decode_limits_);
+    if (!applied.has_value()) {
+      return replay_inconsistency(applied.error(), "recovered append could not apply");
+    }
+    if (applied->kind == CommittedColumnarAppendKind::kMatchingRetry) {
+      const RetryIdentity retry_identity{.client_id = command->client_id(),
+                                         .client_batch_id = command->client_batch_id()};
+      const std::shared_ptr<const ColumnarAppendRetryOutcome>& outcome = applied->outcome;
       if (record.header.record_sequence == outcome->record_sequence) {
         const auto expected =
             std::ranges::find_if(seed_retry_expectations_, [&](const SeedRetryExpectation& item) {
@@ -306,48 +244,6 @@ public:
       if (boundary != tablet_boundary_expectations_.end()) {
         boundary->observed = true;
       }
-      return common::Status::ok();
-    }
-    case RetryDecisionKind::kReserved:
-      break;
-    }
-    if (decision->reservation() == nullptr) {
-      return internal("recovery retry reservation has no owner handle");
-    }
-    RetryReservation reservation = std::move(*decision->reservation());
-    common::Result<std::shared_ptr<const columnar::OwnedColumnarBatch>> batch =
-        own_batch(command->batch(), std::move(*retained_schema), decode_limits_);
-    if (!batch.has_value()) {
-      return batch.error();
-    }
-    common::Result<PreparedTabletAppend> prepared =
-        target->state.prepare_append(retry_identity, mutation, std::move(*batch));
-    if (!prepared.has_value()) {
-      return replay_inconsistency(prepared.error(),
-                                  "recovered append could not reserve tablet state");
-    }
-    common::Status retry_started = reservation.mark_wal_started();
-    if (!retry_started.is_ok()) {
-      return replay_inconsistency(retry_started,
-                                  "recovered retry could not cross its WAL boundary");
-    }
-    common::Status tablet_started = prepared->mark_wal_started();
-    if (!tablet_started.is_ok()) {
-      return replay_inconsistency(tablet_started,
-                                  "recovered tablet append could not cross its WAL boundary");
-    }
-    common::Result<TabletAppendResult> published = prepared->publish(position);
-    if (!published.has_value()) {
-      return replay_inconsistency(published.error(), "recovered tablet append could not publish");
-    }
-    common::Result<std::shared_ptr<const ColumnarAppendRetryOutcome>> committed =
-        reservation.commit_published(published->outcome);
-    if (!committed.has_value()) {
-      return replay_inconsistency(committed.error(),
-                                  "recovered retry outcome could not become globally visible");
-    }
-    if (committed->get() != published->outcome.get()) {
-      return internal("recovery changed the tablet-published retry outcome object");
     }
     return common::Status::ok();
   }

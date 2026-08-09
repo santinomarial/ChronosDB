@@ -264,7 +264,9 @@ add_library(
   src/ingest/columnar_append.cpp
   src/ingest/columnar_append_executor.cpp
   src/ingest/columnar_append_recovery.cpp
+  src/ingest/committed_columnar_append.cpp
   src/ingest/deduplication_key.cpp
+  src/ingest/raft_tablet_state_machine.cpp
   src/ingest/retry_directory.cpp
   src/ingest/sealed_head_flush_queue.cpp
   src/ingest/sha256.cpp
@@ -282,7 +284,7 @@ target_include_directories(
 )
 target_link_libraries(
   chronos_ingest
-  PUBLIC chronos::columnar chronos::head chronos::wal
+  PUBLIC chronos::columnar chronos::head chronos::raft chronos::wal
   PRIVATE OpenSSL::Crypto
 )
 chronos_set_project_warnings(chronos_ingest)
@@ -919,11 +921,14 @@ if(CHRONOS_BUILD_TESTS)
     tests/ingest/columnar_append_header_self_contained.cpp
     tests/ingest/columnar_append_recovery_header_self_contained.cpp
     tests/ingest/columnar_append_recovery_test.cpp
+    tests/ingest/committed_columnar_append_header_self_contained.cpp
     tests/ingest/columnar_append_property_test.cpp
     tests/ingest/columnar_append_test.cpp
     tests/ingest/deduplication_key_test.cpp
     tests/ingest/identity_header_self_contained.cpp
     tests/ingest/identity_test.cpp
+    tests/ingest/raft_tablet_state_machine_header_self_contained.cpp
+    tests/ingest/raft_tablet_state_machine_test.cpp
     tests/ingest/retry_directory_header_self_contained.cpp
     tests/ingest/retry_directory_test.cpp
     tests/ingest/sealed_head_flush_queue_header_self_contained.cpp
