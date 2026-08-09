@@ -119,8 +119,10 @@ buffer and defaults to a 1 GiB operational limit even though the durable format 
 None of these CSEG-local APIs make a file durable or safe to reference from a manifest. Manifest v2
 now has a separate exact single-image admission boundary that binds CSEG 2/0 bytes, schema, source,
 digest, and recomputed temporal extrema. Its complete-generation validator additionally requires
-exact descriptor-order image coverage and canonical names. The images remain only candidates until
-the pending v2 installation protocol durably places them and publishes that validated generation.
+exact descriptor-order image coverage and canonical names. The local Manifest v2 storage path now
+durably installs validated candidates with exact readback, file sync, no-replace rename, and
+directory sync. They become generation-authorized durable objects after the corresponding v2
+Manifest installation boundary; loaded recovery/query publication is still pending.
 
 ## Complexity
 

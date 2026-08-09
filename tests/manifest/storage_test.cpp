@@ -275,6 +275,77 @@ struct PartFixture {
   }
 };
 
+struct TemporalStorageFixture {
+  cseg::EncodedCsegPart encoded{cseg::test::make_valid_temporal_part(cseg::PageCompression::kZstd)};
+  schema::TableId table_id{id<schema::TableId>(2U)};
+  schema::TabletId tablet_id{id<schema::TabletId>(3U)};
+  schema::SchemaId schema_id{id<schema::SchemaId>(4U)};
+  cseg::PartId part_id{id<cseg::PartId>(1U)};
+  common::Uuid source{common::Uuid{id<schema::SchemaId>(8U).bytes()}};
+  schema::TableSchema schema_value{make_schema()};
+  schema::SchemaLineage lineage{schema::SchemaLineage::create(schema_value).value()};
+  TemporalTabletDescriptor owner{.table_id = table_id,
+                                 .tablet_id = tablet_id,
+                                 .recovery_schema_id = schema_id,
+                                 .recovery_schema_version = schema::SchemaVersion::initial(),
+                                 .source_id = source,
+                                 .durable_position = 9U,
+                                 .reclaim_position = 0U,
+                                 .first_part_index = 0U,
+                                 .part_count = 1U,
+                                 .durable_version_count = 2U,
+                                 .commit_source = ManifestCommitSource::kWal};
+  TemporalPartDescriptor descriptor{
+      describe_manifest_v2_temporal_part_image(encoded.bytes(), schema_value, tablet_id,
+                                               ManifestCommitSource::kWal, source)
+          .value()};
+  DatabaseId database_id{id<DatabaseId>(6U)};
+  common::Uuid nonce{PartFixture::make_nonce(0xd0U)};
+
+  [[nodiscard]] schema::TableSchema make_schema() const {
+    const schema::ColumnId event_id = id<schema::ColumnId>(5U);
+    std::vector<schema::ColumnDefinition> columns;
+    columns.push_back(
+        schema::ColumnDefinition::create(
+            event_id, "event_time",
+            schema::LogicalType::create(schema::LogicalTypeKind::kTimestampNs).value(), false)
+            .value());
+    return schema::TableSchema::create(table_id, schema_id, schema::SchemaVersion::initial(),
+                                       std::nullopt, std::move(columns),
+                                       {.event_time_column = event_id,
+                                        .physical_ordering_key = {event_id},
+                                        .partition_columns = {event_id},
+                                        .shard_key = {event_id},
+                                        .deduplication_key = {event_id}})
+        .value();
+  }
+
+  [[nodiscard]] TemporalPartInstallRequest part_request(const common::Uuid& request_nonce) const {
+    return {.encoded_part = std::cref(encoded),
+            .descriptor = descriptor,
+            .owner = owner,
+            .schema = std::cref(schema_value),
+            .nonce = request_nonce,
+            .validation_limits = {}};
+  }
+
+  [[nodiscard]] EncodedTemporalManifest manifest(const std::uint64_t generation) const {
+    const std::array tablets{owner};
+    const std::array parts{descriptor};
+    return encode_manifest_v2_temporal({.generation = generation,
+                                        .database_id = database_id,
+                                        .wal_reclaim_checkpoint = std::nullopt,
+                                        .tablets = tablets,
+                                        .parts = parts,
+                                        .retries = {}})
+        .value();
+  }
+
+  [[nodiscard]] std::array<TabletSchemaBinding, 1> bindings() const {
+    return {TabletSchemaBinding{.tablet_id = tablet_id, .lineage = std::cref(lineage)}};
+  }
+};
+
 TEST(ManifestStorageTest, RequiresExactExistingDirectoryAndLockLayout) {
   TemporaryDirectory missing_directories;
   ASSERT_TRUE(missing_directories.valid());
@@ -337,6 +408,217 @@ TEST(ManifestStorageTest, InstallsExactValidatedPartAndReportsDurabilityMetrics)
                                                       .directory_syncs = 1U}));
   EXPECT_TRUE(owner.is_usable());
   EXPECT_TRUE(owner.poison_status().is_ok());
+}
+
+TEST(TemporalManifestStorageTest, InstallsValidatedPartAndExactSuccessorGeneration) {
+  TemporaryDirectory temporary;
+  ASSERT_TRUE(temporary.valid());
+  establish_layout(temporary.path());
+  const TemporalStorageFixture fixture;
+  const EncodedTemporalManifest predecessor = fixture.manifest(1U);
+  create_entry(temporary.path(),
+               std::filesystem::path{kManifestDirectoryName} / *manifest_file_name(1U),
+               predecessor.bytes());
+  ManifestStorage owner =
+      ManifestStorage::open_existing({.database_root = temporary.path().string()}).value();
+
+  const auto installed_part = owner.install_temporal_part(fixture.part_request(fixture.nonce));
+  ASSERT_TRUE(installed_part.has_value()) << installed_part.error().to_string();
+  EXPECT_EQ(installed_part->file_name, part_file_name(fixture.part_id));
+  EXPECT_EQ(installed_part->descriptor, fixture.descriptor);
+  EXPECT_TRUE(std::filesystem::is_regular_file(temporary.path() / kPartsDirectoryName /
+                                               installed_part->file_name));
+
+  const EncodedTemporalManifest candidate = fixture.manifest(2U);
+  const auto bindings = fixture.bindings();
+  const common::Uuid manifest_nonce = PartFixture::make_nonce(0xd1U);
+  const auto installed_manifest =
+      owner.install_temporal_manifest({.encoded_manifest = std::cref(candidate),
+                                       .schema_bindings = bindings,
+                                       .nonce = manifest_nonce,
+                                       .decode_limits = {},
+                                       .part_validation_limits = {}});
+  ASSERT_TRUE(installed_manifest.has_value()) << installed_manifest.error().to_string();
+  EXPECT_EQ(installed_manifest->file_name, *manifest_file_name(2U));
+  EXPECT_EQ(installed_manifest->generation, 2U);
+  EXPECT_FALSE(installed_manifest->wal_reclaim_checkpoint.has_value());
+  EXPECT_EQ(installed_manifest->tablet_count, 1U);
+  EXPECT_EQ(installed_manifest->part_count, 1U);
+  EXPECT_EQ(installed_manifest->retry_count, 0U);
+  EXPECT_TRUE(std::filesystem::is_regular_file(temporary.path() / kManifestDirectoryName /
+                                               *manifest_file_name(2U)));
+  EXPECT_FALSE(std::filesystem::exists(temporary.path() / kManifestDirectoryName /
+                                       *temporary_manifest_file_name(2U, manifest_nonce)));
+  EXPECT_EQ(owner.metrics().installed_parts, 1U);
+  EXPECT_EQ(owner.manifest_metrics().installed_generations, 1U);
+  EXPECT_EQ(owner.manifest_metrics().referenced_parts_validated, 1U);
+  EXPECT_EQ(owner.manifest_metrics().file_syncs, 1U);
+  EXPECT_EQ(owner.manifest_metrics().directory_syncs, 1U);
+}
+
+TEST(TemporalManifestStorageTest, RejectsDescriptorMismatchBeforeFilesystemMutation) {
+  TemporaryDirectory temporary;
+  ASSERT_TRUE(temporary.valid());
+  establish_layout(temporary.path());
+  ManifestStorage owner =
+      ManifestStorage::open_existing({.database_root = temporary.path().string()}).value();
+  const TemporalStorageFixture fixture;
+  TemporalPartInstallRequest request = fixture.part_request(fixture.nonce);
+  --request.descriptor.minimum_system_time;
+  EXPECT_EQ(owner.install_temporal_part(request).error().code(), common::StatusCode::kCorruption);
+  EXPECT_TRUE(std::filesystem::is_empty(temporary.path() / kPartsDirectoryName));
+  EXPECT_TRUE(owner.is_usable());
+}
+
+TEST(TemporalManifestStorageTest, PartDirectorySyncFailurePoisonsOwnerAfterRename) {
+  TemporaryDirectory temporary;
+  ASSERT_TRUE(temporary.valid());
+  establish_layout(temporary.path());
+  FailingFsyncSyscalls syscalls{{.fail_fsync_call = 2U}};
+  ManifestStorage owner = detail::ManifestStorageTestAccess::open_existing(
+                              {.database_root = temporary.path().string()}, syscalls)
+                              .value();
+  const TemporalStorageFixture fixture;
+  const auto installed = owner.install_temporal_part(fixture.part_request(fixture.nonce));
+  ASSERT_FALSE(installed.has_value());
+  EXPECT_EQ(installed.error().code(), common::StatusCode::kIoError);
+  EXPECT_FALSE(owner.is_usable());
+  EXPECT_TRUE(std::filesystem::exists(temporary.path() / kPartsDirectoryName /
+                                      part_file_name(fixture.part_id)));
+  EXPECT_EQ(owner.metrics().file_syncs, 1U);
+  EXPECT_EQ(owner.metrics().directory_syncs, 0U);
+}
+
+TEST(TemporalManifestStorageTest, CorruptPartReadbackFailsBeforeFileSync) {
+  TemporaryDirectory temporary;
+  ASSERT_TRUE(temporary.valid());
+  establish_layout(temporary.path());
+  FailingFsyncSyscalls syscalls{{.corrupt_pread_call = 1U}};
+  ManifestStorage owner = detail::ManifestStorageTestAccess::open_existing(
+                              {.database_root = temporary.path().string()}, syscalls)
+                              .value();
+  const TemporalStorageFixture fixture;
+  const auto installed = owner.install_temporal_part(fixture.part_request(fixture.nonce));
+  ASSERT_FALSE(installed.has_value());
+  EXPECT_EQ(installed.error().code(), common::StatusCode::kCorruption);
+  EXPECT_TRUE(owner.is_usable());
+  EXPECT_EQ(owner.metrics().file_syncs, 0U);
+  EXPECT_FALSE(std::filesystem::exists(temporary.path() / kPartsDirectoryName /
+                                       part_file_name(fixture.part_id)));
+  EXPECT_TRUE(std::filesystem::exists(temporary.path() / kPartsDirectoryName /
+                                      temporary_part_file_name(fixture.part_id, fixture.nonce)));
+}
+
+TEST(TemporalManifestStorageTest, CorruptManifestReadbackFailsBeforeFileSync) {
+  TemporaryDirectory temporary;
+  ASSERT_TRUE(temporary.valid());
+  establish_layout(temporary.path());
+  const TemporalStorageFixture fixture;
+  const EncodedTemporalManifest predecessor = fixture.manifest(1U);
+  create_entry(temporary.path(),
+               std::filesystem::path{kManifestDirectoryName} / *manifest_file_name(1U),
+               predecessor.bytes());
+  create_entry(temporary.path(),
+               std::filesystem::path{kPartsDirectoryName} / part_file_name(fixture.part_id),
+               fixture.encoded.bytes());
+  FailingFsyncSyscalls syscalls{{.corrupt_pread_call = 3U}};
+  ManifestStorage owner = detail::ManifestStorageTestAccess::open_existing(
+                              {.database_root = temporary.path().string()}, syscalls)
+                              .value();
+  const EncodedTemporalManifest candidate = fixture.manifest(2U);
+  const auto bindings = fixture.bindings();
+  const common::Uuid nonce = PartFixture::make_nonce(0xd2U);
+
+  const auto installed = owner.install_temporal_manifest({.encoded_manifest = std::cref(candidate),
+                                                          .schema_bindings = bindings,
+                                                          .nonce = nonce,
+                                                          .decode_limits = {},
+                                                          .part_validation_limits = {}});
+  ASSERT_FALSE(installed.has_value());
+  EXPECT_EQ(installed.error().code(), common::StatusCode::kCorruption);
+  EXPECT_TRUE(owner.is_usable());
+  EXPECT_EQ(owner.manifest_metrics().file_syncs, 0U);
+  EXPECT_FALSE(
+      std::filesystem::exists(temporary.path() / kManifestDirectoryName / *manifest_file_name(2U)));
+  EXPECT_TRUE(std::filesystem::exists(temporary.path() / kManifestDirectoryName /
+                                      *temporary_manifest_file_name(2U, nonce)));
+}
+
+TEST(TemporalManifestStorageTest, ManifestDirectorySyncFailurePoisonsOwnerAfterRename) {
+  TemporaryDirectory temporary;
+  ASSERT_TRUE(temporary.valid());
+  establish_layout(temporary.path());
+  const TemporalStorageFixture fixture;
+  const EncodedTemporalManifest predecessor = fixture.manifest(1U);
+  create_entry(temporary.path(),
+               std::filesystem::path{kManifestDirectoryName} / *manifest_file_name(1U),
+               predecessor.bytes());
+  create_entry(temporary.path(),
+               std::filesystem::path{kPartsDirectoryName} / part_file_name(fixture.part_id),
+               fixture.encoded.bytes());
+  FailingFsyncSyscalls syscalls{{.fail_fsync_call = 2U}};
+  ManifestStorage owner = detail::ManifestStorageTestAccess::open_existing(
+                              {.database_root = temporary.path().string()}, syscalls)
+                              .value();
+  const EncodedTemporalManifest candidate = fixture.manifest(2U);
+  const auto bindings = fixture.bindings();
+  const common::Uuid nonce = PartFixture::make_nonce(0xd3U);
+
+  const auto installed = owner.install_temporal_manifest({.encoded_manifest = std::cref(candidate),
+                                                          .schema_bindings = bindings,
+                                                          .nonce = nonce,
+                                                          .decode_limits = {},
+                                                          .part_validation_limits = {}});
+  ASSERT_FALSE(installed.has_value());
+  EXPECT_EQ(installed.error().code(), common::StatusCode::kIoError);
+  EXPECT_FALSE(owner.is_usable());
+  EXPECT_EQ(owner.manifest_metrics().file_syncs, 1U);
+  EXPECT_EQ(owner.manifest_metrics().directory_syncs, 0U);
+  EXPECT_TRUE(
+      std::filesystem::exists(temporary.path() / kManifestDirectoryName / *manifest_file_name(2U)));
+}
+
+TEST(TemporalManifestStorageTest, RejectsMissingFinalPartAndV1Predecessor) {
+  TemporaryDirectory missing_part;
+  ASSERT_TRUE(missing_part.valid());
+  establish_layout(missing_part.path());
+  const TemporalStorageFixture fixture;
+  const EncodedTemporalManifest temporal_predecessor = fixture.manifest(1U);
+  create_entry(missing_part.path(),
+               std::filesystem::path{kManifestDirectoryName} / *manifest_file_name(1U),
+               temporal_predecessor.bytes());
+  ManifestStorage owner =
+      ManifestStorage::open_existing({.database_root = missing_part.path().string()}).value();
+  const EncodedTemporalManifest candidate = fixture.manifest(2U);
+  const auto bindings = fixture.bindings();
+  EXPECT_EQ(owner
+                .install_temporal_manifest({.encoded_manifest = std::cref(candidate),
+                                            .schema_bindings = bindings,
+                                            .nonce = PartFixture::make_nonce(0xd4U),
+                                            .decode_limits = {},
+                                            .part_validation_limits = {}})
+                .error()
+                .code(),
+            common::StatusCode::kCorruption);
+
+  TemporaryDirectory v1_predecessor;
+  ASSERT_TRUE(v1_predecessor.valid());
+  establish_layout(v1_predecessor.path());
+  const PartFixture v1_fixture;
+  const EncodedManifest v1 = v1_fixture.manifest(1U);
+  create_entry(v1_predecessor.path(),
+               std::filesystem::path{kManifestDirectoryName} / *manifest_file_name(1U), v1.bytes());
+  ManifestStorage v1_owner =
+      ManifestStorage::open_existing({.database_root = v1_predecessor.path().string()}).value();
+  EXPECT_EQ(v1_owner
+                .install_temporal_manifest({.encoded_manifest = std::cref(candidate),
+                                            .schema_bindings = bindings,
+                                            .nonce = PartFixture::make_nonce(0xd5U),
+                                            .decode_limits = {},
+                                            .part_validation_limits = {}})
+                .error()
+                .code(),
+            common::StatusCode::kNotSupported);
 }
 
 TEST(ManifestStorageTest, RejectsBeforeMutationAndNeverReplacesFinalIdentity) {

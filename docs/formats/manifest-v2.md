@@ -2,9 +2,9 @@
 
 > **Status: accepted source-neutral registry, checked canonical layout, strict checksummed byte
 > codec, exact single-part CSEG admission, and add-only generation transition validation are
-> implemented. Complete in-memory referenced-part coverage is also implemented; durable
-> installation, recovery, authorized retention/compaction, and reclamation integration remain
-> pending.**
+> implemented. Complete referenced-part coverage and crash-ordered local filesystem installation
+> are also implemented; recovery, v1 migration, authorized retention/compaction, and reclamation
+> integration remain pending.**
 
 Manifest v2 is the immutable database storage generation that can authorize CSEG v2 temporal parts
 whose authoritative application source is WAL or Raft. It retains Manifest v1's magic, 256-byte
@@ -114,7 +114,10 @@ bytes with SHA-256, and derives commit/event/system extrema. The companion valid
 requires byte-for-byte descriptor equality with that derived result and checks the owning tablet's
 durable boundary. The complete-generation validator composes that boundary across exactly one image
 per descriptor in canonical order, canonical part filenames, exact retained-schema coverage, and
-each owning tablet. Durable filesystem readback and mutation ordering remain pending.
+each owning tablet. The locked local filesystem owner applies that proof before mutation,
+revalidates exact temporary-file readback, synchronizes the file, renames without replacement, and
+synchronizes the containing directory for both CSEG v2 parts and add-only Manifest v2 successors.
+It streams referenced-part validation rather than retaining every CSEG image simultaneously.
 
 The implemented ordinary transition validator requires an exact successor generation and database
 identity, retained schema bindings, immutable tablet WAL/Raft source lineage, monotonic application
@@ -130,3 +133,8 @@ recovery begins after the optional global coordinate. Each Raft tablet rebuilds 
 its durable application snapshot before replaying committed entries after its reclaim position.
 Neither coordinate permits deletion until its exact manifest generation is durable and the
 corresponding application state is recoverable.
+
+The v2 installer requires the selected predecessor to already be Manifest v2. It does not
+reinterpret or automatically migrate a v1 predecessor. Recovery selection and publication of a
+loaded v2 generation remain pending even though its bytes and namespace ordering can now be made
+durable.

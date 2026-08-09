@@ -48,6 +48,9 @@ SHA-256 bytes. The ordinary successor validator now preserves source identity, a
 reclaim, and schema boundaries monotonically, and retains every prior part and retry descriptor
 exactly. Complete in-memory generation admission requires exact descriptor-order image coverage,
 canonical names, retained part-schema lookup, and full validation against every owning tablet.
-Independent golden Manifest bytes, expanded hostile decode, authorized retention and compaction
-transitions, v1-to-v2 migration, filesystem/object-store installation crash matrices, Raft snapshot
-recovery, fuzzing, and performance evidence remain required implementation work.
+The descriptor-relative local filesystem owner now installs validated CSEG v2 parts and add-only
+Manifest v2 successors with exact readback, file sync, no-replace rename, directory sync, and
+fail-closed poisoning after an uncertain rename boundary. Independent golden Manifest bytes,
+expanded hostile decode, authorized retention and compaction transitions, v1-to-v2 migration,
+subprocess filesystem and object-store crash matrices, Raft snapshot recovery, fuzzing, and
+performance evidence remain required implementation work.

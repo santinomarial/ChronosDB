@@ -13,6 +13,12 @@
 > [WAL recovery state machine](wal-recovery.md). Compaction, retry pruning, and reclamation of
 > installed CSEG/manifest files remain outside this phase.
 
+The same descriptor-relative part-before-manifest ordering is now implemented for CSEG 2/0 and
+Manifest 2/0 add-only successors. The v2 path additionally verifies exact SHA-256, temporal
+WAL/Raft lineage, and commit/event/system extrema before write and after part readback. It accepts
+only a selected v2 predecessor; v1-to-v2 migration, v2 startup publication, and temporal retention
+or compaction remain separate work.
+
 ## Safety objective
 
 At every process-crash point, recovery selects either the previous complete manifest generation or

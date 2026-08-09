@@ -9,6 +9,8 @@
 #include "chronos/manifest/compaction_equivalence.hpp"
 #include "chronos/manifest/part_validation.hpp"
 #include "chronos/manifest/retirement.hpp"
+#include "chronos/manifest/temporal_part_validation.hpp"
+#include "chronos/manifest/temporal_validation.hpp"
 #include "chronos/manifest/types.hpp"
 #include "chronos/manifest/validation.hpp"
 #include "chronos/schema/table_schema.hpp"
@@ -18,6 +20,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -58,6 +61,20 @@ struct InstalledPart {
   PartDescriptor descriptor;
 };
 
+struct TemporalPartInstallRequest {
+  std::reference_wrapper<const cseg::EncodedCsegPart> encoded_part;
+  TemporalPartDescriptor descriptor;
+  TemporalTabletDescriptor owner;
+  std::reference_wrapper<const schema::TableSchema> schema;
+  common::Uuid nonce;
+  TemporalPartValidationLimits validation_limits;
+};
+
+struct InstalledTemporalPart {
+  std::string file_name;
+  TemporalPartDescriptor descriptor;
+};
+
 struct PartInstallationMetrics {
   std::uint64_t attempts{};
   std::uint64_t failures{};
@@ -86,6 +103,23 @@ struct InstalledManifest {
   std::string file_name;
   std::uint64_t generation{};
   WalCheckpoint reclaim_checkpoint;
+  std::uint64_t tablet_count{};
+  std::uint64_t part_count{};
+  std::uint64_t retry_count{};
+};
+
+struct TemporalManifestInstallRequest {
+  std::reference_wrapper<const EncodedTemporalManifest> encoded_manifest;
+  std::span<const TabletSchemaBinding> schema_bindings;
+  common::Uuid nonce;
+  ManifestDecodeLimits decode_limits;
+  TemporalPartValidationLimits part_validation_limits;
+};
+
+struct InstalledTemporalManifest {
+  std::string file_name;
+  std::uint64_t generation{};
+  std::optional<TemporalWalReclaimCheckpoint> wal_reclaim_checkpoint;
   std::uint64_t tablet_count{};
   std::uint64_t part_count{};
   std::uint64_t retry_count{};
@@ -280,12 +314,23 @@ public:
   // directory sync poisons this owner; restart/recovery must resolve the durable namespace.
   [[nodiscard]] common::Result<InstalledPart> install_part(const PartInstallRequest& request);
 
+  // CSEG v2 equivalent. The exact image is bound to its Manifest v2 descriptor and tablet source
+  // both before mutation and after readback, then installed with the same crash-safe ordering.
+  [[nodiscard]] common::Result<InstalledTemporalPart>
+  install_temporal_part(const TemporalPartInstallRequest& request);
+
   // Installs exactly the next generation after the current highest final name. The selected
   // predecessor, candidate transition, catalog binding, and every referenced final CSEG image are
   // revalidated before mutation. Exact readback precedes file sync and a no-replace rename;
   // failure after rename but before directory sync poisons this owner.
   [[nodiscard]] common::Result<InstalledManifest>
   install_manifest(const ManifestInstallRequest& request);
+
+  // Installs one add-only Manifest v2 successor after exact-decoding the selected v2 predecessor,
+  // validating the source-neutral transition, and streaming validation over every final CSEG v2
+  // reference. V1-to-v2 migration and authorized retention/compaction use separate boundaries.
+  [[nodiscard]] common::Result<InstalledTemporalManifest>
+  install_temporal_manifest(const TemporalManifestInstallRequest& request);
 
   // Classifies both locked directories without following symlinks. Final manifest generations
   // must be nonempty and consecutive from one; every other entry must be an exact regular final or

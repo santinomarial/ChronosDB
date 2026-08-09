@@ -143,6 +143,16 @@ find_binding(const std::span<const TabletSchemaBinding> bindings,
   return found == manifest.parts().end() ? nullptr : &*found;
 }
 
+[[nodiscard]] const TemporalTabletDescriptor*
+find_temporal_tablet(const std::span<const TemporalTabletDescriptor> tablets,
+                     const schema::TabletId& tablet_id) noexcept {
+  const auto found =
+      std::ranges::lower_bound(tablets, tablet_id, {}, [](const TemporalTabletDescriptor& tablet) {
+        return tablet.tablet_id;
+      });
+  return found != tablets.end() && found->tablet_id == tablet_id ? &*found : nullptr;
+}
+
 struct OwnedCompactionImage {
   cseg::PartId part_id;
   std::vector<std::byte> bytes;
@@ -396,6 +406,17 @@ public:
     return common::make_unexpected(std::move(failure));
   }
 
+  [[nodiscard]] common::Result<InstalledTemporalPart> fail_temporal_part(common::Status failure) {
+    ++metrics_.failures;
+    return common::make_unexpected(std::move(failure));
+  }
+
+  [[nodiscard]] common::Result<InstalledTemporalManifest>
+  fail_temporal_manifest(common::Status failure) {
+    ++manifest_metrics_.failures;
+    return common::make_unexpected(std::move(failure));
+  }
+
   [[nodiscard]] common::Result<PartReclamationReport> fail_reclamation(common::Status failure) {
     ++reclamation_metrics_.failures;
     return common::make_unexpected(std::move(failure));
@@ -557,6 +578,113 @@ common::Result<InstalledPart> ManifestStorage::install_part(const PartInstallReq
           ? maximum
           : implementation.metrics_.installed_bytes + request.descriptor.file_length;
   return InstalledPart{.file_name = final_name, .descriptor = request.descriptor};
+}
+
+common::Result<InstalledTemporalPart>
+ManifestStorage::install_temporal_part(const TemporalPartInstallRequest& request) {
+  if (!implementation_) {
+    return common::make_unexpected(invalid("Manifest storage owner was moved from"));
+  }
+  Impl& implementation = *implementation_;
+  ++implementation.metrics_.attempts;
+  if (implementation.poisoned_) {
+    std::string message{"Manifest storage owner is poisoned: "};
+    message.append(implementation.poison_status_.message());
+    return implementation.fail_temporal_part(
+        common::Status{common::StatusCode::kUnavailable, std::move(message)});
+  }
+  if (request.nonce.is_nil()) {
+    return implementation.fail_temporal_part(
+        invalid("Temporal part installation nonce must be nonzero"));
+  }
+
+  const cseg::EncodedCsegPart& encoded = request.encoded_part.get();
+  const std::string final_name = part_file_name(request.descriptor.part_id);
+  const std::string temporary_name =
+      temporary_part_file_name(request.descriptor.part_id, request.nonce);
+  common::Status validation =
+      validate_manifest_v2_temporal_part_image(request.descriptor, request.owner, encoded.bytes(),
+                                               request.schema.get(), request.validation_limits);
+  if (!validation.is_ok()) {
+    return implementation.fail_temporal_part(
+        with_context("prevalidate temporal CSEG part installation", validation));
+  }
+
+  common::Result<io::PosixFile> temporary = implementation.parts_.create_exclusive_regular_file(
+      temporary_name, implementation.file_permissions_);
+  if (!temporary.has_value()) {
+    return implementation.fail_temporal_part(
+        with_context("create temporary temporal CSEG part", temporary.error()));
+  }
+  common::Status operation = temporary->write_all_at(0U, encoded.bytes());
+  if (!operation.is_ok()) {
+    return implementation.fail_temporal_part(
+        with_context("write temporary temporal CSEG part", operation));
+  }
+  const common::Result<std::uint64_t> size = temporary->size();
+  if (!size.has_value()) {
+    return implementation.fail_temporal_part(
+        with_context("read temporary temporal CSEG part size", size.error()));
+  }
+  if (*size != request.descriptor.file_length) {
+    return implementation.fail_temporal_part(
+        common::Status{common::StatusCode::kIoError,
+                       "Temporary temporal CSEG part size changed after complete write"});
+  }
+
+  std::vector<std::byte> readback;
+  try {
+    readback.resize(encoded.size());
+  } catch (const std::bad_alloc&) {
+    return implementation.fail_temporal_part(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "Cannot allocate temporal CSEG installation readback"});
+  }
+  const common::Result<std::size_t> read = temporary->read_at(0U, readback);
+  if (!read.has_value()) {
+    return implementation.fail_temporal_part(
+        with_context("read back temporary temporal CSEG part", read.error()));
+  }
+  if (*read != readback.size()) {
+    return implementation.fail_temporal_part(
+        common::Status{common::StatusCode::kIoError,
+                       "Temporary temporal CSEG part readback ended before exact file size"});
+  }
+  validation = validate_manifest_v2_temporal_part_image(
+      request.descriptor, request.owner, readback, request.schema.get(), request.validation_limits);
+  if (!validation.is_ok()) {
+    return implementation.fail_temporal_part(
+        with_context("validate temporary temporal CSEG part readback", validation));
+  }
+
+  operation = temporary->sync_all();
+  if (!operation.is_ok()) {
+    return implementation.fail_temporal_part(
+        with_context("synchronize temporary temporal CSEG part", operation));
+  }
+  ++implementation.metrics_.file_syncs;
+  operation = temporary->close();
+  if (!operation.is_ok()) {
+    return implementation.fail_temporal_part(
+        with_context("close synchronized temporary temporal CSEG part", operation));
+  }
+  operation =
+      implementation.parts_.rename_no_replace({.old_name = temporary_name, .new_name = final_name});
+  if (!operation.is_ok()) {
+    return implementation.fail_temporal_part(
+        with_context("install temporal CSEG part final name", operation));
+  }
+  operation = implementation.parts_.sync();
+  if (!operation.is_ok()) {
+    implementation.poisoned_ = true;
+    implementation.poison_status_ =
+        with_context("synchronize parts directory after temporal CSEG install", operation);
+    return implementation.fail_temporal_part(implementation.poison_status_);
+  }
+  ++implementation.metrics_.directory_syncs;
+  ++implementation.metrics_.installed_parts;
+  saturating_add(implementation.metrics_.installed_bytes, request.descriptor.file_length);
+  return InstalledTemporalPart{.file_name = final_name, .descriptor = request.descriptor};
 }
 
 common::Result<InstalledManifest>
@@ -754,6 +882,201 @@ ManifestStorage::install_manifest(const ManifestInstallRequest& request) {
       .file_name = *final_name,
       .generation = candidate->generation(),
       .reclaim_checkpoint = candidate->reclaim_checkpoint(),
+      .tablet_count = static_cast<std::uint64_t>(candidate->tablets().size()),
+      .part_count = static_cast<std::uint64_t>(candidate->parts().size()),
+      .retry_count = static_cast<std::uint64_t>(candidate->retries().size()),
+  };
+}
+
+common::Result<InstalledTemporalManifest>
+ManifestStorage::install_temporal_manifest(const TemporalManifestInstallRequest& request) {
+  if (!implementation_) {
+    return common::make_unexpected(invalid("Manifest storage owner was moved from"));
+  }
+  Impl& implementation = *implementation_;
+  ++implementation.manifest_metrics_.attempts;
+  if (implementation.poisoned_) {
+    std::string message{"Manifest storage owner is poisoned: "};
+    message.append(implementation.poison_status_.message());
+    return implementation.fail_temporal_manifest(
+        common::Status{common::StatusCode::kUnavailable, std::move(message)});
+  }
+  if (request.nonce.is_nil()) {
+    return implementation.fail_temporal_manifest(
+        invalid("Temporal Manifest installation nonce must be nonzero"));
+  }
+
+  const EncodedTemporalManifest& encoded = request.encoded_manifest.get();
+  TemporalManifestDecodeResult candidate =
+      decode_manifest_v2_temporal_exact(encoded.bytes(), request.decode_limits);
+  if (!candidate.has_value()) {
+    return implementation.fail_temporal_manifest(
+        manifest_decode_failure(candidate.error(), "candidate Manifest v2 generation"));
+  }
+  common::Result<ManifestNamespaceSnapshot> snapshot = scan_namespace();
+  if (!snapshot.has_value()) {
+    return implementation.fail_temporal_manifest(snapshot.error());
+  }
+  const std::uint64_t predecessor_generation = snapshot->generations.back();
+  const common::Result<std::string> predecessor_name = manifest_file_name(predecessor_generation);
+  if (!predecessor_name.has_value()) {
+    return implementation.fail_temporal_manifest(common::Status{
+        common::StatusCode::kInternal, "Selected Manifest v2 generation cannot be formatted"});
+  }
+  common::Result<std::vector<std::byte>> predecessor_bytes = read_final_file(
+      implementation.manifests_, {.name = *predecessor_name,
+                                  .maximum_length = request.decode_limits.max_file_length,
+                                  .exact_length = std::nullopt,
+                                  .description = "selected final Manifest v2 generation"});
+  if (!predecessor_bytes.has_value()) {
+    return implementation.fail_temporal_manifest(predecessor_bytes.error());
+  }
+  TemporalManifestDecodeResult predecessor =
+      decode_manifest_v2_temporal_exact(*predecessor_bytes, request.decode_limits);
+  if (!predecessor.has_value()) {
+    return implementation.fail_temporal_manifest(
+        manifest_decode_failure(predecessor.error(), "selected final Manifest v2 generation"));
+  }
+  if (predecessor->generation() != predecessor_generation) {
+    return implementation.fail_temporal_manifest(
+        corruption("Selected final Manifest v2 filename disagrees with its encoded generation"));
+  }
+
+  common::Status validation =
+      validate_manifest_v2_temporal_transition(*predecessor, *candidate, request.schema_bindings);
+  if (!validation.is_ok()) {
+    return implementation.fail_temporal_manifest(
+        with_context("validate Manifest v2 generation transition", validation));
+  }
+  for (const TemporalPartDescriptor& descriptor : candidate->parts()) {
+    if (!std::ranges::binary_search(snapshot->final_parts, descriptor.part_id)) {
+      return implementation.fail_temporal_manifest(
+          corruption("Manifest v2 candidate references a missing final CSEG part"));
+    }
+    const TemporalTabletDescriptor* owner =
+        find_temporal_tablet(candidate->tablets(), descriptor.tablet_id);
+    const TabletSchemaBinding* binding =
+        find_binding(request.schema_bindings, descriptor.tablet_id);
+    if (owner == nullptr || binding == nullptr) {
+      return implementation.fail_temporal_manifest(
+          common::Status{common::StatusCode::kInternal,
+                         "Validated Manifest v2 tablet or schema binding became inaccessible"});
+    }
+    const std::shared_ptr<const schema::TableSchema> schema_value =
+        binding->lineage.get().find(descriptor.schema_id);
+    if (!schema_value) {
+      return implementation.fail_temporal_manifest(common::Status{
+          common::StatusCode::kInternal, "Validated Manifest v2 part schema became inaccessible"});
+    }
+    const std::string file_name = part_file_name(descriptor.part_id);
+    common::Result<std::vector<std::byte>> part_bytes =
+        read_final_file(implementation.parts_,
+                        {.name = file_name,
+                         .maximum_length = request.part_validation_limits.decode.max_file_length,
+                         .exact_length = descriptor.file_length,
+                         .description = "referenced final temporal CSEG part"});
+    if (!part_bytes.has_value()) {
+      return implementation.fail_temporal_manifest(part_bytes.error());
+    }
+    validation = validate_manifest_v2_temporal_part_image(
+        descriptor, *owner, *part_bytes, *schema_value, request.part_validation_limits);
+    if (!validation.is_ok()) {
+      return implementation.fail_temporal_manifest(
+          with_context("validate referenced final temporal CSEG part", validation));
+    }
+    saturating_add(implementation.manifest_metrics_.referenced_parts_validated, 1U);
+  }
+
+  const common::Result<std::string> final_name = manifest_file_name(candidate->generation());
+  const common::Result<std::string> temporary_name =
+      temporary_manifest_file_name(candidate->generation(), request.nonce);
+  if (!final_name.has_value() || !temporary_name.has_value()) {
+    return implementation.fail_temporal_manifest(
+        common::Status{common::StatusCode::kInternal,
+                       "Validated Manifest v2 generation names cannot be formatted"});
+  }
+  common::Result<io::PosixFile> temporary = implementation.manifests_.create_exclusive_regular_file(
+      *temporary_name, implementation.file_permissions_);
+  if (!temporary.has_value()) {
+    return implementation.fail_temporal_manifest(
+        with_context("create temporary Manifest v2 generation", temporary.error()));
+  }
+  common::Status operation = temporary->write_all_at(0U, encoded.bytes());
+  if (!operation.is_ok()) {
+    return implementation.fail_temporal_manifest(
+        with_context("write temporary Manifest v2 generation", operation));
+  }
+  const common::Result<std::uint64_t> temporary_size = temporary->size();
+  if (!temporary_size.has_value()) {
+    return implementation.fail_temporal_manifest(
+        with_context("read temporary Manifest v2 generation size", temporary_size.error()));
+  }
+  if (*temporary_size != encoded.size()) {
+    return implementation.fail_temporal_manifest(
+        common::Status{common::StatusCode::kIoError,
+                       "Temporary Manifest v2 generation size changed after complete write"});
+  }
+  std::vector<std::byte> readback;
+  try {
+    readback.resize(encoded.size());
+  } catch (const std::bad_alloc&) {
+    return implementation.fail_temporal_manifest(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "Cannot allocate Manifest v2 generation installation readback"});
+  }
+  const common::Result<std::size_t> read = temporary->read_at(0U, readback);
+  if (!read.has_value()) {
+    return implementation.fail_temporal_manifest(
+        with_context("read back temporary Manifest v2 generation", read.error()));
+  }
+  if (*read != readback.size()) {
+    return implementation.fail_temporal_manifest(
+        common::Status{common::StatusCode::kIoError,
+                       "Temporary Manifest v2 generation readback ended before exact file size"});
+  }
+  TemporalManifestDecodeResult decoded_readback =
+      decode_manifest_v2_temporal_exact(readback, request.decode_limits);
+  if (!decoded_readback.has_value()) {
+    return implementation.fail_temporal_manifest(
+        manifest_decode_failure(decoded_readback.error(), "temporary Manifest v2 generation"));
+  }
+  if (!std::ranges::equal(readback, encoded.bytes())) {
+    return implementation.fail_temporal_manifest(
+        corruption("Temporary Manifest v2 generation readback differs from candidate bytes"));
+  }
+
+  operation = temporary->sync_all();
+  if (!operation.is_ok()) {
+    return implementation.fail_temporal_manifest(
+        with_context("synchronize temporary Manifest v2 generation", operation));
+  }
+  ++implementation.manifest_metrics_.file_syncs;
+  operation = temporary->close();
+  if (!operation.is_ok()) {
+    return implementation.fail_temporal_manifest(
+        with_context("close synchronized temporary Manifest v2 generation", operation));
+  }
+  operation = implementation.manifests_.rename_no_replace(
+      {.old_name = *temporary_name, .new_name = *final_name});
+  if (!operation.is_ok()) {
+    return implementation.fail_temporal_manifest(
+        with_context("install Manifest v2 generation final name", operation));
+  }
+  operation = implementation.manifests_.sync();
+  if (!operation.is_ok()) {
+    implementation.poisoned_ = true;
+    implementation.poison_status_ =
+        with_context("synchronize Manifest directory after v2 generation install", operation);
+    return implementation.fail_temporal_manifest(implementation.poison_status_);
+  }
+  ++implementation.manifest_metrics_.directory_syncs;
+  ++implementation.manifest_metrics_.installed_generations;
+  saturating_add(implementation.manifest_metrics_.installed_bytes,
+                 static_cast<std::uint64_t>(encoded.size()));
+  return InstalledTemporalManifest{
+      .file_name = *final_name,
+      .generation = candidate->generation(),
+      .wal_reclaim_checkpoint = candidate->wal_reclaim_checkpoint(),
       .tablet_count = static_cast<std::uint64_t>(candidate->tablets().size()),
       .part_count = static_cast<std::uint64_t>(candidate->parts().size()),
       .retry_count = static_cast<std::uint64_t>(candidate->retries().size()),
