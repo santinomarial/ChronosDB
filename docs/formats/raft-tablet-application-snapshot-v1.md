@@ -1,7 +1,7 @@
 # Raft Tablet Application Snapshot v1
 
-> **Status: canonical owned codec and lock-protected local durable installation are implemented;
-> Raft/tablet recovery integration is pending.**
+> **Status: canonical codec, lock-protected local durable installation, and exact
+> snapshot-plus-suffix tablet recovery are implemented.**
 
 All integers are unsigned little-endian. UUID fields use their canonical 16-byte durable order.
 The complete object is bounded by the caller and by the 1 GiB format maximum.

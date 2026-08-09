@@ -4,6 +4,7 @@
 - **Date:** 2026-08-09
 - **Owners:** ChronosDB ingestion, storage, and distributed-systems maintainers
 - **Extends:** [ADR 0085](0085-raft-tablet-application-snapshot-v1.md)
+- **Extended by:** [ADR 0087](0087-raft-tablet-snapshot-recovery-composition.md)
 
 ## Context
 

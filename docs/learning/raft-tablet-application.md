@@ -35,20 +35,24 @@ process-memory tablet. Therefore startup creates fresh owners and deterministica
 complete retained committed log. It may leave the durable applied index unchanged when it already
 equals commit, because application memory has just been rebuilt from those exact bytes.
 
-This model intentionally rejects any nonzero Raft snapshot boundary. Once log reclamation is added,
-a tablet application snapshot must atomically describe the omitted rows, retry outcomes, schema
-binding, and included group/index before suffix replay can be safe.
+Without a supplied application-snapshot owner, this model intentionally rejects any nonzero Raft
+snapshot boundary. A compacted prefix must atomically describe the omitted rows, retry outcomes,
+schema binding, and included group/index before suffix replay can be safe.
 
 Raft Tablet Application Snapshot v1 now defines the first half of that boundary. Its owned codec
 binds one group/table/tablet and complete Raft snapshot metadata to the exact accepted application
 commands at their original term/index positions. Checksummed entry payloads preserve row and retry
-semantics for deterministic rebuild. State-machine consumption and exact Raft-metadata pairing are
-still required before this recovery model may accept a compacted prefix.
+semantics for deterministic rebuild.
 
 `RaftTabletSnapshotStorage` now supplies the local durable half: one group-scoped directory lock,
 exact readback, file sync, immutable no-replace rename, directory sync, idempotent same-byte retry,
-temporary cleanup, and revalidated latest selection. State-machine consumption and the ordering that
-pairs these files with Raft snapshot metadata remain the next boundary.
+temporary cleanup, and revalidated latest selection.
+
+Snapshot-backed `recover` exact-matches those application bytes with persistent Raft metadata,
+preflights both the stored prefix and committed retained suffix, rebuilds fresh row/retry state from
+original command positions, publishes membership-only frontier gaps, and persists the final applied
+index only after success. The state-machine owner retains the snapshot lock. Local snapshot creation
+and compaction must still be routed through that owner.
 
 ## Failure behavior and limits
 
@@ -61,7 +65,7 @@ log.
 
 `prove_applied_quorum_sync` composes the leader's committed/joint-membership durability receipt with
 the Raft applied index and tablet group/index publication frontier. Client protocol exposure,
-application-snapshot installation/recovery, and physical-log reclamation remain absent.
+application-snapshot creation/compaction, and physical-log reclamation remain absent.
 
 ## Complexity and likely interview questions
 

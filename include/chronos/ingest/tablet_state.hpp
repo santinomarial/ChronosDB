@@ -223,6 +223,12 @@ public:
                           const std::shared_ptr<const ColumnarAppendRetryOutcome>& outcome,
                           head::HeadCommitPosition position);
 
+  // Recovery/application-only publication of a later committed position that carries no tablet
+  // row or retry mutation (for example a Raft membership entry or snapshot boundary). The current
+  // rows, generations, and retry table are retained exactly.
+  [[nodiscard]] common::Result<TabletSnapshot>
+  advance_recovered_position(head::HeadCommitPosition position);
+
   // Removes exactly one sealed generation only after aggregate database publication issued this
   // receipt. Repeated consumption succeeds without another publication. This is a shard-writer
   // operation and cannot overlap a prepared append.

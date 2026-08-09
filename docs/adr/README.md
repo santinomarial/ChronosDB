@@ -121,3 +121,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0084](0084-verified-temporal-checkpoint-overlap.md) | Verified temporal checkpoint overlap | accepted |
 | [0085](0085-raft-tablet-application-snapshot-v1.md) | Raft Tablet Application Snapshot v1 | accepted |
 | [0086](0086-durable-raft-tablet-snapshot-installation.md) | Durable Raft tablet application-snapshot installation | accepted |
+| [0087](0087-raft-tablet-snapshot-recovery-composition.md) | Raft tablet application-snapshot recovery composition | accepted |

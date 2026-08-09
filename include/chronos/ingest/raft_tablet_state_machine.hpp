@@ -3,6 +3,7 @@
 
 #include "chronos/common/result.hpp"
 #include "chronos/ingest/columnar_append.hpp"
+#include "chronos/ingest/raft_tablet_snapshot_storage.hpp"
 #include "chronos/ingest/retry_directory.hpp"
 #include "chronos/ingest/tablet_state.hpp"
 #include "chronos/raft/durable_runtime.hpp"
@@ -10,6 +11,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace chronos::ingest {
@@ -25,9 +27,9 @@ struct RaftTabletApplicationReport {
 
 // Single-thread-affine owner of one Raft group's tablet application state. recover() accepts only
 // fresh unpublished tablet/retry owners and reconstructs the entire committed prefix before
-// returning them. Until application snapshots exist, a nonzero Raft snapshot boundary is rejected.
-// Live apply_committed() publishes only committed entries, in index order, then durably advances
-// the Raft applied index. The complete retained Raft log remains the recovery source of truth.
+// returning them. A compacted prefix requires the overload that transfers ownership of the exact
+// installed application-snapshot storage. Live apply_committed() publishes only committed entries,
+// in index order, then durably advances the Raft applied index.
 class RaftTabletStateMachine {
 public:
   RaftTabletStateMachine() = delete;
@@ -40,6 +42,13 @@ public:
   [[nodiscard]] static common::Result<RaftTabletStateMachine>
   recover(raft::GroupId group_id, raft::DurableMultiRaftRuntime& runtime,
           RetryDirectory retry_directory, TabletState tablet,
+          std::vector<std::shared_ptr<const schema::TableSchema>> retained_schemas,
+          ColumnarAppendDecodeLimits decode_limits = {});
+
+  [[nodiscard]] static common::Result<RaftTabletStateMachine>
+  recover(raft::GroupId group_id, raft::DurableMultiRaftRuntime& runtime,
+          RaftTabletSnapshotStorage snapshot_storage, RetryDirectory retry_directory,
+          TabletState tablet,
           std::vector<std::shared_ptr<const schema::TableSchema>> retained_schemas,
           ColumnarAppendDecodeLimits decode_limits = {});
 
@@ -57,6 +66,12 @@ public:
 
 private:
   class Impl;
+  [[nodiscard]] static common::Result<RaftTabletStateMachine>
+  recover_impl(raft::GroupId group_id, raft::DurableMultiRaftRuntime& runtime,
+               std::optional<RaftTabletSnapshotStorage> snapshot_storage,
+               RetryDirectory retry_directory, TabletState tablet,
+               std::vector<std::shared_ptr<const schema::TableSchema>> retained_schemas,
+               ColumnarAppendDecodeLimits decode_limits);
   explicit RaftTabletStateMachine(std::unique_ptr<Impl> impl) noexcept;
   std::unique_ptr<Impl> impl_;
 };
