@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -11,6 +12,8 @@
 #include <optional>
 #include <set>
 #include <stdexcept>
+#include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -45,6 +48,72 @@ public:
   Impl(std::shared_ptr<const schema::TableSchema> schema_value, TemporalStoreLimits limits_value)
       : schema(std::move(schema_value)), limits(limits_value) {}
 
+  [[nodiscard]] common::Status validate(const std::uint64_t system_commit_position,
+                                        const std::int64_t system_commit_time_ns,
+                                        const std::span<const TemporalMutation> mutations,
+                                        const bool require_source_position) const {
+    if (failed) {
+      return common::Status{common::StatusCode::kUnavailable,
+                            "temporal provider failed closed and requires recovery"};
+    }
+    if (system_commit_position == 0U || mutations.empty() ||
+        system_commit_position <= latest_position ||
+        (latest_position != 0U && system_commit_time_ns < latest_time)) {
+      return invalid("temporal commits must advance position and nondecreasing system time");
+    }
+    if (mutations.size() > limits.maximum_versions - versions) {
+      return common::Status{common::StatusCode::kResourceExhausted,
+                            "temporal version capacity is exhausted"};
+    }
+
+    std::set<std::vector<std::byte>, ByteVectorLess> batch_identities;
+    std::size_t new_identities = 0U;
+    for (const TemporalMutation& mutation : mutations) {
+      if (mutation.logical_identity.empty() ||
+          mutation.logical_identity.size() > limits.maximum_identity_bytes ||
+          (require_source_position &&
+           (mutation.wal_id.is_nil() || mutation.record_sequence == 0U)) ||
+          mutation.columns.size() != schema->columns().size() ||
+          mutation.kind < TemporalMutationKind::kOriginal ||
+          mutation.kind > TemporalMutationKind::kTombstone) {
+        return invalid("temporal mutation identity, source position, or row shape is invalid");
+      }
+      if (!batch_identities.insert(mutation.logical_identity).second) {
+        return invalid("one temporal commit batch contains duplicate logical identities");
+      }
+      const bool exists = histories.contains(mutation.logical_identity);
+      if (!exists) {
+        ++new_identities;
+        if (mutation.kind != TemporalMutationKind::kOriginal) {
+          return invalid("correction, replacement, or tombstone requires an existing identity");
+        }
+      } else if (mutation.kind == TemporalMutationKind::kOriginal) {
+        return invalid(
+            "an existing temporal identity requires correction or replacement semantics");
+      }
+      if (mutation.kind != TemporalMutationKind::kTombstone) {
+        const std::vector<std::byte> generated_identity = schema->deduplication_key().empty()
+                                                              ? mutation.logical_identity
+                                                              : std::vector<std::byte>{};
+        auto validated = ScalarTableSnapshot::create(
+            schema, system_commit_position,
+            {ScalarInputRow{mutation.columns, generated_identity,
+                            require_source_position ? mutation.wal_id : schema->schema_id().uuid(),
+                            require_source_position ? mutation.record_sequence
+                                                    : system_commit_position,
+                            system_commit_position, mutation.row_ordinal}});
+        if (!validated.has_value()) {
+          return validated.error();
+        }
+      }
+    }
+    if (new_identities > limits.maximum_logical_rows - histories.size()) {
+      return common::Status{common::StatusCode::kResourceExhausted,
+                            "temporal logical-row capacity is exhausted"};
+    }
+    return common::Status::ok();
+  }
+
   std::shared_ptr<const schema::TableSchema> schema;
   TemporalStoreLimits limits;
   mutable std::mutex mutex;
@@ -54,6 +123,7 @@ public:
   std::int64_t latest_time{};
   std::optional<std::int64_t> earliest_retained_time;
   std::size_t versions{};
+  bool failed{false};
 };
 
 TemporalSnapshotProvider::TemporalSnapshotProvider(std::unique_ptr<Impl> impl) noexcept
@@ -77,59 +147,12 @@ TemporalSnapshotProvider::create(std::shared_ptr<const schema::TableSchema> sche
 common::Status TemporalSnapshotProvider::apply_committed(const std::uint64_t system_commit_position,
                                                          const std::int64_t system_commit_time_ns,
                                                          std::vector<TemporalMutation> mutations) {
-  if (system_commit_position == 0U || mutations.empty()) {
-    return invalid("temporal commit position and mutation batch must be nonzero");
-  }
   try {
     std::scoped_lock lock{impl_->mutex};
-    if (system_commit_position <= impl_->latest_position ||
-        (impl_->latest_position != 0U && system_commit_time_ns < impl_->latest_time)) {
-      return invalid("temporal commits must advance position and nondecreasing system time");
-    }
-    if (mutations.size() > impl_->limits.maximum_versions - impl_->versions) {
-      return common::Status{common::StatusCode::kResourceExhausted,
-                            "temporal version capacity is exhausted"};
-    }
-
-    std::set<std::vector<std::byte>, ByteVectorLess> batch_identities;
-    std::size_t new_identities = 0U;
-    for (const TemporalMutation& mutation : mutations) {
-      if (mutation.logical_identity.empty() ||
-          mutation.logical_identity.size() > impl_->limits.maximum_identity_bytes ||
-          mutation.wal_id.is_nil() || mutation.record_sequence == 0U ||
-          mutation.columns.size() != impl_->schema->columns().size()) {
-        return invalid("temporal mutation identity, source position, or row shape is invalid");
-      }
-      if (!batch_identities.insert(mutation.logical_identity).second) {
-        return invalid("one temporal commit batch contains duplicate logical identities");
-      }
-      const bool exists = impl_->histories.contains(mutation.logical_identity);
-      if (!exists) {
-        ++new_identities;
-        if (mutation.kind != TemporalMutationKind::kOriginal) {
-          return invalid("correction, replacement, or tombstone requires an existing identity");
-        }
-      } else if (mutation.kind == TemporalMutationKind::kOriginal) {
-        return invalid(
-            "an existing temporal identity requires correction or replacement semantics");
-      }
-      if (mutation.kind != TemporalMutationKind::kTombstone) {
-        const std::vector<std::byte> generated_identity = impl_->schema->deduplication_key().empty()
-                                                              ? mutation.logical_identity
-                                                              : std::vector<std::byte>{};
-        auto validated = ScalarTableSnapshot::create(
-            impl_->schema, system_commit_position,
-            {ScalarInputRow{mutation.columns, generated_identity, mutation.wal_id,
-                            mutation.record_sequence, system_commit_position,
-                            mutation.row_ordinal}});
-        if (!validated.has_value()) {
-          return validated.error();
-        }
-      }
-    }
-    if (new_identities > impl_->limits.maximum_logical_rows - impl_->histories.size()) {
-      return common::Status{common::StatusCode::kResourceExhausted,
-                            "temporal logical-row capacity is exhausted"};
+    const common::Status validation =
+        impl_->validate(system_commit_position, system_commit_time_ns, mutations, true);
+    if (!validation.is_ok()) {
+      return validation;
     }
 
     // Stage the complete next state before publication. Copy-on-commit is intentionally preferred
@@ -157,6 +180,45 @@ common::Status TemporalSnapshotProvider::apply_committed(const std::uint64_t sys
   }
 }
 
+common::Status TemporalSnapshotProvider::validate_next_commit(
+    const std::int64_t system_commit_time_ns,
+    const std::span<const TemporalMutation> mutations) const {
+  try {
+    std::scoped_lock lock{impl_->mutex};
+    if (impl_->latest_position == std::numeric_limits<std::uint64_t>::max()) {
+      return common::Status{common::StatusCode::kOutOfRange,
+                            "temporal system commit position is exhausted"};
+    }
+    return impl_->validate(impl_->latest_position + 1U, system_commit_time_ns, mutations, false);
+  } catch (const std::bad_alloc&) {
+    return common::Status{common::StatusCode::kResourceExhausted,
+                          "temporal precommit validation allocation failed"};
+  } catch (const std::length_error&) {
+    return common::Status{common::StatusCode::kResourceExhausted,
+                          "temporal precommit validation exceeded container limits"};
+  }
+}
+
+common::Status TemporalSnapshotProvider::fail_closed() {
+  try {
+    std::scoped_lock lock{impl_->mutex};
+    impl_->failed = true;
+    return common::Status::ok();
+  } catch (const std::system_error& error) {
+    return common::Status{common::StatusCode::kInternal,
+                          std::string{"temporal fail-closed lock failed: "} + error.what()};
+  }
+}
+
+bool TemporalSnapshotProvider::is_failed() const noexcept {
+  std::scoped_lock lock{impl_->mutex};
+  return impl_->failed;
+}
+
+const schema::TableSchema& TemporalSnapshotProvider::schema() const noexcept {
+  return *impl_->schema;
+}
+
 common::Result<std::shared_ptr<const ScalarTableSnapshot>>
 TemporalSnapshotProvider::resolve(const std::shared_ptr<const schema::TableSchema>& bound_schema,
                                   const std::optional<std::int64_t> as_of_system_time_ns) const {
@@ -165,6 +227,10 @@ TemporalSnapshotProvider::resolve(const std::shared_ptr<const schema::TableSchem
     return common::make_unexpected(invalid("temporal snapshot schema is incompatible"));
   }
   std::scoped_lock lock{impl_->mutex};
+  if (impl_->failed) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kUnavailable, "temporal provider failed closed and requires recovery"});
+  }
   if (as_of_system_time_ns.has_value() && impl_->earliest_retained_time.has_value() &&
       *as_of_system_time_ns < *impl_->earliest_retained_time) {
     return common::make_unexpected(
@@ -210,6 +276,10 @@ common::Status
 TemporalSnapshotProvider::compact_history(const std::uint64_t oldest_observable_commit_position,
                                           const std::int64_t retained_system_time_ns) {
   std::scoped_lock lock{impl_->mutex};
+  if (impl_->failed) {
+    return common::Status{common::StatusCode::kUnavailable,
+                          "temporal provider failed closed and requires recovery"};
+  }
   if (oldest_observable_commit_position > impl_->latest_position ||
       retained_system_time_ns > impl_->latest_time) {
     return invalid("temporal retention boundary is ahead of committed state");

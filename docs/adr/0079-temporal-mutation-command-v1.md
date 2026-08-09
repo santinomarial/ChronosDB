@@ -35,14 +35,17 @@ bounded recovery.
 
 The implemented command-specific recovery owner validates retained schemas, applies enclosing WAL
 identity/order, rejects impossible committed mutation history, and returns the locked reopened
-writer. Live WAL admission/acknowledgment, a mixed database application dispatcher, checkpoints,
-vector/CSEG history persistence, retention pins, and Raft application remain subsequent integration
-tasks; these boundaries do not yet claim Phase 13.
+writer. The live single-writer executor rejects invalid transitions before bounded coordinator
+admission, preserves requested `ASYNC`/`LOCAL_SYNC` semantics, publishes only after completion, and
+fails stale state closed after any post-admission uncertainty. A mixed database application
+dispatcher, checkpoints, vector/CSEG history persistence, retention pins, and Raft application
+remain subsequent integration tasks; these boundaries do not yet claim Phase 13.
 
 ## Affected invariants and validation
 
 Invariants 1, 4, 6–10, 13, 14, and 18 apply. Focused tests cover exact round trip, nested schema
 identity, correction metadata, checksum damage, duplicate-identity rejection, physical-cell
 application, ordered original/correction replay, next-sequence reopen, and impossible-history
-rejection. Golden fixtures, fuzzing, broad hostile-length matrices, mixed-version recovery, and
-crash injection are deferred to Phase 18.
+rejection. Live tests cover a covering `LOCAL_SYNC` frontier, recovery equivalence, pre-WAL semantic
+rejection, sequence preservation, and post-admission fail-closed behavior. Golden fixtures, fuzzing,
+broad hostile-length matrices, mixed-version recovery, and crash injection are deferred to Phase 18.

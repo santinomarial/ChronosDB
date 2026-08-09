@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <vector>
 
 namespace chronos::query {
@@ -55,6 +56,19 @@ public:
   [[nodiscard]] common::Status apply_committed(std::uint64_t system_commit_position,
                                                std::int64_t system_commit_time_ns,
                                                std::vector<TemporalMutation> mutations);
+
+  // Single-writer pre-WAL validation for the next commit. Source WAL fields are deliberately
+  // ignored because admission has not assigned them yet. The caller must serialize this check,
+  // WAL submission, and apply_committed() with every other writer to this provider.
+  [[nodiscard]] common::Status
+  validate_next_commit(std::int64_t system_commit_time_ns,
+                       std::span<const TemporalMutation> mutations) const;
+
+  // A post-WAL application uncertainty makes stale state unsafe to query or extend. Recovery into
+  // a fresh provider is required after this idempotent transition.
+  [[nodiscard]] common::Status fail_closed();
+  [[nodiscard]] bool is_failed() const noexcept;
+  [[nodiscard]] const schema::TableSchema& schema() const noexcept;
 
   [[nodiscard]] common::Result<std::shared_ptr<const ScalarTableSnapshot>>
   resolve(const std::shared_ptr<const schema::TableSchema>& bound_schema,

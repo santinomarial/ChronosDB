@@ -8,10 +8,11 @@ subsystem supplies three concrete layers:
 
 1. Temporal Mutation Command v1 stores schema-shaped values and row-aligned temporal metadata.
 2. `apply_committed_temporal_command` converts one already durable WAL command into owned history.
-3. `recover_temporal_wal` rebuilds fresh multi-table scalar providers from verified WAL order.
+3. `execute_temporal_command` performs validated live WAL admission and acknowledged publication.
+4. `recover_temporal_wal` rebuilds fresh multi-table scalar providers from verified WAL order.
 
-Live WAL admission, mixed command dispatch, CSEG history, vector winner selection, application
-checkpoints, and Raft application are not hidden inside these interfaces.
+Mixed command dispatch, CSEG history, vector winner selection, application checkpoints, and Raft
+application are not hidden inside these interfaces.
 
 ## Public interfaces and data structures
 
@@ -70,6 +71,15 @@ with a binary search within each identity history. Current commit publication co
 histories and the time index, so its cost is linear in retained versions and temporarily doubles
 their memory. This conservative copy-on-commit design makes allocation failure atomic. Replacing it
 requires measured evidence and a representation that preserves the same publication guarantee.
+
+The live executor runs on the table/tablet's serialized writer. It materializes owned scalar values
+and calls `validate_next_commit` before copying command bytes into the bounded WAL coordinator. A
+successful coordinator completion is checked against the exact requested durability mode and WAL
+position contract. Only then are the returned WAL identity and sequence attached and published.
+Submission rejection leaves the provider usable because no WAL work started. Any error after
+admission fails the provider closed; queries and later writes return `UNAVAILABLE` until whole-WAL
+recovery reconciles whether the command exists. This prevents a later commit from skipping an
+uncertain durable predecessor.
 
 The v1 tombstone carries a complete schema-shaped row. This uses more space than an identity-only
 tombstone but keeps canonical schema validation and row alignment uniform. CSEG history may later

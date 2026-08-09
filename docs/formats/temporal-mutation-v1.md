@@ -1,6 +1,6 @@
 # Temporal Mutation Command v1
 
-> **Status: canonical codec and command-specific committed WAL recovery are implemented.**
+> **Status: canonical codec, live WAL commit, and command-specific recovery are implemented.**
 
 Temporal Mutation Command v1 is WAL application format `1`, kind `3`. It stores one schema-shaped
 Columnar Batch v1 plus row-aligned metadata for original versions, corrections, replacements, and
@@ -41,8 +41,11 @@ or application identity are unsupported; damaged canonical bytes are corruption.
 
 `apply_committed_temporal_command` binds the enclosing WAL identity and record sequence to every
 row, copies canonical physical cells into owned scalar history, and atomically publishes the batch.
+`execute_temporal_command` materializes and validates the complete transition before bounded WAL
+admission, waits for the requested `ASYNC` or `LOCAL_SYNC` completion, and only then publishes the
+actual WAL source position. Any post-admission uncertainty fails the provider closed for recovery.
 `recover_temporal_wal` verifies and preflights the complete command-specific WAL before replaying
 records in physical order into fresh multi-table providers; any failure discards the fresh owner.
 It returns the locked reopened writer at the next sequence for subsequent coordination. A combined
-database recovery dispatcher, live admission/acknowledgment path, application checkpoints, and CSEG
-history remain later integration boundaries.
+database recovery dispatcher, application checkpoints, and CSEG history remain later integration
+boundaries.
