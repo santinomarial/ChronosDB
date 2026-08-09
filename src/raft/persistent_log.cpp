@@ -15,6 +15,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -220,6 +221,7 @@ public:
   io::PosixAdvisoryLock lock;
   io::PosixFile active_file;
   RaftPersistentLogRecovery recovered;
+  std::set<GroupId> known_groups;
   common::Status failure;
   bool open{};
 
@@ -328,7 +330,7 @@ RaftPersistentLog::open_existing(const RaftPersistentLogConfig& config,
 
   std::map<GroupId, GroupPersistentState> latest;
   RaftPersistentLogRecovery recovery;
-  std::uint64_t expected_sequence = 1U;
+  std::uint64_t last_sequence = 0U;
   std::uint64_t active_end = kRaftSegmentHeaderSize;
   for (std::size_t segment_index = 0U; segment_index < segments.size(); ++segment_index) {
     const auto& [number, name] = segments[segment_index];
@@ -350,7 +352,8 @@ RaftPersistentLog::open_existing(const RaftPersistentLogConfig& config,
     auto header = decode_segment_header(header_bytes, number);
     if (!header.has_value())
       return common::make_unexpected(header.error());
-    if (header->first_sequence != expected_sequence) {
+    if (last_sequence == std::numeric_limits<std::uint64_t>::max() ||
+        header->first_sequence != last_sequence + 1U) {
       return common::make_unexpected(corrupt("Raft segment first sequence is not contiguous"));
     }
 
@@ -392,7 +395,8 @@ RaftPersistentLog::open_existing(const RaftPersistentLogConfig& config,
       auto decoded = decode_multiplexed_log_record_v1(record);
       if (!decoded.has_value())
         return common::make_unexpected(decoded.error());
-      if (decoded->persistent.physical_sequence != expected_sequence) {
+      if (last_sequence == std::numeric_limits<std::uint64_t>::max() ||
+          decoded->persistent.physical_sequence != last_sequence + 1U) {
         return common::make_unexpected(corrupt("Raft physical sequence is not contiguous"));
       }
       if (++recovery.record_count > config.maximum_records) {
@@ -404,7 +408,7 @@ RaftPersistentLog::open_existing(const RaftPersistentLogConfig& config,
         return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
                                                       "Raft recovery group limit exceeded"});
       }
-      ++expected_sequence;
+      last_sequence = decoded->persistent.physical_sequence;
       offset += inspected->encoded_size;
     }
     active_end = offset;
@@ -432,8 +436,8 @@ RaftPersistentLog::open_existing(const RaftPersistentLogConfig& config,
     return common::make_unexpected(status);
 
   recovery.segment_count = segments.size();
-  recovery.written_position = {segments.back().first, active_end, expected_sequence - 1U};
-  recovery.durable_physical_sequence = expected_sequence - 1U;
+  recovery.written_position = {segments.back().first, active_end, last_sequence};
+  recovery.durable_physical_sequence = last_sequence;
   recovery.latest_group_states.reserve(latest.size());
   for (auto& [group, persistent] : latest) {
     static_cast<void>(group);
@@ -445,6 +449,8 @@ RaftPersistentLog::open_existing(const RaftPersistentLogConfig& config,
   impl->lock = std::move(*lock);
   impl->active_file = std::move(*active);
   impl->recovered = std::move(recovery);
+  for (const GroupPersistentState& persistent : impl->recovered.latest_group_states)
+    impl->known_groups.insert(persistent.group_id);
   impl->open = true;
   return RaftPersistentLog{std::move(impl)};
 }
@@ -460,6 +466,15 @@ RaftPersistentLog::append(const GroupPersistentState& persistent) {
   if (current_sequence == std::numeric_limits<std::uint64_t>::max() ||
       persistent.physical_sequence != current_sequence + 1U) {
     return common::make_unexpected(invalid("Raft physical sequence is not the next sequence"));
+  }
+  if (impl_->recovered.record_count >= impl_->config.maximum_records) {
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                  "Raft persistent-log record limit exceeded"});
+  }
+  if (!impl_->known_groups.contains(persistent.group_id) &&
+      impl_->known_groups.size() >= impl_->config.maximum_groups) {
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                  "Raft persistent-log group limit exceeded"});
   }
   auto encoded = encode_multiplexed_log_record_v1(persistent);
   if (!encoded.has_value())
@@ -497,6 +512,7 @@ RaftPersistentLog::append(const GroupPersistentState& persistent) {
   position.end_offset += encoded->size();
   position.physical_sequence = persistent.physical_sequence;
   ++impl_->recovered.record_count;
+  impl_->known_groups.insert(persistent.group_id);
   return position;
 }
 
