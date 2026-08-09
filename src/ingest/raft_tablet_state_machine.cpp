@@ -188,6 +188,156 @@ public:
     return report;
   }
 
+  [[nodiscard]] common::Result<RaftTabletSnapshotCompactionReport>
+  compact_applied_prefix(const raft::LogIndex last_included_index,
+                         const std::uint64_t manifest_generation,
+                         std::array<std::byte, 32U> part_set_checksum) {
+    if (!failure.is_ok()) {
+      return common::make_unexpected(failure);
+    }
+    if (!snapshot_storage.has_value()) {
+      return common::make_unexpected(
+          unsupported("Raft tablet compaction requires application-snapshot storage ownership"));
+    }
+    const raft::RaftNode* node = runtime->find_group(group_id);
+    if (node == nullptr) {
+      return common::make_unexpected(fail(unavailable("Raft tablet group disappeared")));
+    }
+    const raft::PersistentState& persistent = node->persistent_state();
+    const raft::SnapshotMetadata& current_snapshot = persistent.snapshot;
+    if ((current_snapshot.last_included_index == 0U && installed_snapshot.has_value()) ||
+        (current_snapshot.last_included_index != 0U &&
+         (!installed_snapshot.has_value() || *installed_snapshot != current_snapshot))) {
+      return common::make_unexpected(
+          fail(corruption("Raft application snapshot boundary changed outside its owner")));
+    }
+    if (manifest_generation == 0U || last_included_index <= current_snapshot.last_included_index ||
+        last_included_index > persistent.applied_index || node->joint_membership_active()) {
+      return common::make_unexpected(
+          invalid("Raft tablet snapshot must cover a newer applied stable-configuration prefix"));
+    }
+    const raft::LogIndex relative_index =
+        last_included_index - current_snapshot.last_included_index;
+    if (relative_index == 0U || relative_index > persistent.log.size()) {
+      return common::make_unexpected(
+          fail(corruption("Raft tablet snapshot boundary is absent from the retained log")));
+    }
+    const raft::LogEntry& boundary = persistent.log[static_cast<std::size_t>(relative_index - 1U)];
+    if (boundary.index != last_included_index || boundary.term == 0U) {
+      return common::make_unexpected(
+          fail(corruption("Raft tablet snapshot boundary term cannot be derived")));
+    }
+
+    auto tablet_publication = tablet.snapshot();
+    if (!tablet_publication.has_value()) {
+      return common::make_unexpected(fail(tablet_publication.error()));
+    }
+    const std::optional<head::HeadCommitPosition>& tablet_position =
+        tablet_publication->applied_position();
+    if (!tablet_position.has_value() || tablet_position->source != head::CommitSource::kRaft ||
+        tablet_position->raft_group_id != group_id ||
+        tablet_position->record_sequence < last_included_index) {
+      return common::make_unexpected(
+          fail(corruption("tablet publication trails the requested Raft snapshot boundary")));
+    }
+
+    raft::SnapshotMetadata next_snapshot{.last_included_index = last_included_index,
+                                         .last_included_term = boundary.term,
+                                         .manifest_generation = manifest_generation,
+                                         .part_set_checksum = std::move(part_set_checksum),
+                                         .configuration_index =
+                                             current_snapshot.configuration_index};
+    RaftTabletApplicationSnapshot application_snapshot{.group_id = group_id,
+                                                       .table_id = tablet_publication->table_id(),
+                                                       .tablet_id =
+                                                           tablet_publication->tablet_id()};
+    try {
+      next_snapshot.voters.assign(node->voters().begin(), node->voters().end());
+      if (current_snapshot.last_included_index != 0U) {
+        auto loaded = snapshot_storage->load(current_snapshot.last_included_index);
+        if (!loaded.has_value()) {
+          return common::make_unexpected(fail(loaded.error()));
+        }
+        if (loaded->snapshot.group_id != group_id ||
+            loaded->snapshot.table_id != application_snapshot.table_id ||
+            loaded->snapshot.tablet_id != application_snapshot.tablet_id ||
+            loaded->snapshot.raft_snapshot != current_snapshot) {
+          return common::make_unexpected(
+              fail(corruption("installed application snapshot changed during compaction")));
+        }
+        application_snapshot.entries = std::move(loaded->snapshot.entries);
+      }
+      const std::size_t appended_capacity = static_cast<std::size_t>(relative_index);
+      if (appended_capacity >
+          application_snapshot.entries.max_size() - application_snapshot.entries.size()) {
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kResourceExhausted,
+                           "Raft tablet snapshot entry capacity exceeds the platform limit"});
+      }
+      application_snapshot.entries.reserve(application_snapshot.entries.size() + appended_capacity);
+      for (const raft::LogEntry& entry : persistent.log) {
+        if (entry.index > last_included_index) {
+          break;
+        }
+        if (entry.type == raft::kFinalMembershipEntryType) {
+          next_snapshot.configuration_index = entry.index;
+        }
+        if (raft::is_membership_entry_type(entry.type)) {
+          continue;
+        }
+        if (entry.type != kRaftColumnarAppendEntryType) {
+          return common::make_unexpected(
+              fail(corruption("applied Raft prefix contains an unknown tablet entry type")));
+        }
+        application_snapshot.entries.push_back(
+            RaftTabletSnapshotEntry{entry.index, entry.term, entry.payload});
+      }
+    } catch (const std::bad_alloc&) {
+      return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                    "Raft tablet snapshot allocation failed"});
+    }
+    application_snapshot.raft_snapshot = std::move(next_snapshot);
+
+    std::optional<raft::SnapshotMetadata> pending_installed_snapshot;
+    RaftTabletSnapshotCompactionReport report;
+    std::vector<raft::DurableRaftRequest> compaction_request;
+    try {
+      pending_installed_snapshot.emplace(application_snapshot.raft_snapshot);
+      report.snapshot = application_snapshot.raft_snapshot;
+      report.application_entries = application_snapshot.entries.size();
+      compaction_request.push_back(
+          {group_id, raft::CompactSnapshotOperation{application_snapshot.raft_snapshot}});
+    } catch (const std::bad_alloc&) {
+      return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                    "Raft tablet compaction allocation failed"});
+    }
+
+    auto installed = snapshot_storage->install(application_snapshot);
+    if (!installed.has_value()) {
+      return common::make_unexpected(installed.error());
+    }
+    auto compacted = runtime->execute_batch(std::move(compaction_request));
+    if (!compacted.has_value()) {
+      return common::make_unexpected(fail(compacted.error()));
+    }
+    if (compacted->size() != 1U || !compacted->front().status.is_ok()) {
+      const common::Status status = compacted->empty()
+                                        ? unavailable("Raft snapshot compaction returned no result")
+                                        : compacted->front().status;
+      return common::make_unexpected(status);
+    }
+    node = runtime->find_group(group_id);
+    if (node == nullptr ||
+        node->persistent_state().snapshot != application_snapshot.raft_snapshot) {
+      return common::make_unexpected(
+          fail(corruption("durable Raft snapshot disagrees with installed application bytes")));
+    }
+    installed_snapshot = std::move(pending_installed_snapshot);
+    report.file_name = std::move(installed->file_name);
+    report.application_snapshot_already_present = installed->already_present;
+    return report;
+  }
+
   raft::GroupId group_id;
   raft::DurableMultiRaftRuntime* runtime;
   std::optional<RaftTabletSnapshotStorage> snapshot_storage;
@@ -345,6 +495,14 @@ common::Result<RaftTabletApplicationReport> RaftTabletStateMachine::apply_commit
         unsupported("Raft tablet application cannot cross a different application snapshot")));
   }
   return impl_->apply_entries(node->committed_unapplied(), true);
+}
+
+common::Result<RaftTabletSnapshotCompactionReport>
+RaftTabletStateMachine::compact_applied_prefix(const raft::LogIndex last_included_index,
+                                               const std::uint64_t manifest_generation,
+                                               std::array<std::byte, 32U> part_set_checksum) {
+  return impl_->compact_applied_prefix(last_included_index, manifest_generation,
+                                       std::move(part_set_checksum));
 }
 
 common::Result<raft::QuorumSyncReceipt>

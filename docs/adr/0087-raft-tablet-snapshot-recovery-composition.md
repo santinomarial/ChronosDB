@@ -6,6 +6,7 @@
 - **Extends:** [ADR 0073](0073-committed-raft-tablet-application.md),
   [ADR 0085](0085-raft-tablet-application-snapshot-v1.md), and
   [ADR 0086](0086-durable-raft-tablet-snapshot-installation.md)
+- **Extended by:** [ADR 0088](0088-owned-raft-tablet-snapshot-compaction.md)
 
 ## Context
 
@@ -35,8 +36,8 @@ This keeps the tablet application frontier aligned with durable Raft application
 command occurs at the boundary.
 
 The recovered state machine retains the snapshot lock and rejects a later, different Raft snapshot
-boundary. Local snapshot creation/compaction must therefore be integrated through this owner rather
-than performed behind it.
+boundary. ADR 0088 routes local snapshot creation/compaction through this owner rather than
+performing it behind the owner.
 
 ## Consequences and alternatives
 
@@ -56,4 +57,4 @@ application snapshot, compacts Raft, commits an exact-retry suffix at index 2, r
 proves missing snapshot ownership fails, and reconstructs two rows, one retry, tablet frontier 2,
 and durable applied index 2. Existing membership tests now prove no-row frontier advancement.
 Mismatch/corruption matrices, allocation-failure sweeps, process crashes, follower installation,
-snapshot creation orchestration, and physical-log reclamation remain deferred.
+and physical-log reclamation remain deferred.

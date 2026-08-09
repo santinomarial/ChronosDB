@@ -716,9 +716,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   to exact original command positions. A group-locked local owner exact-validates, file-syncs,
   no-replace installs, directory-syncs, reopens, and selects those immutable bytes. The tablet state
   machine exact-matches a compacted Raft boundary, rebuilds that prefix plus the committed retained
-  suffix, and preserves membership-only application frontiers. Local snapshot creation/compaction
-  orchestration and reclamation are not implemented. Asynchronous worker scheduling/fairness also
-  remains deferred. A leader
+  suffix, and preserves membership-only application frontiers. The same locked owner now extends
+  exact application commands to a newer applied boundary, installs them durably first, and then
+  compacts Raft to matching metadata. Obsolete snapshot-file and shared physical-log reclamation are
+  not implemented. Asynchronous worker scheduling/fairness also remains deferred. A leader
   under stable or joint membership can now produce a checked quorum-sync receipt after
   majority-derived durable commit, and tablet application composes it with visibility; native
   client mode exposure and end-to-end crash evidence remain. The phase exit gate is not claimed.

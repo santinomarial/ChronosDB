@@ -9,9 +9,12 @@
 #include "chronos/raft/durable_runtime.hpp"
 #include "chronos/schema/table_schema.hpp"
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace chronos::ingest {
@@ -23,6 +26,13 @@ struct RaftTabletApplicationReport {
   raft::LogIndex last_applied_index{};
   std::size_t applied_entries{};
   std::size_t matching_retries{};
+};
+
+struct RaftTabletSnapshotCompactionReport {
+  raft::SnapshotMetadata snapshot;
+  std::string file_name;
+  std::size_t application_entries{};
+  bool application_snapshot_already_present{false};
 };
 
 // Single-thread-affine owner of one Raft group's tablet application state. recover() accepts only
@@ -53,6 +63,11 @@ public:
           ColumnarAppendDecodeLimits decode_limits = {});
 
   [[nodiscard]] common::Result<RaftTabletApplicationReport> apply_committed();
+  // Installs an exact application snapshot before durably compacting Raft to the same applied
+  // boundary. Requires snapshot-storage ownership supplied to recover().
+  [[nodiscard]] common::Result<RaftTabletSnapshotCompactionReport>
+  compact_applied_prefix(raft::LogIndex last_included_index, std::uint64_t manifest_generation,
+                         std::array<std::byte, 32U> part_set_checksum);
   [[nodiscard]] common::Result<raft::QuorumSyncReceipt>
   prove_applied_quorum_sync(raft::LogIndex index) const;
 

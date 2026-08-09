@@ -124,6 +124,8 @@ TEST(RaftTabletStateMachineTest, AppliesCommittedEntriesOnceAndRebuildsFromRetai
     EXPECT_EQ(machine->tablet().snapshot()->applied_position(),
               head::HeadCommitPosition::raft(group_id(), 1U));
     EXPECT_EQ(durable.find_group(group_id())->applied_index(), 1U);
+    EXPECT_EQ(machine->compact_applied_prefix(1U, 1U, {}).error().code(),
+              common::StatusCode::kNotSupported);
     const auto acknowledged = machine->prove_applied_quorum_sync(1U);
     ASSERT_TRUE(acknowledged.has_value()) << acknowledged.error().to_string();
     EXPECT_EQ(acknowledged->log_index, 1U);
@@ -166,12 +168,16 @@ TEST(RaftTabletStateMachineTest, RebuildsCompactedPrefixThenCommittedSuffixFromI
   ASSERT_TRUE(std::filesystem::create_directories(snapshot_directory));
   const raft::RaftPersistentLogConfig log_config{.directory_path = log_directory.string()};
   const std::vector<std::byte> payload = command();
+  const std::vector<std::byte> suffix_payload = command(2U);
 
   {
     raft::DurableMultiRaftRuntime durable = runtime(log_config, {1U});
     ASSERT_TRUE(durable.execute_batch({{group_id(), raft::StartElectionOperation{}}}).has_value());
-    auto machine = RaftTabletStateMachine::recover(group_id(), durable, retry_directory(), tablet(),
-                                                   schemas());
+    auto snapshot_storage = RaftTabletSnapshotStorage::create(
+        {.directory_path = snapshot_directory.string(), .group_id = group_id()});
+    ASSERT_TRUE(snapshot_storage.has_value()) << snapshot_storage.error().to_string();
+    auto machine = RaftTabletStateMachine::recover(
+        group_id(), durable, std::move(*snapshot_storage), retry_directory(), tablet(), schemas());
     ASSERT_TRUE(machine.has_value()) << machine.error().to_string();
     ASSERT_TRUE(
         durable
@@ -181,27 +187,12 @@ TEST(RaftTabletStateMachineTest, RebuildsCompactedPrefixThenCommittedSuffixFromI
     ASSERT_TRUE(machine->apply_committed().has_value());
     ASSERT_EQ(durable.find_group(group_id())->applied_index(), 1U);
 
-    raft::SnapshotMetadata snapshot_metadata{.last_included_index = 1U,
-                                             .last_included_term = 1U,
-                                             .manifest_generation = 1U,
-                                             .part_set_checksum = {},
-                                             .configuration_index = 0U,
-                                             .voters = {1U}};
-    auto snapshot_storage = RaftTabletSnapshotStorage::create(
-        {.directory_path = snapshot_directory.string(), .group_id = group_id()});
-    ASSERT_TRUE(snapshot_storage.has_value()) << snapshot_storage.error().to_string();
-    RaftTabletApplicationSnapshot application_snapshot{
-        .group_id = group_id(),
-        .table_id = columnar::test::batch_schema()->table_id(),
-        .tablet_id = tablet_id(),
-        .raft_snapshot = snapshot_metadata,
-        .entries = {{.index = 1U, .term = 1U, .payload = payload}}};
-    ASSERT_TRUE(snapshot_storage->install(application_snapshot).has_value());
-    auto compacted =
-        durable.execute_batch({{group_id(), raft::CompactSnapshotOperation{snapshot_metadata}}});
+    auto compacted = machine->compact_applied_prefix(1U, 1U, {});
     ASSERT_TRUE(compacted.has_value()) << compacted.error().to_string();
-    ASSERT_TRUE(compacted->front().status.is_ok()) << compacted->front().status.to_string();
-    EXPECT_EQ(durable.find_group(group_id())->persistent_state().snapshot, snapshot_metadata);
+    EXPECT_EQ(compacted->snapshot.last_included_index, 1U);
+    EXPECT_EQ(compacted->application_entries, 1U);
+    EXPECT_FALSE(compacted->application_snapshot_already_present);
+    EXPECT_EQ(durable.find_group(group_id())->persistent_state().snapshot, compacted->snapshot);
     EXPECT_TRUE(durable.find_group(group_id())->persistent_state().log.empty());
 
     ASSERT_TRUE(
@@ -211,6 +202,20 @@ TEST(RaftTabletStateMachineTest, RebuildsCompactedPrefixThenCommittedSuffixFromI
             .has_value());
     EXPECT_EQ(durable.find_group(group_id())->commit_index(), 2U);
     EXPECT_EQ(durable.find_group(group_id())->applied_index(), 1U);
+    ASSERT_TRUE(machine->apply_committed().has_value());
+    auto compacted_again = machine->compact_applied_prefix(2U, 2U, {});
+    ASSERT_TRUE(compacted_again.has_value()) << compacted_again.error().to_string();
+    EXPECT_EQ(compacted_again->snapshot.last_included_index, 2U);
+    EXPECT_EQ(compacted_again->application_entries, 2U);
+    EXPECT_TRUE(durable.find_group(group_id())->persistent_state().log.empty());
+
+    ASSERT_TRUE(
+        durable
+            .execute_batch({{group_id(),
+                             raft::ProposeOperation{kRaftColumnarAppendEntryType, suffix_payload}}})
+            .has_value());
+    EXPECT_EQ(durable.find_group(group_id())->commit_index(), 3U);
+    EXPECT_EQ(durable.find_group(group_id())->applied_index(), 2U);
     ASSERT_TRUE(durable.close().is_ok());
   }
 
@@ -230,10 +235,10 @@ TEST(RaftTabletStateMachineTest, RebuildsCompactedPrefixThenCommittedSuffixFromI
   ASSERT_TRUE(rebuilt.has_value()) << rebuilt.error().to_string();
   auto rebuilt_snapshot = rebuilt->tablet().snapshot();
   ASSERT_TRUE(rebuilt_snapshot.has_value()) << rebuilt_snapshot.error().to_string();
-  EXPECT_EQ(rebuilt_snapshot->visible_row_count(), 2U);
-  EXPECT_EQ(rebuilt_snapshot->retry_entry_count(), 1U);
-  EXPECT_EQ(rebuilt_snapshot->applied_position(), head::HeadCommitPosition::raft(group_id(), 2U));
-  EXPECT_EQ(reopened->find_group(group_id())->applied_index(), 2U);
+  EXPECT_EQ(rebuilt_snapshot->visible_row_count(), 4U);
+  EXPECT_EQ(rebuilt_snapshot->retry_entry_count(), 2U);
+  EXPECT_EQ(rebuilt_snapshot->applied_position(), head::HeadCommitPosition::raft(group_id(), 3U));
+  EXPECT_EQ(reopened->find_group(group_id())->applied_index(), 3U);
 }
 
 TEST(RaftTabletStateMachineTest, KeepsAnAppendedButUncommittedEntryInvisible) {
@@ -298,10 +303,17 @@ TEST(RaftTabletStateMachineTest, FailsClosedOnCorruptCommittedCommandBytes) {
 
 TEST(RaftTabletStateMachineTest, AdvancesAcrossCommittedMembershipEntries) {
   TemporaryDirectory directory;
-  const raft::RaftPersistentLogConfig log_config{.directory_path = directory.path().string()};
+  const std::filesystem::path log_directory = directory.path() / "raft";
+  const std::filesystem::path snapshot_directory = directory.path() / "snapshots";
+  ASSERT_TRUE(std::filesystem::create_directories(log_directory));
+  ASSERT_TRUE(std::filesystem::create_directories(snapshot_directory));
+  const raft::RaftPersistentLogConfig log_config{.directory_path = log_directory.string()};
   raft::DurableMultiRaftRuntime durable = runtime(log_config, {1U, 2U});
-  auto machine =
-      RaftTabletStateMachine::recover(group_id(), durable, retry_directory(), tablet(), schemas());
+  auto snapshot_storage = RaftTabletSnapshotStorage::create(
+      {.directory_path = snapshot_directory.string(), .group_id = group_id()});
+  ASSERT_TRUE(snapshot_storage.has_value()) << snapshot_storage.error().to_string();
+  auto machine = RaftTabletStateMachine::recover(group_id(), durable, std::move(*snapshot_storage),
+                                                 retry_directory(), tablet(), schemas());
   ASSERT_TRUE(machine.has_value()) << machine.error().to_string();
   ASSERT_TRUE(durable.execute_batch({{group_id(), raft::StartElectionOperation{}}}).has_value());
   ASSERT_TRUE(
@@ -337,6 +349,12 @@ TEST(RaftTabletStateMachineTest, AdvancesAcrossCommittedMembershipEntries) {
   EXPECT_EQ(machine->tablet().snapshot()->visible_row_count(), 0U);
   EXPECT_EQ(machine->tablet().snapshot()->applied_position(),
             head::HeadCommitPosition::raft(group_id(), 2U));
+  auto compacted = machine->compact_applied_prefix(2U, 1U, {});
+  ASSERT_TRUE(compacted.has_value()) << compacted.error().to_string();
+  EXPECT_EQ(compacted->application_entries, 0U);
+  EXPECT_EQ(compacted->snapshot.configuration_index, 2U);
+  EXPECT_EQ(compacted->snapshot.voters, std::vector<raft::NodeId>{1U});
+  EXPECT_TRUE(durable.find_group(group_id())->persistent_state().log.empty());
 
   ASSERT_TRUE(durable
                   .execute_batch({{group_id(), raft::ProposeOperation{kRaftColumnarAppendEntryType,

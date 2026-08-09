@@ -51,8 +51,13 @@ temporary cleanup, and revalidated latest selection.
 Snapshot-backed `recover` exact-matches those application bytes with persistent Raft metadata,
 preflights both the stored prefix and committed retained suffix, rebuilds fresh row/retry state from
 original command positions, publishes membership-only frontier gaps, and persists the final applied
-index only after success. The state-machine owner retains the snapshot lock. Local snapshot creation
-and compaction must still be routed through that owner.
+index only after success. The state-machine owner retains the snapshot lock.
+
+`compact_applied_prefix` routes local snapshot creation through that same owner. It carries forward
+the prior exact application prefix, appends applied retained-log commands, derives canonical Raft
+term and membership metadata, durably installs the application bytes first, and only then compacts
+Raft to the identical boundary. A crash between those steps leaves an unreferenced future file, not
+an unrecoverable Raft prefix.
 
 ## Failure behavior and limits
 
@@ -65,15 +70,16 @@ log.
 
 `prove_applied_quorum_sync` composes the leader's committed/joint-membership durability receipt with
 the Raft applied index and tablet group/index publication frontier. Client protocol exposure,
-application-snapshot creation/compaction, and physical-log reclamation remain absent.
+follower application-snapshot transfer, and physical-log reclamation remain absent.
 
 ## Complexity and likely interview questions
 
 Application is linear in committed commands plus decoded column bytes. Retry lookup is `O(log N)`
-under the bounded map. Startup is linear in the complete committed history until snapshots exist.
+under the bounded map. Startup is linear in snapshot commands plus the retained committed suffix;
+v1 snapshot extension is linear in the carried command prefix plus newly covered log entries.
 
 - Why is a persisted Raft applied index insufficient to restore mutable tablet memory?
 - Why must applied-index persistence follow row publication?
 - How does an exact retry at a later log index avoid duplicate rows while preserving progress?
-- Why does this implementation reject a compacted Raft prefix?
+- Why must application-snapshot installation precede Raft prefix compaction?
 - Which boundary prevents an uncommitted entry from becoming query-visible?

@@ -61,4 +61,6 @@ schema/tablet binding, retry validation, and ordered publication before acceptin
 Local durable files use `snapshot-<20-digit-index>.rtas`. Installation writes and exact-validates a
 deterministic `.tmp`, synchronizes it, atomically renames without replacement, then synchronizes the
 directory. Existing identical bytes are an idempotent retry; changed bytes at one index are
-corruption.
+corruption. Local creation copies any exact previously compacted application entries, appends the
+supported applied retained-log commands through the new boundary, installs these bytes first, and
+only then durably compacts Raft to their identical metadata.
