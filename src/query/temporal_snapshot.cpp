@@ -1,6 +1,7 @@
 #include "chronos/query/temporal_snapshot.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
@@ -33,6 +34,34 @@ struct ByteVectorLess {
 
 [[nodiscard]] common::Status invalid(const char* message) {
   return common::Status{common::StatusCode::kInvalidArgument, message};
+}
+
+[[nodiscard]] common::Status corruption(const char* message) {
+  return common::Status{common::StatusCode::kCorruption, message};
+}
+
+[[nodiscard]] bool equal_scalar(const ScalarValue& left, const ScalarValue& right) {
+  if (left.type() != right.type() || left.storage().index() != right.storage().index()) {
+    return false;
+  }
+  if (const auto* left_float = std::get_if<float>(&left.storage()); left_float != nullptr) {
+    return std::bit_cast<std::uint32_t>(*left_float) ==
+           std::bit_cast<std::uint32_t>(std::get<float>(right.storage()));
+  }
+  if (const auto* left_double = std::get_if<double>(&left.storage()); left_double != nullptr) {
+    return std::bit_cast<std::uint64_t>(*left_double) ==
+           std::bit_cast<std::uint64_t>(std::get<double>(right.storage()));
+  }
+  return left.storage() == right.storage();
+}
+
+[[nodiscard]] bool equal_mutation(const TemporalMutation& left, const TemporalMutation& right) {
+  return left.logical_identity == right.logical_identity &&
+         left.event_time_ns == right.event_time_ns &&
+         left.receive_time_ns == right.receive_time_ns && left.wal_id == right.wal_id &&
+         left.record_sequence == right.record_sequence && left.row_ordinal == right.row_ordinal &&
+         left.kind == right.kind && left.columns.size() == right.columns.size() &&
+         std::ranges::equal(left.columns, right.columns, equal_scalar);
 }
 
 } // namespace
@@ -255,6 +284,51 @@ TemporalSnapshotProvider::restore_retained_history(const std::int64_t retained_s
   } catch (const std::length_error&) {
     return common::Status{common::StatusCode::kResourceExhausted,
                           "retained temporal restore exceeded container limits"};
+  }
+}
+
+common::Status TemporalSnapshotProvider::verify_retained_commit(
+    const std::uint64_t system_commit_position, const std::int64_t system_commit_time_ns,
+    const std::span<const TemporalMutation> mutations) const {
+  if (system_commit_position == 0U || mutations.empty()) {
+    return invalid("retained temporal verification input is invalid");
+  }
+  try {
+    std::scoped_lock lock{impl_->mutex};
+    if (impl_->failed) {
+      return common::Status{common::StatusCode::kUnavailable,
+                            "temporal provider failed closed and requires recovery"};
+    }
+    if (impl_->earliest_retained_time.has_value() &&
+        system_commit_time_ns < *impl_->earliest_retained_time) {
+      return common::Status::ok();
+    }
+
+    std::size_t stored_count = 0U;
+    for (const auto& [identity, history] : impl_->histories) {
+      static_cast<void>(identity);
+      stored_count += static_cast<std::size_t>(
+          std::ranges::count(history, system_commit_position, &Impl::Version::commit_position));
+    }
+    if (stored_count != mutations.size()) {
+      return corruption("checkpoint-covered temporal commit has different retained row coverage");
+    }
+    for (const TemporalMutation& mutation : mutations) {
+      const auto history = impl_->histories.find(mutation.logical_identity);
+      if (history == impl_->histories.end()) {
+        return corruption("checkpoint-covered temporal identity is absent from retained history");
+      }
+      const auto version = std::ranges::find(history->second, system_commit_position,
+                                             &Impl::Version::commit_position);
+      if (version == history->second.end() || version->commit_time_ns != system_commit_time_ns ||
+          !equal_mutation(version->mutation, mutation)) {
+        return corruption("checkpoint-covered temporal version disagrees with retained history");
+      }
+    }
+    return common::Status::ok();
+  } catch (const std::system_error&) {
+    return common::Status{common::StatusCode::kInternal,
+                          "retained temporal verification lock failed"};
   }
 }
 

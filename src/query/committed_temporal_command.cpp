@@ -29,13 +29,10 @@ namespace {
   return common::Status{common::StatusCode::kInternal, std::move(message)};
 }
 
-} // namespace
-
-common::Result<CommittedTemporalCommandResult>
-apply_committed_temporal_command(const DecodedTemporalCommandView& command,
-                                 const schema::TableSchema& retained_schema,
-                                 const std::uint64_t system_commit_position,
-                                 const wal::WalId wal_id, TemporalSnapshotProvider& provider) {
+[[nodiscard]] common::Result<std::vector<TemporalMutation>>
+materialize_mutations(const DecodedTemporalCommandView& command,
+                      const schema::TableSchema& retained_schema,
+                      const std::uint64_t system_commit_position, const wal::WalId wal_id) {
   if (system_commit_position == 0U || !wal_id.is_valid()) {
     return common::make_unexpected(
         invalid("committed temporal command requires a valid WAL source position"));
@@ -50,7 +47,6 @@ apply_committed_temporal_command(const DecodedTemporalCommandView& command,
     return common::make_unexpected(
         invalid("committed temporal command row metadata does not match its batch"));
   }
-
   try {
     std::vector<TemporalMutation> mutations;
     mutations.reserve(command.mutations().size());
@@ -80,26 +76,61 @@ apply_committed_temporal_command(const DecodedTemporalCommandView& command,
           .row_ordinal = row,
           .kind = descriptor.kind});
     }
-    common::Status applied = provider.apply_committed(
-        system_commit_position, command.system_commit_time_ns(), std::move(mutations));
-    if (!applied.is_ok()) {
-      return common::make_unexpected(std::move(applied));
-    }
-    return CommittedTemporalCommandResult{
-        .system_commit_position = system_commit_position,
-        .applied_mutation_count = static_cast<std::uint32_t>(command.mutations().size())};
+    return mutations;
   } catch (const std::bad_alloc&) {
-    return common::make_unexpected(exhausted("committed temporal application allocation failed"));
+    return common::make_unexpected(
+        exhausted("committed temporal materialization allocation failed"));
   } catch (const std::length_error&) {
     return common::make_unexpected(
-        exhausted("committed temporal application exceeded container limits"));
+        exhausted("committed temporal materialization exceeded container limits"));
   } catch (const std::exception& error) {
     return common::make_unexpected(
-        internal(std::string{"committed temporal application threw: "} + error.what()));
+        internal(std::string{"committed temporal materialization threw: "} + error.what()));
   } catch (...) {
     return common::make_unexpected(
-        internal("committed temporal application threw an unknown exception"));
+        internal("committed temporal materialization threw an unknown exception"));
   }
+}
+
+} // namespace
+
+common::Result<CommittedTemporalCommandResult>
+apply_committed_temporal_command(const DecodedTemporalCommandView& command,
+                                 const schema::TableSchema& retained_schema,
+                                 const std::uint64_t system_commit_position,
+                                 const wal::WalId wal_id, TemporalSnapshotProvider& provider) {
+  common::Result<std::vector<TemporalMutation>> mutations =
+      materialize_mutations(command, retained_schema, system_commit_position, wal_id);
+  if (!mutations.has_value()) {
+    return common::make_unexpected(mutations.error());
+  }
+  common::Status applied = provider.apply_committed(
+      system_commit_position, command.system_commit_time_ns(), std::move(*mutations));
+  if (!applied.is_ok()) {
+    return common::make_unexpected(std::move(applied));
+  }
+  return CommittedTemporalCommandResult{.system_commit_position = system_commit_position,
+                                        .applied_mutation_count =
+                                            static_cast<std::uint32_t>(command.mutations().size())};
+}
+
+common::Result<CommittedTemporalCommandResult> verify_retained_temporal_command(
+    const DecodedTemporalCommandView& command, const schema::TableSchema& retained_schema,
+    const std::uint64_t system_commit_position, const wal::WalId wal_id,
+    const TemporalSnapshotProvider& provider) {
+  common::Result<std::vector<TemporalMutation>> mutations =
+      materialize_mutations(command, retained_schema, system_commit_position, wal_id);
+  if (!mutations.has_value()) {
+    return common::make_unexpected(mutations.error());
+  }
+  common::Status verified = provider.verify_retained_commit(
+      system_commit_position, command.system_commit_time_ns(), *mutations);
+  if (!verified.is_ok()) {
+    return common::make_unexpected(std::move(verified));
+  }
+  return CommittedTemporalCommandResult{.system_commit_position = system_commit_position,
+                                        .applied_mutation_count =
+                                            static_cast<std::uint32_t>(mutations->size())};
 }
 
 } // namespace chronos::query

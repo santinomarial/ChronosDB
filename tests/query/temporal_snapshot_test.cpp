@@ -5,6 +5,7 @@
 #include "chronos/schema/logical_type.hpp"
 #include "chronos/schema/table_schema.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
@@ -159,6 +160,19 @@ TEST(TemporalSnapshotTest, AtomicallyRestoresCanonicalCompactedHistory) {
   const auto current = (*provider)->resolve(schema, std::nullopt);
   ASSERT_TRUE(current.has_value());
   EXPECT_EQ(visible_value(**current), 90);
+
+  const std::array exact{mutation(90, TemporalMutationKind::kReplacement, 9U)};
+  EXPECT_TRUE((*provider)->verify_retained_commit(9U, 9000, exact).is_ok());
+  const std::array changed{mutation(91, TemporalMutationKind::kReplacement, 9U)};
+  EXPECT_EQ((*provider)->verify_retained_commit(9U, 9000, changed).code(),
+            common::StatusCode::kCorruption);
+  auto extra = mutation(92, TemporalMutationKind::kOriginal, 9U);
+  extra.logical_identity = {std::byte{2U}};
+  const std::array expanded{exact.front(), std::move(extra)};
+  EXPECT_EQ((*provider)->verify_retained_commit(9U, 9000, expanded).code(),
+            common::StatusCode::kCorruption);
+  const std::array expired_mutation{mutation(999, TemporalMutationKind::kCorrection, 7U)};
+  EXPECT_TRUE((*provider)->verify_retained_commit(7U, 7000, expired_mutation).is_ok());
 
   EXPECT_TRUE(
       (*provider)

@@ -41,6 +41,10 @@ or application identity are unsupported; damaged canonical bytes are corruption.
 
 `apply_committed_temporal_command` binds the enclosing WAL identity and record sequence to every
 row, copies canonical physical cells into owned scalar history, and atomically publishes the batch.
+`verify_retained_temporal_command` performs the identical binding and cell materialization but
+read-only compares a checkpoint-covered command with restored retained history. Retained rows must
+match exactly; rows older than an explicit caller-proven retention boundary may already have been
+reclaimed and therefore receive structural and schema validation only.
 `execute_temporal_command` materializes and validates the complete transition before bounded WAL
 admission, waits for the requested `ASYNC` or `LOCAL_SYNC` completion, and only then publishes the
 actual WAL source position. Any post-admission uncertainty fails the provider closed for recovery.

@@ -73,6 +73,14 @@ public:
   restore_retained_history(std::int64_t retained_system_time_ns,
                            std::vector<RetainedTemporalVersion> versions);
 
+  // Verifies one checkpoint-covered commit against restored retained history. Commits before the
+  // proven retention boundary are accepted as expired after structural/schema validation by the
+  // caller; at or after the boundary every mutation and the complete per-position row set must
+  // match exactly. This method never mutates provider state.
+  [[nodiscard]] common::Status
+  verify_retained_commit(std::uint64_t system_commit_position, std::int64_t system_commit_time_ns,
+                         std::span<const TemporalMutation> mutations) const;
+
   // Single-writer pre-WAL validation for the next commit. Source WAL fields are deliberately
   // ignored because admission has not assigned them yet. The caller must serialize this check,
   // WAL submission, and apply_committed() with every other writer to this provider.

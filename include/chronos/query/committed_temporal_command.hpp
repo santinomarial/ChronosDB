@@ -27,6 +27,14 @@ struct CommittedTemporalCommandResult {
     const DecodedTemporalCommandView& command, const schema::TableSchema& retained_schema,
     std::uint64_t system_commit_position, wal::WalId wal_id, TemporalSnapshotProvider& provider);
 
+// Materializes the same authoritative WAL-bound mutations but verifies them against a provider's
+// checkpoint-covered retained history instead of applying them. The provider remains unchanged.
+[[nodiscard]] common::Result<CommittedTemporalCommandResult>
+verify_retained_temporal_command(const DecodedTemporalCommandView& command,
+                                 const schema::TableSchema& retained_schema,
+                                 std::uint64_t system_commit_position, wal::WalId wal_id,
+                                 const TemporalSnapshotProvider& provider);
+
 } // namespace chronos::query
 
 #endif // CHRONOS_QUERY_COMMITTED_TEMPORAL_COMMAND_HPP_

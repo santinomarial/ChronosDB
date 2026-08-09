@@ -47,6 +47,19 @@ TEST(CommittedTemporalCommandTest, ConvertsCanonicalCellsAndPublishesOneAtomicPo
   EXPECT_EQ((*snapshot)->rows()[0].wal_id, common::Uuid{wal_id(9U).bytes});
   EXPECT_EQ((*snapshot)->rows()[0].record_sequence, 7U);
   EXPECT_EQ((*snapshot)->rows()[0].system_commit_position, 7U);
+
+  auto verified = verify_retained_temporal_command(*decoded, *retained, 7U, wal_id(9U), **provider);
+  ASSERT_TRUE(verified.has_value()) << verified.error().to_string();
+  auto different_time =
+      encode_temporal_command_v1(*batch, descriptors(TemporalMutationKind::kOriginal), 1001);
+  ASSERT_TRUE(different_time.has_value());
+  auto different_decoded = decode_temporal_command_v1(different_time->bytes());
+  ASSERT_TRUE(different_decoded.has_value());
+  EXPECT_EQ(
+      verify_retained_temporal_command(*different_decoded, *retained, 7U, wal_id(9U), **provider)
+          .error()
+          .code(),
+      common::StatusCode::kCorruption);
 }
 
 } // namespace

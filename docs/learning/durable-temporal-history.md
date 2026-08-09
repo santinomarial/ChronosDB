@@ -41,6 +41,14 @@ its expired predecessor. The caller must supply the proven table-wide retained-s
 inferring it from the first physical row would be unsafe when identities have different histories.
 Earlier as-of requests return `NOT_FOUND` rather than inventing an empty table.
 
+`verify_retained_commit` is the read-only proof boundary for a WAL command already covered by a
+selected durable tablet position. At or after the explicit retained-system-time boundary, it
+requires the complete row set at that source position to match the restored commit timestamp,
+logical identities, source coordinates, operation metadata, and scalar storage exactly (including
+floating-point bit patterns). A structurally and schema-valid covered command before that boundary
+may be accepted as expired because its physical version was deliberately reclaimed; this exception
+is safe only when a durable manifest independently proves that the command is covered.
+
 `RecoveredTemporalState` owns one provider per configured table and the locked reopened
 `WalWriter`. `release_writer()` transfers that writer exactly once to the later live coordinator.
 Provider pointers remain valid for the lifetime of the recovered owner.
@@ -69,6 +77,8 @@ Committed application first binds the decoded batch to the retained catalog sche
 physical cell through `ScalarValue::from_column_cell`, attaches the enclosing WAL identity and
 record sequence, and calls `TemporalSnapshotProvider::apply_committed` once for the complete batch.
 The WAL record sequence is authoritative system order; wall-clock time never replaces it.
+`verify_retained_temporal_command` reuses that canonical materialization path but compares the
+result with restored history without publishing it.
 
 Provider application validates every identity, row shape, source position, mutation transition,
 capacity, and scalar schema before publication. It then stages copies of the complete histories and
@@ -122,10 +132,11 @@ use a different accepted format; it must not reinterpret these bytes in place.
 
 ## Validation and interview questions
 
-Focused tests cover canonical command application, original/correction replay, historical lookup,
-impossible-history rejection, and continued WAL sequence ownership. Phase 18 retains golden bytes,
-fuzzing, allocation-failure sweeps, crash points, mixed-command dispatch, long histories, and
-performance measurement.
+Focused tests cover canonical command application, exact and disagreeing covered-command checks,
+expired covered commands, original/correction replay, historical lookup, impossible-history
+rejection, and continued WAL sequence ownership. Phase 18 retains golden bytes, fuzzing,
+allocation-failure sweeps, crash points, mixed-command dispatch, long histories, and performance
+measurement.
 
 Useful design questions include:
 

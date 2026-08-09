@@ -664,7 +664,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   provider under a caller-proven tablet-wide retention boundary. One fail-closed startup owner now
   composes that state with a verified WAL suffix when a single tablet's durable position exactly
   equals the global physical checkpoint, retains both locks and the selected generation, and
-  returns the writer at the next sequence. Multi-tablet checkpoint overlap, Raft application
+  returns the writer at the next sequence. Checkpoint-covered temporal commands now have a
+  read-only exact verifier that reuses canonical WAL materialization and permits only
+  manifest-proven commands before the explicit retention boundary to be treated as expired.
+  Multi-tablet checkpoint overlap composition, Raft application
   snapshots, complete query-epoch publication, v1 migration, vector output, and authorized
   retention/compaction integration remain deferred, so the phase exit gate is not claimed.
 
