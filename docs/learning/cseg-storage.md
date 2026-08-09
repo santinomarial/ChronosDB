@@ -116,8 +116,10 @@ are rejected before unbounded output allocation and are constrained by both the 
 and caller-provided limits. The inspector checks the filesystem size before allocating its input
 buffer and defaults to a 1 GiB operational limit even though the durable format maximum is larger.
 
-None of these APIs make a file durable or safe to reference from a manifest. A valid CSEG image is
-still only a candidate until the future installation protocol durably places and publishes it.
+None of these CSEG-local APIs make a file durable or safe to reference from a manifest. Manifest v2
+now has a separate exact single-image admission boundary that binds CSEG 2/0 bytes, schema, source,
+digest, and recomputed temporal extrema. The image remains only a candidate until the pending v2
+installation protocol durably places it and publishes a complete validated generation.
 
 ## Complexity
 
