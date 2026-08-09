@@ -469,6 +469,7 @@ add_library(
   src/raft/multi_raft.cpp
   src/raft/multiplexed_log.cpp
   src/raft/node.cpp
+  src/raft/persistent_log.cpp
   src/raft/rebalancing.cpp
 )
 add_library(chronos::raft ALIAS chronos_raft)
@@ -480,7 +481,7 @@ target_include_directories(
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
 )
-target_link_libraries(chronos_raft PUBLIC chronos::common)
+target_link_libraries(chronos_raft PUBLIC chronos::common PRIVATE chronos::io)
 chronos_set_project_warnings(chronos_raft)
 chronos_enable_sanitizers(chronos_raft)
 chronos_enable_static_analysis(chronos_raft)
@@ -675,6 +676,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/raft/metadata_test.cpp
     tests/raft/multiplexed_log_header_self_contained.cpp
     tests/raft/multiplexed_log_test.cpp
+    tests/raft/persistent_log_header_self_contained.cpp
+    tests/raft/persistent_log_test.cpp
     tests/raft/types_header_self_contained.cpp
   )
   set_target_properties(chronos_raft_tests PROPERTIES CXX_EXTENSIONS OFF)

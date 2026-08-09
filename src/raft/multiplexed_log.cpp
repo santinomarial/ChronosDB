@@ -85,6 +85,58 @@ inline constexpr std::size_t kEntryFixedSize = 32U;
 
 } // namespace
 
+common::Result<MultiplexedLogRecordHeader>
+inspect_multiplexed_log_record_header_v1(const common::ByteView encoded_header) {
+  if (encoded_header.size() != kMultiplexedLogHeaderSize) {
+    return common::make_unexpected(corrupt("multiplexed log header size is invalid"));
+  }
+  std::array<std::byte, kMultiplexedLogHeaderSize> checked_header{};
+  std::copy(encoded_header.begin(), encoded_header.end(), checked_header.begin());
+  common::ByteReader crc_reader{common::ByteView{checked_header}.subspan(52U, 4U)};
+  auto stored_header_crc = crc_reader.read_u32_le();
+  std::fill(checked_header.begin() + 52, checked_header.begin() + 56, std::byte{0});
+  if (!stored_header_crc.has_value() || common::crc32c(checked_header) != *stored_header_crc) {
+    return common::make_unexpected(corrupt("multiplexed log header checksum mismatch"));
+  }
+
+  common::ByteReader header{encoded_header};
+  auto magic = header.read_exact(8U);
+  auto major = header.read_u16_le();
+  auto minor = header.read_u16_le();
+  auto header_size = header.read_u32_le();
+  auto total_size = header.read_u32_le();
+  auto payload_length = header.read_u32_le();
+  auto physical_sequence = header.read_u64_le();
+  auto group_bytes = header.read_exact(common::Uuid::kSize);
+  auto payload_crc = header.read_u32_le();
+  auto ignored_header_crc = header.read_u32_le();
+  auto reserved = header.read_exact(8U);
+  static_cast<void>(payload_crc);
+  static_cast<void>(ignored_header_crc);
+  if (!magic || !major || !minor || !header_size || !total_size || !payload_length ||
+      !physical_sequence || !group_bytes || !reserved || !std::ranges::equal(*magic, kMagic)) {
+    return common::make_unexpected(corrupt("multiplexed log header is invalid"));
+  }
+  if (*major != kMultiplexedLogFormatMajor || *minor > kMultiplexedLogFormatMinor) {
+    return common::make_unexpected(common::Status{common::StatusCode::kNotSupported,
+                                                  "multiplexed log version is unsupported"});
+  }
+  const std::uint64_t minimum_size = kMultiplexedLogHeaderSize + kMultiplexedLogTrailerSize;
+  if (*header_size != kMultiplexedLogHeaderSize || *physical_sequence == 0U ||
+      *total_size < minimum_size || *total_size > kMaximumMultiplexedLogRecordSize ||
+      *payload_length != *total_size - minimum_size ||
+      std::ranges::any_of(*reserved, [](const std::byte value) { return value != std::byte{0}; })) {
+    return common::make_unexpected(corrupt("multiplexed log layout or reserved bytes invalid"));
+  }
+  common::Uuid::Bytes group_array{};
+  std::copy(group_bytes->begin(), group_bytes->end(), group_array.begin());
+  const GroupId group_id{group_array};
+  if (group_id.is_nil()) {
+    return common::make_unexpected(corrupt("multiplexed log group is nil"));
+  }
+  return MultiplexedLogRecordHeader{*total_size, *payload_length, *physical_sequence, group_id};
+}
+
 common::Result<std::vector<std::byte>>
 encode_multiplexed_log_record_v1(const GroupPersistentState& persistent) {
   if (persistent.group_id.is_nil() || persistent.physical_sequence == 0U ||
@@ -169,44 +221,21 @@ decode_multiplexed_log_record_v1(const common::ByteView encoded) {
   if (encoded.size() < kMultiplexedLogHeaderSize + kMultiplexedLogTrailerSize) {
     return common::make_unexpected(corrupt("multiplexed log record is truncated"));
   }
-  std::array<std::byte, kMultiplexedLogHeaderSize> checked_header{};
-  std::copy_n(encoded.begin(), checked_header.size(), checked_header.begin());
-  common::ByteReader crc_reader{common::ByteView{checked_header}.subspan(52U, 4U)};
-  auto stored_header_crc = crc_reader.read_u32_le();
-  std::fill(checked_header.begin() + 52, checked_header.begin() + 56, std::byte{0});
-  if (!stored_header_crc.has_value() || common::crc32c(checked_header) != *stored_header_crc) {
-    return common::make_unexpected(corrupt("multiplexed log header checksum mismatch"));
+  auto inspected =
+      inspect_multiplexed_log_record_header_v1(encoded.first(kMultiplexedLogHeaderSize));
+  if (!inspected.has_value()) {
+    return common::make_unexpected(inspected.error());
   }
-
-  common::ByteReader header{encoded.first(kMultiplexedLogHeaderSize)};
-  auto magic = header.read_exact(8U);
-  auto major = header.read_u16_le();
-  auto minor = header.read_u16_le();
-  auto header_size = header.read_u32_le();
-  auto total_size = header.read_u32_le();
-  auto payload_length = header.read_u32_le();
-  auto physical_sequence = header.read_u64_le();
-  auto group_bytes = header.read_exact(common::Uuid::kSize);
-  auto payload_crc = header.read_u32_le();
-  auto ignored_header_crc = header.read_u32_le();
-  auto reserved = header.read_exact(8U);
-  static_cast<void>(ignored_header_crc);
-  if (!magic || !major || !minor || !header_size || !total_size || !payload_length ||
-      !physical_sequence || !group_bytes || !payload_crc || !reserved ||
-      !std::ranges::equal(*magic, kMagic)) {
-    return common::make_unexpected(corrupt("multiplexed log header is invalid"));
+  if (inspected->encoded_size != encoded.size()) {
+    return common::make_unexpected(corrupt("multiplexed log record size does not match header"));
   }
-  if (*major != kMultiplexedLogFormatMajor || *minor > kMultiplexedLogFormatMinor) {
-    return common::make_unexpected(common::Status{common::StatusCode::kNotSupported,
-                                                  "multiplexed log version is unsupported"});
+  common::ByteReader crc_fields{encoded.subspan(48U, 4U)};
+  auto payload_crc = crc_fields.read_u32_le();
+  if (!payload_crc.has_value()) {
+    return common::make_unexpected(corrupt("multiplexed log payload checksum is truncated"));
   }
-  if (*header_size != kMultiplexedLogHeaderSize || *physical_sequence == 0U ||
-      *total_size != encoded.size() || *total_size > kMaximumMultiplexedLogRecordSize ||
-      *payload_length != encoded.size() - kMultiplexedLogHeaderSize - kMultiplexedLogTrailerSize ||
-      std::ranges::any_of(*reserved, [](const std::byte value) { return value != std::byte{0}; })) {
-    return common::make_unexpected(corrupt("multiplexed log layout or reserved bytes invalid"));
-  }
-  const common::ByteView payload = encoded.subspan(kMultiplexedLogHeaderSize, *payload_length);
+  const common::ByteView payload =
+      encoded.subspan(kMultiplexedLogHeaderSize, inspected->payload_size);
   if (common::crc32c(payload) != *payload_crc) {
     return common::make_unexpected(corrupt("multiplexed log payload checksum mismatch"));
   }
@@ -217,11 +246,6 @@ decode_multiplexed_log_record_v1(const common::ByteView encoded) {
     return common::make_unexpected(corrupt("multiplexed log record checksum mismatch"));
   }
 
-  common::Uuid::Bytes group_array{};
-  std::copy(group_bytes->begin(), group_bytes->end(), group_array.begin());
-  const GroupId group_id{group_array};
-  if (group_id.is_nil())
-    return common::make_unexpected(corrupt("multiplexed log group is nil"));
   common::ByteReader reader{payload};
   auto term = reader.read_u64_le();
   auto voted = reader.read_u64_le();
@@ -274,7 +298,8 @@ decode_multiplexed_log_record_v1(const common::ByteView encoded) {
   if (!reader.empty())
     return common::make_unexpected(corrupt("multiplexed log has trailing payload"));
   return DecodedGroupPersistentState{
-      GroupPersistentState{group_id, *physical_sequence, std::move(state)}, encoded.size()};
+      GroupPersistentState{inspected->group_id, inspected->physical_sequence, std::move(state)},
+      encoded.size()};
 }
 
 } // namespace chronos::raft

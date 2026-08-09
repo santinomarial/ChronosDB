@@ -27,6 +27,12 @@ TEST(MultiplexedLogTest, RoundTripsIndependentGroupPersistentStateAndDetectsCorr
 
   auto encoded = encode_multiplexed_log_record_v1(persistent);
   ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  auto header = inspect_multiplexed_log_record_header_v1(
+      common::ByteView{*encoded}.first(kMultiplexedLogHeaderSize));
+  ASSERT_TRUE(header.has_value()) << header.error().to_string();
+  EXPECT_EQ(header->encoded_size, encoded->size());
+  EXPECT_EQ(header->physical_sequence, persistent.physical_sequence);
+  EXPECT_EQ(header->group_id, persistent.group_id);
   auto decoded = decode_multiplexed_log_record_v1(*encoded);
   ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
   EXPECT_EQ(decoded->persistent, persistent);

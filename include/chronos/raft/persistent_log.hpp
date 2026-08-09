@@ -14,6 +14,7 @@ namespace chronos::raft {
 
 inline constexpr std::size_t kRaftSegmentHeaderSize = 64U;
 inline constexpr std::uint64_t kDefaultRaftSegmentTargetSize = 64U * 1024U * 1024U;
+inline constexpr std::uint64_t kMaximumRaftSegmentSize = 1024ULL * 1024ULL * 1024ULL;
 
 struct RaftPersistentLogConfig {
   // Existing dedicated directory. Its parent-directory durability is the caller's responsibility.
@@ -66,8 +67,7 @@ public:
   open_existing(const RaftPersistentLogConfig& config,
                 const RaftPersistentLogOpenOptions& options = {});
 
-  [[nodiscard]] common::Result<RaftPhysicalPosition>
-  append(const GroupPersistentState& persistent);
+  [[nodiscard]] common::Result<RaftPhysicalPosition> append(const GroupPersistentState& persistent);
   [[nodiscard]] common::Result<RaftPhysicalPosition> synchronize();
 
   [[nodiscard]] const RaftPersistentLogRecovery& recovery() const noexcept;
