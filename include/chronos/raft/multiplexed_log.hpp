@@ -22,6 +22,18 @@ struct DecodedGroupPersistentState {
   std::size_t encoded_size{};
 };
 
+struct MultiplexedLogRecordHeader {
+  std::size_t encoded_size{};
+  std::size_t payload_size{};
+  std::uint64_t physical_sequence{};
+  GroupId group_id;
+};
+
+// Validates the complete fixed header, including its checksum, before returning allocation-driving
+// lengths. The input must contain exactly kMultiplexedLogHeaderSize bytes.
+[[nodiscard]] common::Result<MultiplexedLogRecordHeader>
+inspect_multiplexed_log_record_header_v1(common::ByteView encoded_header);
+
 // Encodes a full per-group persistence checkpoint into one checksummed node-level physical record.
 // Repeating records for different groups permits shared batching/fsync without sharing logical
 // indexes. The byte format is independent of native object layout.
