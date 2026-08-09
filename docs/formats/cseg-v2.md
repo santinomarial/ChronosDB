@@ -2,7 +2,8 @@
 
 > **Status: accepted temporal registry, checked layout, strict metadata/part codecs, schema binding,
 > complete temporal row/order validation, and schema-aware projected granule reading are
-> implemented; winner resolution and Manifest v2 installation remain pending.**
+> implemented; bounded single-lineage current/as-of winner resolution is implemented, while
+> Manifest v2 installation and multi-source snapshot integration remain pending.**
 
 CSEG v2.0 is the immutable temporal-history part format. It retains CSEG v1's eight-byte magic,
 fixed 256-byte header, 96-byte column descriptors, 64-byte granule descriptors, 80-byte page
@@ -54,7 +55,14 @@ lineage, plans exact decoded/owned/borrowed bytes, reads only requested user pag
 and semantically validates all eight temporal system pages for a selected granule. Empty user
 projections therefore still authenticate row identities and operations. V1 and v2 open entry points
 remain version-strict. The reader exposes physical history rows; choosing current/as-of winners is a
-higher-level operation and remains pending.
+higher-level query operation.
+
+The query-layer reference resolver implements that higher-level operation for one explicit
+authoritative source lineage. It requires a complete schema-order projection, filters by an
+inclusive system commit-time boundary, selects one logical-identity winner by system commit time
+then commit position, and removes a winning tombstone. It returns an owned scalar snapshot and
+rejects mixed sources. Manifest-backed lineage discovery and vector-output integration remain
+pending.
 
 ## Column registry
 

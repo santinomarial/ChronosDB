@@ -44,9 +44,9 @@
 
 - Exercise Temporal Mutation Command v1 with golden fixtures, fuzzing, hostile length/count and
   nested-batch corruption matrices, mixed versions, allocation failure, and cross-compiler bytes.
-- Mixed `COLUMNAR_APPEND`/temporal recovery dispatch and application checkpoints; vector winner
-  resolution beyond the implemented strict metadata, full-part, bounded semantic-validation, and
-  projected-granule paths;
+- Mixed `COLUMNAR_APPEND`/temporal recovery dispatch and application checkpoints; Manifest-backed
+  multi-part/vector winner resolution beyond the implemented single-lineage scalar reference,
+  strict metadata, full-part, bounded semantic-validation, and projected-granule paths;
   live-executor fault injection plus crash and migration tests.
 - Expand CSEG v2 projected-reader and semantic validation with golden bytes, hostile metadata/page
   matrices,

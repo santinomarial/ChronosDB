@@ -49,8 +49,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [CSEG v2](formats/cseg-v2.md): accepted temporal-history system registry for WAL/Raft source,
   logical identity, correction/tombstone semantics, receive/system time, and checked canonical
   layout; strict metadata/full-part codecs, bounded complete semantic validation, and schema-aware
-  projected granule reading are implemented, while winner resolution and Manifest v2 installation
-  remain in progress.
+  projected granule reading are implemented together with bounded single-lineage current/as-of
+  winner resolution, while Manifest v2 and multi-part/vector integration remain in progress.
 - [Manifest v1](formats/manifest-v1.md): accepted immutable database-wide generation bytes,
   installed-name grammar, tablet/part/retry recovery state, and checkpoint-aware WAL suffix contract;
   implementation is pending.

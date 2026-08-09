@@ -640,8 +640,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   every stored page and alignment region. Bounded semantic acceptance now validates every temporal
   tuple, source/order domains, logical identity, event-time extrema, physical ordering, and exact
   schema/tablet binding. Schema-aware projected reads now account for and validate all eight system
-  pages while touching only requested user pages. Mixed-command recovery, vector winner resolution,
-  Manifest v2 installation, and compaction integration remain deferred, so the phase exit gate is
+  pages while touching only requested user pages. A bounded scalar CSEG resolver now provides
+  current/as-of winners for one explicit authoritative WAL/Raft source lineage, including tombstone
+  removal and deterministic timestamp/position ties. Mixed-command recovery, Manifest v2 snapshot
+  integration, vector output, and compaction integration remain deferred, so the phase exit gate is
   not claimed.
 
 - **Scope:** formal bitemporal row-version model; SQL system-time clauses; history retention; correction/cancellation semantics; compaction and index support; audit visibility.

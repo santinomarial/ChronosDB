@@ -11,8 +11,10 @@ subsystem supplies three concrete layers:
 3. `execute_temporal_command` performs validated live WAL admission and acknowledged publication.
 4. `recover_temporal_wal` rebuilds fresh multi-table scalar providers from verified WAL order.
 
-Mixed command dispatch, CSEG history, vector winner selection, application checkpoints, and Raft
-application are not hidden inside these interfaces.
+Mixed command dispatch, application checkpoints, and Raft application are not hidden inside these
+interfaces. CSEG v2 now has strict metadata/part codecs, semantic and projected reading, plus a
+bounded single-lineage scalar resolver that provides a differential current/as-of winner oracle.
+Manifest snapshot discovery, multi-part vector output, and compaction integration remain pending.
 
 ## Public interfaces and data structures
 
