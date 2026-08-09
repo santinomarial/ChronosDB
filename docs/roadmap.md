@@ -619,9 +619,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   order and per-source expiry vector before token-based replay. Multi-tablet Subscription Checkpoint
   v1 now freezes bounded, checksummed portable bytes for that state. A lock-owning filesystem owner
   now exact-validates, synchronizes, no-replace installs, reopens, and selects contiguous immutable
-  coordinator checkpoint generations. Durable plan lookup, multi-tablet snapshot execution,
-  topology/retention integration, and the full exit evidence remain deferred; the phase exit gate
-  is not claimed.
+  coordinator checkpoint generations. A durable coordinator owner restores that exact generation,
+  resumes token suffixes, accepts consecutive post-checkpoint replay, and publishes source-retention
+  frontiers only after installation succeeds. Durable plan lookup, multi-tablet snapshot execution,
+  topology-aware source deletion, and the full exit evidence remain deferred; the phase exit gate is
+  not claimed.
 
 - **Scope:** committed change model; gap-free snapshot-to-stream handoff; deterministic versioned resume tokens; bounded subscriber policies; supported incremental operators; materialized-view progress/recovery and late-event corrections.
 - **Explicit non-scope:** unqualified end-to-end exactly-once claims, unlimited retention, every SQL operator, cross-cluster delivery, and external-sink transactions not explicitly integrated.

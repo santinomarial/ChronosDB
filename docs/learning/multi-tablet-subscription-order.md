@@ -27,12 +27,20 @@ the same admission order. Restore does not attempt to infer an interleaving: it 
 per-source retained suffix is consecutive through the declared latest vector, then reinstalls the
 recorded order. Subscriber buffers are reconstructed only from an authenticated safe Resume Token.
 
+`DurableMultiTabletSubscription` couples that logical state to a lock-owning immutable-generation
+store. Reopen treats the latest installed checkpoint vector as the authoritative replay boundary;
+committed log entries after it must be fed back through `publish_committed` in each source's exact
+sequence. The owner exposes checkpoint expiry components to a future retention manager only after
+the generation file and directory have synchronized. If installation fails, the prior durable
+frontier remains unchanged even though newer state is still live in memory.
+
 The manager owns no threads and is not internally synchronized. Returned delivery records share
 immutable change ownership. Memory is bounded globally for retention and independently per
 subscriber. A slow subscriber overflows without rejecting a committed source change. A topology or
 source-lineage change requires a newly bound coordinator and snapshot.
 
-Work is linear in active subscribers per publish and in the retained suffix per resume. Useful
-review questions are: why are tablet record sequences incomparable, what exactly makes replay order
-authoritative, why does acknowledgement update a vector rather than one scalar, and why must expiry
-of one component fail the complete resume?
+Work is linear in active subscribers per publish, in the retained suffix per resume, and in retained
+state size per checkpoint. Useful review questions are: why are tablet record sequences
+incomparable, what exactly makes replay order authoritative, why does acknowledgement update a
+vector rather than one scalar, why must expiry of one component fail the complete resume, and why
+can retention advance only after checkpoint installation?

@@ -32,7 +32,8 @@ their full roadmap exit gates or that ChronosDB is a production three-node datab
 - plan-bound single-tablet snapshot execution and schema-bound `SUBSCRIBE SELECT` identity;
 - canonical multi-tablet delivery order, exact logical checkpoint/restore, and frozen checksummed
   checkpoint-generation bytes; and
-- lock-owning, exact-next-generation filesystem installation and fail-closed latest selection.
+- lock-owning, exact-next-generation filesystem installation, fail-closed latest selection, and a
+  durable coordinator owner that publishes retention frontiers only after synchronized install.
 
 Still incomplete: durable plan lookup, multi-tablet snapshot execution, topology/retention owner
 integration, schema-change terminal representation, and complete service lifecycle.
