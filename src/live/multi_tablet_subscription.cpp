@@ -511,6 +511,16 @@ MultiTabletSubscriptionManager::cancel(const common::Uuid& subscription_id) {
   return token;
 }
 
+void MultiTabletSubscriptionManager::abandon(const common::Uuid& subscription_id) noexcept {
+  const auto iterator = impl_->subscriptions.find(subscription_id);
+  if (iterator == impl_->subscriptions.end())
+    return;
+  Impl::State& state = iterator->second;
+  state.phase = SubscriptionPhase::kCancelled;
+  state.buffered.clear();
+  state.buffered_bytes = 0U;
+}
+
 common::Result<MultiTabletSubscriptionStatus>
 MultiTabletSubscriptionManager::status(const common::Uuid& subscription_id) const {
   const auto iterator = impl_->subscriptions.find(subscription_id);

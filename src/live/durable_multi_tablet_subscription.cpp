@@ -200,6 +200,10 @@ DurableMultiTabletSubscription::cancel(const common::Uuid& subscription_id) {
   return impl_->manager.cancel(subscription_id);
 }
 
+void DurableMultiTabletSubscription::abandon(const common::Uuid& subscription_id) noexcept {
+  impl_->manager.abandon(subscription_id);
+}
+
 common::Result<MultiTabletSubscriptionStatus>
 DurableMultiTabletSubscription::status(const common::Uuid& subscription_id) const {
   return impl_->manager.status(subscription_id);

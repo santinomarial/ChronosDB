@@ -87,7 +87,7 @@ public:
 
   void cancel_if_incomplete() noexcept {
     if (phase == Phase::kSnapshot || phase == Phase::kSnapshotEndSent) {
-      static_cast<void>(manager.cancel(subscription_id));
+      manager.abandon(subscription_id);
       pipeline.reset();
       phase = Phase::kFailed;
     }
@@ -184,9 +184,7 @@ common::Result<MultiTabletSnapshotSubscription> MultiTabletSnapshotSubscription:
   auto registration = manager.register_subscription(request);
   if (!registration.has_value())
     return common::make_unexpected(registration.error());
-  const auto cancel = [&manager, &request]() noexcept {
-    static_cast<void>(manager.cancel(request.subscription_id));
-  };
+  const auto cancel = [&manager, &request]() noexcept { manager.abandon(request.subscription_id); };
   try {
     auto snapshot = publisher.snapshot();
     if (!snapshot.has_value()) {

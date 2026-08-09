@@ -153,5 +153,24 @@ TEST(MultiTabletSnapshotSubscriptionTest, CancelsWhenAnyTabletBoundaryDisagrees)
   EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
 }
 
+TEST(MultiTabletSnapshotSubscriptionTest, AbandonsWithoutTokenEncodingWhenDriverIsDestroyed) {
+  query::test::SnapshotTabletScanFixture fixture{1U, 1U};
+  auto manager = MultiTabletSubscriptionManager::create(source(fixture, 1U, 1U));
+  ASSERT_TRUE(manager.has_value());
+  const SubscriptionRequest subscription_request = request(fixture);
+  BoundPlan bound = lower(fixture, "SELECT event_time FROM metrics");
+  auto resources = query::QueryResourceContext::create(8U * 1024U * 1024U).value();
+  {
+    auto subscription = MultiTabletSnapshotSubscription::start(
+        *manager, subscription_request, resources, fixture.storage(), fixture.publisher(),
+        fixture.lineage(), fixture.schema_ptr()->schema_id(), bound.plan, std::move(bound.columns));
+    ASSERT_TRUE(subscription.has_value()) << subscription.error().to_string();
+  }
+  const auto status = manager->status(subscription_request.subscription_id);
+  ASSERT_TRUE(status.has_value());
+  EXPECT_EQ(status->phase, SubscriptionPhase::kCancelled);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
 } // namespace
 } // namespace chronos::live

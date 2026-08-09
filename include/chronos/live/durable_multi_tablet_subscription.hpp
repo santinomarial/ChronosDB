@@ -51,6 +51,7 @@ public:
   [[nodiscard]] common::Result<std::vector<std::byte>>
   acknowledge(const common::Uuid& subscription_id, std::uint64_t delivery_sequence);
   [[nodiscard]] common::Result<std::vector<std::byte>> cancel(const common::Uuid& subscription_id);
+  void abandon(const common::Uuid& subscription_id) noexcept;
   [[nodiscard]] common::Result<MultiTabletSubscriptionStatus>
   status(const common::Uuid& subscription_id) const;
   [[nodiscard]] common::Result<std::vector<SourcePosition>> latest_positions() const;

@@ -130,6 +130,10 @@ public:
 
   [[nodiscard]] common::Result<std::vector<std::byte>> cancel(const common::Uuid& subscription_id);
 
+  // Fail-closed local teardown that does not encode a resume token. Snapshot/service failure paths
+  // use this so allocation failure cannot leave a subscription active.
+  void abandon(const common::Uuid& subscription_id) noexcept;
+
   [[nodiscard]] common::Result<SubscriptionStatus>
   status(const common::Uuid& subscription_id) const;
 

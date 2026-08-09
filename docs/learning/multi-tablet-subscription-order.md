@@ -38,7 +38,8 @@ For the historical half, `MultiTabletSnapshotSubscription` validates every regis
 component against one aggregate storage publication. Raw tablet scans are concatenated before the
 physical plan is instantiated, so a global aggregate, sort, latest, or limit observes the complete
 source set rather than one independently finalized result per tablet. READY is impossible until
-that global pipeline has ended and END_STREAM has been emitted.
+that global pipeline has ended and END_STREAM has been emitted. Pre-READY failure uses idempotent
+no-token abandonment, keeping local teardown independent of token-encoding allocation.
 
 The manager owns no threads and is not internally synchronized. Returned delivery records share
 immutable change ownership. Memory is bounded globally for retention and independently per

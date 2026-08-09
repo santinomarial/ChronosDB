@@ -30,7 +30,8 @@ Output chunks use the existing self-describing `QUERY_RESULT` encoding. The driv
 one empty schema-bearing `END_STREAM` result after the global pipeline ends, and only then completes
 the manager snapshot phase and emits `SUBSCRIPTION_READY`. Post-registration committed changes stay
 buffered and unavailable until READY. Destruction or any pre-READY failure cancels the subscription
-and releases query reservations and publication pins.
+through the no-token abandonment path and releases query reservations and publication pins. Thus
+teardown cannot leave an active subscription merely because resume-token allocation failed.
 
 ## Consequences and alternatives
 
@@ -48,6 +49,7 @@ manager. Reactor worker dispatch and packaged service lifecycle remain separate 
 
 Invariants 4, 6, 11, 12, 15, and 17 apply. Focused tests build two published tablets, prove one
 global `COUNT(*)` result, verify live changes remain unavailable before READY, decode END_STREAM and
-READY, and cancel on one-component boundary mismatch. Concurrent publication schedules, all global
+READY, cancel on one-component boundary mismatch, and destroy a pre-READY driver while proving the
+manager is cancelled and query credit released. Concurrent publication schedules, all global
 operator shapes, allocation sweeps, socket backpressure, and Raft-backed vectors remain Phase 18
 work.

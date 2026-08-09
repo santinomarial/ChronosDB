@@ -36,7 +36,8 @@ their full roadmap exit gates or that ChronosDB is a production three-node datab
 - lock-owning, exact-next-generation filesystem installation, fail-closed latest selection, and a
   durable coordinator owner that publishes retention frontiers only after synchronized install;
   plus exact multi-tablet historical execution through one global physical pipeline, started
-  directly from a durably recovered executable without mutable-manager escape.
+  directly from a durably recovered executable without mutable-manager escape. Snapshot teardown
+  abandons state without token allocation, while client cancellation still returns a safe token.
 
 Still incomplete: topology/retention owner integration, schema-change terminal representation, and
 packaged reactor service lifecycle.

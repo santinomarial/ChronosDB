@@ -32,8 +32,9 @@ remain manager-owned throughout execution and become pollable only after READY.
 
 The owner borrows the manager and query resource context; both outlive it. The instantiated physical
 pipeline pins its exact storage publication. Destruction, execution failure, encoding failure, or a
-boundary mismatch before READY cancels the manager state and releases the pipeline. After READY the
-manager owns the continuing live state independently.
+boundary mismatch before READY abandons the manager state without first allocating or encoding a
+token and releases the pipeline. Client-visible cancellation remains a separate token-producing
+operation. After READY the manager owns the continuing live state independently.
 
 ## Consequences and alternatives
 
