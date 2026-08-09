@@ -4,9 +4,10 @@
 
 `ParallelMergeOperator` runs independent, unordered physical pipelines concurrently and merges
 their already-accounted chunks through a bounded queue. `create` receives the query resource
-context, complete task owners, and explicit maxima for tasks, workers, ready chunks, and retained
-configuration bytes. `next` keeps the normal physical pull contract. Metrics report tasks started
-and completed, chunks published, and peak queue occupancy.
+context, complete task owners, explicit maxima for tasks, workers, ready chunks, and retained
+configuration bytes, and optionally one exact placement per selected worker. `next` keeps the normal
+physical pull contract. Metrics report tasks started and completed, chunks published, and peak queue
+occupancy.
 
 `QuerySharedMemoryReservation` complements the scheduler. Unlike move-only chunk credit, it names
 one immutable shared allocation/lifetime. Copying the token changes no counters; the last token
@@ -22,6 +23,12 @@ Each worker claims the next task ordinal under the mutex and drains that entire 
 thread. Producers wait when the ring is full. The consumer waits when it is empty. Installing a
 complete chunk before unlocking and observing it after locking creates the required happens-before
 edge; relaxed query accounting atomics do not publish payloads.
+
+Before any claim, every worker applies its own optional CPU/NUMA placement and reports through a
+two-stage startup barrier. Registration must be closed and every registered worker must report
+success before the first pipeline pull. The creator observes that same mutex-protected boundary
+before returning. A placement failure stops and joins all workers without cancelling the query;
+concurrent failures select the lowest worker ordinal.
 
 The merge order is intentionally unspecified. A downstream full sort may establish SQL order, but
 the scheduler itself cannot sit where arrival order would become `ORDER BY`, LATEST, ASOF, LIMIT,
@@ -40,8 +47,9 @@ Destroying an unfinished merge requests cancellation and joins; destroying a com
 merge merely releases ownership.
 
 Allocation and length failures during construction or worker pulls become resource exhaustion.
-Operating-system worker creation failure becomes unavailable. A foreign resource context is an
-invalid argument and cancels the owned work before returning.
+Operating-system worker creation failure becomes unavailable. A placement count mismatch is
+invalid; an unsupported or failed OS placement is returned directly from creation before any task
+runs. A foreign resource context is an invalid argument and cancels the owned work before returning.
 
 ## Complexity and tradeoffs
 
@@ -60,8 +68,9 @@ Deterministic tests gate two task starts, force queue capacity one, and compare 
 serial multiset. They record thread affinity, coordinate racing errors, exercise foreign contexts
 and hostile limits, and destroy a producer blocked on a full queue. Allocation injection sweeps all
 caller-owned construction allocations; an explicit throwing source covers worker exception
-classification. The fuzzer varies null tasks, all finite limits, resource admission, cancellation,
-and worker failures.
+classification. Placement tests cover count mismatch, unsupported NUMA, no-pull failure gating,
+credit release, and explicit empty-placement success. The fuzzer varies null tasks, all finite
+limits, resource admission, cancellation, and worker failures.
 
 `merge_independent_chunks` measures scheduler creation, bounded publication, root consumption, and
 join for one and four tasks across one, two, and four workers. Setup chunks are built while timing is

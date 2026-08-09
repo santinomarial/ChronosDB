@@ -338,6 +338,21 @@ chronos_set_project_warnings(chronos_manifest)
 chronos_enable_sanitizers(chronos_manifest)
 chronos_enable_static_analysis(chronos_manifest)
 
+add_library(chronos_runtime src/runtime/thread_placement.cpp)
+add_library(chronos::runtime ALIAS chronos_runtime)
+set_target_properties(chronos_runtime PROPERTIES EXPORT_NAME runtime CXX_EXTENSIONS OFF)
+target_compile_features(chronos_runtime PUBLIC cxx_std_23)
+target_include_directories(
+  chronos_runtime
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+)
+target_link_libraries(chronos_runtime PUBLIC chronos::common)
+chronos_set_project_warnings(chronos_runtime)
+chronos_enable_sanitizers(chronos_runtime)
+chronos_enable_static_analysis(chronos_runtime)
+
 add_library(
   chronos_query
   src/query/asof_join.cpp
@@ -395,7 +410,7 @@ target_include_directories(
 target_link_libraries(
   chronos_query
   PUBLIC chronos::columnar chronos::common chronos::cseg chronos::head chronos::io chronos::manifest
-         chronos::schema chronos::wal
+         chronos::runtime chronos::schema chronos::wal
   PRIVATE Threads::Threads
 )
 chronos_set_project_warnings(chronos_query)
@@ -439,21 +454,6 @@ if(CHRONOS_ENABLE_IO_URING)
   target_link_libraries(chronos_network PRIVATE "${CHRONOS_LIBURING_LIBRARY}")
   target_compile_definitions(chronos_network PUBLIC CHRONOS_HAS_LIBURING=1)
 endif()
-
-add_library(chronos_runtime src/runtime/thread_placement.cpp)
-add_library(chronos::runtime ALIAS chronos_runtime)
-set_target_properties(chronos_runtime PROPERTIES EXPORT_NAME runtime CXX_EXTENSIONS OFF)
-target_compile_features(chronos_runtime PUBLIC cxx_std_23)
-target_include_directories(
-  chronos_runtime
-  PUBLIC
-    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
-    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
-)
-target_link_libraries(chronos_runtime PUBLIC chronos::common)
-chronos_set_project_warnings(chronos_runtime)
-chronos_enable_sanitizers(chronos_runtime)
-chronos_enable_static_analysis(chronos_runtime)
 
 add_library(
   chronos_live

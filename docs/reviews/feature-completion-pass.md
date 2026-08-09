@@ -59,7 +59,9 @@ preserving the portable connection state, bounded buffers, shard queues, and par
 One operation per connection and CQE-before-reclamation ownership keep native references bounded;
 unsupported builds, kernels, or host policies fail explicitly without fallback.
 `ThreadPlacement` adds optional CPU and NUMA hooks; empty configuration is correctness-neutral and
-unsupported NUMA/portable affinity fails explicitly.
+unsupported NUMA/portable affinity fails explicitly. Parallel query workers accept one exact
+placement per selected worker and use an all-worker startup gate: no pipeline executes unless every
+placement succeeds, and concurrent failures resolve by lowest worker ordinal.
 
 A focused Ubuntu 24.04/GCC/liburing 2.5 production build passed with warnings as errors. Focused
 Linux 6.12 tests passed for fragmented accept/read, handshake/query routing, response wakeup,

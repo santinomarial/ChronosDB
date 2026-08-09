@@ -54,9 +54,10 @@
   default-backend change or relative performance claim.
 - AVX2, AVX-512, and ARM NEON kernel implementations/comparisons beyond existing portable vector
   operators; scalar/vector equivalence under every supported CPU feature set.
-- Reactor/query/shard affinity integration, NUMA provider and local allocation policy, invalid CPU/
-  topology behavior, Linux/macOS portability, TSan, NUMA experiments, and allocation cleanup based
-  on profiles rather than speculation.
+- Reactor/shard owned-thread affinity integration; query-worker real CPU-set coverage; NUMA provider
+  and local allocation policy; invalid/offline CPU and topology behavior; broader Linux/macOS
+  portability; TSan; NUMA experiments; and allocation cleanup based on profiles rather than
+  speculation.
 
 ## Phase 13 — system-time history and corrections
 

@@ -52,15 +52,47 @@ public:
   void register_worker() {
     const std::scoped_lock lock{mutex_};
     ++active_workers_;
+    ++registered_workers_;
   }
 
   void unregister_unstarted_worker() noexcept {
     const std::scoped_lock lock{mutex_};
     --active_workers_;
+    --registered_workers_;
+    startup_condition_.notify_all();
     ready_condition_.notify_all();
   }
 
-  void run_worker() noexcept {
+  void run_worker(const std::size_t worker, const runtime::ThreadPlacement placement) noexcept {
+    common::Status placement_status = runtime::apply_current_thread_placement(placement);
+    const bool placement_succeeded = placement_status.is_ok();
+    {
+      const std::scoped_lock lock{mutex_};
+      ++started_workers_;
+      if (!placement_succeeded &&
+          (!startup_failure_.has_value() || worker < startup_failure_->first)) {
+        startup_failure_.emplace(worker, std::move(placement_status));
+        stopping_ = true;
+      }
+    }
+    startup_condition_.notify_all();
+    ready_condition_.notify_all();
+    space_condition_.notify_all();
+    if (!placement_succeeded) {
+      finish_worker();
+      return;
+    }
+    {
+      std::unique_lock lock{mutex_};
+      startup_condition_.wait(lock, [&] {
+        return stopping_ || (registration_complete_ && started_workers_ == registered_workers_);
+      });
+      if (stopping_) {
+        lock.unlock();
+        finish_worker();
+        return;
+      }
+    }
     while (true) {
       std::optional<std::size_t> task = claim_task();
       if (!task.has_value())
@@ -82,6 +114,23 @@ public:
         break;
     }
     finish_worker();
+  }
+
+  void complete_worker_registration() noexcept {
+    {
+      const std::scoped_lock lock{mutex_};
+      registration_complete_ = true;
+    }
+    startup_condition_.notify_all();
+  }
+
+  [[nodiscard]] common::Result<void> await_worker_startup() {
+    std::unique_lock lock{mutex_};
+    startup_condition_.wait(
+        lock, [&] { return registration_complete_ && started_workers_ == registered_workers_; });
+    if (startup_failure_.has_value())
+      return common::make_unexpected(std::move(startup_failure_->second));
+    return {};
   }
 
   [[nodiscard]] bool run_task(const std::size_t task) {
@@ -160,6 +209,7 @@ public:
     }
     if (cancel)
       static_cast<void>(resources_.request_cancel());
+    startup_condition_.notify_all();
     ready_condition_.notify_all();
     space_condition_.notify_all();
   }
@@ -253,12 +303,17 @@ private:
   mutable std::mutex mutex_;
   std::condition_variable ready_condition_;
   std::condition_variable space_condition_;
+  std::condition_variable startup_condition_;
   std::size_t next_task_{};
   std::size_t active_workers_{};
+  std::size_t registered_workers_{};
+  std::size_t started_workers_{};
   std::size_t ready_head_{};
   std::size_t ready_tail_{};
   std::size_t ready_count_{};
   bool stopping_{};
+  bool registration_complete_{};
+  std::optional<std::pair<std::size_t, common::Status>> startup_failure_;
   std::optional<std::pair<std::size_t, common::Status>> failure_;
   ParallelSchedulerMetrics metrics_;
 };
@@ -310,7 +365,8 @@ ParallelMergeOperator::~ParallelMergeOperator() {
 common::Result<std::unique_ptr<ParallelMergeOperator>>
 ParallelMergeOperator::create(const QueryResourceContext& resources,
                               std::vector<std::unique_ptr<PhysicalOperator>> tasks,
-                              const ParallelSchedulerLimits limits) {
+                              const ParallelSchedulerLimits limits,
+                              const std::span<const runtime::ThreadPlacement> worker_placements) {
   if (limits.maximum_tasks == 0U || limits.maximum_workers == 0U ||
       limits.maximum_ready_chunks == 0U || limits.maximum_retained_configuration_bytes == 0U) {
     return common::make_unexpected(invalid("parallel scheduler limits must be nonzero"));
@@ -326,6 +382,10 @@ ParallelMergeOperator::create(const QueryResourceContext& resources,
       return common::make_unexpected(invalid("parallel scheduler tasks must be non-null"));
   }
   const std::size_t worker_count = std::min(tasks.size(), limits.maximum_workers);
+  if (!worker_placements.empty() && worker_placements.size() != worker_count) {
+    return common::make_unexpected(
+        invalid("parallel scheduler placement count must equal its worker count"));
+  }
   common::Result<std::size_t> retained =
       SharedState::configuration_bytes(tasks, worker_count, limits);
   if (!retained.has_value())
@@ -346,11 +406,21 @@ ParallelMergeOperator::create(const QueryResourceContext& resources,
     for (std::size_t worker = 0U; worker < worker_count; ++worker) {
       state->register_worker();
       try {
-        result->workers_.emplace_back([state] { state->run_worker(); });
+        const runtime::ThreadPlacement placement =
+            worker_placements.empty() ? runtime::ThreadPlacement{} : worker_placements[worker];
+        result->workers_.emplace_back(
+            [state, worker, placement] { state->run_worker(worker, placement); });
       } catch (...) {
         state->unregister_unstarted_worker();
         throw;
       }
+    }
+    state->complete_worker_registration();
+    common::Result<void> startup = state->await_worker_startup();
+    if (!startup.has_value()) {
+      result->stop_and_join(false);
+      result->ended_ = true;
+      return common::make_unexpected(std::move(startup).error());
     }
     return result;
   } catch (const std::bad_alloc&) {

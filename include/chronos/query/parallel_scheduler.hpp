@@ -4,10 +4,12 @@
 #include "chronos/common/result.hpp"
 #include "chronos/query/physical_operator.hpp"
 #include "chronos/query/resource_context.hpp"
+#include "chronos/runtime/thread_placement.hpp"
 
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <thread>
 #include <vector>
 
@@ -41,13 +43,16 @@ struct ParallelSchedulerMetrics {
 // release-publishes complete accounted chunks under one mutex; consumers acquire the same mutex
 // before adoption. This operator provides no SQL row order and must never be selected below an
 // order-sensitive consumer unless that consumer establishes the complete required order itself.
+// Optional placements must name every selected worker. Creation waits until each worker has applied
+// its placement and returns the exact placement failure before exposing the operator.
 class ParallelMergeOperator final : public PhysicalOperator {
 public:
   ~ParallelMergeOperator() override;
 
   [[nodiscard]] static common::Result<std::unique_ptr<ParallelMergeOperator>>
   create(const QueryResourceContext& resources,
-         std::vector<std::unique_ptr<PhysicalOperator>> tasks, ParallelSchedulerLimits limits = {});
+         std::vector<std::unique_ptr<PhysicalOperator>> tasks, ParallelSchedulerLimits limits = {},
+         std::span<const runtime::ThreadPlacement> worker_placements = {});
 
   [[nodiscard]] common::Result<PhysicalOperatorStep>
   next(const QueryResourceContext& resources) override;

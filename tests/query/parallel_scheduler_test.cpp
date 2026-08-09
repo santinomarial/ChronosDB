@@ -3,6 +3,7 @@
 #include "chronos/schema/logical_type.hpp"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <bit>
 #include <condition_variable>
@@ -70,6 +71,20 @@ public:
   [[nodiscard]] common::Result<PhysicalOperatorStep> next(const QueryResourceContext&) override {
     return PhysicalOperatorStep::end();
   }
+};
+
+class CountingEndSource final : public PhysicalOperator {
+public:
+  explicit CountingEndSource(std::shared_ptr<std::atomic<std::size_t>> executions)
+      : executions_(std::move(executions)) {}
+
+  [[nodiscard]] common::Result<PhysicalOperatorStep> next(const QueryResourceContext&) override {
+    executions_->fetch_add(1U, std::memory_order_relaxed);
+    return PhysicalOperatorStep::end();
+  }
+
+private:
+  std::shared_ptr<std::atomic<std::size_t>> executions_;
 };
 
 struct StartGate {
@@ -266,6 +281,46 @@ TEST(ParallelSchedulerTest, RejectsHostileShapesAndForeignQueryPulls) {
   EXPECT_EQ(step.error().code(), common::StatusCode::kInvalidArgument);
   scheduler.reset();
   EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
+TEST(ParallelSchedulerTest, AppliesExactWorkerPlacementsBeforeReturningFromCreate) {
+  QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+  const std::array<runtime::ThreadPlacement, 2U> two_placements{};
+  EXPECT_EQ(
+      ParallelMergeOperator::create(resources, end_tasks(1U), {}, two_placements).error().code(),
+      common::StatusCode::kInvalidArgument);
+
+  runtime::ThreadPlacement unsupported;
+  unsupported.numa_node = 0U;
+  const std::array<runtime::ThreadPlacement, 2U> unsupported_placement{runtime::ThreadPlacement{},
+                                                                       unsupported};
+  auto executions = std::make_shared<std::atomic<std::size_t>>(0U);
+  std::vector<std::unique_ptr<PhysicalOperator>> blocked_tasks;
+  blocked_tasks.push_back(std::make_unique<CountingEndSource>(executions));
+  blocked_tasks.push_back(std::make_unique<CountingEndSource>(executions));
+  auto failed = ParallelMergeOperator::create(resources, std::move(blocked_tasks),
+                                              {.maximum_tasks = 2U,
+                                               .maximum_workers = 2U,
+                                               .maximum_ready_chunks = 1U,
+                                               .maximum_retained_configuration_bytes = 1U << 20U},
+                                              unsupported_placement);
+  ASSERT_FALSE(failed.has_value());
+  EXPECT_EQ(failed.error().code(), common::StatusCode::kNotSupported);
+  EXPECT_EQ(executions->load(std::memory_order_relaxed), 0U);
+  EXPECT_FALSE(resources.is_cancelled());
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+
+  auto scheduler =
+      ParallelMergeOperator::create(resources, end_tasks(2U),
+                                    {.maximum_tasks = 2U,
+                                     .maximum_workers = 2U,
+                                     .maximum_ready_chunks = 1U,
+                                     .maximum_retained_configuration_bytes = 1U << 20U},
+                                    two_placements);
+  ASSERT_TRUE(scheduler.has_value()) << scheduler.error().to_string();
+  const auto end = (*scheduler)->next(resources);
+  ASSERT_TRUE(end.has_value()) << end.error().to_string();
+  EXPECT_EQ(end->kind(), PhysicalOperatorStepKind::kEnd);
 }
 
 TEST(ParallelSchedulerTest, EarlyDestructionCancelsWorkersAndReleasesQueuedCredit) {
