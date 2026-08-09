@@ -171,6 +171,7 @@ TEST(RaftNodeTest, RejectsIndexExhaustionBeforeNextIndexCanWrap) {
   state.current_term = 1U;
   state.snapshot.last_included_index = std::numeric_limits<LogIndex>::max() - 1U;
   state.snapshot.last_included_term = 1U;
+  state.snapshot.manifest_generation = 1U;
   state.snapshot.voters = {1U};
   state.commit_index = state.snapshot.last_included_index;
   state.applied_index = state.snapshot.last_included_index;
@@ -310,6 +311,7 @@ TEST(RaftNodeTest, SnapshotMembershipCheckpointSupersedesBootstrapConfiguration)
   state.current_term = 2U;
   state.snapshot.last_included_index = 5U;
   state.snapshot.last_included_term = 2U;
+  state.snapshot.manifest_generation = 1U;
   state.snapshot.configuration_index = 4U;
   state.snapshot.voters = {2U, 3U, 4U};
   state.commit_index = 5U;
@@ -321,6 +323,62 @@ TEST(RaftNodeTest, SnapshotMembershipCheckpointSupersedesBootstrapConfiguration)
   state.snapshot.voters = {2U, 2U, 4U};
   EXPECT_EQ(RaftNode::create(4U, {1U, 2U, 3U}, state).error().code(),
             common::StatusCode::kInvalidArgument);
+}
+
+TEST(RaftNodeTest, CompactsAppliedPrefixAndInstallsSnapshotBeforeAcknowledgingLeader) {
+  auto leader = RaftNode::create(1U, {1U, 2U, 3U});
+  auto follower = RaftNode::create(2U, {1U, 2U, 3U});
+  ASSERT_TRUE(leader.has_value());
+  ASSERT_TRUE(follower.has_value());
+  ASSERT_TRUE(leader->start_election().has_value());
+  ASSERT_TRUE(leader->receive(3U, RequestVoteResponse{1U, true}).has_value());
+  ASSERT_EQ(leader->role(), Role::kLeader);
+  for (std::uint8_t value = 1U; value <= 3U; ++value) {
+    ASSERT_TRUE(leader->propose(1U, {static_cast<std::byte>(value)}).has_value());
+    ASSERT_TRUE(
+        leader->receive(3U, AppendEntriesResponse{1U, true, value, std::nullopt, 0U}).has_value());
+  }
+  ASSERT_TRUE(leader->mark_applied(3U).has_value());
+  SnapshotMetadata snapshot{};
+  snapshot.last_included_index = 2U;
+  snapshot.last_included_term = 1U;
+  snapshot.manifest_generation = 7U;
+  auto compacted = leader->compact_snapshot(snapshot);
+  ASSERT_TRUE(compacted.has_value()) << compacted.error().to_string();
+  ASSERT_TRUE(compacted->persistent_state.has_value());
+  EXPECT_EQ(leader->persistent_state().snapshot.last_included_index, 2U);
+  EXPECT_TRUE(std::ranges::equal(leader->persistent_state().snapshot.voters,
+                                 std::vector<NodeId>{1U, 2U, 3U}));
+  ASSERT_EQ(leader->persistent_state().log.size(), 1U);
+  EXPECT_EQ(leader->persistent_state().log.front().index, 3U);
+
+  auto rewind = leader->receive(2U, AppendEntriesResponse{1U, false, 0U, std::nullopt, 1U});
+  ASSERT_TRUE(rewind.has_value()) << rewind.error().to_string();
+  ASSERT_EQ(rewind->outbound.size(), 1U);
+  const auto* request = std::get_if<InstallSnapshotRequest>(&rewind->outbound.front().message);
+  ASSERT_NE(request, nullptr);
+  auto pending = follower->receive(1U, *request);
+  ASSERT_TRUE(pending.has_value()) << pending.error().to_string();
+  ASSERT_TRUE(pending->snapshot_install.has_value());
+  EXPECT_TRUE(pending->outbound.empty());
+  EXPECT_EQ(follower->persistent_state().snapshot.last_included_index, 0U);
+
+  auto installed = follower->complete_snapshot_install(pending->snapshot_install->source,
+                                                       pending->snapshot_install->snapshot, true);
+  ASSERT_TRUE(installed.has_value()) << installed.error().to_string();
+  ASSERT_TRUE(installed->persistent_state.has_value());
+  EXPECT_EQ(follower->commit_index(), 2U);
+  EXPECT_EQ(follower->applied_index(), 2U);
+  ASSERT_EQ(installed->outbound.size(), 1U);
+  const Message response = installed->outbound.front().message;
+  auto caught_up = leader->receive(2U, response);
+  ASSERT_TRUE(caught_up.has_value()) << caught_up.error().to_string();
+  ASSERT_EQ(caught_up->outbound.size(), 1U);
+  const Message suffix = caught_up->outbound.front().message;
+  auto appended = follower->receive(1U, suffix);
+  ASSERT_TRUE(appended.has_value()) << appended.error().to_string();
+  EXPECT_EQ(follower->last_log_index(), 3U);
+  EXPECT_EQ(follower->commit_index(), 3U);
 }
 
 } // namespace

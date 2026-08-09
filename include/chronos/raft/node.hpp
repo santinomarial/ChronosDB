@@ -40,6 +40,9 @@ public:
                                                    std::vector<std::byte> payload);
   [[nodiscard]] common::Result<Transition> begin_membership_change(std::vector<NodeId> new_voters);
   [[nodiscard]] common::Result<Transition> finalize_membership_change();
+  [[nodiscard]] common::Result<Transition>
+  complete_snapshot_install(NodeId source, SnapshotMetadata snapshot, bool installed);
+  [[nodiscard]] common::Result<Transition> compact_snapshot(SnapshotMetadata snapshot);
   [[nodiscard]] common::Result<Transition> heartbeat();
 
   // Advancing application state is itself persistent state. The returned transition must cross the

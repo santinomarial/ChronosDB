@@ -236,5 +236,44 @@ TEST(DurableMultiRaftRuntimeTest, PersistsAndRecoversCompletedMembershipChange) 
   EXPECT_EQ(reopened->durable_physical_sequence(), durable_sequence);
 }
 
+TEST(DurableMultiRaftRuntimeTest, ReleasesSnapshotAcknowledgmentOnlyAfterInstalledStateIsDurable) {
+  TemporaryDirectory directory;
+  const RaftPersistentLogConfig log_config{.directory_path = directory.path().string()};
+  const GroupId group = group_id(std::byte{10U});
+  const std::vector<RaftGroupConfiguration> groups{{group, {1U, 2U}}};
+  auto follower = DurableMultiRaftRuntime::create_new(2U, log_config, groups);
+  ASSERT_TRUE(follower.has_value()) << follower.error().to_string();
+  SnapshotMetadata snapshot{};
+  snapshot.last_included_index = 5U;
+  snapshot.last_included_term = 2U;
+  snapshot.manifest_generation = 11U;
+  snapshot.configuration_index = 0U;
+  snapshot.voters = {1U, 2U};
+
+  auto requested = follower->execute_batch(
+      {{group, ReceiveOperation{1U, InstallSnapshotRequest{2U, 1U, snapshot}}}});
+  ASSERT_TRUE(requested.has_value()) << requested.error().to_string();
+  ASSERT_TRUE(requested->front().transition.has_value());
+  ASSERT_TRUE(requested->front().transition->snapshot_install.has_value());
+  EXPECT_TRUE(requested->front().transition->outbound.empty());
+  const std::uint64_t term_sequence = follower->durable_physical_sequence();
+  ASSERT_GT(term_sequence, 0U);
+
+  auto completed =
+      follower->execute_batch({{group, CompleteSnapshotInstallOperation{1U, snapshot, true}}});
+  ASSERT_TRUE(completed.has_value()) << completed.error().to_string();
+  ASSERT_TRUE(completed->front().transition.has_value());
+  ASSERT_EQ(completed->front().transition->outbound.size(), 1U);
+  EXPECT_GT(follower->durable_physical_sequence(), term_sequence);
+  EXPECT_EQ(follower->find_group(group)->persistent_state().snapshot, snapshot);
+  ASSERT_TRUE(follower->close().is_ok());
+
+  auto reopened = DurableMultiRaftRuntime::open_existing(2U, log_config, {}, groups);
+  ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+  EXPECT_EQ(reopened->find_group(group)->persistent_state().snapshot, snapshot);
+  EXPECT_EQ(reopened->find_group(group)->commit_index(), 5U);
+  EXPECT_EQ(reopened->find_group(group)->applied_index(), 5U);
+}
+
 } // namespace
 } // namespace chronos::raft

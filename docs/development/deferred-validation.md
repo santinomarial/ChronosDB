@@ -71,6 +71,8 @@
   reclamation/checkpointing, process-crash testing, and metrics.
 - Exercise the v1.1 snapshot membership checkpoint with golden minor-0/minor-1 fixtures,
   mixed-version processes, hostile voter counts, snapshot-install crash points, and reclamation.
+- Connect the implemented two-stage Raft snapshot request/completion boundary to versioned tablet
+  and metadata snapshot bytes, resumable transfer, manifest installation, and process-crash tests.
 - Put `DurableMultiRaftRuntime` behind a bounded asynchronous worker pool; batch transport and
   application alongside its implemented persistence release, and prove fairness/no starvation
   under hot/cold skew.

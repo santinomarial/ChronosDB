@@ -76,21 +76,41 @@ struct AppendEntriesResponse {
   LogIndex conflict_index{};
 };
 
-using Message = std::variant<RequestVoteRequest, RequestVoteResponse, AppendEntriesRequest,
-                             AppendEntriesResponse>;
+struct InstallSnapshotRequest {
+  Term term{};
+  NodeId leader_id{};
+  SnapshotMetadata snapshot;
+};
+
+struct InstallSnapshotResponse {
+  Term term{};
+  bool success{};
+  LogIndex last_included_index{};
+};
+
+using Message =
+    std::variant<RequestVoteRequest, RequestVoteResponse, AppendEntriesRequest,
+                 AppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotResponse>;
 
 struct OutboundMessage {
   NodeId destination{};
   Message message;
 };
 
+struct PendingSnapshotInstall {
+  NodeId source{};
+  SnapshotMetadata snapshot;
+};
+
 // When persistent_state is present, the runtime must durably install it before sending any
 // outbound message in the same transition. Committed entries are still invisible until the
-// application state machine advances applied_index through mark_applied().
+// application state machine advances applied_index through mark_applied(). A snapshot_install is a
+// request to external application/storage code, not evidence that those bytes are installed.
 struct Transition {
   std::optional<PersistentState> persistent_state;
   std::vector<OutboundMessage> outbound;
   std::optional<LogIndex> advanced_commit_index;
+  std::optional<PendingSnapshotInstall> snapshot_install;
 };
 
 } // namespace chronos::raft

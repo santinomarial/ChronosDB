@@ -24,7 +24,9 @@ metadata state machine consumes only consecutive committed metadata-group indexe
 
 ## Consequences and alternatives
 
-Timers, transport, fsync batching, snapshots, and application wiring remain outside the pure core.
+Timers, transport, fsync batching, and application snapshot bytes remain outside the pure core.
+ADR 0078 adds deterministic snapshot request, completion, and compaction transitions without
+claiming external application installation.
 [ADR 0071](0071-segmented-multi-raft-persistence.md) now owns segmented installation, append/sync
 frontiers, and recovery around these records. An external Raft library and one physical fsync stream
 per tablet were rejected under ADR 0010. Full-state records favor recoverability and auditability
@@ -36,5 +38,5 @@ Invariants 1, 4–6, 8, 10–12, 14, and 17 apply. Focused deterministic tests c
 replication/commit, failover, stale-term rejection, restart catch-up, independent groups with
 different leaders, node loss, reopen, metadata order, record round trip, and corruption. Focused disk
 tests additionally cover rotation, reopen, explicit incomplete-tail repair, and corruption
-rejection. Randomized simulation, partitions, snapshots, membership changes, coordinated fsync
-batching/crash testing, and QUORUM_SYNC are deferred.
+rejection. Randomized simulation, partitions, application snapshot codecs, coordinated fsync
+batching/crash testing, and production transport remain deferred.

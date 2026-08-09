@@ -29,10 +29,16 @@ struct GroupPersistentState {
   friend bool operator==(const GroupPersistentState&, const GroupPersistentState&) = default;
 };
 
+struct GroupSnapshotInstall {
+  GroupId group_id;
+  PendingSnapshotInstall install;
+};
+
 struct MultiRaftTransition {
   std::optional<GroupPersistentState> persistence;
   std::vector<GroupOutboundMessage> outbound;
   std::optional<LogIndex> advanced_commit_index;
+  std::optional<GroupSnapshotInstall> snapshot_install;
 };
 
 struct MultiRaftLimits {
@@ -70,6 +76,11 @@ public:
   begin_membership_change(const GroupId& group_id, std::vector<NodeId> new_voters);
   [[nodiscard]] common::Result<MultiRaftTransition>
   finalize_membership_change(const GroupId& group_id);
+  [[nodiscard]] common::Result<MultiRaftTransition>
+  complete_snapshot_install(const GroupId& group_id, NodeId source, SnapshotMetadata snapshot,
+                            bool installed);
+  [[nodiscard]] common::Result<MultiRaftTransition> compact_snapshot(const GroupId& group_id,
+                                                                     SnapshotMetadata snapshot);
   [[nodiscard]] common::Result<MultiRaftTransition> heartbeat(const GroupId& group_id);
   [[nodiscard]] common::Result<MultiRaftTransition> mark_applied(const GroupId& group_id,
                                                                  LogIndex index);

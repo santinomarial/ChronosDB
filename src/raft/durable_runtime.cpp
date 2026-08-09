@@ -152,6 +152,12 @@ DurableMultiRaftRuntime::execute_batch(std::vector<DurableRaftRequest> requests)
                                                           std::move(operation.new_voters));
           } else if constexpr (std::is_same_v<T, FinalizeMembershipChangeOperation>) {
             return impl_->runtime.finalize_membership_change(request.group_id);
+          } else if constexpr (std::is_same_v<T, CompleteSnapshotInstallOperation>) {
+            return impl_->runtime.complete_snapshot_install(request.group_id, operation.source,
+                                                            std::move(operation.snapshot),
+                                                            operation.installed);
+          } else if constexpr (std::is_same_v<T, CompactSnapshotOperation>) {
+            return impl_->runtime.compact_snapshot(request.group_id, std::move(operation.snapshot));
           } else if constexpr (std::is_same_v<T, HeartbeatOperation>) {
             return impl_->runtime.heartbeat(request.group_id);
           } else {

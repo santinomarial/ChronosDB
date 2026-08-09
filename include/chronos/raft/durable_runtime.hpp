@@ -32,6 +32,14 @@ struct BeginMembershipChangeOperation {
   std::vector<NodeId> new_voters;
 };
 struct FinalizeMembershipChangeOperation {};
+struct CompleteSnapshotInstallOperation {
+  NodeId source{};
+  SnapshotMetadata snapshot;
+  bool installed{};
+};
+struct CompactSnapshotOperation {
+  SnapshotMetadata snapshot;
+};
 struct HeartbeatOperation {};
 struct MarkAppliedOperation {
   LogIndex index{};
@@ -40,7 +48,8 @@ struct MarkAppliedOperation {
 using DurableRaftOperation =
     std::variant<StartElectionOperation, ReceiveOperation, ProposeOperation,
                  BeginMembershipChangeOperation, FinalizeMembershipChangeOperation,
-                 HeartbeatOperation, MarkAppliedOperation>;
+                 CompleteSnapshotInstallOperation, CompactSnapshotOperation, HeartbeatOperation,
+                 MarkAppliedOperation>;
 
 struct DurableRaftRequest {
   GroupId group_id;

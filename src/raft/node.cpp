@@ -54,6 +54,14 @@ struct DerivedMembership {
          std::adjacent_find(voters.begin(), voters.end()) == voters.end();
 }
 
+[[nodiscard]] bool valid_snapshot(const SnapshotMetadata& snapshot,
+                                  const std::size_t maximum_voters) {
+  return snapshot.last_included_index != 0U && snapshot.last_included_term != 0U &&
+         snapshot.manifest_generation != 0U &&
+         snapshot.configuration_index <= snapshot.last_included_index &&
+         valid_voters(snapshot.voters, maximum_voters);
+}
+
 [[nodiscard]] common::Result<DerivedMembership>
 derive_membership(const std::vector<NodeId>& base_voters, const std::span<const LogEntry> log,
                   const LogIndex commit_index, const std::size_t maximum_voters) {
@@ -207,8 +215,10 @@ public:
     }
   }
 
-  [[nodiscard]] AppendEntriesRequest append_for(const NodeId peer) const {
+  [[nodiscard]] Message replication_for(const NodeId peer) const {
     const LogIndex next = next_index.at(peer);
+    if (next <= state.snapshot.last_included_index)
+      return InstallSnapshotRequest{state.current_term, id, state.snapshot};
     const LogIndex previous = next - 1U;
     const Term previous_term = term_at(previous).value_or(0U);
     std::vector<LogEntry> entries;
@@ -225,7 +235,7 @@ public:
   void append_to_all(Transition& transition) const {
     for (const NodeId peer : voters) {
       if (peer != id) {
-        transition.outbound.push_back(OutboundMessage{peer, append_for(peer)});
+        transition.outbound.push_back(OutboundMessage{peer, replication_for(peer)});
       }
     }
   }
@@ -278,6 +288,7 @@ public:
   std::set<NodeId> votes;
   std::map<NodeId, LogIndex> next_index;
   std::map<NodeId, LogIndex> match_index;
+  std::optional<InstallSnapshotRequest> pending_snapshot;
 };
 
 RaftNode::RaftNode(std::unique_ptr<Impl> impl) noexcept : impl_(std::move(impl)) {}
@@ -332,8 +343,7 @@ common::Result<RaftNode> RaftNode::create(const NodeId node_id, std::vector<Node
     } else {
       base_voters = persistent.snapshot.voters;
     }
-    if (!valid_voters(base_voters, limits.maximum_voters) ||
-        persistent.snapshot.configuration_index > persistent.snapshot.last_included_index) {
+    if (!valid_snapshot(persistent.snapshot, limits.maximum_voters)) {
       return common::make_unexpected(invalid("Raft snapshot membership checkpoint is invalid"));
     }
   }
@@ -385,8 +395,9 @@ common::Result<Transition> RaftNode::start_election() {
 }
 
 common::Result<Transition> RaftNode::receive(const NodeId source, Message message) {
-  const bool append_request = std::holds_alternative<AppendEntriesRequest>(message);
-  if (source == 0U || source == impl_->id || (!impl_->voter(source) && !append_request)) {
+  const bool replication_request = std::holds_alternative<AppendEntriesRequest>(message) ||
+                                   std::holds_alternative<InstallSnapshotRequest>(message);
+  if (source == 0U || source == impl_->id || (!impl_->voter(source) && !replication_request)) {
     return common::make_unexpected(
         invalid("Raft message source is invalid or not an active voter"));
   }
@@ -484,6 +495,14 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
           if (value.success && value.match_index > impl_->last_index()) {
             return invalid("AppendEntries response exceeds the local log");
           }
+        } else if constexpr (std::is_same_v<T, InstallSnapshotRequest>) {
+          if (value.term == 0U || value.leader_id != source ||
+              !valid_snapshot(value.snapshot, impl_->limits.maximum_voters)) {
+            return invalid("InstallSnapshot identity or metadata is invalid");
+          }
+        } else if constexpr (std::is_same_v<T, InstallSnapshotResponse>) {
+          if (value.success && value.last_included_index > impl_->last_index())
+            return invalid("InstallSnapshot response exceeds the local log");
         }
         return common::Status::ok();
       },
@@ -584,7 +603,7 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
               OutboundMessage{source, AppendEntriesResponse{impl_->state.current_term, true,
                                                             accepted, std::nullopt, 0U}});
           return common::Status::ok();
-        } else {
+        } else if constexpr (std::is_same_v<T, AppendEntriesResponse>) {
           if (value.term < impl_->state.current_term || impl_->role != Role::kLeader ||
               value.term != impl_->state.current_term) {
             return common::Status::ok();
@@ -600,7 +619,8 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
               impl_->append_to_all(transition);
               impl_->step_down_if_removed();
             } else if (impl_->next_index[source] <= impl_->last_index()) {
-              transition.outbound.push_back(OutboundMessage{source, impl_->append_for(source)});
+              transition.outbound.push_back(
+                  OutboundMessage{source, impl_->replication_for(source)});
             }
           } else {
             LogIndex next = value.conflict_index == 0U ? 1U : value.conflict_index;
@@ -615,8 +635,37 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
             }
             impl_->next_index[source] =
                 std::max<LogIndex>(1U, std::min(next, impl_->last_index() + 1U));
-            transition.outbound.push_back(OutboundMessage{source, impl_->append_for(source)});
+            transition.outbound.push_back(OutboundMessage{source, impl_->replication_for(source)});
           }
+          return common::Status::ok();
+        } else if constexpr (std::is_same_v<T, InstallSnapshotRequest>) {
+          if (value.term < impl_->state.current_term) {
+            transition.outbound.push_back(OutboundMessage{
+                source, InstallSnapshotResponse{impl_->state.current_term, false,
+                                                impl_->state.snapshot.last_included_index}});
+            return common::Status::ok();
+          }
+          impl_->become_follower(value.term, source);
+          if (value.snapshot.last_included_index <= impl_->state.snapshot.last_included_index) {
+            transition.outbound.push_back(OutboundMessage{
+                source, InstallSnapshotResponse{impl_->state.current_term, true,
+                                                impl_->state.snapshot.last_included_index}});
+            return common::Status::ok();
+          }
+          impl_->pending_snapshot = value;
+          transition.snapshot_install = PendingSnapshotInstall{source, value.snapshot};
+          return common::Status::ok();
+        } else {
+          if (value.term < impl_->state.current_term || impl_->role != Role::kLeader ||
+              value.term != impl_->state.current_term) {
+            return common::Status::ok();
+          }
+          if (value.success) {
+            impl_->match_index[source] =
+                std::max(impl_->match_index[source], value.last_included_index);
+            impl_->next_index[source] = impl_->match_index[source] + 1U;
+          }
+          transition.outbound.push_back(OutboundMessage{source, impl_->replication_for(source)});
           return common::Status::ok();
         }
       },
@@ -735,6 +784,86 @@ common::Result<Transition> RaftNode::finalize_membership_change() {
     return common::make_unexpected(advanced.error());
   impl_->append_to_all(transition);
   impl_->step_down_if_removed();
+  transition.persistent_state = impl_->state;
+  return transition;
+}
+
+common::Result<Transition> RaftNode::complete_snapshot_install(const NodeId source,
+                                                               SnapshotMetadata snapshot,
+                                                               const bool installed) {
+  if (!impl_->pending_snapshot.has_value() || source != impl_->pending_snapshot->leader_id ||
+      snapshot != impl_->pending_snapshot->snapshot) {
+    return common::make_unexpected(invalid("snapshot completion does not match pending install"));
+  }
+  const Term request_term = impl_->pending_snapshot->term;
+  impl_->pending_snapshot.reset();
+  Transition transition;
+  if (!installed || request_term != impl_->state.current_term) {
+    transition.outbound.push_back(OutboundMessage{
+        source, InstallSnapshotResponse{impl_->state.current_term, false,
+                                        impl_->state.snapshot.last_included_index}});
+    return transition;
+  }
+
+  std::vector<LogEntry> retained;
+  const auto local_term = impl_->term_at(snapshot.last_included_index);
+  if (snapshot.last_included_index < impl_->state.commit_index &&
+      (!local_term.has_value() || *local_term != snapshot.last_included_term)) {
+    return common::make_unexpected(
+        corruption("installed snapshot conflicts with the local committed prefix"));
+  }
+  if (local_term.has_value() && *local_term == snapshot.last_included_term &&
+      snapshot.last_included_index < impl_->last_index()) {
+    const std::size_t first = impl_->offset_for(snapshot.last_included_index) + 1U;
+    retained.assign(impl_->state.log.begin() + static_cast<std::ptrdiff_t>(first),
+                    impl_->state.log.end());
+  }
+  const LogIndex new_commit = std::max(impl_->state.commit_index, snapshot.last_included_index);
+  auto membership =
+      derive_membership(snapshot.voters, retained, new_commit, impl_->limits.maximum_voters);
+  if (!membership.has_value())
+    return common::make_unexpected(membership.error());
+
+  impl_->state.snapshot = std::move(snapshot);
+  impl_->state.log = std::move(retained);
+  impl_->state.commit_index = new_commit;
+  impl_->state.applied_index =
+      std::max(impl_->state.applied_index, impl_->state.snapshot.last_included_index);
+  impl_->base_voters = impl_->state.snapshot.voters;
+  impl_->install_membership(std::move(*membership));
+  transition.persistent_state = impl_->state;
+  transition.advanced_commit_index = impl_->state.commit_index;
+  transition.outbound.push_back(
+      OutboundMessage{source, InstallSnapshotResponse{impl_->state.current_term, true,
+                                                      impl_->state.snapshot.last_included_index}});
+  return transition;
+}
+
+common::Result<Transition> RaftNode::compact_snapshot(SnapshotMetadata snapshot) {
+  if (impl_->joint.has_value() ||
+      snapshot.last_included_index <= impl_->state.snapshot.last_included_index ||
+      snapshot.last_included_index > impl_->state.applied_index ||
+      snapshot.last_included_term == 0U || snapshot.manifest_generation == 0U ||
+      impl_->term_at(snapshot.last_included_index) != snapshot.last_included_term) {
+    return common::make_unexpected(
+        invalid("Raft snapshot must cover an applied stable-configuration prefix"));
+  }
+  snapshot.voters = impl_->committed_voters;
+  snapshot.configuration_index = impl_->state.snapshot.configuration_index;
+  for (const LogEntry& entry : impl_->state.log) {
+    if (entry.index > snapshot.last_included_index)
+      break;
+    if (entry.type == kFinalMembershipEntryType)
+      snapshot.configuration_index = entry.index;
+  }
+  if (!valid_snapshot(snapshot, impl_->limits.maximum_voters))
+    return common::make_unexpected(invalid("Raft snapshot metadata is invalid"));
+  const std::size_t retained_offset = impl_->offset_for(snapshot.last_included_index) + 1U;
+  impl_->state.log.erase(impl_->state.log.begin(),
+                         impl_->state.log.begin() + static_cast<std::ptrdiff_t>(retained_offset));
+  impl_->state.snapshot = std::move(snapshot);
+  impl_->base_voters = impl_->state.snapshot.voters;
+  Transition transition;
   transition.persistent_state = impl_->state;
   return transition;
 }

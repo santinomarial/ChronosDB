@@ -34,6 +34,11 @@ segment. `DurableMultiRaftRuntime` appends several groups from a bounded caller-
 one synchronization, and withholds every associated transition and outbound message until that
 boundary completes. The same rule now covers persisted `applied_index` advancement.
 
+Snapshot installation is deliberately two-stage. A received request exposes pending metadata but
+sends no success response. After the application owner durably installs the named manifest/part
+state, a completion operation persists the compacted Raft state and only then releases success.
+Local compaction similarly requires an already applied exact term/index and stable configuration.
+
 For a committed or joint configuration, a leader may issue a `QuorumSyncReceipt` after its
 synchronized commit index covers an entry. Raft commit embodies either the committed majority or
 both old and new majorities, and every counted follower response was withheld until that follower
@@ -52,8 +57,9 @@ or unchanged bytes produces the same group states and positions.
 
 Recovery is linear in physical bytes and records, with memory proportional to one bounded record
 plus the latest full state of each group. Full-state checkpoints simplify audit and reopen but may
-amplify writes. Segment-prefix reclamation requires a future durable per-group snapshot/checkpoint
-proof; deleting records merely because a later state exists would be unsafe without that boundary.
+amplify writes. Per-group snapshot checkpoints now exist, but segment-prefix reclamation still
+requires proving that every group represented in a shared prefix has a later durable checkpoint;
+deleting records merely because one group advanced would remain unsafe.
 
 ## Likely interview questions
 

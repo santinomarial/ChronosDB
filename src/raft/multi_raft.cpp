@@ -44,6 +44,10 @@ public:
     }
     MultiRaftTransition output;
     output.advanced_commit_index = transition->advanced_commit_index;
+    if (transition->snapshot_install.has_value()) {
+      output.snapshot_install =
+          GroupSnapshotInstall{group_id, std::move(*transition->snapshot_install)};
+    }
     if (transition->persistent_state.has_value()) {
       if (physical_sequence == std::numeric_limits<std::uint64_t>::max()) {
         failed_state = true;
@@ -186,6 +190,36 @@ MultiRaftRuntime::finalize_membership_change(const GroupId& group_id) {
         common::Status{common::StatusCode::kNotFound, "Multi-Raft group does not exist"});
   }
   return impl_->wrap(group_id, group->second.node.finalize_membership_change());
+}
+
+common::Result<MultiRaftTransition>
+MultiRaftRuntime::complete_snapshot_install(const GroupId& group_id, const NodeId source,
+                                            SnapshotMetadata snapshot, const bool installed) {
+  if (impl_->failed_state) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kUnavailable, "Multi-Raft runtime has failed closed"});
+  }
+  const auto group = impl_->groups.find(group_id);
+  if (group == impl_->groups.end()) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kNotFound, "Multi-Raft group does not exist"});
+  }
+  return impl_->wrap(group_id, group->second.node.complete_snapshot_install(
+                                   source, std::move(snapshot), installed));
+}
+
+common::Result<MultiRaftTransition> MultiRaftRuntime::compact_snapshot(const GroupId& group_id,
+                                                                       SnapshotMetadata snapshot) {
+  if (impl_->failed_state) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kUnavailable, "Multi-Raft runtime has failed closed"});
+  }
+  const auto group = impl_->groups.find(group_id);
+  if (group == impl_->groups.end()) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kNotFound, "Multi-Raft group does not exist"});
+  }
+  return impl_->wrap(group_id, group->second.node.compact_snapshot(std::move(snapshot)));
 }
 
 common::Result<MultiRaftTransition> MultiRaftRuntime::heartbeat(const GroupId& group_id) {
