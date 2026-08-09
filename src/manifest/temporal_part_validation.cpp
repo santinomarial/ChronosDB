@@ -5,12 +5,16 @@
 #include "chronos/cseg/part_codec.hpp"
 #include "chronos/cseg/temporal_format.hpp"
 #include "chronos/ingest/sha256.hpp"
+#include "chronos/manifest/naming.hpp"
+#include "chronos/manifest/temporal_validation.hpp"
 
 #include <algorithm>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
+#include <ranges>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -76,6 +80,16 @@ struct TemporalSummary {
   std::int64_t minimum_system_time{std::numeric_limits<std::int64_t>::max()};
   std::int64_t maximum_system_time{std::numeric_limits<std::int64_t>::min()};
 };
+
+[[nodiscard]] const TabletSchemaBinding*
+find_binding(const std::span<const TabletSchemaBinding> bindings,
+             const schema::TabletId& tablet_id) noexcept {
+  const auto found =
+      std::ranges::lower_bound(bindings, tablet_id, {}, [](const TabletSchemaBinding& binding) {
+        return binding.tablet_id;
+      });
+  return found != bindings.end() && found->tablet_id == tablet_id ? &*found : nullptr;
+}
 
 [[nodiscard]] common::Result<TemporalSummary>
 summarize_temporal_rows(const cseg::DecodedCsegPartView& part,
@@ -209,6 +223,48 @@ common::Status validate_manifest_v2_temporal_part_image(const TemporalPartDescri
   }
   if (*actual != descriptor) {
     return corruption("Manifest v2 part descriptor disagrees with its exact CSEG image");
+  }
+  return common::Status::ok();
+}
+
+common::Status validate_manifest_v2_temporal_referenced_parts(
+    const DecodedTemporalManifestView& manifest,
+    const std::span<const TabletSchemaBinding> schema_bindings,
+    const std::span<const ReferencedPartImage> images, const TemporalPartValidationLimits limits) {
+  common::Status binding = validate_manifest_v2_temporal_schema_binding(manifest, schema_bindings);
+  if (!binding.is_ok()) {
+    return binding;
+  }
+  if (images.size() != manifest.parts().size()) {
+    return corruption("Installed CSEG images do not exactly cover Manifest v2 part descriptors");
+  }
+
+  for (const TemporalTabletDescriptor& tablet : manifest.tablets()) {
+    const TabletSchemaBinding* schema_binding = find_binding(schema_bindings, tablet.tablet_id);
+    if (schema_binding == nullptr) {
+      return status(common::StatusCode::kInternal,
+                    "Validated Manifest v2 schema binding became inaccessible");
+    }
+    for (std::uint64_t local = 0U; local < tablet.part_count; ++local) {
+      const std::size_t index = static_cast<std::size_t>(tablet.first_part_index + local);
+      const TemporalPartDescriptor& descriptor = manifest.parts()[index];
+      const ReferencedPartImage& image = images[index];
+      const common::Result<cseg::PartId> named_part = parse_part_file_name(image.file_name);
+      if (!named_part.has_value() || *named_part != descriptor.part_id) {
+        return corruption("Installed CSEG filename disagrees with its Manifest v2 descriptor");
+      }
+      const std::shared_ptr<const schema::TableSchema> part_schema =
+          schema_binding->lineage.get().find(descriptor.schema_id);
+      if (!part_schema) {
+        return status(common::StatusCode::kInternal,
+                      "Validated Manifest v2 part schema became inaccessible");
+      }
+      common::Status part = validate_manifest_v2_temporal_part_image(
+          descriptor, tablet, image.bytes, *part_schema, limits);
+      if (!part.is_ok()) {
+        return part;
+      }
+    }
   }
   return common::Status::ok();
 }

@@ -2,8 +2,9 @@
 
 > **Status: accepted source-neutral registry, checked canonical layout, strict checksummed byte
 > codec, exact single-part CSEG admission, and add-only generation transition validation are
-> implemented; installation, recovery, authorized retention/compaction, and reclamation integration
-> remain pending.**
+> implemented. Complete in-memory referenced-part coverage is also implemented; durable
+> installation, recovery, authorized retention/compaction, and reclamation integration remain
+> pending.**
 
 Manifest v2 is the immutable database storage generation that can authorize CSEG v2 temporal parts
 whose authoritative application source is WAL or Raft. It retains Manifest v1's magic, 256-byte
@@ -111,8 +112,9 @@ accepted compaction/retention proof.
 schema and tablet, requires every row to share the tablet's WAL/Raft source lineage, hashes all
 bytes with SHA-256, and derives commit/event/system extrema. The companion validation entry point
 requires byte-for-byte descriptor equality with that derived result and checks the owning tablet's
-durable boundary. Whole-generation coverage and durable filesystem installation remain separate
-pending work.
+durable boundary. The complete-generation validator composes that boundary across exactly one image
+per descriptor in canonical order, canonical part filenames, exact retained-schema coverage, and
+each owning tablet. Durable filesystem readback and mutation ordering remain pending.
 
 The implemented ordinary transition validator requires an exact successor generation and database
 identity, retained schema bindings, immutable tablet WAL/Raft source lineage, monotonic application

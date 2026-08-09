@@ -647,9 +647,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   single-part admission now derives and checks SHA-256, full temporal semantics/schema binding,
   uniform WAL/Raft lineage, and recomputed commit/event/system extrema. Ordinary add-only generation
   transitions now enforce exact succession, immutable retained history/retries/source lineage, and
-  monotonic application/reclaim/schema boundaries. Complete-generation object coverage,
-  installation and snapshot integration, vector output, and authorized retention/compaction
-  integration remain deferred, so the phase exit gate is not claimed.
+  monotonic application/reclaim/schema boundaries. Complete-generation admission now requires
+  exact descriptor-order object coverage, canonical names, retained schemas, and per-tablet source
+  validation. Durable installation and snapshot integration, vector output, and authorized
+  retention/compaction integration remain deferred, so the phase exit gate is not claimed.
 
 - **Scope:** formal bitemporal row-version model; SQL system-time clauses; history retention; correction/cancellation semantics; compaction and index support; audit visibility.
 - **Explicit non-scope:** general distributed transactions, legal/compliance certification, retroactive mutation of immutable history, and distribution before the model is validated locally.

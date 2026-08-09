@@ -6,8 +6,12 @@
 #include "chronos/common/status.hpp"
 #include "chronos/cseg/metadata_codec.hpp"
 #include "chronos/cseg/validator.hpp"
+#include "chronos/manifest/part_validation.hpp"
 #include "chronos/manifest/temporal_codec.hpp"
+#include "chronos/manifest/validation.hpp"
 #include "chronos/schema/table_schema.hpp"
+
+#include <span>
 
 namespace chronos::manifest {
 
@@ -33,6 +37,15 @@ validate_manifest_v2_temporal_part_image(const TemporalPartDescriptor& descripto
                                          const TemporalTabletDescriptor& owner,
                                          common::ByteView image, const schema::TableSchema& schema,
                                          TemporalPartValidationLimits limits = {});
+
+// Validates exact descriptor-order coverage for a complete Manifest v2 generation. Each canonical
+// filename, retained part schema, owning tablet, exact CSEG bytes, temporal source, extrema, and
+// SHA-256 binding must agree before a storage owner may install or recover the generation.
+[[nodiscard]] common::Status
+validate_manifest_v2_temporal_referenced_parts(const DecodedTemporalManifestView& manifest,
+                                               std::span<const TabletSchemaBinding> schema_bindings,
+                                               std::span<const ReferencedPartImage> images,
+                                               TemporalPartValidationLimits limits = {});
 
 } // namespace chronos::manifest
 

@@ -3,9 +3,11 @@
 #include "chronos/cseg/page_codec.hpp"
 #include "chronos/cseg/part_codec.hpp"
 #include "chronos/cseg/temporal_format.hpp"
+#include "chronos/manifest/naming.hpp"
 #include "chronos/manifest/temporal_part_validation.hpp"
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/logical_type.hpp"
+#include "chronos/schema/schema_lineage.hpp"
 #include "chronos/schema/table_schema.hpp"
 
 #include <array>
@@ -295,6 +297,51 @@ TEST(TemporalPartValidationTest, RejectsMixedLineageCorruptionAndResourceExcess)
                 .error()
                 .code(),
             common::StatusCode::kInvalidArgument);
+}
+
+TEST(TemporalReferencedPartValidationTest, RequiresExactCanonicalGenerationCoverage) {
+  TemporalPartFixture fixture;
+  const auto encoded_part = cseg::encode_cseg_v2_temporal_part(fixture.input());
+  ASSERT_TRUE(encoded_part.has_value());
+  const schema::TableSchema schema_value = fixture.schema_value();
+  const auto descriptor = describe_manifest_v2_temporal_part_image(
+      encoded_part->bytes(), schema_value, fixture.tablet_id, ManifestCommitSource::kWal,
+      fixture.source);
+  ASSERT_TRUE(descriptor.has_value());
+  const std::array tablets{fixture.owner()};
+  const std::array parts{*descriptor};
+  const auto encoded_manifest = encode_manifest_v2_temporal({.generation = 1U,
+                                                             .database_id = id<DatabaseId>(6U),
+                                                             .wal_reclaim_checkpoint = std::nullopt,
+                                                             .tablets = tablets,
+                                                             .parts = parts,
+                                                             .retries = {}});
+  ASSERT_TRUE(encoded_manifest.has_value());
+  const auto manifest = decode_manifest_v2_temporal_exact(encoded_manifest->bytes());
+  ASSERT_TRUE(manifest.has_value());
+  const schema::SchemaLineage lineage = schema::SchemaLineage::create(schema_value).value();
+  const std::array bindings{
+      TabletSchemaBinding{.tablet_id = fixture.tablet_id, .lineage = std::cref(lineage)}};
+  const std::string name = part_file_name(fixture.part_id);
+  const std::array images{ReferencedPartImage{.file_name = name, .bytes = encoded_part->bytes()}};
+
+  EXPECT_TRUE(validate_manifest_v2_temporal_referenced_parts(*manifest, bindings, images).is_ok());
+  EXPECT_EQ(validate_manifest_v2_temporal_referenced_parts(*manifest, bindings, {}).code(),
+            common::StatusCode::kCorruption);
+  EXPECT_EQ(validate_manifest_v2_temporal_referenced_parts(*manifest, {}, images).code(),
+            common::StatusCode::kInvalidArgument);
+
+  const std::array wrong_name{ReferencedPartImage{
+      .file_name = "part-00000000000000000000000000000002.cseg", .bytes = encoded_part->bytes()}};
+  EXPECT_EQ(validate_manifest_v2_temporal_referenced_parts(*manifest, bindings, wrong_name).code(),
+            common::StatusCode::kCorruption);
+
+  std::vector<std::byte> damaged(encoded_part->bytes().begin(), encoded_part->bytes().end());
+  damaged.back() ^= std::byte{1U};
+  const std::array corrupt{
+      ReferencedPartImage{.file_name = name, .bytes = common::ByteView{damaged}}};
+  EXPECT_EQ(validate_manifest_v2_temporal_referenced_parts(*manifest, bindings, corrupt).code(),
+            common::StatusCode::kCorruption);
 }
 
 } // namespace

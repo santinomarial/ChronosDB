@@ -46,7 +46,8 @@ single-part admission boundary exact-decodes CSEG 2/0, validates all temporal se
 bindings, requires uniform source lineage, recomputes commit/event/system extrema, and binds exact
 SHA-256 bytes. The ordinary successor validator now preserves source identity, advances application,
 reclaim, and schema boundaries monotonically, and retains every prior part and retry descriptor
-exactly. Independent golden Manifest bytes, expanded hostile decode, authorized retention and
-compaction transitions, whole-generation coverage, v1-to-v2 migration, filesystem/object-store
-crash matrices, Raft snapshot recovery, fuzzing, and performance evidence remain required
-implementation work.
+exactly. Complete in-memory generation admission requires exact descriptor-order image coverage,
+canonical names, retained part-schema lookup, and full validation against every owning tablet.
+Independent golden Manifest bytes, expanded hostile decode, authorized retention and compaction
+transitions, v1-to-v2 migration, filesystem/object-store installation crash matrices, Raft snapshot
+recovery, fuzzing, and performance evidence remain required implementation work.
