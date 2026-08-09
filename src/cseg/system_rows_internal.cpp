@@ -1,9 +1,12 @@
 #include "system_rows_internal.hpp"
 
 #include "chronos/common/result.hpp"
+#include "chronos/common/uuid.hpp"
 #include "chronos/cseg/format.hpp"
+#include "chronos/cseg/temporal_format.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -84,6 +87,67 @@ common::Status validate_cseg_v1_system_rows(const CsegSystemColumns& columns,
     if (*operation_value != format::kAppendRowsOperation) {
       return status(common::StatusCode::kNotSupported,
                     "CSEG OPERATION system value is unsupported");
+    }
+  }
+  return common::Status::ok();
+}
+
+common::Status validate_cseg_v2_temporal_system_rows(const TemporalCsegSystemColumns& columns,
+                                                     const std::uint32_t row_count) {
+  const std::array<const columnar::PhysicalColumnView*, temporal_format::kSystemColumnCount> pages{
+      &columns.commit_source, &columns.source_id,         &columns.commit_position,
+      &columns.row_ordinal,   &columns.operation,         &columns.logical_identity,
+      &columns.receive_time,  &columns.system_commit_time};
+  if (std::ranges::any_of(pages, [row_count](const columnar::PhysicalColumnView* page) {
+        return page->row_count() != row_count;
+      })) {
+    return corruption("CSEG v2 temporal system pages disagree on their row count");
+  }
+  for (std::uint32_t row = 0U; row < row_count; ++row) {
+    std::array<common::Result<common::ByteView>, temporal_format::kSystemColumnCount> cells{
+        cell_bytes(columns.commit_source, row),   cell_bytes(columns.source_id, row),
+        cell_bytes(columns.commit_position, row), cell_bytes(columns.row_ordinal, row),
+        cell_bytes(columns.operation, row),       cell_bytes(columns.logical_identity, row),
+        cell_bytes(columns.receive_time, row),    cell_bytes(columns.system_commit_time, row)};
+    if (std::ranges::any_of(cells, [](const common::Result<common::ByteView>& cell) {
+          return !cell.has_value();
+        })) {
+      return corruption("validated CSEG v2 temporal system cell is inaccessible");
+    }
+
+    const common::Result<std::uint8_t> source = load_little_endian<std::uint8_t>(*cells[0]);
+    if (!source.has_value() || *source == 0U) {
+      return corruption("CSEG v2 temporal COMMIT_SOURCE is zero or malformed");
+    }
+    if (*source > static_cast<std::uint8_t>(temporal_format::CommitSource::kRaft)) {
+      return status(common::StatusCode::kNotSupported,
+                    "CSEG v2 temporal COMMIT_SOURCE is unsupported");
+    }
+    if (cells[1]->size() != common::Uuid::kSize ||
+        std::ranges::all_of(*cells[1],
+                            [](const std::byte value) { return value == std::byte{0}; })) {
+      return corruption("CSEG v2 temporal SOURCE_ID is zero or malformed");
+    }
+    const common::Result<std::uint64_t> position = load_little_endian<std::uint64_t>(*cells[2]);
+    if (!position.has_value() || *position == 0U) {
+      return corruption("CSEG v2 temporal COMMIT_POSITION is zero or malformed");
+    }
+    if (!load_little_endian<std::uint32_t>(*cells[3]).has_value()) {
+      return corruption("CSEG v2 temporal ROW_ORDINAL is malformed");
+    }
+    const common::Result<std::uint8_t> operation = load_little_endian<std::uint8_t>(*cells[4]);
+    if (!operation.has_value() || *operation == 0U) {
+      return corruption("CSEG v2 temporal OPERATION is zero or malformed");
+    }
+    if (*operation > static_cast<std::uint8_t>(temporal_format::Operation::kTombstone)) {
+      return status(common::StatusCode::kNotSupported, "CSEG v2 temporal OPERATION is unsupported");
+    }
+    if (cells[5]->empty() || cells[5]->size() > temporal_format::kMaximumLogicalIdentityBytes) {
+      return corruption("CSEG v2 temporal LOGICAL_IDENTITY is outside format bounds");
+    }
+    if (!load_little_endian<std::uint64_t>(*cells[6]).has_value() ||
+        !load_little_endian<std::uint64_t>(*cells[7]).has_value()) {
+      return corruption("CSEG v2 temporal timestamp system value is malformed");
     }
   }
   return common::Status::ok();

@@ -1,15 +1,17 @@
-# CSEG v1 storage implementation
+# CSEG storage implementation
 
-This document explains the implemented `chronos_cseg` library. The durable source of truth is the
-[CSEG v1 specification](../formats/cseg-v1.md); this guide describes how the code realizes that
-contract and how callers should compose its interfaces.
+This document explains the implemented `chronos_cseg` library. The durable sources of truth are the
+[CSEG v1](../formats/cseg-v1.md) and [CSEG v2](../formats/cseg-v2.md) specifications; this guide
+describes how the code realizes those contracts and how callers should compose its interfaces.
 
 ## Purpose and boundary
 
 CSEG is ChronosDB's immutable, sorted columnar-part format. One file belongs to one table, tablet,
 and schema version and contains one or more granules. Every granule has one independently stored
 page for every user column and for the mandatory `WAL_ID`, `RECORD_SEQUENCE`, `ROW_ORDINAL`, and
-`OPERATION` system columns.
+`OPERATION` system columns. CSEG v2 retains the physical envelope but replaces that suffix with
+eight temporal columns that support WAL or Raft source identity, correction/tombstone operations,
+logical identity, and receive/system commit time.
 
 The library is pure in-memory. It plans layouts, encodes and decodes metadata/pages/complete parts,
 validates content, serves projected granule reads, and produces inspection reports. It does not
@@ -30,8 +32,8 @@ readers with storage deletion. Those are Phase 6 responsibilities.
   canonical validity, offsets, and values concatenation.
 - `page_codec.hpp` composes PLAIN pages with raw/Zstandard storage and CRC32C.
 - `part_codec.hpp` creates an exact owned file image or borrows a structurally valid part view.
-- `validator.hpp` performs complete schema-independent row validation and optional exact catalog
-  binding.
+- `validator.hpp` performs version-strict complete schema-independent row validation and optional
+  exact catalog binding for v1 append rows and v2 temporal histories.
 - `projected_reader.hpp` authenticates metadata and reads selected granules/columns against a
   retained schema lineage. Its borrowed read plan validates and reports exact decoded-buffer work
   before result allocation.
@@ -73,9 +75,10 @@ Validation is deliberately layered because callers have different trust and I/O 
    Zstandard-window bounds, then validates the PLAIN physical buffers.
 4. Part decoding validates every page and every alignment byte. Prefix decode reports the exact
    next required length; exact decode rejects any suffix.
-5. Complete content validation decodes all pages, validates system rows, recomputes part/granule
-   event-time extrema, and checks strict physical ordering across granule boundaries for every v1
-   logical type, including null and IEEE floating-point edge cases.
+5. Complete content validation decodes all correctness-critical pages, validates version-specific
+   system rows, recomputes part/granule event-time extrema, and checks strict physical ordering
+   across granule boundaries for every logical type, including null and IEEE floating-point edge
+   cases. V2 orders the user key followed by its four-field physical source identity.
 6. Schema binding requires the exact table/schema identity and version, tablet identity, user-column
    ordinals/IDs/types/nullability, event-time column, ordering key, and system-column definitions.
 
@@ -126,7 +129,7 @@ still only a candidate until the future installation protocol durably places and
 | Zstandard page decode | `O(stored + output bytes)` | bounded uncompressed page |
 | Complete part decode | `O(metadata + all page bytes)` | descriptor storage plus one decoded page at a time |
 | Full semantic validation | `O(rows × stored columns)` | bounded per-page decode and ordering state |
-| Projected granule planning | `O(selected columns + 4)` | fixed 4,096-bit stack bitmap; no heap |
+| V1 projected granule planning | `O(selected columns + 4)` | fixed 4,096-bit stack bitmap; no heap |
 | Projected granule read | `O(metadata + selected/system page bytes)` | owned requested result buffers |
 | Single-part physical pull | `O(selected/system page bytes + rows)` | accounted backing, selection, and part pin |
 | Inspection | `O(metadata + all page bytes + rows × stored columns)` | owned descriptors plus bounded validation state |

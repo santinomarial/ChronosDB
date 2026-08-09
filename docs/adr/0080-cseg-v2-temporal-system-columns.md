@@ -46,7 +46,7 @@ Manifest v1 and existing v1 part validators remain unchanged. Strict v2 entry po
 decode the expanded metadata registry and structurally compose/authenticate complete files,
 including every page, checksum, runtime limit, and alignment region, without weakening v1 entry
 points. Manifest v2 must explicitly admit CSEG v2 and carry source/checkpoint meaning before v2
-files are installed. Until then, structural codec support does not claim durable database
+files are installed. Until then, codec and semantic-validation support do not claim durable database
 publication.
 
 ## Affected invariants and validation
@@ -56,6 +56,7 @@ validate WAL/Raft source and operation domains, bound logical identities, prove 
 metadata/page layout with the expanded suffix, round-trip v2 metadata, reject v1/v2 registry
 confusion, bind the exact table schema, deterministically compose complete files, classify every
 truncation, and fail closed on stored-page corruption. Golden fixtures, hostile corruption
-matrices, temporal row/order validation, projected reading, Manifest v2 installation, current/as-of
-winner resolution, crash tests, fuzzing, and performance evidence remain subsequent work and Phase
-18 validation.
+matrices, projected reading, Manifest v2 installation, current/as-of winner resolution, crash tests,
+fuzzing, and performance evidence remain subsequent work and Phase 18 validation. Temporal
+row/order validation is implemented with bounded page work and exact
+corrupt-versus-unsupported value classification.

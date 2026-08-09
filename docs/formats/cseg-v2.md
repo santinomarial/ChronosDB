@@ -1,8 +1,8 @@
 # ChronosDB CSEG v2
 
-> **Status: accepted temporal registry, checked layout, strict metadata codec, and complete
-> structural part composition/decoding are implemented; temporal row/order validation, projected
-> reading, and Manifest v2 installation remain pending.**
+> **Status: accepted temporal registry, checked layout, strict metadata/part codecs, schema binding,
+> and complete temporal row/order validation are implemented; projected reading, winner resolution,
+> and Manifest v2 installation remain pending.**
 
 CSEG v2.0 is the immutable temporal-history part format. It retains CSEG v1's eight-byte magic,
 fixed 256-byte header, 96-byte column descriptors, 64-byte granule descriptors, 80-byte page
@@ -39,8 +39,15 @@ descriptors.
 The owned part composer and borrowed prefix/exact part decoder use the unchanged PLAIN and
 NONE/Zstandard page encodings. The decoder authenticates and interprets every stored page, rejects
 nonzero alignment padding and trailing bytes in exact mode, and reports the exact next required
-size for valid truncations. This structural acceptance does not yet validate temporal value
-domains, physical temporal ordering, event-time extrema, catalog lineage, or installation.
+size for valid truncations.
+
+Complete acceptance additionally binds the exact table schema/tablet, validates every system tuple,
+distinguishes corrupt zero values from unsupported assigned-domain extensions, bounds nonempty
+logical identities, recomputes granule and part event-time extrema, and requires strict ordering by
+the schema physical key followed by `(commit_source, source_id, commit_position, row_ordinal)`
+across pages and granules. It applies an explicit working-memory limit before semantic page
+decompression. This does not yet provide selective/projected reading, current/as-of winner
+resolution, or installation.
 
 ## Column registry
 

@@ -25,12 +25,24 @@ struct CsegValidationLimits {
 [[nodiscard]] common::Status validate_cseg_v1_part_contents(const DecodedCsegPartView& part,
                                                             CsegValidationLimits limits = {});
 
+// Completes schema-independent acceptance of a structurally decoded CSEG v2 temporal part. It
+// validates all eight system values, temporal operation/source domains, identity bounds,
+// event-time extrema, and strict user-key plus physical-source ordering across granules.
+[[nodiscard]] common::Status
+validate_cseg_v2_temporal_part_contents(const DecodedCsegPartView& part,
+                                        CsegValidationLimits limits = {});
+
 // Complete pre-installation acceptance: exact schema/tablet binding followed by full content
 // validation. A binding mismatch is invalid caller/catalog context rather than byte corruption.
 [[nodiscard]] common::Status validate_cseg_v1_part(const DecodedCsegPartView& part,
                                                    const schema::TableSchema& schema,
                                                    const schema::TabletId& target_tablet,
                                                    CsegValidationLimits limits = {});
+
+[[nodiscard]] common::Status validate_cseg_v2_temporal_part(const DecodedCsegPartView& part,
+                                                            const schema::TableSchema& schema,
+                                                            const schema::TabletId& target_tablet,
+                                                            CsegValidationLimits limits = {});
 
 } // namespace chronos::cseg
 

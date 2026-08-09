@@ -3,6 +3,7 @@
 #include "chronos/columnar/column_vector.hpp"
 #include "chronos/common/checked_math.hpp"
 #include "chronos/common/result.hpp"
+#include "chronos/cseg/temporal_format.hpp"
 #include "chronos/schema/logical_type.hpp"
 #include "sort_order_internal.hpp"
 #include "system_rows_internal.hpp"
@@ -182,15 +183,27 @@ event_time_value(const columnar::PhysicalColumnView& event_time, const std::uint
 
 } // namespace
 
-common::Status validate_cseg_v1_part_contents(const DecodedCsegPartView& part,
-                                              const CsegValidationLimits limits) {
+namespace {
+
+[[nodiscard]] common::Status validate_cseg_part_contents(const DecodedCsegPartView& part,
+                                                         const CsegValidationLimits limits,
+                                                         const bool temporal) {
   if (limits.max_working_bytes == 0U) {
     return status(common::StatusCode::kInvalidArgument,
                   "CSEG validation working-memory limit must be nonzero");
   }
   const DecodedCsegMetadataView& metadata = part.metadata();
+  const std::uint16_t expected_major =
+      temporal ? temporal_format::kFormatMajor : format::kFormatMajor;
+  if (metadata.format_major() != expected_major) {
+    return status(common::StatusCode::kInvalidArgument,
+                  "CSEG content validator received the wrong format major");
+  }
   const std::uint32_t stored_count = static_cast<std::uint32_t>(metadata.columns().size());
-  const std::uint32_t user_count = stored_count - format::kSystemColumnCount;
+  const std::uint32_t system_count =
+      temporal ? temporal_format::kSystemColumnCount : format::kSystemColumnCount;
+  const std::uint32_t identity_count = temporal ? 4U : 3U;
+  const std::uint32_t user_count = stored_count - system_count;
   std::vector<std::uint32_t> key_ordinals(metadata.ordering_column_count());
   for (std::uint32_t column = 0U; column < user_count; ++column) {
     const std::optional<std::uint32_t> ordering = metadata.columns()[column].ordering_ordinal;
@@ -198,9 +211,9 @@ common::Status validate_cseg_v1_part_contents(const DecodedCsegPartView& part,
       key_ordinals[ordering.value()] = column;
     }
   }
-  key_ordinals.push_back(user_count);
-  key_ordinals.push_back(user_count + 1U);
-  key_ordinals.push_back(user_count + 2U);
+  for (std::uint32_t ordinal = 0U; ordinal < identity_count; ++ordinal) {
+    key_ordinals.push_back(user_count + ordinal);
+  }
 
   std::vector<CsegColumnDescriptor> key_columns;
   key_columns.reserve(key_ordinals.size());
@@ -226,15 +239,18 @@ common::Status validate_cseg_v1_part_contents(const DecodedCsegPartView& part,
       }
       page_bytes = *next;
     }
-    const CsegPageDescriptor& operation_descriptor = metadata.pages()[first_page + user_count + 3U];
-    const std::optional<std::uint64_t> with_operation =
-        common::checked_add(page_bytes, operation_descriptor.uncompressed_length);
-    if (!with_operation.has_value()) {
-      return status(common::StatusCode::kResourceExhausted,
-                    "CSEG validation working-byte accounting overflows");
+    for (std::uint32_t ordinal = identity_count; ordinal < system_count; ++ordinal) {
+      const CsegPageDescriptor& descriptor = metadata.pages()[first_page + user_count + ordinal];
+      const std::optional<std::uint64_t> next =
+          common::checked_add(page_bytes, descriptor.uncompressed_length);
+      if (!next.has_value()) {
+        return status(common::StatusCode::kResourceExhausted,
+                      "CSEG validation working-byte accounting overflows");
+      }
+      page_bytes = *next;
     }
     const std::optional<std::uint64_t> required =
-        common::checked_add(*with_operation, captured_bytes(previous_boundary));
+        common::checked_add(page_bytes, captured_bytes(previous_boundary));
     if (!required.has_value() || *required > limits.max_working_bytes) {
       return status(common::StatusCode::kResourceExhausted,
                     "CSEG validation exceeds its configured working-memory limit");
@@ -250,19 +266,35 @@ common::Status validate_cseg_v1_part_contents(const DecodedCsegPartView& part,
       }
       key_pages.push_back(std::move(*page));
     }
-    common::Result<DecodedCsegPage> operation =
-        part.decode_page(static_cast<std::size_t>(first_page + user_count + 3U));
-    if (!operation.has_value()) {
-      return corruption("structurally validated CSEG operation page no longer decodes");
+    std::vector<DecodedCsegPage> remaining_system_pages;
+    remaining_system_pages.reserve(system_count - identity_count);
+    for (std::uint32_t ordinal = identity_count; ordinal < system_count; ++ordinal) {
+      common::Result<DecodedCsegPage> page =
+          part.decode_page(static_cast<std::size_t>(first_page + user_count + ordinal));
+      if (!page.has_value()) {
+        return corruption("structurally validated CSEG system page no longer decodes");
+      }
+      remaining_system_pages.push_back(std::move(*page));
     }
 
     const std::size_t system_start = metadata.ordering_column_count();
-    common::Status system = detail::validate_cseg_v1_system_rows(
-        {.wal_id = key_pages[system_start].physical(),
-         .record_sequence = key_pages[system_start + 1U].physical(),
-         .row_ordinal = key_pages[system_start + 2U].physical(),
-         .operation = operation->physical()},
-        granule.row_count);
+    const common::Status system =
+        temporal ? detail::validate_cseg_v2_temporal_system_rows(
+                       {.commit_source = key_pages[system_start].physical(),
+                        .source_id = key_pages[system_start + 1U].physical(),
+                        .commit_position = key_pages[system_start + 2U].physical(),
+                        .row_ordinal = key_pages[system_start + 3U].physical(),
+                        .operation = remaining_system_pages[0U].physical(),
+                        .logical_identity = remaining_system_pages[1U].physical(),
+                        .receive_time = remaining_system_pages[2U].physical(),
+                        .system_commit_time = remaining_system_pages[3U].physical()},
+                       granule.row_count)
+                 : detail::validate_cseg_v1_system_rows(
+                       {.wal_id = key_pages[system_start].physical(),
+                        .record_sequence = key_pages[system_start + 1U].physical(),
+                        .row_ordinal = key_pages[system_start + 2U].physical(),
+                        .operation = remaining_system_pages[0U].physical()},
+                       granule.row_count);
     if (!system.is_ok()) {
       return system;
     }
@@ -312,7 +344,7 @@ common::Status validate_cseg_v1_part_contents(const DecodedCsegPartView& part,
     }
     common::Result<std::vector<OwnedSortCell>> captured =
         capture_last_row(key_pages, {.row_count = granule.row_count,
-                                     .max_bytes = limits.max_working_bytes - *with_operation});
+                                     .max_bytes = limits.max_working_bytes - page_bytes});
     if (!captured.has_value()) {
       return captured.error();
     }
@@ -325,6 +357,18 @@ common::Status validate_cseg_v1_part_contents(const DecodedCsegPartView& part,
   return common::Status::ok();
 }
 
+} // namespace
+
+common::Status validate_cseg_v1_part_contents(const DecodedCsegPartView& part,
+                                              const CsegValidationLimits limits) {
+  return validate_cseg_part_contents(part, limits, false);
+}
+
+common::Status validate_cseg_v2_temporal_part_contents(const DecodedCsegPartView& part,
+                                                       const CsegValidationLimits limits) {
+  return validate_cseg_part_contents(part, limits, true);
+}
+
 common::Status validate_cseg_v1_part(const DecodedCsegPartView& part,
                                      const schema::TableSchema& schema_value,
                                      const schema::TabletId& target_tablet,
@@ -335,6 +379,18 @@ common::Status validate_cseg_v1_part(const DecodedCsegPartView& part,
     return binding;
   }
   return validate_cseg_v1_part_contents(part, limits);
+}
+
+common::Status validate_cseg_v2_temporal_part(const DecodedCsegPartView& part,
+                                              const schema::TableSchema& schema_value,
+                                              const schema::TabletId& target_tablet,
+                                              const CsegValidationLimits limits) {
+  common::Status binding =
+      validate_cseg_v2_temporal_metadata_schema(part.metadata(), schema_value, target_tablet);
+  if (!binding.is_ok()) {
+    return binding;
+  }
+  return validate_cseg_v2_temporal_part_contents(part, limits);
 }
 
 } // namespace chronos::cseg

@@ -2,6 +2,7 @@
 #include "chronos/common/uuid.hpp"
 #include "chronos/cseg/part_codec.hpp"
 #include "chronos/cseg/temporal_format.hpp"
+#include "chronos/cseg/validator.hpp"
 #include "chronos/schema/logical_type.hpp"
 
 #include <algorithm>
@@ -9,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
+#include <memory>
 #include <optional>
 #include <type_traits>
 #include <vector>
@@ -64,6 +66,15 @@ template <typename Integer> void append_le(std::vector<std::byte>& bytes, const 
   return encode_cseg_v1_page(*physical, PageCompression::kNone).value();
 }
 
+struct TemporalFixtureValues {
+  std::int64_t first_event_time{10};
+  std::int64_t second_event_time{20};
+  std::uint8_t commit_source{static_cast<std::uint8_t>(temporal_format::CommitSource::kWal)};
+  std::uint64_t commit_position{7U};
+  std::uint8_t operation{static_cast<std::uint8_t>(temporal_format::Operation::kOriginal)};
+  bool empty_first_identity{};
+};
+
 struct TemporalPartFixture {
   PartId part_id{id<PartId>(1U)};
   schema::TableId table_id{id<schema::TableId>(2U)};
@@ -87,31 +98,34 @@ struct TemporalPartFixture {
                                                .maximum_event_time = 20}};
   std::vector<EncodedCsegPage> pages;
 
-  TemporalPartFixture() {
+  explicit TemporalPartFixture(const TemporalFixtureValues values = {}) {
     std::vector<std::byte> event_time;
-    append_le(event_time, std::int64_t{10});
-    append_le(event_time, std::int64_t{20});
-    const std::vector<std::byte> commit_source{
-        std::byte{static_cast<std::uint8_t>(temporal_format::CommitSource::kWal)},
-        std::byte{static_cast<std::uint8_t>(temporal_format::CommitSource::kWal)}};
+    append_le(event_time, values.first_event_time);
+    append_le(event_time, values.second_event_time);
+    const std::vector<std::byte> commit_source{std::byte{values.commit_source},
+                                               std::byte{values.commit_source}};
     std::vector<std::byte> source_id;
     const common::Uuid::Bytes source = id<schema::SchemaId>(8U).bytes();
     source_id.insert(source_id.end(), source.begin(), source.end());
     source_id.insert(source_id.end(), source.begin(), source.end());
     std::vector<std::byte> positions;
-    append_le(positions, std::uint64_t{7U});
-    append_le(positions, std::uint64_t{7U});
+    append_le(positions, values.commit_position);
+    append_le(positions, values.commit_position);
     std::vector<std::byte> ordinals;
     append_le(ordinals, std::uint32_t{0U});
     append_le(ordinals, std::uint32_t{1U});
     const std::vector<std::byte> operations{
-        std::byte{static_cast<std::uint8_t>(temporal_format::Operation::kOriginal)},
+        std::byte{values.operation},
         std::byte{static_cast<std::uint8_t>(temporal_format::Operation::kCorrection)}};
     std::vector<std::byte> identity_offsets;
     append_le(identity_offsets, std::uint32_t{0U});
-    append_le(identity_offsets, std::uint32_t{1U});
-    append_le(identity_offsets, std::uint32_t{2U});
-    const std::vector<std::byte> identities{std::byte{'a'}, std::byte{'b'}};
+    append_le(identity_offsets,
+              values.empty_first_identity ? std::uint32_t{0U} : std::uint32_t{1U});
+    append_le(identity_offsets,
+              values.empty_first_identity ? std::uint32_t{1U} : std::uint32_t{2U});
+    const std::vector<std::byte> identities =
+        values.empty_first_identity ? std::vector<std::byte>{std::byte{'b'}}
+                                    : std::vector<std::byte>{std::byte{'a'}, std::byte{'b'}};
     std::vector<std::byte> receive_times;
     append_le(receive_times, std::int64_t{100});
     append_le(receive_times, std::int64_t{101});
@@ -146,7 +160,35 @@ struct TemporalPartFixture {
             .granules = granules,
             .pages = pages};
   }
+
+  [[nodiscard]] std::shared_ptr<const schema::TableSchema> schema_value() const {
+    std::vector<schema::ColumnDefinition> definitions;
+    definitions.push_back(
+        schema::ColumnDefinition::create(id<schema::ColumnId>(5U), "event_time",
+                                         type(schema::LogicalTypeKind::kTimestampNs), false)
+            .value());
+    return std::make_shared<const schema::TableSchema>(
+        schema::TableSchema::create(table_id, schema_id, schema::SchemaVersion::initial(),
+                                    std::nullopt, std::move(definitions),
+                                    {.event_time_column = id<schema::ColumnId>(5U),
+                                     .physical_ordering_key = {id<schema::ColumnId>(5U)},
+                                     .partition_columns = {id<schema::ColumnId>(5U)},
+                                     .shard_key = {id<schema::ColumnId>(5U)},
+                                     .deduplication_key = {id<schema::ColumnId>(5U)}})
+            .value());
+  }
 };
+
+[[nodiscard]] common::Status validate_fixture(const TemporalFixtureValues values = {}) {
+  TemporalPartFixture fixture{values};
+  const auto encoded = encode_cseg_v2_temporal_part(fixture.input());
+  if (!encoded.has_value()) {
+    return encoded.error();
+  }
+  const auto decoded = decode_cseg_v2_temporal_part_exact(encoded->bytes());
+  return decoded.has_value() ? validate_cseg_v2_temporal_part_contents(*decoded)
+                             : decoded.error().status();
+}
 
 TEST(TemporalPartCodecTest, ComposesAndDecodesCanonicalV2PartWithoutWeakeningV1) {
   TemporalPartFixture fixture;
@@ -195,6 +237,56 @@ TEST(TemporalPartCodecTest, FailsClosedOnTruncationStoredCorruptionAndSuffix) {
   suffixed.push_back(std::byte{0U});
   EXPECT_TRUE(decode_cseg_v2_temporal_part_prefix(suffixed).has_value());
   EXPECT_FALSE(decode_cseg_v2_temporal_part_exact(suffixed).has_value());
+}
+
+TEST(TemporalPartValidatorTest, AcceptsExactTemporalSemanticsAndSchemaBinding) {
+  TemporalPartFixture fixture;
+  const auto encoded = encode_cseg_v2_temporal_part(fixture.input());
+  ASSERT_TRUE(encoded.has_value());
+  const auto decoded = decode_cseg_v2_temporal_part_exact(encoded->bytes());
+  ASSERT_TRUE(decoded.has_value());
+  EXPECT_TRUE(validate_cseg_v2_temporal_part_contents(*decoded).is_ok());
+  EXPECT_TRUE(
+      validate_cseg_v2_temporal_part(*decoded, *fixture.schema_value(), fixture.tablet_id).is_ok());
+  EXPECT_EQ(validate_cseg_v1_part_contents(*decoded).code(), common::StatusCode::kInvalidArgument);
+}
+
+TEST(TemporalPartValidatorTest, RejectsInvalidAndUnsupportedTemporalValues) {
+  TemporalFixtureValues values;
+  values.commit_source = 0U;
+  EXPECT_EQ(validate_fixture(values).code(), common::StatusCode::kCorruption);
+  values.commit_source = 3U;
+  EXPECT_EQ(validate_fixture(values).code(), common::StatusCode::kNotSupported);
+
+  values = {};
+  values.commit_position = 0U;
+  EXPECT_EQ(validate_fixture(values).code(), common::StatusCode::kCorruption);
+  values = {};
+  values.operation = 0U;
+  EXPECT_EQ(validate_fixture(values).code(), common::StatusCode::kCorruption);
+  values.operation = 5U;
+  EXPECT_EQ(validate_fixture(values).code(), common::StatusCode::kNotSupported);
+  values = {};
+  values.empty_first_identity = true;
+  EXPECT_EQ(validate_fixture(values).code(), common::StatusCode::kCorruption);
+}
+
+TEST(TemporalPartValidatorTest, RejectsEventExtremaOrderingAndWorkingLimitViolations) {
+  TemporalFixtureValues values;
+  values.first_event_time = 20;
+  values.second_event_time = 10;
+  EXPECT_EQ(validate_fixture(values).code(), common::StatusCode::kCorruption);
+  values = {};
+  values.first_event_time = 11;
+  EXPECT_EQ(validate_fixture(values).code(), common::StatusCode::kCorruption);
+
+  TemporalPartFixture fixture;
+  const auto encoded = encode_cseg_v2_temporal_part(fixture.input());
+  ASSERT_TRUE(encoded.has_value());
+  const auto decoded = decode_cseg_v2_temporal_part_exact(encoded->bytes());
+  ASSERT_TRUE(decoded.has_value());
+  EXPECT_EQ(validate_cseg_v2_temporal_part_contents(*decoded, {.max_working_bytes = 1U}).code(),
+            common::StatusCode::kResourceExhausted);
 }
 
 } // namespace
