@@ -35,10 +35,11 @@ their full roadmap exit gates or that ChronosDB is a production three-node datab
   checkpoint-generation bytes; and
 - lock-owning, exact-next-generation filesystem installation, fail-closed latest selection, and a
   durable coordinator owner that publishes retention frontiers only after synchronized install;
-  plus exact multi-tablet historical execution through one global physical pipeline.
+  plus exact multi-tablet historical execution through one global physical pipeline, started
+  directly from a durably recovered executable without mutable-manager escape.
 
 Still incomplete: topology/retention owner integration, schema-change terminal representation, and
-complete service lifecycle.
+packaged reactor service lifecycle.
 
 ### Phase 12 — performance architecture and io_uring
 

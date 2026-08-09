@@ -1,10 +1,15 @@
 #include "chronos/live/durable_multi_tablet_subscription.hpp"
+#include "chronos/live/subscription_plan_storage.hpp"
+#include "chronos/network/messages.hpp"
+#include "chronos/query/catalog.hpp"
+#include "query/snapshot_tablet_scan_test_fixture.hpp"
 
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <gtest/gtest.h>
+#include <memory>
 #include <string>
 #include <system_error>
 #include <unistd.h>
@@ -200,6 +205,64 @@ TEST(DurableMultiTabletSubscriptionTest, DoesNotAdvanceFrontierWhenInstallationF
   const auto frontiers = owner->durable_retention_frontiers();
   ASSERT_TRUE(frontiers.has_value());
   EXPECT_FALSE(frontiers->has_value());
+}
+
+TEST(DurableMultiTabletSubscriptionTest, StartsExactSnapshotFromRecoveredExecutablePlan) {
+  TemporaryDirectory plan_directory;
+  TemporaryDirectory checkpoint_directory;
+  ASSERT_FALSE(plan_directory.path().empty());
+  ASSERT_FALSE(checkpoint_directory.path().empty());
+  query::test::SnapshotTabletScanFixture snapshot{2U, 3U};
+  const std::vector<query::QueryCatalogTableInput> tables{
+      {.name = "metrics", .quoted = false, .schema = snapshot.schema_ptr()}};
+  auto catalog = std::make_shared<const query::QueryCatalogSnapshot>(
+      query::QueryCatalogSnapshot::create(1U, tables).value());
+  auto plans =
+      SubscriptionPlanStorage::create({.directory_path = plan_directory.path().string(),
+                                       .database_id = snapshot.snapshot().database_id().uuid()});
+  ASSERT_TRUE(plans.has_value()) << plans.error().to_string();
+  const auto installed = plans->install("SUBSCRIBE SELECT count(*) AS total FROM metrics", catalog);
+  ASSERT_TRUE(installed.has_value()) << installed.error().to_string();
+  auto prepared = plans->load(installed->plan_fingerprint, catalog);
+  ASSERT_TRUE(prepared.has_value()) << prepared.error().to_string();
+
+  ResumeTokenMacKey key{};
+  key.fill(std::byte{13});
+  const schema::TabletId tablet_a = query::test::SnapshotTabletScanFixture::tablet_id();
+  const schema::TabletId tablet_b = query::test::SnapshotTabletScanFixture::second_tablet_id();
+  const wal::WalId wal = snapshot.snapshot().wal_id();
+  DurableMultiTabletSubscriptionConfig owner_config{
+      .storage = {.directory_path = checkpoint_directory.path().string(),
+                  .identity = {snapshot.snapshot().database_id().uuid(),
+                               snapshot.schema_ptr()->table_id(),
+                               prepared->fingerprint(),
+                               snapshot.schema_ptr()->schema_id(),
+                               snapshot.schema_ptr()->version(),
+                               {{tablet_a, wal}, {tablet_b, wal}}}},
+      .source = {.database_id = snapshot.snapshot().database_id().uuid(),
+                 .table_id = snapshot.schema_ptr()->table_id(),
+                 .plan_fingerprint = prepared->fingerprint(),
+                 .schema_id = snapshot.schema_ptr()->schema_id(),
+                 .schema_version = snapshot.schema_ptr()->version(),
+                 .members = {{tablet_b, wal, 1U}, {tablet_a, wal, 1U}},
+                 .token_key = key}};
+  auto owner = DurableMultiTabletSubscription::create_new(std::move(owner_config));
+  ASSERT_TRUE(owner.has_value()) << owner.error().to_string();
+  auto resources = query::QueryResourceContext::create(32U * 1024U * 1024U).value();
+  auto subscription =
+      owner->start_snapshot(*prepared, uuid(std::byte{14}), resources, snapshot.storage(),
+                            snapshot.publisher(), snapshot.lineage());
+  ASSERT_TRUE(subscription.has_value()) << subscription.error().to_string();
+  const auto rows = subscription->next();
+  ASSERT_TRUE(rows.has_value()) << rows.error().to_string();
+  const auto decoded = network::decode_query_result_batch(rows->payload);
+  ASSERT_TRUE(decoded.has_value());
+  ASSERT_EQ(decoded->row_count(), 1U);
+  ASSERT_NE(decoded->cell(0U, 0U), nullptr);
+  EXPECT_EQ(std::to_integer<std::uint8_t>(decoded->cell(0U, 0U)->value.front()), 5U);
+  ASSERT_TRUE(subscription->next().has_value());
+  ASSERT_TRUE(subscription->next().has_value());
+  EXPECT_TRUE(subscription->ready());
 }
 
 } // namespace

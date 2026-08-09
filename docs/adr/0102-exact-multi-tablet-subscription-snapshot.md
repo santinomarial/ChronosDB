@@ -41,8 +41,8 @@ changes SQL results. Acquiring separate database publications per tablet was rej
 result would not name one stable aggregate epoch.
 
 The driver still receives an already prepared physical plan. Durable fingerprint-to-plan lookup,
-reactor worker dispatch, and a service owner combining durable coordinator recovery with snapshot
-startup remain separate work.
+provided by ADR 0103, can feed the durable coordinator owner directly without exposing its mutable
+manager. Reactor worker dispatch and packaged service lifecycle remain separate work.
 
 ## Affected invariants and validation
 

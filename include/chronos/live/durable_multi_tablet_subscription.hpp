@@ -3,8 +3,10 @@
 
 #include "chronos/common/bytes.hpp"
 #include "chronos/common/result.hpp"
+#include "chronos/live/multi_tablet_snapshot_subscription.hpp"
 #include "chronos/live/multi_tablet_subscription.hpp"
 #include "chronos/live/multi_tablet_subscription_checkpoint_storage.hpp"
+#include "chronos/live/subscription_plan.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -52,6 +54,16 @@ public:
   [[nodiscard]] common::Result<MultiTabletSubscriptionStatus>
   status(const common::Uuid& subscription_id) const;
   [[nodiscard]] common::Result<std::vector<SourcePosition>> latest_positions() const;
+
+  // Starts the exact historical half from a prepared or durably recovered plan without exposing
+  // the mutable manager. This owner and the query resource context must outlive the returned
+  // driver.
+  [[nodiscard]] common::Result<MultiTabletSnapshotSubscription>
+  start_snapshot(const PreparedSubscriptionPlan& plan, common::Uuid subscription_id,
+                 const query::QueryResourceContext& resources,
+                 const manifest::ManifestStorage& storage,
+                 const manifest::DatabaseStoragePublisher& publisher,
+                 const schema::SchemaLineage& lineage, SnapshotSubscriptionLimits limits = {});
 
   [[nodiscard]] common::Result<InstalledMultiTabletSubscriptionCheckpoint> checkpoint();
   [[nodiscard]] common::Result<std::optional<std::vector<SourcePosition>>>
