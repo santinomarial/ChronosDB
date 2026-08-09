@@ -1,11 +1,13 @@
 #include "chronos/columnar/column_vector.hpp"
 #include "chronos/common/uuid.hpp"
 #include "chronos/cseg/part_codec.hpp"
+#include "chronos/cseg/projected_reader.hpp"
 #include "chronos/cseg/temporal_format.hpp"
 #include "chronos/cseg/validator.hpp"
 #include "chronos/schema/logical_type.hpp"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -287,6 +289,50 @@ TEST(TemporalPartValidatorTest, RejectsEventExtremaOrderingAndWorkingLimitViolat
   ASSERT_TRUE(decoded.has_value());
   EXPECT_EQ(validate_cseg_v2_temporal_part_contents(*decoded, {.max_working_bytes = 1U}).code(),
             common::StatusCode::kResourceExhausted);
+}
+
+TEST(TemporalProjectedReaderTest, SelectivelyReadsUserAndAllTemporalSystemPages) {
+  TemporalPartFixture fixture;
+  const auto encoded = encode_cseg_v2_temporal_part(fixture.input());
+  ASSERT_TRUE(encoded.has_value());
+  const schema::SchemaLineage lineage =
+      schema::SchemaLineage::create(*fixture.schema_value()).value();
+  const auto reader = open_cseg_v2_temporal_projected_reader_exact(
+      encoded->bytes(), lineage, fixture.schema_id, fixture.tablet_id);
+  ASSERT_TRUE(reader.has_value()) << reader.error().status().to_string();
+
+  const std::array<std::uint32_t, 1U> projection{0U};
+  const auto plan = reader->plan_granule(0U, projection);
+  ASSERT_TRUE(plan.has_value());
+  EXPECT_EQ(plan->decoded_page_count(), 1U + temporal_format::kSystemColumnCount);
+  const auto granule = reader->read_granule(*plan);
+  ASSERT_TRUE(granule.has_value()) << granule.error().to_string();
+  ASSERT_EQ(granule->columns().size(), 1U);
+  EXPECT_EQ(granule->commit_source().row_count(), 2U);
+  EXPECT_EQ(granule->logical_identity().cell(0U)->bytes()->size(), 1U);
+  EXPECT_EQ(granule->system_commit_time().row_count(), 2U);
+
+  const auto v1 = open_cseg_v1_projected_reader_exact(encoded->bytes(), lineage, fixture.schema_id,
+                                                      fixture.tablet_id);
+  ASSERT_FALSE(v1.has_value());
+  EXPECT_EQ(v1.error().kind(), CsegProjectedReaderOpenErrorKind::kUnsupported);
+}
+
+TEST(TemporalProjectedReaderTest, EmptyProjectionStillRejectsInvalidTemporalSystemRows) {
+  TemporalFixtureValues values;
+  values.commit_source = 0U;
+  TemporalPartFixture fixture{values};
+  const auto encoded = encode_cseg_v2_temporal_part(fixture.input());
+  ASSERT_TRUE(encoded.has_value());
+  const schema::SchemaLineage lineage =
+      schema::SchemaLineage::create(*fixture.schema_value()).value();
+  const auto reader = open_cseg_v2_temporal_projected_reader_exact(
+      encoded->bytes(), lineage, fixture.schema_id, fixture.tablet_id);
+  ASSERT_TRUE(reader.has_value());
+  const std::span<const std::uint32_t> empty;
+  const auto granule = reader->read_granule(0U, empty);
+  ASSERT_FALSE(granule.has_value());
+  EXPECT_EQ(granule.error().code(), common::StatusCode::kCorruption);
 }
 
 } // namespace

@@ -36,7 +36,7 @@ readers with storage deletion. Those are Phase 6 responsibilities.
   exact catalog binding for v1 append rows and v2 temporal histories.
 - `projected_reader.hpp` authenticates metadata and reads selected granules/columns against a
   retained schema lineage. Its borrowed read plan validates and reports exact decoded-buffer work
-  before result allocation.
+  before result allocation for either the four-column v1 or eight-column v2 system suffix.
 - `chronos/query/cseg_scan.hpp` is the query-layer single-part source that reserves from that plan
   and retains the decoded granule plus immutable encoded-image pin in one chunk backing.
 - `inspection.hpp` returns an owned, value-free report after complete structural and
@@ -83,7 +83,7 @@ Validation is deliberately layered because callers have different trust and I/O 
    ordinals/IDs/types/nullability, event-time column, ordering key, and system-column definitions.
 
 The projected reader uses a different cost boundary: it authenticates the complete metadata prefix,
-then validates requested user pages and every mandatory system page for requested granules. It binds
+then validates requested user pages and every version-mandatory system page for requested granules. It binds
 the stored schema through `SchemaLineage`, permits an explicitly requested retained successor, and
 synthesizes canonical all-null buffers only for nullable columns appended by that successor.
 Unrequested user page bytes are neither read nor claimed to be valid by this API.
@@ -129,7 +129,7 @@ still only a candidate until the future installation protocol durably places and
 | Zstandard page decode | `O(stored + output bytes)` | bounded uncompressed page |
 | Complete part decode | `O(metadata + all page bytes)` | descriptor storage plus one decoded page at a time |
 | Full semantic validation | `O(rows × stored columns)` | bounded per-page decode and ordering state |
-| V1 projected granule planning | `O(selected columns + 4)` | fixed 4,096-bit stack bitmap; no heap |
+| Projected granule planning | `O(selected columns + system columns)` | fixed 4,096-bit stack bitmap; no heap |
 | Projected granule read | `O(metadata + selected/system page bytes)` | owned requested result buffers |
 | Single-part physical pull | `O(selected/system page bytes + rows)` | accounted backing, selection, and part pin |
 | Inspection | `O(metadata + all page bytes + rows × stored columns)` | owned descriptors plus bounded validation state |

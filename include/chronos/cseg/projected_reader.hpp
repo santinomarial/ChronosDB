@@ -84,7 +84,7 @@ public:
     return synthesized_column_count_;
   }
   [[nodiscard]] constexpr std::size_t decoded_page_count() const noexcept {
-    return source_user_page_count_ + format::kSystemColumnCount;
+    return source_user_page_count_ + system_page_count_;
   }
   // Exact aggregate canonical bytes for selected source pages, synthesized columns, and all system
   // pages. Raw page bytes are borrowed; compressed page outputs and synthesized columns are owned.
@@ -102,6 +102,7 @@ private:
   struct Accounting {
     std::size_t source_user_page_count;
     std::size_t synthesized_column_count;
+    std::size_t system_page_count;
     std::uint64_t decoded_buffer_bytes;
     std::uint64_t owned_buffer_bytes;
     std::uint64_t borrowed_buffer_bytes;
@@ -119,6 +120,7 @@ private:
   std::span<const std::uint32_t> destination_column_ordinals_;
   std::size_t source_user_page_count_;
   std::size_t synthesized_column_count_;
+  std::size_t system_page_count_;
   std::uint64_t decoded_buffer_bytes_;
   std::uint64_t owned_buffer_bytes_;
   std::uint64_t borrowed_buffer_bytes_;
@@ -181,6 +183,14 @@ public:
   [[nodiscard]] const columnar::PhysicalColumnView& record_sequence() const noexcept;
   [[nodiscard]] const columnar::PhysicalColumnView& row_ordinal() const noexcept;
   [[nodiscard]] const columnar::PhysicalColumnView& operation() const noexcept;
+  [[nodiscard]] const columnar::PhysicalColumnView& commit_source() const noexcept;
+  [[nodiscard]] const columnar::PhysicalColumnView& source_id() const noexcept;
+  [[nodiscard]] const columnar::PhysicalColumnView& commit_position() const noexcept;
+  [[nodiscard]] const columnar::PhysicalColumnView& temporal_row_ordinal() const noexcept;
+  [[nodiscard]] const columnar::PhysicalColumnView& temporal_operation() const noexcept;
+  [[nodiscard]] const columnar::PhysicalColumnView& logical_identity() const noexcept;
+  [[nodiscard]] const columnar::PhysicalColumnView& receive_time() const noexcept;
+  [[nodiscard]] const columnar::PhysicalColumnView& system_commit_time() const noexcept;
   // Exact logical bytes across requested/synthesized user columns and the four mandatory system
   // pages. Retained bytes count owned page/synthesis capacities and result-container capacities;
   // raw page bytes remain the responsibility of the encoded-part owner.
@@ -272,6 +282,14 @@ private:
   open_cseg_v1_projected_reader_prefix(common::ByteView, const schema::SchemaLineage&,
                                        schema::SchemaId, const schema::TabletId&,
                                        CsegProjectedReaderLimits);
+  friend std::expected<CsegProjectedReaderView, CsegProjectedReaderOpenError>
+  open_cseg_v2_temporal_projected_reader_prefix(common::ByteView, const schema::SchemaLineage&,
+                                                schema::SchemaId, const schema::TabletId&,
+                                                CsegProjectedReaderLimits);
+  friend std::expected<CsegProjectedReaderView, CsegProjectedReaderOpenError>
+  open_cseg_projected_reader_prefix(common::ByteView, const schema::SchemaLineage&,
+                                    schema::SchemaId, const schema::TabletId&,
+                                    CsegProjectedReaderLimits, std::uint16_t);
 };
 
 using CsegProjectedReaderOpenResult =
@@ -292,6 +310,16 @@ open_cseg_v1_projected_reader_exact(common::ByteView bytes, const schema::Schema
                                     schema::SchemaId destination_schema_id,
                                     const schema::TabletId& target_tablet,
                                     CsegProjectedReaderLimits limits = {});
+
+[[nodiscard]] CsegProjectedReaderOpenResult open_cseg_v2_temporal_projected_reader_prefix(
+    common::ByteView bytes, const schema::SchemaLineage& lineage,
+    schema::SchemaId destination_schema_id, const schema::TabletId& target_tablet,
+    CsegProjectedReaderLimits limits = {});
+
+[[nodiscard]] CsegProjectedReaderOpenResult open_cseg_v2_temporal_projected_reader_exact(
+    common::ByteView bytes, const schema::SchemaLineage& lineage,
+    schema::SchemaId destination_schema_id, const schema::TabletId& target_tablet,
+    CsegProjectedReaderLimits limits = {});
 
 } // namespace chronos::cseg
 

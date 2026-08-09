@@ -1,6 +1,7 @@
 #include "chronos/cseg/projected_reader.hpp"
 
 #include "chronos/common/checked_math.hpp"
+#include "chronos/cseg/temporal_format.hpp"
 #include "system_rows_internal.hpp"
 
 #include <algorithm>
@@ -220,6 +221,7 @@ CsegProjectedGranuleReadPlan::CsegProjectedGranuleReadPlan(
       row_count_(descriptor.row_count), destination_column_ordinals_(destination_column_ordinals),
       source_user_page_count_(accounting.source_user_page_count),
       synthesized_column_count_(accounting.synthesized_column_count),
+      system_page_count_(accounting.system_page_count),
       decoded_buffer_bytes_(accounting.decoded_buffer_bytes),
       owned_buffer_bytes_(accounting.owned_buffer_bytes),
       borrowed_buffer_bytes_(accounting.borrowed_buffer_bytes) {}
@@ -259,6 +261,38 @@ const columnar::PhysicalColumnView& ProjectedCsegGranule::row_ordinal() const no
 
 const columnar::PhysicalColumnView& ProjectedCsegGranule::operation() const noexcept {
   return decoded_pages_[system_page_start_ + 3U].physical();
+}
+
+const columnar::PhysicalColumnView& ProjectedCsegGranule::commit_source() const noexcept {
+  return decoded_pages_[system_page_start_].physical();
+}
+
+const columnar::PhysicalColumnView& ProjectedCsegGranule::source_id() const noexcept {
+  return decoded_pages_[system_page_start_ + 1U].physical();
+}
+
+const columnar::PhysicalColumnView& ProjectedCsegGranule::commit_position() const noexcept {
+  return decoded_pages_[system_page_start_ + 2U].physical();
+}
+
+const columnar::PhysicalColumnView& ProjectedCsegGranule::temporal_row_ordinal() const noexcept {
+  return decoded_pages_[system_page_start_ + 3U].physical();
+}
+
+const columnar::PhysicalColumnView& ProjectedCsegGranule::temporal_operation() const noexcept {
+  return decoded_pages_[system_page_start_ + 4U].physical();
+}
+
+const columnar::PhysicalColumnView& ProjectedCsegGranule::logical_identity() const noexcept {
+  return decoded_pages_[system_page_start_ + 5U].physical();
+}
+
+const columnar::PhysicalColumnView& ProjectedCsegGranule::receive_time() const noexcept {
+  return decoded_pages_[system_page_start_ + 6U].physical();
+}
+
+const columnar::PhysicalColumnView& ProjectedCsegGranule::system_commit_time() const noexcept {
+  return decoded_pages_[system_page_start_ + 7U].physical();
 }
 
 std::size_t ProjectedCsegGranule::buffer_bytes() const noexcept {
@@ -362,7 +396,10 @@ common::Result<CsegProjectedGranuleReadPlan> CsegProjectedReaderView::plan_granu
   }
 
   const std::size_t source_user_count = source_schema_->columns().size();
-  for (std::size_t system = 0U; system < format::kSystemColumnCount; ++system) {
+  const std::size_t system_count = metadata_.format_major() == temporal_format::kFormatMajor
+                                       ? temporal_format::kSystemColumnCount
+                                       : format::kSystemColumnCount;
+  for (std::size_t system = 0U; system < system_count; ++system) {
     const std::size_t page_index =
         static_cast<std::size_t>(granule.first_page_index) + source_user_count + system;
     common::Status accounting = account_page(page_index);
@@ -376,6 +413,7 @@ common::Result<CsegProjectedGranuleReadPlan> CsegProjectedReaderView::plan_granu
                                       destination_column_ordinals,
                                       {.source_user_page_count = source_user_page_count,
                                        .synthesized_column_count = synthesized_column_count,
+                                       .system_page_count = system_count,
                                        .decoded_buffer_bytes = decoded_bytes,
                                        .owned_buffer_bytes = owned_bytes,
                                        .borrowed_buffer_bytes = borrowed_bytes}};
@@ -404,6 +442,7 @@ CsegProjectedReaderView::read_granule(const CsegProjectedGranuleReadPlan& plan) 
   if (refreshed->first_row_ != plan.first_row_ || refreshed->row_count_ != plan.row_count_ ||
       refreshed->source_user_page_count_ != plan.source_user_page_count_ ||
       refreshed->synthesized_column_count_ != plan.synthesized_column_count_ ||
+      refreshed->system_page_count_ != plan.system_page_count_ ||
       refreshed->decoded_buffer_bytes_ != plan.decoded_buffer_bytes_ ||
       refreshed->owned_buffer_bytes_ != plan.owned_buffer_bytes_ ||
       refreshed->borrowed_buffer_bytes_ != plan.borrowed_buffer_bytes_) {
@@ -459,7 +498,7 @@ CsegProjectedReaderView::execute_granule_plan(const CsegProjectedGranuleReadPlan
     }
     const std::size_t system_page_start = decoded_pages.size();
     const std::size_t source_user_count = source_schema_->columns().size();
-    for (std::size_t system_index = 0U; system_index < format::kSystemColumnCount; ++system_index) {
+    for (std::size_t system_index = 0U; system_index < plan.system_page_count_; ++system_index) {
       const std::size_t page_index =
           static_cast<std::size_t>(granule.first_page_index) + source_user_count + system_index;
       common::Result<DecodedCsegPage> page = decode_page(page_index);
@@ -467,12 +506,24 @@ CsegProjectedReaderView::execute_granule_plan(const CsegProjectedGranuleReadPlan
         return common::make_unexpected(page.error());
       decoded_pages.push_back(std::move(*page));
     }
-    common::Status system = detail::validate_cseg_v1_system_rows(
-        {.wal_id = decoded_pages[system_page_start].physical(),
-         .record_sequence = decoded_pages[system_page_start + 1U].physical(),
-         .row_ordinal = decoded_pages[system_page_start + 2U].physical(),
-         .operation = decoded_pages[system_page_start + 3U].physical()},
-        granule.row_count);
+    const common::Status system =
+        metadata_.format_major() == temporal_format::kFormatMajor
+            ? detail::validate_cseg_v2_temporal_system_rows(
+                  {.commit_source = decoded_pages[system_page_start].physical(),
+                   .source_id = decoded_pages[system_page_start + 1U].physical(),
+                   .commit_position = decoded_pages[system_page_start + 2U].physical(),
+                   .row_ordinal = decoded_pages[system_page_start + 3U].physical(),
+                   .operation = decoded_pages[system_page_start + 4U].physical(),
+                   .logical_identity = decoded_pages[system_page_start + 5U].physical(),
+                   .receive_time = decoded_pages[system_page_start + 6U].physical(),
+                   .system_commit_time = decoded_pages[system_page_start + 7U].physical()},
+                  granule.row_count)
+            : detail::validate_cseg_v1_system_rows(
+                  {.wal_id = decoded_pages[system_page_start].physical(),
+                   .record_sequence = decoded_pages[system_page_start + 1U].physical(),
+                   .row_ordinal = decoded_pages[system_page_start + 2U].physical(),
+                   .operation = decoded_pages[system_page_start + 3U].physical()},
+                  granule.row_count);
     if (!system.is_ok())
       return common::make_unexpected(std::move(system));
 
@@ -525,16 +576,19 @@ CsegProjectedReaderView::execute_granule_plan(const CsegProjectedGranuleReadPlan
   }
 }
 
-CsegProjectedReaderOpenResult open_cseg_v1_projected_reader_prefix(
+CsegProjectedReaderOpenResult open_cseg_projected_reader_prefix(
     const common::ByteView bytes, const schema::SchemaLineage& lineage,
     const schema::SchemaId destination_schema_id, const schema::TabletId& target_tablet,
-    const CsegProjectedReaderLimits limits) {
+    const CsegProjectedReaderLimits limits, const std::uint16_t expected_major) {
   if (limits.max_decoded_buffer_bytes == 0U) {
     return std::unexpected(CsegProjectedReaderOpenError{
         CsegProjectedReaderOpenErrorKind::kInvalidArgument,
         invalid("CSEG projected-reader decoded-buffer limit must be nonzero")});
   }
-  CsegMetadataDecodeResult metadata = decode_cseg_v1_metadata_prefix(bytes, limits.metadata);
+  CsegMetadataDecodeResult metadata =
+      expected_major == temporal_format::kFormatMajor
+          ? decode_cseg_v2_temporal_metadata_prefix(bytes, limits.metadata)
+          : decode_cseg_v1_metadata_prefix(bytes, limits.metadata);
   if (!metadata.has_value()) {
     return std::unexpected(open_error(metadata.error()));
   }
@@ -556,8 +610,10 @@ CsegProjectedReaderOpenResult open_cseg_v1_projected_reader_prefix(
                                      status(common::StatusCode::kNotFound,
                                             "CSEG source schema is not retained in the lineage")});
   }
-  common::Status binding =
-      validate_cseg_v1_metadata_schema(*metadata, *source_schema, target_tablet);
+  const common::Status binding =
+      expected_major == temporal_format::kFormatMajor
+          ? validate_cseg_v2_temporal_metadata_schema(*metadata, *source_schema, target_tablet)
+          : validate_cseg_v1_metadata_schema(*metadata, *source_schema, target_tablet);
   if (!binding.is_ok()) {
     return std::unexpected(invalid_open(binding));
   }
@@ -579,11 +635,44 @@ CsegProjectedReaderOpenResult open_cseg_v1_projected_reader_prefix(
                                  std::move(*projection),   limits};
 }
 
+CsegProjectedReaderOpenResult open_cseg_v1_projected_reader_prefix(
+    const common::ByteView bytes, const schema::SchemaLineage& lineage,
+    const schema::SchemaId destination_schema_id, const schema::TabletId& target_tablet,
+    const CsegProjectedReaderLimits limits) {
+  return open_cseg_projected_reader_prefix(bytes, lineage, destination_schema_id, target_tablet,
+                                           limits, format::kFormatMajor);
+}
+
+CsegProjectedReaderOpenResult open_cseg_v2_temporal_projected_reader_prefix(
+    const common::ByteView bytes, const schema::SchemaLineage& lineage,
+    const schema::SchemaId destination_schema_id, const schema::TabletId& target_tablet,
+    const CsegProjectedReaderLimits limits) {
+  return open_cseg_projected_reader_prefix(bytes, lineage, destination_schema_id, target_tablet,
+                                           limits, temporal_format::kFormatMajor);
+}
+
 CsegProjectedReaderOpenResult open_cseg_v1_projected_reader_exact(
     const common::ByteView bytes, const schema::SchemaLineage& lineage,
     const schema::SchemaId destination_schema_id, const schema::TabletId& target_tablet,
     const CsegProjectedReaderLimits limits) {
   CsegProjectedReaderOpenResult reader = open_cseg_v1_projected_reader_prefix(
+      bytes, lineage, destination_schema_id, target_tablet, limits);
+  if (!reader.has_value()) {
+    return reader;
+  }
+  if (reader->encoded_part().size() != bytes.size()) {
+    return std::unexpected(CsegProjectedReaderOpenError{
+        CsegProjectedReaderOpenErrorKind::kCorruption,
+        corruption("CSEG projected-reader exact open rejects trailing bytes")});
+  }
+  return reader;
+}
+
+CsegProjectedReaderOpenResult open_cseg_v2_temporal_projected_reader_exact(
+    const common::ByteView bytes, const schema::SchemaLineage& lineage,
+    const schema::SchemaId destination_schema_id, const schema::TabletId& target_tablet,
+    const CsegProjectedReaderLimits limits) {
+  CsegProjectedReaderOpenResult reader = open_cseg_v2_temporal_projected_reader_prefix(
       bytes, lineage, destination_schema_id, target_tablet, limits);
   if (!reader.has_value()) {
     return reader;
