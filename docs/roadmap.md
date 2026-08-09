@@ -662,14 +662,14 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   leaves no partial state on validation or allocation failure. Complete generation-pinned CSEG part
   sets can now be exact-decoded, copied, canonicalized across parts, and atomically restored into a
   provider under a caller-proven tablet-wide retention boundary. One fail-closed startup owner now
-  composes that state with a verified WAL suffix when a single tablet's durable position exactly
-  equals the global physical checkpoint, retains both locks and the selected generation, and
-  returns the writer at the next sequence. Checkpoint-covered temporal commands now have a
-  read-only exact verifier that reuses canonical WAL materialization and permits only
-  manifest-proven commands before the explicit retention boundary to be treated as expired.
-  Multi-tablet checkpoint overlap composition, Raft application
-  snapshots, complete query-epoch publication, v1 migration, vector output, and authorized
-  retention/compaction integration remain deferred, so the phase exit gate is not claimed.
+  permits the global physical checkpoint to equal or trail a single tablet's durable position,
+  exactly verifies every physically retained covered row, permits only absent pre-retention rows to
+  be treated as reclaimed, applies only the later WAL suffix, retains both locks and the selected
+  generation, and returns the writer at the next sequence. Its report distinguishes the checkpoint,
+  tablet boundary, verified overlap, and applied suffix. Multi-tablet checkpoint composition, Raft
+  application snapshots, complete query-epoch publication, v1 migration, vector output, and
+  authorized retention/compaction integration remain deferred, so the phase exit gate is not
+  claimed.
 
 - **Scope:** formal bitemporal row-version model; SQL system-time clauses; history retention; correction/cancellation semantics; compaction and index support; audit visibility.
 - **Explicit non-scope:** general distributed transactions, legal/compliance certification, retroactive mutation of immutable history, and distribution before the model is validated locally.

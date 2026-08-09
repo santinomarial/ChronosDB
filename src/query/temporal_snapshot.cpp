@@ -299,29 +299,29 @@ common::Status TemporalSnapshotProvider::verify_retained_commit(
       return common::Status{common::StatusCode::kUnavailable,
                             "temporal provider failed closed and requires recovery"};
     }
-    if (impl_->earliest_retained_time.has_value() &&
-        system_commit_time_ns < *impl_->earliest_retained_time) {
-      return common::Status::ok();
-    }
-
     std::size_t stored_count = 0U;
     for (const auto& [identity, history] : impl_->histories) {
       static_cast<void>(identity);
       stored_count += static_cast<std::size_t>(
           std::ranges::count(history, system_commit_position, &Impl::Version::commit_position));
     }
-    if (stored_count != mutations.size()) {
+    const bool may_be_partially_reclaimed = impl_->earliest_retained_time.has_value() &&
+                                            system_commit_time_ns < *impl_->earliest_retained_time;
+    if ((!may_be_partially_reclaimed && stored_count != mutations.size()) ||
+        stored_count > mutations.size()) {
       return corruption("checkpoint-covered temporal commit has different retained row coverage");
     }
-    for (const TemporalMutation& mutation : mutations) {
-      const auto history = impl_->histories.find(mutation.logical_identity);
-      if (history == impl_->histories.end()) {
-        return corruption("checkpoint-covered temporal identity is absent from retained history");
+    for (const auto& [identity, history] : impl_->histories) {
+      const auto version =
+          std::ranges::find(history, system_commit_position, &Impl::Version::commit_position);
+      if (version == history.end()) {
+        continue;
       }
-      const auto version = std::ranges::find(history->second, system_commit_position,
-                                             &Impl::Version::commit_position);
-      if (version == history->second.end() || version->commit_time_ns != system_commit_time_ns ||
-          !equal_mutation(version->mutation, mutation)) {
+      const auto mutation = std::ranges::find_if(mutations, [&identity](const auto& candidate) {
+        return candidate.logical_identity == identity;
+      });
+      if (mutation == mutations.end() || version->commit_time_ns != system_commit_time_ns ||
+          !equal_mutation(version->mutation, *mutation)) {
         return corruption("checkpoint-covered temporal version disagrees with retained history");
       }
     }

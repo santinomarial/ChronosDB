@@ -3,6 +3,7 @@
 - **Status:** accepted
 - **Date:** 2026-08-09
 - **Owners:** ChronosDB temporal recovery and storage maintainers
+- **Extended by:** [ADR 0084](0084-verified-temporal-checkpoint-overlap.md)
 
 ## Context
 

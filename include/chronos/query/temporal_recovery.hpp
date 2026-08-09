@@ -88,6 +88,9 @@ struct TemporalManifestWalStartupReport {
   std::uint64_t selected_generation{};
   wal::WalReplayCheckpoint checkpoint;
   schema::TabletId tablet_id;
+  std::uint64_t tablet_durable_position{};
+  std::uint64_t verified_covered_command_count{};
+  std::uint64_t applied_suffix_command_count{};
   std::uint64_t part_count{};
   std::uint64_t durable_version_count{};
   std::optional<std::int64_t> retained_system_time_ns;
@@ -97,9 +100,10 @@ struct TemporalManifestWalStartupReport {
 };
 
 // Owns the selected Manifest v2 generation, reconstructed temporal provider, reopened WAL writer,
-// and both filesystem locks. This first composition deliberately supports exactly one WAL tablet
-// whose global reclaim checkpoint equals its durable boundary; broader checkpoint overlap and
-// multi-tablet routing require an exact covered-command verifier rather than silent skipping.
+// and both filesystem locks. This composition supports exactly one WAL tablet. A global reclaim
+// checkpoint may equal or trail its durable boundary: intervening commands are verified against
+// retained history and only commands after the tablet boundary are applied. Multi-tablet routing
+// remains a separate application-snapshot contract.
 class RecoveredManifestTemporalState {
 public:
   RecoveredManifestTemporalState() = delete;
@@ -127,8 +131,9 @@ private:
 };
 
 // Acquires Manifest then WAL ownership, restores the selected tablet's complete CSEG history,
-// preflights/replays only the verified WAL suffix, cleans recognized temporaries, and returns
-// nothing usable unless the complete unpublished composition succeeds.
+// preflights the WAL after the global checkpoint, verifies commands through the tablet durable
+// boundary, applies only the later suffix, cleans recognized temporaries, and returns nothing
+// usable unless the complete unpublished composition succeeds.
 [[nodiscard]] common::Result<RecoveredManifestTemporalState>
 recover_manifest_temporal_wal(TemporalManifestWalStartupConfig config);
 

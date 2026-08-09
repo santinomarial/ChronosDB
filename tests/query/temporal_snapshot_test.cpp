@@ -171,8 +171,11 @@ TEST(TemporalSnapshotTest, AtomicallyRestoresCanonicalCompactedHistory) {
   const std::array expanded{exact.front(), std::move(extra)};
   EXPECT_EQ((*provider)->verify_retained_commit(9U, 9000, expanded).code(),
             common::StatusCode::kCorruption);
-  const std::array expired_mutation{mutation(999, TemporalMutationKind::kCorrection, 7U)};
-  EXPECT_TRUE((*provider)->verify_retained_commit(7U, 7000, expired_mutation).is_ok());
+  const std::array changed_predecessor{mutation(999, TemporalMutationKind::kCorrection, 7U)};
+  EXPECT_EQ((*provider)->verify_retained_commit(7U, 7000, changed_predecessor).code(),
+            common::StatusCode::kCorruption);
+  const std::array reclaimed{mutation(60, TemporalMutationKind::kOriginal, 6U)};
+  EXPECT_TRUE((*provider)->verify_retained_commit(6U, 6000, reclaimed).is_ok());
 
   EXPECT_TRUE(
       (*provider)

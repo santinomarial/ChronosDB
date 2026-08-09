@@ -118,9 +118,12 @@ void write_bytes(const std::filesystem::path& path, const common::ByteView bytes
 }
 
 [[nodiscard]] EncodedTemporalCommand
-suffix_correction(const std::shared_ptr<const schema::TableSchema>& schema_value) {
+temporal_command(const std::shared_ptr<const schema::TableSchema>& schema_value,
+                 const std::int64_t event_time, const char logical_identity,
+                 const std::int64_t receive_time, const TemporalMutationKind kind,
+                 const std::int64_t system_time) {
   std::vector<std::byte> values;
-  append_little_endian(values, std::int64_t{30});
+  append_little_endian(values, event_time);
   std::vector<columnar::OwnedColumnVector> columns;
   columns.push_back(columnar::OwnedColumnVector::create(
                         {.column_id = schema_value->event_time_column(),
@@ -133,11 +136,12 @@ suffix_correction(const std::shared_ptr<const schema::TableSchema>& schema_value
   auto batch = columnar::OwnedColumnarBatch::create(schema_value, std::move(columns));
   return encode_temporal_command_v1(
              *batch,
-             {TemporalMutationDescriptor{.logical_identity = {std::byte{'a'}},
-                                         .event_time_ns = 30,
-                                         .receive_time_ns = 300,
-                                         .kind = TemporalMutationKind::kCorrection}},
-             300)
+             {TemporalMutationDescriptor{
+                 .logical_identity = {std::byte{static_cast<std::uint8_t>(logical_identity)}},
+                 .event_time_ns = event_time,
+                 .receive_time_ns = receive_time,
+                 .kind = kind}},
+             system_time)
       .value();
 }
 
@@ -229,13 +233,15 @@ TEST(TemporalRecoveryTest, RejectsCorrectionWithoutAnOriginalAsCommittedCorrupti
   EXPECT_EQ(recovered.error().code(), common::StatusCode::kCorruption);
 }
 
-TEST(TemporalManifestWalRecoveryTest, RestoresSelectedHistoryAndReplaysExactSuffix) {
+TEST(TemporalManifestWalRecoveryTest, VerifiesCheckpointOverlapAndReplaysOnlyTheSuffix) {
   TemporaryDirectory directory{"chronos-manifest-temporal-recovery"};
   ASSERT_TRUE(directory.valid());
   const std::filesystem::path database_root = directory.path() / "database";
   const std::filesystem::path wal_root = directory.path() / "wal";
+  const std::filesystem::path disagreeing_wal_root = directory.path() / "disagreeing-wal";
   ASSERT_TRUE(std::filesystem::create_directories(database_root));
   ASSERT_TRUE(std::filesystem::create_directories(wal_root));
+  ASSERT_TRUE(std::filesystem::create_directories(disagreeing_wal_root));
   establish_manifest_layout(database_root);
 
   wal::WalId wal_id{};
@@ -251,7 +257,7 @@ TEST(TemporalManifestWalRecoveryTest, RestoresSelectedHistoryAndReplaysExactSuff
                                                                 .application_body = {}});
   ASSERT_TRUE(covered_payload.has_value());
   wal::WalAppendResult checkpoint_append{};
-  for (std::uint64_t sequence = 1U; sequence <= 9U; ++sequence) {
+  for (std::uint64_t sequence = 1U; sequence <= 7U; ++sequence) {
     auto appended = writer.append_application_entry(covered_payload->bytes());
     ASSERT_TRUE(appended.has_value()) << appended.error().to_string();
     EXPECT_EQ(appended->record_sequence, sequence);
@@ -259,12 +265,45 @@ TEST(TemporalManifestWalRecoveryTest, RestoresSelectedHistoryAndReplaysExactSuff
   }
 
   const std::shared_ptr<const schema::TableSchema> retained = temporal_storage_schema();
-  const EncodedTemporalCommand correction = suffix_correction(retained);
+  const EncodedTemporalCommand reclaimed =
+      temporal_command(retained, 15, 'x', 150, TemporalMutationKind::kOriginal, 199);
+  auto reclaimed_append = writer.append_application_entry(reclaimed.bytes());
+  ASSERT_TRUE(reclaimed_append.has_value()) << reclaimed_append.error().to_string();
+  EXPECT_EQ(reclaimed_append->record_sequence, 8U);
+  const EncodedTemporalCommand covered =
+      temporal_command(retained, 20, 'b', 101, TemporalMutationKind::kOriginal, 201);
+  auto covered_append = writer.append_application_entry(covered.bytes());
+  ASSERT_TRUE(covered_append.has_value()) << covered_append.error().to_string();
+  EXPECT_EQ(covered_append->record_sequence, 9U);
+  const EncodedTemporalCommand correction =
+      temporal_command(retained, 30, 'a', 300, TemporalMutationKind::kCorrection, 300);
   auto suffix = writer.append_application_entry(correction.bytes());
   ASSERT_TRUE(suffix.has_value()) << suffix.error().to_string();
   EXPECT_EQ(suffix->record_sequence, 10U);
   ASSERT_TRUE(writer.synchronize().has_value());
   ASSERT_TRUE(writer.close().is_ok());
+
+  FixedWalIdGenerator disagreeing_generator{wal_id};
+  const wal::WalWriterConfig disagreeing_writer_config{.directory_path =
+                                                           disagreeing_wal_root.string()};
+  auto disagreeing_created =
+      wal::WalWriter::create_new(disagreeing_writer_config, disagreeing_generator);
+  ASSERT_TRUE(disagreeing_created.has_value()) << disagreeing_created.error().to_string();
+  wal::WalWriter disagreeing_writer = std::move(*disagreeing_created);
+  wal::WalAppendResult disagreeing_checkpoint{};
+  for (std::uint64_t sequence = 1U; sequence <= 7U; ++sequence) {
+    auto appended = disagreeing_writer.append_application_entry(covered_payload->bytes());
+    ASSERT_TRUE(appended.has_value()) << appended.error().to_string();
+    disagreeing_checkpoint = *appended;
+  }
+  ASSERT_EQ(disagreeing_checkpoint.record_end, checkpoint_append.record_end);
+  ASSERT_TRUE(disagreeing_writer.append_application_entry(reclaimed.bytes()).has_value());
+  const EncodedTemporalCommand disagreeing =
+      temporal_command(retained, 21, 'b', 101, TemporalMutationKind::kOriginal, 201);
+  ASSERT_TRUE(disagreeing_writer.append_application_entry(disagreeing.bytes()).has_value());
+  ASSERT_TRUE(disagreeing_writer.append_application_entry(correction.bytes()).has_value());
+  ASSERT_TRUE(disagreeing_writer.synchronize().has_value());
+  ASSERT_TRUE(disagreeing_writer.close().is_ok());
 
   const cseg::EncodedCsegPart encoded = cseg::test::make_valid_temporal_part();
   const schema::TabletId tablet_id = first_byte_id<schema::TabletId>(3U);
@@ -313,7 +352,8 @@ TEST(TemporalManifestWalRecoveryTest, RestoresSelectedHistoryAndReplaysExactSuff
       .tablet_id = tablet_id,
       .commit_source = cseg::temporal_format::CommitSource::kWal,
       .source_id = source_id}};
-  const auto startup_config = [&](const std::optional<std::int64_t> retention) {
+  const auto startup_config = [&](const wal::WalWriterConfig& selected_writer,
+                                  const std::optional<std::int64_t> retention) {
     return TemporalManifestWalStartupConfig{
         .manifest_storage = {.database_root = database_root.string()},
         .manifest_load = {.expected_database_id = database_id,
@@ -321,7 +361,7 @@ TEST(TemporalManifestWalRecoveryTest, RestoresSelectedHistoryAndReplaysExactSuff
                           .source_bindings = source_bindings,
                           .decode_limits = {},
                           .part_validation_limits = {}},
-        .wal_writer = writer_config,
+        .wal_writer = selected_writer,
         .wal_recovery = {},
         .retained_system_time_ns = retention,
         .store_limits = {},
@@ -330,15 +370,25 @@ TEST(TemporalManifestWalRecoveryTest, RestoresSelectedHistoryAndReplaysExactSuff
         .reclaim_checkpointed_wal_segments = false};
   };
 
-  const auto missing_boundary = recover_manifest_temporal_wal(startup_config(std::nullopt));
+  const auto missing_boundary =
+      recover_manifest_temporal_wal(startup_config(writer_config, std::nullopt));
   ASSERT_FALSE(missing_boundary.has_value());
   EXPECT_EQ(missing_boundary.error().code(), common::StatusCode::kInvalidArgument);
 
-  auto recovered = recover_manifest_temporal_wal(startup_config(part->minimum_system_time));
+  const auto disagreement = recover_manifest_temporal_wal(
+      startup_config(disagreeing_writer_config, part->minimum_system_time));
+  ASSERT_FALSE(disagreement.has_value());
+  EXPECT_EQ(disagreement.error().code(), common::StatusCode::kCorruption);
+
+  auto recovered =
+      recover_manifest_temporal_wal(startup_config(writer_config, part->minimum_system_time));
   ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
   EXPECT_EQ(recovered->report().selected_generation, 1U);
-  EXPECT_EQ(recovered->report().checkpoint.record_sequence, 9U);
+  EXPECT_EQ(recovered->report().checkpoint.record_sequence, 7U);
   EXPECT_EQ(recovered->report().tablet_id, tablet_id);
+  EXPECT_EQ(recovered->report().tablet_durable_position, 9U);
+  EXPECT_EQ(recovered->report().verified_covered_command_count, 2U);
+  EXPECT_EQ(recovered->report().applied_suffix_command_count, 1U);
   EXPECT_EQ(recovered->report().part_count, 1U);
   EXPECT_EQ(recovered->report().durable_version_count, 2U);
   EXPECT_EQ(recovered->selected_manifest().generation(), 1U);

@@ -294,7 +294,7 @@ make_valid_temporal_part(const PageCompression compression = PageCompression::kN
   append_little_endian(positions, std::uint64_t{9U});
   std::vector<std::byte> ordinals;
   append_little_endian(ordinals, std::uint32_t{0U});
-  append_little_endian(ordinals, std::uint32_t{1U});
+  append_little_endian(ordinals, std::uint32_t{0U});
   const std::vector<std::byte> operations(
       kRows, std::byte{static_cast<std::uint8_t>(temporal_format::Operation::kOriginal)});
   std::vector<std::byte> identity_offsets;

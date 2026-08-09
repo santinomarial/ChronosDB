@@ -43,8 +43,8 @@ or application identity are unsupported; damaged canonical bytes are corruption.
 row, copies canonical physical cells into owned scalar history, and atomically publishes the batch.
 `verify_retained_temporal_command` performs the identical binding and cell materialization but
 read-only compares a checkpoint-covered command with restored retained history. Retained rows must
-match exactly; rows older than an explicit caller-proven retention boundary may already have been
-reclaimed and therefore receive structural and schema validation only.
+match exactly; only physically absent rows older than an explicit caller-proven retention boundary
+may be treated as reclaimed after structural and schema validation.
 `execute_temporal_command` materializes and validates the complete transition before bounded WAL
 admission, waits for the requested `ASYNC` or `LOCAL_SYNC` completion, and only then publishes the
 actual WAL source position. Any post-admission uncertainty fails the provider closed for recovery.
@@ -53,5 +53,6 @@ records in physical order into fresh multi-table providers; any failure discards
 It returns the locked reopened writer at the next sequence for subsequent coordination. A combined
 database-kind dispatcher and general application checkpoints remain later integration boundaries.
 For one WAL tablet, `recover_manifest_temporal_wal` now restores complete Manifest-authorized CSEG
-v2 history and replays commands strictly after an exact equal tablet/global checkpoint before
-returning the same writer ownership. Broader checkpoint overlap and routing remain unsupported.
+v2 history, verifies commands between a trailing global checkpoint and the tablet durable position,
+then applies the later suffix before returning the same writer ownership. Multi-tablet overlap and
+routing remain unsupported.

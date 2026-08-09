@@ -58,6 +58,7 @@ public:
   struct TableEntry {
     std::shared_ptr<const schema::TableSchema> schema;
     std::unique_ptr<TemporalSnapshotProvider> provider;
+    std::uint64_t durable_position{};
   };
 
   class ReplaySink final : public wal::WalReplaySink {
@@ -156,15 +157,31 @@ public:
     if (!target.has_value()) {
       return target.error();
     }
+    if (record.header.record_sequence <= (*target)->durable_position) {
+      auto verified = verify_retained_temporal_command(
+          *command, *(*target)->schema, record.header.record_sequence, record.record_start.wal_id,
+          *(*target)->provider);
+      if (!verified.has_value()) {
+        return replay_error(verified.error());
+      }
+      ++verified_covered_commands_;
+      return common::Status::ok();
+    }
     auto applied = apply_committed_temporal_command(
         *command, *(*target)->schema, record.header.record_sequence, record.record_start.wal_id,
         *(*target)->provider);
-    return applied.has_value() ? common::Status::ok() : replay_error(applied.error());
+    if (!applied.has_value()) {
+      return replay_error(applied.error());
+    }
+    ++applied_commands_;
+    return common::Status::ok();
   }
 
   std::vector<TableEntry> tables_;
   TemporalCommandLimits decode_limits_;
   std::optional<wal::WalWriter> writer_;
+  std::uint64_t verified_covered_commands_{};
+  std::uint64_t applied_commands_{};
 };
 
 class RecoveredManifestTemporalState::Impl {
@@ -324,9 +341,9 @@ recover_manifest_temporal_wal(TemporalManifestWalStartupConfig config) {
     }
     const manifest::TemporalWalReclaimCheckpoint& manifest_checkpoint =
         *selected->wal_reclaim_checkpoint();
-    if (manifest_checkpoint.coordinate.record_sequence != tablet.durable_position) {
-      return common::make_unexpected(unsupported(
-          "Manifest temporal WAL startup requires checkpoint and tablet boundaries to match"));
+    if (manifest_checkpoint.coordinate.record_sequence > tablet.durable_position) {
+      return common::make_unexpected(
+          corruption("Manifest temporal WAL checkpoint is ahead of the tablet durable boundary"));
     }
     const wal::WalReplayCheckpoint checkpoint{
         .wal_id = manifest_checkpoint.wal_id,
@@ -399,8 +416,10 @@ recover_manifest_temporal_wal(TemporalManifestWalStartupConfig config) {
     }
 
     std::vector<RecoveredTemporalState::Impl::TableEntry> tables;
-    tables.push_back(RecoveredTemporalState::Impl::TableEntry{.schema = recovery_schema,
-                                                              .provider = std::move(provider)});
+    tables.push_back(
+        RecoveredTemporalState::Impl::TableEntry{.schema = recovery_schema,
+                                                 .provider = std::move(provider),
+                                                 .durable_position = tablet.durable_position});
     auto temporal_implementation =
         std::make_unique<RecoveredTemporalState::Impl>(std::move(tables), config.command_limits);
     RecoveredTemporalState::Impl::ReplaySink sink{*temporal_implementation};
@@ -408,6 +427,14 @@ recover_manifest_temporal_wal(TemporalManifestWalStartupConfig config) {
         config.wal_writer, config.wal_recovery, checkpoint, sink);
     if (!writer.has_value()) {
       return common::make_unexpected(writer.error());
+    }
+    common::Result<std::uint64_t> next_record_sequence = writer->next_record_sequence();
+    if (!next_record_sequence.has_value()) {
+      return common::make_unexpected(next_record_sequence.error());
+    }
+    if (*next_record_sequence <= tablet.durable_position) {
+      return common::make_unexpected(
+          corruption("temporal WAL ends before the Manifest tablet durable boundary"));
     }
     temporal_implementation->writer_.emplace(std::move(*writer));
     RecoveredTemporalState temporal{std::move(temporal_implementation)};
@@ -426,16 +453,19 @@ recover_manifest_temporal_wal(TemporalManifestWalStartupConfig config) {
       wal_reclamation = *reclaimed;
     }
 
-    TemporalManifestWalStartupReport report{.selected_generation = selected->generation(),
-                                            .checkpoint = checkpoint,
-                                            .tablet_id = tablet.tablet_id,
-                                            .part_count = tablet.part_count,
-                                            .durable_version_count = tablet.durable_version_count,
-                                            .retained_system_time_ns =
-                                                config.retained_system_time_ns,
-                                            .orphan_part_count = selected->orphan_parts().size(),
-                                            .temporary_cleanup = *cleanup,
-                                            .wal_reclamation = wal_reclamation};
+    TemporalManifestWalStartupReport report{
+        .selected_generation = selected->generation(),
+        .checkpoint = checkpoint,
+        .tablet_id = tablet.tablet_id,
+        .tablet_durable_position = tablet.durable_position,
+        .verified_covered_command_count = temporal.implementation_->verified_covered_commands_,
+        .applied_suffix_command_count = temporal.implementation_->applied_commands_,
+        .part_count = tablet.part_count,
+        .durable_version_count = tablet.durable_version_count,
+        .retained_system_time_ns = config.retained_system_time_ns,
+        .orphan_part_count = selected->orphan_parts().size(),
+        .temporary_cleanup = *cleanup,
+        .wal_reclamation = wal_reclamation};
     auto implementation = std::make_unique<RecoveredManifestTemporalState::Impl>(
         std::move(*storage), std::move(temporal), std::move(selected), tablet.table_id,
         std::move(report));

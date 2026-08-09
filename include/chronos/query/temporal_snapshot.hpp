@@ -73,10 +73,10 @@ public:
   restore_retained_history(std::int64_t retained_system_time_ns,
                            std::vector<RetainedTemporalVersion> versions);
 
-  // Verifies one checkpoint-covered commit against restored retained history. Commits before the
-  // proven retention boundary are accepted as expired after structural/schema validation by the
-  // caller; at or after the boundary every mutation and the complete per-position row set must
-  // match exactly. This method never mutates provider state.
+  // Verifies one checkpoint-covered commit against restored retained history. Retained rows always
+  // match exactly. Before the proven retention boundary only physically absent rows may be treated
+  // as reclaimed; at or after it the complete per-position row set must remain. The caller first
+  // performs structural/schema validation. This method never mutates provider state.
   [[nodiscard]] common::Status
   verify_retained_commit(std::uint64_t system_commit_position, std::int64_t system_commit_time_ns,
                          std::span<const TemporalMutation> mutations) const;

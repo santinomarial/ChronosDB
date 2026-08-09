@@ -10,16 +10,17 @@ subsystem supplies five concrete layers:
 2. `apply_committed_temporal_command` converts one already durable WAL command into owned history.
 3. `execute_temporal_command` performs validated live WAL admission and acknowledged publication.
 4. `recover_temporal_wal` rebuilds fresh multi-table scalar providers from verified WAL order.
-5. `recover_manifest_temporal_wal` composes selected CSEG history with one exact WAL suffix.
+5. `recover_manifest_temporal_wal` composes selected CSEG history with verified checkpoint overlap
+   and one applied WAL suffix.
 
 Mixed command dispatch, application checkpoints, and Raft application are not hidden inside these
 interfaces. CSEG v2 now has strict metadata/part codecs, semantic and projected reading, plus a
 bounded single-lineage scalar resolver that provides a differential current/as-of winner oracle.
 Manifest v2 discovery, generation-pinned part loading, and bounded multi-part scalar resolution are
 implemented. Complete retained part sets can now reconstruct a fresh scalar provider; vector output,
-general multi-tablet/Raft suffix composition, and compaction integration remain pending. An exact
-single-WAL-tablet Manifest checkpoint can now compose CSEG reconstruction with verified suffix
-replay.
+general multi-tablet/Raft suffix composition, and compaction integration remain pending. One
+single-WAL-tablet Manifest checkpoint can now trail its tablet durable position: covered commands
+are verified and only the later suffix is applied.
 
 ## Public interfaces and data structures
 
@@ -45,21 +46,21 @@ Earlier as-of requests return `NOT_FOUND` rather than inventing an empty table.
 selected durable tablet position. At or after the explicit retained-system-time boundary, it
 requires the complete row set at that source position to match the restored commit timestamp,
 logical identities, source coordinates, operation metadata, and scalar storage exactly (including
-floating-point bit patterns). A structurally and schema-valid covered command before that boundary
-may be accepted as expired because its physical version was deliberately reclaimed; this exception
-is safe only when a durable manifest independently proves that the command is covered.
+floating-point bit patterns). Before that boundary, retained predecessor rows still match exactly,
+while only physically absent command rows may be accepted as reclaimed. This exception is safe only
+when a durable manifest independently proves that the command is covered.
 
 `RecoveredTemporalState` owns one provider per configured table and the locked reopened
 `WalWriter`. `release_writer()` transfers that writer exactly once to the later live coordinator.
 Provider pointers remain valid for the lifetime of the recovered owner.
 
 `RecoveredManifestTemporalState` is the first complete durable startup owner. It requires one WAL
-tablet and a global checkpoint exactly at that tablet's durable boundary, restores its pinned CSEG
-history, opens and preflights the WAL strictly after that coordinate, applies the suffix, cleans
-recognized temporaries, and returns the provider plus locked writer. Manifest storage outlives WAL
-ownership during destruction. A missing retention proof or any validation/replay failure destroys
-all fresh state. Broader checkpoint overlap is rejected until recovery can compare every covered
-command with retained history.
+tablet and a global checkpoint no later than that tablet's durable boundary, restores its pinned
+CSEG history, opens and preflights the WAL strictly after that coordinate, verifies covered commands
+through the tablet boundary, applies the suffix, cleans recognized temporaries, and returns the
+provider plus locked writer. Manifest storage outlives WAL ownership during destruction. A missing
+retention proof, a WAL that does not reach the tablet boundary, or any validation/replay failure
+destroys all fresh state.
 
 `restore_manifest_v2_temporal_tablet_history` exact-opens and fully projects every supplied
 generation-pinned CSEG v2 image after the owning tablet descriptor proves exact part count,
@@ -132,11 +133,11 @@ use a different accepted format; it must not reinterpret these bytes in place.
 
 ## Validation and interview questions
 
-Focused tests cover canonical command application, exact and disagreeing covered-command checks,
-expired covered commands, original/correction replay, historical lookup, impossible-history
-rejection, and continued WAL sequence ownership. Phase 18 retains golden bytes, fuzzing,
-allocation-failure sweeps, crash points, mixed-command dispatch, long histories, and performance
-measurement.
+Focused tests cover canonical command application, exact and disagreeing checkpoint-overlap WALs,
+retained and reclaimed pre-boundary rows, original/correction replay, historical lookup,
+impossible-history rejection, and continued WAL sequence ownership. Phase 18 retains golden bytes,
+fuzzing, allocation-failure sweeps, crash points, mixed-command dispatch, long histories, and
+performance measurement.
 
 Useful design questions include:
 
