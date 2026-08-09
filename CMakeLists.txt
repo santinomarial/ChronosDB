@@ -456,6 +456,7 @@ chronos_enable_static_analysis(chronos_runtime)
 add_library(
   chronos_live
   src/live/bound_materialized_view_checkpoint.cpp
+  src/live/durable_materialized_view.cpp
   src/live/incremental_aggregate.cpp
   src/live/materialized_view.cpp
   src/live/materialized_view_checkpoint.cpp
@@ -671,6 +672,8 @@ if(CHRONOS_BUILD_TESTS)
     chronos_live_tests
     tests/live/incremental_aggregate_header_self_contained.cpp
     tests/live/incremental_aggregate_test.cpp
+    tests/live/durable_materialized_view_header_self_contained.cpp
+    tests/live/durable_materialized_view_test.cpp
     tests/live/materialized_view_header_self_contained.cpp
     tests/live/materialized_view_test.cpp
     tests/live/materialized_view_checkpoint_header_self_contained.cpp

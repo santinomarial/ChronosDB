@@ -4,7 +4,8 @@
 - **Date:** 2026-08-09
 - **Owners:** ChronosDB live-query maintainers
 - **Extends:** [ADR 0068](0068-live-handoff-and-resume-token-v1.md)
-- **Extended by:** [ADR 0090](0090-materialized-view-checkpoint-v1.md)
+- **Extended by:** [ADR 0090](0090-materialized-view-checkpoint-v1.md) and
+  [ADR 0093](0093-durable-windowed-materialized-view-owner.md)
 
 ## Context
 

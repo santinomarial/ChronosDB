@@ -215,7 +215,7 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Committed Raft tablet application](learning/raft-tablet-application.md): committed-only command
   decoding, shared row/retry publication, applied-index ordering, and retained-log reconstruction.
 - [Windowed materialized-view state](learning/windowed-materialized-view.md): committed/event-time
-  separation, corrections, watermarks, exact logical checkpoints, and durable codec boundary.
+  separation, corrections, watermarks, exact checkpoints, durable recovery, and retention frontier.
 - [Durable metadata Raft state](learning/durable-metadata-state.md): checksummed commands,
   commit-order catalog application, quorum proof, and retained-log reconstruction.
 - [Phase 10 network exit review](reviews/phase-10-network-review.md): implemented transport

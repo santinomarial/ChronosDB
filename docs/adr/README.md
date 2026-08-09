@@ -127,3 +127,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0090](0090-materialized-view-checkpoint-v1.md) | Materialized View Checkpoint v1 | accepted |
 | [0091](0091-durable-materialized-view-checkpoint-storage.md) | Durable materialized-view checkpoint storage | accepted |
 | [0092](0092-materialized-view-checkpoint-generations.md) | Materialized-view checkpoint generations | accepted |
+| [0093](0093-durable-windowed-materialized-view-owner.md) | Durable windowed materialized-view owner | accepted |

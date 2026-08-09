@@ -604,9 +604,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   bytes, with a bound envelope for database/view/table/schema/version/plan identity. A view-scoped
   locked owner exact-validates, file-syncs, no-replace installs, directory-syncs, reopens, and selects
   those immutable checkpoints. Backward-compatible bound-envelope generations preserve multiple
-  watermark/revision states at one source sequence. Application-owner scheduling/suffix recovery,
-  native-protocol delivery, multi-tablet ordering, service restart integration, and the full exit
-  evidence remain deferred; the phase exit gate is not claimed.
+  watermark/revision states at one source sequence. A durable application owner now creates or
+  reopens exact view configuration, applies only the consecutive committed suffix, checkpoints
+  watermark-only progress, and exposes a source-retention frontier only after durable installation.
+  Native-protocol delivery, multi-tablet ordering, service plan-to-input suffix replay, retention
+  coordination, and the full exit evidence remain deferred; the phase exit gate is not claimed.
 
 - **Scope:** committed change model; gap-free snapshot-to-stream handoff; deterministic versioned resume tokens; bounded subscriber policies; supported incremental operators; materialized-view progress/recovery and late-event corrections.
 - **Explicit non-scope:** unqualified end-to-end exactly-once claims, unlimited retention, every SQL operator, cross-cluster delivery, and external-sink transactions not explicitly integrated.

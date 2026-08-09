@@ -25,9 +25,12 @@ bytes so a valid file cannot be adopted by a different view. The lock-protected 
 installs immutable sequence files with readback, file sync, no-replace rename, and directory sync,
 then exact-validates them during recovery. A separate monotonic checkpoint generation permits
 watermark-only states at the same source sequence; it never replaces the embedded source boundary.
-External delivery remains at least once, and the
-subscription manager remains a separate single-source retention/handoff owner. Source retention
-release must still follow the fully installed checkpoint.
+`DurableWindowedMaterializedView` now binds those layers: it exact-checks configuration on reopen,
+restores the latest state, accepts only the consecutive committed suffix, and advances its exposed
+durable source frontier only after a synchronized generated checkpoint installation. External
+delivery remains at least once, and the subscription manager remains a separate single-source
+retention/handoff owner. A service-level coordinator must still derive plan-specific inputs and
+combine this frontier with every other source-retention pin before deleting WAL.
 
 Update and correction work is proportional to the number of overlapping windows plus ordered-map
 costs. Checkpoint size includes global rows and per-window contribution rows; this favors a simple

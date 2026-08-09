@@ -4,7 +4,8 @@
 - **Date:** 2026-08-09
 - **Owners:** ChronosDB live-query and durability maintainers
 - **Extends:** [ADR 0090](0090-materialized-view-checkpoint-v1.md)
-- **Extended by:** [ADR 0092](0092-materialized-view-checkpoint-generations.md)
+- **Extended by:** [ADR 0092](0092-materialized-view-checkpoint-generations.md) and
+  [ADR 0093](0093-durable-windowed-materialized-view-owner.md)
 
 ## Context
 
@@ -45,7 +46,9 @@ Using a latest-name pointer was unnecessary: canonical numeric names plus valida
 highest durable boundary without a second mutable truth.
 
 This storage owner does not itself decide when to checkpoint, release source retention, or apply a
-post-checkpoint suffix. Those actions must be integrated by the materialized-view application owner.
+post-checkpoint suffix. ADR 0093 integrates checkpoint scheduling and the durable source frontier in
+the materialized-view application owner; service-level suffix derivation and retention coordination
+remain external.
 
 ## Affected invariants and validation
 

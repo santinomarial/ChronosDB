@@ -5,6 +5,7 @@
 - **Owners:** ChronosDB live-query and durability maintainers
 - **Extends:** [ADR 0090](0090-materialized-view-checkpoint-v1.md) and
   [ADR 0091](0091-durable-materialized-view-checkpoint-storage.md)
+- **Extended by:** [ADR 0093](0093-durable-windowed-materialized-view-owner.md)
 
 ## Context
 
