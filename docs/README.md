@@ -46,6 +46,9 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   Metadata-authenticated projected granule reads independently validate requested user pages plus
   every system page and synthesize nullable successor-schema tails. Complete read-only inspection
   validates all schema-independent semantics and reports owned value-free metadata.
+- [CSEG v2](formats/cseg-v2.md): accepted temporal-history system registry for WAL/Raft source,
+  logical identity, correction/tombstone semantics, receive/system time, and checked canonical
+  layout; complete codecs and Manifest v2 installation remain in progress.
 - [Manifest v1](formats/manifest-v1.md): accepted immutable database-wide generation bytes,
   installed-name grammar, tablet/part/retry recovery state, and checkpoint-aware WAL suffix contract;
   implementation is pending.

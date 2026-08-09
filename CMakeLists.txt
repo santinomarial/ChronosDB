@@ -172,6 +172,8 @@ add_library(
   src/cseg/pruning.cpp
   src/cseg/sort_order_internal.cpp
   src/cseg/system_rows_internal.cpp
+  src/cseg/temporal_layout.cpp
+  src/cseg/temporal_system_row.cpp
   src/cseg/validator.cpp
 )
 add_library(chronos::cseg ALIAS chronos_cseg)
@@ -801,6 +803,12 @@ if(CHRONOS_BUILD_TESTS)
     tests/cseg/projected_reader_test.cpp
     tests/cseg/pruning_header_self_contained.cpp
     tests/cseg/pruning_test.cpp
+    tests/cseg/temporal_format_header_self_contained.cpp
+    tests/cseg/temporal_format_test.cpp
+    tests/cseg/temporal_layout_header_self_contained.cpp
+    tests/cseg/temporal_layout_test.cpp
+    tests/cseg/temporal_system_row_header_self_contained.cpp
+    tests/cseg/temporal_system_row_test.cpp
     tests/cseg/types_header_self_contained.cpp
     tests/cseg/types_test.cpp
     tests/cseg/validator_header_self_contained.cpp

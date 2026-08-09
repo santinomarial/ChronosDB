@@ -634,8 +634,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   application plus command-specific whole-log recovery rebuild fresh multi-table scalar history and
   reopen the writer at the next sequence. Live single-writer admission validates before WAL,
   preserves `ASYNC`/`LOCAL_SYNC`, publishes after completion, and fails closed on post-admission
-  uncertainty. Mixed-command recovery, CSEG history bytes, vector storage resolution, and
-  compaction integration remain deferred, so the phase exit gate is not claimed.
+  uncertainty. CSEG v2 now has an accepted eight-column WAL/Raft temporal system registry and a
+  checked canonical layout planner without altering v1. Mixed-command recovery, complete v2 bytes,
+  vector storage resolution, Manifest v2 installation, and compaction integration remain deferred,
+  so the phase exit gate is not claimed.
 
 - **Scope:** formal bitemporal row-version model; SQL system-time clauses; history retention; correction/cancellation semantics; compaction and index support; audit visibility.
 - **Explicit non-scope:** general distributed transactions, legal/compliance certification, retroactive mutation of immutable history, and distribution before the model is validated locally.
