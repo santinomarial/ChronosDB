@@ -19,7 +19,17 @@ enum class TabletReconfigurationActionKind : std::uint8_t {
   kPublishPlacement = 3,
 };
 
+struct TabletReconfigurationActionId {
+  schema::TabletId tablet_id;
+  std::uint64_t movement_epoch{};
+  TabletReconfigurationActionKind kind{TabletReconfigurationActionKind::kBeginJointMembership};
+
+  friend bool operator==(const TabletReconfigurationActionId&,
+                         const TabletReconfigurationActionId&) = default;
+};
+
 struct TabletReconfigurationAction {
+  TabletReconfigurationActionId id;
   TabletReconfigurationActionKind kind{TabletReconfigurationActionKind::kBeginJointMembership};
   DurableRaftRequest request;
 };

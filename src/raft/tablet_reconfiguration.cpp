@@ -52,8 +52,8 @@ public:
         table_id(table), movement(std::move(owner)), leader_hint(hint) {}
 
   [[nodiscard]] common::Result<std::optional<TabletReconfigurationAction>>
-  raft_action(const RaftNode& node, const std::vector<NodeId>& old_voters,
-              const std::vector<NodeId>& new_voters) const {
+  raft_action(const TabletMovementRecord& record, const RaftNode& node,
+              const std::vector<NodeId>& old_voters, const std::vector<NodeId>& new_voters) const {
     if (node.joint_membership_active()) {
       if (!same_voters(node.joint_old_voters(), old_voters) ||
           !same_voters(node.joint_new_voters(), new_voters)) {
@@ -68,6 +68,8 @@ public:
             "tablet reconfiguration finalization requires the current group leader"});
       }
       return std::optional<TabletReconfigurationAction>{TabletReconfigurationAction{
+          {record.tablet_id, record.placement_epoch,
+           TabletReconfigurationActionKind::kFinalizeJointMembership},
           TabletReconfigurationActionKind::kFinalizeJointMembership,
           DurableRaftRequest{tablet_group_id, FinalizeMembershipChangeOperation{}}}};
     }
@@ -81,6 +83,8 @@ public:
                          "tablet reconfiguration start requires the current group leader"});
     }
     return std::optional<TabletReconfigurationAction>{TabletReconfigurationAction{
+        {record.tablet_id, record.placement_epoch,
+         TabletReconfigurationActionKind::kBeginJointMembership},
         TabletReconfigurationActionKind::kBeginJointMembership,
         DurableRaftRequest{tablet_group_id, BeginMembershipChangeOperation{new_voters}}}};
   }
@@ -96,6 +100,8 @@ public:
     if (!payload.has_value())
       return common::make_unexpected(payload.error());
     return std::optional<TabletReconfigurationAction>{TabletReconfigurationAction{
+        {record.tablet_id, record.placement_epoch,
+         TabletReconfigurationActionKind::kPublishPlacement},
         TabletReconfigurationActionKind::kPublishPlacement,
         DurableRaftRequest{metadata_group_id,
                            ProposeOperation{kRaftMetadataCommandEntryType, std::move(*payload)}}}};
@@ -171,7 +177,7 @@ TabletReconfigurationCoordinator::reconcile(const RaftNode& tablet_group,
         return common::make_unexpected(
             corruption("pre-promotion metadata differs from movement source configuration"));
       }
-      return impl_->raft_action(tablet_group, record.voting_replicas, promoted);
+      return impl_->raft_action(record, tablet_group, record.voting_replicas, promoted);
     }
   }
 
@@ -198,7 +204,7 @@ TabletReconfigurationCoordinator::reconcile(const RaftNode& tablet_group,
       return common::make_unexpected(
           corruption("pre-removal metadata differs from promoted configuration"));
     }
-    return impl_->raft_action(tablet_group, record.voting_replicas, final_voters);
+    return impl_->raft_action(record, tablet_group, record.voting_replicas, final_voters);
   }
 
   if (record.phase == TabletMovementPhase::kComplete)

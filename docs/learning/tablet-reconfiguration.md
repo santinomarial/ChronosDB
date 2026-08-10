@@ -29,12 +29,17 @@ pending yields no action. A follower cannot start/finalize membership. Divergent
 replicas, or joint intent fail as corruption and do not mutate movement. Metadata publication may
 be routed to a different node that leads the metadata group.
 
+Every action also owns a stable ID containing tablet, current movement epoch, and kind. Because the
+ID is derived from checkpointed movement state, restart reconstructs the same pending ID without a
+separate allocation record. The ID identifies retry intent; a routing owner must still persist
+in-flight/completion evidence and exact-match the request before suppressing a duplicate.
+
 ## Complexity and tradeoffs
 
 Reconciliation is linear in the bounded replica count. The explicit two-group handoff adds control-
-plane latency but avoids treating routing intent as consensus. The current coordinator state is
-in-memory; durable intent and idempotent action identities are required for process-restart
-automation.
+plane latency but avoids treating routing intent as consensus. Durable movement generations and
+deterministic action identities now make restart reconstruction exact; production leader routing,
+retry-ledger consumption, and failure injection remain separate work.
 
 ## Likely interview questions
 
@@ -43,3 +48,4 @@ automation.
 - Why does local movement phase not prove membership?
 - What happens when the source is the leader being removed?
 - What must be durable before automatic reconciliation can resume after restart?
+- Why is a stable action identity not itself proof that the action committed?

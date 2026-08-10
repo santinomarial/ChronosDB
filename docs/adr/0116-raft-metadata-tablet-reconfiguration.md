@@ -3,6 +3,7 @@
 - **Status:** accepted
 - **Date:** 2026-08-09
 - **Owners:** ChronosDB distributed-systems and metadata maintainers
+- **Extended by:** [ADR 0119](0119-deterministic-tablet-reconfiguration-action-identities.md)
 
 ## Context
 
@@ -17,7 +18,8 @@ committed; removing the source before the new configuration was durable could lo
 `TabletReconfigurationCoordinator` is a deterministic desired-state reconciler over one ready
 movement, its tablet Raft group, and committed metadata state. It emits at most one exact
 `DurableRaftRequest` per reconciliation. The caller executes that action, waits for the relevant
-commit/application observation, and reconciles again.
+commit/application observation, and reconciles again. ADR 0119 binds each emitted action to a
+deterministic tablet/epoch/kind identity that is reconstructed from durable movement state.
 
 Target promotion follows this exact order:
 
@@ -58,8 +60,9 @@ runtimes.
 Promotion/removal cannot complete without both committed authorities. Reconciliation may return no
 action while joint or final entries are in flight and may return `UNAVAILABLE` when the tablet group
 is not locally led. The caller must serialize one returned action at a time and route metadata-group
-requests to its leader. Durable movement-intent storage, restart reconstruction, resumable snapshot
-files, and transport remain follow-up work.
+requests to its leader. Durable movement generations and restart reconstruction are implemented.
+Resumable chunked snapshot files, production routing/retry consumption of action identities, and
+transport remain follow-up work.
 
 ## Affected invariants
 
@@ -81,9 +84,8 @@ not restore direct unproven calls as a production path.
 
 ## Unresolved questions
 
-Durable movement intent/checkpoint format, action identifiers for cross-process idempotency,
-snapshot transport ownership, metadata/tablet leader routing, bandwidth scheduling, and cleanup of
-the old replica's physical data remain unresolved.
+Snapshot transport ownership, metadata/tablet leader routing with a durable action retry ledger,
+bandwidth scheduling, and cleanup of the old replica's physical data remain unresolved.
 
 ## References
 

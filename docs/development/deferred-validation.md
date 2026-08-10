@@ -138,9 +138,10 @@
   routing/placement epochs, protocol bytes, and leader changes during long scans.
 - Shard-key pruning and statistics in addition to event-time pruning; multi-node scalar/distributed
   differential SQL and partial-aggregation equivalence.
-- Add idempotent reconfiguration action identities, chunked resumable snapshot files, Manifest/CSEG
-  install, checkpoint-generation reclamation, filesystem crash/fault injection, source/target/
-  metadata-leader failures, source switching, bandwidth limits, and stale routing.
+- Persist and consume the implemented reconfiguration action identities in a production leader-
+  routing retry ledger; add chunked resumable snapshot files, Manifest/CSEG install, checkpoint-
+  generation reclamation, filesystem crash/fault injection, source/target/metadata-leader failures,
+  source switching, bandwidth limits, and stale routing.
 - Partitions, duplicate/lost exchanges, skew, chaos, movement at every state, foreground interference,
   scale-out/exchange/coordination/failover benchmarks, and sanitizer/fuzz/property coverage.
 
