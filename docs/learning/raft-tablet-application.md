@@ -66,6 +66,12 @@ then invokes the established immutable installer. Once movement records promotio
 verifies a preexisting exact RTAS and treats absence as corruption. It returns full snapshot
 metadata for the still-separate Raft installation transition.
 
+`complete_recovered_tablet_movement_raft_snapshot` performs that transition. It requires the
+catching-up movement, exact-matches the handoff's full metadata and movement source/target against
+the pending Raft request and local group, and runs `CompleteSnapshotInstallOperation` through the
+durable runtime. Its returned success response is therefore held until the new Raft snapshot state
+is synchronized. A durable RTAS with no matching pending request remains an unreferenced safe file.
+
 ## Failure behavior and limits
 
 Entry count and payload size are bounded by Raft limits; decoded batch rows, columns, and bytes are
@@ -76,9 +82,8 @@ after committed application begins fails the owned tablet closed; restart rebuil
 log.
 
 `prove_applied_quorum_sync` composes the leader's committed/joint-membership durability receipt with
-the Raft applied index and tablet group/index publication frontier. Client protocol exposure, Raft
-metadata completion for transferred application snapshots, and physical-log reclamation remain
-absent.
+the Raft applied index and tablet group/index publication frontier. Client protocol exposure,
+transport of completed snapshot responses, and physical-log reclamation remain absent.
 
 ## Complexity and likely interview questions
 

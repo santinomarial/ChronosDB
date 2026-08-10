@@ -67,8 +67,14 @@ authority. Final application-snapshot installation and safe chunk reclamation ar
 The RTAS portion of final application-snapshot installation is now implemented by
 `install_recovered_tablet_movement_snapshot`. It consumes the recovered checkpoint-owned bytes,
 requires canonical RTAS identity and transfer-coordinate agreement, and crosses the existing RTAS
-directory durability boundary. Raft metadata completion, physical Manifest/CSEG transfer, and safe
-chunk reclamation remain separate.
+directory durability boundary. Physical Manifest/CSEG transfer and safe chunk reclamation remain
+separate.
+
+The matching Raft metadata completion is now composed by
+`complete_recovered_tablet_movement_raft_snapshot`: only catching-up movement may enter it, the
+pending leader request must equal the RTAS's full metadata and movement endpoints, and success is
+returned only after the target Raft state is synchronized. Physical part transfer, response routing,
+checkpoint advancement, and reclamation remain separate orchestration.
 
 - Why are header, payload, and whole-record CRCs separate?
 - Why is a full content CRC required only once transfer is complete?

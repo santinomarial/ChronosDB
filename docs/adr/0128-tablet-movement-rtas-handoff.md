@@ -6,6 +6,7 @@
 - **Extends:** [ADR 0085](0085-raft-tablet-application-snapshot-v1.md),
   [ADR 0086](0086-durable-raft-tablet-snapshot-installation.md), and
   [ADR 0127](0127-composed-tablet-movement-checkpoint-recovery.md)
+- **Extended by:** [ADR 0129](0129-tablet-movement-raft-snapshot-completion.md)
 
 ## Context
 
@@ -62,6 +63,10 @@ transfer rejection, ready/promoted-without-install corruption, table/tablet/meta
 mismatch, and non-RTAS bytes. Raft metadata completion, source acknowledgment, physical part
 transfer, fault injection, process crashes, reclamation, and allocation-failure sweeps remain
 deferred.
+
+**Retrospective update (ADR 0129):** that decision subsequently composes this RTAS boundary with
+exact pending-request validation and the durable Raft metadata transition. Response transport and
+physical part installation remain separate.
 
 ## Migration and rollback
 
