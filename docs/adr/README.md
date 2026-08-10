@@ -170,3 +170,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0133](0133-prepared-tablet-reconfiguration-dispatch.md) | Prepared tablet reconfiguration dispatch boundary | accepted |
 | [0134](0134-sealed-local-tablet-reconfiguration-execution.md) | Sealed local tablet reconfiguration execution | accepted |
 | [0135](0135-bounded-asynchronous-prepared-reconfiguration-admission.md) | Bounded asynchronous prepared reconfiguration admission | accepted |
+| [0136](0136-idempotent-retained-reconfiguration-action-replay.md) | Idempotent retained reconfiguration action replay | accepted |

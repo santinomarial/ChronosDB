@@ -528,5 +528,59 @@ TEST(DurableTabletReconfigurationTest, AdmitsPreparedDispatchToBoundedAsyncOwner
   EXPECT_EQ(reopened->find_group(tablet_group)->persistent_state().log.size(), 1U);
 }
 
+TEST(DurableTabletReconfigurationTest, SuppressesExactRetainedPlacementRetry) {
+  TemporaryDirectory checkpoints{"chronos-placement-retry-checkpoints"};
+  TemporaryDirectory actions{"chronos-placement-retry-actions"};
+  TemporaryDirectory raft_log{"chronos-placement-retry-raft"};
+  auto checkpoint_storage = TabletMovementCheckpointStorage::create(checkpoint_config(checkpoints));
+  auto action_ledger = TabletReconfigurationActionLedger::create(ledger_config(actions));
+  auto movement = ready_movement();
+  ASSERT_TRUE(checkpoint_storage.has_value());
+  ASSERT_TRUE(action_ledger.has_value());
+  ASSERT_TRUE(movement.has_value());
+  ASSERT_TRUE(checkpoint_storage
+                  ->install({1U, TabletMovementCheckpoint{movement->record(), snapshot_bytes()}})
+                  .has_value());
+  auto first = checkpoint_storage->load_latest_any();
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(first->has_value());
+  auto recovered = recover_tablet_movement_generation(**first);
+  ASSERT_TRUE(recovered.has_value());
+  auto metadata = MetadataStateMachine::create();
+  ASSERT_TRUE(metadata.has_value());
+  ASSERT_TRUE(metadata
+                  ->apply_committed(
+                      1U, TabletPlacementMetadata{table_id(), tablet_id(), 7U, {1U, 2U, 3U}, 2U})
+                  .is_ok());
+  auto tablet_node = leader({1U, 2U, 3U, 4U});
+  ASSERT_TRUE(tablet_node.has_value());
+  const GroupId metadata_group = group(std::byte{11U});
+  auto prepared = reconcile_and_prepare_durable_tablet_reconfiguration(
+      *recovered, group(std::byte{10U}), metadata_group, table_id(), *tablet_node, *metadata,
+      *checkpoint_storage, *action_ledger, 2U);
+  ASSERT_TRUE(prepared.has_value()) << prepared.error().to_string();
+  ASSERT_TRUE(prepared->dispatch.has_value());
+  ASSERT_EQ(prepared->dispatch->action().kind, TabletReconfigurationActionKind::kPublishPlacement);
+  const std::vector<RaftGroupConfiguration> groups{{metadata_group, {2U}}};
+  auto runtime =
+      DurableMultiRaftRuntime::create_new(2U, {.directory_path = raft_log.path().string()}, groups);
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  ASSERT_TRUE(runtime->execute_batch({{metadata_group, StartElectionOperation{}}}).has_value());
+  auto executed = execute_local_prepared_tablet_reconfiguration(*prepared->dispatch, *runtime);
+  ASSERT_TRUE(executed.has_value()) << executed.error().to_string();
+  ASSERT_TRUE(executed->status.is_ok());
+  const std::uint64_t durable_after_first = runtime->durable_physical_sequence();
+
+  auto retry = execute_local_prepared_tablet_reconfiguration(*prepared->dispatch, *runtime);
+
+  ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+  EXPECT_TRUE(retry->status.is_ok());
+  ASSERT_TRUE(retry->transition.has_value());
+  EXPECT_FALSE(retry->transition->persistence.has_value());
+  EXPECT_TRUE(retry->transition->outbound.empty());
+  EXPECT_EQ(runtime->durable_physical_sequence(), durable_after_first);
+  EXPECT_EQ(runtime->find_group(metadata_group)->persistent_state().log.size(), 1U);
+}
+
 } // namespace
 } // namespace chronos::raft

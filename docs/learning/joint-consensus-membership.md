@@ -33,6 +33,12 @@ A bootstrap learner can receive replication but cannot start an election or gran
 receive replication as soon as the joint entry is appended. A leader excluded from the final set
 sends the final commit update to new peers, clears leader-only state, and becomes a follower.
 
+Exact begin/finalize retries are empty successful transitions when the matching retained membership
+entry is committed or belongs to the current leader term. Divergent intent is invalid. An exact
+uncommitted match from an earlier term returns unavailable: appending a second configuration entry
+would be unsafe, while committing the old entry needs a separately specified current-term progress
+entry.
+
 Application owners never interpret membership payloads as row or catalog commands. They validate
 application entries, treat membership entries as ordered internal no-ops, and persist the final
 applied index only after the whole batch succeeds.

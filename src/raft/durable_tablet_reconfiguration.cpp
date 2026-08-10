@@ -70,6 +70,15 @@ validate_prepared_dispatch(const PreparedTabletReconfigurationDispatch& dispatch
   return common::Status::ok();
 }
 
+[[nodiscard]] DurableRaftRequest
+request_for_execution(const PreparedTabletReconfigurationDispatch& dispatch) {
+  DurableRaftRequest request = dispatch.action().request;
+  if (auto* proposal = std::get_if<ProposeOperation>(&request.operation); proposal != nullptr) {
+    request.operation = ProposeExactRetainedOperation{proposal->type, std::move(proposal->payload)};
+  }
+  return request;
+}
+
 [[nodiscard]] common::Result<DurableTabletReconfigurationResult>
 reconcile_impl(RecoveredTabletMovementGeneration& recovered, GroupId tablet_group_id,
                GroupId metadata_group_id, const schema::TableId table_id,
@@ -252,7 +261,7 @@ execute_local_prepared_tablet_reconfiguration(const PreparedTabletReconfiguratio
   if (!valid.is_ok())
     return common::make_unexpected(std::move(valid));
   try {
-    auto executed = runtime.execute_batch({dispatch.action().request});
+    auto executed = runtime.execute_batch({request_for_execution(dispatch)});
     if (!executed.has_value())
       return common::make_unexpected(std::move(executed).error());
     if (executed->size() != 1U) {
@@ -275,7 +284,7 @@ common::Result<AsyncDurableRaftCompletion> try_submit_local_prepared_tablet_reco
   if (!valid.is_ok())
     return common::make_unexpected(std::move(valid));
   try {
-    return runtime.try_submit({dispatch.action().request});
+    return runtime.try_submit({request_for_execution(dispatch)});
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(
         exhausted("prepared reconfiguration admission allocation failed"));

@@ -137,6 +137,31 @@ TEST(DurableMultiRaftRuntimeTest, SurfacesGroupReadBarrierWithoutInventingPersis
   EXPECT_EQ(runtime->durable_physical_sequence(), durable_before);
 }
 
+TEST(DurableMultiRaftRuntimeTest, ExactRetainedProposalDoesNotAppendOrSynchronizeTwice) {
+  TemporaryDirectory directory;
+  const GroupId group = group_id(std::byte{14U});
+  auto runtime = DurableMultiRaftRuntime::create_new(
+      1U, {.directory_path = directory.path().string()}, {{group, {1U}}});
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  ASSERT_TRUE(runtime->execute_batch({{group, StartElectionOperation{}}}).has_value());
+  auto first =
+      runtime->execute_batch({{group, ProposeExactRetainedOperation{1U, {std::byte{0x42U}}}}});
+  ASSERT_TRUE(first.has_value()) << first.error().to_string();
+  ASSERT_TRUE(first->front().status.is_ok());
+  const std::uint64_t durable_after_first = runtime->durable_physical_sequence();
+
+  auto retry =
+      runtime->execute_batch({{group, ProposeExactRetainedOperation{1U, {std::byte{0x42U}}}}});
+
+  ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+  ASSERT_TRUE(retry->front().status.is_ok());
+  ASSERT_TRUE(retry->front().transition.has_value());
+  EXPECT_FALSE(retry->front().transition->persistence.has_value());
+  EXPECT_TRUE(retry->front().transition->outbound.empty());
+  EXPECT_EQ(runtime->durable_physical_sequence(), durable_after_first);
+  EXPECT_EQ(runtime->find_group(group)->persistent_state().log.size(), 1U);
+}
+
 TEST(DurableMultiRaftRuntimeTest, ProvesQuorumSyncOnlyAfterDurableMajorityCommit) {
   TemporaryDirectory leader_directory;
   TemporaryDirectory follower_directory;

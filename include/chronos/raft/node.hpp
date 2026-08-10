@@ -38,6 +38,8 @@ public:
   [[nodiscard]] common::Result<Transition> receive(NodeId source, Message message);
   [[nodiscard]] common::Result<Transition> propose(std::uint8_t type,
                                                    std::vector<std::byte> payload);
+  [[nodiscard]] common::Result<Transition> propose_exact_retained(std::uint8_t type,
+                                                                  std::vector<std::byte> payload);
   [[nodiscard]] common::Result<Transition> begin_membership_change(std::vector<NodeId> new_voters);
   [[nodiscard]] common::Result<Transition> finalize_membership_change();
   [[nodiscard]] common::Result<Transition>

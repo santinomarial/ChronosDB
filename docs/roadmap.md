@@ -829,8 +829,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   exactly retryable from the new phase. That dispatch is now a sealed move-only capability, and a
   local synchronous executor releases its Raft result and outbound messages only after the existing
   physical-log synchronization boundary. Sealed dispatches also enter the bounded asynchronous
-  single-owner FIFO without blocking producers or being consumed on admission rejection. Physical
-  Manifest/CSEG handoff remains incomplete. General
+  single-owner FIFO without blocking producers or being consumed on admission rejection. Exact
+  retained placement and membership retries now suppress current-term/committed re-append, while an
+  uncommitted prior-term match fails without duplicating the command. Physical Manifest/CSEG handoff
+  remains incomplete. General
   vector-plan fragments/exchange wire bytes, compatible multi-tablet snapshots, authenticated
   leader transport, and multi-node failure validation remain deferred; the phase exit gate is not
   claimed.

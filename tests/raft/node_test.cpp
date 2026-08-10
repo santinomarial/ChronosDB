@@ -199,6 +199,12 @@ TEST(RaftNodeTest, CommitsMembershipChangeUnderJointQuorumsAndRemovesLeader) {
   auto joint = node->begin_membership_change({2U, 3U, 4U});
   ASSERT_TRUE(joint.has_value()) << joint.error().to_string();
   EXPECT_TRUE(joint->persistent_state.has_value());
+  auto joint_retry = node->begin_membership_change({2U, 3U, 4U});
+  ASSERT_TRUE(joint_retry.has_value()) << joint_retry.error().to_string();
+  EXPECT_FALSE(joint_retry->persistent_state.has_value());
+  EXPECT_TRUE(joint_retry->outbound.empty());
+  EXPECT_EQ(node->begin_membership_change({1U, 2U, 4U}).error().code(),
+            common::StatusCode::kInvalidArgument);
   EXPECT_TRUE(node->joint_membership_active());
   EXPECT_TRUE(std::ranges::equal(node->voters(), std::vector<NodeId>{1U, 2U, 3U, 4U}));
   EXPECT_EQ(node->commit_index(), 0U);
@@ -214,6 +220,10 @@ TEST(RaftNodeTest, CommitsMembershipChangeUnderJointQuorumsAndRemovesLeader) {
   auto final = node->finalize_membership_change();
   ASSERT_TRUE(final.has_value()) << final.error().to_string();
   EXPECT_EQ(node->commit_index(), 1U);
+  auto final_retry = node->finalize_membership_change();
+  ASSERT_TRUE(final_retry.has_value()) << final_retry.error().to_string();
+  EXPECT_FALSE(final_retry->persistent_state.has_value());
+  EXPECT_TRUE(final_retry->outbound.empty());
   auto final_old = node->receive(2U, AppendEntriesResponse{1U, true, 2U, std::nullopt, 0U});
   ASSERT_TRUE(final_old.has_value()) << final_old.error().to_string();
   EXPECT_EQ(node->commit_index(), 1U);
@@ -229,6 +239,32 @@ TEST(RaftNodeTest, CommitsMembershipChangeUnderJointQuorumsAndRemovesLeader) {
   ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
   EXPECT_TRUE(std::ranges::equal(recovered->voters(), std::vector<NodeId>{2U, 3U, 4U}));
   EXPECT_FALSE(recovered->joint_membership_active());
+}
+
+TEST(RaftNodeTest, ExactRetainedProposalSuppressesCurrentTermRetryAndRejectsPriorTermRetry) {
+  auto leader = RaftNode::create(1U, {1U, 2U, 3U});
+  ASSERT_TRUE(leader.has_value());
+  ASSERT_TRUE(leader->start_election().has_value());
+  ASSERT_TRUE(leader->receive(2U, RequestVoteResponse{1U, true}).has_value());
+  const std::vector<std::byte> payload{std::byte{0x42U}};
+  auto first = leader->propose_exact_retained(1U, payload);
+  ASSERT_TRUE(first.has_value()) << first.error().to_string();
+  ASSERT_TRUE(first->persistent_state.has_value());
+  EXPECT_EQ(leader->last_log_index(), 1U);
+  auto retry = leader->propose_exact_retained(1U, payload);
+  ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+  EXPECT_FALSE(retry->persistent_state.has_value());
+  EXPECT_TRUE(retry->outbound.empty());
+  EXPECT_EQ(leader->last_log_index(), 1U);
+
+  auto restarted = RaftNode::create(1U, {1U, 2U, 3U}, leader->persistent_state());
+  ASSERT_TRUE(restarted.has_value()) << restarted.error().to_string();
+  ASSERT_TRUE(restarted->start_election().has_value());
+  ASSERT_TRUE(restarted->receive(2U, RequestVoteResponse{2U, true}).has_value());
+  auto prior_term = restarted->propose_exact_retained(1U, payload);
+  ASSERT_FALSE(prior_term.has_value());
+  EXPECT_EQ(prior_term.error().code(), common::StatusCode::kUnavailable);
+  EXPECT_EQ(restarted->last_log_index(), 1U);
 }
 
 TEST(RaftNodeTest, JointElectionRequiresOldAndNewMajorities) {

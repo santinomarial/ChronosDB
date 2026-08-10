@@ -5,6 +5,7 @@
 - **Owners:** ChronosDB distributed-systems maintainers
 - **Extends:** [ADR 0114](0114-bounded-asynchronous-multi-raft-owner.md) and
   [ADR 0134](0134-sealed-local-tablet-reconfiguration-execution.md)
+- **Extended by:** [ADR 0136](0136-idempotent-retained-reconfiguration-action-replay.md)
 
 ## Context
 

@@ -763,6 +763,32 @@ common::Result<Transition> RaftNode::propose(const std::uint8_t type,
   return transition;
 }
 
+common::Result<Transition> RaftNode::propose_exact_retained(const std::uint8_t type,
+                                                            std::vector<std::byte> payload) {
+  if (impl_->role != Role::kLeader) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kUnavailable, "Raft proposal requires current leader"});
+  }
+  if (type == 0U || is_membership_entry_type(type) ||
+      payload.size() > impl_->limits.maximum_entry_bytes) {
+    return common::make_unexpected(invalid("Raft proposal type or size invalid"));
+  }
+  bool prior_term_uncommitted_match = false;
+  for (const LogEntry& entry : impl_->state.log) {
+    if (entry.type != type || entry.payload != payload)
+      continue;
+    if (entry.index <= impl_->state.commit_index || entry.term == impl_->state.current_term)
+      return Transition{};
+    prior_term_uncommitted_match = true;
+  }
+  if (prior_term_uncommitted_match) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kUnavailable,
+                       "exact Raft proposal is retained uncommitted from an earlier leader term"});
+  }
+  return propose(type, std::move(payload));
+}
+
 common::Result<Transition> RaftNode::begin_membership_change(std::vector<NodeId> new_voters) {
   if (impl_->role != Role::kLeader) {
     return common::make_unexpected(common::Status{
@@ -774,6 +800,17 @@ common::Result<Transition> RaftNode::begin_membership_change(std::vector<NodeId>
                        "membership change cannot start while a Raft read barrier is pending"});
   }
   std::ranges::sort(new_voters);
+  if (impl_->joint.has_value() && impl_->joint->old_voters == impl_->committed_voters &&
+      impl_->joint->new_voters == new_voters) {
+    const auto term = impl_->term_at(impl_->joint->joint_index);
+    if (impl_->joint->joint_index <= impl_->state.commit_index ||
+        (term.has_value() && *term == impl_->state.current_term)) {
+      return Transition{};
+    }
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kUnavailable,
+        "exact joint membership is retained uncommitted from an earlier leader term"});
+  }
   if (impl_->joint.has_value() || !valid_voters(new_voters, impl_->limits.maximum_voters) ||
       new_voters == impl_->committed_voters ||
       voter_union(impl_->committed_voters, new_voters).size() > impl_->limits.maximum_voters ||
@@ -820,6 +857,18 @@ common::Result<Transition> RaftNode::finalize_membership_change() {
     return common::make_unexpected(
         common::Status{common::StatusCode::kUnavailable,
                        "membership change cannot finalize while a Raft read barrier is pending"});
+  }
+  if (impl_->joint.has_value() && impl_->joint->final_pending) {
+    const auto final = std::ranges::find_if(
+        impl_->state.log.rbegin(), impl_->state.log.rend(),
+        [](const LogEntry& entry) { return entry.type == kFinalMembershipEntryType; });
+    if (final != impl_->state.log.rend() &&
+        (final->index <= impl_->state.commit_index || final->term == impl_->state.current_term)) {
+      return Transition{};
+    }
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kUnavailable,
+        "exact final membership is retained uncommitted from an earlier leader term"});
   }
   if (!impl_->joint.has_value() || impl_->joint->final_pending ||
       impl_->joint->joint_index > impl_->state.commit_index ||

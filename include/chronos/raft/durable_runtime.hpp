@@ -28,6 +28,12 @@ struct ProposeOperation {
   std::uint8_t type{};
   std::vector<std::byte> payload;
 };
+// Explicit exact-byte retry semantics for commands whose logical identity is already carried by
+// their canonical payload. A retained current-term or committed exact entry suppresses re-append.
+struct ProposeExactRetainedOperation {
+  std::uint8_t type{};
+  std::vector<std::byte> payload;
+};
 struct BeginMembershipChangeOperation {
   std::vector<NodeId> new_voters;
 };
@@ -48,9 +54,10 @@ struct MarkAppliedOperation {
 
 using DurableRaftOperation =
     std::variant<StartElectionOperation, ReceiveOperation, ProposeOperation,
-                 BeginMembershipChangeOperation, FinalizeMembershipChangeOperation,
-                 CompleteSnapshotInstallOperation, CompactSnapshotOperation, HeartbeatOperation,
-                 BeginReadBarrierOperation, MarkAppliedOperation>;
+                 ProposeExactRetainedOperation, BeginMembershipChangeOperation,
+                 FinalizeMembershipChangeOperation, CompleteSnapshotInstallOperation,
+                 CompactSnapshotOperation, HeartbeatOperation, BeginReadBarrierOperation,
+                 MarkAppliedOperation>;
 
 struct DurableRaftRequest {
   GroupId group_id;
