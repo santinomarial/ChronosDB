@@ -74,6 +74,11 @@ path to the asynchronous single-owner runtime. Capacity or shutdown rejection le
 valid. Successful admission returns an owning completion; reactor threads poll or hand it off, and
 only the completed durable result may release outbound messages.
 
+The same owner now accepts FIFO-ordered bounded group observations. Reconciliation code can inspect
+an owning role/term/commit/apply/membership snapshot after admitted work without borrowing the
+worker-owned `RaftNode`. The observation is not a leader lease or application proof; authoritative
+metadata and movement reconciliation still decide the next action or phase.
+
 Placement execution uses an explicit exact-retained proposal operation. If the identical canonical
 metadata command is already committed or retained in the current term, retry returns an empty
 successful transition without another append or synchronization. An uncommitted prior-term match

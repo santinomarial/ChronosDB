@@ -172,3 +172,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0135](0135-bounded-asynchronous-prepared-reconfiguration-admission.md) | Bounded asynchronous prepared reconfiguration admission | accepted |
 | [0136](0136-idempotent-retained-reconfiguration-action-replay.md) | Idempotent retained reconfiguration action replay | accepted |
 | [0137](0137-current-term-raft-progress-noop.md) | Current-term Raft progress no-op | accepted |
+| [0138](0138-fifo-ordered-raft-group-observation.md) | FIFO-ordered Raft group observation | accepted |

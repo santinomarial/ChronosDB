@@ -80,6 +80,11 @@ public:
   [[nodiscard]] common::Result<AsyncDurableRaftCompletion>
   try_submit(std::vector<DurableRaftRequest> requests);
 
+  // Enqueues one bounded owning observation behind all previously admitted work. The returned
+  // completion contains exactly one result with observation set and transition empty.
+  [[nodiscard]] common::Result<AsyncDurableRaftCompletion>
+  try_observe_group(const GroupId& group_id);
+
   // Idempotently stops admission, drains all accepted batches in FIFO order, closes the log, and
   // joins the worker. A terminal worker failure rejects all not-yet-executed accepted batches.
   [[nodiscard]] common::Status shutdown();

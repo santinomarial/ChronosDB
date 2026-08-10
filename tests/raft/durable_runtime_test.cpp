@@ -137,6 +137,48 @@ TEST(DurableMultiRaftRuntimeTest, SurfacesGroupReadBarrierWithoutInventingPersis
   EXPECT_EQ(runtime->durable_physical_sequence(), durable_before);
 }
 
+TEST(DurableMultiRaftRuntimeTest, ObservesBoundedGroupStateInBatchOrderWithoutPersistence) {
+  TemporaryDirectory directory;
+  const GroupId group = group_id(std::byte{15U});
+  auto runtime = DurableMultiRaftRuntime::create_new(
+      1U, {.directory_path = directory.path().string()}, {{group, {1U}}});
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+
+  auto result = runtime->execute_batch({{group, StartElectionOperation{}},
+                                        {group, BeginMembershipChangeOperation{{1U, 2U}}},
+                                        {group, ObserveGroupOperation{}}});
+
+  ASSERT_TRUE(result.has_value()) << result.error().to_string();
+  ASSERT_EQ(result->size(), 3U);
+  ASSERT_TRUE((*result)[2].status.is_ok());
+  EXPECT_FALSE((*result)[2].transition.has_value());
+  ASSERT_TRUE((*result)[2].observation.has_value());
+  const RaftGroupObservation& observed = *(*result)[2].observation;
+  EXPECT_EQ(observed.group_id, group);
+  EXPECT_EQ(observed.node_id, 1U);
+  EXPECT_EQ(observed.role, Role::kLeader);
+  EXPECT_EQ(observed.current_term, 1U);
+  EXPECT_EQ(observed.leader_id, 1U);
+  EXPECT_EQ(observed.last_log_index, 1U);
+  EXPECT_EQ(observed.commit_index, 0U);
+  EXPECT_EQ(observed.applied_index, 0U);
+  EXPECT_EQ(observed.voters, (std::vector<NodeId>{1U, 2U}));
+  EXPECT_EQ(observed.committed_voters, std::vector<NodeId>{1U});
+  EXPECT_EQ(observed.joint_old_voters, std::vector<NodeId>{1U});
+  EXPECT_EQ(observed.joint_new_voters, (std::vector<NodeId>{1U, 2U}));
+  EXPECT_TRUE(observed.joint_membership_active);
+  EXPECT_FALSE(observed.joint_membership_can_finalize);
+  EXPECT_FALSE(observed.final_membership_pending);
+  EXPECT_EQ(runtime->durable_physical_sequence(), 2U);
+
+  auto missing = runtime->execute_batch({{group_id(std::byte{16U}), ObserveGroupOperation{}}});
+  ASSERT_TRUE(missing.has_value()) << missing.error().to_string();
+  ASSERT_EQ(missing->size(), 1U);
+  EXPECT_EQ(missing->front().status.code(), common::StatusCode::kNotFound);
+  EXPECT_FALSE(missing->front().observation.has_value());
+  EXPECT_FALSE(runtime->failed());
+}
+
 TEST(DurableMultiRaftRuntimeTest, ExactRetainedProposalDoesNotAppendOrSynchronizeTwice) {
   TemporaryDirectory directory;
   const GroupId group = group_id(std::byte{14U});

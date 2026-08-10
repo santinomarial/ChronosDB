@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <map>
 #include <memory>
+#include <new>
+#include <stdexcept>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -17,6 +19,10 @@ namespace {
 
 [[nodiscard]] common::Status unavailable(const char* message) {
   return common::Status{common::StatusCode::kUnavailable, message};
+}
+
+[[nodiscard]] common::Status exhausted(const char* message) {
+  return common::Status{common::StatusCode::kResourceExhausted, message};
 }
 
 [[nodiscard]] common::Result<MultiRaftRuntime>
@@ -136,6 +142,16 @@ DurableMultiRaftRuntime::execute_batch(std::vector<DurableRaftRequest> requests)
   std::size_t outbound_count = 0U;
   bool needs_sync = false;
   for (DurableRaftRequest& request : requests) {
+    if (std::holds_alternative<ObserveGroupOperation>(request.operation)) {
+      auto observation = observe_group(request.group_id);
+      if (!observation.has_value()) {
+        results.push_back(DurableRaftResult{observation.error(), std::nullopt, std::nullopt});
+      } else {
+        results.push_back(
+            DurableRaftResult{common::Status::ok(), std::nullopt, std::move(*observation)});
+      }
+      continue;
+    }
     common::Result<MultiRaftTransition> transition = std::visit(
         [&](auto&& operation) -> common::Result<MultiRaftTransition> {
           using T = std::remove_cvref_t<decltype(operation)>;
@@ -152,6 +168,9 @@ DurableMultiRaftRuntime::execute_batch(std::vector<DurableRaftRequest> requests)
                                                          std::move(operation.payload));
           } else if constexpr (std::is_same_v<T, CommitCurrentTermOperation>) {
             return impl_->runtime.commit_current_term(request.group_id);
+          } else if constexpr (std::is_same_v<T, ObserveGroupOperation>) {
+            return common::make_unexpected(
+                invalid("Raft group observation dispatch is inconsistent"));
           } else if constexpr (std::is_same_v<T, BeginMembershipChangeOperation>) {
             return impl_->runtime.begin_membership_change(request.group_id,
                                                           std::move(operation.new_voters));
@@ -175,7 +194,7 @@ DurableMultiRaftRuntime::execute_batch(std::vector<DurableRaftRequest> requests)
     if (!transition.has_value()) {
       if (impl_->runtime.failed())
         return common::make_unexpected(impl_->fail(transition.error()));
-      results.push_back(DurableRaftResult{transition.error(), std::nullopt});
+      results.push_back(DurableRaftResult{transition.error(), std::nullopt, std::nullopt});
       continue;
     }
     if (transition->outbound.size() > impl_->limits.maximum_batch_outbound - outbound_count) {
@@ -190,7 +209,8 @@ DurableMultiRaftRuntime::execute_batch(std::vector<DurableRaftRequest> requests)
         return common::make_unexpected(impl_->fail(appended.error()));
       needs_sync = true;
     }
-    results.push_back(DurableRaftResult{common::Status::ok(), std::move(*transition)});
+    results.push_back(
+        DurableRaftResult{common::Status::ok(), std::move(*transition), std::nullopt});
   }
   if (needs_sync) {
     auto synchronized = impl_->log.synchronize();
@@ -198,6 +218,46 @@ DurableMultiRaftRuntime::execute_batch(std::vector<DurableRaftRequest> requests)
       return common::make_unexpected(impl_->fail(synchronized.error()));
   }
   return results;
+}
+
+common::Result<RaftGroupObservation>
+DurableMultiRaftRuntime::observe_group(const GroupId& group_id) const {
+  if (!impl_->failure.is_ok())
+    return common::make_unexpected(impl_->failure);
+  if (impl_->runtime.failed()) {
+    return common::make_unexpected(common::Status{common::StatusCode::kUnavailable,
+                                                  "durable Multi-Raft runtime has failed closed"});
+  }
+  const RaftNode* const node = impl_->runtime.find_group(group_id);
+  if (node == nullptr) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kNotFound, "Raft group does not exist"});
+  }
+  try {
+    return RaftGroupObservation{
+        .group_id = group_id,
+        .node_id = node->node_id(),
+        .role = node->role(),
+        .current_term = node->current_term(),
+        .leader_id = node->leader_id(),
+        .last_log_index = node->last_log_index(),
+        .commit_index = node->commit_index(),
+        .applied_index = node->applied_index(),
+        .voters = std::vector<NodeId>{node->voters().begin(), node->voters().end()},
+        .committed_voters =
+            std::vector<NodeId>{node->committed_voters().begin(), node->committed_voters().end()},
+        .joint_old_voters =
+            std::vector<NodeId>{node->joint_old_voters().begin(), node->joint_old_voters().end()},
+        .joint_new_voters =
+            std::vector<NodeId>{node->joint_new_voters().begin(), node->joint_new_voters().end()},
+        .joint_membership_active = node->joint_membership_active(),
+        .joint_membership_can_finalize = node->joint_membership_can_finalize(),
+        .final_membership_pending = node->final_membership_pending()};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("Raft group observation allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("Raft group observation exceeded container limits"));
+  }
 }
 
 const RaftNode* DurableMultiRaftRuntime::find_group(const GroupId& group_id) const noexcept {

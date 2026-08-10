@@ -40,7 +40,7 @@ private:
   return GroupId{bytes};
 }
 
-TEST(AsyncDurableMultiRaftRuntimeTest, DrainsAcceptedFifoBatchesAndRecoversAppliedState) {
+TEST(AsyncDurableMultiRaftRuntimeTest, DrainsAcceptedFifoBatchesObservesAndRecoversAppliedState) {
   TemporaryDirectory directory;
   const RaftPersistentLogConfig log_config{.directory_path = directory.path().string()};
   const GroupId group = group_id(std::byte{1U});
@@ -52,17 +52,25 @@ TEST(AsyncDurableMultiRaftRuntimeTest, DrainsAcceptedFifoBatchesAndRecoversAppli
   auto proposal =
       runtime->try_submit({{group, ProposeOperation{.type = 1U, .payload = {std::byte{0x42U}}}}});
   auto applied = runtime->try_submit({{group, MarkAppliedOperation{.index = 1U}}});
+  auto observed = runtime->try_observe_group(group);
+  auto missing = runtime->try_observe_group(group_id(std::byte{9U}));
   ASSERT_TRUE(election.has_value());
   ASSERT_TRUE(proposal.has_value());
   ASSERT_TRUE(applied.has_value());
+  ASSERT_TRUE(observed.has_value());
+  ASSERT_TRUE(missing.has_value());
 
   EXPECT_TRUE(runtime->shutdown().is_ok());
   auto election_result = election->wait();
   auto proposal_result = proposal->wait();
   auto applied_result = applied->wait();
+  auto observed_result = observed->wait();
+  auto missing_result = missing->wait();
   ASSERT_TRUE(election_result.has_value()) << election_result.error().to_string();
   ASSERT_TRUE(proposal_result.has_value()) << proposal_result.error().to_string();
   ASSERT_TRUE(applied_result.has_value()) << applied_result.error().to_string();
+  ASSERT_TRUE(observed_result.has_value()) << observed_result.error().to_string();
+  ASSERT_TRUE(missing_result.has_value()) << missing_result.error().to_string();
   EXPECT_EQ(applied->wait().error().code(), common::StatusCode::kInvalidArgument);
   ASSERT_EQ(election_result->size(), 1U);
   ASSERT_EQ(proposal_result->size(), 1U);
@@ -70,12 +78,31 @@ TEST(AsyncDurableMultiRaftRuntimeTest, DrainsAcceptedFifoBatchesAndRecoversAppli
   EXPECT_TRUE(election_result->front().status.is_ok());
   EXPECT_TRUE(proposal_result->front().status.is_ok());
   EXPECT_TRUE(applied_result->front().status.is_ok());
+  ASSERT_EQ(observed_result->size(), 1U);
+  ASSERT_TRUE(observed_result->front().status.is_ok());
+  EXPECT_FALSE(observed_result->front().transition.has_value());
+  ASSERT_TRUE(observed_result->front().observation.has_value());
+  EXPECT_EQ(observed_result->front().observation->group_id, group);
+  EXPECT_EQ(observed_result->front().observation->node_id, 1U);
+  EXPECT_EQ(observed_result->front().observation->role, Role::kLeader);
+  EXPECT_EQ(observed_result->front().observation->current_term, 1U);
+  EXPECT_EQ(observed_result->front().observation->leader_id, 1U);
+  EXPECT_EQ(observed_result->front().observation->last_log_index, 1U);
+  EXPECT_EQ(observed_result->front().observation->commit_index, 1U);
+  EXPECT_EQ(observed_result->front().observation->applied_index, 1U);
+  EXPECT_EQ(observed_result->front().observation->voters, std::vector<NodeId>{1U});
+  EXPECT_EQ(observed_result->front().observation->committed_voters, std::vector<NodeId>{1U});
+  EXPECT_FALSE(observed_result->front().observation->joint_membership_active);
+  ASSERT_EQ(missing_result->size(), 1U);
+  EXPECT_EQ(missing_result->front().status.code(), common::StatusCode::kNotFound);
+  EXPECT_FALSE(missing_result->front().transition.has_value());
+  EXPECT_FALSE(missing_result->front().observation.has_value());
 
   const AsyncDurableMultiRaftMetrics metrics = runtime->metrics();
   EXPECT_FALSE(metrics.accepting);
   EXPECT_FALSE(metrics.terminal_failure);
-  EXPECT_EQ(metrics.admitted_batches, 3U);
-  EXPECT_EQ(metrics.completed_batches, 3U);
+  EXPECT_EQ(metrics.admitted_batches, 5U);
+  EXPECT_EQ(metrics.completed_batches, 5U);
   EXPECT_EQ(metrics.pending_batches, 0U);
   EXPECT_EQ(metrics.pending_operations, 0U);
   EXPECT_EQ(runtime->try_submit({{group, HeartbeatOperation{}}}).error().code(),

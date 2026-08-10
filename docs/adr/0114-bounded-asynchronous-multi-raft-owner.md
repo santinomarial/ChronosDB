@@ -4,6 +4,7 @@
 - **Date:** 2026-08-09
 - **Owners:** ChronosDB distributed-systems maintainers
 - **Extended by:** [ADR 0135](0135-bounded-asynchronous-prepared-reconfiguration-admission.md)
+  and [ADR 0138](0138-fifo-ordered-raft-group-observation.md)
 
 ## Context
 

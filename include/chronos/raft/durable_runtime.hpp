@@ -35,6 +35,7 @@ struct ProposeExactRetainedOperation {
   std::vector<std::byte> payload;
 };
 struct CommitCurrentTermOperation {};
+struct ObserveGroupOperation {};
 struct BeginMembershipChangeOperation {
   std::vector<NodeId> new_voters;
 };
@@ -55,7 +56,7 @@ struct MarkAppliedOperation {
 
 using DurableRaftOperation =
     std::variant<StartElectionOperation, ReceiveOperation, ProposeOperation,
-                 ProposeExactRetainedOperation, CommitCurrentTermOperation,
+                 ProposeExactRetainedOperation, CommitCurrentTermOperation, ObserveGroupOperation,
                  BeginMembershipChangeOperation, FinalizeMembershipChangeOperation,
                  CompleteSnapshotInstallOperation, CompactSnapshotOperation, HeartbeatOperation,
                  BeginReadBarrierOperation, MarkAppliedOperation>;
@@ -65,9 +66,32 @@ struct DurableRaftRequest {
   DurableRaftOperation operation;
 };
 
+// Bounded owning copy of the group state needed by routing and reconciliation. It deliberately
+// excludes retained log payloads and pending outbound messages.
+struct RaftGroupObservation {
+  GroupId group_id;
+  NodeId node_id{};
+  Role role{Role::kFollower};
+  Term current_term{};
+  std::optional<NodeId> leader_id;
+  LogIndex last_log_index{};
+  LogIndex commit_index{};
+  LogIndex applied_index{};
+  std::vector<NodeId> voters;
+  std::vector<NodeId> committed_voters;
+  std::vector<NodeId> joint_old_voters;
+  std::vector<NodeId> joint_new_voters;
+  bool joint_membership_active{};
+  bool joint_membership_can_finalize{};
+  bool final_membership_pending{};
+
+  friend bool operator==(const RaftGroupObservation&, const RaftGroupObservation&) = default;
+};
+
 struct DurableRaftResult {
   common::Status status;
   std::optional<MultiRaftTransition> transition;
+  std::optional<RaftGroupObservation> observation;
 };
 
 struct DurableMultiRaftLimits {
@@ -115,6 +139,7 @@ public:
   [[nodiscard]] common::Result<std::vector<DurableRaftResult>>
   execute_batch(std::vector<DurableRaftRequest> requests);
 
+  [[nodiscard]] common::Result<RaftGroupObservation> observe_group(const GroupId& group_id) const;
   [[nodiscard]] const RaftNode* find_group(const GroupId& group_id) const noexcept;
   [[nodiscard]] common::Result<QuorumSyncReceipt> prove_quorum_sync(const GroupId& group_id,
                                                                     LogIndex index) const;

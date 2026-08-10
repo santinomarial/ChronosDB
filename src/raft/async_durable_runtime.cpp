@@ -374,6 +374,11 @@ AsyncDurableMultiRaftRuntime::try_submit(std::vector<DurableRaftRequest> request
   return impl_->try_submit(std::move(requests));
 }
 
+common::Result<AsyncDurableRaftCompletion>
+AsyncDurableMultiRaftRuntime::try_observe_group(const GroupId& group_id) {
+  return try_submit({DurableRaftRequest{group_id, ObserveGroupOperation{}}});
+}
+
 common::Status AsyncDurableMultiRaftRuntime::shutdown() {
   return impl_ == nullptr ? common::Status::ok() : impl_->shutdown();
 }

@@ -13,6 +13,12 @@ sealed capability produced after durable action-ledger preparation, copies its e
 one-operation batch, and leaves the capability valid when admission rejects overload or shutdown.
 The returned completion has the same publication and single-consumer rules as generic batches.
 
+`try_observe_group` submits one `ObserveGroupOperation` through that same FIFO. Its completion owns
+a bounded `RaftGroupObservation` with coherent role, term, leader, log frontiers, and stable/joint
+membership facts. It contains no retained log payload or borrowed worker memory. Observation does
+not create a transition or physical-log synchronization, but it is ordered after earlier admitted
+work and is not released ahead of any synchronization required by earlier operations in its batch.
+
 ## Data structures and invariants
 
 The runtime retains one FIFO of owning task objects. Admission counts every accepted batch and
@@ -23,6 +29,8 @@ operations. Metrics report the same retained quantities and high-water marks.
 Only the worker calls `DurableMultiRaftRuntime`. Therefore its deterministic group transitions,
 node-global physical sequence, append/sync batch, and persist-before-outbound contract remain
 serialized exactly as in the synchronous owner. FIFO batch order is observable and deterministic.
+An observation is a point-in-order fact rather than a lease: leadership can change after completion,
+and callers must still validate term, placement epoch, commit, and application requirements.
 
 ## Ownership, lifetime, and synchronization
 
