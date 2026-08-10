@@ -92,7 +92,8 @@
   persistence-before-response, committed-log overwrite, sequence-exhaustion, response-state, and
   snapshot-boundary properties.
 - Persistent file owner, vote/log fsync ordering, crash/restart at every transition, idempotent
-  recovery, application to tablet state, snapshot creation/install, log compaction, and read index.
+  recovery, application to tablet state, snapshot creation/install, and log compaction. Extend the
+  implemented read barrier through production transport and tablet snapshot acquisition.
 - Membership protocol, leader leases if ever proposed, real transport framing/versioning, timer
   runtime, disk-error behavior, and storage fault injection.
 - Exhaustive bounded schedules, long randomized deterministic simulation with trace replay/shrink,

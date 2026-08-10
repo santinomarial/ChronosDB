@@ -381,5 +381,131 @@ TEST(RaftNodeTest, CompactsAppliedPrefixAndInstallsSnapshotBeforeAcknowledgingLe
   EXPECT_EQ(follower->commit_index(), 3U);
 }
 
+TEST(RaftNodeTest, ConfirmsLinearizableReadAtCommittedIndexBeforeApplicationVisibility) {
+  auto leader = RaftNode::create(1U, {1U, 2U, 3U});
+  ASSERT_TRUE(leader.has_value());
+  ASSERT_TRUE(leader->start_election().has_value());
+  ASSERT_TRUE(leader->receive(2U, RequestVoteResponse{1U, true}).has_value());
+  ASSERT_EQ(leader->role(), Role::kLeader);
+  EXPECT_EQ(leader->begin_read_barrier().error().code(), common::StatusCode::kUnavailable);
+
+  ASSERT_TRUE(leader->propose(1U, {std::byte{0x11}}).has_value());
+  ASSERT_TRUE(
+      leader->receive(2U, AppendEntriesResponse{1U, true, 1U, std::nullopt, 0U}).has_value());
+  ASSERT_EQ(leader->commit_index(), 1U);
+  ASSERT_EQ(leader->applied_index(), 0U);
+
+  auto started = leader->begin_read_barrier();
+  ASSERT_TRUE(started.has_value()) << started.error().to_string();
+  ASSERT_EQ(started->outbound.size(), 2U);
+  EXPECT_FALSE(started->read_barrier_ready.has_value());
+  const auto* request = std::get_if<ReadBarrierRequest>(&started->outbound.front().message);
+  ASSERT_NE(request, nullptr);
+  EXPECT_EQ(request->term, 1U);
+  EXPECT_EQ(request->leader_id, 1U);
+  EXPECT_NE(request->context, 0U);
+  EXPECT_EQ(leader->begin_read_barrier().error().code(), common::StatusCode::kUnavailable);
+  EXPECT_EQ(leader->begin_membership_change({2U, 3U, 4U}).error().code(),
+            common::StatusCode::kUnavailable);
+
+  auto wrong = leader->receive(2U, ReadBarrierResponse{1U, request->context + 1U, true});
+  ASSERT_TRUE(wrong.has_value());
+  EXPECT_FALSE(wrong->read_barrier_ready.has_value());
+  auto confirmed = leader->receive(2U, ReadBarrierResponse{1U, request->context, true});
+  ASSERT_TRUE(confirmed.has_value()) << confirmed.error().to_string();
+  ASSERT_TRUE(confirmed->read_barrier_ready.has_value());
+  EXPECT_EQ(*confirmed->read_barrier_ready,
+            (ReadBarrier{.term = 1U, .context = request->context, .read_index = 1U}));
+  EXPECT_LT(leader->applied_index(), confirmed->read_barrier_ready->read_index);
+  ASSERT_TRUE(leader->mark_applied(confirmed->read_barrier_ready->read_index).has_value());
+  EXPECT_EQ(leader->applied_index(), confirmed->read_barrier_ready->read_index);
+}
+
+TEST(RaftNodeTest, ReadBarrierUsesFrozenJointConsensusQuorums) {
+  auto leader = RaftNode::create(1U, {1U, 2U, 3U});
+  ASSERT_TRUE(leader.has_value());
+  ASSERT_TRUE(leader->start_election().has_value());
+  ASSERT_TRUE(leader->receive(2U, RequestVoteResponse{1U, true}).has_value());
+  ASSERT_TRUE(leader->propose(1U, {std::byte{0x11}}).has_value());
+  ASSERT_TRUE(
+      leader->receive(2U, AppendEntriesResponse{1U, true, 1U, std::nullopt, 0U}).has_value());
+  ASSERT_TRUE(leader->begin_membership_change({3U, 4U, 5U}).has_value());
+  ASSERT_TRUE(leader->joint_membership_active());
+
+  auto started = leader->begin_read_barrier();
+  ASSERT_TRUE(started.has_value()) << started.error().to_string();
+  ASSERT_EQ(started->outbound.size(), 4U);
+  const auto context = std::get<ReadBarrierRequest>(started->outbound.front().message).context;
+  auto old_only = leader->receive(2U, ReadBarrierResponse{1U, context, true});
+  ASSERT_TRUE(old_only.has_value());
+  EXPECT_FALSE(old_only->read_barrier_ready.has_value());
+  auto new_only = leader->receive(4U, ReadBarrierResponse{1U, context, true});
+  ASSERT_TRUE(new_only.has_value());
+  EXPECT_FALSE(new_only->read_barrier_ready.has_value());
+  auto both = leader->receive(3U, ReadBarrierResponse{1U, context, true});
+  ASSERT_TRUE(both.has_value());
+  ASSERT_TRUE(both->read_barrier_ready.has_value());
+  EXPECT_EQ(both->read_barrier_ready->read_index, 1U);
+}
+
+TEST(RaftNodeTest, LeadershipChangeAbandonsPendingReadBarrier) {
+  auto leader = RaftNode::create(1U, {1U, 2U, 3U});
+  ASSERT_TRUE(leader.has_value());
+  ASSERT_TRUE(leader->start_election().has_value());
+  ASSERT_TRUE(leader->receive(2U, RequestVoteResponse{1U, true}).has_value());
+  ASSERT_TRUE(leader->propose(1U, {std::byte{0x11}}).has_value());
+  ASSERT_TRUE(
+      leader->receive(2U, AppendEntriesResponse{1U, true, 1U, std::nullopt, 0U}).has_value());
+  auto first = leader->begin_read_barrier();
+  ASSERT_TRUE(first.has_value());
+  const auto old_context = std::get<ReadBarrierRequest>(first->outbound.front().message).context;
+
+  auto stepped_down = leader->receive(2U, ReadBarrierResponse{2U, old_context, true});
+  ASSERT_TRUE(stepped_down.has_value());
+  EXPECT_TRUE(stepped_down->persistent_state.has_value());
+  EXPECT_EQ(leader->role(), Role::kFollower);
+  ASSERT_TRUE(leader->start_election().has_value());
+  ASSERT_TRUE(leader->receive(2U, RequestVoteResponse{3U, true}).has_value());
+  ASSERT_TRUE(leader->propose(1U, {std::byte{0x22}}).has_value());
+  ASSERT_TRUE(
+      leader->receive(2U, AppendEntriesResponse{3U, true, 2U, std::nullopt, 0U}).has_value());
+  auto second = leader->begin_read_barrier();
+  ASSERT_TRUE(second.has_value());
+  const auto new_context = std::get<ReadBarrierRequest>(second->outbound.front().message).context;
+  EXPECT_NE(new_context, old_context);
+
+  auto stale = leader->receive(2U, ReadBarrierResponse{3U, old_context, true});
+  ASSERT_TRUE(stale.has_value());
+  EXPECT_FALSE(stale->read_barrier_ready.has_value());
+  auto current = leader->receive(2U, ReadBarrierResponse{3U, new_context, true});
+  ASSERT_TRUE(current.has_value());
+  ASSERT_TRUE(current->read_barrier_ready.has_value());
+  EXPECT_EQ(current->read_barrier_ready->term, 3U);
+  EXPECT_EQ(current->read_barrier_ready->read_index, 2U);
+}
+
+TEST(RaftNodeTest, ReadBarrierProbeStepsDownReceiverAndSingleVoterCompletesLocally) {
+  auto follower = RaftNode::create(2U, {1U, 2U, 3U});
+  ASSERT_TRUE(follower.has_value());
+  auto response = follower->receive(1U, ReadBarrierRequest{2U, 1U, 7U});
+  ASSERT_TRUE(response.has_value()) << response.error().to_string();
+  ASSERT_TRUE(response->persistent_state.has_value());
+  ASSERT_EQ(response->outbound.size(), 1U);
+  EXPECT_EQ(std::get<ReadBarrierResponse>(response->outbound.front().message),
+            (ReadBarrierResponse{.term = 2U, .context = 7U, .accepted = true}));
+  EXPECT_EQ(follower->leader_id(), 1U);
+
+  auto single = RaftNode::create(1U, {1U});
+  ASSERT_TRUE(single.has_value());
+  ASSERT_TRUE(single->start_election().has_value());
+  ASSERT_TRUE(single->propose(1U, {std::byte{0x11}}).has_value());
+  ASSERT_EQ(single->commit_index(), 1U);
+  auto barrier = single->begin_read_barrier();
+  ASSERT_TRUE(barrier.has_value());
+  EXPECT_TRUE(barrier->outbound.empty());
+  ASSERT_TRUE(barrier->read_barrier_ready.has_value());
+  EXPECT_EQ(barrier->read_barrier_ready->read_index, 1U);
+}
+
 } // namespace
 } // namespace chronos::raft

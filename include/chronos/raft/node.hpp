@@ -44,6 +44,9 @@ public:
   complete_snapshot_install(NodeId source, SnapshotMetadata snapshot, bool installed);
   [[nodiscard]] common::Result<Transition> compact_snapshot(SnapshotMetadata snapshot);
   [[nodiscard]] common::Result<Transition> heartbeat();
+  // Starts one bounded current-term quorum probe. The leader must first have committed an entry in
+  // its current term. Only one read barrier may be pending; completion is reported by receive().
+  [[nodiscard]] common::Result<Transition> begin_read_barrier();
 
   // Advancing application state is itself persistent state. The returned transition must cross the
   // same persistence boundary as term, vote, log, and commit changes.

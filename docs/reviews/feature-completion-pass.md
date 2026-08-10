@@ -100,9 +100,10 @@ rejection, leader demotion, bounded proposals, and committed-unapplied exposure.
 an explicit persist-before-send state copy.
 
 The focused minimum gate passes for 3-node election, one committed command, leader loss, replacement
-leader, a second command, stale-leader rejection, and restarted follower catch-up. Disk persistence,
-runtime timers, network encoding, tablet application, snapshot transfer/install, membership/read
-index, and randomized simulation remain incomplete.
+leader, a second command, stale-leader rejection, and restarted follower catch-up. Joint membership,
+two-stage snapshot installation, and a current-term quorum read barrier are implemented. Disk
+persistence fault matrices, runtime timers, network encoding, production tablet read integration,
+snapshot transfer bytes, and randomized simulation remain incomplete.
 
 ### Phase 15 — Multi-Raft tablets and metadata
 

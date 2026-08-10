@@ -40,6 +40,15 @@ struct DerivedMembership {
   std::optional<JointConfiguration> joint;
 };
 
+struct PendingReadBarrier {
+  Term term{};
+  std::uint64_t context{};
+  LogIndex read_index{};
+  std::vector<NodeId> old_voters;
+  std::vector<NodeId> new_voters;
+  std::set<NodeId> acknowledgements;
+};
+
 [[nodiscard]] std::vector<NodeId> voter_union(const std::vector<NodeId>& first,
                                               const std::vector<NodeId>& second) {
   std::vector<NodeId> result;
@@ -176,6 +185,26 @@ public:
                              : has_majority(committed_voters, replicated);
   }
 
+  [[nodiscard]] bool read_barrier_quorum() const {
+    if (!pending_read_barrier.has_value())
+      return false;
+    const auto acknowledged = [&](const NodeId node) {
+      return pending_read_barrier->acknowledgements.contains(node);
+    };
+    return has_majority(pending_read_barrier->old_voters, acknowledged) &&
+           (pending_read_barrier->new_voters.empty() ||
+            has_majority(pending_read_barrier->new_voters, acknowledged));
+  }
+
+  void finish_read_barrier(Transition& transition) {
+    if (!read_barrier_quorum())
+      return;
+    transition.read_barrier_ready =
+        ReadBarrier{pending_read_barrier->term, pending_read_barrier->context,
+                    pending_read_barrier->read_index};
+    pending_read_barrier.reset();
+  }
+
   void install_membership(DerivedMembership membership) {
     committed_voters = std::move(membership.committed_voters);
     voters = std::move(membership.active_voters);
@@ -209,6 +238,7 @@ public:
     votes.clear();
     next_index.clear();
     match_index.clear();
+    pending_read_barrier.reset();
     if (term > state.current_term) {
       state.current_term = term;
       state.voted_for.reset();
@@ -245,6 +275,7 @@ public:
     leader_id = id;
     next_index.clear();
     match_index.clear();
+    pending_read_barrier.reset();
     for (const NodeId peer : voters) {
       next_index.emplace(peer, last_index() + 1U);
       match_index.emplace(peer, peer == id ? last_index() : 0U);
@@ -289,6 +320,8 @@ public:
   std::map<NodeId, LogIndex> next_index;
   std::map<NodeId, LogIndex> match_index;
   std::optional<InstallSnapshotRequest> pending_snapshot;
+  std::optional<PendingReadBarrier> pending_read_barrier;
+  std::uint64_t next_read_context{1U};
 };
 
 RaftNode::RaftNode(std::unique_ptr<Impl> impl) noexcept : impl_(std::move(impl)) {}
@@ -378,6 +411,7 @@ common::Result<Transition> RaftNode::start_election() {
   impl_->leader_id.reset();
   impl_->state.voted_for = impl_->id;
   impl_->votes = {impl_->id};
+  impl_->pending_read_barrier.reset();
   Transition transition;
   if (impl_->vote_quorum()) {
     impl_->initialize_leader(transition);
@@ -396,7 +430,8 @@ common::Result<Transition> RaftNode::start_election() {
 
 common::Result<Transition> RaftNode::receive(const NodeId source, Message message) {
   const bool replication_request = std::holds_alternative<AppendEntriesRequest>(message) ||
-                                   std::holds_alternative<InstallSnapshotRequest>(message);
+                                   std::holds_alternative<InstallSnapshotRequest>(message) ||
+                                   std::holds_alternative<ReadBarrierRequest>(message);
   if (source == 0U || source == impl_->id || (!impl_->voter(source) && !replication_request)) {
     return common::make_unexpected(
         invalid("Raft message source is invalid or not an active voter"));
@@ -503,6 +538,12 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
         } else if constexpr (std::is_same_v<T, InstallSnapshotResponse>) {
           if (value.success && value.last_included_index > impl_->last_index())
             return invalid("InstallSnapshot response exceeds the local log");
+        } else if constexpr (std::is_same_v<T, ReadBarrierRequest>) {
+          if (value.term == 0U || value.leader_id != source || value.context == 0U)
+            return invalid("read-barrier request identity or context is invalid");
+        } else if constexpr (std::is_same_v<T, ReadBarrierResponse>) {
+          if (value.context == 0U)
+            return invalid("read-barrier response context is invalid");
         }
         return common::Status::ok();
       },
@@ -655,7 +696,7 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
           impl_->pending_snapshot = value;
           transition.snapshot_install = PendingSnapshotInstall{source, value.snapshot};
           return common::Status::ok();
-        } else {
+        } else if constexpr (std::is_same_v<T, InstallSnapshotResponse>) {
           if (value.term < impl_->state.current_term || impl_->role != Role::kLeader ||
               value.term != impl_->state.current_term) {
             return common::Status::ok();
@@ -666,6 +707,24 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
             impl_->next_index[source] = impl_->match_index[source] + 1U;
           }
           transition.outbound.push_back(OutboundMessage{source, impl_->replication_for(source)});
+          return common::Status::ok();
+        } else if constexpr (std::is_same_v<T, ReadBarrierRequest>) {
+          const bool accepted = value.term == impl_->state.current_term;
+          if (accepted)
+            impl_->become_follower(value.term, source);
+          transition.outbound.push_back(OutboundMessage{
+              source, ReadBarrierResponse{impl_->state.current_term, value.context, accepted}});
+          return common::Status::ok();
+        } else {
+          if (value.term < impl_->state.current_term || impl_->role != Role::kLeader ||
+              value.term != impl_->state.current_term || !value.accepted ||
+              !impl_->pending_read_barrier.has_value() ||
+              value.context != impl_->pending_read_barrier->context ||
+              value.term != impl_->pending_read_barrier->term) {
+            return common::Status::ok();
+          }
+          impl_->pending_read_barrier->acknowledgements.insert(source);
+          impl_->finish_read_barrier(transition);
           return common::Status::ok();
         }
       },
@@ -709,6 +768,11 @@ common::Result<Transition> RaftNode::begin_membership_change(std::vector<NodeId>
     return common::make_unexpected(common::Status{
         common::StatusCode::kUnavailable, "membership change requires current Raft leader"});
   }
+  if (impl_->pending_read_barrier.has_value()) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kUnavailable,
+                       "membership change cannot start while a Raft read barrier is pending"});
+  }
   std::ranges::sort(new_voters);
   if (impl_->joint.has_value() || !valid_voters(new_voters, impl_->limits.maximum_voters) ||
       new_voters == impl_->committed_voters ||
@@ -751,6 +815,11 @@ common::Result<Transition> RaftNode::finalize_membership_change() {
   if (impl_->role != Role::kLeader) {
     return common::make_unexpected(common::Status{
         common::StatusCode::kUnavailable, "membership change requires current Raft leader"});
+  }
+  if (impl_->pending_read_barrier.has_value()) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kUnavailable,
+                       "membership change cannot finalize while a Raft read barrier is pending"});
   }
   if (!impl_->joint.has_value() || impl_->joint->final_pending ||
       impl_->joint->joint_index > impl_->state.commit_index ||
@@ -875,6 +944,50 @@ common::Result<Transition> RaftNode::heartbeat() {
   }
   Transition transition;
   impl_->append_to_all(transition);
+  return transition;
+}
+
+common::Result<Transition> RaftNode::begin_read_barrier() {
+  if (impl_->role != Role::kLeader) {
+    return common::make_unexpected(common::Status{common::StatusCode::kUnavailable,
+                                                  "Raft read barrier requires current leader"});
+  }
+  if (impl_->pending_read_barrier.has_value()) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kUnavailable, "a Raft read barrier is already pending"});
+  }
+  if (impl_->state.commit_index == 0U ||
+      impl_->term_at(impl_->state.commit_index) != impl_->state.current_term) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kUnavailable,
+                       "Raft leader must commit a current-term entry before confirming reads"});
+  }
+  if (impl_->next_read_context == 0U) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kOutOfRange, "Raft read-barrier context is exhausted"});
+  }
+
+  const std::uint64_t context = impl_->next_read_context;
+  impl_->next_read_context =
+      context == std::numeric_limits<std::uint64_t>::max() ? 0U : context + 1U;
+  std::vector<NodeId> new_voters;
+  std::vector<NodeId> old_voters = impl_->committed_voters;
+  if (impl_->joint.has_value()) {
+    old_voters = impl_->joint->old_voters;
+    new_voters = impl_->joint->new_voters;
+  }
+  impl_->pending_read_barrier = PendingReadBarrier{impl_->state.current_term, context,
+                                                   impl_->state.commit_index, std::move(old_voters),
+                                                   std::move(new_voters),     {impl_->id}};
+  Transition transition;
+  impl_->finish_read_barrier(transition);
+  if (transition.read_barrier_ready.has_value())
+    return transition;
+  const ReadBarrierRequest request{impl_->state.current_term, impl_->id, context};
+  for (const NodeId peer : impl_->voters) {
+    if (peer != impl_->id)
+      transition.outbound.push_back(OutboundMessage{peer, request});
+  }
   return transition;
 }
 

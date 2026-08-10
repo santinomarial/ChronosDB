@@ -147,3 +147,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0110](0110-multi-tablet-temporal-wal-recovery.md) | Multi-tablet temporal WAL recovery routing | accepted |
 | [0111](0111-query-accounted-temporal-vector-source.md) | Query-accounted temporal vector source | accepted |
 | [0112](0112-monotonic-temporal-retention-frontier.md) | Monotonic temporal retention frontier | accepted |
+| [0113](0113-linearizable-raft-read-barrier.md) | Linearizable Raft read barrier | accepted |

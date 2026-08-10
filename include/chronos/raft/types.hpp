@@ -88,9 +88,27 @@ struct InstallSnapshotResponse {
   LogIndex last_included_index{};
 };
 
-using Message =
-    std::variant<RequestVoteRequest, RequestVoteResponse, AppendEntriesRequest,
-                 AppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotResponse>;
+// A read barrier is an in-memory leadership proof, not durable state. The opaque context is scoped
+// to one leader term and correlates a bounded round of current-term voter acknowledgements.
+struct ReadBarrierRequest {
+  Term term{};
+  NodeId leader_id{};
+  std::uint64_t context{};
+
+  friend bool operator==(const ReadBarrierRequest&, const ReadBarrierRequest&) = default;
+};
+
+struct ReadBarrierResponse {
+  Term term{};
+  std::uint64_t context{};
+  bool accepted{};
+
+  friend bool operator==(const ReadBarrierResponse&, const ReadBarrierResponse&) = default;
+};
+
+using Message = std::variant<RequestVoteRequest, RequestVoteResponse, AppendEntriesRequest,
+                             AppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotResponse,
+                             ReadBarrierRequest, ReadBarrierResponse>;
 
 struct OutboundMessage {
   NodeId destination{};
@@ -102,6 +120,14 @@ struct PendingSnapshotInstall {
   SnapshotMetadata snapshot;
 };
 
+struct ReadBarrier {
+  Term term{};
+  std::uint64_t context{};
+  LogIndex read_index{};
+
+  friend bool operator==(const ReadBarrier&, const ReadBarrier&) = default;
+};
+
 // When persistent_state is present, the runtime must durably install it before sending any
 // outbound message in the same transition. Committed entries are still invisible until the
 // application state machine advances applied_index through mark_applied(). A snapshot_install is a
@@ -111,6 +137,9 @@ struct Transition {
   std::vector<OutboundMessage> outbound;
   std::optional<LogIndex> advanced_commit_index;
   std::optional<PendingSnapshotInstall> snapshot_install;
+  // A completed barrier authorizes a linearizable read only after applied_index reaches
+  // read_index. It does not make committed-but-unapplied state visible.
+  std::optional<ReadBarrier> read_barrier_ready;
 };
 
 } // namespace chronos::raft
