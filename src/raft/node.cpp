@@ -1039,8 +1039,26 @@ LogIndex RaftNode::applied_index() const noexcept {
 std::span<const NodeId> RaftNode::voters() const noexcept {
   return impl_->voters;
 }
+std::span<const NodeId> RaftNode::committed_voters() const noexcept {
+  return impl_->committed_voters;
+}
+std::span<const NodeId> RaftNode::joint_old_voters() const noexcept {
+  return impl_->joint.has_value() ? std::span<const NodeId>{impl_->joint->old_voters}
+                                  : std::span<const NodeId>{};
+}
+std::span<const NodeId> RaftNode::joint_new_voters() const noexcept {
+  return impl_->joint.has_value() ? std::span<const NodeId>{impl_->joint->new_voters}
+                                  : std::span<const NodeId>{};
+}
 bool RaftNode::joint_membership_active() const noexcept {
   return impl_->joint.has_value();
+}
+bool RaftNode::joint_membership_can_finalize() const noexcept {
+  return impl_->joint.has_value() && !impl_->joint->final_pending &&
+         impl_->joint->joint_index <= impl_->state.commit_index;
+}
+bool RaftNode::final_membership_pending() const noexcept {
+  return impl_->joint.has_value() && impl_->joint->final_pending;
 }
 const PersistentState& RaftNode::persistent_state() const noexcept {
   return impl_->state;

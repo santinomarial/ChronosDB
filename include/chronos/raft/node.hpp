@@ -61,7 +61,12 @@ public:
   [[nodiscard]] LogIndex commit_index() const noexcept;
   [[nodiscard]] LogIndex applied_index() const noexcept;
   [[nodiscard]] std::span<const NodeId> voters() const noexcept;
+  [[nodiscard]] std::span<const NodeId> committed_voters() const noexcept;
+  [[nodiscard]] std::span<const NodeId> joint_old_voters() const noexcept;
+  [[nodiscard]] std::span<const NodeId> joint_new_voters() const noexcept;
   [[nodiscard]] bool joint_membership_active() const noexcept;
+  [[nodiscard]] bool joint_membership_can_finalize() const noexcept;
+  [[nodiscard]] bool final_membership_pending() const noexcept;
   [[nodiscard]] const PersistentState& persistent_state() const noexcept;
 
 private:

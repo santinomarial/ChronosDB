@@ -69,6 +69,9 @@ public:
                                                      std::uint32_t chunk_crc32c);
   [[nodiscard]] common::Status finish_snapshot();
   [[nodiscard]] common::Status mark_caught_up(LogIndex target_applied_index);
+  // These two methods record externally committed milestones. Production callers must use the
+  // tablet reconfiguration coordinator (or an equivalent proof) so Raft membership and metadata
+  // placement commit before advancing the local movement phase.
   [[nodiscard]] common::Status promote_target(std::uint64_t expected_epoch,
                                               std::uint64_t new_epoch);
   [[nodiscard]] common::Status remove_source(std::uint64_t expected_epoch, std::uint64_t new_epoch);

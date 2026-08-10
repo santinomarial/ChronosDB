@@ -792,12 +792,14 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
 - **Feature-pass status:** bounded event-time tablet pruning, proof-bound consistency policies,
   mergeable partial aggregates, bounded exchange backpressure/cancellation, and a coordinator that
   rejects missing/failed fragments are implemented. Tablet movement enforces learner-first,
-  checksummed retryable snapshot, catch-up, epoch-checked promotion, then source removal. General
+  checksummed retryable snapshot, catch-up, epoch-checked promotion, then source removal.
   Leader-linearizable admission now requires an applied Raft read barrier; bounded-stale requires an
   explicit position lag and fresh leader-commit observation; local-eventual remains distinct.
-  General vector-plan fragments/exchange wire bytes, compatible multi-tablet snapshots, placement-to-membership integration,
-  durable transfer, and multi-node failure validation remain deferred; the phase exit gate is not
-  claimed.
+  Tablet movement now reconciles exact joint/final tablet membership with successive committed
+  metadata placement epochs before locally recording target promotion or source removal.
+  General vector-plan fragments/exchange wire bytes, compatible multi-tablet snapshots, durable
+  movement intent/transfer, production leader routing, and multi-node failure validation remain
+  deferred; the phase exit gate is not claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.
 - **Explicit non-scope:** general cross-tablet write transactions, silent consistency downgrade, unlimited shuffle, and topology changes that invalidate tokens without an explicit error/mapping protocol.

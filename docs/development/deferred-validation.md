@@ -138,8 +138,9 @@
   routing/placement epochs, protocol bytes, and leader changes during long scans.
 - Shard-key pruning and statistics in addition to event-time pruning; multi-node scalar/distributed
   differential SQL and partial-aggregation equivalence.
-- Integrate movement with the joint-consensus Raft operations, resumable durable snapshot files, manifest/
-  CSEG install, source/target/leader failures, source switching, bandwidth limits, and stale metadata.
+- Persist and restart the implemented joint-consensus/metadata tablet reconfiguration intent; add
+  idempotent action identities, resumable durable snapshot files, Manifest/CSEG install,
+  source/target/metadata-leader failures, source switching, bandwidth limits, and stale routing.
 - Partitions, duplicate/lost exchanges, skew, chaos, movement at every state, foreground interference,
   scale-out/exchange/coordination/failover benchmarks, and sanitizer/fuzz/property coverage.
 

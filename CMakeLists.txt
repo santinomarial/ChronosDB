@@ -517,6 +517,7 @@ add_library(
   src/raft/node.cpp
   src/raft/persistent_log.cpp
   src/raft/rebalancing.cpp
+  src/raft/tablet_reconfiguration.cpp
 )
 add_library(chronos::raft ALIAS chronos_raft)
 set_target_properties(chronos_raft PROPERTIES EXPORT_NAME raft CXX_EXTENSIONS OFF)
@@ -757,6 +758,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/raft/node_test.cpp
     tests/raft/rebalancing_header_self_contained.cpp
     tests/raft/rebalancing_test.cpp
+    tests/raft/tablet_reconfiguration_header_self_contained.cpp
+    tests/raft/tablet_reconfiguration_test.cpp
     tests/raft/multi_raft_header_self_contained.cpp
     tests/raft/multi_raft_test.cpp
     tests/raft/metadata_header_self_contained.cpp
