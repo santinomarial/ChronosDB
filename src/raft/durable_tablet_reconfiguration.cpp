@@ -79,10 +79,11 @@ request_for_execution(const PreparedTabletReconfigurationDispatch& dispatch) {
   return request;
 }
 
+template <typename TabletGroup>
 [[nodiscard]] common::Result<DurableTabletReconfigurationResult>
 reconcile_impl(RecoveredTabletMovementGeneration& recovered, GroupId tablet_group_id,
                GroupId metadata_group_id, const schema::TableId table_id,
-               const RaftNode& tablet_group, const MetadataStateMachine& metadata,
+               const TabletGroup& tablet_group, const MetadataStateMachine& metadata,
                TabletMovementCheckpointStorage& checkpoint_storage,
                const TabletMovementSnapshotChunkStorage* const chunk_storage,
                const std::optional<NodeId> leader_hint, const TabletMovementLimits limits) {
@@ -242,6 +243,27 @@ reconcile_and_prepare_durable_tablet_reconfiguration(
 common::Result<PreparedDurableTabletReconfigurationResult>
 reconcile_and_prepare_durable_tablet_reconfiguration(
     RecoveredTabletMovementGeneration& recovered, GroupId tablet_group_id,
+    GroupId metadata_group_id, const schema::TableId table_id,
+    const RaftGroupObservation& tablet_group, const MetadataStateMachine& metadata,
+    TabletMovementCheckpointStorage& checkpoint_storage,
+    TabletReconfigurationActionLedger& action_ledger, const std::optional<NodeId> leader_hint,
+    const TabletMovementLimits limits) {
+  try {
+    return prepare_dispatch(reconcile_impl(recovered, std::move(tablet_group_id),
+                                           std::move(metadata_group_id), table_id, tablet_group,
+                                           metadata, checkpoint_storage, nullptr, leader_hint,
+                                           limits),
+                            action_ledger);
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("durable reconfiguration allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("durable reconfiguration exceeded container limits"));
+  }
+}
+
+common::Result<PreparedDurableTabletReconfigurationResult>
+reconcile_and_prepare_durable_tablet_reconfiguration(
+    RecoveredTabletMovementGeneration& recovered, GroupId tablet_group_id,
     GroupId metadata_group_id, const schema::TableId table_id, const RaftNode& tablet_group,
     const MetadataStateMachine& metadata, TabletMovementCheckpointStorage& checkpoint_storage,
     const TabletMovementSnapshotChunkStorage& chunk_storage,
@@ -252,6 +274,28 @@ reconcile_and_prepare_durable_tablet_reconfiguration(
                               table_id, tablet_group, metadata, checkpoint_storage, chunk_storage,
                               leader_hint, limits),
                           action_ledger);
+}
+
+common::Result<PreparedDurableTabletReconfigurationResult>
+reconcile_and_prepare_durable_tablet_reconfiguration(
+    RecoveredTabletMovementGeneration& recovered, GroupId tablet_group_id,
+    GroupId metadata_group_id, const schema::TableId table_id,
+    const RaftGroupObservation& tablet_group, const MetadataStateMachine& metadata,
+    TabletMovementCheckpointStorage& checkpoint_storage,
+    const TabletMovementSnapshotChunkStorage& chunk_storage,
+    TabletReconfigurationActionLedger& action_ledger, const std::optional<NodeId> leader_hint,
+    const TabletMovementLimits limits) {
+  try {
+    return prepare_dispatch(reconcile_impl(recovered, std::move(tablet_group_id),
+                                           std::move(metadata_group_id), table_id, tablet_group,
+                                           metadata, checkpoint_storage, &chunk_storage,
+                                           leader_hint, limits),
+                            action_ledger);
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("durable reconfiguration allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("durable reconfiguration exceeded container limits"));
+  }
 }
 
 common::Result<DurableRaftResult>

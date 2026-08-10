@@ -6,7 +6,8 @@
 - **Extends:** [ADR 0114](0114-bounded-asynchronous-multi-raft-owner.md) and
   [ADR 0134](0134-sealed-local-tablet-reconfiguration-execution.md)
 - **Extended by:** [ADR 0136](0136-idempotent-retained-reconfiguration-action-replay.md) and
-  [ADR 0138](0138-fifo-ordered-raft-group-observation.md)
+  [ADR 0138](0138-fifo-ordered-raft-group-observation.md) and
+  [ADR 0139](0139-observation-driven-tablet-reconfiguration-reconciliation.md)
 
 ## Context
 
@@ -100,3 +101,7 @@ Phase 16 work.
 unresolved here. A producer can now enqueue a bounded owning group observation behind admitted
 execution without borrowing the worker-owned runtime. Authenticated routing and complete
 reconfiguration application reconciliation remain separate work.
+
+[ADR 0139](0139-observation-driven-tablet-reconfiguration-reconciliation.md) then connects that
+owning observation to the existing durable reconciliation and next-action preparation path, closing
+the local async application-observation loop without changing this admission contract.

@@ -5,7 +5,8 @@
 - **Owners:** ChronosDB distributed-systems and storage maintainers
 - **Extends:** [ADR 0121](0121-durable-tablet-reconfiguration-action-ledger.md) and
   [ADR 0132](0132-durable-tablet-reconfiguration-phase-checkpoints.md)
-- **Extended by:** [ADR 0134](0134-sealed-local-tablet-reconfiguration-execution.md)
+- **Extended by:** [ADR 0134](0134-sealed-local-tablet-reconfiguration-execution.md) and
+  [ADR 0139](0139-observation-driven-tablet-reconfiguration-reconciliation.md)
 
 ## Context
 

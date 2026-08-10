@@ -489,11 +489,8 @@ TEST(DurableTabletReconfigurationTest, AdmitsPreparedDispatchToBoundedAsyncOwner
   ASSERT_TRUE(
       metadata->apply_committed(1U, TabletPlacementMetadata{table_id(), tablet_id(), 7U, {2U}, 2U})
           .is_ok());
-  auto observed_node = RaftNode::create(2U, {2U});
-  ASSERT_TRUE(observed_node.has_value());
-  ASSERT_TRUE(observed_node->start_election().has_value());
-  ASSERT_EQ(observed_node->role(), Role::kLeader);
   const GroupId tablet_group = group(std::byte{10U});
+  const GroupId metadata_group = group(std::byte{11U});
   const std::vector<RaftGroupConfiguration> groups{{tablet_group, {2U}}};
   const RaftPersistentLogConfig raft_config{.directory_path = raft_log.path().string()};
   auto runtime = AsyncDurableMultiRaftRuntime::create_new(2U, raft_config, groups);
@@ -503,9 +500,14 @@ TEST(DurableTabletReconfigurationTest, AdmitsPreparedDispatchToBoundedAsyncOwner
   auto election_result = election->wait();
   ASSERT_TRUE(election_result.has_value()) << election_result.error().to_string();
   ASSERT_TRUE(election_result->front().status.is_ok());
+  auto initial_observation = runtime->try_observe_group(tablet_group);
+  ASSERT_TRUE(initial_observation.has_value()) << initial_observation.error().to_string();
+  auto initial_observed = initial_observation->wait();
+  ASSERT_TRUE(initial_observed.has_value()) << initial_observed.error().to_string();
+  ASSERT_TRUE(initial_observed->front().observation.has_value());
   auto prepared = reconcile_and_prepare_durable_tablet_reconfiguration(
-      *recovered, tablet_group, group(std::byte{11U}), table_id(), *observed_node, *metadata,
-      *checkpoint_storage, *action_ledger, 2U);
+      *recovered, tablet_group, metadata_group, table_id(), *initial_observed->front().observation,
+      *metadata, *checkpoint_storage, *action_ledger, 2U);
   ASSERT_TRUE(prepared.has_value()) << prepared.error().to_string();
   ASSERT_TRUE(prepared->dispatch.has_value());
 
@@ -517,6 +519,48 @@ TEST(DurableTabletReconfigurationTest, AdmitsPreparedDispatchToBoundedAsyncOwner
   EXPECT_TRUE(executed->front().status.is_ok()) << executed->front().status.to_string();
   ASSERT_TRUE(executed->front().transition.has_value());
   EXPECT_TRUE(executed->front().transition->persistence.has_value());
+
+  auto pending_observation = runtime->try_observe_group(tablet_group);
+  ASSERT_TRUE(pending_observation.has_value()) << pending_observation.error().to_string();
+  auto pending_observed = pending_observation->wait();
+  ASSERT_TRUE(pending_observed.has_value()) << pending_observed.error().to_string();
+  ASSERT_TRUE(pending_observed->front().observation.has_value());
+  auto pending = reconcile_and_prepare_durable_tablet_reconfiguration(
+      *recovered, tablet_group, metadata_group, table_id(), *pending_observed->front().observation,
+      *metadata, *checkpoint_storage, *action_ledger, 2U);
+  ASSERT_TRUE(pending.has_value()) << pending.error().to_string();
+  EXPECT_FALSE(pending->dispatch.has_value());
+
+  auto committed = runtime->try_submit(
+      {{tablet_group,
+        ReceiveOperation{4U, AppendEntriesResponse{1U, true, 1U, std::nullopt, 0U}}}});
+  ASSERT_TRUE(committed.has_value()) << committed.error().to_string();
+  auto committed_result = committed->wait();
+  ASSERT_TRUE(committed_result.has_value()) << committed_result.error().to_string();
+  ASSERT_TRUE(committed_result->front().status.is_ok());
+  auto committed_observation = runtime->try_observe_group(tablet_group);
+  ASSERT_TRUE(committed_observation.has_value()) << committed_observation.error().to_string();
+  auto committed_observed = committed_observation->wait();
+  ASSERT_TRUE(committed_observed.has_value()) << committed_observed.error().to_string();
+  ASSERT_TRUE(committed_observed->front().observation.has_value());
+  EXPECT_EQ(committed_observed->front().observation->commit_index, 1U);
+  EXPECT_TRUE(committed_observed->front().observation->joint_membership_can_finalize);
+
+  RaftGroupObservation foreign = *committed_observed->front().observation;
+  foreign.group_id = metadata_group;
+  auto rejected_observation = reconcile_and_prepare_durable_tablet_reconfiguration(
+      *recovered, tablet_group, metadata_group, table_id(), foreign, *metadata, *checkpoint_storage,
+      *action_ledger, 2U);
+  ASSERT_FALSE(rejected_observation.has_value());
+  EXPECT_EQ(rejected_observation.error().code(), common::StatusCode::kInvalidArgument);
+
+  auto finalize = reconcile_and_prepare_durable_tablet_reconfiguration(
+      *recovered, tablet_group, metadata_group, table_id(),
+      *committed_observed->front().observation, *metadata, *checkpoint_storage, *action_ledger, 2U);
+  ASSERT_TRUE(finalize.has_value()) << finalize.error().to_string();
+  ASSERT_TRUE(finalize->dispatch.has_value());
+  EXPECT_EQ(finalize->dispatch->action().kind,
+            TabletReconfigurationActionKind::kFinalizeJointMembership);
   EXPECT_TRUE(runtime->shutdown().is_ok());
   auto rejected = try_submit_local_prepared_tablet_reconfiguration(*prepared->dispatch, *runtime);
   ASSERT_FALSE(rejected.has_value());
@@ -526,6 +570,7 @@ TEST(DurableTabletReconfigurationTest, AdmitsPreparedDispatchToBoundedAsyncOwner
   ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
   ASSERT_NE(reopened->find_group(tablet_group), nullptr);
   EXPECT_EQ(reopened->find_group(tablet_group)->persistent_state().log.size(), 1U);
+  EXPECT_EQ(reopened->find_group(tablet_group)->commit_index(), 1U);
 }
 
 TEST(DurableTabletReconfigurationTest, SuppressesExactRetainedPlacementRetry) {

@@ -777,7 +777,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   boundary. Production transport and tablet snapshot acquisition remain deferred.
   The asynchronous owner now exposes FIFO-ordered bounded owning group observations for local
   leader, commit/apply, and stable/joint membership state without releasing worker-owned pointers.
-  Production leader routing and application reconciliation still remain.
+  Those observations now feed the same semantically validated, checkpoint-first and ledger-
+  prepared reconfiguration reconciliation path; authenticated production leader routing remains.
   The dedicated metadata group now has canonical versioned/checksummed command bytes and committed
   application/reopen recovery for nodes, schema identities, tablet placement epochs, leader hints,
   and retention. Complete schema definitions and metadata snapshots remain; placement-driven
@@ -833,7 +834,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   local synchronous executor releases its Raft result and outbound messages only after the existing
   physical-log synchronization boundary. Sealed dispatches also enter the bounded asynchronous
   single-owner FIFO without blocking producers or being consumed on admission rejection, and
-  bounded owning group observations follow that same FIFO for later routing/reconciliation. Exact
+  bounded owning group observations follow that same FIFO and can drive authoritative local
+  reconciliation into the next prepared action. Exact
   retained placement and membership retries now suppress current-term/committed re-append, while an
   uncommitted prior-term match adds or reuses one empty current-term progress entry without
   duplicating the command. Physical Manifest/CSEG handoff

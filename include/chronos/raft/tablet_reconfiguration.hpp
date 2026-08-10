@@ -55,6 +55,8 @@ public:
 
   [[nodiscard]] common::Result<std::optional<TabletReconfigurationAction>>
   reconcile(const RaftNode& tablet_group, const MetadataStateMachine& metadata);
+  [[nodiscard]] common::Result<std::optional<TabletReconfigurationAction>>
+  reconcile(const RaftGroupObservation& tablet_group, const MetadataStateMachine& metadata);
 
   [[nodiscard]] TabletMovementRecord record() const;
   // Transfers the reconciled movement out of a disposable candidate coordinator.

@@ -5,6 +5,7 @@
 - **Owners:** ChronosDB distributed-systems maintainers
 - **Extends:** [ADR 0114](0114-bounded-asynchronous-multi-raft-owner.md) and
   [ADR 0135](0135-bounded-asynchronous-prepared-reconfiguration-admission.md)
+- **Extended by:** [ADR 0139](0139-observation-driven-tablet-reconfiguration-reconciliation.md)
 
 ## Context
 
@@ -101,3 +102,10 @@ continuations, full metadata application reconciliation, and safe ledger reclama
 - [Asynchronous Multi-Raft owner learning guide](../learning/asynchronous-multi-raft-owner.md)
 - [Tablet reconfiguration learning guide](../learning/tablet-reconfiguration.md)
 - [Phase 16 roadmap](../roadmap.md#phase-16--distributed-query-execution-and-rebalancing)
+
+## Retrospective (2026-08-10)
+
+[ADR 0139](0139-observation-driven-tablet-reconfiguration-reconciliation.md) makes this owning
+value an accepted input to durable tablet reconfiguration reconciliation. It preserves this ADR's
+point-in-order, non-lease semantics while validating group and membership coherence before any
+phase checkpoint or action-ledger change.

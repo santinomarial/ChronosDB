@@ -72,6 +72,16 @@ reconcile_and_prepare_durable_tablet_reconfiguration(
     TabletReconfigurationActionLedger& action_ledger,
     std::optional<NodeId> leader_hint = std::nullopt, TabletMovementLimits limits = {});
 
+// Async-owner composition. The owning observation must name the configured tablet group and is
+// semantically validated before it can drive the same durable checkpoint/prepare transition.
+[[nodiscard]] common::Result<PreparedDurableTabletReconfigurationResult>
+reconcile_and_prepare_durable_tablet_reconfiguration(
+    RecoveredTabletMovementGeneration& recovered, GroupId tablet_group_id,
+    GroupId metadata_group_id, schema::TableId table_id, const RaftGroupObservation& tablet_group,
+    const MetadataStateMachine& metadata, TabletMovementCheckpointStorage& checkpoint_storage,
+    TabletReconfigurationActionLedger& action_ledger,
+    std::optional<NodeId> leader_hint = std::nullopt, TabletMovementLimits limits = {});
+
 // Executes one sealed, ledger-prepared action on a node-local synchronous durable runtime. Any
 // returned transition, including outbound messages, is released only after the runtime's existing
 // persist-and-sync boundary. Commit/application observation and remote routing remain external.
@@ -90,6 +100,15 @@ try_submit_local_prepared_tablet_reconfiguration(
 reconcile_and_prepare_durable_tablet_reconfiguration(
     RecoveredTabletMovementGeneration& recovered, GroupId tablet_group_id,
     GroupId metadata_group_id, schema::TableId table_id, const RaftNode& tablet_group,
+    const MetadataStateMachine& metadata, TabletMovementCheckpointStorage& checkpoint_storage,
+    const TabletMovementSnapshotChunkStorage& chunk_storage,
+    TabletReconfigurationActionLedger& action_ledger,
+    std::optional<NodeId> leader_hint = std::nullopt, TabletMovementLimits limits = {});
+
+[[nodiscard]] common::Result<PreparedDurableTabletReconfigurationResult>
+reconcile_and_prepare_durable_tablet_reconfiguration(
+    RecoveredTabletMovementGeneration& recovered, GroupId tablet_group_id,
+    GroupId metadata_group_id, schema::TableId table_id, const RaftGroupObservation& tablet_group,
     const MetadataStateMachine& metadata, TabletMovementCheckpointStorage& checkpoint_storage,
     const TabletMovementSnapshotChunkStorage& chunk_storage,
     TabletReconfigurationActionLedger& action_ledger,

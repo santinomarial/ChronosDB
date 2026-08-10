@@ -79,6 +79,12 @@ an owning role/term/commit/apply/membership snapshot after admitted work without
 worker-owned `RaftNode`. The observation is not a leader lease or application proof; authoritative
 metadata and movement reconciliation still decide the next action or phase.
 
+Production reconciliation accepts that owning observation after validating its tablet-group
+identity, ordered frontiers, canonical voters, and exact stable/joint relationships. Uncommitted
+membership remains a no-dispatch wait. Committed membership plus applied metadata feeds the same
+checkpoint-first, ledger-prepare-second transition used by the node-local path, so asynchronous
+completion never needs a second mutable truth.
+
 Placement execution uses an explicit exact-retained proposal operation. If the identical canonical
 metadata command is already committed or retained in the current term, retry returns an empty
 successful transition without another append or synchronization. An uncommitted prior-term match
