@@ -4,6 +4,7 @@
 - **Date:** 2026-08-09
 - **Owners:** ChronosDB distributed-systems and storage maintainers
 - **Extends:** [ADR 0119](0119-deterministic-tablet-reconfiguration-action-identities.md)
+- **Extended by:** [ADR 0121](0121-durable-tablet-reconfiguration-action-ledger.md)
 
 ## Context
 
@@ -46,8 +47,8 @@ contracts and no current use in this ledger.
 
 Focused tests exact-round-trip all three supported actions and reject damage, identity/kind
 mismatch, and unsupported operations. Invariants 8, 10, 14, and 18 apply. Golden fixtures, fuzzing,
-hostile length matrices, future-version compatibility, filesystem installation, transport framing,
-and authenticated routing remain follow-up work.
+hostile length matrices, future-version compatibility, transport framing, and authenticated routing
+remain follow-up work. ADR 0121 supplies the filesystem installation owner.
 
 ## References
 

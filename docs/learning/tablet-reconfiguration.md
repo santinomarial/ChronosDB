@@ -39,6 +39,11 @@ the destination group and exact supported operation. Decode revalidates the stab
 operation-kind agreement, canonical voter set, and nested placement command before a retry owner can
 dispatch it.
 
+`TabletReconfigurationActionLedger::prepare` installs those exact bytes under the tablet's exclusive
+lock before dispatch. A same-ID retry succeeds only for byte-identical content. Reopen discards only
+canonical temporaries, while immutable final actions remain evidence; the reconciler's observed
+Raft/metadata state decides whether any prepared action still needs execution.
+
 ## Complexity and tradeoffs
 
 Reconciliation is linear in the bounded replica count. The explicit two-group handoff adds control-

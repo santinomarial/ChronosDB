@@ -41,3 +41,16 @@ length mismatch, damage, or trailing data fail closed.
 Major 1, minor 0 is exact. Unknown version values are unsupported after header integrity succeeds.
 No native object layout is serialized. Future action kinds or payload revisions require an explicit
 version policy and cannot reinterpret existing v1 bytes.
+
+## Durable ledger namespace
+
+One tablet-bound directory contains advisory `LOCK`, immutable finals named
+`action-%020u-%03u.ract`, and canonical installation temporaries formed by appending `.tmp`.
+The coordinates are movement placement epoch and action kind. The embedded tablet/epoch/kind must
+match the configured owner and final filename.
+
+Installation is exclusive temporary creation, complete write, exact readback/decode, file sync,
+close, atomic no-replace rename, and directory sync. The directory sync is the durable preparation
+boundary. Reopen removes only canonical regular temporaries and synchronizes cleanup. Final actions
+remain immutable; authoritative Raft/metadata state, not directory order, determines which prepared
+action is still pending.
