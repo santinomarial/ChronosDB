@@ -79,6 +79,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 
 - [Native Protocol v1](protocol/native-v1.md): fixed checksummed 1.0 framing plus negotiated 1.1
   subscription delivery, finite limits, compatibility, and rejection rules.
+- [Remote Tablet Reconfiguration Request v1](protocol/remote-tablet-reconfiguration-v1.md):
+  principal-authorized source/target and exact leader-term binding around one canonical action.
 
 ## Delivery
 

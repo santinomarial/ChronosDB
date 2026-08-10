@@ -193,6 +193,24 @@ PreparedTabletReconfigurationDispatch::preparation() const noexcept {
   return preparation_;
 }
 
+common::Result<PreparedTabletReconfigurationDispatch>
+prepare_received_tablet_reconfiguration_action(TabletReconfigurationAction action,
+                                               TabletReconfigurationActionLedger& action_ledger) {
+  try {
+    auto prepared = action_ledger.prepare(action);
+    if (!prepared.has_value())
+      return common::make_unexpected(std::move(prepared).error());
+    return detail::PreparedTabletReconfigurationDispatchFactory::create(std::move(action),
+                                                                        std::move(*prepared));
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        exhausted("received reconfiguration preparation allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("received reconfiguration preparation exceeded container limits"));
+  }
+}
+
 common::Result<DurableTabletReconfigurationResult> reconcile_durable_tablet_reconfiguration(
     RecoveredTabletMovementGeneration& recovered, GroupId tablet_group_id,
     GroupId metadata_group_id, const schema::TableId table_id, const RaftNode& tablet_group,
@@ -335,6 +353,28 @@ common::Result<AsyncDurableRaftCompletion> try_submit_local_prepared_tablet_reco
   } catch (const std::length_error&) {
     return common::make_unexpected(
         exhausted("prepared reconfiguration admission exceeded container limits"));
+  }
+}
+
+common::Result<AsyncDurableRaftCompletion>
+try_submit_current_leader_prepared_tablet_reconfiguration(
+    const PreparedTabletReconfigurationDispatch& dispatch, const Term required_leader_term,
+    AsyncDurableMultiRaftRuntime& runtime) {
+  common::Status valid = validate_prepared_dispatch(dispatch);
+  if (!valid.is_ok())
+    return common::make_unexpected(std::move(valid));
+  if (required_leader_term == 0U)
+    return common::make_unexpected(invalid("required reconfiguration leader term must be nonzero"));
+  try {
+    DurableRaftRequest request = request_for_execution(dispatch);
+    request.required_leader_term = required_leader_term;
+    return runtime.try_submit({std::move(request)});
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        exhausted("current-leader reconfiguration admission allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("current-leader reconfiguration admission exceeded container limits"));
   }
 }
 

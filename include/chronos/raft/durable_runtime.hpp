@@ -65,7 +65,7 @@ using DurableRaftOperation =
 struct DurableRaftRequest {
   DurableRaftRequest(GroupId configured_group_id, DurableRaftOperation configured_operation,
                      std::optional<Term> configured_required_leader_term = std::nullopt)
-      : group_id(std::move(configured_group_id)), operation(std::move(configured_operation)),
+      : group_id(configured_group_id), operation(std::move(configured_operation)),
         required_leader_term(configured_required_leader_term) {}
 
   GroupId group_id;

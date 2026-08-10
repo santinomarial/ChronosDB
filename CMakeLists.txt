@@ -545,6 +545,21 @@ chronos_set_project_warnings(chronos_raft)
 chronos_enable_sanitizers(chronos_raft)
 chronos_enable_static_analysis(chronos_raft)
 
+add_library(chronos_cluster src/cluster/remote_tablet_reconfiguration.cpp)
+add_library(chronos::cluster ALIAS chronos_cluster)
+set_target_properties(chronos_cluster PROPERTIES EXPORT_NAME cluster CXX_EXTENSIONS OFF)
+target_compile_features(chronos_cluster PUBLIC cxx_std_23)
+target_include_directories(
+  chronos_cluster
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+)
+target_link_libraries(chronos_cluster PUBLIC chronos::network chronos::raft)
+chronos_set_project_warnings(chronos_cluster)
+chronos_enable_sanitizers(chronos_cluster)
+chronos_enable_static_analysis(chronos_cluster)
+
 add_library(
   chronos_tiering
   src/tiering/object_store.cpp
@@ -811,6 +826,19 @@ if(CHRONOS_BUILD_TESTS)
   chronos_enable_sanitizers(chronos_raft_tests)
   chronos_enable_static_analysis(chronos_raft_tests)
   gtest_discover_tests(chronos_raft_tests DISCOVERY_TIMEOUT 30)
+
+  add_executable(
+    chronos_cluster_tests
+    tests/cluster/remote_tablet_reconfiguration_header_self_contained.cpp
+    tests/cluster/remote_tablet_reconfiguration_test.cpp
+  )
+  set_target_properties(chronos_cluster_tests PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_cluster_tests PRIVATE cxx_std_23)
+  target_link_libraries(chronos_cluster_tests PRIVATE chronos::cluster GTest::gtest_main)
+  chronos_set_project_warnings(chronos_cluster_tests)
+  chronos_enable_sanitizers(chronos_cluster_tests)
+  chronos_enable_static_analysis(chronos_cluster_tests)
+  gtest_discover_tests(chronos_cluster_tests DISCOVERY_TIMEOUT 30)
 
   add_executable(
     chronos_tiering_tests

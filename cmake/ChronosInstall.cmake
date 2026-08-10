@@ -20,6 +20,7 @@ function(chronos_configure_installation)
       chronos_runtime
       chronos_live
       chronos_raft
+      chronos_cluster
       chronos_tiering
       chronosctl
       chronos-csegdump

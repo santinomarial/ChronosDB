@@ -175,3 +175,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0138](0138-fifo-ordered-raft-group-observation.md) | FIFO-ordered Raft group observation | accepted |
 | [0139](0139-observation-driven-tablet-reconfiguration-reconciliation.md) | Observation-driven tablet reconfiguration reconciliation | accepted |
 | [0140](0140-atomic-current-leader-term-admission.md) | Atomic current-leader term admission | accepted |
+| [0141](0141-authenticated-remote-reconfiguration-receiver.md) | Authenticated remote reconfiguration receiver | accepted |

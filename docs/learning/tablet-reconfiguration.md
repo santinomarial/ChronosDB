@@ -84,6 +84,17 @@ checks group existence, leader role, and exact term immediately before dispatch,
 decision cannot mutate the group even when another producer queues a leadership transition. The
 check is only an atomic admission fence; it is not a lease or commit proof.
 
+`RemoteTabletReconfigurationReceiver` is the receiving composition around that fence. It consumes a
+versioned/checksummed internal request only after the network layer supplies an authorized nonzero
+principal, then delegates principal-to-source-node authorization to an embedding-owned policy. The
+receiver exact-matches target node, tablet, and tablet-versus-metadata group before it durably
+prepares the nested action and admits it. Authentication or route rejection therefore cannot write
+ledger evidence. Queue rejection can leave preparation evidence and is safely retryable.
+
+The receiver is not a socket or TLS backend. Remote serving remains disabled by the network
+security boundary until a maintained TLS carrier delivers these bytes and authenticated principal
+metadata. A completed receiver operation is still local durability rather than commit/application.
+
 Production reconciliation accepts that owning observation after validating its tablet-group
 identity, ordered frontiers, canonical voters, and exact stable/joint relationships. Uncommitted
 membership remains a no-dispatch wait. Committed membership plus applied metadata feeds the same
@@ -102,8 +113,9 @@ retained-intent rule.
 Reconciliation is linear in the bounded replica count. The explicit two-group handoff adds control-
 plane latency but avoids treating routing intent as consensus. Durable checkpoints before every
 post-catch-up live phase adoption and deterministic action identities make restart reconstruction
-exact; production leader routing, retry-ledger consumption, and failure injection remain separate
-work.
+exact. Authenticated receiver admission and duplicate-safe current-term execution are implemented;
+the TLS/socket sender/response carrier, retry-ledger consumption, and broader failure injection
+remain separate work.
 
 ## Likely interview questions
 

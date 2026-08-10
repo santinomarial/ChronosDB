@@ -49,6 +49,13 @@ struct PreparedDurableTabletReconfigurationResult {
   std::optional<InstalledTabletMovementCheckpoint> installed_checkpoint;
 };
 
+// Receiver-side preparation for an exact action decoded from an authenticated cluster request.
+// The returned sealed dispatch is released only after the tablet-bound ledger has durably prepared
+// the canonical action bytes. Admission may then be retried without consuming the dispatch.
+[[nodiscard]] common::Result<PreparedTabletReconfigurationDispatch>
+prepare_received_tablet_reconfiguration_action(TabletReconfigurationAction action,
+                                               TabletReconfigurationActionLedger& action_ledger);
+
 // Reconciles against a disposable movement candidate. When authoritative Raft/metadata state
 // advances movement phase, the next checkpoint is installed before the candidate is adopted by the
 // recovered live owner. This overload can persist only self-contained generations.
@@ -95,6 +102,13 @@ execute_local_prepared_tablet_reconfiguration(const PreparedTabletReconfiguratio
 [[nodiscard]] common::Result<AsyncDurableRaftCompletion>
 try_submit_local_prepared_tablet_reconfiguration(
     const PreparedTabletReconfigurationDispatch& dispatch, AsyncDurableMultiRaftRuntime& runtime);
+
+// Current-leader receiver admission. The nonzero term is checked atomically by the asynchronous
+// runtime's exclusive durable owner immediately before the exact retained action is dispatched.
+[[nodiscard]] common::Result<AsyncDurableRaftCompletion>
+try_submit_current_leader_prepared_tablet_reconfiguration(
+    const PreparedTabletReconfigurationDispatch& dispatch, Term required_leader_term,
+    AsyncDurableMultiRaftRuntime& runtime);
 
 [[nodiscard]] common::Result<PreparedDurableTabletReconfigurationResult>
 reconcile_and_prepare_durable_tablet_reconfiguration(

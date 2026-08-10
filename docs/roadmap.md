@@ -840,11 +840,15 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   reconciliation into the next prepared action. Exact
   retained placement and membership retries now suppress current-term/committed re-append, while an
   uncommitted prior-term match adds or reuses one empty current-term progress entry without
-  duplicating the command. Physical Manifest/CSEG handoff
+  duplicating the command. A separate cluster-integration target now provides canonical bounded
+  remote action-request bytes and receiver-side authenticated-principal/source authorization,
+  tablet/group binding, durable preparation, duplicate-safe replay, and atomic current-leader-term
+  admission. Its TLS/socket carrier, sender response/retry loop, and leader refresh remain
+  incomplete. Physical Manifest/CSEG handoff
   remains incomplete. General
-  vector-plan fragments/exchange wire bytes, compatible multi-tablet snapshots, authenticated
-  leader transport, and multi-node failure validation remain deferred; the phase exit gate is not
-  claimed.
+  vector-plan fragments/exchange wire bytes, compatible multi-tablet snapshots, the maintained TLS
+  carrier and complete leader transport, and multi-node failure validation remain deferred; the
+  phase exit gate is not claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.
 - **Explicit non-scope:** general cross-tablet write transactions, silent consistency downgrade, unlimited shuffle, and topology changes that invalidate tokens without an explicit error/mapping protocol.
