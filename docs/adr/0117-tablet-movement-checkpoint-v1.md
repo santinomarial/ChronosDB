@@ -3,6 +3,7 @@
 - **Status:** accepted
 - **Date:** 2026-08-09
 - **Owners:** ChronosDB distributed-systems and storage maintainers
+- **Extended by:** [ADR 0118](0118-durable-tablet-movement-checkpoint-generations.md)
 
 ## Context
 
@@ -25,9 +26,7 @@ the source and target learner with capacity for promotion; caught-up phases requ
 snapshot with matching content CRC; promoted/complete phases require the exact source/target voter
 relationship and no learners. Recovery adopts owned bytes only after validation.
 
-The checkpoint is an encoded value, not yet a filesystem installation protocol. A later owner must
-write, synchronize, atomically install, and directory-synchronize generations before treating them
-as restart authority.
+ADR 0118 wraps this value in a generation-bound envelope and supplies its durable filesystem owner.
 
 ## Detailed rationale
 
@@ -49,8 +48,8 @@ Separate header/payload/trailer integrity rejects damaged framing before semanti
 
 Every in-memory phase can round-trip and partial transfer resumes from the exact retained offset.
 Checkpoint size is proportional to the received prefix and bounded by configured snapshot and
-checkpoint limits. Durable file generations, cleanup, crash installation evidence, and write-
-amplification optimization remain follow-up work.
+checkpoint limits. Chunked prefix storage and write-amplification optimization remain follow-up
+work.
 
 ## Affected invariants
 
@@ -72,8 +71,8 @@ their movements without restarting the learner transfer.
 
 ## Unresolved questions
 
-Generation naming, atomic file installation, prefix chunking, encryption, cleanup after completion,
-and whether large transfers should use independently checksummed chunk files remain unresolved.
+Prefix chunking, encryption, cleanup after completion, and whether large transfers should use
+independently checksummed chunk files remain unresolved.
 
 ## References
 

@@ -50,6 +50,13 @@ TEST(TabletMovementCheckpointTest, RoundTripsPartialTransferAndResumesExactly) {
   ASSERT_TRUE(ready.has_value());
   EXPECT_EQ(ready->record.phase, TabletMovementPhase::kReady);
   EXPECT_EQ(ready->received_snapshot, snapshot);
+
+  TabletMovementCheckpointGeneration generation{7U, checkpoint(*recovered)};
+  auto generated = encode_tablet_movement_checkpoint_generation_v1(generation);
+  ASSERT_TRUE(generated.has_value()) << generated.error().to_string();
+  auto decoded_generation = decode_tablet_movement_checkpoint_generation_v1(*generated);
+  ASSERT_TRUE(decoded_generation.has_value()) << decoded_generation.error().to_string();
+  EXPECT_EQ(*decoded_generation, generation);
 }
 
 TEST(TabletMovementCheckpointTest, RoundTripsEmptyAndCompletePhases) {
@@ -95,6 +102,9 @@ TEST(TabletMovementCheckpointTest, RejectsDamageTruncationAndInconsistentRecover
       encode_tablet_movement_checkpoint_v1(checkpoint(*movement), {.maximum_checkpoint_bytes = 64U})
           .error()
           .code(),
+      common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(
+      encode_tablet_movement_checkpoint_generation_v1({0U, checkpoint(*movement)}).error().code(),
       common::StatusCode::kInvalidArgument);
 }
 

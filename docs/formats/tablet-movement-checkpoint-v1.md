@@ -59,3 +59,37 @@ extensions in v1.0.
 Major 1, minor 0 is exact. Unknown major/minor values are unsupported; invalid relationships,
 reserved bytes, truncation, trailing data, or checksum mismatch are corruption. Native structs are
 never serialized.
+
+## Durable generation envelope
+
+Filesystem installation wraps exactly one checkpoint in a second version 1.0 value. Its 64-byte
+header is followed by the complete nested checkpoint and a 4-byte CRC32C trailer.
+
+| Offset | Size | Field |
+| ---: | ---: | --- |
+| 0 | 8 | magic `CHRMOVG\0` |
+| 8 | 2 | major `1` |
+| 10 | 2 | minor `0` |
+| 12 | 4 | header size `64` |
+| 16 | 8 | total envelope size |
+| 24 | 8 | nonzero checkpoint generation |
+| 32 | 8 | nested checkpoint size |
+| 40 | 4 | nested checkpoint CRC32C |
+| 44 | 4 | header CRC32C with this field zero |
+| 48 | 16 | zero reserved |
+
+The trailer covers the header and nested checkpoint. The complete envelope, including framing, must
+fit the configured checkpoint limit. Both the nested and outer checksums are mandatory.
+
+## Filesystem namespace and selection
+
+One tablet-owned directory contains advisory `LOCK`, immutable final files named
+`generation-%020u.movc`, and at most an interrupted canonical `.tmp` counterpart. Generations begin
+at one and remain contiguous. Installation is exclusive temporary creation, complete write, exact
+readback/decode, file sync, close, no-replace rename, and directory sync. The directory sync is the
+durable success boundary.
+
+Reopen removes only canonical regular temporaries and synchronizes removal. Selection rejects gaps
+or malformed recognized entries and accepts the latest file only when its embedded generation and
+nested tablet identity match the filename and configured owner. Old final generations remain
+immutable and are not reclaimed by this format owner.

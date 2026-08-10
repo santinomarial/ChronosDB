@@ -7,6 +7,10 @@
 `TabletMovement::recover` then reconstructs the owning state machine from the decoded record and
 snapshot prefix.
 
+`TabletMovementCheckpointStorage` owns a locked directory for one tablet. It installs and selects
+versioned generation envelopes whose embedded coordinate prevents renaming valid old bytes into a
+false latest recovery point.
+
 ## Invariants and ownership
 
 The record and prefix agree on received length. Replica/learner sets are sorted and unique. Before
@@ -25,6 +29,12 @@ before reserve/copy. A framed but semantically impossible checkpoint is corrupti
 invalid input on encode/recover. Encoding and decoding are linear in replica metadata plus received
 snapshot bytes and require one output/owned-prefix allocation.
 
+Storage exact-reads before file sync, renames without replacement, and treats the final directory
+sync as the success boundary. A post-rename directory-sync failure poisons the live owner because it
+cannot know whether a crash will retain the name. Reopen removes only canonical temporaries,
+requires generations contiguous from one, and revalidates generation, tablet, nested checksums, and
+semantic state before recovery.
+
 ## Tradeoffs and likely interview questions
 
 Self-contained prefixes simplify audit and recovery but can rewrite large prefixes. Generation-
@@ -35,4 +45,5 @@ remain bound to an atomic checkpoint.
 - Why is a full content CRC required only once transfer is complete?
 - Why must pre-promotion voters leave capacity for the learner?
 - Why is movement progress not stored as a metadata Raft command?
-- What filesystem steps are still required before bytes are durable authority?
+- Why must the generation be inside the checksummed envelope rather than only in the filename?
+- Why does a directory-sync failure poison the owner after rename?
