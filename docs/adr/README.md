@@ -165,3 +165,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0128](0128-tablet-movement-rtas-handoff.md) | Tablet movement RTAS handoff | accepted |
 | [0129](0129-tablet-movement-raft-snapshot-completion.md) | Tablet movement Raft snapshot completion | accepted |
 | [0130](0130-durable-tablet-movement-ready-reconciliation.md) | Durable tablet movement ready reconciliation | accepted |
+| [0131](0131-restartable-tablet-reconfiguration-phases.md) | Restartable tablet reconfiguration phases | accepted |

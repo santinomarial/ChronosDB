@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
+#include <limits>
 #include <optional>
 #include <variant>
 #include <vector>
@@ -24,8 +25,9 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
   return GroupId{bytes};
 }
 
-[[nodiscard]] TabletMovement ready_movement() {
-  auto movement = TabletMovement::begin(id<schema::TabletId>(3U), 7U, 1U, 4U, {1U, 2U, 3U});
+[[nodiscard]] TabletMovement ready_movement(const std::uint64_t placement_epoch = 7U) {
+  auto movement =
+      TabletMovement::begin(id<schema::TabletId>(3U), placement_epoch, 1U, 4U, {1U, 2U, 3U});
   EXPECT_TRUE(movement.has_value());
   const std::vector<std::byte> snapshot{std::byte{1U}, std::byte{2U}};
   EXPECT_TRUE(
@@ -194,6 +196,75 @@ TEST(TabletReconfigurationTest, ReconstructsTheSamePendingActionIdentityAfterRes
   EXPECT_EQ((*retried)->id, (*first_action)->id);
   EXPECT_EQ((*retried)->kind, (*first_action)->kind);
   EXPECT_EQ((*retried)->request.group_id, (*first_action)->request.group_id);
+}
+
+TEST(TabletReconfigurationTest, ResumesSourceRemovalAndCompleteStateAfterRestart) {
+  const GroupId tablet_group = group(10U);
+  const GroupId metadata_group = group(11U);
+  const auto table = id<schema::TableId>(2U);
+  const auto tablet = id<schema::TabletId>(3U);
+
+  auto promoted = ready_movement();
+  ASSERT_TRUE(promoted.promote_target(7U, 8U).is_ok());
+  auto promoted_metadata = MetadataStateMachine::create();
+  ASSERT_TRUE(promoted_metadata.has_value());
+  ASSERT_TRUE(
+      promoted_metadata
+          ->apply_committed(1U, TabletPlacementMetadata{table, tablet, 8U, {1U, 2U, 3U, 4U}, 2U})
+          .is_ok());
+  auto promoted_node = RaftNode::create(2U, {1U, 2U, 3U, 4U});
+  ASSERT_TRUE(promoted_node.has_value());
+  ASSERT_TRUE(promoted_node->start_election().has_value());
+  ASSERT_TRUE(promoted_node->receive(1U, RequestVoteResponse{1U, true}).has_value());
+  ASSERT_TRUE(promoted_node->receive(3U, RequestVoteResponse{1U, true}).has_value());
+  ASSERT_EQ(promoted_node->role(), Role::kLeader);
+  auto resumed = TabletReconfigurationCoordinator::create(tablet_group, metadata_group, table,
+                                                          std::move(promoted), 2U);
+  ASSERT_TRUE(resumed.has_value()) << resumed.error().to_string();
+  auto removal = resumed->reconcile(*promoted_node, *promoted_metadata);
+  ASSERT_TRUE(removal.has_value()) << removal.error().to_string();
+  ASSERT_TRUE(removal->has_value());
+  EXPECT_EQ((*removal)->kind, TabletReconfigurationActionKind::kBeginJointMembership);
+  const auto* begin = std::get_if<BeginMembershipChangeOperation>(&(*removal)->request.operation);
+  ASSERT_NE(begin, nullptr);
+  EXPECT_EQ(begin->new_voters, (std::vector<NodeId>{2U, 3U, 4U}));
+  EXPECT_EQ((*removal)->id,
+            (TabletReconfigurationActionId{
+                tablet, 8U, TabletReconfigurationActionKind::kBeginJointMembership}));
+
+  auto complete = ready_movement();
+  ASSERT_TRUE(complete.promote_target(7U, 8U).is_ok());
+  ASSERT_TRUE(complete.remove_source(8U, 9U).is_ok());
+  auto complete_metadata = MetadataStateMachine::create();
+  ASSERT_TRUE(complete_metadata.has_value());
+  ASSERT_TRUE(
+      complete_metadata
+          ->apply_committed(1U, TabletPlacementMetadata{table, tablet, 9U, {2U, 3U, 4U}, 2U})
+          .is_ok());
+  auto complete_node = RaftNode::create(2U, {2U, 3U, 4U});
+  ASSERT_TRUE(complete_node.has_value());
+  auto terminal = TabletReconfigurationCoordinator::create(tablet_group, metadata_group, table,
+                                                           std::move(complete), 2U);
+  ASSERT_TRUE(terminal.has_value()) << terminal.error().to_string();
+  auto no_action = terminal->reconcile(*complete_node, *complete_metadata);
+  ASSERT_TRUE(no_action.has_value()) << no_action.error().to_string();
+  EXPECT_FALSE(no_action->has_value());
+  EXPECT_EQ(terminal->record().phase, TabletMovementPhase::kComplete);
+
+  const std::uint64_t maximum_epoch = std::numeric_limits<std::uint64_t>::max();
+  auto maximum_promoted = ready_movement(maximum_epoch - 2U);
+  ASSERT_TRUE(maximum_promoted.promote_target(maximum_epoch - 2U, maximum_epoch - 1U).is_ok());
+  auto maximum_promoted_coordinator = TabletReconfigurationCoordinator::create(
+      tablet_group, metadata_group, table, std::move(maximum_promoted));
+  EXPECT_TRUE(maximum_promoted_coordinator.has_value())
+      << maximum_promoted_coordinator.error().to_string();
+  auto maximum_complete = ready_movement(maximum_epoch - 2U);
+  ASSERT_TRUE(maximum_complete.promote_target(maximum_epoch - 2U, maximum_epoch - 1U).is_ok());
+  ASSERT_TRUE(maximum_complete.remove_source(maximum_epoch - 1U, maximum_epoch).is_ok());
+  auto maximum_complete_coordinator = TabletReconfigurationCoordinator::create(
+      tablet_group, metadata_group, table, std::move(maximum_complete));
+  EXPECT_TRUE(maximum_complete_coordinator.has_value())
+      << maximum_complete_coordinator.error().to_string();
 }
 
 TEST(TabletReconfigurationTest, RejectsDivergentPlacementAndJointIntent) {

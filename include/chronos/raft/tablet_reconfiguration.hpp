@@ -47,6 +47,8 @@ public:
   TabletReconfigurationCoordinator(TabletReconfigurationCoordinator&&) noexcept;
   TabletReconfigurationCoordinator& operator=(TabletReconfigurationCoordinator&&) noexcept;
 
+  // Recovery may resume from ready, target-promoted, or complete; earlier transfer phases belong
+  // to the snapshot-transfer owner.
   [[nodiscard]] static common::Result<TabletReconfigurationCoordinator>
   create(GroupId tablet_group_id, GroupId metadata_group_id, schema::TableId table_id,
          TabletMovement movement, std::optional<NodeId> leader_hint = std::nullopt);

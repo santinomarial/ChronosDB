@@ -7,6 +7,10 @@ exact durable operations for the tablet and metadata Raft groups. `reconcile` ob
 `RaftNode` plus applied `MetadataStateMachine` and returns either one action, no action while a
 commit is in flight, or an explicit inconsistency.
 
+Construction is restartable from every post-catch-up durable phase. Ready resumes target promotion,
+target-promoted resumes source removal without replaying promotion, and complete reconstructs a
+terminal coordinator that emits no action.
+
 ## State and invariants
 
 There are two authoritative views. Tablet Raft membership decides which replicas can commit data.

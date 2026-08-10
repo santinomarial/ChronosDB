@@ -3,7 +3,8 @@
 - **Status:** accepted
 - **Date:** 2026-08-09
 - **Owners:** ChronosDB distributed-systems and metadata maintainers
-- **Extended by:** [ADR 0119](0119-deterministic-tablet-reconfiguration-action-identities.md)
+- **Extended by:** [ADR 0119](0119-deterministic-tablet-reconfiguration-action-identities.md) and
+  [ADR 0131](0131-restartable-tablet-reconfiguration-phases.md)
 
 ## Context
 

@@ -128,10 +128,18 @@ TabletReconfigurationCoordinator::create(GroupId tablet_group_id, GroupId metada
                                          const schema::TableId table_id, TabletMovement movement,
                                          const std::optional<NodeId> leader_hint) {
   const TabletMovementRecord record = movement.record();
+  const bool resumable_phase = record.phase == TabletMovementPhase::kReady ||
+                               record.phase == TabletMovementPhase::kTargetPromoted ||
+                               record.phase == TabletMovementPhase::kComplete;
+  const std::uint64_t maximum_epoch = std::numeric_limits<std::uint64_t>::max();
+  const bool epoch_has_room = (record.phase == TabletMovementPhase::kReady &&
+                               record.placement_epoch <= maximum_epoch - 2U) ||
+                              (record.phase == TabletMovementPhase::kTargetPromoted &&
+                               record.placement_epoch <= maximum_epoch - 1U) ||
+                              record.phase == TabletMovementPhase::kComplete;
   if (tablet_group_id.is_nil() || metadata_group_id.is_nil() ||
-      tablet_group_id == metadata_group_id || table_id.uuid().is_nil() ||
-      record.phase != TabletMovementPhase::kReady ||
-      record.placement_epoch > std::numeric_limits<std::uint64_t>::max() - 2U ||
+      tablet_group_id == metadata_group_id || table_id.uuid().is_nil() || !resumable_phase ||
+      !epoch_has_room ||
       (leader_hint.has_value() &&
        !std::binary_search(record.voting_replicas.begin(), record.voting_replicas.end(),
                            *leader_hint))) {
