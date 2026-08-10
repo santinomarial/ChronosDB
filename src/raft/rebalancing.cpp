@@ -16,6 +16,12 @@ namespace {
   return common::Status{common::StatusCode::kInvalidArgument, message};
 }
 
+[[nodiscard]] bool valid_limits(const TabletMovementLimits& limits) {
+  return limits.maximum_snapshot_bytes > 0U && limits.maximum_chunk_bytes > 0U &&
+         limits.maximum_chunk_bytes <= limits.maximum_snapshot_bytes &&
+         limits.maximum_replicas >= 2U;
+}
+
 } // namespace
 
 class TabletMovement::Impl {
@@ -38,9 +44,8 @@ TabletMovement::begin(schema::TabletId tablet_id, const std::uint64_t placement_
                       std::vector<NodeId> voting_replicas, const TabletMovementLimits limits) {
   std::ranges::sort(voting_replicas);
   if (tablet_id.uuid().is_nil() || placement_epoch == 0U || source_node == 0U ||
-      target_node == 0U || source_node == target_node || limits.maximum_snapshot_bytes == 0U ||
-      limits.maximum_chunk_bytes == 0U || limits.maximum_replicas < 2U || voting_replicas.empty() ||
-      voting_replicas.size() >= limits.maximum_replicas ||
+      target_node == 0U || source_node == target_node || !valid_limits(limits) ||
+      voting_replicas.empty() || voting_replicas.size() >= limits.maximum_replicas ||
       !std::binary_search(voting_replicas.begin(), voting_replicas.end(), source_node) ||
       std::binary_search(voting_replicas.begin(), voting_replicas.end(), target_node) ||
       voting_replicas.front() == 0U ||
@@ -58,6 +63,18 @@ TabletMovement::begin(schema::TabletId tablet_id, const std::uint64_t placement_
                               {},
                               0U};
   return TabletMovement{std::make_unique<Impl>(std::move(record), limits)};
+}
+
+common::Result<TabletMovement> TabletMovement::recover(TabletMovementRecord record,
+                                                       std::vector<std::byte> received_snapshot,
+                                                       const TabletMovementLimits limits) {
+  const common::Status validated =
+      validate_tablet_movement_state(record, received_snapshot, limits);
+  if (!validated.is_ok())
+    return common::make_unexpected(validated);
+  auto impl = std::make_unique<Impl>(std::move(record), limits);
+  impl->snapshot_bytes = std::move(received_snapshot);
+  return TabletMovement{std::move(impl)};
 }
 
 common::Status TabletMovement::begin_snapshot(const SnapshotTransferMetadata metadata) {
@@ -173,6 +190,79 @@ TabletMovementRecord TabletMovement::record() const {
 }
 common::ByteView TabletMovement::received_snapshot() const noexcept {
   return impl_->snapshot_bytes;
+}
+
+common::Status validate_tablet_movement_state(const TabletMovementRecord& record,
+                                              const common::ByteView received_snapshot,
+                                              const TabletMovementLimits limits) {
+  if (!valid_limits(limits) || record.tablet_id.uuid().is_nil() || record.placement_epoch == 0U ||
+      record.source_node == 0U || record.target_node == 0U ||
+      record.source_node == record.target_node || record.voting_replicas.empty() ||
+      record.voting_replicas.size() > limits.maximum_replicas ||
+      record.voting_replicas.front() == 0U || !std::ranges::is_sorted(record.voting_replicas) ||
+      std::adjacent_find(record.voting_replicas.begin(), record.voting_replicas.end()) !=
+          record.voting_replicas.end() ||
+      !std::ranges::is_sorted(record.learners) ||
+      std::adjacent_find(record.learners.begin(), record.learners.end()) != record.learners.end() ||
+      record.received_bytes != received_snapshot.size() ||
+      record.snapshot.total_bytes > limits.maximum_snapshot_bytes) {
+    return invalid("tablet movement checkpoint identity, bounds, or canonical order is invalid");
+  }
+
+  const bool source_voter = std::binary_search(record.voting_replicas.begin(),
+                                               record.voting_replicas.end(), record.source_node);
+  const bool target_voter = std::binary_search(record.voting_replicas.begin(),
+                                               record.voting_replicas.end(), record.target_node);
+  const bool target_only_learner =
+      record.learners.size() == 1U && record.learners.front() == record.target_node;
+  const bool empty_snapshot =
+      record.snapshot.manifest_generation == 0U && record.snapshot.applied_index == 0U &&
+      record.snapshot.applied_term == 0U && record.snapshot.total_bytes == 0U &&
+      record.snapshot.content_crc32c == 0U && record.received_bytes == 0U &&
+      received_snapshot.empty();
+  const bool valid_snapshot =
+      record.snapshot.manifest_generation != 0U && record.snapshot.applied_index != 0U &&
+      record.snapshot.applied_term != 0U && record.snapshot.total_bytes != 0U &&
+      record.received_bytes <= record.snapshot.total_bytes;
+
+  switch (record.phase) {
+  case TabletMovementPhase::kAddingTarget:
+    return source_voter && !target_voter && target_only_learner && empty_snapshot &&
+                   record.voting_replicas.size() < limits.maximum_replicas
+               ? common::Status::ok()
+               : invalid("adding-target movement checkpoint is inconsistent");
+  case TabletMovementPhase::kTransferringSnapshot:
+    return source_voter && !target_voter && target_only_learner && valid_snapshot &&
+                   record.voting_replicas.size() < limits.maximum_replicas
+               ? common::Status::ok()
+               : invalid("transferring movement checkpoint is inconsistent");
+  case TabletMovementPhase::kCatchingUp:
+  case TabletMovementPhase::kReady:
+    if (!source_voter || target_voter || !target_only_learner || !valid_snapshot ||
+        record.voting_replicas.size() >= limits.maximum_replicas ||
+        record.received_bytes != record.snapshot.total_bytes) {
+      return invalid("caught-up movement checkpoint is inconsistent");
+    }
+    break;
+  case TabletMovementPhase::kTargetPromoted:
+    if (!source_voter || !target_voter || !record.learners.empty() || !valid_snapshot ||
+        record.received_bytes != record.snapshot.total_bytes) {
+      return invalid("promoted movement checkpoint is inconsistent");
+    }
+    break;
+  case TabletMovementPhase::kComplete:
+    if (source_voter || !target_voter || !record.learners.empty() || !valid_snapshot ||
+        record.received_bytes != record.snapshot.total_bytes) {
+      return invalid("complete movement checkpoint is inconsistent");
+    }
+    break;
+  default:
+    return invalid("tablet movement checkpoint phase is unknown");
+  }
+  return common::crc32c(received_snapshot) == record.snapshot.content_crc32c
+             ? common::Status::ok()
+             : common::Status{common::StatusCode::kCorruption,
+                              "tablet movement checkpoint snapshot checksum differs"};
 }
 
 } // namespace chronos::raft

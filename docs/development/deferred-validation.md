@@ -138,8 +138,8 @@
   routing/placement epochs, protocol bytes, and leader changes during long scans.
 - Shard-key pruning and statistics in addition to event-time pruning; multi-node scalar/distributed
   differential SQL and partial-aggregation equivalence.
-- Persist and restart the implemented joint-consensus/metadata tablet reconfiguration intent; add
-  idempotent action identities, resumable durable snapshot files, Manifest/CSEG install,
+- Atomically install and select generations of the implemented movement checkpoint bytes; add
+  idempotent reconfiguration action identities, chunked resumable snapshot files, Manifest/CSEG install,
   source/target/metadata-leader failures, source switching, bandwidth limits, and stale routing.
 - Partitions, duplicate/lost exchanges, skew, chaos, movement at every state, foreground interference,
   scale-out/exchange/coordination/failover benchmarks, and sanitizer/fuzz/property coverage.

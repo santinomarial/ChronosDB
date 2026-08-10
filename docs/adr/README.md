@@ -151,3 +151,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0114](0114-bounded-asynchronous-multi-raft-owner.md) | Bounded asynchronous Multi-Raft owner | accepted |
 | [0115](0115-proof-bound-distributed-read-admission.md) | Proof-bound distributed read admission | accepted |
 | [0116](0116-raft-metadata-tablet-reconfiguration.md) | Raft and metadata tablet reconfiguration | accepted |
+| [0117](0117-tablet-movement-checkpoint-v1.md) | Tablet Movement Checkpoint v1 | accepted |

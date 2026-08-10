@@ -34,6 +34,9 @@ struct SnapshotTransferMetadata {
   Term applied_term{};
   std::size_t total_bytes{};
   std::uint32_t content_crc32c{};
+
+  friend bool operator==(const SnapshotTransferMetadata&,
+                         const SnapshotTransferMetadata&) = default;
 };
 
 struct TabletMovementRecord {
@@ -46,6 +49,8 @@ struct TabletMovementRecord {
   TabletMovementPhase phase{TabletMovementPhase::kAddingTarget};
   SnapshotTransferMetadata snapshot;
   std::size_t received_bytes{};
+
+  friend bool operator==(const TabletMovementRecord&, const TabletMovementRecord&) = default;
 };
 
 // Single-owner add-before-remove tablet movement. Snapshot chunks are sequential, checksummed, and
@@ -63,6 +68,9 @@ public:
   [[nodiscard]] static common::Result<TabletMovement>
   begin(schema::TabletId tablet_id, std::uint64_t placement_epoch, NodeId source_node,
         NodeId target_node, std::vector<NodeId> voting_replicas, TabletMovementLimits limits = {});
+  [[nodiscard]] static common::Result<TabletMovement>
+  recover(TabletMovementRecord record, std::vector<std::byte> received_snapshot,
+          TabletMovementLimits limits = {});
 
   [[nodiscard]] common::Status begin_snapshot(SnapshotTransferMetadata metadata);
   [[nodiscard]] common::Status accept_snapshot_chunk(std::size_t offset, common::ByteView bytes,
@@ -85,6 +93,11 @@ private:
   explicit TabletMovement(std::unique_ptr<Impl> impl) noexcept;
   std::unique_ptr<Impl> impl_;
 };
+
+// Exact structural validation shared by recovery and the durable checkpoint codec.
+[[nodiscard]] common::Status validate_tablet_movement_state(const TabletMovementRecord& record,
+                                                            common::ByteView received_snapshot,
+                                                            TabletMovementLimits limits = {});
 
 } // namespace chronos::raft
 

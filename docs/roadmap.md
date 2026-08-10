@@ -797,8 +797,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   explicit position lag and fresh leader-commit observation; local-eventual remains distinct.
   Tablet movement now reconciles exact joint/final tablet membership with successive committed
   metadata placement epochs before locally recording target promotion or source removal.
-  General vector-plan fragments/exchange wire bytes, compatible multi-tablet snapshots, durable
-  movement intent/transfer, production leader routing, and multi-node failure validation remain
+  A canonical checksummed movement checkpoint now round-trips every phase and exact received
+  snapshot prefix and reconstructs resumable ownership after semantic validation.
+  General vector-plan fragments/exchange wire bytes, compatible multi-tablet snapshots, atomic
+  movement checkpoint installation, production leader routing, and multi-node failure validation remain
   deferred; the phase exit gate is not claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.
