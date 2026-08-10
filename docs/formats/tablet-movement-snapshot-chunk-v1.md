@@ -44,7 +44,10 @@ Final files are immutable. Only the exact current prefix end may be installed; a
 is idempotent only when its full encoded bytes match. File synchronization precedes no-replace
 rename, directory synchronization establishes durable success, and cleanup of canonical
 temporaries is directory-synchronized. Recovery exact-decodes every final in numeric offset order.
-Completion additionally requires exact total length and whole-snapshot content CRC32C.
+Checkpoint composition may revalidate and load through an exact installed boundary; an interior
+offset is invalid and later durable chunks are ignored. This makes a chunk-before-checkpoint crash
+recoverable without allowing chunks alone to advance movement state. Completion additionally
+requires exact total length and whole-snapshot content CRC32C.
 
 These rules make chunks resumable transfer authority only. They do not make completed bytes an
 installed RTAS, Manifest, or CSEG object.

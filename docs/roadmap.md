@@ -813,8 +813,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   reference now records received length and the original chunk-session epoch without rewriting the
   prefix, with a distinct checksummed generation envelope that preserves old envelope semantics;
   the locked checkpoint owner now durably dispatches both envelope magics in one contiguous
-  generation sequence. Composed chunk/reference recovery remains incomplete, as does final RTAS/
-  Manifest/CSEG handoff. General vector-plan fragments/exchange wire bytes,
+  generation sequence. Reference installation and recovery now exact-compose that generation with
+  the session-bound durable prefix, reject missing/interior boundaries, and recover only the
+  checkpointed prefix when a crash leaves chunks ahead. Final RTAS/Manifest/CSEG handoff remains
+  incomplete. General vector-plan fragments/exchange wire bytes,
   compatible multi-tablet snapshots, authenticated leader transport, and multi-node failure
   validation remain deferred; the phase exit gate is not claimed.
 

@@ -396,20 +396,37 @@ common::Result<std::uint64_t> TabletMovementSnapshotChunkStorage::received_bytes
   return impl_->received_bytes_;
 }
 
-common::Result<std::vector<std::byte>>
-TabletMovementSnapshotChunkStorage::load_received_prefix() const {
+common::Result<TabletMovementSnapshotSession> TabletMovementSnapshotChunkStorage::session() const {
   if (impl_ == nullptr)
     return common::make_unexpected(invalid("movement snapshot chunk storage was moved from"));
   common::Status usable = impl_->check_usable();
   if (!usable.is_ok())
     return common::make_unexpected(std::move(usable));
+  return impl_->config_.session;
+}
+
+common::Result<std::vector<std::byte>>
+TabletMovementSnapshotChunkStorage::load_prefix_through(const std::uint64_t received_bytes) const {
+  if (impl_ == nullptr)
+    return common::make_unexpected(invalid("movement snapshot chunk storage was moved from"));
+  common::Status usable = impl_->check_usable();
+  if (!usable.is_ok())
+    return common::make_unexpected(std::move(usable));
+  if (received_bytes > impl_->received_bytes_)
+    return common::make_unexpected(unavailable("movement snapshot prefix is not yet durable"));
   try {
     std::vector<std::byte> prefix;
-    prefix.reserve(static_cast<std::size_t>(impl_->received_bytes_));
+    prefix.reserve(static_cast<std::size_t>(received_bytes));
     std::uint64_t expected_offset = 0U;
     for (const ChunkFile& descriptor : impl_->chunks_) {
+      if (expected_offset == received_bytes)
+        break;
       if (descriptor.offset != expected_offset)
         return common::make_unexpected(corruption("movement chunk progress is not contiguous"));
+      if (descriptor.payload_bytes > received_bytes - expected_offset) {
+        return common::make_unexpected(
+            invalid("requested movement snapshot prefix is not a chunk boundary"));
+      }
       auto loaded = impl_->load_file(descriptor.file_name, descriptor.offset);
       if (!loaded.has_value())
         return common::make_unexpected(loaded.error());
@@ -419,14 +436,21 @@ TabletMovementSnapshotChunkStorage::load_received_prefix() const {
       prefix.insert(prefix.end(), loaded->chunk.bytes.begin(), loaded->chunk.bytes.end());
       expected_offset += loaded->chunk.bytes.size();
     }
-    if (expected_offset != impl_->received_bytes_)
-      return common::make_unexpected(corruption("movement chunk progress length changed"));
+    if (expected_offset != received_bytes)
+      return common::make_unexpected(corruption("movement chunk prefix boundary is unavailable"));
     return prefix;
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("movement snapshot prefix allocation failed"));
   } catch (const std::length_error&) {
     return common::make_unexpected(exhausted("movement snapshot prefix exceeds limits"));
   }
+}
+
+common::Result<std::vector<std::byte>>
+TabletMovementSnapshotChunkStorage::load_received_prefix() const {
+  if (impl_ == nullptr)
+    return common::make_unexpected(invalid("movement snapshot chunk storage was moved from"));
+  return load_prefix_through(impl_->received_bytes_);
 }
 
 common::Result<std::vector<std::byte>> TabletMovementSnapshotChunkStorage::finalize() const {

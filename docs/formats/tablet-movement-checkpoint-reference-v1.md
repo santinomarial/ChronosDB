@@ -50,9 +50,11 @@ catching-up, and ready phases, current and session epochs are equal. Target-prom
 session epoch plus one; complete is exactly plus two. The session epoch plus tablet/source/target/
 snapshot fields derives the exact durable chunk owner.
 
-This value authenticates metadata and received length only. Recovery must separately exact-load the
-same session's contiguous chunk prefix, require the same length, and perform full movement-state and
-whole-content CRC validation before adoption.
+This value authenticates metadata and received length only. Recovery must separately open the exact
+session, require that the referenced length is a durable chunk boundary, exact-load only through
+that boundary, and perform full movement-state and whole-content CRC validation before adoption. A
+durable chunk suffix beyond the boundary is ignored because it may precede a checkpoint interrupted
+by a crash. A durable reference beyond the available prefix is corruption.
 
 ## Reference generation envelope
 

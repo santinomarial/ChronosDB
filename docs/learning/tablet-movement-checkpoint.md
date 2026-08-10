@@ -15,16 +15,19 @@ false latest recovery point.
 target and snapshot boundary. This is the immutable piece format for removing full-prefix rewrites;
 `TabletMovementSnapshotChunkStorage` owns those pieces under one session-bound directory lock. It
 installs only the contiguous end, exact-retries immutable offsets, reconstructs progress by decoding
-every piece after restart, and validates the complete content CRC. Checkpoint handoff remains the
-next layer.
+every piece after restart, and validates the complete content CRC. It can also revalidate and load
+through an exact earlier chunk boundary for checkpoint composition.
 
 `TabletMovementCheckpointReference` is the compact handoff value: it stores the movement record and
 the original chunk-session placement epoch without copying prefix bytes. Structural decode is
-deliberately weaker than recovery authority. The future generation owner must exact-load the
-derived chunk session and pass those bytes through full movement validation before adoption. Its
+deliberately weaker than recovery authority. `install_verified_tablet_movement_reference` derives
+and exact-matches the chunk session, validates the claimed durable boundary and full movement, and
+only then installs the generation. Its
 `CHRMVRG` generation envelope is intentionally distinct from the self-contained `CHRMOVG` envelope.
 The generation storage exact-dispatches those magics within one contiguous sequence and exposes a
 variant load; legacy typed loads fail closed rather than selecting an older generation.
+`recover_tablet_movement_generation` restores self-contained generations directly and requires the
+session-bound chunk owner for reference generations.
 
 ## Invariants and ownership
 
@@ -50,11 +53,16 @@ cannot know whether a crash will retain the name. Reopen removes only canonical 
 requires generations contiguous from one, and revalidates generation, tablet, nested checksums, and
 semantic state before recovery.
 
+Chunks must become durable before the reference that claims them. A crash between those writes can
+leave chunks ahead of the latest checkpoint; recovery deliberately reconstructs only the
+checkpointed boundary and ignores the suffix. The opposite state is corruption. This makes the
+checkpoint generation—not the longest observed chunk prefix—the movement progress authority.
+
 ## Tradeoffs and likely interview questions
 
-Self-contained prefixes simplify audit and recovery but can rewrite large prefixes. Generation-
-installed chunk files may reduce amplification later, provided their exact checksums and identity
-remain bound to an atomic checkpoint.
+Self-contained prefixes simplify audit and recovery but can rewrite large prefixes. Immutable chunk
+files remove repeated prefix writes while the compact checkpoint remains the sole progress
+authority. Final application-snapshot installation and safe chunk reclamation are separate layers.
 
 - Why are header, payload, and whole-record CRCs separate?
 - Why is a full content CRC required only once transfer is complete?
@@ -62,3 +70,4 @@ remain bound to an atomic checkpoint.
 - Why is movement progress not stored as a metadata Raft command?
 - Why must the generation be inside the checksummed envelope rather than only in the filename?
 - Why does a directory-sync failure poison the owner after rename?
+- Why may recovery accept chunks ahead of a checkpoint but never a checkpoint ahead of chunks?

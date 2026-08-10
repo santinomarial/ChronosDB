@@ -61,7 +61,11 @@ public:
   install(const TabletMovementSnapshotChunk& chunk);
   [[nodiscard]] common::Result<LoadedTabletMovementSnapshotChunk>
   load_chunk(std::uint64_t offset) const;
+  [[nodiscard]] common::Result<TabletMovementSnapshotSession> session() const;
   [[nodiscard]] common::Result<std::uint64_t> received_bytes() const;
+  // Loads an exact installed chunk boundary. A durable suffix beyond that boundary is ignored.
+  [[nodiscard]] common::Result<std::vector<std::byte>>
+  load_prefix_through(std::uint64_t received_bytes) const;
   [[nodiscard]] common::Result<std::vector<std::byte>> load_received_prefix() const;
   // Completion requires the exact declared size and matching whole-snapshot content CRC32C.
   [[nodiscard]] common::Result<std::vector<std::byte>> finalize() const;

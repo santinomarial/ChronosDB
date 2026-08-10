@@ -5,7 +5,8 @@
 - **Owners:** ChronosDB distributed-systems and storage maintainers
 - **Extends:** [ADR 0117](0117-tablet-movement-checkpoint-v1.md) and
   [ADR 0123](0123-durable-tablet-movement-snapshot-chunks.md)
-- **Extended by:** [ADR 0125](0125-tablet-movement-reference-generation-v1.md)
+- **Extended by:** [ADR 0125](0125-tablet-movement-reference-generation-v1.md) and
+  [ADR 0127](0127-composed-tablet-movement-checkpoint-recovery.md)
 
 ## Context
 

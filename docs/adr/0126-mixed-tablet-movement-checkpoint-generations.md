@@ -5,6 +5,7 @@
 - **Owners:** ChronosDB distributed-systems and storage maintainers
 - **Extends:** [ADR 0118](0118-durable-tablet-movement-checkpoint-generations.md) and
   [ADR 0125](0125-tablet-movement-reference-generation-v1.md)
+- **Extended by:** [ADR 0127](0127-composed-tablet-movement-checkpoint-recovery.md)
 
 ## Context
 
@@ -56,9 +57,9 @@ state. Reference-aware software must use the general load API.
 
 Invariants 1, 2, 4, 8, 10, 11, 14, and 18 apply. Real-filesystem tests cover old-to-new generation
 transition, general and typed selection, exact reference retry, same-generation conflict, reopen,
-and copied reference bytes renamed to another generation. Composed chunk recovery, crash/fault
-injection, process-kill points, power-loss qualification, reclamation, allocation failure, and
-mixed-version executable testing remain deferred.
+and copied reference bytes renamed to another generation. ADR 0127 supplies composed chunk
+recovery. Crash/fault injection, process-kill points, power-loss qualification, reclamation,
+allocation failure, and mixed-version executable testing remain deferred.
 
 ## Migration and rollback
 

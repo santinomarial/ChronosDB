@@ -521,6 +521,7 @@ add_library(
   src/raft/tablet_reconfiguration_action_codec.cpp
   src/raft/tablet_reconfiguration_action_ledger.cpp
   src/raft/tablet_movement_checkpoint.cpp
+  src/raft/tablet_movement_checkpoint_recovery.cpp
   src/raft/tablet_movement_checkpoint_reference.cpp
   src/raft/tablet_movement_checkpoint_storage.cpp
   src/raft/tablet_movement_snapshot_chunk.cpp
@@ -773,6 +774,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/raft/tablet_reconfiguration_action_ledger_test.cpp
     tests/raft/tablet_movement_checkpoint_header_self_contained.cpp
     tests/raft/tablet_movement_checkpoint_test.cpp
+    tests/raft/tablet_movement_checkpoint_recovery_header_self_contained.cpp
+    tests/raft/tablet_movement_checkpoint_recovery_test.cpp
     tests/raft/tablet_movement_checkpoint_reference_header_self_contained.cpp
     tests/raft/tablet_movement_checkpoint_reference_test.cpp
     tests/raft/tablet_movement_checkpoint_storage_header_self_contained.cpp

@@ -4,7 +4,8 @@
 - **Date:** 2026-08-09
 - **Owners:** ChronosDB distributed-systems and storage maintainers
 - **Extends:** [ADR 0122](0122-tablet-movement-snapshot-chunk-v1.md)
-- **Extended by:** [ADR 0124](0124-tablet-movement-external-prefix-reference-v1.md)
+- **Extended by:** [ADR 0124](0124-tablet-movement-external-prefix-reference-v1.md) and
+  [ADR 0127](0127-composed-tablet-movement-checkpoint-recovery.md)
 
 ## Context
 
