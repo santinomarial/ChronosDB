@@ -5,6 +5,7 @@
 - **Owners:** ChronosDB ingestion and distributed-systems maintainers
 - **Extends:** [ADR 0127](0127-composed-tablet-movement-checkpoint-recovery.md) and
   [ADR 0129](0129-tablet-movement-raft-snapshot-completion.md)
+- **Extended by:** [ADR 0132](0132-durable-tablet-reconfiguration-phase-checkpoints.md)
 
 ## Context
 

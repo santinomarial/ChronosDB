@@ -48,12 +48,22 @@ lock before dispatch. A same-ID retry succeeds only for byte-identical content. 
 canonical temporaries, while immutable final actions remain evidence; the reconciler's observed
 Raft/metadata state decides whether any prepared action still needs execution.
 
+`reconcile_durable_tablet_reconfiguration` runs that reconciler against a private candidate copied
+from a recovered movement generation. Emitting an action, waiting, or observing terminal state does
+not write a generation. When committed authorities advance ready to target-promoted or
+target-promoted to complete, it installs generation +1 before replacing the live movement. The
+adapter preserves self-contained versus external-prefix representation; an external phase change
+therefore requires and exact-revalidates the original chunk owner. Failed installation leaves the
+live phase and generation unchanged. Any returned action must still be prepared in the action ledger
+before dispatch.
+
 ## Complexity and tradeoffs
 
 Reconciliation is linear in the bounded replica count. The explicit two-group handoff adds control-
-plane latency but avoids treating routing intent as consensus. Durable movement generations and
-deterministic action identities now make restart reconstruction exact; production leader routing,
-retry-ledger consumption, and failure injection remain separate work.
+plane latency but avoids treating routing intent as consensus. Durable checkpoints before every
+post-catch-up live phase adoption and deterministic action identities make restart reconstruction
+exact; production leader routing, retry-ledger consumption, and failure injection remain separate
+work.
 
 ## Likely interview questions
 

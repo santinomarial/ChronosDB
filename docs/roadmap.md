@@ -821,8 +821,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   snapshot before releasing its success response. Reopen reconciliation now proves that exact RTAS/
   Raft boundary, durably installs the next ready movement checkpoint, and only then advances live
   movement. Reconfiguration construction now also resumes exact source removal from a durable
-  target-promoted phase and reopens complete state terminally. Physical Manifest/CSEG handoff
-  remains incomplete. General vector-plan fragments/
+  target-promoted phase and reopens complete state terminally. Authoritative target promotion and
+  source removal now install representation-preserving generation checkpoints before live phase
+  adoption, while unchanged reconciliation can emit work without reopening snapshot chunks.
+  Physical Manifest/CSEG handoff remains incomplete. General vector-plan fragments/
   exchange wire bytes, compatible multi-tablet snapshots, authenticated leader transport, and
   multi-node failure validation remain deferred; the phase exit gate is not claimed.
 

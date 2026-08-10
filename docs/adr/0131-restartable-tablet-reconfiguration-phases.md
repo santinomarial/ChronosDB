@@ -5,6 +5,7 @@
 - **Owners:** ChronosDB distributed-systems and metadata maintainers
 - **Extends:** [ADR 0116](0116-raft-metadata-tablet-reconfiguration.md) and
   [ADR 0130](0130-durable-tablet-movement-ready-reconciliation.md)
+- **Extended by:** [ADR 0132](0132-durable-tablet-reconfiguration-phase-checkpoints.md)
 
 ## Context
 
@@ -38,8 +39,8 @@ rejected because all orchestration state is explicitly designed for durable reco
 A restarted process can continue source removal from the exact durable movement phase, and a
 complete movement is observably terminal. Focused tests reconstruct promoted membership/placement,
 elect a valid leader, and prove the exact removal action identity and final voters; they also reopen
-complete state and prove no action. Crash injection during the later action sequence and durable
-checkpoint composition for promoted/complete phase changes remain follow-up work.
+complete state and prove no action. Crash injection during the later action sequence remains
+follow-up work. ADR 0132 composes durable checkpoints for promoted/complete phase changes.
 
 Invariants 4, 5, 8, 11, 14, and 18 apply.
 

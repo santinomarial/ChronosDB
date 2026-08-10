@@ -225,4 +225,8 @@ TabletMovementRecord TabletReconfigurationCoordinator::record() const {
   return impl_->movement.record();
 }
 
+TabletMovement TabletReconfigurationCoordinator::take_movement() && noexcept {
+  return std::move(impl_->movement);
+}
+
 } // namespace chronos::raft

@@ -57,6 +57,8 @@ public:
   reconcile(const RaftNode& tablet_group, const MetadataStateMachine& metadata);
 
   [[nodiscard]] TabletMovementRecord record() const;
+  // Transfers the reconciled movement out of a disposable candidate coordinator.
+  [[nodiscard]] TabletMovement take_movement() && noexcept;
 
 private:
   class Impl;

@@ -511,6 +511,7 @@ add_library(
   chronos_raft
   src/raft/async_durable_runtime.cpp
   src/raft/durable_runtime.cpp
+  src/raft/durable_tablet_reconfiguration.cpp
   src/raft/membership.cpp
   src/raft/metadata.cpp
   src/raft/metadata_codec.cpp
@@ -763,6 +764,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/raft/async_durable_runtime_test.cpp
     tests/raft/durable_runtime_header_self_contained.cpp
     tests/raft/durable_runtime_test.cpp
+    tests/raft/durable_tablet_reconfiguration_header_self_contained.cpp
+    tests/raft/durable_tablet_reconfiguration_test.cpp
     tests/raft/membership_header_self_contained.cpp
     tests/raft/membership_test.cpp
     tests/raft/node_header_self_contained.cpp
