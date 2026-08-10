@@ -11,6 +11,10 @@ snapshot prefix.
 versioned generation envelopes whose embedded coordinate prevents renaming valid old bytes into a
 false latest recovery point.
 
+`TabletMovementSnapshotChunk` separately binds one payload range to the full tablet/epoch/source/
+target and snapshot boundary. This is the immutable piece format for removing full-prefix rewrites;
+its locked sequential filesystem owner and checkpoint handoff remain the next layer.
+
 ## Invariants and ownership
 
 The record and prefix agree on received length. Replica/learner sets are sorted and unique. Before

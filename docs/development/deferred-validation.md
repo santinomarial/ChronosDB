@@ -140,7 +140,7 @@
   differential SQL and partial-aggregation equivalence.
 - Route actions from the implemented durable pre-dispatch ledger through authenticated current-
   leader transport and reconcile duplicate delivery/application; add chunked resumable snapshot
-  files, Manifest/CSEG install, checkpoint-
+  installation/recovery around the implemented chunk bytes, Manifest/CSEG install, checkpoint-
   generation reclamation, filesystem crash/fault injection, source/target/metadata-leader failures,
   source switching, bandwidth limits, and stale routing.
 - Partitions, duplicate/lost exchanges, skew, chaos, movement at every state, foreground interference,
