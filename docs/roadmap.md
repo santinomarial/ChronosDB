@@ -826,7 +826,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   adoption, while unchanged reconciliation can emit work without reopening snapshot chunks.
   Production-facing reconciliation now releases an action only with its matching durable
   pre-dispatch ledger receipt; a ledger failure after phase installation returns no dispatch and is
-  exactly retryable from the new phase. Physical Manifest/CSEG handoff remains incomplete. General
+  exactly retryable from the new phase. That dispatch is now a sealed move-only capability, and a
+  local synchronous executor releases its Raft result and outbound messages only after the existing
+  physical-log synchronization boundary. Physical Manifest/CSEG handoff remains incomplete. General
   vector-plan fragments/exchange wire bytes, compatible multi-tablet snapshots, authenticated leader
   transport, and multi-node failure validation remain deferred; the phase exit gate is not claimed.
 

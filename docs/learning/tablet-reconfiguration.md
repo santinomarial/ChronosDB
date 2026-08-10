@@ -57,10 +57,17 @@ therefore requires and exact-revalidates the original chunk owner. Failed instal
 live phase and generation unchanged.
 
 Production routing uses `reconcile_and_prepare_durable_tablet_reconfiguration`, which releases no
-bare action. It bundles each action with the matching durable ledger preparation receipt. When a
-call both checkpoints target promotion and emits source-removal work, checkpoint installation
-precedes ledger preparation. A ledger failure therefore leaves the new phase durable but returns no
-dispatch; retry reconstructs the same action identity and prepares it idempotently.
+bare action. It returns a sealed, move-only capability bundling each action with the matching durable
+ledger preparation receipt. When a call both checkpoints target promotion and emits source-removal
+work, checkpoint installation precedes ledger preparation. A ledger failure therefore leaves the
+new phase durable but returns no dispatch; retry reconstructs the same action identity and prepares
+it idempotently.
+
+`execute_local_prepared_tablet_reconfiguration` accepts only that capability and submits its exact
+request to the synchronous durable Multi-Raft owner. The result and any outbound messages are
+released after local log synchronization. The per-operation status still must be checked, and local
+durability is not quorum commit or state-machine application; transport and another reconciliation
+remain mandatory.
 
 ## Complexity and tradeoffs
 

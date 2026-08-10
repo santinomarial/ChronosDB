@@ -7,6 +7,16 @@
 #include <vector>
 
 namespace chronos::raft {
+
+class detail::PreparedTabletReconfigurationDispatchFactory {
+public:
+  [[nodiscard]] static PreparedTabletReconfigurationDispatch
+  create(TabletReconfigurationAction action,
+         PreparedTabletReconfigurationAction preparation) noexcept {
+    return PreparedTabletReconfigurationDispatch{std::move(action), std::move(preparation)};
+  }
+};
+
 namespace {
 
 [[nodiscard]] common::Status invalid(const char* message) {
@@ -125,12 +135,44 @@ prepare_dispatch(common::Result<DurableTabletReconfigurationResult> reconciled,
   if (!prepared.has_value())
     return common::make_unexpected(std::move(prepared).error());
   return PreparedDurableTabletReconfigurationResult{
-      .dispatch = PreparedTabletReconfigurationDispatch{.action = std::move(*reconciled->action),
-                                                        .preparation = std::move(*prepared)},
+      .dispatch = detail::PreparedTabletReconfigurationDispatchFactory::create(
+          std::move(*reconciled->action), std::move(*prepared)),
       .installed_checkpoint = std::move(reconciled->installed_checkpoint)};
 }
 
 } // namespace
+
+PreparedTabletReconfigurationDispatch::PreparedTabletReconfigurationDispatch(
+    TabletReconfigurationAction action, PreparedTabletReconfigurationAction preparation) noexcept
+    : action_(std::move(action)), preparation_(std::move(preparation)) {}
+
+PreparedTabletReconfigurationDispatch::PreparedTabletReconfigurationDispatch(
+    PreparedTabletReconfigurationDispatch&& other) noexcept
+    : action_(std::move(other.action_)), preparation_(std::move(other.preparation_)),
+      valid_(std::exchange(other.valid_, false)) {}
+
+PreparedTabletReconfigurationDispatch& PreparedTabletReconfigurationDispatch::operator=(
+    PreparedTabletReconfigurationDispatch&& other) noexcept {
+  if (this != &other) {
+    action_ = std::move(other.action_);
+    preparation_ = std::move(other.preparation_);
+    valid_ = std::exchange(other.valid_, false);
+  }
+  return *this;
+}
+
+bool PreparedTabletReconfigurationDispatch::is_valid() const noexcept {
+  return valid_;
+}
+
+const TabletReconfigurationAction& PreparedTabletReconfigurationDispatch::action() const noexcept {
+  return action_;
+}
+
+const PreparedTabletReconfigurationAction&
+PreparedTabletReconfigurationDispatch::preparation() const noexcept {
+  return preparation_;
+}
 
 common::Result<DurableTabletReconfigurationResult> reconcile_durable_tablet_reconfiguration(
     RecoveredTabletMovementGeneration& recovered, GroupId tablet_group_id,
@@ -192,6 +234,33 @@ reconcile_and_prepare_durable_tablet_reconfiguration(
                               table_id, tablet_group, metadata, checkpoint_storage, chunk_storage,
                               leader_hint, limits),
                           action_ledger);
+}
+
+common::Result<DurableRaftResult>
+execute_local_prepared_tablet_reconfiguration(const PreparedTabletReconfigurationDispatch& dispatch,
+                                              DurableMultiRaftRuntime& runtime) {
+  if (!dispatch.is_valid())
+    return common::make_unexpected(invalid("prepared reconfiguration dispatch was moved from"));
+  if (dispatch.action().id != dispatch.preparation().id) {
+    return common::make_unexpected(
+        corruption("prepared reconfiguration dispatch identity is inconsistent"));
+  }
+  try {
+    auto executed = runtime.execute_batch({dispatch.action().request});
+    if (!executed.has_value())
+      return common::make_unexpected(std::move(executed).error());
+    if (executed->size() != 1U) {
+      return common::make_unexpected(
+          corruption("prepared reconfiguration execution returned an invalid result count"));
+    }
+    return std::move(executed->front());
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        exhausted("prepared reconfiguration execution allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("prepared reconfiguration execution exceeded container limits"));
+  }
 }
 
 } // namespace chronos::raft

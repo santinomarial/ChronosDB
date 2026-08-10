@@ -10,14 +10,37 @@
 
 namespace chronos::raft {
 
+namespace detail {
+class PreparedTabletReconfigurationDispatchFactory;
+}
+
 struct DurableTabletReconfigurationResult {
   std::optional<TabletReconfigurationAction> action;
   std::optional<InstalledTabletMovementCheckpoint> installed_checkpoint;
 };
 
-struct PreparedTabletReconfigurationDispatch {
-  TabletReconfigurationAction action;
-  PreparedTabletReconfigurationAction preparation;
+class PreparedTabletReconfigurationDispatch {
+public:
+  PreparedTabletReconfigurationDispatch() = delete;
+  ~PreparedTabletReconfigurationDispatch() = default;
+  PreparedTabletReconfigurationDispatch(const PreparedTabletReconfigurationDispatch&) = delete;
+  PreparedTabletReconfigurationDispatch&
+  operator=(const PreparedTabletReconfigurationDispatch&) = delete;
+  PreparedTabletReconfigurationDispatch(PreparedTabletReconfigurationDispatch&& other) noexcept;
+  PreparedTabletReconfigurationDispatch&
+  operator=(PreparedTabletReconfigurationDispatch&& other) noexcept;
+
+  [[nodiscard]] bool is_valid() const noexcept;
+  [[nodiscard]] const TabletReconfigurationAction& action() const noexcept;
+  [[nodiscard]] const PreparedTabletReconfigurationAction& preparation() const noexcept;
+
+private:
+  PreparedTabletReconfigurationDispatch(TabletReconfigurationAction action,
+                                        PreparedTabletReconfigurationAction preparation) noexcept;
+  TabletReconfigurationAction action_;
+  PreparedTabletReconfigurationAction preparation_;
+  bool valid_{true};
+  friend class detail::PreparedTabletReconfigurationDispatchFactory;
 };
 
 struct PreparedDurableTabletReconfigurationResult {
@@ -47,6 +70,13 @@ reconcile_and_prepare_durable_tablet_reconfiguration(
     const MetadataStateMachine& metadata, TabletMovementCheckpointStorage& checkpoint_storage,
     TabletReconfigurationActionLedger& action_ledger,
     std::optional<NodeId> leader_hint = std::nullopt, TabletMovementLimits limits = {});
+
+// Executes one sealed, ledger-prepared action on a node-local synchronous durable runtime. Any
+// returned transition, including outbound messages, is released only after the runtime's existing
+// persist-and-sync boundary. Commit/application observation and remote routing remain external.
+[[nodiscard]] common::Result<DurableRaftResult>
+execute_local_prepared_tablet_reconfiguration(const PreparedTabletReconfigurationDispatch& dispatch,
+                                              DurableMultiRaftRuntime& runtime);
 
 [[nodiscard]] common::Result<PreparedDurableTabletReconfigurationResult>
 reconcile_and_prepare_durable_tablet_reconfiguration(
