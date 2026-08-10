@@ -2,6 +2,7 @@
 #define CHRONOS_RAFT_DURABLE_TABLET_RECONFIGURATION_HPP_
 
 #include "chronos/common/result.hpp"
+#include "chronos/raft/async_durable_runtime.hpp"
 #include "chronos/raft/tablet_movement_checkpoint_recovery.hpp"
 #include "chronos/raft/tablet_reconfiguration.hpp"
 #include "chronos/raft/tablet_reconfiguration_action_ledger.hpp"
@@ -77,6 +78,13 @@ reconcile_and_prepare_durable_tablet_reconfiguration(
 [[nodiscard]] common::Result<DurableRaftResult>
 execute_local_prepared_tablet_reconfiguration(const PreparedTabletReconfigurationDispatch& dispatch,
                                               DurableMultiRaftRuntime& runtime);
+
+// Nonblocking admission to the asynchronous single-owner runtime. Rejection leaves the sealed
+// capability reusable. The returned completion releases results only after durable execution; a
+// reactor must poll it or hand it to a non-reactor continuation rather than block in wait().
+[[nodiscard]] common::Result<AsyncDurableRaftCompletion>
+try_submit_local_prepared_tablet_reconfiguration(
+    const PreparedTabletReconfigurationDispatch& dispatch, AsyncDurableMultiRaftRuntime& runtime);
 
 [[nodiscard]] common::Result<PreparedDurableTabletReconfigurationResult>
 reconcile_and_prepare_durable_tablet_reconfiguration(

@@ -466,5 +466,67 @@ TEST(DurableTabletReconfigurationTest, ExecutesOnlySealedPreparedDispatchAfterRa
   EXPECT_EQ(reopened->find_group(tablet_group)->persistent_state().log.size(), 1U);
 }
 
+TEST(DurableTabletReconfigurationTest, AdmitsPreparedDispatchToBoundedAsyncOwner) {
+  TemporaryDirectory checkpoints{"chronos-async-reconfiguration-checkpoints"};
+  TemporaryDirectory actions{"chronos-async-reconfiguration-actions"};
+  TemporaryDirectory raft_log{"chronos-async-reconfiguration-raft"};
+  auto checkpoint_storage = TabletMovementCheckpointStorage::create(checkpoint_config(checkpoints));
+  auto action_ledger = TabletReconfigurationActionLedger::create(ledger_config(actions));
+  auto movement = ready_movement({2U}, 2U, 4U);
+  ASSERT_TRUE(checkpoint_storage.has_value());
+  ASSERT_TRUE(action_ledger.has_value());
+  ASSERT_TRUE(movement.has_value());
+  ASSERT_TRUE(checkpoint_storage
+                  ->install({1U, TabletMovementCheckpoint{movement->record(), snapshot_bytes()}})
+                  .has_value());
+  auto first = checkpoint_storage->load_latest_any();
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(first->has_value());
+  auto recovered = recover_tablet_movement_generation(**first);
+  ASSERT_TRUE(recovered.has_value());
+  auto metadata = MetadataStateMachine::create();
+  ASSERT_TRUE(metadata.has_value());
+  ASSERT_TRUE(
+      metadata->apply_committed(1U, TabletPlacementMetadata{table_id(), tablet_id(), 7U, {2U}, 2U})
+          .is_ok());
+  auto observed_node = RaftNode::create(2U, {2U});
+  ASSERT_TRUE(observed_node.has_value());
+  ASSERT_TRUE(observed_node->start_election().has_value());
+  ASSERT_EQ(observed_node->role(), Role::kLeader);
+  const GroupId tablet_group = group(std::byte{10U});
+  const std::vector<RaftGroupConfiguration> groups{{tablet_group, {2U}}};
+  const RaftPersistentLogConfig raft_config{.directory_path = raft_log.path().string()};
+  auto runtime = AsyncDurableMultiRaftRuntime::create_new(2U, raft_config, groups);
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  auto election = runtime->try_submit({{tablet_group, StartElectionOperation{}}});
+  ASSERT_TRUE(election.has_value());
+  auto election_result = election->wait();
+  ASSERT_TRUE(election_result.has_value()) << election_result.error().to_string();
+  ASSERT_TRUE(election_result->front().status.is_ok());
+  auto prepared = reconcile_and_prepare_durable_tablet_reconfiguration(
+      *recovered, tablet_group, group(std::byte{11U}), table_id(), *observed_node, *metadata,
+      *checkpoint_storage, *action_ledger, 2U);
+  ASSERT_TRUE(prepared.has_value()) << prepared.error().to_string();
+  ASSERT_TRUE(prepared->dispatch.has_value());
+
+  auto completion = try_submit_local_prepared_tablet_reconfiguration(*prepared->dispatch, *runtime);
+  ASSERT_TRUE(completion.has_value()) << completion.error().to_string();
+  auto executed = completion->wait();
+  ASSERT_TRUE(executed.has_value()) << executed.error().to_string();
+  ASSERT_EQ(executed->size(), 1U);
+  EXPECT_TRUE(executed->front().status.is_ok()) << executed->front().status.to_string();
+  ASSERT_TRUE(executed->front().transition.has_value());
+  EXPECT_TRUE(executed->front().transition->persistence.has_value());
+  EXPECT_TRUE(runtime->shutdown().is_ok());
+  auto rejected = try_submit_local_prepared_tablet_reconfiguration(*prepared->dispatch, *runtime);
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kUnavailable);
+  EXPECT_TRUE(prepared->dispatch->is_valid());
+  auto reopened = DurableMultiRaftRuntime::open_existing(2U, raft_config, {}, groups);
+  ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+  ASSERT_NE(reopened->find_group(tablet_group), nullptr);
+  EXPECT_EQ(reopened->find_group(tablet_group)->persistent_state().log.size(), 1U);
+}
+
 } // namespace
 } // namespace chronos::raft

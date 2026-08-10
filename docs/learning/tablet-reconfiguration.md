@@ -69,6 +69,11 @@ released after local log synchronization. The per-operation status still must be
 durability is not quorum commit or state-machine application; transport and another reconciliation
 remain mandatory.
 
+`try_submit_local_prepared_tablet_reconfiguration` provides the nonblocking production admission
+path to the asynchronous single-owner runtime. Capacity or shutdown rejection leaves the capability
+valid. Successful admission returns an owning completion; reactor threads poll or hand it off, and
+only the completed durable result may release outbound messages.
+
 ## Complexity and tradeoffs
 
 Reconciliation is linear in the bounded replica count. The explicit two-group handoff adds control-

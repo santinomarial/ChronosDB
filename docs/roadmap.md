@@ -828,9 +828,12 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   pre-dispatch ledger receipt; a ledger failure after phase installation returns no dispatch and is
   exactly retryable from the new phase. That dispatch is now a sealed move-only capability, and a
   local synchronous executor releases its Raft result and outbound messages only after the existing
-  physical-log synchronization boundary. Physical Manifest/CSEG handoff remains incomplete. General
-  vector-plan fragments/exchange wire bytes, compatible multi-tablet snapshots, authenticated leader
-  transport, and multi-node failure validation remain deferred; the phase exit gate is not claimed.
+  physical-log synchronization boundary. Sealed dispatches also enter the bounded asynchronous
+  single-owner FIFO without blocking producers or being consumed on admission rejection. Physical
+  Manifest/CSEG handoff remains incomplete. General
+  vector-plan fragments/exchange wire bytes, compatible multi-tablet snapshots, authenticated
+  leader transport, and multi-node failure validation remain deferred; the phase exit gate is not
+  claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.
 - **Explicit non-scope:** general cross-tablet write transactions, silent consistency downgrade, unlimited shuffle, and topology changes that invalidate tokens without an explicit error/mapping protocol.

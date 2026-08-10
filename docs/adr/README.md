@@ -169,3 +169,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0132](0132-durable-tablet-reconfiguration-phase-checkpoints.md) | Durable tablet reconfiguration phase checkpoints | accepted |
 | [0133](0133-prepared-tablet-reconfiguration-dispatch.md) | Prepared tablet reconfiguration dispatch boundary | accepted |
 | [0134](0134-sealed-local-tablet-reconfiguration-execution.md) | Sealed local tablet reconfiguration execution | accepted |
+| [0135](0135-bounded-asynchronous-prepared-reconfiguration-admission.md) | Bounded asynchronous prepared reconfiguration admission | accepted |

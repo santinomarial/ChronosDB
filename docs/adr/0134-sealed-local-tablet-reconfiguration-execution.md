@@ -5,6 +5,7 @@
 - **Owners:** ChronosDB distributed-systems and storage maintainers
 - **Extends:** [ADR 0071](0071-segmented-multi-raft-persistence.md) and
   [ADR 0133](0133-prepared-tablet-reconfiguration-dispatch.md)
+- **Extended by:** [ADR 0135](0135-bounded-asynchronous-prepared-reconfiguration-admission.md)
 
 ## Context
 

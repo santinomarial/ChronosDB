@@ -61,6 +61,15 @@ namespace {
   }
 }
 
+[[nodiscard]] common::Status
+validate_prepared_dispatch(const PreparedTabletReconfigurationDispatch& dispatch) {
+  if (!dispatch.is_valid())
+    return invalid("prepared reconfiguration dispatch was moved from");
+  if (dispatch.action().id != dispatch.preparation().id)
+    return corruption("prepared reconfiguration dispatch identity is inconsistent");
+  return common::Status::ok();
+}
+
 [[nodiscard]] common::Result<DurableTabletReconfigurationResult>
 reconcile_impl(RecoveredTabletMovementGeneration& recovered, GroupId tablet_group_id,
                GroupId metadata_group_id, const schema::TableId table_id,
@@ -239,12 +248,9 @@ reconcile_and_prepare_durable_tablet_reconfiguration(
 common::Result<DurableRaftResult>
 execute_local_prepared_tablet_reconfiguration(const PreparedTabletReconfigurationDispatch& dispatch,
                                               DurableMultiRaftRuntime& runtime) {
-  if (!dispatch.is_valid())
-    return common::make_unexpected(invalid("prepared reconfiguration dispatch was moved from"));
-  if (dispatch.action().id != dispatch.preparation().id) {
-    return common::make_unexpected(
-        corruption("prepared reconfiguration dispatch identity is inconsistent"));
-  }
+  common::Status valid = validate_prepared_dispatch(dispatch);
+  if (!valid.is_ok())
+    return common::make_unexpected(std::move(valid));
   try {
     auto executed = runtime.execute_batch({dispatch.action().request});
     if (!executed.has_value())
@@ -260,6 +266,22 @@ execute_local_prepared_tablet_reconfiguration(const PreparedTabletReconfiguratio
   } catch (const std::length_error&) {
     return common::make_unexpected(
         exhausted("prepared reconfiguration execution exceeded container limits"));
+  }
+}
+
+common::Result<AsyncDurableRaftCompletion> try_submit_local_prepared_tablet_reconfiguration(
+    const PreparedTabletReconfigurationDispatch& dispatch, AsyncDurableMultiRaftRuntime& runtime) {
+  common::Status valid = validate_prepared_dispatch(dispatch);
+  if (!valid.is_ok())
+    return common::make_unexpected(std::move(valid));
+  try {
+    return runtime.try_submit({dispatch.action().request});
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        exhausted("prepared reconfiguration admission allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("prepared reconfiguration admission exceeded container limits"));
   }
 }
 

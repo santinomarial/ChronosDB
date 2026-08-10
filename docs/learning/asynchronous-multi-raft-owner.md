@@ -8,6 +8,11 @@ existing physical log single-owned. `try_submit` either transfers a complete bat
 The completion can be polled with `is_ready` or consumed with `wait`. Because transitions may own
 large message batches, `wait` moves the result out exactly once instead of copying it.
 
+Tablet reconfiguration uses `try_submit_local_prepared_tablet_reconfiguration`. It accepts only the
+sealed capability produced after durable action-ledger preparation, copies its exact request into a
+one-operation batch, and leaves the capability valid when admission rejects overload or shutdown.
+The returned completion has the same publication and single-consumer rules as generic batches.
+
 ## Data structures and invariants
 
 The runtime retains one FIFO of owning task objects. Admission counts every accepted batch and

@@ -3,6 +3,7 @@
 - **Status:** accepted
 - **Date:** 2026-08-09
 - **Owners:** ChronosDB distributed-systems maintainers
+- **Extended by:** [ADR 0135](0135-bounded-asynchronous-prepared-reconfiguration-admission.md)
 
 ## Context
 
