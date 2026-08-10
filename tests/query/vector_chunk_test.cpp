@@ -57,6 +57,26 @@ namespace {
       .value();
 }
 
+[[nodiscard]] columnar::OwnedPhysicalColumn
+timestamp_column(const std::vector<std::int64_t>& values) {
+  columnar::ColumnVectorBuffers buffers;
+  buffers.values.resize(values.size() * sizeof(std::int64_t));
+  for (std::size_t row = 0U; row < values.size(); ++row) {
+    const std::uint64_t bits = std::bit_cast<std::uint64_t>(values[row]);
+    for (std::size_t byte = 0U; byte < sizeof(bits); ++byte) {
+      buffers.values[row * sizeof(bits) + byte] =
+          static_cast<std::byte>((bits >> (byte * 8U)) & 0xffU);
+    }
+  }
+  return columnar::OwnedPhysicalColumn::create(
+             {.type = type(schema::LogicalTypeKind::kTimestampNs),
+              .nullable = false,
+              .row_count = static_cast<std::uint32_t>(values.size()),
+              .null_count = 0U},
+             std::move(buffers))
+      .value();
+}
+
 [[nodiscard]] std::int64_t selected_int64(const VectorChunk& chunk,
                                           const std::size_t selected_row) {
   const auto cell = chunk.cell({.column_ordinal = 0U, .selected_row = selected_row}).value();
@@ -152,6 +172,26 @@ TEST(VectorSelectionTest, RejectsInvalidDomainsDuplicatesAndReordering) {
   EXPECT_FALSE(VectorSelection::from_indices(4U, {0U, 4U}).has_value());
   EXPECT_FALSE(VectorSelection::from_indices(4U, {1U, 1U}).has_value());
   EXPECT_FALSE(VectorSelection::from_indices(4U, {2U, 1U}).has_value());
+}
+
+TEST(VectorSelectionTest, IdentityTimestampRangeKernelPreservesExactOrderAndBounds) {
+  std::vector<std::int64_t> timestamps(65U);
+  std::vector<std::uint32_t> expected;
+  for (std::uint32_t row = 0U; row < timestamps.size(); ++row) {
+    timestamps[row] = static_cast<std::int64_t>(row) - 32;
+    if (timestamps[row] >= -7 && timestamps[row] < 13)
+      expected.push_back(row);
+  }
+  const auto column = timestamp_column(timestamps);
+  const TimestampRangePredicate predicate{.lower = TimestampRangeBound{-7, true},
+                                          .upper = TimestampRangeBound{13, false}};
+
+  auto filtered = VectorSelection::where_timestamp_in_range(VectorSelection::all(65U).value(),
+                                                            column.view(), predicate);
+
+  ASSERT_TRUE(filtered.has_value()) << filtered.error().to_string();
+  EXPECT_TRUE(std::ranges::equal(filtered->indices(), expected));
+  EXPECT_FALSE(filtered->is_identity());
 }
 
 TEST(VectorChunkTest, MapsSelectedRowsAcrossCanonicalPhysicalColumns) {

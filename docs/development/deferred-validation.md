@@ -52,8 +52,9 @@
   the focused Ubuntu build and fragmented socket lifecycle executed during the feature pass.
 - Run an equal-semantics epoll/io_uring comparison with unfavorable runs before considering any
   default-backend change or relative performance claim.
-- AVX2, AVX-512, and ARM NEON kernel implementations/comparisons beyond existing portable vector
-  operators; scalar/vector equivalence under every supported CPU feature set.
+- x86 runtime differential evidence for the implemented AVX2 timestamp filter; AVX-512 and
+  additional AVX2/ARM NEON kernels; forced CPU-feature fallback matrices; scalar/SIMD equivalence
+  under every supported compiler/CPU feature set; and comparative threshold/throughput benchmarks.
 - Reactor/shard owned-thread affinity integration; query-worker real CPU-set coverage; NUMA provider
   and local allocation policy; invalid/offline CPU and topology behavior; broader Linux/macOS
   portability; TSan; NUMA experiments; and allocation cleanup based on profiles rather than

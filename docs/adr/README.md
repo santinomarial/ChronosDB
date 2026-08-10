@@ -143,3 +143,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0106](0106-topology-bound-subscription-retention.md) | Topology-bound subscription retention authority | accepted |
 | [0107](0107-bounded-io-uring-socket-reactor.md) | Bounded io_uring socket reactor ownership | accepted |
 | [0108](0108-query-worker-placement-startup-gate.md) | Query-worker placement startup gate | accepted |
+| [0109](0109-runtime-dispatched-timestamp-filter-kernel.md) | Runtime-dispatched timestamp filter kernel | accepted |

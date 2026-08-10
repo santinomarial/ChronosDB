@@ -648,9 +648,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   are implemented. The opt-in Linux liburing backend now owns accept, receive, send, and response
   wakeup socket operations without leaking Linux types. A focused Ubuntu/GCC/liburing build and
   Linux 6.12 fragmented-I/O lifecycle test passed. Parallel query workers now apply exact optional
-  placements behind an all-worker startup gate before any pipeline runs. Epoll remains the
-  reference. Broader parity, SIMD variants, NUMA memory placement, profiling, and performance
-  evidence remain deferred; no speed claim or phase measurement exit is declared.
+  placements behind an all-worker startup gate before any pipeline runs. Dense zero-NULL identity
+  timestamp filtering now has runtime-dispatched scalar, AVX2, and AArch64 NEON kernels with
+  differential coverage; NEON ran locally and AVX2 passed compile-only validation. Epoll remains the
+  reference. Broader parity/SIMD work, NUMA memory placement, profiling, and performance evidence
+  remain deferred; no speed claim or phase measurement exit is declared.
 
 - **Scope:** profile verified single-node paths; remove measured bottlenecks; establish reproducible benchmark governance; compare an optional `io_uring` prototype with epoll under equal semantics.
 - **Explicit non-scope:** weakened durability/checksums/visibility, selective publication of favorable runs, a mandatory `io_uring` migration, distribution, and novel allocators or lock-free rewrites without evidence.

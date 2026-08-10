@@ -393,6 +393,7 @@ add_library(
   src/query/temporal_cseg_snapshot.cpp
   src/query/temporal_recovery.cpp
   src/query/temporal_snapshot.cpp
+  src/query/timestamp_filter_kernel.cpp
   src/query/value.cpp
   src/query/vector_chunk.cpp
   src/query/vector_expression.cpp
@@ -1221,6 +1222,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/temporal_snapshot_header_self_contained.cpp
     tests/query/temporal_snapshot_test.cpp
     tests/query/timestamp_range_header_self_contained.cpp
+    tests/query/timestamp_filter_kernel_test.cpp
     tests/query/value_header_self_contained.cpp
     tests/query/value_test.cpp
     tests/query/vector_chunk_header_self_contained.cpp
@@ -1230,7 +1232,9 @@ if(CHRONOS_BUILD_TESTS)
   )
   set_target_properties(chronos_query_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_query_tests PRIVATE cxx_std_23)
-  target_include_directories(chronos_query_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+  target_include_directories(
+    chronos_query_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+  )
   target_link_libraries(
     chronos_query_tests PRIVATE chronos::query GTest::gtest_main Threads::Threads zstd::libzstd
   )

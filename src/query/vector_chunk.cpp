@@ -3,6 +3,7 @@
 #include "chronos/common/checked_math.hpp"
 #include "chronos/common/status.hpp"
 #include "chronos/schema/logical_type.hpp"
+#include "query/timestamp_filter_kernel.hpp"
 
 #include <bit>
 #include <cstddef>
@@ -164,6 +165,13 @@ VectorSelection::where_timestamp_in_range(VectorSelection selection,
   if (predicate.is_empty()) {
     selection.indices_.clear();
     selection.identity_ = false;
+    return selection;
+  }
+  if (selection.identity_ && timestamp_column.null_count() == 0U) {
+    const std::size_t output = detail::compact_identity_timestamps(
+        timestamp_column.values(), std::span<std::uint32_t>{selection.indices_}, predicate);
+    selection.indices_.resize(output);
+    selection.identity_ = output == selection.physical_row_count_;
     return selection;
   }
 

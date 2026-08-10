@@ -113,16 +113,21 @@ For `S` selected input rows, filtering takes `O(S)` time and `O(1)` additional s
 scan unselected physical rows. Retained memory is unchanged; logical selection bytes become
 `4 * kept_rows`.
 
-The baseline makes no SIMD, sorted-range, binary-search, or predicate-fusion claim. CSEG ordering or
-future head ordering may permit specialized search, but such an optimization must retain exact
-NULL/open-bound semantics and must be justified with profiles and differential tests.
+Under [ADR 0109](../adr/0109-runtime-dispatched-timestamp-filter-kernel.md), a complete identity
+selection over a validated zero-NULL column enters a private runtime-dispatched scalar/AVX2/AArch64
+NEON kernel. AVX2 handles four signed timestamps per vector and NEON two; both write matching lane
+indices in ascending order and use the scalar predicate for tails. Sparse or nullable selections
+stay on the cell path. Big-endian or unsupported CPUs use explicit little-endian scalar decoding.
+No performance claim follows from this architecture; sorted-range, binary search, predicate fusion,
+AVX-512, and dispatch thresholds still require profiles and comparative measurements.
 
 ## Verification and measurement
 
 Unit tests cover open/closed/unbounded/empty ranges, domain extrema, NULL, sparse selections,
 invalid types and shapes, empty-chunk progress, query identity, cancellation, and sticky end. A
 deterministic property compares multiple predicates over forced chunk boundaries against scalar
-`matches()` evaluation.
+`matches()` evaluation. Kernel differential tests force every available backend across SIMD/tail
+boundaries and signed-domain extrema; an integrated identity-selection test protects dispatch.
 
 The vector fuzzer creates valid nullable timestamp columns, derives missing/open/closed/reversed and
 domain-edge bounds from hostile bytes, varies the ordinal, filters, and inspects surviving cells.
@@ -137,8 +142,9 @@ primitive, not scan I/O, planning, source construction, or complete query latenc
 ## Tradeoffs and next steps
 
 Selection compaction avoids copying but retains columns that may now have very few selected rows.
-The generic per-cell path is auditable and safe, though a specialized canonical fixed-width loop may
-later be faster. Neither cost justifies weakening exact comparisons or memory ownership.
+The generic per-cell path remains the auditable reference, and the specialized canonical
+fixed-width loop has no claimed benefit until Phase 18 measurement. Neither cost justifies weakening
+exact comparisons or memory ownership.
 
 The aggregate snapshot CSEG factory now performs the first storage integration: it retains the
 event-time column, uses identical bounds for conservative Manifest/CSEG pruning and exact filtering,

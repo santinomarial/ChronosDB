@@ -65,8 +65,10 @@ placement succeeds, and concurrent failures resolve by lowest worker ordinal.
 
 A focused Ubuntu 24.04/GCC/liburing 2.5 production build passed with warnings as errors. Focused
 Linux 6.12 tests passed for fragmented accept/read, handshake/query routing, response wakeup,
-ordered result/terminal sends, and shutdown. No epoll/io_uring comparison, SIMD/NUMA experiment,
-allocation profile, or performance campaign ran.
+ordered result/terminal sends, and shutdown. Dense non-null identity timestamp filters now dispatch
+between exact scalar, AVX2, and AArch64 NEON kernels; NEON differential tests ran locally and AVX2
+passed an x86_64 warnings-as-errors compile-only check. No epoll/io_uring or SIMD comparison, NUMA
+experiment, allocation profile, or performance campaign ran.
 
 ### Phase 13 — system-time history and corrections
 
@@ -230,7 +232,8 @@ broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were d
 - Ordered maps/multisets and copied snapshots favor correctness over throughput.
 - Live fan-out, temporal history, exchange, cache, and movement have no scale measurements.
 - The io_uring socket backend may be slower than epoll; no comparison was run.
-- No SIMD/NUMA optimization, allocation profile, flame graph, or tail-latency campaign ran.
+- Beyond the timestamp range kernel, no SIMD/NUMA optimization, allocation profile, flame graph, or
+  tail-latency campaign ran.
 
 ## Deferred validation and recommended Phase 18 order
 
