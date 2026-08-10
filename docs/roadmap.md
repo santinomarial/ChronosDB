@@ -824,9 +824,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   target-promoted phase and reopens complete state terminally. Authoritative target promotion and
   source removal now install representation-preserving generation checkpoints before live phase
   adoption, while unchanged reconciliation can emit work without reopening snapshot chunks.
-  Physical Manifest/CSEG handoff remains incomplete. General vector-plan fragments/
-  exchange wire bytes, compatible multi-tablet snapshots, authenticated leader transport, and
-  multi-node failure validation remain deferred; the phase exit gate is not claimed.
+  Production-facing reconciliation now releases an action only with its matching durable
+  pre-dispatch ledger receipt; a ledger failure after phase installation returns no dispatch and is
+  exactly retryable from the new phase. Physical Manifest/CSEG handoff remains incomplete. General
+  vector-plan fragments/exchange wire bytes, compatible multi-tablet snapshots, authenticated leader
+  transport, and multi-node failure validation remain deferred; the phase exit gate is not claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.
 - **Explicit non-scope:** general cross-tablet write transactions, silent consistency downgrade, unlimited shuffle, and topology changes that invalidate tokens without an explicit error/mapping protocol.

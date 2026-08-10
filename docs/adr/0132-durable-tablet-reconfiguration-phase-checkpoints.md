@@ -6,6 +6,7 @@
 - **Extends:** [ADR 0116](0116-raft-metadata-tablet-reconfiguration.md),
   [ADR 0130](0130-durable-tablet-movement-ready-reconciliation.md), and
   [ADR 0131](0131-restartable-tablet-reconfiguration-phases.md)
+- **Extended by:** [ADR 0133](0133-prepared-tablet-reconfiguration-dispatch.md)
 
 ## Context
 

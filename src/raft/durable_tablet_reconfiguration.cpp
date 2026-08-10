@@ -111,6 +111,25 @@ reconcile_impl(RecoveredTabletMovementGeneration& recovered, GroupId tablet_grou
                                             .installed_checkpoint = std::move(*installed)};
 }
 
+[[nodiscard]] common::Result<PreparedDurableTabletReconfigurationResult>
+prepare_dispatch(common::Result<DurableTabletReconfigurationResult> reconciled,
+                 TabletReconfigurationActionLedger& action_ledger) {
+  if (!reconciled.has_value())
+    return common::make_unexpected(std::move(reconciled).error());
+  if (!reconciled->action.has_value()) {
+    return PreparedDurableTabletReconfigurationResult{
+        .dispatch = std::nullopt,
+        .installed_checkpoint = std::move(reconciled->installed_checkpoint)};
+  }
+  auto prepared = action_ledger.prepare(*reconciled->action);
+  if (!prepared.has_value())
+    return common::make_unexpected(std::move(prepared).error());
+  return PreparedDurableTabletReconfigurationResult{
+      .dispatch = PreparedTabletReconfigurationDispatch{.action = std::move(*reconciled->action),
+                                                        .preparation = std::move(*prepared)},
+      .installed_checkpoint = std::move(reconciled->installed_checkpoint)};
+}
+
 } // namespace
 
 common::Result<DurableTabletReconfigurationResult> reconcile_durable_tablet_reconfiguration(
@@ -144,6 +163,35 @@ common::Result<DurableTabletReconfigurationResult> reconcile_durable_tablet_reco
   } catch (const std::length_error&) {
     return common::make_unexpected(exhausted("durable reconfiguration exceeded container limits"));
   }
+}
+
+common::Result<PreparedDurableTabletReconfigurationResult>
+reconcile_and_prepare_durable_tablet_reconfiguration(
+    RecoveredTabletMovementGeneration& recovered, GroupId tablet_group_id,
+    GroupId metadata_group_id, const schema::TableId table_id, const RaftNode& tablet_group,
+    const MetadataStateMachine& metadata, TabletMovementCheckpointStorage& checkpoint_storage,
+    TabletReconfigurationActionLedger& action_ledger, const std::optional<NodeId> leader_hint,
+    const TabletMovementLimits limits) {
+  return prepare_dispatch(
+      reconcile_durable_tablet_reconfiguration(recovered, std::move(tablet_group_id),
+                                               std::move(metadata_group_id), table_id, tablet_group,
+                                               metadata, checkpoint_storage, leader_hint, limits),
+      action_ledger);
+}
+
+common::Result<PreparedDurableTabletReconfigurationResult>
+reconcile_and_prepare_durable_tablet_reconfiguration(
+    RecoveredTabletMovementGeneration& recovered, GroupId tablet_group_id,
+    GroupId metadata_group_id, const schema::TableId table_id, const RaftNode& tablet_group,
+    const MetadataStateMachine& metadata, TabletMovementCheckpointStorage& checkpoint_storage,
+    const TabletMovementSnapshotChunkStorage& chunk_storage,
+    TabletReconfigurationActionLedger& action_ledger, const std::optional<NodeId> leader_hint,
+    const TabletMovementLimits limits) {
+  return prepare_dispatch(reconcile_durable_tablet_reconfiguration(
+                              recovered, std::move(tablet_group_id), std::move(metadata_group_id),
+                              table_id, tablet_group, metadata, checkpoint_storage, chunk_storage,
+                              leader_hint, limits),
+                          action_ledger);
 }
 
 } // namespace chronos::raft

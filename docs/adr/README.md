@@ -167,3 +167,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0130](0130-durable-tablet-movement-ready-reconciliation.md) | Durable tablet movement ready reconciliation | accepted |
 | [0131](0131-restartable-tablet-reconfiguration-phases.md) | Restartable tablet reconfiguration phases | accepted |
 | [0132](0132-durable-tablet-reconfiguration-phase-checkpoints.md) | Durable tablet reconfiguration phase checkpoints | accepted |
+| [0133](0133-prepared-tablet-reconfiguration-dispatch.md) | Prepared tablet reconfiguration dispatch boundary | accepted |

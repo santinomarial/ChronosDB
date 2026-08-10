@@ -54,8 +54,13 @@ not write a generation. When committed authorities advance ready to target-promo
 target-promoted to complete, it installs generation +1 before replacing the live movement. The
 adapter preserves self-contained versus external-prefix representation; an external phase change
 therefore requires and exact-revalidates the original chunk owner. Failed installation leaves the
-live phase and generation unchanged. Any returned action must still be prepared in the action ledger
-before dispatch.
+live phase and generation unchanged.
+
+Production routing uses `reconcile_and_prepare_durable_tablet_reconfiguration`, which releases no
+bare action. It bundles each action with the matching durable ledger preparation receipt. When a
+call both checkpoints target promotion and emits source-removal work, checkpoint installation
+precedes ledger preparation. A ledger failure therefore leaves the new phase durable but returns no
+dispatch; retry reconstructs the same action identity and prepares it idempotently.
 
 ## Complexity and tradeoffs
 

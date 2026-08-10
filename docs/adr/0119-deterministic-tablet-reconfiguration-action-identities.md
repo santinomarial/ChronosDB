@@ -53,6 +53,10 @@ Invariants 4, 8, 9, 10, 14, and 18 apply. Production retry-ledger persistence, d
 before metadata application, leader changes, and same-ID request conflict tests remain deferred to
 the routing owner.
 
+**Retrospective (2026-08-10):** ADR 0121 implements durable exact-byte ledger persistence and
+same-ID conflict coverage; ADR 0133 composes it with reconciliation before releasing a dispatch.
+Authenticated routing, duplicate delivery, and leader-change validation remain deferred.
+
 ## References
 
 - [ADR 0116](0116-raft-metadata-tablet-reconfiguration.md)

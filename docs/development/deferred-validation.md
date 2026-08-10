@@ -138,8 +138,8 @@
   routing/placement epochs, protocol bytes, and leader changes during long scans.
 - Shard-key pruning and statistics in addition to event-time pruning; multi-node scalar/distributed
   differential SQL and partial-aggregation equivalence.
-- Route actions from the implemented durable pre-dispatch ledger through authenticated current-
-  leader transport and reconcile duplicate delivery/application; complete physical Manifest/CSEG
+- Route composed prepared dispatches through authenticated current-leader transport and reconcile
+  duplicate delivery/application; complete physical Manifest/CSEG
   handoff and response routing around the implemented Raft-completed RTAS, composed mixed-generation
   ready/later-phase checkpoint reconciliation, and durable chunk owners; add generation/chunk
   reclamation and filesystem crash/fault injection, source/target/metadata-leader failures, source

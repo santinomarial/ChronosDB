@@ -96,6 +96,11 @@ chunk_config(const TemporaryDirectory& directory) {
           .session = TabletMovementSnapshotSession{tablet_id(), 7U, 1U, 4U, transfer()}};
 }
 
+[[nodiscard]] TabletReconfigurationActionLedgerConfig
+ledger_config(const TemporaryDirectory& directory) {
+  return {.directory_path = directory.path().string(), .tablet_id = tablet_id()};
+}
+
 [[nodiscard]] common::Result<RaftNode> leader(std::vector<NodeId> voters, const NodeId local = 2U) {
   auto node = RaftNode::create(local, std::move(voters));
   if (!node.has_value())
@@ -279,6 +284,126 @@ TEST(DurableTabletReconfigurationTest, CheckpointConflictLeavesLiveMovementUncha
   EXPECT_EQ(rejected.error().code(), common::StatusCode::kCorruption);
   EXPECT_EQ(recovered->checkpoint_generation, 1U);
   EXPECT_EQ(recovered->movement.record().phase, TabletMovementPhase::kReady);
+}
+
+TEST(DurableTabletReconfigurationTest, ReturnsOnlyLedgerPreparedDispatchAndRetriesExactly) {
+  TemporaryDirectory checkpoints{"chronos-prepared-reconfiguration-checkpoints"};
+  TemporaryDirectory actions{"chronos-prepared-reconfiguration-actions"};
+  auto checkpoint_storage = TabletMovementCheckpointStorage::create(checkpoint_config(checkpoints));
+  auto action_ledger = TabletReconfigurationActionLedger::create(ledger_config(actions));
+  auto movement = ready_movement();
+  ASSERT_TRUE(checkpoint_storage.has_value());
+  ASSERT_TRUE(action_ledger.has_value());
+  ASSERT_TRUE(movement.has_value());
+  ASSERT_TRUE(checkpoint_storage
+                  ->install({1U, TabletMovementCheckpoint{movement->record(), snapshot_bytes()}})
+                  .has_value());
+  auto first = checkpoint_storage->load_latest_any();
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(first->has_value());
+  auto recovered = recover_tablet_movement_generation(**first);
+  ASSERT_TRUE(recovered.has_value());
+  auto metadata = MetadataStateMachine::create();
+  ASSERT_TRUE(metadata.has_value());
+  ASSERT_TRUE(metadata
+                  ->apply_committed(
+                      1U, TabletPlacementMetadata{table_id(), tablet_id(), 7U, {1U, 2U, 3U}, 2U})
+                  .is_ok());
+  auto node = leader({1U, 2U, 3U});
+  ASSERT_TRUE(node.has_value());
+
+  auto prepared = reconcile_and_prepare_durable_tablet_reconfiguration(
+      *recovered, group(std::byte{10U}), group(std::byte{11U}), table_id(), *node, *metadata,
+      *checkpoint_storage, *action_ledger, 2U);
+  ASSERT_TRUE(prepared.has_value()) << prepared.error().to_string();
+  EXPECT_FALSE(prepared->installed_checkpoint.has_value());
+  ASSERT_TRUE(prepared->dispatch.has_value());
+  EXPECT_FALSE(prepared->dispatch->preparation.already_present);
+  EXPECT_EQ(prepared->dispatch->action.id, prepared->dispatch->preparation.id);
+  auto loaded = action_ledger->load(prepared->dispatch->action.id);
+  ASSERT_TRUE(loaded.has_value()) << loaded.error().to_string();
+  auto expected_bytes = encode_tablet_reconfiguration_action_v1(prepared->dispatch->action);
+  ASSERT_TRUE(expected_bytes.has_value());
+  EXPECT_EQ(loaded->bytes, *expected_bytes);
+
+  auto retry = reconcile_and_prepare_durable_tablet_reconfiguration(
+      *recovered, group(std::byte{10U}), group(std::byte{11U}), table_id(), *node, *metadata,
+      *checkpoint_storage, *action_ledger, 2U);
+  ASSERT_TRUE(retry.has_value()) << retry.error().to_string();
+  ASSERT_TRUE(retry->dispatch.has_value());
+  EXPECT_TRUE(retry->dispatch->preparation.already_present);
+  EXPECT_EQ(retry->dispatch->action.id, prepared->dispatch->action.id);
+  EXPECT_EQ(recovered->checkpoint_generation, 1U);
+  EXPECT_EQ(recovered->movement.record().phase, TabletMovementPhase::kReady);
+
+  auto promoted_metadata = MetadataStateMachine::create();
+  ASSERT_TRUE(promoted_metadata.has_value());
+  ASSERT_TRUE(
+      promoted_metadata
+          ->apply_committed(
+              1U, TabletPlacementMetadata{table_id(), tablet_id(), 8U, {1U, 2U, 3U, 4U}, 2U})
+          .is_ok());
+  auto promoted_node = leader({1U, 2U, 3U, 4U});
+  ASSERT_TRUE(promoted_node.has_value());
+  auto promoted = reconcile_and_prepare_durable_tablet_reconfiguration(
+      *recovered, group(std::byte{10U}), group(std::byte{11U}), table_id(), *promoted_node,
+      *promoted_metadata, *checkpoint_storage, *action_ledger, 2U);
+  ASSERT_TRUE(promoted.has_value()) << promoted.error().to_string();
+  ASSERT_TRUE(promoted->installed_checkpoint.has_value());
+  EXPECT_EQ(promoted->installed_checkpoint->checkpoint_generation, 2U);
+  ASSERT_TRUE(promoted->dispatch.has_value());
+  EXPECT_FALSE(promoted->dispatch->preparation.already_present);
+  EXPECT_EQ(promoted->dispatch->action.id.movement_epoch, 8U);
+  EXPECT_EQ(promoted->dispatch->action.id, promoted->dispatch->preparation.id);
+  EXPECT_EQ(recovered->checkpoint_generation, 2U);
+  EXPECT_EQ(recovered->movement.record().phase, TabletMovementPhase::kTargetPromoted);
+}
+
+TEST(DurableTabletReconfigurationTest, LedgerConflictKeepsInstalledPhaseCheckpoint) {
+  TemporaryDirectory checkpoints{"chronos-prepared-reconfiguration-conflict-checkpoints"};
+  TemporaryDirectory actions{"chronos-prepared-reconfiguration-conflict-actions"};
+  auto checkpoint_storage = TabletMovementCheckpointStorage::create(checkpoint_config(checkpoints));
+  auto action_ledger = TabletReconfigurationActionLedger::create(ledger_config(actions));
+  auto movement = ready_movement();
+  ASSERT_TRUE(checkpoint_storage.has_value());
+  ASSERT_TRUE(action_ledger.has_value());
+  ASSERT_TRUE(movement.has_value());
+  ASSERT_TRUE(checkpoint_storage
+                  ->install({1U, TabletMovementCheckpoint{movement->record(), snapshot_bytes()}})
+                  .has_value());
+  auto first = checkpoint_storage->load_latest_any();
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(first->has_value());
+  auto recovered = recover_tablet_movement_generation(**first);
+  ASSERT_TRUE(recovered.has_value());
+  TabletReconfigurationAction conflict{
+      {tablet_id(), 8U, TabletReconfigurationActionKind::kBeginJointMembership},
+      TabletReconfigurationActionKind::kBeginJointMembership,
+      {group(std::byte{10U}), BeginMembershipChangeOperation{{1U, 2U, 3U, 4U}}}};
+  ASSERT_TRUE(action_ledger->prepare(conflict).has_value());
+  auto metadata = MetadataStateMachine::create();
+  ASSERT_TRUE(metadata.has_value());
+  ASSERT_TRUE(
+      metadata
+          ->apply_committed(
+              1U, TabletPlacementMetadata{table_id(), tablet_id(), 8U, {1U, 2U, 3U, 4U}, 2U})
+          .is_ok());
+  auto node = leader({1U, 2U, 3U, 4U});
+  ASSERT_TRUE(node.has_value());
+
+  auto rejected = reconcile_and_prepare_durable_tablet_reconfiguration(
+      *recovered, group(std::byte{10U}), group(std::byte{11U}), table_id(), *node, *metadata,
+      *checkpoint_storage, *action_ledger, 2U);
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kCorruption);
+  EXPECT_EQ(recovered->checkpoint_generation, 2U);
+  EXPECT_EQ(recovered->movement.record().phase, TabletMovementPhase::kTargetPromoted);
+  auto latest = checkpoint_storage->load_latest_any();
+  ASSERT_TRUE(latest.has_value());
+  ASSERT_TRUE(latest->has_value());
+  EXPECT_EQ(std::visit([](const auto& value) { return value.checkpoint_generation; },
+                       (**latest).generation),
+            2U);
 }
 
 } // namespace

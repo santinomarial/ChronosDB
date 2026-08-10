@@ -4,6 +4,7 @@
 - **Date:** 2026-08-09
 - **Owners:** ChronosDB distributed-systems and storage maintainers
 - **Extends:** [ADR 0120](0120-tablet-reconfiguration-action-v1.md)
+- **Extended by:** [ADR 0133](0133-prepared-tablet-reconfiguration-dispatch.md)
 
 ## Context
 
