@@ -204,6 +204,52 @@ TEST(DurableMultiRaftRuntimeTest, ExactRetainedProposalDoesNotAppendOrSynchroniz
   EXPECT_EQ(runtime->find_group(group)->persistent_state().log.size(), 1U);
 }
 
+TEST(DurableMultiRaftRuntimeTest, RequiredLeaderTermRejectsStaleOrFollowerWorkWithoutMutation) {
+  TemporaryDirectory directory;
+  const GroupId group = group_id(std::byte{17U});
+  auto runtime = DurableMultiRaftRuntime::create_new(
+      1U, {.directory_path = directory.path().string()}, {{group, {1U}}});
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  const std::uint64_t initial_sequence = runtime->durable_physical_sequence();
+
+  auto follower_rejection =
+      runtime->execute_batch({{group, ProposeOperation{1U, {std::byte{0x41U}}}, Term{1U}}});
+
+  ASSERT_TRUE(follower_rejection.has_value()) << follower_rejection.error().to_string();
+  ASSERT_EQ(follower_rejection->size(), 1U);
+  EXPECT_EQ(follower_rejection->front().status.code(), common::StatusCode::kUnavailable);
+  EXPECT_FALSE(follower_rejection->front().transition.has_value());
+  EXPECT_TRUE(runtime->find_group(group)->persistent_state().log.empty());
+  EXPECT_EQ(runtime->durable_physical_sequence(), initial_sequence);
+
+  ASSERT_TRUE(runtime->execute_batch({{group, StartElectionOperation{}}}).has_value());
+  ASSERT_EQ(runtime->find_group(group)->role(), Role::kLeader);
+  ASSERT_EQ(runtime->find_group(group)->current_term(), 1U);
+  const std::uint64_t elected_sequence = runtime->durable_physical_sequence();
+
+  auto stale_rejection =
+      runtime->execute_batch({{group, ProposeOperation{1U, {std::byte{0x42U}}}, Term{2U}}});
+  auto invalid_rejection =
+      runtime->execute_batch({{group, ProposeOperation{1U, {std::byte{0x43U}}}, Term{0U}}});
+
+  ASSERT_TRUE(stale_rejection.has_value()) << stale_rejection.error().to_string();
+  ASSERT_TRUE(invalid_rejection.has_value()) << invalid_rejection.error().to_string();
+  EXPECT_EQ(stale_rejection->front().status.code(), common::StatusCode::kUnavailable);
+  EXPECT_EQ(invalid_rejection->front().status.code(), common::StatusCode::kInvalidArgument);
+  EXPECT_TRUE(runtime->find_group(group)->persistent_state().log.empty());
+  EXPECT_EQ(runtime->durable_physical_sequence(), elected_sequence);
+
+  auto admitted =
+      runtime->execute_batch({{group, ProposeOperation{1U, {std::byte{0x44U}}}, Term{1U}}});
+
+  ASSERT_TRUE(admitted.has_value()) << admitted.error().to_string();
+  ASSERT_TRUE(admitted->front().status.is_ok()) << admitted->front().status.to_string();
+  ASSERT_TRUE(admitted->front().transition.has_value());
+  EXPECT_TRUE(admitted->front().transition->persistence.has_value());
+  EXPECT_EQ(runtime->find_group(group)->persistent_state().log.size(), 1U);
+  EXPECT_GT(runtime->durable_physical_sequence(), elected_sequence);
+}
+
 TEST(DurableMultiRaftRuntimeTest, ProvesQuorumSyncOnlyAfterDurableMajorityCommit) {
   TemporaryDirectory leader_directory;
   TemporaryDirectory follower_directory;

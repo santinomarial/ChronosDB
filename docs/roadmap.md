@@ -778,7 +778,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   The asynchronous owner now exposes FIFO-ordered bounded owning group observations for local
   leader, commit/apply, and stable/joint membership state without releasing worker-owned pointers.
   Those observations now feed the same semantically validated, checkpoint-first and ledger-
-  prepared reconfiguration reconciliation path; authenticated production leader routing remains.
+  prepared reconfiguration reconciliation path. Durable requests can now atomically require the
+  exact current leader term at single-owner dispatch; authenticated production leader routing
+  remains.
   The dedicated metadata group now has canonical versioned/checksummed command bytes and committed
   application/reopen recovery for nodes, schema identities, tablet placement epochs, leader hints,
   and retention. Complete schema definitions and metadata snapshots remain; placement-driven

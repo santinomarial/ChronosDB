@@ -79,6 +79,11 @@ an owning role/term/commit/apply/membership snapshot after admitted work without
 worker-owned `RaftNode`. The observation is not a leader lease or application proof; authoritative
 metadata and movement reconciliation still decide the next action or phase.
 
+Routed work may also bind a durable request to a nonzero required leader term. The exclusive owner
+checks group existence, leader role, and exact term immediately before dispatch, so a stale routing
+decision cannot mutate the group even when another producer queues a leadership transition. The
+check is only an atomic admission fence; it is not a lease or commit proof.
+
 Production reconciliation accepts that owning observation after validating its tablet-group
 identity, ordered frontiers, canonical voters, and exact stable/joint relationships. Uncommitted
 membership remains a no-dispatch wait. Committed membership plus applied metadata feeds the same

@@ -140,7 +140,8 @@
 - Shard-key pruning and statistics in addition to event-time pruning; multi-node scalar/distributed
   differential SQL and partial-aggregation equivalence.
 - Route asynchronously admitted sealed prepared dispatches through authenticated current-leader
-  transport; add remote duplicate-delivery, retry/backoff, and automatic metadata apply scheduling;
+  transport using the implemented atomic current-leader-term admission fence; add remote
+  duplicate-delivery, retry/backoff, and automatic metadata apply scheduling;
   complete physical Manifest/CSEG
   handoff and response routing around the implemented Raft-completed RTAS, composed mixed-generation
   ready/later-phase checkpoint reconciliation, and durable chunk owners; add generation/chunk

@@ -142,6 +142,26 @@ DurableMultiRaftRuntime::execute_batch(std::vector<DurableRaftRequest> requests)
   std::size_t outbound_count = 0U;
   bool needs_sync = false;
   for (DurableRaftRequest& request : requests) {
+    if (request.required_leader_term.has_value()) {
+      if (*request.required_leader_term == 0U) {
+        results.push_back(DurableRaftResult{invalid("required Raft leader term must be nonzero"),
+                                            std::nullopt, std::nullopt});
+        continue;
+      }
+      const RaftNode* const node = impl_->runtime.find_group(request.group_id);
+      if (node == nullptr) {
+        results.push_back(DurableRaftResult{
+            common::Status{common::StatusCode::kNotFound, "Raft group does not exist"},
+            std::nullopt, std::nullopt});
+        continue;
+      }
+      if (node->role() != Role::kLeader || node->current_term() != *request.required_leader_term) {
+        results.push_back(DurableRaftResult{
+            unavailable("Raft operation is not admitted by the required current leader term"),
+            std::nullopt, std::nullopt});
+        continue;
+      }
+    }
     if (std::holds_alternative<ObserveGroupOperation>(request.operation)) {
       auto observation = observe_group(request.group_id);
       if (!observation.has_value()) {

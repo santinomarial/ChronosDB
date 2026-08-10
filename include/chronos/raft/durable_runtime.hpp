@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -62,8 +63,17 @@ using DurableRaftOperation =
                  BeginReadBarrierOperation, MarkAppliedOperation>;
 
 struct DurableRaftRequest {
+  DurableRaftRequest(GroupId configured_group_id, DurableRaftOperation configured_operation,
+                     std::optional<Term> configured_required_leader_term = std::nullopt)
+      : group_id(std::move(configured_group_id)), operation(std::move(configured_operation)),
+        required_leader_term(configured_required_leader_term) {}
+
   GroupId group_id;
   DurableRaftOperation operation;
+  // When present, the single owner checks this precondition immediately before dispatching the
+  // operation. A role or term mismatch returns UNAVAILABLE without mutating the group. This is the
+  // atomic admission boundary for work routed to a particular observed leader term.
+  std::optional<Term> required_leader_term;
 };
 
 // Bounded owning copy of the group state needed by routing and reconciliation. It deliberately
