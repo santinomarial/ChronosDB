@@ -518,6 +518,7 @@ add_library(
   src/raft/persistent_log.cpp
   src/raft/rebalancing.cpp
   src/raft/tablet_reconfiguration.cpp
+  src/raft/tablet_reconfiguration_action_codec.cpp
   src/raft/tablet_movement_checkpoint.cpp
   src/raft/tablet_movement_checkpoint_storage.cpp
 )
@@ -762,6 +763,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/raft/rebalancing_test.cpp
     tests/raft/tablet_reconfiguration_header_self_contained.cpp
     tests/raft/tablet_reconfiguration_test.cpp
+    tests/raft/tablet_reconfiguration_action_codec_header_self_contained.cpp
+    tests/raft/tablet_reconfiguration_action_codec_test.cpp
     tests/raft/tablet_movement_checkpoint_header_self_contained.cpp
     tests/raft/tablet_movement_checkpoint_test.cpp
     tests/raft/tablet_movement_checkpoint_storage_header_self_contained.cpp

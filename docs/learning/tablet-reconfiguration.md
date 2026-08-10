@@ -34,6 +34,11 @@ ID is derived from checkpointed movement state, restart reconstructs the same pe
 separate allocation record. The ID identifies retry intent; a routing owner must still persist
 in-flight/completion evidence and exact-match the request before suppressing a duplicate.
 
+`encode_tablet_reconfiguration_action_v1` turns that intent into bounded canonical bytes containing
+the destination group and exact supported operation. Decode revalidates the stable identity,
+operation-kind agreement, canonical voter set, and nested placement command before a retry owner can
+dispatch it.
+
 ## Complexity and tradeoffs
 
 Reconciliation is linear in the bounded replica count. The explicit two-group handoff adds control-

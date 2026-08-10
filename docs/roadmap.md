@@ -803,9 +803,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   through exact readback, file sync, no-replace rename, and directory sync, then reopens the latest
   generation without accepting renamed, foreign, corrupt, or gapped state. Every emitted promotion
   and removal step now carries a deterministic tablet/epoch/kind identity that reconstructs exactly
-  after restart. General vector-plan fragments/exchange wire bytes, compatible multi-tablet
-  snapshots, production leader routing/retry-ledger consumption, and multi-node failure validation
-  remain deferred; the phase exit gate is not claimed.
+  after restart, plus a canonical checksummed envelope binding that identity to the exact supported
+  Raft or metadata request. General vector-plan fragments/exchange wire bytes, compatible multi-
+  tablet snapshots, production leader routing/retry-ledger installation, and multi-node failure
+  validation remain deferred; the phase exit gate is not claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.
 - **Explicit non-scope:** general cross-tablet write transactions, silent consistency downgrade, unlimited shuffle, and topology changes that invalidate tokens without an explicit error/mapping protocol.

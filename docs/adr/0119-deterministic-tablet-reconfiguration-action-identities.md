@@ -5,6 +5,7 @@
 - **Owners:** ChronosDB distributed-systems and metadata maintainers
 - **Extends:** [ADR 0116](0116-raft-metadata-tablet-reconfiguration.md) and
   [ADR 0118](0118-durable-tablet-movement-checkpoint-generations.md)
+- **Extended by:** [ADR 0120](0120-tablet-reconfiguration-action-v1.md)
 
 ## Context
 
@@ -44,13 +45,13 @@ metadata groups have different execution domains and diagnostics need the tablet
 
 ## Consequences and validation
 
-The same pending action is recognizable across process restart and leader rerouting. The public
-action structure grows, but no durable or Raft command format changes. Focused tests assert all six
+The same pending action is recognizable across process restart and leader rerouting. ADR 0120 adds
+a canonical envelope without changing the nested Raft commands. Focused tests assert all six
 promotion/removal IDs and reconstruct the same pending ID from recovered movement bytes.
 
 Invariants 4, 8, 9, 10, 14, and 18 apply. Production retry-ledger persistence, duplicate delivery
-before metadata application, leader changes, same-ID request conflict tests, and network encoding
-remain deferred to the routing owner.
+before metadata application, leader changes, and same-ID request conflict tests remain deferred to
+the routing owner.
 
 ## References
 

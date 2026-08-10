@@ -154,3 +154,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0117](0117-tablet-movement-checkpoint-v1.md) | Tablet Movement Checkpoint v1 | accepted |
 | [0118](0118-durable-tablet-movement-checkpoint-generations.md) | Durable tablet movement checkpoint generations | accepted |
 | [0119](0119-deterministic-tablet-reconfiguration-action-identities.md) | Deterministic tablet reconfiguration action identities | accepted |
+| [0120](0120-tablet-reconfiguration-action-v1.md) | Tablet Reconfiguration Action v1 | accepted |
