@@ -19,8 +19,10 @@ bounded single-lineage scalar resolver that provides a differential current/as-o
 Manifest v2 discovery, generation-pinned part loading, and bounded multi-part scalar resolution are
 implemented. Complete retained part sets can reconstruct fresh scalar providers. One global WAL
 checkpoint can now recover every selected distinct-table WAL tablet: covered commands are routed and
-verified against each tablet's durable boundary, and only later commands are applied. Vector output,
-same-table multi-tablet routing, Raft/mixed-source composition, and compaction integration remain.
+verified against each tablet's durable boundary, and only later commands are applied. Resolved
+scalar winners can now enter the vector pipeline through a bounded, query-accounted owned scan
+source. Same-table multi-tablet routing, Raft/mixed-source composition, direct vector winner
+resolution/lowering, and compaction integration remain.
 
 ## Public interfaces and data structures
 
@@ -72,6 +74,13 @@ retained-system-time boundary. Duplicate or impossible
 cross-part mutation history is durable corruption; caller lineage/boundary mistakes remain explicit
 input errors. Decoded parts are borrowed only during reconstruction and the returned provider owns
 every scalar value.
+
+`ScalarSnapshotScanOperator` bridges any resolved current/as-of scalar snapshot into the physical
+pipeline. It plans a finite row slice, reserves conservative query credit before retaining output,
+and copies every schema-order logical value into canonical validity/offset/value buffers. Each
+identity-selected chunk owns its buffers, so releasing the provider, snapshot, or scan operator
+cannot invalidate downstream work. Reservation failure leaves the row cursor unchanged;
+cancellation and successful end are explicit and sticky.
 
 ## Application and recovery sequence
 
@@ -136,9 +145,10 @@ use a different accepted format; it must not reinterpret these bytes in place.
 
 Focused tests cover canonical command application, exact and disagreeing checkpoint-overlap WALs,
 multi-tablet routed verification/application, retained and reclaimed pre-boundary rows,
-original/correction replay, historical lookup, impossible-history rejection, and continued WAL
-sequence ownership. Phase 18 retains golden bytes, fuzzing, allocation-failure sweeps, crash points,
-many-tablet skew, mixed-command dispatch, long histories, and performance measurement.
+original/correction replay, historical lookup, scalar-winner vector materialization,
+impossible-history rejection, and continued WAL sequence ownership. Phase 18 retains golden bytes,
+fuzzing, allocation-failure sweeps, crash points, many-tablet skew, mixed-command dispatch, direct
+vector differential/lowering, long histories, and performance measurement.
 
 Useful design questions include:
 

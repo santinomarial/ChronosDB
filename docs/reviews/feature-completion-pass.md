@@ -84,8 +84,10 @@ version histories without reinterpreting v1 bytes. The WAL startup owner restore
 distinct-table tablet under one global checkpoint, exact-verifies routed overlap, applies only each
 tablet's suffix, and retains all providers/generation/locks until complete unpublished recovery.
 Same-table multi-tablet routing fails explicitly because command v1 lacks tablet identity. Vector
-row-version publication, Raft/mixed-source composition, v1 migration, and authorized compaction/
-retention integration remain, so the complete Phase 13 exit is not claimed.
+publication now has a bounded query-accounted scalar-snapshot source that copies current/as-of
+winners into canonical owned chunks. Direct vector winner resolution/lowering, Raft/mixed-source
+composition, v1 migration, and authorized compaction/retention integration remain, so the complete
+Phase 13 exit is not claimed.
 
 ### Phase 14 — deterministic Raft
 

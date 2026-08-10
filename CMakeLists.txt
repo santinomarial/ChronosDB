@@ -383,6 +383,7 @@ add_library(
   src/query/relational_plan.cpp
   src/query/resource_context.cpp
   src/query/row_version.cpp
+  src/query/scalar_snapshot_scan.cpp
   src/query/snapshot.cpp
   src/query/snapshot_pipeline.cpp
   src/query/sort.cpp
@@ -1201,6 +1202,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/resource_context_test.cpp
     tests/query/row_version_header_self_contained.cpp
     tests/query/row_version_test.cpp
+    tests/query/scalar_snapshot_scan_header_self_contained.cpp
+    tests/query/scalar_snapshot_scan_test.cpp
     tests/query/snapshot_header_self_contained.cpp
     tests/query/snapshot_pipeline_header_self_contained.cpp
     tests/query/snapshot_pipeline_test.cpp

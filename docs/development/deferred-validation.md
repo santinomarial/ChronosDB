@@ -75,9 +75,10 @@
   matrices,
   WAL/Raft source-lineage cases, allocation failure, fuzzing, cross-version conversion, and
   cross-compiler fixtures after the accepted temporal registry and layout planner.
-- Mutable-head and CSEG vector visibility resolution, physical-plan integration, current/as-of
-  scalar-vector differential SQL, many-tablet/skew/allocation/crash coverage beyond the implemented
-  distinct-table WAL checkpoint composition, versioned same-table tablet routing,
+- Direct mutable-head/CSEG vector winner resolution and physical-plan lowering beyond the
+  implemented scalar-snapshot vector source; full logical-type/allocation/cancellation matrices and
+  current/as-of scalar-vector differential SQL; many-tablet/skew/allocation/crash coverage beyond
+  the implemented distinct-table WAL checkpoint composition; versioned same-table tablet routing;
   Raft/mixed-source recovery composition, compaction equivalence, active-snapshot pins,
   tombstone/history retention, and audit interfaces.
 - Generated multi-version property models, timestamp ties/boundaries, late corrections, crash/

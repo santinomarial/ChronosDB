@@ -145,3 +145,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0108](0108-query-worker-placement-startup-gate.md) | Query-worker placement startup gate | accepted |
 | [0109](0109-runtime-dispatched-timestamp-filter-kernel.md) | Runtime-dispatched timestamp filter kernel | accepted |
 | [0110](0110-multi-tablet-temporal-wal-recovery.md) | Multi-tablet temporal WAL recovery routing | accepted |
+| [0111](0111-query-accounted-temporal-vector-source.md) | Query-accounted temporal vector source | accepted |

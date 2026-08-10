@@ -707,8 +707,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   tablet boundary, verified overlap, and applied suffix. The same owner now restores every selected
   distinct-table WAL tablet, routes covered/suffix commands by table, and reports exact per-tablet
   progress; ambiguous same-table multi-tablet routing fails explicitly because command v1 has no
-  tablet identity. Raft/mixed-source application snapshots, complete query-epoch publication, v1
-  migration, vector output, and
+  tablet identity. Resolved current/as-of scalar winners now feed canonical, bounded,
+  query-accounted owned vector chunks with cancellation and sticky end. Raft/mixed-source
+  application snapshots, complete query-epoch publication, v1 migration, direct vector winner
+  resolution/lowering, and
   authorized retention/compaction integration remain deferred, so the phase exit gate is not
   claimed.
 
