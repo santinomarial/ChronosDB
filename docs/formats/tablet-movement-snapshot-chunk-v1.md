@@ -32,6 +32,19 @@ fields except content CRC are nonzero; source and target differ. Header relation
 checked before payload ownership. Unknown versions are unsupported, while invalid bounds, reserved
 bytes, checksum mismatch, truncation, or trailing bytes are corruption.
 
-This v1 document freezes chunk bytes only. A separate owner must define immutable names, exact
-sequential admission, file/directory synchronization, restart selection, and whole-snapshot
-finalization before chunks become recovery authority.
+## Durable chunk namespace
+
+ADR 0123 assigns one locked directory to one exact session. A final chunk is named
+`chunk-<20-digit-offset>.mchk`, where the decimal offset is zero-padded and must equal the embedded
+offset. Its only canonical interrupted-install name appends `.tmp`. Recognized malformed names,
+non-regular entries, embedded/name disagreement, a first offset other than zero, or any later gap
+are corruption. Unrelated names are outside this namespace and ignored.
+
+Final files are immutable. Only the exact current prefix end may be installed; an existing offset
+is idempotent only when its full encoded bytes match. File synchronization precedes no-replace
+rename, directory synchronization establishes durable success, and cleanup of canonical
+temporaries is directory-synchronized. Recovery exact-decodes every final in numeric offset order.
+Completion additionally requires exact total length and whole-snapshot content CRC32C.
+
+These rules make chunks resumable transfer authority only. They do not make completed bytes an
+installed RTAS, Manifest, or CSEG object.

@@ -13,7 +13,10 @@ false latest recovery point.
 
 `TabletMovementSnapshotChunk` separately binds one payload range to the full tablet/epoch/source/
 target and snapshot boundary. This is the immutable piece format for removing full-prefix rewrites;
-its locked sequential filesystem owner and checkpoint handoff remain the next layer.
+`TabletMovementSnapshotChunkStorage` owns those pieces under one session-bound directory lock. It
+installs only the contiguous end, exact-retries immutable offsets, reconstructs progress by decoding
+every piece after restart, and validates the complete content CRC. Checkpoint handoff remains the
+next layer.
 
 ## Invariants and ownership
 

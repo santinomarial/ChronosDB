@@ -13,7 +13,8 @@ namespace chronos::raft {
 
 inline constexpr std::size_t kTabletMovementSnapshotChunkHeaderSize = 128U;
 inline constexpr std::size_t kTabletMovementSnapshotChunkTrailerSize = 4U;
-inline constexpr std::size_t kMaximumTabletMovementSnapshotChunkSize = 16U * 1024U * 1024U;
+inline constexpr std::size_t kMaximumTabletMovementSnapshotChunkSize =
+    std::size_t{16U} * 1024U * 1024U;
 
 struct TabletMovementSnapshotSession {
   schema::TabletId tablet_id;
@@ -36,8 +37,8 @@ struct TabletMovementSnapshotChunk {
 };
 
 struct TabletMovementSnapshotChunkCodecLimits {
-  std::size_t maximum_snapshot_bytes{1U << 30U};
-  std::size_t maximum_chunk_bytes{4U * 1024U * 1024U};
+  std::size_t maximum_snapshot_bytes{std::size_t{1U} << 30U};
+  std::size_t maximum_chunk_bytes{std::size_t{4U} * 1024U * 1024U};
   std::size_t maximum_encoded_bytes{kMaximumTabletMovementSnapshotChunkSize};
 };
 

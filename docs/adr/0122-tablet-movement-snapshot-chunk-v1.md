@@ -4,6 +4,7 @@
 - **Date:** 2026-08-09
 - **Owners:** ChronosDB distributed-systems and storage maintainers
 - **Extends:** [ADR 0117](0117-tablet-movement-checkpoint-v1.md)
+- **Extended by:** [ADR 0123](0123-durable-tablet-movement-snapshot-chunks.md)
 
 ## Context
 
@@ -41,9 +42,10 @@ Transfer pieces can be independently checksummed and later installed immutably. 
 adds 132 bytes and repeats session metadata, trading modest space for simple recovery. Focused tests
 exact-round-trip session/offset/payload and reject damage, out-of-range bytes, and invalid identity.
 
-Invariants 2, 8, 10, 14, and 18 apply. Filesystem installation, contiguous-prefix reconstruction,
-exact retry, final whole-snapshot validation, checkpoint integration, final RTAS/Manifest/CSEG
-installation, crash points, fuzzing, and large-transfer testing remain follow-up work.
+Invariants 2, 8, 10, 14, and 18 apply. ADR 0123 implements filesystem installation,
+contiguous-prefix reconstruction, exact retry, and final whole-snapshot validation. Checkpoint
+integration, final RTAS/Manifest/CSEG installation, crash points, fuzzing, and large-transfer
+testing remain follow-up work.
 
 ## References
 
