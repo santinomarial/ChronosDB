@@ -109,9 +109,9 @@
   mixed-version processes, hostile voter counts, snapshot-install crash points, and reclamation.
 - Connect the implemented two-stage Raft snapshot request/completion boundary to versioned tablet
   and metadata snapshot bytes, resumable transfer, manifest installation, and process-crash tests.
-- Put `DurableMultiRaftRuntime` behind a bounded asynchronous worker pool; batch transport and
-  application alongside its implemented persistence release, and prove fairness/no starvation
-  under hot/cold skew.
+- Extend the implemented one-worker bounded durable Multi-Raft FIFO with allocation/worker-start/I/O
+  failure injection, reactor continuations, timer batching, thread placement, and measured
+  group-aware fairness/no-starvation under hot/cold skew.
 - Carry the implemented group-scoped read-barrier operation through authenticated production
   transport, request deadlines/coalescing, apply waiting, and exact tablet snapshot acquisition.
 - Extend the implemented metadata Raft codec/application/reopen path with complete schema

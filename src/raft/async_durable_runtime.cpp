@@ -1,0 +1,393 @@
+#include "chronos/raft/async_durable_runtime.hpp"
+
+#include <algorithm>
+#include <condition_variable>
+#include <deque>
+#include <exception>
+#include <limits>
+#include <memory>
+#include <mutex>
+#include <new>
+#include <optional>
+#include <string>
+#include <system_error>
+#include <thread>
+#include <utility>
+#include <vector>
+
+namespace chronos::raft {
+namespace {
+
+using BatchResult = common::Result<std::vector<DurableRaftResult>>;
+
+void saturating_increment(std::uint64_t& value) noexcept {
+  if (value != std::numeric_limits<std::uint64_t>::max())
+    ++value;
+}
+
+[[nodiscard]] common::Status invalid(const char* message) {
+  return common::Status{common::StatusCode::kInvalidArgument, message};
+}
+
+} // namespace
+
+namespace detail {
+
+class AsyncDurableRaftCompletionState {
+public:
+  void complete(BatchResult result) {
+    {
+      const std::lock_guard lock{mutex_};
+      result_.emplace(std::move(result));
+    }
+    condition_.notify_all();
+  }
+
+  [[nodiscard]] bool is_ready() const {
+    const std::lock_guard lock{mutex_};
+    return result_.has_value() && !consumed_;
+  }
+
+  [[nodiscard]] BatchResult wait() {
+    std::unique_lock lock{mutex_};
+    condition_.wait(lock, [this] { return result_.has_value(); });
+    if (consumed_) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kInvalidArgument,
+                         "asynchronous durable Raft completion was already consumed"});
+    }
+    consumed_ = true;
+    return std::move(*result_);
+  }
+
+private:
+  mutable std::mutex mutex_;
+  mutable std::condition_variable condition_;
+  std::optional<BatchResult> result_;
+  bool consumed_{};
+};
+
+} // namespace detail
+
+class AsyncDurableMultiRaftRuntime::Impl {
+public:
+  struct Task {
+    std::vector<DurableRaftRequest> requests;
+    std::shared_ptr<detail::AsyncDurableRaftCompletionState> completion;
+    std::size_t operation_count{};
+  };
+
+  Impl(DurableMultiRaftRuntime runtime, const AsyncDurableMultiRaftLimits configured)
+      : runtime_(std::move(runtime)), limits_(configured) {
+    metrics_.accepting = true;
+  }
+
+  ~Impl() noexcept {
+    try {
+      static_cast<void>(shutdown());
+    } catch (...) {
+      std::terminate();
+    }
+  }
+
+  [[nodiscard]] common::Status start() {
+    try {
+      worker_ = std::thread{[this] { run(); }};
+    } catch (const std::system_error& error) {
+      metrics_.accepting = false;
+      return common::Status{common::StatusCode::kResourceExhausted,
+                            std::string{"cannot start durable Multi-Raft worker: "} + error.what()};
+    }
+    return common::Status::ok();
+  }
+
+  [[nodiscard]] common::Result<AsyncDurableRaftCompletion>
+  try_submit(std::vector<DurableRaftRequest> requests) {
+    if (requests.empty())
+      return reject(invalid("asynchronous durable Multi-Raft batch cannot be empty"));
+    if (requests.size() > limits_.durable.maximum_batch_operations ||
+        requests.size() > limits_.maximum_pending_operations) {
+      return reject(common::Status{common::StatusCode::kResourceExhausted,
+                                   "asynchronous durable Multi-Raft batch exceeds limits"});
+    }
+
+    try {
+      auto completion = std::make_shared<detail::AsyncDurableRaftCompletionState>();
+      const std::size_t operation_count = requests.size();
+      auto task = std::make_unique<Task>(Task{std::move(requests), completion, operation_count});
+      std::unique_lock lock{mutex_};
+      if (!metrics_.accepting) {
+        saturating_increment(metrics_.rejected_batches);
+        return common::make_unexpected(
+            terminal_status_.is_ok()
+                ? common::Status{common::StatusCode::kUnavailable,
+                                 "asynchronous durable Multi-Raft admission is closed"}
+                : terminal_status_);
+      }
+      if (metrics_.pending_batches >= limits_.maximum_pending_batches ||
+          operation_count > limits_.maximum_pending_operations - metrics_.pending_operations) {
+        saturating_increment(metrics_.rejected_batches);
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kResourceExhausted,
+                           "asynchronous durable Multi-Raft admission capacity is full"});
+      }
+      queue_.push_back(std::move(task));
+      ++metrics_.pending_batches;
+      metrics_.pending_operations += operation_count;
+      metrics_.high_water_pending_batches =
+          std::max(metrics_.high_water_pending_batches, metrics_.pending_batches);
+      metrics_.high_water_pending_operations =
+          std::max(metrics_.high_water_pending_operations, metrics_.pending_operations);
+      saturating_increment(metrics_.admitted_batches);
+      lock.unlock();
+      condition_.notify_one();
+      return AsyncDurableRaftCompletion{std::move(completion)};
+    } catch (const std::bad_alloc&) {
+      return reject(common::Status{common::StatusCode::kResourceExhausted,
+                                   "cannot allocate asynchronous durable Multi-Raft request"});
+    }
+  }
+
+  [[nodiscard]] common::Status shutdown() {
+    const std::lock_guard shutdown_lock{shutdown_mutex_};
+    {
+      const std::lock_guard lock{mutex_};
+      shutdown_requested_ = true;
+      metrics_.accepting = false;
+    }
+    condition_.notify_all();
+    if (worker_.joinable())
+      worker_.join();
+    const std::lock_guard lock{mutex_};
+    return terminal_status_;
+  }
+
+  [[nodiscard]] AsyncDurableMultiRaftMetrics metrics() const {
+    const std::lock_guard lock{mutex_};
+    return metrics_;
+  }
+
+  [[nodiscard]] bool is_accepting() const {
+    const std::lock_guard lock{mutex_};
+    return metrics_.accepting;
+  }
+
+  [[nodiscard]] common::Status terminal_status() const {
+    const std::lock_guard lock{mutex_};
+    return terminal_status_;
+  }
+
+private:
+  [[nodiscard]] common::Result<AsyncDurableRaftCompletion> reject(common::Status status) {
+    const std::lock_guard lock{mutex_};
+    saturating_increment(metrics_.rejected_batches);
+    return common::make_unexpected(std::move(status));
+  }
+
+  void release_admission(const Task& task, const bool succeeded) {
+    if (metrics_.pending_batches == 0U || metrics_.pending_operations < task.operation_count) {
+      if (terminal_status_.is_ok()) {
+        terminal_status_ = common::Status{common::StatusCode::kInternal,
+                                          "asynchronous Multi-Raft accounting underflow"};
+      }
+      metrics_.terminal_failure = true;
+      metrics_.accepting = false;
+      return;
+    }
+    --metrics_.pending_batches;
+    metrics_.pending_operations -= task.operation_count;
+    if (succeeded)
+      saturating_increment(metrics_.completed_batches);
+    else
+      saturating_increment(metrics_.failed_batches);
+  }
+
+  void fail_pending(const common::Status& status) {
+    std::deque<std::unique_ptr<Task>> failed;
+    {
+      const std::lock_guard lock{mutex_};
+      if (terminal_status_.is_ok())
+        terminal_status_ = status;
+      metrics_.terminal_failure = true;
+      metrics_.accepting = false;
+      failed.swap(queue_);
+      for (const auto& task : failed)
+        release_admission(*task, false);
+    }
+    for (auto& task : failed)
+      task->completion->complete(common::make_unexpected(terminal_status()));
+  }
+
+  [[nodiscard]] BatchResult execute(Task& task) {
+    try {
+      return runtime_.execute_batch(std::move(task.requests));
+    } catch (const std::bad_alloc&) {
+      return common::make_unexpected(common::Status{
+          common::StatusCode::kResourceExhausted,
+          "durable Multi-Raft worker exhausted memory while executing an admitted batch"});
+    } catch (const std::exception& error) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kInternal,
+                         std::string{"durable Multi-Raft worker caught an unexpected exception: "} +
+                             error.what()});
+    } catch (...) {
+      return common::make_unexpected(common::Status{
+          common::StatusCode::kInternal, "durable Multi-Raft worker caught an unknown exception"});
+    }
+  }
+
+  void close_runtime() {
+    const common::Status closed = runtime_.close();
+    if (!closed.is_ok()) {
+      const std::lock_guard lock{mutex_};
+      if (terminal_status_.is_ok())
+        terminal_status_ = closed;
+      metrics_.terminal_failure = true;
+      metrics_.accepting = false;
+    }
+  }
+
+  void run() {
+    while (true) {
+      std::unique_ptr<Task> task;
+      {
+        std::unique_lock lock{mutex_};
+        condition_.wait(lock, [this] { return shutdown_requested_ || !queue_.empty(); });
+        if (queue_.empty()) {
+          if (shutdown_requested_)
+            break;
+          continue;
+        }
+        task = std::move(queue_.front());
+        queue_.pop_front();
+      }
+
+      BatchResult result = execute(*task);
+      const bool succeeded = result.has_value();
+      const common::Status failure = succeeded ? common::Status::ok() : result.error();
+      {
+        const std::lock_guard lock{mutex_};
+        release_admission(*task, succeeded);
+      }
+      if (!succeeded) {
+        fail_pending(failure);
+        task->completion->complete(std::move(result));
+        break;
+      }
+      task->completion->complete(std::move(result));
+    }
+    close_runtime();
+  }
+
+  DurableMultiRaftRuntime runtime_;
+  AsyncDurableMultiRaftLimits limits_;
+  mutable std::mutex mutex_;
+  std::condition_variable condition_;
+  std::deque<std::unique_ptr<Task>> queue_;
+  AsyncDurableMultiRaftMetrics metrics_;
+  common::Status terminal_status_;
+  bool shutdown_requested_{};
+  std::thread worker_;
+  std::mutex shutdown_mutex_;
+};
+
+AsyncDurableRaftCompletion::AsyncDurableRaftCompletion() noexcept = default;
+AsyncDurableRaftCompletion::~AsyncDurableRaftCompletion() = default;
+AsyncDurableRaftCompletion::AsyncDurableRaftCompletion(AsyncDurableRaftCompletion&&) noexcept =
+    default;
+AsyncDurableRaftCompletion&
+AsyncDurableRaftCompletion::operator=(AsyncDurableRaftCompletion&&) noexcept = default;
+AsyncDurableRaftCompletion::AsyncDurableRaftCompletion(
+    std::shared_ptr<detail::AsyncDurableRaftCompletionState> state) noexcept
+    : state_(std::move(state)) {}
+
+bool AsyncDurableRaftCompletion::is_valid() const noexcept {
+  return state_ != nullptr;
+}
+
+bool AsyncDurableRaftCompletion::is_ready() const {
+  return state_ != nullptr && state_->is_ready();
+}
+
+BatchResult AsyncDurableRaftCompletion::wait() {
+  if (state_ == nullptr) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kInvalidArgument, "asynchronous durable Raft completion is invalid"});
+  }
+  return state_->wait();
+}
+
+AsyncDurableMultiRaftRuntime::AsyncDurableMultiRaftRuntime() noexcept = default;
+AsyncDurableMultiRaftRuntime::~AsyncDurableMultiRaftRuntime() = default;
+AsyncDurableMultiRaftRuntime::AsyncDurableMultiRaftRuntime(
+    AsyncDurableMultiRaftRuntime&&) noexcept = default;
+AsyncDurableMultiRaftRuntime&
+AsyncDurableMultiRaftRuntime::operator=(AsyncDurableMultiRaftRuntime&&) noexcept = default;
+AsyncDurableMultiRaftRuntime::AsyncDurableMultiRaftRuntime(std::unique_ptr<Impl> impl) noexcept
+    : impl_(std::move(impl)) {}
+
+common::Result<AsyncDurableMultiRaftRuntime> AsyncDurableMultiRaftRuntime::create_new(
+    const NodeId local_node_id, const RaftPersistentLogConfig& log_config,
+    std::vector<RaftGroupConfiguration> groups, const AsyncDurableMultiRaftLimits limits) {
+  if (limits.maximum_pending_batches == 0U || limits.maximum_pending_operations == 0U) {
+    return common::make_unexpected(invalid("asynchronous durable Multi-Raft limits are invalid"));
+  }
+  auto runtime = DurableMultiRaftRuntime::create_new(local_node_id, log_config, std::move(groups),
+                                                     limits.durable);
+  if (!runtime.has_value())
+    return common::make_unexpected(runtime.error());
+  auto impl = std::make_unique<Impl>(std::move(*runtime), limits);
+  const common::Status started = impl->start();
+  if (!started.is_ok()) {
+    static_cast<void>(impl->shutdown());
+    return common::make_unexpected(started);
+  }
+  return AsyncDurableMultiRaftRuntime{std::move(impl)};
+}
+
+common::Result<AsyncDurableMultiRaftRuntime> AsyncDurableMultiRaftRuntime::open_existing(
+    const NodeId local_node_id, const RaftPersistentLogConfig& log_config,
+    const RaftPersistentLogOpenOptions& open_options, std::vector<RaftGroupConfiguration> groups,
+    const AsyncDurableMultiRaftLimits limits) {
+  if (limits.maximum_pending_batches == 0U || limits.maximum_pending_operations == 0U) {
+    return common::make_unexpected(invalid("asynchronous durable Multi-Raft limits are invalid"));
+  }
+  auto runtime = DurableMultiRaftRuntime::open_existing(local_node_id, log_config, open_options,
+                                                        std::move(groups), limits.durable);
+  if (!runtime.has_value())
+    return common::make_unexpected(runtime.error());
+  auto impl = std::make_unique<Impl>(std::move(*runtime), limits);
+  const common::Status started = impl->start();
+  if (!started.is_ok()) {
+    static_cast<void>(impl->shutdown());
+    return common::make_unexpected(started);
+  }
+  return AsyncDurableMultiRaftRuntime{std::move(impl)};
+}
+
+common::Result<AsyncDurableRaftCompletion>
+AsyncDurableMultiRaftRuntime::try_submit(std::vector<DurableRaftRequest> requests) {
+  if (impl_ == nullptr) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kUnavailable, "asynchronous durable Multi-Raft runtime is not open"});
+  }
+  return impl_->try_submit(std::move(requests));
+}
+
+common::Status AsyncDurableMultiRaftRuntime::shutdown() {
+  return impl_ == nullptr ? common::Status::ok() : impl_->shutdown();
+}
+
+AsyncDurableMultiRaftMetrics AsyncDurableMultiRaftRuntime::metrics() const {
+  return impl_ == nullptr ? AsyncDurableMultiRaftMetrics{} : impl_->metrics();
+}
+
+bool AsyncDurableMultiRaftRuntime::is_accepting() const {
+  return impl_ != nullptr && impl_->is_accepting();
+}
+
+common::Status AsyncDurableMultiRaftRuntime::terminal_status() const {
+  return impl_ == nullptr ? common::Status::ok() : impl_->terminal_status();
+}
+
+} // namespace chronos::raft

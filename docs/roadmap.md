@@ -766,7 +766,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   suffix, and preserves membership-only application frontiers. The same locked owner now extends
   exact application commands to a newer applied boundary, installs them durably first, and then
   compacts Raft to matching metadata. Obsolete snapshot-file and shared physical-log reclamation are
-  not implemented. Asynchronous worker scheduling/fairness also remains deferred. A leader
+  not implemented. A bounded FIFO asynchronous owner now exclusively runs the durable runtime,
+  applies explicit batch/operation backpressure, publishes owning completions, drains on shutdown,
+  and fails queued work closed after terminal storage errors; group-aware fairness remains deferred. A leader
   under stable or joint membership can now produce a checked quorum-sync receipt after
   majority-derived durable commit, and tablet application composes it with visibility; native
   client mode exposure and end-to-end crash evidence remain. The phase exit gate is not claimed.

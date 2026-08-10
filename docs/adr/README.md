@@ -148,3 +148,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0111](0111-query-accounted-temporal-vector-source.md) | Query-accounted temporal vector source | accepted |
 | [0112](0112-monotonic-temporal-retention-frontier.md) | Monotonic temporal retention frontier | accepted |
 | [0113](0113-linearizable-raft-read-barrier.md) | Linearizable Raft read barrier | accepted |
+| [0114](0114-bounded-asynchronous-multi-raft-owner.md) | Bounded asynchronous Multi-Raft owner | accepted |
