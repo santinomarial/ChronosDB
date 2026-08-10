@@ -4,6 +4,7 @@
 - **Date:** 2026-08-09
 - **Owners:** ChronosDB distributed-systems and storage maintainers
 - **Extends:** [ADR 0117](0117-tablet-movement-checkpoint-v1.md)
+- **Extended by:** [ADR 0126](0126-mixed-tablet-movement-checkpoint-generations.md)
 
 ## Context
 

@@ -9,6 +9,7 @@
 #include <string>
 #include <system_error>
 #include <unistd.h>
+#include <variant>
 #include <vector>
 
 namespace chronos::raft {
@@ -176,6 +177,79 @@ TEST(TabletMovementCheckpointStorageTest, UsesCanonicalNonzeroGenerationNames) {
   EXPECT_FALSE(tablet_movement_checkpoint_generation_file_name(0U).has_value());
   EXPECT_EQ(*tablet_movement_checkpoint_generation_file_name(42U),
             "generation-00000000000000000042.movc");
+}
+
+TEST(TabletMovementCheckpointStorageTest, DispatchesMixedEnvelopesAndReopensReferenceGeneration) {
+  TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  auto movement = TabletMovement::begin(tablet_id(), 1U, 1U, 4U, {1U, 2U, 3U});
+  ASSERT_TRUE(movement.has_value());
+  const TabletMovementCheckpointGeneration first{1U, checkpoint(*movement)};
+  const std::vector<std::byte> snapshot{std::byte{3U}, std::byte{4U}};
+  ASSERT_TRUE(
+      movement->begin_snapshot({5U, 8U, 2U, snapshot.size(), common::crc32c(snapshot)}).is_ok());
+  ASSERT_TRUE(
+      movement
+          ->accept_snapshot_chunk(0U, {snapshot.data(), 1U}, common::crc32c({snapshot.data(), 1U}))
+          .is_ok());
+  const TabletMovementCheckpointReferenceGeneration second{
+      2U, TabletMovementCheckpointReference{movement->record(), 1U}};
+
+  {
+    auto storage = TabletMovementCheckpointStorage::create(config(directory.path()));
+    ASSERT_TRUE(storage.has_value()) << storage.error().to_string();
+    ASSERT_TRUE(storage->install(first).has_value());
+    auto installed = storage->install_reference(second);
+    ASSERT_TRUE(installed.has_value()) << installed.error().to_string();
+    EXPECT_FALSE(installed->already_present);
+    auto repeated = storage->install_reference(second);
+    ASSERT_TRUE(repeated.has_value());
+    EXPECT_TRUE(repeated->already_present);
+
+    auto loaded_first = storage->load_any_generation(1U);
+    ASSERT_TRUE(loaded_first.has_value()) << loaded_first.error().to_string();
+    EXPECT_TRUE(
+        std::holds_alternative<TabletMovementCheckpointGeneration>(loaded_first->generation));
+    auto latest = storage->load_latest_any();
+    ASSERT_TRUE(latest.has_value()) << latest.error().to_string();
+    ASSERT_TRUE(latest->has_value());
+    EXPECT_TRUE(
+        std::holds_alternative<TabletMovementCheckpointReferenceGeneration>((*latest)->generation));
+    auto legacy_latest = storage->load_latest();
+    ASSERT_FALSE(legacy_latest.has_value());
+    EXPECT_EQ(legacy_latest.error().code(), common::StatusCode::kNotSupported);
+
+    auto conflict = second;
+    conflict.reference.record.received_bytes = 0U;
+    auto rejected = storage->install_reference(conflict);
+    ASSERT_FALSE(rejected.has_value());
+    EXPECT_EQ(rejected.error().code(), common::StatusCode::kCorruption);
+  }
+
+  {
+    auto reopened = TabletMovementCheckpointStorage::open_existing(config(directory.path()));
+    ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+    auto latest = reopened->load_latest_any();
+    ASSERT_TRUE(latest.has_value()) << latest.error().to_string();
+    ASSERT_TRUE(latest->has_value());
+    const auto* reference =
+        std::get_if<TabletMovementCheckpointReferenceGeneration>(&(*latest)->generation);
+    ASSERT_NE(reference, nullptr);
+    EXPECT_EQ(*reference, second);
+    auto repeated = reopened->install_reference(second);
+    ASSERT_TRUE(repeated.has_value());
+    EXPECT_TRUE(repeated->already_present);
+  }
+
+  const std::string third_name = *tablet_movement_checkpoint_generation_file_name(3U);
+  std::filesystem::copy_file(directory.path() /
+                                 *tablet_movement_checkpoint_generation_file_name(2U),
+                             directory.path() / third_name);
+  auto renamed = TabletMovementCheckpointStorage::open_existing(config(directory.path()));
+  ASSERT_TRUE(renamed.has_value()) << renamed.error().to_string();
+  auto invalid_latest = renamed->load_latest_any();
+  ASSERT_FALSE(invalid_latest.has_value());
+  EXPECT_EQ(invalid_latest.error().code(), common::StatusCode::kCorruption);
 }
 
 } // namespace

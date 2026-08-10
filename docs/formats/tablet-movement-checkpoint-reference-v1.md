@@ -73,5 +73,6 @@ is followed by the complete reference and a four-byte CRC32C trailer.
 | 48 | 16 | zero reserved |
 
 The trailer covers the header and nested reference. The complete envelope must fit the configured
-reference limit. `CHRMVRG` is never interpreted as the self-contained `CHRMOVG` envelope; mixed
-filesystem selection requires explicit magic dispatch.
+reference limit. `CHRMVRG` is never interpreted as the self-contained `CHRMOVG` envelope. The
+tablet-owned generation namespace exact-dispatches these two magics under one contiguous sequence;
+filename generation and embedded tablet must agree.

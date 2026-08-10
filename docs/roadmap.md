@@ -812,8 +812,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   immutable offsets, and validates the final whole-snapshot CRC. A separate canonical checkpoint
   reference now records received length and the original chunk-session epoch without rewriting the
   prefix, with a distinct checksummed generation envelope that preserves old envelope semantics;
-  durable mixed-generation dispatch and composed chunk/reference recovery remain incomplete, as
-  does final RTAS/Manifest/CSEG handoff. General vector-plan fragments/exchange wire bytes,
+  the locked checkpoint owner now durably dispatches both envelope magics in one contiguous
+  generation sequence. Composed chunk/reference recovery remains incomplete, as does final RTAS/
+  Manifest/CSEG handoff. General vector-plan fragments/exchange wire bytes,
   compatible multi-tablet snapshots, authenticated leader transport, and multi-node failure
   validation remain deferred; the phase exit gate is not claimed.
 

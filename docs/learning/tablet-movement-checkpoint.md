@@ -23,6 +23,8 @@ the original chunk-session placement epoch without copying prefix bytes. Structu
 deliberately weaker than recovery authority. The future generation owner must exact-load the
 derived chunk session and pass those bytes through full movement validation before adoption. Its
 `CHRMVRG` generation envelope is intentionally distinct from the self-contained `CHRMOVG` envelope.
+The generation storage exact-dispatches those magics within one contiguous sequence and exposes a
+variant load; legacy typed loads fail closed rather than selecting an older generation.
 
 ## Invariants and ownership
 

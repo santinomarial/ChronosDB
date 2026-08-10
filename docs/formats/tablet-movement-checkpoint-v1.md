@@ -91,5 +91,7 @@ durable success boundary.
 
 Reopen removes only canonical regular temporaries and synchronizes removal. Selection rejects gaps
 or malformed recognized entries and accepts the latest file only when its embedded generation and
-nested tablet identity match the filename and configured owner. Old final generations remain
-immutable and are not reclaimed by this format owner.
+nested tablet identity match the filename and configured owner. ADR 0126 permits the same contiguous
+namespace to contain `CHRMVRG` reference envelopes; selection exact-dispatches envelope magic and
+never falls back past a newer unsupported alternative. Old final generations remain immutable and
+are not reclaimed by this format owner.

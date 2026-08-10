@@ -160,3 +160,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0123](0123-durable-tablet-movement-snapshot-chunks.md) | Durable tablet movement snapshot chunks | accepted |
 | [0124](0124-tablet-movement-external-prefix-reference-v1.md) | Tablet movement external-prefix reference v1 | accepted |
 | [0125](0125-tablet-movement-reference-generation-v1.md) | Tablet movement reference generation v1 | accepted |
+| [0126](0126-mixed-tablet-movement-checkpoint-generations.md) | Mixed tablet movement checkpoint generations | accepted |
