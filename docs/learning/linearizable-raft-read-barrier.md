@@ -6,6 +6,8 @@
 linearizable read without appending one entry per query. The returned transition sends bounded
 leadership probes. A later `receive` transition carries `read_barrier_ready` after quorum
 confirmation. Query code must still wait for `applied_index` to reach the barrier's `read_index`.
+`MultiRaftRuntime` tags that result with its group, and `DurableMultiRaftRuntime` accepts a
+`BeginReadBarrierOperation` through the same serialized batch interface.
 
 ## Data structures and invariants
 
@@ -25,6 +27,11 @@ The deterministic node owns barrier state and uses no clock, socket, thread, or 
 serializes calls just as it does for elections and replication. Request/response values may outlive
 a transition, but a response cannot complete a later barrier unless its exact term and context are
 pending. Leadership changes synchronously discard pending state.
+
+The Multi-Raft wrapper preserves the group on outbound probes and completion. A barrier start or
+ordinary same-term response has no durable state of its own, so the durable owner does not invent a
+physical-log record. If a recipient observes a higher term, its normal persistent transition is
+still appended and synchronized before the response can leave the durable batch.
 
 ## Failure behavior and complexity
 

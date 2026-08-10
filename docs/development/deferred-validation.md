@@ -112,6 +112,8 @@
 - Put `DurableMultiRaftRuntime` behind a bounded asynchronous worker pool; batch transport and
   application alongside its implemented persistence release, and prove fairness/no starvation
   under hot/cold skew.
+- Carry the implemented group-scoped read-barrier operation through authenticated production
+  transport, request deadlines/coalescing, apply waiting, and exact tablet snapshot acquisition.
 - Extend the implemented metadata Raft codec/application/reopen path with complete schema
   definitions, cluster epochs, metadata application snapshots, golden fixtures,
   fuzzing, crash injection, and large-catalog limits/measurements.
@@ -131,8 +133,9 @@
 - General coordinator/worker physical fragments for existing vector plans, projection/filter/scan
   serialization, bounded framed exchanges, partial message I/O, grouping-state codecs, ordering,
   top-N, LIMIT, cancellation, retries, and coordinator/worker failure cleanup.
-- Real leader-linearizable read index, bounded-stale proof, local-eventual routing, compatible
-  multi-tablet snapshots, routing/placement epochs, and no silent consistency downgrade.
+- Bind the implemented leader-linearizable read barrier to distributed query admission; add a
+  bounded-stale proof, local-eventual routing, compatible multi-tablet snapshots, routing/placement
+  epochs, and no silent consistency downgrade.
 - Shard-key pruning and statistics in addition to event-time pruning; multi-node scalar/distributed
   differential SQL and partial-aggregation equivalence.
 - Integrate movement with the joint-consensus Raft operations, resumable durable snapshot files, manifest/

@@ -160,6 +160,8 @@ DurableMultiRaftRuntime::execute_batch(std::vector<DurableRaftRequest> requests)
             return impl_->runtime.compact_snapshot(request.group_id, std::move(operation.snapshot));
           } else if constexpr (std::is_same_v<T, HeartbeatOperation>) {
             return impl_->runtime.heartbeat(request.group_id);
+          } else if constexpr (std::is_same_v<T, BeginReadBarrierOperation>) {
+            return impl_->runtime.begin_read_barrier(request.group_id);
           } else {
             return impl_->runtime.mark_applied(request.group_id, operation.index);
           }

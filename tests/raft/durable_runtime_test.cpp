@@ -110,6 +110,33 @@ TEST(DurableMultiRaftRuntimeTest, ReturnsVoteMessagesOnlyAfterStateIsDurable) {
   EXPECT_EQ(reopened->find_group(group)->persistent_state().voted_for, 1U);
 }
 
+TEST(DurableMultiRaftRuntimeTest, SurfacesGroupReadBarrierWithoutInventingPersistence) {
+  TemporaryDirectory directory;
+  const GroupId group = group_id(std::byte{13U});
+  const std::vector<RaftGroupConfiguration> groups{{group, {1U}}};
+  auto runtime = DurableMultiRaftRuntime::create_new(
+      1U, {.directory_path = directory.path().string()}, groups);
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  ASSERT_TRUE(runtime->execute_batch({{group, StartElectionOperation{}}}).has_value());
+  ASSERT_TRUE(
+      runtime->execute_batch({{group, ProposeOperation{.type = 1U, .payload = {std::byte{0x42U}}}}})
+          .has_value());
+  const std::uint64_t durable_before = runtime->durable_physical_sequence();
+
+  auto barrier = runtime->execute_batch({{group, BeginReadBarrierOperation{}}});
+
+  ASSERT_TRUE(barrier.has_value()) << barrier.error().to_string();
+  ASSERT_EQ(barrier->size(), 1U);
+  ASSERT_TRUE(barrier->front().status.is_ok());
+  ASSERT_TRUE(barrier->front().transition.has_value());
+  EXPECT_FALSE(barrier->front().transition->persistence.has_value());
+  ASSERT_TRUE(barrier->front().transition->read_barrier_ready.has_value());
+  EXPECT_EQ(barrier->front().transition->read_barrier_ready->group_id, group);
+  EXPECT_EQ(barrier->front().transition->read_barrier_ready->barrier.read_index, 1U);
+  EXPECT_EQ(runtime->find_group(group)->applied_index(), 0U);
+  EXPECT_EQ(runtime->durable_physical_sequence(), durable_before);
+}
+
 TEST(DurableMultiRaftRuntimeTest, ProvesQuorumSyncOnlyAfterDurableMajorityCommit) {
   TemporaryDirectory leader_directory;
   TemporaryDirectory follower_directory;

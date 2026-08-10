@@ -48,6 +48,10 @@ public:
       output.snapshot_install =
           GroupSnapshotInstall{group_id, std::move(*transition->snapshot_install)};
     }
+    if (transition->read_barrier_ready.has_value()) {
+      output.read_barrier_ready =
+          GroupReadBarrier{group_id, std::move(*transition->read_barrier_ready)};
+    }
     if (transition->persistent_state.has_value()) {
       if (physical_sequence == std::numeric_limits<std::uint64_t>::max()) {
         failed_state = true;
@@ -233,6 +237,19 @@ common::Result<MultiRaftTransition> MultiRaftRuntime::heartbeat(const GroupId& g
         common::Status{common::StatusCode::kNotFound, "Multi-Raft group does not exist"});
   }
   return impl_->wrap(group_id, group->second.node.heartbeat());
+}
+
+common::Result<MultiRaftTransition> MultiRaftRuntime::begin_read_barrier(const GroupId& group_id) {
+  if (impl_->failed_state) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kUnavailable, "Multi-Raft runtime has failed closed"});
+  }
+  const auto group = impl_->groups.find(group_id);
+  if (group == impl_->groups.end()) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kNotFound, "Multi-Raft group does not exist"});
+  }
+  return impl_->wrap(group_id, group->second.node.begin_read_barrier());
 }
 
 common::Result<MultiRaftTransition> MultiRaftRuntime::mark_applied(const GroupId& group_id,

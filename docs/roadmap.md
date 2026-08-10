@@ -770,6 +770,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   under stable or joint membership can now produce a checked quorum-sync receipt after
   majority-derived durable commit, and tablet application composes it with visibility; native
   client mode exposure and end-to-end crash evidence remain. The phase exit gate is not claimed.
+  Group-scoped read barriers now flow through both Multi-Raft owners without fabricating a durable
+  transition, while higher-term recipient state still crosses the existing sync-before-response
+  boundary. Production transport and tablet snapshot acquisition remain deferred.
   The dedicated metadata group now has canonical versioned/checksummed command bytes and committed
   application/reopen recovery for nodes, schema identities, tablet placement epochs, leader hints,
   and retention. Complete schema definitions and metadata snapshots remain; placement-driven

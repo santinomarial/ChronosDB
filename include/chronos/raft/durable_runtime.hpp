@@ -41,6 +41,7 @@ struct CompactSnapshotOperation {
   SnapshotMetadata snapshot;
 };
 struct HeartbeatOperation {};
+struct BeginReadBarrierOperation {};
 struct MarkAppliedOperation {
   LogIndex index{};
 };
@@ -49,7 +50,7 @@ using DurableRaftOperation =
     std::variant<StartElectionOperation, ReceiveOperation, ProposeOperation,
                  BeginMembershipChangeOperation, FinalizeMembershipChangeOperation,
                  CompleteSnapshotInstallOperation, CompactSnapshotOperation, HeartbeatOperation,
-                 MarkAppliedOperation>;
+                 BeginReadBarrierOperation, MarkAppliedOperation>;
 
 struct DurableRaftRequest {
   GroupId group_id;

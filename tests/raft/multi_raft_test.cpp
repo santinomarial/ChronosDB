@@ -144,5 +144,34 @@ TEST(MultiRaftTest, OutboundOverflowFailsRuntimeClosed) {
   EXPECT_EQ(runtime->group_count(), 1U);
 }
 
+TEST(MultiRaftTest, RoutesReadBarrierProbeAndGroupScopedCompletion) {
+  const GroupId group = group_id(std::byte{8});
+  auto runtime = MultiRaftRuntime::create(1U);
+  ASSERT_TRUE(runtime.has_value());
+  ASSERT_TRUE(runtime->add_group(group, {1U, 2U, 3U}).is_ok());
+  ASSERT_TRUE(runtime->start_election(group).has_value());
+  ASSERT_TRUE(runtime->receive(group, 2U, RequestVoteResponse{1U, true}).has_value());
+  ASSERT_TRUE(runtime->propose(group, 1U, {std::byte{0x44}}).has_value());
+  ASSERT_TRUE(runtime->receive(group, 2U, AppendEntriesResponse{1U, true, 1U, std::nullopt, 0U})
+                  .has_value());
+
+  auto started = runtime->begin_read_barrier(group);
+  ASSERT_TRUE(started.has_value()) << started.error().to_string();
+  ASSERT_EQ(started->outbound.size(), 2U);
+  EXPECT_FALSE(started->persistence.has_value());
+  EXPECT_FALSE(started->read_barrier_ready.has_value());
+  for (const GroupOutboundMessage& outbound : started->outbound)
+    EXPECT_EQ(outbound.group_id, group);
+  const auto context =
+      std::get<ReadBarrierRequest>(started->outbound.front().outbound.message).context;
+
+  auto completed = runtime->receive(group, 2U, ReadBarrierResponse{1U, context, true});
+  ASSERT_TRUE(completed.has_value()) << completed.error().to_string();
+  ASSERT_TRUE(completed->read_barrier_ready.has_value());
+  EXPECT_EQ(*completed->read_barrier_ready,
+            (GroupReadBarrier{.group_id = group,
+                              .barrier = {.term = 1U, .context = context, .read_index = 1U}}));
+}
+
 } // namespace
 } // namespace chronos::raft

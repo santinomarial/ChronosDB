@@ -34,11 +34,19 @@ struct GroupSnapshotInstall {
   PendingSnapshotInstall install;
 };
 
+struct GroupReadBarrier {
+  GroupId group_id;
+  ReadBarrier barrier;
+
+  friend bool operator==(const GroupReadBarrier&, const GroupReadBarrier&) = default;
+};
+
 struct MultiRaftTransition {
   std::optional<GroupPersistentState> persistence;
   std::vector<GroupOutboundMessage> outbound;
   std::optional<LogIndex> advanced_commit_index;
   std::optional<GroupSnapshotInstall> snapshot_install;
+  std::optional<GroupReadBarrier> read_barrier_ready;
 };
 
 struct MultiRaftLimits {
@@ -82,6 +90,7 @@ public:
   [[nodiscard]] common::Result<MultiRaftTransition> compact_snapshot(const GroupId& group_id,
                                                                      SnapshotMetadata snapshot);
   [[nodiscard]] common::Result<MultiRaftTransition> heartbeat(const GroupId& group_id);
+  [[nodiscard]] common::Result<MultiRaftTransition> begin_read_barrier(const GroupId& group_id);
   [[nodiscard]] common::Result<MultiRaftTransition> mark_applied(const GroupId& group_id,
                                                                  LogIndex index);
 
