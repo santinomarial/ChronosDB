@@ -100,5 +100,34 @@ TEST(TabletMovementCheckpointReferenceTest, RejectsNoSessionDamageAndUnboundByte
   EXPECT_EQ(invalid_limits.error().code(), common::StatusCode::kInvalidArgument);
 }
 
+TEST(TabletMovementCheckpointReferenceTest, RoundTripsGenerationAndRejectsIdentityAndDamage) {
+  auto active = movement();
+  ASSERT_TRUE(active.has_value());
+  const std::vector<std::byte> snapshot{std::byte{1U}, std::byte{2U}};
+  ASSERT_TRUE(
+      active->begin_snapshot({4U, 5U, 2U, snapshot.size(), common::crc32c(snapshot)}).is_ok());
+  ASSERT_TRUE(
+      active
+          ->accept_snapshot_chunk(0U, {snapshot.data(), 1U}, common::crc32c({snapshot.data(), 1U}))
+          .is_ok());
+  const TabletMovementCheckpointReferenceGeneration expected{
+      11U, TabletMovementCheckpointReference{active->record(), 7U}};
+  auto encoded = encode_tablet_movement_checkpoint_reference_generation_v1(expected);
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  auto decoded = decode_tablet_movement_checkpoint_reference_generation_v1(*encoded);
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  EXPECT_EQ(*decoded, expected);
+
+  auto zero = expected;
+  zero.checkpoint_generation = 0U;
+  auto invalid_generation = encode_tablet_movement_checkpoint_reference_generation_v1(zero);
+  ASSERT_FALSE(invalid_generation.has_value());
+  EXPECT_EQ(invalid_generation.error().code(), common::StatusCode::kInvalidArgument);
+  (*encoded)[kTabletMovementCheckpointReferenceGenerationHeaderSize] ^= std::byte{1U};
+  auto damaged = decode_tablet_movement_checkpoint_reference_generation_v1(*encoded);
+  ASSERT_FALSE(damaged.has_value());
+  EXPECT_EQ(damaged.error().code(), common::StatusCode::kCorruption);
+}
+
 } // namespace
 } // namespace chronos::raft

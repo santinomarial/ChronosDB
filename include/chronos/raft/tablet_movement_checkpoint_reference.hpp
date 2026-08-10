@@ -14,6 +14,8 @@ namespace chronos::raft {
 
 inline constexpr std::size_t kTabletMovementCheckpointReferenceHeaderSize = 64U;
 inline constexpr std::size_t kTabletMovementCheckpointReferenceTrailerSize = 4U;
+inline constexpr std::size_t kTabletMovementCheckpointReferenceGenerationHeaderSize = 64U;
+inline constexpr std::size_t kTabletMovementCheckpointReferenceGenerationTrailerSize = 4U;
 inline constexpr std::size_t kMaximumTabletMovementCheckpointReferenceSize = std::size_t{1U} << 20U;
 
 struct TabletMovementCheckpointReference {
@@ -31,6 +33,14 @@ struct TabletMovementCheckpointReferenceCodecLimits {
   TabletMovementLimits movement;
 };
 
+struct TabletMovementCheckpointReferenceGeneration {
+  std::uint64_t checkpoint_generation{};
+  TabletMovementCheckpointReference reference;
+
+  friend bool operator==(const TabletMovementCheckpointReferenceGeneration&,
+                         const TabletMovementCheckpointReferenceGeneration&) = default;
+};
+
 [[nodiscard]] common::Result<TabletMovementSnapshotSession>
 tablet_movement_snapshot_session(const TabletMovementCheckpointReference& reference,
                                  TabletMovementLimits limits = {});
@@ -41,6 +51,15 @@ tablet_movement_snapshot_session(const TabletMovementCheckpointReference& refere
 
 [[nodiscard]] common::Result<TabletMovementCheckpointReference>
 decode_tablet_movement_checkpoint_reference_v1(
+    common::ByteView bytes, TabletMovementCheckpointReferenceCodecLimits limits = {});
+
+[[nodiscard]] common::Result<std::vector<std::byte>>
+encode_tablet_movement_checkpoint_reference_generation_v1(
+    const TabletMovementCheckpointReferenceGeneration& generation,
+    TabletMovementCheckpointReferenceCodecLimits limits = {});
+
+[[nodiscard]] common::Result<TabletMovementCheckpointReferenceGeneration>
+decode_tablet_movement_checkpoint_reference_generation_v1(
     common::ByteView bytes, TabletMovementCheckpointReferenceCodecLimits limits = {});
 
 } // namespace chronos::raft

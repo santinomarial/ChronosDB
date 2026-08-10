@@ -2,3 +2,5 @@
 
 [[maybe_unused]] constexpr auto kMovementReferenceHeader =
     chronos::raft::kTabletMovementCheckpointReferenceHeaderSize;
+[[maybe_unused]] constexpr auto kMovementReferenceGenerationHeader =
+    chronos::raft::kTabletMovementCheckpointReferenceGenerationHeaderSize;

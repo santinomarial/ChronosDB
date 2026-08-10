@@ -19,10 +19,14 @@ namespace {
 constexpr std::array<std::byte, 8U> kMagic{std::byte{'C'}, std::byte{'H'}, std::byte{'R'},
                                            std::byte{'M'}, std::byte{'O'}, std::byte{'V'},
                                            std::byte{'R'}, std::byte{0U}};
+constexpr std::array<std::byte, 8U> kGenerationMagic{std::byte{'C'}, std::byte{'H'}, std::byte{'R'},
+                                                     std::byte{'M'}, std::byte{'V'}, std::byte{'R'},
+                                                     std::byte{'G'}, std::byte{0U}};
 constexpr std::uint16_t kMajor = 1U;
 constexpr std::uint16_t kMinor = 0U;
 constexpr std::size_t kFixedPayloadSize = 112U;
 constexpr std::size_t kHeaderCrcOffset = 32U;
+constexpr std::size_t kGenerationHeaderCrcOffset = 44U;
 
 [[nodiscard]] common::Status invalid(const char* message) {
   return {common::StatusCode::kInvalidArgument, message};
@@ -97,6 +101,14 @@ void store_u32(std::span<std::byte> bytes, const std::size_t offset, const std::
   std::ranges::copy(header, copy.begin());
   std::fill_n(copy.begin() + static_cast<std::ptrdiff_t>(kHeaderCrcOffset), sizeof(std::uint32_t),
               std::byte{0U});
+  return common::crc32c(copy);
+}
+
+[[nodiscard]] std::uint32_t generation_header_crc(const common::ByteView header) {
+  std::array<std::byte, kTabletMovementCheckpointReferenceGenerationHeaderSize> copy{};
+  std::ranges::copy(header, copy.begin());
+  std::fill_n(copy.begin() + static_cast<std::ptrdiff_t>(kGenerationHeaderCrcOffset),
+              sizeof(std::uint32_t), std::byte{0U});
   return common::crc32c(copy);
 }
 
@@ -307,6 +319,95 @@ common::Result<TabletMovementCheckpointReference> decode_tablet_movement_checkpo
     return common::make_unexpected(
         corruption("movement checkpoint reference semantic state is invalid"));
   return reference;
+}
+
+common::Result<std::vector<std::byte>> encode_tablet_movement_checkpoint_reference_generation_v1(
+    const TabletMovementCheckpointReferenceGeneration& generation,
+    const TabletMovementCheckpointReferenceCodecLimits limits) {
+  if (generation.checkpoint_generation == 0U)
+    return common::make_unexpected(invalid("movement reference generation must be nonzero"));
+  auto nested = encode_tablet_movement_checkpoint_reference_v1(generation.reference, limits);
+  if (!nested.has_value())
+    return common::make_unexpected(nested.error());
+  constexpr std::size_t kFramingSize = kTabletMovementCheckpointReferenceGenerationHeaderSize +
+                                       kTabletMovementCheckpointReferenceGenerationTrailerSize;
+  if (nested->size() > limits.maximum_checkpoint_bytes - kFramingSize) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "movement reference generation exceeds configured size limit"});
+  }
+  const std::size_t total_size = kFramingSize + nested->size();
+  std::vector<std::byte> output(total_size, std::byte{0U});
+  common::ByteWriter writer{
+      std::span<std::byte>{output}.first(kTabletMovementCheckpointReferenceGenerationHeaderSize)};
+  for (const common::Status& status :
+       {writer.write_exact(kGenerationMagic), writer.write_u16_le(kMajor),
+        writer.write_u16_le(kMinor),
+        writer.write_u32_le(kTabletMovementCheckpointReferenceGenerationHeaderSize),
+        writer.write_u64_le(total_size), writer.write_u64_le(generation.checkpoint_generation),
+        writer.write_u64_le(nested->size()), writer.write_u32_le(common::crc32c(*nested)),
+        writer.write_u32_le(0U), writer.zero_fill(16U)}) {
+    if (!status.is_ok())
+      return common::make_unexpected(status);
+  }
+  std::ranges::copy(*nested,
+                    output.begin() + static_cast<std::ptrdiff_t>(
+                                         kTabletMovementCheckpointReferenceGenerationHeaderSize));
+  store_u32(output, kGenerationHeaderCrcOffset,
+            generation_header_crc(common::ByteView{output}.first(
+                kTabletMovementCheckpointReferenceGenerationHeaderSize)));
+  store_u32(output, total_size - kTabletMovementCheckpointReferenceGenerationTrailerSize,
+            common::crc32c(common::ByteView{output}.first(
+                total_size - kTabletMovementCheckpointReferenceGenerationTrailerSize)));
+  return output;
+}
+
+common::Result<TabletMovementCheckpointReferenceGeneration>
+decode_tablet_movement_checkpoint_reference_generation_v1(
+    const common::ByteView bytes, const TabletMovementCheckpointReferenceCodecLimits limits) {
+  constexpr std::size_t kMinimumNestedSize = kTabletMovementCheckpointReferenceHeaderSize +
+                                             kFixedPayloadSize +
+                                             kTabletMovementCheckpointReferenceTrailerSize;
+  constexpr std::size_t kMinimumSize = kTabletMovementCheckpointReferenceGenerationHeaderSize +
+                                       kMinimumNestedSize +
+                                       kTabletMovementCheckpointReferenceGenerationTrailerSize;
+  if (!valid_limits(limits))
+    return common::make_unexpected(invalid("movement checkpoint reference limits are invalid"));
+  if (bytes.size() < kMinimumSize || bytes.size() > limits.maximum_checkpoint_bytes)
+    return common::make_unexpected(corruption("movement reference generation size is invalid"));
+  const common::ByteView header =
+      bytes.first(kTabletMovementCheckpointReferenceGenerationHeaderSize);
+  if (generation_header_crc(header) != load_u32(header, kGenerationHeaderCrcOffset)) {
+    return common::make_unexpected(
+        corruption("movement reference generation header checksum mismatch"));
+  }
+  if (!std::ranges::equal(header.first(kGenerationMagic.size()), kGenerationMagic) ||
+      load_u16(header, 8U) != kMajor || load_u16(header, 10U) != kMinor) {
+    return common::make_unexpected(
+        unsupported("movement reference generation version is unsupported"));
+  }
+  const std::uint64_t nested_size = load_u64(header, 32U);
+  if (load_u32(header, 12U) != kTabletMovementCheckpointReferenceGenerationHeaderSize ||
+      load_u64(header, 16U) != bytes.size() || load_u64(header, 24U) == 0U ||
+      nested_size != bytes.size() - kTabletMovementCheckpointReferenceGenerationHeaderSize -
+                         kTabletMovementCheckpointReferenceGenerationTrailerSize ||
+      std::ranges::any_of(header.subspan(48U, 16U),
+                          [](const std::byte value) { return value != std::byte{0U}; })) {
+    return common::make_unexpected(corruption("movement reference generation header is invalid"));
+  }
+  const common::ByteView nested =
+      bytes.subspan(kTabletMovementCheckpointReferenceGenerationHeaderSize,
+                    static_cast<std::size_t>(nested_size));
+  if (common::crc32c(nested) != load_u32(header, 40U) ||
+      common::crc32c(
+          bytes.first(bytes.size() - kTabletMovementCheckpointReferenceGenerationTrailerSize)) !=
+          load_u32(bytes, bytes.size() - kTabletMovementCheckpointReferenceGenerationTrailerSize)) {
+    return common::make_unexpected(corruption("movement reference generation checksum mismatch"));
+  }
+  auto reference = decode_tablet_movement_checkpoint_reference_v1(nested, limits);
+  if (!reference.has_value())
+    return common::make_unexpected(reference.error());
+  return TabletMovementCheckpointReferenceGeneration{load_u64(header, 24U), std::move(*reference)};
 }
 
 } // namespace chronos::raft

@@ -53,3 +53,25 @@ snapshot fields derives the exact durable chunk owner.
 This value authenticates metadata and received length only. Recovery must separately exact-load the
 same session's contiguous chunk prefix, require the same length, and perform full movement-state and
 whole-content CRC validation before adoption.
+
+## Reference generation envelope
+
+Durable ordering wraps exactly one reference in a distinct version 1.0 envelope. Its 64-byte header
+is followed by the complete reference and a four-byte CRC32C trailer.
+
+| Offset | Size | Field |
+| ---: | ---: | --- |
+| 0 | 8 | magic `CHRMVRG\0` |
+| 8 | 2 | major `1` |
+| 10 | 2 | minor `0` |
+| 12 | 4 | header size `64` |
+| 16 | 8 | total envelope size |
+| 24 | 8 | nonzero checkpoint generation |
+| 32 | 8 | nested reference size |
+| 40 | 4 | nested reference CRC32C |
+| 44 | 4 | header CRC32C with this field zero |
+| 48 | 16 | zero reserved |
+
+The trailer covers the header and nested reference. The complete envelope must fit the configured
+reference limit. `CHRMVRG` is never interpreted as the self-contained `CHRMOVG` envelope; mixed
+filesystem selection requires explicit magic dispatch.

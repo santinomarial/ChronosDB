@@ -21,7 +21,8 @@ next layer.
 `TabletMovementCheckpointReference` is the compact handoff value: it stores the movement record and
 the original chunk-session placement epoch without copying prefix bytes. Structural decode is
 deliberately weaker than recovery authority. The future generation owner must exact-load the
-derived chunk session and pass those bytes through full movement validation before adoption.
+derived chunk session and pass those bytes through full movement validation before adoption. Its
+`CHRMVRG` generation envelope is intentionally distinct from the self-contained `CHRMOVG` envelope.
 
 ## Invariants and ownership
 

@@ -811,7 +811,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   now durably installs only a contiguous prefix, reconstructs it after restart, exact-retries
   immutable offsets, and validates the final whole-snapshot CRC. A separate canonical checkpoint
   reference now records received length and the original chunk-session epoch without rewriting the
-  prefix; durable generation dispatch and composed chunk/reference recovery remain incomplete, as
+  prefix, with a distinct checksummed generation envelope that preserves old envelope semantics;
+  durable mixed-generation dispatch and composed chunk/reference recovery remain incomplete, as
   does final RTAS/Manifest/CSEG handoff. General vector-plan fragments/exchange wire bytes,
   compatible multi-tablet snapshots, authenticated leader transport, and multi-node failure
   validation remain deferred; the phase exit gate is not claimed.
