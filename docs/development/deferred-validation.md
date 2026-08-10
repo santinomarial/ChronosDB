@@ -139,9 +139,9 @@
 - Shard-key pruning and statistics in addition to event-time pruning; multi-node scalar/distributed
   differential SQL and partial-aggregation equivalence.
 - Route actions from the implemented durable pre-dispatch ledger through authenticated current-
-  leader transport and reconcile duplicate delivery/application; add final RTAS/Manifest/CSEG
-  handoff around the implemented composed mixed-generation checkpoint and durable chunk owners,
-  generation/chunk reclamation, filesystem crash/fault
+  leader transport and reconcile duplicate delivery/application; complete Raft snapshot metadata
+  and physical Manifest/CSEG handoff around the implemented RTAS, composed mixed-generation
+  checkpoint, and durable chunk owners; add generation/chunk reclamation and filesystem crash/fault
   injection, source/target/metadata-leader failures, source switching, bandwidth limits, and stale
   routing.
 - Partitions, duplicate/lost exchanges, skew, chaos, movement at every state, foreground interference,

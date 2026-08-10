@@ -64,3 +64,8 @@ directory. Existing identical bytes are an idempotent retry; changed bytes at on
 corruption. Local creation copies any exact previously compacted application entries, appends the
 supported applied retained-log commands through the new boundary, installs these bytes first, and
 only then durably compacts Raft to their identical metadata.
+
+Tablet movement transfers exactly this complete canonical value. Handoff from a recovered movement
+exact-matches table/tablet, included index/term, Manifest generation, source voters, destination
+group ownership, and a byte-identical canonical re-encoding before using the same durable installer.
+After movement promotion, the path may only verify an exact already-installed file.

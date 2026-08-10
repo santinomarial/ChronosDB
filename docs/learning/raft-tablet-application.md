@@ -59,6 +59,13 @@ term and membership metadata, durably installs the application bytes first, and 
 Raft to the identical boundary. A crash between those steps leaves an unreferenced future file, not
 an unrecoverable Raft prefix.
 
+`install_recovered_tablet_movement_snapshot` is the follower-transfer bridge into that owner. It
+accepts only a completed, authoritatively recovered movement; exact-decodes and canonicalizes the
+transferred RTAS; binds table, tablet, snapshot coordinates, source voters, and group ownership; and
+then invokes the established immutable installer. Once movement records promotion, the bridge only
+verifies a preexisting exact RTAS and treats absence as corruption. It returns full snapshot
+metadata for the still-separate Raft installation transition.
+
 ## Failure behavior and limits
 
 Entry count and payload size are bounded by Raft limits; decoded batch rows, columns, and bytes are
@@ -69,8 +76,9 @@ after committed application begins fails the owned tablet closed; restart rebuil
 log.
 
 `prove_applied_quorum_sync` composes the leader's committed/joint-membership durability receipt with
-the Raft applied index and tablet group/index publication frontier. Client protocol exposure,
-follower application-snapshot transfer, and physical-log reclamation remain absent.
+the Raft applied index and tablet group/index publication frontier. Client protocol exposure, Raft
+metadata completion for transferred application snapshots, and physical-log reclamation remain
+absent.
 
 ## Complexity and likely interview questions
 

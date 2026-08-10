@@ -815,8 +815,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   the locked checkpoint owner now durably dispatches both envelope magics in one contiguous
   generation sequence. Reference installation and recovery now exact-compose that generation with
   the session-bound durable prefix, reject missing/interior boundaries, and recover only the
-  checkpointed prefix when a crash leaves chunks ahead. Final RTAS/Manifest/CSEG handoff remains
-  incomplete. General vector-plan fragments/exchange wire bytes,
+  checkpointed prefix when a crash leaves chunks ahead. Completed recovered transfers now
+  exact-decode and durably install canonical RTAS bytes with table/tablet/group/snapshot/voter
+  binding; Raft snapshot completion and physical Manifest/CSEG handoff remain incomplete. General
+  vector-plan fragments/exchange wire bytes,
   compatible multi-tablet snapshots, authenticated leader transport, and multi-node failure
   validation remain deferred; the phase exit gate is not claimed.
 

@@ -162,3 +162,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0125](0125-tablet-movement-reference-generation-v1.md) | Tablet movement reference generation v1 | accepted |
 | [0126](0126-mixed-tablet-movement-checkpoint-generations.md) | Mixed tablet movement checkpoint generations | accepted |
 | [0127](0127-composed-tablet-movement-checkpoint-recovery.md) | Composed tablet movement checkpoint recovery | accepted |
+| [0128](0128-tablet-movement-rtas-handoff.md) | Tablet movement RTAS handoff | accepted |

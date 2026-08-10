@@ -64,6 +64,12 @@ Self-contained prefixes simplify audit and recovery but can rewrite large prefix
 files remove repeated prefix writes while the compact checkpoint remains the sole progress
 authority. Final application-snapshot installation and safe chunk reclamation are separate layers.
 
+The RTAS portion of final application-snapshot installation is now implemented by
+`install_recovered_tablet_movement_snapshot`. It consumes the recovered checkpoint-owned bytes,
+requires canonical RTAS identity and transfer-coordinate agreement, and crosses the existing RTAS
+directory durability boundary. Raft metadata completion, physical Manifest/CSEG transfer, and safe
+chunk reclamation remain separate.
+
 - Why are header, payload, and whole-record CRCs separate?
 - Why is a full content CRC required only once transfer is complete?
 - Why must pre-promotion voters leave capacity for the learner?

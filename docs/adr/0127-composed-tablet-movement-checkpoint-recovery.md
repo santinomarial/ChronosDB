@@ -6,6 +6,7 @@
 - **Extends:** [ADR 0123](0123-durable-tablet-movement-snapshot-chunks.md),
   [ADR 0124](0124-tablet-movement-external-prefix-reference-v1.md), and
   [ADR 0126](0126-mixed-tablet-movement-checkpoint-generations.md)
+- **Extended by:** [ADR 0128](0128-tablet-movement-rtas-handoff.md)
 
 ## Context
 
