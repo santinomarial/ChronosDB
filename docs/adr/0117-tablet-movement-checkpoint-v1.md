@@ -3,7 +3,8 @@
 - **Status:** accepted
 - **Date:** 2026-08-09
 - **Owners:** ChronosDB distributed-systems and storage maintainers
-- **Extended by:** [ADR 0118](0118-durable-tablet-movement-checkpoint-generations.md)
+- **Extended by:** [ADR 0118](0118-durable-tablet-movement-checkpoint-generations.md) and
+  [ADR 0124](0124-tablet-movement-external-prefix-reference-v1.md)
 
 ## Context
 
@@ -48,8 +49,8 @@ Separate header/payload/trailer integrity rejects damaged framing before semanti
 
 Every in-memory phase can round-trip and partial transfer resumes from the exact retained offset.
 Checkpoint size is proportional to the received prefix and bounded by configured snapshot and
-checkpoint limits. Chunked prefix storage and write-amplification optimization remain follow-up
-work.
+checkpoint limits. ADR 0124 defines a separate compatible external-prefix reference format for the
+implemented durable chunk owner; v1.0 bytes and decoding remain unchanged.
 
 ## Affected invariants
 

@@ -158,3 +158,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0121](0121-durable-tablet-reconfiguration-action-ledger.md) | Durable tablet reconfiguration action ledger | accepted |
 | [0122](0122-tablet-movement-snapshot-chunk-v1.md) | Tablet Movement Snapshot Chunk v1 | accepted |
 | [0123](0123-durable-tablet-movement-snapshot-chunks.md) | Durable tablet movement snapshot chunks | accepted |
+| [0124](0124-tablet-movement-external-prefix-reference-v1.md) | Tablet movement external-prefix reference v1 | accepted |

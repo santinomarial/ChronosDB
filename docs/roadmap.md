@@ -809,10 +809,12 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   across restart. Canonical movement snapshot chunks bind each bounded payload range to the exact
   tablet, epoch, source/target, snapshot boundary, and checksums. Their locked session-bound owner
   now durably installs only a contiguous prefix, reconstructs it after restart, exact-retries
-  immutable offsets, and validates the final whole-snapshot CRC. Movement-checkpoint integration
-  and final RTAS/Manifest/CSEG handoff remain incomplete. General vector-plan fragments/exchange
-  wire bytes, compatible multi-tablet snapshots, authenticated leader transport, and multi-node
-  failure validation remain deferred; the phase exit gate is not claimed.
+  immutable offsets, and validates the final whole-snapshot CRC. A separate canonical checkpoint
+  reference now records received length and the original chunk-session epoch without rewriting the
+  prefix; durable generation dispatch and composed chunk/reference recovery remain incomplete, as
+  does final RTAS/Manifest/CSEG handoff. General vector-plan fragments/exchange wire bytes,
+  compatible multi-tablet snapshots, authenticated leader transport, and multi-node failure
+  validation remain deferred; the phase exit gate is not claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.
 - **Explicit non-scope:** general cross-tablet write transactions, silent consistency downgrade, unlimited shuffle, and topology changes that invalidate tokens without an explicit error/mapping protocol.

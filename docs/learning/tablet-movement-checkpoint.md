@@ -18,6 +18,11 @@ installs only the contiguous end, exact-retries immutable offsets, reconstructs 
 every piece after restart, and validates the complete content CRC. Checkpoint handoff remains the
 next layer.
 
+`TabletMovementCheckpointReference` is the compact handoff value: it stores the movement record and
+the original chunk-session placement epoch without copying prefix bytes. Structural decode is
+deliberately weaker than recovery authority. The future generation owner must exact-load the
+derived chunk session and pass those bytes through full movement validation before adoption.
+
 ## Invariants and ownership
 
 The record and prefix agree on received length. Replica/learner sets are sorted and unique. Before

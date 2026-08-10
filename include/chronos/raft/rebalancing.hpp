@@ -95,6 +95,13 @@ private:
 };
 
 // Exact structural validation shared by recovery and the durable checkpoint codec.
+// This overload validates record relationships without claiming that externally stored
+// snapshot bytes exist or match their whole-content checksum.
+[[nodiscard]] common::Status validate_tablet_movement_record(const TabletMovementRecord& record,
+                                                             TabletMovementLimits limits = {});
+
+// This overload additionally binds the exact owned received prefix and, after transfer completion,
+// validates its whole-content checksum.
 [[nodiscard]] common::Status validate_tablet_movement_state(const TabletMovementRecord& record,
                                                             common::ByteView received_snapshot,
                                                             TabletMovementLimits limits = {});
