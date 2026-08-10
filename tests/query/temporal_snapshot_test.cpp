@@ -122,10 +122,39 @@ TEST(TemporalSnapshotTest, RetentionFailsClosedForExpiredHistory) {
   ASSERT_TRUE((*provider)
                   ->apply_committed(2U, 2000, {mutation(20, TemporalMutationKind::kCorrection, 2U)})
                   .is_ok());
-  ASSERT_TRUE((*provider)->compact_history(2U, 1500).is_ok());
+  const auto first_compaction = (*provider)->compact_history(2U, 1500);
+  ASSERT_TRUE(first_compaction.has_value()) << first_compaction.error().to_string();
+  EXPECT_EQ(first_compaction->removed_version_count, 0U);
+  EXPECT_EQ(first_compaction->retained_version_count, 2U);
   const auto expired = (*provider)->resolve(schema, 1000);
   ASSERT_FALSE(expired.has_value());
   EXPECT_EQ(expired.error().code(), common::StatusCode::kNotFound);
+  const auto retained_boundary = (*provider)->resolve(schema, 1500);
+  ASSERT_TRUE(retained_boundary.has_value()) << retained_boundary.error().to_string();
+  EXPECT_EQ((*retained_boundary)->committed_position(), 1U);
+  EXPECT_EQ(visible_value(**retained_boundary), 10);
+
+  ASSERT_TRUE((*provider)
+                  ->apply_committed(3U, 3000, {mutation(30, TemporalMutationKind::kCorrection, 3U)})
+                  .is_ok());
+  const auto second_compaction = (*provider)->compact_history(3U, 2500);
+  ASSERT_TRUE(second_compaction.has_value()) << second_compaction.error().to_string();
+  EXPECT_EQ(second_compaction->previous_oldest_observable_commit_position, 2U);
+  EXPECT_EQ(second_compaction->previous_retained_system_time_ns, 1500);
+  EXPECT_EQ(second_compaction->removed_version_count, 1U);
+  EXPECT_EQ(second_compaction->retained_version_count, 2U);
+  const auto second_boundary = (*provider)->resolve(schema, 2500);
+  ASSERT_TRUE(second_boundary.has_value()) << second_boundary.error().to_string();
+  EXPECT_EQ((*second_boundary)->committed_position(), 2U);
+  EXPECT_EQ(visible_value(**second_boundary), 20);
+
+  const auto regressed_time = (*provider)->compact_history(3U, 2000);
+  ASSERT_FALSE(regressed_time.has_value());
+  EXPECT_EQ(regressed_time.error().code(), common::StatusCode::kInvalidArgument);
+  const auto regressed_position = (*provider)->compact_history(2U, 2500);
+  ASSERT_FALSE(regressed_position.has_value());
+  EXPECT_EQ(regressed_position.error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_EQ((*provider)->version_count(), 2U);
 }
 
 TEST(TemporalSnapshotTest, AtomicallyRestoresCanonicalCompactedHistory) {

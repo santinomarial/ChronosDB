@@ -151,6 +151,7 @@ public:
   std::map<std::int64_t, std::uint64_t> time_to_position;
   std::uint64_t latest_position{};
   std::int64_t latest_time{};
+  std::optional<std::uint64_t> oldest_observable_position;
   std::optional<std::int64_t> earliest_retained_time;
   std::size_t versions{};
   bool failed{false};
@@ -424,18 +425,28 @@ TemporalSnapshotProvider::resolve(const std::shared_ptr<const schema::TableSchem
   return output;
 }
 
-common::Status
+common::Result<TemporalHistoryCompactionReport>
 TemporalSnapshotProvider::compact_history(const std::uint64_t oldest_observable_commit_position,
                                           const std::int64_t retained_system_time_ns) {
   std::scoped_lock lock{impl_->mutex};
   if (impl_->failed) {
-    return common::Status{common::StatusCode::kUnavailable,
-                          "temporal provider failed closed and requires recovery"};
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kUnavailable, "temporal provider failed closed and requires recovery"});
   }
   if (oldest_observable_commit_position > impl_->latest_position ||
       retained_system_time_ns > impl_->latest_time) {
-    return invalid("temporal retention boundary is ahead of committed state");
+    return common::make_unexpected(
+        invalid("temporal retention boundary is ahead of committed state"));
   }
+  if ((impl_->oldest_observable_position.has_value() &&
+       oldest_observable_commit_position < *impl_->oldest_observable_position) ||
+      (impl_->earliest_retained_time.has_value() &&
+       retained_system_time_ns < *impl_->earliest_retained_time)) {
+    return common::make_unexpected(invalid("temporal retention boundaries cannot regress"));
+  }
+  const std::optional<std::uint64_t> previous_position = impl_->oldest_observable_position;
+  const std::optional<std::int64_t> previous_time = impl_->earliest_retained_time;
+  std::size_t removed_versions = 0U;
   for (auto& [identity, history] : impl_->histories) {
     static_cast<void>(identity);
     const auto keep =
@@ -455,13 +466,21 @@ TemporalSnapshotProvider::compact_history(const std::uint64_t oldest_observable_
         static_cast<std::size_t>(std::distance(history.begin(), predecessor));
     history.erase(history.begin(), predecessor);
     impl_->versions -= removed;
+    removed_versions += removed;
   }
+  impl_->oldest_observable_position = oldest_observable_commit_position;
   impl_->earliest_retained_time = retained_system_time_ns;
-  while (!impl_->time_to_position.empty() &&
-         impl_->time_to_position.begin()->first < retained_system_time_ns) {
-    impl_->time_to_position.erase(impl_->time_to_position.begin());
+  const auto first_retained_time = impl_->time_to_position.lower_bound(retained_system_time_ns);
+  if (first_retained_time != impl_->time_to_position.begin()) {
+    impl_->time_to_position.erase(impl_->time_to_position.begin(), std::prev(first_retained_time));
   }
-  return common::Status::ok();
+  return TemporalHistoryCompactionReport{
+      .previous_oldest_observable_commit_position = previous_position,
+      .previous_retained_system_time_ns = previous_time,
+      .oldest_observable_commit_position = oldest_observable_commit_position,
+      .retained_system_time_ns = retained_system_time_ns,
+      .removed_version_count = removed_versions,
+      .retained_version_count = impl_->versions};
 }
 
 std::uint64_t TemporalSnapshotProvider::latest_commit_position() const noexcept {

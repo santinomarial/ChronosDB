@@ -44,6 +44,17 @@ struct RetainedTemporalVersion {
   TemporalMutation mutation;
 };
 
+struct TemporalHistoryCompactionReport {
+  std::optional<std::uint64_t> previous_oldest_observable_commit_position;
+  std::optional<std::int64_t> previous_retained_system_time_ns;
+  std::uint64_t oldest_observable_commit_position{};
+  std::int64_t retained_system_time_ns{};
+  std::size_t removed_version_count{};
+  std::size_t retained_version_count{};
+  friend bool operator==(const TemporalHistoryCompactionReport&,
+                         const TemporalHistoryCompactionReport&) = default;
+};
+
 // Thread-safe committed temporal state for one exact table schema. A commit batch is validated in
 // full and installed atomically at one monotonically increasing system commit position/time. The
 // provider returns copied immutable snapshots, so compaction cannot invalidate active readers.
@@ -98,10 +109,13 @@ public:
   resolve(const std::shared_ptr<const schema::TableSchema>& bound_schema,
           std::optional<std::int64_t> as_of_system_time_ns) const override;
 
-  // Discards only versions older than both boundaries while retaining the newest predecessor per
-  // logical identity. Requests older than retained_system_time_ns subsequently fail precisely.
-  [[nodiscard]] common::Status compact_history(std::uint64_t oldest_observable_commit_position,
-                                               std::int64_t retained_system_time_ns);
+  // Monotonically advances both boundaries and discards only versions older than both while
+  // retaining the newest predecessor per logical identity and in the global time index. Requests
+  // older than retained_system_time_ns subsequently fail precisely; either frontier regressing is
+  // rejected without mutation.
+  [[nodiscard]] common::Result<TemporalHistoryCompactionReport>
+  compact_history(std::uint64_t oldest_observable_commit_position,
+                  std::int64_t retained_system_time_ns);
 
   [[nodiscard]] std::uint64_t latest_commit_position() const noexcept;
   [[nodiscard]] std::size_t logical_row_count() const noexcept;

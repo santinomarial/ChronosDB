@@ -711,8 +711,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   query-accounted owned vector chunks with cancellation and sticky end. Raft/mixed-source
   application snapshots, complete query-epoch publication, v1 migration, direct vector winner
   resolution/lowering, and
-  authorized retention/compaction integration remain deferred, so the phase exit gate is not
-  claimed.
+  authorized durable retention/compaction integration remain deferred. In-memory history
+  compaction now preserves the exact-boundary time-index predecessor, enforces monotonic position/
+  time frontiers, and reports exact removal state. The phase exit gate is not claimed.
 
 - **Scope:** formal bitemporal row-version model; SQL system-time clauses; history retention; correction/cancellation semantics; compaction and index support; audit visibility.
 - **Explicit non-scope:** general distributed transactions, legal/compliance certification, retroactive mutation of immutable history, and distribution before the model is validated locally.

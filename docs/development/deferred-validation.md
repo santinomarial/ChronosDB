@@ -80,7 +80,8 @@
   current/as-of scalar-vector differential SQL; many-tablet/skew/allocation/crash coverage beyond
   the implemented distinct-table WAL checkpoint composition; versioned same-table tablet routing;
   Raft/mixed-source recovery composition, compaction equivalence, active-snapshot pins,
-  tombstone/history retention, and audit interfaces.
+  durable tombstone/history retention authority, CSEG/Manifest replacement/reclamation, and audit
+  interfaces beyond the implemented monotonic in-memory retention frontier.
 - Generated multi-version property models, timestamp ties/boundaries, late corrections, crash/
   corruption testing, SQL differential testing, storage amplification, scan/compaction benchmarks,
   and retention sensitivity.

@@ -87,7 +87,9 @@ Same-table multi-tablet routing fails explicitly because command v1 lacks tablet
 publication now has a bounded query-accounted scalar-snapshot source that copies current/as-of
 winners into canonical owned chunks. Direct vector winner resolution/lowering, Raft/mixed-source
 composition, v1 migration, and authorized compaction/retention integration remain, so the complete
-Phase 13 exit is not claimed.
+Phase 13 exit is not claimed. In-memory compaction now keeps the global time-index predecessor needed
+at the exact retained boundary, rejects both frontier regressions, and reports exact removals; this
+does not yet authorize durable part replacement or reclamation.
 
 ### Phase 14 — deterministic Raft
 

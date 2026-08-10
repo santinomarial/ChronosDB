@@ -82,6 +82,14 @@ identity-selected chunk owns its buffers, so releasing the provider, snapshot, o
 cannot invalidate downstream work. Reservation failure leaves the row cursor unchanged;
 cancellation and successful end are explicit and sticky.
 
+In-memory retention advances two monotonic frontiers: the oldest commit position still observable
+and the earliest system time still promised. Per-identity history keeps the newest predecessor
+needed at the boundary. The global time index likewise retains its greatest entry before the time
+frontier; removing that entry would make an exact-boundary query incorrectly appear empty. A
+successful compaction reports prior/new frontiers and removed/retained version counts. These caller-
+supplied frontiers are not durable file-deletion authority: Manifest/CSEG replacement still needs
+the combined policy, reader, subscription, backup, and recovery proof.
+
 ## Application and recovery sequence
 
 Committed application first binds the decoded batch to the retained catalog schema. It copies each
@@ -148,7 +156,8 @@ multi-tablet routed verification/application, retained and reclaimed pre-boundar
 original/correction replay, historical lookup, scalar-winner vector materialization,
 impossible-history rejection, and continued WAL sequence ownership. Phase 18 retains golden bytes,
 fuzzing, allocation-failure sweeps, crash points, many-tablet skew, mixed-command dispatch, direct
-vector differential/lowering, long histories, and performance measurement.
+vector differential/lowering, long-history retention models, durable compaction, and performance
+measurement.
 
 Useful design questions include:
 
