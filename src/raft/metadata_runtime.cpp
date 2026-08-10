@@ -53,7 +53,7 @@ public:
     std::vector<std::optional<MetadataCommand>> commands;
     commands.reserve(entries.size());
     for (const LogEntry& entry : entries) {
-      if (is_membership_entry_type(entry.type)) {
+      if (is_internal_raft_entry_type(entry.type)) {
         commands.emplace_back(std::nullopt);
         continue;
       }

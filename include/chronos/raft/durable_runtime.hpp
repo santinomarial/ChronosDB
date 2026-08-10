@@ -34,6 +34,7 @@ struct ProposeExactRetainedOperation {
   std::uint8_t type{};
   std::vector<std::byte> payload;
 };
+struct CommitCurrentTermOperation {};
 struct BeginMembershipChangeOperation {
   std::vector<NodeId> new_voters;
 };
@@ -54,10 +55,10 @@ struct MarkAppliedOperation {
 
 using DurableRaftOperation =
     std::variant<StartElectionOperation, ReceiveOperation, ProposeOperation,
-                 ProposeExactRetainedOperation, BeginMembershipChangeOperation,
-                 FinalizeMembershipChangeOperation, CompleteSnapshotInstallOperation,
-                 CompactSnapshotOperation, HeartbeatOperation, BeginReadBarrierOperation,
-                 MarkAppliedOperation>;
+                 ProposeExactRetainedOperation, CommitCurrentTermOperation,
+                 BeginMembershipChangeOperation, FinalizeMembershipChangeOperation,
+                 CompleteSnapshotInstallOperation, CompactSnapshotOperation, HeartbeatOperation,
+                 BeginReadBarrierOperation, MarkAppliedOperation>;
 
 struct DurableRaftRequest {
   GroupId group_id;

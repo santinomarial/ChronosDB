@@ -150,6 +150,8 @@ DurableMultiRaftRuntime::execute_batch(std::vector<DurableRaftRequest> requests)
           } else if constexpr (std::is_same_v<T, ProposeExactRetainedOperation>) {
             return impl_->runtime.propose_exact_retained(request.group_id, operation.type,
                                                          std::move(operation.payload));
+          } else if constexpr (std::is_same_v<T, CommitCurrentTermOperation>) {
+            return impl_->runtime.commit_current_term(request.group_id);
           } else if constexpr (std::is_same_v<T, BeginMembershipChangeOperation>) {
             return impl_->runtime.begin_membership_change(request.group_id,
                                                           std::move(operation.new_voters));

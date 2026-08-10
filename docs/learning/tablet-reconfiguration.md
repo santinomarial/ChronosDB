@@ -77,8 +77,9 @@ only the completed durable result may release outbound messages.
 Placement execution uses an explicit exact-retained proposal operation. If the identical canonical
 metadata command is already committed or retained in the current term, retry returns an empty
 successful transition without another append or synchronization. An uncommitted prior-term match
-returns unavailable to avoid eventually applying duplicate placement epochs. Membership begin and
-finalize retries use the same retained-intent rule.
+adds or reuses an empty current-term Raft progress entry, allowing the retained action to commit
+without duplicating the placement epoch. Membership begin and finalize retries use the same
+retained-intent rule.
 
 ## Complexity and tradeoffs
 

@@ -241,7 +241,7 @@ TEST(RaftNodeTest, CommitsMembershipChangeUnderJointQuorumsAndRemovesLeader) {
   EXPECT_FALSE(recovered->joint_membership_active());
 }
 
-TEST(RaftNodeTest, ExactRetainedProposalSuppressesCurrentTermRetryAndRejectsPriorTermRetry) {
+TEST(RaftNodeTest, ExactRetainedProposalSuppressesRetryAndAddsPriorTermProgressNoop) {
   auto leader = RaftNode::create(1U, {1U, 2U, 3U});
   ASSERT_TRUE(leader.has_value());
   ASSERT_TRUE(leader->start_election().has_value());
@@ -262,9 +262,15 @@ TEST(RaftNodeTest, ExactRetainedProposalSuppressesCurrentTermRetryAndRejectsPrio
   ASSERT_TRUE(restarted->start_election().has_value());
   ASSERT_TRUE(restarted->receive(2U, RequestVoteResponse{2U, true}).has_value());
   auto prior_term = restarted->propose_exact_retained(1U, payload);
-  ASSERT_FALSE(prior_term.has_value());
-  EXPECT_EQ(prior_term.error().code(), common::StatusCode::kUnavailable);
-  EXPECT_EQ(restarted->last_log_index(), 1U);
+  ASSERT_TRUE(prior_term.has_value()) << prior_term.error().to_string();
+  ASSERT_TRUE(prior_term->persistent_state.has_value());
+  EXPECT_EQ(restarted->last_log_index(), 2U);
+  EXPECT_EQ(restarted->persistent_state().log.back().type, kLeaderNoopEntryType);
+  EXPECT_TRUE(restarted->persistent_state().log.back().payload.empty());
+  auto noop_retry = restarted->propose_exact_retained(1U, payload);
+  ASSERT_TRUE(noop_retry.has_value()) << noop_retry.error().to_string();
+  EXPECT_FALSE(noop_retry->persistent_state.has_value());
+  EXPECT_EQ(restarted->last_log_index(), 2U);
 }
 
 TEST(RaftNodeTest, JointElectionRequiresOldAndNewMajorities) {
@@ -285,6 +291,13 @@ TEST(RaftNodeTest, JointElectionRequiresOldAndNewMajorities) {
   EXPECT_EQ(restarted->role(), Role::kCandidate);
   ASSERT_TRUE(restarted->receive(4U, RequestVoteResponse{2U, true}).has_value());
   EXPECT_EQ(restarted->role(), Role::kLeader);
+
+  auto prior_term_retry = restarted->begin_membership_change({2U, 3U, 4U});
+  ASSERT_TRUE(prior_term_retry.has_value()) << prior_term_retry.error().to_string();
+  ASSERT_TRUE(prior_term_retry->persistent_state.has_value());
+  EXPECT_EQ(restarted->last_log_index(), 2U);
+  EXPECT_EQ(restarted->persistent_state().log.back().type, kLeaderNoopEntryType);
+  EXPECT_TRUE(restarted->persistent_state().log.back().payload.empty());
 }
 
 TEST(RaftNodeTest, RejectsReservedProposalsLearnerElectionsAndInvalidMembershipHistory) {
@@ -297,11 +310,26 @@ TEST(RaftNodeTest, RejectsReservedProposalsLearnerElectionsAndInvalidMembershipH
   ASSERT_TRUE(leader->start_election().has_value());
   EXPECT_EQ(leader->propose(kJointMembershipEntryType, {}).error().code(),
             common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(leader->propose(kLeaderNoopEntryType, {}).error().code(),
+            common::StatusCode::kInvalidArgument);
+
+  PersistentState invalid_noop;
+  invalid_noop.current_term = 1U;
+  invalid_noop.log.push_back(LogEntry{1U, 1U, kLeaderNoopEntryType, {std::byte{0x01U}}});
+  EXPECT_EQ(RaftNode::create(1U, {1U}, invalid_noop).error().code(),
+            common::StatusCode::kInvalidArgument);
+
+  const PersistentState before = learner->persistent_state();
+  auto malformed_noop = learner->receive(
+      1U, AppendEntriesRequest{
+              1U, 1U, 0U, 0U, {LogEntry{1U, 1U, kLeaderNoopEntryType, {std::byte{0x01U}}}}, 0U});
+  ASSERT_FALSE(malformed_noop.has_value());
+  EXPECT_EQ(malformed_noop.error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(learner->persistent_state(), before);
 
   auto final_payload = encode_membership_command_v1(
       FinalMembershipCommand{.joint_index = 1U, .new_voters = {1U, 2U, 3U}});
   ASSERT_TRUE(final_payload.has_value());
-  const PersistentState before = learner->persistent_state();
   auto malformed = learner->receive(
       1U,
       AppendEntriesRequest{1U,

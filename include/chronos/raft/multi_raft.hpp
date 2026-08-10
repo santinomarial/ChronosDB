@@ -83,6 +83,7 @@ public:
   [[nodiscard]] common::Result<MultiRaftTransition>
   propose_exact_retained(const GroupId& group_id, std::uint8_t type,
                          std::vector<std::byte> payload);
+  [[nodiscard]] common::Result<MultiRaftTransition> commit_current_term(const GroupId& group_id);
   [[nodiscard]] common::Result<MultiRaftTransition>
   begin_membership_change(const GroupId& group_id, std::vector<NodeId> new_voters);
   [[nodiscard]] common::Result<MultiRaftTransition>

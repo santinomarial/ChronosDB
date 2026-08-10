@@ -359,6 +359,8 @@ common::Result<RaftNode> RaftNode::create(const NodeId node_id, std::vector<Node
         entry.payload.size() > limits.maximum_entry_bytes) {
       return common::make_unexpected(invalid("Raft persistent log is not contiguous or bounded"));
     }
+    if (entry.type == kLeaderNoopEntryType && !entry.payload.empty())
+      return common::make_unexpected(invalid("Raft leader no-op entry has a payload"));
     if (expected == std::numeric_limits<LogIndex>::max() && &entry != &persistent.log.back()) {
       return common::make_unexpected(invalid("Raft persistent log index overflows"));
     }
@@ -467,6 +469,8 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
                 entry.payload.size() > impl_->limits.maximum_entry_bytes) {
               return invalid("AppendEntries contains an invalid log entry");
             }
+            if (entry.type == kLeaderNoopEntryType && !entry.payload.empty())
+              return invalid("AppendEntries leader no-op entry has a payload");
           }
           if (value.term < impl_->state.current_term) {
             return common::Status::ok();
@@ -744,7 +748,7 @@ common::Result<Transition> RaftNode::propose(const std::uint8_t type,
     return common::make_unexpected(
         common::Status{common::StatusCode::kUnavailable, "Raft proposal requires current leader"});
   }
-  if (type == 0U || is_membership_entry_type(type) ||
+  if (type == 0U || is_internal_raft_entry_type(type) ||
       payload.size() > impl_->limits.maximum_entry_bytes ||
       impl_->state.log.size() >= impl_->limits.maximum_log_entries ||
       impl_->last_index() >= std::numeric_limits<LogIndex>::max() - 1U) {
@@ -769,7 +773,7 @@ common::Result<Transition> RaftNode::propose_exact_retained(const std::uint8_t t
     return common::make_unexpected(
         common::Status{common::StatusCode::kUnavailable, "Raft proposal requires current leader"});
   }
-  if (type == 0U || is_membership_entry_type(type) ||
+  if (type == 0U || is_internal_raft_entry_type(type) ||
       payload.size() > impl_->limits.maximum_entry_bytes) {
     return common::make_unexpected(invalid("Raft proposal type or size invalid"));
   }
@@ -781,12 +785,36 @@ common::Result<Transition> RaftNode::propose_exact_retained(const std::uint8_t t
       return Transition{};
     prior_term_uncommitted_match = true;
   }
-  if (prior_term_uncommitted_match) {
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kUnavailable,
-                       "exact Raft proposal is retained uncommitted from an earlier leader term"});
-  }
+  if (prior_term_uncommitted_match)
+    return commit_current_term();
   return propose(type, std::move(payload));
+}
+
+common::Result<Transition> RaftNode::commit_current_term() {
+  if (impl_->role != Role::kLeader) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kUnavailable, "current-term progress requires current Raft leader"});
+  }
+  if (std::ranges::any_of(impl_->state.log, [&](const LogEntry& entry) {
+        return entry.term == impl_->state.current_term;
+      })) {
+    return Transition{};
+  }
+  if (impl_->state.log.size() >= impl_->limits.maximum_log_entries ||
+      impl_->last_index() >= std::numeric_limits<LogIndex>::max() - 1U) {
+    return common::make_unexpected(invalid("Raft current-term no-op exceeds log bounds"));
+  }
+  const LogIndex index = impl_->last_index() + 1U;
+  impl_->state.log.push_back(LogEntry{index, impl_->state.current_term, kLeaderNoopEntryType, {}});
+  impl_->match_index[impl_->id] = index;
+  impl_->next_index[impl_->id] = index + 1U;
+  Transition transition;
+  auto advanced = impl_->advance_commit(transition);
+  if (!advanced.has_value())
+    return common::make_unexpected(advanced.error());
+  impl_->append_to_all(transition);
+  transition.persistent_state = impl_->state;
+  return transition;
 }
 
 common::Result<Transition> RaftNode::begin_membership_change(std::vector<NodeId> new_voters) {
@@ -807,9 +835,7 @@ common::Result<Transition> RaftNode::begin_membership_change(std::vector<NodeId>
         (term.has_value() && *term == impl_->state.current_term)) {
       return Transition{};
     }
-    return common::make_unexpected(common::Status{
-        common::StatusCode::kUnavailable,
-        "exact joint membership is retained uncommitted from an earlier leader term"});
+    return commit_current_term();
   }
   if (impl_->joint.has_value() || !valid_voters(new_voters, impl_->limits.maximum_voters) ||
       new_voters == impl_->committed_voters ||
@@ -866,9 +892,7 @@ common::Result<Transition> RaftNode::finalize_membership_change() {
         (final->index <= impl_->state.commit_index || final->term == impl_->state.current_term)) {
       return Transition{};
     }
-    return common::make_unexpected(common::Status{
-        common::StatusCode::kUnavailable,
-        "exact final membership is retained uncommitted from an earlier leader term"});
+    return commit_current_term();
   }
   if (!impl_->joint.has_value() || impl_->joint->final_pending ||
       impl_->joint->joint_index > impl_->state.commit_index ||

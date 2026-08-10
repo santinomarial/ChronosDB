@@ -99,7 +99,7 @@ public:
 
   [[nodiscard]] common::Status preflight(const std::span<const raft::LogEntry> entries) const {
     for (const raft::LogEntry& entry : entries) {
-      if (raft::is_membership_entry_type(entry.type))
+      if (raft::is_internal_raft_entry_type(entry.type))
         continue;
       auto command = decode(entry);
       if (!command.has_value()) {
@@ -135,7 +135,7 @@ public:
     }
     report.first_applied_index = entries.front().index;
     for (const raft::LogEntry& entry : entries) {
-      if (raft::is_membership_entry_type(entry.type)) {
+      if (raft::is_internal_raft_entry_type(entry.type)) {
         report.last_applied_index = entry.index;
         continue;
       }
@@ -282,7 +282,7 @@ public:
         if (entry.type == raft::kFinalMembershipEntryType) {
           next_snapshot.configuration_index = entry.index;
         }
-        if (raft::is_membership_entry_type(entry.type)) {
+        if (raft::is_internal_raft_entry_type(entry.type)) {
           continue;
         }
         if (entry.type != kRaftColumnarAppendEntryType) {

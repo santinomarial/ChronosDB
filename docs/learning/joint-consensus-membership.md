@@ -34,14 +34,14 @@ receive replication as soon as the joint entry is appended. A leader excluded fr
 sends the final commit update to new peers, clears leader-only state, and becomes a follower.
 
 Exact begin/finalize retries are empty successful transitions when the matching retained membership
-entry is committed or belongs to the current leader term. Divergent intent is invalid. An exact
-uncommitted match from an earlier term returns unavailable: appending a second configuration entry
-would be unsafe, while committing the old entry needs a separately specified current-term progress
-entry.
+entry is committed or belongs to the current leader term. Divergent intent is invalid. For an exact
+uncommitted match from an earlier term, the leader appends an empty current-term internal no-op, or
+reuses a current-term retained entry, so Raft can commit the old command without appending a second
+configuration entry.
 
-Application owners never interpret membership payloads as row or catalog commands. They validate
-application entries, treat membership entries as ordered internal no-ops, and persist the final
-applied index only after the whole batch succeeds.
+Application owners never interpret membership or leader-progress entries as row or catalog
+commands. They validate application entries, treat reserved internal entries as ordered no-ops, and
+persist the final applied index only after the whole batch succeeds.
 
 ## Complexity and tradeoffs
 

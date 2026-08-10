@@ -41,6 +41,12 @@ membership base for suffix validation.
 Each log entry contains logical index (8), term (8), type (1), seven required-zero bytes, payload
 length (4), four required-zero bytes, and payload.
 
+Logical entry type `253` is the Raft leader progress no-op. Its payload must be empty. Types `254`
+and `255` contain [Raft Membership Command v1](raft-membership-command-v1.md) joint and final
+commands. These three types are reserved for Raft internals; application proposal interfaces reject
+them. Readers must reject a type-253 entry with a nonempty payload, including when it arrives in an
+AppendEntries suffix.
+
 The decoder validates header integrity before trusting lengths, then exact size relationships,
 payload and full-record integrity, required-zero bytes, bounded entry count, and exact exhaustion.
 `RaftNode::create` performs the semantic validation: contiguous logical indexes, bounded entries,

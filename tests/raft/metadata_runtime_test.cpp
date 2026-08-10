@@ -104,7 +104,7 @@ TEST(DurableMetadataStateMachineTest, AppliesAndRebuildsCommittedMetadataGroup) 
   EXPECT_EQ(reopened->durable_physical_sequence(), durable_sequence);
 }
 
-TEST(DurableMetadataStateMachineTest, AppliesMembershipEntriesAsOrderedInternalNoops) {
+TEST(DurableMetadataStateMachineTest, AppliesReservedEntriesAsOrderedInternalNoops) {
   TemporaryDirectory directory;
   const RaftPersistentLogConfig log_config{.directory_path = directory.path().string()};
   const std::vector<RaftGroupConfiguration> groups{{group_id(), {1U, 2U}}};
@@ -131,18 +131,21 @@ TEST(DurableMetadataStateMachineTest, AppliesMembershipEntriesAsOrderedInternalN
                                                                                std::nullopt, 0U}}}})
                   .has_value());
   ASSERT_EQ(runtime->find_group(group_id())->commit_index(), 2U);
+  ASSERT_TRUE(runtime->execute_batch({{group_id(), StartElectionOperation{}}}).has_value());
+  ASSERT_TRUE(runtime->execute_batch({{group_id(), CommitCurrentTermOperation{}}}).has_value());
+  ASSERT_EQ(runtime->find_group(group_id())->commit_index(), 3U);
 
   auto metadata = DurableMetadataStateMachine::recover(group_id(), *runtime);
   ASSERT_TRUE(metadata.has_value()) << metadata.error().to_string();
-  EXPECT_EQ(metadata->state().applied_index(), 2U);
-  EXPECT_EQ(runtime->find_group(group_id())->applied_index(), 2U);
+  EXPECT_EQ(metadata->state().applied_index(), 3U);
+  EXPECT_EQ(runtime->find_group(group_id())->applied_index(), 3U);
 
   ASSERT_TRUE(runtime->execute_batch({{group_id(), proposal(ClusterNodeMetadata{1U, "node-1"})}})
                   .has_value());
   auto report = metadata->apply_committed();
   ASSERT_TRUE(report.has_value()) << report.error().to_string();
-  EXPECT_EQ(report->first_applied_index, 3U);
-  EXPECT_EQ(report->last_applied_index, 3U);
+  EXPECT_EQ(report->first_applied_index, 4U);
+  EXPECT_EQ(report->last_applied_index, 4U);
   EXPECT_EQ(report->applied_commands, 1U);
   EXPECT_EQ(metadata->state().find_node(1U)->endpoint, "node-1");
 }

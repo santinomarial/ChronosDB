@@ -46,3 +46,7 @@ replays membership commands from the retained Raft log to reconstruct the active
 Until Raft snapshots preserve a membership checkpoint, compacting away those commands is not
 supported. Tablet and metadata state machines treat committed membership entries as ordered
 Raft-internal no-ops while durably advancing their applied indexes.
+
+Entry type `253` is a distinct empty-payload leader progress no-op, not a membership command.
+Application state machines apply it with the same ordered internal no-op behavior, but it does not
+change the active or checkpointed configuration.

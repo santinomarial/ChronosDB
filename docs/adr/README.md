@@ -171,3 +171,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0134](0134-sealed-local-tablet-reconfiguration-execution.md) | Sealed local tablet reconfiguration execution | accepted |
 | [0135](0135-bounded-asynchronous-prepared-reconfiguration-admission.md) | Bounded asynchronous prepared reconfiguration admission | accepted |
 | [0136](0136-idempotent-retained-reconfiguration-action-replay.md) | Idempotent retained reconfiguration action replay | accepted |
+| [0137](0137-current-term-raft-progress-noop.md) | Current-term Raft progress no-op | accepted |

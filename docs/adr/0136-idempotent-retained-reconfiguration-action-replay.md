@@ -6,6 +6,7 @@
 - **Extends:** [ADR 0075](0075-durable-metadata-raft-commands.md),
   [ADR 0076](0076-joint-consensus-raft-membership.md), and
   [ADR 0135](0135-bounded-asynchronous-prepared-reconfiguration-admission.md)
+- **Extended by:** [ADR 0137](0137-current-term-raft-progress-noop.md)
 
 ## Context
 
@@ -100,3 +101,11 @@ deduplication, metadata application completion, and safe evidence reclamation re
 - [Raft Membership Command v1](../formats/raft-membership-command-v1.md)
 - [Joint-consensus membership learning guide](../learning/joint-consensus-membership.md)
 - [Tablet reconfiguration learning guide](../learning/tablet-reconfiguration.md)
+
+## Retrospective (2026-08-10)
+
+[ADR 0137](0137-current-term-raft-progress-noop.md) adds the separately specified safe progress
+mechanism left unresolved here. A prior-term exact match now appends, or reuses, one empty
+current-term internal no-op instead of returning `UNAVAILABLE`; it still never appends a second copy
+of the logical command. The original refusal remains the historical behavior of this decision
+before ADR 0137.

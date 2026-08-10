@@ -183,6 +183,19 @@ MultiRaftRuntime::propose_exact_retained(const GroupId& group_id, const std::uin
   return impl_->wrap(group_id, group->second.node.propose_exact_retained(type, std::move(payload)));
 }
 
+common::Result<MultiRaftTransition> MultiRaftRuntime::commit_current_term(const GroupId& group_id) {
+  if (impl_->failed_state) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kUnavailable, "Multi-Raft runtime has failed closed"});
+  }
+  const auto group = impl_->groups.find(group_id);
+  if (group == impl_->groups.end()) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kNotFound, "Multi-Raft group does not exist"});
+  }
+  return impl_->wrap(group_id, group->second.node.commit_current_term());
+}
+
 common::Result<MultiRaftTransition>
 MultiRaftRuntime::begin_membership_change(const GroupId& group_id, std::vector<NodeId> new_voters) {
   if (impl_->failed_state) {

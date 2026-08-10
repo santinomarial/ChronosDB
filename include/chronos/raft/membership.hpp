@@ -12,6 +12,7 @@
 
 namespace chronos::raft {
 
+inline constexpr std::uint8_t kLeaderNoopEntryType = 253U;
 inline constexpr std::uint8_t kJointMembershipEntryType = 254U;
 inline constexpr std::uint8_t kFinalMembershipEntryType = 255U;
 inline constexpr std::size_t kMembershipCommandHeaderSize = 32U;
@@ -40,6 +41,10 @@ decode_membership_command_v1(common::ByteView bytes, std::size_t maximum_voters 
 
 [[nodiscard]] constexpr bool is_membership_entry_type(const std::uint8_t type) noexcept {
   return type == kJointMembershipEntryType || type == kFinalMembershipEntryType;
+}
+
+[[nodiscard]] constexpr bool is_internal_raft_entry_type(const std::uint8_t type) noexcept {
+  return type == kLeaderNoopEntryType || is_membership_entry_type(type);
 }
 
 } // namespace chronos::raft
