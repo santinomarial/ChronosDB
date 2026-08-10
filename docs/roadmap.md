@@ -818,10 +818,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   checkpointed prefix when a crash leaves chunks ahead. Completed recovered transfers now
   exact-decode and durably install canonical RTAS bytes with table/tablet/group/snapshot/voter
   binding, then exact-match pending source/full metadata/target identity and synchronize the Raft
-  snapshot before releasing its success response. Physical Manifest/CSEG handoff remains
-  incomplete. General vector-plan fragments/exchange wire bytes,
-  compatible multi-tablet snapshots, authenticated leader transport, and multi-node failure
-  validation remain deferred; the phase exit gate is not claimed.
+  snapshot before releasing its success response. Reopen reconciliation now proves that exact RTAS/
+  Raft boundary, durably installs the next ready movement checkpoint, and only then advances live
+  movement. Physical Manifest/CSEG handoff remains incomplete. General vector-plan fragments/
+  exchange wire bytes, compatible multi-tablet snapshots, authenticated leader transport, and
+  multi-node failure validation remain deferred; the phase exit gate is not claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.
 - **Explicit non-scope:** general cross-tablet write transactions, silent consistency downgrade, unlimited shuffle, and topology changes that invalidate tokens without an explicit error/mapping protocol.

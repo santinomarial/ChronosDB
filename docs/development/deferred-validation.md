@@ -141,9 +141,9 @@
 - Route actions from the implemented durable pre-dispatch ledger through authenticated current-
   leader transport and reconcile duplicate delivery/application; complete physical Manifest/CSEG
   handoff and response routing around the implemented Raft-completed RTAS, composed mixed-generation
-  checkpoint, and durable chunk owners; add generation/chunk reclamation and filesystem crash/fault
-  injection, source/target/metadata-leader failures, source switching, bandwidth limits, and stale
-  routing.
+  ready-checkpoint reconciliation, and durable chunk owners; add generation/chunk reclamation and
+  filesystem crash/fault injection, source/target/metadata-leader failures, source switching,
+  bandwidth limits, and stale routing.
 - Partitions, duplicate/lost exchanges, skew, chaos, movement at every state, foreground interference,
   scale-out/exchange/coordination/failover benchmarks, and sanitizer/fuzz/property coverage.
 

@@ -5,6 +5,7 @@
 - **Owners:** ChronosDB ingestion and distributed-systems maintainers
 - **Extends:** [ADR 0078](0078-two-stage-raft-snapshot-installation.md) and
   [ADR 0128](0128-tablet-movement-rtas-handoff.md)
+- **Extended by:** [ADR 0130](0130-durable-tablet-movement-ready-reconciliation.md)
 
 ## Context
 
@@ -57,6 +58,10 @@ ordering, exact pending source/full-metadata/target binding, synchronized succes
 movement catch-up only after completion, durable runtime reopen, advanced-phase rejection, and
 missing-pending failure. Syscall fault injection, process kills at each boundary, response
 transport, leader retry orchestration, physical part transfer, and reclamation remain deferred.
+
+**Retrospective update (ADR 0130):** that decision reconciles a persisted Raft snapshot with a
+checkpoint-behind catching-up movement and installs the ready checkpoint before advancing live
+state.
 
 ## Migration and rollback
 

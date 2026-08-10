@@ -274,6 +274,7 @@ add_library(
   src/ingest/retry_directory.cpp
   src/ingest/sealed_head_flush_queue.cpp
   src/ingest/sha256.cpp
+  src/ingest/tablet_movement_catch_up_checkpoint.cpp
   src/ingest/tablet_movement_raft_snapshot_completion.cpp
   src/ingest/tablet_movement_snapshot_handoff.cpp
   src/ingest/tablet_state.cpp
@@ -1062,6 +1063,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/ingest/sealed_head_flush_queue_test.cpp
     tests/ingest/sha256_header_self_contained.cpp
     tests/ingest/sha256_test.cpp
+    tests/ingest/tablet_movement_catch_up_checkpoint_header_self_contained.cpp
+    tests/ingest/tablet_movement_catch_up_checkpoint_test.cpp
     tests/ingest/tablet_movement_raft_snapshot_completion_header_self_contained.cpp
     tests/ingest/tablet_movement_raft_snapshot_completion_test.cpp
     tests/ingest/tablet_movement_snapshot_handoff_header_self_contained.cpp

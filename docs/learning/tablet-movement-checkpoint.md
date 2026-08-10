@@ -74,7 +74,13 @@ The matching Raft metadata completion is now composed by
 `complete_recovered_tablet_movement_raft_snapshot`: only catching-up movement may enter it, the
 pending leader request must equal the RTAS's full metadata and movement endpoints, and success is
 returned only after the target Raft state is synchronized. Physical part transfer, response routing,
-checkpoint advancement, and reclamation remain separate orchestration.
+and reclamation remain separate orchestration.
+
+`checkpoint_recovered_tablet_movement_catch_up` closes the checkpoint-advancement crash window. It
+requires the exact installed RTAS and target Raft boundary, advances a private candidate, installs
+the next ready generation, and only then mutates the live recovered movement. Reference generations
+revalidate the durable chunks; self-contained generations remain self-contained. Promotion,
+response routing, physical part transfer, and reclamation remain later steps.
 
 - Why are header, payload, and whole-record CRCs separate?
 - Why is a full content CRC required only once transfer is complete?

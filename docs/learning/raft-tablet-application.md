@@ -72,6 +72,12 @@ the pending Raft request and local group, and runs `CompleteSnapshotInstallOpera
 durable runtime. Its returned success response is therefore held until the new Raft snapshot state
 is synchronized. A durable RTAS with no matching pending request remains an unreferenced safe file.
 
+After that durable transition,
+`checkpoint_recovered_tablet_movement_catch_up` reconciles the target's exact persisted snapshot
+when movement still reopens as catching-up. It creates a private ready candidate, installs the next
+movement generation, and only then advances the live owner. The external-reference and legacy
+self-contained representations are each preserved.
+
 ## Failure behavior and limits
 
 Entry count and payload size are bounded by Raft limits; decoded batch rows, columns, and bytes are
