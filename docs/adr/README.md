@@ -149,3 +149,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0112](0112-monotonic-temporal-retention-frontier.md) | Monotonic temporal retention frontier | accepted |
 | [0113](0113-linearizable-raft-read-barrier.md) | Linearizable Raft read barrier | accepted |
 | [0114](0114-bounded-asynchronous-multi-raft-owner.md) | Bounded asynchronous Multi-Raft owner | accepted |
+| [0115](0115-proof-bound-distributed-read-admission.md) | Proof-bound distributed read admission | accepted |

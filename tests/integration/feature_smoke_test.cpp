@@ -140,7 +140,9 @@ TEST(FeatureCompletionSmokeTest, CommittedDataFlowsAcrossTemporalLiveDistributed
 
   auto plan = query::plan_distributed_aggregation(uuid(12U), {{tablet, 0, 200, 1U, 1U}}, {0, 200});
   ASSERT_TRUE(plan.has_value());
-  auto coordinator = query::DistributedAggregateCoordinator::create(std::move(*plan));
+  auto coordinator = query::DistributedAggregateCoordinator::create(
+      std::move(*plan),
+      {{tablet, 1U, 1U, 1U, raft::ReadBarrier{.term = 1U, .context = 1U, .read_index = 1U}}});
   ASSERT_TRUE(coordinator.has_value());
   query::MergeableAggregateState partial;
   ASSERT_TRUE(partial.add(7.0).is_ok());

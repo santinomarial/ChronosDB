@@ -3,6 +3,7 @@
 
 #include "chronos/common/result.hpp"
 #include "chronos/common/uuid.hpp"
+#include "chronos/raft/types.hpp"
 #include "chronos/schema/identity.hpp"
 
 #include <cstddef>
@@ -25,6 +26,20 @@ struct DistributedTablet {
   std::int64_t maximum_event_time{};
   std::uint64_t leader_node{};
   std::uint64_t local_applied_position{};
+  std::uint64_t known_leader_commit_position{};
+};
+
+struct DistributedReadPolicy {
+  DistributedReadConsistency consistency{DistributedReadConsistency::kLeaderLinearizable};
+  std::optional<std::uint64_t> maximum_staleness_positions;
+};
+
+struct DistributedReadAdmission {
+  schema::TabletId tablet_id;
+  std::uint64_t serving_node{};
+  std::uint64_t applied_position{};
+  std::uint64_t observed_leader_commit_position{};
+  std::optional<raft::ReadBarrier> linearizable_barrier;
 };
 
 struct DistributedEventTimePredicate {
@@ -39,7 +54,7 @@ struct DistributedPlanLimits {
 
 struct DistributedAggregatePlan {
   common::Uuid query_id;
-  DistributedReadConsistency consistency{DistributedReadConsistency::kLeaderLinearizable};
+  DistributedReadPolicy read_policy;
   std::vector<DistributedTablet> fragments;
   bool scan_pushdown{true};
   bool filter_pushdown{true};
@@ -52,6 +67,15 @@ struct DistributedAggregatePlan {
     const DistributedEventTimePredicate& predicate,
     DistributedReadConsistency consistency = DistributedReadConsistency::kLeaderLinearizable,
     DistributedPlanLimits limits = {});
+
+[[nodiscard]] common::Result<DistributedAggregatePlan>
+plan_distributed_aggregation(common::Uuid query_id, const std::vector<DistributedTablet>& tablets,
+                             const DistributedEventTimePredicate& predicate,
+                             DistributedReadPolicy read_policy, DistributedPlanLimits limits = {});
+
+[[nodiscard]] common::Status
+validate_distributed_read_admission(const DistributedAggregatePlan& plan,
+                                    const DistributedReadAdmission& admission);
 
 struct MergeableAggregateState {
   std::uint64_t count{};
@@ -115,7 +139,7 @@ public:
   DistributedAggregateCoordinator& operator=(DistributedAggregateCoordinator&&) noexcept;
 
   [[nodiscard]] static common::Result<DistributedAggregateCoordinator>
-  create(DistributedAggregatePlan plan);
+  create(DistributedAggregatePlan plan, std::vector<DistributedReadAdmission> admissions);
   [[nodiscard]] common::Status accept(const ExchangeMessage& message);
   [[nodiscard]] common::Status worker_failed(const schema::TabletId& tablet_id,
                                              common::Status failure);

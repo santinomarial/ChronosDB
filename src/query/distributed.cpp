@@ -20,6 +20,24 @@ namespace {
   return common::Status{common::StatusCode::kInvalidArgument, message};
 }
 
+[[nodiscard]] common::Status validate_read_policy(const DistributedReadPolicy& policy) {
+  switch (policy.consistency) {
+  case DistributedReadConsistency::kLeaderLinearizable:
+    return policy.maximum_staleness_positions.has_value()
+               ? invalid("linearizable reads cannot declare staleness")
+               : common::Status::ok();
+  case DistributedReadConsistency::kFollowerBoundedStale:
+    return policy.maximum_staleness_positions.has_value()
+               ? common::Status::ok()
+               : invalid("bounded-stale reads require an explicit position bound");
+  case DistributedReadConsistency::kLocalEventual:
+    return policy.maximum_staleness_positions.has_value()
+               ? invalid("local-eventual reads cannot declare staleness")
+               : common::Status::ok();
+  }
+  return invalid("distributed read consistency mode is invalid");
+}
+
 [[nodiscard]] bool intersects(const DistributedTablet& tablet,
                               const DistributedEventTimePredicate& predicate) noexcept {
   if (predicate.lower_inclusive.has_value() &&
@@ -41,6 +59,14 @@ common::Result<DistributedAggregatePlan> plan_distributed_aggregation(
     const common::Uuid query_id, const std::vector<DistributedTablet>& tablets,
     const DistributedEventTimePredicate& predicate, const DistributedReadConsistency consistency,
     const DistributedPlanLimits limits) {
+  return plan_distributed_aggregation(query_id, tablets, predicate,
+                                      DistributedReadPolicy{consistency, std::nullopt}, limits);
+}
+
+common::Result<DistributedAggregatePlan> plan_distributed_aggregation(
+    const common::Uuid query_id, const std::vector<DistributedTablet>& tablets,
+    const DistributedEventTimePredicate& predicate, const DistributedReadPolicy read_policy,
+    const DistributedPlanLimits limits) {
   if (query_id.is_nil() || limits.maximum_tablets == 0U || limits.maximum_fragments == 0U ||
       tablets.size() > limits.maximum_tablets ||
       (predicate.lower_inclusive.has_value() && predicate.upper_exclusive.has_value() &&
@@ -48,16 +74,11 @@ common::Result<DistributedAggregatePlan> plan_distributed_aggregation(
     return common::make_unexpected(
         invalid("distributed query identity, limits, or predicate invalid"));
   }
-  switch (consistency) {
-  case DistributedReadConsistency::kLeaderLinearizable:
-  case DistributedReadConsistency::kFollowerBoundedStale:
-  case DistributedReadConsistency::kLocalEventual:
-    break;
-  default:
-    return common::make_unexpected(invalid("distributed read consistency mode is invalid"));
-  }
+  const common::Status policy_status = validate_read_policy(read_policy);
+  if (!policy_status.is_ok())
+    return common::make_unexpected(policy_status);
   std::set<schema::TabletId> identities;
-  DistributedAggregatePlan plan{query_id, consistency, {}};
+  DistributedAggregatePlan plan{query_id, read_policy, {}};
   for (const DistributedTablet& tablet : tablets) {
     if (tablet.tablet_id.uuid().is_nil() || tablet.minimum_event_time > tablet.maximum_event_time ||
         tablet.leader_node == 0U || !identities.insert(tablet.tablet_id).second) {
@@ -72,6 +93,48 @@ common::Result<DistributedAggregatePlan> plan_distributed_aggregation(
     }
   }
   return plan;
+}
+
+common::Status validate_distributed_read_admission(const DistributedAggregatePlan& plan,
+                                                   const DistributedReadAdmission& admission) {
+  const auto fragment =
+      std::ranges::find(plan.fragments, admission.tablet_id, &DistributedTablet::tablet_id);
+  if (fragment == plan.fragments.end() || admission.serving_node == 0U)
+    return invalid("distributed read admission does not match a planned tablet");
+
+  switch (plan.read_policy.consistency) {
+  case DistributedReadConsistency::kLeaderLinearizable:
+    if (admission.serving_node != fragment->leader_node ||
+        !admission.linearizable_barrier.has_value() || admission.linearizable_barrier->term == 0U ||
+        admission.linearizable_barrier->context == 0U ||
+        admission.linearizable_barrier->read_index == 0U ||
+        admission.applied_position < admission.linearizable_barrier->read_index) {
+      return common::Status{common::StatusCode::kUnavailable,
+                            "leader-linearizable tablet has no applied Raft read barrier"};
+    }
+    return common::Status::ok();
+  case DistributedReadConsistency::kFollowerBoundedStale: {
+    if (!plan.read_policy.maximum_staleness_positions.has_value() ||
+        admission.linearizable_barrier.has_value() ||
+        admission.observed_leader_commit_position < fragment->known_leader_commit_position) {
+      return common::Status{common::StatusCode::kUnavailable,
+                            "bounded-stale tablet has no current leader-commit observation"};
+    }
+    const std::uint64_t lag =
+        admission.observed_leader_commit_position > admission.applied_position
+            ? admission.observed_leader_commit_position - admission.applied_position
+            : 0U;
+    return lag <= *plan.read_policy.maximum_staleness_positions
+               ? common::Status::ok()
+               : common::Status{common::StatusCode::kUnavailable,
+                                "bounded-stale tablet exceeds its position lag"};
+  }
+  case DistributedReadConsistency::kLocalEventual:
+    return admission.linearizable_barrier.has_value()
+               ? invalid("local-eventual admission must not masquerade as a Raft proof")
+               : common::Status::ok();
+  }
+  return invalid("distributed read consistency mode is invalid");
 }
 
 common::Status MergeableAggregateState::add(const double value) {
@@ -214,9 +277,26 @@ DistributedAggregateCoordinator&
 DistributedAggregateCoordinator::operator=(DistributedAggregateCoordinator&&) noexcept = default;
 
 common::Result<DistributedAggregateCoordinator>
-DistributedAggregateCoordinator::create(DistributedAggregatePlan plan) {
+DistributedAggregateCoordinator::create(DistributedAggregatePlan plan,
+                                        std::vector<DistributedReadAdmission> admissions) {
   if (plan.query_id.is_nil()) {
     return common::make_unexpected(invalid("distributed coordinator query identity is invalid"));
+  }
+  const common::Status policy_status = validate_read_policy(plan.read_policy);
+  if (!policy_status.is_ok())
+    return common::make_unexpected(policy_status);
+  if (admissions.size() != plan.fragments.size()) {
+    return common::make_unexpected(
+        invalid("distributed coordinator requires one read admission per fragment"));
+  }
+  std::set<schema::TabletId> admitted;
+  for (const DistributedReadAdmission& admission : admissions) {
+    if (!admitted.insert(admission.tablet_id).second) {
+      return common::make_unexpected(invalid("distributed read admission is duplicated"));
+    }
+    const common::Status validated = validate_distributed_read_admission(plan, admission);
+    if (!validated.is_ok())
+      return common::make_unexpected(validated);
   }
   return DistributedAggregateCoordinator{std::make_unique<Impl>(std::move(plan))};
 }

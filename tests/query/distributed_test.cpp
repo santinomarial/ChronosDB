@@ -20,6 +20,18 @@ namespace {
   return schema::TabletId::from_uuid(uuid(seed)).value();
 }
 
+[[nodiscard]] std::vector<DistributedReadAdmission>
+linearizable_admissions(const DistributedAggregatePlan& plan) {
+  std::vector<DistributedReadAdmission> admissions;
+  for (const DistributedTablet& fragment : plan.fragments) {
+    admissions.push_back({fragment.tablet_id, fragment.leader_node, fragment.local_applied_position,
+                          fragment.local_applied_position,
+                          raft::ReadBarrier{1U, static_cast<std::uint64_t>(admissions.size()) + 1U,
+                                            fragment.local_applied_position}});
+  }
+  return admissions;
+}
+
 TEST(DistributedQueryTest, PrunesTabletsMergesPartialStateAndRequiresEveryFragment) {
   const common::Uuid query_id = uuid(1U);
   const std::vector<DistributedTablet> tablets{
@@ -37,7 +49,9 @@ TEST(DistributedQueryTest, PrunesTabletsMergesPartialStateAndRequiresEveryFragme
   ASSERT_EQ(pruned->fragments.size(), 1U);
   EXPECT_EQ(pruned->fragments.front().tablet_id, tablet(3U));
 
-  auto coordinator = DistributedAggregateCoordinator::create(std::move(*plan));
+  auto admissions = linearizable_admissions(*plan);
+  auto coordinator =
+      DistributedAggregateCoordinator::create(std::move(*plan), std::move(admissions));
   ASSERT_TRUE(coordinator.has_value());
   MergeableAggregateState first;
   ASSERT_TRUE(first.add(1.0).is_ok());
@@ -74,7 +88,9 @@ TEST(DistributedQueryTest, BackpressureCancellationAndWorkerFailureFailClosed) {
 
   auto plan = plan_distributed_aggregation(query_id, {{tablet(2U), 0, 1, 1U, 1U}}, {});
   ASSERT_TRUE(plan.has_value());
-  auto coordinator = DistributedAggregateCoordinator::create(std::move(*plan));
+  auto admissions = linearizable_admissions(*plan);
+  auto coordinator =
+      DistributedAggregateCoordinator::create(std::move(*plan), std::move(admissions));
   ASSERT_TRUE(coordinator.has_value());
   EXPECT_TRUE(coordinator
                   ->worker_failed(tablet(2U),
@@ -83,6 +99,47 @@ TEST(DistributedQueryTest, BackpressureCancellationAndWorkerFailureFailClosed) {
   const auto result = coordinator->finish();
   ASSERT_FALSE(result.has_value());
   EXPECT_EQ(result.error().code(), common::StatusCode::kUnavailable);
+}
+
+TEST(DistributedQueryTest, EnforcesExplicitReadConsistencyEvidencePerFragment) {
+  const common::Uuid query_id = uuid(5U);
+  const DistributedTablet fragment{tablet(6U), 0, 99, 7U, 95U, 100U};
+  EXPECT_EQ(plan_distributed_aggregation(query_id, {fragment}, {},
+                                         DistributedReadConsistency::kFollowerBoundedStale)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+
+  auto bounded = plan_distributed_aggregation(
+      query_id, {fragment}, {},
+      DistributedReadPolicy{DistributedReadConsistency::kFollowerBoundedStale, 5U});
+  ASSERT_TRUE(bounded.has_value()) << bounded.error().to_string();
+  const DistributedReadAdmission within_bound{fragment.tablet_id, 8U, 95U, 100U, std::nullopt};
+  EXPECT_TRUE(validate_distributed_read_admission(*bounded, within_bound).is_ok());
+  DistributedReadAdmission too_stale = within_bound;
+  too_stale.applied_position = 94U;
+  EXPECT_EQ(validate_distributed_read_admission(*bounded, too_stale).code(),
+            common::StatusCode::kUnavailable);
+  DistributedReadAdmission old_observation = within_bound;
+  old_observation.observed_leader_commit_position = 99U;
+  EXPECT_EQ(validate_distributed_read_admission(*bounded, old_observation).code(),
+            common::StatusCode::kUnavailable);
+  EXPECT_FALSE(DistributedAggregateCoordinator::create(*bounded, {too_stale}).has_value());
+
+  auto eventual = plan_distributed_aggregation(
+      query_id, {fragment}, {},
+      DistributedReadPolicy{DistributedReadConsistency::kLocalEventual, std::nullopt});
+  ASSERT_TRUE(eventual.has_value());
+  EXPECT_TRUE(DistributedAggregateCoordinator::create(
+                  std::move(*eventual), {{fragment.tablet_id, 8U, 1U, 0U, std::nullopt}})
+                  .has_value());
+
+  auto linearizable = plan_distributed_aggregation(query_id, {fragment}, {});
+  ASSERT_TRUE(linearizable.has_value());
+  const DistributedReadAdmission unapplied{fragment.tablet_id, fragment.leader_node, 99U, 100U,
+                                           raft::ReadBarrier{2U, 9U, 100U}};
+  EXPECT_EQ(validate_distributed_read_admission(*linearizable, unapplied).code(),
+            common::StatusCode::kUnavailable);
 }
 
 } // namespace

@@ -789,11 +789,13 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
 
 ## Phase 16 — Distributed query execution and rebalancing
 
-- **Feature-pass status:** bounded event-time tablet pruning, explicit consistency-mode values,
+- **Feature-pass status:** bounded event-time tablet pruning, proof-bound consistency policies,
   mergeable partial aggregates, bounded exchange backpressure/cancellation, and a coordinator that
   rejects missing/failed fragments are implemented. Tablet movement enforces learner-first,
   checksummed retryable snapshot, catch-up, epoch-checked promotion, then source removal. General
-  vector-plan fragments/exchange wire bytes, read-index/staleness proof, placement-to-membership integration,
+  Leader-linearizable admission now requires an applied Raft read barrier; bounded-stale requires an
+  explicit position lag and fresh leader-commit observation; local-eventual remains distinct.
+  General vector-plan fragments/exchange wire bytes, compatible multi-tablet snapshots, placement-to-membership integration,
   durable transfer, and multi-node failure validation remain deferred; the phase exit gate is not
   claimed.
 

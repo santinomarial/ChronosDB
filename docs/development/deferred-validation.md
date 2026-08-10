@@ -133,9 +133,9 @@
 - General coordinator/worker physical fragments for existing vector plans, projection/filter/scan
   serialization, bounded framed exchanges, partial message I/O, grouping-state codecs, ordering,
   top-N, LIMIT, cancellation, retries, and coordinator/worker failure cleanup.
-- Bind the implemented leader-linearizable read barrier to distributed query admission; add a
-  bounded-stale proof, local-eventual routing, compatible multi-tablet snapshots, routing/placement
-  epochs, and no silent consistency downgrade.
+- Carry the implemented proof-bound leader-linearizable/bounded-stale/local-eventual admissions
+  through tablet-to-group identity, production routing, compatible pinned multi-tablet snapshots,
+  routing/placement epochs, protocol bytes, and leader changes during long scans.
 - Shard-key pruning and statistics in addition to event-time pruning; multi-node scalar/distributed
   differential SQL and partial-aggregation equivalence.
 - Integrate movement with the joint-consensus Raft operations, resumable durable snapshot files, manifest/
