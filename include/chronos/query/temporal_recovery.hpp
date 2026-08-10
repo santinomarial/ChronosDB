@@ -77,6 +77,7 @@ struct TemporalManifestWalStartupConfig {
   manifest::TemporalManifestLoadRequest manifest_load;
   wal::WalWriterConfig wal_writer;
   wal::WalRecoveryOptions wal_recovery;
+  // Caller-proven database-wide lower system-time boundary for every selected nonempty tablet.
   std::optional<std::int64_t> retained_system_time_ns;
   TemporalStoreLimits store_limits;
   TemporalManifestCsegResolutionLimits cseg_limits;
@@ -85,10 +86,20 @@ struct TemporalManifestWalStartupConfig {
 };
 
 struct TemporalManifestWalStartupReport {
+  struct Tablet {
+    schema::TableId table_id;
+    schema::TabletId tablet_id;
+    std::uint64_t durable_position{};
+    std::uint64_t verified_covered_command_count{};
+    std::uint64_t applied_suffix_command_count{};
+    std::uint64_t part_count{};
+    std::uint64_t durable_version_count{};
+    friend bool operator==(const Tablet&, const Tablet&) = default;
+  };
+
   std::uint64_t selected_generation{};
   wal::WalReplayCheckpoint checkpoint;
-  schema::TabletId tablet_id;
-  std::uint64_t tablet_durable_position{};
+  std::vector<Tablet> tablets;
   std::uint64_t verified_covered_command_count{};
   std::uint64_t applied_suffix_command_count{};
   std::uint64_t part_count{};
@@ -99,11 +110,11 @@ struct TemporalManifestWalStartupReport {
   std::optional<wal::WalSegmentReclamationReport> wal_reclamation;
 };
 
-// Owns the selected Manifest v2 generation, reconstructed temporal provider, reopened WAL writer,
-// and both filesystem locks. This composition supports exactly one WAL tablet. A global reclaim
-// checkpoint may equal or trail its durable boundary: intervening commands are verified against
-// retained history and only commands after the tablet boundary are applied. Multi-tablet routing
-// remains a separate application-snapshot contract.
+// Owns the selected Manifest v2 generation, reconstructed temporal providers, reopened WAL writer,
+// and both filesystem locks. One global reclaim checkpoint may equal or trail every WAL tablet's
+// durable boundary: intervening commands are verified against the targeted tablet history and only
+// commands after that tablet boundary are applied. Temporal Mutation Command v1 carries a table but
+// no tablet identity, so this owner requires at most one selected tablet per table.
 class RecoveredManifestTemporalState {
 public:
   RecoveredManifestTemporalState() = delete;
@@ -114,8 +125,12 @@ public:
   RecoveredManifestTemporalState& operator=(RecoveredManifestTemporalState&&) noexcept;
 
   [[nodiscard]] const TemporalManifestWalStartupReport& report() const noexcept;
+  // Compatibility convenience for an exact one-tablet startup; returns null for multiple tablets.
   [[nodiscard]] TemporalSnapshotProvider* provider() noexcept;
   [[nodiscard]] const TemporalSnapshotProvider* provider() const noexcept;
+  [[nodiscard]] TemporalSnapshotProvider* provider(schema::TableId table_id) noexcept;
+  [[nodiscard]] const TemporalSnapshotProvider* provider(schema::TableId table_id) const noexcept;
+  [[nodiscard]] std::size_t table_count() const noexcept;
   [[nodiscard]] manifest::ManifestStorage& manifest_storage() noexcept;
   [[nodiscard]] const manifest::LoadedTemporalManifestGeneration&
   selected_manifest() const noexcept;
@@ -130,10 +145,10 @@ private:
       recover_manifest_temporal_wal(TemporalManifestWalStartupConfig);
 };
 
-// Acquires Manifest then WAL ownership, restores the selected tablet's complete CSEG history,
-// preflights the WAL after the global checkpoint, verifies commands through the tablet durable
-// boundary, applies only the later suffix, cleans recognized temporaries, and returns nothing
-// usable unless the complete unpublished composition succeeds.
+// Acquires Manifest then WAL ownership, restores every selected WAL tablet's complete CSEG history,
+// preflights the WAL after the global checkpoint, verifies each command through its target tablet's
+// durable boundary, applies only the later per-tablet suffix, cleans recognized temporaries, and
+// returns nothing usable unless the complete unpublished composition succeeds.
 [[nodiscard]] common::Result<RecoveredManifestTemporalState>
 recover_manifest_temporal_wal(TemporalManifestWalStartupConfig config);
 

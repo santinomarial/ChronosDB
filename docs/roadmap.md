@@ -704,8 +704,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   exactly verifies every physically retained covered row, permits only absent pre-retention rows to
   be treated as reclaimed, applies only the later WAL suffix, retains both locks and the selected
   generation, and returns the writer at the next sequence. Its report distinguishes the checkpoint,
-  tablet boundary, verified overlap, and applied suffix. Multi-tablet checkpoint composition, Raft
-  application snapshots, complete query-epoch publication, v1 migration, vector output, and
+  tablet boundary, verified overlap, and applied suffix. The same owner now restores every selected
+  distinct-table WAL tablet, routes covered/suffix commands by table, and reports exact per-tablet
+  progress; ambiguous same-table multi-tablet routing fails explicitly because command v1 has no
+  tablet identity. Raft/mixed-source application snapshots, complete query-epoch publication, v1
+  migration, vector output, and
   authorized retention/compaction integration remain deferred, so the phase exit gate is not
   claimed.
 

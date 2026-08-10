@@ -144,3 +144,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0107](0107-bounded-io-uring-socket-reactor.md) | Bounded io_uring socket reactor ownership | accepted |
 | [0108](0108-query-worker-placement-startup-gate.md) | Query-worker placement startup gate | accepted |
 | [0109](0109-runtime-dispatched-timestamp-filter-kernel.md) | Runtime-dispatched timestamp filter kernel | accepted |
+| [0110](0110-multi-tablet-temporal-wal-recovery.md) | Multi-tablet temporal WAL recovery routing | accepted |

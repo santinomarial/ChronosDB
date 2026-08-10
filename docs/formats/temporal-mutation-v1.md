@@ -52,7 +52,7 @@ actual WAL source position. Any post-admission uncertainty fails the provider cl
 records in physical order into fresh multi-table providers; any failure discards the fresh owner.
 It returns the locked reopened writer at the next sequence for subsequent coordination. A combined
 database-kind dispatcher and general application checkpoints remain later integration boundaries.
-For one WAL tablet, `recover_manifest_temporal_wal` now restores complete Manifest-authorized CSEG
-v2 history, verifies commands between a trailing global checkpoint and the tablet durable position,
-then applies the later suffix before returning the same writer ownership. Multi-tablet overlap and
-routing remain unsupported.
+`recover_manifest_temporal_wal` restores complete Manifest-authorized CSEG v2 histories for every
+selected distinct-table WAL tablet, verifies commands between a trailing global checkpoint and the
+target tablet's durable position, then applies each later suffix before returning the same writer
+ownership. Multiple tablets for one table remain unsupported because v1 carries no tablet identity.

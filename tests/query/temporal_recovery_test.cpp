@@ -97,8 +97,10 @@ void write_bytes(const std::filesystem::path& path, const common::ByteView bytes
   ASSERT_TRUE(output.good());
 }
 
-[[nodiscard]] std::shared_ptr<const schema::TableSchema> temporal_storage_schema() {
-  const schema::ColumnId event_id = first_byte_id<schema::ColumnId>(5U);
+[[nodiscard]] std::shared_ptr<const schema::TableSchema>
+temporal_storage_schema(const std::uint8_t table_seed = 2U, const std::uint8_t schema_seed = 4U,
+                        const std::uint8_t column_seed = 5U) {
+  const schema::ColumnId event_id = first_byte_id<schema::ColumnId>(column_seed);
   std::vector<schema::ColumnDefinition> columns;
   columns.push_back(schema::ColumnDefinition::create(
                         event_id, "event_time",
@@ -107,7 +109,7 @@ void write_bytes(const std::filesystem::path& path, const common::ByteView bytes
                         .value());
   return std::make_shared<const schema::TableSchema>(
       schema::TableSchema::create(
-          first_byte_id<schema::TableId>(2U), first_byte_id<schema::SchemaId>(4U),
+          first_byte_id<schema::TableId>(table_seed), first_byte_id<schema::SchemaId>(schema_seed),
           schema::SchemaVersion::initial(), std::nullopt, std::move(columns),
           {.event_time_column = event_id,
            .physical_ordering_key = {event_id},
@@ -233,7 +235,7 @@ TEST(TemporalRecoveryTest, RejectsCorrectionWithoutAnOriginalAsCommittedCorrupti
   EXPECT_EQ(recovered.error().code(), common::StatusCode::kCorruption);
 }
 
-TEST(TemporalManifestWalRecoveryTest, VerifiesCheckpointOverlapAndReplaysOnlyTheSuffix) {
+TEST(TemporalManifestWalRecoveryTest, RestoresMultipleTabletsAndReplaysOnlyTheirSuffixes) {
   TemporaryDirectory directory{"chronos-manifest-temporal-recovery"};
   ASSERT_TRUE(directory.valid());
   const std::filesystem::path database_root = directory.path() / "database";
@@ -280,6 +282,13 @@ TEST(TemporalManifestWalRecoveryTest, VerifiesCheckpointOverlapAndReplaysOnlyThe
   auto suffix = writer.append_application_entry(correction.bytes());
   ASSERT_TRUE(suffix.has_value()) << suffix.error().to_string();
   EXPECT_EQ(suffix->record_sequence, 10U);
+  const std::shared_ptr<const schema::TableSchema> second_schema =
+      temporal_storage_schema(12U, 14U, 15U);
+  const EncodedTemporalCommand second_suffix =
+      temporal_command(second_schema, 40, 'c', 400, TemporalMutationKind::kOriginal, 400);
+  auto second_append = writer.append_application_entry(second_suffix.bytes());
+  ASSERT_TRUE(second_append.has_value()) << second_append.error().to_string();
+  EXPECT_EQ(second_append->record_sequence, 11U);
   ASSERT_TRUE(writer.synchronize().has_value());
   ASSERT_TRUE(writer.close().is_ok());
 
@@ -302,6 +311,7 @@ TEST(TemporalManifestWalRecoveryTest, VerifiesCheckpointOverlapAndReplaysOnlyThe
       temporal_command(retained, 21, 'b', 101, TemporalMutationKind::kOriginal, 201);
   ASSERT_TRUE(disagreeing_writer.append_application_entry(disagreeing.bytes()).has_value());
   ASSERT_TRUE(disagreeing_writer.append_application_entry(correction.bytes()).has_value());
+  ASSERT_TRUE(disagreeing_writer.append_application_entry(second_suffix.bytes()).has_value());
   ASSERT_TRUE(disagreeing_writer.synchronize().has_value());
   ASSERT_TRUE(disagreeing_writer.close().is_ok());
 
@@ -323,8 +333,21 @@ TEST(TemporalManifestWalRecoveryTest, VerifiesCheckpointOverlapAndReplaysOnlyThe
                                                   .durable_version_count = part->row_count,
                                                   .commit_source =
                                                       cseg::temporal_format::CommitSource::kWal};
+  const schema::TabletId second_tablet_id = first_byte_id<schema::TabletId>(13U);
+  const manifest::TemporalTabletDescriptor second_tablet{
+      .table_id = second_schema->table_id(),
+      .tablet_id = second_tablet_id,
+      .recovery_schema_id = second_schema->schema_id(),
+      .recovery_schema_version = second_schema->version(),
+      .source_id = source_id,
+      .durable_position = 9U,
+      .reclaim_position = 0U,
+      .first_part_index = 1U,
+      .part_count = 0U,
+      .durable_version_count = 0U,
+      .commit_source = cseg::temporal_format::CommitSource::kWal};
   const manifest::DatabaseId database_id = first_byte_id<manifest::DatabaseId>(6U);
-  const std::array tablets{tablet};
+  const std::array tablets{tablet, second_tablet};
   const std::array parts{*part};
   const auto encoded_manifest = manifest::encode_manifest_v2_temporal(
       {.generation = 1U,
@@ -346,12 +369,20 @@ TEST(TemporalManifestWalRecoveryTest, VerifiesCheckpointOverlapAndReplaysOnlyThe
               encoded_manifest->bytes());
 
   const schema::SchemaLineage lineage = schema::SchemaLineage::create(*retained).value();
+  const schema::SchemaLineage second_lineage =
+      schema::SchemaLineage::create(*second_schema).value();
   const std::array schema_bindings{
-      manifest::TabletSchemaBinding{.tablet_id = tablet_id, .lineage = std::cref(lineage)}};
+      manifest::TabletSchemaBinding{.tablet_id = tablet_id, .lineage = std::cref(lineage)},
+      manifest::TabletSchemaBinding{.tablet_id = second_tablet_id,
+                                    .lineage = std::cref(second_lineage)}};
   const std::array source_bindings{manifest::TemporalTabletSourceBinding{
-      .tablet_id = tablet_id,
-      .commit_source = cseg::temporal_format::CommitSource::kWal,
-      .source_id = source_id}};
+                                       .tablet_id = tablet_id,
+                                       .commit_source = cseg::temporal_format::CommitSource::kWal,
+                                       .source_id = source_id},
+                                   manifest::TemporalTabletSourceBinding{
+                                       .tablet_id = second_tablet_id,
+                                       .commit_source = cseg::temporal_format::CommitSource::kWal,
+                                       .source_id = source_id}};
   const auto startup_config = [&](const wal::WalWriterConfig& selected_writer,
                                   const std::optional<std::int64_t> retention) {
     return TemporalManifestWalStartupConfig{
@@ -385,15 +416,24 @@ TEST(TemporalManifestWalRecoveryTest, VerifiesCheckpointOverlapAndReplaysOnlyThe
   ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
   EXPECT_EQ(recovered->report().selected_generation, 1U);
   EXPECT_EQ(recovered->report().checkpoint.record_sequence, 7U);
-  EXPECT_EQ(recovered->report().tablet_id, tablet_id);
-  EXPECT_EQ(recovered->report().tablet_durable_position, 9U);
+  ASSERT_EQ(recovered->report().tablets.size(), 2U);
+  EXPECT_EQ(recovered->report().tablets.front().tablet_id, tablet_id);
+  EXPECT_EQ(recovered->report().tablets.front().durable_position, 9U);
+  EXPECT_EQ(recovered->report().tablets.front().verified_covered_command_count, 2U);
+  EXPECT_EQ(recovered->report().tablets.front().applied_suffix_command_count, 1U);
+  EXPECT_EQ(recovered->report().tablets.back().tablet_id, second_tablet_id);
+  EXPECT_EQ(recovered->report().tablets.back().durable_position, 9U);
+  EXPECT_EQ(recovered->report().tablets.back().verified_covered_command_count, 0U);
+  EXPECT_EQ(recovered->report().tablets.back().applied_suffix_command_count, 1U);
   EXPECT_EQ(recovered->report().verified_covered_command_count, 2U);
-  EXPECT_EQ(recovered->report().applied_suffix_command_count, 1U);
+  EXPECT_EQ(recovered->report().applied_suffix_command_count, 2U);
   EXPECT_EQ(recovered->report().part_count, 1U);
   EXPECT_EQ(recovered->report().durable_version_count, 2U);
   EXPECT_EQ(recovered->selected_manifest().generation(), 1U);
 
-  TemporalSnapshotProvider* const provider = recovered->provider();
+  EXPECT_EQ(recovered->table_count(), 2U);
+  EXPECT_EQ(recovered->provider(), nullptr);
+  TemporalSnapshotProvider* const provider = recovered->provider(retained->table_id());
   ASSERT_NE(provider, nullptr);
   EXPECT_EQ(provider->latest_commit_position(), 10U);
   EXPECT_EQ(provider->version_count(), 3U);
@@ -409,9 +449,18 @@ TEST(TemporalManifestWalRecoveryTest, VerifiesCheckpointOverlapAndReplaysOnlyThe
     return std::get<std::int64_t>(row.columns.front().storage()) == 30;
   }));
 
+  TemporalSnapshotProvider* const second_provider = recovered->provider(second_schema->table_id());
+  ASSERT_NE(second_provider, nullptr);
+  EXPECT_EQ(second_provider->latest_commit_position(), 11U);
+  auto second_current = second_provider->resolve(second_schema, std::nullopt);
+  ASSERT_TRUE(second_current.has_value()) << second_current.error().to_string();
+  ASSERT_EQ((*second_current)->rows().size(), 1U);
+  EXPECT_EQ(std::get<std::int64_t>((*second_current)->rows().front().columns.front().storage()),
+            40);
+
   auto reopened_writer = recovered->release_writer();
   ASSERT_TRUE(reopened_writer.has_value()) << reopened_writer.error().to_string();
-  EXPECT_EQ(reopened_writer->next_record_sequence().value(), 11U);
+  EXPECT_EQ(reopened_writer->next_record_sequence().value(), 12U);
   EXPECT_TRUE(reopened_writer->close().is_ok());
 }
 

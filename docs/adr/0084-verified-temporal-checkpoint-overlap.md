@@ -4,6 +4,7 @@
 - **Date:** 2026-08-09
 - **Owners:** ChronosDB temporal recovery and storage maintainers
 - **Extends:** [ADR 0083](0083-manifest-v2-temporal-wal-recovery.md)
+- **Extended by:** [ADR 0110](0110-multi-tablet-temporal-wal-recovery.md)
 
 ## Context
 

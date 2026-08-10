@@ -17,10 +17,10 @@ Mixed command dispatch, application checkpoints, and Raft application are not hi
 interfaces. CSEG v2 now has strict metadata/part codecs, semantic and projected reading, plus a
 bounded single-lineage scalar resolver that provides a differential current/as-of winner oracle.
 Manifest v2 discovery, generation-pinned part loading, and bounded multi-part scalar resolution are
-implemented. Complete retained part sets can now reconstruct a fresh scalar provider; vector output,
-general multi-tablet/Raft suffix composition, and compaction integration remain pending. One
-single-WAL-tablet Manifest checkpoint can now trail its tablet durable position: covered commands
-are verified and only the later suffix is applied.
+implemented. Complete retained part sets can reconstruct fresh scalar providers. One global WAL
+checkpoint can now recover every selected distinct-table WAL tablet: covered commands are routed and
+verified against each tablet's durable boundary, and only later commands are applied. Vector output,
+same-table multi-tablet routing, Raft/mixed-source composition, and compaction integration remain.
 
 ## Public interfaces and data structures
 
@@ -54,13 +54,14 @@ when a durable manifest independently proves that the command is covered.
 `WalWriter`. `release_writer()` transfers that writer exactly once to the later live coordinator.
 Provider pointers remain valid for the lifetime of the recovered owner.
 
-`RecoveredManifestTemporalState` is the first complete durable startup owner. It requires one WAL
-tablet and a global checkpoint no later than that tablet's durable boundary, restores its pinned
-CSEG history, opens and preflights the WAL strictly after that coordinate, verifies covered commands
-through the tablet boundary, applies the suffix, cleans recognized temporaries, and returns the
-provider plus locked writer. Manifest storage outlives WAL ownership during destruction. A missing
-retention proof, a WAL that does not reach the tablet boundary, or any validation/replay failure
-destroys all fresh state.
+`RecoveredManifestTemporalState` is the complete WAL-temporal startup owner. It requires a global
+checkpoint no later than every selected tablet's durable boundary, restores all pinned CSEG
+histories, opens and preflights the WAL strictly after that coordinate, routes commands by table,
+verifies covered commands through each target boundary, applies later suffixes, cleans recognized
+temporaries, and returns table-keyed providers plus the locked writer. Manifest storage outlives WAL
+ownership during destruction. Because Temporal Mutation Command v1 lacks tablet identity, a
+same-table multi-tablet generation fails explicitly. A missing retention proof, a WAL that does not
+reach the greatest tablet boundary, or any validation/replay failure destroys all fresh state.
 
 `restore_manifest_v2_temporal_tablet_history` exact-opens and fully projects every supplied
 generation-pinned CSEG v2 image after the owning tablet descriptor proves exact part count,
@@ -134,10 +135,10 @@ use a different accepted format; it must not reinterpret these bytes in place.
 ## Validation and interview questions
 
 Focused tests cover canonical command application, exact and disagreeing checkpoint-overlap WALs,
-retained and reclaimed pre-boundary rows, original/correction replay, historical lookup,
-impossible-history rejection, and continued WAL sequence ownership. Phase 18 retains golden bytes,
-fuzzing, allocation-failure sweeps, crash points, mixed-command dispatch, long histories, and
-performance measurement.
+multi-tablet routed verification/application, retained and reclaimed pre-boundary rows,
+original/correction replay, historical lookup, impossible-history rejection, and continued WAL
+sequence ownership. Phase 18 retains golden bytes, fuzzing, allocation-failure sweeps, crash points,
+many-tablet skew, mixed-command dispatch, long histories, and performance measurement.
 
 Useful design questions include:
 

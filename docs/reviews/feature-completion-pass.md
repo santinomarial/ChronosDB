@@ -78,9 +78,14 @@ schema: atomic commit batches, distinct event/receive/system time, original/corr
 tombstone versions, current and historical winner selection, copied stable snapshots, finite state,
 and precise history-expired failure.
 
-CSEG v1 remains correctly frozen to `APPEND_ROWS`. No correction WAL kind, CSEG v2, mutable-head
-correction representation, durable restart, vector row-version resolution, or compaction retention
-integration was invented. Therefore durable Phase 13 is incomplete.
+CSEG v1 remains correctly frozen to `APPEND_ROWS`. Temporal Mutation Command v1, CSEG v2, and
+Manifest v2 now durably encode, validate, install, select, resolve, and recover WAL/Raft-neutral
+version histories without reinterpreting v1 bytes. The WAL startup owner restores every selected
+distinct-table tablet under one global checkpoint, exact-verifies routed overlap, applies only each
+tablet's suffix, and retains all providers/generation/locks until complete unpublished recovery.
+Same-table multi-tablet routing fails explicitly because command v1 lacks tablet identity. Vector
+row-version publication, Raft/mixed-source composition, v1 migration, and authorized compaction/
+retention integration remain, so the complete Phase 13 exit is not claimed.
 
 ### Phase 14 — deterministic Raft
 
