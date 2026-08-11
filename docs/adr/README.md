@@ -181,3 +181,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0144](0144-maintained-mutual-tls-socket-carrier.md) | Maintained mutual-TLS socket carrier | accepted |
 | [0145](0145-bounded-epoll-mutual-tls-admission.md) | Bounded epoll mutual-TLS admission | accepted |
 | [0146](0146-raft-tablet-physical-snapshot-projection.md) | Raft tablet physical snapshot projection | accepted |
+| [0147](0147-tablet-physical-part-chunk-v1.md) | Tablet physical part chunk v1 | accepted |

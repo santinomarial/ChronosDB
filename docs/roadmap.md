@@ -853,8 +853,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   maintained OpenSSL mutual-TLS carrier is now integrated with epoll admission and preserves
   authentication-before-protocol dispatch under partial readiness. Physical handoff now has a
   canonical one-tablet Manifest v2 projection whose exact CSEG descriptor table supplies Raft's
-  aggregate part-set checksum; restartable CSEG object transfer and destination publication remain
-  incomplete. General
+  aggregate part-set checksum. Canonical physical-part chunks now bind bounded payloads to the exact
+  movement and CSEG identity while preserving 64-bit object lengths; durable chunk receipt,
+  streaming completion, and destination publication remain incomplete. General
   vector-plan fragments/exchange wire bytes, compatible multi-tablet snapshots, complete leader
   transport, and multi-node failure validation remain deferred; the
   phase exit gate is not claimed.
