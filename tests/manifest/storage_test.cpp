@@ -433,6 +433,12 @@ TEST(TemporalManifestStorageTest, InstallsValidatedPartAndExactSuccessorGenerati
   EXPECT_EQ(installed_part->descriptor, fixture.descriptor);
   EXPECT_TRUE(std::filesystem::is_regular_file(temporary.path() / kPartsDirectoryName /
                                                installed_part->file_name));
+  const common::Uuid retry_nonce = PartFixture::make_nonce(0xd0U);
+  auto repeated = owner.install_temporal_part(fixture.part_request(retry_nonce));
+  ASSERT_TRUE(repeated.has_value()) << repeated.error().to_string();
+  EXPECT_EQ(repeated->file_name, installed_part->file_name);
+  EXPECT_FALSE(std::filesystem::exists(temporary.path() / kPartsDirectoryName /
+                                       temporary_part_file_name(fixture.part_id, retry_nonce)));
 
   const EncodedTemporalManifest candidate = fixture.manifest(2U);
   const auto bindings = fixture.bindings();
@@ -472,6 +478,34 @@ TEST(TemporalManifestStorageTest, RejectsDescriptorMismatchBeforeFilesystemMutat
   --request.descriptor.minimum_system_time;
   EXPECT_EQ(owner.install_temporal_part(request).error().code(), common::StatusCode::kCorruption);
   EXPECT_TRUE(std::filesystem::is_empty(temporary.path() / kPartsDirectoryName));
+  EXPECT_TRUE(owner.is_usable());
+}
+
+TEST(TemporalManifestStorageTest, RejectsConflictingDurableFinalPartOnRetry) {
+  TemporaryDirectory temporary;
+  ASSERT_TRUE(temporary.valid());
+  establish_layout(temporary.path());
+  ManifestStorage owner =
+      ManifestStorage::open_existing({.database_root = temporary.path().string()}).value();
+  const TemporalStorageFixture fixture;
+  ASSERT_TRUE(owner.install_temporal_part(fixture.part_request(fixture.nonce)).has_value());
+
+  std::fstream damaged{temporary.path() / kPartsDirectoryName / part_file_name(fixture.part_id),
+                       std::ios::binary | std::ios::in | std::ios::out};
+  ASSERT_TRUE(damaged.good());
+  char first{};
+  damaged.read(&first, 1);
+  ASSERT_TRUE(damaged.good());
+  first = static_cast<char>(static_cast<unsigned char>(first) ^ 0x01U);
+  damaged.seekp(0);
+  damaged.write(&first, 1);
+  damaged.close();
+
+  EXPECT_EQ(owner.install_temporal_part(fixture.part_request(PartFixture::make_nonce(0xd1U)))
+                .error()
+                .code(),
+            common::StatusCode::kCorruption);
+  EXPECT_EQ(owner.metrics().installed_parts, 1U);
   EXPECT_TRUE(owner.is_usable());
 }
 

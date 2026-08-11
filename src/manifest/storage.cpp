@@ -720,6 +720,56 @@ ManifestStorage::install_temporal_part(const TemporalPartInstallRequest& request
         with_context("prevalidate temporal CSEG part installation", validation));
   }
 
+  // A crash may leave a fully durable final part before its successor Manifest is published.
+  // Exact bytes are an idempotent retry; a same-identity difference is corruption.
+  common::Result<io::PosixFile> existing =
+      implementation.parts_.open_regular_file(final_name, io::FileOpenMode::kReadOnly);
+  if (existing.has_value()) {
+    const common::Result<std::uint64_t> existing_size = existing->size();
+    if (!existing_size.has_value()) {
+      return implementation.fail_temporal_part(
+          with_context("read existing temporal CSEG size", existing_size.error()));
+    }
+    if (*existing_size != encoded.size()) {
+      return implementation.fail_temporal_part(
+          corruption("Existing temporal CSEG identity has a different size"));
+    }
+    std::vector<std::byte> existing_bytes;
+    try {
+      existing_bytes.resize(encoded.size());
+    } catch (const std::bad_alloc&) {
+      return implementation.fail_temporal_part(
+          common::Status{common::StatusCode::kResourceExhausted,
+                         "Cannot allocate existing temporal CSEG verification"});
+    } catch (const std::length_error&) {
+      return implementation.fail_temporal_part(
+          common::Status{common::StatusCode::kResourceExhausted,
+                         "Existing temporal CSEG verification exceeds container limits"});
+    }
+    const common::Result<std::size_t> existing_read = existing->read_at(0U, existing_bytes);
+    if (!existing_read.has_value()) {
+      return implementation.fail_temporal_part(
+          with_context("read existing temporal CSEG", existing_read.error()));
+    }
+    if (*existing_read != existing_bytes.size() ||
+        !std::ranges::equal(existing_bytes, encoded.bytes())) {
+      return implementation.fail_temporal_part(
+          corruption("Existing temporal CSEG identity has different durable bytes"));
+    }
+    validation =
+        validate_manifest_v2_temporal_part_image(request.descriptor, request.owner, existing_bytes,
+                                                 request.schema.get(), request.validation_limits);
+    if (!validation.is_ok()) {
+      return implementation.fail_temporal_part(
+          with_context("validate existing temporal CSEG", validation));
+    }
+    return InstalledTemporalPart{.file_name = final_name, .descriptor = request.descriptor};
+  }
+  if (existing.error().code() != common::StatusCode::kNotFound) {
+    return implementation.fail_temporal_part(
+        with_context("open existing temporal CSEG", existing.error()));
+  }
+
   common::Result<io::PosixFile> temporary = implementation.parts_.create_exclusive_regular_file(
       temporary_name, implementation.file_permissions_);
   if (!temporary.has_value()) {
