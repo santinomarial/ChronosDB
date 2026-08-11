@@ -1,11 +1,13 @@
 #ifndef CHRONOS_QUERY_DISTRIBUTED_HPP_
 #define CHRONOS_QUERY_DISTRIBUTED_HPP_
 
+#include "chronos/common/bytes.hpp"
 #include "chronos/common/result.hpp"
 #include "chronos/common/uuid.hpp"
 #include "chronos/raft/types.hpp"
 #include "chronos/schema/identity.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -97,6 +99,31 @@ struct ExchangeMessage {
   MergeableAggregateState partial;
   bool terminal{};
 };
+
+namespace distributed_format {
+inline constexpr std::uint16_t kExchangeMessageMajor = 1U;
+inline constexpr std::uint16_t kExchangeMessageMinor = 0U;
+inline constexpr std::size_t kExchangeMessageLength = 128U;
+} // namespace distributed_format
+
+class EncodedExchangeMessage {
+public:
+  [[nodiscard]] common::ByteView bytes() const noexcept;
+
+private:
+  explicit EncodedExchangeMessage(
+      std::array<std::byte, distributed_format::kExchangeMessageLength> bytes) noexcept;
+
+  std::array<std::byte, distributed_format::kExchangeMessageLength> bytes_{};
+
+  friend common::Result<EncodedExchangeMessage> encode_exchange_message(const ExchangeMessage&);
+};
+
+// Canonical fixed-width worker/coordinator frame. Integrity and version fields are checked before
+// any aggregate state is interpreted; exact decoding rejects truncation and trailing bytes.
+[[nodiscard]] common::Result<EncodedExchangeMessage>
+encode_exchange_message(const ExchangeMessage& message);
+[[nodiscard]] common::Result<ExchangeMessage> decode_exchange_message_exact(common::ByteView bytes);
 
 struct ExchangeLimits {
   std::size_t maximum_messages{1024U};

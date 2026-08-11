@@ -1,6 +1,12 @@
 #include "chronos/query/distributed.hpp"
 
+#include "chronos/common/byte_reader.hpp"
+#include "chronos/common/byte_writer.hpp"
+#include "chronos/common/crc32c.hpp"
+
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -52,8 +58,175 @@ namespace {
 }
 
 inline constexpr std::size_t kExchangeMessageCharge = sizeof(ExchangeMessage);
+inline constexpr std::array<std::byte, 8U> kExchangeMessageMagic{
+    std::byte{'C'}, std::byte{'H'}, std::byte{'D'}, std::byte{'X'},
+    std::byte{'C'}, std::byte{'H'}, std::byte{'G'}, std::byte{'1'}};
+inline constexpr std::uint32_t kTerminalFlag = 1U << 0U;
+inline constexpr std::uint32_t kMinimumFlag = 1U << 1U;
+inline constexpr std::uint32_t kMaximumFlag = 1U << 2U;
+inline constexpr std::uint32_t kKnownExchangeFlags = kTerminalFlag | kMinimumFlag | kMaximumFlag;
+
+[[nodiscard]] common::Status validate_exchange_message(const ExchangeMessage& message) {
+  if (message.query_id.is_nil() || message.tablet_id.uuid().is_nil() || message.sequence == 0U)
+    return invalid("exchange message identity or sequence is invalid");
+  if (message.partial.minimum.has_value() != message.partial.maximum.has_value())
+    return invalid("exchange aggregate extrema presence differs");
+  if (message.partial.count == 0U) {
+    if (message.partial.minimum.has_value() ||
+        std::bit_cast<std::uint64_t>(message.partial.sum) != 0U ||
+        std::bit_cast<std::uint64_t>(message.partial.mean) != 0U ||
+        std::bit_cast<std::uint64_t>(message.partial.m2) != 0U) {
+      return invalid("empty exchange aggregate state is not canonical");
+    }
+  } else if (!message.partial.minimum.has_value()) {
+    return invalid("nonempty exchange aggregate state has no extrema");
+  }
+  return common::Status::ok();
+}
+
+[[nodiscard]] common::Status corruption(const char* message) {
+  return common::Status{common::StatusCode::kCorruption, message};
+}
 
 } // namespace
+
+EncodedExchangeMessage::EncodedExchangeMessage(
+    std::array<std::byte, distributed_format::kExchangeMessageLength> bytes) noexcept
+    : bytes_(std::move(bytes)) {}
+
+common::ByteView EncodedExchangeMessage::bytes() const noexcept {
+  return bytes_;
+}
+
+common::Result<EncodedExchangeMessage> encode_exchange_message(const ExchangeMessage& message) {
+  const common::Status validation = validate_exchange_message(message);
+  if (!validation.is_ok())
+    return common::make_unexpected(validation);
+  std::array<std::byte, distributed_format::kExchangeMessageLength> bytes{};
+  common::ByteWriter writer{bytes};
+  common::Status status = writer.write_exact(kExchangeMessageMagic);
+  if (status.is_ok())
+    status = writer.write_u16_le(distributed_format::kExchangeMessageMajor);
+  if (status.is_ok())
+    status = writer.write_u16_le(distributed_format::kExchangeMessageMinor);
+  if (status.is_ok())
+    status = writer.write_u32_le(distributed_format::kExchangeMessageLength);
+  if (status.is_ok())
+    status = writer.write_exact(message.query_id.bytes());
+  if (status.is_ok())
+    status = writer.write_exact(message.tablet_id.bytes());
+  if (status.is_ok())
+    status = writer.write_u64_le(message.sequence);
+  if (status.is_ok())
+    status = writer.write_u64_le(message.partial.count);
+  if (status.is_ok())
+    status = writer.write_float64_le(message.partial.sum);
+  if (status.is_ok())
+    status = writer.write_float64_le(message.partial.minimum.value_or(0.0));
+  if (status.is_ok())
+    status = writer.write_float64_le(message.partial.maximum.value_or(0.0));
+  if (status.is_ok())
+    status = writer.write_float64_le(message.partial.mean);
+  if (status.is_ok())
+    status = writer.write_float64_le(message.partial.m2);
+  std::uint32_t flags = message.terminal ? kTerminalFlag : 0U;
+  if (message.partial.minimum.has_value())
+    flags |= kMinimumFlag | kMaximumFlag;
+  if (status.is_ok())
+    status = writer.write_u32_le(flags);
+  if (status.is_ok())
+    status = writer.zero_fill(16U);
+  if (!status.is_ok() || writer.offset() != distributed_format::kExchangeMessageLength - 4U) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kInternal, "exchange frame layout does not match its frozen length"});
+  }
+  status = writer.write_u32_le(common::crc32c(common::ByteView{bytes}.first(bytes.size() - 4U)));
+  if (!status.is_ok() || !writer.full()) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kInternal, "exchange frame checksum does not fit frozen layout"});
+  }
+  return EncodedExchangeMessage{std::move(bytes)};
+}
+
+common::Result<ExchangeMessage> decode_exchange_message_exact(const common::ByteView bytes) {
+  if (bytes.size() != distributed_format::kExchangeMessageLength)
+    return common::make_unexpected(corruption("exchange frame length is not exact"));
+  if (!std::ranges::equal(bytes.first(kExchangeMessageMagic.size()), kExchangeMessageMagic))
+    return common::make_unexpected(corruption("exchange frame magic is invalid"));
+  const std::uint32_t expected_crc = common::crc32c(bytes.first(bytes.size() - 4U));
+  common::ByteReader checksum_reader{bytes.last(4U)};
+  const common::Result<std::uint32_t> stored_crc = checksum_reader.read_u32_le();
+  if (!stored_crc.has_value() || *stored_crc != expected_crc)
+    return common::make_unexpected(corruption("exchange frame checksum is invalid"));
+
+  common::ByteReader reader{bytes};
+  if (!reader.skip(kExchangeMessageMagic.size()).is_ok())
+    return common::make_unexpected(corruption("exchange frame header is truncated"));
+  const auto major = reader.read_u16_le();
+  const auto minor = reader.read_u16_le();
+  const auto length = reader.read_u32_le();
+  if (!major.has_value() || !minor.has_value() || !length.has_value())
+    return common::make_unexpected(corruption("exchange frame header is truncated"));
+  if (*major != distributed_format::kExchangeMessageMajor ||
+      *minor != distributed_format::kExchangeMessageMinor) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kNotSupported, "exchange frame version is unsupported"});
+  }
+  if (*length != distributed_format::kExchangeMessageLength)
+    return common::make_unexpected(corruption("exchange frame encoded length is invalid"));
+  const auto query_bytes = reader.read_exact(common::Uuid::kSize);
+  const auto tablet_bytes = reader.read_exact(common::Uuid::kSize);
+  const auto sequence = reader.read_u64_le();
+  const auto count = reader.read_u64_le();
+  const auto sum = reader.read_float64_le();
+  const auto minimum = reader.read_float64_le();
+  const auto maximum = reader.read_float64_le();
+  const auto mean = reader.read_float64_le();
+  const auto m2 = reader.read_float64_le();
+  const auto flags = reader.read_u32_le();
+  const auto reserved = reader.read_exact(16U);
+  if (!query_bytes.has_value() || !tablet_bytes.has_value() || !sequence.has_value() ||
+      !count.has_value() || !sum.has_value() || !minimum.has_value() || !maximum.has_value() ||
+      !mean.has_value() || !m2.has_value() || !flags.has_value() || !reserved.has_value()) {
+    return common::make_unexpected(corruption("exchange frame payload is truncated"));
+  }
+  if (reader.remaining() != 4U)
+    return common::make_unexpected(corruption("exchange frame layout is invalid"));
+  if ((*flags & ~kKnownExchangeFlags) != 0U ||
+      std::ranges::any_of(*reserved, [](const std::byte value) { return value != std::byte{0}; })) {
+    return common::make_unexpected(
+        corruption("exchange frame flags or reserved bytes are invalid"));
+  }
+  if (((*flags & kMinimumFlag) != 0U) != ((*flags & kMaximumFlag) != 0U))
+    return common::make_unexpected(corruption("exchange frame extrema flags disagree"));
+  const bool has_extrema = (*flags & kMinimumFlag) != 0U;
+  if (!has_extrema && (std::bit_cast<std::uint64_t>(*minimum) != 0U ||
+                       std::bit_cast<std::uint64_t>(*maximum) != 0U)) {
+    return common::make_unexpected(corruption("exchange frame absent extrema are not canonical"));
+  }
+  common::Uuid::Bytes query_id_bytes{};
+  common::Uuid::Bytes tablet_id_bytes{};
+  std::ranges::copy(*query_bytes, query_id_bytes.begin());
+  std::ranges::copy(*tablet_bytes, tablet_id_bytes.begin());
+  const common::Result<schema::TabletId> tablet_id = schema::TabletId::from_bytes(tablet_id_bytes);
+  if (!tablet_id.has_value())
+    return common::make_unexpected(corruption("exchange frame tablet identity is invalid"));
+  ExchangeMessage message{
+      .query_id = common::Uuid{query_id_bytes},
+      .tablet_id = *tablet_id,
+      .sequence = *sequence,
+      .partial = {.count = *count,
+                  .sum = *sum,
+                  .minimum = has_extrema ? std::optional<double>{*minimum} : std::nullopt,
+                  .maximum = has_extrema ? std::optional<double>{*maximum} : std::nullopt,
+                  .mean = *mean,
+                  .m2 = *m2},
+      .terminal = (*flags & kTerminalFlag) != 0U};
+  const common::Status validation = validate_exchange_message(message);
+  if (!validation.is_ok())
+    return common::make_unexpected(corruption("exchange frame aggregate state is invalid"));
+  return message;
+}
 
 common::Result<DistributedAggregatePlan> plan_distributed_aggregation(
     const common::Uuid query_id, const std::vector<DistributedTablet>& tablets,
@@ -211,10 +384,11 @@ common::Status BoundedExchange::push(ExchangeMessage message) {
   if (impl_->is_cancelled) {
     return common::Status{common::StatusCode::kCancelled, "exchange is cancelled"};
   }
-  if (message.query_id != impl_->query_id || message.tablet_id.uuid().is_nil() ||
-      message.sequence == 0U) {
-    return invalid("exchange message identity or sequence is invalid");
-  }
+  const common::Status validation = validate_exchange_message(message);
+  if (!validation.is_ok())
+    return validation;
+  if (message.query_id != impl_->query_id)
+    return invalid("exchange message belongs to another query");
   if (impl_->messages.size() >= impl_->limits.maximum_messages ||
       kExchangeMessageCharge > impl_->limits.maximum_bytes - impl_->charged_bytes) {
     return common::Status{common::StatusCode::kResourceExhausted, "exchange is backpressured"};
@@ -304,6 +478,9 @@ DistributedAggregateCoordinator::create(DistributedAggregatePlan plan,
 common::Status DistributedAggregateCoordinator::accept(const ExchangeMessage& message) {
   if (impl_->failure.has_value())
     return *impl_->failure;
+  const common::Status validation = validate_exchange_message(message);
+  if (!validation.is_ok())
+    return validation;
   if (message.query_id != impl_->plan.query_id || !message.terminal ||
       !impl_->expected.contains(message.tablet_id)) {
     return invalid("distributed fragment result is not an expected terminal message");

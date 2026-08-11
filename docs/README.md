@@ -71,6 +71,9 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   reclamation proof without trusting orphan files.
 - [Tablet Physical Part Reclamation Marker v1](formats/tablet-physical-part-reclamation-marker-v1.md):
   session-bound terminal receipt state installed durably before crash-safe descending chunk removal.
+- [Distributed Aggregate Exchange v1](formats/distributed-aggregate-exchange-v1.md): fixed-width,
+  versioned, CRC-protected worker/coordinator ungrouped aggregate state with exact identity,
+  sequence, extrema-presence, and IEEE-754 preservation.
 - [Resume Token v1](formats/resume-token-v1.md): authenticated live-subscription resume identity,
   compatibility, limits, and rejection rules.
 - [Materialized View Checkpoint v1](formats/materialized-view-checkpoint-v1.md): bounded exact
@@ -209,6 +212,9 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   contracts, and reproducible end-to-end profile methodology.
 - [Native Protocol v1 framing](learning/native-protocol-v1-framing.md): portable checksummed frame
   interfaces, validation-before-allocation, ownership, failure behavior, and verification strategy.
+- [Distributed aggregate exchange](learning/distributed-aggregate-exchange.md): canonical aggregate
+  frame ownership, validation order, merge-state invariants, failure behavior, and deferred carrier
+  responsibilities.
 - [Native protocol request lifecycle](learning/native-protocol-request-lifecycle.md): negotiated
   limits, bounded active requests, monotonic identities, cancellation, and durability-explicit
   acknowledgements.

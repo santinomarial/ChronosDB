@@ -96,6 +96,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/query/column_output.hpp>
 #include <chronos/query/cseg_scan.hpp>
 #include <chronos/query/database_cseg_scan.hpp>
+#include <chronos/query/distributed.hpp>
 #include <chronos/query/head_scan.hpp>
 #include <chronos/query/physical_operator.hpp>
 #include <chronos/query/physical_lowering.hpp>
@@ -635,6 +636,8 @@ int main() {
   const ExecuteSelectFunction execute_select = &chronos::query::execute_sql_v1_select;
   using AggregateQueryFunction = bool (chronos::query::BoundSqlSelect::*)() const noexcept;
   const AggregateQueryFunction aggregate_query = &chronos::query::BoundSqlSelect::aggregate_query;
+  const auto encode_exchange_message = &chronos::query::encode_exchange_message;
+  const auto decode_exchange_message = &chronos::query::decode_exchange_message_exact;
   using ExplainFunction = chronos::query::SqlResult<std::string> (*)(
       const chronos::query::BoundSqlSelect&);
   const ExplainFunction explain_select = &chronos::query::explain_sql_v1_select;
@@ -881,6 +884,7 @@ int main() {
                  vector_chunk.has_value() && vector_chunk->selected_row_count() == 1U &&
                  !backed_vector_chunk.has_value() &&
                  chronos::query::kMaximumSqlV1Sources == 64U && aggregate_query != nullptr &&
+                 encode_exchange_message != nullptr && decode_exchange_message != nullptr &&
                  bind_select != nullptr && bind_create != nullptr && bind_insert != nullptr &&
                  materialize_insert != nullptr &&
                  evaluate_expression != nullptr &&
