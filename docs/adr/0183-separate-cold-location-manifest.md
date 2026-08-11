@@ -32,7 +32,9 @@ because valid bytes can be encoded. [ADR 0184](0184-durable-cold-location-genera
 durable installation and no-fallback recovery selection. Atomic publication of a compatible
 base/cold pair and its reader lifetime are now owned by
 [ADR 0185](0185-atomic-tiered-storage-publication.md). Cross-directory crash commit, reader-pin
-retirement proofs, cache/query integration, and remote deletion remain separate.
+retirement proofs, cache/query integration, and remote deletion remain separate. [ADR 0191](0191-manifest-retirement-bound-cold-route-removal.md)
+permits a later cold generation to omit a route only after its newer base Manifest removes the
+logical part.
 
 ## Consequences and validation
 

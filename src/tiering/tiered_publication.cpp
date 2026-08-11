@@ -1,5 +1,6 @@
 #include "chronos/tiering/tiered_publication.hpp"
 
+#include "chronos/manifest/raft_tablet_physical_snapshot.hpp"
 #include "chronos/manifest/temporal_codec.hpp"
 #include "chronos/manifest/temporal_validation.hpp"
 #include "chronos/tiering/tiered_reclamation.hpp"
@@ -113,6 +114,8 @@ public:
         return fail(successor.error());
 
       if (successor->generation() == predecessor->generation()) {
+        if (request.source_retirement != nullptr)
+          return fail(invalid("tiered source retirement does not advance Manifest v2"));
         if (!std::ranges::equal(request.manifest_snapshot.manifest_bytes(),
                                 current->manifest_snapshot_.manifest_bytes())) {
           return fail(invalid("equal Manifest v2 generation has different published bytes"));
@@ -122,8 +125,23 @@ public:
             successor->generation() != predecessor->generation() + 1U) {
           return fail(invalid("tiered publication skips the live Manifest v2 generation"));
         }
-        common::Status transition = manifest::validate_manifest_v2_temporal_transition(
-            *predecessor, *successor, request.schema_bindings);
+        common::Status transition;
+        if (request.source_retirement == nullptr) {
+          transition = manifest::validate_manifest_v2_temporal_transition(*predecessor, *successor,
+                                                                          request.schema_bindings);
+        } else {
+          auto rebuilt = manifest::build_raft_tablet_source_retirement_manifest(
+              *predecessor, *request.source_retirement);
+          if (!rebuilt.has_value())
+            return fail(rebuilt.error());
+          if (!std::ranges::equal(rebuilt->manifest.bytes(),
+                                  request.manifest_snapshot.manifest_bytes())) {
+            return fail(
+                invalid("tiered source-retirement Manifest differs from its exact authority"));
+          }
+          transition = manifest::validate_manifest_v2_temporal_schema_binding(
+              *successor, request.schema_bindings);
+        }
         if (!transition.is_ok())
           return fail(std::move(transition));
       }
@@ -151,7 +169,7 @@ public:
           }
         } else {
           common::Status transition = validate_cold_location_manifest_transition(
-              current->cold_manifest_->manifest(), request.cold_manifest->manifest());
+              current->cold_manifest_->manifest(), request.cold_manifest->manifest(), *successor);
           if (!transition.is_ok())
             return fail(std::move(transition));
         }

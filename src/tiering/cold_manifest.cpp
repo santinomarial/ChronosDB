@@ -550,9 +550,9 @@ common::Status validate_cold_location_manifest_binding(
   }
 }
 
-common::Status
-validate_cold_location_manifest_transition(const DecodedColdLocationManifest& predecessor,
-                                           const DecodedColdLocationManifest& successor) {
+common::Status validate_cold_location_manifest_transition(
+    const DecodedColdLocationManifest& predecessor, const DecodedColdLocationManifest& successor,
+    const manifest::DecodedTemporalManifestView& successor_base_manifest) {
   if (predecessor.generation() == std::numeric_limits<std::uint64_t>::max() ||
       successor.generation() != predecessor.generation() + 1U ||
       successor.previous_generation() != predecessor.generation()) {
@@ -564,12 +564,27 @@ validate_cold_location_manifest_transition(const DecodedColdLocationManifest& pr
   }
   if (successor.base_manifest_generation() < predecessor.base_manifest_generation())
     return invalid("cold manifest successor moves Manifest v2 authority backward");
+  common::Status binding =
+      validate_cold_location_manifest_binding(successor, successor_base_manifest);
+  if (!binding.is_ok())
+    return binding;
   const auto successor_locations = successor.locations();
   for (const ColdPartLocationDescriptor& location : predecessor.locations()) {
+    const bool part_remains_logical =
+        std::ranges::find(successor_base_manifest.parts(), location.part_id,
+                          &manifest::TemporalPartDescriptor::part_id) !=
+        successor_base_manifest.parts().end();
     const auto found = std::ranges::lower_bound(successor_locations, location.part_id, {},
                                                 &ColdPartLocationDescriptor::part_id);
-    if (found == successor_locations.end() || *found != location)
-      return invalid("cold manifest successor removes or changes an existing location");
+    if (found != successor_locations.end() && found->part_id == location.part_id) {
+      if (*found != location)
+        return invalid("cold manifest successor changes an existing location");
+      continue;
+    }
+    if (successor.base_manifest_generation() == predecessor.base_manifest_generation() ||
+        part_remains_logical) {
+      return invalid("cold manifest successor removes a still-logical location");
+    }
   }
   return common::Status::ok();
 }

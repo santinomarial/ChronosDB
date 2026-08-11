@@ -354,6 +354,69 @@ TEST(ColdLocationManifestStorageTest, RejectsGenerationGapsAndLocationRewrites) 
   EXPECT_EQ(gap.error().code(), common::StatusCode::kCorruption);
 }
 
+TEST(ColdLocationManifestStorageTest, DropsOnlyRoutesRetiredByANewerBaseManifest) {
+  Fixture fixture;
+  auto base5_bytes = fixture.encode_base(5U);
+  auto cold1 = fixture.encode_cold(1U, 5U);
+  ASSERT_TRUE(base5_bytes.has_value());
+  ASSERT_TRUE(cold1.has_value());
+  auto base5 = manifest::decode_manifest_v2_temporal_exact(base5_bytes->bytes());
+  ASSERT_TRUE(base5.has_value());
+
+  Fixture successor = fixture;
+  successor.parts.erase(successor.parts.begin());
+  successor.locations.erase(successor.locations.begin());
+  successor.tablets.front().part_count = 1U;
+  successor.tablets.front().durable_version_count = 1U;
+  auto same_base_cold = successor.encode_cold(2U, 5U);
+  auto base6_bytes = successor.encode_base(6U);
+  auto cold2 = successor.encode_cold(2U, 6U);
+  ASSERT_TRUE(same_base_cold.has_value());
+  ASSERT_TRUE(base6_bytes.has_value());
+  ASSERT_TRUE(cold2.has_value());
+  auto base6 = manifest::decode_manifest_v2_temporal_exact(base6_bytes->bytes());
+  ASSERT_TRUE(base6.has_value());
+
+  TemporaryDirectory same_base_directory;
+  auto same_base_storage = ColdLocationManifestStorage::create(fixture.config(same_base_directory));
+  ASSERT_TRUE(same_base_storage.has_value());
+  ASSERT_TRUE(same_base_storage->install(std::cref(*cold1), *base5).has_value());
+  auto premature = same_base_storage->install(std::cref(*same_base_cold), *base5);
+  ASSERT_FALSE(premature.has_value());
+  EXPECT_EQ(premature.error().code(), common::StatusCode::kInvalidArgument);
+
+  Fixture still_logical = fixture;
+  still_logical.locations.erase(still_logical.locations.begin());
+  auto still_logical_base6_bytes = fixture.encode_base(6U);
+  auto missing_still_logical = still_logical.encode_cold(2U, 6U);
+  ASSERT_TRUE(still_logical_base6_bytes.has_value());
+  ASSERT_TRUE(missing_still_logical.has_value());
+  auto still_logical_base6 =
+      manifest::decode_manifest_v2_temporal_exact(still_logical_base6_bytes->bytes());
+  ASSERT_TRUE(still_logical_base6.has_value());
+  TemporaryDirectory still_logical_directory;
+  auto still_logical_storage =
+      ColdLocationManifestStorage::create(fixture.config(still_logical_directory));
+  ASSERT_TRUE(still_logical_storage.has_value());
+  ASSERT_TRUE(still_logical_storage->install(std::cref(*cold1), *base5).has_value());
+  auto missing =
+      still_logical_storage->install(std::cref(*missing_still_logical), *still_logical_base6);
+  ASSERT_FALSE(missing.has_value());
+  EXPECT_EQ(missing.error().code(), common::StatusCode::kInvalidArgument);
+
+  TemporaryDirectory advanced_directory;
+  auto advanced_storage = ColdLocationManifestStorage::create(fixture.config(advanced_directory));
+  ASSERT_TRUE(advanced_storage.has_value());
+  ASSERT_TRUE(advanced_storage->install(std::cref(*cold1), *base5).has_value());
+  auto installed = advanced_storage->install(std::cref(*cold2), *base6);
+  ASSERT_TRUE(installed.has_value()) << installed.error().to_string();
+  auto selected = advanced_storage->load_selected(*base6);
+  ASSERT_TRUE(selected.has_value());
+  ASSERT_TRUE(selected->has_value());
+  ASSERT_EQ((*selected)->manifest().locations().size(), 1U);
+  EXPECT_EQ((*selected)->manifest().locations().front(), successor.locations.front());
+}
+
 TEST(ColdLocationManifestStorageTest, PoisonsAfterUncertainDirectorySync) {
   TemporaryDirectory directory;
   Fixture fixture;

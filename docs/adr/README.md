@@ -225,3 +225,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0188](0188-proof-gated-tiered-distributed-query-loading.md) | Proof-gated tiered distributed-query loading | accepted |
 | [0189](0189-tier-aware-pair-recovery.md) | Tier-aware pair recovery for remote-only CSEGs | accepted |
 | [0190](0190-reader-pinned-tiered-local-reclamation.md) | Reader-pinned tiered local CSEG reclamation | accepted |
+| [0191](0191-manifest-retirement-bound-cold-route-removal.md) | Manifest-retirement-bound cold route removal | accepted |

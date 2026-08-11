@@ -23,8 +23,10 @@ snapshot.
 Creation re-decodes both owners and requires exact database/generation/part-byte binding. Ordinary
 publication permits the same Manifest v2 bytes with the same or exact next cold generation, or the
 exact next valid Manifest v2 generation with compatible cold authority. Equal generation numbers
-must have equal bytes. Cold authority cannot disappear once published; a successor is add-only and
-exactly consecutive. A claimed durable successor that cannot be validated poisons the publisher so
+must have equal bytes. Cold authority cannot disappear wholesale once published; a successor is
+exactly consecutive and may omit an individual route only under the newer logical-Manifest proof in
+[ADR 0191](0191-manifest-retirement-bound-cold-route-removal.md). A claimed durable successor that
+cannot be validated poisons the publisher so
 restart recovery, rather than in-process rollback, resolves durable truth.
 
 The memory-ordering argument is direct: the single writer completely initializes an immutable epoch,

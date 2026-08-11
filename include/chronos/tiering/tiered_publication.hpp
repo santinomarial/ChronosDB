@@ -56,6 +56,9 @@ struct DurableTieredDatabaseStoragePublicationRequest {
   std::span<const manifest::TabletSchemaBinding> schema_bindings;
   manifest::ManifestDecodeLimits manifest_decode_limits;
   ColdLocationManifestDecodeLimits cold_decode_limits;
+  // Non-null authorizes the exact source-retirement Manifest transition that may also retire its
+  // cold routes. Ordinary add-only publication remains the default.
+  const manifest::RaftTabletSourceRetirementRequest* source_retirement{};
 };
 
 // Single-writer publication owner. One atomic shared epoch owns the Manifest v2 snapshot and its

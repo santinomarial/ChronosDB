@@ -99,7 +99,8 @@ public:
   [[nodiscard]] static common::Result<ColdLocationManifestStorage>
   open_existing(ColdLocationManifestStorageConfig config);
 
-  // Installs only generation 1 or the exact add-only successor to the highest final generation.
+  // Installs only generation 1 or the exact successor to the highest final generation. Routes are
+  // add-only at one base generation; a newer base may drop only routes for no-longer-logical parts.
   // Candidate and readback must bind to base_manifest. The temporary is completely written,
   // exact-read, synchronized, closed, no-replace renamed, then followed by directory sync.
   [[nodiscard]] common::Result<InstalledColdLocationManifest>

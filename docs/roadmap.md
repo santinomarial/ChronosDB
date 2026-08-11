@@ -927,7 +927,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   validating locally absent CSEGs through their remote routes and creating publication state.
   Reader-pinned reclamation for Raft-owned parts now waits only for historical aggregate epochs that
   lack an exact route, revalidates the selected pair and every remote/local image, then unlinks and
-  synchronizes with idempotent retry. WAL-local and remote deletion, other query paths,
+  synchronizes with idempotent retry. Cold successors may now omit a route only when a newer base
+  Manifest removed that logical part, establishing the metadata transition required by later
+  reader-pinned remote deletion. WAL-local and remote object deletion, other query paths,
   multipart/retry and credential-refresh ownership, and Arrow/Parquet implementations remain
   deferred; the phase exit gate is not claimed.
 

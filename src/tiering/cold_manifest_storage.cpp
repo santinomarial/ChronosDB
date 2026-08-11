@@ -351,7 +351,8 @@ common::Result<InstalledColdLocationManifest> ColdLocationManifestStorage::insta
     auto predecessor = impl.load_generation(generations->back(), nullptr);
     if (!predecessor.has_value())
       return impl.fail(with_context("load cold manifest predecessor", predecessor.error()));
-    validation = validate_cold_location_manifest_transition(predecessor->manifest(), *candidate);
+    validation = validate_cold_location_manifest_transition(predecessor->manifest(), *candidate,
+                                                            base_manifest);
     if (!validation.is_ok())
       return impl.fail(with_context("validate cold manifest successor", validation));
   }
