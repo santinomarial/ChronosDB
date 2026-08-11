@@ -1,4 +1,6 @@
 #include "chronos/cluster/distributed_query_execution.hpp"
+#include "chronos/cluster/distributed_query_tcp_execution.hpp"
+#include "chronos/cluster/distributed_query_tcp_server.hpp"
 #include "chronos/manifest/naming.hpp"
 #include "chronos/manifest/storage.hpp"
 #include "chronos/manifest/temporal_codec.hpp"
@@ -187,6 +189,84 @@ struct ExecutionInput {
   return {uuid(7U), tablet, 1U, partial, true};
 }
 
+[[nodiscard]] std::filesystem::path tls_fixture(const char* name) {
+  return std::filesystem::path{CHRONOS_NETWORK_FIXTURE_DIR} / "tls" / name;
+}
+
+[[nodiscard]] network::TlsServerConfig execution_tls_server_config() {
+  return {.certificate_chain_file = tls_fixture("server.pem").string(),
+          .private_key_file = tls_fixture("server-key.pem").string(),
+          .trust_store_file = tls_fixture("ca.pem").string()};
+}
+
+[[nodiscard]] network::TlsClientConfig execution_tls_client_config() {
+  return {.certificate_chain_file = tls_fixture("client.pem").string(),
+          .private_key_file = tls_fixture("client-key.pem").string(),
+          .trust_store_file = tls_fixture("ca.pem").string(),
+          .expected_server_identity = "127.0.0.1"};
+}
+
+class ExecutionAuthenticator final : public network::ConnectionAuthenticator {
+public:
+  explicit ExecutionAuthenticator(const std::uint64_t principal_id) : principal_id_(principal_id) {}
+
+  common::Result<network::PeerAuthenticationResult>
+  authenticate(const network::PeerAuthenticationRequest&) override {
+    return network::PeerAuthenticationResult{.authorized = true, .principal_id = principal_id_};
+  }
+
+private:
+  std::uint64_t principal_id_{};
+};
+
+class ExecutionNodeAuthorizer final : public ClusterNodePrincipalAuthorizer {
+public:
+  common::Result<bool> authorize_node(const std::uint64_t principal_id,
+                                      const raft::NodeId node_id) const override {
+    return (principal_id == 91U && node_id == 1U) ||
+           (principal_id == 92U && (node_id == 11U || node_id == 12U));
+  }
+};
+
+class ExecutionWorker final : public DistributedQueryWorkerService {
+public:
+  ExecutionWorker(const double value, const bool fail_first) noexcept
+      : value_(value), fail_first_(fail_first) {}
+
+  common::Result<query::ExchangeMessage>
+  execute(const query::DistributedAggregateFragmentDispatch& dispatch) override {
+    ++calls;
+    if (fail_first_ && calls == 1U) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kUnavailable, "injected retryable worker failure"});
+    }
+    query::MergeableAggregateState partial;
+    const common::Status added = partial.add(value_);
+    if (!added.is_ok())
+      return common::make_unexpected(added);
+    return query::ExchangeMessage{dispatch.fragment.query_id, dispatch.fragment.tablet_id, 1U,
+                                  partial, true};
+  }
+
+  std::size_t calls{};
+
+private:
+  double value_{};
+  bool fail_first_{};
+};
+
+[[nodiscard]] DistributedQueryTcpServerConfig
+execution_server_config(ExecutionAuthenticator& authenticator, DistributedQueryReceiver& receiver) {
+  return {.listener = {},
+          .tls = execution_tls_server_config(),
+          .authenticator = &authenticator,
+          .receiver = &receiver,
+          .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                             .exchange_timeout = std::chrono::milliseconds{1000}},
+          .maximum_connections = 8U,
+          .maximum_accepts_per_poll = 8U};
+}
+
 TEST(DistributedQueryExecutionTest, DeliversEveryTerminalResultExactlyOnceAndFinishes) {
   TemporaryDirectory directory;
   auto input = make_input(directory);
@@ -243,6 +323,7 @@ TEST(DistributedQueryExecutionTest, RetryBackoffDoesNotFailUntilSenderBecomesTer
                          .value();
   ASSERT_TRUE(execution->accept_response(tablet, retry, now).is_ok());
   EXPECT_EQ(*execution->sender_state(tablet), DistributedQuerySenderState::kBackoff);
+  EXPECT_EQ(*execution->next_attempt_not_before(tablet), now + std::chrono::milliseconds{10});
   EXPECT_EQ(*execution->suggested_leader(tablet), DistributedQueryLeaderHint(13U, 14U));
   ASSERT_TRUE(execution->begin_attempt(tablet, now + std::chrono::milliseconds{10}).has_value());
   ASSERT_TRUE(execution
@@ -251,6 +332,95 @@ TEST(DistributedQueryExecutionTest, RetryBackoffDoesNotFailUntilSenderBecomesTer
                   .is_ok());
   EXPECT_EQ(*execution->sender_state(tablet), DistributedQuerySenderState::kFailed);
   EXPECT_EQ(execution->finish().error().code(), common::StatusCode::kIoError);
+}
+
+TEST(DistributedQueryTcpExecutionTest, SchedulesPlanOrderedTabletsAndRetriesWithoutRebinding) {
+  TemporaryDirectory directory;
+  auto input = make_input(directory);
+  ASSERT_TRUE(input.has_value()) << input.error().to_string();
+  auto execution = DistributedQueryExecution::create(
+      1U, std::move(input->plan), std::move(input->admissions), std::move(input->snapshot),
+      {.coordinator = {},
+       .retry = {.maximum_attempts = 2U,
+                 .initial_backoff = std::chrono::milliseconds{1},
+                 .maximum_backoff = std::chrono::milliseconds{1}}});
+  ASSERT_TRUE(execution.has_value()) << execution.error().to_string();
+
+  ExecutionNodeAuthorizer authorizer;
+  ExecutionWorker first_worker{2.5, true};
+  ExecutionWorker second_worker{3.5, false};
+  auto first_receiver = DistributedQueryReceiver::create(
+      {.local_node_id = 11U, .authorizer = &authorizer, .worker = &first_worker});
+  auto second_receiver = DistributedQueryReceiver::create(
+      {.local_node_id = 12U, .authorizer = &authorizer, .worker = &second_worker});
+  ASSERT_TRUE(first_receiver.has_value());
+  ASSERT_TRUE(second_receiver.has_value());
+  ExecutionAuthenticator client_authenticator{91U};
+  auto first_server = DistributedQueryTcpServer::start(
+      execution_server_config(client_authenticator, *first_receiver));
+  auto second_server = DistributedQueryTcpServer::start(
+      execution_server_config(client_authenticator, *second_receiver));
+  ASSERT_TRUE(first_server.has_value()) << first_server.error().to_string();
+  ASSERT_TRUE(second_server.has_value()) << second_server.error().to_string();
+
+  auto tls_context = network::TlsClientContext::create(execution_tls_client_config());
+  ASSERT_TRUE(tls_context.has_value()) << tls_context.error().to_string();
+  ExecutionAuthenticator server_authenticator{92U};
+  auto tcp_execution = DistributedQueryTcpExecution::create(
+      std::move(*execution),
+      {.authenticator = &server_authenticator,
+       .node_authorizer = &authorizer,
+       .routes = {{11U, first_server->bound_endpoint(), &*tls_context},
+                  {12U, second_server->bound_endpoint(), &*tls_context}},
+       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                          .exchange_timeout = std::chrono::milliseconds{1000}},
+       .connect_timeout = std::chrono::milliseconds{1000}});
+  ASSERT_TRUE(tcp_execution.has_value()) << tcp_execution.error().to_string();
+  EXPECT_EQ(tcp_execution->snapshot().snapshot().generation(), 1U);
+
+  for (std::size_t iteration = 0U;
+       iteration < 2048U && tcp_execution->state() == DistributedQueryTcpExecutionState::kRunning;
+       ++iteration) {
+    ASSERT_TRUE(tcp_execution->poll_once(std::chrono::milliseconds{1}).is_ok())
+        << tcp_execution->failure().to_string();
+    ASSERT_TRUE(first_server->poll_once(std::chrono::milliseconds{1}).is_ok());
+    ASSERT_TRUE(second_server->poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+
+  ASSERT_EQ(tcp_execution->state(), DistributedQueryTcpExecutionState::kComplete)
+      << tcp_execution->failure().to_string();
+  auto result = tcp_execution->result();
+  ASSERT_TRUE(result.has_value()) << result.error().to_string();
+  EXPECT_EQ(result->count, 2U);
+  EXPECT_EQ(result->sum, 6.0);
+  EXPECT_EQ(first_worker.calls, 2U);
+  EXPECT_EQ(second_worker.calls, 1U);
+  const auto metrics = tcp_execution->metrics();
+  EXPECT_EQ(metrics.attempts_started, 3U);
+  EXPECT_EQ(metrics.retries_started, 1U);
+  EXPECT_EQ(metrics.transport_completed_attempts, 3U);
+  EXPECT_EQ(metrics.transport_failed_attempts, 0U);
+  EXPECT_EQ(metrics.active_attempts, 0U);
+}
+
+TEST(DistributedQueryTcpExecutionTest, RejectsIncompleteRoutesBeforeOpeningAttempts) {
+  TemporaryDirectory directory;
+  auto input = make_input(directory);
+  ASSERT_TRUE(input.has_value()) << input.error().to_string();
+  auto execution = DistributedQueryExecution::create(
+      1U, std::move(input->plan), std::move(input->admissions), std::move(input->snapshot));
+  ASSERT_TRUE(execution.has_value());
+  ExecutionNodeAuthorizer authorizer;
+  ExecutionAuthenticator authenticator{92U};
+  auto tls_context = network::TlsClientContext::create(execution_tls_client_config());
+  ASSERT_TRUE(tls_context.has_value());
+  EXPECT_EQ(DistributedQueryTcpExecution::create(
+                std::move(*execution), {.authenticator = &authenticator,
+                                        .node_authorizer = &authorizer,
+                                        .routes = {{11U, {{127U, 0U, 0U, 1U}, 1U}, &*tls_context}}})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
 }
 
 TEST(DistributedQueryExecutionTest, RejectsAdmissionOrderThatDiffersFromPinnedDispatches) {

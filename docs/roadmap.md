@@ -880,9 +880,12 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   deadline driving, stable carrier-before-descriptor teardown, explicit overload, and real
   end-to-end mutual-TLS query serving. A matching one-attempt TCP client now validates before
   connect, binds route identity, enforces connect/TLS/exchange deadlines, and retains exact sender
-  response bytes with fail-closed teardown. Multi-attempt scheduling, cross-node generation
-  refresh/rebinding, general vector-plan fragments/exchanges, complete leader transport, and
-  multi-node failure validation remain deferred; the
+  response bytes with fail-closed teardown. A pinned multi-tablet TCP scheduler now prevalidates
+  every immutable node route, starts plan-ordered attempts and deadline-due retries, drives a fixed
+  poll table, reports each terminal transport outcome once, closes peer attempts on query failure,
+  and publishes only the complete aggregate while retaining the compatible Manifest epoch.
+  Cross-node generation refresh/rebinding, general vector-plan fragments/exchanges, complete leader
+  transport, and broader multi-node failure validation remain deferred; the
   phase exit gate is not claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.

@@ -158,6 +158,14 @@ DistributedQueryExecution::sender_state(const schema::TabletId& tablet_id) const
   return senders_[*index].sender.state();
 }
 
+common::Result<std::optional<DistributedQueryExecution::TimePoint>>
+DistributedQueryExecution::next_attempt_not_before(const schema::TabletId& tablet_id) const {
+  auto index = sender_index(tablet_id);
+  if (!index.has_value())
+    return common::make_unexpected(index.error());
+  return senders_[*index].sender.next_attempt_not_before();
+}
+
 common::Result<std::optional<DistributedQueryLeaderHint>>
 DistributedQueryExecution::suggested_leader(const schema::TabletId& tablet_id) const {
   auto index = sender_index(tablet_id);

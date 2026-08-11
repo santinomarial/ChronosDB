@@ -212,3 +212,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0175](0175-nonblocking-ipv4-tcp-descriptor-ownership.md) | Nonblocking IPv4 TCP descriptor ownership | accepted |
 | [0176](0176-bounded-distributed-query-tcp-server.md) | Bounded distributed-query TCP server | accepted |
 | [0177](0177-deadline-bound-distributed-query-tcp-client.md) | Deadline-bound distributed-query TCP client | accepted |
+| [0178](0178-pinned-multi-tablet-tcp-query-scheduling.md) | Pinned multi-tablet TCP query scheduling | accepted |

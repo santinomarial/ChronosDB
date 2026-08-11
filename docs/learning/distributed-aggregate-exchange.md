@@ -91,6 +91,11 @@ shutdown order for real multi-connection serving.
 `DistributedQueryTcpClient` validates one attempt before connect, owns its connect deadline and
 descriptor, creates TLS only after `SO_ERROR` success, delegates exchange readiness, and retains the
 exact response while preserving carrier-before-descriptor teardown.
+`DistributedQueryTcpExecution` owns that execution and one optional client per plan-ordered tablet.
+It prevalidates immutable target routes, starts ready or deadline-due attempts, drives every active
+client from one fixed poll table, reports each transport outcome once, closes peers on terminal
+failure, and publishes only the all-tablet coordinator result. The pinned Manifest epoch therefore
+outlives every attempt and retry.
 
 ## Tradeoffs and deferred work
 
@@ -99,8 +104,9 @@ prematurely defining a general physical-fragment language. The cost is a special
 type. Grouping state, physical plans, ordering/top-N, cancellation delivery, and general duplicate
 sequencing require their own bounded contracts. A leader hint never
 mutates an existing proof-bound dispatch: following it requires explicit coordinator rebinding.
-Multi-attempt connection scheduling, address resolution, cancellation delivery, pooled
-multiplexing, asynchronous worker completion, and multi-node fault handling remain embedding work.
+Address resolution, explicit authority refresh/rebinding, cancellation delivery, pooled
+multiplexing, asynchronous worker completion, and broader multi-node fault handling remain
+embedding work.
 
 ## Verification and review questions
 

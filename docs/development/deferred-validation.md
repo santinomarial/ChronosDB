@@ -141,12 +141,13 @@
   generation before constructing that envelope. The first worker path reproves local route,
   placement, barrier, schema, group, and durable snapshot authority, resolves logical winners from
   validated generation-pinned temporal parts, and emits a filtered terminal Float64 partial.
-  General physical pipeline stage/expression serialization, socket integration and connection
-  backpressure, grouping-state codecs, reconnect/resend protocol, ordering, top-N, LIMIT,
+  The authenticated TCP server/client and pinned multi-tablet retry scheduler now provide bounded
+  socket integration for this aggregate path. General physical pipeline stage/expression
+  serialization, connection pooling/multiplexing, grouping-state codecs, ordering, top-N, LIMIT,
   cancellation, durable retries, and broader coordinator/worker failure cleanup remain.
-- Carry the implemented proof-bound leader-linearizable/bounded-stale/local-eventual admissions
-  through compatible pinned multi-tablet snapshots, protocol/carrier integration, and leader or
-  placement changes during long scans.
+- Proof-bound leader-linearizable/bounded-stale/local-eventual admissions now remain attached through
+  compatible pinned multi-tablet snapshots and protocol/carrier scheduling. Add explicit generation
+  refresh and rebinding for leader or placement changes during long scans without silent downgrade.
 - Shard-key pruning and statistics in addition to event-time pruning; multi-node scalar/distributed
   differential SQL and partial-aggregation equivalence.
 - Carry the implemented authenticated remote-action receiver bytes and atomic current-leader-term

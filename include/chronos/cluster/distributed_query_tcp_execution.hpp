@@ -1,0 +1,80 @@
+#ifndef CHRONOS_CLUSTER_DISTRIBUTED_QUERY_TCP_EXECUTION_HPP_
+#define CHRONOS_CLUSTER_DISTRIBUTED_QUERY_TCP_EXECUTION_HPP_
+
+#include "chronos/cluster/distributed_query_execution.hpp"
+#include "chronos/cluster/distributed_query_tcp_client.hpp"
+#include "chronos/common/result.hpp"
+#include "chronos/network/security.hpp"
+#include "chronos/network/tcp_socket.hpp"
+#include "chronos/network/tls_socket.hpp"
+#include "chronos/query/distributed.hpp"
+#include "chronos/raft/types.hpp"
+
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <vector>
+
+namespace chronos::cluster {
+
+struct DistributedQueryNodeRoute {
+  raft::NodeId node_id{};
+  network::Ipv4Endpoint endpoint;
+  const network::TlsClientContext* tls_context{};
+};
+
+struct DistributedQueryTcpExecutionConfig {
+  network::ConnectionAuthenticator* authenticator{};
+  const ClusterNodePrincipalAuthorizer* node_authorizer{};
+  std::vector<DistributedQueryNodeRoute> routes;
+  DistributedQueryTlsClientLimits carrier_limits;
+  std::chrono::milliseconds connect_timeout{5000};
+};
+
+struct DistributedQueryTcpExecutionMetrics {
+  std::uint64_t attempts_started{};
+  std::uint64_t retries_started{};
+  std::uint64_t transport_completed_attempts{};
+  std::uint64_t transport_failed_attempts{};
+  std::size_t active_attempts{};
+};
+
+enum class DistributedQueryTcpExecutionState : std::uint8_t {
+  kRunning = 1,
+  kComplete = 2,
+  kFailed = 3,
+};
+
+// Single-threaded poll owner for one compatible multi-tablet execution. It owns the execution and
+// therefore its pinned Manifest epoch. Authentication policy and route TLS contexts are borrowed
+// and must outlive this owner. Route targets are immutable for the execution; leader hints require
+// explicit rebinding into a new execution.
+class DistributedQueryTcpExecution {
+public:
+  DistributedQueryTcpExecution() noexcept;
+  ~DistributedQueryTcpExecution();
+  DistributedQueryTcpExecution(const DistributedQueryTcpExecution&) = delete;
+  DistributedQueryTcpExecution& operator=(const DistributedQueryTcpExecution&) = delete;
+  DistributedQueryTcpExecution(DistributedQueryTcpExecution&&) noexcept;
+  DistributedQueryTcpExecution& operator=(DistributedQueryTcpExecution&&) noexcept;
+
+  [[nodiscard]] static common::Result<DistributedQueryTcpExecution>
+  create(DistributedQueryExecution execution, DistributedQueryTcpExecutionConfig config);
+  [[nodiscard]] common::Status poll_once(std::chrono::milliseconds maximum_wait);
+
+  [[nodiscard]] DistributedQueryTcpExecutionState state() const noexcept;
+  [[nodiscard]] DistributedQueryTcpExecutionMetrics metrics() const noexcept;
+  [[nodiscard]] common::Result<query::MergeableAggregateState> result() const;
+  [[nodiscard]] const common::Status& failure() const noexcept;
+  [[nodiscard]] const query::CompatibleDistributedAggregateSnapshot& snapshot() const;
+
+private:
+  class Impl;
+  explicit DistributedQueryTcpExecution(std::unique_ptr<Impl> implementation) noexcept;
+  std::unique_ptr<Impl> implementation_;
+};
+
+} // namespace chronos::cluster
+
+#endif // CHRONOS_CLUSTER_DISTRIBUTED_QUERY_TCP_EXECUTION_HPP_

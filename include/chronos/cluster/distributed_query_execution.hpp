@@ -48,6 +48,8 @@ public:
 
   [[nodiscard]] common::Result<DistributedQuerySenderState>
   sender_state(const schema::TabletId& tablet_id) const;
+  [[nodiscard]] common::Result<std::optional<TimePoint>>
+  next_attempt_not_before(const schema::TabletId& tablet_id) const;
   [[nodiscard]] common::Result<std::optional<DistributedQueryLeaderHint>>
   suggested_leader(const schema::TabletId& tablet_id) const;
   [[nodiscard]] common::Result<query::MergeableAggregateState> finish() const;

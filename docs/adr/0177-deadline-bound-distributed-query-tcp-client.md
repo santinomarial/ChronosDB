@@ -38,6 +38,9 @@ The client owns no retry or backoff. A caller reports failure or exact response 
 Address resolution, multiple candidate addresses, route pooling, and multi-attempt scheduling remain
 above this one-attempt composite.
 
+ADR 0178 now supplies that multi-tablet and multi-attempt scheduling layer while retaining this
+client as the sole owner of one immutable connection attempt.
+
 ## Consequences and validation
 
 Memory is the sum of one bounded attempt, TCP/TLS state, and the outbound carrier's fixed response
@@ -78,3 +81,4 @@ embedding.
 - [Bounded distributed-query TCP server](0176-bounded-distributed-query-tcp-server.md)
 - [Distributed aggregate exchange](../learning/distributed-aggregate-exchange.md)
 - [Architecture invariants](../architecture/invariants.md)
+- [Pinned multi-tablet TCP query scheduling](0178-pinned-multi-tablet-tcp-query-scheduling.md)

@@ -30,6 +30,9 @@ The owner has no socket, thread, timer, or background callback. Its caller seria
 supplies monotonic time, drives the bounded write/read owners, and decides whether an advisory
 leader hint warrants explicit authority rebinding into a new execution.
 
+ADR 0178 subsequently adds the single-owner multi-tablet TCP scheduler. It retains this execution,
+uses the sender's exposed retry deadline, and preserves explicit authority rebinding.
+
 ## Consequences and validation
 
 Creation is `O(fragments log fragments + total dispatch size)` and retains one compatible Manifest
@@ -59,3 +62,4 @@ distinguish retry from terminal failure, and never return the coordinator result
 - [Bounded distributed query carrier lifecycle](0169-bounded-distributed-query-carrier-lifecycle.md)
 - [Compatible multi-tablet Manifest snapshot binding](0170-compatible-multi-tablet-manifest-snapshot-binding.md)
 - [Distributed aggregate exchange](../learning/distributed-aggregate-exchange.md)
+- [Pinned multi-tablet TCP query scheduling](0178-pinned-multi-tablet-tcp-query-scheduling.md)
