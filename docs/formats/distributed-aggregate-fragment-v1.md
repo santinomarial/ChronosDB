@@ -1,6 +1,8 @@
 # Distributed Aggregate Fragment v1
 
-> **Status:** accepted with implemented canonical owned encoding and exact bounded decoding.
+> **Status:** accepted with implemented canonical owned encoding and exact bounded decoding. This is
+> an inner payload; executable transport requires the group-scoped
+> [Dispatch v1 envelope](distributed-aggregate-fragment-dispatch-v1.md).
 
 This frame describes one snapshot-bound, single-tablet worker request for the current projected
 Float64 aggregate path. All integers are little-endian. UUIDs use canonical UUID byte order. The
@@ -60,6 +62,7 @@ checks the complete-frame CRC before allocating or interpreting projection entri
 checks canonical semantics. A checksum-valid unknown version is unsupported; configured projection
 excess is resource exhaustion; damaged or contradictory bytes are corruption.
 
-The frame does not prove that a local snapshot matches the named generation or position and does
-not authenticate the sender. Worker admission and an authenticated carrier must independently
-reprove those facts before scan execution.
+The frame does not name the Raft group that scopes its indexes, prove that a local snapshot matches
+the named generation or position, or authenticate the sender. It must not be executed bare. The
+dispatch envelope supplies group identity; worker admission and an authenticated carrier must
+independently reprove all route and snapshot facts before scan execution.

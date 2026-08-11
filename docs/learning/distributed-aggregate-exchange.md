@@ -14,6 +14,8 @@ encoded frame and exposes the remaining suffix after each checked short-write ac
 sequence order, and merges only accepted messages into terminal tablet state.
 `encode_distributed_aggregate_fragment` and exact decoding provide the corresponding request-side
 bytes for one snapshot-bound projected aggregate scan.
+The dispatch envelope adds the distinct Raft group identity that scopes every admission index;
+workers never execute the bare inner fragment.
 
 ## Data, ownership, and invariants
 
@@ -32,6 +34,8 @@ The coordinator is single-owner and unsynchronized. Its history owns message val
 coordinator is destroyed, making exact retry decisions independent of carrier-buffer lifetime.
 The encoded fragment owns one bounded vector. Decoding borrows input only for the call, checks both
 integrity boundaries before projection allocation, and returns owned ordinals.
+The dispatch decoder validates its outer integrity and group first, then delegates exact inner
+decoding. Tablet identity is never substituted for group identity.
 
 ## Failure behavior and complexity
 

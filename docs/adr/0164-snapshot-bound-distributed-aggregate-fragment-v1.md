@@ -29,6 +29,9 @@ bytes and absent optional numeric fields are zero, and unknown versions or flags
 The codec validates structural and read-proof relationships. A later worker executor must still
 bind schema/type, local snapshot generation, tablet/table identity, local applied position, current
 placement epoch, and serving-node ownership before touching storage. CRC32C is not authentication.
+Because indexes are group-scoped and tablet UUID is not group UUID, the accepted
+[Dispatch v1 envelope](../formats/distributed-aggregate-fragment-dispatch-v1.md) supplies the
+required group binding without changing these bytes. A bare fragment is not executable.
 
 ## Consequences and validation
 

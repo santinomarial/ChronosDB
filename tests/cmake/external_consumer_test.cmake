@@ -98,6 +98,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/query/database_cseg_scan.hpp>
 #include <chronos/query/distributed.hpp>
 #include <chronos/query/distributed_fragment.hpp>
+#include <chronos/query/distributed_fragment_dispatch.hpp>
 #include <chronos/query/head_scan.hpp>
 #include <chronos/query/physical_operator.hpp>
 #include <chronos/query/physical_lowering.hpp>
@@ -647,6 +648,10 @@ int main() {
       &chronos::query::encode_distributed_aggregate_fragment;
   const auto decode_distributed_fragment =
       &chronos::query::decode_distributed_aggregate_fragment_exact;
+  const auto encode_distributed_fragment_dispatch =
+      &chronos::query::encode_distributed_aggregate_fragment_dispatch;
+  const auto decode_distributed_fragment_dispatch =
+      &chronos::query::decode_distributed_aggregate_fragment_dispatch_exact;
   using ExplainFunction = chronos::query::SqlResult<std::string> (*)(
       const chronos::query::BoundSqlSelect&);
   const ExplainFunction explain_select = &chronos::query::explain_sql_v1_select;
@@ -898,6 +903,8 @@ int main() {
                  create_distributed_coordinator != nullptr &&
                  encode_distributed_fragment != nullptr &&
                  decode_distributed_fragment != nullptr &&
+                 encode_distributed_fragment_dispatch != nullptr &&
+                 decode_distributed_fragment_dispatch != nullptr &&
                  bind_select != nullptr && bind_create != nullptr && bind_insert != nullptr &&
                  materialize_insert != nullptr &&
                  evaluate_expression != nullptr &&

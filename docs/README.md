@@ -77,6 +77,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Distributed Aggregate Fragment v1](formats/distributed-aggregate-fragment-v1.md): bounded,
   integrity-first worker request bytes binding an exact snapshot route, consistency evidence,
   projection, aggregate input, and event-time predicate.
+- [Distributed Aggregate Fragment Dispatch v1](formats/distributed-aggregate-fragment-dispatch-v1.md):
+  group-scoped executable envelope around one exact aggregate fragment request.
 - [Resume Token v1](formats/resume-token-v1.md): authenticated live-subscription resume identity,
   compatibility, limits, and rejection rules.
 - [Materialized View Checkpoint v1](formats/materialized-view-checkpoint-v1.md): bounded exact

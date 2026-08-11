@@ -135,7 +135,8 @@
   state admission, and constant-storage fragmented/coalesced read plus short-write ownership are
   implemented. Contiguous per-tablet sequence admission, bounded bit-exact retry history, terminal
   closure, and first-failure arbitration are also implemented. The current projected Float64
-  aggregate path has canonical snapshot/route/proof/projection/event-filter fragment request bytes.
+  aggregate path has canonical snapshot/route/proof/projection/event-filter fragment request bytes
+  plus an exact Raft-group-scoped executable dispatch envelope.
   General physical pipeline stage/expression serialization, worker execution, socket integration
   and connection backpressure, grouping-state codecs, reconnect/resend protocol, ordering, top-N,
   LIMIT, cancellation, durable retries, and broader coordinator/worker failure cleanup remain.

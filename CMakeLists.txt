@@ -373,6 +373,7 @@ add_library(
   src/query/diagnostic.cpp
   src/query/distributed.cpp
   src/query/distributed_fragment.cpp
+  src/query/distributed_fragment_dispatch.cpp
   src/query/evaluator.cpp
   src/query/executor.cpp
   src/query/explain.cpp
@@ -1274,6 +1275,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/distributed_test.cpp
     tests/query/distributed_fragment_header_self_contained.cpp
     tests/query/distributed_fragment_test.cpp
+    tests/query/distributed_fragment_dispatch_header_self_contained.cpp
+    tests/query/distributed_fragment_dispatch_test.cpp
     tests/query/evaluator_header_self_contained.cpp
     tests/query/evaluator_test.cpp
     tests/query/executor_header_self_contained.cpp
