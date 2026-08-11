@@ -1449,8 +1449,7 @@ TEST(PhysicalSelectLoweringTest, RejectsUnsupportedRelationalAndScalarSurfaces) 
   BoundSqlSelect text_comparison = bind("SELECT 'a' = 'b' AS compared FROM metrics");
   EXPECT_TRUE(lower_bound_sql_select(text_comparison).has_value());
   BoundSqlSelect subscribe = bind("SUBSCRIBE SELECT value FROM metrics");
-  EXPECT_EQ(lower_bound_sql_select(subscribe).error().code(),
-            SqlDiagnosticCode::kUnsupportedSyntax);
+  EXPECT_TRUE(lower_bound_sql_select(subscribe).has_value());
   BoundSqlSelect explain = bind("EXPLAIN SELECT value FROM metrics");
   EXPECT_EQ(lower_bound_sql_select(explain).error().code(), SqlDiagnosticCode::kUnsupportedSyntax);
   BoundSqlSelect analyze = bind("EXPLAIN ANALYZE SELECT value FROM metrics");
