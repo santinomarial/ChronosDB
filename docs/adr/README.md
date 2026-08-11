@@ -209,3 +209,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0172](0172-maintained-mutual-tls-client-socket.md) | Maintained mutual-TLS client socket | accepted |
 | [0173](0173-bounded-outbound-distributed-query-tls-carrier.md) | Bounded outbound distributed-query TLS carrier | accepted |
 | [0174](0174-bounded-inbound-distributed-query-tls-carrier.md) | Bounded inbound distributed-query TLS carrier | accepted |
+| [0175](0175-nonblocking-ipv4-tcp-descriptor-ownership.md) | Nonblocking IPv4 TCP descriptor ownership | accepted |

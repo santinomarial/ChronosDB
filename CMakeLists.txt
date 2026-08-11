@@ -441,6 +441,7 @@ add_library(
   src/network/security.cpp
   src/network/spsc_queue.cpp
   src/network/subscription_messages.cpp
+  src/network/tcp_socket.cpp
   src/network/tls_socket.cpp
 )
 add_library(chronos::network ALIAS chronos_network)
@@ -707,6 +708,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/network/spsc_queue_test.cpp
     tests/network/subscription_messages_header_self_contained.cpp
     tests/network/subscription_messages_test.cpp
+    tests/network/tcp_socket_header_self_contained.cpp
+    tests/network/tcp_socket_test.cpp
     tests/network/tls_socket_header_self_contained.cpp
     tests/network/tls_socket_test.cpp
   )

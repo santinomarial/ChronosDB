@@ -65,6 +65,9 @@ The baseline is single-owner and bounded. TLS record I/O and worker scheduling m
 added behind the boundary but cannot weaken overload, identity, or cleanup. Concurrent reactor
 mutation is outside the contract.
 
+ADR 0175 later factors the portable public RAII ownership and nonblocking completion rules for
+IPv4 listener/connector descriptors used outside this native-protocol reactor.
+
 ## Validation
 
 Linux real-socket tests cover fragmented reads, response routing, queue overload, admission, and
@@ -80,3 +83,4 @@ retains the pre-decision delayed-terminal observation as the evidence for `TCP_N
 - [ADR 0062](0062-bounded-connection-buffer-ownership.md)
 - [ADR 0063](0063-bounded-reactor-shard-spsc-routing.md)
 - [Native Protocol v1](../protocol/native-v1.md)
+- [ADR 0175](0175-nonblocking-ipv4-tcp-descriptor-ownership.md)

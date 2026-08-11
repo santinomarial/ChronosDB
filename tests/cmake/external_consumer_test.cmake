@@ -130,6 +130,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/manifest/validation.hpp>
 #include <chronos/network/protocol.hpp>
 #include <chronos/network/security.hpp>
+#include <chronos/network/tcp_socket.hpp>
 #include <chronos/network/tls_socket.hpp>
 #include <chronos/network/spsc_queue.hpp>
 #include <chronos/network/messages.hpp>
@@ -170,6 +171,8 @@ int main() {
       &chronos::query::bind_compatible_distributed_aggregate_snapshot;
   const auto create_tls_client_context = &chronos::network::TlsClientContext::create;
   const auto connect_tls_socket = &chronos::network::TlsSocket::connect;
+  const auto begin_tcp_connect = &chronos::network::TcpSocket::begin_connect;
+  const auto bind_tcp_listener = &chronos::network::TcpListener::bind;
   const auto reclaim_physical_receipt =
       &chronos::cluster::reclaim_tablet_physical_part_receipt;
   (void)encode_distributed_query_request;
@@ -182,6 +185,8 @@ int main() {
   (void)bind_compatible_distributed_snapshot;
   (void)create_tls_client_context;
   (void)connect_tls_socket;
+  (void)begin_tcp_connect;
+  (void)bind_tcp_listener;
   const auto build_source_retirement =
       &chronos::manifest::build_raft_tablet_source_retirement_manifest;
   const auto publish_source_retirement =
