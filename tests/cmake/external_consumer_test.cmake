@@ -461,7 +461,8 @@ int main() {
       chronos::common::Result<std::unique_ptr<chronos::query::ParallelMergeOperator>> (*)(
           const chronos::query::QueryResourceContext&,
           std::vector<std::unique_ptr<chronos::query::PhysicalOperator>>,
-          chronos::query::ParallelSchedulerLimits);
+          chronos::query::ParallelSchedulerLimits,
+          std::span<const chronos::runtime::ThreadPlacement>);
   const CreateParallelMergeFunction create_parallel_merge =
       &chronos::query::ParallelMergeOperator::create;
   const auto physical_end = chronos::query::PhysicalOperatorStep::end();
