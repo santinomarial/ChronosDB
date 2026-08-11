@@ -1,4 +1,5 @@
 #include "chronos/cluster/tablet_physical_movement_readiness.hpp"
+#include "chronos/cluster/tablet_physical_receipt_reclamation.hpp"
 #include "chronos/cluster/tablet_physical_snapshot_ownership.hpp"
 #include "chronos/common/crc32c.hpp"
 #include "chronos/cseg/temporal_format.hpp"
@@ -403,6 +404,7 @@ TEST(TabletPhysicalSnapshotOwnershipTest,
   OwnershipTemporaryDirectory checkpoints;
   OwnershipTemporaryDirectory snapshots;
   OwnershipTemporaryDirectory log;
+  OwnershipTemporaryDirectory receipts;
   OwnershipFixture fixture;
   establish_layout(database.path(), fixture);
   auto storage =
@@ -447,6 +449,26 @@ TEST(TabletPhysicalSnapshotOwnershipTest,
   ASSERT_TRUE(checkpoint_storage.has_value());
   ASSERT_TRUE(snapshot_storage.has_value());
   ASSERT_TRUE(runtime.has_value());
+  const TabletPhysicalPartTransferSession transfer_session{
+      .table_id = fixture.owner.table_id,
+      .tablet_id = fixture.owner.tablet_id,
+      .group_id = fixture.group_id,
+      .placement_epoch = 10U,
+      .source_node = 1U,
+      .target_node = 4U,
+      .manifest_generation = 14U,
+      .part_id = fixture.descriptor.part_id,
+      .total_bytes = fixture.encoded.bytes().size(),
+      .content_sha256 = fixture.descriptor.content_sha256};
+  auto receipt = TabletPhysicalPartChunkStorage::create(
+      {.directory_path = receipts.path().string(), .session = transfer_session});
+  ASSERT_TRUE(receipt.has_value());
+  ASSERT_TRUE(
+      receipt
+          ->install({.session = transfer_session,
+                     .offset = 0U,
+                     .bytes = {fixture.encoded.bytes().begin(), fixture.encoded.bytes().end()}})
+          .has_value());
   ASSERT_TRUE(
       checkpoint_storage
           ->install({1U, raft::TabletMovementCheckpoint{movement->record(), *encoded_application}})
@@ -484,6 +506,31 @@ TEST(TabletPhysicalSnapshotOwnershipTest,
   EXPECT_EQ(ready->destination_manifest_generation, 2U);
   EXPECT_EQ(ready->part_set_checksum, projection.part_set_checksum());
   EXPECT_EQ(recovered->movement.record().phase, raft::TabletMovementPhase::kReady);
+
+  auto wrong_phase = *ready;
+  wrong_phase.movement.phase = raft::TabletMovementPhase::kCatchingUp;
+  EXPECT_EQ(reclaim_tablet_physical_part_receipt(*receipt, published->destination, wrong_phase)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_FALSE(receipt->is_reclaimed());
+  auto reclaimed = reclaim_tablet_physical_part_receipt(*receipt, published->destination, *ready);
+  ASSERT_TRUE(reclaimed.has_value()) << reclaimed.error().to_string();
+  EXPECT_EQ(reclaimed->receipt.removed_chunks, 1U);
+  EXPECT_EQ(reclaimed->receipt.removed_payload_bytes, fixture.encoded.bytes().size());
+  EXPECT_TRUE(receipt->is_reclaimed());
+
+  auto readiness_retry = checkpoint_tablet_physical_movement_readiness(
+      *recovered, fixture.owner.table_id, *snapshot_storage, *runtime, *checkpoint_storage,
+      published->destination);
+  ASSERT_TRUE(readiness_retry.has_value()) << readiness_retry.error().to_string();
+  EXPECT_TRUE(readiness_retry->ready_checkpoint.already_present);
+  EXPECT_EQ(readiness_retry->ready_checkpoint.checkpoint_generation, 2U);
+  auto reclaimed_retry =
+      reclaim_tablet_physical_part_receipt(*receipt, published->destination, *readiness_retry);
+  ASSERT_TRUE(reclaimed_retry.has_value()) << reclaimed_retry.error().to_string();
+  EXPECT_TRUE(reclaimed_retry->receipt.marker_already_present);
+  EXPECT_EQ(reclaimed_retry->receipt.removed_chunks, 0U);
   EXPECT_TRUE(runtime->close().is_ok());
 }
 

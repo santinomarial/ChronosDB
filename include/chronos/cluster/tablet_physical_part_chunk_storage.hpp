@@ -42,6 +42,13 @@ struct CompletedTabletPhysicalPartTransfer {
   ingest::Sha256Digest content_sha256;
 };
 
+struct ReclaimedTabletPhysicalPartReceipt {
+  TabletPhysicalPartTransferSession session;
+  std::size_t removed_chunks{};
+  std::uint64_t removed_payload_bytes{};
+  bool marker_already_present{};
+};
+
 [[nodiscard]] common::Result<std::string>
 tablet_physical_part_chunk_file_name(std::uint64_t offset);
 
@@ -69,6 +76,16 @@ public:
   load_chunk(std::uint64_t offset) const;
   [[nodiscard]] common::Result<std::uint64_t> received_bytes() const;
   [[nodiscard]] common::Result<CompletedTabletPhysicalPartTransfer> finalize() const;
+
+  // Installs a checksummed, session-bound durable reclamation marker before removing any receipt
+  // chunk. Chunks are then removed from the highest offset downward with a directory sync after
+  // each unlink, so every crash leaves either the complete transfer or one valid prefix. The
+  // marker makes reopen continue cleanup and permanently rejects late chunk retries. Callers must
+  // first obtain the cluster-level published-ownership/readiness proof.
+  [[nodiscard]] common::Result<ReclaimedTabletPhysicalPartReceipt> reclaim();
+
+  [[nodiscard]] common::Result<TabletPhysicalPartTransferSession> transfer_session() const;
+  [[nodiscard]] bool is_reclaimed() const noexcept;
 
   [[nodiscard]] bool is_usable() const noexcept;
   [[nodiscard]] common::Status poison_status() const;

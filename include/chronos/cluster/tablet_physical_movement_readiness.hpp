@@ -17,6 +17,7 @@ namespace chronos::cluster {
 struct TabletPhysicalMovementReadinessReport {
   ingest::TabletMovementSnapshotHandoffReport application_snapshot;
   raft::InstalledTabletMovementCheckpoint ready_checkpoint;
+  raft::TabletMovementRecord movement;
   std::uint64_t destination_manifest_generation{};
   ingest::Sha256Digest part_set_checksum;
 };

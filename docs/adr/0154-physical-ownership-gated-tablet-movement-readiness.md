@@ -30,6 +30,10 @@ next `ready` checkpoint and mutate the live recovered movement. The RTAS install
 before physical proof fails because it is independently durable and idempotent; the authoritative
 checkpoint and live movement remain `catching-up`.
 
+If recovery already selected the exact `ready` generation, the same entry point revalidates RTAS,
+Raft, physical publication, and the selected checkpoint bytes and returns an already-present proof
+without advancing another generation. This closes the crash window before receipt reclamation.
+
 The lower-level `checkpoint_recovered_tablet_movement_catch_up()` remains available as an
 application-only primitive. A production path that transfers physical CSEG state must use the
 cluster composition. External-prefix generations continue to revalidate and retain their exact

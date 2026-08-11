@@ -58,4 +58,5 @@ authority.
 ## References
 
 - [Tablet Physical Part Chunk v1](../formats/tablet-physical-part-chunk-v1.md)
+- [Durable physical-part receipt reclamation](0155-durable-physical-part-receipt-reclamation.md)
 - [POSIX I/O learning guide](../learning/posix-io.md)

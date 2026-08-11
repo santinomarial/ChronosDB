@@ -61,7 +61,10 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   transfer-to-install composition, and canonical Raft-tablet destination successor construction are
   implemented together with fail-closed atomic publication, restart reconciliation of
   already-durable Manifest v2 successors, and a movement-ready gate requiring exact RTAS/Raft and
-  published destination part-set ownership. Receipt cleanup remains separate.
+  published destination part-set ownership. Completed per-part receipts are reclaimed only after
+  that proof and retain a checksummed terminal marker that rejects late transfer retries.
+- [Tablet Physical Part Reclamation Marker v1](formats/tablet-physical-part-reclamation-marker-v1.md):
+  session-bound terminal receipt state installed durably before crash-safe descending chunk removal.
 - [Resume Token v1](formats/resume-token-v1.md): authenticated live-subscription resume identity,
   compatibility, limits, and rejection rules.
 - [Materialized View Checkpoint v1](formats/materialized-view-checkpoint-v1.md): bounded exact

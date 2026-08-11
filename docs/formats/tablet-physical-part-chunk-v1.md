@@ -38,3 +38,7 @@ greater than the object length, and `payload_length <= object_length - offset`. 
 A checksum-valid unknown version is unsupported. Invalid caller limits and encoder inputs are
 invalid arguments. Damaged or contradictory decoded bytes are corruption. Allocation or platform
 container limits produce resource exhaustion.
+
+After published ownership and movement readiness are proved, the receipt transitions permanently
+to [Tablet Physical Part Reclamation Marker v1](tablet-physical-part-reclamation-marker-v1.md).
+Chunk frames remaining beside that marker are cleanup residue, never an active transfer.

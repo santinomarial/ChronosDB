@@ -1,5 +1,8 @@
 #include "chronos/cluster/tablet_physical_part_chunk_storage.hpp"
 
+#include "chronos/common/byte_reader.hpp"
+#include "chronos/common/byte_writer.hpp"
+#include "chronos/common/crc32c.hpp"
 #include "chronos/io/posix_io.hpp"
 
 #include <algorithm>
@@ -10,7 +13,9 @@
 #include <limits>
 #include <memory>
 #include <new>
+#include <optional>
 #include <ranges>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -24,7 +29,16 @@ constexpr std::string_view kLockFileName = "LOCK";
 constexpr std::string_view kChunkPrefix = "part-chunk-";
 constexpr std::string_view kChunkSuffix = ".pchk";
 constexpr std::string_view kTemporarySuffix = ".tmp";
+constexpr std::string_view kReclaimedFileName = "RECLAIMED";
+constexpr std::string_view kReclaimedTemporaryFileName = "RECLAIMED.tmp";
 constexpr std::size_t kOffsetDigits = 20U;
+constexpr std::size_t kReclaimedMarkerSize = 160U;
+constexpr std::size_t kReclaimedMarkerCrcOffset = 152U;
+constexpr std::array<std::byte, 8U> kReclaimedMagic{std::byte{'C'}, std::byte{'H'}, std::byte{'R'},
+                                                    std::byte{'P'}, std::byte{'R'}, std::byte{'C'},
+                                                    std::byte{'L'}, std::byte{0U}};
+constexpr std::uint16_t kReclaimedMajor = 1U;
+constexpr std::uint16_t kReclaimedMinor = 0U;
 
 [[nodiscard]] common::Status invalid(std::string message) {
   return {common::StatusCode::kInvalidArgument, std::move(message)};
@@ -38,12 +52,29 @@ constexpr std::size_t kOffsetDigits = 20U;
 [[nodiscard]] common::Status unavailable(std::string message) {
   return {common::StatusCode::kUnavailable, std::move(message)};
 }
+[[nodiscard]] common::Status unsupported(std::string message) {
+  return {common::StatusCode::kNotSupported, std::move(message)};
+}
 [[nodiscard]] common::Status with_context(const std::string_view context,
                                           const common::Status& status) {
   std::string message{context};
   message.append(": ");
   message.append(status.message());
   return {status.code(), std::move(message)};
+}
+
+void store_u32(std::span<std::byte> bytes, const std::size_t offset, const std::uint32_t value) {
+  for (std::size_t index = 0U; index < sizeof(value); ++index)
+    bytes[offset + index] = static_cast<std::byte>(value >> (index * 8U));
+}
+
+[[nodiscard]] std::uint32_t load_u32(const common::ByteView bytes, const std::size_t offset) {
+  std::uint32_t value{};
+  for (std::size_t index = 0U; index < sizeof(value); ++index) {
+    value |= static_cast<std::uint32_t>(std::to_integer<std::uint8_t>(bytes[offset + index]))
+             << (index * 8U);
+  }
+  return value;
 }
 
 [[nodiscard]] bool valid_limits(const TabletPhysicalPartChunkCodecLimits& limits) noexcept {
@@ -66,6 +97,111 @@ constexpr std::size_t kOffsetDigits = 20U;
          session.target_node != 0U && session.source_node != session.target_node &&
          session.manifest_generation != 0U && !session.part_id.uuid().is_nil() &&
          session.total_bytes != 0U && session.total_bytes <= limits.maximum_object_bytes;
+}
+
+[[nodiscard]] std::uint32_t reclaimed_marker_crc(const common::ByteView bytes) {
+  std::array<std::byte, kReclaimedMarkerSize> copy{};
+  std::ranges::copy(bytes, copy.begin());
+  std::fill_n(copy.begin() + static_cast<std::ptrdiff_t>(kReclaimedMarkerCrcOffset),
+              sizeof(std::uint32_t), std::byte{0U});
+  return common::crc32c(copy);
+}
+
+template <typename Identity>
+[[nodiscard]] common::Result<Identity> read_identity(common::ByteReader& reader) {
+  auto bytes = reader.read_exact(common::Uuid::kSize);
+  if (!bytes.has_value())
+    return common::make_unexpected(bytes.error());
+  common::Uuid::Bytes identity{};
+  std::ranges::copy(*bytes, identity.begin());
+  return Identity::from_bytes(identity);
+}
+
+[[nodiscard]] common::Result<common::Uuid> read_uuid(common::ByteReader& reader) {
+  auto bytes = reader.read_exact(common::Uuid::kSize);
+  if (!bytes.has_value())
+    return common::make_unexpected(bytes.error());
+  common::Uuid::Bytes identity{};
+  std::ranges::copy(*bytes, identity.begin());
+  return common::Uuid{identity};
+}
+
+[[nodiscard]] common::Result<std::array<std::byte, kReclaimedMarkerSize>>
+encode_reclaimed_marker(const TabletPhysicalPartTransferSession& session,
+                        const TabletPhysicalPartChunkCodecLimits& limits) {
+  if (!valid_session(session, limits))
+    return common::make_unexpected(invalid("physical receipt reclamation session is invalid"));
+  std::array<std::byte, kReclaimedMarkerSize> bytes{};
+  common::ByteWriter writer{bytes};
+  for (const common::Status& status :
+       {writer.write_exact(kReclaimedMagic), writer.write_u16_le(kReclaimedMajor),
+        writer.write_u16_le(kReclaimedMinor), writer.write_u32_le(kReclaimedMarkerSize),
+        writer.write_exact(session.table_id.bytes()), writer.write_exact(session.tablet_id.bytes()),
+        writer.write_exact(session.group_id.bytes()), writer.write_u64_le(session.placement_epoch),
+        writer.write_u64_le(session.source_node), writer.write_u64_le(session.target_node),
+        writer.write_u64_le(session.manifest_generation),
+        writer.write_exact(session.part_id.bytes()), writer.write_u64_le(session.total_bytes),
+        writer.write_exact(session.content_sha256.bytes()), writer.write_u32_le(0U),
+        writer.zero_fill(4U)}) {
+    if (!status.is_ok())
+      return common::make_unexpected(status);
+  }
+  store_u32(bytes, kReclaimedMarkerCrcOffset, reclaimed_marker_crc(bytes));
+  return bytes;
+}
+
+[[nodiscard]] common::Result<TabletPhysicalPartTransferSession>
+decode_reclaimed_marker(const common::ByteView bytes,
+                        const TabletPhysicalPartChunkCodecLimits& limits) {
+  if (bytes.size() != kReclaimedMarkerSize ||
+      !std::ranges::equal(bytes.first(kReclaimedMagic.size()), kReclaimedMagic) ||
+      reclaimed_marker_crc(bytes) != load_u32(bytes, kReclaimedMarkerCrcOffset)) {
+    return common::make_unexpected(corruption("physical receipt reclamation marker is damaged"));
+  }
+  common::ByteReader reader{bytes.subspan(kReclaimedMagic.size())};
+  auto major = reader.read_u16_le();
+  auto minor = reader.read_u16_le();
+  auto length = reader.read_u32_le();
+  auto table_id = read_identity<schema::TableId>(reader);
+  auto tablet_id = read_identity<schema::TabletId>(reader);
+  auto group_id = read_uuid(reader);
+  auto epoch = reader.read_u64_le();
+  auto source = reader.read_u64_le();
+  auto target = reader.read_u64_le();
+  auto manifest = reader.read_u64_le();
+  auto part_id = read_identity<cseg::PartId>(reader);
+  auto total_bytes = reader.read_u64_le();
+  auto digest = reader.read_exact(ingest::Sha256Digest::kSize);
+  auto stored_crc = reader.read_u32_le();
+  auto reserved = reader.read_exact(4U);
+  if (!major.has_value() || !minor.has_value() || !length.has_value())
+    return common::make_unexpected(corruption("physical receipt marker prefix is truncated"));
+  if (*major != kReclaimedMajor || *minor != kReclaimedMinor)
+    return common::make_unexpected(unsupported("physical receipt marker version is unsupported"));
+  if (*length != bytes.size() || !table_id.has_value() || !tablet_id.has_value() ||
+      !group_id.has_value() || !epoch.has_value() || !source.has_value() || !target.has_value() ||
+      !manifest.has_value() || !part_id.has_value() || !total_bytes.has_value() ||
+      !digest.has_value() || !stored_crc.has_value() ||
+      *stored_crc != load_u32(bytes, kReclaimedMarkerCrcOffset) || !reserved.has_value() ||
+      std::ranges::any_of(*reserved,
+                          [](const std::byte value) { return value != std::byte{0U}; })) {
+    return common::make_unexpected(corruption("physical receipt reclamation marker is invalid"));
+  }
+  ingest::Sha256Digest::Bytes digest_bytes{};
+  std::ranges::copy(*digest, digest_bytes.begin());
+  TabletPhysicalPartTransferSession session{.table_id = *table_id,
+                                            .tablet_id = *tablet_id,
+                                            .group_id = *group_id,
+                                            .placement_epoch = *epoch,
+                                            .source_node = *source,
+                                            .target_node = *target,
+                                            .manifest_generation = *manifest,
+                                            .part_id = *part_id,
+                                            .total_bytes = *total_bytes,
+                                            .content_sha256 = ingest::Sha256Digest{digest_bytes}};
+  if (!valid_session(session, limits))
+    return common::make_unexpected(corruption("physical receipt reclamation session is invalid"));
+  return session;
 }
 
 [[nodiscard]] std::string temporary_name(const std::string_view final_name) {
@@ -126,6 +262,15 @@ public:
       return entries.error();
     bool removed = false;
     for (const io::DirectoryEntry& entry : *entries) {
+      if (entry.name == kReclaimedTemporaryFileName) {
+        if (entry.type != io::DirectoryEntryType::kRegularFile)
+          return corruption("physical receipt reclamation temporary is noncanonical");
+        common::Status status = directory_.remove_file(entry.name);
+        if (!status.is_ok())
+          return status;
+        removed = true;
+        continue;
+      }
       if (!entry.name.starts_with(kChunkPrefix) || !entry.name.ends_with(kTemporarySuffix))
         continue;
       if (!parse_name(entry.name, true).has_value() ||
@@ -138,6 +283,92 @@ public:
       removed = true;
     }
     return removed ? directory_.sync() : common::Status::ok();
+  }
+
+  [[nodiscard]] common::Result<std::optional<TabletPhysicalPartTransferSession>>
+  load_reclaimed_marker() const {
+    auto file = directory_.open_regular_file(kReclaimedFileName, io::FileOpenMode::kReadOnly);
+    if (!file.has_value()) {
+      if (file.error().code() == common::StatusCode::kNotFound)
+        return std::optional<TabletPhysicalPartTransferSession>{};
+      return common::make_unexpected(file.error());
+    }
+    auto size = file->size();
+    if (!size.has_value())
+      return common::make_unexpected(size.error());
+    if (*size != kReclaimedMarkerSize)
+      return common::make_unexpected(
+          corruption("physical receipt reclamation marker size changed"));
+    std::array<std::byte, kReclaimedMarkerSize> bytes{};
+    auto read = file->read_at(0U, bytes);
+    if (!read.has_value())
+      return common::make_unexpected(read.error());
+    if (*read != bytes.size())
+      return common::make_unexpected(
+          corruption("physical receipt reclamation marker is truncated"));
+    auto decoded = decode_reclaimed_marker(bytes, config_.codec_limits);
+    if (!decoded.has_value())
+      return common::make_unexpected(decoded.error());
+    return std::optional<TabletPhysicalPartTransferSession>{std::move(*decoded)};
+  }
+
+  [[nodiscard]] common::Result<bool> install_reclaimed_marker() {
+    auto existing = load_reclaimed_marker();
+    if (!existing.has_value())
+      return common::make_unexpected(existing.error());
+    if (existing->has_value()) {
+      if (**existing != config_.session)
+        return common::make_unexpected(
+            corruption("physical receipt marker belongs to another session"));
+      reclaimed_ = true;
+      return true;
+    }
+    auto encoded = encode_reclaimed_marker(config_.session, config_.codec_limits);
+    if (!encoded.has_value())
+      return common::make_unexpected(encoded.error());
+    common::Status cleanup = directory_.remove_file(kReclaimedTemporaryFileName);
+    if (cleanup.is_ok())
+      cleanup = directory_.sync();
+    else if (cleanup.code() == common::StatusCode::kNotFound)
+      cleanup = common::Status::ok();
+    if (!cleanup.is_ok())
+      return common::make_unexpected(with_context("clean receipt marker temporary", cleanup));
+    auto temporary = directory_.create_exclusive_regular_file(kReclaimedTemporaryFileName,
+                                                              config_.file_permissions);
+    if (!temporary.has_value())
+      return common::make_unexpected(temporary.error());
+    common::Status operation = temporary->write_all_at(0U, *encoded);
+    if (!operation.is_ok())
+      return common::make_unexpected(with_context("write receipt marker", operation));
+    std::array<std::byte, kReclaimedMarkerSize> readback{};
+    auto read = temporary->read_at(0U, readback);
+    if (!read.has_value() || *read != readback.size()) {
+      return common::make_unexpected(
+          read.has_value() ? corruption("physical receipt marker readback is incomplete")
+                           : read.error());
+    }
+    auto decoded = decode_reclaimed_marker(readback, config_.codec_limits);
+    if (!decoded.has_value() || *decoded != config_.session) {
+      return common::make_unexpected(decoded.has_value()
+                                         ? corruption("physical receipt marker readback changed")
+                                         : decoded.error());
+    }
+    operation = temporary->sync_all();
+    if (!operation.is_ok())
+      return common::make_unexpected(with_context("synchronize receipt marker", operation));
+    operation = temporary->close();
+    if (!operation.is_ok())
+      return common::make_unexpected(with_context("close receipt marker", operation));
+    operation = directory_.rename_no_replace({kReclaimedTemporaryFileName, kReclaimedFileName});
+    if (!operation.is_ok())
+      return common::make_unexpected(with_context("install receipt marker", operation));
+    operation = directory_.sync();
+    if (!operation.is_ok()) {
+      return common::make_unexpected(
+          fail(with_context("synchronize receipt marker directory", operation), true));
+    }
+    reclaimed_ = true;
+    return false;
   }
 
   [[nodiscard]] common::Result<LoadedTabletPhysicalPartChunk>
@@ -220,6 +451,7 @@ public:
   io::PosixAdvisoryLock lock_;
   std::vector<ChunkFile> chunks_;
   std::uint64_t received_bytes_{};
+  bool reclaimed_{};
   common::Status poison_;
 };
 
@@ -256,6 +488,17 @@ TabletPhysicalPartChunkStorage::open(TabletPhysicalPartChunkStorageConfig config
   auto implementation =
       std::make_unique<Impl>(std::move(config), std::move(*directory), std::move(*lock));
   common::Status status = implementation->cleanup_temporaries();
+  if (status.is_ok()) {
+    auto marker = implementation->load_reclaimed_marker();
+    if (!marker.has_value())
+      status = marker.error();
+    else if (marker->has_value()) {
+      if (**marker != implementation->config_.session)
+        status = corruption("physical receipt marker belongs to another session");
+      else
+        implementation->reclaimed_ = true;
+    }
+  }
   if (status.is_ok())
     status = implementation->recover_progress();
   if (!status.is_ok())
@@ -301,6 +544,8 @@ TabletPhysicalPartChunkStorage::install(const TabletPhysicalPartChunk& chunk) {
   common::Status usable = implementation_->check_usable();
   if (!usable.is_ok())
     return common::make_unexpected(std::move(usable));
+  if (implementation_->reclaimed_)
+    return common::make_unexpected(unavailable("physical part receipt was reclaimed"));
   if (chunk.session != implementation_->config_.session)
     return common::make_unexpected(invalid("physical part chunk belongs to another session"));
   auto encoded = encode_tablet_physical_part_chunk_v1(chunk, implementation_->config_.codec_limits);
@@ -384,6 +629,8 @@ common::Result<LoadedTabletPhysicalPartChunk>
 TabletPhysicalPartChunkStorage::load_chunk(const std::uint64_t offset) const {
   if (implementation_ == nullptr)
     return common::make_unexpected(invalid("physical part storage was moved from"));
+  if (implementation_->reclaimed_)
+    return common::make_unexpected(unavailable("physical part receipt was reclaimed"));
   auto name = tablet_physical_part_chunk_file_name(offset);
   if (!name.has_value())
     return common::make_unexpected(name.error());
@@ -406,6 +653,8 @@ TabletPhysicalPartChunkStorage::finalize() const {
   common::Status usable = implementation_->check_usable();
   if (!usable.is_ok())
     return common::make_unexpected(std::move(usable));
+  if (implementation_->reclaimed_)
+    return common::make_unexpected(unavailable("physical part receipt was reclaimed"));
   if (implementation_->received_bytes_ != implementation_->config_.session.total_bytes)
     return common::make_unexpected(unavailable("physical part prefix is incomplete"));
   auto hasher = ingest::Sha256Hasher::create();
@@ -436,6 +685,56 @@ TabletPhysicalPartChunkStorage::finalize() const {
                                              .received_bytes = expected_offset,
                                              .chunk_count = implementation_->chunks_.size(),
                                              .content_sha256 = *digest};
+}
+
+common::Result<ReclaimedTabletPhysicalPartReceipt> TabletPhysicalPartChunkStorage::reclaim() {
+  if (implementation_ == nullptr)
+    return common::make_unexpected(invalid("physical part storage was moved from"));
+  common::Status usable = implementation_->check_usable();
+  if (!usable.is_ok())
+    return common::make_unexpected(std::move(usable));
+  const bool marker_already_present = implementation_->reclaimed_;
+  if (!marker_already_present) {
+    auto complete = finalize();
+    if (!complete.has_value())
+      return common::make_unexpected(complete.error());
+  }
+  auto marker = implementation_->install_reclaimed_marker();
+  if (!marker.has_value())
+    return common::make_unexpected(marker.error());
+
+  ReclaimedTabletPhysicalPartReceipt report{.session = implementation_->config_.session,
+                                            .marker_already_present = *marker};
+  while (!implementation_->chunks_.empty()) {
+    const ChunkFile& chunk = implementation_->chunks_.back();
+    auto loaded = implementation_->load_file(chunk.file_name, chunk.offset);
+    if (!loaded.has_value())
+      return common::make_unexpected(loaded.error());
+    common::Status removed = implementation_->directory_.remove_file(chunk.file_name);
+    if (!removed.is_ok())
+      return common::make_unexpected(with_context("remove reclaimed physical chunk", removed));
+    removed = implementation_->directory_.sync();
+    if (!removed.is_ok()) {
+      return common::make_unexpected(implementation_->fail(
+          with_context("synchronize reclaimed physical chunk directory", removed), true));
+    }
+    ++report.removed_chunks;
+    report.removed_payload_bytes += chunk.payload_bytes;
+    implementation_->received_bytes_ -= chunk.payload_bytes;
+    implementation_->chunks_.pop_back();
+  }
+  return report;
+}
+
+common::Result<TabletPhysicalPartTransferSession>
+TabletPhysicalPartChunkStorage::transfer_session() const {
+  if (implementation_ == nullptr)
+    return common::make_unexpected(invalid("physical part storage was moved from"));
+  return implementation_->config_.session;
+}
+
+bool TabletPhysicalPartChunkStorage::is_reclaimed() const noexcept {
+  return implementation_ != nullptr && implementation_->reclaimed_;
 }
 
 bool TabletPhysicalPartChunkStorage::is_usable() const noexcept {

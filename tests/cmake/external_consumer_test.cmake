@@ -21,7 +21,7 @@ cmake_minimum_required(VERSION 3.25)
 project(ChronosIngestConsumer LANGUAGES CXX)
 find_package(ChronosDB 0.1 CONFIG REQUIRED)
 add_executable(consumer main.cpp)
-target_link_libraries(consumer PRIVATE chronos::cseg chronos::head chronos::ingest chronos::manifest chronos::query chronos::network)
+target_link_libraries(consumer PRIVATE chronos::cluster chronos::cseg chronos::head chronos::ingest chronos::manifest chronos::query chronos::network)
 target_compile_features(consumer PRIVATE cxx_std_23)
 set(consumer_sanitizers "")
 if(CHRONOS_TEST_ENABLE_ASAN)
@@ -44,6 +44,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/columnar/columnar_batch_codec.hpp>
 #include <chronos/columnar/columnar_batch_format.hpp>
 #include <chronos/columnar/column_vector.hpp>
+#include <chronos/cluster/tablet_physical_receipt_reclamation.hpp>
 #include <chronos/cseg/compression.hpp>
 #include <chronos/cseg/format.hpp>
 #include <chronos/cseg/inspection.hpp>
@@ -136,6 +137,8 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <vector>
 
 int main() {
+  const auto reclaim_physical_receipt =
+      &chronos::cluster::reclaim_tablet_physical_part_receipt;
   using EventTimeMatchFunction = chronos::common::Result<bool> (*)(
       std::int64_t, std::int64_t,
       const std::optional<chronos::cseg::EventTimePredicate>&);
@@ -787,7 +790,8 @@ int main() {
       chronos::schema::LogicalTypeKind::kInt64);
   const chronos::network::NetworkSecurityConfig installed_security;
   const auto installed_client = chronos::network::NativeClientSession::create();
-  return event_time_match != nullptr && execute != nullptr && recover != nullptr &&
+  return reclaim_physical_receipt != nullptr && event_time_match != nullptr &&
+                 execute != nullptr && recover != nullptr &&
                  reclaim_recovered_wal != nullptr && inspect_wal_suffix != nullptr &&
                  recover_wal_checkpoint != nullptr && open_wal_checkpoint != nullptr &&
                  reclaim_wal != nullptr && wal_reclamation_metrics != nullptr &&

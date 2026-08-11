@@ -559,6 +559,7 @@ add_library(
   src/cluster/tablet_physical_movement_readiness.cpp
   src/cluster/tablet_physical_part_chunk.cpp
   src/cluster/tablet_physical_part_chunk_storage.cpp
+  src/cluster/tablet_physical_receipt_reclamation.cpp
   src/cluster/tablet_physical_snapshot_ownership.cpp
 )
 add_library(chronos::cluster ALIAS chronos_cluster)
@@ -861,6 +862,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/cluster/tablet_physical_part_chunk_header_self_contained.cpp
     tests/cluster/tablet_physical_part_chunk_storage_header_self_contained.cpp
     tests/cluster/tablet_physical_part_chunk_storage_test.cpp
+    tests/cluster/tablet_physical_receipt_reclamation_header_self_contained.cpp
     tests/cluster/tablet_physical_part_chunk_test.cpp
     tests/cluster/tablet_physical_snapshot_ownership_header_self_contained.cpp
     tests/cluster/tablet_physical_snapshot_ownership_test.cpp

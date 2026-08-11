@@ -147,8 +147,9 @@
   duplicate delivery beyond the deterministic filesystem/runtime coverage;
   complete physical Manifest/CSEG
   handoff and response routing around the implemented Raft-completed RTAS, composed mixed-generation
-  ready/later-phase checkpoint reconciliation, and durable chunk owners; add generation/chunk
-  reclamation and filesystem crash/fault injection, source/target/metadata-leader failures, source
+  ready/later-phase checkpoint reconciliation, durable chunk owners, and published-ownership-gated
+  terminal physical-receipt reclamation; add generation reclamation and broader filesystem
+  crash/fault injection, source/target/metadata-leader failures, source
   switching, bandwidth limits, and stale routing.
 - Partitions, duplicate/lost exchanges, skew, chaos, movement at every state, foreground interference,
   scale-out/exchange/coordination/failover benchmarks, and sanitizer/fuzz/property coverage.

@@ -3,7 +3,9 @@
 #include "chronos/manifest/raft_tablet_physical_snapshot.hpp"
 #include "chronos/manifest/temporal_codec.hpp"
 
+#include <algorithm>
 #include <new>
+#include <ranges>
 #include <stdexcept>
 #include <utility>
 
@@ -15,6 +17,45 @@ namespace {
 }
 [[nodiscard]] common::Status exhausted(const char* message) {
   return {common::StatusCode::kResourceExhausted, message};
+}
+[[nodiscard]] common::Status invalid(const char* message) {
+  return {common::StatusCode::kInvalidArgument, message};
+}
+[[nodiscard]] common::Status unsupported(const char* message) {
+  return {common::StatusCode::kNotSupported, message};
+}
+
+[[nodiscard]] common::Result<raft::InstalledTabletMovementCheckpoint>
+verify_existing_ready_checkpoint(
+    const raft::RecoveredTabletMovementGeneration& recovered,
+    raft::TabletMovementCheckpointStorage& checkpoint_storage,
+    const raft::TabletMovementSnapshotChunkStorage* const chunk_storage,
+    const raft::TabletMovementLimits movement_limits) {
+  if (recovered.used_external_prefix && chunk_storage == nullptr) {
+    return common::make_unexpected(
+        unsupported("external physical readiness retry requires its durable chunk owner"));
+  }
+  auto loaded = checkpoint_storage.load_any_generation(recovered.checkpoint_generation);
+  if (!loaded.has_value())
+    return common::make_unexpected(loaded.error());
+  common::Result<raft::RecoveredTabletMovementGeneration> durable =
+      chunk_storage == nullptr
+          ? raft::recover_tablet_movement_generation(*loaded, movement_limits)
+          : raft::recover_tablet_movement_generation(*loaded, *chunk_storage, movement_limits);
+  if (!durable.has_value())
+    return common::make_unexpected(durable.error());
+  if (durable->checkpoint_generation != recovered.checkpoint_generation ||
+      durable->used_external_prefix != recovered.used_external_prefix ||
+      durable->movement.record() != recovered.movement.record() ||
+      !std::ranges::equal(durable->movement.received_snapshot(),
+                          recovered.movement.received_snapshot())) {
+    return common::make_unexpected(
+        corruption("durable ready checkpoint differs from recovered movement"));
+  }
+  return raft::InstalledTabletMovementCheckpoint{.checkpoint_generation =
+                                                     recovered.checkpoint_generation,
+                                                 .file_name = std::move(loaded->file_name),
+                                                 .already_present = true};
 }
 
 [[nodiscard]] common::Result<TabletPhysicalMovementReadinessReport>
@@ -44,18 +85,34 @@ checkpoint_impl(raft::RecoveredTabletMovementGeneration& recovered,
     return common::make_unexpected(
         corruption("published destination part set differs from the installed Raft snapshot"));
 
+  const raft::TabletMovementRecord movement = recovered.movement.record();
   common::Result<raft::InstalledTabletMovementCheckpoint> ready =
-      chunk_storage == nullptr
-          ? ingest::checkpoint_recovered_tablet_movement_catch_up(
-                recovered, expected_table_id, snapshot_storage, runtime, checkpoint_storage,
-                codec_limits, movement_limits)
-          : ingest::checkpoint_recovered_tablet_movement_catch_up(
-                recovered, expected_table_id, snapshot_storage, runtime, checkpoint_storage,
-                *chunk_storage, codec_limits, movement_limits);
+      common::make_unexpected(invalid("physical movement is not at a readiness boundary"));
+  if (movement.phase == raft::TabletMovementPhase::kCatchingUp) {
+    ready = chunk_storage == nullptr
+                ? ingest::checkpoint_recovered_tablet_movement_catch_up(
+                      recovered, expected_table_id, snapshot_storage, runtime, checkpoint_storage,
+                      codec_limits, movement_limits)
+                : ingest::checkpoint_recovered_tablet_movement_catch_up(
+                      recovered, expected_table_id, snapshot_storage, runtime, checkpoint_storage,
+                      *chunk_storage, codec_limits, movement_limits);
+  } else if (movement.phase == raft::TabletMovementPhase::kReady) {
+    const raft::RaftNode* target = runtime.find_group(application->group_id);
+    if (target == nullptr || target->node_id() != movement.target_node ||
+        target->persistent_state().snapshot != application->raft_snapshot ||
+        target->commit_index() < movement.snapshot.applied_index ||
+        target->applied_index() < movement.snapshot.applied_index) {
+      return common::make_unexpected(
+          corruption("target Raft state no longer contains the movement snapshot boundary"));
+    }
+    ready = verify_existing_ready_checkpoint(recovered, checkpoint_storage, chunk_storage,
+                                             movement_limits);
+  }
   if (!ready.has_value())
     return common::make_unexpected(ready.error());
   return TabletPhysicalMovementReadinessReport{.application_snapshot = std::move(*application),
                                                .ready_checkpoint = std::move(*ready),
+                                               .movement = recovered.movement.record(),
                                                .destination_manifest_generation =
                                                    destination.generation(),
                                                .part_set_checksum = physical->part_set_checksum()};

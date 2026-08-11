@@ -200,5 +200,70 @@ TEST(TabletPhysicalPartChunkStorageTest, EnforcesChunkCountAndCanonicalNames) {
             common::StatusCode::kResourceExhausted);
 }
 
+TEST(TabletPhysicalPartChunkStorageTest, ReclaimsDurablyAndResumesADeletedSuffix) {
+  TemporaryDirectory directory;
+  const std::vector<std::byte> object{std::byte{1U}, std::byte{2U}, std::byte{3U}};
+  const auto owner = session(object);
+  const auto first = chunk(owner, 0U, {object.begin(), object.begin() + 2});
+  const auto encoded_first =
+      encode_tablet_physical_part_chunk_v1(first, config(directory.path(), owner).codec_limits)
+          .value();
+  {
+    auto storage = TabletPhysicalPartChunkStorage::create(config(directory.path(), owner));
+    ASSERT_TRUE(storage.has_value());
+    ASSERT_TRUE(storage->install(first).has_value());
+    EXPECT_EQ(storage->reclaim().error().code(), common::StatusCode::kUnavailable);
+    ASSERT_TRUE(storage->install(chunk(owner, 2U, {object.back()})).has_value());
+    auto reclaimed = storage->reclaim();
+    ASSERT_TRUE(reclaimed.has_value()) << reclaimed.error().to_string();
+    EXPECT_FALSE(reclaimed->marker_already_present);
+    EXPECT_EQ(reclaimed->removed_chunks, 2U);
+    EXPECT_EQ(reclaimed->removed_payload_bytes, object.size());
+    EXPECT_TRUE(storage->is_reclaimed());
+    EXPECT_EQ(*storage->received_bytes(), 0U);
+    EXPECT_EQ(storage->install(first).error().code(), common::StatusCode::kUnavailable);
+    EXPECT_EQ(storage->load_chunk(0U).error().code(), common::StatusCode::kUnavailable);
+    EXPECT_EQ(storage->finalize().error().code(), common::StatusCode::kUnavailable);
+  }
+  EXPECT_TRUE(std::filesystem::exists(directory.path() / "RECLAIMED"));
+  EXPECT_FALSE(
+      std::filesystem::exists(directory.path() / *tablet_physical_part_chunk_file_name(0U)));
+
+  // A marker plus a contiguous prefix is the only possible interrupted-delete recovery state.
+  write_bytes(directory.path() / *tablet_physical_part_chunk_file_name(0U), encoded_first);
+  auto reopened = TabletPhysicalPartChunkStorage::open_existing(config(directory.path(), owner));
+  ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+  EXPECT_TRUE(reopened->is_reclaimed());
+  EXPECT_EQ(*reopened->transfer_session(), owner);
+  EXPECT_EQ(*reopened->received_bytes(), 2U);
+  auto resumed = reopened->reclaim();
+  ASSERT_TRUE(resumed.has_value()) << resumed.error().to_string();
+  EXPECT_TRUE(resumed->marker_already_present);
+  EXPECT_EQ(resumed->removed_chunks, 1U);
+  EXPECT_EQ(resumed->removed_payload_bytes, 2U);
+  EXPECT_EQ(reopened->reclaim()->removed_chunks, 0U);
+}
+
+TEST(TabletPhysicalPartChunkStorageTest, RejectsDamagedReclamationMarker) {
+  TemporaryDirectory directory;
+  const std::vector<std::byte> object{std::byte{1U}};
+  const auto owner = session(object);
+  {
+    auto storage = TabletPhysicalPartChunkStorage::create(config(directory.path(), owner));
+    ASSERT_TRUE(storage.has_value());
+    ASSERT_TRUE(storage->install(chunk(owner, 0U, object)).has_value());
+    ASSERT_TRUE(storage->reclaim().has_value());
+  }
+  {
+    std::fstream marker{directory.path() / "RECLAIMED",
+                        std::ios::binary | std::ios::in | std::ios::out};
+    marker.seekp(24);
+    marker.put('x');
+  }
+  EXPECT_EQ(
+      TabletPhysicalPartChunkStorage::open_existing(config(directory.path(), owner)).error().code(),
+      common::StatusCode::kCorruption);
+}
+
 } // namespace
 } // namespace chronos::cluster
