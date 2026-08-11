@@ -556,6 +556,7 @@ add_library(
   chronos_cluster
   src/cluster/remote_tablet_reconfiguration.cpp
   src/cluster/tablet_physical_part_install.cpp
+  src/cluster/tablet_physical_movement_readiness.cpp
   src/cluster/tablet_physical_part_chunk.cpp
   src/cluster/tablet_physical_part_chunk_storage.cpp
   src/cluster/tablet_physical_snapshot_ownership.cpp
@@ -856,6 +857,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/cluster/remote_tablet_reconfiguration_test.cpp
     tests/cluster/tablet_physical_part_install_header_self_contained.cpp
     tests/cluster/tablet_physical_part_install_test.cpp
+    tests/cluster/tablet_physical_movement_readiness_header_self_contained.cpp
     tests/cluster/tablet_physical_part_chunk_header_self_contained.cpp
     tests/cluster/tablet_physical_part_chunk_storage_header_self_contained.cpp
     tests/cluster/tablet_physical_part_chunk_storage_test.cpp

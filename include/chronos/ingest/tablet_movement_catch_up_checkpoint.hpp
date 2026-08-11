@@ -8,7 +8,8 @@
 
 namespace chronos::ingest {
 
-// Reconciles a self-contained catching-up generation with an exact installed RTAS/Raft boundary.
+// Lower-level application-only reconciliation. It proves RTAS/Raft state but not physical CSEG or
+// Manifest ownership. Production physical movement must use the cluster readiness composition.
 // The next ready checkpoint is made durable before the supplied live movement advances.
 [[nodiscard]] common::Result<raft::InstalledTabletMovementCheckpoint>
 checkpoint_recovered_tablet_movement_catch_up(

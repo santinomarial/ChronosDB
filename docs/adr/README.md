@@ -188,3 +188,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0151](0151-raft-tablet-destination-manifest-composition.md) | Raft tablet destination Manifest composition | accepted |
 | [0152](0152-atomic-temporal-manifest-publication.md) | Atomic temporal Manifest publication | accepted |
 | [0153](0153-restartable-tablet-physical-ownership-publication.md) | Restartable tablet physical ownership publication | accepted |
+| [0154](0154-physical-ownership-gated-tablet-movement-readiness.md) | Physical-ownership-gated tablet movement readiness | accepted |

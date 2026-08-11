@@ -314,6 +314,20 @@ successor, preserves superseded input finals, classifies an installed-but-unrefe
 orphan, removes only recognized temporaries, and converges to identical selected bytes on a second
 restart.
 
+## Physical tablet movement readiness
+
+Physical movement has two independent destination authorities. RTAS storage plus the synchronized
+Raft snapshot metadata prove the application boundary; the atomically published Manifest epoch
+proves query-visible ownership of the CSEG part set. The cluster readiness coordinator acquires one
+immutable destination epoch, rebuilds the target tablet's canonical physical projection at the
+exact applied index, and compares that checksum with the full Raft snapshot metadata. It invokes the
+durable catching-up-to-ready checkpoint transition only after both proofs agree.
+
+An RTAS installation completed before a missing or mismatched physical proof is harmless and
+restartable. The old catching-up checkpoint remains the movement authority, the live movement is not
+mutated, and no readiness is inferred from a generation number or the mere presence of part files.
+Receipt reclamation and source-side ownership removal are later, separately authorized operations.
+
 Normal service remains unavailable while the storage owner performs:
 
 1. open the durable database, `parts/`, and `manifest/` directories and acquire `manifest/LOCK`;

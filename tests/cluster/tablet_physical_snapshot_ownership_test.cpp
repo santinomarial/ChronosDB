@@ -1,5 +1,9 @@
+#include "chronos/cluster/tablet_physical_movement_readiness.hpp"
 #include "chronos/cluster/tablet_physical_snapshot_ownership.hpp"
+#include "chronos/common/crc32c.hpp"
 #include "chronos/cseg/temporal_format.hpp"
+#include "chronos/ingest/raft_tablet_snapshot.hpp"
+#include "chronos/ingest/tablet_movement_raft_snapshot_completion.hpp"
 #include "chronos/manifest/naming.hpp"
 #include "chronos/manifest/temporal_codec.hpp"
 #include "chronos/manifest/temporal_part_validation.hpp"
@@ -186,6 +190,50 @@ request(const OwnershipFixture& fixture,
           .part_validation_limits = {}};
 }
 
+[[nodiscard]] ingest::RaftTabletApplicationSnapshot
+application_snapshot(const OwnershipFixture& fixture, raft::SnapshotMetadata metadata) {
+  return {.group_id = fixture.group_id,
+          .table_id = fixture.owner.table_id,
+          .tablet_id = fixture.owner.tablet_id,
+          .raft_snapshot = std::move(metadata),
+          .entries = {}};
+}
+
+[[nodiscard]] common::Result<raft::TabletMovement>
+catching_movement(const OwnershipFixture& fixture, const std::vector<std::byte>& bytes) {
+  auto movement = raft::TabletMovement::begin(fixture.owner.tablet_id, 10U, 1U, 4U, {1U, 2U});
+  if (!movement.has_value())
+    return common::make_unexpected(movement.error());
+  common::Status status = movement->begin_snapshot(
+      {14U, fixture.owner.durable_position, 3U, bytes.size(), common::crc32c(bytes)});
+  if (!status.is_ok())
+    return common::make_unexpected(std::move(status));
+  status = movement->accept_snapshot_chunk(0U, bytes, common::crc32c(bytes));
+  if (!status.is_ok())
+    return common::make_unexpected(std::move(status));
+  status = movement->finish_snapshot();
+  if (!status.is_ok())
+    return common::make_unexpected(std::move(status));
+  return std::move(*movement);
+}
+
+[[nodiscard]] common::Result<raft::GroupSnapshotInstall>
+request_snapshot(raft::DurableMultiRaftRuntime& runtime, const OwnershipFixture& fixture,
+                 raft::SnapshotMetadata metadata) {
+  auto requested = runtime.execute_batch(
+      {{fixture.group_id,
+        raft::ReceiveOperation{1U, raft::InstallSnapshotRequest{2U, 1U, std::move(metadata)}}}});
+  if (!requested.has_value())
+    return common::make_unexpected(requested.error());
+  if (requested->size() != 1U || !requested->front().status.is_ok() ||
+      !requested->front().transition.has_value() ||
+      !requested->front().transition->snapshot_install.has_value()) {
+    return common::make_unexpected(common::Status{common::StatusCode::kInternal,
+                                                  "test snapshot request did not become pending"});
+  }
+  return *requested->front().transition->snapshot_install;
+}
+
 TEST(TabletPhysicalSnapshotOwnershipTest, InstallsReloadsAndAtomicallyPublishesOwnership) {
   OwnershipTemporaryDirectory directory;
   OwnershipFixture fixture;
@@ -347,6 +395,96 @@ TEST(TabletPhysicalSnapshotOwnershipTest, DifferentAlreadyDurableSuccessorFailsP
                    .has_value());
   EXPECT_FALSE(publisher->is_usable());
   EXPECT_EQ(publisher->snapshot().error().code(), common::StatusCode::kUnavailable);
+}
+
+TEST(TabletPhysicalSnapshotOwnershipTest,
+     MovementReadinessRequiresPublishedDestinationPhysicalOwnership) {
+  OwnershipTemporaryDirectory database;
+  OwnershipTemporaryDirectory checkpoints;
+  OwnershipTemporaryDirectory snapshots;
+  OwnershipTemporaryDirectory log;
+  OwnershipFixture fixture;
+  establish_layout(database.path(), fixture);
+  auto storage =
+      manifest::ManifestStorage::open_existing({.database_root = database.path().string()});
+  ASSERT_TRUE(storage.has_value());
+  ASSERT_TRUE(storage
+                  ->install_temporal_part({.encoded_part = std::cref(fixture.encoded),
+                                           .descriptor = fixture.descriptor,
+                                           .owner = fixture.owner,
+                                           .schema = std::cref(fixture.schema),
+                                           .nonce = nonce(60U),
+                                           .validation_limits = {}})
+                  .has_value());
+  auto publisher =
+      manifest::TemporalDatabaseStoragePublisher::create(load_initial(*storage, fixture), {});
+  ASSERT_TRUE(publisher.has_value());
+  auto old_destination = publisher->snapshot();
+  ASSERT_TRUE(old_destination.has_value());
+  auto projection = fixture.projection();
+  const raft::SnapshotMetadata metadata = fixture.metadata(projection);
+  const std::array schemas{manifest::TabletSchemaBinding{.tablet_id = fixture.owner.tablet_id,
+                                                         .lineage = std::cref(fixture.lineage)}};
+  const std::array sources{
+      manifest::TemporalTabletSourceBinding{.tablet_id = fixture.owner.tablet_id,
+                                            .commit_source = manifest::ManifestCommitSource::kRaft,
+                                            .source_id = fixture.group_id}};
+  auto published = install_and_publish_tablet_physical_snapshot(
+      *storage, *publisher, request(fixture, projection, metadata, schemas, sources, nonce(61U)));
+  ASSERT_TRUE(published.has_value()) << published.error().to_string();
+
+  auto encoded_application =
+      ingest::encode_raft_tablet_application_snapshot_v1(application_snapshot(fixture, metadata));
+  ASSERT_TRUE(encoded_application.has_value()) << encoded_application.error().to_string();
+  auto movement = catching_movement(fixture, *encoded_application);
+  ASSERT_TRUE(movement.has_value()) << movement.error().to_string();
+  auto checkpoint_storage = raft::TabletMovementCheckpointStorage::create(
+      {.directory_path = checkpoints.path().string(), .tablet_id = fixture.owner.tablet_id});
+  auto snapshot_storage = ingest::RaftTabletSnapshotStorage::create(
+      {.directory_path = snapshots.path().string(), .group_id = fixture.group_id});
+  auto runtime = raft::DurableMultiRaftRuntime::create_new(
+      4U, {.directory_path = log.path().string()}, {{fixture.group_id, {1U, 2U}}});
+  ASSERT_TRUE(checkpoint_storage.has_value());
+  ASSERT_TRUE(snapshot_storage.has_value());
+  ASSERT_TRUE(runtime.has_value());
+  ASSERT_TRUE(
+      checkpoint_storage
+          ->install({1U, raft::TabletMovementCheckpoint{movement->record(), *encoded_application}})
+          .has_value());
+  auto latest = checkpoint_storage->load_latest_any();
+  ASSERT_TRUE(latest.has_value());
+  ASSERT_TRUE(latest->has_value());
+  auto recovered = raft::recover_tablet_movement_generation(**latest);
+  ASSERT_TRUE(recovered.has_value());
+  auto pending = request_snapshot(*runtime, fixture, metadata);
+  ASSERT_TRUE(pending.has_value()) << pending.error().to_string();
+  ASSERT_TRUE(ingest::complete_recovered_tablet_movement_raft_snapshot(
+                  *recovered, fixture.owner.table_id, *snapshot_storage, *pending, *runtime)
+                  .has_value());
+
+  auto missing_physical = checkpoint_tablet_physical_movement_readiness(
+      *recovered, fixture.owner.table_id, *snapshot_storage, *runtime, *checkpoint_storage,
+      *old_destination);
+  ASSERT_FALSE(missing_physical.has_value());
+  EXPECT_EQ(missing_physical.error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(recovered->checkpoint_generation, 1U);
+  EXPECT_EQ(recovered->movement.record().phase, raft::TabletMovementPhase::kCatchingUp);
+  auto still_catching_up = checkpoint_storage->load_latest_any();
+  ASSERT_TRUE(still_catching_up.has_value());
+  ASSERT_TRUE(still_catching_up->has_value());
+  EXPECT_EQ(std::visit([](const auto& value) { return value.checkpoint_generation; },
+                       (**still_catching_up).generation),
+            1U);
+
+  auto ready = checkpoint_tablet_physical_movement_readiness(
+      *recovered, fixture.owner.table_id, *snapshot_storage, *runtime, *checkpoint_storage,
+      published->destination);
+  ASSERT_TRUE(ready.has_value()) << ready.error().to_string();
+  EXPECT_EQ(ready->ready_checkpoint.checkpoint_generation, 2U);
+  EXPECT_EQ(ready->destination_manifest_generation, 2U);
+  EXPECT_EQ(ready->part_set_checksum, projection.part_set_checksum());
+  EXPECT_EQ(recovered->movement.record().phase, raft::TabletMovementPhase::kReady);
+  EXPECT_TRUE(runtime->close().is_ok());
 }
 
 } // namespace

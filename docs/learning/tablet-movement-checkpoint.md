@@ -80,7 +80,10 @@ and reclamation remain separate orchestration.
 requires the exact installed RTAS and target Raft boundary, advances a private candidate, installs
 the next ready generation, and only then mutates the live recovered movement. Reference generations
 revalidate the durable chunks; self-contained generations remain self-contained. Promotion,
-response routing, physical part transfer, and reclamation remain later steps.
+response routing, and reclamation remain later steps. This is an application-only primitive: a
+physical movement must use `checkpoint_tablet_physical_movement_readiness`, which additionally
+projects the target tablet from one owned destination publication epoch and exact-matches its
+canonical part-set checksum to the RTAS/Raft snapshot before permitting the ready checkpoint.
 
 - Why are header, payload, and whole-record CRCs separate?
 - Why is a full content CRC required only once transfer is complete?

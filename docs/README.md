@@ -59,8 +59,9 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   checked canonical layout with a strict checksummed codec; transition validation, exact CSEG
   admission, installation, exact orphan-final retry adoption, and capped verified physical
   transfer-to-install composition, and canonical Raft-tablet destination successor construction are
-  implemented together with fail-closed atomic publication and restart reconciliation of
-  already-durable Manifest v2 successors. Movement readiness and receipt cleanup remain separate.
+  implemented together with fail-closed atomic publication, restart reconciliation of
+  already-durable Manifest v2 successors, and a movement-ready gate requiring exact RTAS/Raft and
+  published destination part-set ownership. Receipt cleanup remains separate.
 - [Resume Token v1](formats/resume-token-v1.md): authenticated live-subscription resume identity,
   compatibility, limits, and rejection rules.
 - [Materialized View Checkpoint v1](formats/materialized-view-checkpoint-v1.md): bounded exact
