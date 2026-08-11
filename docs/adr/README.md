@@ -215,3 +215,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0178](0178-pinned-multi-tablet-tcp-query-scheduling.md) | Pinned multi-tablet TCP query scheduling | accepted |
 | [0179](0179-whole-query-tcp-cancellation-deadline.md) | Whole-query TCP cancellation and deadline | accepted |
 | [0180](0180-explicit-whole-query-authority-rebinding.md) | Explicit whole-query authority rebinding | accepted |
+| [0181](0181-authenticated-distributed-leader-hint-publication.md) | Authenticated distributed leader-hint publication | accepted |

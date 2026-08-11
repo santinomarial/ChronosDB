@@ -229,6 +229,17 @@ public:
   }
 };
 
+class ExecutionLeaderHintProvider final : public DistributedQueryLeaderHintProvider {
+public:
+  common::Result<std::optional<DistributedQueryLeaderHint>>
+  current_leader_hint(const schema::TabletId&, const raft::GroupId&) const override {
+    ++calls;
+    return DistributedQueryLeaderHint{13U, 14U};
+  }
+
+  mutable std::size_t calls{};
+};
+
 class ExecutionWorker final : public DistributedQueryWorkerService {
 public:
   ExecutionWorker(const double value, const bool fail_first) noexcept
@@ -489,10 +500,14 @@ TEST(DistributedQueryTcpExecutionTest, RebindsWholeQueryAndDiscardsPriorEpochPar
 
   ExecutionWorker old_first_worker{100.0, false};
   ExecutionWorker old_second_worker{200.0, true};
+  ExecutionLeaderHintProvider leader_hint_provider;
   auto old_first_receiver = DistributedQueryReceiver::create(
       {.local_node_id = 11U, .authorizer = &authorizer, .worker = &old_first_worker});
-  auto old_second_receiver = DistributedQueryReceiver::create(
-      {.local_node_id = 12U, .authorizer = &authorizer, .worker = &old_second_worker});
+  auto old_second_receiver =
+      DistributedQueryReceiver::create({.local_node_id = 12U,
+                                        .authorizer = &authorizer,
+                                        .worker = &old_second_worker,
+                                        .leader_hint_provider = &leader_hint_provider});
   ASSERT_TRUE(old_first_receiver.has_value());
   ASSERT_TRUE(old_second_receiver.has_value());
   auto old_first_server = DistributedQueryTcpServer::start(
@@ -542,6 +557,9 @@ TEST(DistributedQueryTcpExecutionTest, RebindsWholeQueryAndDiscardsPriorEpochPar
   }
   ASSERT_EQ(scheduled->state(), DistributedQueryTcpExecutionState::kFailed);
   EXPECT_EQ(scheduled->failure().code(), common::StatusCode::kUnavailable);
+  EXPECT_EQ(leader_hint_provider.calls, 1U);
+  const schema::TabletId hinted_tablet = scheduled->snapshot().dispatches()[1].fragment.tablet_id;
+  EXPECT_EQ(*scheduled->suggested_leader(hinted_tablet), DistributedQueryLeaderHint(13U, 14U));
 
   TemporaryDirectory wrong_directory;
   auto wrong_input = make_input(wrong_directory, 99U);

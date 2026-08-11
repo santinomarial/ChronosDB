@@ -37,6 +37,9 @@ transport, retry, and rebinding metrics survive replacement. The scheduler also 
 sender's optional advisory leader hint for the serialized caller to include when consulting its
 authoritative metadata service.
 
+ADR 0181 subsequently provides that hint from a post-authentication committed-metadata provider on
+the server and carries it through the existing response fields to this scheduler accessor.
+
 ## Consequences and validation
 
 Compatibility validation is `O(fragments * projection width)` and performs no network or durable
@@ -81,3 +84,4 @@ whole-query restart rules.
 - [Whole-query TCP cancellation and deadline](0179-whole-query-tcp-cancellation-deadline.md)
 - [Distributed read admission](../learning/distributed-read-admission.md)
 - [Architecture invariants](../architecture/invariants.md)
+- [Authenticated distributed leader-hint publication](0181-authenticated-distributed-leader-hint-publication.md)

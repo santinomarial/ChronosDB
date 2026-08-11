@@ -87,6 +87,26 @@ public:
   bool throw_failure{};
 };
 
+class LeaderHintProvider final : public DistributedQueryLeaderHintProvider {
+public:
+  common::Result<std::optional<DistributedQueryLeaderHint>>
+  current_leader_hint(const schema::TabletId& tablet_id,
+                      const raft::GroupId& group_id) const override {
+    ++calls;
+    last_tablet = tablet_id;
+    last_group = group_id;
+    if (failure.has_value())
+      return common::make_unexpected(*failure);
+    return hint;
+  }
+
+  mutable std::size_t calls{};
+  mutable std::optional<schema::TabletId> last_tablet;
+  mutable std::optional<raft::GroupId> last_group;
+  std::optional<DistributedQueryLeaderHint> hint{DistributedQueryLeaderHint{3U, 9U}};
+  std::optional<common::Status> failure;
+};
+
 void store_u16(std::vector<std::byte>& bytes, const std::size_t offset, const std::uint16_t value) {
   for (std::size_t index = 0U; index < sizeof(value); ++index)
     bytes[offset + index] = static_cast<std::byte>(value >> (index * 8U));
@@ -236,8 +256,11 @@ TEST(DistributedQueryTransportCodecTest, RejectsDamageAndUncorrelatedResults) {
 TEST(DistributedQueryReceiverTest, AuthenticatesSourceAndCorrelatesWorkerOutcome) {
   Authorizer authorizer;
   Worker worker;
-  auto receiver = DistributedQueryReceiver::create(
-      {.local_node_id = 2U, .authorizer = &authorizer, .worker = &worker});
+  LeaderHintProvider hint_provider;
+  auto receiver = DistributedQueryReceiver::create({.local_node_id = 2U,
+                                                    .authorizer = &authorizer,
+                                                    .worker = &worker,
+                                                    .leader_hint_provider = &hint_provider});
   ASSERT_TRUE(receiver.has_value()) << receiver.error().to_string();
   const auto request = encode_distributed_query_request_v1({1U, 2U, dispatch()}).value();
 
@@ -266,15 +289,27 @@ TEST(DistributedQueryReceiverTest, AuthenticatesSourceAndCorrelatesWorkerOutcome
   worker.failure = common::Status{common::StatusCode::kUnavailable, "placement changed"};
   const auto failed = receiver->receive(request, {.authorized = true, .principal_id = 91U});
   ASSERT_TRUE(failed.has_value());
-  EXPECT_EQ(decode_distributed_query_response_v1(*failed)->status_code,
-            common::StatusCode::kUnavailable);
+  const auto decoded_failure = decode_distributed_query_response_v1(*failed);
+  ASSERT_TRUE(decoded_failure.has_value());
+  EXPECT_EQ(decoded_failure->status_code, common::StatusCode::kUnavailable);
+  EXPECT_EQ(decoded_failure->leader_hint, DistributedQueryLeaderHint(3U, 9U));
+  EXPECT_EQ(hint_provider.calls, 1U);
+  EXPECT_EQ(hint_provider.last_tablet, id<schema::TabletId>(4U));
+  EXPECT_EQ(hint_provider.last_group, uuid(9U));
   EXPECT_EQ(worker.calls, 2U);
+
+  hint_provider.failure =
+      common::Status{common::StatusCode::kUnavailable, "metadata view unavailable"};
+  EXPECT_EQ(receiver->receive(request, {.authorized = true, .principal_id = 91U}).error(),
+            *hint_provider.failure);
+  EXPECT_EQ(worker.calls, 3U);
+  hint_provider.failure.reset();
 
   worker.failure.reset();
   worker.return_wrong_query = true;
   EXPECT_EQ(receiver->receive(request, {.authorized = true, .principal_id = 91U}).error().code(),
             common::StatusCode::kInvalidArgument);
-  EXPECT_EQ(worker.calls, 3U);
+  EXPECT_EQ(worker.calls, 4U);
 
   worker.return_wrong_query = false;
   worker.throw_failure = true;
@@ -282,7 +317,7 @@ TEST(DistributedQueryReceiverTest, AuthenticatesSourceAndCorrelatesWorkerOutcome
   ASSERT_TRUE(threw.has_value());
   EXPECT_EQ(decode_distributed_query_response_v1(*threw)->status_code,
             common::StatusCode::kInternal);
-  EXPECT_EQ(worker.calls, 4U);
+  EXPECT_EQ(worker.calls, 5U);
 }
 
 TEST(DistributedQueryStreamTest, RequestReaderHandlesEverySplitAndCoalescedFrames) {

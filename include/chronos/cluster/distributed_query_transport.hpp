@@ -73,10 +73,21 @@ public:
   execute(const query::DistributedAggregateFragmentDispatch& dispatch) = 0;
 };
 
+// Embedding-owned committed metadata view used only after an authenticated, correlated worker
+// reports that its authority is unavailable. Returned hints are advisory and never replace fresh
+// admission and snapshot binding. Implementations provide their own synchronization.
+class DistributedQueryLeaderHintProvider {
+public:
+  virtual ~DistributedQueryLeaderHintProvider() = default;
+  [[nodiscard]] virtual common::Result<std::optional<DistributedQueryLeaderHint>>
+  current_leader_hint(const schema::TabletId& tablet_id, const raft::GroupId& group_id) const = 0;
+};
+
 struct DistributedQueryReceiverConfig {
   raft::NodeId local_node_id{};
   const ClusterNodePrincipalAuthorizer* authorizer{};
   DistributedQueryWorkerService* worker{};
+  const DistributedQueryLeaderHintProvider* leader_hint_provider{};
 };
 
 class DistributedQueryReceiver {

@@ -4,6 +4,7 @@
 
 static_assert(std::is_aggregate_v<chronos::cluster::DistributedQueryRequest>);
 static_assert(std::is_aggregate_v<chronos::cluster::DistributedQueryResponse>);
+static_assert(std::is_abstract_v<chronos::cluster::DistributedQueryLeaderHintProvider>);
 
 namespace {
 [[maybe_unused]] const auto kEncodeRequest = &chronos::cluster::encode_distributed_query_request_v1;

@@ -888,8 +888,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   client without exposing partial state. Retryable terminal failures may now replace the entire
   execution through finite explicit rebinding only after the caller supplies freshly proved
   authority for the same logical query and a nonregressing compatible generation; old partials are
-  never carried across. Automatic metadata acquisition, general vector-plan fragments/exchanges,
-  complete leader transport, and broader multi-node failure validation remain deferred; the
+  never carried across. Authenticated unavailable-worker responses now obtain an advisory
+  leader/placement pair from a committed metadata-provider boundary and carry it through mTLS to the
+  failed scheduler without treating it as authority. Automatic metadata acquisition, general
+  vector-plan fragments/exchanges, and broader multi-node failure validation remain deferred; the
   phase exit gate is not claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.

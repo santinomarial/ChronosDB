@@ -100,6 +100,10 @@ cancellation both close every active client, retain no partial result, and remai
 After a retryable terminal failure, explicit finite rebinding accepts only an independently proved
 execution for the same plan-ordered logical query and a nonregressing Manifest generation. It
 discards every old partial and pin together before new attempts begin; leader hints remain advisory.
+On `UNAVAILABLE`, the authenticated receiver may query a committed metadata provider for the exact
+tablet/group and publish its advisory leader/placement pair through the canonical response. Provider
+failure emits no hint or response, and the scheduler exposes a correlated hint only for a caller's
+fresh authority lookup.
 
 ## Tradeoffs and deferred work
 

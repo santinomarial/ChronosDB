@@ -594,6 +594,14 @@ DistributedQueryReceiver::receive(const common::ByteView request_bytes,
   std::optional<query::ExchangeMessage> message;
   if (result.has_value())
     message = std::move(*result);
+  else if (!leader_hint.has_value() && code == common::StatusCode::kUnavailable &&
+           config_.leader_hint_provider != nullptr) {
+    auto resolved = config_.leader_hint_provider->current_leader_hint(
+        tablet_id, request->dispatch.raft_group_id);
+    if (!resolved.has_value())
+      return common::make_unexpected(resolved.error());
+    leader_hint = std::move(*resolved);
+  }
   return encode_distributed_query_response_v1({.source_node_id = config_.local_node_id,
                                                .target_node_id = request->source_node_id,
                                                .query_id = query_id,
