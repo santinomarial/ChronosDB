@@ -857,9 +857,12 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   movement and CSEG identity while preserving 64-bit object lengths. Their locked durable owner
   admits an immutable contiguous prefix, reconstructs it across restart, and streams final SHA-256
   verification without assembling the CSEG; destination installation and publication remain
-  incomplete. General
-  vector-plan fragments/exchange wire bytes, compatible multi-tablet snapshots, complete leader
-  transport, and multi-node failure validation remain deferred; the
+  incomplete. Group-scoped aggregate dispatches and terminal exchanges now also have canonical
+  bounded checksummed cluster request/response frames, exact route/result correlation, and an
+  authenticated principal-to-source receiver that invokes the proof-revalidating worker through an
+  embedding-owned service boundary. Partial socket I/O, sender retry, general vector-plan
+  fragments/exchanges, compatible multi-tablet snapshots, complete leader transport, and multi-node
+  failure validation remain deferred; the
   phase exit gate is not claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.

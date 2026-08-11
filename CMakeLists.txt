@@ -558,6 +558,7 @@ chronos_enable_static_analysis(chronos_raft)
 
 add_library(
   chronos_cluster
+  src/cluster/distributed_query_transport.cpp
   src/cluster/remote_tablet_reconfiguration.cpp
   src/cluster/tablet_physical_part_install.cpp
   src/cluster/tablet_physical_movement_readiness.cpp
@@ -577,7 +578,7 @@ target_include_directories(
 )
 target_link_libraries(
   chronos_cluster
-  PUBLIC chronos::cseg chronos::ingest chronos::manifest chronos::network chronos::raft
+  PUBLIC chronos::cseg chronos::ingest chronos::manifest chronos::network chronos::query chronos::raft
   PRIVATE chronos::io
 )
 chronos_set_project_warnings(chronos_cluster)
@@ -858,6 +859,8 @@ if(CHRONOS_BUILD_TESTS)
 
   add_executable(
     chronos_cluster_tests
+    tests/cluster/distributed_query_transport_header_self_contained.cpp
+    tests/cluster/distributed_query_transport_test.cpp
     tests/cluster/remote_tablet_reconfiguration_header_self_contained.cpp
     tests/cluster/remote_tablet_reconfiguration_test.cpp
     tests/cluster/tablet_physical_part_install_header_self_contained.cpp

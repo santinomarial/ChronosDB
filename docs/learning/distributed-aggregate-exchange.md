@@ -20,6 +20,9 @@ workers never execute the bare inner fragment.
 committed placement, schema, group, and proof admission exact-match.
 `execute_distributed_aggregate_fragment` repeats local authority checks, resolves temporal winners
 from validated generation-pinned parts, filters event time, and emits one terminal partial state.
+Distributed Query Transport v1 wraps the dispatch and terminal exchange in correlated cluster
+request/response frames. `DistributedQueryReceiver` authenticates and authorizes the source before
+an embedding-owned worker service can execute the dispatch.
 
 ## Data, ownership, and invariants
 
@@ -59,13 +62,17 @@ Fragment encoding/decoding is `O(projected columns)` with a 4,096-column and 16,
 Binding is `O(replicas + tablets + projected columns)` and allocates only the owned projection.
 Worker authority checks precede I/O. Current execution inherits the bounded temporal resolver's
 decode and winner-selection costs, then scans visible logical rows once for filtering/aggregation.
+Transport requests retain at most 16,772 bytes and responses at most 244 bytes. Authentication,
+outer and nested decoding, route validation, and worker execution occur in that order.
 
 ## Tradeoffs and deferred work
 
 A fixed ungrouped-aggregate frame gives partial-I/O carriers an unambiguous payload without
 prematurely defining a general physical-fragment language. The cost is a specialized first exchange
 type. Grouping state, physical plans, ordering/top-N, cancellation, retry, duplicate sequencing,
-and multi-tablet snapshot compatibility require their own bounded contracts.
+and multi-tablet snapshot compatibility require their own bounded contracts. The authenticated
+receiver defines canonical carrier payloads but not partial socket I/O, connection ownership,
+deadlines, or sender retry.
 
 ## Verification and review questions
 

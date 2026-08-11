@@ -45,6 +45,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/columnar/columnar_batch_format.hpp>
 #include <chronos/columnar/column_vector.hpp>
 #include <chronos/cluster/tablet_physical_receipt_reclamation.hpp>
+#include <chronos/cluster/distributed_query_transport.hpp>
 #include <chronos/cseg/compression.hpp>
 #include <chronos/cseg/format.hpp>
 #include <chronos/cseg/inspection.hpp>
@@ -144,8 +145,14 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <vector>
 
 int main() {
+  const auto encode_distributed_query_request =
+      &chronos::cluster::encode_distributed_query_request_v1;
+  const auto decode_distributed_query_response =
+      &chronos::cluster::decode_distributed_query_response_v1;
   const auto reclaim_physical_receipt =
       &chronos::cluster::reclaim_tablet_physical_part_receipt;
+  (void)encode_distributed_query_request;
+  (void)decode_distributed_query_response;
   const auto build_source_retirement =
       &chronos::manifest::build_raft_tablet_source_retirement_manifest;
   const auto publish_source_retirement =
