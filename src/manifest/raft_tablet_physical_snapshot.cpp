@@ -1,11 +1,14 @@
 #include "chronos/manifest/raft_tablet_physical_snapshot.hpp"
 
+#include "chronos/common/checked_math.hpp"
 #include "chronos/manifest/format.hpp"
 #include "chronos/manifest/temporal_format.hpp"
+#include "chronos/manifest/temporal_validation.hpp"
 
 #include <algorithm>
 #include <limits>
 #include <new>
+#include <optional>
 #include <ranges>
 #include <span>
 #include <stdexcept>
@@ -48,6 +51,12 @@ checksum_part_descriptors(const common::ByteView bytes, const std::size_t part_c
 
 [[nodiscard]] common::Status decode_status(const ManifestDecodeError& error) {
   return error.status();
+}
+
+[[nodiscard]] bool retry_less(const TemporalRetryDescriptor& left,
+                              const TemporalRetryDescriptor& right) noexcept {
+  return left.client_id != right.client_id ? left.client_id < right.client_id
+                                           : left.client_batch_id < right.client_batch_id;
 }
 
 } // namespace
@@ -177,6 +186,84 @@ common::Result<RaftTabletPhysicalSnapshotReport> validate_raft_tablet_physical_s
     return common::make_unexpected(exhausted("Raft tablet physical validation allocation failed"));
   } catch (const std::length_error&) {
     return common::make_unexpected(exhausted("Raft tablet physical validation exceeded limits"));
+  }
+}
+
+common::Result<EncodedTemporalManifest>
+build_raft_tablet_destination_manifest(const DecodedTemporalManifestView& destination,
+                                       const RaftTabletDestinationManifestRequest& request) {
+  auto authority = validate_raft_tablet_physical_snapshot(
+      request.physical_snapshot, request.group_id, request.table_id, request.tablet_id,
+      request.raft_snapshot.get(), request.decode_limits);
+  if (!authority.has_value())
+    return common::make_unexpected(authority.error());
+  try {
+    auto projected =
+        decode_manifest_v2_temporal_exact(request.physical_snapshot, request.decode_limits);
+    if (!projected.has_value())
+      return common::make_unexpected(decode_status(projected.error()));
+    if (projected->database_id() != destination.database_id()) {
+      return common::make_unexpected(
+          invalid("Raft physical snapshot belongs to a different destination database"));
+    }
+    if (std::ranges::any_of(destination.tablets(), [&](const TemporalTabletDescriptor& tablet) {
+          return tablet.tablet_id == request.tablet_id;
+        })) {
+      return common::make_unexpected(
+          invalid("Raft physical snapshot tablet already exists in the destination Manifest"));
+    }
+    const std::optional<std::uint64_t> generation =
+        common::checked_add(destination.generation(), std::uint64_t{1U});
+    if (!generation.has_value())
+      return common::make_unexpected(exhausted("destination Manifest generation overflowed"));
+
+    std::vector<TemporalTabletDescriptor> tablets(destination.tablets().begin(),
+                                                  destination.tablets().end());
+    tablets.push_back(projected->tablets().front());
+    std::ranges::sort(tablets, {}, &TemporalTabletDescriptor::tablet_id);
+    std::vector<TemporalPartDescriptor> parts;
+    parts.reserve(destination.parts().size() + projected->parts().size());
+    for (TemporalTabletDescriptor& tablet : tablets) {
+      const bool incoming = tablet.tablet_id == request.tablet_id;
+      const DecodedTemporalManifestView& source = incoming ? *projected : destination;
+      const auto source_tablet = std::ranges::find(source.tablets(), tablet.tablet_id,
+                                                   &TemporalTabletDescriptor::tablet_id);
+      if (source_tablet == source.tablets().end())
+        return common::make_unexpected(corruption("destination tablet became inaccessible"));
+      const std::size_t first = static_cast<std::size_t>(source_tablet->first_part_index);
+      const std::size_t count = static_cast<std::size_t>(source_tablet->part_count);
+      tablet.first_part_index = parts.size();
+      parts.insert(parts.end(), source.parts().begin() + static_cast<std::ptrdiff_t>(first),
+                   source.parts().begin() + static_cast<std::ptrdiff_t>(first + count));
+    }
+    std::vector<TemporalRetryDescriptor> retries(destination.retries().begin(),
+                                                 destination.retries().end());
+    retries.insert(retries.end(), projected->retries().begin(), projected->retries().end());
+    std::ranges::sort(retries, retry_less);
+
+    auto encoded =
+        encode_manifest_v2_temporal({.generation = *generation,
+                                     .database_id = destination.database_id(),
+                                     .wal_reclaim_checkpoint = destination.wal_reclaim_checkpoint(),
+                                     .tablets = tablets,
+                                     .parts = parts,
+                                     .retries = retries});
+    if (!encoded.has_value())
+      return common::make_unexpected(encoded.error());
+    auto candidate = decode_manifest_v2_temporal_exact(encoded->bytes(), request.decode_limits);
+    if (!candidate.has_value())
+      return common::make_unexpected(decode_status(candidate.error()));
+    common::Status transition =
+        validate_manifest_v2_temporal_transition(destination, *candidate, request.schema_bindings);
+    if (!transition.is_ok())
+      return common::make_unexpected(std::move(transition));
+    return encoded;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        exhausted("Raft destination Manifest composition allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("Raft destination Manifest composition exceeded limits"));
   }
 }
 

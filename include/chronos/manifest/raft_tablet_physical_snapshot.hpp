@@ -5,9 +5,12 @@
 #include "chronos/common/result.hpp"
 #include "chronos/ingest/sha256.hpp"
 #include "chronos/manifest/temporal_codec.hpp"
+#include "chronos/manifest/validation.hpp"
 #include "chronos/raft/multi_raft.hpp"
 
 #include <cstdint>
+#include <functional>
+#include <span>
 
 namespace chronos::manifest {
 
@@ -50,6 +53,16 @@ struct RaftTabletPhysicalSnapshotReport {
   ingest::Sha256Digest part_set_checksum;
 };
 
+struct RaftTabletDestinationManifestRequest {
+  common::ByteView physical_snapshot;
+  raft::GroupId group_id;
+  schema::TableId table_id;
+  schema::TabletId tablet_id;
+  std::reference_wrapper<const raft::SnapshotMetadata> raft_snapshot;
+  std::span<const TabletSchemaBinding> schema_bindings;
+  ManifestDecodeLimits decode_limits;
+};
+
 // Projects one already-decoded authoritative Manifest v2 generation. The selected tablet must use
 // the supplied Raft group as its source and must be durable exactly through applied_position.
 [[nodiscard]] common::Result<EncodedRaftTabletPhysicalSnapshot> build_raft_tablet_physical_snapshot(
@@ -65,6 +78,14 @@ validate_raft_tablet_physical_snapshot(common::ByteView bytes, const raft::Group
                                        const schema::TabletId& tablet_id,
                                        const raft::SnapshotMetadata& raft_snapshot,
                                        ManifestDecodeLimits limits = {});
+
+// Builds one local add-only Manifest v2 successor by merging a validated source projection as a
+// new destination tablet. The source Manifest generation remains Raft snapshot authority; the
+// returned candidate uses destination.generation()+1 and preserves every local descriptor.
+// Physical CSEG finals must cross installation before this candidate is passed to ManifestStorage.
+[[nodiscard]] common::Result<EncodedTemporalManifest>
+build_raft_tablet_destination_manifest(const DecodedTemporalManifestView& destination,
+                                       const RaftTabletDestinationManifestRequest& request);
 
 } // namespace chronos::manifest
 

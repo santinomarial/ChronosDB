@@ -4,3 +4,5 @@
     &chronos::manifest::build_raft_tablet_physical_snapshot;
 [[maybe_unused]] auto* const kValidateRaftTabletPhysicalSnapshot =
     &chronos::manifest::validate_raft_tablet_physical_snapshot;
+[[maybe_unused]] auto* const kBuildRaftTabletDestinationManifest =
+    &chronos::manifest::build_raft_tablet_destination_manifest;

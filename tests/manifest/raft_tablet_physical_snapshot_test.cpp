@@ -1,7 +1,13 @@
 #include "chronos/manifest/raft_tablet_physical_snapshot.hpp"
+#include "chronos/manifest/temporal_validation.hpp"
+#include "chronos/schema/column_definition.hpp"
+#include "chronos/schema/logical_type.hpp"
+#include "chronos/schema/schema_lineage.hpp"
+#include "chronos/schema/table_schema.hpp"
 #include "manifest/manifest_test_support.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
@@ -128,6 +134,26 @@ struct Fixture {
   }
 };
 
+[[nodiscard]] schema::SchemaLineage lineage(const Fixture& fixture) {
+  const schema::ColumnId event_time = test::make_id<schema::ColumnId>(30U);
+  std::vector<schema::ColumnDefinition> columns;
+  columns.push_back(schema::ColumnDefinition::create(
+                        event_time, "event_time",
+                        schema::LogicalType::create(schema::LogicalTypeKind::kTimestampNs).value(),
+                        false)
+                        .value());
+  schema::TableSchema value = schema::TableSchema::create(fixture.table_id, fixture.schema_id,
+                                                          schema::SchemaVersion::initial(),
+                                                          std::nullopt, std::move(columns),
+                                                          {.event_time_column = event_time,
+                                                           .physical_ordering_key = {event_time},
+                                                           .partition_columns = {event_time},
+                                                           .shard_key = {event_time},
+                                                           .deduplication_key = {event_time}})
+                                  .value();
+  return schema::SchemaLineage::create(std::move(value)).value();
+}
+
 TEST(RaftTabletPhysicalSnapshotTest, ProjectsOneRaftTabletAndBindsCanonicalPartSet) {
   Fixture fixture;
   const EncodedTemporalManifest full = fixture.encode();
@@ -209,6 +235,106 @@ TEST(RaftTabletPhysicalSnapshotTest, RejectsFullDatabaseManifestAndCorruptedByte
                 .error()
                 .code(),
             common::StatusCode::kCorruption);
+}
+
+TEST(RaftTabletPhysicalSnapshotTest, BuildsCanonicalDestinationSuccessorForNewTablet) {
+  Fixture fixture;
+  const EncodedTemporalManifest full = fixture.encode();
+  auto source = decode_manifest_v2_temporal_exact(full.bytes());
+  ASSERT_TRUE(source.has_value());
+  auto projected =
+      build_raft_tablet_physical_snapshot(*source, fixture.group_id, fixture.tablet_id, 9U);
+  ASSERT_TRUE(projected.has_value());
+  const raft::SnapshotMetadata metadata = fixture.metadata(projected->part_set_checksum());
+
+  TemporalTabletDescriptor retained_tablet = fixture.tablets[1U];
+  retained_tablet.first_part_index = 0U;
+  const std::array destination_tablets{retained_tablet};
+  const std::array destination_parts{fixture.parts[1U]};
+  const std::array destination_retries{fixture.retries[1U]};
+  EncodedTemporalManifest destination_bytes =
+      encode_manifest_v2_temporal({.generation = 1U,
+                                   .database_id = fixture.database_id,
+                                   .wal_reclaim_checkpoint = std::nullopt,
+                                   .tablets = destination_tablets,
+                                   .parts = destination_parts,
+                                   .retries = destination_retries})
+          .value();
+  auto destination = decode_manifest_v2_temporal_exact(destination_bytes.bytes());
+  ASSERT_TRUE(destination.has_value());
+  const schema::SchemaLineage schemas = lineage(fixture);
+  const std::array bindings{
+      TabletSchemaBinding{.tablet_id = fixture.tablet_id, .lineage = std::cref(schemas)},
+      TabletSchemaBinding{.tablet_id = fixture.other_tablet_id, .lineage = std::cref(schemas)}};
+
+  auto candidate =
+      build_raft_tablet_destination_manifest(*destination, {.physical_snapshot = projected->bytes(),
+                                                            .group_id = fixture.group_id,
+                                                            .table_id = fixture.table_id,
+                                                            .tablet_id = fixture.tablet_id,
+                                                            .raft_snapshot = std::cref(metadata),
+                                                            .schema_bindings = bindings,
+                                                            .decode_limits = {}});
+  ASSERT_TRUE(candidate.has_value()) << candidate.error().to_string();
+  auto decoded = decode_manifest_v2_temporal_exact(candidate->bytes());
+  ASSERT_TRUE(decoded.has_value());
+  EXPECT_EQ(decoded->generation(), 2U);
+  ASSERT_EQ(decoded->tablets().size(), 2U);
+  EXPECT_EQ(decoded->tablets()[0U].tablet_id, fixture.tablet_id);
+  EXPECT_EQ(decoded->tablets()[1U].tablet_id, fixture.other_tablet_id);
+  EXPECT_EQ(decoded->parts()[0U], fixture.parts[0U]);
+  EXPECT_EQ(decoded->parts()[1U], fixture.parts[1U]);
+  EXPECT_EQ(decoded->retries()[0U], fixture.retries[0U]);
+  EXPECT_EQ(decoded->retries()[1U], fixture.retries[1U]);
+  EXPECT_TRUE(validate_manifest_v2_temporal_transition(*destination, *decoded, bindings).is_ok());
+}
+
+TEST(RaftTabletPhysicalSnapshotTest, RejectsExistingTabletAndForeignDatabaseDestination) {
+  Fixture fixture;
+  const EncodedTemporalManifest full = fixture.encode();
+  auto source = decode_manifest_v2_temporal_exact(full.bytes());
+  ASSERT_TRUE(source.has_value());
+  auto projected =
+      build_raft_tablet_physical_snapshot(*source, fixture.group_id, fixture.tablet_id, 9U);
+  ASSERT_TRUE(projected.has_value());
+  const raft::SnapshotMetadata metadata = fixture.metadata(projected->part_set_checksum());
+  const schema::SchemaLineage schemas = lineage(fixture);
+  const std::array bindings{
+      TabletSchemaBinding{.tablet_id = fixture.tablet_id, .lineage = std::cref(schemas)},
+      TabletSchemaBinding{.tablet_id = fixture.other_tablet_id, .lineage = std::cref(schemas)}};
+  EXPECT_EQ(
+      build_raft_tablet_destination_manifest(*source, {.physical_snapshot = projected->bytes(),
+                                                       .group_id = fixture.group_id,
+                                                       .table_id = fixture.table_id,
+                                                       .tablet_id = fixture.tablet_id,
+                                                       .raft_snapshot = std::cref(metadata),
+                                                       .schema_bindings = bindings,
+                                                       .decode_limits = {}})
+          .error()
+          .code(),
+      common::StatusCode::kInvalidArgument);
+
+  EncodedTemporalManifest foreign =
+      encode_manifest_v2_temporal({.generation = 1U,
+                                   .database_id = test::make_id<DatabaseId>(99U),
+                                   .wal_reclaim_checkpoint = std::nullopt,
+                                   .tablets = {},
+                                   .parts = {},
+                                   .retries = {}})
+          .value();
+  auto foreign_destination = decode_manifest_v2_temporal_exact(foreign.bytes());
+  ASSERT_TRUE(foreign_destination.has_value());
+  EXPECT_EQ(build_raft_tablet_destination_manifest(*foreign_destination,
+                                                   {.physical_snapshot = projected->bytes(),
+                                                    .group_id = fixture.group_id,
+                                                    .table_id = fixture.table_id,
+                                                    .tablet_id = fixture.tablet_id,
+                                                    .raft_snapshot = std::cref(metadata),
+                                                    .schema_bindings = {},
+                                                    .decode_limits = {}})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
 }
 
 } // namespace
