@@ -556,6 +556,9 @@ single-owner authenticator, stable principal propagation through request/cancel 
 rejection metrics, and `TLS_REQUIRED` rejection until a maintained backend exists. The test
 client/server adapter, packet fuzzing, hostile Linux lifecycle matrix, and measurements remain.
 
+Phase 16 follow-up under ADRs 0144 and 0145 later supplied the maintained OpenSSL mutual-TLS carrier
+and bounded epoll integration; the paragraph above remains the historical Phase 10 increment boundary.
+
 The eighth increment adds the bounded portable native client session and replaces self-agreeing
 packet-only coverage with real client-to-epoll interoperability. It covers partial/coalesced I/O,
 negotiation, monotonic requests, query and ingest terminal rules, cancellation, fail-closed input,

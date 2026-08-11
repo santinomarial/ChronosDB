@@ -7,6 +7,10 @@
 #if defined(__linux__)
 #include <arpa/inet.h>
 #include <cerrno>
+#include <fcntl.h>
+#include <filesystem>
+#include <memory>
+#include <openssl/ssl.h>
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
@@ -18,9 +22,15 @@ namespace {
 
 class TestAuthenticator final : public ConnectionAuthenticator {
 public:
-  common::Result<PeerAuthenticationResult> authenticate(const PeerAuthenticationRequest&) override {
+  common::Result<PeerAuthenticationResult>
+  authenticate(const PeerAuthenticationRequest& request) override {
+    last_request = request;
+    ++calls;
     return PeerAuthenticationResult{.authorized = true, .principal_id = 77U};
   }
+
+  PeerAuthenticationRequest last_request;
+  std::size_t calls{};
 };
 
 TEST(EpollReactorTest, PlatformBoundaryIsExplicit) {
@@ -99,6 +109,174 @@ void drive_handshake(EpollReactor& reactor, const int socket, NativeClientSessio
     }
   }
   ASSERT_EQ(client.phase(), ClientSessionPhase::kActive);
+}
+
+struct SslContextDeleter {
+  void operator()(SSL_CTX* context) const noexcept {
+    SSL_CTX_free(context);
+  }
+};
+
+struct SslDeleter {
+  void operator()(SSL* session) const noexcept {
+    SSL_free(session);
+  }
+};
+
+using ClientTlsContext = std::unique_ptr<SSL_CTX, SslContextDeleter>;
+using ClientTlsSession = std::unique_ptr<SSL, SslDeleter>;
+
+[[nodiscard]] std::filesystem::path tls_fixture(const char* name) {
+  return std::filesystem::path{CHRONOS_NETWORK_FIXTURE_DIR} / "tls" / name;
+}
+
+[[nodiscard]] TlsServerConfig epoll_tls_config() {
+  return {.certificate_chain_file = tls_fixture("server.pem").string(),
+          .private_key_file = tls_fixture("server-key.pem").string(),
+          .trust_store_file = tls_fixture("ca.pem").string()};
+}
+
+[[nodiscard]] ClientTlsContext create_client_tls_context() {
+  ClientTlsContext context{SSL_CTX_new(TLS_client_method())};
+  EXPECT_NE(context, nullptr);
+  if (!context)
+    return context;
+  EXPECT_EQ(SSL_CTX_set_min_proto_version(context.get(), TLS1_2_VERSION), 1);
+  SSL_CTX_set_verify(context.get(), SSL_VERIFY_PEER, nullptr);
+  EXPECT_EQ(SSL_CTX_load_verify_locations(context.get(), tls_fixture("ca.pem").c_str(), nullptr),
+            1);
+  EXPECT_EQ(SSL_CTX_use_certificate_chain_file(context.get(), tls_fixture("client.pem").c_str()),
+            1);
+  EXPECT_EQ(SSL_CTX_use_PrivateKey_file(context.get(), tls_fixture("client-key.pem").c_str(),
+                                        SSL_FILETYPE_PEM),
+            1);
+  EXPECT_EQ(SSL_CTX_check_private_key(context.get()), 1);
+  return context;
+}
+
+[[nodiscard]] ClientTlsSession create_client_tls_session(SSL_CTX* context, const int socket) {
+  ClientTlsSession session{SSL_new(context)};
+  EXPECT_NE(session, nullptr);
+  if (!session)
+    return session;
+  EXPECT_EQ(SSL_set_fd(session.get(), socket), 1);
+  SSL_set_connect_state(session.get());
+  return session;
+}
+
+void drive_tls_handshake(EpollReactor& reactor, SSL* client) {
+  bool client_complete = false;
+  for (std::size_t attempt = 0U; attempt < 1024U; ++attempt) {
+    if (!client_complete) {
+      const int result = SSL_do_handshake(client);
+      if (result == 1) {
+        client_complete = true;
+      } else {
+        const int error = SSL_get_error(client, result);
+        ASSERT_TRUE(error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE);
+      }
+    }
+    ASSERT_TRUE(reactor.poll_once(std::chrono::milliseconds{1}).is_ok());
+    if (client_complete && reactor.metrics().accepted_connections == 1U)
+      return;
+  }
+  FAIL() << "epoll mutual TLS handshake did not converge";
+}
+
+void tls_write_all(EpollReactor& reactor, SSL* client, const common::ByteView bytes) {
+  std::size_t offset{};
+  for (std::size_t attempt = 0U; attempt < 1024U && offset < bytes.size(); ++attempt) {
+    std::size_t written{};
+    const int result = SSL_write_ex(client, bytes.data() + offset, bytes.size() - offset, &written);
+    if (result == 1) {
+      offset += written;
+    } else {
+      const int error = SSL_get_error(client, result);
+      ASSERT_TRUE(error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE);
+    }
+    ASSERT_TRUE(reactor.poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  ASSERT_EQ(offset, bytes.size());
+}
+
+[[nodiscard]] std::vector<std::byte> tls_receive_available(EpollReactor& reactor, SSL* client) {
+  std::vector<std::byte> bytes;
+  std::array<std::byte, 4096U> buffer{};
+  for (std::size_t attempt = 0U; attempt < 1024U && bytes.empty(); ++attempt) {
+    const common::Status poll = reactor.poll_once(std::chrono::milliseconds{1});
+    if (!poll.is_ok()) {
+      ADD_FAILURE() << poll.to_string();
+      return bytes;
+    }
+    for (;;) {
+      std::size_t received{};
+      const int result = SSL_read_ex(client, buffer.data(), buffer.size(), &received);
+      if (result == 1) {
+        bytes.insert(bytes.end(), buffer.begin(),
+                     buffer.begin() + static_cast<std::ptrdiff_t>(received));
+        continue;
+      }
+      const int error = SSL_get_error(client, result);
+      EXPECT_TRUE(error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE);
+      break;
+    }
+  }
+  return bytes;
+}
+
+TEST(EpollReactorTest, MutualTlsAuthenticatesBeforeProtocolDispatch) {
+  SpscNetworkTaskQueue requests = SpscNetworkTaskQueue::create(4U).value();
+  SpscNetworkTaskQueue responses = SpscNetworkTaskQueue::create(4U).value();
+  TestAuthenticator authenticator;
+  EpollServerConfig config;
+  config.maximum_io_operations_per_event = 1U;
+  config.read_chunk_bytes = 17U;
+  config.security = {.mode = TransportSecurityMode::kTlsRequired,
+                     .authenticator = &authenticator,
+                     .tls = epoll_tls_config()};
+  EpollReactor reactor =
+      EpollReactor::start(config, {.requests = &requests, .responses = &responses}).value();
+  const int socket = connect_client(reactor.bound_port());
+  ASSERT_GE(socket, 0);
+  const int flags = ::fcntl(socket, F_GETFL, 0);
+  ASSERT_GE(flags, 0);
+  ASSERT_EQ(::fcntl(socket, F_SETFL, flags | O_NONBLOCK), 0);
+  ClientTlsContext client_context = create_client_tls_context();
+  ASSERT_NE(client_context, nullptr);
+  ClientTlsSession client = create_client_tls_session(client_context.get(), socket);
+  ASSERT_NE(client, nullptr);
+
+  drive_tls_handshake(reactor, client.get());
+  ASSERT_EQ(authenticator.calls, 1U);
+  EXPECT_TRUE(authenticator.last_request.transport_authenticated);
+  EXPECT_TRUE(authenticator.last_request.peer_certificate_sha256.has_value());
+  EXPECT_TRUE(requests.empty());
+
+  const auto hello_payload = encode_client_hello({}).value();
+  const auto hello =
+      encode_frame({.message_type = MessageType::kClientHello}, hello_payload).value();
+  tls_write_all(reactor, client.get(), hello);
+  const auto hello_response = decode_frame(tls_receive_available(reactor, client.get()));
+  ASSERT_TRUE(hello_response.has_value()) << hello_response.error().to_string();
+  EXPECT_EQ(hello_response->header.message_type, MessageType::kServerHello);
+
+  const auto query_payload = encode_query_request("SELECT 1").value();
+  const auto query =
+      encode_frame({.message_type = MessageType::kQueryRequest, .request_id = 1U}, query_payload)
+          .value();
+  tls_write_all(reactor, client.get(), query);
+  for (std::size_t attempt = 0U; attempt < 128U && requests.empty(); ++attempt)
+    ASSERT_TRUE(reactor.poll_once(std::chrono::milliseconds{1}).is_ok());
+  const auto dispatched = requests.try_pop();
+  ASSERT_TRUE(dispatched.has_value());
+  EXPECT_EQ(dispatched->principal_id, 77U);
+  EXPECT_EQ(dispatched->frame.header.message_type, MessageType::kQueryRequest);
+  EXPECT_GT(reactor.metrics().bytes_read, 0U);
+  EXPECT_GT(reactor.metrics().bytes_written, 0U);
+
+  client.reset();
+  ::close(socket);
+  EXPECT_TRUE(reactor.shutdown().is_ok());
 }
 
 TEST(EpollReactorTest, RealSocketsHandshakeDispatchRespondAndExposeQueueOverload) {

@@ -1,7 +1,5 @@
 #include "chronos/network/tls_socket.hpp"
 
-#include <cerrno>
-#include <limits>
 #include <new>
 #include <openssl/err.h>
 #include <openssl/evp.h>
@@ -41,8 +39,6 @@ namespace {
     return TlsIoResult{.state = TlsIoState::kClosed};
   if (error == SSL_ERROR_SYSCALL && result == 0)
     return TlsIoResult{.state = TlsIoState::kClosed};
-  if (error == SSL_ERROR_SYSCALL && (errno == EAGAIN || errno == EWOULDBLOCK))
-    return TlsIoResult{.state = TlsIoState::kWantRead};
   return common::make_unexpected(io_error(std::string(operation) + " failed"));
 }
 
@@ -202,6 +198,12 @@ common::Result<TlsIoResult> TlsSocket::write(const common::ByteView source) {
 
 bool TlsSocket::handshake_complete() const noexcept {
   return implementation_ && implementation_->peer_certificate_sha256_.has_value();
+}
+
+std::size_t TlsSocket::pending_plaintext_bytes() const noexcept {
+  if (!implementation_)
+    return 0U;
+  return static_cast<std::size_t>(SSL_pending(implementation_->session_));
 }
 
 common::Result<PeerCertificateSha256> TlsSocket::peer_certificate_sha256() const {

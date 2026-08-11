@@ -172,12 +172,20 @@ TEST(TlsSocketTest, MutualHandshakeCarriesVerifiedIdentityAndPlaintext) {
   std::size_t client_written{};
   ASSERT_EQ(SSL_write_ex(client.get(), request.data(), request.size(), &client_written), 1);
   ASSERT_EQ(client_written, request.size());
-  std::array<std::byte, 16> received{};
+  std::array<std::byte, 2> received{};
   auto read = server->read(received);
   ASSERT_TRUE(read.has_value()) << read.error().message();
   ASSERT_EQ(read->state, TlsIoState::kComplete);
-  EXPECT_TRUE(
-      std::ranges::equal(std::span{received}.first(read->bytes_transferred), std::span{request}));
+  EXPECT_EQ(read->bytes_transferred, received.size());
+  EXPECT_TRUE(std::ranges::equal(std::span{received}, std::span{request}.first(received.size())));
+  EXPECT_EQ(server->pending_plaintext_bytes(), request.size() - received.size());
+  std::array<std::byte, 16> remaining{};
+  read = server->read(remaining);
+  ASSERT_TRUE(read.has_value()) << read.error().message();
+  ASSERT_EQ(read->state, TlsIoState::kComplete);
+  EXPECT_TRUE(std::ranges::equal(std::span{remaining}.first(read->bytes_transferred),
+                                 std::span{request}.subspan(received.size())));
+  EXPECT_EQ(server->pending_plaintext_bytes(), 0U);
 
   constexpr std::array<std::byte, 2> response{std::byte{'o'}, std::byte{'k'}};
   auto write = server->write(response);

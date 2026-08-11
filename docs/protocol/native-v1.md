@@ -100,8 +100,11 @@ minor versions, header extensions, types, flags, or feature bits fail closed.
 
 CRC32C is accidental-corruption coverage, not authentication. A peer able to modify bytes can
 recompute it. The baseline permits plaintext only on IPv4 loopback and can attach an
-authenticator-issued principal before handshake. `TLS_REQUIRED` fails closed until a maintained TLS
-record backend is integrated; it never downgrades to plaintext.
+authenticator-issued principal before the native handshake. In epoll `TLS_REQUIRED` mode, OpenSSL
+must first verify the server-configured chain policy and client certificate; the application
+authenticator then maps the verified certificate SHA-256 fingerprint to a nonzero principal before
+any frame is decoded. The transport never downgrades to plaintext. io_uring TLS is explicitly
+unsupported.
 
 ## Handshake and request lifecycle
 

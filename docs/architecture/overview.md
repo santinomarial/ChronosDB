@@ -340,8 +340,11 @@ cryptography use maintained external libraries behind defined interfaces; Chrono
 implement cryptographic primitives.
 
 Under [ADR 0066](../adr/0066-authentication-and-tls-integration-boundary.md), plaintext is confined
-to loopback, a borrowed authenticator attaches stable principal identity to shard work, and
-`TLS_REQUIRED` fails startup until the maintained TLS backend exists.
+to loopback. Under [ADRs 0144](../adr/0144-maintained-mutual-tls-socket-carrier.md) and
+[0145](../adr/0145-bounded-epoll-mutual-tls-admission.md), the epoll backend performs nonblocking
+mutual TLS through OpenSSL, passes only a verified certificate fingerprint to the borrowed
+authenticator, and attaches its stable principal to shard work. The io_uring TLS path remains
+explicitly unsupported.
 
 ## Distribution foundations: tablets and Raft
 

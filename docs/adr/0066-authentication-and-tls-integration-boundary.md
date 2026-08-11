@@ -19,13 +19,16 @@ thread and attach a nonzero stable `principal_id`. Every dispatched request and 
 that identity to the shard. The default loopback development identity is anonymous zero; custom
 authenticators cannot claim an authorized zero identity.
 
-`TLS_REQUIRED` is explicit, but the epoll backend returns `NOT_SUPPORTED` at startup until a
-maintained TLS record/handshake backend is integrated. It never falls back to plaintext. Future
-providers may mark a peer transport-authenticated only after cryptographic verification.
+As completed by ADRs 0144 and 0145, `TLS_REQUIRED` uses the maintained OpenSSL carrier in the epoll
+backend and never falls back to plaintext. A peer is marked transport-authenticated only after
+chain and client-certificate verification; the certificate fingerprint is then mapped to the
+stable principal by the application authenticator. The io_uring backend remains explicitly
+unsupported for TLS until its separate record-completion design exists.
 
-Authentication rejection closes the descriptor before protocol allocation or handshake and
-increments a metric. The authenticator must outlive the reactor, is called only by its owner thread,
-and must implement any external synchronization itself.
+Authentication rejection closes the descriptor before native-protocol decoding and increments a
+metric. Plaintext loopback authorization runs at accept; TLS authorization runs after the bounded
+cryptographic handshake. The authenticator must outlive the reactor, is called only by its owner
+thread, and must implement any external synchronization itself.
 
 ## Alternatives considered
 
@@ -37,17 +40,19 @@ and must implement any external synchronization itself.
 
 ## Consequences
 
-Loopback development works now. Remote serving remains blocked until a maintained TLS integration is
-implemented and tested. Authorization above the stable principal remains an embedding responsibility.
+Loopback development and mutually authenticated remote epoll serving are supported. Authorization
+above the stable principal remains an embedding responsibility. io_uring TLS remains unavailable.
 
 ## Validation
 
-Portable tests cover loopback restriction, custom allow/deny and identity, and TLS fail-closed
-behavior. Linux real-socket coverage proves the principal crosses the bounded shard queue.
+Portable tests cover loopback restriction, custom allow/deny, certificate identity, mutual TLS,
+and fail-closed behavior. Linux real-socket coverage proves verified TLS identity crosses the
+bounded shard queue as the authorized principal.
 
 ## References
 
 - [ADR 0009](0009-network-reactor-strategy.md)
 - [ADR 0011](0011-dependency-and-build-versus-buy-policy.md)
+- [ADR 0144](0144-maintained-mutual-tls-socket-carrier.md)
+- [ADR 0145](0145-bounded-epoll-mutual-tls-admission.md)
 - [Native Protocol v1](../protocol/native-v1.md)
-

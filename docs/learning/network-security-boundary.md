@@ -3,7 +3,7 @@
 Loopback plaintext is a development mode, not TLS. The maintained OpenSSL carrier requires TLS 1.2
 or newer, an explicit server chain and key, an explicit trust store, and a verified client
 certificate. There is no fallback or opportunistic downgrade. Backend event-loop integration must
-still be present before that backend can claim remote TLS serving support.
+be explicit: epoll provides it; io_uring currently returns `NOT_SUPPORTED` for TLS.
 
 `ConnectionAuthenticator` is a borrowed synchronous callback invoked by the socket owner after
 transport verification. For TLS it receives the verified certificate SHA-256 fingerprint and maps

@@ -47,8 +47,9 @@ Phases 0 through 10 have reached their documented development boundaries. The cu
 contains the checksummed WAL and recovery path, append-only mutable and immutable columnar storage,
 manifest/checkpoint/compaction machinery, the explicitly supported SQL v1 and bounded vectorized
 execution surface, and Protocol v1 with a portable client/session layer plus the Linux `epoll`
-reactor. The networking layer is embeddable library code: plaintext is loopback-only and
-`TLS_REQUIRED` fails closed because no maintained TLS record backend is implemented. Published
+reactor. The networking layer is embeddable library code: plaintext is loopback-only, while epoll
+`TLS_REQUIRED` uses maintained OpenSSL mutual TLS and authorizes the verified client-certificate
+fingerprint before protocol decoding. io_uring TLS remains explicitly unsupported. Published
 measurements are reproducible subsystem baselines, not production capacity or service-level claims.
 See the [roadmap](docs/roadmap.md) and [Phase 10 exit review](docs/reviews/phase-10-network-review.md)
 for the exact implemented and deferred boundaries.

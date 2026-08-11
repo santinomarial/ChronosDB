@@ -67,6 +67,7 @@ public:
   [[nodiscard]] common::Result<TlsIoResult> read(common::MutableByteView destination);
   [[nodiscard]] common::Result<TlsIoResult> write(common::ByteView source);
   [[nodiscard]] bool handshake_complete() const noexcept;
+  [[nodiscard]] std::size_t pending_plaintext_bytes() const noexcept;
   [[nodiscard]] common::Result<PeerCertificateSha256> peer_certificate_sha256() const;
 
 private:

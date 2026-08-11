@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <limits>
 #include <new>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -47,10 +48,17 @@ public:
     int socket{-1};
     std::uint64_t id{};
     std::uint64_t principal_id{};
+    std::array<std::uint8_t, 4> peer_address{};
     ConnectionBuffers buffers;
     ServerConnectionState state;
+    std::optional<TlsSocket> tls;
     std::chrono::steady_clock::time_point accepted_at;
     std::chrono::steady_clock::time_point last_progress;
+    bool authenticated{};
+    bool handshake_wants_write{};
+    bool read_wants_write{};
+    bool write_wants_read{};
+    bool buffered_tls_plaintext{};
     bool close_after_write{};
   };
 
@@ -58,10 +66,11 @@ public:
   Impl(EpollServerConfig configured, SpscNetworkTaskQueue& request_queue,
        SpscNetworkTaskQueue& response_queue, int epoll_descriptor, int listener,
        int wake_descriptor, std::uint16_t actual_port, std::vector<epoll_event> events,
-       std::vector<std::byte> scratch) noexcept
+       std::vector<std::byte> scratch, std::optional<TlsServerContext> tls_server_context) noexcept
       : config(std::move(configured)), requests(&request_queue), responses(&response_queue),
         epoll_fd(epoll_descriptor), listen_fd(listener), wake_fd(wake_descriptor),
-        port(actual_port), events_(std::move(events)), scratch_(std::move(scratch)) {}
+        port(actual_port), events_(std::move(events)), scratch_(std::move(scratch)),
+        tls_context(std::move(tls_server_context)) {}
 
   ~Impl() {
     static_cast<void>(stop());
@@ -91,7 +100,10 @@ public:
   void update_interest(Connection& connection) {
     epoll_event event{};
     event.events = EPOLLIN | EPOLLRDHUP;
-    if (!connection.buffers.pending_write().empty())
+    const bool application_write_ready =
+        !connection.buffers.pending_write().empty() &&
+        (!connection.tls.has_value() || !connection.write_wants_read);
+    if (connection.handshake_wants_write || connection.read_wants_write || application_write_ready)
       event.events |= EPOLLOUT;
     event.data.fd = connection.socket;
     static_cast<void>(::epoll_ctl(epoll_fd, EPOLL_CTL_MOD, connection.socket, &event));
@@ -113,8 +125,8 @@ public:
     connection.state.close();
     connection.buffers.clear();
     static_cast<void>(::epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, nullptr));
-    ::close(fd);
     connections.erase(found);
+    ::close(fd);
     ++stats.closed_connections;
     if (timed_out)
       ++stats.timed_out_connections;
@@ -200,6 +212,50 @@ public:
     ++stats.dispatched_requests;
   }
 
+  [[nodiscard]] bool advance_tls_handshake(const int fd) {
+    auto found = connections.find(fd);
+    if (found == connections.end())
+      return false;
+    Connection& connection = found->second;
+    if (!connection.tls.has_value() || connection.authenticated)
+      return true;
+
+    auto progress = connection.tls->handshake();
+    if (!progress.has_value() || progress->state == TlsIoState::kClosed) {
+      ++stats.authentication_rejections;
+      close_connection(fd, false);
+      return false;
+    }
+    connection.handshake_wants_write = progress->state == TlsIoState::kWantWrite;
+    if (progress->state != TlsIoState::kComplete) {
+      update_interest(connection);
+      return false;
+    }
+    auto fingerprint = connection.tls->peer_certificate_sha256();
+    if (!fingerprint.has_value()) {
+      ++stats.authentication_rejections;
+      close_connection(fd, false);
+      return false;
+    }
+    auto authentication =
+        authenticate_peer(config.security, {.ipv4_address = connection.peer_address,
+                                            .transport_authenticated = true,
+                                            .peer_certificate_sha256 = *fingerprint});
+    if (!authentication.has_value() || !authentication->authorized) {
+      ++stats.authentication_rejections;
+      close_connection(fd, false);
+      return false;
+    }
+    connection.principal_id = authentication->principal_id;
+    connection.authenticated = true;
+    connection.handshake_wants_write = false;
+    connection.buffered_tls_plaintext = connection.tls->pending_plaintext_bytes() != 0U;
+    connection.last_progress = std::chrono::steady_clock::now();
+    ++stats.accepted_connections;
+    update_interest(connection);
+    return true;
+  }
+
   void accept_ready() {
     for (std::size_t accepted = 0U; accepted < config.maximum_io_operations_per_event; ++accepted) {
       sockaddr_in peer{};
@@ -229,17 +285,40 @@ public:
           static_cast<std::uint8_t>((peer_address >> 16U) & 0xffU),
           static_cast<std::uint8_t>((peer_address >> 8U) & 0xffU),
           static_cast<std::uint8_t>(peer_address & 0xffU)};
-      auto authentication = authenticate_peer(
-          config.security, {.ipv4_address = peer_bytes, .transport_authenticated = false});
-      if (!authentication.has_value() || !authentication->authorized) {
-        ++stats.authentication_rejections;
-        ::close(fd);
-        continue;
+      std::uint64_t principal_id{};
+      bool authenticated{};
+      std::optional<TlsSocket> tls;
+      if (config.security.mode == TransportSecurityMode::kTlsRequired) {
+        if (!tls_context.has_value()) {
+          ++stats.rejected_connections;
+          ::close(fd);
+          continue;
+        }
+        auto session = TlsSocket::accept(*tls_context, fd);
+        if (!session.has_value()) {
+          ++stats.rejected_connections;
+          ::close(fd);
+          continue;
+        }
+        tls.emplace(std::move(*session));
+      } else {
+        auto authentication =
+            authenticate_peer(config.security, {.ipv4_address = peer_bytes,
+                                                .transport_authenticated = false,
+                                                .peer_certificate_sha256 = std::nullopt});
+        if (!authentication.has_value() || !authentication->authorized) {
+          ++stats.authentication_rejections;
+          ::close(fd);
+          continue;
+        }
+        principal_id = authentication->principal_id;
+        authenticated = true;
       }
       auto buffers = ConnectionBuffers::create(config.buffers);
       auto state = ServerConnectionState::create(config.state);
       if (!buffers.has_value() || !state.has_value()) {
         ++stats.rejected_connections;
+        tls.reset();
         ::close(fd);
         continue;
       }
@@ -247,6 +326,7 @@ public:
       event.events = EPOLLIN | EPOLLRDHUP;
       event.data.fd = fd;
       if (::epoll_ctl(epoll_fd, EPOLL_CTL_ADD, fd, &event) != 0) {
+        tls.reset();
         ::close(fd);
         continue;
       }
@@ -254,18 +334,22 @@ public:
       try {
         connections.emplace(fd, Connection{.socket = fd,
                                            .id = next_connection_id++,
-                                           .principal_id = authentication->principal_id,
+                                           .principal_id = principal_id,
+                                           .peer_address = peer_bytes,
                                            .buffers = std::move(*buffers),
                                            .state = std::move(*state),
+                                           .tls = std::move(tls),
                                            .accepted_at = now,
-                                           .last_progress = now});
+                                           .last_progress = now,
+                                           .authenticated = authenticated});
       } catch (const std::bad_alloc&) {
         static_cast<void>(::epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, nullptr));
         ::close(fd);
         ++stats.rejected_connections;
         continue;
       }
-      ++stats.accepted_connections;
+      if (authenticated)
+        ++stats.accepted_connections;
       stats.active_connections = connections.size();
     }
   }
@@ -276,25 +360,46 @@ public:
       return;
     for (std::size_t operation = 0U; operation < config.maximum_io_operations_per_event;
          ++operation) {
-      const ssize_t count = ::recv(fd, scratch_.data(), scratch_.size(), 0);
-      if (count == 0) {
-        close_connection(fd, false);
-        return;
-      }
-      if (count < 0) {
-        if (errno == EAGAIN)
-          return;
-        close_connection(fd, false);
-        return;
-      }
       found = connections.find(fd);
       if (found == connections.end())
         return;
       Connection& connection = found->second;
+      std::size_t count{};
+      if (connection.tls.has_value()) {
+        auto received = connection.tls->read(common::MutableByteView{scratch_});
+        if (!received.has_value() || received->state == TlsIoState::kClosed) {
+          close_connection(fd, false);
+          return;
+        }
+        connection.buffered_tls_plaintext = connection.tls->pending_plaintext_bytes() != 0U;
+        connection.read_wants_write = received->state == TlsIoState::kWantWrite;
+        if (received->state != TlsIoState::kComplete) {
+          update_interest(connection);
+          return;
+        }
+        count = received->bytes_transferred;
+      } else {
+        const ssize_t received = ::recv(fd, scratch_.data(), scratch_.size(), 0);
+        if (received == 0) {
+          close_connection(fd, false);
+          return;
+        }
+        if (received < 0) {
+          if (errno == EAGAIN)
+            return;
+          close_connection(fd, false);
+          return;
+        }
+        count = static_cast<std::size_t>(received);
+      }
+      if (count == 0U) {
+        close_connection(fd, false);
+        return;
+      }
+      connection.read_wants_write = false;
       connection.last_progress = std::chrono::steady_clock::now();
-      stats.bytes_read += static_cast<std::uint64_t>(count);
-      auto frames = connection.buffers.receive(
-          common::ByteView{scratch_}.first(static_cast<std::size_t>(count)));
+      stats.bytes_read += count;
+      auto frames = connection.buffers.receive(common::ByteView{scratch_}.first(count));
       if (!frames.has_value()) {
         ++stats.protocol_errors;
         close_connection(fd, false);
@@ -307,8 +412,15 @@ public:
           return;
         dispatch_frame(found->second, std::move(frame));
       }
-      if (static_cast<std::size_t>(count) < scratch_.size())
+      found = connections.find(fd);
+      if (found == connections.end())
         return;
+      if (found->second.tls.has_value()) {
+        if (!found->second.buffered_tls_plaintext)
+          return;
+      } else if (count < scratch_.size()) {
+        return;
+      }
     }
   }
 
@@ -321,28 +433,93 @@ public:
                                      !connection.buffers.pending_write().empty();
          ++operation) {
       const common::ByteView pending = connection.buffers.pending_write();
-      const ssize_t count = ::send(fd, pending.data(), pending.size(), MSG_NOSIGNAL);
-      if (count < 0) {
-        if (errno == EAGAIN) {
+      std::size_t count{};
+      if (connection.tls.has_value()) {
+        auto written = connection.tls->write(pending);
+        if (!written.has_value() || written->state == TlsIoState::kClosed) {
+          close_connection(fd, false);
+          return;
+        }
+        connection.write_wants_read = written->state == TlsIoState::kWantRead;
+        if (written->state != TlsIoState::kComplete) {
           update_interest(connection);
           return;
         }
+        count = written->bytes_transferred;
+      } else {
+        const ssize_t written = ::send(fd, pending.data(), pending.size(), MSG_NOSIGNAL);
+        if (written < 0) {
+          if (errno == EAGAIN) {
+            update_interest(connection);
+            return;
+          }
+          close_connection(fd, false);
+          return;
+        }
+        count = static_cast<std::size_t>(written);
+      }
+      if (count == 0U) {
         close_connection(fd, false);
         return;
       }
-      if (count == 0) {
-        close_connection(fd, false);
-        return;
-      }
+      connection.write_wants_read = false;
       connection.last_progress = std::chrono::steady_clock::now();
-      stats.bytes_written += static_cast<std::uint64_t>(count);
-      static_cast<void>(connection.buffers.consume_written(static_cast<std::size_t>(count)));
+      stats.bytes_written += count;
+      static_cast<void>(connection.buffers.consume_written(count));
     }
-    if (connection.close_after_write) {
+    if (connection.close_after_write && connection.buffers.pending_write().empty()) {
       close_connection(fd, false);
       return;
     }
     update_interest(connection);
+  }
+
+  void service_ready(const int fd, const bool readable, const bool writable) {
+    auto found = connections.find(fd);
+    if (found == connections.end())
+      return;
+    if (found->second.tls.has_value() && !found->second.authenticated && !advance_tls_handshake(fd))
+      return;
+    found = connections.find(fd);
+    if (found == connections.end())
+      return;
+    bool write_attempted = false;
+    if (readable && found->second.write_wants_read) {
+      write_ready(fd);
+      write_attempted = true;
+    }
+    found = connections.find(fd);
+    if (found == connections.end())
+      return;
+    if (write_attempted && found->second.write_wants_read)
+      return;
+    if (found->second.buffered_tls_plaintext || readable ||
+        (writable && found->second.read_wants_write))
+      read_ready(fd);
+    found = connections.find(fd);
+    if (found == connections.end())
+      return;
+    if (found->second.read_wants_write)
+      return;
+    if (writable && !write_attempted)
+      write_ready(fd);
+  }
+
+  [[nodiscard]] bool drain_buffered_tls_plaintext() {
+    bool serviced = false;
+    std::size_t serviced_connections{};
+    for (auto iterator = connections.begin();
+         iterator != connections.end() && serviced_connections < config.maximum_events_per_poll;) {
+      const int fd = iterator->first;
+      const bool pending = iterator->second.buffered_tls_plaintext;
+      ++iterator;
+      if (!pending)
+        continue;
+      read_ready(fd);
+      serviced = true;
+      ++serviced_connections;
+    }
+    return serviced;
   }
 
   void drain_responses() {
@@ -432,6 +609,7 @@ public:
   std::uint16_t port{};
   std::vector<epoll_event> events_;
   std::vector<std::byte> scratch_;
+  std::optional<TlsServerContext> tls_context;
   std::unordered_map<int, Connection> connections;
   std::uint64_t next_connection_id{1U};
   EpollServerMetrics stats;
@@ -466,9 +644,13 @@ common::Result<EpollReactor> EpollReactor::start(const EpollServerConfig& config
           validate_network_security_config(config.security, config.bind_address);
       !status.is_ok())
     return common::make_unexpected(status);
-  if (config.security.mode == TransportSecurityMode::kTlsRequired)
-    return common::make_unexpected(common::Status{
-        common::StatusCode::kNotSupported, "epoll TLS readiness integration is unavailable"});
+  std::optional<TlsServerContext> tls_context;
+  if (config.security.mode == TransportSecurityMode::kTlsRequired) {
+    auto context = TlsServerContext::create(*config.security.tls);
+    if (!context.has_value())
+      return common::make_unexpected(context.error());
+    tls_context.emplace(std::move(*context));
+  }
   int epoll_fd = ::epoll_create1(EPOLL_CLOEXEC);
   if (epoll_fd < 0)
     return common::make_unexpected(io_error("epoll_create1 failed"));
@@ -528,7 +710,7 @@ common::Result<EpollReactor> EpollReactor::start(const EpollServerConfig& config
     auto implementation = std::make_unique<Impl>(
         config, *queues.requests, *queues.responses, epoll_fd, listener, wake_fd,
         ntohs(address.sin_port), std::vector<epoll_event>(config.maximum_events_per_poll),
-        std::vector<std::byte>(config.read_chunk_bytes));
+        std::vector<std::byte>(config.read_chunk_bytes), std::move(tls_context));
     implementation->connections.reserve(config.maximum_connections);
     return EpollReactor{std::move(implementation)};
   } catch (const std::bad_alloc&) {
@@ -553,9 +735,11 @@ common::Status EpollReactor::poll_once(const std::chrono::milliseconds maximum_w
   if (maximum_wait.count() < 0 || maximum_wait.count() > std::numeric_limits<int>::max())
     return invalid("epoll wait duration is invalid");
   implementation_->drain_responses();
-  const int ready = ::epoll_wait(implementation_->epoll_fd, implementation_->events_.data(),
-                                 static_cast<int>(implementation_->events_.size()),
-                                 static_cast<int>(maximum_wait.count()));
+  const bool serviced_buffered_tls = implementation_->drain_buffered_tls_plaintext();
+  const int ready =
+      ::epoll_wait(implementation_->epoll_fd, implementation_->events_.data(),
+                   static_cast<int>(implementation_->events_.size()),
+                   serviced_buffered_tls ? 0 : static_cast<int>(maximum_wait.count()));
   if (ready < 0 && errno != EINTR)
     return io_error("epoll_wait failed");
   for (int index = 0; index < std::max(ready, 0); ++index) {
@@ -569,10 +753,8 @@ common::Status EpollReactor::poll_once(const std::chrono::milliseconds maximum_w
       implementation_->drain_responses();
       continue;
     }
-    if ((event.events & EPOLLIN) != 0U)
-      implementation_->read_ready(event.data.fd);
-    if ((event.events & EPOLLOUT) != 0U)
-      implementation_->write_ready(event.data.fd);
+    implementation_->service_ready(event.data.fd, (event.events & EPOLLIN) != 0U,
+                                   (event.events & EPOLLOUT) != 0U);
     if ((event.events & (EPOLLERR | EPOLLHUP | EPOLLRDHUP)) != 0U)
       implementation_->close_connection(event.data.fd, false);
   }

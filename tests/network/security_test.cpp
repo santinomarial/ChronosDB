@@ -1,6 +1,7 @@
 #include "chronos/network/security.hpp"
 
 #include <gtest/gtest.h>
+#include <optional>
 
 namespace chronos::network {
 namespace {
@@ -25,33 +26,42 @@ TEST(NetworkSecurityTest, PlaintextIsRestrictedToLoopback) {
   NetworkSecurityConfig config;
   EXPECT_TRUE(validate_network_security_config(config, {127U, 0U, 0U, 1U}).is_ok());
   EXPECT_FALSE(validate_network_security_config(config, {0U, 0U, 0U, 0U}).is_ok());
-  EXPECT_TRUE(authenticate_peer(config, {.ipv4_address = {127U, 1U, 2U, 3U}}).has_value());
-  EXPECT_FALSE(authenticate_peer(config, {.ipv4_address = {10U, 0U, 0U, 1U}}).has_value());
+  EXPECT_TRUE(authenticate_peer(config, {.ipv4_address = {127U, 1U, 2U, 3U},
+                                         .peer_certificate_sha256 = std::nullopt})
+                  .has_value());
+  EXPECT_FALSE(authenticate_peer(config, {.ipv4_address = {10U, 0U, 0U, 1U},
+                                          .peer_certificate_sha256 = std::nullopt})
+                   .has_value());
 }
 
 TEST(NetworkSecurityTest, CustomAuthenticatorAttachesOnlyNonzeroAuthorizedPrincipal) {
   FixedAuthenticator allowed{{.authorized = true, .principal_id = 42U}};
-  NetworkSecurityConfig config{.authenticator = &allowed};
-  const auto result = authenticate_peer(config, {.ipv4_address = {127U, 0U, 0U, 1U}});
+  NetworkSecurityConfig config{.authenticator = &allowed, .tls = std::nullopt};
+  const auto result = authenticate_peer(
+      config, {.ipv4_address = {127U, 0U, 0U, 1U}, .peer_certificate_sha256 = std::nullopt});
   ASSERT_TRUE(result.has_value());
   EXPECT_EQ(result->principal_id, 42U);
   EXPECT_EQ(allowed.last_request.ipv4_address[0], 127U);
 
   FixedAuthenticator invalid_identity{{.authorized = true, .principal_id = 0U}};
   config.authenticator = &invalid_identity;
-  EXPECT_FALSE(authenticate_peer(config, {.ipv4_address = {127U, 0U, 0U, 1U}}).has_value());
+  EXPECT_FALSE(authenticate_peer(config, {.ipv4_address = {127U, 0U, 0U, 1U},
+                                          .peer_certificate_sha256 = std::nullopt})
+                   .has_value());
   FixedAuthenticator denied{{.authorized = false}};
   config.authenticator = &denied;
-  const auto rejection = authenticate_peer(config, {.ipv4_address = {127U, 0U, 0U, 1U}});
+  const auto rejection = authenticate_peer(
+      config, {.ipv4_address = {127U, 0U, 0U, 1U}, .peer_certificate_sha256 = std::nullopt});
   ASSERT_TRUE(rejection.has_value());
   EXPECT_FALSE(rejection->authorized);
 }
 
 TEST(NetworkSecurityTest, TlsRequiredFailsClosedWithoutCredentialsAndVerifiedIdentity) {
-  NetworkSecurityConfig config{.mode = TransportSecurityMode::kTlsRequired};
+  NetworkSecurityConfig config{.mode = TransportSecurityMode::kTlsRequired, .tls = std::nullopt};
   EXPECT_EQ(validate_network_security_config(config, {127U, 0U, 0U, 1U}).code(),
             common::StatusCode::kInvalidArgument);
-  const auto peer = authenticate_peer(config, {.ipv4_address = {127U, 0U, 0U, 1U}});
+  const auto peer = authenticate_peer(
+      config, {.ipv4_address = {127U, 0U, 0U, 1U}, .peer_certificate_sha256 = std::nullopt});
   ASSERT_FALSE(peer.has_value());
   EXPECT_EQ(peer.error().code(), common::StatusCode::kUnauthenticated);
 }

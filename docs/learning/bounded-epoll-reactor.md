@@ -8,8 +8,10 @@ returns `NOT_SUPPORTED`.
 
 One thread owns a reactor. It accepts sockets, performs nonblocking I/O, mutates connection state,
 changes readiness interest, drains responses, and expires deadlines. Each connection owns its
-buffers and state. Decoded `Frame` ownership crosses the request SPSC ring. A shard returns another
-owned frame; encoding copies it into bounded connection output storage.
+buffers, state, and optional OpenSSL session. The reactor-owned TLS context outlives the connection
+table, and a session is destroyed before its borrowed descriptor closes. Decoded `Frame` ownership
+crosses the request SPSC ring. A shard returns another owned frame; encoding copies it into bounded
+connection output storage.
 After publishing a response, the shard signals a coalescing `eventfd`, so an owner blocked in
 `epoll_wait` does not wait for its timeout. The queue release/acquire pair publishes data; eventfd
 publishes only readiness.
@@ -18,7 +20,7 @@ Connection IDs, not file descriptors, authenticate returned work. IDs increase w
 Disconnect erases state and bytes, so later responses have no destination and are dropped.
 
 ```text
-accept -> bounded connection
+accept -> bounded connection -> optional mutual TLS -> principal authorization
 EPOLLIN -> checked frames -> state transition -> request ring
 response ring -> active identity/type/payload check -> bounded output -> EPOLLOUT
 deadline/EOF/error -> detach -> clear -> close
@@ -28,6 +30,11 @@ Reads continue until would-block or a short read. Data accompanying half-close i
 then performs disconnect cleanup. Writes retain immutable encoded bytes plus a monotonic offset.
 Accepted sockets use `TCP_NODELAY`: adjacent result and terminal frames remain separately owned,
 and the terminal must not wait for a delayed-ACK/Nagle interaction after the preceding short write.
+TLS `WANT_READ`/`WANT_WRITE` states change epoll interest without blocking. The owner repeats
+cross-direction operations with the same scratch or immutable pending-write buffer before other
+record work. Decrypted bytes retained inside OpenSSL are marked explicitly and drained through a
+bounded pre-poll pass, because they cannot rely on another kernel readiness edge. No decrypted frame
+reaches the decoder before certificate verification and principal authorization.
 
 ## Bounds and failures
 
@@ -42,8 +49,9 @@ Detachment is unconditional: identities are removed and late results dropped.
 
 The Linux hostile suite uses real loopback sockets for slow partial hello, admission saturation,
 explicit cancellation, simultaneous data/half-close, 128 descriptor-reuse cycles, a blocked poll
-wakeup, and an 8 MiB result with a constrained receive window. The last case proves partial writes
-retain exact bytes and preserve `QUERY_RESULT` before `QUERY_END`.
+wakeup, an authenticated TLS hello/query exchange, and an 8 MiB result with a constrained receive
+window. The last case proves partial writes retain exact bytes and preserve `QUERY_RESULT` before
+`QUERY_END`.
 
 ## Complexity
 

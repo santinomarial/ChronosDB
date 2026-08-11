@@ -49,9 +49,9 @@ thread, and the context must outlive every session created from it.
 `chronos_network` now privately links OpenSSL Crypto and SSL, while its public ABI remains free of
 OpenSSL types. TLS credentials are owning strings in the copied server configuration; the
 application authenticator remains borrowed and must outlive the reactor. The socket carrier is
-usable independently and is the only accepted transport-authentication source. Reactor event-loop
-integration and backend-specific readiness scheduling are separate follow-up work; until integrated,
-no backend may claim remote TLS serving support.
+usable independently and is the only accepted transport-authentication source. ADR 0145 integrates
+its readiness states into epoll. Other backends may not claim TLS serving support until they provide
+their own tested record scheduling.
 
 ## Affected invariants
 
@@ -74,13 +74,14 @@ moving new connections to it; existing sessions retain their original context an
 
 ## Unresolved questions
 
-Epoll readiness integration, io_uring record scheduling, credential reload orchestration, revocation
-policy, response write deadlines, and disconnect retry ownership remain.
+io_uring record scheduling, credential reload orchestration, revocation policy, response write
+deadlines, and disconnect retry ownership remain.
 
 ## References
 
 - [ADR 0009](0009-network-reactor-strategy.md)
 - [ADR 0064](0064-bounded-linux-epoll-reactor.md)
 - [ADR 0066](0066-authentication-and-tls-integration-boundary.md)
+- [ADR 0145](0145-bounded-epoll-mutual-tls-admission.md)
 - [OpenSSL dependency record](../dependencies/openssl.md)
 - [Architecture invariants](../architecture/invariants.md)

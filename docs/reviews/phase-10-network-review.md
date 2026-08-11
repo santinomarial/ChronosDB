@@ -1,5 +1,9 @@
 # Phase 10 Native Network Exit Review
 
+This is the Phase 10 exit snapshot. Phase 16 follow-up under ADRs 0144 and 0145 subsequently added
+the maintained mutual-TLS carrier and epoll integration; historical deferrals below are retained as
+the evidence boundary reviewed at Phase 10 exit.
+
 ## Decision
 
 **PASS WITH DOCUMENTED NONBLOCKING RISKS**
