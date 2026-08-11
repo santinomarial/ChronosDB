@@ -15,6 +15,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <optional>
 #include <set>
 #include <utility>
@@ -86,6 +87,28 @@ inline constexpr std::uint32_t kKnownExchangeFlags = kTerminalFlag | kMinimumFla
 
 [[nodiscard]] common::Status corruption(const char* message) {
   return common::Status{common::StatusCode::kCorruption, message};
+}
+
+[[nodiscard]] bool same_float_bits(const double left, const double right) noexcept {
+  return std::bit_cast<std::uint64_t>(left) == std::bit_cast<std::uint64_t>(right);
+}
+
+[[nodiscard]] bool same_optional_float_bits(const std::optional<double>& left,
+                                            const std::optional<double>& right) noexcept {
+  return left.has_value() == right.has_value() &&
+         (!left.has_value() || same_float_bits(*left, *right));
+}
+
+[[nodiscard]] bool same_exchange_message(const ExchangeMessage& left,
+                                         const ExchangeMessage& right) noexcept {
+  return left.query_id == right.query_id && left.tablet_id == right.tablet_id &&
+         left.sequence == right.sequence && left.terminal == right.terminal &&
+         left.partial.count == right.partial.count &&
+         same_float_bits(left.partial.sum, right.partial.sum) &&
+         same_optional_float_bits(left.partial.minimum, right.partial.minimum) &&
+         same_optional_float_bits(left.partial.maximum, right.partial.maximum) &&
+         same_float_bits(left.partial.mean, right.partial.mean) &&
+         same_float_bits(left.partial.m2, right.partial.m2);
 }
 
 } // namespace
@@ -504,13 +527,21 @@ std::size_t BoundedExchange::queued_messages() const noexcept {
 
 class DistributedAggregateCoordinator::Impl {
 public:
-  explicit Impl(DistributedAggregatePlan value) : plan(std::move(value)) {
+  struct FragmentProgress {
+    std::vector<ExchangeMessage> messages;
+    MergeableAggregateState merged;
+    bool terminal{};
+  };
+
+  Impl(DistributedAggregatePlan value, DistributedCoordinatorLimits configured)
+      : plan(std::move(value)), limits(configured) {
     for (const auto& fragment : plan.fragments)
-      expected.insert(fragment.tablet_id);
+      fragments.emplace(fragment.tablet_id, FragmentProgress{});
   }
   DistributedAggregatePlan plan;
-  std::set<schema::TabletId> expected;
-  std::map<schema::TabletId, MergeableAggregateState> completed;
+  DistributedCoordinatorLimits limits;
+  std::map<schema::TabletId, FragmentProgress> fragments;
+  std::size_t retained_messages{};
   std::optional<common::Status> failure;
 };
 
@@ -525,9 +556,16 @@ DistributedAggregateCoordinator::operator=(DistributedAggregateCoordinator&&) no
 
 common::Result<DistributedAggregateCoordinator>
 DistributedAggregateCoordinator::create(DistributedAggregatePlan plan,
-                                        std::vector<DistributedReadAdmission> admissions) {
+                                        std::vector<DistributedReadAdmission> admissions,
+                                        const DistributedCoordinatorLimits limits) {
   if (plan.query_id.is_nil()) {
     return common::make_unexpected(invalid("distributed coordinator query identity is invalid"));
+  }
+  if (limits.maximum_messages_per_fragment == 0U ||
+      limits.maximum_messages_per_fragment > limits.maximum_total_messages ||
+      limits.maximum_total_messages > kMaximumDistributedCoordinatorMessages ||
+      limits.maximum_total_messages < plan.fragments.size()) {
+    return common::make_unexpected(invalid("distributed coordinator limits are invalid"));
   }
   const common::Status policy_status = validate_read_policy(plan.read_policy);
   if (!policy_status.is_ok())
@@ -536,16 +574,21 @@ DistributedAggregateCoordinator::create(DistributedAggregatePlan plan,
     return common::make_unexpected(
         invalid("distributed coordinator requires one read admission per fragment"));
   }
-  std::set<schema::TabletId> admitted;
-  for (const DistributedReadAdmission& admission : admissions) {
-    if (!admitted.insert(admission.tablet_id).second) {
-      return common::make_unexpected(invalid("distributed read admission is duplicated"));
+  try {
+    std::set<schema::TabletId> admitted;
+    for (const DistributedReadAdmission& admission : admissions) {
+      if (!admitted.insert(admission.tablet_id).second) {
+        return common::make_unexpected(invalid("distributed read admission is duplicated"));
+      }
+      const common::Status validated = validate_distributed_read_admission(plan, admission);
+      if (!validated.is_ok())
+        return common::make_unexpected(validated);
     }
-    const common::Status validated = validate_distributed_read_admission(plan, admission);
-    if (!validated.is_ok())
-      return common::make_unexpected(validated);
+    return DistributedAggregateCoordinator{std::make_unique<Impl>(std::move(plan), limits)};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                  "distributed coordinator allocation failed"});
   }
-  return DistributedAggregateCoordinator{std::make_unique<Impl>(std::move(plan))};
 }
 
 common::Status DistributedAggregateCoordinator::accept(const ExchangeMessage& message) {
@@ -554,22 +597,56 @@ common::Status DistributedAggregateCoordinator::accept(const ExchangeMessage& me
   const common::Status validation = validate_exchange_message(message);
   if (!validation.is_ok())
     return validation;
-  if (message.query_id != impl_->plan.query_id || !message.terminal ||
-      !impl_->expected.contains(message.tablet_id)) {
-    return invalid("distributed fragment result is not an expected terminal message");
+  auto fragment = impl_->fragments.find(message.tablet_id);
+  if (message.query_id != impl_->plan.query_id || fragment == impl_->fragments.end())
+    return invalid("distributed fragment result does not belong to the plan");
+
+  Impl::FragmentProgress& progress = fragment->second;
+  if (message.sequence <= progress.messages.size()) {
+    const ExchangeMessage& retained = progress.messages[message.sequence - 1U];
+    return same_exchange_message(message, retained)
+               ? common::Status::ok()
+               : common::Status{common::StatusCode::kAlreadyExists,
+                                "distributed fragment sequence conflicts with retained state"};
   }
-  if (!impl_->completed.emplace(message.tablet_id, message.partial).second) {
-    return common::Status{common::StatusCode::kAlreadyExists,
-                          "distributed fragment result is duplicated"};
+  if (progress.terminal)
+    return invalid("distributed fragment emitted after its terminal message");
+  if (message.sequence != progress.messages.size() + 1U) {
+    return common::Status{common::StatusCode::kUnavailable,
+                          "distributed fragment sequence has a gap"};
   }
+  if (progress.messages.size() == impl_->limits.maximum_messages_per_fragment ||
+      impl_->retained_messages == impl_->limits.maximum_total_messages) {
+    return common::Status{common::StatusCode::kResourceExhausted,
+                          "distributed coordinator message history is exhausted"};
+  }
+
+  MergeableAggregateState merged = progress.merged;
+  const common::Status merge_status = merged.merge(message.partial);
+  if (!merge_status.is_ok())
+    return merge_status;
+  try {
+    progress.messages.push_back(message);
+  } catch (const std::bad_alloc&) {
+    return common::Status{common::StatusCode::kResourceExhausted,
+                          "distributed coordinator message retention allocation failed"};
+  }
+  progress.merged = std::move(merged);
+  progress.terminal = message.terminal;
+  ++impl_->retained_messages;
   return common::Status::ok();
 }
 
 common::Status DistributedAggregateCoordinator::worker_failed(const schema::TabletId& tablet_id,
                                                               common::Status failure) {
-  if (!impl_->expected.contains(tablet_id) || failure.is_ok()) {
+  const auto fragment = impl_->fragments.find(tablet_id);
+  if (fragment == impl_->fragments.end() || failure.is_ok()) {
     return invalid("distributed worker failure is invalid or belongs to another plan");
   }
+  if (fragment->second.terminal)
+    return common::Status::ok();
+  if (impl_->failure.has_value())
+    return *impl_->failure;
   impl_->failure = std::move(failure);
   return common::Status::ok();
 }
@@ -577,14 +654,14 @@ common::Status DistributedAggregateCoordinator::worker_failed(const schema::Tabl
 common::Result<MergeableAggregateState> DistributedAggregateCoordinator::finish() const {
   if (impl_->failure.has_value())
     return common::make_unexpected(*impl_->failure);
-  if (impl_->completed.size() != impl_->expected.size()) {
-    return common::make_unexpected(common::Status{common::StatusCode::kUnavailable,
-                                                  "distributed query has incomplete fragments"});
-  }
   MergeableAggregateState merged;
-  for (const auto& [tablet, partial] : impl_->completed) {
+  for (const auto& [tablet, progress] : impl_->fragments) {
     static_cast<void>(tablet);
-    const common::Status status = merged.merge(partial);
+    if (!progress.terminal) {
+      return common::make_unexpected(common::Status{common::StatusCode::kUnavailable,
+                                                    "distributed query has incomplete fragments"});
+    }
+    const common::Status status = merged.merge(progress.merged);
     if (!status.is_ok())
       return common::make_unexpected(status);
   }

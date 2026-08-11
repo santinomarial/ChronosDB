@@ -124,9 +124,77 @@ TEST(DistributedQueryTest, BackpressureCancellationAndWorkerFailureFailClosed) {
                   ->worker_failed(tablet(2U),
                                   common::Status{common::StatusCode::kUnavailable, "worker lost"})
                   .is_ok());
+  EXPECT_EQ(coordinator
+                ->worker_failed(tablet(2U),
+                                common::Status{common::StatusCode::kInternal, "later failure"})
+                .code(),
+            common::StatusCode::kUnavailable);
   const auto result = coordinator->finish();
   ASSERT_FALSE(result.has_value());
   EXPECT_EQ(result.error().code(), common::StatusCode::kUnavailable);
+}
+
+TEST(DistributedQueryTest, CoordinatorEnforcesSequenceDeduplicationAndTerminalOwnership) {
+  const common::Uuid query_id = uuid(1U);
+  auto plan = plan_distributed_aggregation(query_id, {{tablet(2U), 0, 1, 1U, 1U}}, {});
+  ASSERT_TRUE(plan.has_value());
+  auto coordinator = DistributedAggregateCoordinator::create(*plan, linearizable_admissions(*plan));
+  ASSERT_TRUE(coordinator.has_value());
+
+  MergeableAggregateState first;
+  ASSERT_TRUE(first.add(1.0).is_ok());
+  MergeableAggregateState second;
+  ASSERT_TRUE(second.add(3.0).is_ok());
+  const ExchangeMessage first_message{query_id, tablet(2U), 1U, first, false};
+  const ExchangeMessage terminal_message{query_id, tablet(2U), 2U, second, true};
+
+  EXPECT_EQ(coordinator->accept(terminal_message).code(), common::StatusCode::kUnavailable);
+  EXPECT_EQ(coordinator->finish().error().code(), common::StatusCode::kUnavailable);
+  EXPECT_TRUE(coordinator->accept(first_message).is_ok());
+  EXPECT_TRUE(coordinator->accept(first_message).is_ok());
+
+  ExchangeMessage conflict = first_message;
+  conflict.partial = second;
+  EXPECT_EQ(coordinator->accept(conflict).code(), common::StatusCode::kAlreadyExists);
+  EXPECT_TRUE(coordinator->accept(terminal_message).is_ok());
+  EXPECT_TRUE(coordinator->accept(terminal_message).is_ok());
+
+  ExchangeMessage after_terminal = terminal_message;
+  after_terminal.sequence = 3U;
+  EXPECT_EQ(coordinator->accept(after_terminal).code(), common::StatusCode::kInvalidArgument);
+  EXPECT_TRUE(coordinator
+                  ->worker_failed(tablet(2U),
+                                  common::Status{common::StatusCode::kUnavailable, "socket lost"})
+                  .is_ok());
+  const auto result = coordinator->finish();
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->count, 2U);
+  EXPECT_DOUBLE_EQ(result->sum, 4.0);
+  EXPECT_DOUBLE_EQ(*result->minimum, 1.0);
+  EXPECT_DOUBLE_EQ(*result->maximum, 3.0);
+}
+
+TEST(DistributedQueryTest, CoordinatorEnforcesFiniteRetryHistory) {
+  const common::Uuid query_id = uuid(1U);
+  auto plan = plan_distributed_aggregation(query_id, {{tablet(2U), 0, 1, 1U, 1U}}, {});
+  ASSERT_TRUE(plan.has_value());
+  const auto admissions = linearizable_admissions(*plan);
+  EXPECT_EQ(DistributedAggregateCoordinator::create(
+                *plan, admissions,
+                DistributedCoordinatorLimits{1U, kMaximumDistributedCoordinatorMessages + 1U})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+
+  auto coordinator = DistributedAggregateCoordinator::create(*plan, admissions,
+                                                             DistributedCoordinatorLimits{1U, 1U});
+  ASSERT_TRUE(coordinator.has_value());
+  MergeableAggregateState partial;
+  ASSERT_TRUE(partial.add(1.0).is_ok());
+  EXPECT_TRUE(coordinator->accept({query_id, tablet(2U), 1U, partial, false}).is_ok());
+  EXPECT_EQ(coordinator->accept({query_id, tablet(2U), 2U, partial, true}).code(),
+            common::StatusCode::kResourceExhausted);
+  EXPECT_EQ(coordinator->finish().error().code(), common::StatusCode::kUnavailable);
 }
 
 TEST(DistributedQueryTest, ExchangeFrameHasFrozenLayoutAndRoundTripsAggregateBits) {

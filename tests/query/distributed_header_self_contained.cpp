@@ -9,4 +9,6 @@ namespace {
 [[maybe_unused]] const auto kConsumeExchangeFrame = &chronos::query::ExchangeFrameReader::consume;
 [[maybe_unused]] auto* const kCreateExchangeWriteCursor =
     &chronos::query::ExchangeFrameWriteCursor::create;
+[[maybe_unused]] auto* const kCreateDistributedCoordinator =
+    &chronos::query::DistributedAggregateCoordinator::create;
 } // namespace

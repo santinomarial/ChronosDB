@@ -640,6 +640,8 @@ int main() {
   const auto decode_exchange_message = &chronos::query::decode_exchange_message_exact;
   const auto consume_exchange_frame = &chronos::query::ExchangeFrameReader::consume;
   const auto create_exchange_write_cursor = &chronos::query::ExchangeFrameWriteCursor::create;
+  const auto create_distributed_coordinator =
+      &chronos::query::DistributedAggregateCoordinator::create;
   using ExplainFunction = chronos::query::SqlResult<std::string> (*)(
       const chronos::query::BoundSqlSelect&);
   const ExplainFunction explain_select = &chronos::query::explain_sql_v1_select;
@@ -888,6 +890,7 @@ int main() {
                  chronos::query::kMaximumSqlV1Sources == 64U && aggregate_query != nullptr &&
                  encode_exchange_message != nullptr && decode_exchange_message != nullptr &&
                  consume_exchange_frame != nullptr && create_exchange_write_cursor != nullptr &&
+                 create_distributed_coordinator != nullptr &&
                  bind_select != nullptr && bind_create != nullptr && bind_insert != nullptr &&
                  materialize_insert != nullptr &&
                  evaluate_expression != nullptr &&

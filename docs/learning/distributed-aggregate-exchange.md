@@ -10,6 +10,8 @@ the same state invariants before retaining a message.
 `ExchangeFrameReader` composes exact decoding with fragmented/coalesced stream input. Each call
 reports how much of the caller's view belongs to one frame. `ExchangeFrameWriteCursor` owns one
 encoded frame and exposes the remaining suffix after each checked short-write acknowledgement.
+`DistributedAggregateCoordinator` retains a finite per-tablet retry history, enforces contiguous
+sequence order, and merges only accepted messages into terminal tablet state.
 
 ## Data, ownership, and invariants
 
@@ -24,6 +26,8 @@ that owner lives. Exact decoding does not retain the input view. The current in-
 mutex-protected MPMC state; the codec itself has no shared state and needs no synchronization.
 The reader is a noncopyable, nonmovable connection-owned state machine. The write cursor is
 move-only, and moving it makes the source complete so only the destination can continue output.
+The coordinator is single-owner and unsynchronized. Its history owns message values until the
+coordinator is destroyed, making exact retry decisions independent of carrier-buffer lifetime.
 
 ## Failure behavior and complexity
 
@@ -35,6 +39,8 @@ Encoding and decoding are `O(1)` because the frame is fixed at 128 bytes, use co
 perform no successful-path heap allocation. Across arbitrary fragments, the reader is `O(total
 bytes)` and retains exactly one frame; cursor advancement is `O(1)`. The bounded exchange still
 charges its in-memory `ExchangeMessage` representation, not the wire length.
+Coordinator sequence lookup is `O(1)` within one tablet, retained memory is `O(accepted messages)`
+under a 65,536-message hard ceiling, and final merge is `O(planned tablets)`.
 
 ## Tradeoffs and deferred work
 
@@ -51,6 +57,10 @@ beyond the checksum gate. Carrier tests enumerate every two-part split, coalesce
 failure, short writes, invalid advances, and move ownership. Sanitizer and installed-consumer checks
 cover runtime safety and public header/link visibility.
 
+Coordinator tests reject gaps and conflicts without mutation, accept bit-exact retries, close on
+terminal state, preserve the first failure, ignore post-terminal worker loss, and exhaust finite
+history explicitly.
+
 **Why require positive zero for empty state?** Arithmetic equality is too weak for canonical bytes:
 positive and negative zero compare equal but have different IEEE-754 representations.
 
@@ -60,3 +70,7 @@ count/mean/M2 retains population variance semantics without replaying individual
 **Why is sequence not enforced by the codec?** The codec proves that a sequence exists and is
 nonzero. Ordering, deduplication, and retry windows depend on connection/coordinator lifecycle and
 belong to the carrier protocol.
+
+**Why retain full messages instead of only the last sequence?** A delayed retry can name any
+already-accepted sequence. Retaining bounded full values distinguishes a true retry from a
+conflicting reuse without trusting hashes or accepting collision risk.

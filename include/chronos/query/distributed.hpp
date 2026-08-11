@@ -205,6 +205,15 @@ private:
   std::unique_ptr<Impl> impl_;
 };
 
+inline constexpr std::size_t kMaximumDistributedCoordinatorMessages = 65'536U;
+
+struct DistributedCoordinatorLimits {
+  std::size_t maximum_messages_per_fragment{1024U};
+  std::size_t maximum_total_messages{kMaximumDistributedCoordinatorMessages};
+};
+
+// Single-owner coordinator state machine. The owner must serialize accept, worker_failed, and
+// finish; retained messages provide a bounded exact retry window until coordinator destruction.
 class DistributedAggregateCoordinator {
 public:
   DistributedAggregateCoordinator() = delete;
@@ -215,7 +224,8 @@ public:
   DistributedAggregateCoordinator& operator=(DistributedAggregateCoordinator&&) noexcept;
 
   [[nodiscard]] static common::Result<DistributedAggregateCoordinator>
-  create(DistributedAggregatePlan plan, std::vector<DistributedReadAdmission> admissions);
+  create(DistributedAggregatePlan plan, std::vector<DistributedReadAdmission> admissions,
+         DistributedCoordinatorLimits limits = {});
   [[nodiscard]] common::Status accept(const ExchangeMessage& message);
   [[nodiscard]] common::Status worker_failed(const schema::TabletId& tablet_id,
                                              common::Status failure);

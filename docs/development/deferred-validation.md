@@ -133,10 +133,11 @@
 
 - The canonical fixed-width ungrouped aggregate exchange frame, exact codec, aligned in-memory
   state admission, and constant-storage fragmented/coalesced read plus short-write ownership are
-  implemented. General coordinator/worker physical fragments for existing vector plans,
-  projection/filter/scan serialization, socket integration and connection backpressure,
-  grouping-state codecs, sequence/deduplication policy, ordering, top-N, LIMIT, cancellation,
-  retries, and coordinator/worker failure cleanup remain.
+  implemented. Contiguous per-tablet sequence admission, bounded bit-exact retry history, terminal
+  closure, and first-failure arbitration are also implemented. General coordinator/worker physical
+  fragments for existing vector plans, projection/filter/scan serialization, socket integration and
+  connection backpressure, grouping-state codecs, reconnect/resend protocol, ordering, top-N,
+  LIMIT, cancellation, durable retries, and broader coordinator/worker failure cleanup remain.
 - Carry the implemented proof-bound leader-linearizable/bounded-stale/local-eventual admissions
   through tablet-to-group identity, production routing, compatible pinned multi-tablet snapshots,
   routing/placement epochs, protocol bytes, and leader changes during long scans.

@@ -214,7 +214,7 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   interfaces, validation-before-allocation, ownership, failure behavior, and verification strategy.
 - [Distributed aggregate exchange](learning/distributed-aggregate-exchange.md): canonical aggregate
   frame ownership, validation order, merge-state invariants, failure behavior, and deferred carrier
-  responsibilities.
+  responsibilities, plus bounded partial I/O and exact coordinator retry sequencing.
 - [Native protocol request lifecycle](learning/native-protocol-request-lifecycle.md): negotiated
   limits, bounded active requests, monotonic identities, cancellation, and durability-explicit
   acknowledgements.

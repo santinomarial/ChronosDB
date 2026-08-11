@@ -197,3 +197,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0160](0160-authority-bound-temporal-retirement-recovery.md) | Authority-bound temporal retirement recovery | accepted |
 | [0161](0161-canonical-distributed-aggregate-exchange-frame.md) | Canonical distributed aggregate exchange frame | accepted |
 | [0162](0162-bounded-distributed-exchange-partial-io.md) | Bounded distributed exchange partial I/O | accepted |
+| [0163](0163-bounded-distributed-fragment-sequencing.md) | Bounded distributed fragment sequencing | accepted |

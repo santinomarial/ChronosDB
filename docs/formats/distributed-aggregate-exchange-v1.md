@@ -48,3 +48,12 @@ becomes permanently failed after a decode error. The write cursor owns one encod
 only its unwritten suffix, and rejects an acknowledged byte count larger than that suffix before
 changing state. These carriers assign portable partial-I/O ownership but do not define a socket,
 queue, retry window, or connection protocol.
+
+## Coordinator sequence semantics
+
+Within one query/tablet pair, sequences start at 1 and are contiguous. The terminal flag closes the
+tablet stream after its message is accepted. The coordinator retains a bounded history and accepts
+a duplicate sequence only when every message field and floating-point bit is identical to the
+retained message. A conflicting duplicate, sequence gap, or post-terminal new message never changes
+aggregate state. These are coordinator semantics around v1 bytes; the codec only validates that an
+individual sequence is nonzero.
