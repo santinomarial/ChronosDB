@@ -387,7 +387,9 @@ separate checksummed Cold Location Manifest v1 now binds object keys and a deplo
 to exact Manifest v2 part bytes without changing frozen Manifest v2 fields. Its dedicated locked
 storage owner installs immutable add-only generations through complete readback, file sync,
 no-replace rename, and directory sync, then recovers only the highest consecutive generation and
-fails rather than pairing it with a different Manifest v2 generation.
+fails rather than pairing it with a different Manifest v2 generation. The tiered publication owner
+release-publishes one compatible base/cold shared epoch, so concurrent and held readers retain an
+old or new complete pair. Cross-directory crash commit and deletion authorization remain separate.
 
 ## Accepted direction and deferred design
 

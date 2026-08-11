@@ -251,7 +251,7 @@ TEST(ColdLocationManifestStorageTest, InstallsIdempotentlyAndRecoversHighestBoun
     auto selected = storage->load_selected(*base6);
     ASSERT_TRUE(selected.has_value()) << selected.error().to_string();
     ASSERT_TRUE(selected->has_value());
-    EXPECT_EQ((*selected)->manifest.generation(), 2U);
+    EXPECT_EQ((*selected)->manifest().generation(), 2U);
     EXPECT_EQ(storage->metrics().install_attempts, 3U);
     EXPECT_EQ(storage->metrics().installed_generations, 2U);
     EXPECT_EQ(storage->metrics().file_syncs, 2U);
@@ -263,7 +263,7 @@ TEST(ColdLocationManifestStorageTest, InstallsIdempotentlyAndRecoversHighestBoun
   auto selected = reopened->load_selected(*base6);
   ASSERT_TRUE(selected.has_value()) << selected.error().to_string();
   ASSERT_TRUE(selected->has_value());
-  EXPECT_EQ((*selected)->manifest.generation(), 2U);
+  EXPECT_EQ((*selected)->manifest().generation(), 2U);
   EXPECT_EQ(reopened->load_selected(*base5).error().code(), common::StatusCode::kUnavailable);
 }
 

@@ -14,7 +14,8 @@ The important public operations are:
 - validate its database, generation, part length, and SHA-256 against one decoded Manifest v2;
 - validate an add-only cold successor;
 - install generation one or the exact next generation; and
-- recover the highest consecutive generation only when it binds to the supplied Manifest v2.
+- recover the highest consecutive generation only when it binds to the supplied Manifest v2; and
+- release-publish one compatible Manifest-v2/cold shared epoch for readers.
 
 ## Data structures and invariants
 
@@ -33,6 +34,12 @@ its base generation backward.
 `ColdLocationManifestStorage` is move-only, single-threaded, and owns one directory descriptor plus
 its advisory `LOCK` for its complete lifetime. The deployment must prevent out-of-band mutation.
 Decoded loaded values own their key strings and encoded bytes; they do not borrow a caller buffer.
+
+`TieredDatabaseStoragePublisher` is a separate single-writer owner. It completely initializes one
+immutable epoch containing an owning temporal Manifest snapshot and optional loaded cold owner,
+then release-stores the shared epoch. Readers acquire-load exactly that pointer. The synchronization
+edge exposes all initialized fields, while shared ownership retains the old complete pair until its
+last reader exits. No epoch field mutates after publication, and lock-free progress is not claimed.
 
 Installation ordering is deliberately conservative:
 
@@ -56,9 +63,9 @@ Selection reads the highest final generation and never searches lower generation
 checksum, identity, or binding failure. This prevents silent metadata rollback.
 
 An empty directory means no cold authority and therefore local-only operation. A valid cold
-generation does not itself make a local file deletable. Query publication must atomically pin a
-compatible Manifest-v2/cold pair; later reclamation must wait for every older reader and verify the
-remaining source before unlinking anything.
+generation does not itself make a local file deletable. The tiered publisher now atomically pins a
+compatible Manifest-v2/cold pair in memory; later cross-directory crash commit and reclamation must
+wait for every older reader and verify the remaining source before unlinking anything.
 
 ## Complexity and tradeoffs
 
@@ -75,7 +82,8 @@ to configuration mapping.
 
 Focused tests exercise canonical round trips, every truncation, hostile versions and checksums,
 binding mismatches, exclusive locks, idempotent installation, restart selection, temporary cleanup,
-add-only rejection, corrupt-highest no-fallback behavior, and injected directory-sync poisoning.
+add-only rejection, corrupt-highest no-fallback behavior, injected directory-sync poisoning,
+concurrent old/new pair acquisition, and predecessor-owner retention.
 
 Useful design questions include:
 

@@ -44,10 +44,27 @@ struct InstalledColdLocationManifest {
   bool already_present{false};
 };
 
-struct LoadedColdLocationManifest {
-  std::string file_name;
-  DecodedColdLocationManifest manifest;
-  std::vector<std::byte> encoded_bytes;
+class LoadedColdLocationManifest {
+public:
+  LoadedColdLocationManifest() = delete;
+  LoadedColdLocationManifest(const LoadedColdLocationManifest&) = delete;
+  LoadedColdLocationManifest& operator=(const LoadedColdLocationManifest&) = delete;
+  LoadedColdLocationManifest(LoadedColdLocationManifest&&) noexcept = default;
+  LoadedColdLocationManifest& operator=(LoadedColdLocationManifest&&) noexcept = default;
+
+  [[nodiscard]] const std::string& file_name() const noexcept;
+  [[nodiscard]] const DecodedColdLocationManifest& manifest() const noexcept;
+  [[nodiscard]] common::ByteView encoded_bytes() const noexcept;
+
+private:
+  LoadedColdLocationManifest(std::string file_name, DecodedColdLocationManifest manifest,
+                             std::vector<std::byte> encoded_bytes) noexcept;
+
+  std::string file_name_;
+  DecodedColdLocationManifest manifest_;
+  std::vector<std::byte> encoded_bytes_;
+
+  friend class ColdLocationManifestStorage;
 };
 
 struct ColdLocationManifestStorageMetrics {

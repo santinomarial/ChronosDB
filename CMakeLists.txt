@@ -605,6 +605,7 @@ add_library(
   src/tiering/cold_manifest.cpp
   src/tiering/cold_manifest_storage.cpp
   src/tiering/object_store.cpp
+  src/tiering/tiered_publication.cpp
   src/tiering/tiered_parts.cpp
 )
 add_library(chronos::tiering ALIAS chronos_tiering)
@@ -927,6 +928,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/tiering/cold_manifest_test.cpp
     tests/tiering/object_store_header_self_contained.cpp
     tests/tiering/object_store_test.cpp
+    tests/tiering/tiered_publication_header_self_contained.cpp
+    tests/tiering/tiered_publication_test.cpp
     tests/tiering/tiered_parts_header_self_contained.cpp
     tests/tiering/tiered_parts_test.cpp
   )

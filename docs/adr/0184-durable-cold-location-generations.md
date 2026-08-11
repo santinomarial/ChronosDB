@@ -34,8 +34,9 @@ binds it to the caller's exact Manifest v2 value. It never falls back to a lower
 corruption, an unsupported version, an identity mismatch, or a base-generation mismatch. Retrying
 an already durable generation succeeds only when its bytes match exactly.
 
-This boundary does not publish a query-visible pair and does not authorize local or remote deletion.
-Those require an aggregate publication/pin owner and an explicit reclamation proof.
+This boundary does not itself publish a query-visible pair and does not authorize local or remote
+deletion. [ADR 0185](0185-atomic-tiered-storage-publication.md) now owns the in-memory aggregate
+publication/pin boundary; durable cross-directory commit and reclamation proofs remain separate.
 
 ## Consequences and validation
 

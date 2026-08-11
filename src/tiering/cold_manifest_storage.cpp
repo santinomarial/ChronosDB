@@ -237,6 +237,24 @@ common::Result<std::string> cold_location_manifest_file_name(const std::uint64_t
   return result;
 }
 
+LoadedColdLocationManifest::LoadedColdLocationManifest(
+    std::string file_name, DecodedColdLocationManifest manifest,
+    std::vector<std::byte> encoded_bytes) noexcept
+    : file_name_(std::move(file_name)), manifest_(std::move(manifest)),
+      encoded_bytes_(std::move(encoded_bytes)) {}
+
+const std::string& LoadedColdLocationManifest::file_name() const noexcept {
+  return file_name_;
+}
+
+const DecodedColdLocationManifest& LoadedColdLocationManifest::manifest() const noexcept {
+  return manifest_;
+}
+
+common::ByteView LoadedColdLocationManifest::encoded_bytes() const noexcept {
+  return encoded_bytes_;
+}
+
 common::Result<ColdLocationManifestStorage>
 ColdLocationManifestStorage::open(ColdLocationManifestStorageConfig config, const bool create_lock,
                                   io::detail::PosixSyscalls& syscalls) {
@@ -314,9 +332,9 @@ common::Result<InstalledColdLocationManifest> ColdLocationManifestStorage::insta
     auto existing = impl.load_generation(candidate->generation(), &base_manifest);
     if (!existing.has_value())
       return impl.fail(existing.error());
-    if (!std::ranges::equal(existing->encoded_bytes, encoded.bytes()))
+    if (!std::ranges::equal(existing->encoded_bytes(), encoded.bytes()))
       return impl.fail(corruption("cold manifest generation already has different durable bytes"));
-    return InstalledColdLocationManifest{.file_name = existing->file_name,
+    return InstalledColdLocationManifest{.file_name = existing->file_name(),
                                          .generation = candidate->generation(),
                                          .base_manifest_generation =
                                              candidate->base_manifest_generation(),
@@ -333,7 +351,7 @@ common::Result<InstalledColdLocationManifest> ColdLocationManifestStorage::insta
     auto predecessor = impl.load_generation(generations->back(), nullptr);
     if (!predecessor.has_value())
       return impl.fail(with_context("load cold manifest predecessor", predecessor.error()));
-    validation = validate_cold_location_manifest_transition(predecessor->manifest, *candidate);
+    validation = validate_cold_location_manifest_transition(predecessor->manifest(), *candidate);
     if (!validation.is_ok())
       return impl.fail(with_context("validate cold manifest successor", validation));
   }

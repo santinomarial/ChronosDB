@@ -154,8 +154,10 @@ Manifest v1/v2 bytes remain unchanged. A subsequent Cold Location Manifest v1 co
 object keys and deployment store identity to exact Manifest v2 part length/SHA-256 without trusting
 listings. A dedicated locked storage owner now exact-readback installs synchronized immutable
 add-only generations and recovers the highest consecutive generation without fallback, always
-binding it to an exact Manifest v2 value. Credential refresh/provider policy, automatic retry/backoff,
-multipart upload, aggregate cold/base publication, safe deletion, CSEG pre-upload validator
+binding it to an exact Manifest v2 value. One release/acquire tiered publication now exposes and
+retains a complete compatible Manifest-v2/cold pair to concurrent readers. Credential refresh/provider
+policy, automatic retry/backoff, multipart upload, cross-directory crash commit, safe deletion,
+CSEG pre-upload validator
 connection, cache concurrency, and Arrow/Parquet import/export remain incomplete.
 
 ## End-to-end integration state
@@ -206,7 +208,7 @@ Focused executions passed:
 - `chronos_live_tests`: 10 tests;
 - `chronos_query_tests --gtest_filter=TemporalSnapshotTest.*:DistributedQueryTest.*`: 4 tests;
 - `chronos_raft_tests`: 12 tests after metadata integration and final hostile-input audit fixes;
-- `chronos_tiering_tests`: 11 tests;
+- `chronos_tiering_tests`: 14 tests;
 - `chronos_network_tests`: 31 tests, including the backend-selection test;
 - `chronos_runtime_tests`: 1 test; and
 - `chronos_feature_smoke_tests`: 1 test.

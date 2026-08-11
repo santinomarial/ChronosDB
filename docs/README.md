@@ -365,6 +365,7 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   NULL, numeric, ownership, cancellation, and canonical-output behavior.
 - [Durable cold-location manifests](learning/cold-location-manifest-storage.md): implemented
   checksummed object-location authority, exact Manifest v2 binding, add-only installation,
-  restart selection, failure poisoning, and lifecycle boundaries.
+  restart selection, atomic pair publication, reader-pin lifetime, failure poisoning, and lifecycle
+  boundaries.
 
 Future format, protocol, subsystem, operations, and learning documents should be linked here when they are added by their corresponding roadmap phase.
