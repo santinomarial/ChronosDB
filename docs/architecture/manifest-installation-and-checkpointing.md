@@ -20,6 +20,12 @@ only a selected v2 predecessor. Highest-generation v2 startup selection now bind
 owners and retained schemas and validates every part without fallback; v1-to-v2 migration, v2
 application replay/publication, and temporal retention or compaction remain separate work.
 
+`TemporalDatabaseStoragePublisher` now release-publishes one already-durable, fully validated v2
+successor through a single shared owner. Readers acquire one immutable generation, so held readers
+retain their predecessor while later readers see the complete successor. A transition failure after
+durable installation fails the live publisher closed and defers selection to restart recovery.
+Temporal head/application epoch composition remains separate.
+
 ## Safety objective
 
 At every process-crash point, recovery selects either the previous complete manifest generation or
