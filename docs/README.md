@@ -73,7 +73,7 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   session-bound terminal receipt state installed durably before crash-safe descending chunk removal.
 - [Distributed Aggregate Exchange v1](formats/distributed-aggregate-exchange-v1.md): fixed-width,
   versioned, CRC-protected worker/coordinator ungrouped aggregate state with exact identity,
-  sequence, extrema-presence, and IEEE-754 preservation.
+  sequence, extrema-presence, IEEE-754 preservation, and bounded partial-I/O ownership.
 - [Resume Token v1](formats/resume-token-v1.md): authenticated live-subscription resume identity,
   compatibility, limits, and rejection rules.
 - [Materialized View Checkpoint v1](formats/materialized-view-checkpoint-v1.md): bounded exact

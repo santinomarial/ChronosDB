@@ -1,6 +1,7 @@
 # Distributed Aggregate Exchange v1
 
-> **Status:** accepted with implemented canonical owned encoding and exact borrowed decoding.
+> **Status:** accepted with implemented canonical owned encoding, exact borrowed decoding, and
+> bounded constant-storage partial-I/O carriers.
 
 This fixed-width frame carries one mergeable ungrouped aggregate state from a tablet worker to its
 coordinator. All integers are unsigned little-endian. UUID fields use the canonical UUID byte order;
@@ -38,3 +39,12 @@ aggregate state is corruption. Invalid values supplied to the encoder are invali
 CRC32C is an accidental-corruption boundary, not authentication. An authenticated transport and
 query admission remain independently required. This frame does not serialize a physical plan,
 grouping state, ordering state, cancellation, or retry policy.
+
+## Stream ownership
+
+The incremental reader retains at most one 128-byte frame, reports the exact input prefix it
+consumed, and leaves any coalesced suffix with its caller. It emits only complete valid frames and
+becomes permanently failed after a decode error. The write cursor owns one encoded frame, exposes
+only its unwritten suffix, and rejects an acknowledged byte count larger than that suffix before
+changing state. These carriers assign portable partial-I/O ownership but do not define a socket,
+queue, retry window, or connection protocol.

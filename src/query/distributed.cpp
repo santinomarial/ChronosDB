@@ -228,6 +228,79 @@ common::Result<ExchangeMessage> decode_exchange_message_exact(const common::Byte
   return message;
 }
 
+common::Result<ExchangeFrameReadStep> ExchangeFrameReader::consume(const common::ByteView bytes) {
+  if (failure_.has_value())
+    return common::make_unexpected(*failure_);
+  const std::size_t consumed =
+      std::min(bytes.size(), distributed_format::kExchangeMessageLength - buffered_bytes_);
+  std::ranges::copy(bytes.first(consumed),
+                    bytes_.begin() + static_cast<std::ptrdiff_t>(buffered_bytes_));
+  buffered_bytes_ += consumed;
+  if (buffered_bytes_ != distributed_format::kExchangeMessageLength)
+    return ExchangeFrameReadStep{.consumed_bytes = consumed};
+
+  common::Result<ExchangeMessage> decoded = decode_exchange_message_exact(bytes_);
+  if (!decoded.has_value()) {
+    failure_ = decoded.error();
+    return common::make_unexpected(*failure_);
+  }
+  buffered_bytes_ = 0U;
+  return ExchangeFrameReadStep{.consumed_bytes = consumed, .message = std::move(*decoded)};
+}
+
+std::size_t ExchangeFrameReader::buffered_bytes() const noexcept {
+  return buffered_bytes_;
+}
+
+bool ExchangeFrameReader::failed() const noexcept {
+  return failure_.has_value();
+}
+
+ExchangeFrameWriteCursor::ExchangeFrameWriteCursor(EncodedExchangeMessage encoded) noexcept
+    : encoded_(std::move(encoded)) {}
+
+ExchangeFrameWriteCursor::ExchangeFrameWriteCursor(ExchangeFrameWriteCursor&& other) noexcept
+    : encoded_(std::move(other.encoded_)),
+      written_bytes_(
+          std::exchange(other.written_bytes_, distributed_format::kExchangeMessageLength)) {}
+
+ExchangeFrameWriteCursor&
+ExchangeFrameWriteCursor::operator=(ExchangeFrameWriteCursor&& other) noexcept {
+  if (this != &other) {
+    encoded_ = std::move(other.encoded_);
+    written_bytes_ =
+        std::exchange(other.written_bytes_, distributed_format::kExchangeMessageLength);
+  }
+  return *this;
+}
+
+common::Result<ExchangeFrameWriteCursor>
+ExchangeFrameWriteCursor::create(const ExchangeMessage& message) {
+  common::Result<EncodedExchangeMessage> encoded = encode_exchange_message(message);
+  if (!encoded.has_value())
+    return common::make_unexpected(encoded.error());
+  return ExchangeFrameWriteCursor{std::move(*encoded)};
+}
+
+common::ByteView ExchangeFrameWriteCursor::pending_write() const noexcept {
+  return encoded_.bytes().subspan(written_bytes_);
+}
+
+common::Status ExchangeFrameWriteCursor::consume_written(const std::size_t bytes) noexcept {
+  if (bytes > distributed_format::kExchangeMessageLength - written_bytes_)
+    return invalid("written byte count exceeds the distributed exchange frame");
+  written_bytes_ += bytes;
+  return common::Status::ok();
+}
+
+std::size_t ExchangeFrameWriteCursor::written_bytes() const noexcept {
+  return written_bytes_;
+}
+
+bool ExchangeFrameWriteCursor::complete() const noexcept {
+  return written_bytes_ == distributed_format::kExchangeMessageLength;
+}
+
 common::Result<DistributedAggregatePlan> plan_distributed_aggregation(
     const common::Uuid query_id, const std::vector<DistributedTablet>& tablets,
     const DistributedEventTimePredicate& predicate, const DistributedReadConsistency consistency,

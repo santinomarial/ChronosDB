@@ -125,6 +125,55 @@ private:
 encode_exchange_message(const ExchangeMessage& message);
 [[nodiscard]] common::Result<ExchangeMessage> decode_exchange_message_exact(common::ByteView bytes);
 
+struct ExchangeFrameReadStep {
+  std::size_t consumed_bytes{};
+  std::optional<ExchangeMessage> message;
+};
+
+// Constant-storage stream decoder. One call consumes at most the bytes needed for one frame, so a
+// caller can retain and resubmit any coalesced suffix. A decode failure is sticky.
+class ExchangeFrameReader {
+public:
+  ExchangeFrameReader() = default;
+  ExchangeFrameReader(const ExchangeFrameReader&) = delete;
+  ExchangeFrameReader& operator=(const ExchangeFrameReader&) = delete;
+  ExchangeFrameReader(ExchangeFrameReader&&) = delete;
+  ExchangeFrameReader& operator=(ExchangeFrameReader&&) = delete;
+
+  [[nodiscard]] common::Result<ExchangeFrameReadStep> consume(common::ByteView bytes);
+  [[nodiscard]] std::size_t buffered_bytes() const noexcept;
+  [[nodiscard]] bool failed() const noexcept;
+
+private:
+  std::array<std::byte, distributed_format::kExchangeMessageLength> bytes_{};
+  std::size_t buffered_bytes_{};
+  std::optional<common::Status> failure_;
+};
+
+// Owns one encoded frame and exposes only its unwritten suffix. Short-write acknowledgement is
+// checked before cursor mutation.
+class ExchangeFrameWriteCursor {
+public:
+  ExchangeFrameWriteCursor() = delete;
+  ExchangeFrameWriteCursor(const ExchangeFrameWriteCursor&) = delete;
+  ExchangeFrameWriteCursor& operator=(const ExchangeFrameWriteCursor&) = delete;
+  ExchangeFrameWriteCursor(ExchangeFrameWriteCursor&& other) noexcept;
+  ExchangeFrameWriteCursor& operator=(ExchangeFrameWriteCursor&& other) noexcept;
+
+  [[nodiscard]] static common::Result<ExchangeFrameWriteCursor>
+  create(const ExchangeMessage& message);
+  [[nodiscard]] common::ByteView pending_write() const noexcept;
+  [[nodiscard]] common::Status consume_written(std::size_t bytes) noexcept;
+  [[nodiscard]] std::size_t written_bytes() const noexcept;
+  [[nodiscard]] bool complete() const noexcept;
+
+private:
+  explicit ExchangeFrameWriteCursor(EncodedExchangeMessage encoded) noexcept;
+
+  EncodedExchangeMessage encoded_;
+  std::size_t written_bytes_{};
+};
+
 struct ExchangeLimits {
   std::size_t maximum_messages{1024U};
   std::size_t maximum_bytes{4U * 1024U * 1024U};

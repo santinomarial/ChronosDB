@@ -7,6 +7,10 @@ coordinator frame. `decode_exchange_message_exact` validates one borrowed exact 
 value-owned state. `BoundedExchange::push` and `DistributedAggregateCoordinator::accept` enforce
 the same state invariants before retaining a message.
 
+`ExchangeFrameReader` composes exact decoding with fragmented/coalesced stream input. Each call
+reports how much of the caller's view belongs to one frame. `ExchangeFrameWriteCursor` owns one
+encoded frame and exposes the remaining suffix after each checked short-write acknowledgement.
+
 ## Data, ownership, and invariants
 
 The frame names both query and tablet and includes a nonzero per-tablet sequence. Its aggregate is
@@ -18,6 +22,8 @@ same arithmetic value but produce different bytes.
 `EncodedExchangeMessage` owns a `std::array<std::byte, 128>`. Its byte view remains valid only while
 that owner lives. Exact decoding does not retain the input view. The current in-memory exchange is
 mutex-protected MPMC state; the codec itself has no shared state and needs no synchronization.
+The reader is a noncopyable, nonmovable connection-owned state machine. The write cursor is
+move-only, and moving it makes the source complete so only the destination can continue output.
 
 ## Failure behavior and complexity
 
@@ -26,8 +32,9 @@ return `NOT_SUPPORTED`; damaged or contradictory bytes return `CORRUPTION`; inva
 returns `INVALID_ARGUMENT`. Transport authentication is separate from CRC integrity.
 
 Encoding and decoding are `O(1)` because the frame is fixed at 128 bytes, use constant storage, and
-perform no successful-path heap allocation. The bounded exchange still charges its in-memory
-`ExchangeMessage` representation, not the wire length.
+perform no successful-path heap allocation. Across arbitrary fragments, the reader is `O(total
+bytes)` and retains exactly one frame; cursor advancement is `O(1)`. The bounded exchange still
+charges its in-memory `ExchangeMessage` representation, not the wire length.
 
 ## Tradeoffs and deferred work
 
@@ -40,8 +47,9 @@ and multi-tablet snapshot compatibility require their own bounded contracts.
 
 The golden-layout test reads every field independently and freezes one whole-frame CRC. Corruption
 tests rewrite CRC where needed so reserved, version, and canonical-state validation are exercised
-beyond the checksum gate. Sanitizer and installed-consumer checks cover runtime safety and public
-header/link visibility.
+beyond the checksum gate. Carrier tests enumerate every two-part split, coalesced frames, sticky
+failure, short writes, invalid advances, and move ownership. Sanitizer and installed-consumer checks
+cover runtime safety and public header/link visibility.
 
 **Why require positive zero for empty state?** Arithmetic equality is too weak for canonical bytes:
 positive and negative zero compare equal but have different IEEE-754 representations.

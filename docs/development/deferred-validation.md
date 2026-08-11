@@ -131,9 +131,10 @@
 
 ## Phase 16 — distributed query and rebalancing
 
-- The canonical fixed-width ungrouped aggregate exchange frame, exact codec, and aligned in-memory
-  state admission are implemented. General coordinator/worker physical fragments for existing
-  vector plans, projection/filter/scan serialization, bounded partial message I/O carriers,
+- The canonical fixed-width ungrouped aggregate exchange frame, exact codec, aligned in-memory
+  state admission, and constant-storage fragmented/coalesced read plus short-write ownership are
+  implemented. General coordinator/worker physical fragments for existing vector plans,
+  projection/filter/scan serialization, socket integration and connection backpressure,
   grouping-state codecs, sequence/deduplication policy, ordering, top-N, LIMIT, cancellation,
   retries, and coordinator/worker failure cleanup remain.
 - Carry the implemented proof-bound leader-linearizable/bounded-stale/local-eventual admissions

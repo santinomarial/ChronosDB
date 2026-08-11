@@ -259,6 +259,109 @@ TEST(DistributedQueryTest, ExchangeBoundariesRejectInconsistentAggregateState) {
             common::StatusCode::kInvalidArgument);
 }
 
+TEST(DistributedQueryTest, ExchangeFrameReaderHandlesEverySplitAndCoalescedFrames) {
+  const ExchangeMessage first_message{
+      .query_id = uuid(1U),
+      .tablet_id = tablet(2U),
+      .sequence = 3U,
+      .partial = {.count = 1U, .sum = 4.0, .minimum = 4.0, .maximum = 4.0, .mean = 4.0},
+      .terminal = false};
+  ExchangeMessage second_message = first_message;
+  second_message.sequence = 4U;
+  second_message.terminal = true;
+  const auto first_encoded = encode_exchange_message(first_message);
+  const auto second_encoded = encode_exchange_message(second_message);
+  ASSERT_TRUE(first_encoded.has_value());
+  ASSERT_TRUE(second_encoded.has_value());
+
+  for (std::size_t split = 0U; split <= first_encoded->bytes().size(); ++split) {
+    ExchangeFrameReader reader;
+    const auto prefix = reader.consume(first_encoded->bytes().first(split));
+    ASSERT_TRUE(prefix.has_value()) << "split=" << split;
+    EXPECT_EQ(prefix->consumed_bytes, split) << "split=" << split;
+    EXPECT_EQ(prefix->message.has_value(), split == first_encoded->bytes().size())
+        << "split=" << split;
+    const auto suffix = reader.consume(first_encoded->bytes().subspan(split));
+    ASSERT_TRUE(suffix.has_value()) << "split=" << split;
+    EXPECT_EQ(suffix->consumed_bytes, first_encoded->bytes().size() - split) << "split=" << split;
+    const ExchangeMessage* decoded =
+        prefix->message.has_value() ? &*prefix->message : &*suffix->message;
+    EXPECT_EQ(decoded->sequence, first_message.sequence) << "split=" << split;
+    EXPECT_EQ(reader.buffered_bytes(), 0U);
+  }
+
+  std::vector<std::byte> coalesced(first_encoded->bytes().begin(), first_encoded->bytes().end());
+  coalesced.insert(coalesced.end(), second_encoded->bytes().begin(), second_encoded->bytes().end());
+  ExchangeFrameReader reader;
+  const auto first = reader.consume(coalesced);
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(first->message.has_value());
+  EXPECT_EQ(first->consumed_bytes, distributed_format::kExchangeMessageLength);
+  EXPECT_EQ(first->message->sequence, first_message.sequence);
+  const auto second = reader.consume(common::ByteView{coalesced}.subspan(first->consumed_bytes));
+  ASSERT_TRUE(second.has_value());
+  ASSERT_TRUE(second->message.has_value());
+  EXPECT_EQ(second->message->sequence, second_message.sequence);
+  EXPECT_TRUE(second->message->terminal);
+}
+
+TEST(DistributedQueryTest, ExchangeFrameReaderFailureIsSticky) {
+  const ExchangeMessage message{.query_id = uuid(1U),
+                                .tablet_id = tablet(2U),
+                                .sequence = 3U,
+                                .partial = {},
+                                .terminal = true};
+  const auto encoded = encode_exchange_message(message);
+  ASSERT_TRUE(encoded.has_value());
+  ExchangeBytes corrupt = copy_encoded(*encoded);
+  corrupt[64U] ^= std::byte{1U};
+
+  ExchangeFrameReader reader;
+  const auto rejected = reader.consume(corrupt);
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kCorruption);
+  EXPECT_TRUE(reader.failed());
+  EXPECT_EQ(reader.buffered_bytes(), distributed_format::kExchangeMessageLength);
+  const auto retry = reader.consume(encoded->bytes());
+  ASSERT_FALSE(retry.has_value());
+  EXPECT_EQ(retry.error().code(), rejected.error().code());
+  EXPECT_EQ(retry.error().message(), rejected.error().message());
+}
+
+TEST(DistributedQueryTest, ExchangeFrameWriteCursorOwnsAndAdvancesExactSuffix) {
+  const ExchangeMessage message{.query_id = uuid(1U),
+                                .tablet_id = tablet(2U),
+                                .sequence = 3U,
+                                .partial = {},
+                                .terminal = true};
+  const auto expected = encode_exchange_message(message);
+  ASSERT_TRUE(expected.has_value());
+  auto cursor = ExchangeFrameWriteCursor::create(message);
+  ASSERT_TRUE(cursor.has_value());
+  EXPECT_TRUE(std::ranges::equal(cursor->pending_write(), expected->bytes()));
+  EXPECT_FALSE(cursor->complete());
+
+  ASSERT_TRUE(cursor->consume_written(17U).is_ok());
+  EXPECT_EQ(cursor->written_bytes(), 17U);
+  EXPECT_TRUE(std::ranges::equal(cursor->pending_write(), expected->bytes().subspan(17U)));
+  EXPECT_EQ(cursor->consume_written(cursor->pending_write().size() + 1U).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(cursor->written_bytes(), 17U);
+  ExchangeFrameWriteCursor moved = std::move(*cursor);
+  EXPECT_TRUE(cursor->complete());
+  EXPECT_TRUE(cursor->pending_write().empty());
+  EXPECT_EQ(moved.written_bytes(), 17U);
+  ASSERT_TRUE(moved.consume_written(moved.pending_write().size()).is_ok());
+  EXPECT_TRUE(moved.complete());
+  EXPECT_TRUE(moved.pending_write().empty());
+  EXPECT_TRUE(moved.consume_written(0U).is_ok());
+
+  ExchangeMessage invalid_message = message;
+  invalid_message.sequence = 0U;
+  EXPECT_EQ(ExchangeFrameWriteCursor::create(invalid_message).error().code(),
+            common::StatusCode::kInvalidArgument);
+}
+
 TEST(DistributedQueryTest, EnforcesExplicitReadConsistencyEvidencePerFragment) {
   const common::Uuid query_id = uuid(5U);
   const DistributedTablet fragment{tablet(6U), 0, 99, 7U, 95U, 100U};
