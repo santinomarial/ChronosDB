@@ -83,6 +83,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   Manifest v2 snapshot before these bytes can be emitted.
   Worker execution reproves local authority, loads generation-pinned validated temporal parts, and
   resolves logical winners before producing one terminal partial aggregate.
+  Multi-tablet binding owns one acquire-loaded Manifest v2 epoch and constructs every planned
+  dispatch in exact plan order, preventing mixed database generations before transport begins.
 - [Distributed Query Transport v1](formats/distributed-query-transport-v1.md): bounded checksummed
   cluster request/response frames with exact route/result correlation and authenticated
   principal-to-source authorization before worker dispatch, plus fixed-storage partial readers,

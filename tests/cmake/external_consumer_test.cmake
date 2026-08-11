@@ -156,12 +156,15 @@ int main() {
       &chronos::cluster::DistributedQueryRequestReader::consume;
   const auto create_distributed_query_sender =
       &chronos::cluster::DistributedQuerySender::create;
+  const auto bind_compatible_distributed_snapshot =
+      &chronos::query::bind_compatible_distributed_aggregate_snapshot;
   const auto reclaim_physical_receipt =
       &chronos::cluster::reclaim_tablet_physical_part_receipt;
   (void)encode_distributed_query_request;
   (void)decode_distributed_query_response;
   (void)consume_distributed_query_request;
   (void)create_distributed_query_sender;
+  (void)bind_compatible_distributed_snapshot;
   const auto build_source_retirement =
       &chronos::manifest::build_raft_tablet_source_retirement_manifest;
   const auto publish_source_retirement =

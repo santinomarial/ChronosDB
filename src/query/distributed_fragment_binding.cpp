@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <new>
 #include <ranges>
+#include <set>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -153,6 +154,98 @@ bind_distributed_aggregate_fragment(const DistributedAggregateFragmentBinding& b
   } catch (const std::length_error&) {
     return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
                                                   "distributed fragment binding exceeds limits"});
+  }
+}
+
+CompatibleDistributedAggregateSnapshot::CompatibleDistributedAggregateSnapshot(
+    manifest::TemporalDatabaseStorageSnapshot snapshot,
+    std::vector<DistributedAggregateFragmentDispatch> dispatches) noexcept
+    : snapshot_(std::move(snapshot)), dispatches_(std::move(dispatches)) {}
+
+const manifest::TemporalDatabaseStorageSnapshot&
+CompatibleDistributedAggregateSnapshot::snapshot() const noexcept {
+  return snapshot_;
+}
+
+std::span<const DistributedAggregateFragmentDispatch>
+CompatibleDistributedAggregateSnapshot::dispatches() const noexcept {
+  return dispatches_;
+}
+
+common::Result<CompatibleDistributedAggregateSnapshot>
+bind_compatible_distributed_aggregate_snapshot(
+    const DistributedAggregatePlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
+    const std::span<const DistributedAggregateSnapshotFragmentBinding> bindings,
+    const DistributedAggregateSnapshotBindingLimits limits) {
+  if (limits.maximum_fragments == 0U ||
+      limits.maximum_fragments > DistributedPlanLimits{}.maximum_fragments ||
+      limits.maximum_total_projection_ordinals == 0U ||
+      limits.maximum_total_projection_ordinals > kMaximumDistributedSnapshotProjectionOrdinals) {
+    return common::make_unexpected(
+        invalid("compatible distributed snapshot binding limits are invalid"));
+  }
+  if (plan.query_id.is_nil() || plan.fragments.empty() || !plan.scan_pushdown ||
+      !plan.filter_pushdown || !plan.projection_pushdown || !plan.partial_aggregate_pushdown ||
+      snapshot.database_id().uuid().is_nil() || snapshot.generation() == 0U) {
+    return common::make_unexpected(invalid("compatible distributed snapshot authority is invalid"));
+  }
+  if (plan.fragments.size() != bindings.size())
+    return common::make_unexpected(
+        invalid("compatible distributed snapshot binding count differs from plan"));
+  if (bindings.size() > limits.maximum_fragments)
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "compatible distributed snapshot fragment limit is exhausted"});
+
+  try {
+    std::vector<DistributedAggregateFragmentDispatch> dispatches;
+    dispatches.reserve(bindings.size());
+    std::set<schema::TabletId> tablet_ids;
+    std::size_t total_projection_ordinals = 0U;
+    for (std::size_t index = 0U; index < bindings.size(); ++index) {
+      const auto& binding = bindings[index];
+      const DistributedReadAdmission& admission = binding.admission.get();
+      if (plan.fragments[index].tablet_id.uuid().is_nil() ||
+          !tablet_ids.insert(plan.fragments[index].tablet_id).second ||
+          admission.tablet_id != plan.fragments[index].tablet_id) {
+        return common::make_unexpected(
+            invalid("compatible distributed snapshot tablet identity or order is invalid"));
+      }
+      if (binding.destination_column_ordinals.size() >
+          limits.maximum_total_projection_ordinals - total_projection_ordinals) {
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kResourceExhausted,
+                           "compatible distributed snapshot projection limit is exhausted"});
+      }
+      total_projection_ordinals += binding.destination_column_ordinals.size();
+      auto dispatch = bind_distributed_aggregate_fragment(
+          {.plan = std::cref(plan),
+           .admission = binding.admission,
+           .snapshot = std::cref(snapshot),
+           .destination_schema = binding.destination_schema,
+           .raft_group_id = binding.raft_group_id,
+           .placement = binding.placement,
+           .destination_column_ordinals = binding.destination_column_ordinals,
+           .aggregate_input_index = binding.aggregate_input_index,
+           .event_time_predicate = binding.event_time_predicate});
+      if (!dispatch.has_value())
+        return common::make_unexpected(dispatch.error());
+      if (dispatch->fragment.database_id != snapshot.database_id() ||
+          dispatch->fragment.snapshot_generation != snapshot.generation()) {
+        return common::make_unexpected(
+            invalid("compatible distributed snapshot dispatch escaped its owning epoch"));
+      }
+      dispatches.push_back(std::move(*dispatch));
+    }
+    return CompatibleDistributedAggregateSnapshot{std::move(snapshot), std::move(dispatches)};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "compatible distributed snapshot binding allocation failed"});
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "compatible distributed snapshot binding exceeds container limits"});
   }
 }
 

@@ -9,10 +9,12 @@
 #include "chronos/raft/types.hpp"
 #include "chronos/schema/table_schema.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <optional>
 #include <span>
+#include <vector>
 
 namespace chronos::query {
 
@@ -35,6 +37,64 @@ struct DistributedAggregateFragmentBinding {
 // group-scoped executable request. It performs no I/O and publishes no state.
 [[nodiscard]] common::Result<DistributedAggregateFragmentDispatch>
 bind_distributed_aggregate_fragment(const DistributedAggregateFragmentBinding& binding);
+
+struct DistributedAggregateSnapshotFragmentBinding {
+  std::reference_wrapper<const DistributedReadAdmission> admission;
+  std::reference_wrapper<const schema::TableSchema> destination_schema;
+  common::Uuid raft_group_id;
+  std::reference_wrapper<const raft::TabletPlacementMetadata> placement;
+  std::span<const std::uint32_t> destination_column_ordinals;
+  std::uint32_t aggregate_input_index{};
+  std::optional<cseg::EventTimePredicate> event_time_predicate;
+};
+
+inline constexpr std::size_t kMaximumDistributedSnapshotProjectionOrdinals =
+    DistributedPlanLimits{}.maximum_fragments * schema::kMaximumSchemaColumnCount;
+
+struct DistributedAggregateSnapshotBindingLimits {
+  std::size_t maximum_fragments{DistributedPlanLimits{}.maximum_fragments};
+  std::size_t maximum_total_projection_ordinals{65'536U};
+};
+
+// Owns the one acquire-loaded Manifest v2 epoch that supplied every dispatch. The dispatch vector
+// is in exact plan order and cannot contain mixed database/generation snapshots.
+class CompatibleDistributedAggregateSnapshot {
+public:
+  CompatibleDistributedAggregateSnapshot() = delete;
+  CompatibleDistributedAggregateSnapshot(const CompatibleDistributedAggregateSnapshot&) = delete;
+  CompatibleDistributedAggregateSnapshot&
+  operator=(const CompatibleDistributedAggregateSnapshot&) = delete;
+  CompatibleDistributedAggregateSnapshot(CompatibleDistributedAggregateSnapshot&&) noexcept =
+      default;
+  CompatibleDistributedAggregateSnapshot&
+  operator=(CompatibleDistributedAggregateSnapshot&&) noexcept = default;
+
+  [[nodiscard]] const manifest::TemporalDatabaseStorageSnapshot& snapshot() const noexcept;
+  [[nodiscard]] std::span<const DistributedAggregateFragmentDispatch> dispatches() const noexcept;
+
+private:
+  CompatibleDistributedAggregateSnapshot(
+      manifest::TemporalDatabaseStorageSnapshot snapshot,
+      std::vector<DistributedAggregateFragmentDispatch> dispatches) noexcept;
+
+  manifest::TemporalDatabaseStorageSnapshot snapshot_;
+  std::vector<DistributedAggregateFragmentDispatch> dispatches_;
+
+  friend common::Result<CompatibleDistributedAggregateSnapshot>
+  bind_compatible_distributed_aggregate_snapshot(
+      const DistributedAggregatePlan&, manifest::TemporalDatabaseStorageSnapshot,
+      std::span<const DistributedAggregateSnapshotFragmentBinding>,
+      DistributedAggregateSnapshotBindingLimits);
+};
+
+// Binds every planned tablet against one acquire-pinned database epoch. Binding count/order,
+// per-tablet admission/placement/group/schema authority, and aggregate projection limits are
+// validated before the owning compatible snapshot is returned.
+[[nodiscard]] common::Result<CompatibleDistributedAggregateSnapshot>
+bind_compatible_distributed_aggregate_snapshot(
+    const DistributedAggregatePlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
+    std::span<const DistributedAggregateSnapshotFragmentBinding> bindings,
+    DistributedAggregateSnapshotBindingLimits limits = {});
 
 } // namespace chronos::query
 

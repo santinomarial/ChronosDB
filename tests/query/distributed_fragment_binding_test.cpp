@@ -16,6 +16,7 @@
 #include <gtest/gtest.h>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <system_error>
 #include <unistd.h>
@@ -91,26 +92,33 @@ void write_file(const std::filesystem::path& path, const common::ByteView bytes)
       .value();
 }
 
+struct SnapshotTabletSpec {
+  schema::TabletId tablet_id;
+  common::Uuid group_id;
+  std::uint64_t durable_position{};
+};
+
 [[nodiscard]] common::Result<manifest::TemporalDatabaseStorageSnapshot>
 make_snapshot(const TemporaryDirectory& directory, const schema::SchemaLineage& lineage,
-              const common::Uuid& group_id, const std::uint64_t durable_position) {
+              const std::span<const SnapshotTabletSpec> tablet_specs) {
   const manifest::DatabaseId database_id = id<manifest::DatabaseId>(1U);
   const schema::TableId table_id = id<schema::TableId>(2U);
-  const schema::TabletId tablet_id = id<schema::TabletId>(3U);
   const schema::TableSchema& latest = *lineage.current();
-  const manifest::TemporalTabletDescriptor tablet{.table_id = table_id,
-                                                  .tablet_id = tablet_id,
-                                                  .recovery_schema_id = latest.schema_id(),
-                                                  .recovery_schema_version = latest.version(),
-                                                  .source_id = group_id,
-                                                  .durable_position = durable_position,
-                                                  .reclaim_position = 0U,
-                                                  .first_part_index = 0U,
-                                                  .part_count = 0U,
-                                                  .durable_version_count = 0U,
-                                                  .commit_source =
-                                                      manifest::ManifestCommitSource::kRaft};
-  const std::array tablets{tablet};
+  std::vector<manifest::TemporalTabletDescriptor> tablets;
+  tablets.reserve(tablet_specs.size());
+  for (const auto& spec : tablet_specs) {
+    tablets.push_back({.table_id = table_id,
+                       .tablet_id = spec.tablet_id,
+                       .recovery_schema_id = latest.schema_id(),
+                       .recovery_schema_version = latest.version(),
+                       .source_id = spec.group_id,
+                       .durable_position = spec.durable_position,
+                       .reclaim_position = 0U,
+                       .first_part_index = 0U,
+                       .part_count = 0U,
+                       .durable_version_count = 0U,
+                       .commit_source = manifest::ManifestCommitSource::kRaft});
+  }
   auto encoded = manifest::encode_manifest_v2_temporal({.generation = 1U,
                                                         .database_id = database_id,
                                                         .wal_reclaim_checkpoint = std::nullopt,
@@ -133,12 +141,16 @@ make_snapshot(const TemporaryDirectory& directory, const schema::SchemaLineage& 
       manifest::ManifestStorage::open_existing({.database_root = directory.path().string()});
   if (!storage.has_value())
     return common::make_unexpected(storage.error());
-  const std::array schema_bindings{
-      manifest::TabletSchemaBinding{.tablet_id = tablet_id, .lineage = std::cref(lineage)}};
-  const std::array source_bindings{
-      manifest::TemporalTabletSourceBinding{.tablet_id = tablet_id,
-                                            .commit_source = manifest::ManifestCommitSource::kRaft,
-                                            .source_id = group_id}};
+  std::vector<manifest::TabletSchemaBinding> schema_bindings;
+  std::vector<manifest::TemporalTabletSourceBinding> source_bindings;
+  schema_bindings.reserve(tablet_specs.size());
+  source_bindings.reserve(tablet_specs.size());
+  for (const auto& spec : tablet_specs) {
+    schema_bindings.push_back({.tablet_id = spec.tablet_id, .lineage = std::cref(lineage)});
+    source_bindings.push_back({.tablet_id = spec.tablet_id,
+                               .commit_source = manifest::ManifestCommitSource::kRaft,
+                               .source_id = spec.group_id});
+  }
   auto loaded = storage->load_selected_temporal_manifest({.expected_database_id = database_id,
                                                           .schema_bindings = schema_bindings,
                                                           .source_bindings = source_bindings,
@@ -152,6 +164,13 @@ make_snapshot(const TemporaryDirectory& directory, const schema::SchemaLineage& 
   if (!publisher.has_value())
     return common::make_unexpected(publisher.error());
   return publisher->snapshot();
+}
+
+[[nodiscard]] common::Result<manifest::TemporalDatabaseStorageSnapshot>
+make_snapshot(const TemporaryDirectory& directory, const schema::SchemaLineage& lineage,
+              const common::Uuid& group_id, const std::uint64_t durable_position) {
+  const std::array specs{SnapshotTabletSpec{id<schema::TabletId>(3U), group_id, durable_position}};
+  return make_snapshot(directory, lineage, specs);
 }
 
 struct Authority {
@@ -224,6 +243,94 @@ TEST(DistributedFragmentBindingTest, BindsOneExactCommittedAuthoritySet) {
   EXPECT_EQ(dispatch->fragment.event_time_predicate,
             binding(value, *snapshot, schema_value, group_id, projection).event_time_predicate);
   EXPECT_TRUE(encode_distributed_aggregate_fragment_dispatch(*dispatch).has_value());
+}
+
+TEST(DistributedFragmentBindingTest, PinsOneCompatibleEpochAcrossEveryPlannedTablet) {
+  TemporaryDirectory directory;
+  const schema::TableSchema schema_value = make_schema(schema::LogicalTypeKind::kFloat64);
+  const schema::SchemaLineage lineage = schema::SchemaLineage::create(schema_value).value();
+  const std::array specs{SnapshotTabletSpec{id<schema::TabletId>(3U), uuid(8U), 10U},
+                         SnapshotTabletSpec{id<schema::TabletId>(9U), uuid(10U), 20U}};
+  auto snapshot = make_snapshot(directory, lineage, specs);
+  ASSERT_TRUE(snapshot.has_value()) << snapshot.error().to_string();
+  std::weak_ptr<const manifest::LoadedTemporalManifestGeneration> pinned =
+      snapshot->selected_manifest();
+
+  const DistributedAggregatePlan plan{
+      .query_id = uuid(7U),
+      .read_policy = {.consistency = DistributedReadConsistency::kLeaderLinearizable,
+                      .maximum_staleness_positions = std::nullopt},
+      .fragments = {{.tablet_id = specs[0].tablet_id,
+                     .minimum_event_time = 0,
+                     .maximum_event_time = 100,
+                     .leader_node = 11U,
+                     .local_applied_position = 10U,
+                     .known_leader_commit_position = 10U},
+                    {.tablet_id = specs[1].tablet_id,
+                     .minimum_event_time = 101,
+                     .maximum_event_time = 200,
+                     .leader_node = 12U,
+                     .local_applied_position = 20U,
+                     .known_leader_commit_position = 20U}}};
+  const std::array admissions{
+      DistributedReadAdmission{specs[0].tablet_id, 11U, 10U, 10U, raft::ReadBarrier{2U, 3U, 10U}},
+      DistributedReadAdmission{specs[1].tablet_id, 12U, 20U, 20U, raft::ReadBarrier{2U, 4U, 20U}}};
+  const std::array placements{raft::TabletPlacementMetadata{.table_id = id<schema::TableId>(2U),
+                                                            .tablet_id = specs[0].tablet_id,
+                                                            .placement_epoch = 12U,
+                                                            .replicas = {11U, 13U},
+                                                            .leader_hint = 11U},
+                              raft::TabletPlacementMetadata{.table_id = id<schema::TableId>(2U),
+                                                            .tablet_id = specs[1].tablet_id,
+                                                            .placement_epoch = 13U,
+                                                            .replicas = {12U, 14U},
+                                                            .leader_hint = 12U}};
+  const std::array<std::uint32_t, 2U> projection{0U, 1U};
+  const std::array bindings{
+      DistributedAggregateSnapshotFragmentBinding{.admission = std::cref(admissions[0]),
+                                                  .destination_schema = std::cref(schema_value),
+                                                  .raft_group_id = specs[0].group_id,
+                                                  .placement = std::cref(placements[0]),
+                                                  .destination_column_ordinals = projection,
+                                                  .aggregate_input_index = 1U},
+      DistributedAggregateSnapshotFragmentBinding{.admission = std::cref(admissions[1]),
+                                                  .destination_schema = std::cref(schema_value),
+                                                  .raft_group_id = specs[1].group_id,
+                                                  .placement = std::cref(placements[1]),
+                                                  .destination_column_ordinals = projection,
+                                                  .aggregate_input_index = 1U}};
+
+  const std::array reversed{bindings[1], bindings[0]};
+  EXPECT_EQ(
+      bind_compatible_distributed_aggregate_snapshot(plan, *snapshot, reversed).error().code(),
+      common::StatusCode::kInvalidArgument);
+  DistributedAggregatePlan duplicate_plan = plan;
+  duplicate_plan.fragments[1].tablet_id = duplicate_plan.fragments[0].tablet_id;
+  EXPECT_EQ(bind_compatible_distributed_aggregate_snapshot(duplicate_plan, *snapshot, bindings)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(bind_compatible_distributed_aggregate_snapshot(
+                plan, *snapshot, bindings,
+                {.maximum_fragments = 2U, .maximum_total_projection_ordinals = 3U})
+                .error()
+                .code(),
+            common::StatusCode::kResourceExhausted);
+
+  auto compatible = bind_compatible_distributed_aggregate_snapshot(
+      plan, std::move(*snapshot), bindings,
+      {.maximum_fragments = 2U, .maximum_total_projection_ordinals = 4U});
+  ASSERT_TRUE(compatible.has_value()) << compatible.error().to_string();
+  EXPECT_FALSE(pinned.expired());
+  EXPECT_EQ(compatible->snapshot().generation(), 1U);
+  ASSERT_EQ(compatible->dispatches().size(), 2U);
+  for (std::size_t index = 0U; index < compatible->dispatches().size(); ++index) {
+    EXPECT_EQ(compatible->dispatches()[index].fragment.tablet_id, plan.fragments[index].tablet_id);
+    EXPECT_EQ(compatible->dispatches()[index].fragment.database_id,
+              compatible->snapshot().database_id());
+    EXPECT_EQ(compatible->dispatches()[index].fragment.snapshot_generation,
+              compatible->snapshot().generation());
+  }
 }
 
 TEST(DistributedFragmentBindingTest, RejectsMixedSnapshotPlacementSchemaAndProjectionAuthority) {

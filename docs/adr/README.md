@@ -204,3 +204,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0167](0167-proof-revalidated-distributed-aggregate-worker.md) | Proof-revalidated distributed aggregate worker | accepted |
 | [0168](0168-authenticated-distributed-query-transport.md) | Authenticated distributed query transport | accepted |
 | [0169](0169-bounded-distributed-query-carrier-lifecycle.md) | Bounded distributed query carrier lifecycle | accepted |
+| [0170](0170-compatible-multi-tablet-manifest-snapshot-binding.md) | Compatible multi-tablet Manifest snapshot binding | accepted |
