@@ -94,3 +94,9 @@ reclamation remain Phase 16 work.
 - [ADR 0135](0135-bounded-asynchronous-prepared-reconfiguration-admission.md)
 - [ADR 0140](0140-atomic-current-leader-term-admission.md)
 - [Architecture invariants](../architecture/invariants.md)
+
+## Retrospective (2026-08-11)
+
+[ADR 0142](0142-bounded-remote-reconfiguration-retry.md) supplies the exact response correlation,
+advisory leader hint, and finite sender retry behavior left unresolved here. TLS transport and the
+receiver completion-to-response service adapter remain separate.

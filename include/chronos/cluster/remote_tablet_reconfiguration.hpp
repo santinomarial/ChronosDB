@@ -6,8 +6,10 @@
 #include "chronos/network/security.hpp"
 #include "chronos/raft/durable_tablet_reconfiguration.hpp"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -31,12 +33,41 @@ struct RemoteTabletReconfigurationRequest {
   raft::TabletReconfigurationAction action;
 };
 
+inline constexpr std::size_t kRemoteTabletReconfigurationResponseHeaderSize = 112U;
+inline constexpr std::size_t kRemoteTabletReconfigurationResponseTrailerSize = 4U;
+inline constexpr std::size_t kRemoteTabletReconfigurationResponseSize =
+    kRemoteTabletReconfigurationResponseHeaderSize +
+    kRemoteTabletReconfigurationResponseTrailerSize;
+
+struct RemoteTabletReconfigurationLeaderHint {
+  raft::NodeId node_id{};
+  raft::Term term{};
+
+  friend bool operator==(const RemoteTabletReconfigurationLeaderHint&,
+                         const RemoteTabletReconfigurationLeaderHint&) = default;
+};
+
+struct RemoteTabletReconfigurationResponse {
+  raft::NodeId source_node_id{};
+  raft::NodeId target_node_id{};
+  raft::Term required_leader_term{};
+  raft::TabletReconfigurationActionId action_id;
+  common::StatusCode status_code{common::StatusCode::kInternal};
+  bool already_prepared{};
+  std::optional<RemoteTabletReconfigurationLeaderHint> leader_hint;
+};
+
 [[nodiscard]] common::Result<std::vector<std::byte>>
 encode_remote_tablet_reconfiguration_request_v1(const RemoteTabletReconfigurationRequest& request,
                                                 RemoteTabletReconfigurationCodecLimits limits = {});
 [[nodiscard]] common::Result<RemoteTabletReconfigurationRequest>
 decode_remote_tablet_reconfiguration_request_v1(common::ByteView bytes,
                                                 RemoteTabletReconfigurationCodecLimits limits = {});
+[[nodiscard]] common::Result<std::vector<std::byte>>
+encode_remote_tablet_reconfiguration_response_v1(
+    const RemoteTabletReconfigurationResponse& response);
+[[nodiscard]] common::Result<RemoteTabletReconfigurationResponse>
+decode_remote_tablet_reconfiguration_response_v1(common::ByteView bytes);
 
 // Embedding-owned authorization policy connecting the network authenticator's stable principal to
 // an exact cluster node identity. It must outlive the receiver and provide its own synchronization.
@@ -96,6 +127,79 @@ private:
   explicit RemoteTabletReconfigurationReceiver(
       RemoteTabletReconfigurationReceiverConfig config) noexcept;
   RemoteTabletReconfigurationReceiverConfig config_;
+};
+
+struct RemoteTabletReconfigurationRetryLimits {
+  std::size_t maximum_attempts{5U};
+  std::chrono::milliseconds initial_backoff{50};
+  std::chrono::milliseconds maximum_backoff{5000};
+};
+
+enum class RemoteTabletReconfigurationSenderState : std::uint8_t {
+  kReady = 1,
+  kWaitingForResponse = 2,
+  kBackoff = 3,
+  kLocallyAccepted = 4,
+  kFailed = 5,
+};
+
+struct RemoteTabletReconfigurationAttempt {
+  std::size_t attempt_number{};
+  raft::NodeId target_node_id{};
+  raft::Term required_leader_term{};
+  std::vector<std::byte> request_bytes;
+};
+
+// Deterministic sender-side retry owner for one already ledger-prepared action. It does no I/O and
+// owns no clock: the carrier supplies a fresh leader route and monotonic time for each attempt,
+// sends the returned bytes, and reports either the exact response bytes or a transport failure.
+// Success means receiver-local durable admission only; authoritative reconciliation still proves
+// commit/application. The sealed dispatch stays owned for the sender's full lifetime.
+class RemoteTabletReconfigurationSender {
+public:
+  using TimePoint = std::chrono::steady_clock::time_point;
+
+  RemoteTabletReconfigurationSender() = delete;
+  ~RemoteTabletReconfigurationSender() = default;
+  RemoteTabletReconfigurationSender(const RemoteTabletReconfigurationSender&) = delete;
+  RemoteTabletReconfigurationSender& operator=(const RemoteTabletReconfigurationSender&) = delete;
+  RemoteTabletReconfigurationSender(RemoteTabletReconfigurationSender&&) noexcept = default;
+  RemoteTabletReconfigurationSender&
+  operator=(RemoteTabletReconfigurationSender&&) noexcept = default;
+
+  [[nodiscard]] static common::Result<RemoteTabletReconfigurationSender>
+  create(raft::NodeId source_node_id, raft::PreparedTabletReconfigurationDispatch dispatch,
+         RemoteTabletReconfigurationRetryLimits limits = {});
+
+  [[nodiscard]] common::Result<RemoteTabletReconfigurationAttempt>
+  begin_attempt(RemoteTabletReconfigurationLeaderHint route, TimePoint now);
+  [[nodiscard]] common::Status accept_response(common::ByteView response_bytes, TimePoint now);
+  [[nodiscard]] common::Status record_transport_failure(common::StatusCode code, TimePoint now);
+
+  [[nodiscard]] RemoteTabletReconfigurationSenderState state() const noexcept;
+  [[nodiscard]] std::size_t attempts_started() const noexcept;
+  [[nodiscard]] std::optional<TimePoint> next_attempt_not_before() const noexcept;
+  [[nodiscard]] std::optional<common::StatusCode> last_status_code() const noexcept;
+  [[nodiscard]] std::optional<RemoteTabletReconfigurationLeaderHint>
+  suggested_leader() const noexcept;
+  [[nodiscard]] const raft::TabletReconfigurationActionId& action_id() const noexcept;
+
+private:
+  RemoteTabletReconfigurationSender(raft::NodeId source_node_id,
+                                    raft::PreparedTabletReconfigurationDispatch dispatch,
+                                    RemoteTabletReconfigurationRetryLimits limits) noexcept;
+  [[nodiscard]] common::Status schedule(common::StatusCode code, TimePoint now);
+
+  raft::NodeId source_node_id_{};
+  raft::PreparedTabletReconfigurationDispatch dispatch_;
+  RemoteTabletReconfigurationRetryLimits limits_;
+  RemoteTabletReconfigurationSenderState state_{RemoteTabletReconfigurationSenderState::kReady};
+  std::size_t attempts_started_{};
+  std::chrono::milliseconds next_backoff_{};
+  std::optional<TimePoint> next_attempt_not_before_;
+  std::optional<common::StatusCode> last_status_code_;
+  std::optional<RemoteTabletReconfigurationLeaderHint> active_route_;
+  std::optional<RemoteTabletReconfigurationLeaderHint> suggested_leader_;
 };
 
 } // namespace chronos::cluster

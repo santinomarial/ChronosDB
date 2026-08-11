@@ -81,6 +81,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   subscription delivery, finite limits, compatibility, and rejection rules.
 - [Remote Tablet Reconfiguration Request v1](protocol/remote-tablet-reconfiguration-v1.md):
   principal-authorized source/target and exact leader-term binding around one canonical action.
+- [Remote Tablet Reconfiguration Response v1](protocol/remote-tablet-reconfiguration-response-v1.md):
+  exact route/action correlation, stable local status, leader hints, and bounded sender retry.
 
 ## Delivery
 

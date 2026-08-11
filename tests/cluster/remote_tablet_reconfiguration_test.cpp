@@ -100,6 +100,39 @@ TEST(RemoteTabletReconfigurationCodecTest, RoundTripsCanonicalRequestAndRejectsD
             common::StatusCode::kInvalidArgument);
 }
 
+TEST(RemoteTabletReconfigurationCodecTest, RoundTripsCorrelatedResponseAndRejectsDamage) {
+  const RemoteTabletReconfigurationResponse response{
+      2U,
+      1U,
+      9U,
+      action().id,
+      common::StatusCode::kUnavailable,
+      true,
+      RemoteTabletReconfigurationLeaderHint{3U, 10U}};
+  auto encoded = encode_remote_tablet_reconfiguration_response_v1(response);
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  EXPECT_EQ(encoded->size(), kRemoteTabletReconfigurationResponseSize);
+
+  auto decoded = decode_remote_tablet_reconfiguration_response_v1(*encoded);
+
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  EXPECT_EQ(decoded->source_node_id, response.source_node_id);
+  EXPECT_EQ(decoded->target_node_id, response.target_node_id);
+  EXPECT_EQ(decoded->required_leader_term, response.required_leader_term);
+  EXPECT_EQ(decoded->action_id, response.action_id);
+  EXPECT_EQ(decoded->status_code, response.status_code);
+  EXPECT_TRUE(decoded->already_prepared);
+  EXPECT_EQ(decoded->leader_hint, response.leader_hint);
+  auto reencoded = encode_remote_tablet_reconfiguration_response_v1(*decoded);
+  ASSERT_TRUE(reencoded.has_value());
+  EXPECT_EQ(*reencoded, *encoded);
+
+  (*encoded)[100U] ^= std::byte{1U};
+  auto damaged = decode_remote_tablet_reconfiguration_response_v1(*encoded);
+  ASSERT_FALSE(damaged.has_value());
+  EXPECT_EQ(damaged.error().code(), common::StatusCode::kCorruption);
+}
+
 TEST(RemoteTabletReconfigurationReceiverTest,
      AuthenticatesPreparesAdmitsAndRejectsStaleTermWithoutRaftMutation) {
   TemporaryDirectory actions{"chronos-remote-reconfiguration-actions"};
@@ -231,6 +264,122 @@ TEST(RemoteTabletReconfigurationReceiverTest, RejectsWrongTargetTabletAndGroupBe
             common::StatusCode::kInvalidArgument);
   EXPECT_EQ(ledger->load(wrong_target.action.id).error().code(), common::StatusCode::kNotFound);
   EXPECT_TRUE(runtime->shutdown().is_ok());
+}
+
+TEST(RemoteTabletReconfigurationSenderTest,
+     CorrelatesResponsesRequiresFreshRoutesAndBacksOffWithinAttemptBudget) {
+  TemporaryDirectory actions{"chronos-remote-sender-actions"};
+  auto ledger = raft::TabletReconfigurationActionLedger::create(
+      {.directory_path = actions.path().string(), .tablet_id = tablet_id()});
+  ASSERT_TRUE(ledger.has_value());
+  auto dispatch = raft::prepare_received_tablet_reconfiguration_action(action(), *ledger);
+  ASSERT_TRUE(dispatch.has_value()) << dispatch.error().to_string();
+  auto sender =
+      RemoteTabletReconfigurationSender::create(1U, std::move(*dispatch),
+                                                {.maximum_attempts = 3U,
+                                                 .initial_backoff = std::chrono::milliseconds{10},
+                                                 .maximum_backoff = std::chrono::milliseconds{20}});
+  ASSERT_TRUE(sender.has_value()) << sender.error().to_string();
+  const auto start = RemoteTabletReconfigurationSender::TimePoint{};
+
+  auto first = sender->begin_attempt({2U, 3U}, start);
+
+  ASSERT_TRUE(first.has_value()) << first.error().to_string();
+  EXPECT_EQ(first->attempt_number, 1U);
+  auto first_request = decode_remote_tablet_reconfiguration_request_v1(first->request_bytes);
+  ASSERT_TRUE(first_request.has_value());
+  EXPECT_EQ(first_request->source_node_id, 1U);
+  EXPECT_EQ(first_request->target_node_id, 2U);
+  EXPECT_EQ(first_request->required_leader_term, 3U);
+  EXPECT_EQ(first_request->action.id, sender->action_id());
+  EXPECT_EQ(sender->begin_attempt({2U, 3U}, start).error().code(),
+            common::StatusCode::kUnavailable);
+
+  RemoteTabletReconfigurationResponse wrong{
+      3U, 1U, 3U, sender->action_id(), common::StatusCode::kUnavailable, false, std::nullopt};
+  auto wrong_bytes = encode_remote_tablet_reconfiguration_response_v1(wrong);
+  ASSERT_TRUE(wrong_bytes.has_value());
+  EXPECT_EQ(sender->accept_response(*wrong_bytes, start).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(sender->state(), RemoteTabletReconfigurationSenderState::kWaitingForResponse);
+
+  RemoteTabletReconfigurationResponse retryable{2U,
+                                                1U,
+                                                3U,
+                                                sender->action_id(),
+                                                common::StatusCode::kUnavailable,
+                                                true,
+                                                RemoteTabletReconfigurationLeaderHint{3U, 4U}};
+  auto retryable_bytes = encode_remote_tablet_reconfiguration_response_v1(retryable);
+  ASSERT_TRUE(retryable_bytes.has_value());
+  ASSERT_TRUE(sender->accept_response(*retryable_bytes, start).is_ok());
+  EXPECT_EQ(sender->state(), RemoteTabletReconfigurationSenderState::kBackoff);
+  EXPECT_EQ(sender->next_attempt_not_before(), start + std::chrono::milliseconds{10});
+  EXPECT_EQ(sender->suggested_leader(), retryable.leader_hint);
+  EXPECT_EQ(sender->begin_attempt({3U, 4U}, start + std::chrono::milliseconds{9}).error().code(),
+            common::StatusCode::kUnavailable);
+
+  auto second = sender->begin_attempt({3U, 4U}, start + std::chrono::milliseconds{10});
+  ASSERT_TRUE(second.has_value()) << second.error().to_string();
+  EXPECT_EQ(second->attempt_number, 2U);
+  EXPECT_FALSE(sender->suggested_leader().has_value());
+  ASSERT_TRUE(sender
+                  ->record_transport_failure(common::StatusCode::kIoError,
+                                             start + std::chrono::milliseconds{20})
+                  .is_ok());
+  EXPECT_EQ(sender->next_attempt_not_before(), start + std::chrono::milliseconds{40});
+
+  auto third = sender->begin_attempt({4U, 5U}, start + std::chrono::milliseconds{40});
+  ASSERT_TRUE(third.has_value()) << third.error().to_string();
+  RemoteTabletReconfigurationResponse accepted{
+      4U, 1U, 5U, sender->action_id(), common::StatusCode::kOk, true, std::nullopt};
+  auto accepted_bytes = encode_remote_tablet_reconfiguration_response_v1(accepted);
+  ASSERT_TRUE(accepted_bytes.has_value());
+  ASSERT_TRUE(sender->accept_response(*accepted_bytes, start).is_ok());
+  EXPECT_EQ(sender->state(), RemoteTabletReconfigurationSenderState::kLocallyAccepted);
+  EXPECT_EQ(sender->attempts_started(), 3U);
+  EXPECT_EQ(sender->last_status_code(), common::StatusCode::kOk);
+  EXPECT_EQ(sender->begin_attempt({4U, 5U}, start).error().code(),
+            common::StatusCode::kInvalidArgument);
+}
+
+TEST(RemoteTabletReconfigurationSenderTest, StopsOnTerminalStatusOrExhaustedRetryBudget) {
+  TemporaryDirectory first_actions{"chronos-remote-terminal-sender-actions"};
+  TemporaryDirectory second_actions{"chronos-remote-exhausted-sender-actions"};
+  auto first_ledger = raft::TabletReconfigurationActionLedger::create(
+      {.directory_path = first_actions.path().string(), .tablet_id = tablet_id()});
+  auto second_ledger = raft::TabletReconfigurationActionLedger::create(
+      {.directory_path = second_actions.path().string(), .tablet_id = tablet_id()});
+  ASSERT_TRUE(first_ledger.has_value());
+  ASSERT_TRUE(second_ledger.has_value());
+  auto first_dispatch =
+      raft::prepare_received_tablet_reconfiguration_action(action(), *first_ledger);
+  auto second_dispatch =
+      raft::prepare_received_tablet_reconfiguration_action(action(), *second_ledger);
+  ASSERT_TRUE(first_dispatch.has_value());
+  ASSERT_TRUE(second_dispatch.has_value());
+  auto terminal = RemoteTabletReconfigurationSender::create(1U, std::move(*first_dispatch));
+  auto exhausted =
+      RemoteTabletReconfigurationSender::create(1U, std::move(*second_dispatch),
+                                                {.maximum_attempts = 1U,
+                                                 .initial_backoff = std::chrono::milliseconds{1},
+                                                 .maximum_backoff = std::chrono::milliseconds{1}});
+  ASSERT_TRUE(terminal.has_value());
+  ASSERT_TRUE(exhausted.has_value());
+  const auto now = RemoteTabletReconfigurationSender::TimePoint{};
+
+  ASSERT_TRUE(terminal->begin_attempt({2U, 1U}, now).has_value());
+  ASSERT_TRUE(
+      terminal->record_transport_failure(common::StatusCode::kUnauthenticated, now).is_ok());
+  EXPECT_EQ(terminal->state(), RemoteTabletReconfigurationSenderState::kFailed);
+  EXPECT_EQ(terminal->last_status_code(), common::StatusCode::kUnauthenticated);
+  EXPECT_FALSE(terminal->next_attempt_not_before().has_value());
+
+  ASSERT_TRUE(exhausted->begin_attempt({2U, 1U}, now).has_value());
+  ASSERT_TRUE(exhausted->record_transport_failure(common::StatusCode::kUnavailable, now).is_ok());
+  EXPECT_EQ(exhausted->state(), RemoteTabletReconfigurationSenderState::kFailed);
+  EXPECT_EQ(exhausted->last_status_code(), common::StatusCode::kUnavailable);
+  EXPECT_EQ(exhausted->attempts_started(), 1U);
 }
 
 } // namespace

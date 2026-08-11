@@ -95,6 +95,13 @@ The receiver is not a socket or TLS backend. Remote serving remains disabled by 
 security boundary until a maintained TLS carrier delivers these bytes and authenticated principal
 metadata. A completed receiver operation is still local durability rather than commit/application.
 
+The matching response format exact-correlates receiver/sender, required term, and action identity.
+`RemoteTabletReconfigurationSender` keeps the sealed preparation capability and exposes a
+carrier-driven state machine rather than owning I/O or sleeping. Stale-leader, overload, and I/O
+statuses schedule a bounded capped exponential backoff; every new attempt requires a fresh explicit
+leader route. Foreign or damaged responses do not consume the pending attempt. `LOCALLY_ACCEPTED`
+is terminal for delivery only and never advances movement without authoritative reconciliation.
+
 Production reconciliation accepts that owning observation after validating its tablet-group
 identity, ordered frontiers, canonical voters, and exact stable/joint relationships. Uncommitted
 membership remains a no-dispatch wait. Committed membership plus applied metadata feeds the same
@@ -113,9 +120,9 @@ retained-intent rule.
 Reconciliation is linear in the bounded replica count. The explicit two-group handoff adds control-
 plane latency but avoids treating routing intent as consensus. Durable checkpoints before every
 post-catch-up live phase adoption and deterministic action identities make restart reconstruction
-exact. Authenticated receiver admission and duplicate-safe current-term execution are implemented;
-the TLS/socket sender/response carrier, retry-ledger consumption, and broader failure injection
-remain separate work.
+exact. Authenticated receiver admission, exact response correlation, bounded sender retry, and
+duplicate-safe current-term execution are implemented; the TLS/socket carrier and response service
+adapter, retry-ledger consumption, and broader failure injection remain separate work.
 
 ## Likely interview questions
 

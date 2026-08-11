@@ -843,7 +843,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   duplicating the command. A separate cluster-integration target now provides canonical bounded
   remote action-request bytes and receiver-side authenticated-principal/source authorization,
   tablet/group binding, durable preparation, duplicate-safe replay, and atomic current-leader-term
-  admission. Its TLS/socket carrier, sender response/retry loop, and leader refresh remain
+  admission. Canonical response bytes and a sealed-action sender now add exact route/term/action
+  correlation, explicit local-only success, advisory leader refresh, bounded attempts, and capped
+  exponential backoff. The TLS/socket carrier and completion-to-response service adapter remain
   incomplete. Physical Manifest/CSEG handoff
   remains incomplete. General
   vector-plan fragments/exchange wire bytes, compatible multi-tablet snapshots, the maintained TLS

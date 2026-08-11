@@ -60,3 +60,6 @@ Major 1, minor 0 is exact. Unknown versions are unsupported only after header in
 Reserved bytes must be zero. Invalid sizes, identities, checksums, nested action bytes, trailing
 data, or noncanonical action semantics fail closed before ledger preparation. No native object
 layout is serialized.
+
+Receiver-local completion is reported using
+[Remote Tablet Reconfiguration Response v1](remote-tablet-reconfiguration-response-v1.md).

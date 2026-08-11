@@ -140,9 +140,10 @@
 - Shard-key pruning and statistics in addition to event-time pruning; multi-node scalar/distributed
   differential SQL and partial-aggregation equivalence.
 - Carry the implemented authenticated remote-action receiver bytes and atomic current-leader-term
-  admission fence through a maintained TLS/socket carrier; add sender response correlation,
-  leader refresh, retry/backoff, and automatic metadata apply scheduling; extend exact remote
-  duplicate delivery beyond the receiver's deterministic filesystem/runtime coverage;
+  admission fence plus the exact response and bounded sender retry state machine through a
+  maintained TLS/socket carrier; add completion-to-response service routing, carrier deadlines,
+  connection-level leader refresh, and automatic metadata apply scheduling; extend exact remote
+  duplicate delivery beyond the deterministic filesystem/runtime coverage;
   complete physical Manifest/CSEG
   handoff and response routing around the implemented Raft-completed RTAS, composed mixed-generation
   ready/later-phase checkpoint reconciliation, and durable chunk owners; add generation/chunk
