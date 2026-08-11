@@ -1,18 +1,21 @@
 # Network security boundary
 
-The Phase 10 security boundary is deliberately honest: loopback plaintext is a development mode,
-not TLS. `TLS_REQUIRED` fails startup because no maintained TLS record backend is integrated. There
-is no fallback.
+Loopback plaintext is a development mode, not TLS. The maintained OpenSSL carrier requires TLS 1.2
+or newer, an explicit server chain and key, an explicit trust store, and a verified client
+certificate. There is no fallback or opportunistic downgrade. Backend event-loop integration must
+still be present before that backend can claim remote TLS serving support.
 
-`ConnectionAuthenticator` is a borrowed synchronous callback invoked by the reactor owner for a
-new peer. It returns rejection or a stable nonzero principal. The reactor attaches that identity to
+`ConnectionAuthenticator` is a borrowed synchronous callback invoked by the socket owner after
+transport verification. For TLS it receives the verified certificate SHA-256 fingerprint and maps
+that identity to rejection or a stable nonzero principal. The reactor attaches that identity to
 every request and cancellation, so authorization never infers identity from a reused descriptor.
 Anonymous zero exists only for default loopback development.
 
-The callback must outlive the reactor. Rejection happens before handshake or peer-sized allocation.
-A future TLS provider may set `transport_authenticated` only after its maintained library verifies
-the handshake; source address, CRC, and proxy assertions are not equivalent evidence.
+The callback must outlive the reactor. In plaintext mode rejection precedes protocol handshake. In
+TLS mode untrusted peers consume only the explicitly bounded connection and handshake resources;
+no application frame is decoded first. Only the maintained carrier may set
+`transport_authenticated`, and only after chain verification and peer-certificate capture. Source
+address, CRC, certificate subject text, and proxy assertions are not equivalent evidence.
 
 Review questions: What proves transport authentication? Can the backend downgrade? Who owns the
 authenticator? Does the principal survive cancellation? When can hostile bytes allocate memory?
-

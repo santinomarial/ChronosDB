@@ -2,9 +2,11 @@
 #define CHRONOS_NETWORK_SECURITY_HPP_
 
 #include "chronos/common/result.hpp"
+#include "chronos/network/tls_socket.hpp"
 
 #include <array>
 #include <cstdint>
+#include <optional>
 
 namespace chronos::network {
 
@@ -13,6 +15,7 @@ enum class TransportSecurityMode : std::uint8_t { kLoopbackPlaintext, kTlsRequir
 struct PeerAuthenticationRequest {
   std::array<std::uint8_t, 4> ipv4_address{};
   bool transport_authenticated{};
+  std::optional<PeerCertificateSha256> peer_certificate_sha256;
 };
 
 struct PeerAuthenticationResult {
@@ -32,6 +35,7 @@ public:
 struct NetworkSecurityConfig {
   TransportSecurityMode mode{TransportSecurityMode::kLoopbackPlaintext};
   ConnectionAuthenticator* authenticator{};
+  std::optional<TlsServerConfig> tls;
 };
 
 [[nodiscard]] common::Status

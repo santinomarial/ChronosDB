@@ -5,5 +5,5 @@ the narrow ownership boundary, version source, license, transitive surface, secu
 policy, and rejected alternatives. Test-only dependencies remain governed by the reproducible
 CMake dependency configuration.
 
-- [OpenSSL](openssl.md) — SHA-256 provider for the in-memory ingest command layer.
+- [OpenSSL](openssl.md) — SHA-256 provider and maintained mutual-TLS socket carrier.
 - [Zstandard](zstd.md) — bounded general-purpose compression provider for CSEG v1 pages.

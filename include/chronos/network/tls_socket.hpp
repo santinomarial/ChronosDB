@@ -1,0 +1,80 @@
+#ifndef CHRONOS_NETWORK_TLS_SOCKET_HPP_
+#define CHRONOS_NETWORK_TLS_SOCKET_HPP_
+
+#include "chronos/common/bytes.hpp"
+#include "chronos/common/result.hpp"
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <string>
+
+namespace chronos::network {
+
+using PeerCertificateSha256 = std::array<std::uint8_t, 32>;
+
+struct TlsServerConfig {
+  std::string certificate_chain_file;
+  std::string private_key_file;
+  std::string trust_store_file;
+  bool require_client_certificate{true};
+};
+
+enum class TlsIoState : std::uint8_t { kComplete, kWantRead, kWantWrite, kClosed };
+
+struct TlsIoResult {
+  TlsIoState state{TlsIoState::kComplete};
+  std::size_t bytes_transferred{};
+};
+
+// Owns an OpenSSL server context. It is immutable after creation and may be shared by socket
+// sessions on one reactor owner thread. OpenSSL types remain private to the implementation.
+class TlsServerContext {
+public:
+  TlsServerContext() noexcept;
+  ~TlsServerContext();
+  TlsServerContext(const TlsServerContext&) = delete;
+  TlsServerContext& operator=(const TlsServerContext&) = delete;
+  TlsServerContext(TlsServerContext&&) noexcept;
+  TlsServerContext& operator=(TlsServerContext&&) noexcept;
+
+  [[nodiscard]] static common::Result<TlsServerContext> create(const TlsServerConfig& config);
+
+private:
+  class Impl;
+  explicit TlsServerContext(std::unique_ptr<Impl> implementation) noexcept;
+  std::unique_ptr<Impl> implementation_;
+
+  friend class TlsSocket;
+};
+
+// A nonblocking TLS server session over a borrowed connected socket. The caller owns the socket
+// descriptor and must keep it open until this object is destroyed. One reactor thread must own all
+// calls. Plaintext is available only after a mutually authenticated handshake completes.
+class TlsSocket {
+public:
+  TlsSocket() noexcept;
+  ~TlsSocket();
+  TlsSocket(const TlsSocket&) = delete;
+  TlsSocket& operator=(const TlsSocket&) = delete;
+  TlsSocket(TlsSocket&&) noexcept;
+  TlsSocket& operator=(TlsSocket&&) noexcept;
+
+  [[nodiscard]] static common::Result<TlsSocket> accept(const TlsServerContext& context,
+                                                        int connected_socket);
+  [[nodiscard]] common::Result<TlsIoResult> handshake();
+  [[nodiscard]] common::Result<TlsIoResult> read(common::MutableByteView destination);
+  [[nodiscard]] common::Result<TlsIoResult> write(common::ByteView source);
+  [[nodiscard]] bool handshake_complete() const noexcept;
+  [[nodiscard]] common::Result<PeerCertificateSha256> peer_certificate_sha256() const;
+
+private:
+  class Impl;
+  explicit TlsSocket(std::unique_ptr<Impl> implementation) noexcept;
+  std::unique_ptr<Impl> implementation_;
+};
+
+} // namespace chronos::network
+
+#endif // CHRONOS_NETWORK_TLS_SOCKET_HPP_

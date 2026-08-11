@@ -1,0 +1,86 @@
+# ADR 0144: Maintained mutual-TLS socket carrier
+
+- **Status:** accepted
+- **Date:** 2026-08-11
+- **Owners:** network and cluster-security subsystems
+- **Supersedes:** the deferred carrier portion of ADR 0066
+
+## Context
+
+Remote cluster control traffic cannot rely on CRCs, source addresses, or an application principal
+assertion for transport authentication. ADR 0066 therefore kept `TLS_REQUIRED` fail-closed until a
+maintained TLS implementation existed. The reactor also needs nonblocking handshake and record I/O
+whose ownership is compatible with its single-threaded socket owner.
+
+## Decision
+
+ChronosDB uses OpenSSL 3 `libssl` as its maintained TLS record and certificate-verification
+implementation. `TlsServerContext` owns an immutable `SSL_CTX` behind a PIMPL. `TlsSocket` owns one
+server `SSL` session over a borrowed nonblocking connected socket; the reactor continues to own and
+close the descriptor. No OpenSSL type appears in a public ChronosDB header.
+
+The server requires TLS 1.2 or newer, disables compression and renegotiation, loads an explicit
+certificate chain, private key, and trust store, and requires a verified client certificate. After
+OpenSSL reports a successful handshake and `X509_V_OK`, the carrier computes the peer certificate's
+SHA-256 fingerprint through OpenSSL EVP. Only then may it expose authenticated plaintext or pass the
+fingerprint to `ConnectionAuthenticator`, which maps the certificate identity to a stable nonzero
+ChronosDB principal. Transport verification and application authorization remain separate checks.
+
+Handshake, read, and write calls return explicit complete, want-read, want-write, or clean-close
+states. They never block or own an event loop. A session and its borrowed descriptor have one owner
+thread, and the context must outlive every session created from it.
+
+## Alternatives considered
+
+- **Custom TLS or cryptography:** rejected because security-sensitive commodity protocols require a
+  maintained implementation and review surface.
+- **Treat a certificate subject string as the principal:** rejected because naming and collision
+  policy belong to the application authenticator; the carrier supplies the verified certificate
+  fingerprint.
+- **Authorize by source address after TLS:** rejected because addresses are routing metadata, not
+  durable node identity.
+- **Make TLS calls blocking:** rejected because one slow or malicious handshake could stall all
+  sockets owned by a reactor.
+- **Permit optional client certificates:** rejected because remote database and cluster control
+  connections require mutual identity.
+
+## Consequences
+
+`chronos_network` now privately links OpenSSL Crypto and SSL, while its public ABI remains free of
+OpenSSL types. TLS credentials are owning strings in the copied server configuration; the
+application authenticator remains borrowed and must outlive the reactor. The socket carrier is
+usable independently and is the only accepted transport-authentication source. Reactor event-loop
+integration and backend-specific readiness scheduling are separate follow-up work; until integrated,
+no backend may claim remote TLS serving support.
+
+## Affected invariants
+
+Invariants 1, 5, 14, and 18 apply. Unverified bytes never become protocol frames, authentication
+cannot downgrade to plaintext, allocation and socket ownership are explicit, and failures are
+observable statuses rather than successful placeholders.
+
+## Validation plan
+
+Focused socket-pair tests use a test CA plus distinct server and client certificates. They cover
+credential loading failure, successful nonblocking mutual handshake, verified fingerprint delivery
+to the application authenticator, bidirectional plaintext records, and rejection without a client
+certificate. Sanitizer and installed-consumer checks cover the same OpenSSL-free public boundary.
+
+## Migration or rollback considerations
+
+This adds no durable or application wire format. Removing the carrier returns `TLS_REQUIRED` to
+fail-closed unsupported behavior. Certificate rotation is performed by creating a new context and
+moving new connections to it; existing sessions retain their original context and trust decision.
+
+## Unresolved questions
+
+Epoll readiness integration, io_uring record scheduling, credential reload orchestration, revocation
+policy, response write deadlines, and disconnect retry ownership remain.
+
+## References
+
+- [ADR 0009](0009-network-reactor-strategy.md)
+- [ADR 0064](0064-bounded-linux-epoll-reactor.md)
+- [ADR 0066](0066-authentication-and-tls-integration-boundary.md)
+- [OpenSSL dependency record](../dependencies/openssl.md)
+- [Architecture invariants](../architecture/invariants.md)

@@ -624,6 +624,8 @@ common::Result<IoUringReactor> IoUringReactor::start(const EpollServerConfig& co
           validate_network_security_config(config.security, config.bind_address);
       !status.is_ok())
     return common::make_unexpected(status);
+  if (config.security.mode == TransportSecurityMode::kTlsRequired)
+    return common::make_unexpected(not_supported("io_uring TLS record scheduling is unavailable"));
   const std::optional<std::size_t> operation_count =
       common::checked_add(config.maximum_connections, std::size_t{2U});
   if (!operation_count.has_value() ||

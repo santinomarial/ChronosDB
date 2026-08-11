@@ -178,3 +178,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0141](0141-authenticated-remote-reconfiguration-receiver.md) | Authenticated remote reconfiguration receiver | accepted |
 | [0142](0142-bounded-remote-reconfiguration-retry.md) | Bounded remote reconfiguration response and retry | accepted |
 | [0143](0143-nonblocking-reconfiguration-response-publication.md) | Nonblocking reconfiguration response publication | accepted |
+| [0144](0144-maintained-mutual-tls-socket-carrier.md) | Maintained mutual-TLS socket carrier | accepted |

@@ -466,6 +466,9 @@ common::Result<EpollReactor> EpollReactor::start(const EpollServerConfig& config
           validate_network_security_config(config.security, config.bind_address);
       !status.is_ok())
     return common::make_unexpected(status);
+  if (config.security.mode == TransportSecurityMode::kTlsRequired)
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kNotSupported, "epoll TLS readiness integration is unavailable"});
   int epoll_fd = ::epoll_create1(EPOLL_CLOEXEC);
   if (epoll_fd < 0)
     return common::make_unexpected(io_error("epoll_create1 failed"));

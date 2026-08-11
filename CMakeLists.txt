@@ -43,7 +43,7 @@ endfunction()
 
 chronos_validate_standard_library()
 find_package(Threads REQUIRED)
-find_package(OpenSSL 3.0...<4.0 REQUIRED COMPONENTS Crypto)
+find_package(OpenSSL 3.0...<4.0 REQUIRED COMPONENTS Crypto SSL)
 find_package(zstd 1.5.5...<2.0 CONFIG REQUIRED)
 if(NOT TARGET zstd::libzstd)
   if(TARGET zstd::libzstd_shared)
@@ -435,6 +435,7 @@ add_library(
   src/network/security.cpp
   src/network/spsc_queue.cpp
   src/network/subscription_messages.cpp
+  src/network/tls_socket.cpp
 )
 add_library(chronos::network ALIAS chronos_network)
 set_target_properties(chronos_network PROPERTIES EXPORT_NAME network CXX_EXTENSIONS OFF)
@@ -445,7 +446,11 @@ target_include_directories(
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
 )
-target_link_libraries(chronos_network PUBLIC chronos::common chronos::schema)
+target_link_libraries(
+  chronos_network
+  PUBLIC chronos::common chronos::schema
+  PRIVATE OpenSSL::Crypto OpenSSL::SSL
+)
 chronos_set_project_warnings(chronos_network)
 chronos_enable_sanitizers(chronos_network)
 chronos_enable_static_analysis(chronos_network)
@@ -679,10 +684,15 @@ if(CHRONOS_BUILD_TESTS)
     tests/network/spsc_queue_test.cpp
     tests/network/subscription_messages_header_self_contained.cpp
     tests/network/subscription_messages_test.cpp
+    tests/network/tls_socket_header_self_contained.cpp
+    tests/network/tls_socket_test.cpp
   )
   set_target_properties(chronos_network_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_network_tests PRIVATE cxx_std_23)
-  target_link_libraries(chronos_network_tests PRIVATE chronos::network GTest::gtest_main)
+  target_link_libraries(
+    chronos_network_tests
+    PRIVATE chronos::network GTest::gtest_main OpenSSL::SSL
+  )
   target_compile_definitions(
     chronos_network_tests
     PRIVATE CHRONOS_NETWORK_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/network"
