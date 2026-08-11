@@ -54,6 +54,8 @@ private:
   encode_cseg_v2_temporal_part(const CsegPartEncodeInput& input);
   friend common::Result<EncodedCsegPart> encode_cseg_part(const CsegPartEncodeInput& input,
                                                           std::uint16_t format_major);
+  friend common::Result<EncodedCsegPart>
+  adopt_cseg_v2_temporal_part(common::ByteView bytes, CsegMetadataDecodeLimits limits);
 };
 
 // Composes metadata followed by pages in granule-major, stored-column-major order. Pages must have
@@ -120,6 +122,11 @@ decode_cseg_v2_temporal_part_prefix(common::ByteView bytes, CsegMetadataDecodeLi
 
 [[nodiscard]] CsegPartDecodeResult
 decode_cseg_v2_temporal_part_exact(common::ByteView bytes, CsegMetadataDecodeLimits limits = {});
+
+// Exact-validates untrusted complete CSEG v2 bytes, then copies them into the immutable owned
+// representation used by durable installation. Input storage is borrowed only for the call.
+[[nodiscard]] common::Result<EncodedCsegPart>
+adopt_cseg_v2_temporal_part(common::ByteView bytes, CsegMetadataDecodeLimits limits = {});
 
 } // namespace chronos::cseg
 

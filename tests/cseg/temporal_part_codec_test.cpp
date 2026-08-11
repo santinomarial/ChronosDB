@@ -216,6 +216,22 @@ TEST(TemporalPartCodecTest, ComposesAndDecodesCanonicalV2PartWithoutWeakeningV1)
   EXPECT_FALSE(encode_cseg_v1_part(fixture.input()).has_value());
 }
 
+TEST(TemporalPartCodecTest, AdoptsOnlyAnExactCanonicalV2Image) {
+  TemporalPartFixture fixture;
+  auto encoded = encode_cseg_v2_temporal_part(fixture.input());
+  ASSERT_TRUE(encoded.has_value());
+  auto adopted = adopt_cseg_v2_temporal_part(encoded->bytes());
+  ASSERT_TRUE(adopted.has_value()) << adopted.error().to_string();
+  EXPECT_TRUE(std::ranges::equal(adopted->bytes(), encoded->bytes()));
+
+  std::vector<std::byte> damaged(encoded->bytes().begin(), encoded->bytes().end());
+  damaged.back() ^= std::byte{0x80U};
+  EXPECT_EQ(adopt_cseg_v2_temporal_part(damaged).error().code(), common::StatusCode::kCorruption);
+  damaged.assign(encoded->bytes().begin(), encoded->bytes().end());
+  damaged.push_back(std::byte{0U});
+  EXPECT_EQ(adopt_cseg_v2_temporal_part(damaged).error().code(), common::StatusCode::kCorruption);
+}
+
 TEST(TemporalPartCodecTest, FailsClosedOnTruncationStoredCorruptionAndSuffix) {
   TemporalPartFixture fixture;
   const auto encoded = encode_cseg_v2_temporal_part(fixture.input());

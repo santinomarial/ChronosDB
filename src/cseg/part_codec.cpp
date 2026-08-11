@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <limits>
+#include <new>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -217,6 +219,22 @@ CsegPartDecodeResult decode_cseg_v2_temporal_part_exact(const common::ByteView b
     return std::unexpected(corruption("CSEG part exact decoder rejects trailing bytes"));
   }
   return decoded;
+}
+
+common::Result<EncodedCsegPart> adopt_cseg_v2_temporal_part(const common::ByteView bytes,
+                                                            const CsegMetadataDecodeLimits limits) {
+  CsegPartDecodeResult decoded = decode_cseg_v2_temporal_part_exact(bytes, limits);
+  if (!decoded.has_value())
+    return common::make_unexpected(decoded.error().status());
+  try {
+    return EncodedCsegPart{std::vector<std::byte>{bytes.begin(), bytes.end()}};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                  "Cannot allocate adopted CSEG v2 image"});
+  } catch (const std::length_error&) {
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                  "Adopted CSEG v2 image exceeds limits"});
+  }
 }
 
 } // namespace chronos::cseg
