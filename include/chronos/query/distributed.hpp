@@ -34,6 +34,8 @@ struct DistributedTablet {
 struct DistributedReadPolicy {
   DistributedReadConsistency consistency{DistributedReadConsistency::kLeaderLinearizable};
   std::optional<std::uint64_t> maximum_staleness_positions;
+
+  friend bool operator==(const DistributedReadPolicy&, const DistributedReadPolicy&) = default;
 };
 
 struct DistributedReadAdmission {

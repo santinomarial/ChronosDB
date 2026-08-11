@@ -134,9 +134,10 @@
 - The canonical fixed-width ungrouped aggregate exchange frame, exact codec, aligned in-memory
   state admission, and constant-storage fragmented/coalesced read plus short-write ownership are
   implemented. Contiguous per-tablet sequence admission, bounded bit-exact retry history, terminal
-  closure, and first-failure arbitration are also implemented. General coordinator/worker physical
-  fragments for existing vector plans, projection/filter/scan serialization, socket integration and
-  connection backpressure, grouping-state codecs, reconnect/resend protocol, ordering, top-N,
+  closure, and first-failure arbitration are also implemented. The current projected Float64
+  aggregate path has canonical snapshot/route/proof/projection/event-filter fragment request bytes.
+  General physical pipeline stage/expression serialization, worker execution, socket integration
+  and connection backpressure, grouping-state codecs, reconnect/resend protocol, ordering, top-N,
   LIMIT, cancellation, durable retries, and broader coordinator/worker failure cleanup remain.
 - Carry the implemented proof-bound leader-linearizable/bounded-stale/local-eventual admissions
   through tablet-to-group identity, production routing, compatible pinned multi-tablet snapshots,

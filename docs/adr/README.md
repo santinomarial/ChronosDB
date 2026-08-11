@@ -198,3 +198,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0161](0161-canonical-distributed-aggregate-exchange-frame.md) | Canonical distributed aggregate exchange frame | accepted |
 | [0162](0162-bounded-distributed-exchange-partial-io.md) | Bounded distributed exchange partial I/O | accepted |
 | [0163](0163-bounded-distributed-fragment-sequencing.md) | Bounded distributed fragment sequencing | accepted |
+| [0164](0164-snapshot-bound-distributed-aggregate-fragment-v1.md) | Snapshot-bound distributed aggregate fragment v1 | accepted |
