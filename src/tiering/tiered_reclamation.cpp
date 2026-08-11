@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <limits>
 #include <memory>
 #include <ranges>
 #include <utility>
@@ -58,6 +59,30 @@ TieredLocalPartReclamationProof::parts() const noexcept {
 }
 
 bool TieredLocalPartReclamationProof::is_pinned() const noexcept {
+  return std::ranges::any_of(reader_pins_, [](const auto& pin) { return !pin.expired(); });
+}
+
+TieredRemoteObjectReclamationProof::TieredRemoteObjectReclamationProof(
+    TieredPairCommitRecord record, TieredDatabaseStorageSnapshot snapshot,
+    std::vector<ColdPartLocationDescriptor> locations,
+    std::vector<std::weak_ptr<const detail::TieredDatabaseStorageEpoch>> reader_pins) noexcept
+    : record_(std::move(record)), snapshot_(std::move(snapshot)), locations_(std::move(locations)),
+      reader_pins_(std::move(reader_pins)) {}
+
+std::uint64_t TieredRemoteObjectReclamationProof::pair_generation() const noexcept {
+  return record_.generation;
+}
+
+std::uint64_t TieredRemoteObjectReclamationProof::manifest_generation() const noexcept {
+  return snapshot_.manifest_generation();
+}
+
+std::span<const ColdPartLocationDescriptor>
+TieredRemoteObjectReclamationProof::locations() const noexcept {
+  return locations_;
+}
+
+bool TieredRemoteObjectReclamationProof::is_pinned() const noexcept {
   return std::ranges::any_of(reader_pins_, [](const auto& pin) { return !pin.expired(); });
 }
 
@@ -119,6 +144,80 @@ common::Result<TieredLocalPartReclamationReport> TieredLocalPartReclamationCoord
   report.removed_bytes = reclaimed->removed_bytes;
   report.already_absent_parts = reclaimed->already_absent_parts;
   report.directory_syncs = reclaimed->directory_syncs;
+  return report;
+}
+
+common::Result<TieredRemoteObjectReclamationReport>
+TieredRemoteObjectReclamationCoordinator::reclaim(const TieredRemoteObjectReclamationProof& proof,
+                                                  const TieredPairCommitStorage& pair_storage,
+                                                  ObjectStore& remote_store) {
+  TieredRemoteObjectReclamationReport report{
+      .outcome = manifest::PartReclamationOutcome::kPending,
+      .pair_generation = proof.record_.generation,
+      .manifest_generation = proof.snapshot_.manifest_generation(),
+      .candidate_objects = static_cast<std::uint64_t>(proof.locations_.size()),
+  };
+  if (proof.locations_.empty())
+    return common::make_unexpected(invalid("tiered remote reclamation proof is empty"));
+  if (proof.is_pinned())
+    return report;
+
+  auto selected_pair = pair_storage.load_selected_record();
+  if (!selected_pair.has_value())
+    return common::make_unexpected(selected_pair.error());
+  if (!selected_pair->has_value() || **selected_pair != proof.record_) {
+    return common::make_unexpected(
+        invalid("tiered remote reclamation pair is no longer the selected durable authority"));
+  }
+  const LoadedColdLocationManifest* current_cold = proof.snapshot_.cold_manifest();
+  if (current_cold == nullptr)
+    return common::make_unexpected(corruption("tiered remote reclamation cold owner disappeared"));
+  const auto current_parts = proof.snapshot_.manifest_snapshot().parts();
+  const auto current_locations = current_cold->manifest().locations();
+  for (const ColdPartLocationDescriptor& retired : proof.locations_) {
+    if (retired.file_length > std::numeric_limits<std::size_t>::max()) {
+      return common::make_unexpected(
+          invalid("tiered remote reclamation object is not addressable on this host"));
+    }
+    if (std::ranges::find(current_parts, retired.part_id,
+                          &manifest::TemporalPartDescriptor::part_id) != current_parts.end() ||
+        std::ranges::find(current_locations, retired.part_id,
+                          &ColdPartLocationDescriptor::part_id) != current_locations.end() ||
+        std::ranges::find(current_locations, retired.object_key,
+                          &ColdPartLocationDescriptor::object_key) != current_locations.end()) {
+      return common::make_unexpected(
+          invalid("tiered remote reclamation candidate returned to current authority"));
+    }
+    auto metadata = remote_store.stat(retired.object_key);
+    if (!metadata.has_value()) {
+      if (metadata.error().code() == common::StatusCode::kNotFound)
+        continue;
+      return common::make_unexpected(metadata.error());
+    }
+    if (metadata->key != retired.object_key ||
+        metadata->size != static_cast<std::size_t>(retired.file_length) ||
+        metadata->checksum != retired.content_sha256) {
+      return common::make_unexpected(
+          corruption("tiered remote reclamation object metadata differs"));
+    }
+    ++report.metadata_validated;
+  }
+
+  for (const ColdPartLocationDescriptor& retired : proof.locations_) {
+    auto removed = remote_store.remove_if_exact(
+        retired.object_key, static_cast<std::size_t>(retired.file_length), retired.content_sha256);
+    if (!removed.has_value())
+      return common::make_unexpected(removed.error());
+    if (removed->removed == removed->already_absent) {
+      return common::make_unexpected(
+          corruption("object store returned an invalid exact-deletion outcome"));
+    }
+    if (removed->removed)
+      ++report.removed_objects;
+    if (removed->already_absent)
+      ++report.already_absent_objects;
+  }
+  report.outcome = manifest::PartReclamationOutcome::kReclaimed;
   return report;
 }
 

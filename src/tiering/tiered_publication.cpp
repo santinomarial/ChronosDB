@@ -11,6 +11,7 @@
 #include <limits>
 #include <memory>
 #include <new>
+#include <optional>
 #include <ranges>
 #include <stdexcept>
 #include <string>
@@ -311,6 +312,138 @@ public:
     }
   }
 
+  [[nodiscard]] common::Result<TieredRemoteObjectReclamationProof>
+  authorize_remote_reclamation(const TieredPairCommitRecord& record,
+                               const std::span<const cseg::PartId> part_ids,
+                               const TieredRemoteObjectReclamationLimits limits) const {
+    if (failed_.load(std::memory_order_acquire))
+      return common::make_unexpected(unavailable("tiered storage publisher is failed closed"));
+    if (part_ids.empty() || part_ids.size() > limits.maximum_objects)
+      return common::make_unexpected(invalid("tiered remote reclamation identities exceed limits"));
+    for (std::size_t index = 1U; index < part_ids.size(); ++index) {
+      if (!(part_ids[index - 1U] < part_ids[index])) {
+        return common::make_unexpected(
+            invalid("tiered remote reclamation identities are not strictly sorted"));
+      }
+    }
+    try {
+      const std::shared_ptr<const TieredDatabaseStorageEpoch> current =
+          std::atomic_load_explicit(&epoch_, std::memory_order_acquire);
+      if (current->cold_manifest_ == nullptr) {
+        return common::make_unexpected(
+            invalid("tiered remote reclamation has no current cold authority"));
+      }
+      auto manifest_digest = ingest::sha256(current->manifest_snapshot_.manifest_bytes());
+      auto cold_digest = ingest::sha256(current->cold_manifest_->encoded_bytes());
+      if (!manifest_digest.has_value())
+        return common::make_unexpected(manifest_digest.error());
+      if (!cold_digest.has_value())
+        return common::make_unexpected(cold_digest.error());
+      if (record.database_id != current->manifest_snapshot_.database_id() ||
+          record.object_store_id != current->cold_manifest_->manifest().object_store_id() ||
+          record.manifest_generation != current->manifest_snapshot_.generation() ||
+          record.cold_generation != current->cold_manifest_->manifest().generation() ||
+          record.manifest_length != current->manifest_snapshot_.manifest_bytes().size() ||
+          record.cold_length != current->cold_manifest_->encoded_bytes().size() ||
+          record.manifest_sha256 != *manifest_digest || record.cold_sha256 != *cold_digest) {
+        return common::make_unexpected(
+            invalid("tiered remote reclamation pair differs from current publication"));
+      }
+
+      std::vector<ColdPartLocationDescriptor> retired_locations;
+      retired_locations.reserve(part_ids.size());
+      const auto current_locations = current->cold_manifest_->manifest().locations();
+      for (const cseg::PartId& part_id : part_ids) {
+        const auto current_route = std::ranges::lower_bound(current_locations, part_id, {},
+                                                            &ColdPartLocationDescriptor::part_id);
+        if (std::ranges::find(current->manifest_snapshot_.parts(), part_id,
+                              &manifest::TemporalPartDescriptor::part_id) !=
+                current->manifest_snapshot_.parts().end() ||
+            (current_route != current_locations.end() && current_route->part_id == part_id)) {
+          return common::make_unexpected(
+              invalid("tiered remote reclamation candidate remains current authority"));
+        }
+
+        std::optional<ColdPartLocationDescriptor> candidate;
+        for (const auto& weak : published_epochs_) {
+          const std::shared_ptr<const TieredDatabaseStorageEpoch> epoch = weak.lock();
+          if (epoch == nullptr || epoch->cold_manifest_ == nullptr)
+            continue;
+          const auto locations = epoch->cold_manifest_->manifest().locations();
+          const auto route = std::ranges::lower_bound(locations, part_id, {},
+                                                      &ColdPartLocationDescriptor::part_id);
+          if (route == locations.end() || route->part_id != part_id)
+            continue;
+          const auto descriptor = std::ranges::find(epoch->manifest_snapshot_.parts(), part_id,
+                                                    &manifest::TemporalPartDescriptor::part_id);
+          if (descriptor == epoch->manifest_snapshot_.parts().end() ||
+              descriptor->file_length != route->file_length ||
+              descriptor->content_sha256 != route->content_sha256) {
+            return common::make_unexpected(
+                invalid("published retired route lost its logical byte identity"));
+          }
+          if (candidate.has_value() && *candidate != *route) {
+            return common::make_unexpected(
+                invalid("published history changes a retired object route"));
+          }
+          candidate = *route;
+        }
+        if (!candidate.has_value()) {
+          return common::make_unexpected(
+              invalid("tiered remote reclamation route is absent from publication history"));
+        }
+        if (std::ranges::any_of(current_locations,
+                                [&](const auto& location) {
+                                  return location.object_key == candidate->object_key;
+                                }) ||
+            std::ranges::any_of(retired_locations, [&](const auto& location) {
+              return location.object_key == candidate->object_key;
+            })) {
+          return common::make_unexpected(
+              invalid("tiered remote reclamation object key remains or is duplicated"));
+        }
+        retired_locations.push_back(std::move(*candidate));
+      }
+
+      std::vector<std::weak_ptr<const TieredDatabaseStorageEpoch>> reader_pins;
+      reader_pins.reserve(published_epochs_.size());
+      for (const auto& weak : published_epochs_) {
+        const std::shared_ptr<const TieredDatabaseStorageEpoch> epoch = weak.lock();
+        if (epoch == nullptr || epoch->cold_manifest_ == nullptr)
+          continue;
+        const auto locations = epoch->cold_manifest_->manifest().locations();
+        bool references_retired_object = false;
+        for (const ColdPartLocationDescriptor& candidate : retired_locations) {
+          const auto route = std::ranges::lower_bound(locations, candidate.part_id, {},
+                                                      &ColdPartLocationDescriptor::part_id);
+          if (route != locations.end() && route->part_id == candidate.part_id) {
+            if (*route != candidate) {
+              return common::make_unexpected(
+                  invalid("published reader route differs from retired object identity"));
+            }
+            references_retired_object = true;
+          }
+          const auto reused_key = std::ranges::find(locations, candidate.object_key,
+                                                    &ColdPartLocationDescriptor::object_key);
+          if (reused_key != locations.end() && *reused_key != candidate) {
+            return common::make_unexpected(invalid("published reader reuses a retired object key"));
+          }
+        }
+        if (references_retired_object)
+          reader_pins.push_back(weak);
+      }
+      return TieredRemoteObjectReclamationProof{record, TieredDatabaseStorageSnapshot{current},
+                                                std::move(retired_locations),
+                                                std::move(reader_pins)};
+    } catch (const std::bad_alloc&) {
+      return common::make_unexpected(
+          exhausted("tiered remote reclamation authorization allocation failed"));
+    } catch (const std::length_error&) {
+      return common::make_unexpected(
+          exhausted("tiered remote reclamation authorization exceeded limits"));
+    }
+  }
+
 private:
   std::shared_ptr<const TieredDatabaseStorageEpoch> epoch_;
   // Single-writer history. Entries are installed before release-publication; weak owners capture
@@ -420,6 +553,16 @@ TieredLocalPartReclamationCoordinator::authorize(const TieredDatabaseStoragePubl
   if (publisher.impl_ == nullptr)
     return common::make_unexpected(invalid("tiered storage publisher was moved from"));
   return publisher.impl_->authorize_local_reclamation(committed_pair, part_ids);
+}
+
+common::Result<TieredRemoteObjectReclamationProof>
+TieredRemoteObjectReclamationCoordinator::authorize(
+    const TieredDatabaseStoragePublisher& publisher, const TieredPairCommitRecord& committed_pair,
+    const std::span<const cseg::PartId> part_ids,
+    const TieredRemoteObjectReclamationLimits limits) {
+  if (publisher.impl_ == nullptr)
+    return common::make_unexpected(invalid("tiered storage publisher was moved from"));
+  return publisher.impl_->authorize_remote_reclamation(committed_pair, part_ids, limits);
 }
 
 } // namespace chronos::tiering

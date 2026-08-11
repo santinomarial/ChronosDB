@@ -15,6 +15,7 @@
 namespace chronos::tiering {
 
 class TieredLocalPartReclamationCoordinator;
+class TieredRemoteObjectReclamationCoordinator;
 
 namespace detail {
 class TieredDatabaseStorageEpoch;
@@ -93,6 +94,7 @@ private:
   std::unique_ptr<detail::TieredDatabaseStoragePublisherImpl> impl_;
 
   friend class TieredLocalPartReclamationCoordinator;
+  friend class TieredRemoteObjectReclamationCoordinator;
 };
 
 } // namespace chronos::tiering

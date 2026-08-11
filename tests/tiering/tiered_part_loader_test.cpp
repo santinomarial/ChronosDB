@@ -1,6 +1,9 @@
+#include "chronos/common/crc32c.hpp"
 #include "chronos/manifest/naming.hpp"
+#include "chronos/manifest/raft_tablet_physical_snapshot.hpp"
 #include "chronos/manifest/temporal_codec.hpp"
 #include "chronos/manifest/temporal_publication.hpp"
+#include "chronos/raft/rebalancing.hpp"
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/logical_type.hpp"
 #include "chronos/schema/schema_lineage.hpp"
@@ -183,6 +186,20 @@ struct PartFixture {
             .file_length = descriptor.file_length,
             .content_sha256 = descriptor.content_sha256,
             .object_key = object_key};
+  }
+
+  [[nodiscard]] raft::TabletMovementRecord completed_movement() const {
+    raft::TabletMovement movement =
+        raft::TabletMovement::begin(tablet_id, 10U, 1U, 3U, {1U, 2U}).value();
+    const std::array bytes{std::byte{0xA5U}};
+    EXPECT_TRUE(
+        movement.begin_snapshot({1U, 10U, 3U, bytes.size(), common::crc32c(bytes)}).is_ok());
+    EXPECT_TRUE(movement.accept_snapshot_chunk(0U, bytes, common::crc32c(bytes)).is_ok());
+    EXPECT_TRUE(movement.finish_snapshot().is_ok());
+    EXPECT_TRUE(movement.mark_caught_up(10U).is_ok());
+    EXPECT_TRUE(movement.promote_target(10U, 11U).is_ok());
+    EXPECT_TRUE(movement.remove_source(11U, 12U).is_ok());
+    return movement.record();
   }
 };
 
@@ -675,6 +692,171 @@ TEST(TieredLocalPartReclamationTest, WaitsForUnsafeReaderThenUnlinksAndRetriesId
       *proof, *pair_storage, fixture->manifest_storage, fixture->object_store, schema_bindings);
   ASSERT_FALSE(stale_proof.has_value());
   EXPECT_EQ(stale_proof.error().code(), common::StatusCode::kInvalidArgument);
+}
+
+TEST(TieredRemoteObjectReclamationTest,
+     WaitsForRouteReaderThenDeletesExactRetiredObjectAndRetries) {
+  auto fixture = LiveFixture::create();
+  ASSERT_NE(fixture, nullptr);
+  ASSERT_TRUE(std::filesystem::create_directory(fixture->directory.path() / "tiered-pair"));
+  auto pair_storage = TieredPairCommitStorage::create(
+      {.directory_path = (fixture->directory.path() / "tiered-pair").string(),
+       .expected_database_id = fixture->part.database_id,
+       .expected_object_store_id = fixture->part.object_store_id});
+  ASSERT_TRUE(pair_storage.has_value());
+
+  std::optional<TieredRemoteObjectReclamationProof> proof;
+  std::shared_ptr<const LoadedColdLocationManifest> cold_successor;
+  manifest::TemporalDatabaseStorageSnapshot retired_manifest_snapshot = [&] {
+    auto predecessor = fixture->publisher.snapshot();
+    EXPECT_TRUE(predecessor.has_value());
+    auto first_pair = pair_storage->commit(predecessor->manifest_snapshot(), fixture->cold_owner);
+    EXPECT_TRUE(first_pair.has_value());
+    const auto bindings = fixture->part.bindings();
+    auto manifest_publisher = manifest::TemporalDatabaseStoragePublisher::create(
+        predecessor->manifest_snapshot().selected_manifest(), bindings);
+    EXPECT_TRUE(manifest_publisher.has_value());
+
+    const raft::TabletMovementRecord movement = fixture->part.completed_movement();
+    const raft::TabletPlacementMetadata placement{
+        fixture->part.table_id, fixture->part.tablet_id, 12U, {2U, 3U}, 3U};
+    const manifest::RaftTabletSourceRetirementRequest authority{
+        .group_id = fixture->part.group_id,
+        .table_id = fixture->part.table_id,
+        .tablet_id = fixture->part.tablet_id,
+        .source_node = 1U,
+        .completed_movement = std::cref(movement),
+        .committed_placement = std::cref(placement),
+    };
+    auto predecessor_decoded = manifest::decode_manifest_v2_temporal_exact(
+        predecessor->manifest_snapshot().manifest_bytes());
+    EXPECT_TRUE(predecessor_decoded.has_value());
+    auto built =
+        manifest::build_raft_tablet_source_retirement_manifest(*predecessor_decoded, authority);
+    EXPECT_TRUE(built.has_value());
+    const std::span<const manifest::TabletSchemaBinding> no_bindings;
+    auto installed = fixture->manifest_storage.install_temporal_manifest(
+        {.encoded_manifest = std::cref(built->manifest),
+         .schema_bindings = no_bindings,
+         .nonce = uuid(31U),
+         .decode_limits = {},
+         .part_validation_limits = {},
+         .source_retirement = &authority});
+    EXPECT_TRUE(installed.has_value());
+    auto loaded = fixture->manifest_storage.load_selected_temporal_manifest(
+        {.expected_database_id = fixture->part.database_id,
+         .schema_bindings = no_bindings,
+         .source_bindings = {},
+         .decode_limits = {},
+         .part_validation_limits = {}});
+    EXPECT_TRUE(loaded.has_value());
+    auto successor_owner =
+        std::make_shared<const manifest::LoadedTemporalManifestGeneration>(std::move(*loaded));
+    auto published_manifest = manifest_publisher->publish_source_retirement_manifest(
+        {.selected_manifest = successor_owner,
+         .schema_bindings = no_bindings,
+         .decode_limits = {},
+         .source_retirement = &authority});
+    EXPECT_TRUE(published_manifest.has_value());
+
+    auto successor_decoded =
+        manifest::decode_manifest_v2_temporal_exact(published_manifest->snapshot.manifest_bytes());
+    EXPECT_TRUE(successor_decoded.has_value());
+    auto encoded_cold = encode_cold_location_manifest_v1({
+        .generation = 2U,
+        .base_manifest_generation = published_manifest->snapshot.generation(),
+        .database_id = fixture->part.database_id,
+        .object_store_id = fixture->part.object_store_id,
+        .locations = {},
+    });
+    EXPECT_TRUE(encoded_cold.has_value());
+    EXPECT_TRUE(
+        fixture->cold_storage->install(std::cref(*encoded_cold), *successor_decoded).has_value());
+    auto selected_cold = fixture->cold_storage->load_selected(*successor_decoded);
+    EXPECT_TRUE(selected_cold.has_value() && selected_cold->has_value());
+    cold_successor = std::make_shared<const LoadedColdLocationManifest>(std::move(**selected_cold));
+    auto published_pair =
+        fixture->publisher.publish({.manifest_snapshot = published_manifest->snapshot,
+                                    .cold_manifest = cold_successor,
+                                    .schema_bindings = no_bindings,
+                                    .manifest_decode_limits = {},
+                                    .cold_decode_limits = {},
+                                    .source_retirement = &authority});
+    EXPECT_TRUE(published_pair.has_value());
+    auto committed = pair_storage->commit(published_pair->manifest_snapshot(), cold_successor);
+    EXPECT_TRUE(committed.has_value());
+    const std::array ids{fixture->part.descriptor.part_id};
+    auto authorized = TieredRemoteObjectReclamationCoordinator::authorize(fixture->publisher,
+                                                                          committed->record, ids);
+    EXPECT_TRUE(authorized.has_value());
+    EXPECT_TRUE(authorized->is_pinned());
+    proof.emplace(std::move(*authorized));
+    auto pending = TieredRemoteObjectReclamationCoordinator::reclaim(*proof, *pair_storage,
+                                                                     fixture->object_store);
+    EXPECT_TRUE(pending.has_value());
+    EXPECT_EQ(pending->outcome, manifest::PartReclamationOutcome::kPending);
+    EXPECT_EQ(pending->metadata_validated, 0U);
+    EXPECT_EQ(fixture->object_store.object_count(), 1U);
+    return published_pair->manifest_snapshot();
+  }();
+
+  ASSERT_TRUE(proof.has_value());
+  EXPECT_FALSE(proof->is_pinned());
+  MemoryObjectStore wrong_store;
+  const std::array wrong_bytes{std::byte{0x01U}};
+  auto wrong_digest = ingest::sha256(wrong_bytes);
+  ASSERT_TRUE(wrong_digest.has_value());
+  ASSERT_TRUE(
+      wrong_store.put_if_absent(fixture->part.object_key, wrong_bytes, *wrong_digest).has_value());
+  auto mismatch =
+      TieredRemoteObjectReclamationCoordinator::reclaim(*proof, *pair_storage, wrong_store);
+  ASSERT_FALSE(mismatch.has_value());
+  EXPECT_EQ(mismatch.error().code(), common::StatusCode::kCorruption);
+  EXPECT_EQ(wrong_store.object_count(), 1U);
+
+  auto reclaimed = TieredRemoteObjectReclamationCoordinator::reclaim(*proof, *pair_storage,
+                                                                     fixture->object_store);
+  ASSERT_TRUE(reclaimed.has_value()) << reclaimed.error().to_string();
+  EXPECT_EQ(reclaimed->outcome, manifest::PartReclamationOutcome::kReclaimed);
+  EXPECT_EQ(reclaimed->candidate_objects, 1U);
+  EXPECT_EQ(reclaimed->metadata_validated, 1U);
+  EXPECT_EQ(reclaimed->removed_objects, 1U);
+  EXPECT_EQ(reclaimed->already_absent_objects, 0U);
+  EXPECT_EQ(fixture->object_store.object_count(), 0U);
+
+  auto retry = TieredRemoteObjectReclamationCoordinator::reclaim(*proof, *pair_storage,
+                                                                 fixture->object_store);
+  ASSERT_TRUE(retry.has_value());
+  EXPECT_EQ(retry->removed_objects, 0U);
+  EXPECT_EQ(retry->already_absent_objects, 1U);
+
+  auto successor_decoded =
+      manifest::decode_manifest_v2_temporal_exact(retired_manifest_snapshot.manifest_bytes());
+  ASSERT_TRUE(successor_decoded.has_value());
+  auto encoded_cold3 = encode_cold_location_manifest_v1({
+      .generation = 3U,
+      .base_manifest_generation = retired_manifest_snapshot.generation(),
+      .database_id = fixture->part.database_id,
+      .object_store_id = fixture->part.object_store_id,
+      .locations = {},
+  });
+  ASSERT_TRUE(encoded_cold3.has_value());
+  ASSERT_TRUE(
+      fixture->cold_storage->install(std::cref(*encoded_cold3), *successor_decoded).has_value());
+  auto loaded_cold3 = fixture->cold_storage->load_selected(*successor_decoded);
+  ASSERT_TRUE(loaded_cold3.has_value() && loaded_cold3->has_value());
+  auto cold3 = std::make_shared<const LoadedColdLocationManifest>(std::move(**loaded_cold3));
+  auto published3 = fixture->publisher.publish({.manifest_snapshot = retired_manifest_snapshot,
+                                                .cold_manifest = cold3,
+                                                .schema_bindings = {},
+                                                .manifest_decode_limits = {},
+                                                .cold_decode_limits = {}});
+  ASSERT_TRUE(published3.has_value());
+  ASSERT_TRUE(pair_storage->commit(published3->manifest_snapshot(), cold3).has_value());
+  auto stale = TieredRemoteObjectReclamationCoordinator::reclaim(*proof, *pair_storage,
+                                                                 fixture->object_store);
+  ASSERT_FALSE(stale.has_value());
+  EXPECT_EQ(stale.error().code(), common::StatusCode::kInvalidArgument);
 }
 
 } // namespace

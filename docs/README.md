@@ -206,7 +206,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Tiered CSEG loading](learning/tiered-cseg-loading.md): implemented aggregate-snapshot-bound local
   preference, missing-only remote fallback, exact metadata/digest/CSEG validation, owned bytes, and
   Manifest/cold lifetime retention, tier-aware pair recovery, and pair/reader/remote-validated
-  local reclamation for Raft-owned parts.
+  local reclamation for Raft-owned parts, plus pair- and reader-pinned exact remote reclamation after
+  logical part/route retirement.
 - [Manifest v1 codec](learning/manifest-codec.md): implemented nominal values, checked layout,
   canonical owned encoding, borrowed decoding, trust ladder, failure classes, and evidence boundary.
 - [Append-only CSEG compaction](learning/append-only-compaction.md): accepted replacement boundary,

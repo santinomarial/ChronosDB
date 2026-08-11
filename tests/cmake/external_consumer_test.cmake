@@ -213,6 +213,10 @@ int main() {
       &chronos::tiering::TieredLocalPartReclamationCoordinator::authorize;
   const auto reclaim_tiered_local_parts =
       &chronos::tiering::TieredLocalPartReclamationCoordinator::reclaim;
+  const auto authorize_tiered_remote_reclamation =
+      &chronos::tiering::TieredRemoteObjectReclamationCoordinator::authorize;
+  const auto reclaim_tiered_remote_objects =
+      &chronos::tiering::TieredRemoteObjectReclamationCoordinator::reclaim;
   const auto load_selected_tiered_pair =
       &chronos::tiering::TieredPairCommitStorage::load_selected_record;
   const auto reclaim_physical_receipt =
@@ -248,6 +252,8 @@ int main() {
   (void)execute_tiered_distributed_fragment;
   (void)authorize_tiered_local_reclamation;
   (void)reclaim_tiered_local_parts;
+  (void)authorize_tiered_remote_reclamation;
+  (void)reclaim_tiered_remote_objects;
   (void)load_selected_tiered_pair;
   const auto build_source_retirement =
       &chronos::manifest::build_raft_tablet_source_retirement_manifest;

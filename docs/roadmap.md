@@ -930,8 +930,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   synchronizes with idempotent retry. Cold successors may now omit a route only when a newer base
   Manifest removed that logical part, establishing the metadata transition required by later
   reader-pinned remote deletion. Memory and S3 backends now expose idempotent exact deletion; S3
-  validates length/SHA-256 with HEAD and conditions DELETE on the observed ETag. The cross-layer
-  remote-reclamation proof, WAL-local deletion, other query paths,
+  validates length/SHA-256 with HEAD and conditions DELETE on the observed ETag. Cross-layer remote
+  reclamation now requires the exact selected pair to omit the logical part/route/key, waits for all
+  historical aggregate readers that can expose the route, preflights every object's metadata, and
+  conditionally deletes with idempotent absent retry. Durable post-crash garbage discovery,
+  WAL-local deletion, other query paths,
   multipart/retry and credential-refresh ownership, and Arrow/Parquet implementations remain
   deferred; the phase exit gate is not claimed.
 

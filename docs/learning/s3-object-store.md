@@ -60,8 +60,10 @@ ordered part index in `O(base parts log base parts)` time and checks locations i
 
 The codec is not a deletion receipt. Production publication must acquire a compatible Manifest-v2/
 cold pair, and local reclamation must wait for every older reader pin. The object backend can now
-delete only after exact length/SHA-256 verification and, for S3, an ETag `If-Match`; invocation still
-needs a separate proof that no retained logical or cold generation references the object.
+delete only after exact length/SHA-256 verification and, for S3, an ETag `If-Match`.
+`TieredRemoteObjectReclamationCoordinator` supplies the separate current-pair and historical-reader
+proof before invoking it. Interrupted deletion remains safely retryable, although restart garbage
+discovery for leaked unreachable objects is not yet implemented.
 
 Likely review questions include why conditional PUT precedes HEAD, why ETag is insufficient, why
 redirects are disabled, what verifies a range, and why the memory backend is not a durability

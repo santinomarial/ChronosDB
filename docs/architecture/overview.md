@@ -379,9 +379,10 @@ rebalancing must preserve identities, resume positions, and retention pins.
 Local storage remains the initial source of truth. The implemented logical tiering coordinator moves
 eligible immutable identities through verified idempotent object upload, a caller-owned atomic
 manifest-install callback, bounded content caching, range reads, and exact conditional deletion.
-Object-store listings are not
-metadata truth. Manifest v1 has no cold-location fields, so production manifest persistence, safe
-local/remote deletion, crash recovery, encryption, and Arrow/Parquet exports remain deferred. The
+Object-store listings are not metadata truth. Manifest v1 has no cold-location fields; Manifest v2
+now composes exact pair authority and reader pins for safe Raft-part local and remote reclamation.
+WAL-local deletion, durable post-crash garbage discovery, encryption, and Arrow/Parquet exports
+remain deferred. The
 production object carrier now uses libcurl SigV4 with TLS-by-default, conditional immutable PUT,
 authoritative per-key HEAD metadata, and exact bounded range GET; listing is never authority. A
 separate checksummed Cold Location Manifest v1 now binds object keys and a deployment store identity

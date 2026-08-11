@@ -59,8 +59,9 @@ present damaged local image remains a corruption error.
 The distributed aggregate worker supplies the integrated query path: all dispatch/placement/Raft/
 Manifest gates run before a synchronous tiered batch loader exposes image views to the unchanged
 temporal resolver. WAL-owned startup and other local-only entry points are not eligible for local
-reclamation yet. The loader also does not authorize remote deletion, multipart upload, cache
-eviction, or retry policy.
+reclamation yet. Remote deletion is separately authorized only after the part and route leave the
+selected pair and every route-bearing aggregate reader drains; it never follows from a loader miss.
+The loader does not authorize multipart upload, cache eviction, or retry policy.
 
 Likely review questions include why only `NOT_FOUND` permits fallback, why the cold key is not data
 authority, why metadata and a recomputed digest are both checked, why the complete CSEG validator is

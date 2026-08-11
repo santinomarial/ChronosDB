@@ -180,8 +180,9 @@
 
 - Live AWS/MinIO/LocalStack validation for the libcurl SigV4 backend; credential refresh/provider
   chain, proxy policy, retry/backoff, multipart upload, concurrent conditional writers, timeout/TLS/
-  partial-response faults, eventual listing behavior, restore, remote deletion, encryption
-  boundary, and broader object-store fault injection.
+  partial-response faults, eventual listing behavior, restore, conditional-delete races, durable
+  post-crash garbage discovery for interrupted remote reclamation, encryption boundary, and broader
+  object-store fault injection.
 - Subprocess/power-loss coverage for the implemented durable component and pair-commit installers;
   TSan coverage for the implemented atomic shared pair publisher; CSEG validation
   before upload, safe local deletion, snapshot/compaction pins, cache concurrency, cache index
