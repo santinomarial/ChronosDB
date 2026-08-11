@@ -423,6 +423,18 @@ std::size_t LoadedTemporalManifestGeneration::retained_buffer_bytes() const noex
   return saturating_size_add(total, owner_allocation_count * kConservativeAllocationOverheadBytes);
 }
 
+LoadedTemporalManifestMetadata::LoadedTemporalManifestMetadata(
+    const std::uint64_t generation, std::vector<std::byte> encoded_bytes) noexcept
+    : generation_(generation), encoded_bytes_(std::move(encoded_bytes)) {}
+
+std::uint64_t LoadedTemporalManifestMetadata::generation() const noexcept {
+  return generation_;
+}
+
+common::ByteView LoadedTemporalManifestMetadata::encoded_bytes() const noexcept {
+  return encoded_bytes_;
+}
+
 LoadedPartImage::LoadedPartImage(PartDescriptor descriptor, std::vector<std::byte> bytes) noexcept
     : descriptor_(descriptor), bytes_(std::move(bytes)) {}
 
@@ -1850,12 +1862,12 @@ ManifestStorage::load_selected_temporal_manifest(const TemporalManifestLoadReque
   return load_temporal_manifest_generation(snapshot->generations.back(), request);
 }
 
-common::Result<LoadedTemporalManifestGeneration> ManifestStorage::load_temporal_manifest_generation(
-    const std::uint64_t selected_generation, const TemporalManifestLoadRequest& request) const {
+common::Result<LoadedTemporalManifestMetadata>
+ManifestStorage::load_temporal_manifest_metadata(const std::uint64_t selected_generation,
+                                                 const TemporalManifestLoadRequest& request) const {
   common::Result<ManifestNamespaceSnapshot> snapshot = scan_namespace();
-  if (!snapshot.has_value()) {
+  if (!snapshot.has_value())
     return common::make_unexpected(snapshot.error());
-  }
   if (!std::ranges::binary_search(snapshot->generations, selected_generation)) {
     return common::make_unexpected(common::Status{
         common::StatusCode::kNotFound, "Requested Manifest v2 generation is not installed"});
@@ -1869,15 +1881,14 @@ common::Result<LoadedTemporalManifestGeneration> ManifestStorage::load_temporal_
       implementation_->manifests_, {.name = *selected_name,
                                     .maximum_length = request.decode_limits.max_file_length,
                                     .exact_length = std::nullopt,
-                                    .description = "selected final Manifest v2 generation"});
-  if (!encoded.has_value()) {
+                                    .description = "selected final Manifest v2 metadata"});
+  if (!encoded.has_value())
     return common::make_unexpected(encoded.error());
-  }
   TemporalManifestDecodeResult decoded =
       decode_manifest_v2_temporal_exact(*encoded, request.decode_limits);
   if (!decoded.has_value()) {
     return common::make_unexpected(
-        manifest_decode_failure(decoded.error(), "selected final Manifest v2 generation"));
+        manifest_decode_failure(decoded.error(), "selected final Manifest v2 metadata"));
   }
   if (decoded->generation() != selected_generation) {
     return common::make_unexpected(
@@ -1898,11 +1909,52 @@ common::Result<LoadedTemporalManifestGeneration> ManifestStorage::load_temporal_
     return common::make_unexpected(
         with_context("bind selected Manifest v2 to configured sources", validation));
   }
+  return LoadedTemporalManifestMetadata{selected_generation, std::move(*encoded)};
+}
+
+common::Result<LoadedTemporalManifestGeneration> ManifestStorage::load_temporal_manifest_generation(
+    const std::uint64_t selected_generation, const TemporalManifestLoadRequest& request) const {
+  auto metadata = load_temporal_manifest_metadata(selected_generation, request);
+  if (!metadata.has_value())
+    return common::make_unexpected(metadata.error());
+  common::Result<ManifestNamespaceSnapshot> snapshot = scan_namespace();
+  if (!snapshot.has_value())
+    return common::make_unexpected(snapshot.error());
+  if (!std::ranges::binary_search(snapshot->generations, selected_generation)) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kNotFound, "Requested Manifest v2 generation is not installed"});
+  }
+  std::vector<std::byte> encoded = std::move(metadata->encoded_bytes_);
+  TemporalManifestDecodeResult decoded =
+      decode_manifest_v2_temporal_exact(encoded, request.decode_limits);
+  if (!decoded.has_value()) {
+    return common::make_unexpected(
+        manifest_decode_failure(decoded.error(), "selected final Manifest v2 generation"));
+  }
 
   for (const TemporalPartDescriptor& descriptor : decoded->parts()) {
     if (!std::ranges::binary_search(snapshot->final_parts, descriptor.part_id)) {
-      return common::make_unexpected(
-          corruption("Selected Manifest v2 references a missing final CSEG part"));
+      if (request.missing_part_validator == nullptr)
+        return common::make_unexpected(
+            corruption("Selected Manifest v2 references a missing final CSEG part"));
+      const TemporalTabletDescriptor* owner =
+          find_temporal_tablet(decoded->tablets(), descriptor.tablet_id);
+      const TabletSchemaBinding* binding =
+          find_binding(request.schema_bindings, descriptor.tablet_id);
+      const std::shared_ptr<const schema::TableSchema> schema_value =
+          binding == nullptr ? nullptr : binding->lineage.get().find(descriptor.schema_id);
+      if (owner == nullptr || schema_value == nullptr) {
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kInternal,
+                           "Validated missing Manifest v2 part binding became inaccessible"});
+      }
+      common::Status remote_validation = request.missing_part_validator->validate_missing_part(
+          descriptor, *owner, *schema_value, request.part_validation_limits);
+      if (!remote_validation.is_ok()) {
+        return common::make_unexpected(
+            with_context("validate missing referenced temporal CSEG part", remote_validation));
+      }
+      continue;
     }
     const TemporalTabletDescriptor* owner =
         find_temporal_tablet(decoded->tablets(), descriptor.tablet_id);
@@ -1929,7 +1981,7 @@ common::Result<LoadedTemporalManifestGeneration> ManifestStorage::load_temporal_
     if (!part_bytes.has_value()) {
       return common::make_unexpected(part_bytes.error());
     }
-    validation = validate_manifest_v2_temporal_part_image(
+    common::Status validation = validate_manifest_v2_temporal_part_image(
         descriptor, *owner, *part_bytes, *schema_value, request.part_validation_limits);
     if (!validation.is_ok()) {
       return common::make_unexpected(
@@ -1953,7 +2005,7 @@ common::Result<LoadedTemporalManifestGeneration> ManifestStorage::load_temporal_
     }
     return LoadedTemporalManifestGeneration{
         std::make_unique<LoadedTemporalManifestGeneration::Impl>(
-            std::move(*encoded), std::move(*decoded), std::move(orphan_parts),
+            std::move(encoded), std::move(*decoded), std::move(orphan_parts),
             std::move(snapshot->temporary_parts), std::move(snapshot->temporary_manifests))};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,

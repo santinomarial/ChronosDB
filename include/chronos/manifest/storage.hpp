@@ -215,12 +215,51 @@ struct ManifestLoadRequest {
   ReferencedPartValidationLimits part_validation_limits;
 };
 
+class TemporalMissingPartValidator {
+public:
+  TemporalMissingPartValidator() = default;
+  TemporalMissingPartValidator(const TemporalMissingPartValidator&) = delete;
+  TemporalMissingPartValidator& operator=(const TemporalMissingPartValidator&) = delete;
+  virtual ~TemporalMissingPartValidator() = default;
+
+  // Called only when the exact canonical local final is absent from the locked namespace.
+  // Implementations must fully validate an independently authoritative immutable image.
+  [[nodiscard]] virtual common::Status
+  validate_missing_part(const TemporalPartDescriptor& descriptor,
+                        const TemporalTabletDescriptor& owner, const schema::TableSchema& schema,
+                        TemporalPartValidationLimits limits) const = 0;
+};
+
 struct TemporalManifestLoadRequest {
   DatabaseId expected_database_id;
   std::span<const TabletSchemaBinding> schema_bindings;
   std::span<const TemporalTabletSourceBinding> source_bindings;
   ManifestDecodeLimits decode_limits;
   TemporalPartValidationLimits part_validation_limits;
+  const TemporalMissingPartValidator* missing_part_validator{};
+};
+
+// Exact decoded/catalog/source-bound Manifest v2 bytes whose referenced CSEG images have not yet
+// been validated. This move-only value is recovery preflight input and is not publishable state.
+class LoadedTemporalManifestMetadata {
+public:
+  LoadedTemporalManifestMetadata() = delete;
+  LoadedTemporalManifestMetadata(const LoadedTemporalManifestMetadata&) = delete;
+  LoadedTemporalManifestMetadata& operator=(const LoadedTemporalManifestMetadata&) = delete;
+  LoadedTemporalManifestMetadata(LoadedTemporalManifestMetadata&&) noexcept = default;
+  LoadedTemporalManifestMetadata& operator=(LoadedTemporalManifestMetadata&&) noexcept = default;
+
+  [[nodiscard]] std::uint64_t generation() const noexcept;
+  [[nodiscard]] common::ByteView encoded_bytes() const noexcept;
+
+private:
+  LoadedTemporalManifestMetadata(std::uint64_t generation,
+                                 std::vector<std::byte> encoded_bytes) noexcept;
+
+  std::uint64_t generation_{};
+  std::vector<std::byte> encoded_bytes_;
+
+  friend class ManifestStorage;
 };
 
 class LoadedPartImage {
@@ -463,6 +502,13 @@ public:
   [[nodiscard]] common::Result<LoadedTemporalManifestGeneration>
   load_temporal_manifest_generation(std::uint64_t generation,
                                     const TemporalManifestLoadRequest& request) const;
+
+  // Reads and exact-decodes one installed generation and validates database/catalog/source
+  // bindings without touching referenced parts. The result cannot initialize publication; tiered
+  // pair recovery uses it only to authenticate the compatible cold authority before full loading.
+  [[nodiscard]] common::Result<LoadedTemporalManifestMetadata>
+  load_temporal_manifest_metadata(std::uint64_t generation,
+                                  const TemporalManifestLoadRequest& request) const;
 
   // Loads exact strictly sorted temporal parts from one held v2 generation. Each result pins that
   // generation owner and independently owns its fully revalidated CSEG bytes.

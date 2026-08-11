@@ -33,7 +33,8 @@ Recovery selects only the highest consecutive pair commit and never falls back i
 unsupported. It exact-loads the named historical Manifest/cold generations, repeats their full
 catalog/source/part and compatibility validation, and checks lengths and SHA-256. Higher uncommitted
 Manifest or cold finals are retained as orphans and are not query authority. The recovered owning
-pair can initialize the atomic in-memory tiered publisher.
+pair can initialize the atomic in-memory tiered publisher. [ADR 0189](0189-tier-aware-pair-recovery.md)
+extends this path to validate a locally absent part through only the exact pair-committed cold route.
 
 Locks must be held in Manifest, cold-manifest, then pair-commit order. The deployment must prevent
 out-of-band mutation. A pair marker does not itself authorize local or remote deletion.

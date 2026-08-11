@@ -203,6 +203,8 @@ int main() {
   const auto create_tiered_pair_storage = &chronos::tiering::TieredPairCommitStorage::create;
   const auto decode_tiered_pair = &chronos::tiering::decode_tiered_pair_commit_v1_exact;
   const auto load_tiered_parts = &chronos::tiering::load_tiered_temporal_part_images;
+  const auto load_remote_temporal_part =
+      &chronos::tiering::load_validated_remote_temporal_part_image;
   const auto execute_tiered_distributed_fragment =
       &chronos::tiering::execute_tiered_distributed_aggregate_fragment;
   const auto reclaim_physical_receipt =
@@ -233,6 +235,7 @@ int main() {
   (void)create_tiered_pair_storage;
   (void)decode_tiered_pair;
   (void)load_tiered_parts;
+  (void)load_remote_temporal_part;
   (void)execute_tiered_distributed_fragment;
   const auto build_source_retirement =
       &chronos::manifest::build_raft_tablet_source_retirement_manifest;
@@ -828,6 +831,8 @@ int main() {
           const chronos::manifest::ManifestLoadRequest&) const;
   const LoadSelectedManifestFunction load_selected_manifest =
       &chronos::manifest::ManifestStorage::load_selected_manifest;
+  const auto load_temporal_manifest_metadata =
+      &chronos::manifest::ManifestStorage::load_temporal_manifest_metadata;
   using LoadSelectedPartImagesFunction =
       chronos::common::Result<std::vector<chronos::manifest::LoadedPartImage>> (
           chronos::manifest::ManifestStorage::*)(
@@ -1032,7 +1037,8 @@ int main() {
                  cleanup_manifest_temporaries != nullptr &&
                  reclaim_retired_parts != nullptr &&
                  install_manifest != nullptr && manifest_metrics != nullptr &&
-                 load_selected_manifest != nullptr && load_selected_part_images != nullptr &&
+                 load_selected_manifest != nullptr && load_temporal_manifest_metadata != nullptr &&
+                 load_selected_part_images != nullptr &&
                  load_snapshot_part_images != nullptr && snapshot_publication_bytes != nullptr &&
                  flush_sealed_head != nullptr &&
                  build_manifest != nullptr && build_checkpoint != nullptr &&

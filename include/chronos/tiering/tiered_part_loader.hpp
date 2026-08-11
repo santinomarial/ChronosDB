@@ -28,6 +28,14 @@ struct TieredTemporalPartLoadLimits {
   manifest::TemporalPartValidationLimits validation;
 };
 
+// Reads one exact immutable object after authoritative per-key metadata checks, recomputes its
+// complete SHA-256, and applies the full Manifest-v2 CSEG/schema/source validator.
+[[nodiscard]] common::Result<std::vector<std::byte>> load_validated_remote_temporal_part_image(
+    const ObjectStore& remote_store, const ColdPartLocationDescriptor& location,
+    const manifest::TemporalPartDescriptor& descriptor,
+    const manifest::TemporalTabletDescriptor& owner, const schema::TableSchema& schema,
+    manifest::TemporalPartValidationLimits limits = {});
+
 // Move-only exact CSEG image retaining the aggregate tiered snapshot that selected its local or
 // remote source. Returned byte views and descriptors remain valid for this owner's lifetime.
 class TieredTemporalPartImage {

@@ -4,6 +4,7 @@
 #include "chronos/common/crc32c.hpp"
 #include "chronos/io/posix_io.hpp"
 #include "chronos/manifest/temporal_codec.hpp"
+#include "chronos/tiering/tiered_part_loader.hpp"
 #include "chronos/tiering/tiered_publication.hpp"
 
 #include <algorithm>
@@ -148,6 +149,36 @@ constexpr std::size_t kFileCrcOffset = 252U;
   }
   return common::Status::ok();
 }
+
+class CommittedColdMissingPartValidator final : public manifest::TemporalMissingPartValidator {
+public:
+  CommittedColdMissingPartValidator(const LoadedColdLocationManifest* cold_manifest,
+                                    const ObjectStore* remote_store) noexcept
+      : cold_manifest_(cold_manifest), remote_store_(remote_store) {}
+
+  common::Status
+  validate_missing_part(const manifest::TemporalPartDescriptor& descriptor,
+                        const manifest::TemporalTabletDescriptor& owner,
+                        const schema::TableSchema& schema,
+                        const manifest::TemporalPartValidationLimits limits) const override {
+    if (cold_manifest_ == nullptr)
+      return corruption("committed pair has no cold authority for missing local CSEG");
+    const auto locations = cold_manifest_->manifest().locations();
+    const auto found = std::ranges::lower_bound(locations, descriptor.part_id, {},
+                                                &ColdPartLocationDescriptor::part_id);
+    if (found == locations.end() || found->part_id != descriptor.part_id)
+      return corruption("committed cold authority has no route for missing local CSEG");
+    if (remote_store_ == nullptr)
+      return unavailable("tiered pair recovery requires the committed object store");
+    auto image = load_validated_remote_temporal_part_image(*remote_store_, *found, descriptor,
+                                                           owner, schema, limits);
+    return image.has_value() ? common::Status::ok() : image.error();
+  }
+
+private:
+  const LoadedColdLocationManifest* cold_manifest_{};
+  const ObjectStore* remote_store_{};
+};
 
 [[nodiscard]] bool same_pair(const TieredPairCommitRecord& left,
                              const TieredPairCommitRecord& right) noexcept {
@@ -575,6 +606,10 @@ TieredPairCommitStorage::recover(manifest::ManifestStorage& manifest_storage,
   common::Status usable = impl_->usable();
   if (!usable.is_ok())
     return common::make_unexpected(std::move(usable));
+  if (request.manifest_request.missing_part_validator != nullptr) {
+    return common::make_unexpected(
+        invalid("tiered pair recovery owns the missing-part validation authority"));
+  }
   try {
     auto generations = impl_->scan();
     if (!generations.has_value())
@@ -585,31 +620,21 @@ TieredPairCommitStorage::recover(manifest::ManifestStorage& manifest_storage,
     if (!loaded_record.has_value())
       return common::make_unexpected(loaded_record.error());
     const TieredPairCommitRecord& record = loaded_record->first;
-    auto loaded_manifest = manifest_storage.load_temporal_manifest_generation(
-        record.manifest_generation, request.manifest_request);
-    if (!loaded_manifest.has_value())
-      return common::make_unexpected(loaded_manifest.error());
-    if (loaded_manifest->encoded_bytes().size() != record.manifest_length)
+    auto metadata = manifest_storage.load_temporal_manifest_metadata(record.manifest_generation,
+                                                                     request.manifest_request);
+    if (!metadata.has_value())
+      return common::make_unexpected(metadata.error());
+    if (metadata->encoded_bytes().size() != record.manifest_length)
       return common::make_unexpected(corruption("committed Manifest v2 length changed"));
-    auto manifest_digest = ingest::sha256(loaded_manifest->encoded_bytes());
+    auto manifest_digest = ingest::sha256(metadata->encoded_bytes());
     if (!manifest_digest.has_value() || *manifest_digest != record.manifest_sha256)
       return common::make_unexpected(corruption("committed Manifest v2 digest changed"));
-    auto manifest_owner = std::make_shared<const manifest::LoadedTemporalManifestGeneration>(
-        std::move(*loaded_manifest));
-    auto manifest_publisher = manifest::TemporalDatabaseStoragePublisher::create(
-        manifest_owner, request.manifest_request.schema_bindings,
-        request.manifest_request.decode_limits);
-    if (!manifest_publisher.has_value())
-      return common::make_unexpected(manifest_publisher.error());
-    auto manifest_snapshot = manifest_publisher->snapshot();
-    if (!manifest_snapshot.has_value())
-      return common::make_unexpected(manifest_snapshot.error());
+    auto decoded_manifest = manifest::decode_manifest_v2_temporal_exact(
+        metadata->encoded_bytes(), request.manifest_request.decode_limits);
+    if (!decoded_manifest.has_value())
+      return common::make_unexpected(decoded_manifest.error().status());
     std::shared_ptr<const LoadedColdLocationManifest> cold_owner;
     if (record.cold_generation != 0U) {
-      auto decoded_manifest =
-          manifest::decode_manifest_v2_temporal_exact(manifest_snapshot->manifest_bytes());
-      if (!decoded_manifest.has_value())
-        return common::make_unexpected(decoded_manifest.error().status());
       auto loaded_cold = cold_storage.load_generation(record.cold_generation, *decoded_manifest);
       if (!loaded_cold.has_value())
         return common::make_unexpected(loaded_cold.error());
@@ -620,6 +645,31 @@ TieredPairCommitStorage::recover(manifest::ManifestStorage& manifest_storage,
         return common::make_unexpected(corruption("committed cold manifest digest changed"));
       cold_owner = std::make_shared<const LoadedColdLocationManifest>(std::move(*loaded_cold));
     }
+    const CommittedColdMissingPartValidator missing_validator{cold_owner.get(),
+                                                              request.remote_store};
+    manifest::TemporalManifestLoadRequest full_request = request.manifest_request;
+    full_request.missing_part_validator = &missing_validator;
+    auto loaded_manifest = manifest_storage.load_temporal_manifest_generation(
+        record.manifest_generation, full_request);
+    if (!loaded_manifest.has_value())
+      return common::make_unexpected(loaded_manifest.error());
+    if (loaded_manifest->encoded_bytes().size() != record.manifest_length)
+      return common::make_unexpected(
+          corruption("committed Manifest v2 length changed during load"));
+    auto loaded_digest = ingest::sha256(loaded_manifest->encoded_bytes());
+    if (!loaded_digest.has_value() || *loaded_digest != record.manifest_sha256)
+      return common::make_unexpected(
+          corruption("committed Manifest v2 digest changed during load"));
+    auto manifest_owner = std::make_shared<const manifest::LoadedTemporalManifestGeneration>(
+        std::move(*loaded_manifest));
+    auto manifest_publisher = manifest::TemporalDatabaseStoragePublisher::create(
+        manifest_owner, request.manifest_request.schema_bindings,
+        request.manifest_request.decode_limits);
+    if (!manifest_publisher.has_value())
+      return common::make_unexpected(manifest_publisher.error());
+    auto manifest_snapshot = manifest_publisher->snapshot();
+    if (!manifest_snapshot.has_value())
+      return common::make_unexpected(manifest_snapshot.error());
     return std::optional<RecoveredTieredPair>{
         RecoveredTieredPair{record, std::move(*manifest_snapshot), std::move(cold_owner)}};
   } catch (const std::bad_alloc&) {

@@ -69,6 +69,44 @@ const TieredDatabaseStorageSnapshot& TieredTemporalPartImage::snapshot() const n
   return snapshot_;
 }
 
+common::Result<std::vector<std::byte>> load_validated_remote_temporal_part_image(
+    const ObjectStore& remote_store, const ColdPartLocationDescriptor& location,
+    const manifest::TemporalPartDescriptor& descriptor,
+    const manifest::TemporalTabletDescriptor& owner, const schema::TableSchema& schema,
+    const manifest::TemporalPartValidationLimits limits) {
+  if (location.part_id != descriptor.part_id || location.file_length != descriptor.file_length ||
+      location.content_sha256 != descriptor.content_sha256) {
+    return common::make_unexpected(corruption("remote CSEG route differs from Manifest v2"));
+  }
+  if (descriptor.file_length > limits.decode.max_file_length)
+    return common::make_unexpected(exhausted("remote CSEG exceeds validation byte limit"));
+  if (descriptor.file_length > std::numeric_limits<std::size_t>::max())
+    return common::make_unexpected(exhausted("remote CSEG is not addressable on this host"));
+  const std::size_t file_length = static_cast<std::size_t>(descriptor.file_length);
+  auto metadata = remote_store.stat(location.object_key);
+  if (!metadata.has_value())
+    return common::make_unexpected(metadata.error());
+  if (metadata->key != location.object_key || metadata->size != file_length ||
+      metadata->checksum != descriptor.content_sha256) {
+    return common::make_unexpected(corruption("remote CSEG metadata differs from Manifest v2"));
+  }
+  auto remote = remote_store.get_range(location.object_key, 0U, file_length);
+  if (!remote.has_value())
+    return common::make_unexpected(remote.error());
+  if (remote->size() != file_length)
+    return common::make_unexpected(corruption("remote CSEG read is incomplete"));
+  auto digest = ingest::sha256(*remote);
+  if (!digest.has_value())
+    return common::make_unexpected(digest.error());
+  if (*digest != descriptor.content_sha256)
+    return common::make_unexpected(corruption("remote CSEG content digest differs"));
+  common::Status validation = manifest::validate_manifest_v2_temporal_part_image(
+      descriptor, owner, *remote, schema, limits);
+  if (!validation.is_ok())
+    return common::make_unexpected(std::move(validation));
+  return remote;
+}
+
 common::Result<std::vector<TieredTemporalPartImage>> load_tiered_temporal_part_images(
     const TieredDatabaseStorageSnapshot& snapshot, const manifest::ManifestStorage& local_storage,
     const ObjectStore& remote_store, const std::span<const cseg::PartId> part_ids,
@@ -124,27 +162,6 @@ common::Result<std::vector<TieredTemporalPartImage>> load_tiered_temporal_part_i
         return common::make_unexpected(
             corruption("missing local part has no exact pinned cold location"));
       }
-      if (descriptor.file_length > std::numeric_limits<std::size_t>::max())
-        return common::make_unexpected(exhausted("remote CSEG is not addressable on this host"));
-      const std::size_t file_length = static_cast<std::size_t>(descriptor.file_length);
-      auto metadata = remote_store.stat(location->object_key);
-      if (!metadata.has_value())
-        return common::make_unexpected(metadata.error());
-      if (metadata->key != location->object_key || metadata->size != file_length ||
-          metadata->checksum != descriptor.content_sha256) {
-        return common::make_unexpected(corruption("remote CSEG metadata differs from Manifest v2"));
-      }
-      auto remote = remote_store.get_range(location->object_key, 0U, file_length);
-      if (!remote.has_value())
-        return common::make_unexpected(remote.error());
-      if (remote->size() != file_length)
-        return common::make_unexpected(corruption("remote CSEG read is incomplete"));
-      auto digest = ingest::sha256(*remote);
-      if (!digest.has_value())
-        return common::make_unexpected(digest.error());
-      if (*digest != descriptor.content_sha256)
-        return common::make_unexpected(corruption("remote CSEG content digest differs"));
-
       const manifest::TemporalTabletDescriptor* owner =
           find_tablet(snapshot.manifest_snapshot().tablets(), descriptor.tablet_id);
       const manifest::TabletSchemaBinding* binding =
@@ -153,10 +170,10 @@ common::Result<std::vector<TieredTemporalPartImage>> load_tiered_temporal_part_i
           binding == nullptr ? nullptr : binding->lineage.get().find(descriptor.schema_id);
       if (owner == nullptr || schema_value == nullptr)
         return common::make_unexpected(invalid("remote CSEG has no exact tablet/schema binding"));
-      common::Status validation = manifest::validate_manifest_v2_temporal_part_image(
-          descriptor, *owner, *remote, *schema_value, limits.validation);
-      if (!validation.is_ok())
-        return common::make_unexpected(std::move(validation));
+      auto remote = load_validated_remote_temporal_part_image(
+          remote_store, *location, descriptor, *owner, *schema_value, limits.validation);
+      if (!remote.has_value())
+        return common::make_unexpected(remote.error());
       images.push_back(TieredTemporalPartImage{TieredPartSource::kRemote, descriptor,
                                                TieredTemporalPartImage::Storage{std::move(*remote)},
                                                snapshot});

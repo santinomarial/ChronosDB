@@ -8,6 +8,7 @@
 #include "chronos/tiering/cold_manifest_storage.hpp"
 #include "chronos/tiering/object_store.hpp"
 #include "chronos/tiering/tiered_distributed_fragment_worker.hpp"
+#include "chronos/tiering/tiered_pair_commit.hpp"
 #include "chronos/tiering/tiered_part_loader.hpp"
 #include "chronos/tiering/tiered_publication.hpp"
 #include "cseg/cseg_test_fixture.hpp"
@@ -463,6 +464,69 @@ TEST(TieredDistributedFragmentWorkerTest, ExecutesFromMissingLocalPartUsingExact
        .load_limits = {}});
   ASSERT_FALSE(mismatched.has_value());
   EXPECT_EQ(mismatched.error().code(), common::StatusCode::kUnavailable);
+}
+
+TEST(TieredPairRecoveryTest, ReconstructsCommittedSnapshotFromRemoteOnlyPart) {
+  auto fixture = LiveFixture::create();
+  ASSERT_NE(fixture, nullptr);
+  ASSERT_TRUE(std::filesystem::create_directory(fixture->directory.path() / "tiered-pair"));
+  auto pair_storage = TieredPairCommitStorage::create(
+      {.directory_path = (fixture->directory.path() / "tiered-pair").string(),
+       .expected_database_id = fixture->part.database_id,
+       .expected_object_store_id = fixture->part.object_store_id});
+  ASSERT_TRUE(pair_storage.has_value());
+  auto committed_snapshot = fixture->publisher.snapshot();
+  ASSERT_TRUE(committed_snapshot.has_value());
+  ASSERT_TRUE(pair_storage->commit(committed_snapshot->manifest_snapshot(), fixture->cold_owner)
+                  .has_value());
+  ASSERT_TRUE(std::filesystem::remove(fixture->local_part_path()));
+
+  const auto schema_bindings = fixture->part.bindings();
+  const auto source_bindings = fixture->part.source_bindings();
+  const TieredPairRecoveryRequest without_store{
+      .manifest_request = {.expected_database_id = fixture->part.database_id,
+                           .schema_bindings = schema_bindings,
+                           .source_bindings = source_bindings,
+                           .decode_limits = {},
+                           .part_validation_limits = {}},
+      .remote_store = nullptr};
+  auto unavailable =
+      pair_storage->recover(fixture->manifest_storage, *fixture->cold_storage, without_store);
+  ASSERT_FALSE(unavailable.has_value());
+  EXPECT_EQ(unavailable.error().code(), common::StatusCode::kUnavailable);
+
+  auto recovery = without_store;
+  recovery.remote_store = &fixture->object_store;
+  auto recovered =
+      pair_storage->recover(fixture->manifest_storage, *fixture->cold_storage, recovery);
+  ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
+  ASSERT_TRUE(recovered->has_value());
+  EXPECT_EQ((*recovered)->record.generation, 1U);
+  EXPECT_EQ((*recovered)->manifest_snapshot.generation(), 1U);
+  ASSERT_NE((*recovered)->cold_manifest, nullptr);
+  EXPECT_EQ((*recovered)->cold_manifest->manifest().generation(), 1U);
+
+  auto recovered_publisher = TieredDatabaseStoragePublisher::create((*recovered)->manifest_snapshot,
+                                                                    (*recovered)->cold_manifest);
+  ASSERT_TRUE(recovered_publisher.has_value());
+  auto recovered_snapshot = recovered_publisher->snapshot();
+  ASSERT_TRUE(recovered_snapshot.has_value());
+  const std::array ids{fixture->part.descriptor.part_id};
+  auto image = load_tiered_temporal_part_images(*recovered_snapshot, fixture->manifest_storage,
+                                                fixture->object_store, ids, schema_bindings);
+  ASSERT_TRUE(image.has_value()) << image.error().to_string();
+  ASSERT_EQ(image->size(), 1U);
+  EXPECT_EQ(image->front().source(), TieredPartSource::kRemote);
+  EXPECT_TRUE(std::ranges::equal(image->front().bytes(), fixture->part.encoded.bytes()));
+
+  std::vector<std::byte> corrupt(fixture->part.encoded.bytes().begin(),
+                                 fixture->part.encoded.bytes().end());
+  corrupt.back() ^= std::byte{0xFFU};
+  write_bytes(fixture->local_part_path(), corrupt);
+  auto local_corruption =
+      pair_storage->recover(fixture->manifest_storage, *fixture->cold_storage, recovery);
+  ASSERT_FALSE(local_corruption.has_value());
+  EXPECT_EQ(local_corruption.error().code(), common::StatusCode::kCorruption);
 }
 
 } // namespace

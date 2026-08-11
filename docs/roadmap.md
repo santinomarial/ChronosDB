@@ -922,7 +922,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   only an exact pinned cold route when that final is absent, repeating object metadata, SHA-256,
   CSEG, schema, and source validation while retaining the aggregate epoch. The distributed
   aggregate worker now invokes that loader only after its complete route, placement, Raft barrier,
-  Manifest, tablet, and schema proof gates, and requires the exact aggregate Manifest owner. Other
+  Manifest, tablet, and schema proof gates, and requires the exact aggregate Manifest owner. Pair
+  recovery now authenticates Manifest metadata and the exact committed cold generation before fully
+  validating locally absent CSEGs through their remote routes and creating publication state. Other
   query paths, safe deletion, multipart/retry and credential-refresh ownership, and Arrow/Parquet
   implementations remain deferred; the phase exit gate is not claimed.
 

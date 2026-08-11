@@ -21,6 +21,8 @@
 
 namespace chronos::tiering {
 
+class ObjectStore;
+
 inline constexpr std::size_t kTieredPairCommitV1Size = 256U;
 inline constexpr std::string_view kTieredPairCommitLockFileName = "LOCK";
 
@@ -60,6 +62,9 @@ struct InstalledTieredPairCommit {
 
 struct TieredPairRecoveryRequest {
   manifest::TemporalManifestLoadRequest manifest_request;
+  // Required only when a committed Manifest part has no local final. Recovery never uses this
+  // store without an exact committed cold route.
+  const ObjectStore* remote_store{};
 };
 
 struct RecoveredTieredPair {

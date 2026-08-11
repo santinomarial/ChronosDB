@@ -43,12 +43,17 @@ retain the same exact snapshot, integrity, and schema/source proofs.
 
 ## Current boundary and review questions
 
-This loader alone does not make local deletion safe: restart recovery and every query entry point
-must use equivalent tier-aware authority before reclamation is enabled. The distributed aggregate
-worker now supplies one integrated path: all dispatch/placement/Raft/Manifest gates run before a
-synchronous tiered batch loader exposes image views to the unchanged temporal resolver. Other query
-entry points remain local-only. The loader also does not authorize remote deletion, multipart
-upload, cache eviction, or retry policy.
+Pair recovery now uses the same remote validation primitive for absent local finals. It first
+metadata-loads and hashes the exact pair-selected Manifest, binds the exact committed cold
+generation, then repeats full Manifest loading with remote validation before creating any
+publishable owner. A metadata-only Manifest value is deliberately not a storage snapshot.
+
+This loader and recovery path still do not make local deletion safe by themselves: reclamation must
+also prove that the remote route is committed and that every older reader pin has expired. The
+distributed aggregate worker supplies one integrated query path: all dispatch/placement/Raft/
+Manifest gates run before a synchronous tiered batch loader exposes image views to the unchanged
+temporal resolver. Other query entry points remain local-only. The loader also does not authorize
+remote deletion, multipart upload, cache eviction, or retry policy.
 
 Likely review questions include why only `NOT_FOUND` permits fallback, why the cold key is not data
 authority, why metadata and a recomputed digest are both checked, why the complete CSEG validator is
