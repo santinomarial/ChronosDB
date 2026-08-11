@@ -64,12 +64,25 @@ public:
         poll_slot_indexes(std::move(indexes)) {}
 
   [[nodiscard]] common::Status fail(common::Status status) {
-    if (execution_state != DistributedQueryTcpExecutionState::kFailed) {
+    if (execution_state == DistributedQueryTcpExecutionState::kRunning) {
       for (Slot& slot : slots)
         slot.client.reset();
       execution_metrics.active_attempts = 0U;
       execution_failure = std::move(status);
       execution_state = DistributedQueryTcpExecutionState::kFailed;
+    }
+    return execution_failure;
+  }
+
+  [[nodiscard]] common::Status cancel(common::Status status) {
+    if (execution_state == DistributedQueryTcpExecutionState::kComplete)
+      return common::Status::ok();
+    if (execution_state == DistributedQueryTcpExecutionState::kRunning) {
+      for (Slot& slot : slots)
+        slot.client.reset();
+      execution_metrics.active_attempts = 0U;
+      execution_failure = std::move(status);
+      execution_state = DistributedQueryTcpExecutionState::kCancelled;
     }
     return execution_failure;
   }
@@ -134,7 +147,7 @@ public:
 
   [[nodiscard]] std::chrono::milliseconds bounded_wait(std::chrono::milliseconds maximum_wait,
                                                        const TimePoint now) const {
-    std::optional<TimePoint> earliest;
+    std::optional<TimePoint> earliest = config.execution_deadline;
     for (const Slot& slot : slots) {
       if (slot.client.has_value())
         continue;
@@ -252,12 +265,18 @@ DistributedQueryTcpExecution::poll_once(const std::chrono::milliseconds maximum_
   if (maximum_wait.count() < 0 || maximum_wait.count() > INT_MAX)
     return invalid("distributed query TCP execution poll timeout is invalid");
   Impl& impl = *implementation_;
-  if (impl.execution_state == DistributedQueryTcpExecutionState::kFailed)
+  if (impl.execution_state == DistributedQueryTcpExecutionState::kFailed ||
+      impl.execution_state == DistributedQueryTcpExecutionState::kCancelled) {
     return impl.execution_failure;
+  }
   if (impl.execution_state == DistributedQueryTcpExecutionState::kComplete)
     return common::Status::ok();
 
   auto now = std::chrono::steady_clock::now();
+  if (impl.config.execution_deadline.has_value() && now >= *impl.config.execution_deadline) {
+    return impl.cancel(
+        {common::StatusCode::kCancelled, "distributed query TCP execution deadline expired"});
+  }
   const common::Status started = impl.start_due_attempts(now);
   if (!started.is_ok())
     return impl.fail(started);
@@ -289,6 +308,10 @@ DistributedQueryTcpExecution::poll_once(const std::chrono::milliseconds maximum_
     return impl.fail(poll_error());
 
   now = std::chrono::steady_clock::now();
+  if (impl.config.execution_deadline.has_value() && now >= *impl.config.execution_deadline) {
+    return impl.cancel(
+        {common::StatusCode::kCancelled, "distributed query TCP execution deadline expired"});
+  }
   for (std::size_t descriptor_index = 0U; descriptor_index < descriptor_count; ++descriptor_index) {
     Impl::Slot& slot = impl.slots[impl.poll_slot_indexes[descriptor_index]];
     if (!slot.client.has_value())
@@ -331,6 +354,13 @@ DistributedQueryTcpExecution::poll_once(const std::chrono::milliseconds maximum_
   return impl.publish_if_terminal();
 }
 
+common::Status DistributedQueryTcpExecution::cancel() {
+  if (!implementation_)
+    return invalid("distributed query TCP execution is empty");
+  return implementation_->cancel(
+      {common::StatusCode::kCancelled, "distributed query TCP execution was cancelled"});
+}
+
 DistributedQueryTcpExecutionState DistributedQueryTcpExecution::state() const noexcept {
   return implementation_ ? implementation_->execution_state
                          : DistributedQueryTcpExecutionState::kFailed;
@@ -344,8 +374,10 @@ DistributedQueryTcpExecutionMetrics DistributedQueryTcpExecution::metrics() cons
 common::Result<query::MergeableAggregateState> DistributedQueryTcpExecution::result() const {
   if (!implementation_)
     return common::make_unexpected(invalid("distributed query TCP execution is empty"));
-  if (implementation_->execution_state == DistributedQueryTcpExecutionState::kFailed)
+  if (implementation_->execution_state == DistributedQueryTcpExecutionState::kFailed ||
+      implementation_->execution_state == DistributedQueryTcpExecutionState::kCancelled) {
     return common::make_unexpected(implementation_->execution_failure);
+  }
   if (!implementation_->execution_result.has_value())
     return common::make_unexpected(common::Status{common::StatusCode::kUnavailable,
                                                   "distributed query TCP execution is incomplete"});

@@ -883,7 +883,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   response bytes with fail-closed teardown. A pinned multi-tablet TCP scheduler now prevalidates
   every immutable node route, starts plan-ordered attempts and deadline-due retries, drives a fixed
   poll table, reports each terminal transport outcome once, closes peer attempts on query failure,
-  and publishes only the complete aggregate while retaining the compatible Manifest epoch.
+  and publishes only the complete aggregate while retaining the compatible Manifest epoch. A
+  whole-query monotonic deadline and explicit idempotent cancellation now release every active
+  client without exposing partial state.
   Cross-node generation refresh/rebinding, general vector-plan fragments/exchanges, complete leader
   transport, and broader multi-node failure validation remain deferred; the
   phase exit gate is not claimed.

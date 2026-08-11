@@ -95,7 +95,8 @@ exact response while preserving carrier-before-descriptor teardown.
 It prevalidates immutable target routes, starts ready or deadline-due attempts, drives every active
 client from one fixed poll table, reports each transport outcome once, closes peers on terminal
 failure, and publishes only the all-tablet coordinator result. The pinned Manifest epoch therefore
-outlives every attempt and retry.
+outlives every attempt and retry. Its optional whole-query monotonic deadline and explicit
+cancellation both close every active client, retain no partial result, and remain sticky.
 
 ## Tradeoffs and deferred work
 
@@ -104,7 +105,7 @@ prematurely defining a general physical-fragment language. The cost is a special
 type. Grouping state, physical plans, ordering/top-N, cancellation delivery, and general duplicate
 sequencing require their own bounded contracts. A leader hint never
 mutates an existing proof-bound dispatch: following it requires explicit coordinator rebinding.
-Address resolution, explicit authority refresh/rebinding, cancellation delivery, pooled
+Address resolution, explicit authority refresh/rebinding, remote worker-interrupt delivery, pooled
 multiplexing, asynchronous worker completion, and broader multi-node fault handling remain
 embedding work.
 

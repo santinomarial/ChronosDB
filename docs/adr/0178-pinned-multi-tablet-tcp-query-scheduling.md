@@ -43,6 +43,9 @@ change requires fresh admission, placement, barrier, and compatible snapshot evi
 bound execution. Authentication and node-authorization policies plus TLS contexts are borrowed and
 must outlive the scheduler; all other execution, route, slot, client, and result state is owned.
 
+ADR 0179 subsequently adds a whole-query monotonic deadline and explicit cancellation while
+preserving this owner's all-tablet success boundary and deterministic client teardown.
+
 ## Consequences and validation
 
 Creation uses `O(routes log routes + fragments log routes)` work and retains `O(routes + fragments)`
@@ -89,3 +92,4 @@ or servers.
 - [Bounded distributed-query TCP server](0176-bounded-distributed-query-tcp-server.md)
 - [Distributed aggregate exchange](../learning/distributed-aggregate-exchange.md)
 - [Architecture invariants](../architecture/invariants.md)
+- [Whole-query TCP cancellation and deadline](0179-whole-query-tcp-cancellation-deadline.md)

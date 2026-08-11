@@ -142,9 +142,11 @@
   placement, barrier, schema, group, and durable snapshot authority, resolves logical winners from
   validated generation-pinned temporal parts, and emits a filtered terminal Float64 partial.
   The authenticated TCP server/client and pinned multi-tablet retry scheduler now provide bounded
-  socket integration for this aggregate path. General physical pipeline stage/expression
+  socket integration, whole-query deadlines, and local cancellation for this aggregate path.
+  General physical pipeline stage/expression
   serialization, connection pooling/multiplexing, grouping-state codecs, ordering, top-N, LIMIT,
-  cancellation, durable retries, and broader coordinator/worker failure cleanup remain.
+  remote worker interruption, durable retries, and broader coordinator/worker failure cleanup
+  remain.
 - Proof-bound leader-linearizable/bounded-stale/local-eventual admissions now remain attached through
   compatible pinned multi-tablet snapshots and protocol/carrier scheduling. Add explicit generation
   refresh and rebinding for leader or placement changes during long scans without silent downgrade.

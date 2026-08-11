@@ -213,3 +213,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0176](0176-bounded-distributed-query-tcp-server.md) | Bounded distributed-query TCP server | accepted |
 | [0177](0177-deadline-bound-distributed-query-tcp-client.md) | Deadline-bound distributed-query TCP client | accepted |
 | [0178](0178-pinned-multi-tablet-tcp-query-scheduling.md) | Pinned multi-tablet TCP query scheduling | accepted |
+| [0179](0179-whole-query-tcp-cancellation-deadline.md) | Whole-query TCP cancellation and deadline | accepted |

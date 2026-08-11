@@ -423,6 +423,62 @@ TEST(DistributedQueryTcpExecutionTest, RejectsIncompleteRoutesBeforeOpeningAttem
             common::StatusCode::kInvalidArgument);
 }
 
+TEST(DistributedQueryTcpExecutionTest, DeadlineAndCancellationReleaseEveryAttempt) {
+  ExecutionNodeAuthorizer authorizer;
+  ExecutionAuthenticator authenticator{92U};
+  auto tls_context = network::TlsClientContext::create(execution_tls_client_config());
+  ASSERT_TRUE(tls_context.has_value());
+
+  TemporaryDirectory expired_directory;
+  auto expired_input = make_input(expired_directory);
+  ASSERT_TRUE(expired_input.has_value());
+  auto expired_execution = DistributedQueryExecution::create(1U, std::move(expired_input->plan),
+                                                             std::move(expired_input->admissions),
+                                                             std::move(expired_input->snapshot));
+  ASSERT_TRUE(expired_execution.has_value());
+  auto expired = DistributedQueryTcpExecution::create(
+      std::move(*expired_execution),
+      {.authenticator = &authenticator,
+       .node_authorizer = &authorizer,
+       .routes = {{11U, {{127U, 0U, 0U, 1U}, 1U}, &*tls_context},
+                  {12U, {{127U, 0U, 0U, 1U}, 2U}, &*tls_context}},
+       .execution_deadline = DistributedQueryExecution::TimePoint{}});
+  ASSERT_TRUE(expired.has_value());
+  const common::Status deadline = expired->poll_once(std::chrono::milliseconds{100});
+  EXPECT_EQ(deadline.code(), common::StatusCode::kCancelled);
+  EXPECT_EQ(expired->state(), DistributedQueryTcpExecutionState::kCancelled);
+  EXPECT_EQ(expired->metrics().attempts_started, 0U);
+  EXPECT_EQ(expired->result().error(), deadline);
+  EXPECT_EQ(expired->poll_once(std::chrono::milliseconds{0}), deadline);
+
+  TemporaryDirectory cancelled_directory;
+  auto cancelled_input = make_input(cancelled_directory);
+  ASSERT_TRUE(cancelled_input.has_value());
+  auto cancelled_execution = DistributedQueryExecution::create(
+      1U, std::move(cancelled_input->plan), std::move(cancelled_input->admissions),
+      std::move(cancelled_input->snapshot));
+  ASSERT_TRUE(cancelled_execution.has_value());
+  auto listener = network::TcpListener::bind();
+  ASSERT_TRUE(listener.has_value()) << listener.error().to_string();
+  auto cancelled = DistributedQueryTcpExecution::create(
+      std::move(*cancelled_execution),
+      {.authenticator = &authenticator,
+       .node_authorizer = &authorizer,
+       .routes = {{11U, listener->bound_endpoint(), &*tls_context},
+                  {12U, listener->bound_endpoint(), &*tls_context}}});
+  ASSERT_TRUE(cancelled.has_value());
+  ASSERT_TRUE(cancelled->poll_once(std::chrono::milliseconds{0}).is_ok());
+  EXPECT_EQ(cancelled->metrics().attempts_started, 2U);
+  EXPECT_EQ(cancelled->metrics().active_attempts, 2U);
+  const common::Status cancellation = cancelled->cancel();
+  EXPECT_EQ(cancellation.code(), common::StatusCode::kCancelled);
+  EXPECT_EQ(cancelled->state(), DistributedQueryTcpExecutionState::kCancelled);
+  EXPECT_EQ(cancelled->metrics().active_attempts, 0U);
+  EXPECT_EQ(cancelled->cancel(), cancellation);
+  EXPECT_EQ(cancelled->poll_once(std::chrono::milliseconds{0}), cancellation);
+  EXPECT_EQ(cancelled->result().error(), cancellation);
+}
+
 TEST(DistributedQueryExecutionTest, RejectsAdmissionOrderThatDiffersFromPinnedDispatches) {
   TemporaryDirectory directory;
   auto input = make_input(directory);

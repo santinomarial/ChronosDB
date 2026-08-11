@@ -14,6 +14,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace chronos::cluster {
@@ -30,6 +31,7 @@ struct DistributedQueryTcpExecutionConfig {
   std::vector<DistributedQueryNodeRoute> routes;
   DistributedQueryTlsClientLimits carrier_limits;
   std::chrono::milliseconds connect_timeout{5000};
+  std::optional<std::chrono::steady_clock::time_point> execution_deadline;
 };
 
 struct DistributedQueryTcpExecutionMetrics {
@@ -44,6 +46,7 @@ enum class DistributedQueryTcpExecutionState : std::uint8_t {
   kRunning = 1,
   kComplete = 2,
   kFailed = 3,
+  kCancelled = 4,
 };
 
 // Single-threaded poll owner for one compatible multi-tablet execution. It owns the execution and
@@ -62,6 +65,7 @@ public:
   [[nodiscard]] static common::Result<DistributedQueryTcpExecution>
   create(DistributedQueryExecution execution, DistributedQueryTcpExecutionConfig config);
   [[nodiscard]] common::Status poll_once(std::chrono::milliseconds maximum_wait);
+  [[nodiscard]] common::Status cancel();
 
   [[nodiscard]] DistributedQueryTcpExecutionState state() const noexcept;
   [[nodiscard]] DistributedQueryTcpExecutionMetrics metrics() const noexcept;
