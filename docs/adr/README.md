@@ -180,3 +180,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0143](0143-nonblocking-reconfiguration-response-publication.md) | Nonblocking reconfiguration response publication | accepted |
 | [0144](0144-maintained-mutual-tls-socket-carrier.md) | Maintained mutual-TLS socket carrier | accepted |
 | [0145](0145-bounded-epoll-mutual-tls-admission.md) | Bounded epoll mutual-TLS admission | accepted |
+| [0146](0146-raft-tablet-physical-snapshot-projection.md) | Raft tablet physical snapshot projection | accepted |

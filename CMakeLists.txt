@@ -311,6 +311,7 @@ add_library(
   src/manifest/naming.cpp
   src/manifest/part_validation.cpp
   src/manifest/publication.cpp
+  src/manifest/raft_tablet_physical_snapshot.cpp
   src/manifest/sealed_head_flush.cpp
   src/manifest/sealed_head_flush_coordinator.cpp
   src/manifest/startup_recovery.cpp
@@ -1175,6 +1176,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/manifest/part_reclamation_crash_matrix_test.cpp
     tests/manifest/publication_header_self_contained.cpp
     tests/manifest/publication_test.cpp
+    tests/manifest/raft_tablet_physical_snapshot_header_self_contained.cpp
+    tests/manifest/raft_tablet_physical_snapshot_test.cpp
     tests/manifest/retirement_header_self_contained.cpp
     tests/manifest/sealed_head_flush_header_self_contained.cpp
     tests/manifest/sealed_head_flush_test.cpp

@@ -850,10 +850,13 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   correlation, explicit local-only success, advisory leader refresh, bounded attempts, and capped
   exponential backoff. Receiver admissions now retain exact correlation through asynchronous local
   durability and nonblockingly publish that sole result as the response exactly once. The
-  TLS/socket carrier remains incomplete. Physical Manifest/CSEG handoff
-  remains incomplete. General
-  vector-plan fragments/exchange wire bytes, compatible multi-tablet snapshots, the maintained TLS
-  carrier and complete leader transport, and multi-node failure validation remain deferred; the
+  maintained OpenSSL mutual-TLS carrier is now integrated with epoll admission and preserves
+  authentication-before-protocol dispatch under partial readiness. Physical handoff now has a
+  canonical one-tablet Manifest v2 projection whose exact CSEG descriptor table supplies Raft's
+  aggregate part-set checksum; restartable CSEG object transfer and destination publication remain
+  incomplete. General
+  vector-plan fragments/exchange wire bytes, compatible multi-tablet snapshots, complete leader
+  transport, and multi-node failure validation remain deferred; the
   phase exit gate is not claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.
