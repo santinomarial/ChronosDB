@@ -554,6 +554,7 @@ chronos_enable_static_analysis(chronos_raft)
 add_library(
   chronos_cluster
   src/cluster/remote_tablet_reconfiguration.cpp
+  src/cluster/tablet_physical_part_install.cpp
   src/cluster/tablet_physical_part_chunk.cpp
   src/cluster/tablet_physical_part_chunk_storage.cpp
 )
@@ -568,7 +569,7 @@ target_include_directories(
 )
 target_link_libraries(
   chronos_cluster
-  PUBLIC chronos::cseg chronos::ingest chronos::network chronos::raft
+  PUBLIC chronos::cseg chronos::ingest chronos::manifest chronos::network chronos::raft
   PRIVATE chronos::io
 )
 chronos_set_project_warnings(chronos_cluster)
@@ -851,6 +852,8 @@ if(CHRONOS_BUILD_TESTS)
     chronos_cluster_tests
     tests/cluster/remote_tablet_reconfiguration_header_self_contained.cpp
     tests/cluster/remote_tablet_reconfiguration_test.cpp
+    tests/cluster/tablet_physical_part_install_header_self_contained.cpp
+    tests/cluster/tablet_physical_part_install_test.cpp
     tests/cluster/tablet_physical_part_chunk_header_self_contained.cpp
     tests/cluster/tablet_physical_part_chunk_storage_header_self_contained.cpp
     tests/cluster/tablet_physical_part_chunk_storage_test.cpp
@@ -858,6 +861,7 @@ if(CHRONOS_BUILD_TESTS)
   )
   set_target_properties(chronos_cluster_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_cluster_tests PRIVATE cxx_std_23)
+  target_include_directories(chronos_cluster_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
   target_link_libraries(chronos_cluster_tests PRIVATE chronos::cluster GTest::gtest_main)
   chronos_set_project_warnings(chronos_cluster_tests)
   chronos_enable_sanitizers(chronos_cluster_tests)

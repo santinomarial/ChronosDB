@@ -184,3 +184,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0147](0147-tablet-physical-part-chunk-v1.md) | Tablet physical part chunk v1 | accepted |
 | [0148](0148-durable-physical-part-chunk-receipt.md) | Durable physical-part chunk receipt | accepted |
 | [0149](0149-idempotent-final-temporal-part-adoption.md) | Idempotent final temporal-part adoption | accepted |
+| [0150](0150-verified-physical-part-destination-installation.md) | Verified physical-part destination installation | accepted |

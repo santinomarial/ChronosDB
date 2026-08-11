@@ -1,7 +1,7 @@
 # Tablet Physical Part Chunk v1
 
-> **Status:** accepted and implemented byte codec. Durable receipt and streaming completion remain
-> separate.
+> **Status:** accepted with implemented codec, restart-safe durable receipt, streamed completion,
+> and capped verified composition into destination CSEG installation.
 
 All integers are unsigned little-endian. UUIDs use durable network byte order. The payload is
 nonempty and the frame has no trailing bytes.

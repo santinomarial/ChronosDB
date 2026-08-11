@@ -229,8 +229,14 @@ make_valid_part_with_rows(const std::uint32_t rows, const std::uint32_t rows_per
       .value();
 }
 
+struct TemporalPartFixtureOptions {
+  temporal_format::CommitSource commit_source{temporal_format::CommitSource::kWal};
+  common::Uuid source_id{common::Uuid{identifier<schema::SchemaId>(8U).bytes()}};
+};
+
 [[nodiscard]] inline EncodedCsegPart
-make_valid_temporal_part(const PageCompression compression = PageCompression::kNone) {
+make_valid_temporal_part(const PageCompression compression = PageCompression::kNone,
+                         const TemporalPartFixtureOptions options = {}) {
   constexpr std::uint32_t kRows = 2U;
   const schema::LogicalType timestamp = type(schema::LogicalTypeKind::kTimestampNs);
   const schema::LogicalType uuid = type(schema::LogicalTypeKind::kUuid);
@@ -283,9 +289,9 @@ make_valid_temporal_part(const PageCompression compression = PageCompression::kN
   std::vector<std::byte> event_times;
   append_little_endian(event_times, std::int64_t{10});
   append_little_endian(event_times, std::int64_t{20});
-  const std::vector<std::byte> sources(
-      kRows, std::byte{static_cast<std::uint8_t>(temporal_format::CommitSource::kWal)});
-  const common::Uuid::Bytes source = identifier<schema::SchemaId>(8U).bytes();
+  const std::vector<std::byte> sources(kRows,
+                                       std::byte{static_cast<std::uint8_t>(options.commit_source)});
+  const common::Uuid::Bytes source = options.source_id.bytes();
   std::vector<std::byte> source_ids;
   source_ids.insert(source_ids.end(), source.begin(), source.end());
   source_ids.insert(source_ids.end(), source.begin(), source.end());
