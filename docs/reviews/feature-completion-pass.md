@@ -131,9 +131,13 @@ duplicate detection, worker failure, and a coordinator that refuses partial succ
 catch-up through the snapshot index, placement-epoch-checked target promotion, and only then source
 removal. Corrupt, gapped, or conflicting retry chunks fail closed.
 
-General vector-plan fragment serialization, exchange wire protocol, final grouping/order/top-N/
-LIMIT, real consistency proofs, routing, durable transfer, joint Raft membership, and production
-multi-node execution remain incomplete.
+Subsequent work added proof-bound dispatch/response protocols, authenticated TCP/mTLS clients and
+servers, compatible pinned multi-tablet scheduling, whole-query cancellation/deadlines, finite
+explicit rebinding, authenticated leader hints, durable physical movement ownership, joint Raft
+membership coordination, and reader-pinned source retirement/reclamation. A focused real-mTLS gate
+now returns the identical aggregate before and after a learner-first movement. General vector-plan
+grouping/order/top-N/LIMIT, automatic metadata acquisition, a packaged process runtime, remote CSEG
+execution in that gate, and broad failure/measurement evidence remain incomplete.
 
 ### Phase 17 — object storage and interoperability
 
@@ -155,10 +159,12 @@ distributed partial aggregation, a committed single-group Raft command, verified
 manifest callback, cache/range read, and byte-identical result in one process. Separate deterministic
 tests cover the requested 3-node Raft failover and Multi-Raft different-leader cases.
 
-A packaged daemon and the requested real three-process/socket workflow do not exist. The smoke does
-not start three server processes, execute SQL through the native protocol, kill a process, apply a
-Raft command to mutable/CSEG storage, move a real replica, or query a real remote CSEG. Those are
-high-priority Phase 18/integration tasks, not passed checks.
+A packaged daemon and the requested real three-process/socket workflow do not exist. A later focused
+gate uses real mutual-TLS query sockets around the complete movement state machine, but simulates the
+externally committed promotion/removal milestones and deterministic worker aggregates. It does not
+start three server processes, execute SQL through the native protocol, kill a process, apply a Raft
+command to mutable/CSEG storage, or query a real remote CSEG. Those remain high-priority integration
+and hardening tasks, not passed checks.
 
 ## Public APIs and formats
 

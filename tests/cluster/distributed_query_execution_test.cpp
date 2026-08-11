@@ -1,9 +1,11 @@
 #include "chronos/cluster/distributed_query_execution.hpp"
 #include "chronos/cluster/distributed_query_tcp_execution.hpp"
 #include "chronos/cluster/distributed_query_tcp_server.hpp"
+#include "chronos/common/crc32c.hpp"
 #include "chronos/manifest/naming.hpp"
 #include "chronos/manifest/storage.hpp"
 #include "chronos/manifest/temporal_codec.hpp"
+#include "chronos/raft/rebalancing.hpp"
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/logical_type.hpp"
 #include "chronos/schema/schema_lineage.hpp"
@@ -94,8 +96,10 @@ struct ExecutionInput {
   query::CompatibleDistributedAggregateSnapshot snapshot;
 };
 
-[[nodiscard]] common::Result<ExecutionInput> make_input(const TemporaryDirectory& directory,
-                                                        const std::uint8_t query_seed = 7U) {
+[[nodiscard]] common::Result<ExecutionInput>
+make_input(const TemporaryDirectory& directory, const std::uint8_t query_seed = 7U,
+           const std::array<raft::NodeId, 2U> serving_nodes = {11U, 12U},
+           const std::array<std::uint64_t, 2U> placement_epochs = {12U, 13U}) {
   const schema::TableSchema schema = schema_value();
   const schema::SchemaLineage lineage = schema::SchemaLineage::create(schema).value();
   const std::array tablets{id<schema::TabletId>(3U), id<schema::TabletId>(9U)};
@@ -162,13 +166,22 @@ struct ExecutionInput {
   query::DistributedAggregatePlan plan{
       .query_id = uuid(query_seed),
       .read_policy = {.consistency = query::DistributedReadConsistency::kLeaderLinearizable},
-      .fragments = {{tablets[0], 0, 100, 11U, 10U, 10U}, {tablets[1], 101, 200, 12U, 20U, 20U}}};
+      .fragments = {{tablets[0], 0, 100, serving_nodes[0], 10U, 10U},
+                    {tablets[1], 101, 200, serving_nodes[1], 20U, 20U}}};
   std::vector<query::DistributedReadAdmission> admissions{
-      {tablets[0], 11U, 10U, 10U, raft::ReadBarrier{2U, 3U, 10U}},
-      {tablets[1], 12U, 20U, 20U, raft::ReadBarrier{2U, 4U, 20U}}};
+      {tablets[0], serving_nodes[0], 10U, 10U, raft::ReadBarrier{2U, 3U, 10U}},
+      {tablets[1], serving_nodes[1], 20U, 20U, raft::ReadBarrier{2U, 4U, 20U}}};
   const std::array placements{
-      raft::TabletPlacementMetadata{schema.table_id(), tablets[0], 12U, {11U, 13U}, 11U},
-      raft::TabletPlacementMetadata{schema.table_id(), tablets[1], 13U, {12U, 14U}, 12U}};
+      raft::TabletPlacementMetadata{schema.table_id(),
+                                    tablets[0],
+                                    placement_epochs[0],
+                                    {serving_nodes[0], serving_nodes[0] + 2U},
+                                    serving_nodes[0]},
+      raft::TabletPlacementMetadata{schema.table_id(),
+                                    tablets[1],
+                                    placement_epochs[1],
+                                    {serving_nodes[1], serving_nodes[1] + 2U},
+                                    serving_nodes[1]}};
   const std::array<std::uint32_t, 2U> projection{0U, 1U};
   const std::array bindings{query::DistributedAggregateSnapshotFragmentBinding{
                                 std::cref(admissions[0]), std::cref(schema), groups[0],
@@ -225,7 +238,7 @@ public:
   common::Result<bool> authorize_node(const std::uint64_t principal_id,
                                       const raft::NodeId node_id) const override {
     return (principal_id == 91U && node_id == 1U) ||
-           (principal_id == 92U && (node_id == 11U || node_id == 12U));
+           (principal_id == 92U && (node_id == 11U || node_id == 12U || node_id == 13U));
   }
 };
 
@@ -631,6 +644,113 @@ TEST(DistributedQueryTcpExecutionTest, RebindsWholeQueryAndDiscardsPriorEpochPar
   EXPECT_EQ(scheduled->metrics().attempts_started, 4U);
   EXPECT_EQ(scheduled->metrics().transport_completed_attempts, 4U);
   EXPECT_EQ(scheduled->metrics().rebindings_started, 1U);
+}
+
+TEST(DistributedQueryMovementGateTest, QueryResultIsStableAcrossCompletedTabletMovement) {
+  ExecutionNodeAuthorizer authorizer;
+  ExecutionAuthenticator client_authenticator{91U};
+  ExecutionAuthenticator server_authenticator{92U};
+  auto tls_context = network::TlsClientContext::create(execution_tls_client_config());
+  ASSERT_TRUE(tls_context.has_value());
+
+  ExecutionWorker source_worker{2.5, false};
+  ExecutionWorker stable_worker{3.5, false};
+  ExecutionWorker target_worker{2.5, false};
+  auto source_receiver = DistributedQueryReceiver::create(
+      {.local_node_id = 11U, .authorizer = &authorizer, .worker = &source_worker});
+  auto stable_receiver = DistributedQueryReceiver::create(
+      {.local_node_id = 12U, .authorizer = &authorizer, .worker = &stable_worker});
+  auto target_receiver = DistributedQueryReceiver::create(
+      {.local_node_id = 13U, .authorizer = &authorizer, .worker = &target_worker});
+  ASSERT_TRUE(source_receiver.has_value());
+  ASSERT_TRUE(stable_receiver.has_value());
+  ASSERT_TRUE(target_receiver.has_value());
+  auto source_server = DistributedQueryTcpServer::start(
+      execution_server_config(client_authenticator, *source_receiver));
+  auto stable_server = DistributedQueryTcpServer::start(
+      execution_server_config(client_authenticator, *stable_receiver));
+  auto target_server = DistributedQueryTcpServer::start(
+      execution_server_config(client_authenticator, *target_receiver));
+  ASSERT_TRUE(source_server.has_value());
+  ASSERT_TRUE(stable_server.has_value());
+  ASSERT_TRUE(target_server.has_value());
+
+  TemporaryDirectory before_directory;
+  auto before_input = make_input(before_directory);
+  ASSERT_TRUE(before_input.has_value());
+  const schema::TabletId moved_tablet = before_input->plan.fragments[0].tablet_id;
+  auto before_execution = DistributedQueryExecution::create(1U, std::move(before_input->plan),
+                                                            std::move(before_input->admissions),
+                                                            std::move(before_input->snapshot));
+  ASSERT_TRUE(before_execution.has_value());
+  auto before = DistributedQueryTcpExecution::create(
+      std::move(*before_execution),
+      {.authenticator = &server_authenticator,
+       .node_authorizer = &authorizer,
+       .routes = {{11U, source_server->bound_endpoint(), &*tls_context},
+                  {12U, stable_server->bound_endpoint(), &*tls_context}}});
+  ASSERT_TRUE(before.has_value());
+  for (std::size_t iteration = 0U;
+       iteration < 2048U && before->state() == DistributedQueryTcpExecutionState::kRunning;
+       ++iteration) {
+    ASSERT_TRUE(before->poll_once(std::chrono::milliseconds{1}).is_ok());
+    ASSERT_TRUE(source_server->poll_once(std::chrono::milliseconds{1}).is_ok());
+    ASSERT_TRUE(stable_server->poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  ASSERT_EQ(before->state(), DistributedQueryTcpExecutionState::kComplete);
+  const auto before_result = before->result();
+  ASSERT_TRUE(before_result.has_value());
+
+  const std::vector<std::byte> snapshot{std::byte{1U}, std::byte{2U}, std::byte{3U}, std::byte{4U}};
+  auto movement = raft::TabletMovement::begin(moved_tablet, 12U, 11U, 13U, {11U, 15U});
+  ASSERT_TRUE(movement.has_value());
+  ASSERT_TRUE(
+      movement->begin_snapshot({1U, 10U, 2U, snapshot.size(), common::crc32c(snapshot)}).is_ok());
+  const common::ByteView first_half{snapshot.data(), 2U};
+  const common::ByteView second_half{snapshot.data() + 2U, 2U};
+  ASSERT_TRUE(movement->accept_snapshot_chunk(0U, first_half, common::crc32c(first_half)).is_ok());
+  ASSERT_TRUE(
+      movement->accept_snapshot_chunk(2U, second_half, common::crc32c(second_half)).is_ok());
+  ASSERT_TRUE(movement->finish_snapshot().is_ok());
+  ASSERT_TRUE(movement->mark_caught_up(10U).is_ok());
+  ASSERT_TRUE(movement->promote_target(12U, 13U).is_ok());
+  ASSERT_TRUE(movement->remove_source(13U, 14U).is_ok());
+  ASSERT_EQ(movement->record().phase, raft::TabletMovementPhase::kComplete);
+  EXPECT_EQ(movement->record().voting_replicas, (std::vector<raft::NodeId>{13U, 15U}));
+
+  TemporaryDirectory after_directory;
+  auto after_input = make_input(after_directory, 7U, {13U, 12U}, {14U, 13U});
+  ASSERT_TRUE(after_input.has_value());
+  auto after_execution = DistributedQueryExecution::create(1U, std::move(after_input->plan),
+                                                           std::move(after_input->admissions),
+                                                           std::move(after_input->snapshot));
+  ASSERT_TRUE(after_execution.has_value());
+  auto after = DistributedQueryTcpExecution::create(
+      std::move(*after_execution),
+      {.authenticator = &server_authenticator,
+       .node_authorizer = &authorizer,
+       .routes = {{13U, target_server->bound_endpoint(), &*tls_context},
+                  {12U, stable_server->bound_endpoint(), &*tls_context}}});
+  ASSERT_TRUE(after.has_value());
+  for (std::size_t iteration = 0U;
+       iteration < 2048U && after->state() == DistributedQueryTcpExecutionState::kRunning;
+       ++iteration) {
+    ASSERT_TRUE(after->poll_once(std::chrono::milliseconds{1}).is_ok());
+    ASSERT_TRUE(target_server->poll_once(std::chrono::milliseconds{1}).is_ok());
+    ASSERT_TRUE(stable_server->poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  ASSERT_EQ(after->state(), DistributedQueryTcpExecutionState::kComplete);
+  const auto after_result = after->result();
+  ASSERT_TRUE(after_result.has_value());
+  EXPECT_EQ(after_result->count, before_result->count);
+  EXPECT_EQ(after_result->sum, before_result->sum);
+  EXPECT_EQ(after_result->minimum, before_result->minimum);
+  EXPECT_EQ(after_result->maximum, before_result->maximum);
+  EXPECT_EQ(after_result->mean, before_result->mean);
+  EXPECT_EQ(after_result->m2, before_result->m2);
+  EXPECT_EQ(source_worker.calls, 1U);
+  EXPECT_EQ(target_worker.calls, 1U);
+  EXPECT_EQ(stable_worker.calls, 2U);
 }
 
 TEST(DistributedQueryExecutionTest, RejectsAdmissionOrderThatDiffersFromPinnedDispatches) {

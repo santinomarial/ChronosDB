@@ -891,8 +891,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   never carried across. Authenticated unavailable-worker responses now obtain an advisory
   leader/placement pair from a committed metadata-provider boundary and carry it through mTLS to the
   failed scheduler without treating it as authority. Automatic metadata acquisition, general
-  vector-plan fragments/exchanges, and broader multi-node failure validation remain deferred; the
-  phase exit gate is not claimed.
+  vector-plan fragments/exchanges, and broader multi-node failure validation remain deferred. A
+  focused real-mTLS gate now queries two tablets, drives one through checksummed learner-first
+  movement and externally committed promotion/removal milestones, rebinds it to the target, and
+  proves the complete aggregate state is identical before and after. The full phase exit gate is
+  not claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.
 - **Explicit non-scope:** general cross-tablet write transactions, silent consistency downgrade, unlimited shuffle, and topology changes that invalidate tokens without an explicit error/mapping protocol.

@@ -172,6 +172,9 @@
   switching, bandwidth limits, and stale routing.
 - Partitions, duplicate/lost exchanges, skew, chaos, movement at every state, foreground interference,
   scale-out/exchange/coordination/failover benchmarks, and sanitizer/fuzz/property coverage.
+  The focused real-mTLS two-tablet query/movement/query gate passes, but uses deterministic worker
+  aggregates and externally committed milestone simulation rather than a packaged multi-process
+  cluster or remote installed-CSEG scan.
 
 ## Phase 17 — object storage and interoperability
 
