@@ -97,6 +97,10 @@ public:
     return !failed_.load(std::memory_order_acquire);
   }
 
+  void fail_closed() noexcept {
+    failed_.store(true, std::memory_order_release);
+  }
+
   [[nodiscard]] common::Status poison_status() const {
     return is_usable() ? common::Status::ok() : poison_status_;
   }
@@ -170,6 +174,10 @@ common::Result<TemporalDatabaseStorageSnapshot> TemporalDatabaseStoragePublisher
   if (implementation_ == nullptr)
     return common::make_unexpected(invalid("temporal storage publisher was moved from"));
   return implementation_->publish(request);
+}
+void TemporalDatabaseStoragePublisher::fail_closed_after_durable_successor() noexcept {
+  if (implementation_ != nullptr)
+    implementation_->fail_closed();
 }
 bool TemporalDatabaseStoragePublisher::is_usable() const noexcept {
   return implementation_ != nullptr && implementation_->is_usable();

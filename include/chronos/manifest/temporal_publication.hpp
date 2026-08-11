@@ -70,6 +70,11 @@ public:
   [[nodiscard]] common::Result<TemporalDatabaseStorageSnapshot>
   publish_manifest(const DurableTemporalManifestPublicationRequest& request);
 
+  // Used by a coordinator that has crossed the durable Manifest boundary but cannot complete or
+  // revalidate live publication. Subsequent snapshots fail until restart recovery reconstructs
+  // the owner from durable truth.
+  void fail_closed_after_durable_successor() noexcept;
+
   [[nodiscard]] bool is_usable() const noexcept;
   [[nodiscard]] common::Status poison_status() const;
 

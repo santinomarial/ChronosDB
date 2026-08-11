@@ -558,6 +558,7 @@ add_library(
   src/cluster/tablet_physical_part_install.cpp
   src/cluster/tablet_physical_part_chunk.cpp
   src/cluster/tablet_physical_part_chunk_storage.cpp
+  src/cluster/tablet_physical_snapshot_ownership.cpp
 )
 add_library(chronos::cluster ALIAS chronos_cluster)
 set_target_properties(chronos_cluster PROPERTIES EXPORT_NAME cluster CXX_EXTENSIONS OFF)
@@ -859,6 +860,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/cluster/tablet_physical_part_chunk_storage_header_self_contained.cpp
     tests/cluster/tablet_physical_part_chunk_storage_test.cpp
     tests/cluster/tablet_physical_part_chunk_test.cpp
+    tests/cluster/tablet_physical_snapshot_ownership_header_self_contained.cpp
+    tests/cluster/tablet_physical_snapshot_ownership_test.cpp
   )
   set_target_properties(chronos_cluster_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_cluster_tests PRIVATE cxx_std_23)

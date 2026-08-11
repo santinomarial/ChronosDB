@@ -26,6 +26,13 @@ retain their predecessor while later readers see the complete successor. A trans
 durable installation fails the live publisher closed and defers selection to restart recovery.
 Temporal head/application epoch composition remains separate.
 
+The tablet physical ownership coordinator composes this boundary for a new Raft tablet. It builds
+the local successor from the live predecessor and source projection, requires every named CSEG final
+to validate before Manifest installation, reloads the highest durable generation with explicit
+schema/source bindings, exact-compares the expected candidate, and then publishes. If a prior
+attempt already synchronized the exact successor, it resumes at reload/publication. Any different
+durable successor fails the temporal publisher closed for restart recovery.
+
 ## Safety objective
 
 At every process-crash point, recovery selects either the previous complete manifest generation or
