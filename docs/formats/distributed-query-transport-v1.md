@@ -72,5 +72,11 @@ barrier, schema, and snapshot authority. Authentication, authorization, CRC inte
 authority are distinct checks; none substitutes for another.
 
 Minor-version compatibility is exact in v1. Reserved fields and flags must remain zero unless a
-later accepted version defines them. Stream fragmentation, write ownership, connection deadlines,
-and sender retry are carrier responsibilities and do not change these canonical bytes.
+later accepted version defines them.
+
+The implemented stream readers retain fixed storage at the request/response maxima,
+integrity-check the fixed header before accepting its declared bounded remainder, consume at most
+one frame, and fail sticky. The move-only write cursor owns one validated frame and exposes only its
+unwritten suffix. The sender correlates one outstanding response and uses finite capped retry/backoff without
+changing the immutable dispatch. Connection deadlines and socket/TLS readiness remain embedding
+responsibilities and do not change these canonical bytes.

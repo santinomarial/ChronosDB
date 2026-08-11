@@ -9,6 +9,8 @@
 #include "chronos/query/distributed_fragment_dispatch.hpp"
 #include "chronos/raft/types.hpp"
 
+#include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -94,6 +96,147 @@ public:
 private:
   explicit DistributedQueryReceiver(DistributedQueryReceiverConfig config) noexcept;
   DistributedQueryReceiverConfig config_;
+};
+
+struct DistributedQueryRequestReadStep {
+  std::size_t consumed_bytes{};
+  std::optional<DistributedQueryRequest> request;
+};
+
+// One-frame constant-storage stream reader. It integrity-checks the complete fixed header before
+// trusting the declared length, consumes at most one frame, and leaves any coalesced suffix with
+// the caller. Failure is sticky.
+class DistributedQueryRequestReader {
+public:
+  DistributedQueryRequestReader() = default;
+  DistributedQueryRequestReader(const DistributedQueryRequestReader&) = delete;
+  DistributedQueryRequestReader& operator=(const DistributedQueryRequestReader&) = delete;
+  DistributedQueryRequestReader(DistributedQueryRequestReader&&) = delete;
+  DistributedQueryRequestReader& operator=(DistributedQueryRequestReader&&) = delete;
+
+  [[nodiscard]] common::Result<DistributedQueryRequestReadStep> consume(common::ByteView bytes);
+  [[nodiscard]] std::size_t buffered_bytes() const noexcept;
+  [[nodiscard]] std::optional<std::size_t> expected_frame_bytes() const noexcept;
+  [[nodiscard]] bool failed() const noexcept;
+
+private:
+  std::array<std::byte, kMaximumDistributedQueryRequestSize> bytes_{};
+  std::size_t buffered_bytes_{};
+  std::optional<std::size_t> expected_frame_bytes_;
+  std::optional<common::Status> failure_;
+};
+
+struct DistributedQueryResponseReadStep {
+  std::size_t consumed_bytes{};
+  std::optional<DistributedQueryResponse> response;
+};
+
+class DistributedQueryResponseReader {
+public:
+  DistributedQueryResponseReader() = default;
+  DistributedQueryResponseReader(const DistributedQueryResponseReader&) = delete;
+  DistributedQueryResponseReader& operator=(const DistributedQueryResponseReader&) = delete;
+  DistributedQueryResponseReader(DistributedQueryResponseReader&&) = delete;
+  DistributedQueryResponseReader& operator=(DistributedQueryResponseReader&&) = delete;
+
+  [[nodiscard]] common::Result<DistributedQueryResponseReadStep> consume(common::ByteView bytes);
+  [[nodiscard]] std::size_t buffered_bytes() const noexcept;
+  [[nodiscard]] std::optional<std::size_t> expected_frame_bytes() const noexcept;
+  [[nodiscard]] bool failed() const noexcept;
+
+private:
+  std::array<std::byte, kMaximumDistributedQueryResponseSize> bytes_{};
+  std::size_t buffered_bytes_{};
+  std::optional<std::size_t> expected_frame_bytes_;
+  std::optional<common::Status> failure_;
+};
+
+// Validates and owns one already encoded request or response, then exposes only its unwritten
+// suffix. Moving transfers the sole write obligation and leaves the source complete.
+class DistributedQueryFrameWriteCursor {
+public:
+  DistributedQueryFrameWriteCursor() = delete;
+  DistributedQueryFrameWriteCursor(const DistributedQueryFrameWriteCursor&) = delete;
+  DistributedQueryFrameWriteCursor& operator=(const DistributedQueryFrameWriteCursor&) = delete;
+  DistributedQueryFrameWriteCursor(DistributedQueryFrameWriteCursor&& other) noexcept;
+  DistributedQueryFrameWriteCursor& operator=(DistributedQueryFrameWriteCursor&& other) noexcept;
+
+  [[nodiscard]] static common::Result<DistributedQueryFrameWriteCursor>
+  create(std::vector<std::byte> encoded_frame);
+  [[nodiscard]] common::ByteView pending_write() const noexcept;
+  [[nodiscard]] common::Status consume_written(std::size_t bytes) noexcept;
+  [[nodiscard]] std::size_t written_bytes() const noexcept;
+  [[nodiscard]] bool complete() const noexcept;
+
+private:
+  explicit DistributedQueryFrameWriteCursor(std::vector<std::byte> encoded_frame) noexcept;
+  std::vector<std::byte> encoded_frame_;
+  std::size_t written_bytes_{};
+};
+
+struct DistributedQueryRetryLimits {
+  std::size_t maximum_attempts{5U};
+  std::chrono::milliseconds initial_backoff{50};
+  std::chrono::milliseconds maximum_backoff{5000};
+};
+
+enum class DistributedQuerySenderState : std::uint8_t {
+  kReady = 1,
+  kWaitingForResponse = 2,
+  kBackoff = 3,
+  kSucceeded = 4,
+  kFailed = 5,
+};
+
+struct DistributedQueryAttempt {
+  std::size_t attempt_number{};
+  raft::NodeId target_node_id{};
+  std::vector<std::byte> request_bytes;
+};
+
+// Single-owner deterministic retry state for one immutable proof-bound dispatch. It owns no socket
+// or clock. Leader hints are advisory: changing authority requires explicit coordinator rebinding,
+// never mutation of this sender's dispatch.
+class DistributedQuerySender {
+public:
+  using TimePoint = std::chrono::steady_clock::time_point;
+
+  DistributedQuerySender() = delete;
+  DistributedQuerySender(const DistributedQuerySender&) = delete;
+  DistributedQuerySender& operator=(const DistributedQuerySender&) = delete;
+  DistributedQuerySender(DistributedQuerySender&&) noexcept = default;
+  DistributedQuerySender& operator=(DistributedQuerySender&&) noexcept = default;
+
+  [[nodiscard]] static common::Result<DistributedQuerySender>
+  create(raft::NodeId source_node_id, query::DistributedAggregateFragmentDispatch dispatch,
+         DistributedQueryRetryLimits limits = {});
+  [[nodiscard]] common::Result<DistributedQueryAttempt> begin_attempt(TimePoint now);
+  [[nodiscard]] common::Status accept_response(common::ByteView response_bytes, TimePoint now);
+  [[nodiscard]] common::Status record_transport_failure(common::StatusCode code, TimePoint now);
+
+  [[nodiscard]] DistributedQuerySenderState state() const noexcept;
+  [[nodiscard]] std::size_t attempts_started() const noexcept;
+  [[nodiscard]] std::optional<TimePoint> next_attempt_not_before() const noexcept;
+  [[nodiscard]] std::optional<common::StatusCode> last_status_code() const noexcept;
+  [[nodiscard]] std::optional<DistributedQueryLeaderHint> suggested_leader() const noexcept;
+  [[nodiscard]] const std::optional<query::ExchangeMessage>& result() const noexcept;
+
+private:
+  DistributedQuerySender(raft::NodeId source_node_id,
+                         query::DistributedAggregateFragmentDispatch dispatch,
+                         DistributedQueryRetryLimits limits) noexcept;
+  [[nodiscard]] common::Status schedule(common::StatusCode code, TimePoint now);
+
+  raft::NodeId source_node_id_{};
+  query::DistributedAggregateFragmentDispatch dispatch_;
+  DistributedQueryRetryLimits limits_;
+  DistributedQuerySenderState state_{DistributedQuerySenderState::kReady};
+  std::size_t attempts_started_{};
+  std::chrono::milliseconds next_backoff_{};
+  std::optional<TimePoint> next_attempt_not_before_;
+  std::optional<common::StatusCode> last_status_code_;
+  std::optional<DistributedQueryLeaderHint> suggested_leader_;
+  std::optional<query::ExchangeMessage> result_;
 };
 
 } // namespace chronos::cluster

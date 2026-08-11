@@ -85,7 +85,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   resolves logical winners before producing one terminal partial aggregate.
 - [Distributed Query Transport v1](formats/distributed-query-transport-v1.md): bounded checksummed
   cluster request/response frames with exact route/result correlation and authenticated
-  principal-to-source authorization before worker dispatch.
+  principal-to-source authorization before worker dispatch, plus fixed-storage partial readers,
+  move-only write ownership, and immutable-dispatch finite retry.
 - [Resume Token v1](formats/resume-token-v1.md): authenticated live-subscription resume identity,
   compatibility, limits, and rejection rules.
 - [Materialized View Checkpoint v1](formats/materialized-view-checkpoint-v1.md): bounded exact

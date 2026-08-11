@@ -860,9 +860,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   incomplete. Group-scoped aggregate dispatches and terminal exchanges now also have canonical
   bounded checksummed cluster request/response frames, exact route/result correlation, and an
   authenticated principal-to-source receiver that invokes the proof-revalidating worker through an
-  embedding-owned service boundary. Partial socket I/O, sender retry, general vector-plan
-  fragments/exchanges, compatible multi-tablet snapshots, complete leader transport, and multi-node
-  failure validation remain deferred; the
+  embedding-owned service boundary. Fixed-storage fragmented/coalesced readers, move-only
+  short-write ownership, and exact-correlation finite retry now cover the portable carrier
+  lifecycle without silently rebinding a hinted leader. Socket/TLS readiness integration,
+  deadlines, general vector-plan fragments/exchanges, compatible multi-tablet snapshots, complete
+  leader transport, and multi-node failure validation remain deferred; the
   phase exit gate is not claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.

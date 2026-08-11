@@ -1,6 +1,9 @@
 #include "chronos/cluster/distributed_query_transport.hpp"
 #include "chronos/common/crc32c.hpp"
 
+#include <algorithm>
+#include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
@@ -94,6 +97,11 @@ void store_u32(std::vector<std::byte>& bytes, const std::size_t offset, const st
     bytes[offset + index] = static_cast<std::byte>(value >> (index * 8U));
 }
 
+void store_u64(std::vector<std::byte>& bytes, const std::size_t offset, const std::uint64_t value) {
+  for (std::size_t index = 0U; index < sizeof(value); ++index)
+    bytes[offset + index] = static_cast<std::byte>(value >> (index * 8U));
+}
+
 void rewrite_request_checksums(std::vector<std::byte>& bytes) {
   const common::ByteView payload = common::ByteView{bytes}.subspan(
       kDistributedQueryRequestHeaderSize, bytes.size() - kDistributedQueryRequestHeaderSize - 4U);
@@ -149,6 +157,36 @@ TEST(DistributedQueryTransportCodecTest, RoundTripsCorrelatedRequestAndResponses
   ASSERT_TRUE(decoded_failure.has_value());
   EXPECT_EQ(decoded_failure->status_code, common::StatusCode::kUnavailable);
   EXPECT_FALSE(decoded_failure->message.has_value());
+
+  constexpr std::array status_codes{common::StatusCode::kOk,
+                                    common::StatusCode::kCancelled,
+                                    common::StatusCode::kInvalidArgument,
+                                    common::StatusCode::kOutOfRange,
+                                    common::StatusCode::kNotFound,
+                                    common::StatusCode::kAlreadyExists,
+                                    common::StatusCode::kCorruption,
+                                    common::StatusCode::kIoError,
+                                    common::StatusCode::kResourceExhausted,
+                                    common::StatusCode::kUnavailable,
+                                    common::StatusCode::kNotSupported,
+                                    common::StatusCode::kUnauthenticated,
+                                    common::StatusCode::kInternal};
+  for (std::size_t ordinal = 0U; ordinal < status_codes.size(); ++ordinal) {
+    const bool success_status = status_codes[ordinal] == common::StatusCode::kOk;
+    auto bytes = encode_distributed_query_response_v1(
+        {.source_node_id = 2U,
+         .target_node_id = 1U,
+         .query_id = uuid(1U),
+         .tablet_id = id<schema::TabletId>(4U),
+         .status_code = status_codes[ordinal],
+         .message =
+             success_status ? std::optional<query::ExchangeMessage>{message()} : std::nullopt});
+    ASSERT_TRUE(bytes.has_value()) << ordinal;
+    EXPECT_EQ(std::to_integer<std::uint8_t>((*bytes)[72U]), ordinal);
+    const auto decoded_status = decode_distributed_query_response_v1(*bytes);
+    ASSERT_TRUE(decoded_status.has_value()) << ordinal;
+    EXPECT_EQ(decoded_status->status_code, status_codes[ordinal]);
+  }
 }
 
 TEST(DistributedQueryTransportCodecTest, RejectsDamageAndUncorrelatedResults) {
@@ -245,6 +283,239 @@ TEST(DistributedQueryReceiverTest, AuthenticatesSourceAndCorrelatesWorkerOutcome
   EXPECT_EQ(decode_distributed_query_response_v1(*threw)->status_code,
             common::StatusCode::kInternal);
   EXPECT_EQ(worker.calls, 4U);
+}
+
+TEST(DistributedQueryStreamTest, RequestReaderHandlesEverySplitAndCoalescedFrames) {
+  const auto encoded = encode_distributed_query_request_v1({1U, 2U, dispatch()}).value();
+  for (std::size_t split = 0U; split <= encoded.size(); ++split) {
+    DistributedQueryRequestReader reader;
+    const auto first = reader.consume(common::ByteView{encoded}.first(split));
+    ASSERT_TRUE(first.has_value()) << "split " << split;
+    EXPECT_EQ(first->consumed_bytes, split);
+    if (split == encoded.size()) {
+      ASSERT_TRUE(first->request.has_value());
+      EXPECT_EQ(first->request->dispatch.fragment.query_id, uuid(1U));
+      continue;
+    }
+    EXPECT_FALSE(first->request.has_value());
+    const auto second = reader.consume(common::ByteView{encoded}.subspan(split));
+    ASSERT_TRUE(second.has_value()) << "split " << split;
+    ASSERT_TRUE(second->request.has_value());
+    EXPECT_EQ(second->consumed_bytes, encoded.size() - split);
+    EXPECT_EQ(second->request->dispatch.raft_group_id, uuid(9U));
+  }
+
+  std::vector<std::byte> coalesced = encoded;
+  coalesced.insert(coalesced.end(), encoded.begin(), encoded.end());
+  DistributedQueryRequestReader reader;
+  const auto first = reader.consume(coalesced);
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(first->request.has_value());
+  EXPECT_EQ(first->consumed_bytes, encoded.size());
+  const auto second = reader.consume(common::ByteView{coalesced}.subspan(first->consumed_bytes));
+  ASSERT_TRUE(second.has_value());
+  EXPECT_TRUE(second->request.has_value());
+  EXPECT_EQ(second->consumed_bytes, encoded.size());
+}
+
+TEST(DistributedQueryStreamTest, ResponseReaderHandlesBothLengthsEverySplit) {
+  const std::vector<std::vector<std::byte>> frames{
+      encode_distributed_query_response_v1({.source_node_id = 2U,
+                                            .target_node_id = 1U,
+                                            .query_id = uuid(1U),
+                                            .tablet_id = id<schema::TabletId>(4U),
+                                            .status_code = common::StatusCode::kOk,
+                                            .message = message()})
+          .value(),
+      encode_distributed_query_response_v1({.source_node_id = 2U,
+                                            .target_node_id = 1U,
+                                            .query_id = uuid(1U),
+                                            .tablet_id = id<schema::TabletId>(4U),
+                                            .status_code = common::StatusCode::kUnavailable})
+          .value()};
+  for (const auto& frame : frames) {
+    for (std::size_t split = 0U; split <= frame.size(); ++split) {
+      DistributedQueryResponseReader reader;
+      const auto first = reader.consume(common::ByteView{frame}.first(split));
+      ASSERT_TRUE(first.has_value()) << "size " << frame.size() << " split " << split;
+      if (split == frame.size()) {
+        EXPECT_TRUE(first->response.has_value());
+        continue;
+      }
+      EXPECT_FALSE(first->response.has_value());
+      const auto second = reader.consume(common::ByteView{frame}.subspan(split));
+      ASSERT_TRUE(second.has_value()) << "size " << frame.size() << " split " << split;
+      ASSERT_TRUE(second->response.has_value());
+      EXPECT_EQ(second->response->query_id, uuid(1U));
+    }
+  }
+
+  std::vector<std::byte> coalesced = frames.front();
+  coalesced.insert(coalesced.end(), frames.back().begin(), frames.back().end());
+  DistributedQueryResponseReader reader;
+  const auto first = reader.consume(coalesced);
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(first->response.has_value());
+  EXPECT_EQ(first->consumed_bytes, frames.front().size());
+  const auto second = reader.consume(common::ByteView{coalesced}.subspan(first->consumed_bytes));
+  ASSERT_TRUE(second.has_value());
+  ASSERT_TRUE(second->response.has_value());
+  EXPECT_EQ(second->response->status_code, common::StatusCode::kUnavailable);
+}
+
+TEST(DistributedQueryStreamTest, ReaderFailuresAreStickyAndWriteCursorOwnsOneFrame) {
+  auto damaged = encode_distributed_query_request_v1({1U, 2U, dispatch()}).value();
+  damaged[24U] ^= std::byte{1U};
+  DistributedQueryRequestReader reader;
+  const auto rejected = reader.consume(damaged);
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kCorruption);
+  EXPECT_TRUE(reader.failed());
+  const auto retry =
+      reader.consume(encode_distributed_query_request_v1({1U, 2U, dispatch()}).value());
+  ASSERT_FALSE(retry.has_value());
+  EXPECT_EQ(retry.error(), rejected.error());
+
+  auto oversized = encode_distributed_query_request_v1({1U, 2U, dispatch()}).value();
+  store_u64(oversized, 16U, kMaximumDistributedQueryRequestSize + 1U);
+  store_u32(oversized, 76U, common::crc32c(common::ByteView{oversized}.first(76U)));
+  DistributedQueryRequestReader oversized_reader;
+  const auto oversized_result = oversized_reader.consume(
+      common::ByteView{oversized}.first(kDistributedQueryRequestHeaderSize));
+  ASSERT_FALSE(oversized_result.has_value());
+  EXPECT_EQ(oversized_result.error().code(), common::StatusCode::kCorruption);
+  EXPECT_EQ(oversized_reader.buffered_bytes(), kDistributedQueryRequestHeaderSize);
+  EXPECT_FALSE(oversized_reader.expected_frame_bytes().has_value());
+
+  const auto expected = encode_distributed_query_request_v1({1U, 2U, dispatch()}).value();
+  auto cursor = DistributedQueryFrameWriteCursor::create(expected);
+  ASSERT_TRUE(cursor.has_value()) << cursor.error().to_string();
+  EXPECT_TRUE(std::ranges::equal(cursor->pending_write(), expected));
+  ASSERT_TRUE(cursor->consume_written(17U).is_ok());
+  EXPECT_EQ(cursor->written_bytes(), 17U);
+  EXPECT_TRUE(std::ranges::equal(cursor->pending_write(), common::ByteView{expected}.subspan(17U)));
+  EXPECT_EQ(cursor->consume_written(cursor->pending_write().size() + 1U).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(cursor->written_bytes(), 17U);
+  DistributedQueryFrameWriteCursor moved = std::move(*cursor);
+  EXPECT_TRUE(cursor->complete());
+  EXPECT_TRUE(cursor->pending_write().empty());
+  ASSERT_TRUE(moved.consume_written(moved.pending_write().size()).is_ok());
+  EXPECT_TRUE(moved.complete());
+
+  auto corrupt = expected;
+  corrupt.back() ^= std::byte{1U};
+  EXPECT_EQ(DistributedQueryFrameWriteCursor::create(std::move(corrupt)).error().code(),
+            common::StatusCode::kCorruption);
+
+  auto response =
+      encode_distributed_query_response_v1({.source_node_id = 2U,
+                                            .target_node_id = 1U,
+                                            .query_id = uuid(1U),
+                                            .tablet_id = id<schema::TabletId>(4U),
+                                            .status_code = common::StatusCode::kUnavailable})
+          .value();
+  auto response_cursor = DistributedQueryFrameWriteCursor::create(response);
+  ASSERT_TRUE(response_cursor.has_value());
+  EXPECT_TRUE(std::ranges::equal(response_cursor->pending_write(), response));
+}
+
+TEST(DistributedQuerySenderTest, RetriesTheImmutableDispatchAndCorrelatesTerminalResult) {
+  auto sender = DistributedQuerySender::create(1U, dispatch(),
+                                               {.maximum_attempts = 3U,
+                                                .initial_backoff = std::chrono::milliseconds{10},
+                                                .maximum_backoff = std::chrono::milliseconds{20}});
+  ASSERT_TRUE(sender.has_value()) << sender.error().to_string();
+  const auto start = DistributedQuerySender::TimePoint{};
+  const auto first = sender->begin_attempt(start);
+  ASSERT_TRUE(first.has_value()) << first.error().to_string();
+  EXPECT_EQ(first->attempt_number, 1U);
+  EXPECT_EQ(first->target_node_id, 2U);
+  const auto first_request = decode_distributed_query_request_v1(first->request_bytes);
+  ASSERT_TRUE(first_request.has_value());
+  EXPECT_EQ(first_request->dispatch.fragment.snapshot_generation, 6U);
+  EXPECT_EQ(sender->begin_attempt(start).error().code(), common::StatusCode::kUnavailable);
+
+  const auto wrong =
+      encode_distributed_query_response_v1({.source_node_id = 3U,
+                                            .target_node_id = 1U,
+                                            .query_id = uuid(1U),
+                                            .tablet_id = id<schema::TabletId>(4U),
+                                            .status_code = common::StatusCode::kUnavailable})
+          .value();
+  EXPECT_EQ(sender->accept_response(wrong, start).code(), common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(sender->state(), DistributedQuerySenderState::kWaitingForResponse);
+
+  const DistributedQueryLeaderHint hint{3U, 9U};
+  const auto retryable =
+      encode_distributed_query_response_v1({.source_node_id = 2U,
+                                            .target_node_id = 1U,
+                                            .query_id = uuid(1U),
+                                            .tablet_id = id<schema::TabletId>(4U),
+                                            .status_code = common::StatusCode::kUnavailable,
+                                            .leader_hint = hint})
+          .value();
+  ASSERT_TRUE(sender->accept_response(retryable, start).is_ok());
+  EXPECT_EQ(sender->state(), DistributedQuerySenderState::kBackoff);
+  EXPECT_EQ(sender->suggested_leader(), hint);
+  EXPECT_EQ(sender->next_attempt_not_before(), start + std::chrono::milliseconds{10});
+  EXPECT_EQ(sender->begin_attempt(start + std::chrono::milliseconds{9}).error().code(),
+            common::StatusCode::kUnavailable);
+
+  const auto second = sender->begin_attempt(start + std::chrono::milliseconds{10});
+  ASSERT_TRUE(second.has_value());
+  EXPECT_EQ(second->target_node_id, 2U);
+  const auto second_request = decode_distributed_query_request_v1(second->request_bytes);
+  ASSERT_TRUE(second_request.has_value());
+  EXPECT_EQ(second_request->dispatch, first_request->dispatch);
+  ASSERT_TRUE(sender
+                  ->record_transport_failure(common::StatusCode::kIoError,
+                                             start + std::chrono::milliseconds{20})
+                  .is_ok());
+  EXPECT_EQ(sender->next_attempt_not_before(), start + std::chrono::milliseconds{40});
+
+  ASSERT_TRUE(sender->begin_attempt(start + std::chrono::milliseconds{40}).has_value());
+  const auto success = encode_distributed_query_response_v1({.source_node_id = 2U,
+                                                             .target_node_id = 1U,
+                                                             .query_id = uuid(1U),
+                                                             .tablet_id = id<schema::TabletId>(4U),
+                                                             .status_code = common::StatusCode::kOk,
+                                                             .message = message()})
+                           .value();
+  ASSERT_TRUE(sender->accept_response(success, start).is_ok());
+  EXPECT_EQ(sender->state(), DistributedQuerySenderState::kSucceeded);
+  ASSERT_TRUE(sender->result().has_value());
+  EXPECT_EQ(sender->result()->partial.sum, 2.5);
+  EXPECT_EQ(sender->attempts_started(), 3U);
+  EXPECT_EQ(sender->last_status_code(), common::StatusCode::kOk);
+}
+
+TEST(DistributedQuerySenderTest, StopsOnTerminalStatusAndExhaustedRetryBudget) {
+  auto terminal = DistributedQuerySender::create(1U, dispatch());
+  auto exhausted =
+      DistributedQuerySender::create(1U, dispatch(),
+                                     {.maximum_attempts = 1U,
+                                      .initial_backoff = std::chrono::milliseconds{1},
+                                      .maximum_backoff = std::chrono::milliseconds{1}});
+  ASSERT_TRUE(terminal.has_value());
+  ASSERT_TRUE(exhausted.has_value());
+  const auto now = DistributedQuerySender::TimePoint{};
+
+  ASSERT_TRUE(terminal->begin_attempt(now).has_value());
+  ASSERT_TRUE(
+      terminal->record_transport_failure(common::StatusCode::kUnauthenticated, now).is_ok());
+  EXPECT_EQ(terminal->state(), DistributedQuerySenderState::kFailed);
+  EXPECT_EQ(terminal->last_status_code(), common::StatusCode::kUnauthenticated);
+
+  ASSERT_TRUE(exhausted->begin_attempt(now).has_value());
+  ASSERT_TRUE(exhausted->record_transport_failure(common::StatusCode::kUnavailable, now).is_ok());
+  EXPECT_EQ(exhausted->state(), DistributedQuerySenderState::kFailed);
+  EXPECT_EQ(exhausted->attempts_started(), 1U);
+
+  auto invalid_dispatch = dispatch();
+  invalid_dispatch.fragment.serving_node = 1U;
+  EXPECT_EQ(DistributedQuerySender::create(1U, std::move(invalid_dispatch)).error().code(),
+            common::StatusCode::kInvalidArgument);
 }
 
 } // namespace

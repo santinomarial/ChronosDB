@@ -6,8 +6,10 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <new>
 #include <ranges>
 #include <stdexcept>
@@ -54,17 +56,73 @@ inline constexpr std::size_t kMinimumDispatchSize =
   return {common::StatusCode::kUnauthenticated, message};
 }
 
+[[nodiscard]] common::Status unavailable(const char* message) {
+  return {common::StatusCode::kUnavailable, message};
+}
+
 [[nodiscard]] common::Result<std::uint8_t> encode_status(const common::StatusCode code) {
-  const auto numeric = static_cast<std::uint8_t>(code);
-  if (code < common::StatusCode::kOk || code > common::StatusCode::kInternal)
-    return common::make_unexpected(invalid("distributed query response status is invalid"));
-  return numeric;
+  switch (code) {
+  case common::StatusCode::kOk:
+    return 0U;
+  case common::StatusCode::kCancelled:
+    return 1U;
+  case common::StatusCode::kInvalidArgument:
+    return 2U;
+  case common::StatusCode::kOutOfRange:
+    return 3U;
+  case common::StatusCode::kNotFound:
+    return 4U;
+  case common::StatusCode::kAlreadyExists:
+    return 5U;
+  case common::StatusCode::kCorruption:
+    return 6U;
+  case common::StatusCode::kIoError:
+    return 7U;
+  case common::StatusCode::kResourceExhausted:
+    return 8U;
+  case common::StatusCode::kUnavailable:
+    return 9U;
+  case common::StatusCode::kNotSupported:
+    return 10U;
+  case common::StatusCode::kUnauthenticated:
+    return 11U;
+  case common::StatusCode::kInternal:
+    return 12U;
+  }
+  return common::make_unexpected(invalid("distributed query response status is invalid"));
 }
 
 [[nodiscard]] common::Result<common::StatusCode> decode_status(const std::uint8_t code) {
-  if (code > static_cast<std::uint8_t>(common::StatusCode::kInternal))
+  switch (code) {
+  case 0U:
+    return common::StatusCode::kOk;
+  case 1U:
+    return common::StatusCode::kCancelled;
+  case 2U:
+    return common::StatusCode::kInvalidArgument;
+  case 3U:
+    return common::StatusCode::kOutOfRange;
+  case 4U:
+    return common::StatusCode::kNotFound;
+  case 5U:
+    return common::StatusCode::kAlreadyExists;
+  case 6U:
+    return common::StatusCode::kCorruption;
+  case 7U:
+    return common::StatusCode::kIoError;
+  case 8U:
+    return common::StatusCode::kResourceExhausted;
+  case 9U:
+    return common::StatusCode::kUnavailable;
+  case 10U:
+    return common::StatusCode::kNotSupported;
+  case 11U:
+    return common::StatusCode::kUnauthenticated;
+  case 12U:
+    return common::StatusCode::kInternal;
+  default:
     return common::make_unexpected(corruption("distributed query response status is unknown"));
-  return static_cast<common::StatusCode>(code);
+  }
 }
 
 [[nodiscard]] common::Result<common::Uuid> read_uuid(common::ByteReader& reader) {
@@ -96,6 +154,108 @@ execute_worker(DistributedQueryWorkerService& worker,
   } catch (...) {
     return common::make_unexpected(
         common::Status{common::StatusCode::kInternal, "distributed query worker threw"});
+  }
+}
+
+[[nodiscard]] common::Result<std::size_t> request_frame_length(const common::ByteView header) {
+  if (header.size() != kDistributedQueryRequestHeaderSize)
+    return common::make_unexpected(corruption("distributed query request header is truncated"));
+  if (!std::ranges::equal(header.first(kRequestMagic.size()), kRequestMagic))
+    return common::make_unexpected(corruption("distributed query request magic is invalid"));
+  common::ByteReader crc_reader{header.last(4U)};
+  const auto stored_crc = crc_reader.read_u32_le();
+  if (!stored_crc.has_value() ||
+      *stored_crc != common::crc32c(header.first(kRequestHeaderCrcOffset))) {
+    return common::make_unexpected(corruption("distributed query request header checksum differs"));
+  }
+  common::ByteReader reader{header.subspan(kRequestMagic.size())};
+  const auto major = reader.read_u16_le();
+  const auto minor = reader.read_u16_le();
+  const auto header_length = reader.read_u32_le();
+  const auto total_length = reader.read_u64_le();
+  const auto source = reader.read_u64_le();
+  const auto target = reader.read_u64_le();
+  const auto payload_length = reader.read_u64_le();
+  const auto payload_crc = reader.read_u32_le();
+  const auto reserved = reader.read_exact(24U);
+  const auto header_crc = reader.read_u32_le();
+  if (!major.has_value() || !minor.has_value() || !header_length.has_value() ||
+      !total_length.has_value() || !source.has_value() || !target.has_value() ||
+      !payload_length.has_value() || !payload_crc.has_value() || !reserved.has_value() ||
+      !header_crc.has_value()) {
+    return common::make_unexpected(corruption("distributed query request header is truncated"));
+  }
+  if (*major != kMajor || *minor != kMinor)
+    return common::make_unexpected(unsupported("distributed query request version is unsupported"));
+  if (*header_length != kDistributedQueryRequestHeaderSize || *source == 0U || *target == 0U ||
+      *source == *target || !zero(*reserved) || *payload_length < kMinimumDispatchSize ||
+      *payload_length > query::distributed_fragment_dispatch_format::kMaximumFrameLength ||
+      *total_length != kDistributedQueryRequestHeaderSize + *payload_length +
+                           kDistributedQueryRequestTrailerSize ||
+      *total_length > kMaximumDistributedQueryRequestSize) {
+    return common::make_unexpected(corruption("distributed query request header is invalid"));
+  }
+  return static_cast<std::size_t>(*total_length);
+}
+
+[[nodiscard]] common::Result<std::size_t> response_frame_length(const common::ByteView header) {
+  if (header.size() != kDistributedQueryResponseHeaderSize)
+    return common::make_unexpected(corruption("distributed query response header is truncated"));
+  if (!std::ranges::equal(header.first(kResponseMagic.size()), kResponseMagic))
+    return common::make_unexpected(corruption("distributed query response magic is invalid"));
+  common::ByteReader crc_reader{header.last(4U)};
+  const auto stored_crc = crc_reader.read_u32_le();
+  if (!stored_crc.has_value() ||
+      *stored_crc != common::crc32c(header.first(kResponseHeaderCrcOffset))) {
+    return common::make_unexpected(
+        corruption("distributed query response header checksum differs"));
+  }
+  common::ByteReader reader{header.subspan(kResponseMagic.size())};
+  const auto major = reader.read_u16_le();
+  const auto minor = reader.read_u16_le();
+  const auto header_length = reader.read_u32_le();
+  const auto total_length = reader.read_u64_le();
+  if (!major.has_value() || !minor.has_value() || !header_length.has_value() ||
+      !total_length.has_value()) {
+    return common::make_unexpected(corruption("distributed query response header is truncated"));
+  }
+  if (*major != kMajor || *minor != kMinor)
+    return common::make_unexpected(
+        unsupported("distributed query response version is unsupported"));
+  if (*header_length != kDistributedQueryResponseHeaderSize ||
+      (*total_length !=
+           kDistributedQueryResponseHeaderSize + kDistributedQueryResponseTrailerSize &&
+       *total_length != kMaximumDistributedQueryResponseSize)) {
+    return common::make_unexpected(corruption("distributed query response header is invalid"));
+  }
+  return static_cast<std::size_t>(*total_length);
+}
+
+[[nodiscard]] bool retryable_status(const common::StatusCode code) noexcept {
+  return code == common::StatusCode::kUnavailable ||
+         code == common::StatusCode::kResourceExhausted || code == common::StatusCode::kIoError;
+}
+
+[[nodiscard]] DistributedQuerySender::TimePoint
+saturating_add(const DistributedQuerySender::TimePoint now,
+               const std::chrono::milliseconds delay) noexcept {
+  const auto converted =
+      std::chrono::duration_cast<DistributedQuerySender::TimePoint::duration>(delay);
+  if (now > DistributedQuerySender::TimePoint::max() - converted)
+    return DistributedQuerySender::TimePoint::max();
+  return now + converted;
+}
+
+[[nodiscard]] common::Result<std::vector<std::byte>>
+encode_sender_request(const raft::NodeId source_node_id,
+                      const query::DistributedAggregateFragmentDispatch& dispatch) noexcept {
+  try {
+    return encode_distributed_query_request_v1(
+        {source_node_id, dispatch.fragment.serving_node, dispatch});
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("distributed query sender allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("distributed query sender request exceeds limits"));
   }
 }
 
@@ -441,6 +601,297 @@ DistributedQueryReceiver::receive(const common::ByteView request_bytes,
                                                .status_code = code,
                                                .message = std::move(message),
                                                .leader_hint = std::move(leader_hint)});
+}
+
+common::Result<DistributedQueryRequestReadStep>
+DistributedQueryRequestReader::consume(const common::ByteView bytes) {
+  if (failure_.has_value())
+    return common::make_unexpected(*failure_);
+  std::size_t consumed = 0U;
+  if (!expected_frame_bytes_.has_value()) {
+    const std::size_t header_bytes =
+        std::min(bytes.size(), kDistributedQueryRequestHeaderSize - buffered_bytes_);
+    std::ranges::copy(bytes.first(header_bytes),
+                      bytes_.begin() + static_cast<std::ptrdiff_t>(buffered_bytes_));
+    buffered_bytes_ += header_bytes;
+    consumed += header_bytes;
+    if (buffered_bytes_ != kDistributedQueryRequestHeaderSize)
+      return DistributedQueryRequestReadStep{.consumed_bytes = consumed};
+    auto length =
+        request_frame_length(common::ByteView{bytes_}.first(kDistributedQueryRequestHeaderSize));
+    if (!length.has_value()) {
+      failure_.emplace(std::move(length).error());
+      return common::make_unexpected(*failure_);
+    }
+    expected_frame_bytes_ = *length;
+  }
+  const std::size_t frame_bytes =
+      std::min(bytes.size() - consumed, *expected_frame_bytes_ - buffered_bytes_);
+  std::ranges::copy(bytes.subspan(consumed, frame_bytes),
+                    bytes_.begin() + static_cast<std::ptrdiff_t>(buffered_bytes_));
+  buffered_bytes_ += frame_bytes;
+  consumed += frame_bytes;
+  if (buffered_bytes_ != *expected_frame_bytes_)
+    return DistributedQueryRequestReadStep{.consumed_bytes = consumed};
+  auto decoded =
+      decode_distributed_query_request_v1(common::ByteView{bytes_}.first(*expected_frame_bytes_));
+  if (!decoded.has_value()) {
+    failure_.emplace(std::move(decoded).error());
+    return common::make_unexpected(*failure_);
+  }
+  buffered_bytes_ = 0U;
+  expected_frame_bytes_.reset();
+  return DistributedQueryRequestReadStep{.consumed_bytes = consumed,
+                                         .request = std::move(*decoded)};
+}
+
+std::size_t DistributedQueryRequestReader::buffered_bytes() const noexcept {
+  return buffered_bytes_;
+}
+
+std::optional<std::size_t> DistributedQueryRequestReader::expected_frame_bytes() const noexcept {
+  return expected_frame_bytes_;
+}
+
+bool DistributedQueryRequestReader::failed() const noexcept {
+  return failure_.has_value();
+}
+
+common::Result<DistributedQueryResponseReadStep>
+DistributedQueryResponseReader::consume(const common::ByteView bytes) {
+  if (failure_.has_value())
+    return common::make_unexpected(*failure_);
+  std::size_t consumed = 0U;
+  if (!expected_frame_bytes_.has_value()) {
+    const std::size_t header_bytes =
+        std::min(bytes.size(), kDistributedQueryResponseHeaderSize - buffered_bytes_);
+    std::ranges::copy(bytes.first(header_bytes),
+                      bytes_.begin() + static_cast<std::ptrdiff_t>(buffered_bytes_));
+    buffered_bytes_ += header_bytes;
+    consumed += header_bytes;
+    if (buffered_bytes_ != kDistributedQueryResponseHeaderSize)
+      return DistributedQueryResponseReadStep{.consumed_bytes = consumed};
+    auto length =
+        response_frame_length(common::ByteView{bytes_}.first(kDistributedQueryResponseHeaderSize));
+    if (!length.has_value()) {
+      failure_.emplace(std::move(length).error());
+      return common::make_unexpected(*failure_);
+    }
+    expected_frame_bytes_ = *length;
+  }
+  const std::size_t frame_bytes =
+      std::min(bytes.size() - consumed, *expected_frame_bytes_ - buffered_bytes_);
+  std::ranges::copy(bytes.subspan(consumed, frame_bytes),
+                    bytes_.begin() + static_cast<std::ptrdiff_t>(buffered_bytes_));
+  buffered_bytes_ += frame_bytes;
+  consumed += frame_bytes;
+  if (buffered_bytes_ != *expected_frame_bytes_)
+    return DistributedQueryResponseReadStep{.consumed_bytes = consumed};
+  auto decoded =
+      decode_distributed_query_response_v1(common::ByteView{bytes_}.first(*expected_frame_bytes_));
+  if (!decoded.has_value()) {
+    failure_.emplace(std::move(decoded).error());
+    return common::make_unexpected(*failure_);
+  }
+  buffered_bytes_ = 0U;
+  expected_frame_bytes_.reset();
+  return DistributedQueryResponseReadStep{.consumed_bytes = consumed,
+                                          .response = std::move(*decoded)};
+}
+
+std::size_t DistributedQueryResponseReader::buffered_bytes() const noexcept {
+  return buffered_bytes_;
+}
+
+std::optional<std::size_t> DistributedQueryResponseReader::expected_frame_bytes() const noexcept {
+  return expected_frame_bytes_;
+}
+
+bool DistributedQueryResponseReader::failed() const noexcept {
+  return failure_.has_value();
+}
+
+DistributedQueryFrameWriteCursor::DistributedQueryFrameWriteCursor(
+    std::vector<std::byte> encoded_frame) noexcept
+    : encoded_frame_(std::move(encoded_frame)) {}
+
+DistributedQueryFrameWriteCursor::DistributedQueryFrameWriteCursor(
+    DistributedQueryFrameWriteCursor&& other) noexcept
+    : encoded_frame_(std::move(other.encoded_frame_)), written_bytes_(other.written_bytes_) {
+  other.written_bytes_ = other.encoded_frame_.size();
+}
+
+DistributedQueryFrameWriteCursor&
+DistributedQueryFrameWriteCursor::operator=(DistributedQueryFrameWriteCursor&& other) noexcept {
+  if (this != &other) {
+    encoded_frame_ = std::move(other.encoded_frame_);
+    written_bytes_ = other.written_bytes_;
+    other.written_bytes_ = other.encoded_frame_.size();
+  }
+  return *this;
+}
+
+common::Result<DistributedQueryFrameWriteCursor>
+DistributedQueryFrameWriteCursor::create(std::vector<std::byte> encoded_frame) {
+  if (encoded_frame.size() < kRequestMagic.size())
+    return common::make_unexpected(corruption("distributed query frame is truncated"));
+  const common::ByteView bytes{encoded_frame};
+  if (std::ranges::equal(bytes.first(kRequestMagic.size()), kRequestMagic)) {
+    auto decoded = decode_distributed_query_request_v1(bytes);
+    if (!decoded.has_value())
+      return common::make_unexpected(decoded.error());
+  } else if (std::ranges::equal(bytes.first(kResponseMagic.size()), kResponseMagic)) {
+    auto decoded = decode_distributed_query_response_v1(bytes);
+    if (!decoded.has_value())
+      return common::make_unexpected(decoded.error());
+  } else {
+    return common::make_unexpected(corruption("distributed query frame magic is invalid"));
+  }
+  return DistributedQueryFrameWriteCursor{std::move(encoded_frame)};
+}
+
+common::ByteView DistributedQueryFrameWriteCursor::pending_write() const noexcept {
+  return common::ByteView{encoded_frame_}.subspan(written_bytes_);
+}
+
+common::Status DistributedQueryFrameWriteCursor::consume_written(const std::size_t bytes) noexcept {
+  if (bytes > encoded_frame_.size() - written_bytes_)
+    return invalid("written byte count exceeds the distributed query frame");
+  written_bytes_ += bytes;
+  return common::Status::ok();
+}
+
+std::size_t DistributedQueryFrameWriteCursor::written_bytes() const noexcept {
+  return written_bytes_;
+}
+
+bool DistributedQueryFrameWriteCursor::complete() const noexcept {
+  return written_bytes_ == encoded_frame_.size();
+}
+
+DistributedQuerySender::DistributedQuerySender(const raft::NodeId source_node_id,
+                                               query::DistributedAggregateFragmentDispatch dispatch,
+                                               const DistributedQueryRetryLimits limits) noexcept
+    : source_node_id_(source_node_id), dispatch_(std::move(dispatch)), limits_(limits),
+      next_backoff_(limits.initial_backoff) {}
+
+common::Result<DistributedQuerySender>
+DistributedQuerySender::create(const raft::NodeId source_node_id,
+                               query::DistributedAggregateFragmentDispatch dispatch,
+                               const DistributedQueryRetryLimits limits) {
+  const auto maximum_supported_backoff =
+      std::chrono::duration_cast<std::chrono::milliseconds>(TimePoint::duration::max());
+  if (source_node_id == 0U || limits.maximum_attempts == 0U || limits.maximum_attempts > 1024U ||
+      limits.initial_backoff.count() <= 0 || limits.maximum_backoff < limits.initial_backoff ||
+      limits.maximum_backoff > maximum_supported_backoff ||
+      dispatch.fragment.serving_node == source_node_id) {
+    return common::make_unexpected(invalid("distributed query retry configuration is invalid"));
+  }
+  auto encoded = encode_sender_request(source_node_id, dispatch);
+  if (!encoded.has_value())
+    return common::make_unexpected(encoded.error());
+  return DistributedQuerySender{source_node_id, std::move(dispatch), limits};
+}
+
+common::Result<DistributedQueryAttempt> DistributedQuerySender::begin_attempt(const TimePoint now) {
+  if (state_ == DistributedQuerySenderState::kSucceeded ||
+      state_ == DistributedQuerySenderState::kFailed) {
+    return common::make_unexpected(invalid("distributed query sender is terminal"));
+  }
+  if (state_ == DistributedQuerySenderState::kWaitingForResponse)
+    return common::make_unexpected(unavailable("distributed query response is pending"));
+  if (state_ == DistributedQuerySenderState::kBackoff && now < *next_attempt_not_before_)
+    return common::make_unexpected(unavailable("distributed query retry backoff is active"));
+  if (attempts_started_ >= limits_.maximum_attempts)
+    return common::make_unexpected(invalid("distributed query retry budget is exhausted"));
+  auto bytes = encode_sender_request(source_node_id_, dispatch_);
+  if (!bytes.has_value())
+    return common::make_unexpected(bytes.error());
+  ++attempts_started_;
+  state_ = DistributedQuerySenderState::kWaitingForResponse;
+  suggested_leader_.reset();
+  next_attempt_not_before_.reset();
+  return DistributedQueryAttempt{attempts_started_, dispatch_.fragment.serving_node,
+                                 std::move(*bytes)};
+}
+
+common::Status DistributedQuerySender::accept_response(const common::ByteView response_bytes,
+                                                       const TimePoint now) {
+  if (state_ != DistributedQuerySenderState::kWaitingForResponse)
+    return invalid("distributed query sender has no pending response");
+  auto response = decode_distributed_query_response_v1(response_bytes);
+  if (!response.has_value())
+    return response.error();
+  if (response->source_node_id != dispatch_.fragment.serving_node ||
+      response->target_node_id != source_node_id_ ||
+      response->query_id != dispatch_.fragment.query_id ||
+      response->tablet_id != dispatch_.fragment.tablet_id) {
+    return invalid("distributed query response correlation mismatch");
+  }
+  suggested_leader_ = response->leader_hint;
+  if (response->status_code == common::StatusCode::kOk) {
+    last_status_code_ = common::StatusCode::kOk;
+    result_ = std::move(response->message);
+    state_ = DistributedQuerySenderState::kSucceeded;
+    next_attempt_not_before_.reset();
+    return common::Status::ok();
+  }
+  return schedule(response->status_code, now);
+}
+
+common::Status DistributedQuerySender::record_transport_failure(const common::StatusCode code,
+                                                                const TimePoint now) {
+  if (state_ != DistributedQuerySenderState::kWaitingForResponse)
+    return invalid("distributed query sender has no active transport attempt");
+  if (code == common::StatusCode::kOk)
+    return invalid("distributed query transport failure cannot be OK");
+  suggested_leader_.reset();
+  return schedule(code, now);
+}
+
+common::Status DistributedQuerySender::schedule(const common::StatusCode code,
+                                                const TimePoint now) {
+  last_status_code_ = code;
+  if (!retryable_status(code) || attempts_started_ >= limits_.maximum_attempts) {
+    state_ = DistributedQuerySenderState::kFailed;
+    next_attempt_not_before_.reset();
+    return common::Status::ok();
+  }
+  state_ = DistributedQuerySenderState::kBackoff;
+  next_attempt_not_before_ = saturating_add(now, next_backoff_);
+  if (next_backoff_ < limits_.maximum_backoff) {
+    const auto current = next_backoff_.count();
+    const auto maximum = limits_.maximum_backoff.count();
+    next_backoff_ = current > maximum / 2 ? limits_.maximum_backoff
+                                          : std::min(next_backoff_ * 2, limits_.maximum_backoff);
+  }
+  return common::Status::ok();
+}
+
+DistributedQuerySenderState DistributedQuerySender::state() const noexcept {
+  return state_;
+}
+
+std::size_t DistributedQuerySender::attempts_started() const noexcept {
+  return attempts_started_;
+}
+
+std::optional<DistributedQuerySender::TimePoint>
+DistributedQuerySender::next_attempt_not_before() const noexcept {
+  return next_attempt_not_before_;
+}
+
+std::optional<common::StatusCode> DistributedQuerySender::last_status_code() const noexcept {
+  return last_status_code_;
+}
+
+std::optional<DistributedQueryLeaderHint>
+DistributedQuerySender::suggested_leader() const noexcept {
+  return suggested_leader_;
+}
+
+const std::optional<query::ExchangeMessage>& DistributedQuerySender::result() const noexcept {
+  return result_;
 }
 
 } // namespace chronos::cluster

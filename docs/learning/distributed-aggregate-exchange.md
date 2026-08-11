@@ -64,15 +64,21 @@ Worker authority checks precede I/O. Current execution inherits the bounded temp
 decode and winner-selection costs, then scans visible logical rows once for filtering/aggregation.
 Transport requests retain at most 16,772 bytes and responses at most 244 bytes. Authentication,
 outer and nested decoding, route validation, and worker execution occur in that order.
+Request/response stream readers retain those fixed maxima, integrity-check the complete header
+before trusting its declared length, consume no coalesced successor bytes, and fail sticky. The
+move-only write cursor exposes only the unwritten suffix. The deterministic sender permits one outstanding
+attempt, exact-correlates the reverse route/query/tablet, and caps retry count and exponential
+backoff.
 
 ## Tradeoffs and deferred work
 
 A fixed ungrouped-aggregate frame gives partial-I/O carriers an unambiguous payload without
 prematurely defining a general physical-fragment language. The cost is a specialized first exchange
 type. Grouping state, physical plans, ordering/top-N, cancellation, retry, duplicate sequencing,
-and multi-tablet snapshot compatibility require their own bounded contracts. The authenticated
-receiver defines canonical carrier payloads but not partial socket I/O, connection ownership,
-deadlines, or sender retry.
+and multi-tablet snapshot compatibility require their own bounded contracts. A leader hint never
+mutates an existing proof-bound dispatch: following it requires explicit coordinator rebinding.
+Socket/TLS readiness, connection deadlines, cancellation delivery, and multi-node fault handling
+remain embedding work.
 
 ## Verification and review questions
 
