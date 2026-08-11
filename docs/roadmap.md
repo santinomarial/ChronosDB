@@ -864,9 +864,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   short-write ownership, and exact-correlation finite retry now cover the portable carrier
   lifecycle without silently rebinding a hinted leader. Coordinator-side compatible multi-tablet
   binding now owns one acquire-pinned Manifest v2 epoch and constructs every dispatch in exact plan
-  order, rejecting mixed generations. Socket/TLS readiness integration, deadlines, cross-node
-  generation refresh/rebinding, general vector-plan fragments/exchanges, complete leader transport,
-  and multi-node failure validation remain deferred; the
+  order, rejecting mixed generations. A fail-closed execution owner now retains that epoch,
+  correlates one sender per tablet, delivers each terminal exchange once, and distinguishes retry
+  backoff from terminal coordinator failure. Socket/TLS readiness integration, deadlines,
+  cross-node generation refresh/rebinding, general vector-plan fragments/exchanges, complete leader
+  transport, and multi-node failure validation remain deferred; the
   phase exit gate is not claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.

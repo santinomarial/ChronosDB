@@ -558,6 +558,7 @@ chronos_enable_static_analysis(chronos_raft)
 
 add_library(
   chronos_cluster
+  src/cluster/distributed_query_execution.cpp
   src/cluster/distributed_query_transport.cpp
   src/cluster/remote_tablet_reconfiguration.cpp
   src/cluster/tablet_physical_part_install.cpp
@@ -859,6 +860,8 @@ if(CHRONOS_BUILD_TESTS)
 
   add_executable(
     chronos_cluster_tests
+    tests/cluster/distributed_query_execution_header_self_contained.cpp
+    tests/cluster/distributed_query_execution_test.cpp
     tests/cluster/distributed_query_transport_header_self_contained.cpp
     tests/cluster/distributed_query_transport_test.cpp
     tests/cluster/remote_tablet_reconfiguration_header_self_contained.cpp

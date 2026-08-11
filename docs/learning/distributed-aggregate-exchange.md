@@ -63,23 +63,29 @@ under a 65,536-message hard ceiling, and final merge is `O(planned tablets)`.
 Fragment encoding/decoding is `O(projected columns)` with a 4,096-column and 16,604-byte hard cap.
 Binding is `O(replicas + tablets + projected columns)` and allocates only the owned projection.
 Compatible batch binding adds `O(fragments log fragments + total projected columns)` validation and
-retains one shared Manifest generation plus the bounded plan-ordered dispatch vector.
+retains one shared Manifest generation plus the bounded plan-ordered dispatch vector. Execution
+creation adds an ordered `O(fragments)` index with `O(log fragments)` event lookup; the owner is
+single-threaded and requires external method serialization.
 Worker authority checks precede I/O. Current execution inherits the bounded temporal resolver's
 decode and winner-selection costs, then scans visible logical rows once for filtering/aggregation.
 Transport requests retain at most 16,772 bytes and responses at most 244 bytes. Authentication,
 outer and nested decoding, route validation, and worker execution occur in that order.
 Request/response stream readers retain those fixed maxima, integrity-check the complete header
 before trusting its declared length, consume no coalesced successor bytes, and fail sticky. The
-move-only write cursor exposes only the unwritten suffix. The deterministic sender permits one outstanding
-attempt, exact-correlates the reverse route/query/tablet, and caps retry count and exponential
-backoff.
+move-only write cursor exposes only the unwritten suffix. The deterministic sender permits one
+outstanding attempt, exact-correlates the reverse route/query/tablet, and caps retry count and
+exponential backoff.
+`DistributedQueryExecution` retains the compatible snapshot and one sender per tablet. It delivers
+each successful terminal exchange to the coordinator once, ignores nonterminal backoff for merge
+purposes, and reports only terminal sender failure. Coordinator `finish` therefore remains the sole
+complete-result boundary.
 
 ## Tradeoffs and deferred work
 
 A fixed ungrouped-aggregate frame gives partial-I/O carriers an unambiguous payload without
 prematurely defining a general physical-fragment language. The cost is a specialized first exchange
-type. Grouping state, physical plans, ordering/top-N, cancellation, retry, duplicate sequencing,
-and multi-tablet snapshot compatibility require their own bounded contracts. A leader hint never
+type. Grouping state, physical plans, ordering/top-N, cancellation delivery, and general duplicate
+sequencing require their own bounded contracts. A leader hint never
 mutates an existing proof-bound dispatch: following it requires explicit coordinator rebinding.
 Socket/TLS readiness, connection deadlines, cancellation delivery, and multi-node fault handling
 remain embedding work.

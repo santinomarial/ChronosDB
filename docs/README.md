@@ -89,6 +89,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   cluster request/response frames with exact route/result correlation and authenticated
   principal-to-source authorization before worker dispatch, plus fixed-storage partial readers,
   move-only write ownership, and immutable-dispatch finite retry.
+  The fail-closed execution owner retains the compatible Manifest snapshot, coordinates one sender
+  per tablet, and publishes terminal success or failure to the aggregate coordinator exactly once.
 - [Resume Token v1](formats/resume-token-v1.md): authenticated live-subscription resume identity,
   compatibility, limits, and rejection rules.
 - [Materialized View Checkpoint v1](formats/materialized-view-checkpoint-v1.md): bounded exact

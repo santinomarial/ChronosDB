@@ -205,3 +205,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0168](0168-authenticated-distributed-query-transport.md) | Authenticated distributed query transport | accepted |
 | [0169](0169-bounded-distributed-query-carrier-lifecycle.md) | Bounded distributed query carrier lifecycle | accepted |
 | [0170](0170-compatible-multi-tablet-manifest-snapshot-binding.md) | Compatible multi-tablet Manifest snapshot binding | accepted |
+| [0171](0171-fail-closed-distributed-query-execution-owner.md) | Fail-closed distributed query execution owner | accepted |
