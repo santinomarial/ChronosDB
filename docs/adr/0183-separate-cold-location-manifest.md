@@ -28,9 +28,9 @@ part's immutable byte identity to one pinned decoded Manifest v2 value. The obje
 resolve to one deployment configuration; listings, ETags, and an equal part name are never proof.
 
 This decision freezes codec and binding semantics only. It does not allow local deletion merely
-because valid bytes can be encoded. Durable installation, no-fallback recovery selection, atomic
-publication of a compatible base/cold pair, reader-pin retirement, cache/query integration, and
-remote deletion each require their own explicit owners and tests.
+because valid bytes can be encoded. [ADR 0184](0184-durable-cold-location-generations.md) now owns
+durable installation and no-fallback recovery selection. Atomic publication of a compatible
+base/cold pair, reader-pin retirement, cache/query integration, and remote deletion remain separate.
 
 ## Consequences and validation
 
@@ -70,4 +70,3 @@ retain a verified local copy before removing the cold authority.
 - [Manifest v2 format](../formats/manifest-v2.md)
 - [libcurl SigV4 S3 backend](0182-libcurl-sigv4-s3-object-store.md)
 - [Architecture invariants](../architecture/invariants.md)
-

@@ -134,6 +134,13 @@ decode_cold_location_manifest_v1_exact(common::ByteView bytes,
 validate_cold_location_manifest_binding(const DecodedColdLocationManifest& cold,
                                         const manifest::DecodedTemporalManifestView& base_manifest);
 
+// Cold authority is add-only until an explicit pin-aware removal/rekey protocol exists. A
+// successor advances exactly one cold generation, never moves its Manifest v2 binding backward,
+// and retains every predecessor location byte-for-byte.
+[[nodiscard]] common::Status
+validate_cold_location_manifest_transition(const DecodedColdLocationManifest& predecessor,
+                                           const DecodedColdLocationManifest& successor);
+
 } // namespace chronos::tiering
 
 #endif // CHRONOS_TIERING_COLD_MANIFEST_HPP_

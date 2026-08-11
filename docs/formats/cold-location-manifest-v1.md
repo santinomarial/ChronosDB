@@ -1,7 +1,7 @@
 # ChronosDB Cold Location Manifest v1
 
-> **Status: accepted canonical codec and exact Manifest v2 binding validation are implemented.
-> Durable generation installation/recovery, atomic publication with Manifest v2, local-source
+> **Status: accepted canonical codec, exact Manifest v2 binding validation, and durable generation
+> installation/no-fallback recovery are implemented. Atomic publication with Manifest v2, local-source
 > reclamation, remote deletion, and query-path integration remain separate work.**
 
 Cold Location Manifest v1 is an immutable full-generation registry that maps exact CSEG identities
@@ -79,10 +79,11 @@ generation equal the header. Every cold descriptor must find one Manifest v2 par
 UUID, file length, and content SHA-256. An equal key returned by object storage is still verified by
 that digest; provider ETag and listing state are not authority.
 
-The codec alone does not authorize deletion of the local CSEG. A future durable installer must
-write and synchronize the complete cold generation, atomically rename it without replacement,
-synchronize the directory, publish a compatible Manifest-v2/cold pair, wait for predecessor reader
-pins, and only then reclaim a local source. Remote deletion additionally requires proof that no
+The codec alone does not authorize deletion of the local CSEG. The durable installer uses canonical
+`generation-00000000000000000001.clm` final names, exact `.tmp` candidates, synchronized complete
+readback, no-replace rename, directory synchronization, and highest-consecutive/no-fallback
+selection. A later owner must publish a compatible Manifest-v2/cold pair, wait for predecessor
+reader pins, and only then reclaim a local source. Remote deletion additionally requires proof that no
 retained logical Manifest generation or cold generation references the object.
 
 ## Compatibility and rejection
@@ -92,4 +93,3 @@ reserved-byte damage are corruption. A checksum-valid unknown nonzero version or
 unsupported. Configured limits are resource exhaustion. Prefix decoding reports the exact required
 header or generation length for truncation. Readers never fall back from a damaged highest durable
 cold generation without an explicit recovery contract.
-

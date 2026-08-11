@@ -218,3 +218,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0181](0181-authenticated-distributed-leader-hint-publication.md) | Authenticated distributed leader-hint publication | accepted |
 | [0182](0182-libcurl-sigv4-s3-object-store.md) | libcurl SigV4 S3 object-store backend | accepted |
 | [0183](0183-separate-cold-location-manifest.md) | Separate cold-location manifest authority | accepted |
+| [0184](0184-durable-cold-location-generations.md) | Durable cold-location generation installation and recovery | accepted |

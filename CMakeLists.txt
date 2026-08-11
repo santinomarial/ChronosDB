@@ -603,6 +603,7 @@ chronos_enable_static_analysis(chronos_cluster)
 add_library(
   chronos_tiering
   src/tiering/cold_manifest.cpp
+  src/tiering/cold_manifest_storage.cpp
   src/tiering/object_store.cpp
   src/tiering/tiered_parts.cpp
 )
@@ -614,11 +615,12 @@ target_include_directories(
   PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+  PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
 target_link_libraries(
   chronos_tiering
   PUBLIC chronos::common chronos::cseg chronos::ingest chronos::manifest chronos::schema
-  PRIVATE CURL::libcurl
+  PRIVATE chronos::io CURL::libcurl
 )
 chronos_set_project_warnings(chronos_tiering)
 chronos_enable_sanitizers(chronos_tiering)
@@ -920,6 +922,8 @@ if(CHRONOS_BUILD_TESTS)
     chronos_tiering_tests
     tests/tiering/cold_manifest_header_self_contained.cpp
     tests/tiering/cold_manifest_format_header_self_contained.cpp
+    tests/tiering/cold_manifest_storage_header_self_contained.cpp
+    tests/tiering/cold_manifest_storage_test.cpp
     tests/tiering/cold_manifest_test.cpp
     tests/tiering/object_store_header_self_contained.cpp
     tests/tiering/object_store_test.cpp
@@ -928,6 +932,7 @@ if(CHRONOS_BUILD_TESTS)
   )
   set_target_properties(chronos_tiering_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_tiering_tests PRIVATE cxx_std_23)
+  target_include_directories(chronos_tiering_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
   target_link_libraries(chronos_tiering_tests PRIVATE chronos::tiering GTest::gtest_main)
   chronos_set_project_warnings(chronos_tiering_tests)
   chronos_enable_sanitizers(chronos_tiering_tests)

@@ -182,8 +182,8 @@
   chain, proxy policy, retry/backoff, multipart upload, concurrent conditional writers, timeout/TLS/
   partial-response faults, eventual listing behavior, restore, remote deletion, encryption
   boundary, and broader object-store fault injection.
-- Durable Cold Location Manifest generation installation, highest-generation/no-fallback recovery,
-  atomic compatible Manifest-v2/cold publication and old/new crash selection; CSEG validation
+- Atomic compatible Manifest-v2/cold publication and old/new crash selection; subprocess
+  power-loss coverage for the implemented durable cold-generation installer; CSEG validation
   before upload, safe local deletion, snapshot/compaction pins, cache concurrency, cache index
   recovery, remote corruption, and page-range checksum integration.
 - Arrow IPC and Parquet import/export providers, schema/logical-type mapping, fixtures, round trips,

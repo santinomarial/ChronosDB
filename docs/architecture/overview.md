@@ -384,7 +384,10 @@ local/remote deletion, crash recovery, encryption, and Arrow/Parquet exports rem
 production object carrier now uses libcurl SigV4 with TLS-by-default, conditional immutable PUT,
 authoritative per-key HEAD metadata, and exact bounded range GET; listing is never authority. A
 separate checksummed Cold Location Manifest v1 now binds object keys and a deployment store identity
-to exact Manifest v2 part bytes without changing frozen Manifest v2 fields.
+to exact Manifest v2 part bytes without changing frozen Manifest v2 fields. Its dedicated locked
+storage owner installs immutable add-only generations through complete readback, file sync,
+no-replace rename, and directory sync, then recovers only the highest consecutive generation and
+fails rather than pairing it with a different Manifest v2 generation.
 
 ## Accepted direction and deferred design
 

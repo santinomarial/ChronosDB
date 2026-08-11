@@ -550,4 +550,28 @@ common::Status validate_cold_location_manifest_binding(
   }
 }
 
+common::Status
+validate_cold_location_manifest_transition(const DecodedColdLocationManifest& predecessor,
+                                           const DecodedColdLocationManifest& successor) {
+  if (predecessor.generation() == std::numeric_limits<std::uint64_t>::max() ||
+      successor.generation() != predecessor.generation() + 1U ||
+      successor.previous_generation() != predecessor.generation()) {
+    return invalid("cold manifest successor generation is not exact");
+  }
+  if (successor.database_id() != predecessor.database_id() ||
+      successor.object_store_id() != predecessor.object_store_id()) {
+    return invalid("cold manifest successor changes durable identity");
+  }
+  if (successor.base_manifest_generation() < predecessor.base_manifest_generation())
+    return invalid("cold manifest successor moves Manifest v2 authority backward");
+  const auto successor_locations = successor.locations();
+  for (const ColdPartLocationDescriptor& location : predecessor.locations()) {
+    const auto found = std::ranges::lower_bound(successor_locations, location.part_id, {},
+                                                &ColdPartLocationDescriptor::part_id);
+    if (found == successor_locations.end() || *found != location)
+      return invalid("cold manifest successor removes or changes an existing location");
+  }
+  return common::Status::ok();
+}
+
 } // namespace chronos::tiering

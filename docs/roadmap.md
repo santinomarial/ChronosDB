@@ -913,9 +913,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   callback; bounded full-object caching and authenticated large range reads are implemented.
   Manifest v1/v2 bytes are unchanged. A separate checksummed Cold Location Manifest v1 now binds
   bounded object keys and deployment store identity to exact Manifest v2 part bytes without using
-  listings. Durable cold-generation install/recovery/publication, safe deletion, multipart/retry
-  and credential-refresh ownership, and Arrow/Parquet implementations remain deferred; the phase
-  exit gate is not claimed.
+  listings. A dedicated lock-protected storage owner now performs exact-readback, file-sync,
+  no-replace, directory-sync installation and highest-consecutive/no-fallback recovery of add-only
+  cold generations bound to an exact Manifest v2 value. Aggregate base/cold publication, safe
+  deletion, multipart/retry and credential-refresh ownership, and Arrow/Parquet implementations
+  remain deferred; the phase exit gate is not claimed.
 
 - **Scope:** immutable-part upload/install/cache/eviction; remote integrity and retry; authoritative manifest references; safe remote deletion; selected documented import/export or ecosystem formats.
 - **Explicit non-scope:** treating bucket listings as metadata truth, mutating remote parts in place, claiming object storage has local-disk latency, custom cloud APIs when standard clients suffice, and compatibility claims without fixtures.

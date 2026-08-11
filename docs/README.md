@@ -71,7 +71,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   reclamation proof without trusting orphan files.
 - [Cold Location Manifest v1](formats/cold-location-manifest-v1.md): separate immutable object-store
   location authority bound to an exact Manifest v2 database/generation, deployment store identity,
-  and part length/SHA-256, with a strict checksummed codec and exact binding validation.
+  and part length/SHA-256, with a strict checksummed codec, exact binding validation, synchronized
+  immutable generation installation, and highest-generation/no-fallback recovery.
 - [Tablet Physical Part Reclamation Marker v1](formats/tablet-physical-part-reclamation-marker-v1.md):
   session-bound terminal receipt state installed durably before crash-safe descending chunk removal.
 - [Distributed Aggregate Exchange v1](formats/distributed-aggregate-exchange-v1.md): fixed-width,
@@ -362,5 +363,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Streaming ungrouped vector aggregates](learning/streaming-ungrouped-aggregates.md): implemented
   fixed-state global COUNT/SUM/AVG/MIN/MAX/variance over accounted chunk streams with exact empty,
   NULL, numeric, ownership, cancellation, and canonical-output behavior.
+- [Durable cold-location manifests](learning/cold-location-manifest-storage.md): implemented
+  checksummed object-location authority, exact Manifest v2 binding, add-only installation,
+  restart selection, failure poisoning, and lifecycle boundaries.
 
 Future format, protocol, subsystem, operations, and learning documents should be linked here when they are added by their corresponding roadmap phase.
