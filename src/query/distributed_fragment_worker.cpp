@@ -49,10 +49,119 @@ validate_local_placement(const raft::TabletPlacementMetadata& placement,
   return common::Status::ok();
 }
 
+class LocalTemporalPartBatchLoader final : public DistributedTemporalPartBatchLoader {
+public:
+  explicit LocalTemporalPartBatchLoader(const manifest::ManifestStorage& storage) noexcept
+      : storage_(storage) {}
+
+  common::Status load(const manifest::TemporalDatabaseStorageSnapshot& snapshot,
+                      const std::span<const cseg::PartId> part_ids,
+                      const std::span<const manifest::TabletSchemaBinding> schema_bindings,
+                      const manifest::TemporalPartValidationLimits validation_limits,
+                      DistributedTemporalPartBatchConsumer& consumer) const override {
+    auto images = storage_.get().load_temporal_part_images(snapshot.selected_manifest(), part_ids,
+                                                           schema_bindings, validation_limits);
+    if (!images.has_value())
+      return images.error();
+    try {
+      std::vector<TemporalManifestCsegPartView> views;
+      views.reserve(images->size());
+      for (const manifest::LoadedTemporalPartImage& image : *images)
+        views.push_back({.descriptor = &image.descriptor(), .bytes = image.bytes()});
+      return consumer.consume(views);
+    } catch (const std::bad_alloc&) {
+      return {common::StatusCode::kResourceExhausted,
+              "distributed local part view allocation failed"};
+    } catch (const std::length_error&) {
+      return {common::StatusCode::kResourceExhausted,
+              "distributed local part view exceeds container limits"};
+    }
+  }
+
+private:
+  std::reference_wrapper<const manifest::ManifestStorage> storage_;
+};
+
+class AggregatePartBatchConsumer final : public DistributedTemporalPartBatchConsumer {
+public:
+  AggregatePartBatchConsumer(std::shared_ptr<const schema::TableSchema> schema_value,
+                             const schema::SchemaLineage& lineage,
+                             const manifest::TemporalTabletDescriptor& tablet,
+                             const common::Uuid& source_id,
+                             const std::optional<cseg::EventTimePredicate>& predicate,
+                             const std::size_t event_ordinal, const std::uint32_t aggregate_ordinal,
+                             const TemporalManifestCsegResolutionLimits limits,
+                             MergeableAggregateState& partial) noexcept
+      : schema_value_(std::move(schema_value)), lineage_(lineage), tablet_(tablet),
+        source_id_(source_id), predicate_(predicate), event_ordinal_(event_ordinal),
+        aggregate_ordinal_(aggregate_ordinal), limits_(limits), partial_(partial) {}
+
+  common::Status consume(const std::span<const TemporalManifestCsegPartView> parts) override {
+    if (called_) {
+      repeated_ = true;
+      return {common::StatusCode::kCorruption,
+              "distributed part loader invoked its consumer more than once"};
+    }
+    called_ = true;
+    auto visible = resolve_manifest_v2_temporal_tablet_snapshot(
+        schema_value_, lineage_.get(), tablet_.get(), parts,
+        {.source = cseg::temporal_format::CommitSource::kRaft, .source_id = source_id_},
+        std::nullopt, limits_);
+    if (!visible.has_value())
+      return visible.error();
+    for (const ScalarInputRow& row : (*visible)->rows()) {
+      if (row.columns.size() != schema_value_->columns().size()) {
+        return {common::StatusCode::kCorruption,
+                "distributed worker resolved row shape is invalid"};
+      }
+      const auto* event_time = std::get_if<std::int64_t>(&row.columns[event_ordinal_].storage());
+      if (event_time == nullptr)
+        return {common::StatusCode::kCorruption, "distributed worker event time is invalid"};
+      const auto matches =
+          cseg::cseg_event_time_range_may_match(*event_time, *event_time, predicate_.get());
+      if (!matches.has_value())
+        return matches.error();
+      if (!*matches || row.columns[aggregate_ordinal_].is_null())
+        continue;
+      const auto* value = std::get_if<double>(&row.columns[aggregate_ordinal_].storage());
+      if (value == nullptr)
+        return {common::StatusCode::kCorruption, "distributed worker aggregate value is invalid"};
+      const common::Status added = partial_.get().add(*value);
+      if (!added.is_ok())
+        return added;
+    }
+    return common::Status::ok();
+  }
+
+  [[nodiscard]] bool has_exactly_one_call() const noexcept {
+    return called_ && !repeated_;
+  }
+
+private:
+  std::shared_ptr<const schema::TableSchema> schema_value_;
+  std::reference_wrapper<const schema::SchemaLineage> lineage_;
+  std::reference_wrapper<const manifest::TemporalTabletDescriptor> tablet_;
+  common::Uuid source_id_;
+  std::reference_wrapper<const std::optional<cseg::EventTimePredicate>> predicate_;
+  std::size_t event_ordinal_{};
+  std::uint32_t aggregate_ordinal_{};
+  TemporalManifestCsegResolutionLimits limits_;
+  std::reference_wrapper<MergeableAggregateState> partial_;
+  bool called_{false};
+  bool repeated_{false};
+};
+
 } // namespace
 
 common::Result<ExchangeMessage>
 execute_distributed_aggregate_fragment(const DistributedAggregateWorkerRequest& request) {
+  const LocalTemporalPartBatchLoader loader{request.storage.get()};
+  return execute_distributed_aggregate_fragment(request, loader);
+}
+
+common::Result<ExchangeMessage>
+execute_distributed_aggregate_fragment(const DistributedAggregateWorkerRequest& request,
+                                       const DistributedTemporalPartBatchLoader& loader) {
   const DistributedAggregateFragmentDispatch& dispatch = request.dispatch.get();
   const DistributedAggregateFragment& fragment = dispatch.fragment;
   const manifest::TemporalDatabaseStorageSnapshot& snapshot = request.snapshot.get();
@@ -135,44 +244,23 @@ execute_distributed_aggregate_fragment(const DistributedAggregateWorkerRequest& 
         part_ids.push_back(descriptor.part_id);
       const std::array bindings{manifest::TabletSchemaBinding{.tablet_id = fragment.tablet_id,
                                                               .lineage = std::cref(lineage)}};
-      auto images = request.storage.get().load_temporal_part_images(
-          snapshot.selected_manifest(), part_ids, bindings, request.limits.part_validation);
-      if (!images.has_value())
-        return common::make_unexpected(images.error());
-      std::vector<TemporalManifestCsegPartView> views;
-      views.reserve(images->size());
-      for (const manifest::LoadedTemporalPartImage& image : *images) {
-        views.push_back({.descriptor = &image.descriptor(), .bytes = image.bytes()});
-      }
-      auto visible = resolve_manifest_v2_temporal_tablet_snapshot(
-          schema_value, lineage, *tablet, views,
-          {.source = cseg::temporal_format::CommitSource::kRaft,
-           .source_id = request.raft_group_id},
-          std::nullopt, request.limits.resolution);
-      if (!visible.has_value())
-        return common::make_unexpected(visible.error());
-      for (const ScalarInputRow& row : (*visible)->rows()) {
-        if (row.columns.size() != schema_value->columns().size()) {
-          return common::make_unexpected(common::Status{
-              common::StatusCode::kCorruption, "distributed worker resolved row shape is invalid"});
-        }
-        const auto* event_time = std::get_if<std::int64_t>(&row.columns[*event_ordinal].storage());
-        if (event_time == nullptr)
-          return common::make_unexpected(common::Status{
-              common::StatusCode::kCorruption, "distributed worker event time is invalid"});
-        const auto matches = cseg::cseg_event_time_range_may_match(*event_time, *event_time,
-                                                                   fragment.event_time_predicate);
-        if (!matches.has_value())
-          return common::make_unexpected(matches.error());
-        if (!*matches || row.columns[aggregate_ordinal].is_null())
-          continue;
-        const auto* value = std::get_if<double>(&row.columns[aggregate_ordinal].storage());
-        if (value == nullptr)
-          return common::make_unexpected(common::Status{
-              common::StatusCode::kCorruption, "distributed worker aggregate value is invalid"});
-        const common::Status added = partial.add(*value);
-        if (!added.is_ok())
-          return common::make_unexpected(added);
+      AggregatePartBatchConsumer consumer{schema_value,
+                                          lineage,
+                                          *tablet,
+                                          request.raft_group_id,
+                                          fragment.event_time_predicate,
+                                          *event_ordinal,
+                                          aggregate_ordinal,
+                                          request.limits.resolution,
+                                          partial};
+      const common::Status loaded =
+          loader.load(snapshot, part_ids, bindings, request.limits.part_validation, consumer);
+      if (!loaded.is_ok())
+        return common::make_unexpected(loaded);
+      if (!consumer.has_exactly_one_call()) {
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kCorruption,
+                           "distributed part loader did not invoke its consumer exactly once"});
       }
     } else if (tablet->durable_version_count != 0U) {
       return common::make_unexpected(common::Status{

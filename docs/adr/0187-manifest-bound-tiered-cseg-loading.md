@@ -28,8 +28,9 @@ full CSEG/schema/tablet/source validation used for local bytes.
 
 Each returned move-only image owns either the validated local image or remote byte vector and a copy
 of the aggregate tiered snapshot. Its byte view, descriptor, Manifest generation, and cold route
-therefore remain valid together until the image is destroyed. This boundary does not yet authorize
-local deletion, provide a range cache, or integrate the distributed query worker.
+therefore remain valid together until the image is destroyed. This boundary does not authorize
+local deletion or provide a range cache. [ADR 0188](0188-proof-gated-tiered-distributed-query-loading.md)
+now integrates it with the proof-gated distributed aggregate worker.
 
 ## Consequences and validation
 

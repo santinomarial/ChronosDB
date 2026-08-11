@@ -605,6 +605,7 @@ add_library(
   src/tiering/cold_manifest.cpp
   src/tiering/cold_manifest_storage.cpp
   src/tiering/object_store.cpp
+  src/tiering/tiered_distributed_fragment_worker.cpp
   src/tiering/tiered_pair_commit.cpp
   src/tiering/tiered_part_loader.cpp
   src/tiering/tiered_publication.cpp
@@ -622,7 +623,12 @@ target_include_directories(
 )
 target_link_libraries(
   chronos_tiering
-  PUBLIC chronos::common chronos::cseg chronos::ingest chronos::manifest chronos::schema
+  PUBLIC chronos::common
+         chronos::cseg
+         chronos::ingest
+         chronos::manifest
+         chronos::query
+         chronos::schema
   PRIVATE chronos::io CURL::libcurl
 )
 chronos_set_project_warnings(chronos_tiering)
@@ -930,6 +936,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/tiering/cold_manifest_test.cpp
     tests/tiering/object_store_header_self_contained.cpp
     tests/tiering/object_store_test.cpp
+    tests/tiering/tiered_distributed_fragment_worker_header_self_contained.cpp
     tests/tiering/tiered_pair_commit_header_self_contained.cpp
     tests/tiering/tiered_pair_commit_test.cpp
     tests/tiering/tiered_part_loader_header_self_contained.cpp

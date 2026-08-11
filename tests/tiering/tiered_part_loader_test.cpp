@@ -7,6 +7,7 @@
 #include "chronos/tiering/cold_manifest.hpp"
 #include "chronos/tiering/cold_manifest_storage.hpp"
 #include "chronos/tiering/object_store.hpp"
+#include "chronos/tiering/tiered_distributed_fragment_worker.hpp"
 #include "chronos/tiering/tiered_part_loader.hpp"
 #include "chronos/tiering/tiered_publication.hpp"
 #include "cseg/cseg_test_fixture.hpp"
@@ -88,7 +89,7 @@ struct PartFixture {
   common::Uuid object_store_id{uuid(12U)};
   schema::TableSchema schema_value{make_schema()};
   schema::SchemaLineage lineage{schema::SchemaLineage::create(schema_value).value()};
-  cseg::EncodedCsegPart encoded{cseg::test::make_valid_temporal_part(
+  cseg::EncodedCsegPart encoded{cseg::test::make_valid_temporal_float64_part(
       cseg::PageCompression::kZstd,
       {.commit_source = cseg::temporal_format::CommitSource::kRaft, .source_id = group_id})};
   manifest::TemporalPartDescriptor descriptor{
@@ -112,12 +113,18 @@ struct PartFixture {
 
   [[nodiscard]] schema::TableSchema make_schema() const {
     const schema::ColumnId event_id = cseg::test::identifier<schema::ColumnId>(5U);
+    const schema::ColumnId value_id = cseg::test::identifier<schema::ColumnId>(6U);
     std::vector<schema::ColumnDefinition> columns;
     columns.push_back(
         schema::ColumnDefinition::create(
             event_id, "event_time",
             schema::LogicalType::create(schema::LogicalTypeKind::kTimestampNs).value(), false)
             .value());
+    columns.push_back(schema::ColumnDefinition::create(
+                          value_id, "value",
+                          schema::LogicalType::create(schema::LogicalTypeKind::kFloat64).value(),
+                          false)
+                          .value());
     return schema::TableSchema::create(table_id, schema_id, schema::SchemaVersion::initial(),
                                        std::nullopt, std::move(columns),
                                        {.event_time_column = event_id,
@@ -370,6 +377,92 @@ TEST(TieredPartLoaderTest, RejectsUnsortedOrOverBudgetSelectionBeforeIo) {
       {.maximum_parts = 1U, .maximum_total_bytes = fixture->part.descriptor.file_length - 1U});
   ASSERT_FALSE(limited.has_value());
   EXPECT_EQ(limited.error().code(), common::StatusCode::kResourceExhausted);
+}
+
+TEST(TieredDistributedFragmentWorkerTest, ExecutesFromMissingLocalPartUsingExactTieredSnapshot) {
+  auto fixture = LiveFixture::create();
+  ASSERT_NE(fixture, nullptr);
+  const auto schema_bindings = fixture->part.bindings();
+  const auto source_bindings = fixture->part.source_bindings();
+  auto independently_loaded = fixture->manifest_storage.load_selected_temporal_manifest(
+      {.expected_database_id = fixture->part.database_id,
+       .schema_bindings = schema_bindings,
+       .source_bindings = source_bindings,
+       .decode_limits = {},
+       .part_validation_limits = {}});
+  ASSERT_TRUE(independently_loaded.has_value());
+  auto independent_owner = std::make_shared<const manifest::LoadedTemporalManifestGeneration>(
+      std::move(*independently_loaded));
+  auto independent_publisher =
+      manifest::TemporalDatabaseStoragePublisher::create(independent_owner, schema_bindings);
+  ASSERT_TRUE(independent_publisher.has_value());
+  auto independent_snapshot = independent_publisher->snapshot();
+  ASSERT_TRUE(independent_snapshot.has_value());
+  ASSERT_TRUE(std::filesystem::remove(fixture->local_part_path()));
+  auto tiered_snapshot = fixture->publisher.snapshot();
+  ASSERT_TRUE(tiered_snapshot.has_value());
+
+  const query::DistributedAggregateFragmentDispatch dispatch{
+      .raft_group_id = fixture->part.group_id,
+      .fragment = {
+          .query_id = uuid(21U),
+          .database_id = fixture->part.database_id,
+          .table_id = fixture->part.table_id,
+          .tablet_id = fixture->part.tablet_id,
+          .destination_schema_id = fixture->part.schema_id,
+          .snapshot_generation = 1U,
+          .serving_node = 11U,
+          .applied_position = 9U,
+          .observed_leader_commit_position = 9U,
+          .placement_epoch = 12U,
+          .read_policy = {.consistency = query::DistributedReadConsistency::kLeaderLinearizable,
+                          .maximum_staleness_positions = std::nullopt},
+          .linearizable_barrier = raft::ReadBarrier{2U, 3U, 9U},
+          .destination_column_ordinals = {0U, 1U},
+          .aggregate_input_index = 1U,
+          .event_time_predicate = cseg::EventTimePredicate{.lower = cseg::EventTimeBound{15, true},
+                                                           .upper = std::nullopt},
+      }};
+  const raft::TabletPlacementMetadata placement{.table_id = fixture->part.table_id,
+                                                .tablet_id = fixture->part.tablet_id,
+                                                .placement_epoch = 12U,
+                                                .replicas = {11U, 12U},
+                                                .leader_hint = 11U};
+  const query::DistributedAggregateWorkerRequest worker{
+      .dispatch = std::cref(dispatch),
+      .storage = std::cref(fixture->manifest_storage),
+      .snapshot = std::cref(tiered_snapshot->manifest_snapshot()),
+      .lineage = std::cref(fixture->part.lineage),
+      .placement = std::cref(placement),
+      .raft_group_id = fixture->part.group_id,
+      .local_node = 11U,
+      .local_linearizable_barrier = raft::ReadBarrier{2U, 3U, 9U},
+      .limits = {},
+  };
+  auto result = execute_tiered_distributed_aggregate_fragment(
+      {.worker = std::cref(worker),
+       .tiered_snapshot = std::cref(*tiered_snapshot),
+       .remote_store = std::cref(fixture->object_store),
+       .load_limits = {}});
+  ASSERT_TRUE(result.has_value()) << result.error().to_string();
+  EXPECT_EQ(result->query_id, dispatch.fragment.query_id);
+  EXPECT_EQ(result->tablet_id, fixture->part.tablet_id);
+  EXPECT_EQ(result->sequence, 1U);
+  EXPECT_EQ(result->partial.count, 1U);
+  EXPECT_EQ(result->partial.sum, 2.5);
+  EXPECT_EQ(result->partial.minimum, 2.5);
+  EXPECT_EQ(result->partial.maximum, 2.5);
+  EXPECT_TRUE(result->terminal);
+
+  auto mismatched_worker = worker;
+  mismatched_worker.snapshot = std::cref(*independent_snapshot);
+  auto mismatched = execute_tiered_distributed_aggregate_fragment(
+      {.worker = std::cref(mismatched_worker),
+       .tiered_snapshot = std::cref(*tiered_snapshot),
+       .remote_store = std::cref(fixture->object_store),
+       .load_limits = {}});
+  ASSERT_FALSE(mismatched.has_value());
+  EXPECT_EQ(mismatched.error().code(), common::StatusCode::kUnavailable);
 }
 
 } // namespace

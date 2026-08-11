@@ -66,6 +66,24 @@ void write_file(const std::filesystem::path& path, const common::ByteView bytes)
   ASSERT_TRUE(output.good());
 }
 
+class OmittingPartLoader final : public DistributedTemporalPartBatchLoader {
+public:
+  common::Status load(const manifest::TemporalDatabaseStorageSnapshot&,
+                      std::span<const cseg::PartId>, std::span<const manifest::TabletSchemaBinding>,
+                      manifest::TemporalPartValidationLimits,
+                      DistributedTemporalPartBatchConsumer&) const override {
+    ++calls_;
+    return common::Status::ok();
+  }
+
+  [[nodiscard]] std::size_t calls() const noexcept {
+    return calls_;
+  }
+
+private:
+  mutable std::size_t calls_{};
+};
+
 [[nodiscard]] std::shared_ptr<const schema::TableSchema> make_schema() {
   const schema::ColumnId event_id = id<schema::ColumnId>(5U);
   const schema::ColumnId value_id = id<schema::ColumnId>(6U);
@@ -209,6 +227,14 @@ TEST(DistributedFragmentWorkerTest, ExecutesPinnedTemporalPartsAndReprovesLocalP
   EXPECT_EQ(result->partial.minimum, 2.5);
   EXPECT_EQ(result->partial.maximum, 2.5);
   EXPECT_TRUE(result->terminal);
+
+  OmittingPartLoader omitting_loader;
+  EXPECT_EQ(execute_distributed_aggregate_fragment(request(11U), omitting_loader).error().code(),
+            common::StatusCode::kCorruption);
+  EXPECT_EQ(omitting_loader.calls(), 1U);
+  EXPECT_EQ(execute_distributed_aggregate_fragment(request(12U), omitting_loader).error().code(),
+            common::StatusCode::kUnavailable);
+  EXPECT_EQ(omitting_loader.calls(), 1U);
 
   auto stale_barrier = request(11U);
   stale_barrier.local_linearizable_barrier = raft::ReadBarrier{2U, 4U, 10U};

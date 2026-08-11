@@ -6,5 +6,7 @@ static_assert(std::is_aggregate_v<chronos::query::DistributedAggregateWorkerLimi
 static_assert(std::is_aggregate_v<chronos::query::DistributedAggregateWorkerRequest>);
 
 namespace {
-[[maybe_unused]] const auto kExecute = &chronos::query::execute_distributed_aggregate_fragment;
-}
+using Execute = chronos::common::Result<chronos::query::ExchangeMessage> (*)(
+    const chronos::query::DistributedAggregateWorkerRequest&);
+[[maybe_unused]] const Execute kExecute = &chronos::query::execute_distributed_aggregate_fragment;
+} // namespace

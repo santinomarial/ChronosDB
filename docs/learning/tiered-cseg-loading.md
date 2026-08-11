@@ -44,8 +44,11 @@ retain the same exact snapshot, integrity, and schema/source proofs.
 ## Current boundary and review questions
 
 This loader alone does not make local deletion safe: restart recovery and every query entry point
-must use equivalent tier-aware authority before reclamation is enabled. It also does not authorize
-remote deletion, multipart upload, cache eviction, or retry policy.
+must use equivalent tier-aware authority before reclamation is enabled. The distributed aggregate
+worker now supplies one integrated path: all dispatch/placement/Raft/Manifest gates run before a
+synchronous tiered batch loader exposes image views to the unchanged temporal resolver. Other query
+entry points remain local-only. The loader also does not authorize remote deletion, multipart
+upload, cache eviction, or retry policy.
 
 Likely review questions include why only `NOT_FOUND` permits fallback, why the cold key is not data
 authority, why metadata and a recomputed digest are both checked, why the complete CSEG validator is
