@@ -136,13 +136,15 @@
   implemented. Contiguous per-tablet sequence admission, bounded bit-exact retry history, terminal
   closure, and first-failure arbitration are also implemented. The current projected Float64
   aggregate path has canonical snapshot/route/proof/projection/event-filter fragment request bytes
-  plus an exact Raft-group-scoped executable dispatch envelope.
+  plus an exact Raft-group-scoped executable dispatch envelope. Runtime binding now exact-matches
+  admission, committed placement, destination schema, and one pinned Raft-backed Manifest v2
+  generation before constructing that envelope.
   General physical pipeline stage/expression serialization, worker execution, socket integration
   and connection backpressure, grouping-state codecs, reconnect/resend protocol, ordering, top-N,
   LIMIT, cancellation, durable retries, and broader coordinator/worker failure cleanup remain.
 - Carry the implemented proof-bound leader-linearizable/bounded-stale/local-eventual admissions
-  through tablet-to-group identity, production routing, compatible pinned multi-tablet snapshots,
-  routing/placement epochs, protocol bytes, and leader changes during long scans.
+  through compatible pinned multi-tablet snapshots, protocol/carrier integration, and leader or
+  placement changes during long scans.
 - Shard-key pruning and statistics in addition to event-time pruning; multi-node scalar/distributed
   differential SQL and partial-aggregation equivalence.
 - Carry the implemented authenticated remote-action receiver bytes and atomic current-leader-term

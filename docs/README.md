@@ -79,6 +79,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   projection, aggregate input, and event-time predicate.
 - [Distributed Aggregate Fragment Dispatch v1](formats/distributed-aggregate-fragment-dispatch-v1.md):
   group-scoped executable envelope around one exact aggregate fragment request.
+  Runtime construction binds admission, committed placement, schema, and one exact Raft-backed
+  Manifest v2 snapshot before these bytes can be emitted.
 - [Resume Token v1](formats/resume-token-v1.md): authenticated live-subscription resume identity,
   compatibility, limits, and rejection rules.
 - [Materialized View Checkpoint v1](formats/materialized-view-checkpoint-v1.md): bounded exact

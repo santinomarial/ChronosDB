@@ -16,6 +16,8 @@ sequence order, and merges only accepted messages into terminal tablet state.
 bytes for one snapshot-bound projected aggregate scan.
 The dispatch envelope adds the distinct Raft group identity that scopes every admission index;
 workers never execute the bare inner fragment.
+`bind_distributed_aggregate_fragment` constructs that envelope only after one Manifest v2 snapshot,
+committed placement, schema, group, and proof admission exact-match.
 
 ## Data, ownership, and invariants
 
@@ -36,6 +38,8 @@ The encoded fragment owns one bounded vector. Decoding borrows input only for th
 integrity boundaries before projection allocation, and returns owned ordinals.
 The dispatch decoder validates its outer integrity and group first, then delegates exact inner
 decoding. Tablet identity is never substituted for group identity.
+The binder borrows its authority only for the call and copies a coherent immutable request; it
+never retains spans or references and performs no storage or metadata mutation.
 
 ## Failure behavior and complexity
 
@@ -50,6 +54,7 @@ charges its in-memory `ExchangeMessage` representation, not the wire length.
 Coordinator sequence lookup is `O(1)` within one tablet, retained memory is `O(accepted messages)`
 under a 65,536-message hard ceiling, and final merge is `O(planned tablets)`.
 Fragment encoding/decoding is `O(projected columns)` with a 4,096-column and 16,604-byte hard cap.
+Binding is `O(replicas + tablets + projected columns)` and allocates only the owned projection.
 
 ## Tradeoffs and deferred work
 
