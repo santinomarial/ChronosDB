@@ -907,11 +907,13 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
 ## Phase 17 — Object-storage tiering and interoperability
 
 - **Feature-pass status:** `chronos_tiering` provides an S3-compatible immutable put/stat/range
-  abstraction, a deterministic memory backend, verified idempotent SHA-256 upload before a caller's
-  atomic manifest-install callback, bounded full-object cache/eviction, and authenticated large
-  range reads. Manifest v1 is unchanged. A production S3 transport, Manifest v2 cold descriptors,
-  safe deletion/recovery, and Arrow/Parquet implementations remain deferred; the phase exit gate is
-  not claimed.
+  abstraction, a deterministic memory backend, and a production libcurl carrier with SigV4,
+  TLS-by-default, conditional immutable PUT, checksum metadata, finite timeouts, and exact bounded
+  range responses. Verified idempotent SHA-256 upload precedes a caller's atomic manifest-install
+  callback; bounded full-object caching and authenticated large range reads are implemented.
+  Manifest v1 is unchanged. Manifest cold descriptors, safe deletion/recovery, multipart/retry and
+  credential-refresh ownership, and Arrow/Parquet implementations remain deferred; the phase exit
+  gate is not claimed.
 
 - **Scope:** immutable-part upload/install/cache/eviction; remote integrity and retry; authoritative manifest references; safe remote deletion; selected documented import/export or ecosystem formats.
 - **Explicit non-scope:** treating bucket listings as metadata truth, mutating remote parts in place, claiming object storage has local-disk latency, custom cloud APIs when standard clients suffice, and compatibility claims without fixtures.

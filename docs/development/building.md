@@ -17,7 +17,7 @@ correctness support is not a power-loss durability claim.
 - a C++23 compiler and standard library that provide `std::expected`: GCC 13+, Clang 17+ paired
   with a capable libc++/libstdc++, or a current AppleClang
 - Git, so CMake can fetch pinned test dependencies and optionally record revision metadata
-- OpenSSL 3 and Zstandard 1.5.5 or newer production development packages
+- OpenSSL 3, Zstandard 1.5.5 or newer, and libcurl 7.75 or newer production development packages
 - Python only as required by CMake/GoogleTest test discovery
 - clang-format 18 and clang-tidy 18 exactly
 
@@ -28,7 +28,8 @@ vendored into this repository.
 ## Linux setup
 
 On Ubuntu 24.04, install the distribution packages for `cmake`, `ninja-build`, `g++`, `clang`,
-`libc++-dev`, `libc++abi-dev`, `libssl-dev`, `libzstd-dev`, `clang-format-18`, and
+`libc++-dev`, `libc++abi-dev`, `libssl-dev`, `libzstd-dev`, `libcurl4-openssl-dev`,
+`clang-format-18`, and
 `clang-tidy-18`. GCC and Clang are both
 CI-supported. Ubuntu's Clang 18 defaults to libstdc++ 13, but that compiler/library pairing does not
 expose the required C++23 `std::expected`; the supported Clang pairing uses libc++. Select the

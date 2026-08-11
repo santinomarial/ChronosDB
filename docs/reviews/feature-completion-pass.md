@@ -142,15 +142,17 @@ execution in that gate, and broad failure/measurement evidence remain incomplete
 ### Phase 17 — object storage and interoperability
 
 `chronos_tiering` defines S3-compatible immutable `put_if_absent`/`stat`/`get_range` semantics and a
-deterministic memory implementation. `TieredPartManager` checks SHA-256 content, verifies remote
-metadata, calls the atomic manifest installer before allowing local release, rejects part/key
-identity conflicts, caches bounded complete objects with eviction, and supports authenticated range
-reads for larger objects. A smoke test exposed and fixed a 32-bit constant-expression overflow that
-made the default 4 GiB object limit zero.
+deterministic memory implementation. A subsequent production libcurl backend adds SigV4,
+TLS-by-default, finite timeouts and response bounds, checksum metadata, conditional immutable PUT,
+exact retry verification, and exact range responses. `TieredPartManager` checks SHA-256 content,
+verifies remote metadata, calls the atomic manifest installer before allowing local release, rejects
+part/key identity conflicts, caches bounded complete objects with eviction, and supports
+authenticated range reads for larger objects. A smoke test exposed and fixed a 32-bit constant-
+expression overflow that made the default 4 GiB object limit zero.
 
-Manifest v1 remains unchanged. No production S3 transport, credentials/retry/multipart policy,
-Manifest v2 cold descriptor, safe deletion/recovery, CSEG pre-upload validator connection, cache
-concurrency, or Arrow/Parquet import/export provider is implemented.
+Manifest v1 remains unchanged. Credential refresh/provider policy, automatic retry/backoff,
+multipart upload, Manifest cold descriptors, safe deletion/recovery, CSEG pre-upload validator
+connection, cache concurrency, and Arrow/Parquet import/export remain incomplete.
 
 ## End-to-end integration state
 

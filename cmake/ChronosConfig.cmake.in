@@ -2,6 +2,17 @@
 
 include(CMakeFindDependencyMacro)
 find_dependency(Threads)
+find_dependency(CURL 7.75)
+set(ChronosDB_CURL_VERSION "${CURL_VERSION}")
+if(ChronosDB_CURL_VERSION STREQUAL "")
+  set(ChronosDB_CURL_VERSION "${CURL_VERSION_STRING}")
+endif()
+if(ChronosDB_CURL_VERSION VERSION_GREATER_EQUAL 9.0)
+  set(ChronosDB_FOUND FALSE)
+  set(ChronosDB_NOT_FOUND_MESSAGE
+      "ChronosDB has not reviewed libcurl ${ChronosDB_CURL_VERSION}")
+  return()
+endif()
 find_dependency(OpenSSL 3.0...<4.0 COMPONENTS Crypto SSL)
 find_dependency(zstd 1.5.5...<2.0 CONFIG)
 

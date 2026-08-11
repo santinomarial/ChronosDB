@@ -178,9 +178,10 @@
 
 ## Phase 17 — object storage and interoperability
 
-- Production S3-compatible HTTP/authentication backend, pinned dependency record, credentials,
-  timeouts, retry/backoff, multipart upload, conditional immutable put, eventual listing behavior,
-  restore, remote deletion, encryption boundary, and object-store fault injection.
+- Live AWS/MinIO/LocalStack validation for the libcurl SigV4 backend; credential refresh/provider
+  chain, proxy policy, retry/backoff, multipart upload, concurrent conditional writers, timeout/TLS/
+  partial-response faults, eventual listing behavior, restore, remote deletion, encryption
+  boundary, and broader object-store fault injection.
 - Manifest v2 cold-location descriptor and atomic old/new recovery; CSEG validation before upload,
   safe local deletion, snapshot/compaction pins, cache concurrency, crash/restart, cache index
   recovery, remote corruption, and page-range checksum integration.

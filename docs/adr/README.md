@@ -216,3 +216,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0179](0179-whole-query-tcp-cancellation-deadline.md) | Whole-query TCP cancellation and deadline | accepted |
 | [0180](0180-explicit-whole-query-authority-rebinding.md) | Explicit whole-query authority rebinding | accepted |
 | [0181](0181-authenticated-distributed-leader-hint-publication.md) | Authenticated distributed leader-hint publication | accepted |
+| [0182](0182-libcurl-sigv4-s3-object-store.md) | libcurl SigV4 S3 object-store backend | accepted |

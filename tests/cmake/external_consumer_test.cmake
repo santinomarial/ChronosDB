@@ -21,7 +21,7 @@ cmake_minimum_required(VERSION 3.25)
 project(ChronosIngestConsumer LANGUAGES CXX)
 find_package(ChronosDB 0.1 CONFIG REQUIRED)
 add_executable(consumer main.cpp)
-target_link_libraries(consumer PRIVATE chronos::cluster chronos::cseg chronos::head chronos::ingest chronos::manifest chronos::query chronos::network)
+target_link_libraries(consumer PRIVATE chronos::cluster chronos::cseg chronos::head chronos::ingest chronos::manifest chronos::query chronos::network chronos::tiering)
 target_compile_features(consumer PRIVATE cxx_std_23)
 set(consumer_sanitizers "")
 if(CHRONOS_TEST_ENABLE_ASAN)
@@ -135,6 +135,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/network/security.hpp>
 #include <chronos/network/tcp_socket.hpp>
 #include <chronos/network/tls_socket.hpp>
+#include <chronos/tiering/object_store.hpp>
 #include <chronos/network/spsc_queue.hpp>
 #include <chronos/network/messages.hpp>
 #include <chronos/network/connection_state.hpp>
@@ -186,6 +187,7 @@ int main() {
   const auto connect_tls_socket = &chronos::network::TlsSocket::connect;
   const auto begin_tcp_connect = &chronos::network::TcpSocket::begin_connect;
   const auto bind_tcp_listener = &chronos::network::TcpListener::bind;
+  const auto create_s3_object_store = &chronos::tiering::S3ObjectStore::create;
   const auto reclaim_physical_receipt =
       &chronos::cluster::reclaim_tablet_physical_part_receipt;
   (void)encode_distributed_query_request;
@@ -205,6 +207,7 @@ int main() {
   (void)connect_tls_socket;
   (void)begin_tcp_connect;
   (void)bind_tcp_listener;
+  (void)create_s3_object_store;
   const auto build_source_retirement =
       &chronos::manifest::build_raft_tablet_source_retirement_manifest;
   const auto publish_source_retirement =

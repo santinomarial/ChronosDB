@@ -49,12 +49,12 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes libssl-dev libzstd-dev
+          sudo apt-get install --yes libcurl4-openssl-dev libssl-dev libzstd-dev
       - name: Install libc++ for Linux Clang
         if: matrix.name == 'Linux Clang'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes libc++-dev libc++abi-dev libssl-dev libzstd-dev
+          sudo apt-get install --yes libc++-dev libc++abi-dev libcurl4-openssl-dev libssl-dev libzstd-dev
       - name: Configure
         run: cmake --preset debug -DCHRONOS_WARNINGS_AS_ERRORS=${{ matrix.werror }}
       - name: Build
@@ -89,7 +89,7 @@ jobs:
       - name: Install libc++
         run: |
           sudo apt-get update
-          sudo apt-get install --yes libc++-dev libc++abi-dev libzstd-dev
+          sudo apt-get install --yes libc++-dev libc++abi-dev libcurl4-openssl-dev libzstd-dev
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
       - name: Build
@@ -119,7 +119,7 @@ jobs:
       - name: Install pinned fuzz toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install --yes clang-18 libc++-dev libc++abi-dev libssl-dev libzstd-dev
+          sudo apt-get install --yes clang-18 libc++-dev libc++abi-dev libcurl4-openssl-dev libssl-dev libzstd-dev
       - name: Configure fuzz targets
         run: cmake --preset fuzz
       - name: Build fuzz targets
@@ -160,7 +160,7 @@ jobs:
       - name: Install clang-tidy
         run: |
           sudo apt-get update
-          sudo apt-get install --yes clang-tidy-18 libc++-dev libc++abi-dev libssl-dev libzstd-dev
+          sudo apt-get install --yes clang-tidy-18 libc++-dev libc++abi-dev libcurl4-openssl-dev libssl-dev libzstd-dev
       - name: Report clang-tidy version
         run: clang-tidy-18 --version
       - name: Configure and run clang-tidy

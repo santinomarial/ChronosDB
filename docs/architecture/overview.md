@@ -380,8 +380,9 @@ Local storage remains the initial source of truth. The implemented logical tieri
 eligible immutable identities through verified idempotent object upload, a caller-owned atomic
 manifest-install callback, bounded content caching, and range reads. Object-store listings are not
 metadata truth. Manifest v1 has no cold-location fields, so production manifest persistence, safe
-local/remote deletion, crash recovery, S3 transport, encryption, and Arrow/Parquet exports remain
-deferred.
+local/remote deletion, crash recovery, encryption, and Arrow/Parquet exports remain deferred. The
+production object carrier now uses libcurl SigV4 with TLS-by-default, conditional immutable PUT,
+authoritative per-key HEAD metadata, and exact bounded range GET; listing is never authority.
 
 ## Accepted direction and deferred design
 

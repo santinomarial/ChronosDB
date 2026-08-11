@@ -43,6 +43,14 @@ endfunction()
 
 chronos_validate_standard_library()
 find_package(Threads REQUIRED)
+find_package(CURL 7.75 REQUIRED)
+set(CHRONOS_RESOLVED_CURL_VERSION "${CURL_VERSION}")
+if(CHRONOS_RESOLVED_CURL_VERSION STREQUAL "")
+  set(CHRONOS_RESOLVED_CURL_VERSION "${CURL_VERSION_STRING}")
+endif()
+if(CHRONOS_RESOLVED_CURL_VERSION VERSION_GREATER_EQUAL 9.0)
+  message(FATAL_ERROR "ChronosDB has not reviewed libcurl ${CHRONOS_RESOLVED_CURL_VERSION}")
+endif()
 find_package(OpenSSL 3.0...<4.0 REQUIRED COMPONENTS Crypto SSL)
 find_package(zstd 1.5.5...<2.0 CONFIG REQUIRED)
 if(NOT TARGET zstd::libzstd)
@@ -609,6 +617,7 @@ target_include_directories(
 target_link_libraries(
   chronos_tiering
   PUBLIC chronos::common chronos::cseg chronos::ingest chronos::manifest chronos::schema
+  PRIVATE CURL::libcurl
 )
 chronos_set_project_warnings(chronos_tiering)
 chronos_enable_sanitizers(chronos_tiering)
