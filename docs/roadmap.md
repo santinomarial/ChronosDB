@@ -878,9 +878,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   connect completion, single-accept admission, and descriptor lifetime for those carriers. A
   dedicated TCP server now owns a fixed-capacity connection/poll table, finite accepts per poll,
   deadline driving, stable carrier-before-descriptor teardown, explicit overload, and real
-  end-to-end mutual-TLS query serving. Outbound multi-attempt connection scheduling, cross-node
-  generation refresh/rebinding, general vector-plan fragments/exchanges, complete leader transport,
-  and multi-node failure validation remain deferred; the
+  end-to-end mutual-TLS query serving. A matching one-attempt TCP client now validates before
+  connect, binds route identity, enforces connect/TLS/exchange deadlines, and retains exact sender
+  response bytes with fail-closed teardown. Multi-attempt scheduling, cross-node generation
+  refresh/rebinding, general vector-plan fragments/exchanges, complete leader transport, and
+  multi-node failure validation remain deferred; the
   phase exit gate is not claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.

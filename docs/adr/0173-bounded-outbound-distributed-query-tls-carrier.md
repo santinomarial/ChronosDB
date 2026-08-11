@@ -56,6 +56,10 @@ not expire, and the exact deadline creates a sticky retryable failure.
 Inbound distributed-query TLS serving, connector/address ownership, cancellation frames, pooled
 connections, and multi-node failure simulation remain separate work.
 
+ADRs 0175 and 0177 subsequently provide nonblocking descriptor ownership and a deadline-bound
+one-attempt TCP/TLS composite. Multi-attempt scheduling, address resolution, cancellation, pooling,
+and multi-node simulation remain separate.
+
 Invariants 5, 6, 10, 11, 14, 15, and 18 apply.
 
 ## Alternatives considered
@@ -83,3 +87,4 @@ the class returns outbound socket scheduling to the embedding.
 - [Maintained mutual-TLS client socket](0172-maintained-mutual-tls-client-socket.md)
 - [Distributed Query Transport v1](../formats/distributed-query-transport-v1.md)
 - [Distributed aggregate exchange](../learning/distributed-aggregate-exchange.md)
+- [Deadline-bound distributed-query TCP client](0177-deadline-bound-distributed-query-tcp-client.md)

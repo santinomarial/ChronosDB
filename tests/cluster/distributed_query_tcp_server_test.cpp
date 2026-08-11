@@ -1,5 +1,5 @@
+#include "chronos/cluster/distributed_query_tcp_client.hpp"
 #include "chronos/cluster/distributed_query_tcp_server.hpp"
-#include "chronos/cluster/distributed_query_tls_client.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -113,22 +113,6 @@ public:
           .maximum_accepts_per_poll = 8U};
 }
 
-void finish_connect(network::TcpSocket& socket, DistributedQueryTcpServer& server) {
-  for (std::size_t iteration = 0U;
-       iteration < 64U && socket.connect_state() != network::TcpConnectState::kConnected;
-       ++iteration) {
-    ASSERT_TRUE(server.poll_once(std::chrono::milliseconds{1}).is_ok());
-    pollfd writable{.fd = socket.descriptor(), .events = POLLOUT};
-    ASSERT_GE(::poll(&writable, 1U, 10), 0);
-    if ((writable.revents & (POLLOUT | POLLERR | POLLHUP)) != 0) {
-      auto completion = socket.finish_connect();
-      ASSERT_TRUE(completion.has_value()) << completion.error().message();
-    }
-  }
-  ASSERT_EQ(socket.connect_state(), network::TcpConnectState::kConnected);
-  ASSERT_TRUE(server.poll_once(std::chrono::milliseconds{1}).is_ok());
-}
-
 TEST(DistributedQueryTcpServerTest, ServesRealTcpMutualTlsQuery) {
   NodeAuthorizer node_authorizer;
   Worker worker;
@@ -140,32 +124,30 @@ TEST(DistributedQueryTcpServerTest, ServesRealTcpMutualTlsQuery) {
   ASSERT_TRUE(server.has_value()) << server.error().message();
   EXPECT_TRUE(server->is_running());
 
-  auto tcp_client = network::TcpSocket::begin_connect(server->bound_endpoint());
-  ASSERT_TRUE(tcp_client.has_value()) << tcp_client.error().message();
-  finish_connect(*tcp_client, *server);
   auto tls_context = network::TlsClientContext::create(tls_client_config());
   ASSERT_TRUE(tls_context.has_value());
-  auto tls_client = network::TlsSocket::connect(*tls_context, tcp_client->descriptor());
-  ASSERT_TRUE(tls_client.has_value());
   auto sender = DistributedQuerySender::create(1U, dispatch());
   ASSERT_TRUE(sender.has_value());
   const auto start = DistributedQuerySender::TimePoint::clock::now();
   auto attempt = sender->begin_attempt(start);
   ASSERT_TRUE(attempt.has_value());
   Authenticator server_authenticator{92U};
-  auto client = DistributedQueryTlsClient::create(
-      std::move(*tls_client), std::move(*attempt),
-      {.authenticator = &server_authenticator,
-       .node_authorizer = &node_authorizer,
-       .peer_ipv4_address = {127U, 0U, 0U, 1U},
-       .limits = {.handshake_timeout = std::chrono::milliseconds{1000},
-                  .exchange_timeout = std::chrono::milliseconds{1000}}},
+  auto client = DistributedQueryTcpClient::begin(
+      std::move(*attempt),
+      {.remote_endpoint = server->bound_endpoint(),
+       .tls_context = &*tls_context,
+       .carrier = {.authenticator = &server_authenticator,
+                   .node_authorizer = &node_authorizer,
+                   .peer_ipv4_address = {127U, 0U, 0U, 1U},
+                   .limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                              .exchange_timeout = std::chrono::milliseconds{1000}}},
+       .connect_timeout = std::chrono::milliseconds{1000}},
       start);
   ASSERT_TRUE(client.has_value());
 
   for (std::size_t iteration = 0U; iteration < 1024U; ++iteration) {
     const auto interest = client->interest();
-    pollfd descriptor{.fd = tcp_client->descriptor(),
+    pollfd descriptor{.fd = client->descriptor(),
                       .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
                                                    (interest.want_write ? POLLOUT : 0))};
     ASSERT_GE(::poll(&descriptor, 1U, 1), 0);
@@ -176,11 +158,11 @@ TEST(DistributedQueryTcpServerTest, ServesRealTcpMutualTlsQuery) {
                     .is_ok())
         << client->failure().message();
     ASSERT_TRUE(server->poll_once(std::chrono::milliseconds{1}).is_ok());
-    if (client->state() == DistributedQueryTlsClientState::kComplete)
+    if (client->state() == DistributedQueryTcpClientState::kComplete)
       break;
   }
 
-  ASSERT_EQ(client->state(), DistributedQueryTlsClientState::kComplete);
+  ASSERT_EQ(client->state(), DistributedQueryTcpClientState::kComplete);
   auto response = client->response_bytes();
   ASSERT_TRUE(response.has_value());
   ASSERT_TRUE(
@@ -235,6 +217,46 @@ TEST(DistributedQueryTcpServerTest, BoundsAdmissionAndValidatesConfiguration) {
   EXPECT_EQ(metrics.active_connections, 1U);
   EXPECT_TRUE(server->shutdown().is_ok());
   EXPECT_EQ(server->metrics().active_connections, 0U);
+}
+
+TEST(DistributedQueryTcpClientTest, ValidatesConfigurationAndExpiresConnectExactly) {
+  NodeAuthorizer node_authorizer;
+  Authenticator authenticator{92U};
+  auto sender = DistributedQuerySender::create(1U, dispatch());
+  ASSERT_TRUE(sender.has_value());
+  const auto start = DistributedQueryTcpClient::TimePoint{};
+  auto invalid_attempt = sender->begin_attempt(start);
+  ASSERT_TRUE(invalid_attempt.has_value());
+  EXPECT_EQ(DistributedQueryTcpClient::begin(std::move(*invalid_attempt), {}, start).error().code(),
+            common::StatusCode::kInvalidArgument);
+
+  auto second_sender = DistributedQuerySender::create(1U, dispatch());
+  ASSERT_TRUE(second_sender.has_value());
+  auto attempt = second_sender->begin_attempt(start);
+  auto listener = network::TcpListener::bind();
+  auto tls_context = network::TlsClientContext::create(tls_client_config());
+  ASSERT_TRUE(attempt.has_value());
+  ASSERT_TRUE(listener.has_value());
+  ASSERT_TRUE(tls_context.has_value());
+  auto client = DistributedQueryTcpClient::begin(
+      std::move(*attempt),
+      {.remote_endpoint = listener->bound_endpoint(),
+       .tls_context = &*tls_context,
+       .carrier = {.authenticator = &authenticator,
+                   .node_authorizer = &node_authorizer,
+                   .peer_ipv4_address = {127U, 0U, 0U, 1U},
+                   .limits = {.handshake_timeout = std::chrono::milliseconds{100},
+                              .exchange_timeout = std::chrono::milliseconds{100}}},
+       .connect_timeout = std::chrono::milliseconds{5}},
+      start);
+  ASSERT_TRUE(client.has_value());
+  EXPECT_TRUE(client->on_ready(false, false, start + std::chrono::milliseconds{4}).is_ok());
+  const common::Status timed_out =
+      client->on_ready(false, false, start + std::chrono::milliseconds{5});
+  EXPECT_EQ(timed_out.code(), common::StatusCode::kUnavailable);
+  EXPECT_EQ(client->state(), DistributedQueryTcpClientState::kFailed);
+  EXPECT_EQ(client->descriptor(), -1);
+  EXPECT_EQ(client->on_ready(true, true, start + std::chrono::milliseconds{6}), timed_out);
 }
 
 } // namespace
