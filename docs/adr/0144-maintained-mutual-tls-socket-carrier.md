@@ -77,11 +77,15 @@ moving new connections to it; existing sessions retain their original context an
 io_uring record scheduling, credential reload orchestration, revocation policy, response write
 deadlines, and disconnect retry ownership remain.
 
+ADR 0172 subsequently adds the symmetric maintained client context and connected-session creation
+with required DNS or IP server-identity verification.
+
 ## References
 
 - [ADR 0009](0009-network-reactor-strategy.md)
 - [ADR 0064](0064-bounded-linux-epoll-reactor.md)
 - [ADR 0066](0066-authentication-and-tls-integration-boundary.md)
 - [ADR 0145](0145-bounded-epoll-mutual-tls-admission.md)
+- [ADR 0172](0172-maintained-mutual-tls-client-socket.md)
 - [OpenSSL dependency record](../dependencies/openssl.md)
 - [Architecture invariants](../architecture/invariants.md)

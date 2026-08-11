@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 #include <memory>
 #include <openssl/ssl.h>
+#include <optional>
 #include <span>
 #include <string>
 #include <sys/socket.h>
@@ -53,6 +54,13 @@ using ClientSession = std::unique_ptr<SSL, SslDeleter>;
           .trust_store_file = fixture("ca.pem").string()};
 }
 
+[[nodiscard]] TlsClientConfig client_config() {
+  return {.certificate_chain_file = fixture("client.pem").string(),
+          .private_key_file = fixture("client-key.pem").string(),
+          .trust_store_file = fixture("ca.pem").string(),
+          .expected_server_identity = "127.0.0.1"};
+}
+
 [[nodiscard]] SocketPair nonblocking_socket_pair() {
   SocketPair pair;
   EXPECT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, pair.sockets.data()), 0);
@@ -92,25 +100,17 @@ using ClientSession = std::unique_ptr<SSL, SslDeleter>;
   return session;
 }
 
-[[nodiscard]] bool advance_client_handshake(SSL* session) {
-  const int result = SSL_do_handshake(session);
-  if (result == 1)
-    return true;
-  const int error = SSL_get_error(session, result);
-  EXPECT_TRUE(error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE);
-  return false;
-}
-
-void complete_handshake(TlsSocket& server, SSL* client) {
-  bool client_complete = false;
+void complete_handshake(TlsSocket& server, TlsSocket& client) {
   for (std::size_t attempt = 0U; attempt < 1024U; ++attempt) {
     if (!server.handshake_complete()) {
       auto progress = server.handshake();
       ASSERT_TRUE(progress.has_value()) << progress.error().message();
     }
-    if (!client_complete)
-      client_complete = advance_client_handshake(client);
-    if (server.handshake_complete() && client_complete)
+    if (!client.handshake_complete()) {
+      auto progress = client.handshake();
+      ASSERT_TRUE(progress.has_value()) << progress.error().message();
+    }
+    if (server.handshake_complete() && client.handshake_complete())
       return;
   }
   FAIL() << "nonblocking mutual TLS handshake did not converge";
@@ -137,23 +137,37 @@ TEST(TlsSocketTest, InvalidCredentialConfigurationFailsClosed) {
   const auto missing_context = TlsServerContext::create(missing);
   ASSERT_FALSE(missing_context.has_value());
   EXPECT_EQ(missing_context.error().code(), common::StatusCode::kUnauthenticated);
+
+  const auto empty_client = TlsClientContext::create({});
+  ASSERT_FALSE(empty_client.has_value());
+  EXPECT_EQ(empty_client.error().code(), common::StatusCode::kInvalidArgument);
+
+  TlsClientConfig missing_client = client_config();
+  missing_client.certificate_chain_file = fixture("missing-client.pem").string();
+  const auto missing_client_context = TlsClientContext::create(missing_client);
+  ASSERT_FALSE(missing_client_context.has_value());
+  EXPECT_EQ(missing_client_context.error().code(), common::StatusCode::kUnauthenticated);
 }
 
 TEST(TlsSocketTest, MutualHandshakeCarriesVerifiedIdentityAndPlaintext) {
-  auto context = TlsServerContext::create(server_config());
-  ASSERT_TRUE(context.has_value()) << context.error().message();
+  auto server_context = TlsServerContext::create(server_config());
+  ASSERT_TRUE(server_context.has_value()) << server_context.error().message();
+  auto client_context_owner = TlsClientContext::create(client_config());
+  ASSERT_TRUE(client_context_owner.has_value()) << client_context_owner.error().message();
   SocketPair sockets = nonblocking_socket_pair();
-  auto server = TlsSocket::accept(*context, sockets.sockets[0]);
+  auto server = TlsSocket::accept(*server_context, sockets.sockets[0]);
   ASSERT_TRUE(server.has_value()) << server.error().message();
-  ClientContext client_context_owner = client_context(true);
-  ASSERT_NE(client_context_owner, nullptr);
-  ClientSession client = client_session(client_context_owner.get(), sockets.sockets[1]);
-  ASSERT_NE(client, nullptr);
+  auto client = TlsSocket::connect(*client_context_owner, sockets.sockets[1]);
+  ASSERT_TRUE(client.has_value()) << client.error().message();
 
-  complete_handshake(*server, client.get());
-  auto fingerprint = server->peer_certificate_sha256();
-  ASSERT_TRUE(fingerprint.has_value());
-  EXPECT_NE(*fingerprint, PeerCertificateSha256{});
+  complete_handshake(*server, *client);
+  auto client_fingerprint = server->peer_certificate_sha256();
+  ASSERT_TRUE(client_fingerprint.has_value());
+  EXPECT_NE(*client_fingerprint, PeerCertificateSha256{});
+  auto server_fingerprint = client->peer_certificate_sha256();
+  ASSERT_TRUE(server_fingerprint.has_value());
+  EXPECT_NE(*server_fingerprint, PeerCertificateSha256{});
+  EXPECT_NE(*server_fingerprint, *client_fingerprint);
 
   CapturingAuthenticator authenticator;
   NetworkSecurityConfig security{.mode = TransportSecurityMode::kTlsRequired,
@@ -162,16 +176,17 @@ TEST(TlsSocketTest, MutualHandshakeCarriesVerifiedIdentityAndPlaintext) {
   const auto authentication =
       authenticate_peer(security, {.ipv4_address = {10U, 0U, 0U, 7U},
                                    .transport_authenticated = true,
-                                   .peer_certificate_sha256 = *fingerprint});
+                                   .peer_certificate_sha256 = *client_fingerprint});
   ASSERT_TRUE(authentication.has_value());
   EXPECT_EQ(authentication->principal_id, 91U);
-  EXPECT_EQ(authenticator.captured.peer_certificate_sha256, fingerprint);
+  EXPECT_EQ(authenticator.captured.peer_certificate_sha256, client_fingerprint);
 
   constexpr std::array<std::byte, 5> request{std::byte{'h'}, std::byte{'e'}, std::byte{'l'},
                                              std::byte{'l'}, std::byte{'o'}};
-  std::size_t client_written{};
-  ASSERT_EQ(SSL_write_ex(client.get(), request.data(), request.size(), &client_written), 1);
-  ASSERT_EQ(client_written, request.size());
+  auto client_write = client->write(request);
+  ASSERT_TRUE(client_write.has_value()) << client_write.error().message();
+  ASSERT_EQ(client_write->state, TlsIoState::kComplete);
+  ASSERT_EQ(client_write->bytes_transferred, request.size());
   std::array<std::byte, 2> received{};
   auto read = server->read(received);
   ASSERT_TRUE(read.has_value()) << read.error().message();
@@ -193,11 +208,37 @@ TEST(TlsSocketTest, MutualHandshakeCarriesVerifiedIdentityAndPlaintext) {
   ASSERT_EQ(write->state, TlsIoState::kComplete);
   EXPECT_EQ(write->bytes_transferred, response.size());
   std::array<std::byte, 8> client_received{};
-  std::size_t client_read{};
-  ASSERT_EQ(SSL_read_ex(client.get(), client_received.data(), client_received.size(), &client_read),
-            1);
-  EXPECT_TRUE(
-      std::ranges::equal(std::span{client_received}.first(client_read), std::span{response}));
+  const auto client_read = client->read(client_received);
+  ASSERT_TRUE(client_read.has_value()) << client_read.error().message();
+  EXPECT_EQ(client_read->state, TlsIoState::kComplete);
+  EXPECT_TRUE(std::ranges::equal(std::span{client_received}.first(client_read->bytes_transferred),
+                                 std::span{response}));
+}
+
+TEST(TlsSocketTest, ClientRejectsServerCertificateForDifferentIdentity) {
+  auto server_context = TlsServerContext::create(server_config());
+  ASSERT_TRUE(server_context.has_value());
+  TlsClientConfig wrong_identity = client_config();
+  wrong_identity.expected_server_identity = "127.0.0.2";
+  auto client_context_owner = TlsClientContext::create(wrong_identity);
+  ASSERT_TRUE(client_context_owner.has_value());
+  SocketPair sockets = nonblocking_socket_pair();
+  auto server = TlsSocket::accept(*server_context, sockets.sockets[0]);
+  ASSERT_TRUE(server.has_value());
+  auto client = TlsSocket::connect(*client_context_owner, sockets.sockets[1]);
+  ASSERT_TRUE(client.has_value());
+
+  std::optional<common::Status> client_error;
+  for (std::size_t attempt = 0U; attempt < 1024U && !client_error.has_value(); ++attempt) {
+    if (!server->handshake_complete())
+      (void)server->handshake();
+    auto progress = client->handshake();
+    if (!progress.has_value())
+      client_error = progress.error();
+  }
+  ASSERT_TRUE(client_error.has_value());
+  EXPECT_EQ(client_error->code(), common::StatusCode::kUnauthenticated);
+  EXPECT_FALSE(client->handshake_complete());
 }
 
 TEST(TlsSocketTest, MissingClientCertificateCannotCompleteServerHandshake) {

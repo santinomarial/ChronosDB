@@ -21,6 +21,14 @@ struct TlsServerConfig {
   bool require_client_certificate{true};
 };
 
+struct TlsClientConfig {
+  std::string certificate_chain_file;
+  std::string private_key_file;
+  std::string trust_store_file;
+  // Required DNS name or IP address matched against the server certificate SAN.
+  std::string expected_server_identity;
+};
+
 enum class TlsIoState : std::uint8_t { kComplete, kWantRead, kWantWrite, kClosed };
 
 struct TlsIoResult {
@@ -49,7 +57,28 @@ private:
   friend class TlsSocket;
 };
 
-// A nonblocking TLS server session over a borrowed connected socket. The caller owns the socket
+// Owns an immutable OpenSSL client context and its required server identity. It may be shared by
+// socket sessions on one reactor owner thread. OpenSSL types remain private to the implementation.
+class TlsClientContext {
+public:
+  TlsClientContext() noexcept;
+  ~TlsClientContext();
+  TlsClientContext(const TlsClientContext&) = delete;
+  TlsClientContext& operator=(const TlsClientContext&) = delete;
+  TlsClientContext(TlsClientContext&&) noexcept;
+  TlsClientContext& operator=(TlsClientContext&&) noexcept;
+
+  [[nodiscard]] static common::Result<TlsClientContext> create(const TlsClientConfig& config);
+
+private:
+  class Impl;
+  explicit TlsClientContext(std::unique_ptr<Impl> implementation) noexcept;
+  std::unique_ptr<Impl> implementation_;
+
+  friend class TlsSocket;
+};
+
+// A nonblocking TLS session over a borrowed connected socket. The caller owns the socket
 // descriptor and must keep it open until this object is destroyed. One reactor thread must own all
 // calls. Plaintext is available only after a mutually authenticated handshake completes.
 class TlsSocket {
@@ -63,6 +92,8 @@ public:
 
   [[nodiscard]] static common::Result<TlsSocket> accept(const TlsServerContext& context,
                                                         int connected_socket);
+  [[nodiscard]] static common::Result<TlsSocket> connect(const TlsClientContext& context,
+                                                         int connected_socket);
   [[nodiscard]] common::Result<TlsIoResult> handshake();
   [[nodiscard]] common::Result<TlsIoResult> read(common::MutableByteView destination);
   [[nodiscard]] common::Result<TlsIoResult> write(common::ByteView source);

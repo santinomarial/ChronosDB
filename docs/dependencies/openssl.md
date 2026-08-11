@@ -3,8 +3,9 @@
 ## Purpose and boundary
 
 `chronos_ingest` uses OpenSSL's maintained EVP provider API to compute SHA-256 request digests.
-`chronos_network` uses the maintained TLS record, certificate-loading, chain-verification, and EVP
-certificate-digest APIs behind an OpenSSL-free public PIMPL boundary. OpenSSL does not define a
+`chronos_network` uses the maintained TLS record, certificate-loading, chain-verification,
+DNS/IP identity-verification, SNI, and EVP certificate-digest APIs behind an OpenSSL-free public
+PIMPL boundary. OpenSSL does not define a
 durable representation, database command, application principal, or authorization policy.
 
 ## Version source and compatibility
@@ -26,7 +27,8 @@ The ingestion and network owners maintain their wrappers and compatibility tests
 security updates come from the operating-system or Homebrew package channel. Dependency updates
 must run SHA-256 vectors, mutual-TLS socket tests, network tests, fuzz targets, sanitizers,
 installed-consumer tests, and applicable benchmarks. Advisories affecting SHA-256, EVP/provider
-initialization, certificate verification, TLS, or library loading require prompt review.
+initialization, certificate or server-identity verification, TLS, SNI, or library loading require
+prompt review.
 
 ## Rejected alternatives
 
