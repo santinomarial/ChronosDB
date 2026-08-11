@@ -6,6 +6,7 @@
 #include "chronos/manifest/temporal_validation.hpp"
 
 #include <algorithm>
+#include <iterator>
 #include <limits>
 #include <new>
 #include <optional>
@@ -264,6 +265,94 @@ build_raft_tablet_destination_manifest(const DecodedTemporalManifestView& destin
   } catch (const std::length_error&) {
     return common::make_unexpected(
         exhausted("Raft destination Manifest composition exceeded limits"));
+  }
+}
+
+common::Result<BuiltRaftTabletSourceRetirementManifest>
+build_raft_tablet_source_retirement_manifest(const DecodedTemporalManifestView& source,
+                                             const RaftTabletSourceRetirementRequest& request) {
+  const raft::TabletMovementRecord& movement = request.completed_movement.get();
+  const raft::TabletPlacementMetadata& placement = request.committed_placement.get();
+  const common::Status movement_status = raft::validate_tablet_movement_record(movement);
+  if (!movement_status.is_ok())
+    return common::make_unexpected(movement_status);
+  if (request.group_id.is_nil() || request.table_id.uuid().is_nil() ||
+      request.tablet_id.uuid().is_nil() || request.source_node == 0U ||
+      movement.phase != raft::TabletMovementPhase::kComplete ||
+      movement.tablet_id != request.tablet_id || movement.source_node != request.source_node ||
+      movement.placement_epoch != placement.placement_epoch ||
+      movement.voting_replicas != placement.replicas || placement.table_id != request.table_id ||
+      placement.tablet_id != request.tablet_id ||
+      std::ranges::find(placement.replicas, request.source_node) != placement.replicas.end() ||
+      !std::binary_search(placement.replicas.begin(), placement.replicas.end(),
+                          movement.target_node) ||
+      (placement.leader_hint.has_value() &&
+       !std::binary_search(placement.replicas.begin(), placement.replicas.end(),
+                           *placement.leader_hint))) {
+    return common::make_unexpected(
+        invalid("Raft tablet source retirement authority is incomplete or inconsistent"));
+  }
+  try {
+    const auto retired = std::ranges::find(source.tablets(), request.tablet_id,
+                                           &TemporalTabletDescriptor::tablet_id);
+    if (retired == source.tablets().end() || retired->table_id != request.table_id ||
+        retired->commit_source != ManifestCommitSource::kRaft ||
+        !same_source(retired->source_id, request.group_id) ||
+        retired->first_part_index > source.parts().size() ||
+        retired->part_count > source.parts().size() - retired->first_part_index) {
+      return common::make_unexpected(
+          invalid("Raft tablet source retirement does not match the selected Manifest"));
+    }
+    const std::optional<std::uint64_t> generation =
+        common::checked_add(source.generation(), std::uint64_t{1U});
+    if (!generation.has_value())
+      return common::make_unexpected(exhausted("source retirement Manifest generation overflowed"));
+
+    const auto retired_first = static_cast<std::size_t>(retired->first_part_index);
+    const auto retired_count = static_cast<std::size_t>(retired->part_count);
+    std::vector<TemporalPartDescriptor> retired_parts(
+        source.parts().begin() + static_cast<std::ptrdiff_t>(retired_first),
+        source.parts().begin() + static_cast<std::ptrdiff_t>(retired_first + retired_count));
+    std::vector<TemporalTabletDescriptor> tablets;
+    std::vector<TemporalPartDescriptor> parts;
+    tablets.reserve(source.tablets().size() - 1U);
+    parts.reserve(source.parts().size() - retired_count);
+    for (const TemporalTabletDescriptor& current : source.tablets()) {
+      if (current.tablet_id == request.tablet_id)
+        continue;
+      if (current.first_part_index > source.parts().size() ||
+          current.part_count > source.parts().size() - current.first_part_index) {
+        return common::make_unexpected(corruption("source Manifest tablet part range is invalid"));
+      }
+      TemporalTabletDescriptor retained = current;
+      retained.first_part_index = parts.size();
+      const auto first = static_cast<std::size_t>(current.first_part_index);
+      const auto count = static_cast<std::size_t>(current.part_count);
+      parts.insert(parts.end(), source.parts().begin() + static_cast<std::ptrdiff_t>(first),
+                   source.parts().begin() + static_cast<std::ptrdiff_t>(first + count));
+      tablets.push_back(std::move(retained));
+    }
+    std::vector<TemporalRetryDescriptor> retries;
+    retries.reserve(source.retries().size());
+    std::ranges::copy_if(
+        source.retries(), std::back_inserter(retries),
+        [&](const TemporalRetryDescriptor& retry) { return retry.tablet_id != request.tablet_id; });
+    auto encoded =
+        encode_manifest_v2_temporal({.generation = *generation,
+                                     .database_id = source.database_id(),
+                                     .wal_reclaim_checkpoint = source.wal_reclaim_checkpoint(),
+                                     .tablets = tablets,
+                                     .parts = parts,
+                                     .retries = retries});
+    if (!encoded.has_value())
+      return common::make_unexpected(encoded.error());
+    return BuiltRaftTabletSourceRetirementManifest{.manifest = std::move(*encoded),
+                                                   .predecessor_generation = source.generation(),
+                                                   .retired_parts = std::move(retired_parts)};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("Raft tablet source retirement allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("Raft tablet source retirement exceeded limits"));
   }
 }
 

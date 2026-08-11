@@ -190,3 +190,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0153](0153-restartable-tablet-physical-ownership-publication.md) | Restartable tablet physical ownership publication | accepted |
 | [0154](0154-physical-ownership-gated-tablet-movement-readiness.md) | Physical-ownership-gated tablet movement readiness | accepted |
 | [0155](0155-durable-physical-part-receipt-reclamation.md) | Durable physical-part receipt reclamation | accepted |
+| [0156](0156-authorized-raft-tablet-source-retirement-manifest.md) | Authorized Raft-tablet source-retirement Manifest | accepted |

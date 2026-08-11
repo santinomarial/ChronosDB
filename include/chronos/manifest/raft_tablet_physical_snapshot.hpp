@@ -6,11 +6,14 @@
 #include "chronos/ingest/sha256.hpp"
 #include "chronos/manifest/temporal_codec.hpp"
 #include "chronos/manifest/validation.hpp"
+#include "chronos/raft/metadata.hpp"
 #include "chronos/raft/multi_raft.hpp"
+#include "chronos/raft/rebalancing.hpp"
 
 #include <cstdint>
 #include <functional>
 #include <span>
+#include <vector>
 
 namespace chronos::manifest {
 
@@ -63,6 +66,21 @@ struct RaftTabletDestinationManifestRequest {
   ManifestDecodeLimits decode_limits;
 };
 
+struct RaftTabletSourceRetirementRequest {
+  raft::GroupId group_id;
+  schema::TableId table_id;
+  schema::TabletId tablet_id;
+  raft::NodeId source_node{};
+  std::reference_wrapper<const raft::TabletMovementRecord> completed_movement;
+  std::reference_wrapper<const raft::TabletPlacementMetadata> committed_placement;
+};
+
+struct BuiltRaftTabletSourceRetirementManifest {
+  EncodedTemporalManifest manifest;
+  std::uint64_t predecessor_generation{};
+  std::vector<TemporalPartDescriptor> retired_parts;
+};
+
 // Projects one already-decoded authoritative Manifest v2 generation. The selected tablet must use
 // the supplied Raft group as its source and must be durable exactly through applied_position.
 [[nodiscard]] common::Result<EncodedRaftTabletPhysicalSnapshot> build_raft_tablet_physical_snapshot(
@@ -86,6 +104,13 @@ validate_raft_tablet_physical_snapshot(common::ByteView bytes, const raft::Group
 [[nodiscard]] common::Result<EncodedTemporalManifest>
 build_raft_tablet_destination_manifest(const DecodedTemporalManifestView& destination,
                                        const RaftTabletDestinationManifestRequest& request);
+
+// Builds one exact successor that removes a tablet only after the completed movement and committed
+// final placement agree that source_node is no longer a replica. Installation, publication, and
+// reader-pinned final-part reclamation remain separate authority boundaries.
+[[nodiscard]] common::Result<BuiltRaftTabletSourceRetirementManifest>
+build_raft_tablet_source_retirement_manifest(const DecodedTemporalManifestView& source,
+                                             const RaftTabletSourceRetirementRequest& request);
 
 } // namespace chronos::manifest
 

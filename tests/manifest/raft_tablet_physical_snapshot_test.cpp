@@ -1,3 +1,4 @@
+#include "chronos/common/crc32c.hpp"
 #include "chronos/manifest/raft_tablet_physical_snapshot.hpp"
 #include "chronos/manifest/temporal_validation.hpp"
 #include "chronos/schema/column_definition.hpp"
@@ -152,6 +153,18 @@ struct Fixture {
                                                            .deduplication_key = {event_time}})
                                   .value();
   return schema::SchemaLineage::create(std::move(value)).value();
+}
+
+[[nodiscard]] raft::TabletMovementRecord completed_movement(const Fixture& fixture) {
+  auto movement = raft::TabletMovement::begin(fixture.tablet_id, 10U, 1U, 3U, {1U, 2U}).value();
+  const std::array bytes{std::byte{0xA5U}};
+  EXPECT_TRUE(movement.begin_snapshot({7U, 9U, 3U, bytes.size(), common::crc32c(bytes)}).is_ok());
+  EXPECT_TRUE(movement.accept_snapshot_chunk(0U, bytes, common::crc32c(bytes)).is_ok());
+  EXPECT_TRUE(movement.finish_snapshot().is_ok());
+  EXPECT_TRUE(movement.mark_caught_up(9U).is_ok());
+  EXPECT_TRUE(movement.promote_target(10U, 11U).is_ok());
+  EXPECT_TRUE(movement.remove_source(11U, 12U).is_ok());
+  return movement.record();
 }
 
 TEST(RaftTabletPhysicalSnapshotTest, ProjectsOneRaftTabletAndBindsCanonicalPartSet) {
@@ -335,6 +348,68 @@ TEST(RaftTabletPhysicalSnapshotTest, RejectsExistingTabletAndForeignDatabaseDest
                 .error()
                 .code(),
             common::StatusCode::kInvalidArgument);
+}
+
+TEST(RaftTabletPhysicalSnapshotTest, BuildsSourceRetirementAfterCommittedReplicaRemoval) {
+  Fixture fixture;
+  const EncodedTemporalManifest full = fixture.encode();
+  auto source = decode_manifest_v2_temporal_exact(full.bytes());
+  ASSERT_TRUE(source.has_value());
+  const raft::TabletMovementRecord movement = completed_movement(fixture);
+  const raft::TabletPlacementMetadata placement{
+      fixture.table_id, fixture.tablet_id, 12U, {2U, 3U}, 3U};
+
+  auto retired = build_raft_tablet_source_retirement_manifest(
+      *source, {.group_id = fixture.group_id,
+                .table_id = fixture.table_id,
+                .tablet_id = fixture.tablet_id,
+                .source_node = 1U,
+                .completed_movement = std::cref(movement),
+                .committed_placement = std::cref(placement)});
+  ASSERT_TRUE(retired.has_value()) << retired.error().to_string();
+  EXPECT_EQ(retired->predecessor_generation, 7U);
+  ASSERT_EQ(retired->retired_parts.size(), 1U);
+  EXPECT_EQ(retired->retired_parts.front(), fixture.parts.front());
+  auto decoded = decode_manifest_v2_temporal_exact(retired->manifest.bytes());
+  ASSERT_TRUE(decoded.has_value());
+  EXPECT_EQ(decoded->generation(), 8U);
+  ASSERT_EQ(decoded->tablets().size(), 1U);
+  EXPECT_EQ(decoded->tablets().front().tablet_id, fixture.other_tablet_id);
+  EXPECT_EQ(decoded->tablets().front().first_part_index, 0U);
+  ASSERT_EQ(decoded->parts().size(), 1U);
+  EXPECT_EQ(decoded->parts().front(), fixture.parts.back());
+  ASSERT_EQ(decoded->retries().size(), 1U);
+  EXPECT_EQ(decoded->retries().front(), fixture.retries.back());
+}
+
+TEST(RaftTabletPhysicalSnapshotTest, RejectsSourceRetirementBeforeFinalPlacement) {
+  Fixture fixture;
+  const EncodedTemporalManifest full = fixture.encode();
+  auto source = decode_manifest_v2_temporal_exact(full.bytes());
+  ASSERT_TRUE(source.has_value());
+  raft::TabletMovementRecord movement = completed_movement(fixture);
+  const raft::TabletPlacementMetadata stale{
+      fixture.table_id, fixture.tablet_id, 11U, {1U, 2U, 3U}, 1U};
+  EXPECT_EQ(build_raft_tablet_source_retirement_manifest(*source,
+                                                         {.group_id = fixture.group_id,
+                                                          .table_id = fixture.table_id,
+                                                          .tablet_id = fixture.tablet_id,
+                                                          .source_node = 1U,
+                                                          .completed_movement = std::cref(movement),
+                                                          .committed_placement = std::cref(stale)})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  movement.phase = raft::TabletMovementPhase::kTargetPromoted;
+  const raft::TabletPlacementMetadata final{fixture.table_id, fixture.tablet_id, 12U, {2U, 3U}, 3U};
+  EXPECT_FALSE(build_raft_tablet_source_retirement_manifest(
+                   *source, {.group_id = fixture.group_id,
+                             .table_id = fixture.table_id,
+                             .tablet_id = fixture.tablet_id,
+                             .source_node = 1U,
+                             .completed_movement = std::cref(movement),
+                             .committed_placement = std::cref(final)})
+                   .has_value());
 }
 
 } // namespace

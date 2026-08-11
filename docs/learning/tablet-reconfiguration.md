@@ -122,6 +122,13 @@ adds or reuses an empty current-term Raft progress entry, allowing the retained 
 without duplicating the placement epoch. Membership begin and finalize retries use the same
 retained-intent rule.
 
+After final stable membership and placement are committed and the movement's complete checkpoint is
+durable, `build_raft_tablet_source_retirement_manifest` can compose the old source's exact next
+Manifest. It rechecks that the source is absent and target remains, removes only that tablet's local
+parts and retries, and returns the removed descriptors for later pinned reclamation. The builder
+deliberately does not install, publish, or unlink; those are separate crash and reader-lifetime
+boundaries.
+
 ## Complexity and tradeoffs
 
 Reconciliation is linear in the bounded replica count. The explicit two-group handoff adds control-
