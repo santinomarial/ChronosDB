@@ -128,8 +128,11 @@ Manifest. It rechecks that the source is absent and target remains, removes only
 parts and retries, and returns the removed descriptors for later pinned reclamation. The storage
 installer rereads the durable predecessor, independently rebuilds this special successor, requires
 byte-exact agreement, and validates every retained part before the ordinary synchronized install
-sequence. Neither boundary publishes or unlinks; those remain separate crash and reader-lifetime
-boundaries.
+sequence. A special publisher then repeats the authority check, atomically selects the durable
+successor, and returns the removed descriptors with weak pins for every still-live published
+generation that names them. The weak registry does not keep readers alive, but prevents a later
+reclaimer from unlinking while either the immediate predecessor or an older retaining epoch remains
+in use. File deletion remains a separate crash and reader-lifetime boundary.
 
 ## Complexity and tradeoffs
 

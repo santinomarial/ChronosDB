@@ -84,6 +84,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/manifest/sealed_head_flush_coordinator.hpp>
 #include <chronos/manifest/startup_recovery.hpp>
 #include <chronos/manifest/storage.hpp>
+#include <chronos/manifest/temporal_publication.hpp>
 #include <chronos/query/asof_join.hpp>
 #include <chronos/query/relational_plan.hpp>
 #include <chronos/query/lexer.hpp>
@@ -142,6 +143,8 @@ int main() {
       &chronos::cluster::reclaim_tablet_physical_part_receipt;
   const auto build_source_retirement =
       &chronos::manifest::build_raft_tablet_source_retirement_manifest;
+  const auto publish_source_retirement =
+      &chronos::manifest::TemporalDatabaseStoragePublisher::publish_source_retirement_manifest;
   using EventTimeMatchFunction = chronos::common::Result<bool> (*)(
       std::int64_t, std::int64_t,
       const std::optional<chronos::cseg::EventTimePredicate>&);
@@ -794,6 +797,7 @@ int main() {
   const chronos::network::NetworkSecurityConfig installed_security;
   const auto installed_client = chronos::network::NativeClientSession::create();
   return reclaim_physical_receipt != nullptr && build_source_retirement != nullptr &&
+                 publish_source_retirement != nullptr &&
                  event_time_match != nullptr &&
                  execute != nullptr && recover != nullptr &&
                  reclaim_recovered_wal != nullptr && inspect_wal_suffix != nullptr &&

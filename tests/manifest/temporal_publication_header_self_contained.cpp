@@ -2,3 +2,5 @@
 
 [[maybe_unused]] auto* const kCreateTemporalDatabaseStoragePublisher =
     &chronos::manifest::TemporalDatabaseStoragePublisher::create;
+[[maybe_unused]] auto const kPublishTemporalSourceRetirement =
+    &chronos::manifest::TemporalDatabaseStoragePublisher::publish_source_retirement_manifest;
