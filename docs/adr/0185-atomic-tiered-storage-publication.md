@@ -33,9 +33,9 @@ ordering before dereferencing any fields. The release/acquire edge makes all epo
 visible, and shared ownership prevents destruction until every acquiring reader is done. No field
 inside an epoch is mutated and the primitive does not claim lock-free progress.
 
-This is an in-memory publication boundary. It does not make two directory renames crash-atomic. A
-future durable pair-commit/recovery protocol must define install order and old/new selection across
-process or power loss before local CSEG reclamation can rely on cold-only recoverability.
+This is an in-memory publication boundary. It does not make two directory renames crash-atomic.
+[ADR 0186](0186-durable-tiered-pair-commit.md) now supplies the durable pair-commit/recovery
+protocol and explicit old/new selection. Local CSEG reclamation remains separately authorized.
 
 ## Consequences and validation
 

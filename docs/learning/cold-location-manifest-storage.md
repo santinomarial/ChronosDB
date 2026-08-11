@@ -13,9 +13,10 @@ The important public operations are:
 - encode/decode a bounded checksummed generation;
 - validate its database, generation, part length, and SHA-256 against one decoded Manifest v2;
 - validate an add-only cold successor;
-- install generation one or the exact next generation; and
+- install generation one or the exact next generation;
 - recover the highest consecutive generation only when it binds to the supplied Manifest v2; and
-- release-publish one compatible Manifest-v2/cold shared epoch for readers.
+- release-publish one compatible Manifest-v2/cold shared epoch for readers; and
+- crash-commit exact component lengths and SHA-256 values through a separate pair registry.
 
 ## Data structures and invariants
 
@@ -64,8 +65,12 @@ checksum, identity, or binding failure. This prevents silent metadata rollback.
 
 An empty directory means no cold authority and therefore local-only operation. A valid cold
 generation does not itself make a local file deletable. The tiered publisher now atomically pins a
-compatible Manifest-v2/cold pair in memory; later cross-directory crash commit and reclamation must
-wait for every older reader and verify the remaining source before unlinking anything.
+compatible Manifest-v2/cold pair in memory. `TieredPairCommitStorage` closes the two-directory crash
+gap: component finals may be prepared in either order, but they are not aggregate query authority
+until a synchronized 256-byte pair marker names and hashes them. Recovery exact-loads the historical
+generations named by the highest marker; later component finals remain uncommitted orphans. Lock
+acquisition order is Manifest, cold manifest, then pair commit. Reclamation must still wait for every
+older reader and verify the remaining source before unlinking anything.
 
 ## Complexity and tradeoffs
 
@@ -84,6 +89,9 @@ Focused tests exercise canonical round trips, every truncation, hostile versions
 binding mismatches, exclusive locks, idempotent installation, restart selection, temporary cleanup,
 add-only rejection, corrupt-highest no-fallback behavior, injected directory-sync poisoning,
 concurrent old/new pair acquisition, and predecessor-owner retention.
+Pair tests additionally cover every fixed-record truncation, unknown versions/flags, idempotent
+commit, uncommitted higher component finals, committed pair advancement, and no fallback from a
+damaged highest marker.
 
 Useful design questions include:
 

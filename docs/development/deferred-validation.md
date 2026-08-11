@@ -182,9 +182,8 @@
   chain, proxy policy, retry/backoff, multipart upload, concurrent conditional writers, timeout/TLS/
   partial-response faults, eventual listing behavior, restore, remote deletion, encryption
   boundary, and broader object-store fault injection.
-- Cross-directory compatible Manifest-v2/cold commit and old/new crash selection; subprocess
-  power-loss coverage for the implemented durable cold-generation installer; TSan coverage for the
-  implemented atomic shared pair publisher; CSEG validation
+- Subprocess/power-loss coverage for the implemented durable component and pair-commit installers;
+  TSan coverage for the implemented atomic shared pair publisher; CSEG validation
   before upload, safe local deletion, snapshot/compaction pins, cache concurrency, cache index
   recovery, remote corruption, and page-range checksum integration.
 - Arrow IPC and Parquet import/export providers, schema/logical-type mapping, fixtures, round trips,

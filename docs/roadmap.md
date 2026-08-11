@@ -916,8 +916,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   listings. A dedicated lock-protected storage owner now performs exact-readback, file-sync,
   no-replace, directory-sync installation and highest-consecutive/no-fallback recovery of add-only
   cold generations bound to an exact Manifest v2 value. One atomic shared epoch now exposes and
-  reader-pins a complete compatible Manifest-v2/cold pair. Cross-directory pair commit and crash
-  selection, safe deletion, multipart/retry and credential-refresh ownership, and Arrow/Parquet
+  reader-pins a complete compatible Manifest-v2/cold pair. A fixed checksummed pair registry makes
+  already-durable component generations atomically crash-selectable and ignores higher uncommitted
+  finals. Safe deletion, multipart/retry and credential-refresh ownership, and Arrow/Parquet
   implementations remain deferred; the phase exit gate is not claimed.
 
 - **Scope:** immutable-part upload/install/cache/eviction; remote integrity and retry; authoritative manifest references; safe remote deletion; selected documented import/export or ecosystem formats.

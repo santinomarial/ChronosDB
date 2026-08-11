@@ -1,9 +1,9 @@
 # ChronosDB Cold Location Manifest v1
 
 > **Status: accepted canonical codec, exact Manifest v2 binding validation, and durable generation
-> installation/no-fallback recovery are implemented. Atomic in-memory publication with Manifest v2
-> is implemented; cross-directory crash commit, local-source reclamation, remote deletion, and
-> query-path integration remain separate work.**
+> installation/no-fallback recovery are implemented. Atomic in-memory publication and durable
+> cross-directory pair commit with Manifest v2 are implemented; local-source reclamation, remote
+> deletion, and query-path integration remain separate work.**
 
 Cold Location Manifest v1 is an immutable full-generation registry that maps exact CSEG identities
 from one Manifest v2 database generation to one configured object-store namespace. It does not
@@ -84,8 +84,8 @@ The codec alone does not authorize deletion of the local CSEG. The durable insta
 `generation-00000000000000000001.clm` final names, exact `.tmp` candidates, synchronized complete
 readback, no-replace rename, directory synchronization, and highest-consecutive/no-fallback
 selection. The tiered publisher now atomically exposes and pins one compatible Manifest-v2/cold
-pair in memory. A later durable pair-commit and reclamation owner must cover crash selection, wait
-for predecessor reader pins, and only then reclaim a local source. Remote deletion additionally
+pair in memory. Tiered Pair Commit v1 covers crash selection. A later reclamation owner must wait
+for predecessor reader pins and only then reclaim a local source. Remote deletion additionally
 requires proof that no
 retained logical Manifest generation or cold generation references the object.
 

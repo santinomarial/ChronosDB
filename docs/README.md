@@ -73,6 +73,9 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   location authority bound to an exact Manifest v2 database/generation, deployment store identity,
   and part length/SHA-256, with a strict checksummed codec, exact binding validation, synchronized
   immutable generation installation, and highest-generation/no-fallback recovery.
+- [Tiered Pair Commit v1](formats/tiered-pair-commit-v1.md): fixed checksummed aggregate commit
+  binding exact Manifest v2 and cold generations by length/SHA-256, with synchronized installation,
+  uncommitted-final isolation, and no-fallback recovery.
 - [Tablet Physical Part Reclamation Marker v1](formats/tablet-physical-part-reclamation-marker-v1.md):
   session-bound terminal receipt state installed durably before crash-safe descending chunk removal.
 - [Distributed Aggregate Exchange v1](formats/distributed-aggregate-exchange-v1.md): fixed-width,

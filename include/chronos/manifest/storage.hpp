@@ -457,6 +457,13 @@ public:
   [[nodiscard]] common::Result<LoadedTemporalManifestGeneration>
   load_selected_temporal_manifest(const TemporalManifestLoadRequest& request) const;
 
+  // Tiered pair-commit recovery loads the exact generation named by its higher-level durable
+  // authority. The generation must exist in the same consecutive namespace and receives the same
+  // database/catalog/source/part validation as ordinary highest-generation recovery.
+  [[nodiscard]] common::Result<LoadedTemporalManifestGeneration>
+  load_temporal_manifest_generation(std::uint64_t generation,
+                                    const TemporalManifestLoadRequest& request) const;
+
   // Loads exact strictly sorted temporal parts from one held v2 generation. Each result pins that
   // generation owner and independently owns its fully revalidated CSEG bytes.
   [[nodiscard]] common::Result<std::vector<LoadedTemporalPartImage>>

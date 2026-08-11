@@ -389,7 +389,9 @@ storage owner installs immutable add-only generations through complete readback,
 no-replace rename, and directory sync, then recovers only the highest consecutive generation and
 fails rather than pairing it with a different Manifest v2 generation. The tiered publication owner
 release-publishes one compatible base/cold shared epoch, so concurrent and held readers retain an
-old or new complete pair. Cross-directory crash commit and deletion authorization remain separate.
+old or new complete pair. A separate immutable Tiered Pair Commit registry makes the already-durable
+component pair crash-selectable by exact generation, length, and SHA-256; higher component finals
+remain uncommitted orphans until the marker sync. Deletion authorization remains separate.
 
 ## Accepted direction and deferred design
 

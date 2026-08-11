@@ -111,6 +111,12 @@ public:
   [[nodiscard]] common::Result<std::optional<LoadedColdLocationManifest>>
   load_selected(const manifest::DecodedTemporalManifestView& base_manifest) const;
 
+  // Higher-level pair-commit recovery may select an older exact cold generation while newer
+  // uncommitted finals remain forensic orphans. The directory generation chain is still strict.
+  [[nodiscard]] common::Result<LoadedColdLocationManifest>
+  load_generation(std::uint64_t generation,
+                  const manifest::DecodedTemporalManifestView& base_manifest) const;
+
   [[nodiscard]] bool is_usable() const noexcept;
   [[nodiscard]] common::Status poison_status() const;
   [[nodiscard]] ColdLocationManifestStorageMetrics metrics() const noexcept;

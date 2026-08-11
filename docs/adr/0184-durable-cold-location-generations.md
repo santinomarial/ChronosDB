@@ -36,7 +36,8 @@ an already durable generation succeeds only when its bytes match exactly.
 
 This boundary does not itself publish a query-visible pair and does not authorize local or remote
 deletion. [ADR 0185](0185-atomic-tiered-storage-publication.md) now owns the in-memory aggregate
-publication/pin boundary; durable cross-directory commit and reclamation proofs remain separate.
+publication/pin boundary, and [ADR 0186](0186-durable-tiered-pair-commit.md) owns cross-directory
+crash commit. Reclamation proofs remain separate.
 
 ## Consequences and validation
 

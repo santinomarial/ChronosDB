@@ -1847,7 +1847,19 @@ ManifestStorage::load_selected_temporal_manifest(const TemporalManifestLoadReque
   if (!snapshot.has_value()) {
     return common::make_unexpected(snapshot.error());
   }
-  const std::uint64_t selected_generation = snapshot->generations.back();
+  return load_temporal_manifest_generation(snapshot->generations.back(), request);
+}
+
+common::Result<LoadedTemporalManifestGeneration> ManifestStorage::load_temporal_manifest_generation(
+    const std::uint64_t selected_generation, const TemporalManifestLoadRequest& request) const {
+  common::Result<ManifestNamespaceSnapshot> snapshot = scan_namespace();
+  if (!snapshot.has_value()) {
+    return common::make_unexpected(snapshot.error());
+  }
+  if (!std::ranges::binary_search(snapshot->generations, selected_generation)) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kNotFound, "Requested Manifest v2 generation is not installed"});
+  }
   const common::Result<std::string> selected_name = manifest_file_name(selected_generation);
   if (!selected_name.has_value()) {
     return common::make_unexpected(common::Status{

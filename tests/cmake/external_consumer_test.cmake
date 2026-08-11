@@ -139,6 +139,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/tiering/cold_manifest_storage.hpp>
 #include <chronos/tiering/object_store.hpp>
 #include <chronos/tiering/tiered_publication.hpp>
+#include <chronos/tiering/tiered_pair_commit.hpp>
 #include <chronos/network/spsc_queue.hpp>
 #include <chronos/network/messages.hpp>
 #include <chronos/network/connection_state.hpp>
@@ -197,6 +198,8 @@ int main() {
   const auto cold_manifest_file_name = &chronos::tiering::cold_location_manifest_file_name;
   const auto create_tiered_storage_publisher =
       &chronos::tiering::TieredDatabaseStoragePublisher::create;
+  const auto create_tiered_pair_storage = &chronos::tiering::TieredPairCommitStorage::create;
+  const auto decode_tiered_pair = &chronos::tiering::decode_tiered_pair_commit_v1_exact;
   const auto reclaim_physical_receipt =
       &chronos::cluster::reclaim_tablet_physical_part_receipt;
   (void)encode_distributed_query_request;
@@ -222,6 +225,8 @@ int main() {
   (void)create_cold_manifest_storage;
   (void)cold_manifest_file_name;
   (void)create_tiered_storage_publisher;
+  (void)create_tiered_pair_storage;
+  (void)decode_tiered_pair;
   const auto build_source_retirement =
       &chronos::manifest::build_raft_tablet_source_retirement_manifest;
   const auto publish_source_retirement =

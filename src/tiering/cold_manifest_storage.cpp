@@ -448,6 +448,21 @@ ColdLocationManifestStorage::load_selected(
   return std::optional<LoadedColdLocationManifest>{std::move(*loaded)};
 }
 
+common::Result<LoadedColdLocationManifest> ColdLocationManifestStorage::load_generation(
+    const std::uint64_t generation,
+    const manifest::DecodedTemporalManifestView& base_manifest) const {
+  if (impl_ == nullptr)
+    return common::make_unexpected(invalid("cold manifest storage was moved from"));
+  auto generations = impl_->scan_generations();
+  if (!generations.has_value())
+    return common::make_unexpected(generations.error());
+  if (!std::ranges::binary_search(*generations, generation)) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kNotFound, "requested cold manifest generation is not installed"});
+  }
+  return impl_->load_generation(generation, &base_manifest);
+}
+
 bool ColdLocationManifestStorage::is_usable() const noexcept {
   return impl_ != nullptr && impl_->poison_.is_ok();
 }
