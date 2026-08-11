@@ -135,7 +135,10 @@ reclaimer from unlinking while either the immediate predecessor or an older reta
 in use. After every pin expires, storage rechecks the exact selected Manifest, verifies all present
 retired bytes against their published lengths and SHA-256 digests before the first unlink, removes
 them, and synchronizes the directory. Missing files make the operation idempotent; post-unlink
-failure poisons the live owner until recovery.
+failure poisons the live owner until recovery. A restarted process can reconstruct the unpinned
+proof only by locating the unique adjacent Manifest pair that byte-exactly rebuilds from the same
+completed movement and final committed placement; orphan files alone never become deletion
+authority.
 
 ## Complexity and tradeoffs
 

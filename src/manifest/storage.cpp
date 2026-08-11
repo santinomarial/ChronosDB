@@ -1642,6 +1642,105 @@ ManifestStorage::reclaim_retired_temporal_parts(const TemporalPartReclamationReq
   return report;
 }
 
+common::Result<TemporalRetiredPartSet> ManifestStorage::recover_temporal_source_retirement(
+    const TemporalSourceRetirementRecoveryRequest& request) const {
+  if (!implementation_) {
+    return common::make_unexpected(invalid("Manifest storage owner was moved from"));
+  }
+  if (implementation_->poisoned_) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kUnavailable, "Manifest storage owner is poisoned"});
+  }
+  common::Result<ManifestNamespaceSnapshot> snapshot = scan_namespace();
+  if (!snapshot.has_value())
+    return common::make_unexpected(snapshot.error());
+  const LoadedTemporalManifestGeneration& selected = request.selected_manifest.get();
+  if (snapshot->generations.back() != selected.generation()) {
+    return common::make_unexpected(
+        invalid("Recovered temporal retirement Manifest owner is no longer selected"));
+  }
+  const auto read_generation =
+      [&](const std::uint64_t generation) -> common::Result<std::vector<std::byte>> {
+    const common::Result<std::string> name = manifest_file_name(generation);
+    if (!name.has_value()) {
+      return common::make_unexpected(common::Status{
+          common::StatusCode::kInternal, "Temporal retirement generation cannot be formatted"});
+    }
+    return read_final_file(implementation_->manifests_,
+                           {.name = *name,
+                            .maximum_length = request.decode_limits.max_file_length,
+                            .exact_length = std::nullopt,
+                            .description = "temporal retirement history generation"});
+  };
+
+  {
+    common::Result<std::vector<std::byte>> selected_bytes = read_generation(selected.generation());
+    if (!selected_bytes.has_value())
+      return common::make_unexpected(selected_bytes.error());
+    if (!std::ranges::equal(*selected_bytes, selected.encoded_bytes())) {
+      return common::make_unexpected(
+          corruption("Selected Manifest v2 bytes changed before retirement recovery"));
+    }
+  }
+
+  std::optional<BuiltRaftTabletSourceRetirementManifest> recovered;
+  common::Result<std::vector<std::byte>> current = read_generation(snapshot->generations.front());
+  if (!current.has_value())
+    return common::make_unexpected(current.error());
+  for (std::size_t index = 0U; index + 1U < snapshot->generations.size(); ++index) {
+    common::Result<std::vector<std::byte>> next =
+        read_generation(snapshot->generations[index + 1U]);
+    if (!next.has_value())
+      return common::make_unexpected(next.error());
+    TemporalManifestDecodeResult predecessor =
+        decode_manifest_v2_temporal_exact(*current, request.decode_limits);
+    if (!predecessor.has_value()) {
+      if (predecessor.error().kind() == ManifestDecodeErrorKind::kUnsupported) {
+        current = std::move(next);
+        continue;
+      }
+      return common::make_unexpected(
+          manifest_decode_failure(predecessor.error(), "temporal retirement predecessor"));
+    }
+    if (predecessor->generation() != snapshot->generations[index]) {
+      return common::make_unexpected(
+          corruption("Temporal retirement history filename disagrees with its encoded generation"));
+    }
+    common::Result<BuiltRaftTabletSourceRetirementManifest> candidate =
+        build_raft_tablet_source_retirement_manifest(*predecessor, request.source_retirement.get());
+    if (candidate.has_value() && std::ranges::equal(candidate->manifest.bytes(), *next)) {
+      if (recovered.has_value()) {
+        return common::make_unexpected(
+            corruption("Multiple durable transitions match one temporal source retirement"));
+      }
+      recovered.emplace(std::move(*candidate));
+    } else if (!candidate.has_value() &&
+               candidate.error().code() != common::StatusCode::kInvalidArgument) {
+      return common::make_unexpected(candidate.error());
+    }
+    current = std::move(next);
+  }
+  if (!recovered.has_value()) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kNotFound,
+        "No durable Manifest v2 transition matches the temporal source-retirement authority"});
+  }
+  if (std::ranges::find(selected.tablets(), request.source_retirement.get().tablet_id,
+                        &TemporalTabletDescriptor::tablet_id) != selected.tablets().end()) {
+    return common::make_unexpected(
+        corruption("Selected Manifest v2 reintroduced the retired source tablet"));
+  }
+  for (const TemporalPartDescriptor& retired : recovered->retired_parts) {
+    if (std::ranges::find(selected.parts(), retired.part_id, &TemporalPartDescriptor::part_id) !=
+        selected.parts().end()) {
+      return common::make_unexpected(
+          corruption("Selected Manifest v2 reintroduced a retired source part"));
+    }
+  }
+  return TemporalRetiredPartSet{
+      recovered->predecessor_generation, std::move(recovered->retired_parts), {}};
+}
+
 common::Result<LoadedManifestGeneration>
 ManifestStorage::load_selected_manifest(const ManifestLoadRequest& request) const {
   common::Result<ManifestNamespaceSnapshot> snapshot = scan_namespace();

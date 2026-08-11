@@ -177,6 +177,12 @@ struct TemporalPartReclamationRequest {
   TemporalPartValidationLimits part_validation_limits;
 };
 
+struct TemporalSourceRetirementRecoveryRequest {
+  std::reference_wrapper<const LoadedTemporalManifestGeneration> selected_manifest;
+  std::reference_wrapper<const RaftTabletSourceRetirementRequest> source_retirement;
+  ManifestDecodeLimits decode_limits;
+};
+
 struct PartReclamationReport {
   PartReclamationOutcome outcome{PartReclamationOutcome::kPending};
   std::uint64_t predecessor_generation{};
@@ -433,6 +439,11 @@ public:
   // exact published length and SHA-256 before the first unlink.
   [[nodiscard]] common::Result<PartReclamationReport>
   reclaim_retired_temporal_parts(const TemporalPartReclamationRequest& request);
+
+  // Reconstructs an unpinned retirement proof after process restart by finding the unique durable
+  // generation pair that exactly rebuilds from the supplied completed movement/final placement.
+  [[nodiscard]] common::Result<TemporalRetiredPartSet>
+  recover_temporal_source_retirement(const TemporalSourceRetirementRecoveryRequest& request) const;
 
   // Selects only the highest consecutive final generation, exact-decodes it without fallback,
   // binds configured identities/catalog state, validates every referenced final CSEG, and returns

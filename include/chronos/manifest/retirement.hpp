@@ -107,6 +107,7 @@ private:
 
   friend class detail::TemporalDatabaseStoragePublisherImpl;
   friend class detail::ManifestStorageTestAccess;
+  friend class ManifestStorage;
 };
 
 } // namespace chronos::manifest

@@ -194,3 +194,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0157](0157-durable-raft-tablet-source-retirement-installation.md) | Durable Raft-tablet source-retirement installation | accepted |
 | [0158](0158-reader-pinned-raft-tablet-source-retirement-publication.md) | Reader-pinned Raft-tablet source-retirement publication | accepted |
 | [0159](0159-reader-pinned-temporal-source-part-reclamation.md) | Reader-pinned temporal source-part reclamation | accepted |
+| [0160](0160-authority-bound-temporal-retirement-recovery.md) | Authority-bound temporal retirement recovery | accepted |

@@ -716,6 +716,87 @@ TEST(TemporalManifestStorageTest, ReclaimsSourcePartsOnlyAfterPinsExpireAndBytes
   EXPECT_EQ(owner.reclamation_metrics().already_absent_parts, 1U);
 }
 
+TEST(TemporalManifestStorageTest, RecoversExactSourceRetirementProofAfterRestart) {
+  TemporaryDirectory temporary;
+  ASSERT_TRUE(temporary.valid());
+  establish_layout(temporary.path());
+  const RaftRetirementStorageFixture fixture;
+  const EncodedTemporalManifest predecessor = fixture.manifest(1U);
+  create_entry(temporary.path(),
+               std::filesystem::path{kManifestDirectoryName} / *manifest_file_name(1U),
+               predecessor.bytes());
+  create_entry(temporary.path(),
+               std::filesystem::path{kPartsDirectoryName} /
+                   part_file_name(fixture.descriptor.part_id),
+               fixture.encoded.bytes());
+  const raft::TabletMovementRecord movement = fixture.completed_movement();
+  const raft::TabletPlacementMetadata placement{
+      fixture.base.table_id, fixture.base.tablet_id, 12U, {2U, 3U}, 3U};
+  const RaftTabletSourceRetirementRequest authority{.group_id = fixture.group_id,
+                                                    .table_id = fixture.base.table_id,
+                                                    .tablet_id = fixture.base.tablet_id,
+                                                    .source_node = 1U,
+                                                    .completed_movement = std::cref(movement),
+                                                    .committed_placement = std::cref(placement)};
+  {
+    ManifestStorage installer =
+        ManifestStorage::open_existing({.database_root = temporary.path().string()}).value();
+    auto decoded = decode_manifest_v2_temporal_exact(predecessor.bytes());
+    ASSERT_TRUE(decoded.has_value());
+    auto built = build_raft_tablet_source_retirement_manifest(*decoded, authority);
+    ASSERT_TRUE(built.has_value()) << built.error().to_string();
+    const std::span<const TabletSchemaBinding> no_bindings;
+    ASSERT_TRUE(installer
+                    .install_temporal_manifest({.encoded_manifest = std::cref(built->manifest),
+                                                .schema_bindings = no_bindings,
+                                                .nonce = PartFixture::make_nonce(0xdaU),
+                                                .decode_limits = {},
+                                                .part_validation_limits = {},
+                                                .source_retirement = &authority})
+                    .has_value());
+  }
+
+  ManifestStorage recovered_storage =
+      ManifestStorage::open_existing({.database_root = temporary.path().string()}).value();
+  const std::span<const TabletSchemaBinding> no_bindings;
+  auto selected = recovered_storage.load_selected_temporal_manifest(
+      {.expected_database_id = fixture.base.database_id,
+       .schema_bindings = no_bindings,
+       .source_bindings = {},
+       .decode_limits = {},
+       .part_validation_limits = {}});
+  ASSERT_TRUE(selected.has_value()) << selected.error().to_string();
+  RaftTabletSourceRetirementRequest wrong_authority = authority;
+  wrong_authority.source_node = 2U;
+  EXPECT_EQ(
+      recovered_storage
+          .recover_temporal_source_retirement({.selected_manifest = std::cref(*selected),
+                                               .source_retirement = std::cref(wrong_authority),
+                                               .decode_limits = {}})
+          .error()
+          .code(),
+      common::StatusCode::kNotFound);
+
+  auto retirement = recovered_storage.recover_temporal_source_retirement(
+      {.selected_manifest = std::cref(*selected),
+       .source_retirement = std::cref(authority),
+       .decode_limits = {}});
+  ASSERT_TRUE(retirement.has_value()) << retirement.error().to_string();
+  EXPECT_EQ(retirement->predecessor_generation(), 1U);
+  ASSERT_EQ(retirement->parts().size(), 1U);
+  EXPECT_EQ(retirement->parts().front(), fixture.descriptor);
+  EXPECT_FALSE(retirement->is_pinned());
+  auto reclaimed =
+      recovered_storage.reclaim_retired_temporal_parts({.selected_manifest = std::cref(*selected),
+                                                        .retirement = std::cref(*retirement),
+                                                        .decode_limits = {},
+                                                        .part_validation_limits = {}});
+  ASSERT_TRUE(reclaimed.has_value()) << reclaimed.error().to_string();
+  EXPECT_EQ(reclaimed->removed_parts, 1U);
+  EXPECT_FALSE(std::filesystem::exists(temporary.path() / kPartsDirectoryName /
+                                       part_file_name(fixture.descriptor.part_id)));
+}
+
 TEST(TemporalManifestStorageTest, RejectsDescriptorMismatchBeforeFilesystemMutation) {
   TemporaryDirectory temporary;
   ASSERT_TRUE(temporary.valid());
