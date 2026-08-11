@@ -871,10 +871,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   nonblocking mutually authenticated sessions through the same verified-fingerprint boundary.
   One outbound query-attempt carrier now authorizes that verified server principal for the exact
   target before request bytes, owns TLS readiness and bounded response framing, and applies sticky
-  handshake/exchange deadlines without duplicating sender retry policy. Inbound distributed-query
-  socket serving, connection establishment, cross-node generation refresh/rebinding, general
-  vector-plan fragments/exchanges, complete leader transport, and multi-node failure validation
-  remain deferred; the
+  handshake/exchange deadlines without duplicating sender retry policy. The symmetric inbound
+  carrier authenticates before reading, owns one fixed-bound request, invokes the authorized worker
+  once, and owns the correlated response through all TLS short writes. Listener/connector ownership,
+  cross-node generation refresh/rebinding, general vector-plan fragments/exchanges, complete leader
+  transport, and multi-node failure validation remain deferred; the
   phase exit gate is not claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.

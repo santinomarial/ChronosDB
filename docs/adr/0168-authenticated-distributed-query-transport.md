@@ -46,6 +46,9 @@ sanitizer checks cover the public ABI and runtime parser boundary.
 Partial stream I/O, socket ownership, connection deadlines, retry/backoff, cancellation, and
 coordinator scheduling remain follow-up carrier work.
 
+ADRs 0169, 0173, and 0174 subsequently supply bounded stream/retry ownership and symmetric
+single-attempt mutual-TLS readiness/deadline carriers over embedding-owned connected descriptors.
+
 Invariants 6, 10, 11, 14, 15, and 18 apply.
 
 ## Migration and rollback
@@ -59,3 +62,4 @@ reject checksum-valid unknown protocol versions explicitly.
 - [Distributed Query Transport v1](../formats/distributed-query-transport-v1.md)
 - [Distributed Aggregate Fragment Dispatch v1](../formats/distributed-aggregate-fragment-dispatch-v1.md)
 - [Distributed Aggregate Exchange v1](../formats/distributed-aggregate-exchange-v1.md)
+- [Bounded inbound distributed-query TLS carrier](0174-bounded-inbound-distributed-query-tls-carrier.md)
