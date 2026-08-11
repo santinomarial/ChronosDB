@@ -606,6 +606,7 @@ add_library(
   src/tiering/cold_manifest_storage.cpp
   src/tiering/object_store.cpp
   src/tiering/tiered_pair_commit.cpp
+  src/tiering/tiered_part_loader.cpp
   src/tiering/tiered_publication.cpp
   src/tiering/tiered_parts.cpp
 )
@@ -931,6 +932,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/tiering/object_store_test.cpp
     tests/tiering/tiered_pair_commit_header_self_contained.cpp
     tests/tiering/tiered_pair_commit_test.cpp
+    tests/tiering/tiered_part_loader_header_self_contained.cpp
+    tests/tiering/tiered_part_loader_test.cpp
     tests/tiering/tiered_publication_header_self_contained.cpp
     tests/tiering/tiered_publication_test.cpp
     tests/tiering/tiered_parts_header_self_contained.cpp
@@ -938,7 +941,9 @@ if(CHRONOS_BUILD_TESTS)
   )
   set_target_properties(chronos_tiering_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_tiering_tests PRIVATE cxx_std_23)
-  target_include_directories(chronos_tiering_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+  target_include_directories(
+    chronos_tiering_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+  )
   target_link_libraries(chronos_tiering_tests PRIVATE chronos::tiering GTest::gtest_main)
   chronos_set_project_warnings(chronos_tiering_tests)
   chronos_enable_sanitizers(chronos_tiering_tests)

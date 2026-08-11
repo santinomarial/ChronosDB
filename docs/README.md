@@ -203,6 +203,9 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [CSEG v1 storage](learning/cseg-storage.md): implemented layout, compression, metadata/page/part
   codecs, layered validation, projected reads, inspection, ownership, failure, and measurement
   contracts.
+- [Tiered CSEG loading](learning/tiered-cseg-loading.md): implemented aggregate-snapshot-bound local
+  preference, missing-only remote fallback, exact metadata/digest/CSEG validation, owned bytes, and
+  Manifest/cold lifetime retention.
 - [Manifest v1 codec](learning/manifest-codec.md): implemented nominal values, checked layout,
   canonical owned encoding, borrowed decoding, trust ladder, failure classes, and evidence boundary.
 - [Append-only CSEG compaction](learning/append-only-compaction.md): accepted replacement boundary,

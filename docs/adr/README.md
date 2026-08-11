@@ -221,3 +221,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0184](0184-durable-cold-location-generations.md) | Durable cold-location generation installation and recovery | accepted |
 | [0185](0185-atomic-tiered-storage-publication.md) | Atomic Manifest v2 and cold-location publication | accepted |
 | [0186](0186-durable-tiered-pair-commit.md) | Durable Manifest v2/cold pair commit and recovery | accepted |
+| [0187](0187-manifest-bound-tiered-cseg-loading.md) | Manifest-bound local and remote CSEG loading | accepted |
