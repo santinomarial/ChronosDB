@@ -555,6 +555,7 @@ add_library(
   chronos_cluster
   src/cluster/remote_tablet_reconfiguration.cpp
   src/cluster/tablet_physical_part_chunk.cpp
+  src/cluster/tablet_physical_part_chunk_storage.cpp
 )
 add_library(chronos::cluster ALIAS chronos_cluster)
 set_target_properties(chronos_cluster PROPERTIES EXPORT_NAME cluster CXX_EXTENSIONS OFF)
@@ -568,6 +569,7 @@ target_include_directories(
 target_link_libraries(
   chronos_cluster
   PUBLIC chronos::cseg chronos::ingest chronos::network chronos::raft
+  PRIVATE chronos::io
 )
 chronos_set_project_warnings(chronos_cluster)
 chronos_enable_sanitizers(chronos_cluster)
@@ -850,6 +852,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/cluster/remote_tablet_reconfiguration_header_self_contained.cpp
     tests/cluster/remote_tablet_reconfiguration_test.cpp
     tests/cluster/tablet_physical_part_chunk_header_self_contained.cpp
+    tests/cluster/tablet_physical_part_chunk_storage_header_self_contained.cpp
+    tests/cluster/tablet_physical_part_chunk_storage_test.cpp
     tests/cluster/tablet_physical_part_chunk_test.cpp
   )
   set_target_properties(chronos_cluster_tests PROPERTIES CXX_EXTENSIONS OFF)
