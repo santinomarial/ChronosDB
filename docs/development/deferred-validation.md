@@ -182,8 +182,9 @@
   chain, proxy policy, retry/backoff, multipart upload, concurrent conditional writers, timeout/TLS/
   partial-response faults, eventual listing behavior, restore, remote deletion, encryption
   boundary, and broader object-store fault injection.
-- Manifest v2 cold-location descriptor and atomic old/new recovery; CSEG validation before upload,
-  safe local deletion, snapshot/compaction pins, cache concurrency, crash/restart, cache index
+- Durable Cold Location Manifest generation installation, highest-generation/no-fallback recovery,
+  atomic compatible Manifest-v2/cold publication and old/new crash selection; CSEG validation
+  before upload, safe local deletion, snapshot/compaction pins, cache concurrency, cache index
   recovery, remote corruption, and page-range checksum integration.
 - Arrow IPC and Parquet import/export providers, schema/logical-type mapping, fixtures, round trips,
   dependency/SBOM review, and explicit proof that CSEG remains the primary store.

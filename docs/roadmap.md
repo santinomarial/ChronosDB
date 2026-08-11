@@ -911,9 +911,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   TLS-by-default, conditional immutable PUT, checksum metadata, finite timeouts, and exact bounded
   range responses. Verified idempotent SHA-256 upload precedes a caller's atomic manifest-install
   callback; bounded full-object caching and authenticated large range reads are implemented.
-  Manifest v1 is unchanged. Manifest cold descriptors, safe deletion/recovery, multipart/retry and
-  credential-refresh ownership, and Arrow/Parquet implementations remain deferred; the phase exit
-  gate is not claimed.
+  Manifest v1/v2 bytes are unchanged. A separate checksummed Cold Location Manifest v1 now binds
+  bounded object keys and deployment store identity to exact Manifest v2 part bytes without using
+  listings. Durable cold-generation install/recovery/publication, safe deletion, multipart/retry
+  and credential-refresh ownership, and Arrow/Parquet implementations remain deferred; the phase
+  exit gate is not claimed.
 
 - **Scope:** immutable-part upload/install/cache/eviction; remote integrity and retry; authoritative manifest references; safe remote deletion; selected documented import/export or ecosystem formats.
 - **Explicit non-scope:** treating bucket listings as metadata truth, mutating remote parts in place, claiming object storage has local-disk latency, custom cloud APIs when standard clients suffice, and compatibility claims without fixtures.

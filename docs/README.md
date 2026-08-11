@@ -69,6 +69,9 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   directory is synchronized with idempotent absent-file retry behavior. After restart, the exact
   adjacent durable transition plus the same movement/placement authority reconstructs an unpinned
   reclamation proof without trusting orphan files.
+- [Cold Location Manifest v1](formats/cold-location-manifest-v1.md): separate immutable object-store
+  location authority bound to an exact Manifest v2 database/generation, deployment store identity,
+  and part length/SHA-256, with a strict checksummed codec and exact binding validation.
 - [Tablet Physical Part Reclamation Marker v1](formats/tablet-physical-part-reclamation-marker-v1.md):
   session-bound terminal receipt state installed durably before crash-safe descending chunk removal.
 - [Distributed Aggregate Exchange v1](formats/distributed-aggregate-exchange-v1.md): fixed-width,

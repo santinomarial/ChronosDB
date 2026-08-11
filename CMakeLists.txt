@@ -602,6 +602,7 @@ chronos_enable_static_analysis(chronos_cluster)
 
 add_library(
   chronos_tiering
+  src/tiering/cold_manifest.cpp
   src/tiering/object_store.cpp
   src/tiering/tiered_parts.cpp
 )
@@ -917,6 +918,9 @@ if(CHRONOS_BUILD_TESTS)
 
   add_executable(
     chronos_tiering_tests
+    tests/tiering/cold_manifest_header_self_contained.cpp
+    tests/tiering/cold_manifest_format_header_self_contained.cpp
+    tests/tiering/cold_manifest_test.cpp
     tests/tiering/object_store_header_self_contained.cpp
     tests/tiering/object_store_test.cpp
     tests/tiering/tiered_parts_header_self_contained.cpp

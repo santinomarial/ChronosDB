@@ -150,8 +150,10 @@ part/key identity conflicts, caches bounded complete objects with eviction, and 
 authenticated range reads for larger objects. A smoke test exposed and fixed a 32-bit constant-
 expression overflow that made the default 4 GiB object limit zero.
 
-Manifest v1 remains unchanged. Credential refresh/provider policy, automatic retry/backoff,
-multipart upload, Manifest cold descriptors, safe deletion/recovery, CSEG pre-upload validator
+Manifest v1/v2 bytes remain unchanged. A subsequent Cold Location Manifest v1 codec binds bounded
+object keys and deployment store identity to exact Manifest v2 part length/SHA-256 without trusting
+listings. Credential refresh/provider policy, automatic retry/backoff, multipart upload, durable
+cold-generation installation/publication, safe deletion/recovery, CSEG pre-upload validator
 connection, cache concurrency, and Arrow/Parquet import/export remain incomplete.
 
 ## End-to-end integration state

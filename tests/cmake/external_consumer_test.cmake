@@ -135,6 +135,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/network/security.hpp>
 #include <chronos/network/tcp_socket.hpp>
 #include <chronos/network/tls_socket.hpp>
+#include <chronos/tiering/cold_manifest.hpp>
 #include <chronos/tiering/object_store.hpp>
 #include <chronos/network/spsc_queue.hpp>
 #include <chronos/network/messages.hpp>
@@ -188,6 +189,8 @@ int main() {
   const auto begin_tcp_connect = &chronos::network::TcpSocket::begin_connect;
   const auto bind_tcp_listener = &chronos::network::TcpListener::bind;
   const auto create_s3_object_store = &chronos::tiering::S3ObjectStore::create;
+  const auto encode_cold_manifest = &chronos::tiering::encode_cold_location_manifest_v1;
+  const auto decode_cold_manifest = &chronos::tiering::decode_cold_location_manifest_v1_exact;
   const auto reclaim_physical_receipt =
       &chronos::cluster::reclaim_tablet_physical_part_receipt;
   (void)encode_distributed_query_request;
@@ -208,6 +211,8 @@ int main() {
   (void)begin_tcp_connect;
   (void)bind_tcp_listener;
   (void)create_s3_object_store;
+  (void)encode_cold_manifest;
+  (void)decode_cold_manifest;
   const auto build_source_retirement =
       &chronos::manifest::build_raft_tablet_source_retirement_manifest;
   const auto publish_source_retirement =

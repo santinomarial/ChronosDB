@@ -217,3 +217,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0180](0180-explicit-whole-query-authority-rebinding.md) | Explicit whole-query authority rebinding | accepted |
 | [0181](0181-authenticated-distributed-leader-hint-publication.md) | Authenticated distributed leader-hint publication | accepted |
 | [0182](0182-libcurl-sigv4-s3-object-store.md) | libcurl SigV4 S3 object-store backend | accepted |
+| [0183](0183-separate-cold-location-manifest.md) | Separate cold-location manifest authority | accepted |

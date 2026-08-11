@@ -42,9 +42,24 @@ are deferred until their ownership and cancellation contracts are defined.
 
 Operators should grant only `PutObject`, `HeadObject`/`GetObject`, and ranged `GetObject` access for
 the configured prefix, enforce TLS, keep conditional-write bucket policy compatible with
-`If-None-Match`, and rotate credentials outside the current store lifetime. ChronosDB records the
-object key and SHA-256 in future cold-manifest authority; bucket listings and ETags are not a
+`If-None-Match`, and rotate credentials outside the current store lifetime. Cold Location Manifest
+v1 records the object key, store identity, and exact Manifest v2 part SHA-256; its durable
+installation/publication path is still separate work. Bucket listings and ETags are not a
 replacement.
+
+## Cold location authority
+
+Cold Location Manifest v1 is a separate immutable full-generation registry because Manifest v2's
+fixed reserved bytes remain frozen zero. It binds one database and exact base generation to a
+deployment object-store UUID, then maps a sorted subset of part IDs to exact length, SHA-256, and
+bounded object key. The strict codec owns parsed keys, validates the header before trusting lengths,
+checks every descriptor and the complete file, and rejects trailing bytes. Binding constructs an
+ordered part index in `O(base parts log base parts)` time and checks locations in
+`O(cold parts log base parts)` time with `O(base parts)` temporary pointers.
+
+The codec is not a deletion receipt. Production publication must acquire a compatible Manifest-v2/
+cold pair, and local reclamation must wait for every older reader pin. Remote deletion needs a
+separate proof that no retained logical or cold generation references the object.
 
 Likely review questions include why conditional PUT precedes HEAD, why ETag is insufficient, why
 redirects are disabled, what verifies a range, and why the memory backend is not a durability

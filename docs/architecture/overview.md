@@ -382,7 +382,9 @@ manifest-install callback, bounded content caching, and range reads. Object-stor
 metadata truth. Manifest v1 has no cold-location fields, so production manifest persistence, safe
 local/remote deletion, crash recovery, encryption, and Arrow/Parquet exports remain deferred. The
 production object carrier now uses libcurl SigV4 with TLS-by-default, conditional immutable PUT,
-authoritative per-key HEAD metadata, and exact bounded range GET; listing is never authority.
+authoritative per-key HEAD metadata, and exact bounded range GET; listing is never authority. A
+separate checksummed Cold Location Manifest v1 now binds object keys and a deployment store identity
+to exact Manifest v2 part bytes without changing frozen Manifest v2 fields.
 
 ## Accepted direction and deferred design
 
