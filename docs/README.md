@@ -63,8 +63,9 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   already-durable Manifest v2 successors, and a movement-ready gate requiring exact RTAS/Raft and
   published destination part-set ownership. Completed per-part receipts are reclaimed only after
   that proof and retain a checksummed terminal marker that rejects late transfer retries. Completed
-  Raft movement plus committed final placement can build an exact source-retirement successor;
-  durable installation, publication, and source-part reclamation remain separate.
+  Raft movement plus committed final placement can build and durably install an exact
+  source-retirement successor while retaining its source parts; publication and reader-pinned
+  source-part reclamation remain separate.
 - [Tablet Physical Part Reclamation Marker v1](formats/tablet-physical-part-reclamation-marker-v1.md):
   session-bound terminal receipt state installed durably before crash-safe descending chunk removal.
 - [Resume Token v1](formats/resume-token-v1.md): authenticated live-subscription resume identity,

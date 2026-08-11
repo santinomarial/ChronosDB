@@ -4,6 +4,7 @@
 #include "chronos/io/posix_io.hpp"
 #include "chronos/manifest/naming.hpp"
 #include "chronos/manifest/publication.hpp"
+#include "chronos/manifest/raft_tablet_physical_snapshot.hpp"
 #include "io/posix_syscalls.hpp"
 
 #include <algorithm>
@@ -1102,8 +1103,23 @@ ManifestStorage::install_temporal_manifest(const TemporalManifestInstallRequest&
         corruption("Selected final Manifest v2 filename disagrees with its encoded generation"));
   }
 
-  common::Status validation =
-      validate_manifest_v2_temporal_transition(*predecessor, *candidate, request.schema_bindings);
+  common::Status validation;
+  if (request.source_retirement == nullptr) {
+    validation =
+        validate_manifest_v2_temporal_transition(*predecessor, *candidate, request.schema_bindings);
+  } else {
+    common::Result<BuiltRaftTabletSourceRetirementManifest> rebuilt =
+        build_raft_tablet_source_retirement_manifest(*predecessor, *request.source_retirement);
+    if (!rebuilt.has_value()) {
+      return implementation.fail_temporal_manifest(with_context(
+          "rebuild authorized source-retirement Manifest v2 generation", rebuilt.error()));
+    }
+    if (!std::ranges::equal(rebuilt->manifest.bytes(), encoded.bytes())) {
+      return implementation.fail_temporal_manifest(invalid(
+          "Source-retirement Manifest v2 candidate differs from the authorized exact successor"));
+    }
+    validation = validate_manifest_v2_temporal_schema_binding(*candidate, request.schema_bindings);
+  }
   if (!validation.is_ok()) {
     return implementation.fail_temporal_manifest(
         with_context("validate Manifest v2 generation transition", validation));

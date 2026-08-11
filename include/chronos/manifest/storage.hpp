@@ -34,6 +34,7 @@ namespace chronos::manifest {
 
 class LoadedManifestGeneration;
 class LoadedTemporalManifestGeneration;
+struct RaftTabletSourceRetirementRequest;
 
 namespace detail {
 class ManifestStorageTestAccess;
@@ -115,6 +116,10 @@ struct TemporalManifestInstallRequest {
   common::Uuid nonce;
   ManifestDecodeLimits decode_limits;
   TemporalPartValidationLimits part_validation_limits;
+  // Null preserves the ordinary add-only authority. A non-null retirement proof causes storage to
+  // rebuild the one authorized source-removal successor from the selected durable predecessor and
+  // require byte-for-byte equality before filesystem mutation.
+  const RaftTabletSourceRetirementRequest* source_retirement{};
 };
 
 struct InstalledTemporalManifest {
@@ -394,9 +399,10 @@ public:
   [[nodiscard]] common::Result<InstalledManifest>
   install_manifest(const ManifestInstallRequest& request);
 
-  // Installs one add-only Manifest v2 successor after exact-decoding the selected v2 predecessor,
-  // validating the source-neutral transition, and streaming validation over every final CSEG v2
-  // reference. V1-to-v2 migration and authorized retention/compaction use separate boundaries.
+  // Installs one Manifest v2 successor after exact-decoding the selected v2 predecessor and
+  // streaming validation over every final CSEG v2 reference. The default path is add-only. The
+  // source-retirement path independently rebuilds the exact candidate from its Raft/metadata proof.
+  // V1-to-v2 migration and authorized retention/compaction use separate boundaries.
   [[nodiscard]] common::Result<InstalledTemporalManifest>
   install_temporal_manifest(const TemporalManifestInstallRequest& request);
 

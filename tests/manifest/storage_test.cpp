@@ -1,9 +1,11 @@
+#include "chronos/common/crc32c.hpp"
 #include "chronos/common/status.hpp"
 #include "chronos/common/uuid.hpp"
 #include "chronos/io/posix_io.hpp"
 #include "chronos/manifest/compaction.hpp"
 #include "chronos/manifest/naming.hpp"
 #include "chronos/manifest/publication.hpp"
+#include "chronos/manifest/raft_tablet_physical_snapshot.hpp"
 #include "chronos/manifest/storage.hpp"
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/logical_type.hpp"
@@ -351,6 +353,54 @@ struct TemporalStorageFixture {
   }
 };
 
+struct RaftRetirementStorageFixture {
+  TemporalStorageFixture base;
+  raft::GroupId group_id{id<schema::SchemaId>(8U).uuid()};
+  cseg::EncodedCsegPart encoded{cseg::test::make_valid_temporal_part(
+      cseg::PageCompression::kZstd,
+      {.commit_source = cseg::temporal_format::CommitSource::kRaft, .source_id = group_id})};
+  TemporalPartDescriptor descriptor{
+      describe_manifest_v2_temporal_part_image(encoded.bytes(), base.schema_value, base.tablet_id,
+                                               ManifestCommitSource::kRaft, group_id)
+          .value()};
+  TemporalTabletDescriptor owner{.table_id = base.table_id,
+                                 .tablet_id = base.tablet_id,
+                                 .recovery_schema_id = base.schema_id,
+                                 .recovery_schema_version = schema::SchemaVersion::initial(),
+                                 .source_id = group_id,
+                                 .durable_position = 9U,
+                                 .reclaim_position = 0U,
+                                 .first_part_index = 0U,
+                                 .part_count = 1U,
+                                 .durable_version_count = 2U,
+                                 .commit_source = ManifestCommitSource::kRaft};
+
+  [[nodiscard]] EncodedTemporalManifest manifest(const std::uint64_t generation) const {
+    const std::array tablets{owner};
+    const std::array parts{descriptor};
+    return encode_manifest_v2_temporal({.generation = generation,
+                                        .database_id = base.database_id,
+                                        .wal_reclaim_checkpoint = std::nullopt,
+                                        .tablets = tablets,
+                                        .parts = parts,
+                                        .retries = {}})
+        .value();
+  }
+
+  [[nodiscard]] raft::TabletMovementRecord completed_movement() const {
+    raft::TabletMovement movement =
+        raft::TabletMovement::begin(base.tablet_id, 10U, 1U, 3U, {1U, 2U}).value();
+    const std::array bytes{std::byte{0xA5U}};
+    EXPECT_TRUE(movement.begin_snapshot({1U, 9U, 3U, bytes.size(), common::crc32c(bytes)}).is_ok());
+    EXPECT_TRUE(movement.accept_snapshot_chunk(0U, bytes, common::crc32c(bytes)).is_ok());
+    EXPECT_TRUE(movement.finish_snapshot().is_ok());
+    EXPECT_TRUE(movement.mark_caught_up(9U).is_ok());
+    EXPECT_TRUE(movement.promote_target(10U, 11U).is_ok());
+    EXPECT_TRUE(movement.remove_source(11U, 12U).is_ok());
+    return movement.record();
+  }
+};
+
 TEST(ManifestStorageTest, RequiresExactExistingDirectoryAndLockLayout) {
   TemporaryDirectory missing_directories;
   ASSERT_TRUE(missing_directories.valid());
@@ -465,6 +515,82 @@ TEST(TemporalManifestStorageTest, InstallsValidatedPartAndExactSuccessorGenerati
   EXPECT_EQ(owner.manifest_metrics().referenced_parts_validated, 1U);
   EXPECT_EQ(owner.manifest_metrics().file_syncs, 1U);
   EXPECT_EQ(owner.manifest_metrics().directory_syncs, 1U);
+}
+
+TEST(TemporalManifestStorageTest, InstallsOnlyTheExactAuthorizedSourceRetirement) {
+  TemporaryDirectory temporary;
+  ASSERT_TRUE(temporary.valid());
+  establish_layout(temporary.path());
+  const RaftRetirementStorageFixture fixture;
+  const EncodedTemporalManifest predecessor = fixture.manifest(1U);
+  create_entry(temporary.path(),
+               std::filesystem::path{kManifestDirectoryName} / *manifest_file_name(1U),
+               predecessor.bytes());
+  create_entry(temporary.path(),
+               std::filesystem::path{kPartsDirectoryName} /
+                   part_file_name(fixture.descriptor.part_id),
+               fixture.encoded.bytes());
+  auto decoded = decode_manifest_v2_temporal_exact(predecessor.bytes());
+  ASSERT_TRUE(decoded.has_value());
+  const raft::TabletMovementRecord movement = fixture.completed_movement();
+  const raft::TabletPlacementMetadata placement{
+      fixture.base.table_id, fixture.base.tablet_id, 12U, {2U, 3U}, 3U};
+  const RaftTabletSourceRetirementRequest authority{.group_id = fixture.group_id,
+                                                    .table_id = fixture.base.table_id,
+                                                    .tablet_id = fixture.base.tablet_id,
+                                                    .source_node = 1U,
+                                                    .completed_movement = std::cref(movement),
+                                                    .committed_placement = std::cref(placement)};
+  auto built = build_raft_tablet_source_retirement_manifest(*decoded, authority);
+  ASSERT_TRUE(built.has_value()) << built.error().to_string();
+  const std::span<const TabletSchemaBinding> no_bindings;
+  ManifestStorage owner =
+      ManifestStorage::open_existing({.database_root = temporary.path().string()}).value();
+
+  EXPECT_EQ(owner
+                .install_temporal_manifest({.encoded_manifest = std::cref(built->manifest),
+                                            .schema_bindings = no_bindings,
+                                            .nonce = PartFixture::make_nonce(0xd6U),
+                                            .decode_limits = {},
+                                            .part_validation_limits = {}})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_FALSE(
+      std::filesystem::exists(temporary.path() / kManifestDirectoryName / *manifest_file_name(2U)));
+
+  RaftTabletSourceRetirementRequest mismatched_authority = authority;
+  mismatched_authority.source_node = 2U;
+  EXPECT_EQ(owner
+                .install_temporal_manifest({.encoded_manifest = std::cref(built->manifest),
+                                            .schema_bindings = no_bindings,
+                                            .nonce = PartFixture::make_nonce(0xd7U),
+                                            .decode_limits = {},
+                                            .part_validation_limits = {},
+                                            .source_retirement = &mismatched_authority})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_FALSE(
+      std::filesystem::exists(temporary.path() / kManifestDirectoryName / *manifest_file_name(2U)));
+
+  const auto installed =
+      owner.install_temporal_manifest({.encoded_manifest = std::cref(built->manifest),
+                                       .schema_bindings = no_bindings,
+                                       .nonce = PartFixture::make_nonce(0xd8U),
+                                       .decode_limits = {},
+                                       .part_validation_limits = {},
+                                       .source_retirement = &authority});
+  ASSERT_TRUE(installed.has_value()) << installed.error().to_string();
+  EXPECT_EQ(installed->generation, 2U);
+  EXPECT_EQ(installed->tablet_count, 0U);
+  EXPECT_EQ(installed->part_count, 0U);
+  EXPECT_EQ(installed->retry_count, 0U);
+  EXPECT_TRUE(
+      std::filesystem::exists(temporary.path() / kManifestDirectoryName / *manifest_file_name(2U)));
+  EXPECT_TRUE(std::filesystem::exists(temporary.path() / kPartsDirectoryName /
+                                      part_file_name(fixture.descriptor.part_id)));
+  EXPECT_EQ(owner.manifest_metrics().installed_generations, 1U);
 }
 
 TEST(TemporalManifestStorageTest, RejectsDescriptorMismatchBeforeFilesystemMutation) {

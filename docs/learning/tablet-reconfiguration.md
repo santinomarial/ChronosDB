@@ -125,8 +125,10 @@ retained-intent rule.
 After final stable membership and placement are committed and the movement's complete checkpoint is
 durable, `build_raft_tablet_source_retirement_manifest` can compose the old source's exact next
 Manifest. It rechecks that the source is absent and target remains, removes only that tablet's local
-parts and retries, and returns the removed descriptors for later pinned reclamation. The builder
-deliberately does not install, publish, or unlink; those are separate crash and reader-lifetime
+parts and retries, and returns the removed descriptors for later pinned reclamation. The storage
+installer rereads the durable predecessor, independently rebuilds this special successor, requires
+byte-exact agreement, and validates every retained part before the ordinary synchronized install
+sequence. Neither boundary publishes or unlinks; those remain separate crash and reader-lifetime
 boundaries.
 
 ## Complexity and tradeoffs
