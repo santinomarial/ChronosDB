@@ -885,9 +885,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   poll table, reports each terminal transport outcome once, closes peer attempts on query failure,
   and publishes only the complete aggregate while retaining the compatible Manifest epoch. A
   whole-query monotonic deadline and explicit idempotent cancellation now release every active
-  client without exposing partial state.
-  Cross-node generation refresh/rebinding, general vector-plan fragments/exchanges, complete leader
-  transport, and broader multi-node failure validation remain deferred; the
+  client without exposing partial state. Retryable terminal failures may now replace the entire
+  execution through finite explicit rebinding only after the caller supplies freshly proved
+  authority for the same logical query and a nonregressing compatible generation; old partials are
+  never carried across. Automatic metadata acquisition, general vector-plan fragments/exchanges,
+  complete leader transport, and broader multi-node failure validation remain deferred; the
   phase exit gate is not claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.

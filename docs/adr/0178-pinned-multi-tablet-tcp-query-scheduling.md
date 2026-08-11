@@ -45,6 +45,8 @@ must outlive the scheduler; all other execution, route, slot, client, and result
 
 ADR 0179 subsequently adds a whole-query monotonic deadline and explicit cancellation while
 preserving this owner's all-tablet success boundary and deterministic client teardown.
+ADR 0180 adds finite explicit whole-query replacement after retryable terminal failure; it validates
+logical identity and generation monotonicity and never retains partials across authorities.
 
 ## Consequences and validation
 
@@ -93,3 +95,4 @@ or servers.
 - [Distributed aggregate exchange](../learning/distributed-aggregate-exchange.md)
 - [Architecture invariants](../architecture/invariants.md)
 - [Whole-query TCP cancellation and deadline](0179-whole-query-tcp-cancellation-deadline.md)
+- [Explicit whole-query authority rebinding](0180-explicit-whole-query-authority-rebinding.md)

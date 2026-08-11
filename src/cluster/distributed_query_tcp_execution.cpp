@@ -44,6 +44,44 @@ namespace {
   return timeout.count() > 0 && timeout <= maximum;
 }
 
+[[nodiscard]] bool retryable(const common::StatusCode code) noexcept {
+  return code == common::StatusCode::kUnavailable ||
+         code == common::StatusCode::kResourceExhausted || code == common::StatusCode::kIoError;
+}
+
+[[nodiscard]] bool
+same_logical_fragment(const query::DistributedAggregateFragmentDispatch& previous,
+                      const query::DistributedAggregateFragmentDispatch& replacement) noexcept {
+  const auto& left = previous.fragment;
+  const auto& right = replacement.fragment;
+  return previous.raft_group_id == replacement.raft_group_id && left.query_id == right.query_id &&
+         left.database_id == right.database_id && left.table_id == right.table_id &&
+         left.tablet_id == right.tablet_id &&
+         left.destination_schema_id == right.destination_schema_id &&
+         left.read_policy == right.read_policy &&
+         left.destination_column_ordinals == right.destination_column_ordinals &&
+         left.aggregate_input_index == right.aggregate_input_index &&
+         left.event_time_predicate == right.event_time_predicate;
+}
+
+[[nodiscard]] bool
+compatible_rebinding(const query::CompatibleDistributedAggregateSnapshot& previous,
+                     const query::CompatibleDistributedAggregateSnapshot& replacement) noexcept {
+  if (previous.snapshot().database_id() != replacement.snapshot().database_id() ||
+      replacement.snapshot().generation() < previous.snapshot().generation()) {
+    return false;
+  }
+  const auto old_dispatches = previous.dispatches();
+  const auto new_dispatches = replacement.dispatches();
+  if (old_dispatches.size() != new_dispatches.size())
+    return false;
+  for (std::size_t index = 0U; index < old_dispatches.size(); ++index) {
+    if (!same_logical_fragment(old_dispatches[index], new_dispatches[index]))
+      return false;
+  }
+  return true;
+}
+
 } // namespace
 
 class DistributedQueryTcpExecution::Impl {
@@ -218,7 +256,7 @@ DistributedQueryTcpExecution::create(DistributedQueryExecution execution,
                                      DistributedQueryTcpExecutionConfig config) {
   if (config.authenticator == nullptr || config.node_authorizer == nullptr ||
       config.routes.empty() || config.routes.size() > 65'536U ||
-      !valid_timeout(config.connect_timeout) ||
+      config.maximum_rebindings > 1024U || !valid_timeout(config.connect_timeout) ||
       !valid_timeout(config.carrier_limits.handshake_timeout) ||
       !valid_timeout(config.carrier_limits.exchange_timeout)) {
     return common::make_unexpected(
@@ -361,6 +399,41 @@ common::Status DistributedQueryTcpExecution::cancel() {
       {common::StatusCode::kCancelled, "distributed query TCP execution was cancelled"});
 }
 
+common::Status DistributedQueryTcpExecution::rebind(DistributedQueryExecution execution,
+                                                    DistributedQueryTcpExecutionConfig config) {
+  if (!implementation_)
+    return invalid("distributed query TCP execution is empty");
+  Impl& previous = *implementation_;
+  if (previous.execution_state != DistributedQueryTcpExecutionState::kFailed ||
+      !retryable(previous.execution_failure.code())) {
+    return invalid("distributed query TCP execution is not eligible for rebinding");
+  }
+  if (previous.execution_metrics.rebindings_started >= previous.config.maximum_rebindings)
+    return exhausted("distributed query TCP execution rebinding budget is exhausted");
+  if (config.execution_deadline != previous.config.execution_deadline ||
+      config.maximum_rebindings != previous.config.maximum_rebindings) {
+    return invalid("distributed query TCP execution rebinding limits changed");
+  }
+  if (!compatible_rebinding(previous.execution.snapshot(), execution.snapshot()))
+    return invalid("distributed query TCP execution replacement changes logical query authority");
+
+  auto replacement = DistributedQueryTcpExecution::create(std::move(execution), std::move(config));
+  if (!replacement.has_value())
+    return replacement.error();
+  const DistributedQueryTcpExecutionMetrics prior_metrics = previous.execution_metrics;
+  replacement->implementation_->execution_metrics.attempts_started +=
+      prior_metrics.attempts_started;
+  replacement->implementation_->execution_metrics.retries_started += prior_metrics.retries_started;
+  replacement->implementation_->execution_metrics.transport_completed_attempts +=
+      prior_metrics.transport_completed_attempts;
+  replacement->implementation_->execution_metrics.transport_failed_attempts +=
+      prior_metrics.transport_failed_attempts;
+  replacement->implementation_->execution_metrics.rebindings_started =
+      prior_metrics.rebindings_started + 1U;
+  implementation_ = std::move(replacement->implementation_);
+  return common::Status::ok();
+}
+
 DistributedQueryTcpExecutionState DistributedQueryTcpExecution::state() const noexcept {
   return implementation_ ? implementation_->execution_state
                          : DistributedQueryTcpExecutionState::kFailed;
@@ -395,6 +468,13 @@ DistributedQueryTcpExecution::snapshot() const {
   if (!implementation_)
     throw std::logic_error("distributed query TCP execution is empty");
   return implementation_->execution.snapshot();
+}
+
+common::Result<std::optional<DistributedQueryLeaderHint>>
+DistributedQueryTcpExecution::suggested_leader(const schema::TabletId& tablet_id) const {
+  if (!implementation_)
+    return common::make_unexpected(invalid("distributed query TCP execution is empty"));
+  return implementation_->execution.suggested_leader(tablet_id);
 }
 
 } // namespace chronos::cluster

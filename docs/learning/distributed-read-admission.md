@@ -32,8 +32,9 @@ or unapplied proof rejects the complete coordinator; partial results are never r
 Position lag is deterministic and clock-free but is not a direct time-duration promise when write
 rates vary. A later protocol may expose both after defining clock and sampling contracts. The
 compatible aggregate snapshot binder now pins one Manifest v2 generation across all admitted
-tablets; long remote scans still require worker-side generation availability and explicit rebinding
-after authority changes.
+tablets. A retryably failed TCP execution may be rebound only as a whole after the caller reacquires
+every admission, placement proof, and compatible snapshot; logical query identity and nonregressing
+generation are checked before any new socket opens.
 
 - Why is a committed read index insufficient without applied coverage?
 - Why must bounded stale name a number rather than an enum alone?

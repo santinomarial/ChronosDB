@@ -176,6 +176,10 @@ int main() {
       &chronos::cluster::DistributedQueryTcpClient::begin;
   const auto create_distributed_query_tcp_execution =
       &chronos::cluster::DistributedQueryTcpExecution::create;
+  const auto cancel_distributed_query_tcp_execution =
+      &chronos::cluster::DistributedQueryTcpExecution::cancel;
+  const auto rebind_distributed_query_tcp_execution =
+      &chronos::cluster::DistributedQueryTcpExecution::rebind;
   const auto bind_compatible_distributed_snapshot =
       &chronos::query::bind_compatible_distributed_aggregate_snapshot;
   const auto create_tls_client_context = &chronos::network::TlsClientContext::create;
@@ -194,6 +198,8 @@ int main() {
   (void)start_distributed_query_tcp_server;
   (void)begin_distributed_query_tcp_client;
   (void)create_distributed_query_tcp_execution;
+  (void)cancel_distributed_query_tcp_execution;
+  (void)rebind_distributed_query_tcp_execution;
   (void)bind_compatible_distributed_snapshot;
   (void)create_tls_client_context;
   (void)connect_tls_socket;

@@ -148,8 +148,10 @@
   remote worker interruption, durable retries, and broader coordinator/worker failure cleanup
   remain.
 - Proof-bound leader-linearizable/bounded-stale/local-eventual admissions now remain attached through
-  compatible pinned multi-tablet snapshots and protocol/carrier scheduling. Add explicit generation
-  refresh and rebinding for leader or placement changes during long scans without silent downgrade.
+  compatible pinned multi-tablet snapshots and protocol/carrier scheduling. Whole-query replacement
+  now validates fresh caller-proved authority, identical logical shape, nonregressing generation,
+  and a finite budget. Add automatic metadata acquisition and broader leader/placement-change
+  integration during long scans without silent downgrade.
 - Shard-key pruning and statistics in addition to event-time pruning; multi-node scalar/distributed
   differential SQL and partial-aggregation equivalence.
 - Carry the implemented authenticated remote-action receiver bytes and atomic current-leader-term

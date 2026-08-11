@@ -44,8 +44,10 @@ the input snapshot is moved. Reordered bindings, duplicate tablet plans, and agg
 limit exhaustion fail before a compatible owner is returned. Existing single-fragment mismatch
 tests continue to cover placement, group, schema, and durable-boundary conflicts.
 
-Remote generation refresh, leader-loss rebinding, general vector fragments, and cross-tablet write
-transactions remain separate work.
+ADR 0180 now permits a failed TCP scheduler to replace its whole execution only with another
+compatible binding for the identical logical query and a nonregressing Manifest generation.
+Automatic metadata refresh, general vector fragments, and cross-tablet write transactions remain
+separate work.
 
 Invariants 4, 5, 6, 14, 15, and 18 apply.
 
@@ -60,3 +62,4 @@ independent per-tablet binding loses the structural guarantee against mixed Mani
 - [Authority-bound distributed fragment construction](0166-authority-bound-distributed-fragment-construction.md)
 - [Manifest v2](../formats/manifest-v2.md)
 - [Distributed read admission](../learning/distributed-read-admission.md)
+- [Explicit whole-query authority rebinding](0180-explicit-whole-query-authority-rebinding.md)
