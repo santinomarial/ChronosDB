@@ -246,7 +246,8 @@ private:
     if (request->method == "HEAD") {
       const std::string response =
           "HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(object_->size()) +
-          "\r\nx-amz-meta-chronos-sha256: " + checksum_hex_ + "\r\nConnection: close\r\n\r\n";
+          "\r\nx-amz-meta-chronos-sha256: " + checksum_hex_ +
+          "\r\nETag: \"fixture-etag\"\r\nConnection: close\r\n\r\n";
       static_cast<void>(send_all(descriptor, response));
       return;
     }
@@ -265,6 +266,20 @@ private:
           static_cast<char>(std::to_integer<unsigned char>((*object_)[1])),
           static_cast<char>(std::to_integer<unsigned char>((*object_)[2]))};
       static_cast<void>(send_all(descriptor, std::string_view{body.data(), body.size()}));
+      return;
+    }
+    if (request->method == "DELETE") {
+      const auto condition = request->headers.find("if-match");
+      if (condition == request->headers.end() || condition->second != "\"fixture-etag\"") {
+        static_cast<void>(send_all(descriptor,
+                                   "HTTP/1.1 412 Precondition Failed\r\nContent-Length: "
+                                   "0\r\nConnection: close\r\n\r\n"));
+        return;
+      }
+      object_.reset();
+      checksum_hex_.clear();
+      static_cast<void>(send_all(
+          descriptor, "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"));
       return;
     }
     static_cast<void>(send_all(
@@ -318,6 +333,19 @@ TEST(MemoryObjectStoreTest, ImmutablePutIsIdempotentAndRangesAreBounded) {
   EXPECT_EQ(*range, (std::vector<std::byte>{std::byte{2U}, std::byte{3U}}));
   const std::vector<std::byte> other{std::byte{9U}};
   EXPECT_FALSE(store.put_if_absent("part/a", other, ingest::sha256(other).value()).has_value());
+  auto wrong_delete = store.remove_if_exact("part/a", bytes.size(), ingest::sha256(other).value());
+  ASSERT_FALSE(wrong_delete.has_value());
+  EXPECT_EQ(wrong_delete.error().code(), common::StatusCode::kAlreadyExists);
+  EXPECT_EQ(store.object_count(), 1U);
+  auto removed = store.remove_if_exact("part/a", bytes.size(), checksum);
+  ASSERT_TRUE(removed.has_value());
+  EXPECT_TRUE(removed->removed);
+  EXPECT_FALSE(removed->already_absent);
+  EXPECT_EQ(store.object_count(), 0U);
+  auto retry = store.remove_if_exact("part/a", bytes.size(), checksum);
+  ASSERT_TRUE(retry.has_value());
+  EXPECT_FALSE(retry->removed);
+  EXPECT_TRUE(retry->already_absent);
 }
 
 TEST(S3ObjectStoreTest, SignsConditionalPutVerifiesRetryAndReadsExactRange) {
@@ -358,8 +386,21 @@ TEST(S3ObjectStoreTest, SignsConditionalPutVerifiesRetryAndReadsExactRange) {
   ASSERT_TRUE(range.has_value()) << range.error().to_string();
   EXPECT_EQ(*range, (std::vector<std::byte>{std::byte{2U}, std::byte{3U}}));
 
+  auto wrong_delete = (*store)->remove_if_exact("parts/a b", bytes.size(),
+                                                ingest::sha256(conflicting_bytes).value());
+  ASSERT_FALSE(wrong_delete.has_value());
+  EXPECT_EQ(wrong_delete.error().code(), common::StatusCode::kAlreadyExists);
+  auto removed = (*store)->remove_if_exact("parts/a b", bytes.size(), checksum);
+  ASSERT_TRUE(removed.has_value()) << removed.error().to_string();
+  EXPECT_TRUE(removed->removed);
+  EXPECT_FALSE(removed->already_absent);
+  auto deletion_retry = (*store)->remove_if_exact("parts/a b", bytes.size(), checksum);
+  ASSERT_TRUE(deletion_retry.has_value());
+  EXPECT_FALSE(deletion_retry->removed);
+  EXPECT_TRUE(deletion_retry->already_absent);
+
   const auto requests = server.requests();
-  ASSERT_EQ(requests.size(), 7U);
+  ASSERT_EQ(requests.size(), 11U);
   EXPECT_EQ(requests[0].method, "PUT");
   EXPECT_EQ(requests[0].target, "/chronos-test/parts/a%20b");
   EXPECT_EQ(requests[1].method, "PUT");
@@ -368,6 +409,11 @@ TEST(S3ObjectStoreTest, SignsConditionalPutVerifiesRetryAndReadsExactRange) {
   EXPECT_EQ(requests[4].method, "HEAD");
   EXPECT_EQ(requests[5].method, "HEAD");
   EXPECT_EQ(requests[6].method, "GET");
+  EXPECT_EQ(requests[7].method, "HEAD");
+  EXPECT_EQ(requests[8].method, "HEAD");
+  EXPECT_EQ(requests[9].method, "DELETE");
+  EXPECT_EQ(requests[9].headers.at("if-match"), "\"fixture-etag\"");
+  EXPECT_EQ(requests[10].method, "HEAD");
   EXPECT_TRUE(server.failure().empty()) << server.failure();
 }
 

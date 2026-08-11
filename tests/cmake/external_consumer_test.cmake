@@ -195,6 +195,7 @@ int main() {
   const auto begin_tcp_connect = &chronos::network::TcpSocket::begin_connect;
   const auto bind_tcp_listener = &chronos::network::TcpListener::bind;
   const auto create_s3_object_store = &chronos::tiering::S3ObjectStore::create;
+  const auto remove_exact_object = &chronos::tiering::ObjectStore::remove_if_exact;
   const auto encode_cold_manifest = &chronos::tiering::encode_cold_location_manifest_v1;
   const auto decode_cold_manifest = &chronos::tiering::decode_cold_location_manifest_v1_exact;
   const auto create_cold_manifest_storage = &chronos::tiering::ColdLocationManifestStorage::create;
@@ -234,6 +235,7 @@ int main() {
   (void)begin_tcp_connect;
   (void)bind_tcp_listener;
   (void)create_s3_object_store;
+  (void)remove_exact_object;
   (void)encode_cold_manifest;
   (void)decode_cold_manifest;
   (void)create_cold_manifest_storage;

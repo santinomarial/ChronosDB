@@ -906,7 +906,7 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
 
 ## Phase 17 — Object-storage tiering and interoperability
 
-- **Feature-pass status:** `chronos_tiering` provides an S3-compatible immutable put/stat/range
+- **Feature-pass status:** `chronos_tiering` provides an S3-compatible immutable put/stat/range/delete
   abstraction, a deterministic memory backend, and a production libcurl carrier with SigV4,
   TLS-by-default, conditional immutable PUT, checksum metadata, finite timeouts, and exact bounded
   range responses. Verified idempotent SHA-256 upload precedes a caller's atomic manifest-install
@@ -929,7 +929,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   lack an exact route, revalidates the selected pair and every remote/local image, then unlinks and
   synchronizes with idempotent retry. Cold successors may now omit a route only when a newer base
   Manifest removed that logical part, establishing the metadata transition required by later
-  reader-pinned remote deletion. WAL-local and remote object deletion, other query paths,
+  reader-pinned remote deletion. Memory and S3 backends now expose idempotent exact deletion; S3
+  validates length/SHA-256 with HEAD and conditions DELETE on the observed ETag. The cross-layer
+  remote-reclamation proof, WAL-local deletion, other query paths,
   multipart/retry and credential-refresh ownership, and Arrow/Parquet implementations remain
   deferred; the phase exit gate is not claimed.
 

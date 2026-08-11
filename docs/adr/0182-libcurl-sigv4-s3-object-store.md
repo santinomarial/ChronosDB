@@ -55,8 +55,9 @@ libcurl becomes a required exported package dependency. The synchronous `ObjectS
 still ties one caller thread to one HTTP request; higher-level scheduling must keep it off latency-
 sensitive shard owners. Static configuration does not refresh expiring credentials. This first
 production carrier deliberately excludes automatic retries/backoff, multipart upload, redirects,
-remote deletion, proxy policy, and a credential-provider chain. Those require explicit lifecycle
-owners rather than hidden behavior inside one immutable operation.
+proxy policy, and a credential-provider chain. [ADR 0192](0192-exact-conditional-object-deletion.md)
+adds the exact conditional delete primitive, while its invocation still requires a separate
+reader/authority lifecycle owner.
 
 A local S3-compatible HTTP integration test checks TLS-default rejection of plaintext, SigV4 and
 session-token headers, conditional creation, exact retry verification, percent-encoded keys, HEAD

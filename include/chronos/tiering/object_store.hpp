@@ -23,6 +23,13 @@ struct ObjectMetadata {
   friend bool operator==(const ObjectMetadata&, const ObjectMetadata&) = default;
 };
 
+struct ObjectDeletionReport {
+  bool removed{};
+  bool already_absent{};
+
+  friend bool operator==(const ObjectDeletionReport&, const ObjectDeletionReport&) = default;
+};
+
 // S3-compatible semantic boundary. Implementations must make put_if_absent idempotent for one
 // immutable key and must never report success for a different existing body.
 class ObjectStore {
@@ -40,6 +47,11 @@ public:
   [[nodiscard]] virtual common::Result<ObjectMetadata> stat(std::string_view key) const = 0;
   [[nodiscard]] virtual common::Result<std::vector<std::byte>>
   get_range(std::string_view key, std::size_t offset, std::size_t length) const = 0;
+  // Idempotently removes only the exact immutable key/length/SHA-256 identity. A different current
+  // object fails without deletion; an already absent key is successful and reported separately.
+  [[nodiscard]] virtual common::Result<ObjectDeletionReport>
+  remove_if_exact(std::string_view key, std::size_t expected_size,
+                  const ingest::Sha256Digest& expected_checksum) = 0;
 };
 
 // Deterministic reference backend for focused tests and embedded deployments. It follows the same
@@ -59,6 +71,9 @@ public:
   [[nodiscard]] common::Result<ObjectMetadata> stat(std::string_view key) const override;
   [[nodiscard]] common::Result<std::vector<std::byte>>
   get_range(std::string_view key, std::size_t offset, std::size_t length) const override;
+  [[nodiscard]] common::Result<ObjectDeletionReport>
+  remove_if_exact(std::string_view key, std::size_t expected_size,
+                  const ingest::Sha256Digest& expected_checksum) override;
   [[nodiscard]] std::size_t object_count() const noexcept;
 
 private:
@@ -107,6 +122,9 @@ public:
   [[nodiscard]] common::Result<ObjectMetadata> stat(std::string_view key) const override;
   [[nodiscard]] common::Result<std::vector<std::byte>>
   get_range(std::string_view key, std::size_t offset, std::size_t length) const override;
+  [[nodiscard]] common::Result<ObjectDeletionReport>
+  remove_if_exact(std::string_view key, std::size_t expected_size,
+                  const ingest::Sha256Digest& expected_checksum) override;
 
 private:
   class Impl;

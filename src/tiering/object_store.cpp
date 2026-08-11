@@ -155,8 +155,10 @@ struct ResponseCapture {
   std::size_t maximum_body_bytes{};
   std::optional<std::string> checksum_hex;
   std::optional<std::string> content_range;
+  std::optional<std::string> entity_tag;
   bool checksum_conflict{};
   bool content_range_conflict{};
+  bool entity_tag_conflict{};
   bool body_limit_exhausted{};
 };
 
@@ -213,6 +215,7 @@ struct ResponseCapture {
   };
   constexpr std::string_view checksum_name{"x-amz-meta-chronos-sha256:"};
   constexpr std::string_view content_range_name{"content-range:"};
+  constexpr std::string_view entity_tag_name{"etag:"};
   try {
     if (matches_name(checksum_name)) {
       const std::string value{trim_header_value(line.substr(checksum_name.size()))};
@@ -226,6 +229,12 @@ struct ResponseCapture {
         capture.content_range_conflict = true;
       else
         capture.content_range = value;
+    } else if (matches_name(entity_tag_name)) {
+      const std::string value{trim_header_value(line.substr(entity_tag_name.size()))};
+      if (capture.entity_tag.has_value())
+        capture.entity_tag_conflict = true;
+      else
+        capture.entity_tag = value;
     }
   } catch (...) {
     return 0U;
@@ -378,9 +387,27 @@ std::size_t MemoryObjectStore::object_count() const noexcept {
   return impl_->objects.size();
 }
 
+common::Result<ObjectDeletionReport>
+MemoryObjectStore::remove_if_exact(const std::string_view key, const std::size_t expected_size,
+                                   const ingest::Sha256Digest& expected_checksum) {
+  if (key.empty())
+    return common::make_unexpected(invalid("object key must be nonempty"));
+  std::scoped_lock lock{impl_->mutex};
+  const auto found = impl_->objects.find(key);
+  if (found == impl_->objects.end())
+    return ObjectDeletionReport{.already_absent = true};
+  if (found->second.bytes.size() != expected_size || found->second.checksum != expected_checksum) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kAlreadyExists,
+                       "object key does not contain the expected immutable content"});
+  }
+  impl_->objects.erase(found);
+  return ObjectDeletionReport{.removed = true};
+}
+
 class S3ObjectStore::Impl {
 public:
-  enum class Method : std::uint8_t { kPut, kHead, kGetRange };
+  enum class Method : std::uint8_t { kPut, kHead, kGetRange, kDelete };
 
   struct Request {
     Method method{};
@@ -390,6 +417,7 @@ public:
     std::size_t range_offset{};
     std::size_t range_length{};
     std::size_t maximum_body_bytes{};
+    std::string_view match_validator;
   };
 
   struct Response {
@@ -493,6 +521,8 @@ public:
                        std::to_string(request.range_offset + request.range_length - 1U);
         configured = append_header(headers, range_header);
       }
+      if (configured.is_ok() && request.method == Method::kDelete)
+        configured = append_header(headers, "If-Match: " + std::string{request.match_validator});
       if (!configured.is_ok())
         return common::make_unexpected(configured);
       if (headers)
@@ -511,6 +541,8 @@ public:
               set(CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(request.upload.size()));
         }
       }
+      if (configured.is_ok() && request.method == Method::kDelete)
+        configured = set(CURLOPT_CUSTOMREQUEST, "DELETE");
       if (!configured.is_ok())
         return common::make_unexpected(configured);
 
@@ -525,7 +557,8 @@ public:
         return common::make_unexpected(
             common::Status{common::StatusCode::kIoError, "S3 response metadata is unavailable"});
       }
-      if (response.capture.checksum_conflict || response.capture.content_range_conflict) {
+      if (response.capture.checksum_conflict || response.capture.content_range_conflict ||
+          response.capture.entity_tag_conflict) {
         return common::make_unexpected(
             common::Status{common::StatusCode::kCorruption, "S3 response metadata conflicts"});
       }
@@ -691,6 +724,54 @@ common::Result<std::vector<std::byte>> S3ObjectStore::get_range(const std::strin
         common::Status{common::StatusCode::kCorruption, "S3 range response length differs"});
   }
   return std::move(response->capture.body);
+}
+
+common::Result<ObjectDeletionReport>
+S3ObjectStore::remove_if_exact(const std::string_view key, const std::size_t expected_size,
+                               const ingest::Sha256Digest& expected_checksum) {
+  if (key.empty() || key.size() > 1024U || contains_control(key))
+    return common::make_unexpected(invalid("S3 object key is invalid"));
+  auto head = impl_->perform(
+      {.method = Impl::Method::kHead, .key = key, .maximum_body_bytes = 64U * 1024U});
+  if (!head.has_value())
+    return common::make_unexpected(head.error());
+  if (head->status == 404L)
+    return ObjectDeletionReport{.already_absent = true};
+  if (head->status != 200L)
+    return common::make_unexpected(http_failure(head->status));
+  if (head->content_length < 0 ||
+      static_cast<std::uintmax_t>(head->content_length) > std::numeric_limits<std::size_t>::max() ||
+      !head->capture.checksum_hex.has_value() || !head->capture.entity_tag.has_value() ||
+      head->capture.entity_tag->empty() || head->capture.entity_tag->size() > 1024U ||
+      contains_control(*head->capture.entity_tag)) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kCorruption,
+                       "S3 object deletion metadata is incomplete or unaddressable"});
+  }
+  auto checksum = parse_digest_hex(*head->capture.checksum_hex);
+  if (!checksum.has_value())
+    return common::make_unexpected(checksum.error());
+  if (static_cast<std::size_t>(head->content_length) != expected_size ||
+      *checksum != expected_checksum) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kAlreadyExists,
+                       "S3 key does not contain the expected immutable content"});
+  }
+  auto removed = impl_->perform({.method = Impl::Method::kDelete,
+                                 .key = key,
+                                 .maximum_body_bytes = 64U * 1024U,
+                                 .match_validator = *head->capture.entity_tag});
+  if (!removed.has_value())
+    return common::make_unexpected(removed.error());
+  if (removed->status == 404L)
+    return ObjectDeletionReport{.already_absent = true};
+  if (removed->status == 412L) {
+    return common::make_unexpected(common::Status{common::StatusCode::kAlreadyExists,
+                                                  "S3 object changed before conditional deletion"});
+  }
+  if (removed->status != 200L && removed->status != 204L)
+    return common::make_unexpected(http_failure(removed->status));
+  return ObjectDeletionReport{.removed = true};
 }
 
 } // namespace chronos::tiering

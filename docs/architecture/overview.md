@@ -378,7 +378,8 @@ rebalancing must preserve identities, resume positions, and retention pins.
 
 Local storage remains the initial source of truth. The implemented logical tiering coordinator moves
 eligible immutable identities through verified idempotent object upload, a caller-owned atomic
-manifest-install callback, bounded content caching, and range reads. Object-store listings are not
+manifest-install callback, bounded content caching, range reads, and exact conditional deletion.
+Object-store listings are not
 metadata truth. Manifest v1 has no cold-location fields, so production manifest persistence, safe
 local/remote deletion, crash recovery, encryption, and Arrow/Parquet exports remain deferred. The
 production object carrier now uses libcurl SigV4 with TLS-by-default, conditional immutable PUT,

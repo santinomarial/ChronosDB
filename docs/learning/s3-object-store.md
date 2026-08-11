@@ -4,8 +4,8 @@
 
 `ObjectStore` is ChronosDB's provider-neutral immutable-object boundary. `S3ObjectStore` supplies
 the production HTTP implementation; `MemoryObjectStore` remains a deterministic reference backend
-and does not claim remote durability. The API intentionally contains only conditional upload,
-authoritative per-key metadata, and exact range read. It has no listing operation because an
+and does not claim remote durability. The API contains conditional upload, authoritative per-key
+metadata, exact range read, and exact conditional deletion. It has no listing operation because an
 eventually consistent or incomplete bucket listing must never determine query-visible state.
 
 `S3ObjectStore::create` owns its configuration and credentials. `put_if_absent` borrows upload
@@ -40,8 +40,9 @@ bound. Every operation currently creates one easy handle and is synchronous; con
 the libcurl multi interface, multipart upload, retries/backoff, and rotating credential providers
 are deferred until their ownership and cancellation contracts are defined.
 
-Operators should grant only `PutObject`, `HeadObject`/`GetObject`, and ranged `GetObject` access for
-the configured prefix, enforce TLS, keep conditional-write bucket policy compatible with
+Operators should grant only `PutObject`, `HeadObject`/`GetObject`, ranged `GetObject`, and
+conditional `DeleteObject` access for the configured prefix, enforce TLS, keep bucket policy
+compatible with
 `If-None-Match`, and rotate credentials outside the current store lifetime. Cold Location Manifest
 v1 records the object key, store identity, and exact Manifest v2 part SHA-256; its durable
 installation/publication path is still separate work. Bucket listings and ETags are not a
@@ -58,8 +59,9 @@ ordered part index in `O(base parts log base parts)` time and checks locations i
 `O(cold parts log base parts)` time with `O(base parts)` temporary pointers.
 
 The codec is not a deletion receipt. Production publication must acquire a compatible Manifest-v2/
-cold pair, and local reclamation must wait for every older reader pin. Remote deletion needs a
-separate proof that no retained logical or cold generation references the object.
+cold pair, and local reclamation must wait for every older reader pin. The object backend can now
+delete only after exact length/SHA-256 verification and, for S3, an ETag `If-Match`; invocation still
+needs a separate proof that no retained logical or cold generation references the object.
 
 Likely review questions include why conditional PUT precedes HEAD, why ETag is insufficient, why
 redirects are disabled, what verifies a range, and why the memory backend is not a durability
