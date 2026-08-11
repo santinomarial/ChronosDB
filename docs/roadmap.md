@@ -869,9 +869,12 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   backoff from terminal coordinator failure. A maintained outbound OpenSSL client context now
   requires client credentials plus exact DNS or IP server-certificate identity and creates
   nonblocking mutually authenticated sessions through the same verified-fingerprint boundary.
-  Distributed-query socket/TLS readiness integration, deadlines,
-  cross-node generation refresh/rebinding, general vector-plan fragments/exchanges, complete leader
-  transport, and multi-node failure validation remain deferred; the
+  One outbound query-attempt carrier now authorizes that verified server principal for the exact
+  target before request bytes, owns TLS readiness and bounded response framing, and applies sticky
+  handshake/exchange deadlines without duplicating sender retry policy. Inbound distributed-query
+  socket serving, connection establishment, cross-node generation refresh/rebinding, general
+  vector-plan fragments/exchanges, complete leader transport, and multi-node failure validation
+  remain deferred; the
   phase exit gate is not claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.

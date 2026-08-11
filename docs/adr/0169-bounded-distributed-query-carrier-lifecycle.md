@@ -53,6 +53,10 @@ exhaustion, and successful result retention.
 Socket/TLS connection admission, readiness registration, deadlines, cancellation delivery, and
 multi-node fault simulation remain separate integration work.
 
+ADR 0173 subsequently supplies the outbound single-attempt TLS readiness and deadline owner while
+leaving inbound serving, connection establishment, cancellation, and multi-node simulation
+separate.
+
 Invariants 6, 10, 11, 14, 15, and 18 apply.
 
 ## Migration and rollback
@@ -66,3 +70,4 @@ write ownership, exact correlation, finite retries, and explicit authority rebin
 - [Distributed Query Transport v1](../formats/distributed-query-transport-v1.md)
 - [Bounded distributed exchange partial I/O](0162-bounded-distributed-exchange-partial-io.md)
 - [Authenticated distributed query transport](0168-authenticated-distributed-query-transport.md)
+- [Bounded outbound distributed-query TLS carrier](0173-bounded-outbound-distributed-query-tls-carrier.md)

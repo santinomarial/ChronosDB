@@ -207,3 +207,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0170](0170-compatible-multi-tablet-manifest-snapshot-binding.md) | Compatible multi-tablet Manifest snapshot binding | accepted |
 | [0171](0171-fail-closed-distributed-query-execution-owner.md) | Fail-closed distributed query execution owner | accepted |
 | [0172](0172-maintained-mutual-tls-client-socket.md) | Maintained mutual-TLS client socket | accepted |
+| [0173](0173-bounded-outbound-distributed-query-tls-carrier.md) | Bounded outbound distributed-query TLS carrier | accepted |

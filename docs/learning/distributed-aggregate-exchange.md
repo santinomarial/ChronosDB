@@ -79,6 +79,9 @@ exponential backoff.
 each successful terminal exchange to the coordinator once, ignores nonterminal backoff for merge
 purposes, and reports only terminal sender failure. Coordinator `finish` therefore remains the sole
 complete-result boundary.
+`DistributedQueryTlsClient` owns one sender attempt's maintained TLS readiness, authenticates the
+server certificate principal for the immutable target before writing, applies exact handshake and
+exchange deadlines, and retains one fixed-bound canonical response for sender correlation.
 
 ## Tradeoffs and deferred work
 
@@ -87,8 +90,8 @@ prematurely defining a general physical-fragment language. The cost is a special
 type. Grouping state, physical plans, ordering/top-N, cancellation delivery, and general duplicate
 sequencing require their own bounded contracts. A leader hint never
 mutates an existing proof-bound dispatch: following it requires explicit coordinator rebinding.
-Socket/TLS readiness, connection deadlines, cancellation delivery, and multi-node fault handling
-remain embedding work.
+Inbound socket/TLS serving, connection establishment, cancellation delivery, and multi-node fault
+handling remain embedding work.
 
 ## Verification and review questions
 

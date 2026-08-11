@@ -559,6 +559,7 @@ chronos_enable_static_analysis(chronos_raft)
 add_library(
   chronos_cluster
   src/cluster/distributed_query_execution.cpp
+  src/cluster/distributed_query_tls_client.cpp
   src/cluster/distributed_query_transport.cpp
   src/cluster/remote_tablet_reconfiguration.cpp
   src/cluster/tablet_physical_part_install.cpp
@@ -862,6 +863,8 @@ if(CHRONOS_BUILD_TESTS)
     chronos_cluster_tests
     tests/cluster/distributed_query_execution_header_self_contained.cpp
     tests/cluster/distributed_query_execution_test.cpp
+    tests/cluster/distributed_query_tls_client_header_self_contained.cpp
+    tests/cluster/distributed_query_tls_client_test.cpp
     tests/cluster/distributed_query_transport_header_self_contained.cpp
     tests/cluster/distributed_query_transport_test.cpp
     tests/cluster/remote_tablet_reconfiguration_header_self_contained.cpp
@@ -880,6 +883,10 @@ if(CHRONOS_BUILD_TESTS)
   set_target_properties(chronos_cluster_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_cluster_tests PRIVATE cxx_std_23)
   target_include_directories(chronos_cluster_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+  target_compile_definitions(
+    chronos_cluster_tests
+    PRIVATE CHRONOS_NETWORK_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/network"
+  )
   target_link_libraries(chronos_cluster_tests PRIVATE chronos::cluster GTest::gtest_main)
   chronos_set_project_warnings(chronos_cluster_tests)
   chronos_enable_sanitizers(chronos_cluster_tests)
