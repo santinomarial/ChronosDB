@@ -138,10 +138,12 @@
   aggregate path has canonical snapshot/route/proof/projection/event-filter fragment request bytes
   plus an exact Raft-group-scoped executable dispatch envelope. Runtime binding now exact-matches
   admission, committed placement, destination schema, and one pinned Raft-backed Manifest v2
-  generation before constructing that envelope.
-  General physical pipeline stage/expression serialization, worker execution, socket integration
-  and connection backpressure, grouping-state codecs, reconnect/resend protocol, ordering, top-N,
-  LIMIT, cancellation, durable retries, and broader coordinator/worker failure cleanup remain.
+  generation before constructing that envelope. The first worker path reproves local route,
+  placement, barrier, schema, group, and durable snapshot authority, resolves logical winners from
+  validated generation-pinned temporal parts, and emits a filtered terminal Float64 partial.
+  General physical pipeline stage/expression serialization, socket integration and connection
+  backpressure, grouping-state codecs, reconnect/resend protocol, ordering, top-N, LIMIT,
+  cancellation, durable retries, and broader coordinator/worker failure cleanup remain.
 - Carry the implemented proof-bound leader-linearizable/bounded-stale/local-eventual admissions
   through compatible pinned multi-tablet snapshots, protocol/carrier integration, and leader or
   placement changes during long scans.

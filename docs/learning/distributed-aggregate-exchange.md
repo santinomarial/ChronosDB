@@ -18,6 +18,8 @@ The dispatch envelope adds the distinct Raft group identity that scopes every ad
 workers never execute the bare inner fragment.
 `bind_distributed_aggregate_fragment` constructs that envelope only after one Manifest v2 snapshot,
 committed placement, schema, group, and proof admission exact-match.
+`execute_distributed_aggregate_fragment` repeats local authority checks, resolves temporal winners
+from validated generation-pinned parts, filters event time, and emits one terminal partial state.
 
 ## Data, ownership, and invariants
 
@@ -55,6 +57,8 @@ Coordinator sequence lookup is `O(1)` within one tablet, retained memory is `O(a
 under a 65,536-message hard ceiling, and final merge is `O(planned tablets)`.
 Fragment encoding/decoding is `O(projected columns)` with a 4,096-column and 16,604-byte hard cap.
 Binding is `O(replicas + tablets + projected columns)` and allocates only the owned projection.
+Worker authority checks precede I/O. Current execution inherits the bounded temporal resolver's
+decode and winner-selection costs, then scans visible logical rows once for filtering/aggregation.
 
 ## Tradeoffs and deferred work
 

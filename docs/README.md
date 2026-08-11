@@ -81,6 +81,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   group-scoped executable envelope around one exact aggregate fragment request.
   Runtime construction binds admission, committed placement, schema, and one exact Raft-backed
   Manifest v2 snapshot before these bytes can be emitted.
+  Worker execution reproves local authority, loads generation-pinned validated temporal parts, and
+  resolves logical winners before producing one terminal partial aggregate.
 - [Resume Token v1](formats/resume-token-v1.md): authenticated live-subscription resume identity,
   compatibility, limits, and rejection rules.
 - [Materialized View Checkpoint v1](formats/materialized-view-checkpoint-v1.md): bounded exact

@@ -201,3 +201,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0164](0164-snapshot-bound-distributed-aggregate-fragment-v1.md) | Snapshot-bound distributed aggregate fragment v1 | accepted |
 | [0165](0165-group-scoped-distributed-fragment-dispatch.md) | Group-scoped distributed fragment dispatch | accepted |
 | [0166](0166-authority-bound-distributed-fragment-construction.md) | Authority-bound distributed fragment construction | accepted |
+| [0167](0167-proof-revalidated-distributed-aggregate-worker.md) | Proof-revalidated distributed aggregate worker | accepted |

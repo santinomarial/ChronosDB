@@ -353,6 +353,134 @@ make_valid_temporal_part(const PageCompression compression = PageCompression::kN
       .value();
 }
 
+[[nodiscard]] inline EncodedCsegPart
+make_valid_temporal_float64_part(const PageCompression compression = PageCompression::kNone,
+                                 const TemporalPartFixtureOptions options = {}) {
+  constexpr std::uint32_t kRows = 2U;
+  const schema::LogicalType timestamp = type(schema::LogicalTypeKind::kTimestampNs);
+  const schema::LogicalType float64 = type(schema::LogicalTypeKind::kFloat64);
+  const schema::LogicalType uuid = type(schema::LogicalTypeKind::kUuid);
+  const schema::LogicalType uint64 = type(schema::LogicalTypeKind::kUInt64);
+  const schema::LogicalType uint32 = type(schema::LogicalTypeKind::kUInt32);
+  const schema::LogicalType uint8 = type(schema::LogicalTypeKind::kUInt8);
+  const schema::LogicalType binary = type(schema::LogicalTypeKind::kBinary);
+  const std::vector<CsegColumnDescriptor> columns{{.column_id = identifier<schema::ColumnId>(5U),
+                                                   .storage_kind = StorageKind::kUser,
+                                                   .logical_type = timestamp,
+                                                   .nullable = false,
+                                                   .event_time = true,
+                                                   .schema_ordinal = 0U,
+                                                   .ordering_ordinal = 0U},
+                                                  {.column_id = identifier<schema::ColumnId>(6U),
+                                                   .storage_kind = StorageKind::kUser,
+                                                   .logical_type = float64,
+                                                   .nullable = false,
+                                                   .event_time = false,
+                                                   .schema_ordinal = 1U,
+                                                   .ordering_ordinal = std::nullopt},
+                                                  {.column_id = std::nullopt,
+                                                   .storage_kind = StorageKind::kCommitSource,
+                                                   .logical_type = uint8,
+                                                   .nullable = false},
+                                                  {.column_id = std::nullopt,
+                                                   .storage_kind = StorageKind::kSourceId,
+                                                   .logical_type = uuid,
+                                                   .nullable = false},
+                                                  {.column_id = std::nullopt,
+                                                   .storage_kind = StorageKind::kCommitPosition,
+                                                   .logical_type = uint64,
+                                                   .nullable = false},
+                                                  {.column_id = std::nullopt,
+                                                   .storage_kind = StorageKind::kTemporalRowOrdinal,
+                                                   .logical_type = uint32,
+                                                   .nullable = false},
+                                                  {.column_id = std::nullopt,
+                                                   .storage_kind = StorageKind::kTemporalOperation,
+                                                   .logical_type = uint8,
+                                                   .nullable = false},
+                                                  {.column_id = std::nullopt,
+                                                   .storage_kind = StorageKind::kLogicalIdentity,
+                                                   .logical_type = binary,
+                                                   .nullable = false},
+                                                  {.column_id = std::nullopt,
+                                                   .storage_kind = StorageKind::kReceiveTime,
+                                                   .logical_type = timestamp,
+                                                   .nullable = false},
+                                                  {.column_id = std::nullopt,
+                                                   .storage_kind = StorageKind::kSystemCommitTime,
+                                                   .logical_type = timestamp,
+                                                   .nullable = false}};
+
+  std::vector<std::byte> event_times;
+  append_little_endian(event_times, std::int64_t{10});
+  append_little_endian(event_times, std::int64_t{20});
+  std::vector<std::byte> values;
+  append_little_endian(values, std::bit_cast<std::uint64_t>(1.5));
+  append_little_endian(values, std::bit_cast<std::uint64_t>(2.5));
+  const std::vector<std::byte> sources(kRows,
+                                       std::byte{static_cast<std::uint8_t>(options.commit_source)});
+  const common::Uuid::Bytes source = options.source_id.bytes();
+  std::vector<std::byte> source_ids;
+  source_ids.insert(source_ids.end(), source.begin(), source.end());
+  source_ids.insert(source_ids.end(), source.begin(), source.end());
+  std::vector<std::byte> positions;
+  append_little_endian(positions, std::uint64_t{7U});
+  append_little_endian(positions, std::uint64_t{10U});
+  std::vector<std::byte> ordinals;
+  append_little_endian(ordinals, std::uint32_t{0U});
+  append_little_endian(ordinals, std::uint32_t{0U});
+  const std::vector<std::byte> operations(
+      kRows, std::byte{static_cast<std::uint8_t>(temporal_format::Operation::kOriginal)});
+  std::vector<std::byte> identity_offsets;
+  append_little_endian(identity_offsets, std::uint32_t{0U});
+  append_little_endian(identity_offsets, std::uint32_t{1U});
+  append_little_endian(identity_offsets, std::uint32_t{2U});
+  const std::vector<std::byte> identities{std::byte{'a'}, std::byte{'b'}};
+  std::vector<std::byte> receive_times;
+  append_little_endian(receive_times, std::int64_t{100});
+  append_little_endian(receive_times, std::int64_t{101});
+  std::vector<std::byte> system_times;
+  append_little_endian(system_times, std::int64_t{200});
+  append_little_endian(system_times, std::int64_t{201});
+  const auto encode_page = [&](const schema::LogicalType logical_type,
+                               const common::ByteView offsets, const common::ByteView data) {
+    const auto physical = columnar::PhysicalColumnView::create(
+        {.type = logical_type, .nullable = false, .row_count = kRows, .null_count = 0U},
+        {.validity = {}, .offsets = offsets, .values = data});
+    return encode_cseg_v1_page(*physical, compression).value();
+  };
+  std::vector<EncodedCsegPage> pages;
+  pages.push_back(encode_page(timestamp, {}, event_times));
+  pages.push_back(encode_page(float64, {}, values));
+  pages.push_back(encode_page(uint8, {}, sources));
+  pages.push_back(encode_page(uuid, {}, source_ids));
+  pages.push_back(encode_page(uint64, {}, positions));
+  pages.push_back(encode_page(uint32, {}, ordinals));
+  pages.push_back(encode_page(uint8, {}, operations));
+  pages.push_back(encode_page(binary, identity_offsets, identities));
+  pages.push_back(encode_page(timestamp, {}, receive_times));
+  pages.push_back(encode_page(timestamp, {}, system_times));
+  const std::vector<CsegGranuleDescriptor> granules{{.first_row = 0U,
+                                                     .row_count = kRows,
+                                                     .first_page_index = 0U,
+                                                     .minimum_event_time = 10,
+                                                     .maximum_event_time = 20}};
+  return encode_cseg_v2_temporal_part({.part_id = identifier<PartId>(1U),
+                                       .table_id = identifier<schema::TableId>(2U),
+                                       .tablet_id = identifier<schema::TabletId>(3U),
+                                       .schema_id = identifier<schema::SchemaId>(4U),
+                                       .schema_version = schema::SchemaVersion::initial(),
+                                       .row_count = kRows,
+                                       .event_time_column_ordinal = 0U,
+                                       .ordering_column_count = 1U,
+                                       .minimum_event_time = 10,
+                                       .maximum_event_time = 20,
+                                       .columns = columns,
+                                       .granules = granules,
+                                       .pages = pages})
+      .value();
+}
+
 } // namespace chronos::cseg::test
 
 #endif // CHRONOS_TESTS_CSEG_CSEG_TEST_FIXTURE_HPP_
