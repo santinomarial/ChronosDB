@@ -876,9 +876,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   once, and owns the correlated response through all TLS short writes. Move-only nonblocking IPv4
   listener/connector owners now supply close-on-exec, `TCP_NODELAY`, exact endpoints, explicit
   connect completion, single-accept admission, and descriptor lifetime for those carriers. A
-  bounded multi-connection readiness owner, cross-node generation refresh/rebinding, general
-  vector-plan fragments/exchanges, complete leader transport, and multi-node failure validation
-  remain deferred; the
+  dedicated TCP server now owns a fixed-capacity connection/poll table, finite accepts per poll,
+  deadline driving, stable carrier-before-descriptor teardown, explicit overload, and real
+  end-to-end mutual-TLS query serving. Outbound multi-attempt connection scheduling, cross-node
+  generation refresh/rebinding, general vector-plan fragments/exchanges, complete leader transport,
+  and multi-node failure validation remain deferred; the
   phase exit gate is not claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.

@@ -85,6 +85,9 @@ exchange deadlines, and retains one fixed-bound canonical response for sender co
 `DistributedQueryTlsServer` symmetrically authenticates the client certificate before reading one
 fixed-bound request, invokes the authenticated receiver once, and owns the sole response through
 all TLS short writes under the same deadline model.
+`DistributedQueryTcpServer` owns the dedicated listener, long-lived TLS context, fixed-capacity poll
+storage, bounded stable connection records, deadline driving, metrics, and carrier-before-descriptor
+shutdown order for real multi-connection serving.
 
 ## Tradeoffs and deferred work
 
@@ -93,8 +96,8 @@ prematurely defining a general physical-fragment language. The cost is a special
 type. Grouping state, physical plans, ordering/top-N, cancellation delivery, and general duplicate
 sequencing require their own bounded contracts. A leader hint never
 mutates an existing proof-bound dispatch: following it requires explicit coordinator rebinding.
-Connection establishment/listener admission, cancellation delivery, pooled multiplexing, and
-multi-node fault handling remain embedding work.
+Outbound connection scheduling, cancellation delivery, pooled multiplexing, asynchronous worker
+completion, and multi-node fault handling remain embedding work.
 
 ## Verification and review questions
 

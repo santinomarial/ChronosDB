@@ -55,6 +55,10 @@ Listener/connector ownership, descriptor admission caps, cancellation frames, mu
 connections, asynchronous worker completion, leader hints, and multi-node fault simulation remain
 separate work.
 
+ADRs 0175 and 0176 subsequently provide descriptor ownership plus a bounded multi-connection TCP
+listener/readiness owner. Outbound connection scheduling, cancellation, pooling, asynchronous
+workers, and multi-node simulation remain separate.
+
 Invariants 5, 6, 10, 11, 14, 15, and 18 apply.
 
 ## Alternatives considered
@@ -84,3 +88,4 @@ embedding without changing existing codecs or receivers.
 - [Bounded outbound distributed-query TLS carrier](0173-bounded-outbound-distributed-query-tls-carrier.md)
 - [Distributed Query Transport v1](../formats/distributed-query-transport-v1.md)
 - [Distributed aggregate exchange](../learning/distributed-aggregate-exchange.md)
+- [Bounded distributed-query TCP server](0176-bounded-distributed-query-tcp-server.md)

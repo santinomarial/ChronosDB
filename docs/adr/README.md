@@ -210,3 +210,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0173](0173-bounded-outbound-distributed-query-tls-carrier.md) | Bounded outbound distributed-query TLS carrier | accepted |
 | [0174](0174-bounded-inbound-distributed-query-tls-carrier.md) | Bounded inbound distributed-query TLS carrier | accepted |
 | [0175](0175-nonblocking-ipv4-tcp-descriptor-ownership.md) | Nonblocking IPv4 TCP descriptor ownership | accepted |
+| [0176](0176-bounded-distributed-query-tcp-server.md) | Bounded distributed-query TCP server | accepted |

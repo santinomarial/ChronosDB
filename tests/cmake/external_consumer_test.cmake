@@ -49,6 +49,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/cluster/distributed_query_execution.hpp>
 #include <chronos/cluster/distributed_query_tls_client.hpp>
 #include <chronos/cluster/distributed_query_tls_server.hpp>
+#include <chronos/cluster/distributed_query_tcp_server.hpp>
 #include <chronos/cseg/compression.hpp>
 #include <chronos/cseg/format.hpp>
 #include <chronos/cseg/inspection.hpp>
@@ -167,6 +168,8 @@ int main() {
       &chronos::cluster::DistributedQueryTlsClient::create;
   const auto create_distributed_query_tls_server =
       &chronos::cluster::DistributedQueryTlsServer::create;
+  const auto start_distributed_query_tcp_server =
+      &chronos::cluster::DistributedQueryTcpServer::start;
   const auto bind_compatible_distributed_snapshot =
       &chronos::query::bind_compatible_distributed_aggregate_snapshot;
   const auto create_tls_client_context = &chronos::network::TlsClientContext::create;
@@ -182,6 +185,7 @@ int main() {
   (void)create_distributed_query_execution;
   (void)create_distributed_query_tls_client;
   (void)create_distributed_query_tls_server;
+  (void)start_distributed_query_tcp_server;
   (void)bind_compatible_distributed_snapshot;
   (void)create_tls_client_context;
   (void)connect_tls_socket;
