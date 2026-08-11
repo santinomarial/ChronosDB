@@ -7,6 +7,7 @@
 #include <array>
 #include <compare>
 #include <cstddef>
+#include <memory>
 #include <span>
 
 namespace chronos::ingest {
@@ -26,6 +27,28 @@ public:
 
 private:
   Bytes bytes_;
+};
+
+// Move-only incremental SHA-256 owner for files and other inputs that cannot be retained as one
+// fragment set. The OpenSSL provider state is private. update() borrows bytes only for the call;
+// finish() consumes the state and may be called exactly once.
+class Sha256Hasher {
+public:
+  Sha256Hasher() = delete;
+  ~Sha256Hasher();
+  Sha256Hasher(const Sha256Hasher&) = delete;
+  Sha256Hasher& operator=(const Sha256Hasher&) = delete;
+  Sha256Hasher(Sha256Hasher&&) noexcept;
+  Sha256Hasher& operator=(Sha256Hasher&&) noexcept;
+
+  [[nodiscard]] static common::Result<Sha256Hasher> create();
+  [[nodiscard]] common::Status update(common::ByteView bytes);
+  [[nodiscard]] common::Result<Sha256Digest> finish();
+
+private:
+  class Impl;
+  explicit Sha256Hasher(std::unique_ptr<Impl> implementation) noexcept;
+  std::unique_ptr<Impl> implementation_;
 };
 
 // SHA-256 is provided by the configured OpenSSL 3 provider. Fragments are hashed in order without

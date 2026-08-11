@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <gtest/gtest.h>
+#include <utility>
 
 namespace chronos::ingest {
 namespace {
@@ -39,6 +40,27 @@ TEST(Sha256Test, MatchesPublishedEmptyAndAbcVectorsAndStreamsFragments) {
   const auto streamed = sha256(fragments);
   ASSERT_TRUE(streamed.has_value());
   EXPECT_EQ(*streamed, *contiguous);
+}
+
+TEST(Sha256Test, IncrementalOwnerMatchesOneShotAndFinalizesExactlyOnce) {
+  const std::array<std::byte, 3U> abc{std::byte{'a'}, std::byte{'b'}, std::byte{'c'}};
+  auto expected = sha256(abc);
+  ASSERT_TRUE(expected.has_value()) << expected.error().to_string();
+
+  auto hasher = Sha256Hasher::create();
+  ASSERT_TRUE(hasher.has_value()) << hasher.error().to_string();
+  EXPECT_TRUE(hasher->update(common::ByteView{abc}.first(1U)).is_ok());
+  EXPECT_TRUE(hasher->update(common::ByteView{}).is_ok());
+  EXPECT_TRUE(hasher->update(common::ByteView{abc}.subspan(1U)).is_ok());
+  auto actual = hasher->finish();
+  ASSERT_TRUE(actual.has_value()) << actual.error().to_string();
+  EXPECT_EQ(*actual, *expected);
+  EXPECT_EQ(hasher->finish().error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(hasher->update(abc).code(), common::StatusCode::kInvalidArgument);
+
+  Sha256Hasher moved = std::move(*hasher);
+  EXPECT_EQ(hasher->update(abc).code(), common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(moved.finish().error().code(), common::StatusCode::kInvalidArgument);
 }
 
 } // namespace
