@@ -924,9 +924,12 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   aggregate worker now invokes that loader only after its complete route, placement, Raft barrier,
   Manifest, tablet, and schema proof gates, and requires the exact aggregate Manifest owner. Pair
   recovery now authenticates Manifest metadata and the exact committed cold generation before fully
-  validating locally absent CSEGs through their remote routes and creating publication state. Other
-  query paths, safe deletion, multipart/retry and credential-refresh ownership, and Arrow/Parquet
-  implementations remain deferred; the phase exit gate is not claimed.
+  validating locally absent CSEGs through their remote routes and creating publication state.
+  Reader-pinned reclamation for Raft-owned parts now waits only for historical aggregate epochs that
+  lack an exact route, revalidates the selected pair and every remote/local image, then unlinks and
+  synchronizes with idempotent retry. WAL-local and remote deletion, other query paths,
+  multipart/retry and credential-refresh ownership, and Arrow/Parquet implementations remain
+  deferred; the phase exit gate is not claimed.
 
 - **Scope:** immutable-part upload/install/cache/eviction; remote integrity and retry; authoritative manifest references; safe remote deletion; selected documented import/export or ecosystem formats.
 - **Explicit non-scope:** treating bucket listings as metadata truth, mutating remote parts in place, claiming object storage has local-disk latency, custom cloud APIs when standard clients suffice, and compatibility claims without fixtures.

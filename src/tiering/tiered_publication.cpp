@@ -2,6 +2,7 @@
 
 #include "chronos/manifest/temporal_codec.hpp"
 #include "chronos/manifest/temporal_validation.hpp"
+#include "chronos/tiering/tiered_reclamation.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -82,7 +83,7 @@ class TieredDatabaseStoragePublisherImpl {
 public:
   explicit TieredDatabaseStoragePublisherImpl(
       std::shared_ptr<const TieredDatabaseStorageEpoch> epoch)
-      : epoch_(std::move(epoch)) {}
+      : epoch_(std::move(epoch)), published_epochs_{epoch_} {}
 
   [[nodiscard]] common::Result<TieredDatabaseStorageSnapshot> snapshot() const {
     if (failed_.load(std::memory_order_acquire))
@@ -158,6 +159,8 @@ public:
 
       auto next = std::make_shared<const TieredDatabaseStorageEpoch>(request.manifest_snapshot,
                                                                      request.cold_manifest);
+      std::erase_if(published_epochs_, [](const auto& weak) { return weak.expired(); });
+      published_epochs_.push_back(next);
       // All epoch state is fully initialized above. Release publication synchronizes with acquire
       // snapshots; shared ownership keeps the exact old pair alive until its last reader exits.
       std::atomic_store_explicit(&epoch_, next, std::memory_order_release);
@@ -182,8 +185,119 @@ public:
                        : unavailable("tiered storage publisher failed after durable successor");
   }
 
+  [[nodiscard]] common::Result<TieredLocalPartReclamationProof>
+  authorize_local_reclamation(const TieredPairCommitRecord& record,
+                              const std::span<const cseg::PartId> part_ids) const {
+    if (failed_.load(std::memory_order_acquire))
+      return common::make_unexpected(unavailable("tiered storage publisher is failed closed"));
+    if (part_ids.empty())
+      return common::make_unexpected(invalid("tiered local reclamation identities are empty"));
+    for (std::size_t index = 1U; index < part_ids.size(); ++index) {
+      if (!(part_ids[index - 1U] < part_ids[index])) {
+        return common::make_unexpected(
+            invalid("tiered local reclamation identities are not strictly sorted"));
+      }
+    }
+    try {
+      const std::shared_ptr<const TieredDatabaseStorageEpoch> current =
+          std::atomic_load_explicit(&epoch_, std::memory_order_acquire);
+      if (part_ids.size() > current->manifest_snapshot_.parts().size() ||
+          current->cold_manifest_ == nullptr) {
+        return common::make_unexpected(
+            invalid("tiered local reclamation has no complete current cold authority"));
+      }
+      auto manifest_digest = ingest::sha256(current->manifest_snapshot_.manifest_bytes());
+      auto cold_digest = ingest::sha256(current->cold_manifest_->encoded_bytes());
+      if (!manifest_digest.has_value())
+        return common::make_unexpected(manifest_digest.error());
+      if (!cold_digest.has_value())
+        return common::make_unexpected(cold_digest.error());
+      if (record.database_id != current->manifest_snapshot_.database_id() ||
+          record.object_store_id != current->cold_manifest_->manifest().object_store_id() ||
+          record.manifest_generation != current->manifest_snapshot_.generation() ||
+          record.cold_generation != current->cold_manifest_->manifest().generation() ||
+          record.manifest_length != current->manifest_snapshot_.manifest_bytes().size() ||
+          record.cold_length != current->cold_manifest_->encoded_bytes().size() ||
+          record.manifest_sha256 != *manifest_digest || record.cold_sha256 != *cold_digest) {
+        return common::make_unexpected(
+            invalid("tiered local reclamation pair differs from current publication"));
+      }
+
+      std::vector<manifest::TemporalPartDescriptor> parts;
+      parts.reserve(part_ids.size());
+      for (const cseg::PartId& part_id : part_ids) {
+        const auto found = std::ranges::find(current->manifest_snapshot_.parts(), part_id,
+                                             &manifest::TemporalPartDescriptor::part_id);
+        if (found == current->manifest_snapshot_.parts().end()) {
+          return common::make_unexpected(
+              invalid("tiered local reclamation part is not currently Manifest-referenced"));
+        }
+        const auto owner =
+            std::ranges::find(current->manifest_snapshot_.tablets(), found->tablet_id,
+                              &manifest::TemporalTabletDescriptor::tablet_id);
+        if (owner == current->manifest_snapshot_.tablets().end() ||
+            owner->commit_source != manifest::ManifestCommitSource::kRaft) {
+          return common::make_unexpected(
+              invalid("tiered local reclamation currently requires a Raft-owned temporal part"));
+        }
+        const auto locations = current->cold_manifest_->manifest().locations();
+        const auto location =
+            std::ranges::lower_bound(locations, part_id, {}, &ColdPartLocationDescriptor::part_id);
+        if (location == locations.end() || location->part_id != part_id ||
+            location->file_length != found->file_length ||
+            location->content_sha256 != found->content_sha256) {
+          return common::make_unexpected(
+              invalid("tiered local reclamation part has no exact current cold route"));
+        }
+        parts.push_back(*found);
+      }
+
+      std::vector<std::weak_ptr<const TieredDatabaseStorageEpoch>> reader_pins;
+      reader_pins.reserve(published_epochs_.size());
+      for (const auto& weak : published_epochs_) {
+        const std::shared_ptr<const TieredDatabaseStorageEpoch> epoch = weak.lock();
+        if (epoch == nullptr)
+          continue;
+        bool requires_local = false;
+        for (const manifest::TemporalPartDescriptor& candidate : parts) {
+          const auto historical =
+              std::ranges::find(epoch->manifest_snapshot_.parts(), candidate.part_id,
+                                &manifest::TemporalPartDescriptor::part_id);
+          if (historical == epoch->manifest_snapshot_.parts().end())
+            continue;
+          if (*historical != candidate || epoch->cold_manifest_ == nullptr) {
+            requires_local = true;
+            break;
+          }
+          const auto locations = epoch->cold_manifest_->manifest().locations();
+          const auto location = std::ranges::lower_bound(locations, candidate.part_id, {},
+                                                         &ColdPartLocationDescriptor::part_id);
+          if (location == locations.end() || location->part_id != candidate.part_id ||
+              location->file_length != candidate.file_length ||
+              location->content_sha256 != candidate.content_sha256) {
+            requires_local = true;
+            break;
+          }
+        }
+        if (requires_local)
+          reader_pins.push_back(weak);
+      }
+      return TieredLocalPartReclamationProof{record, TieredDatabaseStorageSnapshot{current},
+                                             std::move(parts), std::move(reader_pins)};
+    } catch (const std::bad_alloc&) {
+      return common::make_unexpected(
+          exhausted("tiered local reclamation authorization allocation failed"));
+    } catch (const std::length_error&) {
+      return common::make_unexpected(
+          exhausted("tiered local reclamation authorization exceeded limits"));
+    }
+  }
+
 private:
   std::shared_ptr<const TieredDatabaseStorageEpoch> epoch_;
+  // Single-writer history. Entries are installed before release-publication; weak owners capture
+  // exactly the epochs whose readers may still require local bytes.
+  std::vector<std::weak_ptr<const TieredDatabaseStorageEpoch>> published_epochs_;
   std::atomic<bool> failed_{false};
 };
 
@@ -279,6 +393,15 @@ bool TieredDatabaseStoragePublisher::is_usable() const noexcept {
 common::Status TieredDatabaseStoragePublisher::poison_status() const {
   return impl_ == nullptr ? invalid("tiered storage publisher was moved from")
                           : impl_->poison_status();
+}
+
+common::Result<TieredLocalPartReclamationProof>
+TieredLocalPartReclamationCoordinator::authorize(const TieredDatabaseStoragePublisher& publisher,
+                                                 const TieredPairCommitRecord& committed_pair,
+                                                 const std::span<const cseg::PartId> part_ids) {
+  if (publisher.impl_ == nullptr)
+    return common::make_unexpected(invalid("tiered storage publisher was moved from"));
+  return publisher.impl_->authorize_local_reclamation(committed_pair, part_ids);
 }
 
 } // namespace chronos::tiering

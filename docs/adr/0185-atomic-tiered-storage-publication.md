@@ -35,7 +35,8 @@ inside an epoch is mutated and the primitive does not claim lock-free progress.
 
 This is an in-memory publication boundary. It does not make two directory renames crash-atomic.
 [ADR 0186](0186-durable-tiered-pair-commit.md) now supplies the durable pair-commit/recovery
-protocol and explicit old/new selection. Local CSEG reclamation remains separately authorized.
+protocol and explicit old/new selection. [ADR 0190](0190-reader-pinned-tiered-local-reclamation.md)
+uses the aggregate epoch history to authorize local CSEG reclamation separately.
 
 ## Consequences and validation
 

@@ -141,6 +141,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/tiering/tiered_distributed_fragment_worker.hpp>
 #include <chronos/tiering/tiered_part_loader.hpp>
 #include <chronos/tiering/tiered_publication.hpp>
+#include <chronos/tiering/tiered_reclamation.hpp>
 #include <chronos/tiering/tiered_pair_commit.hpp>
 #include <chronos/network/spsc_queue.hpp>
 #include <chronos/network/messages.hpp>
@@ -207,6 +208,12 @@ int main() {
       &chronos::tiering::load_validated_remote_temporal_part_image;
   const auto execute_tiered_distributed_fragment =
       &chronos::tiering::execute_tiered_distributed_aggregate_fragment;
+  const auto authorize_tiered_local_reclamation =
+      &chronos::tiering::TieredLocalPartReclamationCoordinator::authorize;
+  const auto reclaim_tiered_local_parts =
+      &chronos::tiering::TieredLocalPartReclamationCoordinator::reclaim;
+  const auto load_selected_tiered_pair =
+      &chronos::tiering::TieredPairCommitStorage::load_selected_record;
   const auto reclaim_physical_receipt =
       &chronos::cluster::reclaim_tablet_physical_part_receipt;
   (void)encode_distributed_query_request;
@@ -237,6 +244,9 @@ int main() {
   (void)load_tiered_parts;
   (void)load_remote_temporal_part;
   (void)execute_tiered_distributed_fragment;
+  (void)authorize_tiered_local_reclamation;
+  (void)reclaim_tiered_local_parts;
+  (void)load_selected_tiered_pair;
   const auto build_source_retirement =
       &chronos::manifest::build_raft_tablet_source_retirement_manifest;
   const auto publish_source_retirement =
@@ -833,6 +843,8 @@ int main() {
       &chronos::manifest::ManifestStorage::load_selected_manifest;
   const auto load_temporal_manifest_metadata =
       &chronos::manifest::ManifestStorage::load_temporal_manifest_metadata;
+  const auto reclaim_tiered_temporal_parts =
+      &chronos::manifest::ManifestStorage::reclaim_tiered_local_temporal_parts;
   using LoadSelectedPartImagesFunction =
       chronos::common::Result<std::vector<chronos::manifest::LoadedPartImage>> (
           chronos::manifest::ManifestStorage::*)(
@@ -1038,6 +1050,7 @@ int main() {
                  reclaim_retired_parts != nullptr &&
                  install_manifest != nullptr && manifest_metrics != nullptr &&
                  load_selected_manifest != nullptr && load_temporal_manifest_metadata != nullptr &&
+                 reclaim_tiered_temporal_parts != nullptr &&
                  load_selected_part_images != nullptr &&
                  load_snapshot_part_images != nullptr && snapshot_publication_bytes != nullptr &&
                  flush_sealed_head != nullptr &&

@@ -48,12 +48,19 @@ metadata-loads and hashes the exact pair-selected Manifest, binds the exact comm
 generation, then repeats full Manifest loading with remote validation before creating any
 publishable owner. A metadata-only Manifest value is deliberately not a storage snapshot.
 
-This loader and recovery path still do not make local deletion safe by themselves: reclamation must
-also prove that the remote route is committed and that every older reader pin has expired. The
-distributed aggregate worker supplies one integrated query path: all dispatch/placement/Raft/
+Reader-pinned local reclamation now supplies that missing proof for Raft-owned parts. The aggregate
+publisher tracks weak historical epochs; only an epoch that names a candidate without its own exact
+cold route blocks. After those pins expire, the coordinator reloads the exact pair marker, fully
+validates every remote image, and passes a private capability to ManifestStorage. ManifestStorage
+then rechecks Manifest bytes, exact referenced descriptors, and all present local SHA-256 values
+before unlinking and synchronizing the directory. Retry treats absent files idempotently, while a
+present damaged local image remains a corruption error.
+
+The distributed aggregate worker supplies the integrated query path: all dispatch/placement/Raft/
 Manifest gates run before a synchronous tiered batch loader exposes image views to the unchanged
-temporal resolver. Other query entry points remain local-only. The loader also does not authorize
-remote deletion, multipart upload, cache eviction, or retry policy.
+temporal resolver. WAL-owned startup and other local-only entry points are not eligible for local
+reclamation yet. The loader also does not authorize remote deletion, multipart upload, cache
+eviction, or retry policy.
 
 Likely review questions include why only `NOT_FOUND` permits fallback, why the cold key is not data
 authority, why metadata and a recomputed digest are both checked, why the complete CSEG validator is

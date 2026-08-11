@@ -679,6 +679,24 @@ TieredPairCommitStorage::recover(manifest::ManifestStorage& manifest_storage,
   }
 }
 
+common::Result<std::optional<TieredPairCommitRecord>>
+TieredPairCommitStorage::load_selected_record() const {
+  if (impl_ == nullptr)
+    return common::make_unexpected(invalid("tiered pair commit storage was moved from"));
+  common::Status usable = impl_->usable();
+  if (!usable.is_ok())
+    return common::make_unexpected(std::move(usable));
+  auto generations = impl_->scan();
+  if (!generations.has_value())
+    return common::make_unexpected(generations.error());
+  if (generations->empty())
+    return std::optional<TieredPairCommitRecord>{};
+  auto loaded = impl_->load(generations->back());
+  if (!loaded.has_value())
+    return common::make_unexpected(loaded.error());
+  return std::optional<TieredPairCommitRecord>{std::move(loaded->first)};
+}
+
 bool TieredPairCommitStorage::is_usable() const noexcept {
   return impl_ != nullptr && impl_->poison_.is_ok();
 }

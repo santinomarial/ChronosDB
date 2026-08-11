@@ -30,6 +30,10 @@ namespace chronos::io::detail {
 class PosixSyscalls;
 }
 
+namespace chronos::tiering {
+class TieredLocalPartReclamationCoordinator;
+}
+
 namespace chronos::manifest {
 
 class LoadedManifestGeneration;
@@ -205,6 +209,37 @@ struct PartReclamationMetrics {
   std::uint64_t directory_syncs{};
 
   friend bool operator==(const PartReclamationMetrics&, const PartReclamationMetrics&) = default;
+};
+
+// Unforgeable cross-layer capability constructed only after tiered pair and reader-pin validation.
+// It authorizes physical removal while its exact Manifest generation continues to reference the
+// same immutable descriptors for remote loading.
+class TieredLocalPartReclamationAuthority {
+public:
+  TieredLocalPartReclamationAuthority() = delete;
+  TieredLocalPartReclamationAuthority(const TieredLocalPartReclamationAuthority&) = delete;
+  TieredLocalPartReclamationAuthority&
+  operator=(const TieredLocalPartReclamationAuthority&) = delete;
+  TieredLocalPartReclamationAuthority(TieredLocalPartReclamationAuthority&&) noexcept = default;
+  TieredLocalPartReclamationAuthority&
+  operator=(TieredLocalPartReclamationAuthority&&) noexcept = default;
+
+private:
+  TieredLocalPartReclamationAuthority(
+      std::shared_ptr<const LoadedTemporalManifestGeneration> selected_manifest,
+      std::span<const TemporalPartDescriptor> parts) noexcept;
+
+  std::shared_ptr<const LoadedTemporalManifestGeneration> selected_manifest_;
+  std::span<const TemporalPartDescriptor> parts_;
+
+  friend class ManifestStorage;
+  friend class tiering::TieredLocalPartReclamationCoordinator;
+};
+
+struct TieredLocalPartReclamationRequest {
+  std::reference_wrapper<const TieredLocalPartReclamationAuthority> authority;
+  ManifestDecodeLimits decode_limits;
+  TemporalPartValidationLimits part_validation_limits;
 };
 
 struct ManifestLoadRequest {
@@ -478,6 +513,12 @@ public:
   // exact published length and SHA-256 before the first unlink.
   [[nodiscard]] common::Result<PartReclamationReport>
   reclaim_retired_temporal_parts(const TemporalPartReclamationRequest& request);
+
+  // Physically removes still-referenced local CSEGs only through the tiering-owned capability.
+  // Exact Manifest bytes/descriptors and all present local SHA-256 values are rechecked before the
+  // first unlink; a directory sync is the durable completion boundary.
+  [[nodiscard]] common::Result<PartReclamationReport>
+  reclaim_tiered_local_temporal_parts(const TieredLocalPartReclamationRequest& request);
 
   // Reconstructs an unpinned retirement proof after process restart by finding the unique durable
   // generation pair that exactly rebuilds from the supplied completed movement/final placement.

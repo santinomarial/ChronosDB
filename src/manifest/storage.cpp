@@ -67,6 +67,7 @@ struct FileReadRequest {
   std::uint64_t maximum_length{};
   std::optional<std::uint64_t> exact_length;
   std::string_view description;
+  bool missing_is_not_found{};
 };
 
 [[nodiscard]] common::Result<std::vector<std::byte>>
@@ -75,6 +76,10 @@ read_final_file(const io::PosixDirectory& directory, const FileReadRequest& requ
       directory.open_regular_file(request.name, io::FileOpenMode::kReadOnly);
   if (!file.has_value()) {
     if (file.error().code() == common::StatusCode::kNotFound) {
+      if (request.missing_is_not_found) {
+        return common::make_unexpected(common::Status{
+            common::StatusCode::kNotFound, std::string{request.description}.append(" is missing")});
+      }
       return common::make_unexpected(
           corruption(std::string{request.description}.append(" is missing")));
     }
@@ -434,6 +439,11 @@ std::uint64_t LoadedTemporalManifestMetadata::generation() const noexcept {
 common::ByteView LoadedTemporalManifestMetadata::encoded_bytes() const noexcept {
   return encoded_bytes_;
 }
+
+TieredLocalPartReclamationAuthority::TieredLocalPartReclamationAuthority(
+    std::shared_ptr<const LoadedTemporalManifestGeneration> selected_manifest,
+    const std::span<const TemporalPartDescriptor> parts) noexcept
+    : selected_manifest_(std::move(selected_manifest)), parts_(parts) {}
 
 LoadedPartImage::LoadedPartImage(PartDescriptor descriptor, std::vector<std::byte> bytes) noexcept
     : descriptor_(descriptor), bytes_(std::move(bytes)) {}
@@ -1654,6 +1664,128 @@ ManifestStorage::reclaim_retired_temporal_parts(const TemporalPartReclamationReq
   return report;
 }
 
+common::Result<PartReclamationReport> ManifestStorage::reclaim_tiered_local_temporal_parts(
+    const TieredLocalPartReclamationRequest& request) {
+  if (!implementation_)
+    return common::make_unexpected(invalid("Manifest storage owner was moved from"));
+  Impl& implementation = *implementation_;
+  ++implementation.reclamation_metrics_.attempts;
+  if (implementation.poisoned_) {
+    return implementation.fail_reclamation(
+        common::Status{common::StatusCode::kUnavailable, "Manifest storage owner is poisoned"});
+  }
+
+  const TieredLocalPartReclamationAuthority& authority = request.authority.get();
+  if (authority.selected_manifest_ == nullptr || authority.parts_.empty())
+    return implementation.fail_reclamation(invalid("Tiered local reclamation authority is empty"));
+  const LoadedTemporalManifestGeneration& selected = *authority.selected_manifest_;
+  PartReclamationReport report{.outcome = PartReclamationOutcome::kPending,
+                               .predecessor_generation = selected.generation(),
+                               .candidate_parts =
+                                   static_cast<std::uint64_t>(authority.parts_.size())};
+  for (std::size_t index = 0U; index < authority.parts_.size(); ++index) {
+    const TemporalPartDescriptor& candidate = authority.parts_[index];
+    if (candidate.file_length == 0U ||
+        (index != 0U && !(authority.parts_[index - 1U].part_id < candidate.part_id))) {
+      return implementation.fail_reclamation(
+          invalid("Tiered local reclamation descriptors are not strictly sorted"));
+    }
+  }
+
+  auto snapshot = scan_namespace();
+  if (!snapshot.has_value())
+    return implementation.fail_reclamation(snapshot.error());
+  if (!std::ranges::binary_search(snapshot->generations, selected.generation())) {
+    return implementation.fail_reclamation(
+        invalid("Tiered local reclamation Manifest generation is no longer installed"));
+  }
+  const auto selected_name = manifest_file_name(selected.generation());
+  if (!selected_name.has_value())
+    return implementation.fail_reclamation(selected_name.error());
+  auto current_bytes =
+      read_final_file(implementation.manifests_,
+                      {.name = *selected_name,
+                       .maximum_length = request.decode_limits.max_file_length,
+                       .exact_length = static_cast<std::uint64_t>(selected.encoded_bytes().size()),
+                       .description = "tiered local reclamation Manifest v2 generation"});
+  if (!current_bytes.has_value())
+    return implementation.fail_reclamation(current_bytes.error());
+  if (!std::ranges::equal(*current_bytes, selected.encoded_bytes())) {
+    return implementation.fail_reclamation(
+        corruption("Tiered local reclamation Manifest bytes changed"));
+  }
+  for (const TemporalPartDescriptor& candidate : authority.parts_) {
+    const auto found =
+        std::ranges::find(selected.parts(), candidate.part_id, &TemporalPartDescriptor::part_id);
+    if (found == selected.parts().end() || *found != candidate) {
+      return implementation.fail_reclamation(
+          corruption("Tiered local reclamation descriptor is not exactly Manifest-referenced"));
+    }
+  }
+
+  // Validate every present local image before the first unlink. Missing images make retries
+  // idempotent; any present corruption remains visible and aborts without mutation.
+  for (const TemporalPartDescriptor& candidate : authority.parts_) {
+    if (!std::ranges::binary_search(snapshot->final_parts, candidate.part_id))
+      continue;
+    auto bytes =
+        read_final_file(implementation.parts_,
+                        {.name = part_file_name(candidate.part_id),
+                         .maximum_length = request.part_validation_limits.decode.max_file_length,
+                         .exact_length = candidate.file_length,
+                         .description = "tiered local temporal CSEG part"});
+    if (!bytes.has_value())
+      return implementation.fail_reclamation(bytes.error());
+    auto digest = ingest::sha256(*bytes);
+    if (!digest.has_value())
+      return implementation.fail_reclamation(digest.error());
+    if (*digest != candidate.content_sha256) {
+      return implementation.fail_reclamation(
+          corruption("Tiered local CSEG bytes disagree with their Manifest descriptor"));
+    }
+  }
+
+  bool unlinked = false;
+  for (const TemporalPartDescriptor& candidate : authority.parts_) {
+    if (!std::ranges::binary_search(snapshot->final_parts, candidate.part_id)) {
+      ++report.already_absent_parts;
+      continue;
+    }
+    const common::Status removal =
+        implementation.parts_.remove_file(part_file_name(candidate.part_id));
+    if (!removal.is_ok()) {
+      if (unlinked) {
+        implementation.poisoned_ = true;
+        implementation.poison_status_ =
+            with_context("remove tiered local CSEG after a prior unlink", removal);
+        return implementation.fail_reclamation(implementation.poison_status_);
+      }
+      return implementation.fail_reclamation(
+          with_context("remove tiered local temporal CSEG", removal));
+    }
+    unlinked = true;
+    ++report.removed_parts;
+    saturating_add(report.removed_bytes, candidate.file_length);
+  }
+  if (unlinked) {
+    const common::Status sync = implementation.parts_.sync();
+    if (!sync.is_ok()) {
+      implementation.poisoned_ = true;
+      implementation.poison_status_ =
+          with_context("synchronize parts directory after tiered local reclamation", sync);
+      return implementation.fail_reclamation(implementation.poison_status_);
+    }
+    report.directory_syncs = 1U;
+  }
+  report.outcome = PartReclamationOutcome::kReclaimed;
+  saturating_add(implementation.reclamation_metrics_.reclaimed_parts, report.removed_parts);
+  saturating_add(implementation.reclamation_metrics_.reclaimed_bytes, report.removed_bytes);
+  saturating_add(implementation.reclamation_metrics_.already_absent_parts,
+                 report.already_absent_parts);
+  saturating_add(implementation.reclamation_metrics_.directory_syncs, report.directory_syncs);
+  return report;
+}
+
 common::Result<TemporalRetiredPartSet> ManifestStorage::recover_temporal_source_retirement(
     const TemporalSourceRetirementRecoveryRequest& request) const {
   if (!implementation_) {
@@ -2065,7 +2197,8 @@ common::Result<std::vector<LoadedTemporalPartImage>> ManifestStorage::load_tempo
           implementation_->parts_, {.name = file_name,
                                     .maximum_length = limits.decode.max_file_length,
                                     .exact_length = descriptor->file_length,
-                                    .description = "generation-pinned temporal CSEG part image"});
+                                    .description = "generation-pinned temporal CSEG part image",
+                                    .missing_is_not_found = true});
       if (!bytes.has_value()) {
         return common::make_unexpected(bytes.error());
       }

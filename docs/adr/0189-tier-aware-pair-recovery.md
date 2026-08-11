@@ -42,7 +42,8 @@ present.
 Startup may now reconstruct the exact committed pair after safe local reclamation. Recovery pays a
 second Manifest read and one full remote read/validation for each absent part; this is deliberate
 before publication and does not claim local-disk latency. The metadata-only owner cannot initialize
-`TemporalDatabaseStoragePublisher`.
+`TemporalDatabaseStoragePublisher`. [ADR 0190](0190-reader-pinned-tiered-local-reclamation.md)
+defines the first authorized Raft-part deletion path that relies on this recovery guarantee.
 
 Existing Manifest tests prove unchanged strict local recovery. The tiering integration test commits
 a real Manifest/cold pair, removes its local CSEG, verifies recovery fails without the object store,

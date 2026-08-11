@@ -99,6 +99,11 @@ public:
           const ColdLocationManifestStorage& cold_storage,
           const TieredPairRecoveryRequest& request) const;
 
+  // Returns the highest consecutive, exact-decoded durable pair marker without loading its
+  // components. Reclamation uses this to revalidate aggregate commit authority immediately before
+  // irreversible mutation.
+  [[nodiscard]] common::Result<std::optional<TieredPairCommitRecord>> load_selected_record() const;
+
   [[nodiscard]] bool is_usable() const noexcept;
   [[nodiscard]] common::Status poison_status() const;
 

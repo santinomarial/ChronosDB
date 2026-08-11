@@ -609,6 +609,7 @@ add_library(
   src/tiering/tiered_pair_commit.cpp
   src/tiering/tiered_part_loader.cpp
   src/tiering/tiered_publication.cpp
+  src/tiering/tiered_reclamation.cpp
   src/tiering/tiered_parts.cpp
 )
 add_library(chronos::tiering ALIAS chronos_tiering)
@@ -943,6 +944,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/tiering/tiered_part_loader_test.cpp
     tests/tiering/tiered_publication_header_self_contained.cpp
     tests/tiering/tiered_publication_test.cpp
+    tests/tiering/tiered_reclamation_header_self_contained.cpp
     tests/tiering/tiered_parts_header_self_contained.cpp
     tests/tiering/tiered_parts_test.cpp
   )
