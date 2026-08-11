@@ -1,6 +1,7 @@
 #include "chronos/manifest/storage.hpp"
 
 #include "chronos/common/checked_math.hpp"
+#include "chronos/ingest/sha256.hpp"
 #include "chronos/io/posix_io.hpp"
 #include "chronos/manifest/naming.hpp"
 #include "chronos/manifest/publication.hpp"
@@ -1494,6 +1495,140 @@ ManifestStorage::reclaim_retired_parts(const PartReclamationRequest& request) {
       implementation.poisoned_ = true;
       implementation.poison_status_ =
           with_context("synchronize parts directory after reclamation", sync);
+      return implementation.fail_reclamation(implementation.poison_status_);
+    }
+    report.directory_syncs = 1U;
+  }
+  report.outcome = PartReclamationOutcome::kReclaimed;
+  saturating_add(implementation.reclamation_metrics_.reclaimed_parts, report.removed_parts);
+  saturating_add(implementation.reclamation_metrics_.reclaimed_bytes, report.removed_bytes);
+  saturating_add(implementation.reclamation_metrics_.already_absent_parts,
+                 report.already_absent_parts);
+  saturating_add(implementation.reclamation_metrics_.directory_syncs, report.directory_syncs);
+  return report;
+}
+
+common::Result<PartReclamationReport>
+ManifestStorage::reclaim_retired_temporal_parts(const TemporalPartReclamationRequest& request) {
+  if (!implementation_) {
+    return common::make_unexpected(invalid("Manifest storage owner was moved from"));
+  }
+  Impl& implementation = *implementation_;
+  ++implementation.reclamation_metrics_.attempts;
+  if (implementation.poisoned_) {
+    return implementation.fail_reclamation(
+        common::Status{common::StatusCode::kUnavailable, "Manifest storage owner is poisoned"});
+  }
+
+  const TemporalRetiredPartSet& retirement = request.retirement.get();
+  PartReclamationReport report{
+      .outcome = PartReclamationOutcome::kPending,
+      .predecessor_generation = retirement.predecessor_generation(),
+      .candidate_parts = static_cast<std::uint64_t>(retirement.parts().size()),
+  };
+  if (retirement.is_pinned()) {
+    saturating_add(implementation.reclamation_metrics_.pending, 1U);
+    return report;
+  }
+
+  const LoadedTemporalManifestGeneration& selected = request.selected_manifest.get();
+  if (retirement.predecessor_generation() >= selected.generation()) {
+    return implementation.fail_reclamation(
+        invalid("Temporal part retirement predecessor is not older than the selected Manifest"));
+  }
+  for (std::size_t index = 0U; index < retirement.parts().size(); ++index) {
+    const TemporalPartDescriptor& candidate = retirement.parts()[index];
+    if (candidate.file_length == 0U ||
+        (index != 0U && !(retirement.parts()[index - 1U].part_id < candidate.part_id))) {
+      return implementation.fail_reclamation(
+          invalid("Temporal part retirement descriptors are not nonempty and strictly sorted"));
+    }
+  }
+
+  common::Result<ManifestNamespaceSnapshot> snapshot = scan_namespace();
+  if (!snapshot.has_value()) {
+    return implementation.fail_reclamation(snapshot.error());
+  }
+  if (snapshot->generations.back() != selected.generation()) {
+    return implementation.fail_reclamation(
+        invalid("Temporal part reclamation Manifest owner is no longer selected"));
+  }
+  const common::Result<std::string> selected_name = manifest_file_name(selected.generation());
+  if (!selected_name.has_value()) {
+    return implementation.fail_reclamation(common::Status{
+        common::StatusCode::kInternal, "Selected Manifest v2 generation cannot be formatted"});
+  }
+  common::Result<std::vector<std::byte>> current_bytes =
+      read_final_file(implementation.manifests_,
+                      {.name = *selected_name,
+                       .maximum_length = request.decode_limits.max_file_length,
+                       .exact_length = static_cast<std::uint64_t>(selected.encoded_bytes().size()),
+                       .description = "current final Manifest v2 generation"});
+  if (!current_bytes.has_value()) {
+    return implementation.fail_reclamation(current_bytes.error());
+  }
+  if (!std::ranges::equal(*current_bytes, selected.encoded_bytes())) {
+    return implementation.fail_reclamation(
+        corruption("Current final Manifest v2 bytes disagree with the supplied owner"));
+  }
+  for (const TemporalPartDescriptor& candidate : retirement.parts()) {
+    if (std::ranges::find(selected.parts(), candidate.part_id, &TemporalPartDescriptor::part_id) !=
+        selected.parts().end()) {
+      return implementation.fail_reclamation(
+          corruption("Current Manifest v2 still references a retired temporal part candidate"));
+    }
+  }
+
+  // Validate every present candidate before the first unlink so corruption never turns into a
+  // partially completed reclamation attempt.
+  for (const TemporalPartDescriptor& candidate : retirement.parts()) {
+    if (!std::ranges::binary_search(snapshot->final_parts, candidate.part_id))
+      continue;
+    common::Result<std::vector<std::byte>> bytes =
+        read_final_file(implementation.parts_,
+                        {.name = part_file_name(candidate.part_id),
+                         .maximum_length = request.part_validation_limits.decode.max_file_length,
+                         .exact_length = candidate.file_length,
+                         .description = "retired temporal CSEG part"});
+    if (!bytes.has_value())
+      return implementation.fail_reclamation(bytes.error());
+    common::Result<ingest::Sha256Digest> digest = ingest::sha256(*bytes);
+    if (!digest.has_value())
+      return implementation.fail_reclamation(digest.error());
+    if (*digest != candidate.content_sha256) {
+      return implementation.fail_reclamation(
+          corruption("Retired temporal CSEG bytes disagree with their published descriptor"));
+    }
+  }
+
+  bool unlinked = false;
+  for (const TemporalPartDescriptor& candidate : retirement.parts()) {
+    if (!std::ranges::binary_search(snapshot->final_parts, candidate.part_id)) {
+      ++report.already_absent_parts;
+      continue;
+    }
+    const common::Status removal =
+        implementation.parts_.remove_file(part_file_name(candidate.part_id));
+    if (!removal.is_ok()) {
+      if (unlinked) {
+        implementation.poisoned_ = true;
+        implementation.poison_status_ =
+            with_context("remove retired temporal CSEG part after a prior unlink", removal);
+        return implementation.fail_reclamation(implementation.poison_status_);
+      }
+      return implementation.fail_reclamation(
+          with_context("remove retired temporal CSEG part", removal));
+    }
+    unlinked = true;
+    ++report.removed_parts;
+    saturating_add(report.removed_bytes, candidate.file_length);
+  }
+  if (unlinked) {
+    const common::Status sync = implementation.parts_.sync();
+    if (!sync.is_ok()) {
+      implementation.poisoned_ = true;
+      implementation.poison_status_ =
+          with_context("synchronize parts directory after temporal reclamation", sync);
       return implementation.fail_reclamation(implementation.poison_status_);
     }
     report.directory_syncs = 1U;

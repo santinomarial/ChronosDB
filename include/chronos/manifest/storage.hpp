@@ -170,6 +170,13 @@ struct PartReclamationRequest {
   ManifestDecodeLimits decode_limits;
 };
 
+struct TemporalPartReclamationRequest {
+  std::reference_wrapper<const LoadedTemporalManifestGeneration> selected_manifest;
+  std::reference_wrapper<const TemporalRetiredPartSet> retirement;
+  ManifestDecodeLimits decode_limits;
+  TemporalPartValidationLimits part_validation_limits;
+};
+
 struct PartReclamationReport {
   PartReclamationOutcome outcome{PartReclamationOutcome::kPending};
   std::uint64_t predecessor_generation{};
@@ -420,6 +427,12 @@ public:
   // the first unlink poisons this storage owner until restart.
   [[nodiscard]] common::Result<PartReclamationReport>
   reclaim_retired_parts(const PartReclamationRequest& request);
+
+  // Reclaims only source-retirement parts absent from the exact current durable Manifest v2 owner.
+  // Every historical publication pin must have expired and every present file must still match its
+  // exact published length and SHA-256 before the first unlink.
+  [[nodiscard]] common::Result<PartReclamationReport>
+  reclaim_retired_temporal_parts(const TemporalPartReclamationRequest& request);
 
   // Selects only the highest consecutive final generation, exact-decodes it without fallback,
   // binds configured identities/catalog state, validates every referenced final CSEG, and returns

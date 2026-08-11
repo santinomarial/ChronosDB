@@ -387,6 +387,16 @@ struct RaftRetirementStorageFixture {
         .value();
   }
 
+  [[nodiscard]] std::array<TabletSchemaBinding, 1> bindings() const {
+    return {TabletSchemaBinding{.tablet_id = base.tablet_id, .lineage = std::cref(base.lineage)}};
+  }
+
+  [[nodiscard]] std::array<TemporalTabletSourceBinding, 1> source_bindings() const {
+    return {TemporalTabletSourceBinding{.tablet_id = base.tablet_id,
+                                        .commit_source = ManifestCommitSource::kRaft,
+                                        .source_id = group_id}};
+  }
+
   [[nodiscard]] raft::TabletMovementRecord completed_movement() const {
     raft::TabletMovement movement =
         raft::TabletMovement::begin(base.tablet_id, 10U, 1U, 3U, {1U, 2U}).value();
@@ -591,6 +601,119 @@ TEST(TemporalManifestStorageTest, InstallsOnlyTheExactAuthorizedSourceRetirement
   EXPECT_TRUE(std::filesystem::exists(temporary.path() / kPartsDirectoryName /
                                       part_file_name(fixture.descriptor.part_id)));
   EXPECT_EQ(owner.manifest_metrics().installed_generations, 1U);
+}
+
+TEST(TemporalManifestStorageTest, ReclaimsSourcePartsOnlyAfterPinsExpireAndBytesStillMatch) {
+  TemporaryDirectory temporary;
+  ASSERT_TRUE(temporary.valid());
+  establish_layout(temporary.path());
+  const RaftRetirementStorageFixture fixture;
+  const EncodedTemporalManifest predecessor = fixture.manifest(1U);
+  create_entry(temporary.path(),
+               std::filesystem::path{kManifestDirectoryName} / *manifest_file_name(1U),
+               predecessor.bytes());
+  const std::filesystem::path part_path =
+      temporary.path() / kPartsDirectoryName / part_file_name(fixture.descriptor.part_id);
+  create_entry(temporary.path(),
+               std::filesystem::path{kPartsDirectoryName} /
+                   part_file_name(fixture.descriptor.part_id),
+               fixture.encoded.bytes());
+  ManifestStorage owner =
+      ManifestStorage::open_existing({.database_root = temporary.path().string()}).value();
+  const auto bindings = fixture.bindings();
+  const auto sources = fixture.source_bindings();
+  auto predecessor_loaded =
+      owner.load_selected_temporal_manifest({.expected_database_id = fixture.base.database_id,
+                                             .schema_bindings = bindings,
+                                             .source_bindings = sources,
+                                             .decode_limits = {},
+                                             .part_validation_limits = {}});
+  ASSERT_TRUE(predecessor_loaded.has_value()) << predecessor_loaded.error().to_string();
+  auto predecessor_owner =
+      std::make_shared<const LoadedTemporalManifestGeneration>(std::move(*predecessor_loaded));
+  auto decoded = decode_manifest_v2_temporal_exact(predecessor.bytes());
+  ASSERT_TRUE(decoded.has_value());
+  const raft::TabletMovementRecord movement = fixture.completed_movement();
+  const raft::TabletPlacementMetadata placement{
+      fixture.base.table_id, fixture.base.tablet_id, 12U, {2U, 3U}, 3U};
+  const RaftTabletSourceRetirementRequest authority{.group_id = fixture.group_id,
+                                                    .table_id = fixture.base.table_id,
+                                                    .tablet_id = fixture.base.tablet_id,
+                                                    .source_node = 1U,
+                                                    .completed_movement = std::cref(movement),
+                                                    .committed_placement = std::cref(placement)};
+  auto built = build_raft_tablet_source_retirement_manifest(*decoded, authority);
+  ASSERT_TRUE(built.has_value()) << built.error().to_string();
+  const std::span<const TabletSchemaBinding> no_bindings;
+  ASSERT_TRUE(owner
+                  .install_temporal_manifest({.encoded_manifest = std::cref(built->manifest),
+                                              .schema_bindings = no_bindings,
+                                              .nonce = PartFixture::make_nonce(0xd9U),
+                                              .decode_limits = {},
+                                              .part_validation_limits = {},
+                                              .source_retirement = &authority})
+                  .has_value());
+  auto selected =
+      owner.load_selected_temporal_manifest({.expected_database_id = fixture.base.database_id,
+                                             .schema_bindings = no_bindings,
+                                             .source_bindings = {},
+                                             .decode_limits = {},
+                                             .part_validation_limits = {}});
+  ASSERT_TRUE(selected.has_value()) << selected.error().to_string();
+  std::vector<std::weak_ptr<const LoadedTemporalManifestGeneration>> pins{predecessor_owner};
+  TemporalRetiredPartSet retirement = detail::ManifestStorageTestAccess::make_temporal_retirement(
+      built->predecessor_generation, std::move(built->retired_parts), std::move(pins));
+
+  auto pending = owner.reclaim_retired_temporal_parts({.selected_manifest = std::cref(*selected),
+                                                       .retirement = std::cref(retirement),
+                                                       .decode_limits = {},
+                                                       .part_validation_limits = {}});
+  ASSERT_TRUE(pending.has_value()) << pending.error().to_string();
+  EXPECT_EQ(pending->outcome, PartReclamationOutcome::kPending);
+  EXPECT_TRUE(std::filesystem::exists(part_path));
+
+  predecessor_owner.reset();
+  auto reclaimed = owner.reclaim_retired_temporal_parts({.selected_manifest = std::cref(*selected),
+                                                         .retirement = std::cref(retirement),
+                                                         .decode_limits = {},
+                                                         .part_validation_limits = {}});
+  ASSERT_TRUE(reclaimed.has_value()) << reclaimed.error().to_string();
+  EXPECT_EQ(reclaimed->outcome, PartReclamationOutcome::kReclaimed);
+  EXPECT_EQ(reclaimed->predecessor_generation, 1U);
+  EXPECT_EQ(reclaimed->candidate_parts, 1U);
+  EXPECT_EQ(reclaimed->removed_parts, 1U);
+  EXPECT_EQ(reclaimed->removed_bytes, fixture.descriptor.file_length);
+  EXPECT_EQ(reclaimed->directory_syncs, 1U);
+  EXPECT_FALSE(std::filesystem::exists(part_path));
+
+  auto repeated = owner.reclaim_retired_temporal_parts({.selected_manifest = std::cref(*selected),
+                                                        .retirement = std::cref(retirement),
+                                                        .decode_limits = {},
+                                                        .part_validation_limits = {}});
+  ASSERT_TRUE(repeated.has_value()) << repeated.error().to_string();
+  EXPECT_EQ(repeated->already_absent_parts, 1U);
+
+  std::vector<std::byte> damaged(fixture.encoded.bytes().begin(), fixture.encoded.bytes().end());
+  damaged.back() ^= std::byte{0x01U};
+  create_entry(temporary.path(),
+               std::filesystem::path{kPartsDirectoryName} /
+                   part_file_name(fixture.descriptor.part_id),
+               damaged);
+  EXPECT_EQ(owner
+                .reclaim_retired_temporal_parts({.selected_manifest = std::cref(*selected),
+                                                 .retirement = std::cref(retirement),
+                                                 .decode_limits = {},
+                                                 .part_validation_limits = {}})
+                .error()
+                .code(),
+            common::StatusCode::kCorruption);
+  EXPECT_TRUE(std::filesystem::exists(part_path));
+  EXPECT_TRUE(owner.is_usable());
+  EXPECT_EQ(owner.reclamation_metrics().attempts, 4U);
+  EXPECT_EQ(owner.reclamation_metrics().pending, 1U);
+  EXPECT_EQ(owner.reclamation_metrics().failures, 1U);
+  EXPECT_EQ(owner.reclamation_metrics().reclaimed_parts, 1U);
+  EXPECT_EQ(owner.reclamation_metrics().already_absent_parts, 1U);
 }
 
 TEST(TemporalManifestStorageTest, RejectsDescriptorMismatchBeforeFilesystemMutation) {

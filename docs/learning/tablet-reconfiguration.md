@@ -132,7 +132,10 @@ sequence. A special publisher then repeats the authority check, atomically selec
 successor, and returns the removed descriptors with weak pins for every still-live published
 generation that names them. The weak registry does not keep readers alive, but prevents a later
 reclaimer from unlinking while either the immediate predecessor or an older retaining epoch remains
-in use. File deletion remains a separate crash and reader-lifetime boundary.
+in use. After every pin expires, storage rechecks the exact selected Manifest, verifies all present
+retired bytes against their published lengths and SHA-256 digests before the first unlink, removes
+them, and synchronizes the directory. Missing files make the operation idempotent; post-unlink
+failure poisons the live owner until recovery.
 
 ## Complexity and tradeoffs
 

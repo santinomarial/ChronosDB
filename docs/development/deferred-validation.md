@@ -150,7 +150,8 @@
   ready/later-phase checkpoint reconciliation, durable chunk owners, and published-ownership-gated
   terminal physical-receipt reclamation; compose the implemented committed-placement-authorized
   source-retirement Manifest builder, exact durable installer, and reader-pinned publication proof
-  with source part and generation reclamation, and broader filesystem crash/fault injection;
+  with exact reader-pinned source-part reclamation; add restart-time retirement discovery, old
+  generation reclamation, and broader filesystem crash/fault injection;
   source/target/metadata-leader failures, source
   switching, bandwidth limits, and stale routing.
 - Partitions, duplicate/lost exchanges, skew, chaos, movement at every state, foreground interference,

@@ -20,6 +20,13 @@ public:
                            std::vector<RetiredPartFile> parts) {
     return RetiredPartSet{predecessor_generation, std::move(parts), {}};
   }
+
+  [[nodiscard]] static TemporalRetiredPartSet make_temporal_retirement(
+      const std::uint64_t predecessor_generation, std::vector<TemporalPartDescriptor> parts,
+      std::vector<std::weak_ptr<const LoadedTemporalManifestGeneration>> generation_pins = {}) {
+    return TemporalRetiredPartSet{predecessor_generation, std::move(parts),
+                                  std::move(generation_pins)};
+  }
 };
 
 } // namespace chronos::manifest::detail

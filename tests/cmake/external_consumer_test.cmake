@@ -145,6 +145,8 @@ int main() {
       &chronos::manifest::build_raft_tablet_source_retirement_manifest;
   const auto publish_source_retirement =
       &chronos::manifest::TemporalDatabaseStoragePublisher::publish_source_retirement_manifest;
+  const auto reclaim_source_parts =
+      &chronos::manifest::ManifestStorage::reclaim_retired_temporal_parts;
   using EventTimeMatchFunction = chronos::common::Result<bool> (*)(
       std::int64_t, std::int64_t,
       const std::optional<chronos::cseg::EventTimePredicate>&);
@@ -798,6 +800,7 @@ int main() {
   const auto installed_client = chronos::network::NativeClientSession::create();
   return reclaim_physical_receipt != nullptr && build_source_retirement != nullptr &&
                  publish_source_retirement != nullptr &&
+                 reclaim_source_parts != nullptr &&
                  event_time_match != nullptr &&
                  execute != nullptr && recover != nullptr &&
                  reclaim_recovered_wal != nullptr && inspect_wal_suffix != nullptr &&

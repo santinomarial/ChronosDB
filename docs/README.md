@@ -65,7 +65,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   that proof and retain a checksummed terminal marker that rejects late transfer retries. Completed
   Raft movement plus committed final placement can build, durably install, and atomically publish
   an exact source-retirement successor while returning a proof pinned by every older live reader;
-  source-part reclamation remains separate.
+  once those readers release, exact-length/SHA-256-validated source parts are unlinked and the parts
+  directory is synchronized with idempotent absent-file retry behavior.
 - [Tablet Physical Part Reclamation Marker v1](formats/tablet-physical-part-reclamation-marker-v1.md):
   session-bound terminal receipt state installed durably before crash-safe descending chunk removal.
 - [Resume Token v1](formats/resume-token-v1.md): authenticated live-subscription resume identity,
