@@ -141,8 +141,9 @@
   differential SQL and partial-aggregation equivalence.
 - Carry the implemented authenticated remote-action receiver bytes and atomic current-leader-term
   admission fence plus the exact response and bounded sender retry state machine through a
-  maintained TLS/socket carrier; add completion-to-response service routing, carrier deadlines,
-  connection-level leader refresh, and automatic metadata apply scheduling; extend exact remote
+  maintained TLS/socket carrier; carry the implemented nonblocking completion-to-response adapter
+  through connection write ownership, carrier deadlines, connection-level leader refresh, and
+  automatic metadata apply scheduling; extend exact remote
   duplicate delivery beyond the deterministic filesystem/runtime coverage;
   complete physical Manifest/CSEG
   handoff and response routing around the implemented Raft-completed RTAS, composed mixed-generation

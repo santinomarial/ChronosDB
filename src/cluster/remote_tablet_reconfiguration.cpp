@@ -510,14 +510,48 @@ RemoteTabletReconfigurationReceiver::try_receive(
         *prepared, request->required_leader_term, *config_.runtime);
     if (!completion.has_value())
       return common::make_unexpected(std::move(completion).error());
-    return RemoteTabletReconfigurationAdmission{action_id, already_prepared,
-                                                std::move(*completion)};
+    return RemoteTabletReconfigurationAdmission{
+        request->source_node_id, request->target_node_id, request->required_leader_term, action_id,
+        already_prepared,        std::move(*completion)};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("remote reconfiguration receive allocation failed"));
   } catch (const std::length_error&) {
     return common::make_unexpected(
         exhausted("remote reconfiguration receive exceeded container limits"));
   }
+}
+
+common::Result<std::optional<std::vector<std::byte>>>
+try_finish_remote_tablet_reconfiguration_admission(
+    RemoteTabletReconfigurationAdmission& admission,
+    std::optional<RemoteTabletReconfigurationLeaderHint> leader_hint) {
+  if (admission.response_finished)
+    return common::make_unexpected(invalid("remote reconfiguration response is already finished"));
+  if (!admission.completion.is_valid()) {
+    return common::make_unexpected(
+        invalid("remote reconfiguration admission has no valid completion"));
+  }
+  if (!admission.completion.is_ready())
+    return std::optional<std::vector<std::byte>>{};
+  auto completed = admission.completion.wait();
+  admission.response_finished = true;
+  common::StatusCode response_code = common::StatusCode::kInternal;
+  if (!completed.has_value()) {
+    response_code = completed.error().code();
+  } else {
+    if (completed->size() != 1U) {
+      return common::make_unexpected(
+          corruption("remote reconfiguration completion result count is invalid"));
+    }
+    response_code = completed->front().status.code();
+  }
+  auto response =
+      encode_remote_tablet_reconfiguration_response_v1(RemoteTabletReconfigurationResponse{
+          admission.target_node_id, admission.source_node_id, admission.required_leader_term,
+          admission.action_id, response_code, admission.already_prepared, std::move(leader_hint)});
+  if (!response.has_value())
+    return common::make_unexpected(std::move(response).error());
+  return std::optional<std::vector<std::byte>>{std::move(*response)};
 }
 
 RemoteTabletReconfigurationSender::RemoteTabletReconfigurationSender(

@@ -91,14 +91,21 @@ struct RemoteTabletReconfigurationReceiverConfig {
 
 struct RemoteTabletReconfigurationAdmission {
   RemoteTabletReconfigurationAdmission(
+      raft::NodeId request_source_node_id, raft::NodeId request_target_node_id,
+      raft::Term request_required_leader_term,
       raft::TabletReconfigurationActionId admitted_action_id, bool action_already_prepared,
       raft::AsyncDurableRaftCompletion admitted_completion) noexcept
-      : action_id(admitted_action_id), already_prepared(action_already_prepared),
-        completion(std::move(admitted_completion)) {}
+      : source_node_id(request_source_node_id), target_node_id(request_target_node_id),
+        required_leader_term(request_required_leader_term), action_id(admitted_action_id),
+        already_prepared(action_already_prepared), completion(std::move(admitted_completion)) {}
 
+  raft::NodeId source_node_id{};
+  raft::NodeId target_node_id{};
+  raft::Term required_leader_term{};
   raft::TabletReconfigurationActionId action_id;
   bool already_prepared{};
   raft::AsyncDurableRaftCompletion completion;
+  bool response_finished{};
 };
 
 // One tablet's authenticated receiver. All configured dependencies are borrowed and must outlive
@@ -128,6 +135,15 @@ private:
       RemoteTabletReconfigurationReceiverConfig config) noexcept;
   RemoteTabletReconfigurationReceiverConfig config_;
 };
+
+// Nonblocking carrier adapter. Before the durable completion is ready it returns an empty optional
+// and leaves the admission reusable. Once ready it consumes the completion exactly once and emits
+// canonical response bytes with the exact request route/action identity. The optional leader hint
+// must come from a separately ordered authoritative observation; it is never fabricated here.
+[[nodiscard]] common::Result<std::optional<std::vector<std::byte>>>
+try_finish_remote_tablet_reconfiguration_admission(
+    RemoteTabletReconfigurationAdmission& admission,
+    std::optional<RemoteTabletReconfigurationLeaderHint> leader_hint = std::nullopt);
 
 struct RemoteTabletReconfigurationRetryLimits {
   std::size_t maximum_attempts{5U};

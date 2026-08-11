@@ -91,3 +91,9 @@ remain Phase 16 work.
 - [ADR 0140](0140-atomic-current-leader-term-admission.md)
 - [ADR 0141](0141-authenticated-remote-reconfiguration-receiver.md)
 - [Architecture invariants](../architecture/invariants.md)
+
+## Retrospective (2026-08-11)
+
+[ADR 0143](0143-nonblocking-reconfiguration-response-publication.md) connects an authenticated
+receiver admission to these exact response bytes after the asynchronous local durability boundary.
+TLS/socket delivery and pre-admission error policy remain carrier work.

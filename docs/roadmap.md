@@ -845,8 +845,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   tablet/group binding, durable preparation, duplicate-safe replay, and atomic current-leader-term
   admission. Canonical response bytes and a sealed-action sender now add exact route/term/action
   correlation, explicit local-only success, advisory leader refresh, bounded attempts, and capped
-  exponential backoff. The TLS/socket carrier and completion-to-response service adapter remain
-  incomplete. Physical Manifest/CSEG handoff
+  exponential backoff. Receiver admissions now retain exact correlation through asynchronous local
+  durability and nonblockingly publish that sole result as the response exactly once. The
+  TLS/socket carrier remains incomplete. Physical Manifest/CSEG handoff
   remains incomplete. General
   vector-plan fragments/exchange wire bytes, compatible multi-tablet snapshots, the maintained TLS
   carrier and complete leader transport, and multi-node failure validation remain deferred; the

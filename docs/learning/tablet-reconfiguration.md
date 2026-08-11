@@ -102,6 +102,13 @@ statuses schedule a bounded capped exponential backoff; every new attempt requir
 leader route. Foreign or damaged responses do not consume the pending attempt. `LOCALLY_ACCEPTED`
 is terminal for delivery only and never advances movement without authoritative reconciliation.
 
+The receiver admission retains its route identity until the durable completion is ready.
+`try_finish_remote_tablet_reconfiguration_admission` polls without blocking, consumes that
+completion once, and emits the exact reversed-route response. It maps the durable owner's sole
+operation status rather than inferring success from queue admission. A caller may attach a leader
+hint only from a separately ordered observation; response publication itself never borrows worker
+state.
+
 Production reconciliation accepts that owning observation after validating its tablet-group
 identity, ordered frontiers, canonical voters, and exact stable/joint relationships. Uncommitted
 membership remains a no-dispatch wait. Committed membership plus applied metadata feeds the same
@@ -121,8 +128,9 @@ Reconciliation is linear in the bounded replica count. The explicit two-group ha
 plane latency but avoids treating routing intent as consensus. Durable checkpoints before every
 post-catch-up live phase adoption and deterministic action identities make restart reconstruction
 exact. Authenticated receiver admission, exact response correlation, bounded sender retry, and
-duplicate-safe current-term execution are implemented; the TLS/socket carrier and response service
-adapter, retry-ledger consumption, and broader failure injection remain separate work.
+duplicate-safe current-term execution are implemented, including nonblocking completion-to-response
+publication. The TLS/socket carrier, retry-ledger consumption, and broader failure injection remain
+separate work.
 
 ## Likely interview questions
 

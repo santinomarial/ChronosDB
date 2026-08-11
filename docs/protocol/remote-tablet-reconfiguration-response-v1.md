@@ -53,6 +53,11 @@ supply a fresh nonzero leader node/term route; a response hint is advisory only.
 terminal. Transport failure follows the same classification. No hidden retry queue, wall clock, or
 I/O is owned by the retry state machine.
 
+The implemented receiver adapter retains the request correlation beside its owning asynchronous
+completion. Polling before readiness emits nothing. Readiness consumes the completion once and maps
+either its top-level failure or sole per-operation status into this response. A leader hint is
+included only when the caller supplies one from a separately ordered observation.
+
 ## Compatibility
 
 Major 1, minor 0 is exact. Damage, unknown versions/statuses/flags, invalid identities, inconsistent

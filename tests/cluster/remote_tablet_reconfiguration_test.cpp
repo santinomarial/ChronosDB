@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 #include <string>
 #include <system_error>
+#include <thread>
 #include <unistd.h>
 #include <utility>
 #include <variant>
@@ -67,6 +68,21 @@ public:
     return principal_id == 700U && claimed_node_id == 1U;
   }
 };
+
+[[nodiscard]] common::Result<std::vector<std::byte>> finish_admission(
+    RemoteTabletReconfigurationAdmission& admission,
+    const std::optional<RemoteTabletReconfigurationLeaderHint> leader_hint = std::nullopt) {
+  for (std::size_t attempt = 0U; attempt < 100'000U; ++attempt) {
+    auto response = try_finish_remote_tablet_reconfiguration_admission(admission, leader_hint);
+    if (!response.has_value())
+      return common::make_unexpected(std::move(response).error());
+    if (response->has_value())
+      return std::move(**response);
+    std::this_thread::yield();
+  }
+  return common::make_unexpected(
+      common::Status{common::StatusCode::kUnavailable, "test completion did not become ready"});
+}
 
 TEST(RemoteTabletReconfigurationCodecTest, RoundTripsCanonicalRequestAndRejectsDamage) {
   const RemoteTabletReconfigurationRequest request{1U, 2U, 9U, action()};
@@ -178,12 +194,19 @@ TEST(RemoteTabletReconfigurationReceiverTest,
   ASSERT_TRUE(admitted.has_value()) << admitted.error().to_string();
   EXPECT_EQ(admitted->action_id, request.action.id);
   EXPECT_FALSE(admitted->already_prepared);
-  auto completed = admitted->completion.wait();
-  ASSERT_TRUE(completed.has_value()) << completed.error().to_string();
-  ASSERT_EQ(completed->size(), 1U);
-  EXPECT_TRUE(completed->front().status.is_ok()) << completed->front().status.to_string();
-  ASSERT_TRUE(completed->front().transition.has_value());
-  EXPECT_TRUE(completed->front().transition->persistence.has_value());
+  auto admitted_response_bytes = finish_admission(*admitted);
+  ASSERT_TRUE(admitted_response_bytes.has_value()) << admitted_response_bytes.error().to_string();
+  auto admitted_response =
+      decode_remote_tablet_reconfiguration_response_v1(*admitted_response_bytes);
+  ASSERT_TRUE(admitted_response.has_value()) << admitted_response.error().to_string();
+  EXPECT_EQ(admitted_response->source_node_id, 2U);
+  EXPECT_EQ(admitted_response->target_node_id, 1U);
+  EXPECT_EQ(admitted_response->required_leader_term, 1U);
+  EXPECT_EQ(admitted_response->action_id, request.action.id);
+  EXPECT_EQ(admitted_response->status_code, common::StatusCode::kOk);
+  EXPECT_FALSE(admitted_response->already_prepared);
+  EXPECT_EQ(try_finish_remote_tablet_reconfiguration_admission(*admitted).error().code(),
+            common::StatusCode::kInvalidArgument);
   ASSERT_TRUE(ledger->load(request.action.id).has_value());
 
   auto observation = runtime->try_observe_group(tablet_group);
@@ -197,11 +220,13 @@ TEST(RemoteTabletReconfigurationReceiverTest,
       *encoded, network::PeerAuthenticationResult{.authorized = true, .principal_id = 700U});
   ASSERT_TRUE(duplicate.has_value()) << duplicate.error().to_string();
   EXPECT_TRUE(duplicate->already_prepared);
-  auto duplicate_completed = duplicate->completion.wait();
-  ASSERT_TRUE(duplicate_completed.has_value());
-  ASSERT_TRUE(duplicate_completed->front().status.is_ok());
-  ASSERT_TRUE(duplicate_completed->front().transition.has_value());
-  EXPECT_FALSE(duplicate_completed->front().transition->persistence.has_value());
+  auto duplicate_response_bytes = finish_admission(*duplicate);
+  ASSERT_TRUE(duplicate_response_bytes.has_value());
+  auto duplicate_response =
+      decode_remote_tablet_reconfiguration_response_v1(*duplicate_response_bytes);
+  ASSERT_TRUE(duplicate_response.has_value());
+  EXPECT_EQ(duplicate_response->status_code, common::StatusCode::kOk);
+  EXPECT_TRUE(duplicate_response->already_prepared);
 
   RemoteTabletReconfigurationRequest stale_request{1U, 2U, 2U, action(tablet_id(), tablet_group)};
   auto stale_bytes = encode_remote_tablet_reconfiguration_request_v1(stale_request);
@@ -209,10 +234,13 @@ TEST(RemoteTabletReconfigurationReceiverTest,
   auto stale = receiver->try_receive(
       *stale_bytes, network::PeerAuthenticationResult{.authorized = true, .principal_id = 700U});
   ASSERT_TRUE(stale.has_value()) << stale.error().to_string();
-  auto stale_completed = stale->completion.wait();
-  ASSERT_TRUE(stale_completed.has_value());
-  EXPECT_EQ(stale_completed->front().status.code(), common::StatusCode::kUnavailable);
-  EXPECT_FALSE(stale_completed->front().transition.has_value());
+  const RemoteTabletReconfigurationLeaderHint leader_hint{2U, 1U};
+  auto stale_response_bytes = finish_admission(*stale, leader_hint);
+  ASSERT_TRUE(stale_response_bytes.has_value());
+  auto stale_response = decode_remote_tablet_reconfiguration_response_v1(*stale_response_bytes);
+  ASSERT_TRUE(stale_response.has_value());
+  EXPECT_EQ(stale_response->status_code, common::StatusCode::kUnavailable);
+  EXPECT_EQ(stale_response->leader_hint, leader_hint);
 
   auto final_observation = runtime->try_observe_group(tablet_group);
   ASSERT_TRUE(final_observation.has_value());
