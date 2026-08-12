@@ -359,7 +359,8 @@
   sync; concurrent multi-process creation; large-root scaling; Linux filesystem/power-loss and macOS
   persistence qualification; install/export and public API review.
 - Extend the packaged `chronosd` authenticated Raft peer lifecycle with remote leader routing,
-  Raft-backed query snapshots, live delivery, flush/CSEG/Manifest,
+  native dispatch over the implemented local-applied Raft query snapshots, stronger read barriers,
+  live delivery, flush/CSEG/Manifest,
   failover/movement, and object storage; then run it as three processes.
 - Configured `chronosd` Linux subprocess execution in CI, daemon ingest over real sockets, corrupt
   root/WAL/Raft startup cases, signals during ingest/query, queue saturation with multi-frame

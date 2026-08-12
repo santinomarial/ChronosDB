@@ -1,5 +1,9 @@
 #include "chronos/columnar/columnar_batch_codec.hpp"
+#include "chronos/common/byte_reader.hpp"
 #include "chronos/network/messages.hpp"
+#include "chronos/query/binder.hpp"
+#include "chronos/query/parser.hpp"
+#include "chronos/query/physical_lowering.hpp"
 #include "chronos/raft/metadata_codec.hpp"
 #include "chronos/raft/schema_definition_codec.hpp"
 #include "chronos/raft/tablet_group_binding_codec.hpp"
@@ -139,7 +143,7 @@ initial_runtime_config(const runtime::DatabaseBootstrap& bootstrap) {
           .metadata = {.group_id = metadata_group()}};
 }
 
-void elect_and_provision(ReplicatedIngestRuntime& owner) {
+void elect_and_provision(ReplicatedIngestRuntime& owner, const bool include_remote = true) {
   auto election = owner.runtime()->try_submit({{metadata_group(), raft::StartElectionOperation{}}});
   ASSERT_TRUE(election.has_value());
   ASSERT_TRUE(election->wait().has_value());
@@ -173,12 +177,17 @@ void elect_and_provision(ReplicatedIngestRuntime& owner) {
   const raft::ProposeOperation remote_binding{
       raft::kRaftTabletGroupBindingEntryType,
       raft::encode_tablet_group_binding_v1({remote_tablet, remote_tablet_group()}).value()};
-  auto metadata = owner.runtime()->try_submit({{metadata_group(), schema},
-                                               {metadata_group(), policy},
-                                               {metadata_group(), placement},
-                                               {metadata_group(), binding},
-                                               {metadata_group(), remote_placement},
-                                               {metadata_group(), remote_binding}});
+  auto metadata = include_remote
+                      ? owner.runtime()->try_submit({{metadata_group(), schema},
+                                                     {metadata_group(), policy},
+                                                     {metadata_group(), placement},
+                                                     {metadata_group(), binding},
+                                                     {metadata_group(), remote_placement},
+                                                     {metadata_group(), remote_binding}})
+                      : owner.runtime()->try_submit({{metadata_group(), schema},
+                                                     {metadata_group(), policy},
+                                                     {metadata_group(), placement},
+                                                     {metadata_group(), binding}});
   ASSERT_TRUE(metadata.has_value());
   ASSERT_TRUE(metadata->wait().has_value());
   election = owner.runtime()->try_submit({{tablet_group(), raft::StartElectionOperation{}}});
@@ -239,6 +248,89 @@ TEST(ReplicatedIngestDatabaseTest, RebuildsTabletOwnersFromCommittedMetadataUnde
   EXPECT_TRUE(database->shutdown().is_ok());
   EXPECT_FALSE(database->is_running());
   EXPECT_EQ(database->ingest_runtime(), nullptr);
+}
+
+TEST(ReplicatedIngestDatabaseTest, PinsCommittedWholeTableQueryStateBeyondOwnerShutdown) {
+  TemporaryDirectory directory;
+  runtime::DatabaseBootstrapConfig bootstrap_config{.database_root = directory.path().string(),
+                                                    .new_database = descriptor()};
+  auto bootstrap = runtime::DatabaseBootstrap::open_or_create(bootstrap_config);
+  ASSERT_TRUE(bootstrap.has_value()) << bootstrap.error().to_string();
+  auto initial = ReplicatedIngestRuntime::create_new(initial_runtime_config(*bootstrap));
+  ASSERT_TRUE(initial.has_value()) << initial.error().to_string();
+  elect_and_provision(*initial, false);
+  ASSERT_TRUE(initial->coordinator()->admit(request()).is_ok());
+  ASSERT_EQ(await_response(*initial).frame.header.message_type,
+            network::MessageType::kQuorumSyncIngestAcknowledgement);
+  ASSERT_TRUE(initial->shutdown().is_ok());
+  ASSERT_TRUE(bootstrap->close().is_ok());
+
+  auto database =
+      ReplicatedIngestDatabase::open_existing({.bootstrap = bootstrap_config, .groups = groups()});
+  ASSERT_TRUE(database.has_value()) << database.error().to_string();
+  auto snapshot = database->acquire_query_snapshot();
+  ASSERT_TRUE(snapshot.has_value()) << snapshot.error().to_string();
+  ASSERT_EQ(snapshot->catalog()->tables().size(), 1U);
+  auto parsed = query::parse_sql_v1_select("SELECT count(*) AS rows FROM events");
+  ASSERT_TRUE(parsed.has_value()) << parsed.error().status().to_string();
+  auto bound = query::bind_sql_v1_select(std::move(*parsed), snapshot->catalog());
+  ASSERT_TRUE(bound.has_value()) << bound.error().status().to_string();
+  auto lowered = query::lower_bound_sql_select(*bound);
+  ASSERT_TRUE(lowered.has_value()) << lowered.error().status().to_string();
+  ASSERT_TRUE(database->shutdown().is_ok());
+
+  query::QueryResourceContext resources =
+      query::QueryResourceContext::create(8U * 1024U * 1024U).value();
+  const auto schema = columnar::test::batch_schema();
+  auto pipeline = snapshot->instantiate_table_pipeline(resources, schema->table_id(),
+                                                       schema->schema_id(), *lowered);
+  ASSERT_TRUE(pipeline.has_value()) << pipeline.error().to_string();
+  auto step = (*pipeline)->next(resources);
+  ASSERT_TRUE(step.has_value()) << step.error().to_string();
+  ASSERT_EQ(step->kind(), query::PhysicalOperatorStepKind::kChunk);
+  const auto cell = step->chunk()->chunk().cell({.column_ordinal = 0U, .selected_row = 0U});
+  ASSERT_TRUE(cell.has_value());
+  common::ByteReader count{cell->bytes().value()};
+  EXPECT_EQ(count.read_i64_le().value(), 2);
+  step = (*pipeline)->next(resources);
+  ASSERT_TRUE(step.has_value());
+  EXPECT_EQ(step->kind(), query::PhysicalOperatorStepKind::kEnd);
+  pipeline->reset();
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
+TEST(ReplicatedIngestDatabaseTest, RejectsAQueryOverAPartiallyResidentTable) {
+  TemporaryDirectory directory;
+  runtime::DatabaseBootstrapConfig bootstrap_config{.database_root = directory.path().string(),
+                                                    .new_database = descriptor()};
+  auto bootstrap = runtime::DatabaseBootstrap::open_or_create(bootstrap_config);
+  ASSERT_TRUE(bootstrap.has_value());
+  auto initial = ReplicatedIngestRuntime::create_new(initial_runtime_config(*bootstrap));
+  ASSERT_TRUE(initial.has_value());
+  elect_and_provision(*initial);
+  ASSERT_TRUE(initial->shutdown().is_ok());
+  ASSERT_TRUE(bootstrap->close().is_ok());
+
+  auto database =
+      ReplicatedIngestDatabase::open_existing({.bootstrap = bootstrap_config, .groups = groups()});
+  ASSERT_TRUE(database.has_value()) << database.error().to_string();
+  auto snapshot = database->acquire_query_snapshot();
+  ASSERT_TRUE(snapshot.has_value()) << snapshot.error().to_string();
+  auto parsed = query::parse_sql_v1_select("SELECT count(*) FROM events");
+  ASSERT_TRUE(parsed.has_value());
+  auto bound = query::bind_sql_v1_select(std::move(*parsed), snapshot->catalog());
+  ASSERT_TRUE(bound.has_value());
+  auto lowered = query::lower_bound_sql_select(*bound);
+  ASSERT_TRUE(lowered.has_value());
+  query::QueryResourceContext resources =
+      query::QueryResourceContext::create(1024U * 1024U).value();
+  const auto schema = columnar::test::batch_schema();
+  auto pipeline = snapshot->instantiate_table_pipeline(resources, schema->table_id(),
+                                                       schema->schema_id(), *lowered);
+  ASSERT_FALSE(pipeline.has_value());
+  EXPECT_EQ(pipeline.error().code(), common::StatusCode::kUnavailable);
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+  EXPECT_TRUE(database->shutdown().is_ok());
 }
 
 TEST(ReplicatedIngestDatabaseTest, RejectsAnOmittedLocallyPlacedTabletGroup) {

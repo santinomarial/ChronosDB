@@ -2,6 +2,7 @@
 
 #include "chronos/ingest/retry_directory.hpp"
 #include "chronos/ingest/tablet_state.hpp"
+#include "chronos/query/tablet_state_pipeline.hpp"
 #include "chronos/raft/durable_runtime.hpp"
 #include "chronos/raft/metadata_runtime.hpp"
 
@@ -110,6 +111,22 @@ retained_schemas(const raft::MetadataCatalogSnapshot& catalog, const schema::Tab
   }
 }
 
+[[nodiscard]] common::Result<schema::SchemaLineage>
+retained_lineage(const raft::MetadataCatalogSnapshot& catalog, const schema::TableId& table_id) {
+  auto schemas = retained_schemas(catalog, table_id);
+  if (!schemas.has_value())
+    return common::make_unexpected(schemas.error());
+  auto lineage = schema::SchemaLineage::create(**schemas->begin());
+  if (!lineage.has_value())
+    return common::make_unexpected(corruption("replicated query lineage root is invalid"));
+  for (std::size_t index = 1U; index < schemas->size(); ++index) {
+    const common::Status appended = lineage->append(*(*schemas)[index]);
+    if (!appended.is_ok())
+      return common::make_unexpected(corruption("replicated query lineage is invalid"));
+  }
+  return lineage;
+}
+
 [[nodiscard]] common::Result<std::vector<ingest::AsyncRaftTabletApplicationConfig>>
 build_tablets(const ReplicatedIngestDatabaseConfig& config,
               const runtime::DatabaseBootstrapDescriptor& bootstrap,
@@ -215,14 +232,69 @@ build_tablets(const ReplicatedIngestDatabaseConfig& config,
 
 } // namespace
 
+class ReplicatedQuerySnapshot::Impl {
+public:
+  struct Table {
+    schema::SchemaLineage lineage;
+    std::vector<ingest::TabletSnapshot> tablets;
+    bool complete_residency{};
+  };
+
+  Impl(std::shared_ptr<const query::QueryCatalogSnapshot> configured_catalog,
+       std::vector<Table> configured_tables) noexcept
+      : catalog(std::move(configured_catalog)), tables(std::move(configured_tables)) {}
+
+  std::shared_ptr<const query::QueryCatalogSnapshot> catalog;
+  std::vector<Table> tables;
+};
+
+ReplicatedQuerySnapshot::ReplicatedQuerySnapshot(std::unique_ptr<Impl> impl) noexcept
+    : impl_(std::move(impl)) {}
+
+ReplicatedQuerySnapshot::~ReplicatedQuerySnapshot() = default;
+ReplicatedQuerySnapshot::ReplicatedQuerySnapshot(ReplicatedQuerySnapshot&&) noexcept = default;
+ReplicatedQuerySnapshot&
+ReplicatedQuerySnapshot::operator=(ReplicatedQuerySnapshot&&) noexcept = default;
+
+const std::shared_ptr<const query::QueryCatalogSnapshot>&
+ReplicatedQuerySnapshot::catalog() const noexcept {
+  return impl_->catalog;
+}
+
+common::Result<std::unique_ptr<query::PhysicalOperator>>
+ReplicatedQuerySnapshot::instantiate_table_pipeline(
+    const query::QueryResourceContext& resources, const schema::TableId& table_id,
+    const schema::SchemaId& destination_schema_id, const query::PhysicalPipelinePlan& pipeline,
+    const query::TabletStatePipelineLimits limits) const {
+  if (impl_ == nullptr)
+    return common::make_unexpected(invalid("replicated query snapshot was moved from"));
+  const auto table = std::ranges::find_if(impl_->tables, [&](const Impl::Table& candidate) {
+    return candidate.lineage.table_id() == table_id;
+  });
+  if (table == impl_->tables.end())
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kNotFound, "replicated query table is not catalogued"});
+  if (!table->complete_residency) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kUnavailable,
+        "replicated query requires a distributed read because the table is not fully resident"});
+  }
+  if (table->tablets.empty())
+    return common::make_unexpected(invalid("replicated query table has no tablet publication"));
+  return query::instantiate_tablet_states_pipeline(resources, table->tablets, table->lineage,
+                                                   destination_schema_id, pipeline, limits);
+}
+
 class ReplicatedIngestDatabase::Impl {
 public:
-  Impl(runtime::DatabaseBootstrap configured_bootstrap,
-       ReplicatedIngestRuntime configured_runtime) noexcept
-      : bootstrap_owner(std::move(configured_bootstrap)), runtime(std::move(configured_runtime)) {}
+  Impl(runtime::DatabaseBootstrap configured_bootstrap, ReplicatedIngestRuntime configured_runtime,
+       std::vector<raft::GroupId> configured_resident_groups) noexcept
+      : bootstrap_owner(std::move(configured_bootstrap)), runtime(std::move(configured_runtime)),
+        resident_groups(std::move(configured_resident_groups)) {}
 
   runtime::DatabaseBootstrap bootstrap_owner;
   ReplicatedIngestRuntime runtime;
+  std::vector<raft::GroupId> resident_groups;
   bool shutdown_complete{};
   common::Status shutdown_status;
 };
@@ -257,6 +329,17 @@ ReplicatedIngestDatabase::open_existing(ReplicatedIngestDatabaseConfig config) {
   auto tablets = build_tablets(config, descriptor, *catalog);
   if (!tablets.has_value())
     return common::make_unexpected(tablets.error());
+  std::vector<raft::GroupId> resident_groups;
+  try {
+    resident_groups.reserve(config.groups.size() - 1U);
+    for (const raft::RaftGroupConfiguration& group : config.groups) {
+      if (group.group_id != descriptor.metadata_group_id)
+        resident_groups.push_back(group.group_id);
+    }
+    std::ranges::sort(resident_groups);
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("replicated resident-group allocation failed"));
+  }
   std::optional<raft::MetadataSnapshotStorage> metadata_snapshots;
   if (config.metadata_snapshots.has_value()) {
     auto opened = raft::MetadataSnapshotStorage::open_existing(*config.metadata_snapshots);
@@ -283,8 +366,8 @@ ReplicatedIngestDatabase::open_existing(ReplicatedIngestDatabaseConfig config) {
   if (!ingest_runtime.has_value())
     return common::make_unexpected(ingest_runtime.error());
   try {
-    return ReplicatedIngestDatabase{
-        std::make_unique<Impl>(std::move(*bootstrap), std::move(*ingest_runtime))};
+    return ReplicatedIngestDatabase{std::make_unique<Impl>(
+        std::move(*bootstrap), std::move(*ingest_runtime), std::move(resident_groups))};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("replicated database owner allocation failed"));
   }
@@ -296,6 +379,84 @@ const runtime::DatabaseBootstrapDescriptor& ReplicatedIngestDatabase::bootstrap(
 
 ReplicatedIngestRuntime* ReplicatedIngestDatabase::ingest_runtime() noexcept {
   return is_running() ? std::addressof(impl_->runtime) : nullptr;
+}
+
+common::Result<ReplicatedQuerySnapshot> ReplicatedIngestDatabase::acquire_query_snapshot() const {
+  if (!is_running())
+    return common::make_unexpected(invalid("replicated query database is unavailable"));
+  raft::AsyncRaftMetadataApplication* const metadata = impl_->runtime.metadata_application();
+  ingest::AsyncRaftTabletApplication* const tablets = impl_->runtime.tablet_application();
+  if (metadata == nullptr || tablets == nullptr)
+    return common::make_unexpected(invalid("replicated query applications are unavailable"));
+  auto catalog = metadata->catalog_snapshot();
+  if (!catalog.has_value())
+    return common::make_unexpected(catalog.error());
+  try {
+    std::vector<query::QueryCatalogTableInput> inputs;
+    std::vector<ReplicatedQuerySnapshot::Impl::Table> tables;
+    inputs.reserve((*catalog)->active_schemas.size());
+    tables.reserve((*catalog)->active_schemas.size());
+    for (const raft::ActiveSchemaMetadata& active : (*catalog)->active_schemas) {
+      const raft::CatalogTableDefinition* definition =
+          active_definition(**catalog, active.table_id);
+      if (definition == nullptr || definition->schema == nullptr)
+        return common::make_unexpected(corruption("replicated query active schema is incomplete"));
+      auto lineage = retained_lineage(**catalog, active.table_id);
+      if (!lineage.has_value() || lineage->current()->schema_id() != active.schema_id) {
+        return common::make_unexpected(
+            lineage.has_value() ? corruption("replicated query active schema is not lineage tail")
+                                : lineage.error());
+      }
+      std::vector<ingest::TabletSnapshot> pinned;
+      bool complete_residency = true;
+      std::size_t placement_count{};
+      for (const raft::TabletPlacementMetadata& placement : (*catalog)->tablet_placements) {
+        if (placement.table_id != active.table_id)
+          continue;
+        ++placement_count;
+        const auto binding =
+            std::ranges::find((*catalog)->tablet_group_bindings, placement.tablet_id,
+                              &raft::TabletGroupBindingMetadata::tablet_id);
+        if (binding == (*catalog)->tablet_group_bindings.end())
+          return common::make_unexpected(
+              corruption("replicated query tablet has no group binding"));
+        if (!std::ranges::binary_search(impl_->resident_groups, binding->group_id)) {
+          complete_residency = false;
+          continue;
+        }
+        auto snapshot = tablets->snapshot(binding->group_id);
+        if (!snapshot.has_value())
+          return common::make_unexpected(snapshot.error());
+        if (snapshot->tablet_id() != placement.tablet_id ||
+            snapshot->table_id() != active.table_id ||
+            lineage->find(snapshot->schema_ptr()->schema_id()) == nullptr) {
+          return common::make_unexpected(
+              corruption("replicated query tablet publication disagrees with committed metadata"));
+        }
+        pinned.push_back(std::move(*snapshot));
+      }
+      if (placement_count == 0U)
+        complete_residency = false;
+      std::ranges::sort(pinned, {}, &ingest::TabletSnapshot::tablet_id);
+      inputs.push_back(
+          {.name = definition->name, .quoted = definition->quoted, .schema = definition->schema});
+      tables.push_back({.lineage = std::move(*lineage),
+                        .tablets = std::move(pinned),
+                        .complete_residency = complete_residency});
+    }
+    auto query_catalog = query::QueryCatalogSnapshot::create(
+        std::max<std::uint64_t>(1U, (*catalog)->applied_index), inputs);
+    if (!query_catalog.has_value())
+      return common::make_unexpected(query_catalog.error().status());
+    auto shared_catalog =
+        std::make_shared<const query::QueryCatalogSnapshot>(std::move(*query_catalog));
+    return ReplicatedQuerySnapshot{std::make_unique<ReplicatedQuerySnapshot::Impl>(
+        std::move(shared_catalog), std::move(tables))};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("replicated query snapshot allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("replicated query snapshot exceeds limits"));
+  }
 }
 
 bool ReplicatedIngestDatabase::is_running() const noexcept {

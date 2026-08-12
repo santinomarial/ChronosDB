@@ -325,3 +325,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0288](0288-exact-raft-certificate-node-authority.md) | Exact Raft certificate-to-node authority | accepted |
 | [0289](0289-owning-authenticated-raft-transport-runtime.md) | Owning authenticated Raft transport runtime | accepted |
 | [0290](0290-packaged-authenticated-raft-peer-transport.md) | Packaged authenticated Raft peer transport | accepted |
+| [0291](0291-stable-local-applied-replicated-query-snapshot.md) | Stable local-applied replicated query snapshot | accepted |

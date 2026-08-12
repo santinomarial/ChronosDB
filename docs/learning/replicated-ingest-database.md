@@ -33,3 +33,19 @@ Failure closes temporary owners through RAII and never exposes a partial runtime
 the asynchronous owner before releasing the root lock. Likely review questions include why group
 membership remains external, why the log is reopened, why remote catalog entries are not local
 owners, and why placement equality is checked at admission rather than recovery.
+
+## Query snapshot boundary
+
+`acquire_query_snapshot` pins one immutable applied metadata projection and reconstructs each active
+schema lineage from its retained definitions. It then resolves the projection's tablet bindings and
+pins the immutable publications available from the resident tablet application. The resulting
+`ReplicatedQuerySnapshot` owns all of those objects, so binding and vector execution use the same
+catalog generation and execution can outlive the database owner.
+
+This is a stable local-applied vector, not a cross-group linearizable read. Each tablet publication
+contains only committed applied entries, but separate groups can contribute different applied
+positions. A later quorum/read-index coordinator can establish a stronger declared contract without
+changing this pinning primitive. If any placement is nonresident, the table remains visible to the
+binder but execution fails `UNAVAILABLE`; a local subset is never presented as a whole-table result.
+The physical source concatenates all pinned tablet generations beneath one pipeline, so global SQL
+operators run once rather than independently per shard.

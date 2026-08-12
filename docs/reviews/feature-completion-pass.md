@@ -418,7 +418,9 @@ broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were d
 - QUORUM_SYNC receipts, Protocol 2.0 negotiation/acknowledgement bytes, metadata-derived local
   routing, bounded execution, queue-facing backpressure/drain composition, database-root reopen,
   and explicit packaged daemon advertisement exist. Authenticated multi-node peer transport is now
-  packaged; remote client leader routing and real three-process failover evidence are still absent.
+  packaged. Stable local-applied Raft query snapshots now pin one committed binder catalog and
+  fail closed for partial table residency; native replicated-query dispatch, stronger read barriers,
+  remote client leader routing, and real three-process failover evidence are still absent.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 
@@ -436,9 +438,9 @@ broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were d
 The exact subsystem/category ledger is
 [`deferred-validation.md`](../development/deferred-validation.md). Recommended order:
 
-1. Compose the packaged daemon with worker-affine committed Raft tablet/metadata application and
-   advertise the implemented client QUORUM_SYNC negotiation only there; then run the real
-   three-process data-plane smoke path.
+1. Package native SELECT over the stable local-applied Raft snapshot boundary, add explicit stronger
+   read-barrier behavior and remote leader routing, then run the real three-process data-plane smoke
+   path over the already composed worker-affine applications and authenticated transport.
 2. Specify database namespaces/catalog tombstones and placement-driven membership orchestration
    without changing Metadata Command v1 or Metadata Application Snapshot 1.0 bytes in place.
 3. Finish direct vector temporal winner lowering, mixed WAL/Raft recovery, durable retention
