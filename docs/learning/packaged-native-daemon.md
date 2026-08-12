@@ -20,6 +20,13 @@ worker may retain one owned response when the response ring is full. It retries 
 without moving from it, blocking the data-plane consumer rather than allocating an unbounded side
 queue. The SPSC release/acquire proof remains the one documented by ADR 0063.
 
+The subscription composition uses a stable committed-append router as the database's pre-open
+observer address. After recovery and before socket admission, one per-plan runtime binds its fan-out
+and borrows the database's exact snapshot storage context. The runtime owns neither the plan,
+coordinator, resources, nor queues; all outlive it. A daemon registry must use separate bounded
+internal SPSC queues for subscription requests and responses rather than letting two consumers race
+on the reactor request ring.
+
 ## Failure behavior and limits
 
 Queue capacity is finite and validated before allocation. Reactor admission, frame, connection,

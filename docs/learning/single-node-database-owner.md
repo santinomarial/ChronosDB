@@ -123,6 +123,13 @@ plans, coordinators, and query resource contexts must also outlive it. It routes
 table/tablet/WAL matches and contains evaluation or publication failure by expiring the affected
 plan's old replay continuity; it never changes the applied write result.
 
+Because executable plans are recovered only after database startup, the daemon passes a stable
+`SingleNodeCommittedAppendRouter` as the database observer. Before admitting requests it binds one
+heap-stable `SingleNodeSubscriptionRuntime` fan-out. That runtime and its service mutate their
+coordinator only on the database worker thread and detach before any borrowed plan, coordinator, or
+database storage context is destroyed. `subscription_snapshot_context` exposes only the exact
+borrowed Manifest storage, aggregate publisher, and lineage needed for the historical half.
+
 ## Complexity, tradeoffs, and review questions
 
 Startup is linear in retained metadata history, current catalog size, and verified WAL history.

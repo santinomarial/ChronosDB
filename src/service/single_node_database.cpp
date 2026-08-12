@@ -611,6 +611,22 @@ common::Result<manifest::DatabaseStorageSnapshot> SingleNodeDatabase::storage_sn
   return impl_->recovered->snapshot();
 }
 
+common::Result<SingleNodeSubscriptionSnapshotContext>
+SingleNodeDatabase::subscription_snapshot_context(const schema::TableId& table_id) const {
+  if (impl_ == nullptr || impl_->shutdown || !impl_->recovered.has_value())
+    return common::make_unexpected(invalid("database subscription storage is unavailable"));
+  const auto table = std::ranges::find_if(impl_->tables, [&](const RecoveredTable& candidate) {
+    return candidate.lineage.table_id() == table_id;
+  });
+  if (table == impl_->tables.end())
+    return common::make_unexpected(common::Status{common::StatusCode::kNotFound,
+                                                  "subscription table has no local runtime state"});
+  return SingleNodeSubscriptionSnapshotContext{
+      .storage = &std::as_const(*impl_->recovered).manifest_storage(),
+      .publisher = &impl_->recovered->storage_publisher(),
+      .lineage = &table->lineage};
+}
+
 common::Result<std::unique_ptr<query::PhysicalOperator>>
 SingleNodeDatabase::instantiate_table_pipeline(
     const query::QueryResourceContext& resources, const schema::TableId& table_id,

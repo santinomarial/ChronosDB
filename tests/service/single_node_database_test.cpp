@@ -317,6 +317,13 @@ TEST(SingleNodeDatabaseTest, RecoversCatalogWalRowsAndVectorQueryVisibility) {
   ASSERT_TRUE(database.has_value()) << database.error().to_string();
   ASSERT_EQ(database->query_catalog()->tables().size(), 1U);
   ASSERT_NE(database->find_tablet(tablet_id()), nullptr);
+  const schema::TableId subscription_table = batch()->schema().table_id();
+  auto subscription_context = database->subscription_snapshot_context(subscription_table);
+  ASSERT_TRUE(subscription_context.has_value()) << subscription_context.error().to_string();
+  EXPECT_NE(subscription_context->storage, nullptr);
+  EXPECT_NE(subscription_context->publisher, nullptr);
+  ASSERT_NE(subscription_context->lineage, nullptr);
+  EXPECT_EQ(subscription_context->lineage->table_id(), subscription_table);
   const auto appended = database->execute_append(
       tablet_id(), {.client_id = ingest::test::request_id<ingest::ClientId>(1U),
                     .client_batch_id = ingest::test::request_id<ingest::ClientBatchId>(2U),

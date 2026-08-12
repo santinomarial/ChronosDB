@@ -681,8 +681,10 @@ chronos_enable_static_analysis(chronos_tiering)
 add_library(
   chronos_service
   src/service/native_protocol_service.cpp
+  src/service/single_node_committed_append_router.cpp
   src/service/single_node_database.cpp
   src/service/single_node_live_append_fanout.cpp
+  src/service/single_node_subscription_runtime.cpp
 )
 add_library(chronos::service ALIAS chronos_service)
 set_target_properties(chronos_service PROPERTIES EXPORT_NAME service CXX_EXTENSIONS OFF)
@@ -854,8 +856,12 @@ if(CHRONOS_BUILD_TESTS)
   add_executable(
     chronos_service_tests
     tests/service/native_protocol_service_header_self_contained.cpp
+    tests/service/single_node_committed_append_router_header_self_contained.cpp
+    tests/service/single_node_committed_append_router_test.cpp
     tests/service/single_node_live_append_fanout_header_self_contained.cpp
     tests/service/single_node_live_append_fanout_test.cpp
+    tests/service/single_node_subscription_runtime_header_self_contained.cpp
+    tests/service/single_node_subscription_runtime_test.cpp
     tests/service/single_node_database_header_self_contained.cpp
     tests/service/single_node_database_test.cpp
   )

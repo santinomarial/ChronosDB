@@ -7,6 +7,7 @@
 #include "chronos/ingest/retry_directory.hpp"
 #include "chronos/ingest/tablet_state.hpp"
 #include "chronos/manifest/publication.hpp"
+#include "chronos/manifest/storage.hpp"
 #include "chronos/query/catalog.hpp"
 #include "chronos/query/physical_operator.hpp"
 #include "chronos/query/physical_plan.hpp"
@@ -77,6 +78,12 @@ struct SingleNodeAsofSourceBinding {
   query::SnapshotTabletPipelineLimits limits{};
 };
 
+struct SingleNodeSubscriptionSnapshotContext {
+  const manifest::ManifestStorage* storage{};
+  const manifest::DatabaseStoragePublisher* publisher{};
+  const schema::SchemaLineage* lineage{};
+};
+
 // Recoverable single-process owner for the current WAL-backed single-node product boundary. The
 // object is thread-affine except for the independently synchronized WAL coordinator and query-safe
 // immutable snapshots returned by TabletState. Metadata Raft, WAL admission, and the database root
@@ -113,6 +120,10 @@ public:
   [[nodiscard]] common::Result<ingest::ColumnarAppendExecutionResult>
   execute_append(schema::TabletId tablet_id, ingest::ColumnarAppendExecutionInput input);
   [[nodiscard]] common::Result<manifest::DatabaseStorageSnapshot> storage_snapshot() const;
+  // Borrows the exact storage publication and lineage owners used to execute a subscription's
+  // historical half. The database must outlive the returned context and subscription runtime.
+  [[nodiscard]] common::Result<SingleNodeSubscriptionSnapshotContext>
+  subscription_snapshot_context(const schema::TableId& table_id) const;
   [[nodiscard]] common::Result<std::unique_ptr<query::PhysicalOperator>> instantiate_table_pipeline(
       const query::QueryResourceContext& resources, const schema::TableId& table_id,
       const schema::SchemaId& destination_schema_id, const query::PhysicalPipelinePlan& pipeline,
