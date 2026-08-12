@@ -1,6 +1,10 @@
 #include "chronos/columnar/columnar_batch_codec.hpp"
 #include "chronos/ingest/async_raft_tablet_application.hpp"
 #include "chronos/ingest/columnar_append.hpp"
+#include "chronos/raft/async_durable_worker_extension_set.hpp"
+#include "chronos/raft/async_metadata_application.hpp"
+#include "chronos/raft/metadata_codec.hpp"
+#include "chronos/raft/tablet_group_binding_codec.hpp"
 #include "chronos/service/replicated_ingest_coordinator.hpp"
 #include "chronos/service/replicated_ingest_operation.hpp"
 #include "columnar/columnar_test_support.hpp"
@@ -42,6 +46,12 @@ private:
 [[nodiscard]] raft::GroupId group_id() {
   common::Uuid::Bytes bytes{};
   bytes.fill(std::byte{0x51U});
+  return raft::GroupId{bytes};
+}
+
+[[nodiscard]] raft::GroupId metadata_group_id() {
+  common::Uuid::Bytes bytes{};
+  bytes.fill(std::byte{0x52U});
   return raft::GroupId{bytes};
 }
 
@@ -110,6 +120,52 @@ private:
   return ingest::AsyncRaftTabletApplication::create(std::move(configured));
 }
 
+struct RoutedApplications {
+  std::shared_ptr<ingest::AsyncRaftTabletApplication> tablets;
+  std::shared_ptr<raft::AsyncRaftMetadataApplication> metadata;
+  std::shared_ptr<raft::AsyncDurableRaftWorkerExtensionSet> extensions;
+};
+
+[[nodiscard]] common::Result<RoutedApplications> routed_applications() {
+  auto tablets = application();
+  if (!tablets.has_value())
+    return common::make_unexpected(tablets.error());
+  auto metadata = raft::AsyncRaftMetadataApplication::create({.group_id = metadata_group_id()});
+  if (!metadata.has_value())
+    return common::make_unexpected(metadata.error());
+  auto extensions = raft::AsyncDurableRaftWorkerExtensionSet::create({*tablets, *metadata});
+  if (!extensions.has_value())
+    return common::make_unexpected(extensions.error());
+  return RoutedApplications{std::move(*tablets), std::move(*metadata), std::move(*extensions)};
+}
+
+[[nodiscard]] raft::ProposeOperation placement_proposal(std::vector<raft::NodeId> replicas = {1U}) {
+  return {raft::kRaftMetadataCommandEntryType,
+          raft::encode_metadata_command_v1(
+              raft::TabletPlacementMetadata{columnar::test::batch_schema()->table_id(), tablet_id(),
+                                            1U, std::move(replicas), 1U})
+              .value()};
+}
+
+[[nodiscard]] raft::ProposeOperation binding_proposal() {
+  return {raft::kRaftTabletGroupBindingEntryType,
+          raft::encode_tablet_group_binding_v1({tablet_id(), group_id()}).value()};
+}
+
+void publish_route(raft::AsyncDurableMultiRaftRuntime& runtime,
+                   std::vector<raft::NodeId> replicas = {1U}, const bool include_binding = true) {
+  auto election = runtime.try_submit({{metadata_group_id(), raft::StartElectionOperation{}}});
+  ASSERT_TRUE(election.has_value()) << election.error().to_string();
+  ASSERT_TRUE(election->wait().has_value());
+  std::vector<raft::DurableRaftRequest> proposals;
+  proposals.emplace_back(metadata_group_id(), placement_proposal(std::move(replicas)));
+  if (include_binding)
+    proposals.emplace_back(metadata_group_id(), binding_proposal());
+  auto published = runtime.try_submit(std::move(proposals));
+  ASSERT_TRUE(published.has_value()) << published.error().to_string();
+  ASSERT_TRUE(published->wait().has_value());
+}
+
 [[nodiscard]] common::Result<ReplicatedIngestResult> await(ReplicatedIngestOperation& operation) {
   for (std::size_t attempt = 0U; attempt < 10'000U; ++attempt) {
     auto polled = operation.poll();
@@ -176,22 +232,24 @@ TEST(ReplicatedIngestOperationTest, RejectsAProposalOutsideTheRequiredLeaderTerm
 
 TEST(ReplicatedIngestCoordinatorTest, BoundsCancelsCompletesAndTimesOutCorrelatedRequests) {
   TemporaryDirectory directory;
-  auto extension = application();
-  ASSERT_TRUE(extension.has_value()) << extension.error().to_string();
+  auto applications = routed_applications();
+  ASSERT_TRUE(applications.has_value()) << applications.error().to_string();
   auto runtime = raft::AsyncDurableMultiRaftRuntime::create_new(
-      1U, {.directory_path = directory.path().string()}, {{group_id(), {1U}}}, {}, *extension);
+      1U, {.directory_path = directory.path().string()},
+      {{metadata_group_id(), {1U}}, {group_id(), {1U}}}, {}, applications->extensions);
   ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  publish_route(*runtime);
   auto election = runtime->try_submit({{group_id(), raft::StartElectionOperation{}}});
   ASSERT_TRUE(election.has_value());
   ASSERT_TRUE(election->wait().has_value());
   auto coordinator = ReplicatedIngestCoordinator::create(
-      *runtime, **extension,
+      *runtime, *applications->tablets, *applications->metadata,
       {.maximum_pending_requests = 2U, .request_timeout = std::chrono::milliseconds{100}});
   ASSERT_TRUE(coordinator.has_value()) << coordinator.error().to_string();
   const auto start = std::chrono::steady_clock::time_point{std::chrono::seconds{10}};
-  EXPECT_TRUE(coordinator->admit(quorum_request(10U, 1U, 1U), group_id(), 1U, start).is_ok());
-  EXPECT_TRUE(coordinator->admit(quorum_request(11U, 1U, 2U), group_id(), 1U, start).is_ok());
-  EXPECT_EQ(coordinator->admit(quorum_request(12U, 1U, 3U), group_id(), 1U, start).code(),
+  EXPECT_TRUE(coordinator->admit(quorum_request(10U, 1U, 1U), start).is_ok());
+  EXPECT_TRUE(coordinator->admit(quorum_request(11U, 1U, 2U), start).is_ok());
+  EXPECT_EQ(coordinator->admit(quorum_request(12U, 1U, 3U), start).code(),
             common::StatusCode::kResourceExhausted);
   EXPECT_TRUE(coordinator->cancel(11U, 1U));
   EXPECT_FALSE(coordinator->cancel(11U, 1U));
@@ -211,7 +269,7 @@ TEST(ReplicatedIngestCoordinatorTest, BoundsCancelsCompletesAndTimesOutCorrelate
   EXPECT_TRUE(
       network::decode_quorum_sync_ingest_acknowledgement(response->frame.payload).has_value());
 
-  EXPECT_TRUE(coordinator->admit(quorum_request(13U, 7U, 4U), group_id(), 1U, start).is_ok());
+  EXPECT_TRUE(coordinator->admit(quorum_request(13U, 7U, 4U), start).is_ok());
   auto timed_out = coordinator->poll(start + std::chrono::milliseconds{101});
   ASSERT_TRUE(timed_out.has_value()) << timed_out.error().to_string();
   ASSERT_TRUE(timed_out->has_value());
@@ -232,18 +290,68 @@ TEST(ReplicatedIngestCoordinatorTest, BoundsCancelsCompletesAndTimesOutCorrelate
 
 TEST(ReplicatedIngestCoordinatorTest, RejectsTaskWithoutNegotiatedQuorumFeature) {
   TemporaryDirectory directory;
-  auto extension = application();
-  ASSERT_TRUE(extension.has_value());
+  auto applications = routed_applications();
+  ASSERT_TRUE(applications.has_value());
   auto runtime = raft::AsyncDurableMultiRaftRuntime::create_new(
-      1U, {.directory_path = directory.path().string()}, {{group_id(), {1U}}}, {}, *extension);
+      1U, {.directory_path = directory.path().string()},
+      {{metadata_group_id(), {1U}}, {group_id(), {1U}}}, {}, applications->extensions);
   ASSERT_TRUE(runtime.has_value());
-  auto coordinator = ReplicatedIngestCoordinator::create(*runtime, **extension);
+  auto coordinator = ReplicatedIngestCoordinator::create(*runtime, *applications->tablets,
+                                                         *applications->metadata);
   ASSERT_TRUE(coordinator.has_value());
   auto request = quorum_request(10U, 1U, 1U);
   request.protocol.feature_bits = 0U;
-  EXPECT_EQ(coordinator->admit(std::move(request), group_id(), 1U).code(),
-            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(coordinator->admit(std::move(request)).code(), common::StatusCode::kInvalidArgument);
   EXPECT_EQ(coordinator->metrics().pending_requests, 0U);
+  EXPECT_TRUE(runtime->shutdown().is_ok());
+}
+
+TEST(ReplicatedIngestCoordinatorTest, RejectsAPlacedTabletWithoutAnAuthoritativeGroupBinding) {
+  TemporaryDirectory directory;
+  auto applications = routed_applications();
+  ASSERT_TRUE(applications.has_value());
+  auto runtime = raft::AsyncDurableMultiRaftRuntime::create_new(
+      1U, {.directory_path = directory.path().string()},
+      {{metadata_group_id(), {1U}}, {group_id(), {1U}}}, {}, applications->extensions);
+  ASSERT_TRUE(runtime.has_value());
+  publish_route(*runtime, {1U}, false);
+  auto coordinator = ReplicatedIngestCoordinator::create(*runtime, *applications->tablets,
+                                                         *applications->metadata);
+  ASSERT_TRUE(coordinator.has_value());
+  EXPECT_EQ(coordinator->admit(quorum_request(10U, 1U, 1U)).code(),
+            common::StatusCode::kUnavailable);
+  EXPECT_EQ(coordinator->metrics().pending_requests, 0U);
+  EXPECT_TRUE(runtime->shutdown().is_ok());
+}
+
+TEST(ReplicatedIngestCoordinatorTest, FailsClosedWithoutLocalStablePlacementLeadership) {
+  TemporaryDirectory directory;
+  auto applications = routed_applications();
+  ASSERT_TRUE(applications.has_value());
+  auto runtime = raft::AsyncDurableMultiRaftRuntime::create_new(
+      1U, {.directory_path = directory.path().string()},
+      {{metadata_group_id(), {1U}}, {group_id(), {1U}}}, {}, applications->extensions);
+  ASSERT_TRUE(runtime.has_value());
+  publish_route(*runtime, {1U, 2U});
+  auto election = runtime->try_submit({{group_id(), raft::StartElectionOperation{}}});
+  ASSERT_TRUE(election.has_value());
+  ASSERT_TRUE(election->wait().has_value());
+  auto coordinator = ReplicatedIngestCoordinator::create(*runtime, *applications->tablets,
+                                                         *applications->metadata);
+  ASSERT_TRUE(coordinator.has_value());
+  EXPECT_TRUE(coordinator->admit(quorum_request(10U, 1U, 1U)).is_ok());
+  std::optional<network::NetworkTask> response;
+  for (std::size_t attempt = 0U; attempt < 10'000U && !response.has_value(); ++attempt) {
+    auto polled = coordinator->poll();
+    ASSERT_TRUE(polled.has_value()) << polled.error().to_string();
+    response = std::move(*polled);
+    std::this_thread::yield();
+  }
+  ASSERT_TRUE(response.has_value());
+  EXPECT_EQ(response->frame.header.message_type, network::MessageType::kError);
+  const auto error = network::decode_error_message(response->frame.payload);
+  ASSERT_TRUE(error.has_value());
+  EXPECT_EQ(error->code, network::ProtocolErrorCode::kExecutionFailure);
   EXPECT_TRUE(runtime->shutdown().is_ok());
 }
 

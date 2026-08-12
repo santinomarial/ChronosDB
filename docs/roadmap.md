@@ -838,8 +838,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   exact negotiated version, feature bits, and payload bound through the SPSC handoff, so a service
   can authorize QUORUM_SYNC without reconstructing connection capabilities.
   A bounded service coordinator now owns multiple such operations, validates negotiated task
-  authority, polls them round-robin, enforces exact cancellation/deadlines, reports finite metrics,
-  and releases one correlated acknowledgement or error for response-queue backpressure.
+  authority, derives the tablet group from committed placement/binding metadata, queues an ordered
+  group observation, and admits only stable local leadership under its exact term. It polls requests
+  round-robin, enforces exact cancellation/deadlines, reports finite metrics, and releases one
+  correlated acknowledgement or error for response-queue backpressure.
   Group-scoped read barriers now flow through both Multi-Raft owners without fabricating a durable
   transition, while higher-term recipient state still crosses the existing sync-before-response
   boundary. Production transport and tablet snapshot acquisition remain deferred.
@@ -860,7 +862,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   those immutable snapshots. The metadata application owner now installs them before Raft
   compaction and exact-rebuilds a compacted catalog from snapshot plus committed suffix. Database
   namespaces and catalog tombstones remain;
-  placement-driven membership orchestration is not yet integrated.
+  replicated-ingest admission exact-compares placement with stable committed group membership;
+  automatic placement-driven membership orchestration is not yet integrated.
 
 - **Scope:** map tablets to Raft groups; multiplex logical records over physical logs, threads, timers, and connections; lifecycle, placement, snapshot transfer, fairness, and safe per-group reclamation.
 - **Explicit non-scope:** globally ordered logs, cross-tablet atomic transactions, distributed query execution, automatic rebalancing beyond scoped placement mechanics, and conflating physical offsets with logical indexes.

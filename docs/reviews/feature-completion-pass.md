@@ -170,6 +170,9 @@ all-group recovery anchor before removing old segments. Tablet and metadata snap
 retain only the exact durable Raft authority and reclaim older or crash-orphaned future files.
 Additive Snapshot 1.1 retains exact Tablet Group Binding v1 type-4 entries, giving routing an
 immutable committed tablet-to-group identity without changing Metadata Command v1 or minor-0 bytes.
+Replicated-ingest coordination now derives that route from committed metadata, obtains an ordered
+local role/term observation, exact-compares stable membership with placement, and term-fences the
+proposal. Callers no longer supply group or term authority.
 
 ### Phase 15 — Multi-Raft tablets and metadata
 
@@ -386,8 +389,9 @@ broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were d
   its routing catalog is restored from selected authority and bytes rebuild on verified demand.
 - Shared Raft-log and application-snapshot reclamation are caller-triggered and lack syscall/crash
   fault matrices; the ordering protocols are implemented and focused restart tests pass.
-- QUORUM_SYNC receipts and Protocol 2.0 negotiation/acknowledgement bytes exist, but no packaged
-  replicated service advertises or executes the client mode yet.
+- QUORUM_SYNC receipts, Protocol 2.0 negotiation/acknowledgement bytes, metadata-derived local
+  routing, and bounded execution exist, but no packaged replicated daemon advertises the client
+  mode yet.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 

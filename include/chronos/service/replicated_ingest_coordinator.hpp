@@ -5,6 +5,7 @@
 #include "chronos/ingest/async_raft_tablet_application.hpp"
 #include "chronos/network/spsc_queue.hpp"
 #include "chronos/raft/async_durable_runtime.hpp"
+#include "chronos/raft/async_metadata_application.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -32,7 +33,9 @@ struct ReplicatedIngestCoordinatorMetrics {
 
 // Thread-affine bounded owner for multiple reactor-routed QUORUM_SYNC requests. poll() performs no
 // blocking wait and returns at most one owning response for caller-managed queue backpressure. The
-// borrowed runtime and application must outlive this coordinator and all admitted operations.
+// borrowed runtime and application owners must outlive this coordinator and all admitted
+// operations. Admission derives the tablet group from committed metadata; poll() obtains an
+// ordered current-role observation before submitting under that exact leader term.
 class ReplicatedIngestCoordinator {
 public:
   ReplicatedIngestCoordinator() = delete;
@@ -42,13 +45,12 @@ public:
   ReplicatedIngestCoordinator(ReplicatedIngestCoordinator&&) noexcept;
   ReplicatedIngestCoordinator& operator=(ReplicatedIngestCoordinator&&) noexcept;
 
-  [[nodiscard]] static common::Result<ReplicatedIngestCoordinator>
-  create(raft::AsyncDurableMultiRaftRuntime& runtime,
-         ingest::AsyncRaftTabletApplication& application,
-         ReplicatedIngestCoordinatorLimits limits = {});
+  [[nodiscard]] static common::Result<ReplicatedIngestCoordinator> create(
+      raft::AsyncDurableMultiRaftRuntime& runtime, ingest::AsyncRaftTabletApplication& application,
+      raft::AsyncRaftMetadataApplication& metadata, ReplicatedIngestCoordinatorLimits limits = {});
 
   [[nodiscard]] common::Status
-  admit(network::NetworkTask request, raft::GroupId group_id, raft::Term required_leader_term,
+  admit(network::NetworkTask request,
         std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
   [[nodiscard]] bool cancel(std::uint64_t connection_id, std::uint64_t request_id) noexcept;
   [[nodiscard]] common::Result<std::optional<network::NetworkTask>>

@@ -8,8 +8,10 @@
 #include <memory>
 #include <new>
 #include <optional>
+#include <ranges>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace chronos::service {
@@ -20,6 +22,12 @@ namespace {
 }
 [[nodiscard]] common::Status exhausted(std::string message) {
   return {common::StatusCode::kResourceExhausted, std::move(message)};
+}
+[[nodiscard]] common::Status unavailable(std::string message) {
+  return {common::StatusCode::kUnavailable, std::move(message)};
+}
+[[nodiscard]] common::Status corruption(std::string message) {
+  return {common::StatusCode::kCorruption, std::move(message)};
 }
 
 void increment(std::uint64_t& value) noexcept {
@@ -52,23 +60,31 @@ void increment(std::uint64_t& value) noexcept {
 
 class ReplicatedIngestCoordinator::Impl {
 public:
+  struct Routing {
+    raft::GroupId group_id;
+    schema::TableId table_id;
+    schema::TabletId tablet_id;
+    std::vector<std::byte> command;
+    raft::AsyncDurableRaftCompletion observation;
+  };
+
   struct Pending {
     std::uint64_t connection_id{};
     std::uint64_t principal_id{};
     std::uint64_t request_id{};
     network::NetworkTaskProtocolContext protocol;
     std::chrono::steady_clock::time_point deadline;
-    ReplicatedIngestOperation operation;
+    std::variant<Routing, ReplicatedIngestOperation> work;
   };
 
   Impl(raft::AsyncDurableMultiRaftRuntime& configured_runtime,
        ingest::AsyncRaftTabletApplication& configured_application,
+       raft::AsyncRaftMetadataApplication& configured_metadata,
        const ReplicatedIngestCoordinatorLimits configured_limits) noexcept
       : runtime(&configured_runtime), application(&configured_application),
-        limits(configured_limits) {}
+        metadata(&configured_metadata), limits(configured_limits) {}
 
-  [[nodiscard]] common::Status admit(network::NetworkTask request, const raft::GroupId& group_id,
-                                     const raft::Term term,
+  [[nodiscard]] common::Status admit(network::NetworkTask request,
                                      const std::chrono::steady_clock::time_point now) {
     const auto reject = [&](common::Status status) {
       increment(stats.rejected_requests);
@@ -101,19 +117,43 @@ public:
     auto envelope = network::decode_ingest_request(request.frame.payload, context, protocol_limits);
     if (!envelope.has_value() || envelope->durability != network::DurabilityMode::kQuorumSync)
       return reject(invalid("replicated ingest requires negotiated QUORUM_SYNC bytes"));
+    auto decoded = ingest::decode_columnar_append_v1_exact(envelope->encoded_columnar_append,
+                                                           limits.columnar_append);
+    if (!decoded.has_value())
+      return reject(decoded.error().status());
+    auto catalog = metadata->catalog_snapshot();
+    if (!catalog.has_value())
+      return reject(catalog.error());
+    const auto placement =
+        std::ranges::lower_bound((*catalog)->tablet_placements, decoded->tablet_id(), {},
+                                 &raft::TabletPlacementMetadata::tablet_id);
+    if (placement == (*catalog)->tablet_placements.end() ||
+        placement->tablet_id != decoded->tablet_id())
+      return reject(unavailable("replicated ingest tablet has no committed placement"));
+    if (placement->table_id != decoded->table_id())
+      return reject(invalid("replicated ingest tablet belongs to another table"));
+    const auto binding =
+        std::ranges::lower_bound((*catalog)->tablet_group_bindings, decoded->tablet_id(), {},
+                                 &raft::TabletGroupBindingMetadata::tablet_id);
+    if (binding == (*catalog)->tablet_group_bindings.end() ||
+        binding->tablet_id != decoded->tablet_id())
+      return reject(unavailable("replicated ingest tablet has no committed Raft group binding"));
+    if (binding->group_id == metadata->group_id())
+      return reject(corruption("replicated ingest tablet aliases the metadata Raft group"));
+    auto observation = runtime->try_observe_group(binding->group_id);
+    if (!observation.has_value())
+      return reject(observation.error());
     try {
       std::vector<std::byte> command{envelope->encoded_columnar_append.begin(),
                                      envelope->encoded_columnar_append.end()};
-      auto operation = ReplicatedIngestOperation::submit(
-          group_id, term, std::move(command), *runtime, *application, limits.columnar_append);
-      if (!operation.has_value())
-        return reject(operation.error());
-      pending.push_back({.connection_id = request.connection_id,
-                         .principal_id = request.principal_id,
-                         .request_id = request.frame.header.request_id,
-                         .protocol = request.protocol,
-                         .deadline = now + limits.request_timeout,
-                         .operation = std::move(*operation)});
+      pending.push_back(
+          {.connection_id = request.connection_id,
+           .principal_id = request.principal_id,
+           .request_id = request.frame.header.request_id,
+           .protocol = request.protocol,
+           .deadline = now + limits.request_timeout,
+           .work = Routing{binding->group_id, decoded->table_id(), decoded->tablet_id(),
+                           std::move(command), std::move(*observation)}});
       stats.pending_requests = pending.size();
       stats.high_water_pending_requests =
           std::max(stats.high_water_pending_requests, stats.pending_requests);
@@ -124,6 +164,40 @@ public:
     } catch (const std::length_error&) {
       return reject(exhausted("replicated ingest coordinator exceeds container limits"));
     }
+  }
+
+  [[nodiscard]] common::Status validate_route(const Routing& route,
+                                              const raft::RaftGroupObservation& observed) const {
+    if (observed.group_id != route.group_id || observed.node_id == 0U ||
+        observed.current_term == 0U || observed.last_log_index < observed.commit_index ||
+        observed.commit_index < observed.applied_index)
+      return corruption("replicated ingest received an invalid Raft group observation");
+    auto catalog = metadata->catalog_snapshot();
+    if (!catalog.has_value())
+      return catalog.error();
+    const auto placement = std::ranges::lower_bound((*catalog)->tablet_placements, route.tablet_id,
+                                                    {}, &raft::TabletPlacementMetadata::tablet_id);
+    if (placement == (*catalog)->tablet_placements.end() || placement->tablet_id != route.tablet_id)
+      return unavailable("replicated ingest tablet placement is no longer available");
+    if (placement->table_id != route.table_id)
+      return corruption("replicated ingest tablet placement changed table identity");
+    const auto binding =
+        std::ranges::lower_bound((*catalog)->tablet_group_bindings, route.tablet_id, {},
+                                 &raft::TabletGroupBindingMetadata::tablet_id);
+    if (binding == (*catalog)->tablet_group_bindings.end() ||
+        binding->tablet_id != route.tablet_id || binding->group_id != route.group_id)
+      return corruption("replicated ingest tablet Raft group binding changed");
+    if (observed.role != raft::Role::kLeader || observed.leader_id != observed.node_id)
+      return unavailable("replicated ingest tablet is not led by this node");
+    if (!std::ranges::binary_search(placement->replicas, observed.node_id))
+      return unavailable("replicated ingest leader is outside committed placement");
+    if (observed.joint_membership_active || observed.joint_membership_can_finalize ||
+        observed.final_membership_pending || observed.voters != placement->replicas ||
+        observed.committed_voters != placement->replicas || !observed.joint_old_voters.empty() ||
+        !observed.joint_new_voters.empty())
+      return unavailable(
+          "replicated ingest tablet membership is reconfiguring or differs from placement");
+    return common::Status::ok();
   }
 
   [[nodiscard]] common::Result<std::optional<network::NetworkTask>>
@@ -139,14 +213,50 @@ public:
         failure = {common::StatusCode::kCancelled, "replicated ingest request timed out"};
         increment(stats.timed_out_requests);
       } else {
-        auto result = item.operation.poll();
-        if (!result.has_value())
-          failure = result.error();
-        else if (result->has_value())
-          completed = std::move(**result);
-        else {
-          ++cursor;
-          continue;
+        if (auto* route = std::get_if<Routing>(&item.work); route != nullptr) {
+          if (!route->observation.is_ready()) {
+            ++cursor;
+            continue;
+          }
+          auto result = route->observation.wait();
+          if (!result.has_value())
+            failure = result.error();
+          else if (result->size() != 1U)
+            failure = corruption("replicated ingest route observation is not singular");
+          else {
+            const raft::DurableRaftResult& observed = result->front();
+            if (observed.transition.has_value() ||
+                (!observed.status.is_ok() && observed.observation.has_value()))
+              failure = corruption("replicated ingest route observation is malformed");
+            else if (!observed.status.is_ok())
+              failure = observed.status;
+            else if (!observed.observation.has_value())
+              failure = corruption("replicated ingest route observation is missing");
+            else
+              failure = validate_route(*route, *observed.observation);
+          }
+          if (failure.is_ok()) {
+            auto operation = ReplicatedIngestOperation::submit(
+                route->group_id, result->front().observation->current_term,
+                std::move(route->command), *runtime, *application, limits.columnar_append);
+            if (!operation.has_value())
+              failure = operation.error();
+            else {
+              item.work = std::move(*operation);
+              ++cursor;
+              continue;
+            }
+          }
+        } else {
+          auto result = std::get<ReplicatedIngestOperation>(item.work).poll();
+          if (!result.has_value())
+            failure = result.error();
+          else if (result->has_value())
+            completed = std::move(**result);
+          else {
+            ++cursor;
+            continue;
+          }
         }
       }
       common::Result<std::vector<std::byte>> payload =
@@ -186,6 +296,7 @@ public:
 
   raft::AsyncDurableMultiRaftRuntime* runtime;
   ingest::AsyncRaftTabletApplication* application;
+  raft::AsyncRaftMetadataApplication* metadata;
   ReplicatedIngestCoordinatorLimits limits;
   std::vector<Pending> pending;
   std::size_t cursor{};
@@ -200,16 +311,15 @@ ReplicatedIngestCoordinator::ReplicatedIngestCoordinator(ReplicatedIngestCoordin
 ReplicatedIngestCoordinator&
 ReplicatedIngestCoordinator::operator=(ReplicatedIngestCoordinator&&) noexcept = default;
 
-common::Result<ReplicatedIngestCoordinator>
-ReplicatedIngestCoordinator::create(raft::AsyncDurableMultiRaftRuntime& runtime,
-                                    ingest::AsyncRaftTabletApplication& application,
-                                    const ReplicatedIngestCoordinatorLimits limits) {
+common::Result<ReplicatedIngestCoordinator> ReplicatedIngestCoordinator::create(
+    raft::AsyncDurableMultiRaftRuntime& runtime, ingest::AsyncRaftTabletApplication& application,
+    raft::AsyncRaftMetadataApplication& metadata, const ReplicatedIngestCoordinatorLimits limits) {
   if (limits.maximum_pending_requests == 0U || limits.maximum_pending_requests > 65'536U ||
       limits.request_timeout <= std::chrono::milliseconds::zero() ||
-      !runtime.owns_worker_extension(application))
+      !runtime.owns_worker_extension(application) || !runtime.owns_worker_extension(metadata))
     return common::make_unexpected(invalid("replicated ingest coordinator limits are invalid"));
   try {
-    auto impl = std::make_unique<Impl>(runtime, application, limits);
+    auto impl = std::make_unique<Impl>(runtime, application, metadata, limits);
     impl->pending.reserve(limits.maximum_pending_requests);
     return ReplicatedIngestCoordinator{std::move(impl)};
   } catch (const std::bad_alloc&) {
@@ -220,10 +330,8 @@ ReplicatedIngestCoordinator::create(raft::AsyncDurableMultiRaftRuntime& runtime,
 }
 
 common::Status ReplicatedIngestCoordinator::admit(network::NetworkTask request,
-                                                  const raft::GroupId group_id,
-                                                  const raft::Term required_leader_term,
                                                   const std::chrono::steady_clock::time_point now) {
-  return impl_->admit(std::move(request), group_id, required_leader_term, now);
+  return impl_->admit(std::move(request), now);
 }
 
 bool ReplicatedIngestCoordinator::cancel(const std::uint64_t connection_id,
