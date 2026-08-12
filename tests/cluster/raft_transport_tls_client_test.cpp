@@ -116,6 +116,8 @@ TEST(RaftTransportTlsClientTest, AuthenticatesQueuesAndWritesPersistentFrames) {
   auto client = RaftTransportTlsClient::create(std::move(*client_socket),
                                                client_config(authenticator, authorizer), now);
   ASSERT_TRUE(client.has_value());
+  EXPECT_FALSE(client->interest().want_read);
+  EXPECT_TRUE(client->interest().want_write);
   ASSERT_TRUE(client->next_deadline().has_value());
   EXPECT_EQ(*client->next_deadline(), now + std::chrono::milliseconds{100});
   auto first = frame(1U);

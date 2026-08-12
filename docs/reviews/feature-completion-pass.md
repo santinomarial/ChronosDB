@@ -146,6 +146,8 @@ Inbound terminal closure now preserves an already admitted durable operation unt
 is taken, rather than discarding possibly persisted state with the socket.
 Outbound terminal closure now immediately transfers whole retry frames into capped reconnect instead
 of spinning on a terminal descriptor until its later TLS deadline.
+Outbound Raft TLS now starts with write readiness so a real poll loop emits ClientHello before
+following OpenSSL's subsequent readiness state.
 A bounded deterministic simulator now records explicit and seeded virtual-network, crash/restart,
 atomic persistence-fault, application, membership, and snapshot actions; it runs an independent
 election/log/commit/leader-completeness checker after each step, replays exact traces, and performs

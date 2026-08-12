@@ -169,7 +169,8 @@ public:
   std::size_t queued_bytes_{};
   TimePoint deadline_{};
   RaftTransportTlsClientState state_{RaftTransportTlsClientState::kHandshaking};
-  RaftTransportTlsClientInterest interest_{.want_read = true};
+  // A TLS client must initiate the handshake by producing ClientHello bytes.
+  RaftTransportTlsClientInterest interest_{.want_write = true};
   common::Status failure_{common::StatusCode::kInternal, "Raft TLS client has not failed"};
 };
 

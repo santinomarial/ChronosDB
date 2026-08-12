@@ -60,6 +60,8 @@ The outbound TLS carrier uses one preallocated fixed-slot ring per peer. Queue a
 the canonical source/destination and both frame/byte limits before moving caller bytes. One event-
 loop thread owns all offsets, so no atomics are needed. A failed connection can drain complete FIFO
 frames for whole-message retry; the partially written front is deliberately restarted at byte zero.
+Its initial readiness is writable so the client emits ClientHello; later interests follow OpenSSL's
+exact `WANT_READ`/`WANT_WRITE` result.
 
 The peer pool preallocates a bounded set of exact-peer carrier slots. It borrows one durable result,
 preflights every destination and aggregate per-peer frame/byte demand, encodes the complete result,

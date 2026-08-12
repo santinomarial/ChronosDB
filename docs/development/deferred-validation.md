@@ -164,6 +164,8 @@
   disconnect timing, descriptor-pressure, and crash matrices remain deferred.
   Outbound terminal events now immediately retain whole retry frames and enter capped reconnect;
   partial-write terminal matrices and reconnect-storm stress remain deferred.
+  Outbound Raft TLS now begins with client-write readiness; handshake fragmentation/failure and
+  reconnect matrices remain deferred.
 - Broad leader-churn and partition matrices, semantic/chunk trace shrinking, clock changes, physical
   disk failures, ASan/UBSan/TSan, fuzzing, independent model checking, commit/catch-up/snapshot
   benchmarks, and API review.
