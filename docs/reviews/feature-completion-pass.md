@@ -9,8 +9,11 @@
   pushed `f35c140`, `30ba6bd42f84aae821f426cc194f344b32114de9`, and
   `034273eb74b0040820be4e82587797c77b217fac`, committing the Phase 11–17, runtime, integration, and
   documentation files produced during the pass. The agent did not run `git commit` or `git push`.
-- **Reviewed ending HEAD:** `034273eb74b0040820be4e82587797c77b217fac`. The final uncommitted tree
-  contains the last Raft safety fixes, documentation reconciliation, and formatting corrections.
+- **Reviewed implementation boundary:** `ce3e47cfdcda5c02a80c9995de7eaf5808f29af0`
+  (`Reclaim obsolete Raft application snapshots`), pushed to `main`; the working tree was clean before
+  this review reconciliation.
+- **Continuation policy:** the repository owner subsequently requested one verified commit and push
+  per completed task, overriding the original no-commit instruction for that continuation.
 
 This is a truthful feature-architecture checkpoint, not a declaration that Phases 11–17 have passed
 their full roadmap exit gates or that ChronosDB is a production three-node database.
@@ -48,8 +51,9 @@ plan frontier and validates committed placement epochs and local replica members
 a source-specific batch reclaimer. Logical subscription positions are not fabricated into physical
 WAL offsets.
 
-Still incomplete for production deployment: source-specific WAL/Raft physical prefix reclamation
-and dynamic plan-owner retirement remain coupled to the Phase 15 physical-log lifecycle.
+Node-wide Raft physical prefix reclamation is now implemented after a complete all-group checkpoint.
+Mapping a particular durable subscription frontier into that node-wide scheduling policy and dynamic
+plan-owner retirement remain production composition work.
 
 ### Phase 12 — performance architecture and io_uring
 
@@ -102,13 +106,11 @@ an explicit persist-before-send state copy.
 The focused minimum gate passes for 3-node election, one committed command, leader loss, replacement
 leader, a second command, stale-leader rejection, and restarted follower catch-up. Joint membership,
 two-stage snapshot installation, and a current-term quorum read barrier are implemented. Physical
-disk persistence fault matrices, production tablet read integration, snapshot transfer bytes, and
+disk persistence fault matrices, production tablet read integration, broader snapshot transfer, and
 long/exhaustive randomized simulation remain incomplete.
 
 Later work accepted and implemented a bounded canonical group/source/destination Raft transport
-envelope for every current vote, append, snapshot, and read-barrier message. Production socket
-connection establishment/backoff, event-loop composition, and retransmission policy remain
-incomplete.
+envelope for every current vote, append, snapshot, and read-barrier message.
 Header-first stream ownership now validates the fixed header before exact frame allocation, returns
 precise consumed prefixes for coalesced input, and owns complete output across short writes.
 An authenticated receiver now rejects trust and route failures before durable runtime admission and
@@ -129,9 +131,8 @@ of silently dropping or replacing them.
 One nonblocking exact-route TCP attempt now retains complete retry frames through connection,
 creates TLS only after authoritative connect completion, and transfers descriptor/carrier ownership
 together into that pool. One exact peer now has capped monotonic reconnect backoff and complete frame
-custody between attempts. A fixed multi-peer manager now exposes exact descriptor interests,
-installs and recycles pairs, and rejects unroutable fresh results without consuming them; whole
-runtime poll composition remains external.
+custody between attempts. A fixed multi-peer manager exposes exact descriptor interests, installs
+and recycles pairs, and rejects unroutable fresh results without consuming them.
 A bounded injected-time scheduler now emits generation-tagged election and heartbeat actions,
 preserves due work across admission backpressure, and rejects stale completion rearming.
 A bounded driver now submits each timer action plus its ordered observation through the asynchronous
@@ -164,8 +165,9 @@ Metadata Application Snapshot v1 now provides a bounded canonical structural cod
 metadata/schema application entries and internal Raft gaps under one complete snapshot membership
 identity. A locked storage owner exact-installs those bytes, and the metadata application owner now
 installs them before Raft compaction and exact-reopens a compacted catalog from the validated
-snapshot plus committed suffix. Snapshot transfer and obsolete application/physical-log
-reclamation remain.
+snapshot plus committed suffix. Node-wide physical-log reclamation now installs a checksummed
+all-group recovery anchor before removing old segments. Tablet and metadata snapshot owners also
+retain only the exact durable Raft authority and reclaim older or crash-orphaned future files.
 
 ### Phase 15 — Multi-Raft tablets and metadata
 
@@ -182,9 +184,13 @@ metadata-group indexes. Focused tests cover deterministic schema bytes, strict d
 legal schema succession, different leaders, group isolation, one-node loss, reopen, metadata order,
 and record corruption.
 
-No segmented file/fsync owner, batching worker pool, fairness policy, physical-log recovery scan,
-tablet state-machine adapter, membership protocol, or QUORUM_SYNC exists. QUORUM_SYNC is not aliased
-to LOCAL_SYNC or exposed.
+A single-owner segmented file/fsync/recovery log, bounded asynchronous persistence worker, committed
+tablet state-machine adapter, joint-consensus membership, exact application snapshots, and checked
+leader quorum-sync/application receipts are implemented. The shared physical log now performs
+caller-triggered all-group checkpoint reclamation without crossing group authority. QUORUM_SYNC is
+not yet negotiated as a native client durability mode, and measured group-aware scheduling remains
+deferred. Database namespaces, catalog tombstones, and placement-driven membership orchestration
+still need accepted durable/runtime composition before being added.
 
 ### Phase 16 — distributed query and rebalancing
 
@@ -279,10 +285,11 @@ Important APIs include `SubscriptionManager`, `WindowedMaterializedView`,
 `MetadataStateMachine`, `TabletMovement`, `BoundedExchange`, `DistributedAggregateCoordinator`,
 `ObjectStore`, `TieredPartManager`, `Reactor`, and `apply_current_thread_placement`.
 
-At this review boundary, new bytes were limited to authenticated Resume Token v1 and Multiplexed
-Raft Persistent-State Record v1. Subsequent accepted formats now include Raft transport, distributed
-exchange, temporal CSEG/Manifest v2, and cold-location authority. WAL v1, Columnar Batch v1, CSEG v1,
-Manifest v1, and native Protocol v1 bytes were not reinterpreted.
+Accepted formats added during and after the pass include authenticated Resume Token v1,
+Multiplexed Raft Persistent-State Record v1, Raft transport, distributed exchange, temporal
+CSEG/Manifest v2, cold-location authority, tablet and metadata application snapshots, and the
+node-wide Raft recovery anchor. WAL v1, Columnar Batch v1, CSEG v1, Manifest v1, and native Protocol
+v1 bytes were not reinterpreted.
 
 ## Checks actually performed
 
@@ -307,6 +314,11 @@ Focused executions passed:
 - `chronos_runtime_tests`: 1 test; and
 - `chronos_feature_smoke_tests`: 1 test.
 - Linux 6.12/liburing 2.5 `IoUringReactorTest.*`: 2 focused tests.
+- Continued Raft work: `chronos_raft_tests`, 123 tests, including transport composition, metadata
+  snapshot recovery, shared-log reclamation, and application-snapshot reclamation.
+- Continued ingest work: `chronos_ingest_tests`, 95 tests, including repeated tablet snapshot
+  compaction/recovery and authoritative file reclamation.
+- Continued lightweight integration: `chronos_feature_smoke_tests`, 1 test.
 
 The final C++ tree passed the repository-pinned clang-format 18 check. Full-suite, sanitizer, fuzz,
 broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were deliberately not run.
@@ -317,10 +329,12 @@ broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were d
 
 - The feature graph is not service-integrated; several APIs accept already-committed/validated data
   and rely on an absent adapter to preserve that precondition.
-- Temporal corrections are not durable and are not resolved in vector CSEG/head scans.
+- Temporal corrections have durable WAL/CSEG v2/Manifest v2 composition; direct vector winner
+  lowering and mixed WAL/Raft-source composition remain incomplete.
 - The distributed implementation covers numeric global aggregate state, not arbitrary plans,
   grouping, order, top-N, limits, or exchange retries.
-- The movement state machine is not the Raft membership protocol itself.
+- Movement now composes deterministic actions with joint Raft membership and durable checkpoints;
+  automatic placement-driven orchestration remains external.
 - Cold upload independently performs exact schema/source-bound CSEG validation before remote
   mutation, but broader corruption, allocation-failure, and fuzz evidence remains deferred.
 - Raft now prevalidates malformed higher-term messages and divergent matching-term entries, but
@@ -328,8 +342,9 @@ broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were d
 
 ### Concurrency
 
-- Live/materialized-view, Multi-Raft, metadata, movement, and tiering owners are intentionally
-  single-thread-affine but are not yet scheduled by production worker pools.
+- Live/materialized-view, metadata-application, movement, and tiering owners are intentionally
+  single-thread-affine. Multi-Raft has a bounded dedicated worker, but committed tablet/metadata
+  application still lacks one packaged worker-affine service composition.
 - BoundedExchange and MemoryObjectStore use mutexes but have no TSan evidence in this pass.
 - io_uring protocol cancellation, forced in-flight shutdown, and close/completion races lack broad
   Linux and TSan evidence beyond the focused clean-shutdown lifecycle.
@@ -339,14 +354,15 @@ broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were d
 
 ### Durability
 
-- No persistent materialized-view checkpoint, temporal correction log/part, Raft segmented writer,
-  metadata command codec/file, durable movement receipt, or Manifest v2 cold location. The
-  full-object cache intentionally has no durable index; its routing catalog is restored from selected
-  authority and its bytes rebuild on verified demand.
-- Multiplexed records are codecs only; no append/sync/recovery/reclamation owner exists.
-- QUORUM_SYNC is unavailable.
-- The in-memory object store explicitly makes no remote durability claim; production S3 semantics
-  have not been exercised.
+- Materialized-view/subscription checkpoints, temporal mutation/CSEG v2/Manifest v2 state, segmented
+  Raft persistence, metadata commands/snapshots, movement checkpoints/receipts, and cold-location
+  authority are durable and checksummed. The full-object cache intentionally has no durable index;
+  its routing catalog is restored from selected authority and bytes rebuild on verified demand.
+- Shared Raft-log and application-snapshot reclamation are caller-triggered and lack syscall/crash
+  fault matrices; the ordering protocols are implemented and focused restart tests pass.
+- QUORUM_SYNC receipts exist internally but are not exposed through client protocol negotiation.
+- Production S3 semantics are implemented through the libcurl SigV4 backend but still require
+  object-store fault and deployment qualification.
 
 ### Performance
 
@@ -362,17 +378,12 @@ broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were d
 The exact subsystem/category ledger is
 [`deferred-validation.md`](../development/deferred-validation.md). Recommended order:
 
-1. Audit/fix deterministic Raft transition safety, add persistent file owner and crash recovery,
-   then run bounded deterministic simulation before building more distribution on it.
-2. Connect committed Raft application to tablet ingest/head/CSEG state and metadata command codecs;
-   only then define and test QUORUM_SYNC.
-3. Accept/version correction WAL and CSEG v2 plus Manifest v2 cold descriptors; implement recovery,
-   compaction, and scalar/vector temporal equivalence.
-4. Build real coordinator/worker fragment and exchange protocols with consistency proofs, then wire
-   safe Raft membership and durable snapshot movement.
-5. Add production S3 and Arrow/Parquet providers with dependency/security/compatibility review.
-6. Compose the packaged daemon with the durable three-node service adapter and run the complete
-   small end-to-end path.
-7. Run full compiler/Debug/Release/install suites, then ASan/UBSan/TSan, fuzz/corruption/crash,
+1. Compose the packaged daemon with worker-affine committed Raft tablet/metadata application and
+   client QUORUM_SYNC negotiation; then run the real three-process data-plane smoke path.
+2. Specify database namespaces/catalog tombstones and placement-driven membership orchestration
+   without changing Metadata Command v1 or Metadata Application Snapshot v1 bytes in place.
+3. Finish direct vector temporal winner lowering, mixed WAL/Raft recovery, durable retention
+   integration, and broader distributed grouping/order/top-N/LIMIT plan coverage.
+4. Run full compiler/Debug/Release/install suites, then ASan/UBSan/TSan, fuzz/corruption/crash,
    deterministic/chaos campaigns, SQL differential tests, and only afterward benchmarks/profiling/
    epoll-io_uring/SIMD/NUMA comparison and final tuning.
