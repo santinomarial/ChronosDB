@@ -409,6 +409,7 @@ add_library(
   src/query/ast.cpp
   src/query/binder.cpp
   src/query/catalog.cpp
+  src/query/columnar_batch_scan.cpp
   src/query/column_output.cpp
   src/query/committed_temporal_command.cpp
   src/query/cseg_scan.cpp
@@ -1490,6 +1491,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/binder_test.cpp
     tests/query/catalog_header_self_contained.cpp
     tests/query/catalog_test.cpp
+    tests/query/columnar_batch_scan_header_self_contained.cpp
+    tests/query/columnar_batch_scan_test.cpp
     tests/query/column_output_header_self_contained.cpp
     tests/query/column_output_test.cpp
     tests/query/committed_temporal_command_header_self_contained.cpp
