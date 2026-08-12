@@ -266,6 +266,11 @@
   cancellation, concurrent query/DDL/shutdown, every logical cell type, scalar/vector differential
   coverage, ASan/UBSan/TSan, and latency/memory profiles. Focused coverage now proves table-wide
   count encoding, bounded overflow, and described zero-row completion.
+- Native CREATE TABLE secure system-identity source integration, entropy failure injection,
+  duplicate/nil generator tests, DDL response boundary tests, client retry identities, fully
+  complete duplicate-request behavior, concurrent/stale DDL, authorization, ALTER/DROP/rename,
+  crash matrices through protocol dispatch, and subprocess restart qualification. Focused coverage
+  now proves injected identities, canonical durable completion fields, and immediate queryability.
 - Execute the complete requested three-node scenario with real sockets/processes and retained logs:
   create table, ingest, historical SQL, vector distributed aggregate, subscribe/update, leader kill,
   failover ingest/query, movement/query, tier/query, restart, and result reconciliation.

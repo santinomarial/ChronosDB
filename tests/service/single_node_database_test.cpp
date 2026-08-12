@@ -50,6 +50,20 @@ private:
   std::filesystem::path path_;
 };
 
+class DeterministicIdentityGenerator final : public NativeIdentityGenerator {
+public:
+  explicit DeterministicIdentityGenerator(const std::uint8_t first) noexcept : next_(first) {}
+
+  [[nodiscard]] common::Result<common::Uuid> generate() override {
+    common::Uuid::Bytes bytes{};
+    bytes.front() = static_cast<std::byte>(next_++);
+    return common::Uuid{bytes};
+  }
+
+private:
+  std::uint8_t next_;
+};
+
 [[nodiscard]] common::Uuid uuid(const std::uint8_t seed) {
   common::Uuid::Bytes bytes{};
   bytes.front() = static_cast<std::byte>(seed);
@@ -385,6 +399,54 @@ TEST(NativeProtocolServiceTest, EmitsDescribedZeroRowResultBeforeQueryEnd) {
   ASSERT_TRUE(result.has_value()) << result.error().to_string();
   EXPECT_EQ(result->row_count(), 0U);
   EXPECT_EQ(result->columns().size(), 3U);
+  EXPECT_TRUE(database->shutdown().is_ok());
+}
+
+TEST(NativeProtocolServiceTest, CreatesTableWithInjectedIdentitiesAndReturnsDurableResult) {
+  TemporaryDirectory directory;
+  auto database = SingleNodeDatabase::open_or_create(config(directory));
+  ASSERT_TRUE(database.has_value()) << database.error().to_string();
+  DeterministicIdentityGenerator identities{50U};
+  NativeProtocolService service{*database, identities};
+
+  auto ddl = service.execute_query(query_task(43U, kCreateSql));
+  ASSERT_TRUE(ddl.has_value()) << ddl.error().to_string();
+  ASSERT_EQ(ddl->responses.size(), 2U);
+  EXPECT_EQ(ddl->result_rows, 1U);
+  EXPECT_EQ(ddl->responses[0].frame.header.message_type, network::MessageType::kQueryResult);
+  EXPECT_EQ(ddl->responses[1].frame.header.message_type, network::MessageType::kQueryEnd);
+  const auto result = network::decode_query_result_batch(ddl->responses[0].frame.payload);
+  ASSERT_TRUE(result.has_value()) << result.error().to_string();
+  ASSERT_EQ(result->row_count(), 1U);
+  ASSERT_EQ(result->columns().size(), 5U);
+  EXPECT_EQ(result->columns()[0].name, "table_id");
+  EXPECT_EQ(result->columns()[3].name, "metadata_index");
+  EXPECT_EQ(result->columns()[4].name, "resumed_incomplete_creation");
+  const auto* table = result->cell(0U, 0U);
+  const auto* schema = result->cell(0U, 1U);
+  const auto* tablet = result->cell(0U, 2U);
+  const auto* metadata = result->cell(0U, 3U);
+  const auto* resumed = result->cell(0U, 4U);
+  ASSERT_NE(table, nullptr);
+  ASSERT_NE(schema, nullptr);
+  ASSERT_NE(tablet, nullptr);
+  ASSERT_NE(metadata, nullptr);
+  ASSERT_NE(resumed, nullptr);
+  EXPECT_EQ(table->value.front(), std::byte{50U});
+  EXPECT_EQ(schema->value.front(), std::byte{51U});
+  EXPECT_EQ(tablet->value.front(), std::byte{52U});
+  common::ByteReader metadata_index{metadata->value};
+  EXPECT_NE(metadata_index.read_u64_le().value(), 0U);
+  ASSERT_EQ(resumed->value.size(), 1U);
+  EXPECT_EQ(resumed->value.front(), std::byte{0U});
+
+  auto count = service.execute_query(query_task(44U, "SELECT count(*) AS rows FROM trades"));
+  ASSERT_TRUE(count.has_value()) << count.error().to_string();
+  ASSERT_EQ(count->responses.size(), 2U);
+  const auto count_result = network::decode_query_result_batch(count->responses[0].frame.payload);
+  ASSERT_TRUE(count_result.has_value()) << count_result.error().to_string();
+  common::ByteReader count_value{count_result->cell(0U, 0U)->value};
+  EXPECT_EQ(count_value.read_i64_le().value(), 0);
   EXPECT_TRUE(database->shutdown().is_ok());
 }
 

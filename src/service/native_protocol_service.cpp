@@ -1,5 +1,6 @@
 #include "chronos/service/native_protocol_service.hpp"
 
+#include "chronos/common/byte_writer.hpp"
 #include "chronos/common/checked_math.hpp"
 #include "chronos/ingest/columnar_append_executor.hpp"
 #include "chronos/ingest/committed_columnar_append.hpp"
@@ -11,6 +12,7 @@
 #include "chronos/query/tablet_state_pipeline.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -99,6 +101,10 @@ error_response(network::NetworkTask request, const common::Status& status,
 
 [[nodiscard]] common::Status internal(std::string_view message) {
   return common::Status{common::StatusCode::kInternal, std::string{message}};
+}
+
+[[nodiscard]] common::Status unsupported(std::string_view message) {
+  return common::Status{common::StatusCode::kNotSupported, std::string{message}};
 }
 
 struct ResponseRoute {
@@ -190,11 +196,62 @@ encode_query_chunk(const query::VectorChunk& chunk,
   }
 }
 
+[[nodiscard]] common::Result<NativeProtocolResponseSequence>
+ddl_result(const ResponseRoute& target, const CreatedSingleNodeTable& created,
+           const NativeProtocolServiceLimits& limits) {
+  auto uuid_type = schema::LogicalType::create(schema::LogicalTypeKind::kUuid);
+  auto uint64_type = schema::LogicalType::create(schema::LogicalTypeKind::kUInt64);
+  auto bool_type = schema::LogicalType::create(schema::LogicalTypeKind::kBool);
+  if (!uuid_type.has_value() || !uint64_type.has_value() || !bool_type.has_value())
+    return query_error(target, internal("DDL result logical types are unavailable"),
+                       limits.protocol);
+  const std::array columns{
+      network::QueryResultColumn{"table_id", *uuid_type, false},
+      network::QueryResultColumn{"schema_id", *uuid_type, false},
+      network::QueryResultColumn{"tablet_id", *uuid_type, false},
+      network::QueryResultColumn{"metadata_index", *uint64_type, false},
+      network::QueryResultColumn{"resumed_incomplete_creation", *bool_type, false}};
+  std::array<std::byte, sizeof(std::uint64_t)> metadata_index{};
+  common::ByteWriter writer{metadata_index};
+  const common::Status written = writer.write_u64_le(created.metadata_index);
+  if (!written.is_ok())
+    return query_error(target, written, limits.protocol);
+  const std::byte resumed = created.resumed_incomplete_creation ? std::byte{1U} : std::byte{0U};
+  const std::array cells{network::QueryResultCell{.value = created.table_id.bytes()},
+                         network::QueryResultCell{.value = created.schema_id.bytes()},
+                         network::QueryResultCell{.value = created.tablet_id.bytes()},
+                         network::QueryResultCell{.value = metadata_index},
+                         network::QueryResultCell{.value = {&resumed, 1U}}};
+  network::QueryResultLimits result_limits = limits.query_result;
+  result_limits.protocol = limits.protocol;
+  auto payload = network::encode_query_result_batch(1U, columns, cells, result_limits);
+  if (!payload.has_value())
+    return query_error(target, payload.error(), limits.protocol);
+  if (payload->size() > limits.maximum_response_payload_bytes)
+    return query_error(target, exhausted("DDL response byte limit exceeded"), limits.protocol);
+  try {
+    NativeProtocolResponseSequence result;
+    result.result_rows = 1U;
+    result.payload_bytes = payload->size();
+    result.responses.reserve(2U);
+    result.responses.push_back(
+        make_response(target, network::MessageType::kQueryResult, std::move(*payload)));
+    result.responses.push_back(make_response(target, network::MessageType::kQueryEnd));
+    return result;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("DDL response allocation failed"));
+  }
+}
+
 } // namespace
 
 NativeProtocolService::NativeProtocolService(SingleNodeDatabase& database,
                                              NativeProtocolServiceLimits limits) noexcept
     : database_(&database), limits_(limits) {}
+NativeProtocolService::NativeProtocolService(SingleNodeDatabase& database,
+                                             NativeIdentityGenerator& identities,
+                                             NativeProtocolServiceLimits limits) noexcept
+    : database_(&database), identities_(&identities), limits_(limits) {}
 
 common::Result<network::NetworkTask>
 NativeProtocolService::execute_ingest(network::NetworkTask request) {
@@ -280,6 +337,72 @@ NativeProtocolService::execute_query(network::NetworkTask request) {
   try {
     std::string sql_text(sql->size(), '\0');
     std::memcpy(sql_text.data(), sql->data(), sql->size());
+    auto tokens = query::tokenize_sql_v1(sql_text, limits_.sql_parser.lexer);
+    if (!tokens.has_value())
+      return query_error(target, tokens.error().status(), limits_.protocol);
+    const std::span<const query::SqlToken> statement_tokens = tokens->tokens();
+    if (statement_tokens.empty() ||
+        statement_tokens.front().kind() != query::SqlTokenKind::kKeyword)
+      return query_error(target, invalid("native SQL requires a supported statement keyword"),
+                         limits_.protocol);
+    if (statement_tokens.front().keyword() == query::SqlKeyword::kCreate) {
+      if (identities_ == nullptr)
+        return query_error(target, unsupported("native CREATE TABLE has no identity source"),
+                           limits_.protocol);
+      if (limits_.ddl_retry_retention_positions == 0U)
+        return query_error(target, invalid("DDL retry retention limit is invalid"),
+                           limits_.protocol);
+      auto parsed = query::parse_sql_v1_create_table(sql_text, limits_.sql_parser);
+      if (!parsed.has_value())
+        return query_error(target, parsed.error().status(), limits_.protocol);
+      const std::size_t column_count = parsed->columns().size();
+      auto bound = query::bind_sql_v1_create_table(std::move(*parsed), database_->query_catalog());
+      if (!bound.has_value())
+        return query_error(target, bound.error().status(), limits_.protocol);
+      std::vector<common::Uuid> generated;
+      generated.reserve(column_count + 3U);
+      for (std::size_t index = 0U; index < column_count + 3U; ++index) {
+        auto identity = identities_->generate();
+        if (!identity.has_value())
+          return query_error(target, identity.error(), limits_.protocol);
+        if (identity->is_nil())
+          return query_error(target, internal("identity source returned a nil UUID"),
+                             limits_.protocol);
+        generated.push_back(*identity);
+      }
+      auto unique = generated;
+      std::ranges::sort(unique);
+      if (std::ranges::adjacent_find(unique) != unique.end())
+        return query_error(target, internal("identity source returned a duplicate UUID"),
+                           limits_.protocol);
+      auto table_id = schema::TableId::from_uuid(generated[0]);
+      auto schema_id = schema::SchemaId::from_uuid(generated[1]);
+      auto tablet_id = schema::TabletId::from_uuid(generated[2]);
+      if (!table_id.has_value() || !schema_id.has_value() || !tablet_id.has_value())
+        return query_error(target, internal("identity source returned an invalid durable UUID"),
+                           limits_.protocol);
+      std::vector<schema::ColumnId> column_ids;
+      column_ids.reserve(column_count);
+      for (std::size_t index = 0U; index < column_count; ++index) {
+        auto column_id = schema::ColumnId::from_uuid(generated[index + 3U]);
+        if (!column_id.has_value())
+          return query_error(target, internal("identity source returned an invalid column UUID"),
+                             limits_.protocol);
+        column_ids.push_back(*column_id);
+      }
+      auto created = database_->create_table(*bound,
+                                             {.table_id = *table_id,
+                                              .schema_id = *schema_id,
+                                              .column_ids = std::move(column_ids),
+                                              .tablet_id = *tablet_id},
+                                             limits_.ddl_retry_retention_positions);
+      if (!created.has_value())
+        return query_error(target, created.error(), limits_.protocol);
+      return ddl_result(target, *created, limits_);
+    }
+    if (statement_tokens.front().keyword() != query::SqlKeyword::kSelect)
+      return query_error(target, unsupported("native SQL statement is not implemented"),
+                         limits_.protocol);
     auto parsed = query::parse_sql_v1_select(sql_text, limits_.sql_parser);
     if (!parsed.has_value())
       return query_error(target, parsed.error().status(), limits_.protocol);

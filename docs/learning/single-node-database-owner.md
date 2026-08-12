@@ -28,6 +28,13 @@ aggregate encoded payload bytes all have independent finite caps. A successful e
 emits a described zero-row result before `QUERY_END`; a local failure discards accumulated frames
 and returns one terminal error.
 
+For CREATE TABLE, token dispatch selects the DDL parser/binder and requires an injected identity
+generator. The adapter rejects nil or duplicate UUIDs before handing explicit table, schema, tablet,
+and per-column identities to the owner's restartable creation path. Completion is one described row
+containing those durable identities, the applied metadata index, and whether an incomplete prefix
+was resumed. The reusable service does not choose entropy policy; its process owner must inject a
+secure generator.
+
 ## Startup ownership and data flow
 
 ```text
