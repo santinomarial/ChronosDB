@@ -20,6 +20,11 @@ An optional `AsyncDurableRaftWorkerExtension` composes application state with th
 `complete_batch` receives that context and the post-sync results before completion publication.
 `shutdown` runs before the log closes. These hooks let a higher-level ingest/metadata library own
 state machines that borrow the synchronous runtime without creating a reverse Raft dependency.
+When more than one application owner is required, `AsyncDurableRaftWorkerExtensionSet` composes a
+flat bounded list. It initializes, prepares, and completes children in declaration order, retains
+one opaque child context per batch, and shuts down every attempted child in reverse order. The
+runtime's identity check recognizes both the set and its direct children, so a higher-level owner
+still proves it is hosted by the exact worker before admitting dependent work.
 `AsyncRaftTabletApplication` is the first concrete consumer: it recovers bounded tablet machines on
 the worker, applies only request-touched groups before completion publication, and exposes only
 pinned immutable snapshots, copied observations, and bounded exact term/index receipt completions
@@ -77,6 +82,8 @@ batch results. A top-level durable failure or unexpected exception is ambiguous 
 partial in-memory progress, so the worker fails closed, gives all remaining accepted work the same
 terminal failure, and stops. Shutdown returns the retained storage/worker failure.
 Initialization failure prevents admission and still invokes extension shutdown for partial cleanup.
+For a composed extension, that cleanup includes the child whose initialization returned failure;
+shutdown continues through earlier children even when a later child returns an error or throws.
 
 ## Complexity, tradeoffs, and interview questions
 
@@ -86,6 +93,7 @@ single log; fairness is FIFO and only bounded by maximum batch size.
 
 - Why does active work continue consuming admission capacity?
 - Why does extension completion precede external result publication?
+- Why is extension composition flat, bounded, and reverse-ordered during shutdown?
 - Why may an extension call the synchronous runtime but not submit and wait on the async owner?
 - Which mutex edges publish tasks and results?
 - Why is a top-level execution exception terminal rather than retryable?

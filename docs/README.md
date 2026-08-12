@@ -293,6 +293,9 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Worker-affine asynchronous Raft tablet application](learning/async-raft-tablet-application.md):
   pre-admission recovery, touched-group application before completion, pinned snapshot publication,
   term-bound exact applied-quorum completions, ownership, and terminal failure behavior.
+- [Asynchronous Multi-Raft owner](learning/asynchronous-multi-raft-owner.md): bounded FIFO durable
+  ownership, completion publication, flat worker-extension composition, failure cleanup, and
+  synchronization edges.
 - [Replicated ingest operation](learning/replicated-ingest-operation.md): nonblocking exact-command
   proposal, post-sync result validation, applied receipt, retry outcome, and protocol-v2 projection.
 - [Replicated ingest coordinator](learning/replicated-ingest-coordinator.md): bounded multi-request

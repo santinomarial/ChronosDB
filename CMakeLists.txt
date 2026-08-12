@@ -572,6 +572,7 @@ chronos_enable_static_analysis(chronos_live)
 add_library(
   chronos_raft
   src/raft/async_durable_runtime.cpp
+  src/raft/async_durable_worker_extension_set.cpp
   src/raft/deterministic_simulator.cpp
   src/raft/durable_runtime.cpp
   src/raft/durable_tablet_reconfiguration.cpp
@@ -970,6 +971,8 @@ if(CHRONOS_BUILD_TESTS)
     chronos_raft_tests
     tests/raft/async_durable_runtime_header_self_contained.cpp
     tests/raft/async_durable_runtime_test.cpp
+    tests/raft/async_durable_worker_extension_set_header_self_contained.cpp
+    tests/raft/async_durable_worker_extension_set_test.cpp
     tests/raft/deterministic_simulator_header_self_contained.cpp
     tests/raft/deterministic_simulator_test.cpp
     tests/raft/durable_runtime_header_self_contained.cpp

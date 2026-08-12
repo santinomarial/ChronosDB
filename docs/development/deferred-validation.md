@@ -195,7 +195,9 @@
   operation now exact-validates proposal persistence, applied receipts, retry outcomes, and
   protocol-v2 acknowledgement projection. Reactor tasks now preserve exact negotiated protocol
   context, and a bounded coordinator now owns fair multi-request polling, exact cancellation,
-  deadlines, correlation, and metrics; add metadata application, packaged reactor/daemon routing,
+  deadlines, correlation, and metrics. A flat bounded extension set now composes multiple exact
+  application owners with ordered callbacks, reverse partial-failure cleanup, and direct-child
+  identity proof; add metadata application, packaged reactor/daemon routing,
   completion-driven wakeup, broader failure matrices, long-running hook watchdog evidence, and TSan
   scheduling coverage.
 - Carry the implemented group-scoped read-barrier operation through authenticated production

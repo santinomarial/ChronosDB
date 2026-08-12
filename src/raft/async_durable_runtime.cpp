@@ -249,7 +249,7 @@ public:
 
   [[nodiscard]] bool
   owns_worker_extension(const AsyncDurableRaftWorkerExtension& extension) const noexcept {
-    return extension_.get() == &extension;
+    return extension_ != nullptr && extension_->contains_worker_extension(extension);
   }
 
   [[nodiscard]] common::Status terminal_status() const {

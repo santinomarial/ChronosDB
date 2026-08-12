@@ -30,6 +30,13 @@ class AsyncDurableRaftWorkerExtension {
 public:
   virtual ~AsyncDurableRaftWorkerExtension() = default;
 
+  // Immutable membership query used by higher-level owners to prove that their extension is
+  // hosted by the same worker. Composite extensions override this for their direct children.
+  [[nodiscard]] virtual bool
+  contains_worker_extension(const AsyncDurableRaftWorkerExtension& candidate) const noexcept {
+    return this == &candidate;
+  }
+
   [[nodiscard]] virtual common::Status initialize(DurableMultiRaftRuntime& runtime) = 0;
   [[nodiscard]] virtual common::Result<std::unique_ptr<AsyncDurableRaftWorkerBatchContext>>
   prepare_batch(DurableMultiRaftRuntime& runtime, std::span<const DurableRaftRequest> requests) = 0;
