@@ -300,3 +300,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0263](0263-immediate-outbound-raft-terminal-reconnect.md) | Immediate outbound Raft terminal reconnect | accepted |
 | [0264](0264-client-initiated-raft-tls-handshake.md) | Client-initiated Raft TLS handshake | accepted |
 | [0265](0265-unified-raft-transport-runtime.md) | Unified Raft transport runtime | accepted |
+| [0266](0266-metadata-application-snapshot-v1.md) | Metadata Application Snapshot v1 | accepted |

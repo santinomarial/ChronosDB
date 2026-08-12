@@ -191,8 +191,8 @@
   transport, request deadlines/coalescing, apply waiting, and exact tablet snapshot acquisition.
 - Extend the implemented metadata Raft codec/application/reopen path and complete-schema-definition
   entry, complete table-policy command, and owning deterministic recovery projection with cluster
-  epochs, metadata application snapshots,
-  golden fixtures, fuzzing, allocation/crash injection, policy-transition matrices, and
+  epochs and durable installation/recovery for the canonical exact-entry Metadata Application
+  Snapshot v1 codec. Add golden fixtures, fuzzing, allocation/crash injection, policy-transition matrices, and
   large-catalog limits/measurements.
 - Extend the implemented committed-only tablet command application and full retained-log rebuild
   with crash injection around publication/applied-index persistence. Extend the implemented durable

@@ -160,6 +160,11 @@ exhaustive campaigns, clock changes, and physical-log syscall faults remain hard
 The core now also rejects zero terms and noncanonical vote/append predecessor and response state
 before observing a higher term, preserving the persist-before-response contract on invalid input.
 
+Metadata Application Snapshot v1 now provides a bounded canonical structural codec for exact
+metadata/schema application entries and internal Raft gaps under one complete snapshot membership
+identity. Durable installation, nested replay validation, Raft compaction, and reopen composition
+remain the next metadata lifecycle checkpoint.
+
 ### Phase 15 — Multi-Raft tablets and metadata
 
 `MultiRaftRuntime` multiplexes bounded logical groups on one owner with group-tagged messages,

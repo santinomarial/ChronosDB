@@ -577,6 +577,7 @@ add_library(
   src/raft/membership.cpp
   src/raft/metadata.cpp
   src/raft/metadata_codec.cpp
+  src/raft/metadata_snapshot.cpp
   src/raft/metadata_runtime.cpp
   src/raft/multi_raft.cpp
   src/raft/multiplexed_log.cpp
@@ -1003,6 +1004,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/raft/metadata_test.cpp
     tests/raft/metadata_codec_header_self_contained.cpp
     tests/raft/metadata_codec_test.cpp
+    tests/raft/metadata_snapshot_header_self_contained.cpp
+    tests/raft/metadata_snapshot_test.cpp
     tests/raft/metadata_runtime_header_self_contained.cpp
     tests/raft/metadata_runtime_test.cpp
     tests/raft/schema_definition_codec_header_self_contained.cpp
