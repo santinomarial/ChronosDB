@@ -744,9 +744,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   asynchronous durable runtime before exposing response bytes. A persistent bounded inbound
   mutual-TLS session now reads exact fragmented frames, admits one durable operation, and publishes
   its complete result for embedding-owned routing. A persistent peer-authenticated outbound session
-  now bounds FIFO frames/bytes and preserves complete frames for reconnect retry. Connection pooling,
-  runtime event-loop composition, randomized simulation, and the full exit
-  evidence remain deferred. Linearizable reads now use one bounded explicit current-term leadership
+  now bounds FIFO frames/bytes and preserves complete frames for reconnect retry. A fixed-capacity
+  exact-peer pool now preflights whole durable results against every route and aggregate queue bound,
+  then returns failed carriers with complete retry frames. TCP connect/address/backoff replacement
+  automation, runtime event-loop composition, randomized simulation, and the full exit evidence
+  remain deferred. Linearizable reads now use one bounded explicit current-term leadership
   probe, require a current-term committed entry, freeze stable or joint voter quorums at issuance,
   abandon pending work on leadership change, and return an exact committed read index that must be
   applied before visibility.

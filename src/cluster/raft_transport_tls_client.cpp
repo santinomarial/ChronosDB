@@ -217,6 +217,17 @@ common::Status RaftTransportTlsClient::try_enqueue(std::vector<std::byte>& encod
   if (envelope->source != impl.config_.local_node_id ||
       envelope->destination != impl.config_.peer_node_id)
     return invalid("Raft TLS queued frame route differs from connection ownership");
+  return try_enqueue_prevalidated(encoded_frame, now);
+}
+
+common::Status
+RaftTransportTlsClient::try_enqueue_prevalidated(std::vector<std::byte>& encoded_frame,
+                                                 const TimePoint now) {
+  if (!implementation_)
+    return invalid("Raft TLS client is empty");
+  Impl& impl = *implementation_;
+  if (impl.state_ == RaftTransportTlsClientState::kFailed)
+    return impl.failure_;
   if (impl.count_ == impl.slots_.size() ||
       encoded_frame.size() > impl.config_.limits.maximum_queued_bytes - impl.queued_bytes_)
     return exhausted("Raft TLS output queue is full");
@@ -286,6 +297,20 @@ std::size_t RaftTransportTlsClient::queued_frames() const noexcept {
 }
 std::size_t RaftTransportTlsClient::queued_bytes() const noexcept {
   return implementation_ ? implementation_->queued_bytes_ : 0U;
+}
+std::size_t RaftTransportTlsClient::available_frames() const noexcept {
+  return implementation_ ? implementation_->slots_.size() - implementation_->count_ : 0U;
+}
+std::size_t RaftTransportTlsClient::available_bytes() const noexcept {
+  return implementation_
+             ? implementation_->config_.limits.maximum_queued_bytes - implementation_->queued_bytes_
+             : 0U;
+}
+raft::NodeId RaftTransportTlsClient::local_node_id() const noexcept {
+  return implementation_ ? implementation_->config_.local_node_id : 0U;
+}
+raft::NodeId RaftTransportTlsClient::peer_node_id() const noexcept {
+  return implementation_ ? implementation_->config_.peer_node_id : 0U;
 }
 const common::Status& RaftTransportTlsClient::failure() const noexcept {
   static const common::Status empty_failure{common::StatusCode::kInvalidArgument,

@@ -16,6 +16,8 @@
 
 namespace chronos::cluster {
 
+class RaftTransportPeerPool;
+
 struct RaftTransportTlsClientLimits {
   std::size_t maximum_queued_frames{1024U};
   std::size_t maximum_queued_bytes{64U * 1024U * 1024U};
@@ -69,11 +71,18 @@ public:
   [[nodiscard]] RaftTransportTlsClientInterest interest() const noexcept;
   [[nodiscard]] std::size_t queued_frames() const noexcept;
   [[nodiscard]] std::size_t queued_bytes() const noexcept;
+  [[nodiscard]] std::size_t available_frames() const noexcept;
+  [[nodiscard]] std::size_t available_bytes() const noexcept;
+  [[nodiscard]] raft::NodeId local_node_id() const noexcept;
+  [[nodiscard]] raft::NodeId peer_node_id() const noexcept;
   [[nodiscard]] const common::Status& failure() const noexcept;
 
 private:
+  friend class RaftTransportPeerPool;
   class Impl;
   explicit RaftTransportTlsClient(std::unique_ptr<Impl> implementation) noexcept;
+  [[nodiscard]] common::Status try_enqueue_prevalidated(std::vector<std::byte>& encoded_frame,
+                                                        TimePoint now);
   std::unique_ptr<Impl> implementation_;
 };
 

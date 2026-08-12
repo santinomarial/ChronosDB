@@ -38,6 +38,11 @@ reconnect. The carrier deliberately owns no address resolution, TCP connect, con
 backoff, peer replacement, routing table, or retransmission decision. An embedding groups frames by
 destination, creates/replaces one carrier per peer, and decides when drained duplicates are retried.
 
+**Retrospective note (2026-08-12):** [ADR 0251](0251-bounded-raft-peer-carrier-pool.md) now provides
+the fixed-capacity exact-peer map, durable-result routing preflight, and explicit failed-carrier
+handoff. TCP connection establishment, address policy, backoff, and replacement automation remain
+outside the carrier and pool.
+
 The default 64 MiB queue can hold only one maximum-size default frame; operators must configure
 append batching and carrier budgets together. Queue admission never truncates a message.
 
