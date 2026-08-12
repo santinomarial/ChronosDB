@@ -174,6 +174,8 @@ Replicated-ingest coordination now derives that route from committed metadata, o
 local role/term observation, exact-compares stable membership with placement, and term-fences the
 proposal. It also binds the complete command shape to the committed active schema on both sides of
 the observation. Callers no longer supply group, term, or schema authority.
+An address-stable outer service owner now composes tablet and metadata applications, their shared
+durable worker, and that coordinator through create, shutdown, and exact reopen.
 
 ### Phase 15 — Multi-Raft tablets and metadata
 

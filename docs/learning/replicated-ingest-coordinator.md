@@ -15,3 +15,7 @@ poll scan cost, timeout bursts, and response-queue stalls before replacing the v
 Review questions include why cancellation emits no response, why negotiated context must survive
 the reactor handoff, why one response per poll helps backpressure, and why timeout cannot undo an
 admitted entry.
+
+The production lifetime is supplied by `ReplicatedIngestRuntime`. It fixes the asynchronous runtime
+at its final address before constructing this coordinator, then destroys the coordinator before
+worker shutdown. A coordinator must never borrow a stack-local runtime that will later be moved.

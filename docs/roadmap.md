@@ -865,6 +865,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   namespaces and catalog tombstones remain;
   replicated-ingest admission exact-compares placement with stable committed group membership;
   automatic placement-driven membership orchestration is not yet integrated.
+  One owning replicated-ingest runtime now composes the exact tablet and metadata extensions,
+  asynchronous durable worker, and coordinator with address-stable create/reopen and ordered
+  shutdown. Transport, elections, provisioning, and native daemon advertisement remain external.
 
 - **Scope:** map tablets to Raft groups; multiplex logical records over physical logs, threads, timers, and connections; lifecycle, placement, snapshot transfer, fairness, and safe per-group reclamation.
 - **Explicit non-scope:** globally ordered logs, cross-tablet atomic transactions, distributed query execution, automatic rebalancing beyond scoped placement mechanics, and conflating physical offsets with logical indexes.
