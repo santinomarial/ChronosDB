@@ -82,7 +82,17 @@ validate_plan_snapshot(const manifest::DatabaseStorageSnapshot& snapshot,
     return invalid("snapshot CSEG part-scan plan belongs to another database epoch");
   }
   const manifest::TabletDescriptor* tablet = find_durable_tablet(snapshot, plan.tablet_id());
-  if (tablet == nullptr || tablet->table_id != plan.table_id())
+  if (tablet == nullptr) {
+    const manifest::PublishedTabletStorage* const published =
+        snapshot.find_tablet(plan.tablet_id());
+    if (published == nullptr || published->table_id() != plan.table_id() ||
+        !plan.selected_part_ids().empty() || plan.selected_rows() != 0U ||
+        plan.skipped_rows() != 0U || plan.skipped_part_count() != 0U) {
+      return invalid("head-only snapshot CSEG plan disagrees with its tablet publication");
+    }
+    return common::Status::ok();
+  }
+  if (tablet->table_id != plan.table_id())
     return invalid("snapshot CSEG part-scan plan disagrees with its durable tablet");
   common::Result<std::span<const manifest::PartDescriptor>> parts = tablet_parts(snapshot, *tablet);
   if (!parts.has_value())
@@ -321,8 +331,24 @@ plan_snapshot_cseg_part_scan(const manifest::DatabaseStorageSnapshot& snapshot,
     return common::make_unexpected(invalid("snapshot CSEG part-scan limits must be nonzero"));
   }
   const manifest::TabletDescriptor* tablet = find_durable_tablet(snapshot, target_tablet);
-  if (tablet == nullptr)
-    return common::make_unexpected(not_found("snapshot has no durable target tablet"));
+  if (tablet == nullptr) {
+    const manifest::PublishedTabletStorage* const published = snapshot.find_tablet(target_tablet);
+    if (published == nullptr)
+      return common::make_unexpected(not_found("snapshot has no target tablet"));
+    constexpr std::size_t retained = sizeof(SnapshotCsegPartScanPlan) + 64U;
+    if (retained > limits.maximum_retained_configuration_bytes)
+      return common::make_unexpected(
+          exhausted("head-only snapshot CSEG plan exceeds its retained configuration limit"));
+    return SnapshotCsegPartScanPlan{
+        snapshot.database_id(),
+        snapshot.wal_id(),
+        snapshot.generation(),
+        published->table_id(),
+        published->tablet_id(),
+        event_time_predicate,
+        {},
+        SnapshotCsegPartScanPlan::Metrics{.retained_configuration_bytes = retained}};
+  }
   if (tablet->part_count > limits.maximum_parts)
     return common::make_unexpected(exhausted("snapshot CSEG part count exceeds its plan limit"));
   common::Result<std::span<const manifest::PartDescriptor>> parts = tablet_parts(snapshot, *tablet);

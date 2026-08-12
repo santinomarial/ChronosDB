@@ -36,9 +36,9 @@ replace query storage authority, retire the sealed head, and restart from only t
 suffix. Queues remain bounded and per-tablet ownership avoids cross-tablet dequeue probing.
 
 Flush execution is currently synchronous on the service owner and uses uncompressed CSEG pages.
-The native SELECT adapter remains head-only, so CSEG-backed query composition is the next required
-step. Checkpoint advancement, WAL reclamation, background scheduling, compression policy, and flush
-metrics export remain separate work.
+ADR 0231 subsequently routes native SELECT through the aggregate CSEG/head snapshot. Checkpoint
+advancement, WAL reclamation, background scheduling, compression policy, and flush metrics export
+remain separate work.
 
 ## Validation
 

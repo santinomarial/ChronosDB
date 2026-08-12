@@ -298,7 +298,8 @@
   background scheduling, compression policy, checkpoint advancement, legacy migration crash points,
   allocation/entropy faults, subprocess restarts, metrics, and ASan/UBSan/TSan. Focused owner
   coverage now routes empty and WAL-backed restarts through aggregate recovery and proves a live
-  generation-2 CSEG flush plus exact suffix recovery. Native queries still need that CSEG source.
+  generation-2 CSEG flush plus exact suffix recovery. Native queries now count the complete mixed
+  CSEG/head epoch before and after restart; ASOF/distributed query sources remain uncomposed here.
 - Execute the complete requested three-node scenario with real sockets/processes and retained logs:
   create table, ingest, historical SQL, vector distributed aggregate, subscribe/update, leader kill,
   failover ingest/query, movement/query, tier/query, restart, and result reconciliation.

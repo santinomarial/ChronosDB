@@ -7,6 +7,10 @@
 #include "chronos/ingest/tablet_state.hpp"
 #include "chronos/manifest/publication.hpp"
 #include "chronos/query/catalog.hpp"
+#include "chronos/query/physical_operator.hpp"
+#include "chronos/query/physical_plan.hpp"
+#include "chronos/query/resource_context.hpp"
+#include "chronos/query/snapshot_pipeline.hpp"
 #include "chronos/query/statement_binder.hpp"
 #include "chronos/raft/metadata.hpp"
 #include "chronos/raft/persistent_log.hpp"
@@ -78,6 +82,10 @@ public:
   [[nodiscard]] ingest::RetryDirectory& retry_directory() noexcept;
   [[nodiscard]] wal::WalCommitCoordinator& wal_coordinator() noexcept;
   [[nodiscard]] common::Result<manifest::DatabaseStorageSnapshot> storage_snapshot() const;
+  [[nodiscard]] common::Result<std::unique_ptr<query::PhysicalOperator>> instantiate_table_pipeline(
+      const query::QueryResourceContext& resources, const schema::TableId& table_id,
+      const schema::SchemaId& destination_schema_id, const query::PhysicalPipelinePlan& pipeline,
+      query::SnapshotTabletPipelineLimits limits = {}) const;
 
   // Synchronously drains every ready per-tablet sealed-head queue through durable CSEG/Manifest
   // publication. Returns the number of completed replacements; no work is also successful.

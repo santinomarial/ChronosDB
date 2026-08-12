@@ -62,6 +62,7 @@ public:
   [[nodiscard]] ingest::RetryDirectory& retry_directory() noexcept;
   [[nodiscard]] ingest::TabletState* tablet(const schema::TabletId& tablet_id) noexcept;
   [[nodiscard]] ManifestStorage& manifest_storage() noexcept;
+  [[nodiscard]] const ManifestStorage& manifest_storage() const noexcept;
   [[nodiscard]] DatabaseStoragePublisher& storage_publisher() noexcept;
   [[nodiscard]] common::Result<wal::WalWriter> release_writer();
 

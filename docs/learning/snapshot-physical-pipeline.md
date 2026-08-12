@@ -7,6 +7,11 @@ append-only tablet source selected by one `DatabaseStorageSnapshot`. It is the f
 storage adapter for the supported vector SQL subset; parse, bind, and physical lowering remain
 separate so their source-spanned SQL diagnostics survive unchanged.
 
+The single-node native SELECT adapter now acquires this source through its database owner for the
+canonical local tablet vector. A tablet absent from the durable Manifest but present in aggregate
+head publication receives an empty bounded CSEG plan, so the same path covers head-only and mixed
+CSEG/head epochs. Native writes refresh aggregate head publication before later queries acquire it.
+
 The call takes query resources, Manifest storage, the held aggregate snapshot, tablet and schema
 lineage identities, the physical plan, and `SnapshotTabletPipelineLimits`. It returns one
 thread-affine pull operator or an explicit status. The optimized overload accepts an

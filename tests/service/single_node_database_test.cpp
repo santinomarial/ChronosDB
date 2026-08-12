@@ -229,6 +229,23 @@ batch(const std::byte timestamp_tail = std::byte{0U}) {
                     .payload = std::move(payload)}};
 }
 
+[[nodiscard]] std::int64_t native_query_count(NativeProtocolService& service,
+                                              const std::uint64_t request_id,
+                                              const std::string_view table_name) {
+  auto result = service.execute_query(
+      query_task(request_id, std::string{"SELECT count(*) AS rows FROM "}.append(table_name)));
+  EXPECT_TRUE(result.has_value()) << (result.has_value() ? std::string{}
+                                                         : result.error().to_string());
+  if (!result.has_value() || result->responses.empty())
+    return -1;
+  auto batch = network::decode_query_result_batch(result->responses.front().frame.payload);
+  EXPECT_TRUE(batch.has_value()) << (batch.has_value() ? std::string{} : batch.error().to_string());
+  if (!batch.has_value() || batch->cell(0U, 0U) == nullptr)
+    return -1;
+  common::ByteReader count{batch->cell(0U, 0U)->value};
+  return count.read_i64_le().value_or(-1);
+}
+
 [[nodiscard]] std::int64_t query_count(SingleNodeDatabase& database) {
   auto parsed = query::parse_sql_v1_select("SELECT count(*) AS rows FROM events");
   EXPECT_TRUE(parsed.has_value()) << parsed.error().status().to_string();
@@ -380,6 +397,7 @@ TEST(NativeProtocolServiceTest, FlushesSealedHeadsAndRecoversOnlyTheWalSuffix) {
   EXPECT_EQ(storage->durable_tablets().front().durable_row_count, 4U);
   EXPECT_EQ(storage->retries().size(), 2U);
   EXPECT_EQ(storage->visible_head_row_count(), 2U);
+  EXPECT_EQ(native_query_count(service, 46U, "events"), 6);
   EXPECT_TRUE(database->shutdown().is_ok());
 
   auto recovered = SingleNodeDatabase::open_or_create(config(directory));
@@ -391,6 +409,8 @@ TEST(NativeProtocolServiceTest, FlushesSealedHeadsAndRecoversOnlyTheWalSuffix) {
   EXPECT_EQ(recovered_storage->parts().front().row_count, 4U);
   EXPECT_EQ(recovered_storage->visible_head_row_count(), 2U);
   EXPECT_EQ(recovered->find_tablet(tablet_id())->snapshot()->visible_row_count(), 2U);
+  NativeProtocolService recovered_service{*recovered};
+  EXPECT_EQ(native_query_count(recovered_service, 47U, "events"), 6);
   EXPECT_TRUE(recovered->shutdown().is_ok());
 }
 
@@ -423,6 +443,7 @@ TEST(NativeProtocolServiceTest, ConvertsBoundedQueryOverflowToOneTerminalError) 
                   database->retry_directory(), *database->find_tablet(tablet_id()),
                   database->wal_coordinator())
                   .has_value());
+  ASSERT_TRUE(database->flush_ready_heads().has_value());
   NativeProtocolServiceLimits limits;
   limits.maximum_result_rows = 1U;
   NativeProtocolService service{*database, limits};

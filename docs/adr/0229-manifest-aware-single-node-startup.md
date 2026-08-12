@@ -38,9 +38,8 @@ The owner can open advanced Manifest generations without replaying part-covered 
 heads and retains selected CSEG descriptors plus the head suffix in one publication. Legacy roots
 undergo a one-time exact initialization after complete WAL validation.
 
-The native SELECT adapter still builds its source from `TabletState` head snapshots, so it does not
-yet scan recovered Manifest CSEGs. Flush scheduling is also not yet attached to live tablet rotation.
-Those are separate composition steps using the startup authority established here.
+ADRs 0230 and 0231 subsequently attach live sealed-head flush and route native SELECT through the
+aggregate CSEG/head snapshot. Checkpoint advancement and WAL reclamation remain separate work.
 
 ## Validation
 

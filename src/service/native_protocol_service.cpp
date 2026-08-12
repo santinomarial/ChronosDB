@@ -9,8 +9,8 @@
 #include "chronos/query/parser.hpp"
 #include "chronos/query/physical_lowering.hpp"
 #include "chronos/query/resource_context.hpp"
+#include "chronos/query/snapshot_pipeline.hpp"
 #include "chronos/query/statement_binder.hpp"
-#include "chronos/query/tablet_state_pipeline.hpp"
 
 #include <algorithm>
 #include <array>
@@ -547,15 +547,12 @@ NativeProtocolService::execute_query(network::NetworkTask request) {
     if (lineage == nullptr)
       return query_error(target, internal("bound query table has no runtime lineage"),
                          limits_.protocol);
-    auto snapshots = database_->table_snapshots(source_schema->table_id());
-    if (!snapshots.has_value())
-      return query_error(target, snapshots.error(), limits_.protocol);
     auto resources = query::QueryResourceContext::create(limits_.maximum_query_memory_bytes);
     if (!resources.has_value())
       return query_error(target, resources.error(), limits_.protocol);
-    auto pipeline = query::instantiate_tablet_states_pipeline(*resources, *snapshots, *lineage,
-                                                              source_schema->schema_id(), *physical,
-                                                              limits_.tablet_pipeline);
+    auto pipeline = database_->instantiate_table_pipeline(*resources, source_schema->table_id(),
+                                                          source_schema->schema_id(), *physical,
+                                                          limits_.tablet_pipeline);
     if (!pipeline.has_value())
       return query_error(target, pipeline.error(), limits_.protocol);
 

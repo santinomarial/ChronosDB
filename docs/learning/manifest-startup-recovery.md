@@ -109,9 +109,8 @@ transitions below this composition.
 The single-node service owner now supplies its durable metadata catalog as the retained registry and
 uses this composition for every live startup. A selected-identity preflight exact-decodes the
 checksummed generation to discover its WAL and durable tablet identities; full catalog/part binding
-still occurs only inside this recovery function. Native CSEG query scanning and live flush
-scheduling remain outside that integration.
+still occurs only inside this recovery function. The live owner now attaches sealed-head flush and
+native aggregate CSEG/head query composition after recovery returns.
 
 Remaining work includes multi-kind application dispatch, crash injection inside this composition's
-cleanup/recovery ordering, CSEG-backed service query activation, and future query-state
-reconstruction.
+cleanup/recovery ordering, and future query-state reconstruction.

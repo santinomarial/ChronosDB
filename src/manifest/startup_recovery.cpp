@@ -164,6 +164,9 @@ RecoveredManifestColumnarState::tablet(const schema::TabletId& tablet_id) noexce
 ManifestStorage& RecoveredManifestColumnarState::manifest_storage() noexcept {
   return implementation_->manifest_storage_;
 }
+const ManifestStorage& RecoveredManifestColumnarState::manifest_storage() const noexcept {
+  return implementation_->manifest_storage_;
+}
 
 DatabaseStoragePublisher& RecoveredManifestColumnarState::storage_publisher() noexcept {
   return implementation_->storage_publisher_;

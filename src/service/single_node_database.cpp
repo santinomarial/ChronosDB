@@ -577,6 +577,27 @@ common::Result<manifest::DatabaseStorageSnapshot> SingleNodeDatabase::storage_sn
   return impl_->recovered->snapshot();
 }
 
+common::Result<std::unique_ptr<query::PhysicalOperator>>
+SingleNodeDatabase::instantiate_table_pipeline(
+    const query::QueryResourceContext& resources, const schema::TableId& table_id,
+    const schema::SchemaId& destination_schema_id, const query::PhysicalPipelinePlan& pipeline,
+    const query::SnapshotTabletPipelineLimits limits) const {
+  if (impl_ == nullptr || impl_->shutdown || !impl_->recovered.has_value())
+    return common::make_unexpected(invalid("database query storage is unavailable"));
+  const auto table = std::ranges::find_if(impl_->tables, [&](const RecoveredTable& candidate) {
+    return candidate.lineage.table_id() == table_id;
+  });
+  if (table == impl_->tables.end())
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kNotFound, "query table has no local runtime state"});
+  auto snapshot = impl_->recovered->snapshot();
+  if (!snapshot.has_value())
+    return common::make_unexpected(snapshot.error());
+  return query::instantiate_snapshot_tablets_pipeline(
+      resources, std::as_const(*impl_->recovered).manifest_storage(), *snapshot, table->tablets,
+      table->lineage, destination_schema_id, pipeline, limits);
+}
+
 common::Result<std::size_t> SingleNodeDatabase::flush_ready_heads() {
   if (impl_ == nullptr || impl_->shutdown || !impl_->recovered.has_value())
     return common::make_unexpected(invalid("database is not accepting storage maintenance"));
@@ -584,6 +605,16 @@ common::Result<std::size_t> SingleNodeDatabase::flush_ready_heads() {
     common::SystemUuidGenerator identities;
     std::size_t completed = 0U;
     for (TabletFlushOwner& owner : impl_->flush_owners) {
+      ingest::TabletState* const current_tablet = find_tablet(owner.tablet_id);
+      if (current_tablet == nullptr)
+        return common::make_unexpected(corruption("flush queue has no tablet owner"));
+      auto current_snapshot = current_tablet->snapshot();
+      if (!current_snapshot.has_value())
+        return common::make_unexpected(current_snapshot.error());
+      auto refreshed =
+          impl_->recovered->storage_publisher().publish_tablet_snapshot(*current_snapshot);
+      if (!refreshed.has_value())
+        return common::make_unexpected(refreshed.error());
       while (owner.queue->metrics().ready != 0U) {
         ingest::TabletState* const tablet = find_tablet(owner.tablet_id);
         if (tablet == nullptr)

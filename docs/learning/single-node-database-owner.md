@@ -12,8 +12,8 @@ For a pre-Manifest root, the owner opens the WAL only long enough to validate it
 durable identity, then installs exact empty generation 1. Every live startup proceeds through
 `recover_manifest_columnar_database()`: it validates the selected Manifest/CSEGs, restores durable
 retry/tablet boundaries, replays only the WAL suffix, and retains one aggregate Manifest/part/head
-publication plus `manifest/LOCK`. Native queries do not yet consume selected CSEG descriptors, so
-their current results remain head-only after a nonempty Manifest recovery.
+publication plus `manifest/LOCK`. Native queries instantiate their physical pipeline from that exact
+aggregate epoch, including selected CSEG descriptors and current head boundaries.
 
 The owner accepts initial local `CREATE TABLE` as three exact-retained metadata proposals. A table is
 visible only when metadata contains its complete schema tail, complete policy, and local placement.
@@ -75,7 +75,9 @@ and replay succeed.
 verified/repositioned writer to the coordinator. Tables created later retain separate tablet owners
 but publish their empty epochs into the same aggregate storage owner. Every tablet uses a separate
 bounded flush queue. Native writes synchronously drain ready work through CSEG installation,
-Manifest installation, aggregate replacement, tablet retirement, and queue completion.
+Manifest installation, aggregate replacement, tablet retirement, and queue completion. They also
+refresh the aggregate tablet epoch when no flush is ready, so later queries see the latest active
+head boundary.
 
 ## Shutdown and failures
 
