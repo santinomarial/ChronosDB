@@ -174,9 +174,9 @@ public:
          observed.observation->group_id != admission_->group_id) ||
         (!observed.status.is_ok() && received.status.is_ok()))
       return fail(corruption("Raft TLS receive completion has an invalid group observation"));
-    completed_.emplace(
-        RaftTransportCompletedReceive{admission_->group_id, admission_->source_node_id,
-                                      std::move(received), std::move(observed.observation)});
+    completed_.emplace(RaftTransportCompletedReceive{
+        admission_->completion.submission_sequence(), admission_->group_id,
+        admission_->source_node_id, std::move(received), std::move(observed.observation)});
     admission_.reset();
     state_ = RaftTransportTlsServerState::kResultReady;
     return common::Status::ok();
@@ -271,6 +271,13 @@ RaftTransportTlsServer::next_deadline() const noexcept {
                            implementation_->state_ != RaftTransportTlsServerState::kReadingFrame))
     return std::nullopt;
   return implementation_->deadline_;
+}
+
+std::optional<std::uint64_t>
+RaftTransportTlsServer::completed_submission_sequence() const noexcept {
+  return implementation_ && implementation_->completed_.has_value()
+             ? std::optional<std::uint64_t>{implementation_->completed_->submission_sequence}
+             : std::nullopt;
 }
 
 const common::Status& RaftTransportTlsServer::failure() const noexcept {

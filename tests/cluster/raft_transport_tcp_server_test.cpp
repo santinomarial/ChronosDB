@@ -155,6 +155,7 @@ TEST(RaftTransportTcpServerTest, AcceptsPersistentTlsAndPublishesPostSyncResult)
       completed = std::move(**next);
   }
   ASSERT_TRUE(completed.has_value());
+  EXPECT_EQ(completed->submission_sequence, 1U);
   EXPECT_EQ(completed->group_id, group());
   EXPECT_EQ(completed->source_node_id, 1U);
   ASSERT_TRUE(completed->result.status.is_ok());

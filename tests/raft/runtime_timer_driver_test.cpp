@@ -95,6 +95,7 @@ TEST(RaftTimerDriverTest, DrivesBootstrapElectionAndHeartbeatThroughDurableOwner
   drive_until_completed(*driver, start + 5ms, 1U);
   auto election = driver->take_completed();
   ASSERT_TRUE(election.has_value()) << election.error().to_string();
+  EXPECT_EQ(election->submission_sequence, 1U);
   EXPECT_EQ(election->action.kind, RaftTimerActionKind::kStartElection);
   ASSERT_TRUE(election->result.status.is_ok()) << election->result.status.to_string();
   ASSERT_TRUE(election->result.transition.has_value());
@@ -107,6 +108,7 @@ TEST(RaftTimerDriverTest, DrivesBootstrapElectionAndHeartbeatThroughDurableOwner
   drive_until_completed(*driver, start + 7ms, 1U);
   auto heartbeat = driver->take_completed();
   ASSERT_TRUE(heartbeat.has_value());
+  EXPECT_EQ(heartbeat->submission_sequence, 2U);
   EXPECT_EQ(heartbeat->action.kind, RaftTimerActionKind::kHeartbeat);
   EXPECT_TRUE(heartbeat->result.status.is_ok());
   EXPECT_EQ(heartbeat->observation.role, Role::kLeader);
@@ -140,6 +142,7 @@ TEST(RaftTimerDriverTest, CompletedQueueBackpressuresOwningResults) {
   drive_until_completed(*driver, start + 5ms, 1U);
   auto two = driver->take_completed();
   ASSERT_TRUE(two.has_value());
+  EXPECT_LT(one->submission_sequence, two->submission_sequence);
   EXPECT_NE(one->action.group_id, two->action.group_id);
   ASSERT_TRUE(runtime->shutdown().is_ok());
 }

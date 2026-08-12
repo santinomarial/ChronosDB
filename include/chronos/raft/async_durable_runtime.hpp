@@ -46,13 +46,16 @@ public:
   AsyncDurableRaftCompletion& operator=(AsyncDurableRaftCompletion&&) noexcept;
 
   [[nodiscard]] bool is_valid() const noexcept;
+  [[nodiscard]] std::uint64_t submission_sequence() const noexcept;
   [[nodiscard]] bool is_ready() const;
   [[nodiscard]] common::Result<std::vector<DurableRaftResult>> wait();
 
 private:
   explicit AsyncDurableRaftCompletion(
-      std::shared_ptr<detail::AsyncDurableRaftCompletionState> state) noexcept;
+      std::shared_ptr<detail::AsyncDurableRaftCompletionState> state,
+      std::uint64_t submission_sequence) noexcept;
   std::shared_ptr<detail::AsyncDurableRaftCompletionState> state_;
+  std::uint64_t submission_sequence_{};
   friend class AsyncDurableMultiRaftRuntime;
 };
 

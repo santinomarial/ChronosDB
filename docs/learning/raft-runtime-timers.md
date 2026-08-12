@@ -31,6 +31,8 @@ and one following group observation in the same FIFO durable batch, then rearms 
 post-action observation. Its separate fixed pending and completed rings bound ownership. A full
 completed ring leaves ready async completions untouched, while admission backpressure releases the
 due action for retry. The complete action result remains available to transport and snapshot owners.
+Ready pending actions enter the completed ring by their asynchronous FIFO submission sequence rather
+than reusable pending-slot index.
 
 The driver accepts fresh group activity from other completed runtime work. That activity increments
 the scheduler generation, so an older timer operation may still finish and be routed but cannot

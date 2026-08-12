@@ -77,6 +77,7 @@ TEST(RaftTransportReceiverTest, AuthenticatesRoutesPersistsAndEncodesResponse) {
       vote_request(), network::PeerAuthenticationResult{.authorized = true, .principal_id = 700U});
 
   ASSERT_TRUE(admission.has_value()) << admission.error().to_string();
+  EXPECT_EQ(admission->completion.submission_sequence(), 1U);
   EXPECT_EQ(admission->group_id, group());
   EXPECT_EQ(admission->source_node_id, 1U);
   auto completed = admission->completion.wait();
@@ -165,6 +166,7 @@ TEST(RaftTransportReceiverTest, SurfacesUnknownGroupWithoutFailingRuntime) {
   auto admission = receiver->try_receive(vote_request(group(std::byte{8U})),
                                          {.authorized = true, .principal_id = 700U});
   ASSERT_TRUE(admission.has_value()) << admission.error().to_string();
+  EXPECT_EQ(admission->completion.submission_sequence(), 1U);
   auto completed = admission->completion.wait();
   ASSERT_TRUE(completed.has_value()) << completed.error().to_string();
   ASSERT_EQ(completed->size(), 2U);

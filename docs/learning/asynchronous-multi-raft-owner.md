@@ -7,6 +7,9 @@ existing physical log single-owned. `try_submit` either transfers a complete bat
 `AsyncDurableRaftCompletion`, or immediately reports invalid input, overload, or closed admission.
 The completion can be polled with `is_ready` or consumed with `wait`. Because transitions may own
 large message batches, `wait` moves the result out exactly once instead of copying it.
+Every admitted batch also receives a nonzero runtime-lifetime submission sequence under the FIFO
+mutex. That sequence orders in-process completions across component queues; it is not durable state
+and has no meaning after restart.
 The runtime also exposes one borrowed nonblocking completion descriptor. Its worker publishes the
 owning completion first and then signals that descriptor; one event loop drains the coalesced signal
 and inspects every completion owner it coordinates.

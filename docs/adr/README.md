@@ -295,3 +295,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0258](0258-portable-durable-raft-completion-wakeup.md) | Portable durable Raft completion wakeup | accepted |
 | [0259](0259-exact-raft-runtime-deadline-introspection.md) | Exact Raft runtime deadline introspection | accepted |
 | [0260](0260-embedding-owned-inbound-raft-readiness.md) | Embedding-owned inbound Raft readiness | accepted |
+| [0261](0261-fifo-identified-raft-completions.md) | FIFO-identified Raft completions | accepted |

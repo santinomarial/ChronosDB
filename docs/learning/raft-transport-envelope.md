@@ -89,6 +89,8 @@ sessions without read interest until the embedding takes the exact post-sync tra
 Its standalone poll wrapper and external readiness API share the same ownership. Stable nonzero
 connection IDs let an outer loop compose listener/session descriptors without retaining compacting
 connection-table indexes.
+Each completed session also retains the asynchronous FIFO submission sequence. The server selects
+the smallest result-ready sequence across connections, so table order cannot reorder durable work.
 Each authenticated message and its immediately following owning group observation execute in one
 durable FIFO batch, so timer rearming uses the exact post-message role and term rather than a later
 racy observation.

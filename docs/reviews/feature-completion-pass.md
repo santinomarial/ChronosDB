@@ -140,6 +140,8 @@ The asynchronous durable owner now publishes a portable nonblocking completion d
 each owning result, allowing one event loop to wait on storage progress and sockets together.
 Timer, connect, reconnect, TLS, peer, and inbound-server owners now expose exact earliest monotonic
 deadlines so that wait cannot overrun a consensus or transport timeout.
+Nonzero runtime-lifetime FIFO submission identities now propagate through timer and inbound results,
+preventing reusable slots or connection-table order from reversing durable work.
 A bounded deterministic simulator now records explicit and seeded virtual-network, crash/restart,
 atomic persistence-fault, application, membership, and snapshot actions; it runs an independent
 election/log/commit/leader-completeness checker after each step, replays exact traces, and performs

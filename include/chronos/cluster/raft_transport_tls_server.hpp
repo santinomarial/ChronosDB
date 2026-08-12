@@ -41,6 +41,7 @@ struct RaftTransportTlsServerInterest {
 };
 
 struct RaftTransportCompletedReceive {
+  std::uint64_t submission_sequence{};
   raft::GroupId group_id;
   raft::NodeId source_node_id{};
   raft::DurableRaftResult result;
@@ -70,6 +71,7 @@ public:
   [[nodiscard]] RaftTransportTlsServerState state() const noexcept;
   [[nodiscard]] RaftTransportTlsServerInterest interest() const noexcept;
   [[nodiscard]] std::optional<TimePoint> next_deadline() const noexcept;
+  [[nodiscard]] std::optional<std::uint64_t> completed_submission_sequence() const noexcept;
   [[nodiscard]] const common::Status& failure() const noexcept;
 
 private:

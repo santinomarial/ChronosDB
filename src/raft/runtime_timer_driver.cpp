@@ -70,11 +70,18 @@ public:
   }
 
   [[nodiscard]] common::Status collect_ready(const TimePoint now) {
-    for (std::optional<Pending>& pending : pending_) {
-      if (!pending.has_value() || !pending->completion.is_ready())
-        continue;
-      if (completed_count_ == completed_.size())
-        return common::Status::ok();
+    while (completed_count_ != completed_.size()) {
+      std::optional<std::size_t> next;
+      for (std::size_t index = 0U; index < pending_.size(); ++index) {
+        if (!pending_[index].has_value() || !pending_[index]->completion.is_ready())
+          continue;
+        if (!next.has_value() || pending_[index]->completion.submission_sequence() <
+                                     pending_[*next]->completion.submission_sequence())
+          next = index;
+      }
+      if (!next.has_value())
+        break;
+      std::optional<Pending>& pending = pending_[*next];
       auto results = pending->completion.wait();
       if (!results.has_value())
         return fail(results.error());
@@ -90,8 +97,9 @@ public:
       const common::Status rearmed = timers_.complete(pending->action, observation, now, *deadline);
       if (!rearmed.is_ok() && rearmed.code() != common::StatusCode::kInvalidArgument)
         return fail(rearmed);
-      completed_[completed_tail_].emplace(RaftTimerCompletedAction{
-          pending->action, std::move((*results)[0]), std::move(observation)});
+      completed_[completed_tail_].emplace(
+          RaftTimerCompletedAction{pending->completion.submission_sequence(), pending->action,
+                                   std::move((*results)[0]), std::move(observation)});
       completed_tail_ = (completed_tail_ + 1U) % completed_.size();
       ++completed_count_;
       pending.reset();
@@ -244,6 +252,14 @@ common::Result<RaftTimerCompletedAction> RaftTimerDriver::take_completed() {
       (implementation_->completed_head_ + 1U) % implementation_->completed_.size();
   --implementation_->completed_count_;
   return result;
+}
+
+std::optional<std::uint64_t> RaftTimerDriver::next_completed_sequence() const noexcept {
+  return implementation_ && implementation_->completed_count_ != 0U
+             ? std::optional<std::uint64_t>{implementation_
+                                                ->completed_[implementation_->completed_head_]
+                                                ->submission_sequence}
+             : std::nullopt;
 }
 
 std::optional<RaftTimerDriver::TimePoint> RaftTimerDriver::next_deadline() const noexcept {

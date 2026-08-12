@@ -60,6 +60,7 @@ public:
   [[nodiscard]] common::Status drive(TimePoint now);
   [[nodiscard]] common::Result<std::vector<RaftTransportTcpServerInterest>> interests() const;
   [[nodiscard]] int listener_descriptor() const noexcept;
+  [[nodiscard]] std::optional<std::uint64_t> next_completed_sequence() const noexcept;
   [[nodiscard]] common::Result<std::optional<RaftTransportCompletedReceive>> take_completed();
   [[nodiscard]] std::optional<TimePoint> next_deadline() const noexcept;
   [[nodiscard]] common::Status shutdown();

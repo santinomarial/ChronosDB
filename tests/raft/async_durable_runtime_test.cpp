@@ -60,6 +60,11 @@ TEST(AsyncDurableMultiRaftRuntimeTest, DrainsAcceptedFifoBatchesObservesAndRecov
   ASSERT_TRUE(applied.has_value());
   ASSERT_TRUE(observed.has_value());
   ASSERT_TRUE(missing.has_value());
+  EXPECT_EQ(election->submission_sequence(), 1U);
+  EXPECT_EQ(proposal->submission_sequence(), 2U);
+  EXPECT_EQ(applied->submission_sequence(), 3U);
+  EXPECT_EQ(observed->submission_sequence(), 4U);
+  EXPECT_EQ(missing->submission_sequence(), 5U);
 
   EXPECT_TRUE(runtime->shutdown().is_ok());
   auto election_result = election->wait();
@@ -135,6 +140,7 @@ TEST(AsyncDurableMultiRaftRuntimeTest, RejectsInvalidAndOverCapacityBatchesWitho
 
   AsyncDurableRaftCompletion invalid_completion;
   EXPECT_FALSE(invalid_completion.is_valid());
+  EXPECT_EQ(invalid_completion.submission_sequence(), 0U);
   EXPECT_EQ(invalid_completion.wait().error().code(), common::StatusCode::kInvalidArgument);
 }
 

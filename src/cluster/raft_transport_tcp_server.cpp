@@ -275,13 +275,28 @@ int RaftTransportTcpServer::listener_descriptor() const noexcept {
   return implementation_ && implementation_->running ? implementation_->listener.descriptor() : -1;
 }
 
+std::optional<std::uint64_t> RaftTransportTcpServer::next_completed_sequence() const noexcept {
+  std::optional<std::uint64_t> next;
+  if (!implementation_ || !implementation_->running)
+    return next;
+  for (const std::unique_ptr<Impl::Connection>& connection : implementation_->connections) {
+    const auto sequence = connection->carrier.completed_submission_sequence();
+    if (sequence.has_value() && (!next.has_value() || *sequence < *next))
+      next = sequence;
+  }
+  return next;
+}
+
 common::Result<std::optional<RaftTransportCompletedReceive>>
 RaftTransportTcpServer::take_completed() {
   if (!implementation_ || !implementation_->running)
     return common::make_unexpected(
         status(common::StatusCode::kInvalidArgument, "Raft TCP server is not running"));
+  const auto next_sequence = next_completed_sequence();
+  if (!next_sequence.has_value())
+    return std::optional<RaftTransportCompletedReceive>{};
   for (std::unique_ptr<Impl::Connection>& connection : implementation_->connections) {
-    if (connection->carrier.state() != RaftTransportTlsServerState::kResultReady)
+    if (connection->carrier.completed_submission_sequence() != next_sequence)
       continue;
     auto completed = connection->carrier.take_completed(std::chrono::steady_clock::now());
     if (!completed.has_value())
@@ -289,7 +304,8 @@ RaftTransportTcpServer::take_completed() {
     ++implementation_->metrics.completed_results;
     return std::optional<RaftTransportCompletedReceive>{std::move(*completed)};
   }
-  return std::optional<RaftTransportCompletedReceive>{};
+  return common::make_unexpected(
+      status(common::StatusCode::kCorruption, "Raft TCP completed sequence disappeared"));
 }
 
 std::optional<RaftTransportTcpServer::TimePoint>

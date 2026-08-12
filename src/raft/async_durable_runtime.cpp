@@ -164,7 +164,14 @@ public:
             common::Status{common::StatusCode::kResourceExhausted,
                            "asynchronous durable Multi-Raft admission capacity is full"});
       }
+      if (next_submission_sequence_ == std::numeric_limits<std::uint64_t>::max()) {
+        saturating_increment(metrics_.rejected_batches);
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kResourceExhausted,
+                           "asynchronous durable Multi-Raft submission sequence is exhausted"});
+      }
       queue_.push_back(std::move(task));
+      const std::uint64_t submission_sequence = next_submission_sequence_++;
       ++metrics_.pending_batches;
       metrics_.pending_operations += operation_count;
       metrics_.high_water_pending_batches =
@@ -174,7 +181,7 @@ public:
       saturating_increment(metrics_.admitted_batches);
       lock.unlock();
       condition_.notify_one();
-      return AsyncDurableRaftCompletion{std::move(completion)};
+      return AsyncDurableRaftCompletion{std::move(completion), submission_sequence};
     } catch (const std::bad_alloc&) {
       return reject(common::Status{common::StatusCode::kResourceExhausted,
                                    "cannot allocate asynchronous durable Multi-Raft request"});
@@ -363,6 +370,7 @@ private:
   std::thread worker_;
   std::mutex shutdown_mutex_;
   std::array<int, 2> completion_pipe_{-1, -1};
+  std::uint64_t next_submission_sequence_{1U};
 };
 
 AsyncDurableRaftCompletion::AsyncDurableRaftCompletion() noexcept = default;
@@ -372,11 +380,16 @@ AsyncDurableRaftCompletion::AsyncDurableRaftCompletion(AsyncDurableRaftCompletio
 AsyncDurableRaftCompletion&
 AsyncDurableRaftCompletion::operator=(AsyncDurableRaftCompletion&&) noexcept = default;
 AsyncDurableRaftCompletion::AsyncDurableRaftCompletion(
-    std::shared_ptr<detail::AsyncDurableRaftCompletionState> state) noexcept
-    : state_(std::move(state)) {}
+    std::shared_ptr<detail::AsyncDurableRaftCompletionState> state,
+    const std::uint64_t submission_sequence) noexcept
+    : state_(std::move(state)), submission_sequence_(submission_sequence) {}
 
 bool AsyncDurableRaftCompletion::is_valid() const noexcept {
   return state_ != nullptr;
+}
+
+std::uint64_t AsyncDurableRaftCompletion::submission_sequence() const noexcept {
+  return state_ == nullptr ? 0U : submission_sequence_;
 }
 
 bool AsyncDurableRaftCompletion::is_ready() const {
