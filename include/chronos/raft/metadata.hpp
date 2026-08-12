@@ -2,6 +2,7 @@
 #define CHRONOS_RAFT_METADATA_HPP_
 
 #include "chronos/common/result.hpp"
+#include "chronos/raft/tablet_group_binding.hpp"
 #include "chronos/raft/types.hpp"
 #include "chronos/schema/identity.hpp"
 #include "chronos/schema/table_schema.hpp"
@@ -107,6 +108,7 @@ struct MetadataCatalogSnapshot {
   std::vector<CatalogTableDefinition> schema_definitions;
   std::vector<ActiveSchemaMetadata> active_schemas;
   std::vector<TabletPlacementMetadata> tablet_placements;
+  std::vector<TabletGroupBindingMetadata> tablet_group_bindings;
   std::vector<TablePolicyMetadata> table_policies;
 };
 
@@ -126,6 +128,8 @@ public:
   [[nodiscard]] common::Status apply_committed(LogIndex index, MetadataCommand command);
   [[nodiscard]] common::Status apply_committed_schema_definition(LogIndex index,
                                                                  CatalogTableDefinition definition);
+  [[nodiscard]] common::Status
+  apply_committed_tablet_group_binding(LogIndex index, TabletGroupBindingMetadata binding);
   [[nodiscard]] common::Status apply_internal_noop(LogIndex index);
   // Efficient equivalent of applying only internal Raft entries through index. The caller must
   // have independently proved that the skipped range contains no application entry.
@@ -142,6 +146,8 @@ public:
   find_active_table_definition(std::string_view name, bool quoted) const noexcept;
   [[nodiscard]] const TabletPlacementMetadata*
   find_tablet(const schema::TabletId& tablet_id) const noexcept;
+  [[nodiscard]] const TabletGroupBindingMetadata*
+  find_tablet_group_binding(const schema::TabletId& tablet_id) const noexcept;
   [[nodiscard]] const RetentionMetadata*
   find_retention(const schema::TableId& table_id) const noexcept;
   [[nodiscard]] const TablePolicyMetadata*

@@ -199,7 +199,9 @@
   application owners with ordered callbacks, reverse partial-failure cleanup, and direct-child
   identity proof. The concrete metadata extension now performs pre-admission retained/snapshot
   recovery, touched-group application, durable applied-index advancement, and immutable catalog
-  snapshot publication on that worker; add packaged reactor/daemon routing,
+  snapshot publication on that worker. The metadata log now durably binds placed tablets to their
+  Raft groups through additive entry type 4 and Snapshot minor 1; add administrative legacy binding
+  backfill, packaged reactor/daemon routing,
   completion-driven wakeup, broader failure matrices, long-running hook watchdog evidence, and TSan
   scheduling coverage.
 - Carry the implemented group-scoped read-barrier operation through authenticated production

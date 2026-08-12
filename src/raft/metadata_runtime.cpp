@@ -1,6 +1,7 @@
 #include "chronos/raft/metadata_runtime.hpp"
 
 #include "chronos/raft/membership.hpp"
+#include "chronos/raft/tablet_group_binding_codec.hpp"
 
 #include <algorithm>
 #include <array>
@@ -99,7 +100,8 @@ metadata_entry_digest(const std::span<const MetadataSnapshotEntry> entries) {
 
 class DurableMetadataStateMachine::Impl {
 public:
-  using Application = std::variant<std::monostate, MetadataCommand, CatalogTableDefinition>;
+  using Application = std::variant<std::monostate, MetadataCommand, CatalogTableDefinition,
+                                   TabletGroupBindingMetadata>;
 
   Impl(GroupId configured_group_id, DurableMultiRaftRuntime& configured_runtime,
        std::optional<MetadataSnapshotStorage> configured_snapshot_storage,
@@ -136,6 +138,16 @@ public:
         commands.emplace_back(std::move(*decoded));
         continue;
       }
+      if (entry.type == kRaftTabletGroupBindingEntryType) {
+        auto decoded = decode_tablet_group_binding_v1(entry.payload);
+        if (!decoded.has_value())
+          return common::make_unexpected(fail(decoded.error()));
+        if (decoded->group_id == group_id)
+          return common::make_unexpected(
+              fail(invalid("tablet group binding names the metadata group")));
+        commands.emplace_back(std::move(*decoded));
+        continue;
+      }
       if (entry.type != kRaftMetadataCommandEntryType) {
         return common::make_unexpected(
             fail(unsupported("committed metadata Raft entry type is unsupported")));
@@ -153,6 +165,9 @@ public:
       } else if (auto* definition = std::get_if<CatalogTableDefinition>(&commands[ordinal])) {
         status = metadata.apply_committed_schema_definition(entries[ordinal].index,
                                                             std::move(*definition));
+      } else if (auto* binding = std::get_if<TabletGroupBindingMetadata>(&commands[ordinal])) {
+        status = metadata.apply_committed_tablet_group_binding(entries[ordinal].index,
+                                                               std::move(*binding));
       } else {
         status = metadata.apply_internal_noop(entries[ordinal].index);
       }
@@ -197,6 +212,13 @@ public:
           if (!decoded.has_value())
             return decoded.error();
           commands.emplace_back(std::move(*decoded));
+        } else if (entry.type == kRaftTabletGroupBindingEntryType) {
+          auto decoded = decode_tablet_group_binding_v1(entry.payload);
+          if (!decoded.has_value())
+            return decoded.error();
+          if (decoded->group_id == group_id)
+            return invalid("tablet group binding names the metadata group");
+          commands.emplace_back(std::move(*decoded));
         } else {
           return corruption("metadata snapshot contains an unsupported application type");
         }
@@ -211,9 +233,11 @@ public:
         common::Status applied = common::Status::ok();
         if (auto* command = std::get_if<MetadataCommand>(&commands[ordinal])) {
           applied = metadata.apply_committed(entry.index, std::move(*command));
+        } else if (auto* definition = std::get_if<CatalogTableDefinition>(&commands[ordinal])) {
+          applied = metadata.apply_committed_schema_definition(entry.index, std::move(*definition));
         } else {
-          applied = metadata.apply_committed_schema_definition(
-              entry.index, std::move(std::get<CatalogTableDefinition>(commands[ordinal])));
+          applied = metadata.apply_committed_tablet_group_binding(
+              entry.index, std::move(std::get<TabletGroupBindingMetadata>(commands[ordinal])));
         }
         if (!applied.is_ok())
           return applied;
@@ -302,7 +326,8 @@ public:
         if (is_internal_raft_entry_type(entry.type))
           continue;
         if (entry.type != kRaftMetadataCommandEntryType &&
-            entry.type != kRaftSchemaDefinitionEntryType) {
+            entry.type != kRaftSchemaDefinitionEntryType &&
+            entry.type != kRaftTabletGroupBindingEntryType) {
           return common::make_unexpected(
               fail(corruption("applied metadata prefix contains an unknown entry type")));
         }

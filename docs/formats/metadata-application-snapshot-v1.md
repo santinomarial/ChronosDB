@@ -4,7 +4,9 @@
 > exact snapshot-plus-suffix recovery implemented.**
 
 All integers are unsigned little-endian. The object is caller-bounded and has a 1 GiB format
-maximum. Its magic is `CHRMASN\0`, major version 1, minor version 0.
+maximum. Its magic is `CHRMASN\0`, major version 1. Minor version 0 retains metadata and schema
+entries; minor version 1 additively admits exact Tablet Group Binding v1 entries. Encoders emit the
+lowest minor required by their entry set.
 
 ## Header
 
@@ -14,7 +16,7 @@ The fixed header is 128 bytes:
 | ---: | ---: | --- |
 | 0 | 8 | Magic `CHRMASN\0` |
 | 8 | 2 | Major `1` |
-| 10 | 2 | Minor `0` |
+| 10 | 2 | Minor `0` or `1` |
 | 12 | 4 | Header size `128` |
 | 16 | 8 | Complete byte size including trailer |
 | 24 | 4 | Application-entry count |
@@ -47,7 +49,7 @@ Each entry begins at an 8-byte boundary with this 32-byte header:
 | ---: | ---: | --- |
 | 0 | 8 | Original logical Raft index |
 | 8 | 8 | Original Raft term |
-| 16 | 1 | Permanent Raft application type (`2` metadata command, `3` schema definition) |
+| 16 | 1 | Permanent Raft application type (`2` metadata command, `3` schema definition, or minor-1 `4` tablet-group binding) |
 | 17 | 3 | Required zero |
 | 20 | 4 | Payload size |
 | 24 | 4 | Payload CRC32C |
@@ -57,6 +59,10 @@ The exact nonempty payload follows, then required-zero padding to the next 8-byt
 are nonzero, strictly increasing, and no later than the included index. Terms are nonzero,
 nondecreasing, and no later than the included term. An entry at the included index has the included
 term. Internal Raft entries are omitted and therefore appear as index gaps.
+
+Minor 0 accepts only types 2 and 3 and its bytes are unchanged. Minor 1 accepts types 2, 3, and 4;
+a type-4 entry mislabeled as minor 0 is corruption. Readers that do not implement minor 1 reject it
+as unsupported. The structural codec still retains exact nested bytes without reinterpreting them.
 
 The final four bytes are CRC32C over every preceding byte. No trailing bytes are allowed. The
 structural codec does not reinterpret nested Metadata Command v1 or Schema Definition v1 bytes;

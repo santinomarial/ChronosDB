@@ -4,6 +4,7 @@
 #include "chronos/common/crc32c.hpp"
 #include "chronos/raft/metadata_codec.hpp"
 #include "chronos/raft/schema_definition_codec.hpp"
+#include "chronos/raft/tablet_group_binding_codec.hpp"
 
 #include <algorithm>
 #include <array>
@@ -25,7 +26,8 @@ constexpr std::array<std::byte, 8U> kMagic{std::byte{'C'}, std::byte{'H'}, std::
                                            std::byte{'M'}, std::byte{'A'}, std::byte{'S'},
                                            std::byte{'N'}, std::byte{0U}};
 constexpr std::uint16_t kMajor = 1U;
-constexpr std::uint16_t kMinor = 0U;
+constexpr std::uint16_t kMinor0 = 0U;
+constexpr std::uint16_t kMinor1 = 1U;
 constexpr std::size_t kAlignment = 8U;
 constexpr std::size_t kTotalSizeOffset = 16U;
 constexpr std::size_t kEntryCountOffset = 24U;
@@ -75,8 +77,9 @@ constexpr std::size_t kReservedOffset = 124U;
              metadata.voters.end();
 }
 
-[[nodiscard]] bool valid_entry_type(const std::uint8_t type) noexcept {
-  return type == kRaftMetadataCommandEntryType || type == kRaftSchemaDefinitionEntryType;
+[[nodiscard]] bool valid_entry_type(const std::uint8_t type, const std::uint16_t minor) noexcept {
+  return type == kRaftMetadataCommandEntryType || type == kRaftSchemaDefinitionEntryType ||
+         (minor >= kMinor1 && type == kRaftTabletGroupBindingEntryType);
 }
 
 void store_u16(const std::span<std::byte> bytes, const std::size_t offset,
@@ -120,7 +123,8 @@ void store_u64(const std::span<std::byte> bytes, const std::size_t offset,
 }
 
 [[nodiscard]] common::Result<std::size_t> encoded_size(const MetadataApplicationSnapshot& snapshot,
-                                                       const MetadataSnapshotCodecLimits& limits) {
+                                                       const MetadataSnapshotCodecLimits& limits,
+                                                       const std::uint16_t minor) {
   if (snapshot.entries.size() > limits.maximum_entries ||
       snapshot.entries.size() > std::numeric_limits<std::uint32_t>::max()) {
     return common::make_unexpected(exhausted("metadata snapshot entry count exceeds limit"));
@@ -140,7 +144,7 @@ void store_u64(const std::span<std::byte> bytes, const std::size_t offset,
         entry.term < previous_term || entry.term > snapshot.raft_snapshot.last_included_term ||
         (entry.index == snapshot.raft_snapshot.last_included_index &&
          entry.term != snapshot.raft_snapshot.last_included_term) ||
-        !valid_entry_type(entry.type) || entry.payload.empty()) {
+        !valid_entry_type(entry.type, minor) || entry.payload.empty()) {
       return common::make_unexpected(invalid("metadata snapshot entries are noncanonical"));
     }
     if (entry.payload.size() > limits.maximum_entry_payload_bytes ||
@@ -174,14 +178,21 @@ encode_metadata_application_snapshot_v1(const MetadataApplicationSnapshot& snaps
     return common::make_unexpected(invalid("metadata snapshot codec limits are invalid"));
   if (!valid_metadata(snapshot, limits))
     return common::make_unexpected(invalid("metadata snapshot identity or metadata is invalid"));
-  auto total_size = encoded_size(snapshot, limits);
+  const std::uint16_t minor =
+      std::ranges::any_of(snapshot.entries,
+                          [](const MetadataSnapshotEntry& entry) {
+                            return entry.type == kRaftTabletGroupBindingEntryType;
+                          })
+          ? kMinor1
+          : kMinor0;
+  auto total_size = encoded_size(snapshot, limits, minor);
   if (!total_size.has_value())
     return common::make_unexpected(total_size.error());
   try {
     std::vector<std::byte> bytes(*total_size, std::byte{0U});
     std::ranges::copy(kMagic, bytes.begin());
     store_u16(bytes, 8U, kMajor);
-    store_u16(bytes, 10U, kMinor);
+    store_u16(bytes, 10U, minor);
     store_u32(bytes, 12U, kMetadataSnapshotHeaderSize);
     store_u64(bytes, kTotalSizeOffset, *total_size);
     store_u32(bytes, kEntryCountOffset, static_cast<std::uint32_t>(snapshot.entries.size()));
@@ -246,7 +257,8 @@ decode_metadata_application_snapshot_v1(const common::ByteView bytes,
     return common::make_unexpected(corruption("metadata snapshot header checksum mismatch"));
   if (!std::ranges::equal(bytes.first(kMagic.size()), kMagic) || load_u16(bytes, 8U) != kMajor)
     return common::make_unexpected(unsupported("metadata snapshot magic or major is unknown"));
-  if (load_u16(bytes, 10U) != kMinor || load_u32(bytes, 12U) != kMetadataSnapshotHeaderSize)
+  const std::uint16_t minor = load_u16(bytes, 10U);
+  if (minor > kMinor1 || load_u32(bytes, 12U) != kMetadataSnapshotHeaderSize)
     return common::make_unexpected(unsupported("metadata snapshot minor or header is unknown"));
 
   const std::uint64_t total_size = load_u64(bytes, kTotalSizeOffset);
@@ -309,7 +321,7 @@ decode_metadata_application_snapshot_v1(const common::ByteView bytes,
           term < previous_term || term > snapshot.raft_snapshot.last_included_term ||
           (index == snapshot.raft_snapshot.last_included_index &&
            term != snapshot.raft_snapshot.last_included_term) ||
-          !valid_entry_type(type) || payload_size == 0U ||
+          !valid_entry_type(type, minor) || payload_size == 0U ||
           std::ranges::any_of(bytes.subspan(cursor + 17U, 3U),
                               [](const std::byte value) { return value != std::byte{0U}; }) ||
           load_u32(bytes, cursor + 28U) != 0U || payload_offset > trailer_offset ||

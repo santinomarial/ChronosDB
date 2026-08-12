@@ -853,7 +853,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   application/reopen recovery for nodes, schema identities, tablet placement epochs, leader hints,
   complete partition/retention/history/lateness policy, and complete immutable table schemas with
   SQL catalog names. Canonical Metadata Application Snapshot v1 bytes now retain exact original
-  metadata/schema entries and Raft membership identity for later compaction/recovery. A dedicated
+  metadata/schema entries and Raft membership identity for later compaction/recovery. Additive
+  Snapshot 1.1 retains a separate checksummed immutable tablet-to-group binding without changing
+  placement or minor-0 bytes. A dedicated
   locked owner now exact-validates, file-syncs, no-replace installs, directory-syncs, and reopens
   those immutable snapshots. The metadata application owner now installs them before Raft
   compaction and exact-rebuilds a compacted catalog from snapshot plus committed suffix. Database

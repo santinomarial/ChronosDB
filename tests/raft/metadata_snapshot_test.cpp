@@ -1,14 +1,31 @@
+#include "chronos/common/crc32c.hpp"
 #include "chronos/common/status.hpp"
 #include "chronos/raft/metadata_codec.hpp"
 #include "chronos/raft/metadata_snapshot.hpp"
 #include "chronos/raft/schema_definition_codec.hpp"
+#include "chronos/raft/tablet_group_binding_codec.hpp"
 
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
+#include <span>
+#include <vector>
 
 namespace chronos::raft {
 namespace {
+
+void store_u32(std::span<std::byte> bytes, const std::size_t offset, const std::uint32_t value) {
+  for (std::size_t index = 0U; index < sizeof(value); ++index)
+    bytes[offset + index] = static_cast<std::byte>(value >> (index * 8U));
+}
+
+void restore_snapshot_checksums(std::vector<std::byte>& bytes) {
+  store_u32(bytes, 120U, 0U);
+  store_u32(bytes, 120U, common::crc32c(common::ByteView{bytes}.first(128U)));
+  store_u32(bytes, bytes.size() - 4U, 0U);
+  store_u32(bytes, bytes.size() - 4U,
+            common::crc32c(common::ByteView{bytes}.first(bytes.size() - 4U)));
+}
 
 [[nodiscard]] MetadataApplicationSnapshot snapshot() {
   common::Uuid::Bytes group_bytes{};
@@ -40,6 +57,35 @@ TEST(MetadataSnapshotTest, RoundTripsCanonicalApplicationEntriesAndInternalGaps)
   auto decoded = decode_metadata_application_snapshot_v1(*encoded);
   ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
   EXPECT_EQ(*decoded, expected);
+}
+
+TEST(MetadataSnapshotTest, MinorOneRetainsTabletGroupBindingsWithoutReinterpretingMinorZero) {
+  MetadataApplicationSnapshot expected = snapshot();
+  expected.entries.push_back(
+      {.index = 8U,
+       .term = 3U,
+       .type = kRaftTabletGroupBindingEntryType,
+       .payload = encode_tablet_group_binding_v1(
+                      {schema::TabletId::from_bytes(common::Uuid::Bytes{std::byte{1U}}).value(),
+                       GroupId{common::Uuid::Bytes{std::byte{2U}}}})
+                      .value()});
+  auto encoded = encode_metadata_application_snapshot_v1(expected);
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  EXPECT_EQ(std::to_integer<std::uint8_t>((*encoded)[10U]), 1U);
+  auto decoded = decode_metadata_application_snapshot_v1(*encoded);
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  EXPECT_EQ(*decoded, expected);
+
+  auto mislabeled_minor_zero = *encoded;
+  mislabeled_minor_zero[10U] = std::byte{0U};
+  restore_snapshot_checksums(mislabeled_minor_zero);
+  auto rejected = decode_metadata_application_snapshot_v1(mislabeled_minor_zero);
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kCorruption);
+
+  auto minor_zero = encode_metadata_application_snapshot_v1(snapshot());
+  ASSERT_TRUE(minor_zero.has_value()) << minor_zero.error().to_string();
+  EXPECT_EQ(std::to_integer<std::uint8_t>((*minor_zero)[10U]), 0U);
 }
 
 TEST(MetadataSnapshotTest, RejectsDamageUnknownTypesAndNoncanonicalOrder) {

@@ -1,5 +1,6 @@
 #include "chronos/raft/metadata_runtime.hpp"
 #include "chronos/raft/schema_definition_codec.hpp"
+#include "chronos/raft/tablet_group_binding_codec.hpp"
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/logical_type.hpp"
 
@@ -46,6 +47,12 @@ private:
   return GroupId{bytes};
 }
 
+[[nodiscard]] GroupId tablet_group_id() {
+  common::Uuid::Bytes bytes{};
+  bytes.fill(std::byte{0x56U});
+  return GroupId{bytes};
+}
+
 template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t seed) {
   common::Uuid::Bytes bytes{};
   bytes.front() = static_cast<std::byte>(seed);
@@ -83,6 +90,11 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
   return {kRaftSchemaDefinitionEntryType, encode_schema_definition_v1(definition).value()};
 }
 
+[[nodiscard]] ProposeOperation binding_proposal(const schema::TabletId& tablet_id) {
+  return {kRaftTabletGroupBindingEntryType,
+          encode_tablet_group_binding_v1({tablet_id, tablet_group_id()}).value()};
+}
+
 TEST(DurableMetadataStateMachineTest, AppliesAndRebuildsCommittedMetadataGroup) {
   TemporaryDirectory directory;
   const RaftPersistentLogConfig log_config{.directory_path = directory.path().string()};
@@ -102,23 +114,25 @@ TEST(DurableMetadataStateMachineTest, AppliesAndRebuildsCommittedMetadataGroup) 
   requests.push_back(
       {group_id(), proposal(SchemaMetadata{table, schema_id, schema::SchemaVersion::initial()})});
   requests.push_back({group_id(), proposal(TabletPlacementMetadata{table, tablet, 1U, {1U}, 1U})});
+  requests.push_back({group_id(), binding_proposal(tablet)});
   requests.push_back({group_id(), proposal(RetentionMetadata{table, 1000, 100U})});
   ASSERT_TRUE(runtime->execute_batch(std::move(requests)).has_value());
-  EXPECT_EQ(runtime->find_group(group_id())->commit_index(), 4U);
+  EXPECT_EQ(runtime->find_group(group_id())->commit_index(), 5U);
   EXPECT_EQ(metadata->state().applied_index(), 0U);
-  EXPECT_EQ(metadata->prove_applied_quorum_sync(4U).error().code(),
+  EXPECT_EQ(metadata->prove_applied_quorum_sync(5U).error().code(),
             common::StatusCode::kUnavailable);
 
   auto report = metadata->apply_committed();
   ASSERT_TRUE(report.has_value()) << report.error().to_string();
   EXPECT_EQ(report->first_applied_index, 1U);
-  EXPECT_EQ(report->last_applied_index, 4U);
-  EXPECT_EQ(report->applied_commands, 4U);
+  EXPECT_EQ(report->last_applied_index, 5U);
+  EXPECT_EQ(report->applied_commands, 5U);
   EXPECT_EQ(metadata->state().find_node(1U)->endpoint, "node-1");
   EXPECT_EQ(metadata->state().find_schema(schema_id)->table_id, table);
   EXPECT_EQ(metadata->state().find_tablet(tablet)->placement_epoch, 1U);
+  EXPECT_EQ(metadata->state().find_tablet_group_binding(tablet)->group_id, tablet_group_id());
   EXPECT_EQ(metadata->state().find_retention(table)->retry_retention_positions, 100U);
-  EXPECT_TRUE(metadata->prove_applied_quorum_sync(4U).has_value());
+  EXPECT_TRUE(metadata->prove_applied_quorum_sync(5U).has_value());
 
   metadata.reset();
   const std::uint64_t durable_sequence = runtime->durable_physical_sequence();
@@ -127,9 +141,10 @@ TEST(DurableMetadataStateMachineTest, AppliesAndRebuildsCommittedMetadataGroup) 
   ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
   auto rebuilt = DurableMetadataStateMachine::recover(group_id(), *reopened);
   ASSERT_TRUE(rebuilt.has_value()) << rebuilt.error().to_string();
-  EXPECT_EQ(rebuilt->state().applied_index(), 4U);
+  EXPECT_EQ(rebuilt->state().applied_index(), 5U);
   EXPECT_EQ(rebuilt->state().find_node(1U)->endpoint, "node-1");
   EXPECT_EQ(rebuilt->state().find_tablet(tablet)->leader_hint, 1U);
+  EXPECT_EQ(rebuilt->state().find_tablet_group_binding(tablet)->group_id, tablet_group_id());
   EXPECT_EQ(reopened->durable_physical_sequence(), durable_sequence);
 }
 
@@ -177,6 +192,32 @@ TEST(DurableMetadataStateMachineTest, AppliesReservedEntriesAsOrderedInternalNoo
   EXPECT_EQ(report->last_applied_index, 4U);
   EXPECT_EQ(report->applied_commands, 1U);
   EXPECT_EQ(metadata->state().find_node(1U)->endpoint, "node-1");
+}
+
+TEST(DurableMetadataStateMachineTest, RejectsTabletBindingThatAliasesMetadataGroup) {
+  TemporaryDirectory directory;
+  const RaftPersistentLogConfig log_config{.directory_path = directory.path().string()};
+  const std::vector<RaftGroupConfiguration> groups{{group_id(), {1U}}};
+  auto runtime = DurableMultiRaftRuntime::create_new(1U, log_config, groups);
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  ASSERT_TRUE(runtime->execute_batch({{group_id(), StartElectionOperation{}}}).has_value());
+  const auto table = id<schema::TableId>(51U);
+  const auto tablet = id<schema::TabletId>(52U);
+  ASSERT_TRUE(
+      runtime
+          ->execute_batch(
+              {{group_id(), proposal(TabletPlacementMetadata{table, tablet, 1U, {1U}, 1U})}})
+          .has_value());
+  ASSERT_TRUE(
+      runtime
+          ->execute_batch(
+              {{group_id(),
+                ProposeOperation{kRaftTabletGroupBindingEntryType,
+                                 encode_tablet_group_binding_v1({tablet, group_id()}).value()}}})
+          .has_value());
+  auto metadata = DurableMetadataStateMachine::recover(group_id(), *runtime);
+  ASSERT_FALSE(metadata.has_value());
+  EXPECT_EQ(metadata.error().code(), common::StatusCode::kInvalidArgument);
 }
 
 TEST(DurableMetadataStateMachineTest, RebuildsCompleteCatalogDefinitionFromRetainedRaftLog) {
@@ -239,12 +280,13 @@ TEST(DurableMetadataStateMachineTest, ProjectsAnOwningDeterministicRecoveryCatal
           ->execute_batch({{group_id(), proposal(TabletPlacementMetadata{
                                             definition.schema->table_id(), tablet, 1U, {1U}, 1U})}})
           .has_value());
+  ASSERT_TRUE(runtime->execute_batch({{group_id(), binding_proposal(tablet)}}).has_value());
   auto metadata = DurableMetadataStateMachine::recover(group_id(), *runtime);
   ASSERT_TRUE(metadata.has_value()) << metadata.error().to_string();
   std::optional<DurableMetadataStateMachine> owner{std::move(*metadata)};
   auto projected = owner->state().catalog_snapshot();
   ASSERT_TRUE(projected.has_value()) << projected.error().to_string();
-  EXPECT_EQ(projected->applied_index, 4U);
+  EXPECT_EQ(projected->applied_index, 5U);
   ASSERT_EQ(projected->cluster_nodes.size(), 1U);
   EXPECT_EQ(projected->cluster_nodes.front(), (ClusterNodeMetadata{1U, "node-1"}));
   ASSERT_EQ(projected->schema_definitions.size(), 1U);
@@ -254,6 +296,9 @@ TEST(DurableMetadataStateMachineTest, ProjectsAnOwningDeterministicRecoveryCatal
             (ActiveSchemaMetadata{definition.schema->table_id(), definition.schema->schema_id()}));
   ASSERT_EQ(projected->tablet_placements.size(), 1U);
   EXPECT_EQ(projected->tablet_placements.front().tablet_id, tablet);
+  ASSERT_EQ(projected->tablet_group_bindings.size(), 1U);
+  EXPECT_EQ(projected->tablet_group_bindings.front(),
+            (TabletGroupBindingMetadata{tablet, tablet_group_id()}));
   ASSERT_EQ(projected->table_policies.size(), 1U);
   EXPECT_EQ(projected->table_policies.front().allowed_lateness_ns, 10);
 
@@ -283,48 +328,55 @@ TEST(DurableMetadataStateMachineTest, InstallsCompactsAndReopensSnapshotPlusComm
   std::optional<DurableMetadataStateMachine> metadata{std::move(*recovered)};
 
   const CatalogTableDefinition definition = schema_definition();
+  const auto tablet = id<schema::TabletId>(41U);
   ASSERT_TRUE(runtime->execute_batch({{group_id(), schema_proposal(definition)}}).has_value());
   ASSERT_TRUE(
       runtime
           ->execute_batch({{group_id(), proposal(TablePolicyMetadata{definition.schema->table_id(),
                                                                      100, 1000, 500, 10, 100U})}})
           .has_value());
+  ASSERT_TRUE(
+      runtime
+          ->execute_batch({{group_id(), proposal(TabletPlacementMetadata{
+                                            definition.schema->table_id(), tablet, 1U, {1U}, 1U})}})
+          .has_value());
+  ASSERT_TRUE(runtime->execute_batch({{group_id(), binding_proposal(tablet)}}).has_value());
   auto applied = metadata->apply_committed();
   ASSERT_TRUE(applied.has_value()) << applied.error().to_string();
-  ASSERT_EQ(applied->last_applied_index, 2U);
+  ASSERT_EQ(applied->last_applied_index, 4U);
 
-  auto first_compaction = metadata->compact_applied_prefix(2U);
+  auto first_compaction = metadata->compact_applied_prefix(4U);
   ASSERT_TRUE(first_compaction.has_value()) << first_compaction.error().to_string();
-  EXPECT_EQ(first_compaction->snapshot.last_included_index, 2U);
+  EXPECT_EQ(first_compaction->snapshot.last_included_index, 4U);
 
   ASSERT_TRUE(runtime->execute_batch({{group_id(), StartElectionOperation{}}}).has_value());
   ASSERT_TRUE(runtime->execute_batch({{group_id(), CommitCurrentTermOperation{}}}).has_value());
   applied = metadata->apply_committed();
   ASSERT_TRUE(applied.has_value()) << applied.error().to_string();
-  ASSERT_EQ(applied->last_applied_index, 3U);
+  ASSERT_EQ(applied->last_applied_index, 5U);
   ASSERT_EQ(applied->applied_commands, 0U);
 
-  auto compacted = metadata->compact_applied_prefix(3U);
+  auto compacted = metadata->compact_applied_prefix(5U);
   ASSERT_TRUE(compacted.has_value()) << compacted.error().to_string();
-  EXPECT_EQ(compacted->snapshot.last_included_index, 3U);
-  EXPECT_EQ(compacted->snapshot.manifest_generation, 3U);
-  EXPECT_EQ(compacted->application_entries, 2U);
+  EXPECT_EQ(compacted->snapshot.last_included_index, 5U);
+  EXPECT_EQ(compacted->snapshot.manifest_generation, 5U);
+  EXPECT_EQ(compacted->application_entries, 4U);
   EXPECT_FALSE(compacted->application_snapshot_already_present);
   EXPECT_TRUE(runtime->find_group(group_id())->persistent_state().log.empty());
   auto reclaimed = metadata->reclaim_obsolete_snapshots();
   ASSERT_TRUE(reclaimed.has_value()) << reclaimed.error().to_string();
-  EXPECT_EQ(reclaimed->authoritative_index, 3U);
+  EXPECT_EQ(reclaimed->authoritative_index, 5U);
   EXPECT_EQ(reclaimed->reclaimed_files, 1U);
   EXPECT_FALSE(
-      std::filesystem::exists(snapshot_directory / "metadata-snapshot-00000000000000000002.rmas"));
+      std::filesystem::exists(snapshot_directory / "metadata-snapshot-00000000000000000004.rmas"));
   EXPECT_TRUE(
-      std::filesystem::exists(snapshot_directory / "metadata-snapshot-00000000000000000003.rmas"));
+      std::filesystem::exists(snapshot_directory / "metadata-snapshot-00000000000000000005.rmas"));
 
   ASSERT_TRUE(runtime->execute_batch({{group_id(), proposal(ClusterNodeMetadata{1U, "node-1"})}})
                   .has_value());
   applied = metadata->apply_committed();
   ASSERT_TRUE(applied.has_value()) << applied.error().to_string();
-  EXPECT_EQ(applied->first_applied_index, 4U);
+  EXPECT_EQ(applied->first_applied_index, 6U);
   EXPECT_EQ(metadata->state().find_node(1U)->endpoint, "node-1");
 
   metadata.reset();
@@ -340,13 +392,15 @@ TEST(DurableMetadataStateMachineTest, InstallsCompactsAndReopensSnapshotPlusComm
   auto rebuilt =
       DurableMetadataStateMachine::recover(group_id(), *reopened, std::move(*reopened_snapshots));
   ASSERT_TRUE(rebuilt.has_value()) << rebuilt.error().to_string();
-  EXPECT_EQ(rebuilt->state().applied_index(), 4U);
+  EXPECT_EQ(rebuilt->state().applied_index(), 6U);
   const auto* installed =
       rebuilt->state().find_active_table_definition(definition.schema->table_id());
   ASSERT_NE(installed, nullptr);
   EXPECT_TRUE(*installed == definition);
   ASSERT_NE(rebuilt->state().find_table_policy(definition.schema->table_id()), nullptr);
   EXPECT_EQ(rebuilt->state().find_table_policy(definition.schema->table_id())->retention_ns, 1000);
+  ASSERT_NE(rebuilt->state().find_tablet_group_binding(tablet), nullptr);
+  EXPECT_EQ(rebuilt->state().find_tablet_group_binding(tablet)->group_id, tablet_group_id());
   ASSERT_NE(rebuilt->state().find_node(1U), nullptr);
   EXPECT_EQ(rebuilt->state().find_node(1U)->endpoint, "node-1");
 }

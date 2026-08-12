@@ -1,6 +1,7 @@
 #include "chronos/raft/async_metadata_application.hpp"
 #include "chronos/raft/metadata_codec.hpp"
 #include "chronos/raft/schema_definition_codec.hpp"
+#include "chronos/raft/tablet_group_binding_codec.hpp"
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/logical_type.hpp"
 
@@ -84,6 +85,12 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
   return {kRaftMetadataCommandEntryType, encode_metadata_command_v1(std::move(command)).value()};
 }
 
+[[nodiscard]] ProposeOperation binding_proposal(const schema::TabletId& tablet_id,
+                                                const GroupId& group_id) {
+  return {kRaftTabletGroupBindingEntryType,
+          encode_tablet_group_binding_v1({tablet_id, group_id}).value()};
+}
+
 [[nodiscard]] common::Result<std::shared_ptr<AsyncRaftMetadataApplication>>
 application(const GroupId& metadata_group,
             std::optional<MetadataSnapshotStorage> snapshot_storage = std::nullopt) {
@@ -128,7 +135,8 @@ TEST(AsyncRaftMetadataApplicationTest,
        {metadata_group, metadata_proposal(TablePolicyMetadata{definition.schema->table_id(), 100,
                                                               1000, 500, 10, 100U})},
        {metadata_group, metadata_proposal(TabletPlacementMetadata{
-                            definition.schema->table_id(), tablet, 1U, {1U}, 1U})}});
+                            definition.schema->table_id(), tablet, 1U, {1U}, 1U})},
+       {metadata_group, binding_proposal(tablet, data_group)}});
   ASSERT_TRUE(proposals.has_value()) << proposals.error().to_string();
   const auto result = proposals->wait();
   ASSERT_TRUE(result.has_value()) << result.error().to_string();
@@ -136,13 +144,16 @@ TEST(AsyncRaftMetadataApplicationTest,
   auto published = (*extension)->catalog_snapshot();
   ASSERT_TRUE(published.has_value()) << published.error().to_string();
   EXPECT_NE(published->get(), initial->get());
-  EXPECT_EQ((*published)->applied_index, 4U);
+  EXPECT_EQ((*published)->applied_index, 5U);
   ASSERT_EQ((*published)->cluster_nodes.size(), 1U);
   EXPECT_EQ((*published)->cluster_nodes.front(), (ClusterNodeMetadata{1U, "node-1"}));
   ASSERT_EQ((*published)->schema_definitions.size(), 1U);
   EXPECT_TRUE((*published)->schema_definitions.front() == definition);
   ASSERT_EQ((*published)->tablet_placements.size(), 1U);
   EXPECT_EQ((*published)->tablet_placements.front().tablet_id, tablet);
+  ASSERT_EQ((*published)->tablet_group_bindings.size(), 1U);
+  EXPECT_EQ((*published)->tablet_group_bindings.front(),
+            (TabletGroupBindingMetadata{tablet, data_group}));
   ASSERT_EQ((*published)->table_policies.size(), 1U);
   EXPECT_EQ((*published)->table_policies.front().retention_ns, 1000);
 
@@ -150,7 +161,7 @@ TEST(AsyncRaftMetadataApplicationTest,
   EXPECT_TRUE(runtime->shutdown().is_ok());
   EXPECT_FALSE((*extension)->initialized());
   EXPECT_EQ((*extension)->catalog_snapshot().error().code(), common::StatusCode::kUnavailable);
-  EXPECT_EQ(retained->applied_index, 4U);
+  EXPECT_EQ(retained->applied_index, 5U);
   EXPECT_TRUE(retained->schema_definitions.front() == definition);
 }
 

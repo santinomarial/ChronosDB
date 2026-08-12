@@ -16,6 +16,12 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
   return Identifier::from_bytes(bytes).value();
 }
 
+[[nodiscard]] GroupId group(const std::uint8_t seed) {
+  common::Uuid::Bytes bytes{};
+  bytes.front() = std::byte{seed};
+  return GroupId{bytes};
+}
+
 TEST(MetadataStateMachineTest, AppliesSchemaPlacementNodesAndRetentionOnlyInCommitOrder) {
   auto metadata = MetadataStateMachine::create();
   ASSERT_TRUE(metadata.has_value());
@@ -30,17 +36,31 @@ TEST(MetadataStateMachineTest, AppliesSchemaPlacementNodesAndRetentionOnlyInComm
   EXPECT_TRUE(
       metadata->apply_committed(3U, TabletPlacementMetadata{table, tablet, 1U, {1U, 2U, 3U}, 1U})
           .is_ok());
-  EXPECT_TRUE(metadata->apply_committed(4U, RetentionMetadata{table, 1000, 100U}).is_ok());
-  EXPECT_EQ(metadata->applied_index(), 4U);
+  const GroupId tablet_group = group(4U);
+  EXPECT_TRUE(metadata
+                  ->apply_committed_tablet_group_binding(
+                      4U, TabletGroupBindingMetadata{tablet, tablet_group})
+                  .is_ok());
+  EXPECT_FALSE(
+      metadata
+          ->apply_committed_tablet_group_binding(5U, TabletGroupBindingMetadata{tablet, group(5U)})
+          .is_ok());
+  EXPECT_TRUE(metadata
+                  ->apply_committed_tablet_group_binding(
+                      5U, TabletGroupBindingMetadata{tablet, tablet_group})
+                  .is_ok());
+  EXPECT_TRUE(metadata->apply_committed(6U, RetentionMetadata{table, 1000, 100U}).is_ok());
+  EXPECT_EQ(metadata->applied_index(), 6U);
   EXPECT_EQ(metadata->find_node(1U)->endpoint, "node-1");
   EXPECT_EQ(metadata->find_schema(schema_id)->table_id, table);
   EXPECT_EQ(metadata->find_tablet(tablet)->leader_hint, 1U);
+  EXPECT_EQ(metadata->find_tablet_group_binding(tablet)->group_id, tablet_group);
   EXPECT_EQ(metadata->find_retention(table)->system_history_ns, 1000);
-  EXPECT_FALSE(metadata->apply_committed(6U, ClusterNodeMetadata{2U, "node-2"}).is_ok());
-  EXPECT_EQ(metadata->applied_index(), 4U);
-  EXPECT_TRUE(metadata->apply_internal_noop(5U).is_ok());
-  EXPECT_TRUE(metadata->apply_committed(6U, ClusterNodeMetadata{2U, "node-2"}).is_ok());
+  EXPECT_FALSE(metadata->apply_committed(8U, ClusterNodeMetadata{2U, "node-2"}).is_ok());
   EXPECT_EQ(metadata->applied_index(), 6U);
+  EXPECT_TRUE(metadata->apply_internal_noop(7U).is_ok());
+  EXPECT_TRUE(metadata->apply_committed(8U, ClusterNodeMetadata{2U, "node-2"}).is_ok());
+  EXPECT_EQ(metadata->applied_index(), 8U);
 }
 
 TEST(MetadataStateMachineTest, AppliesCompleteSchemasInLinearCommittedOrder) {
@@ -117,6 +137,37 @@ TEST(MetadataStateMachineTest, AppliesCompleteSchemasInLinearCommittedOrder) {
   EXPECT_FALSE(
       metadata->apply_committed(4U, RetentionMetadata{table, 3'600'000'000'001LL, 8192U}).is_ok());
   EXPECT_EQ(metadata->applied_index(), 3U);
+}
+
+TEST(MetadataStateMachineTest, RejectsOneRaftGroupBoundToDifferentTablets) {
+  auto metadata = MetadataStateMachine::create();
+  ASSERT_TRUE(metadata.has_value());
+  const auto table = id<schema::TableId>(20U);
+  const auto first = id<schema::TabletId>(21U);
+  const auto second = id<schema::TabletId>(22U);
+  const GroupId first_group = group(23U);
+  EXPECT_FALSE(
+      metadata
+          ->apply_committed_tablet_group_binding(1U, TabletGroupBindingMetadata{first, first_group})
+          .is_ok());
+  EXPECT_EQ(metadata->applied_index(), 0U);
+  EXPECT_TRUE(
+      metadata->apply_committed(1U, TabletPlacementMetadata{table, first, 1U, {1U}, 1U}).is_ok());
+  EXPECT_TRUE(
+      metadata
+          ->apply_committed_tablet_group_binding(2U, TabletGroupBindingMetadata{first, first_group})
+          .is_ok());
+  EXPECT_TRUE(
+      metadata->apply_committed(3U, TabletPlacementMetadata{table, second, 1U, {1U}, 1U}).is_ok());
+  EXPECT_FALSE(metadata
+                   ->apply_committed_tablet_group_binding(
+                       4U, TabletGroupBindingMetadata{second, first_group})
+                   .is_ok());
+  EXPECT_EQ(metadata->applied_index(), 3U);
+  EXPECT_TRUE(
+      metadata
+          ->apply_committed_tablet_group_binding(4U, TabletGroupBindingMetadata{second, group(24U)})
+          .is_ok());
 }
 
 } // namespace

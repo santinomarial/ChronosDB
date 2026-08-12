@@ -313,3 +313,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0276](0276-bounded-replicated-ingest-coordinator.md) | Bounded replicated ingest coordinator | accepted |
 | [0277](0277-bounded-worker-extension-composition.md) | Bounded durable Raft worker-extension composition | accepted |
 | [0278](0278-worker-affine-metadata-application.md) | Worker-affine asynchronous metadata application | accepted |
+| [0279](0279-authoritative-tablet-group-binding.md) | Authoritative tablet-to-Raft-group binding | accepted |

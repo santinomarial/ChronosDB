@@ -47,6 +47,8 @@ public:
   std::map<schema::SchemaId, CatalogTableDefinition> definitions;
   std::map<schema::TableId, schema::SchemaId> active_schemas;
   std::map<schema::TabletId, TabletPlacementMetadata> tablets;
+  std::map<schema::TabletId, TabletGroupBindingMetadata> tablet_groups;
+  std::map<GroupId, schema::TabletId> group_tablets;
   std::map<schema::TableId, RetentionMetadata> retention;
   std::map<schema::TableId, TablePolicyMetadata> policies;
 };
@@ -248,6 +250,43 @@ common::Status MetadataStateMachine::apply_internal_noop(const LogIndex index) {
   return common::Status::ok();
 }
 
+common::Status
+MetadataStateMachine::apply_committed_tablet_group_binding(const LogIndex index,
+                                                           TabletGroupBindingMetadata binding) {
+  if (impl_ == nullptr || index == 0U || index != impl_->applied + 1U)
+    return invalid("tablet group binding must follow committed Raft log order");
+  if (binding.tablet_id.uuid().is_nil() || binding.group_id.is_nil() ||
+      !impl_->tablets.contains(binding.tablet_id)) {
+    return invalid("tablet group binding is invalid or has no committed placement");
+  }
+  const auto existing = impl_->tablet_groups.find(binding.tablet_id);
+  if (existing != impl_->tablet_groups.end() && existing->second.group_id != binding.group_id)
+    return invalid("tablet group binding is immutable");
+  const auto group_owner = impl_->group_tablets.find(binding.group_id);
+  if (group_owner != impl_->group_tablets.end() && group_owner->second != binding.tablet_id)
+    return invalid("Raft group identity is already bound to another tablet");
+  if (existing != impl_->tablet_groups.end()) {
+    impl_->applied = index;
+    return common::Status::ok();
+  }
+  try {
+    auto [owner, owner_inserted] =
+        impl_->group_tablets.emplace(binding.group_id, binding.tablet_id);
+    if (!owner_inserted)
+      return invalid("Raft group identity is already bound");
+    try {
+      impl_->tablet_groups.emplace(binding.tablet_id, std::move(binding));
+    } catch (...) {
+      impl_->group_tablets.erase(owner);
+      throw;
+    }
+  } catch (const std::bad_alloc&) {
+    return {common::StatusCode::kResourceExhausted, "tablet group binding allocation failed"};
+  }
+  impl_->applied = index;
+  return common::Status::ok();
+}
+
 common::Status MetadataStateMachine::apply_internal_noops_through(const LogIndex index) {
   if (impl_ == nullptr || index < impl_->applied)
     return invalid("metadata internal range cannot move application backward");
@@ -295,6 +334,11 @@ MetadataStateMachine::find_tablet(const schema::TabletId& tablet_id) const noexc
   const auto found = impl_->tablets.find(tablet_id);
   return found == impl_->tablets.end() ? nullptr : &found->second;
 }
+const TabletGroupBindingMetadata*
+MetadataStateMachine::find_tablet_group_binding(const schema::TabletId& tablet_id) const noexcept {
+  const auto found = impl_->tablet_groups.find(tablet_id);
+  return found == impl_->tablet_groups.end() ? nullptr : &found->second;
+}
 const RetentionMetadata*
 MetadataStateMachine::find_retention(const schema::TableId& table_id) const noexcept {
   const auto found = impl_->retention.find(table_id);
@@ -316,6 +360,7 @@ common::Result<MetadataCatalogSnapshot> MetadataStateMachine::catalog_snapshot()
     snapshot.schema_definitions.reserve(impl_->definitions.size());
     snapshot.active_schemas.reserve(impl_->active_schemas.size());
     snapshot.tablet_placements.reserve(impl_->tablets.size());
+    snapshot.tablet_group_bindings.reserve(impl_->tablet_groups.size());
     snapshot.table_policies.reserve(impl_->policies.size());
     for (const auto& [node_id, node] : impl_->nodes) {
       static_cast<void>(node_id);
@@ -330,6 +375,10 @@ common::Result<MetadataCatalogSnapshot> MetadataStateMachine::catalog_snapshot()
     for (const auto& [tablet_id, placement] : impl_->tablets) {
       static_cast<void>(tablet_id);
       snapshot.tablet_placements.push_back(placement);
+    }
+    for (const auto& [tablet_id, binding] : impl_->tablet_groups) {
+      static_cast<void>(tablet_id);
+      snapshot.tablet_group_bindings.push_back(binding);
     }
     for (const auto& [table_id, policy] : impl_->policies) {
       static_cast<void>(table_id);

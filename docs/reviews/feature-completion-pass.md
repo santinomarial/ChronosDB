@@ -168,6 +168,8 @@ installs them before Raft compaction and exact-reopens a compacted catalog from 
 snapshot plus committed suffix. Node-wide physical-log reclamation now installs a checksummed
 all-group recovery anchor before removing old segments. Tablet and metadata snapshot owners also
 retain only the exact durable Raft authority and reclaim older or crash-orphaned future files.
+Additive Snapshot 1.1 retains exact Tablet Group Binding v1 type-4 entries, giving routing an
+immutable committed tablet-to-group identity without changing Metadata Command v1 or minor-0 bytes.
 
 ### Phase 15 — Multi-Raft tablets and metadata
 
@@ -339,6 +341,9 @@ Focused executions passed:
 - Worker-affine metadata continuation: 5 focused Raft tests passed for applied publication,
   untouched-group isolation, pre-admission retained-log reconstruction, exact installed-snapshot
   recovery, retained immutable snapshot lifetime, and terminal corrupt-command handling.
+- Tablet-group authority continuation: 20 focused Raft tests passed for binding codec damage and
+  version rejection, immutable ordered application, retained-log and Snapshot 1.1 recovery,
+  minor-0 isolation, compaction, owning projection, and asynchronous publication.
 
 The final C++ tree passed the repository-pinned clang-format 18 check. Full-suite, sanitizer, fuzz,
 broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were deliberately not run.
@@ -404,7 +409,7 @@ The exact subsystem/category ledger is
    advertise the implemented client QUORUM_SYNC negotiation only there; then run the real
    three-process data-plane smoke path.
 2. Specify database namespaces/catalog tombstones and placement-driven membership orchestration
-   without changing Metadata Command v1 or Metadata Application Snapshot v1 bytes in place.
+   without changing Metadata Command v1 or Metadata Application Snapshot 1.0 bytes in place.
 3. Finish direct vector temporal winner lowering, mixed WAL/Raft recovery, durable retention
    integration, and broader distributed grouping/order/top-N/LIMIT plan coverage.
 4. Run full compiler/Debug/Release/install suites, then ASan/UBSan/TSan, fuzz/corruption/crash,

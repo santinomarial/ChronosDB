@@ -114,6 +114,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   `COLUMNAR_APPEND` payload, group/index identity, ordering, and retained-log recovery contract.
 - [Metadata Command v1](formats/metadata-command-v1.md): canonical checksummed metadata-group
   commands for nodes, schemas, placements, legacy retention, and complete table policy.
+- [Tablet Group Binding v1](formats/tablet-group-binding-v1.md): immutable checksummed metadata
+  authority joining each placed tablet to its independent Raft group.
 - [Schema Definition v1](formats/schema-definition-v1.md): complete immutable table schemas and SQL
   catalog names applied and reconstructed through the metadata Raft group.
 - [Temporal Mutation Command v1](formats/temporal-mutation-v1.md): checksummed columnar originals,

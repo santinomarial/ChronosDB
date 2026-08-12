@@ -41,6 +41,13 @@ persists touched metadata-group batches before their completion is visible. Read
 reuse the exact prior projection; a retained projection remains valid after replacement or owner
 shutdown, while new acquisition fails once the owner stops.
 
+Logical metadata entry type 4 carries [Tablet Group Binding v1](../formats/tablet-group-binding-v1.md).
+Application requires an existing placement and then fixes the tablet's group permanently. The
+owning catalog projection publishes bindings in tablet order, allowing routing to join a tablet's
+current placement and node endpoints without inferring consensus identity. Metadata Application
+Snapshot 1.1 retains those exact type-4 bytes; minor 0 remains restricted to metadata and schema
+entries.
+
 ## Recovery and failure behavior
 
 The applied index is not a catalog snapshot. Without compaction, startup constructs empty state and
@@ -78,3 +85,4 @@ and allocates only the explicitly bounded vectors and copied table names.
 - What must a metadata application snapshot bind before log reclamation is safe?
 - Why does placement metadata not itself change Raft voting membership?
 - Why is an immutable catalog projection published only after `applied_index` persistence?
+- Why must tablet group identity be separate from mutable placement and leader hints?
