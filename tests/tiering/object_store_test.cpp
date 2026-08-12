@@ -583,6 +583,37 @@ private:
   bool part_workers_released_{};
 };
 
+class ConcurrentPutCredentialProvider final : public S3CredentialProvider {
+public:
+  [[nodiscard]] common::Result<S3Credentials> acquire(S3CredentialRequest request) override {
+    if (request != S3CredentialRequest::kCurrent)
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kUnauthenticated, "fixture refresh is unsupported"});
+    std::unique_lock lock{mutex_};
+    ++calls_;
+    if (calls_ <= 2U) {
+      ++ready_;
+      if (ready_ == 2U)
+        released_ = true;
+      condition_.notify_all();
+      if (!condition_.wait_for(lock, std::chrono::seconds{2}, [this] { return released_; })) {
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kUnavailable, "concurrent PUTs did not overlap"});
+      }
+    }
+    return S3Credentials{.access_key_id = "test-access",
+                         .secret_access_key = "test-secret",
+                         .session_token = "test-token"};
+  }
+
+private:
+  std::mutex mutex_;
+  std::condition_variable condition_;
+  std::size_t calls_{};
+  std::size_t ready_{};
+  bool released_{};
+};
+
 class ScopedAwsEnvironment final {
 public:
   explicit ScopedAwsEnvironment(std::array<std::optional<std::string>, 3U> values)
@@ -927,6 +958,80 @@ TEST(S3ObjectStoreTest, RefreshesRejectedCredentialsAndRetriesTransientCondition
   EXPECT_TRUE(requests[1].headers.at("authorization").contains("Credential=fresh-access/"));
   EXPECT_TRUE(requests[2].headers.at("authorization").contains("Credential=fresh-access/"));
   EXPECT_TRUE(server.failure().empty()) << server.failure();
+}
+
+TEST(S3ObjectStoreTest, ConcurrentConditionalWritersConvergeWithoutOverwrite) {
+  const auto run_race = [](const bool same_content) {
+    LocalS3Server server;
+    ASSERT_TRUE(server.valid()) << server.failure();
+    auto provider = std::make_shared<ConcurrentPutCredentialProvider>();
+    const auto make_store = [&]() {
+      S3ObjectStoreConfig config{.endpoint = "http://127.0.0.1:" + std::to_string(server.port()),
+                                 .region = "us-east-1",
+                                 .bucket = "chronos-test",
+                                 .credential_provider = provider,
+                                 .connect_timeout = std::chrono::milliseconds{1'000},
+                                 .request_timeout = std::chrono::milliseconds{2'000},
+                                 .maximum_response_bytes = 1024U,
+                                 .require_tls = false};
+      return S3ObjectStore::create(std::move(config));
+    };
+    auto first_store = make_store();
+    auto second_store = make_store();
+    ASSERT_TRUE(first_store.has_value()) << first_store.error().to_string();
+    ASSERT_TRUE(second_store.has_value()) << second_store.error().to_string();
+
+    const std::vector<std::byte> first_bytes{std::byte{0x21U}, std::byte{0x22U}};
+    const std::vector<std::byte> different_bytes{std::byte{0x31U}, std::byte{0x32U}};
+    const auto& second_bytes = same_content ? first_bytes : different_bytes;
+    std::optional<common::Result<ObjectMetadata>> first_result;
+    std::optional<common::Result<ObjectMetadata>> second_result;
+    std::jthread first_writer{[&] {
+      first_result =
+          (*first_store)
+              ->put_if_absent("parts/concurrent", first_bytes, ingest::sha256(first_bytes).value());
+    }};
+    std::jthread second_writer{[&] {
+      second_result = (*second_store)
+                          ->put_if_absent("parts/concurrent", second_bytes,
+                                          ingest::sha256(second_bytes).value());
+    }};
+    first_writer.join();
+    second_writer.join();
+    ASSERT_TRUE(first_result.has_value());
+    ASSERT_TRUE(second_result.has_value());
+
+    if (same_content) {
+      ASSERT_TRUE(first_result->has_value()) << first_result->error().to_string();
+      ASSERT_TRUE(second_result->has_value()) << second_result->error().to_string();
+      EXPECT_EQ(**first_result, **second_result);
+    } else {
+      const bool first_won = first_result->has_value();
+      const bool second_won = second_result->has_value();
+      EXPECT_NE(first_won, second_won);
+      const auto& loser = first_won ? *second_result : *first_result;
+      ASSERT_FALSE(loser.has_value());
+      EXPECT_EQ(loser.error().code(), common::StatusCode::kAlreadyExists);
+    }
+
+    auto stored = (*first_store)->stat("parts/concurrent");
+    ASSERT_TRUE(stored.has_value()) << stored.error().to_string();
+    const auto first_checksum = ingest::sha256(first_bytes).value();
+    const auto second_checksum = ingest::sha256(second_bytes).value();
+    if (same_content) {
+      EXPECT_EQ(stored->checksum, first_checksum);
+    } else {
+      EXPECT_TRUE(stored->checksum == first_checksum || stored->checksum == second_checksum);
+    }
+    const auto requests = server.requests();
+    EXPECT_EQ(std::ranges::count_if(
+                  requests, [](const RecordedRequest& request) { return request.method == "PUT"; }),
+              2);
+    EXPECT_TRUE(server.failure().empty()) << server.failure();
+  };
+
+  run_race(true);
+  run_race(false);
 }
 
 TEST(S3ObjectStoreTest, StopsAtTheConfiguredRetryAttemptLimit) {

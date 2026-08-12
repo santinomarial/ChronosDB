@@ -69,9 +69,11 @@ transfer, conditional completion, exact final verification, and best-effort abor
 
 A local S3-compatible HTTP integration test checks TLS-default rejection of plaintext, SigV4 and
 session-token headers, conditional creation, exact retry verification, percent-encoded keys, HEAD
-metadata, and a two-byte range response. Live AWS/MinIO/LocalStack, credential-expiry, proxy, TLS-
-failure, timeout, partial-response, concurrent-writer, and object-store fault matrices remain in the
-deferred-validation ledger.
+metadata, and a two-byte range response. A focused two-client race subsequently proves that equal
+immutable identities converge through 412 plus exact HEAD, while unequal identities select one
+winner and return `ALREADY_EXISTS` without overwrite to the loser. Live AWS/MinIO/LocalStack,
+credential-expiry, proxy, TLS-failure, timeout, partial-response, and broader object-store fault
+matrices remain in the deferred-validation ledger.
 
 Invariants 2, 3, 10, 14, and 18 apply.
 

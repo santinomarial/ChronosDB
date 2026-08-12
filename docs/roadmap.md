@@ -953,7 +953,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   carrier disables ambient proxy variables; one bounded credential-free HTTP(S) proxy requires
   explicit configuration and cannot be bypassed by ambient `no_proxy`. Optional explicit SSE-S3 or
   SSE-KMS policy is signed on object creation and exact HEAD verification rejects missing,
-  wrong-mode, or wrong-KMS-key metadata before immutable content is accepted. The
+  wrong-mode, or wrong-KMS-key metadata before immutable content is accepted. The signed
+  conditional-write path has focused two-client races proving equal-identity convergence and
+  unequal-identity single-winner/no-overwrite behavior. The
   bounded full-object LRU now supports concurrent post-install readers while keeping remote I/O and
   digest validation outside its cache-state critical section. After restart, a fresh manager can
   transactionally restore a bounded exact-metadata-preflighted catalog from caller-selected durable

@@ -23,7 +23,8 @@ concurrent calls, while destruction still requires ordinary external lifetime ex
 An immutable key is created with `If-None-Match: *`. The request carries the exact SHA-256 as the
 SigV4 content digest, an S3 checksum, and Chronos-owned metadata. If the key already exists, a HEAD
 request must prove equal length and digest before the retry is successful. A conflicting object is
-never overwritten or accepted.
+never overwritten or accepted. Concurrent independent clients therefore converge to the same
+identity or elect one complete winner; a losing different identity receives `ALREADY_EXISTS`.
 
 HTTPS and certificate/hostname verification are the default. Plain HTTP must be selected
 explicitly and is appropriate only where the deployment accepts exposure of credentials and object
