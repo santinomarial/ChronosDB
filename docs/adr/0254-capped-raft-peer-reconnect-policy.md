@@ -30,6 +30,10 @@ The per-peer retry lifecycle now has bounded memory, one in-flight descriptor, e
 capped delay, and lossless duplicate-safe frame custody. A higher event-loop layer must still own a
 bounded route catalog, poll descriptors, feed readiness, and retain unroutable fresh durable results.
 
+**Retrospective note (2026-08-12):** [ADR 0255](0255-bounded-raft-outbound-peer-manager.md) now
+provides the fixed route catalog, descriptor interests, pool installation, failure recycling, and
+fresh-result backpressure boundary. Whole runtime poll composition remains separate.
+
 Focused tests prove pre-deadline suppression, exact-deadline attempts, doubling to the configured
 cap, successful descriptor/carrier handoff, TLS failure extraction from the production pool, and
 retention of the complete queued frame for the next attempt.
@@ -39,4 +43,3 @@ retention of the complete queued frame for the next attempt.
 - [ADR 0248](0248-persistent-outbound-raft-mtls-carrier.md)
 - [ADR 0251](0251-bounded-raft-peer-carrier-pool.md)
 - [ADR 0253](0253-ownership-safe-raft-tcp-connect-attempt.md)
-

@@ -231,4 +231,17 @@ RaftTransportTlsClient* RaftTransportPeerPool::find_peer(const raft::NodeId peer
   Impl::Peer* peer = implementation_->find(peer_node_id);
   return peer == nullptr ? nullptr : &peer->carrier;
 }
+const RaftTransportTlsClient*
+RaftTransportPeerPool::find_peer(const raft::NodeId peer_node_id) const noexcept {
+  if (!implementation_)
+    return nullptr;
+  const Impl::Peer* peer = implementation_->find(peer_node_id);
+  return peer == nullptr ? nullptr : &peer->carrier;
+}
+int RaftTransportPeerPool::peer_descriptor(const raft::NodeId peer_node_id) const noexcept {
+  if (!implementation_)
+    return -1;
+  const Impl::Peer* peer = implementation_->find(peer_node_id);
+  return peer == nullptr || !peer->socket.has_value() ? -1 : peer->socket->descriptor();
+}
 } // namespace chronos::cluster

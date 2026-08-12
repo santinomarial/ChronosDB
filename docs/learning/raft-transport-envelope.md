@@ -76,6 +76,12 @@ connector at a time, doubles a positive delay to an inclusive cap, resets after 
 and retakes the pool's complete failed frame set. It intentionally has no fresh-result side queue;
 the bounded upstream owner must retain work until the peer can accept it.
 
+The outbound peer manager composes a fixed catalog of those policies with the carrier pool. It
+exposes exact connecting/connected descriptor interests, installs completed pairs, recycles failed
+pairs, and routes a durable transition only if every destination passes preflight. This completes
+outbound ownership without adding a hidden unbounded queue; the embedding still owns the poll loop
+and the bounded durable-result completion that retries admission.
+
 ## Complexity and tradeoffs
 
 Fixed messages encode and decode in constant time and space. Append messages are linear in entry

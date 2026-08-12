@@ -53,6 +53,8 @@ public:
   [[nodiscard]] common::Result<RaftTransportFailedPeer> take_failed_peer(raft::NodeId peer_node_id);
   [[nodiscard]] std::size_t peer_count() const noexcept;
   [[nodiscard]] RaftTransportTlsClient* find_peer(raft::NodeId peer_node_id) noexcept;
+  [[nodiscard]] const RaftTransportTlsClient* find_peer(raft::NodeId peer_node_id) const noexcept;
+  [[nodiscard]] int peer_descriptor(raft::NodeId peer_node_id) const noexcept;
 
 private:
   class Impl;

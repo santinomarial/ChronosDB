@@ -289,3 +289,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0252](0252-replayable-deterministic-raft-fault-simulator.md) | Replayable deterministic Raft fault simulator | accepted |
 | [0253](0253-ownership-safe-raft-tcp-connect-attempt.md) | Ownership-safe Raft TCP connect attempt | accepted |
 | [0254](0254-capped-raft-peer-reconnect-policy.md) | Capped Raft peer reconnect policy | accepted |
+| [0255](0255-bounded-raft-outbound-peer-manager.md) | Bounded Raft outbound peer manager | accepted |

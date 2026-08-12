@@ -123,7 +123,9 @@ of silently dropping or replacing them.
 One nonblocking exact-route TCP attempt now retains complete retry frames through connection,
 creates TLS only after authoritative connect completion, and transfers descriptor/carrier ownership
 together into that pool. One exact peer now has capped monotonic reconnect backoff and complete frame
-custody between attempts; multi-peer poll/catalog composition remains external.
+custody between attempts. A fixed multi-peer manager now exposes exact descriptor interests,
+installs and recycles pairs, and rejects unroutable fresh results without consuming them; whole
+runtime poll composition remains external.
 A bounded injected-time scheduler now emits generation-tagged election and heartbeat actions,
 preserves due work across admission backpressure, and rejects stale completion rearming.
 A bounded driver now submits each timer action plus its ordered observation through the asynchronous

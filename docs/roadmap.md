@@ -750,8 +750,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   now retains complete retry frames through connect, creates TLS only after `SO_ERROR`, and transfers
   descriptor/carrier ownership together into the pool. A per-peer owner now retries indefinitely at
   exact monotonic deadlines with capped exponential backoff and retakes complete failed-carrier
-  frames. A bounded multi-peer route catalog, fresh-result backpressure composition, and runtime
-  event-loop polling remain deferred. A bounded deterministic simulator
+  frames. A fixed-capacity multi-peer manager now validates immutable routes, exposes exact
+  descriptor interests, installs successful pairs, recycles failed pairs, and leaves unroutable
+  fresh durable results with their bounded upstream owner. Runtime event-loop polling and inbound/
+  timer/durable-completion composition remain deferred. A bounded deterministic simulator
   now records and replays explicit or seeded partitions, delay/reordering, duplicate/loss,
   crash/restart, atomic persistence faults, application, membership, and snapshot actions; it checks
   election, log, commit, and leader-completeness safety after every step and deletion-shrinks failing
