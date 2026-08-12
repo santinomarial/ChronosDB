@@ -179,6 +179,9 @@ durable worker, and that coordinator through create, shutdown, and exact reopen.
 A bounded queue-facing adapter now connects negotiated reactor tasks to that coordinator, preserves
 one exact response across response-ring saturation, exposes wakeup information, and drains admitted
 work after shutdown closes new admission. Packaged daemon configuration remains external.
+A database-level recovery owner now holds Database Bootstrap authority, uses explicit resident group
+membership to recover the committed global metadata catalog, reconstructs only local tablet/retry
+owners, and reopens the asynchronous runtime before exposing service access.
 
 ### Phase 15 — Multi-Raft tablets and metadata
 
@@ -396,8 +399,8 @@ broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were d
 - Shared Raft-log and application-snapshot reclamation are caller-triggered and lack syscall/crash
   fault matrices; the ordering protocols are implemented and focused restart tests pass.
 - QUORUM_SYNC receipts, Protocol 2.0 negotiation/acknowledgement bytes, metadata-derived local
-  routing, bounded execution, and queue-facing backpressure/drain composition exist, but no packaged
-  replicated daemon advertises the client mode yet.
+  routing, bounded execution, queue-facing backpressure/drain composition, and database-root reopen
+  from committed metadata exist, but no packaged replicated daemon advertises the client mode yet.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 

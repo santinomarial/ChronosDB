@@ -206,7 +206,10 @@
   backfill. An owning replicated runtime now fixes group/application identity and address-stable
   create/reopen/shutdown ordering. A bounded queue-facing service now preserves negotiated tasks,
   exact cancellation, one retained response, response-wakeup reporting, and admission-close/drain;
-  add remote leader redirection, packaged daemon ownership/configuration, broader queue/disconnect
+  a database-root owner now reconstructs resident tablet applications from committed global
+  metadata and explicit group membership before reopening the asynchronous runtime. Add external
+  group-configuration parsing, remote leader redirection, packaged daemon ownership, metadata/tablet
+  snapshot process recovery, joint-reconfiguration restart matrices, broader queue/disconnect
   failure matrices, long-running hook watchdog evidence, and TSan scheduling coverage.
 - Carry the implemented group-scoped read-barrier operation through authenticated production
   transport, request deadlines/coalescing, apply waiting, and exact tablet snapshot acquisition.

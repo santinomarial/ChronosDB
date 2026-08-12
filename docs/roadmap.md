@@ -869,7 +869,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   asynchronous durable worker, and coordinator with address-stable create/reopen and ordered
   shutdown. A bounded reactor-facing service now consumes negotiated request/cancellation tasks,
   retains one exact response across SPSC backpressure, reports response wakeups, and drains admitted
-  work after closing admission. Transport, elections, provisioning, and native daemon
+  work after closing admission. A database-root owner now preflights the committed metadata catalog
+  from explicit resident group configuration, reconstructs bounded local tablet owners while
+  ignoring nonresident remote bindings, and reopens the complete asynchronous service under the
+  root lock. Transport, elections, provisioning, group-configuration parsing, and native daemon
   advertisement remain external.
 
 - **Scope:** map tablets to Raft groups; multiplex logical records over physical logs, threads, timers, and connections; lifecycle, placement, snapshot transfer, fairness, and safe per-group reclamation.

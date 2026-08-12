@@ -318,3 +318,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0281](0281-committed-schema-replicated-ingest-admission.md) | Committed-schema replicated-ingest admission | accepted |
 | [0282](0282-owning-replicated-ingest-runtime.md) | Owning replicated-ingest runtime composition | accepted |
 | [0283](0283-bounded-reactor-facing-replicated-ingest-service.md) | Bounded reactor-facing replicated-ingest service | accepted |
+| [0284](0284-committed-metadata-replicated-database-recovery.md) | Committed-metadata replicated database recovery | accepted |

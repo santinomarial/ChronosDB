@@ -702,6 +702,7 @@ add_library(
   chronos_service
   src/service/native_protocol_service.cpp
   src/service/replicated_ingest_coordinator.cpp
+  src/service/replicated_ingest_database.cpp
   src/service/replicated_ingest_operation.cpp
   src/service/replicated_ingest_runtime.cpp
   src/service/replicated_ingest_service.cpp
@@ -881,6 +882,8 @@ if(CHRONOS_BUILD_TESTS)
     chronos_service_tests
     tests/service/native_protocol_service_header_self_contained.cpp
     tests/service/replicated_ingest_coordinator_header_self_contained.cpp
+    tests/service/replicated_ingest_database_header_self_contained.cpp
+    tests/service/replicated_ingest_database_test.cpp
     tests/service/replicated_ingest_operation_header_self_contained.cpp
     tests/service/replicated_ingest_operation_test.cpp
     tests/service/replicated_ingest_runtime_header_self_contained.cpp
