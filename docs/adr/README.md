@@ -268,3 +268,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0231](0231-manifest-snapshot-native-query-source.md) | Manifest-snapshot native query source | accepted |
 | [0232](0232-shutdown-wal-checkpoint-publication.md) | Shutdown WAL checkpoint publication | accepted |
 | [0233](0233-native-whole-table-asof-query-composition.md) | Native whole-table ASOF query composition | accepted |
+| [0234](0234-fail-closed-native-historical-query-admission.md) | Fail-closed native historical query admission | accepted |

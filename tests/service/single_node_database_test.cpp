@@ -23,6 +23,7 @@
 #include <gtest/gtest.h>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -448,6 +449,31 @@ TEST(NativeProtocolServiceTest, ExecutesAsofAcrossTheCompleteManifestSnapshotAft
   common::ByteReader recovered_count{result->cell(0U, 0U)->value};
   EXPECT_EQ(recovered_count.read_i64_le().value(), 6);
   EXPECT_TRUE(reopened->shutdown().is_ok());
+}
+
+TEST(NativeProtocolServiceTest, RejectsHistoricalSqlInsteadOfReadingTheCurrentSnapshot) {
+  TemporaryDirectory directory;
+  seed_catalog(directory);
+  auto database = SingleNodeDatabase::open_or_create(config(directory));
+  ASSERT_TRUE(database.has_value()) << database.error().to_string();
+  NativeProtocolService service{*database};
+  auto response = service.execute_ingest(ingest_task(30U, network::DurabilityMode::kLocalSync));
+  ASSERT_TRUE(response.has_value()) << response.error().to_string();
+
+  auto historical = service.execute_query(
+      query_task(50U, "SELECT count(*) AS rows FROM events FOR SYSTEM_TIME AS OF "
+                      "TIMESTAMP '1970-01-01 00:00:00Z'"));
+  ASSERT_TRUE(historical.has_value()) << historical.error().to_string();
+  ASSERT_EQ(historical->responses.size(), 1U);
+  EXPECT_EQ(historical->result_rows, 0U);
+  EXPECT_EQ(historical->responses.front().frame.header.message_type, network::MessageType::kError);
+  auto error = network::decode_error_message(historical->responses.front().frame.payload);
+  ASSERT_TRUE(error.has_value()) << error.error().to_string();
+  EXPECT_EQ(error->code, network::ProtocolErrorCode::kExecutionFailure);
+  constexpr std::string_view kMessage = "native FOR SYSTEM_TIME storage is not configured";
+  EXPECT_TRUE(std::ranges::equal(error->message,
+                                 std::as_bytes(std::span{kMessage.data(), kMessage.size()})));
+  EXPECT_TRUE(database->shutdown().is_ok());
 }
 
 TEST(NativeProtocolServiceTest, RejectsMalformedIngestWithProtocolError) {

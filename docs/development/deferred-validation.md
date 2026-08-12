@@ -274,6 +274,11 @@
   count encoding, bounded overflow, described zero-row completion, and whole-table ASOF execution
   over one mixed Manifest/CSEG/head epoch before and after restart. Whole-table ASOF allocation
   injection, fuzzing, large tablet/source counts, and profiles remain deferred.
+- Compose `FOR SYSTEM_TIME AS OF` with the accepted Temporal Mutation Command v1 and
+  CSEG/Manifest v2 recovery owners. Native admission now fails closed before current-snapshot
+  execution, and focused coverage proves a historical aggregate cannot silently return present
+  rows. Mixed current/temporal command dispatch, history retention, restart, and protocol-level
+  historical result coverage remain deferred.
 - Native CREATE TABLE system-identity entropy failure injection, duplicate/nil generator tests, DDL
   response boundary tests, client retry identities, fully complete duplicate-request behavior,
   concurrent/stale DDL, authorization, ALTER/DROP/rename, crash matrices through protocol dispatch,

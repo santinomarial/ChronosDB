@@ -35,6 +35,10 @@ aggregate encoded payload bytes all have independent finite caps. A successful e
 emits a described zero-row result before `QUERY_END`; a local failure discards accumulated frames
 and returns one terminal error.
 
+The owner currently publishes append-only Manifest v1 state rather than temporal CSEG/Manifest v2
+history. Native `FOR SYSTEM_TIME AS OF` therefore fails explicitly before snapshot acquisition; it
+must never reuse the current source and return present rows for a historical request.
+
 For CREATE TABLE, token dispatch selects the DDL parser/binder and requires an injected identity
 generator. The adapter rejects nil or duplicate UUIDs before handing explicit table, schema, tablet,
 and per-column identities to the owner's restartable creation path. Completion is one described row

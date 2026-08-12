@@ -535,6 +535,10 @@ NativeProtocolService::execute_query(network::NetworkTask request) {
                                            limits_.sql_binder);
     if (!bound.has_value())
       return query_error(target, bound.error().status(), limits_.protocol);
+    if (bound->syntax().system_time().has_value()) {
+      return query_error(target, unsupported("native FOR SYSTEM_TIME storage is not configured"),
+                         limits_.protocol);
+    }
     auto resources = query::QueryResourceContext::create(limits_.maximum_query_memory_bytes);
     if (!resources.has_value())
       return query_error(target, resources.error(), limits_.protocol);
