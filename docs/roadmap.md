@@ -730,8 +730,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
 - **Feature-pass status:** `chronos_raft` implements a deterministic follower/candidate/leader core,
   persistent term/vote/log/commit/apply/snapshot metadata, RequestVote log freshness, AppendEntries
   validation/conflict rewind, next/match indexes, current-term majority commit, stale-term rejection,
-  and explicit persist-before-send transitions. Canonical joint/final membership commands enforce
-  old-and-new election and commit quorums, recover from the retained log, and safely remove leaders.
+  explicit persist-before-send transitions, and complete message-local validation before a newer
+  term can mutate persistent state. Canonical joint/final membership commands enforce old-and-new
+  election and commit quorums, recover from the retained log, and safely remove leaders.
   Focused 3-node election, commit, failover, stale leader, restart catch-up, and membership tests
   pass. A two-stage snapshot protocol now withholds acknowledgment until external application
   installation is confirmed and the compacted Raft state is synchronized. A bounded canonical

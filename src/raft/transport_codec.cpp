@@ -164,12 +164,16 @@ void store_u32(const std::span<std::byte> bytes, const std::size_t offset,
         if (value.term == 0U)
           return invalid("Raft transport message term is zero");
         if constexpr (std::is_same_v<T, RequestVoteRequest>) {
-          if (value.candidate_id != envelope.source)
-            return invalid("Raft vote candidate disagrees with the transport source");
+          if (value.candidate_id != envelope.source ||
+              ((value.last_log_index == 0U) != (value.last_log_term == 0U)) ||
+              value.last_log_term > value.term)
+            return invalid("Raft vote request identity or last-log position is invalid");
         } else if constexpr (std::is_same_v<T, AppendEntriesRequest>) {
           if (value.leader_id != envelope.source ||
+              ((value.previous_log_index == 0U) != (value.previous_log_term == 0U)) ||
+              value.previous_log_term > value.term ||
               value.entries.size() > limits.maximum_append_entries)
-            return invalid("Raft append request source or entry count is invalid");
+            return invalid("Raft append request identity, previous position, or count is invalid");
           LogIndex expected = value.previous_log_index;
           for (const LogEntry& entry : value.entries) {
             if (expected == std::numeric_limits<LogIndex>::max() || entry.index != expected + 1U ||
@@ -192,6 +196,9 @@ void store_u32(const std::span<std::byte> bytes, const std::size_t offset,
               validate_snapshot(value.snapshot, limits.maximum_snapshot_voters);
           if (!snapshot.is_ok())
             return snapshot;
+        } else if constexpr (std::is_same_v<T, InstallSnapshotResponse>) {
+          if (value.success && value.last_included_index == 0U)
+            return invalid("successful Raft snapshot response has a zero installed index");
         } else if constexpr (std::is_same_v<T, ReadBarrierRequest>) {
           if (value.leader_id != envelope.source || value.context == 0U)
             return invalid("Raft read barrier request identity is invalid");

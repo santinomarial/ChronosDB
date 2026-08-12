@@ -278,3 +278,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0241](0241-single-node-subscription-runtime-composition.md) | Single-node subscription runtime composition | accepted |
 | [0242](0242-configured-chronosd-subscription-lifecycle.md) | Configured chronosd subscription lifecycle | accepted |
 | [0243](0243-canonical-raft-transport-envelope.md) | Canonical group-scoped Raft transport envelope | accepted |
+| [0244](0244-pre-observation-raft-message-validation.md) | Pre-observation Raft message validation | accepted |

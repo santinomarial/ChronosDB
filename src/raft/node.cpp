@@ -446,14 +446,20 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
   const common::Status validation = std::visit(
       [&](const auto& value) -> common::Status {
         using T = std::remove_cvref_t<decltype(value)>;
+        if (value.term == 0U)
+          return invalid("Raft message term must be nonzero");
         if constexpr (std::is_same_v<T, RequestVoteRequest>) {
-          return value.candidate_id == source
-                     ? common::Status::ok()
-                     : invalid("RequestVote candidate does not match message source");
+          if (value.candidate_id != source ||
+              ((value.last_log_index == 0U) != (value.last_log_term == 0U)) ||
+              value.last_log_term > value.term) {
+            return invalid("RequestVote identity or last-log position is invalid");
+          }
         } else if constexpr (std::is_same_v<T, AppendEntriesRequest>) {
-          if (value.term == 0U || value.leader_id != source ||
+          if (value.leader_id != source ||
+              ((value.previous_log_index == 0U) != (value.previous_log_term == 0U)) ||
+              value.previous_log_term > value.term ||
               value.entries.size() > impl_->limits.maximum_append_entries) {
-            return invalid("AppendEntries leader identity or batch bound is invalid");
+            return invalid("AppendEntries identity, previous position, or batch bound is invalid");
           }
           if (value.previous_log_index == std::numeric_limits<LogIndex>::max()) {
             return invalid("AppendEntries log index overflows");
@@ -531,19 +537,22 @@ common::Result<Transition> RaftNode::receive(const NodeId source, Message messag
             return membership.error();
           validated_membership = std::move(*membership);
         } else if constexpr (std::is_same_v<T, AppendEntriesResponse>) {
-          if (value.success && value.match_index > impl_->last_index()) {
-            return invalid("AppendEntries response exceeds the local log");
+          if ((value.success && (value.match_index > impl_->last_index() ||
+                                 value.conflict_term.has_value() || value.conflict_index != 0U)) ||
+              (value.conflict_term.has_value() && *value.conflict_term == 0U)) {
+            return invalid("AppendEntries response state is invalid");
           }
         } else if constexpr (std::is_same_v<T, InstallSnapshotRequest>) {
-          if (value.term == 0U || value.leader_id != source ||
+          if (value.leader_id != source ||
               !valid_snapshot(value.snapshot, impl_->limits.maximum_voters)) {
             return invalid("InstallSnapshot identity or metadata is invalid");
           }
         } else if constexpr (std::is_same_v<T, InstallSnapshotResponse>) {
-          if (value.success && value.last_included_index > impl_->last_index())
+          if (value.success &&
+              (value.last_included_index == 0U || value.last_included_index > impl_->last_index()))
             return invalid("InstallSnapshot response exceeds the local log");
         } else if constexpr (std::is_same_v<T, ReadBarrierRequest>) {
-          if (value.term == 0U || value.leader_id != source || value.context == 0U)
+          if (value.leader_id != source || value.context == 0U)
             return invalid("read-barrier request identity or context is invalid");
         } else if constexpr (std::is_same_v<T, ReadBarrierResponse>) {
           if (value.context == 0U)

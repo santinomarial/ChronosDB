@@ -108,6 +108,8 @@ snapshot transfer bytes, and randomized simulation remain incomplete.
 Later work accepted and implemented a bounded canonical group/source/destination Raft transport
 envelope for every current vote, append, snapshot, and read-barrier message. Authenticated socket
 carrier scheduling, timers, retransmission, and randomized simulation remain incomplete.
+The core now also rejects zero terms and noncanonical vote/append predecessor and response state
+before observing a higher term, preserving the persist-before-response contract on invalid input.
 
 ### Phase 15 — Multi-Raft tablets and metadata
 

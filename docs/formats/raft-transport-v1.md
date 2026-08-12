@@ -58,6 +58,9 @@ Every payload starts with a nonzero 64-bit term.
 8. `READ_BARRIER_RESPONSE` is 24 bytes: term, nonzero context, accepted Boolean, and seven zero
    bytes.
 
+Vote last-log and append previous-log index/term fields use exact zero-pair semantics, and their log
+term cannot exceed the message term. A successful snapshot response names a nonzero installed index.
+
 ## Validation and compatibility
 
 Decoding validates the fixed physical bound, magic, and header checksum before trusting declared

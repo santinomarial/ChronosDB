@@ -151,6 +151,29 @@ TEST(RaftNodeTest, RejectsMalformedHigherTermWithoutChangingPersistentState) {
   EXPECT_EQ(node->persistent_state(), before);
 }
 
+TEST(RaftNodeTest, RejectsNoncanonicalTermsAndResponseStateBeforeObservingTerm) {
+  const std::vector<Message> malformed{
+      RequestVoteRequest{0U, 2U, 0U, 0U},
+      RequestVoteRequest{9U, 2U, 0U, 1U},
+      AppendEntriesRequest{9U, 2U, 0U, 1U, {}, 0U},
+      AppendEntriesResponse{9U, true, 0U, 1U, 1U},
+      AppendEntriesResponse{9U, false, 0U, 0U, 1U},
+      InstallSnapshotResponse{9U, true, 0U},
+      ReadBarrierResponse{9U, 0U, true},
+  };
+  for (const Message& message : malformed) {
+    auto node = RaftNode::create(1U, {1U, 2U, 3U});
+    ASSERT_TRUE(node.has_value());
+    const PersistentState before = node->persistent_state();
+
+    auto rejected = node->receive(2U, message);
+
+    ASSERT_FALSE(rejected.has_value());
+    EXPECT_EQ(rejected.error().code(), common::StatusCode::kInvalidArgument);
+    EXPECT_EQ(node->persistent_state(), before);
+  }
+}
+
 TEST(RaftNodeTest, RejectsDivergentBytesAtMatchingTermAndIndex) {
   PersistentState state{};
   state.current_term = 1U;
