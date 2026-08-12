@@ -208,7 +208,8 @@
   exact cancellation, one retained response, response-wakeup reporting, and admission-close/drain;
   a database-root owner now reconstructs resident tablet applications from committed global
   metadata and explicit group membership before reopening the asynchronous runtime. A strict
-  bounded group/voter deployment parser and secure packaged daemon loading/routing now exist; add
+  bounded group/voter deployment parser and secure packaged daemon loading/routing now exist. A
+  strict authenticated peer route/identity parser also exists; compose it with credential loading,
   remote leader redirection, authenticated peer transport, metadata/tablet snapshot process recovery,
   joint-reconfiguration restart matrices, broader queue/disconnect failure matrices, long-running
   hook watchdog evidence, and TSan scheduling coverage.

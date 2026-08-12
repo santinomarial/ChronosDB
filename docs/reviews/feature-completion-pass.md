@@ -185,6 +185,9 @@ owners, and reopens the asynchronous runtime before exposing service access.
 The external resident group/voter set now has a strict bounded canonical text parser; daemon file
 loading and explicit mode selection now compose it with Protocol 2 advertisement, local single-voter
 election, reactor routing/wakeup, and ordered shutdown.
+Authenticated Raft deployment routes now also have a separate strict bounded text parser binding
+ordered node IDs to unique IPv4 endpoints, TLS server identities, and unique leaf-certificate
+SHA-256 fingerprints. Daemon transport ownership and credential loading remain external.
 
 ### Phase 15 — Multi-Raft tablets and metadata
 
