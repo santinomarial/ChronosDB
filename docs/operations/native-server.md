@@ -1,16 +1,17 @@
 # Native server operations baseline
 
-The Phase 10 transport remains an embeddable library component. `chronosd` now packages its process,
-bounded-queue, signal-shutdown, and native-socket lifecycle, but its durable data plane is not yet
-configured: handshake and PING/PONG work, while ingest, query, and subscription requests terminate
-with an explicit execution error. It is a lifecycle integration boundary, not a production database
-service. Linux is authoritative. Embedders create bounded request/response rings, start one
+The native transport remains an embeddable library component. `chronosd` packages its process,
+bounded-queue, signal-shutdown, and native-socket lifecycle. Linux is authoritative. Embedders create
+bounded request/response rings, start one
 `EpollReactor`, and drive `poll_once` from its single owner thread. Port zero is for ephemeral tests;
 deployments should bind explicitly.
 
-Run `chronosd --help` for bounded startup options. The current binary accepts plaintext only on
-`127.0.0.1`; it prints its actual port and the explicit `data_plane=unconfigured` state after
-successful startup. `SIGINT` and `SIGTERM` request orderly worker join and reactor shutdown.
+Run `chronosd --help` for bounded startup options. The binary accepts plaintext only on `127.0.0.1`.
+Without `--data-dir` it reports `data_plane=unconfigured` and explicitly rejects data work. With
+`--data-dir PATH` it initializes or reopens an existing directory as a durable single-node root and
+reports `data_plane=configured`; native CREATE TABLE, canonical ingest, and supported vector SELECT
+execute, while subscriptions fail explicitly. `SIGINT` and `SIGTERM` request orderly worker join,
+reactor shutdown, WAL drain, Raft close, and root-lock release.
 
 Set finite connection, event, frame, buffered-byte, queued-frame, in-flight request, handshake, and
 idle limits. Defaults are development bounds, not capacity guidance. Monitor accepted, rejected,

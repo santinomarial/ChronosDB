@@ -1,3 +1,4 @@
+#include "chronos/common/byte_reader.hpp"
 #include "chronos/network/messages.hpp"
 #include "chronos/network/protocol.hpp"
 
@@ -6,7 +7,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <fcntl.h>
+#include <filesystem>
 #include <gtest/gtest.h>
 #include <netinet/in.h>
 #include <poll.h>
@@ -15,6 +18,7 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <system_error>
 #include <unistd.h>
 #include <vector>
 
@@ -30,16 +34,26 @@ public:
   ChildProcess(const ChildProcess&) = delete;
   ChildProcess& operator=(const ChildProcess&) = delete;
 
-  [[nodiscard]] bool start() {
+  [[nodiscard]] bool start(const std::string& data_directory = {}) {
     int output[2]{};
-    if (::pipe2(output, O_CLOEXEC) != 0)
+    if (::pipe(output) != 0)
       return false;
+    if (::fcntl(output[0], F_SETFD, FD_CLOEXEC) != 0 ||
+        ::fcntl(output[1], F_SETFD, FD_CLOEXEC) != 0) {
+      ::close(output[0]);
+      ::close(output[1]);
+      return false;
+    }
     pid_ = ::fork();
     if (pid_ == 0) {
       static_cast<void>(::dup2(output[1], STDOUT_FILENO));
       ::close(output[0]);
       ::close(output[1]);
-      ::execl(CHRONOSD_PATH, CHRONOSD_PATH, "--port", "0", nullptr);
+      if (data_directory.empty())
+        ::execl(CHRONOSD_PATH, CHRONOSD_PATH, "--port", "0", nullptr);
+      else
+        ::execl(CHRONOSD_PATH, CHRONOSD_PATH, "--port", "0", "--data-dir", data_directory.c_str(),
+                nullptr);
       std::_Exit(127);
     }
     ::close(output[1]);
@@ -84,6 +98,26 @@ private:
   int output_{-1};
 };
 
+class TemporaryDirectory {
+public:
+  TemporaryDirectory() {
+    std::string pattern =
+        (std::filesystem::temp_directory_path() / "chronosd-process-XXXXXX").string();
+    if (char* const created = ::mkdtemp(pattern.data()); created != nullptr)
+      path_ = created;
+  }
+  ~TemporaryDirectory() {
+    std::error_code ignored;
+    std::filesystem::remove_all(path_, ignored);
+  }
+  [[nodiscard]] const std::string& path() const noexcept {
+    return path_;
+  }
+
+private:
+  std::string path_;
+};
+
 [[nodiscard]] std::uint16_t parse_port(const std::string_view line) {
   constexpr std::string_view prefix{"chronosd listening on 127.0.0.1:"};
   const std::size_t end = line.find(' ', prefix.size());
@@ -95,9 +129,13 @@ private:
 }
 
 [[nodiscard]] int connect_client(const std::uint16_t port) {
-  const int socket = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+  const int socket = ::socket(AF_INET, SOCK_STREAM, 0);
   if (socket < 0)
     return -1;
+  if (::fcntl(socket, F_SETFD, FD_CLOEXEC) != 0) {
+    ::close(socket);
+    return -1;
+  }
   sockaddr_in address{};
   address.sin_family = AF_INET;
   address.sin_port = htons(port);
@@ -108,6 +146,8 @@ private:
     ::close(socket);
     return -1;
   }
+  const timeval timeout{.tv_sec = 5, .tv_usec = 0};
+  static_cast<void>(::setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)));
   return socket;
 }
 
@@ -145,6 +185,36 @@ private:
   return bytes;
 }
 
+[[nodiscard]] std::string byte_string(const common::ByteView bytes) {
+  std::string value(bytes.size(), '\0');
+  std::memcpy(value.data(), bytes.data(), bytes.size());
+  return value;
+}
+
+void handshake(const int client) {
+  const auto hello_payload = network::encode_client_hello({}).value();
+  ASSERT_TRUE(
+      send_all(client, network::encode_frame({.message_type = network::MessageType::kClientHello},
+                                             hello_payload)
+                           .value()));
+  const auto response = network::decode_frame(receive_frame(client));
+  ASSERT_TRUE(response.has_value());
+  EXPECT_EQ(response->header.message_type, network::MessageType::kServerHello);
+}
+
+[[nodiscard]] network::Frame send_query(const int client, const std::uint64_t request_id,
+                                        const std::string_view sql) {
+  const auto payload = network::encode_query_request(sql).value();
+  EXPECT_TRUE(send_all(
+      client,
+      network::encode_frame(
+          {.message_type = network::MessageType::kQueryRequest, .request_id = request_id}, payload)
+          .value()));
+  auto response = network::decode_frame(receive_frame(client));
+  EXPECT_TRUE(response.has_value());
+  return response.value_or(network::Frame{});
+}
+
 TEST(ChronosdProcessTest, NegotiatesPongsAndRejectsUnconfiguredDataPlane) {
   ChildProcess child;
   ASSERT_TRUE(child.start());
@@ -155,18 +225,11 @@ TEST(ChronosdProcessTest, NegotiatesPongsAndRejectsUnconfiguredDataPlane) {
 
   const int client = connect_client(port);
   ASSERT_GE(client, 0);
-  const auto hello_payload = network::encode_client_hello({}).value();
-  ASSERT_TRUE(
-      send_all(client, network::encode_frame({.message_type = network::MessageType::kClientHello},
-                                             hello_payload)
-                           .value()));
-  auto response = network::decode_frame(receive_frame(client));
-  ASSERT_TRUE(response.has_value());
-  EXPECT_EQ(response->header.message_type, network::MessageType::kServerHello);
+  handshake(client);
 
   ASSERT_TRUE(send_all(
       client, network::encode_frame({.message_type = network::MessageType::kPing}, {}).value()));
-  response = network::decode_frame(receive_frame(client));
+  auto response = network::decode_frame(receive_frame(client));
   ASSERT_TRUE(response.has_value());
   EXPECT_EQ(response->header.message_type, network::MessageType::kPong);
 
@@ -182,8 +245,68 @@ TEST(ChronosdProcessTest, NegotiatesPongsAndRejectsUnconfiguredDataPlane) {
   const auto error = network::decode_error_message(response->payload);
   ASSERT_TRUE(error.has_value());
   EXPECT_EQ(error->code, network::ProtocolErrorCode::kExecutionFailure);
-  EXPECT_EQ(common::as_string_view(error->message), "chronosd data plane is not configured");
+  EXPECT_EQ(byte_string(error->message), "chronosd data plane is not configured");
 
+  ::close(client);
+  EXPECT_EQ(child.stop(), 0);
+}
+
+TEST(ChronosdProcessTest, CreatesQueriesAndRecoversAConfiguredDatabase) {
+  constexpr std::string_view create_sql =
+      "CREATE TABLE trades (ts TIMESTAMP_NS NOT NULL, symbol SYMBOL NOT NULL, price "
+      "DECIMAL(20, 8) NOT NULL, note STRING) EVENT TIME ts ORDER KEY (symbol, ts) "
+      "PARTITION BY time_bucket(INTERVAL '1 day', ts) SHARD KEY (symbol) DEDUP KEY "
+      "(symbol, ts) RETENTION INTERVAL '30 days' SYSTEM HISTORY RETENTION INTERVAL "
+      "'7 days' ALLOWED LATENESS INTERVAL '0 seconds'";
+  TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  ChildProcess child;
+  ASSERT_TRUE(child.start(directory.path()));
+  std::string startup = child.read_startup_line();
+  EXPECT_NE(startup.find("data_plane=configured"), std::string::npos);
+  std::uint16_t port = parse_port(startup);
+  ASSERT_NE(port, 0U);
+
+  int client = connect_client(port);
+  ASSERT_GE(client, 0);
+  handshake(client);
+  auto response = send_query(client, 1U, create_sql);
+  ASSERT_EQ(response.header.message_type, network::MessageType::kQueryResult);
+  auto ddl = network::decode_query_result_batch(response.payload);
+  ASSERT_TRUE(ddl.has_value()) << ddl.error().to_string();
+  EXPECT_EQ(ddl->row_count(), 1U);
+  EXPECT_EQ(ddl->columns().size(), 5U);
+  response = network::decode_frame(receive_frame(client)).value();
+  EXPECT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
+
+  response = send_query(client, 2U, "SELECT count(*) AS rows FROM trades");
+  ASSERT_EQ(response.header.message_type, network::MessageType::kQueryResult);
+  auto count = network::decode_query_result_batch(response.payload);
+  ASSERT_TRUE(count.has_value()) << count.error().to_string();
+  ASSERT_NE(count->cell(0U, 0U), nullptr);
+  common::ByteReader zero{count->cell(0U, 0U)->value};
+  EXPECT_EQ(zero.read_i64_le().value(), 0);
+  response = network::decode_frame(receive_frame(client)).value();
+  EXPECT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
+  ::close(client);
+  EXPECT_EQ(child.stop(), 0);
+
+  ASSERT_TRUE(child.start(directory.path()));
+  startup = child.read_startup_line();
+  EXPECT_NE(startup.find("data_plane=configured"), std::string::npos);
+  port = parse_port(startup);
+  ASSERT_NE(port, 0U);
+  client = connect_client(port);
+  ASSERT_GE(client, 0);
+  handshake(client);
+  response = send_query(client, 3U, "SELECT count(*) AS rows FROM trades");
+  ASSERT_EQ(response.header.message_type, network::MessageType::kQueryResult);
+  count = network::decode_query_result_batch(response.payload);
+  ASSERT_TRUE(count.has_value()) << count.error().to_string();
+  common::ByteReader recovered{count->cell(0U, 0U)->value};
+  EXPECT_EQ(recovered.read_i64_le().value(), 0);
+  response = network::decode_frame(receive_frame(client)).value();
+  EXPECT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
   ::close(client);
   EXPECT_EQ(child.stop(), 0);
 }

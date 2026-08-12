@@ -258,3 +258,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0221](0221-global-multi-tablet-vector-source.md) | Global multi-tablet vector source | accepted |
 | [0222](0222-bounded-native-vector-query-results.md) | Bounded native vector query results | accepted |
 | [0223](0223-native-create-table-dispatch.md) | Native CREATE TABLE dispatch | accepted |
+| [0224](0224-configured-single-node-chronosd.md) | Configured single-node chronosd | accepted |

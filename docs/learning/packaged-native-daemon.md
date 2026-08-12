@@ -3,10 +3,9 @@
 ## Purpose and boundary
 
 `chronosd` turns the existing Protocol v1 reactor into an installed process with bounded queues,
-startup reporting, and signal-driven shutdown. It deliberately does not manufacture a database
-behind that socket. Handshake and PING/PONG are implemented by the reactor; ingest, query, and
-subscription requests receive a terminal `EXECUTION_FAILURE` until durable runtime composition is
-configured.
+startup reporting, and signal-driven shutdown. With `--data-dir`, it owns the recoverable
+single-node database and native service adapter behind that socket. Without the option it retains
+the explicit unconfigured rejection mode. Handshake and PING/PONG remain implemented by the reactor.
 
 ## Ownership and lifetime
 
@@ -15,7 +14,9 @@ response-ring consumer. One joined worker thread is the sole request-ring consum
 producer. The queues outlive both threads and the reactor. Shutdown sets a signal-safe flag, stops
 and joins the worker, and only then closes reactor descriptors.
 
-The worker may retain one owned response when the response ring is full. It retries that same frame
+The configured worker dispatches one task synchronously and may retain a bounded query response
+sequence. It publishes that sequence in order and consumes no next request until completion. The
+worker may retain one owned response when the response ring is full. It retries that same frame
 without moving from it, blocking the data-plane consumer rather than allocating an unbounded side
 queue. The SPSC release/acquire proof remains the one documented by ADR 0063.
 
@@ -26,22 +27,28 @@ handshake, idle, and buffering limits remain the `EpollServerConfig` bounds. Pla
 restricted to exact IPv4 loopback. Invalid options and unavailable reactor backends fail before the
 startup banner. Worker publication or reactor failures terminate the process with a nonzero status.
 
-The startup banner reports `data_plane=unconfigured` so process liveness cannot be confused with
-database readiness. No ingest durability mode is acknowledged.
+The startup banner reports `data_plane=configured` only after the database and reactor both start;
+otherwise the explicit unconfigured mode remains distinguishable. Configured ingest acknowledges
+the exact requested/effective ASYNC or LOCAL_SYNC mode.
 
 ## Complexity and tradeoffs
 
 Each dispatch and response handoff is amortized O(1); protocol parsing remains linear in frame size.
 The worker uses a one-millisecond idle/backpressure poll, which is simple and bounded but is not a
-measured production scheduling strategy. A future durable adapter should use an explicit wakeup and
-retain the same finite ownership contract.
+measured production scheduling strategy. Configured execution is serial; a long request delays later
+work. A future worker should use explicit wakeups and cancellable bounded execution while retaining
+the same finite ownership contract.
 
 ## Verification and likely review questions
 
 The Linux subprocess test starts the actual binary on an ephemeral port, negotiates Protocol v1,
-checks PING/PONG, verifies explicit query rejection, and sends `SIGTERM`. Install-layout validation
-checks that the binary is packaged and its help path runs.
+checks PING/PONG and explicit unconfigured rejection, then starts a configured root, creates and
+queries a table, sends `SIGTERM`, and verifies queryability after restart. Install-layout validation
+checks that the binary is packaged and its help path runs. On non-Linux hosts, daemon/service build
+and durable-root initialization run, but the socket subprocess is not registered because the server
+reactor is Linux-only.
 
 Reviewers should ask: Which thread owns each queue endpoint? Can saturation allocate elsewhere? Can
 liveness imply data readiness? What happens to active socket work on `SIGTERM`? Which acknowledged
-durability mode applies? Today the last answer is “none,” by design.
+durability mode applies? In configured mode, the last answer is the exact requested/effective ASYNC
+or LOCAL_SYNC mode; in unconfigured mode there is no acknowledgement.

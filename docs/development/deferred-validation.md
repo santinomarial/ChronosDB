@@ -256,6 +256,12 @@
 - Compose the packaged `chronosd` lifecycle with a durable service adapter connecting native
   protocol, auth, ingest, WAL/Raft, mutable heads, flush/CSEG/manifest, SQL execution, live delivery,
   metadata routing, failover, movement, and object storage; then run it as three processes.
+- Configured `chronosd` Linux subprocess execution in CI, daemon ingest over real sockets, corrupt
+  root/WAL/Raft startup cases, signals during ingest/query, queue saturation with multi-frame
+  responses, cancellation, concurrent clients, TLS/auth configuration, secure UUID entropy-failure
+  injection, metrics, privilege dropping, service-manager packaging, ASan/UBSan/TSan, and sustained
+  load. The Linux-only test now covers CREATE/query/restart/query; this macOS run verified daemon
+  build and durable root creation before the expected Linux-reactor rejection.
 - Native ingest service adapter allocation/fault injection, event-time and ancestor-schema retry
   policy, authorization, cancellation during WAL wait, concurrent requests/shutdown, queue-worker
   integration, daemon subprocess/restart, ASan/UBSan/TSan, and throughput/latency profiles. Focused

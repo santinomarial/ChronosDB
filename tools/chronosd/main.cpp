@@ -2,7 +2,10 @@
 #include "chronos/network/messages.hpp"
 #include "chronos/network/reactor.hpp"
 #include "chronos/network/spsc_queue.hpp"
+#include "chronos/service/native_protocol_service.hpp"
+#include "chronos/service/single_node_database.hpp"
 
+#include <array>
 #include <atomic>
 #include <charconv>
 #include <chrono>
@@ -11,12 +14,16 @@
 #include <cstdint>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <new>
+#include <openssl/rand.h>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <system_error>
 #include <thread>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -26,6 +33,8 @@ using chronos::network::ProtocolErrorCode;
 using chronos::network::Reactor;
 using chronos::network::ReactorBackend;
 using chronos::network::SpscNetworkTaskQueue;
+using chronos::service::NativeProtocolService;
+using chronos::service::SingleNodeDatabase;
 
 volatile std::sig_atomic_t stop_requested = 0;
 
@@ -37,6 +46,7 @@ struct Options {
   ReactorBackend backend{ReactorBackend::kEpoll};
   std::uint16_t port{8812U};
   std::size_t queue_capacity{1024U};
+  std::string data_directory;
   bool help{};
   bool version{};
 };
@@ -44,7 +54,7 @@ struct Options {
 void print_usage(const std::string_view program, std::ostream& stream) {
   stream << "Usage: " << program
          << " [--listen 127.0.0.1] [--port PORT] [--backend epoll|io_uring]"
-            " [--queue-capacity COUNT]\n"
+            " [--queue-capacity COUNT] [--data-dir PATH]\n"
             "       "
          << program << " --help\n"
          << "       " << program << " --version\n";
@@ -106,6 +116,12 @@ template <typename Integer>
         std::cerr << "chronosd: backend must be epoll or io_uring\n";
         return std::nullopt;
       }
+    } else if (argument == "--data-dir") {
+      if (value.empty()) {
+        std::cerr << "chronosd: data directory must be nonempty\n";
+        return std::nullopt;
+      }
+      options.data_directory = value;
     } else {
       std::cerr << "chronosd: unknown option " << argument << '\n';
       return std::nullopt;
@@ -118,14 +134,65 @@ template <typename Integer>
   return options;
 }
 
-class UnconfiguredDataPlaneWorker {
+class OpenSslIdentityGenerator final : public chronos::service::NativeIdentityGenerator {
 public:
-  UnconfiguredDataPlaneWorker(SpscNetworkTaskQueue& requests, SpscNetworkTaskQueue& responses,
-                              Reactor& reactor) noexcept
-      : requests_(&requests), responses_(&responses), reactor_(&reactor) {}
+  [[nodiscard]] chronos::common::Result<chronos::common::Uuid> generate() override {
+    for (std::size_t attempt = 0U; attempt < 8U; ++attempt) {
+      std::array<unsigned char, chronos::common::Uuid::kSize> random{};
+      if (RAND_bytes(random.data(), static_cast<int>(random.size())) != 1) {
+        return chronos::common::make_unexpected(chronos::common::Status{
+            chronos::common::StatusCode::kUnavailable, "secure UUID generation failed"});
+      }
+      chronos::common::Uuid::Bytes bytes{};
+      for (std::size_t index = 0U; index < bytes.size(); ++index)
+        bytes[index] = static_cast<std::byte>(random[index]);
+      chronos::common::Uuid result{bytes};
+      if (!result.is_nil())
+        return result;
+    }
+    return chronos::common::make_unexpected(chronos::common::Status{
+        chronos::common::StatusCode::kUnavailable, "secure UUID source repeatedly returned nil"});
+  }
+};
 
-  UnconfiguredDataPlaneWorker(const UnconfiguredDataPlaneWorker&) = delete;
-  UnconfiguredDataPlaneWorker& operator=(const UnconfiguredDataPlaneWorker&) = delete;
+[[nodiscard]] chronos::common::Result<chronos::runtime::DatabaseBootstrapDescriptor>
+new_database_descriptor(OpenSslIdentityGenerator& identities) {
+  auto database_id = identities.generate();
+  if (!database_id.has_value())
+    return chronos::common::make_unexpected(database_id.error());
+  chronos::common::Result<chronos::common::Uuid> metadata_group = identities.generate();
+  if (!metadata_group.has_value())
+    return chronos::common::make_unexpected(metadata_group.error());
+  for (std::size_t attempt = 0U; *metadata_group == *database_id && attempt < 8U; ++attempt) {
+    metadata_group = identities.generate();
+    if (!metadata_group.has_value())
+      return chronos::common::make_unexpected(metadata_group.error());
+  }
+  if (*metadata_group == *database_id) {
+    return chronos::common::make_unexpected(
+        chronos::common::Status{chronos::common::StatusCode::kUnavailable,
+                                "secure UUID source repeated the database identity"});
+  }
+  return chronos::runtime::DatabaseBootstrapDescriptor{
+      .database_id = *database_id,
+      .metadata_group_id = *metadata_group,
+      .local_node_id = 1U,
+      .mutable_head_rows = 65'536U,
+      .maximum_sealed_generations = 8U,
+      .variable_column_bytes = 1U * 1024U * 1024U,
+      .maximum_retry_entries = 65'536U,
+      .wal_segment_target_bytes = chronos::wal::kSegmentSizeLimit,
+      .raft_segment_target_bytes = 64U * 1024U * 1024U};
+}
+
+class DataPlaneWorker {
+public:
+  DataPlaneWorker(SpscNetworkTaskQueue& requests, SpscNetworkTaskQueue& responses, Reactor& reactor,
+                  NativeProtocolService* service) noexcept
+      : requests_(&requests), responses_(&responses), reactor_(&reactor), service_(service) {}
+
+  DataPlaneWorker(const DataPlaneWorker&) = delete;
+  DataPlaneWorker& operator=(const DataPlaneWorker&) = delete;
 
   [[nodiscard]] bool start() noexcept {
     try {
@@ -149,8 +216,34 @@ public:
   }
 
 private:
+  [[nodiscard]] std::optional<NetworkTask> unconfigured(NetworkTask request) {
+    auto payload = chronos::network::encode_error_message(ProtocolErrorCode::kExecutionFailure,
+                                                          "chronosd data plane is not configured");
+    if (!payload.has_value())
+      return std::nullopt;
+    request.frame = {.header = {.message_type = MessageType::kError,
+                                .request_id = request.frame.header.request_id,
+                                .payload_size = static_cast<std::uint32_t>(payload->size())},
+                     .payload = std::move(*payload)};
+    return request;
+  }
+
+  [[nodiscard]] std::optional<NetworkTask> unsupported(NetworkTask request) {
+    auto payload = chronos::network::encode_error_message(
+        ProtocolErrorCode::kExecutionFailure, "native subscriptions are not configured");
+    if (!payload.has_value())
+      return std::nullopt;
+    request.frame = {.header = {.message_type = MessageType::kError,
+                                .request_id = request.frame.header.request_id,
+                                .payload_size = static_cast<std::uint32_t>(payload->size())},
+                     .payload = std::move(*payload)};
+    return request;
+  }
+
   void run() noexcept {
     std::optional<NetworkTask> pending;
+    std::vector<NetworkTask> sequence;
+    std::size_t next_response{};
     while (!stopping_.load(std::memory_order_acquire)) {
       if (pending.has_value()) {
         if (!responses_->try_push_preserving(*pending)) {
@@ -165,6 +258,15 @@ private:
         continue;
       }
 
+      if (next_response < sequence.size()) {
+        pending.emplace(std::move(sequence[next_response++]));
+        if (next_response == sequence.size()) {
+          sequence.clear();
+          next_response = 0U;
+        }
+        continue;
+      }
+
       auto request = requests_->try_pop();
       if (!request.has_value()) {
         std::this_thread::sleep_for(std::chrono::milliseconds{1});
@@ -172,26 +274,32 @@ private:
       }
       if (request->frame.header.message_type == MessageType::kCancel)
         continue;
-
-      auto payload = chronos::network::encode_error_message(
-          ProtocolErrorCode::kExecutionFailure, "chronosd data plane is not configured");
-      if (!payload.has_value()) {
+      if (service_ == nullptr) {
+        pending = unconfigured(std::move(*request));
+      } else if (request->frame.header.message_type == MessageType::kIngestRequest) {
+        auto response = service_->execute_ingest(std::move(*request));
+        if (response.has_value())
+          pending.emplace(std::move(*response));
+      } else if (request->frame.header.message_type == MessageType::kQueryRequest) {
+        auto responses = service_->execute_query(std::move(*request));
+        if (responses.has_value()) {
+          sequence = std::move(responses->responses);
+          next_response = 0U;
+        }
+      } else {
+        pending = unsupported(std::move(*request));
+      }
+      if (!pending.has_value() && sequence.empty()) {
         failed_.store(true, std::memory_order_release);
         return;
       }
-      pending.emplace(NetworkTask{
-          .connection_id = request->connection_id,
-          .principal_id = request->principal_id,
-          .frame = {.header = {.message_type = MessageType::kError,
-                               .request_id = request->frame.header.request_id,
-                               .payload_size = static_cast<std::uint32_t>(payload->size())},
-                    .payload = std::move(*payload)}});
     }
   }
 
   SpscNetworkTaskQueue* requests_;
   SpscNetworkTaskQueue* responses_;
   Reactor* reactor_;
+  NativeProtocolService* service_;
   std::atomic<bool> stopping_{false};
   std::atomic<bool> failed_{false};
   std::thread thread_;
@@ -216,6 +324,29 @@ int main(const int argc, const char* const argv[]) {
     return 0;
   }
 
+  OpenSslIdentityGenerator identities;
+  std::optional<SingleNodeDatabase> database;
+  std::optional<NativeProtocolService> service;
+  if (!options->data_directory.empty()) {
+    auto descriptor = new_database_descriptor(identities);
+    if (!descriptor.has_value()) {
+      std::cerr << "chronosd: secure identity setup failed: " << descriptor.error().to_string()
+                << '\n';
+      return 1;
+    }
+    chronos::service::SingleNodeDatabaseConfig database_config{
+        .bootstrap = {.database_root = options->data_directory, .new_database = *descriptor},
+        .wal_recovery = {.repair_incomplete_final_tail = false},
+        .raft_recovery = {.repair_incomplete_final_tail = false}};
+    auto opened = SingleNodeDatabase::open_or_create(std::move(database_config));
+    if (!opened.has_value()) {
+      std::cerr << "chronosd: database start failed: " << opened.error().to_string() << '\n';
+      return 1;
+    }
+    database.emplace(std::move(*opened));
+    service.emplace(*database, identities);
+  }
+
   auto requests = SpscNetworkTaskQueue::create(options->queue_capacity);
   auto responses = SpscNetworkTaskQueue::create(options->queue_capacity);
   if (!requests.has_value() || !responses.has_value()) {
@@ -233,9 +364,12 @@ int main(const int argc, const char* const argv[]) {
     return 1;
   }
 
-  UnconfiguredDataPlaneWorker worker{*requests, *responses, *reactor};
+  DataPlaneWorker worker{*requests, *responses, *reactor,
+                         service.has_value() ? std::addressof(*service) : nullptr};
   if (!worker.start()) {
     static_cast<void>(reactor->shutdown());
+    if (database.has_value())
+      static_cast<void>(database->shutdown());
     std::cerr << "chronosd: worker start failed\n";
     return 1;
   }
@@ -245,13 +379,15 @@ int main(const int argc, const char* const argv[]) {
       std::signal(SIGTERM, request_stop) == SIG_ERR) {
     worker.stop();
     static_cast<void>(reactor->shutdown());
+    if (database.has_value())
+      static_cast<void>(database->shutdown());
     std::cerr << "chronosd: signal handler installation failed\n";
     return 1;
   }
 
   std::cout << "chronosd listening on 127.0.0.1:" << reactor->bound_port()
             << " backend=" << chronos::network::reactor_backend_name(options->backend)
-            << " data_plane=unconfigured\n"
+            << " data_plane=" << (service.has_value() ? "configured" : "unconfigured") << '\n'
             << std::flush;
 
   int exit_code = 0;
@@ -273,6 +409,13 @@ int main(const int argc, const char* const argv[]) {
   if (!shutdown.is_ok()) {
     std::cerr << "chronosd: shutdown failed: " << shutdown.to_string() << '\n';
     exit_code = 1;
+  }
+  if (database.has_value()) {
+    const auto database_shutdown = database->shutdown();
+    if (!database_shutdown.is_ok()) {
+      std::cerr << "chronosd: database shutdown failed: " << database_shutdown.to_string() << '\n';
+      exit_code = 1;
+    }
   }
   return exit_code;
 }

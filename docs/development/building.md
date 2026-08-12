@@ -108,9 +108,11 @@ build/dev/chronosctl version --json
 build/dev/chronosd --help
 ```
 
-`chronosd` currently packages the loopback native-protocol lifecycle only. Its startup banner says
-`data_plane=unconfigured`; ingest, query, and subscription requests fail explicitly until the
-durable runtime adapter is implemented.
+`chronosd` packages the Linux loopback native-protocol lifecycle. With no data directory its startup
+banner says `data_plane=unconfigured` and data-plane requests fail explicitly. Supplying
+`--data-dir PATH` opens or creates a recoverable single-node database and reports
+`data_plane=configured`; native CREATE TABLE, canonical ingest, and the supported vector SELECT
+subset are dispatched. Subscriptions remain explicitly unavailable.
 
 The read-only WAL inspector acquires the existing writer lock, verifies the complete physical log,
 preflights every record, and then prints record metadata in deterministic order without dumping
