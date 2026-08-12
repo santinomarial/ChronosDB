@@ -255,9 +255,9 @@ public:
             std::ranges::find(current->manifest_snapshot_.tablets(), found->tablet_id,
                               &manifest::TemporalTabletDescriptor::tablet_id);
         if (owner == current->manifest_snapshot_.tablets().end() ||
-            owner->commit_source != manifest::ManifestCommitSource::kRaft) {
+            owner->commit_source != found->commit_source || owner->source_id != found->source_id) {
           return common::make_unexpected(
-              invalid("tiered local reclamation currently requires a Raft-owned temporal part"));
+              invalid("tiered local reclamation part differs from its tablet source authority"));
         }
         const auto locations = current->cold_manifest_->manifest().locations();
         const auto location =

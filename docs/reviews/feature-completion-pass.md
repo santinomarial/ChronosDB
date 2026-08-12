@@ -178,6 +178,11 @@ abort. The optional Arrow/Parquet
 provider now round-trips all current logical types through an exact
 caller-supplied schema and keeps CSEG as the primary store.
 
+Reader-pinned local reclamation now accepts both WAL- and Raft-owned temporal parts after proving
+exact part/tablet source agreement. The WAL case has focused remote validation, synchronized
+deletion, tier-aware restart recovery, and post-restart remote query coverage; standalone local-only
+recovery remains intentionally invalid after either source is reclaimed.
+
 ## End-to-end integration state
 
 `chronos_feature_smoke_tests` connects committed metadata, temporal visibility, live handoff,

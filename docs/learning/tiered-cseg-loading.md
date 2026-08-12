@@ -71,7 +71,7 @@ metadata-loads and hashes the exact pair-selected Manifest, binds the exact comm
 generation, then repeats full Manifest loading with remote validation before creating any
 publishable owner. A metadata-only Manifest value is deliberately not a storage snapshot.
 
-Reader-pinned local reclamation now supplies that missing proof for Raft-owned parts. The aggregate
+Reader-pinned local reclamation supplies that proof for WAL- and Raft-owned parts. The aggregate
 publisher tracks weak historical epochs; only an epoch that names a candidate without its own exact
 cold route blocks. After those pins expire, the coordinator reloads the exact pair marker, fully
 validates every remote image, and passes a private capability to ManifestStorage. ManifestStorage
@@ -81,9 +81,11 @@ present damaged local image remains a corruption error.
 
 The distributed aggregate worker supplies the integrated query path: all dispatch/placement/Raft/
 Manifest gates run before a synchronous tiered batch loader exposes image views to the unchanged
-temporal resolver. WAL-owned startup and other local-only entry points are not eligible for local
-reclamation yet. Remote deletion is separately authorized only after the part and route leave the
-selected pair and every route-bearing aggregate reader drains; it never follows from a loader miss.
+temporal resolver. Authorization requires each part and owning tablet to agree exactly on commit
+source and source identity. After deletion, tier-aware pair recovery is mandatory; standalone
+local-only startup is not eligible. Remote deletion is separately authorized only after the part
+and route leave the selected pair and every route-bearing aggregate reader drains; it never follows
+from a loader miss.
 The loader does not authorize multipart upload, cache eviction, or retry policy. Those remain the
 manager and provider carrier's responsibility after admission succeeds.
 

@@ -925,9 +925,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   Manifest, tablet, and schema proof gates, and requires the exact aggregate Manifest owner. Pair
   recovery now authenticates Manifest metadata and the exact committed cold generation before fully
   validating locally absent CSEGs through their remote routes and creating publication state.
-  Reader-pinned reclamation for Raft-owned parts now waits only for historical aggregate epochs that
-  lack an exact route, revalidates the selected pair and every remote/local image, then unlinks and
-  synchronizes with idempotent retry. Cold successors may now omit a route only when a newer base
+  Reader-pinned reclamation for WAL- and Raft-owned parts now waits only for historical aggregate
+  epochs that lack an exact route, revalidates the selected pair and every remote/local image, then
+  unlinks and synchronizes with idempotent retry. Cold successors may now omit a route only when a newer base
   Manifest removed that logical part, establishing the metadata transition required by later
   reader-pinned remote deletion. Memory and S3 backends now expose idempotent exact deletion; S3
   validates length/SHA-256 with HEAD and conditions DELETE on the observed ETag. Cross-layer remote
@@ -943,7 +943,7 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   use bounded sequential multipart sessions with per-part signing/retry, opaque ETag completion,
   `If-None-Match: *`, exact final HEAD verification, and failure-path abort. Upload admission now
   performs full Manifest-v1 CSEG validation against the exact schema, tablet, part descriptor, and
-  WAL source before any remote request or manifest callback. WAL-local deletion, other query paths,
+  WAL source before any remote request or manifest callback. Other query paths,
   parallel multipart scheduling, and workload/instance provider-chain integrations remain deferred.
   An explicit built-in environment provider now snapshots and validates the standard AWS access
   key, secret, and optional session token without implicit precedence or unsafe refresh. The

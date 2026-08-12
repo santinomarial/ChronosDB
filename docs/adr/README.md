@@ -236,3 +236,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0199](0199-explicit-s3-environment-credential-provider.md) | Explicit S3 environment credential provider | accepted |
 | [0200](0200-concurrent-bounded-tiered-part-cache.md) | Concurrent bounded tiered-part cache | accepted |
 | [0201](0201-authority-restored-volatile-tiered-cache.md) | Authority-restored volatile tiered cache | accepted |
+| [0202](0202-source-general-tiered-local-reclamation.md) | Source-general tiered local reclamation | accepted |

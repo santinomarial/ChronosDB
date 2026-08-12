@@ -94,37 +94,43 @@ void write_bytes(const std::filesystem::path& path, const common::ByteView bytes
 }
 
 struct PartFixture {
+  explicit PartFixture(
+      const manifest::ManifestCommitSource source = manifest::ManifestCommitSource::kRaft)
+      : group_id(uuid(source == manifest::ManifestCommitSource::kRaft ? 8U : 9U)),
+        encoded(cseg::test::make_valid_temporal_float64_part(
+            cseg::PageCompression::kZstd,
+            {.commit_source = source == manifest::ManifestCommitSource::kRaft
+                                  ? cseg::temporal_format::CommitSource::kRaft
+                                  : cseg::temporal_format::CommitSource::kWal,
+             .source_id = group_id})),
+        descriptor(require_value(manifest::describe_manifest_v2_temporal_part_image(
+                                     encoded.bytes(), schema_value, tablet_id, source, group_id),
+                                 "temporal part descriptor")),
+        owner{.table_id = table_id,
+              .tablet_id = tablet_id,
+              .recovery_schema_id = schema_id,
+              .recovery_schema_version = schema::SchemaVersion::initial(),
+              .source_id = group_id,
+              .durable_position = 10U,
+              .reclaim_position = 0U,
+              .first_part_index = 0U,
+              .part_count = 1U,
+              .durable_version_count = 2U,
+              .commit_source = source} {}
+
   schema::TableId table_id{cseg::test::identifier<schema::TableId>(2U)};
   schema::TabletId tablet_id{cseg::test::identifier<schema::TabletId>(3U)};
   schema::SchemaId schema_id{cseg::test::identifier<schema::SchemaId>(4U)};
-  common::Uuid group_id{uuid(8U)};
+  common::Uuid group_id;
   manifest::DatabaseId database_id{
       require_value(manifest::DatabaseId::from_bytes(uuid(11U).bytes()), "database identifier")};
   common::Uuid object_store_id{uuid(12U)};
   schema::TableSchema schema_value{make_schema()};
   schema::SchemaLineage lineage{
       require_value(schema::SchemaLineage::create(schema_value), "schema lineage")};
-  cseg::EncodedCsegPart encoded{cseg::test::make_valid_temporal_float64_part(
-      cseg::PageCompression::kZstd,
-      {.commit_source = cseg::temporal_format::CommitSource::kRaft, .source_id = group_id})};
-  manifest::TemporalPartDescriptor descriptor{require_value(
-      manifest::describe_manifest_v2_temporal_part_image(encoded.bytes(), schema_value, tablet_id,
-                                                         manifest::ManifestCommitSource::kRaft,
-                                                         group_id),
-      "temporal part descriptor")};
-  manifest::TemporalTabletDescriptor owner{
-      .table_id = table_id,
-      .tablet_id = tablet_id,
-      .recovery_schema_id = schema_id,
-      .recovery_schema_version = schema::SchemaVersion::initial(),
-      .source_id = group_id,
-      .durable_position = 10U,
-      .reclaim_position = 0U,
-      .first_part_index = 0U,
-      .part_count = 1U,
-      .durable_version_count = 2U,
-      .commit_source = manifest::ManifestCommitSource::kRaft,
-  };
+  cseg::EncodedCsegPart encoded;
+  manifest::TemporalPartDescriptor descriptor;
+  manifest::TemporalTabletDescriptor owner;
   std::string object_key{"chronos/parts/part.cseg"};
 
   [[nodiscard]] schema::TableSchema make_schema() const {
@@ -176,7 +182,7 @@ struct PartFixture {
   [[nodiscard]] std::array<manifest::TemporalTabletSourceBinding, 1> source_bindings() const {
     return {manifest::TemporalTabletSourceBinding{
         .tablet_id = tablet_id,
-        .commit_source = manifest::ManifestCommitSource::kRaft,
+        .commit_source = owner.commit_source,
         .source_id = group_id,
     }};
   }
@@ -221,10 +227,11 @@ struct LiveFixture {
         manifest_storage(std::move(storage)), cold_storage(std::move(cold_storage_value)),
         cold_owner(std::move(cold_owner_value)), publisher(std::move(publisher_value)) {}
 
-  [[nodiscard]] static std::unique_ptr<LiveFixture> create() {
+  [[nodiscard]] static std::unique_ptr<LiveFixture>
+  create(const manifest::ManifestCommitSource source = manifest::ManifestCommitSource::kRaft) {
     auto fixture = std::unique_ptr<LiveFixture>{};
     TemporaryDirectory directory;
-    PartFixture part;
+    PartFixture part{source};
     if (directory.path().empty())
       return nullptr;
     EXPECT_TRUE(
@@ -692,6 +699,58 @@ TEST(TieredLocalPartReclamationTest, WaitsForUnsafeReaderThenUnlinksAndRetriesId
       *proof, *pair_storage, fixture->manifest_storage, fixture->object_store, schema_bindings);
   ASSERT_FALSE(stale_proof.has_value());
   EXPECT_EQ(stale_proof.error().code(), common::StatusCode::kInvalidArgument);
+}
+
+TEST(TieredLocalPartReclamationTest, ReclaimsWalOwnedPartAndRecoversItRemotelyAfterRestart) {
+  auto fixture = LiveFixture::create(manifest::ManifestCommitSource::kWal);
+  ASSERT_NE(fixture, nullptr);
+  ASSERT_TRUE(std::filesystem::create_directory(fixture->directory.path() / "tiered-pair"));
+  auto pair_storage = TieredPairCommitStorage::create(
+      {.directory_path = (fixture->directory.path() / "tiered-pair").string(),
+       .expected_database_id = fixture->part.database_id,
+       .expected_object_store_id = fixture->part.object_store_id});
+  ASSERT_TRUE(pair_storage.has_value());
+  auto current = fixture->publisher.snapshot();
+  ASSERT_TRUE(current.has_value());
+  auto committed = pair_storage->commit(current->manifest_snapshot(), fixture->cold_owner);
+  ASSERT_TRUE(committed.has_value()) << committed.error().to_string();
+  const auto schema_bindings = fixture->part.bindings();
+  const auto source_bindings = fixture->part.source_bindings();
+  const std::array ids{fixture->part.descriptor.part_id};
+  auto proof =
+      TieredLocalPartReclamationCoordinator::authorize(fixture->publisher, committed->record, ids);
+  ASSERT_TRUE(proof.has_value()) << proof.error().to_string();
+  EXPECT_FALSE(proof->is_pinned());
+  auto reclaimed = TieredLocalPartReclamationCoordinator::reclaim(
+      *proof, *pair_storage, fixture->manifest_storage, fixture->object_store, schema_bindings);
+  ASSERT_TRUE(reclaimed.has_value()) << reclaimed.error().to_string();
+  EXPECT_EQ(reclaimed->outcome, manifest::PartReclamationOutcome::kReclaimed);
+  EXPECT_EQ(reclaimed->remote_parts_validated, 1U);
+  EXPECT_EQ(reclaimed->removed_parts, 1U);
+  EXPECT_FALSE(std::filesystem::exists(fixture->local_part_path()));
+
+  const TieredPairRecoveryRequest recovery{
+      .manifest_request = {.expected_database_id = fixture->part.database_id,
+                           .schema_bindings = schema_bindings,
+                           .source_bindings = source_bindings,
+                           .decode_limits = {},
+                           .part_validation_limits = {}},
+      .remote_store = &fixture->object_store};
+  auto recovered =
+      pair_storage->recover(fixture->manifest_storage, *fixture->cold_storage, recovery);
+  ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
+  ASSERT_TRUE(recovered->has_value());
+  auto restarted_publisher = TieredDatabaseStoragePublisher::create((*recovered)->manifest_snapshot,
+                                                                    (*recovered)->cold_manifest);
+  ASSERT_TRUE(restarted_publisher.has_value()) << restarted_publisher.error().to_string();
+  auto restarted = restarted_publisher->snapshot();
+  ASSERT_TRUE(restarted.has_value());
+  auto remote = load_tiered_temporal_part_images(*restarted, fixture->manifest_storage,
+                                                 fixture->object_store, ids, schema_bindings);
+  ASSERT_TRUE(remote.has_value()) << remote.error().to_string();
+  ASSERT_EQ(remote->size(), 1U);
+  EXPECT_EQ(remote->front().source(), TieredPartSource::kRemote);
+  EXPECT_TRUE(std::ranges::equal(remote->front().bytes(), fixture->part.encoded.bytes()));
 }
 
 TEST(TieredRemoteObjectReclamationTest,
