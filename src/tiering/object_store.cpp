@@ -1091,6 +1091,208 @@ S3ContainerCredentialProvider::acquire(const S3CredentialRequest request) {
   }
 }
 
+class S3InstanceCredentialProvider::Impl {
+public:
+  explicit Impl(S3InstanceCredentialProviderConfig configured) : config(std::move(configured)) {}
+
+  struct Response {
+    long status{};
+    std::vector<std::byte> body;
+  };
+
+  struct Cached {
+    S3Credentials credentials;
+    std::chrono::sys_seconds expiration;
+  };
+
+  [[nodiscard]] common::Result<Response>
+  request(const std::string_view path, const bool put,
+          const std::optional<std::string_view> token = std::nullopt) const {
+    try {
+      const std::string url = config.endpoint + std::string{path};
+      CurlHandle handle{curl_easy_init()};
+      if (!handle)
+        return common::make_unexpected(exhausted("IMDSv2 HTTP handle allocation failed"));
+      ResponseCapture capture;
+      capture.maximum_body_bytes = config.maximum_response_bytes;
+      auto set = [&](const CURLoption option, const auto value) -> bool {
+        return curl_easy_setopt(handle.get(), option, value) == CURLE_OK;
+      };
+      if (!set(CURLOPT_URL, url.c_str()) || !set(CURLOPT_PROXY, "") ||
+          !set(CURLOPT_CONNECTTIMEOUT_MS, static_cast<long>(config.connect_timeout.count())) ||
+          !set(CURLOPT_TIMEOUT_MS, static_cast<long>(config.request_timeout.count())) ||
+          !set(CURLOPT_NOSIGNAL, 1L) || !set(CURLOPT_FOLLOWLOCATION, 0L) ||
+          !set(CURLOPT_MAXREDIRS, 0L) || !set(CURLOPT_PROTOCOLS_STR, "http") ||
+          !set(CURLOPT_HTTP_CONTENT_DECODING, 0L) || !set(CURLOPT_WRITEFUNCTION, &capture_body) ||
+          !set(CURLOPT_WRITEDATA, &capture) || (put && !set(CURLOPT_CUSTOMREQUEST, "PUT"))) {
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kInternal, "IMDSv2 HTTP configuration failed"});
+      }
+      HeaderList headers;
+      common::Status appended = common::Status::ok();
+      if (put) {
+        appended = append_header(headers, "X-aws-ec2-metadata-token-ttl-seconds: " +
+                                              std::to_string(config.token_lifetime.count()));
+      } else if (token.has_value()) {
+        appended = append_header(headers, "X-aws-ec2-metadata-token: " + std::string{*token});
+      }
+      if (!appended.is_ok())
+        return common::make_unexpected(appended);
+      if (headers && !set(CURLOPT_HTTPHEADER, headers.get())) {
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kInternal, "IMDSv2 HTTP configuration failed"});
+      }
+      const CURLcode performed = curl_easy_perform(handle.get());
+      if (performed != CURLE_OK)
+        return common::make_unexpected(curl_failure(performed, capture.body_limit_exhausted));
+      long status{};
+      if (curl_easy_getinfo(handle.get(), CURLINFO_RESPONSE_CODE, &status) != CURLE_OK) {
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kIoError, "IMDSv2 response status is unavailable"});
+      }
+      return Response{.status = status, .body = std::move(capture.body)};
+    } catch (const std::bad_alloc&) {
+      return common::make_unexpected(exhausted("IMDSv2 request allocation failed"));
+    } catch (const std::length_error&) {
+      return common::make_unexpected(exhausted("IMDSv2 request exceeds limits"));
+    }
+  }
+
+  [[nodiscard]] common::Result<Cached> fetch() const {
+    auto token_response = request("/latest/api/token", true);
+    if (!token_response.has_value())
+      return common::make_unexpected(token_response.error());
+    if (token_response->status != 200L || token_response->body.empty() ||
+        token_response->body.size() > 4096U) {
+      return common::make_unexpected(common::Status{token_response->status == 404L
+                                                        ? common::StatusCode::kNotFound
+                                                        : common::StatusCode::kUnauthenticated,
+                                                    "IMDSv2 token request failed"});
+    }
+    const std::string_view token{reinterpret_cast<const char*>(token_response->body.data()),
+                                 token_response->body.size()};
+    if (contains_control(token)) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kUnauthenticated, "IMDSv2 token response is invalid"});
+    }
+    auto role_response = request("/latest/meta-data/iam/security-credentials/", false, token);
+    if (!role_response.has_value())
+      return common::make_unexpected(role_response.error());
+    if (role_response->status == 404L)
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kNotFound, "EC2 instance role is not configured"});
+    if (role_response->status != 200L)
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kUnauthenticated, "IMDSv2 role request failed"});
+    std::string_view role{reinterpret_cast<const char*>(role_response->body.data()),
+                          role_response->body.size()};
+    while (!role.empty() && (role.back() == '\r' || role.back() == '\n'))
+      role.remove_suffix(1U);
+    if (role.empty() || role.size() > 256U || contains_control(role) ||
+        !std::ranges::all_of(role, [](const char character) {
+          const auto value = static_cast<unsigned char>(character);
+          return unreserved(value) || character == '+' || character == '=' || character == ',' ||
+                 character == '@';
+        })) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kUnauthenticated, "IMDSv2 role response is invalid"});
+    }
+    auto credentials_response = request(
+        "/latest/meta-data/iam/security-credentials/" + encode_path(role, false), false, token);
+    if (!credentials_response.has_value())
+      return common::make_unexpected(credentials_response.error());
+    if (credentials_response->status != 200L) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kUnauthenticated, "IMDSv2 credential request failed"});
+    }
+    const std::string_view json{reinterpret_cast<const char*>(credentials_response->body.data()),
+                                credentials_response->body.size()};
+    auto code = extract_json_string_field(json, "Code", 64U);
+    auto access = extract_json_string_field(json, "AccessKeyId", 1024U);
+    auto secret = extract_json_string_field(json, "SecretAccessKey", 4096U);
+    auto session = extract_json_string_field(json, "Token", 8192U);
+    auto expiration = extract_json_string_field(json, "Expiration", 64U);
+    if (!code.has_value() || *code != "Success" || !access.has_value() || !secret.has_value() ||
+        !session.has_value() || !expiration.has_value()) {
+      return common::make_unexpected(common::Status{common::StatusCode::kUnauthenticated,
+                                                    "IMDSv2 credential response is invalid"});
+    }
+    auto expires_at = parse_utc_expiration(*expiration);
+    S3Credentials credentials{.access_key_id = std::move(*access),
+                              .secret_access_key = std::move(*secret),
+                              .session_token = std::move(*session)};
+    if (!expires_at.has_value() || !valid_credentials(credentials) ||
+        *expires_at <= std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now())) {
+      return common::make_unexpected(common::Status{common::StatusCode::kUnauthenticated,
+                                                    "IMDSv2 credentials are expired or invalid"});
+    }
+    return Cached{.credentials = std::move(credentials), .expiration = *expires_at};
+  }
+
+  S3InstanceCredentialProviderConfig config;
+  mutable std::mutex mutex;
+  std::optional<Cached> cached;
+};
+
+S3InstanceCredentialProvider::S3InstanceCredentialProvider(std::unique_ptr<Impl> impl) noexcept
+    : impl_(std::move(impl)) {}
+S3InstanceCredentialProvider::~S3InstanceCredentialProvider() = default;
+
+common::Result<std::shared_ptr<S3InstanceCredentialProvider>>
+S3InstanceCredentialProvider::create(S3InstanceCredentialProviderConfig config) {
+  const bool endpoint_valid = config.endpoint == "http://169.254.169.254" ||
+                              config.endpoint == "http://[fd00:ec2::254]" ||
+                              !config.require_link_local_endpoint;
+  const std::size_t scheme_length = std::string_view{"http://"}.size();
+  const auto maximum_long = std::chrono::milliseconds{std::numeric_limits<long>::max()};
+  if (!config.endpoint.starts_with("http://") || !endpoint_valid ||
+      config.endpoint.size() <= scheme_length || config.endpoint[scheme_length] == '/' ||
+      config.endpoint.size() > 1024U || config.endpoint.contains('@') ||
+      config.endpoint.contains('?') || config.endpoint.contains('#') ||
+      config.endpoint.substr(scheme_length).contains('/') || contains_control(config.endpoint) ||
+      contains_space(config.endpoint) || config.connect_timeout.count() <= 0 ||
+      config.connect_timeout > maximum_long || config.request_timeout.count() <= 0 ||
+      config.request_timeout > maximum_long || config.token_lifetime < std::chrono::seconds{1} ||
+      config.token_lifetime > std::chrono::hours{6} ||
+      config.refresh_before_expiration.count() < 0 ||
+      config.refresh_before_expiration > std::chrono::hours{24 * 7} ||
+      config.maximum_response_bytes == 0U || config.maximum_response_bytes > 1024U * 1024U) {
+    return common::make_unexpected(invalid("IMDSv2 credential provider configuration is invalid"));
+  }
+  if (initialize_curl() != CURLE_OK)
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInternal, "libcurl global initialization failed"});
+  try {
+    return std::shared_ptr<S3InstanceCredentialProvider>{
+        new S3InstanceCredentialProvider{std::make_unique<Impl>(std::move(config))}};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("IMDSv2 credential provider allocation failed"));
+  }
+}
+
+common::Result<S3Credentials>
+S3InstanceCredentialProvider::acquire(const S3CredentialRequest request) {
+  if (request != S3CredentialRequest::kCurrent && request != S3CredentialRequest::kRefresh)
+    return common::make_unexpected(invalid("S3 credential request is invalid"));
+  try {
+    std::scoped_lock lock{impl_->mutex};
+    const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    if (request == S3CredentialRequest::kCurrent && impl_->cached.has_value() &&
+        now + impl_->config.refresh_before_expiration < impl_->cached->expiration) {
+      return impl_->cached->credentials;
+    }
+    auto fetched = impl_->fetch();
+    if (!fetched.has_value())
+      return common::make_unexpected(fetched.error());
+    impl_->cached = std::move(*fetched);
+    return impl_->cached->credentials;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("IMDSv2 credential copy allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("IMDSv2 credential copy exceeds limits"));
+  }
+}
+
 class S3ObjectStore::Impl {
 public:
   enum class Method : std::uint8_t {

@@ -75,6 +75,7 @@ struct LocalS3Behavior {
   std::optional<std::string> head_encryption_override;
   std::optional<std::string> container_credential_response;
   std::optional<std::string> container_authorization;
+  std::optional<std::string> imdsv2_credential_response;
 };
 
 class LocalS3Server final {
@@ -234,6 +235,39 @@ private:
     {
       std::scoped_lock lock{mutex_};
       requests_.push_back(*request);
+    }
+    if (behavior_.imdsv2_credential_response.has_value()) {
+      if (request->method == "PUT" && request->target == "/latest/api/token" &&
+          request->headers.contains("x-aws-ec2-metadata-token-ttl-seconds")) {
+        static_cast<void>(send_all(
+            descriptor,
+            "HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: close\r\n\r\nfixture-token"));
+        return;
+      }
+      const auto token = request->headers.find("x-aws-ec2-metadata-token");
+      if (request->method != "GET" || token == request->headers.end() ||
+          token->second != "fixture-token") {
+        static_cast<void>(
+            send_all(descriptor,
+                     "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"));
+        return;
+      }
+      if (request->target == "/latest/meta-data/iam/security-credentials/") {
+        static_cast<void>(send_all(descriptor,
+                                   "HTTP/1.1 200 OK\r\nContent-Length: 12\r\nConnection: "
+                                   "close\r\n\r\nfixture-role"));
+        return;
+      }
+      if (request->target == "/latest/meta-data/iam/security-credentials/fixture-role") {
+        const std::string& body = *behavior_.imdsv2_credential_response;
+        static_cast<void>(send_all(
+            descriptor, "HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(body.size()) +
+                            "\r\nConnection: close\r\n\r\n" + body));
+        return;
+      }
+      static_cast<void>(send_all(
+          descriptor, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"));
+      return;
     }
     if (behavior_.container_credential_response.has_value()) {
       const auto authorization = request->headers.find("authorization");
@@ -925,6 +959,57 @@ TEST(S3ContainerCredentialProviderTest, RejectsMalformedResponseAndInsecureDefau
   ASSERT_FALSE(rejected.has_value());
   EXPECT_FALSE(rejected.error().to_string().contains("secret"));
   EXPECT_TRUE(credential_server.failure().empty()) << credential_server.failure();
+}
+
+TEST(S3InstanceCredentialProviderTest, UsesImdsv2CachesAndRefreshesTemporaryCredentials) {
+  const std::string response =
+      "{\"Code\":\"Success\",\"AccessKeyId\":\"instance-access\","
+      "\"SecretAccessKey\":\"instance-secret\",\"Token\":\"instance-token\","
+      "\"Expiration\":\"" +
+      future_iso_expiration() + "\"}";
+  LocalS3Server metadata_server{LocalS3Behavior{.imdsv2_credential_response = response}};
+  ASSERT_TRUE(metadata_server.valid()) << metadata_server.failure();
+  S3InstanceCredentialProviderConfig config{.endpoint = "http://127.0.0.1:" +
+                                                        std::to_string(metadata_server.port()),
+                                            .connect_timeout = std::chrono::milliseconds{1'000},
+                                            .request_timeout = std::chrono::milliseconds{2'000},
+                                            .require_link_local_endpoint = false};
+  auto provider = S3InstanceCredentialProvider::create(config);
+  ASSERT_TRUE(provider.has_value()) << provider.error().to_string();
+
+  auto current = (*provider)->acquire(S3CredentialRequest::kCurrent);
+  ASSERT_TRUE(current.has_value()) << current.error().to_string();
+  EXPECT_EQ(current->access_key_id, "instance-access");
+  ASSERT_TRUE(current->session_token.has_value());
+  EXPECT_EQ(*current->session_token, "instance-token");
+  ASSERT_TRUE((*provider)->acquire(S3CredentialRequest::kCurrent).has_value());
+  EXPECT_EQ(metadata_server.requests().size(), 3U);
+  ASSERT_TRUE((*provider)->acquire(S3CredentialRequest::kRefresh).has_value());
+  const auto requests = metadata_server.requests();
+  ASSERT_EQ(requests.size(), 6U);
+  EXPECT_EQ(requests[0].method, "PUT");
+  EXPECT_EQ(requests[0].target, "/latest/api/token");
+  EXPECT_EQ(requests[0].headers.at("x-aws-ec2-metadata-token-ttl-seconds"), "21600");
+  EXPECT_EQ(requests[1].headers.at("x-aws-ec2-metadata-token"), "fixture-token");
+  EXPECT_EQ(requests[2].target, "/latest/meta-data/iam/security-credentials/fixture-role");
+  EXPECT_TRUE(metadata_server.failure().empty()) << metadata_server.failure();
+}
+
+TEST(S3InstanceCredentialProviderTest, RejectsNonLinkLocalAndInvalidLimits) {
+  S3InstanceCredentialProviderConfig config{.endpoint = "http://127.0.0.1:1234",
+                                            .connect_timeout = std::chrono::milliseconds{100},
+                                            .request_timeout = std::chrono::milliseconds{200}};
+  auto rejected = S3InstanceCredentialProvider::create(config);
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kInvalidArgument);
+
+  config.endpoint = "http://user:secret@169.254.169.254";
+  rejected = S3InstanceCredentialProvider::create(config);
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_FALSE(rejected.error().to_string().contains("secret"));
+  config.endpoint = "http://169.254.169.254";
+  config.token_lifetime = std::chrono::hours{7};
+  EXPECT_FALSE(S3InstanceCredentialProvider::create(std::move(config)).has_value());
 }
 
 TEST(S3ObjectStoreTest, SignsConditionalPutVerifiesRetryAndReadsExactRange) {

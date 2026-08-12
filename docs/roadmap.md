@@ -947,15 +947,16 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   and failure-path abort. Upload admission now
   performs full Manifest-v1 CSEG validation against the exact schema, tablet, part descriptor, and
   WAL source before any remote request or manifest callback. Other query paths,
-  high-concurrency stress and instance provider integration remain deferred.
+  high-concurrency stress and live provider qualification remain deferred.
   An explicit built-in environment provider now snapshots and validates the standard AWS access
   key, secret, and optional session token without implicit precedence or unsafe refresh. The
   explicit ordered chain advances only past `NOT_FOUND`, pins its first identity, and cannot fall
   through after authorization rejection. An explicit ECS/EKS-compatible container provider fetches
   bounded temporary credentials from one reviewed endpoint and refreshes before expiration without
-  ambient proxy/redirect policy. The carrier disables ambient proxy variables; one bounded
-  credential-free HTTP(S) proxy requires
-  explicit configuration and cannot be bypassed by ambient `no_proxy`. Optional explicit SSE-S3 or
+  ambient proxy/redirect policy. An explicit EC2 provider uses IMDSv2 token, role, and credential
+  requests against link-local authorities only by default, with no IMDSv1 fallback. The carrier
+  disables ambient proxy variables; one bounded credential-free HTTP(S) proxy requires explicit
+  configuration and cannot be bypassed by ambient `no_proxy`. Optional explicit SSE-S3 or
   SSE-KMS policy is signed on object creation and exact HEAD verification rejects missing,
   wrong-mode, or wrong-KMS-key metadata before immutable content is accepted. The signed
   conditional-write path has focused two-client races proving equal-identity convergence and

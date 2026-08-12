@@ -234,6 +234,40 @@ private:
   std::unique_ptr<Impl> impl_;
 };
 
+struct S3InstanceCredentialProviderConfig {
+  std::string endpoint{"http://169.254.169.254"};
+  std::chrono::milliseconds connect_timeout{500};
+  std::chrono::milliseconds request_timeout{1'000};
+  std::chrono::seconds token_lifetime{21'600};
+  std::chrono::seconds refresh_before_expiration{300};
+  std::size_t maximum_response_bytes{64U * 1024U};
+  // Production keeps this true. The false setting exists for isolated loopback-compatible tests
+  // and explicitly reviewed metadata proxies.
+  bool require_link_local_endpoint{true};
+};
+
+// Explicit EC2 instance-role provider using IMDSv2 only. It never falls back to IMDSv1, follows a
+// redirect, or inherits a proxy. Token, role name, and temporary credentials are bounded and cached
+// under one mutex.
+class S3InstanceCredentialProvider final : public S3CredentialProvider {
+public:
+  S3InstanceCredentialProvider() = delete;
+  ~S3InstanceCredentialProvider() override;
+  S3InstanceCredentialProvider(const S3InstanceCredentialProvider&) = delete;
+  S3InstanceCredentialProvider& operator=(const S3InstanceCredentialProvider&) = delete;
+  S3InstanceCredentialProvider(S3InstanceCredentialProvider&&) = delete;
+  S3InstanceCredentialProvider& operator=(S3InstanceCredentialProvider&&) = delete;
+
+  [[nodiscard]] static common::Result<std::shared_ptr<S3InstanceCredentialProvider>>
+  create(S3InstanceCredentialProviderConfig config = {});
+  [[nodiscard]] common::Result<S3Credentials> acquire(S3CredentialRequest request) override;
+
+private:
+  class Impl;
+  explicit S3InstanceCredentialProvider(std::unique_ptr<Impl> impl) noexcept;
+  std::unique_ptr<Impl> impl_;
+};
+
 // Synchronous S3-compatible HTTPS backend. Each operation owns an independent libcurl easy handle,
 // so callers may invoke const and non-const operations concurrently. Requests use SigV4, never
 // follow redirects, enforce finite timeouts and response bounds, and use If-None-Match for

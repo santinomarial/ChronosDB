@@ -20,6 +20,9 @@ requests so authorization rejection cannot downgrade credentials.
 agents: it owns one reviewed endpoint/token/CA/timeout policy, parses bounded temporary credentials,
 and caches them only outside an expiration refresh window. It never reads environment or token files
 and never inherits redirects or proxies.
+`S3InstanceCredentialProvider` is the explicit EC2 option. It accepts only documented link-local
+authorities by default, uses a complete IMDSv2 token/role/credential sequence with no v1 fallback,
+and caches rotating credentials under the same expiration-window rule.
 `stat` and `get_range` are const and each attempt owns a fresh libcurl easy handle, credential
 value, signature, header list, and bounded response buffer. The store itself is therefore safe for
 concurrent calls, while destruction still requires ordinary external lifetime exclusion.
@@ -86,7 +89,7 @@ bound. Multipart retains borrowed object bytes plus `O(part count)` ETags and co
 bounded number of simultaneous handles. Every attempt currently creates one easy handle and the
 public call is synchronous; connection pooling and the libcurl multi interface remain deferred.
 Workload,
-instance-metadata and shared-file providers remain deferred.
+Shared-file credential providers remain deferred.
 
 Operators should grant only `PutObject`, multipart create/upload/complete/abort,
 `HeadObject`/`GetObject`, ranged `GetObject`, and conditional `DeleteObject` access for the configured
