@@ -36,6 +36,11 @@
   coordinator/protocol contract. Forced failures across multi-chunk result collection, broad type
   matrices, production ingest fan-out, incremental stateful-plan routing, and daemon delivery remain
   integration work.
+- Single-node applied-append observation: the native ingest and SQL INSERT product paths now share
+  one database-owned executor seam, and focused coverage proves that one applied mutation notifies
+  while its matching retry does not. Multiple registered-plan fan-out, evaluator failure
+  containment/metrics, disconnect races, replay/startup interleavings, and sustained observer cost
+  remain integration and Phase 18 work.
 - Commits injected at every historical-to-live handoff step across real snapshot execution.
 - Cross-tablet-owner wiring around the implemented canonical vector/admission-order coordinator,
   topology transitions, multi-plan retention registration/retirement, service SQL/plan-to-input

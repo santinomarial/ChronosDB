@@ -68,6 +68,17 @@ private:
   std::uint8_t next_;
 };
 
+class RecordingCommittedAppendObserver final : public SingleNodeCommittedAppendObserver {
+public:
+  void on_applied(AppliedSingleNodeColumnarAppend append) noexcept override {
+    ++notifications;
+    last.emplace(std::move(append));
+  }
+
+  std::size_t notifications{};
+  std::optional<AppliedSingleNodeColumnarAppend> last;
+};
+
 [[nodiscard]] common::Uuid uuid(const std::uint8_t seed) {
   common::Uuid::Bytes bytes{};
   bytes.front() = static_cast<std::byte>(seed);
@@ -306,13 +317,11 @@ TEST(SingleNodeDatabaseTest, RecoversCatalogWalRowsAndVectorQueryVisibility) {
   ASSERT_TRUE(database.has_value()) << database.error().to_string();
   ASSERT_EQ(database->query_catalog()->tables().size(), 1U);
   ASSERT_NE(database->find_tablet(tablet_id()), nullptr);
-  const auto appended = ingest::execute_columnar_append(
-      {.client_id = ingest::test::request_id<ingest::ClientId>(1U),
-       .client_batch_id = ingest::test::request_id<ingest::ClientBatchId>(2U),
-       .batch = batch(),
-       .durability = wal::WalDurabilityMode::kLocalSync},
-      database->retry_directory(), *database->find_tablet(tablet_id()),
-      database->wal_coordinator());
+  const auto appended = database->execute_append(
+      tablet_id(), {.client_id = ingest::test::request_id<ingest::ClientId>(1U),
+                    .client_batch_id = ingest::test::request_id<ingest::ClientBatchId>(2U),
+                    .batch = batch(),
+                    .durability = wal::WalDurabilityMode::kLocalSync});
   ASSERT_TRUE(appended.has_value()) << appended.error().to_string();
   EXPECT_EQ(query_count(*database), 2);
   ASSERT_TRUE(database->shutdown().is_ok());
@@ -327,7 +336,10 @@ TEST(SingleNodeDatabaseTest, RecoversCatalogWalRowsAndVectorQueryVisibility) {
 TEST(NativeProtocolServiceTest, AppliesLocalSyncIngestAndReturnsPositionlessMatchingRetry) {
   TemporaryDirectory directory;
   seed_catalog(directory);
-  auto database = SingleNodeDatabase::open_or_create(config(directory));
+  RecordingCommittedAppendObserver observer;
+  SingleNodeDatabaseConfig database_config = config(directory);
+  database_config.committed_append_observer = &observer;
+  auto database = SingleNodeDatabase::open_or_create(std::move(database_config));
   ASSERT_TRUE(database.has_value()) << database.error().to_string();
   NativeProtocolService service{*database};
 
@@ -343,6 +355,12 @@ TEST(NativeProtocolServiceTest, AppliesLocalSyncIngestAndReturnsPositionlessMatc
   EXPECT_EQ(applied_ack->outcome, network::IngestOutcome::kApplied);
   EXPECT_NE(applied_ack->record_sequence, 0U);
   EXPECT_NE(applied_ack->segment_number, 0U);
+  ASSERT_EQ(observer.notifications, 1U);
+  ASSERT_TRUE(observer.last.has_value());
+  EXPECT_EQ(observer.last->tablet_id, tablet_id());
+  EXPECT_EQ(observer.last->position.record_sequence, applied_ack->record_sequence);
+  EXPECT_EQ(observer.last->batch->row_count(), 2U);
+  EXPECT_EQ(observer.last->outcome->record_sequence, applied_ack->record_sequence);
 
   auto matching = service.execute_ingest(ingest_task(3U, network::DurabilityMode::kAsync));
   ASSERT_TRUE(matching.has_value()) << matching.error().to_string();
@@ -354,6 +372,7 @@ TEST(NativeProtocolServiceTest, AppliesLocalSyncIngestAndReturnsPositionlessMatc
   EXPECT_EQ(matching_ack->record_sequence, 0U);
   EXPECT_EQ(matching_ack->segment_number, 0U);
   EXPECT_EQ(matching_ack->byte_offset, 0U);
+  EXPECT_EQ(observer.notifications, 1U);
   EXPECT_EQ(database->find_tablet(tablet_id())->snapshot()->visible_row_count(), 2U);
 
   auto query = service.execute_query(query_task(40U, "SELECT count(*) AS rows FROM events"));
@@ -498,13 +517,13 @@ TEST(NativeProtocolServiceTest, ConvertsBoundedQueryOverflowToOneTerminalError) 
   seed_catalog(directory);
   auto database = SingleNodeDatabase::open_or_create(config(directory));
   ASSERT_TRUE(database.has_value()) << database.error().to_string();
-  ASSERT_TRUE(ingest::execute_columnar_append(
-                  {.client_id = ingest::test::request_id<ingest::ClientId>(1U),
-                   .client_batch_id = ingest::test::request_id<ingest::ClientBatchId>(2U),
-                   .batch = batch()},
-                  database->retry_directory(), *database->find_tablet(tablet_id()),
-                  database->wal_coordinator())
-                  .has_value());
+  ASSERT_TRUE(
+      database
+          ->execute_append(tablet_id(),
+                           {.client_id = ingest::test::request_id<ingest::ClientId>(1U),
+                            .client_batch_id = ingest::test::request_id<ingest::ClientBatchId>(2U),
+                            .batch = batch()})
+          .has_value());
   ASSERT_TRUE(database->flush_ready_heads().has_value());
   NativeProtocolServiceLimits limits;
   limits.maximum_result_rows = 1U;

@@ -244,13 +244,15 @@ public:
        std::shared_ptr<const query::QueryCatalogSnapshot> configured_query_catalog,
        manifest::RecoveredManifestColumnarState configured_recovered,
        std::vector<TabletFlushOwner> configured_flush_owners,
-       std::vector<FreshTablet> configured_fresh, wal::WalCommitCoordinator configured_wal) noexcept
+       std::vector<FreshTablet> configured_fresh, wal::WalCommitCoordinator configured_wal,
+       SingleNodeCommittedAppendObserver* configured_observer) noexcept
       : bootstrap_owner(std::move(configured_bootstrap)), raft_runtime(std::move(configured_raft)),
         metadata(std::move(configured_metadata)), catalog(std::move(configured_catalog)),
         tables(std::move(configured_tables)), query_catalog(std::move(configured_query_catalog)),
         recovered(std::move(configured_recovered)),
         flush_owners(std::move(configured_flush_owners)),
-        fresh_tablets(std::move(configured_fresh)), wal_coordinator(std::move(configured_wal)) {}
+        fresh_tablets(std::move(configured_fresh)), wal_coordinator(std::move(configured_wal)),
+        committed_append_observer(configured_observer) {}
 
   [[nodiscard]] common::Status refresh_catalog() {
     auto projected = metadata.state().catalog_snapshot();
@@ -286,6 +288,7 @@ public:
   std::vector<TabletFlushOwner> flush_owners;
   std::vector<FreshTablet> fresh_tablets;
   wal::WalCommitCoordinator wal_coordinator;
+  SingleNodeCommittedAppendObserver* committed_append_observer{};
   bool shutdown{};
 };
 
@@ -497,7 +500,8 @@ SingleNodeDatabase::open_or_create(SingleNodeDatabaseConfig config) {
     return SingleNodeDatabase{std::make_unique<Impl>(
         std::move(*bootstrap), std::move(stable_raft), std::move(*metadata), std::move(*catalog),
         std::move(*tables), std::move(query_catalog), std::move(*recovered),
-        std::move(flush_owners), std::vector<FreshTablet>{}, std::move(*coordinator))};
+        std::move(flush_owners), std::vector<FreshTablet>{}, std::move(*coordinator),
+        config.committed_append_observer)};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("single-node database allocation failed"));
   } catch (const std::length_error&) {
@@ -568,11 +572,38 @@ SingleNodeDatabase::table_snapshots(const schema::TableId& table_id) const {
     return common::make_unexpected(exhausted("tablet snapshot count exceeds container limits"));
   }
 }
-ingest::RetryDirectory& SingleNodeDatabase::retry_directory() noexcept {
-  return impl_->recovered->retry_directory();
-}
-wal::WalCommitCoordinator& SingleNodeDatabase::wal_coordinator() noexcept {
-  return impl_->wal_coordinator;
+common::Result<ingest::ColumnarAppendExecutionResult>
+SingleNodeDatabase::execute_append(const schema::TabletId tablet_id,
+                                   ingest::ColumnarAppendExecutionInput input) {
+  if (impl_ == nullptr || impl_->shutdown || !impl_->recovered.has_value())
+    return common::make_unexpected(invalid("single-node append storage is unavailable"));
+  if (input.batch == nullptr)
+    return common::make_unexpected(invalid("single-node append requires an owning batch"));
+  ingest::TabletState* const tablet = find_tablet(tablet_id);
+  if (tablet == nullptr)
+    return common::make_unexpected(invalid("single-node append tablet is not local"));
+  auto before = tablet->snapshot();
+  if (!before.has_value())
+    return common::make_unexpected(before.error());
+  if (before->table_id() != input.batch->schema().table_id() || before->tablet_id() != tablet_id)
+    return common::make_unexpected(invalid("single-node append batch is routed to another tablet"));
+
+  std::shared_ptr<const columnar::OwnedColumnarBatch> retained_batch = input.batch;
+  auto executed = ingest::execute_columnar_append(input, impl_->recovered->retry_directory(),
+                                                  *tablet, impl_->wal_coordinator);
+  if (!executed.has_value())
+    return common::make_unexpected(executed.error());
+  if (executed->kind == ingest::ColumnarAppendExecutionKind::kApplied &&
+      impl_->committed_append_observer != nullptr && executed->wal_commit.has_value() &&
+      executed->outcome != nullptr) {
+    impl_->committed_append_observer->on_applied(
+        {.tablet_id = tablet_id,
+         .position = {.wal_id = executed->wal_commit->append.record_start.wal_id,
+                      .record_sequence = executed->wal_commit->append.record_sequence},
+         .batch = std::move(retained_batch),
+         .outcome = executed->outcome});
+  }
+  return executed;
 }
 common::Result<manifest::DatabaseStorageSnapshot> SingleNodeDatabase::storage_snapshot() const {
   if (impl_ == nullptr || !impl_->recovered.has_value())

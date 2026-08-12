@@ -3,6 +3,7 @@
 
 #include "chronos/common/result.hpp"
 #include "chronos/common/status.hpp"
+#include "chronos/ingest/columnar_append_executor.hpp"
 #include "chronos/ingest/retry_directory.hpp"
 #include "chronos/ingest/tablet_state.hpp"
 #include "chronos/manifest/publication.hpp"
@@ -27,11 +28,32 @@
 
 namespace chronos::service {
 
+struct AppliedSingleNodeColumnarAppend {
+  schema::TabletId tablet_id;
+  head::HeadCommitPosition position;
+  std::shared_ptr<const columnar::OwnedColumnarBatch> batch;
+  std::shared_ptr<const ingest::ColumnarAppendRetryOutcome> outcome;
+};
+
+// Thread-affine post-apply notification. The observer is borrowed by SingleNodeDatabase and must
+// outlive it. It cannot reject an already committed mutation or throw through the write path;
+// downstream live overload/failure must terminate or overflow affected subscriptions internally.
+class SingleNodeCommittedAppendObserver {
+public:
+  SingleNodeCommittedAppendObserver() = default;
+  SingleNodeCommittedAppendObserver(const SingleNodeCommittedAppendObserver&) = delete;
+  SingleNodeCommittedAppendObserver& operator=(const SingleNodeCommittedAppendObserver&) = delete;
+  virtual ~SingleNodeCommittedAppendObserver() = default;
+
+  virtual void on_applied(AppliedSingleNodeColumnarAppend append) noexcept = 0;
+};
+
 struct SingleNodeDatabaseConfig {
   runtime::DatabaseBootstrapConfig bootstrap;
   wal::WalRecoveryOptions wal_recovery{};
   raft::RaftPersistentLogOpenOptions raft_recovery{};
   wal::WalCommitCoordinatorConfig wal_commit{};
+  SingleNodeCommittedAppendObserver* committed_append_observer{};
 };
 
 struct NewTableIdentities {
@@ -85,8 +107,11 @@ public:
   // metadata placement order. The returned pins are independent of later tablet publications.
   [[nodiscard]] common::Result<std::vector<ingest::TabletSnapshot>>
   table_snapshots(const schema::TableId& table_id) const;
-  [[nodiscard]] ingest::RetryDirectory& retry_directory() noexcept;
-  [[nodiscard]] wal::WalCommitCoordinator& wal_coordinator() noexcept;
+  // The sole product-path append boundary. Routing is validated before WAL admission. A newly
+  // committed/applied mutation notifies the configured observer exactly once; a matching retry
+  // returns its original outcome without another notification.
+  [[nodiscard]] common::Result<ingest::ColumnarAppendExecutionResult>
+  execute_append(schema::TabletId tablet_id, ingest::ColumnarAppendExecutionInput input);
   [[nodiscard]] common::Result<manifest::DatabaseStorageSnapshot> storage_snapshot() const;
   [[nodiscard]] common::Result<std::unique_ptr<query::PhysicalOperator>> instantiate_table_pipeline(
       const query::QueryResourceContext& resources, const schema::TableId& table_id,

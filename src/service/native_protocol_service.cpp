@@ -352,12 +352,11 @@ NativeProtocolService::execute_ingest(network::NetworkTask request) {
   if (!batch.has_value())
     return error_response(std::move(request), batch.error(), limits_.protocol);
 
-  auto executed = ingest::execute_columnar_append(
-      {.client_id = command->client_id(),
-       .client_batch_id = command->client_batch_id(),
-       .batch = std::move(*batch),
-       .durability = wal_durability(envelope->durability)},
-      database_->retry_directory(), *tablet, database_->wal_coordinator());
+  auto executed = database_->execute_append(command->tablet_id(),
+                                            {.client_id = command->client_id(),
+                                             .client_batch_id = command->client_batch_id(),
+                                             .batch = std::move(*batch),
+                                             .durability = wal_durability(envelope->durability)});
   if (!executed.has_value())
     return error_response(std::move(request), executed.error(), limits_.protocol);
   auto flushed = database_->flush_ready_heads();
@@ -512,12 +511,11 @@ NativeProtocolService::execute_query(network::NetworkTask request) {
       const std::uint32_t applied_rows = owned_batch->row_count();
       auto retained_batch =
           std::make_shared<const columnar::OwnedColumnarBatch>(std::move(*owned_batch));
-      auto executed = ingest::execute_columnar_append(
-          {.client_id = *client_id,
-           .client_batch_id = *client_batch_id,
-           .batch = std::move(retained_batch),
-           .durability = wal::WalDurabilityMode::kLocalSync},
-          database_->retry_directory(), *tablet, database_->wal_coordinator());
+      auto executed = database_->execute_append(snapshots->front().tablet_id(),
+                                                {.client_id = *client_id,
+                                                 .client_batch_id = *client_batch_id,
+                                                 .batch = std::move(retained_batch),
+                                                 .durability = wal::WalDurabilityMode::kLocalSync});
       if (!executed.has_value())
         return query_error(target, executed.error(), limits_.protocol);
       auto flushed = database_->flush_ready_heads();

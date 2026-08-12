@@ -5,8 +5,8 @@
 `SingleNodeDatabase` is the first owner that turns existing ChronosDB subsystems into one recoverable
 database lifetime. The startup config supplies an existing root plus proposed values used only if no
 final bootstrap exists. After success, callers can inspect the immutable query catalog, find a table
-lineage or tablet, execute appends through the global retry directory and WAL coordinator, and take
-tablet snapshots for vector query execution.
+lineage or tablet, execute routed appends through one database-owned method, and take tablet
+snapshots for vector query execution.
 
 For a pre-Manifest root, the owner opens the WAL only long enough to validate it and obtain its
 durable identity, then installs exact empty generation 1. Every live startup proceeds through
@@ -22,10 +22,16 @@ durable identities before completing publication.
 
 `NativeProtocolService` supplies the first transport-to-owner boundary. It exactly decodes an
 accepted Protocol v1 ingest request, resolves only the active durable schema and local tablet, copies
-borrowed canonical column buffers into immutable ownership, and executes through the same retry
-directory and WAL coordinator used by direct callers. A new append acknowledges its real WAL record
-start and exact requested/effective durability. A matching retry performs no second WAL operation
-and therefore returns zero position fields.
+borrowed canonical column buffers into immutable ownership, and executes through the database-owned
+append boundary. A new append acknowledges its real WAL record start and exact requested/effective
+durability. A matching retry performs no second WAL operation and therefore returns zero position
+fields.
+
+The append boundary retains the immutable input until the executor returns. Only `kApplied` invokes
+the optional borrowed committed-append observer, with the exact tablet/WAL position and committed
+outcome. Failed work and matching retries never notify. The callback cannot change an already
+committed result and must contain live overload or evaluation failure internally rather than throw
+or report a false write failure.
 
 For SELECT, the same adapter parses and binds against the owner's immutable catalog, acquires one
 aggregate Manifest publication, lowers the supported unary or ASOF SQL subset, and places each
@@ -110,6 +116,9 @@ shared schema/catalog ownership and already-instantiated head scans keep generat
 SQL INSERT is also thread-affine and rejects multi-tablet targets rather than guessing event-time or
 shard routing. Parser, binder, columnar, WAL, head, and response bounds fail before success is
 reported; after WAL begins, the append executor's existing fail-closed rules remain authoritative.
+The configured committed-append observer must outlive the database and is called on the same owner
+thread. Database startup replay completes before the observer can receive online work and does not
+re-emit historical notifications.
 
 ## Complexity, tradeoffs, and review questions
 
