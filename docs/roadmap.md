@@ -944,7 +944,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   `If-None-Match: *`, exact final HEAD verification, and failure-path abort. Upload admission now
   performs full Manifest-v1 CSEG validation against the exact schema, tablet, part descriptor, and
   WAL source before any remote request or manifest callback. WAL-local deletion, other query paths,
-  parallel multipart scheduling, and built-in provider-chain integrations remain deferred. An
+  parallel multipart scheduling, and workload/instance provider-chain integrations remain deferred.
+  An explicit built-in environment provider now snapshots and validates the standard AWS access
+  key, secret, and optional session token without implicit precedence or unsafe refresh. An
   optional Apache Arrow/Parquet provider now imports and exports files through an exact
   caller-supplied schema, maps all
   current logical types, bounds source/final canonical storage, rejects corruption and mismatch,

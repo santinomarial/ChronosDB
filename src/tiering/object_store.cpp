@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <curl/curl.h>
 #include <limits>
 #include <map>
@@ -300,6 +301,21 @@ struct ResponseCapture {
            !contains_space(*credentials.session_token)));
 }
 
+[[nodiscard]] common::Result<std::optional<std::string>>
+copy_environment_value(const char* name, const std::size_t maximum_length) {
+  const char* value = std::getenv(name);
+  if (value == nullptr || *value == '\0')
+    return std::optional<std::string>{};
+  std::size_t length{};
+  while (length <= maximum_length && value[length] != '\0')
+    ++length;
+  if (length > maximum_length) {
+    return common::make_unexpected(common::Status{common::StatusCode::kUnauthenticated,
+                                                  "AWS environment credential exceeds its bound"});
+  }
+  return std::optional<std::string>{std::in_place, value, length};
+}
+
 [[nodiscard]] common::Result<std::string> extract_xml_element(const common::ByteView bytes,
                                                               const std::string_view element,
                                                               const std::size_t maximum_length) {
@@ -524,6 +540,56 @@ MemoryObjectStore::remove_if_exact(const std::string_view key, const std::size_t
   }
   impl_->objects.erase(found);
   return ObjectDeletionReport{.removed = true};
+}
+
+S3EnvironmentCredentialProvider::S3EnvironmentCredentialProvider(S3Credentials credentials) noexcept
+    : credentials_(std::move(credentials)) {}
+
+common::Result<std::shared_ptr<S3EnvironmentCredentialProvider>>
+S3EnvironmentCredentialProvider::create() {
+  try {
+    auto access_key_id = copy_environment_value("AWS_ACCESS_KEY_ID", 1024U);
+    auto secret_access_key = copy_environment_value("AWS_SECRET_ACCESS_KEY", 4096U);
+    auto session_token = copy_environment_value("AWS_SESSION_TOKEN", 8192U);
+    if (!access_key_id.has_value())
+      return common::make_unexpected(access_key_id.error());
+    if (!secret_access_key.has_value())
+      return common::make_unexpected(secret_access_key.error());
+    if (!session_token.has_value())
+      return common::make_unexpected(session_token.error());
+    S3Credentials credentials{.access_key_id = access_key_id->value_or(std::string{}),
+                              .secret_access_key = secret_access_key->value_or(std::string{}),
+                              .session_token = std::move(*session_token)};
+    if (!valid_credentials(credentials)) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kUnauthenticated,
+                         "AWS environment credentials are missing, incomplete, or invalid"});
+    }
+    return std::shared_ptr<S3EnvironmentCredentialProvider>{
+        new S3EnvironmentCredentialProvider{std::move(credentials)}};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("AWS environment credential allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("AWS environment credentials exceed limits"));
+  }
+}
+
+common::Result<S3Credentials>
+S3EnvironmentCredentialProvider::acquire(const S3CredentialRequest request) {
+  if (request == S3CredentialRequest::kRefresh) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kUnauthenticated,
+        "AWS environment credentials cannot refresh; recreate the provider after rotation"});
+  }
+  if (request != S3CredentialRequest::kCurrent)
+    return common::make_unexpected(invalid("S3 credential request is invalid"));
+  try {
+    return credentials_;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("AWS environment credential copy allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("AWS environment credential copy exceeds limits"));
+  }
 }
 
 class S3ObjectStore::Impl {

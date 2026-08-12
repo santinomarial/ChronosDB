@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <gtest/gtest.h>
 #include <map>
 #include <mutex>
@@ -479,6 +480,44 @@ private:
   std::vector<S3CredentialRequest> requests_;
 };
 
+class ScopedAwsEnvironment final {
+public:
+  explicit ScopedAwsEnvironment(std::array<std::optional<std::string>, 3U> values)
+      : values_(std::move(values)) {
+    for (std::size_t index = 0U; index < names_.size(); ++index) {
+      if (const char* existing = std::getenv(names_[index].data()); existing != nullptr)
+        previous_[index] = existing;
+      const int result = values_[index].has_value()
+                             ? ::setenv(names_[index].data(), values_[index]->c_str(), 1)
+                             : ::unsetenv(names_[index].data());
+      valid_ = valid_ && result == 0;
+    }
+  }
+
+  ~ScopedAwsEnvironment() {
+    for (std::size_t index = 0U; index < names_.size(); ++index) {
+      if (previous_[index].has_value())
+        static_cast<void>(::setenv(names_[index].data(), previous_[index]->c_str(), 1));
+      else
+        static_cast<void>(::unsetenv(names_[index].data()));
+    }
+  }
+
+  ScopedAwsEnvironment(const ScopedAwsEnvironment&) = delete;
+  ScopedAwsEnvironment& operator=(const ScopedAwsEnvironment&) = delete;
+
+  [[nodiscard]] bool valid() const noexcept {
+    return valid_;
+  }
+
+private:
+  static constexpr std::array<std::string_view, 3U> names_{
+      "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"};
+  std::array<std::optional<std::string>, 3U> values_;
+  std::array<std::optional<std::string>, 3U> previous_;
+  bool valid_{true};
+};
+
 TEST(MemoryObjectStoreTest, ImmutablePutIsIdempotentAndRangesAreBounded) {
   MemoryObjectStore store;
   const std::vector<std::byte> bytes{std::byte{1U}, std::byte{2U}, std::byte{3U}};
@@ -504,6 +543,71 @@ TEST(MemoryObjectStoreTest, ImmutablePutIsIdempotentAndRangesAreBounded) {
   ASSERT_TRUE(retry.has_value());
   EXPECT_FALSE(retry->removed);
   EXPECT_TRUE(retry->already_absent);
+}
+
+TEST(S3EnvironmentCredentialProviderTest, SnapshotsStandardEnvironmentAndSignsRequests) {
+  ScopedAwsEnvironment environment{
+      {"environment-access", "environment-secret", "environment-token"}};
+  ASSERT_TRUE(environment.valid());
+  LocalS3Server server{
+      LocalS3Behavior{.access_key_id = "environment-access", .session_token = "environment-token"}};
+  ASSERT_TRUE(server.valid()) << server.failure();
+  auto provider = S3EnvironmentCredentialProvider::create();
+  ASSERT_TRUE(provider.has_value()) << provider.error().to_string();
+  ASSERT_EQ(::setenv("AWS_ACCESS_KEY_ID", "rotated-access", 1), 0);
+  ASSERT_EQ(::setenv("AWS_SECRET_ACCESS_KEY", "rotated-secret", 1), 0);
+  ASSERT_EQ(::setenv("AWS_SESSION_TOKEN", "rotated-token", 1), 0);
+  auto current = (*provider)->acquire(S3CredentialRequest::kCurrent);
+  ASSERT_TRUE(current.has_value());
+  EXPECT_EQ(current->access_key_id, "environment-access");
+  EXPECT_EQ(current->secret_access_key, "environment-secret");
+  ASSERT_TRUE(current->session_token.has_value());
+  EXPECT_EQ(*current->session_token, "environment-token");
+
+  S3ObjectStoreConfig config{.endpoint = "http://127.0.0.1:" + std::to_string(server.port()),
+                             .region = "us-east-1",
+                             .bucket = "chronos-test",
+                             .credential_provider = *provider,
+                             .connect_timeout = std::chrono::milliseconds{1'000},
+                             .request_timeout = std::chrono::milliseconds{2'000},
+                             .maximum_response_bytes = 1024U,
+                             .require_tls = false};
+  auto store = S3ObjectStore::create(std::move(config));
+  ASSERT_TRUE(store.has_value()) << store.error().to_string();
+  const std::vector<std::byte> bytes{std::byte{0x31U}};
+  const auto uploaded =
+      (*store)->put_if_absent("parts/environment", bytes, ingest::sha256(bytes).value());
+  ASSERT_TRUE(uploaded.has_value()) << uploaded.error().to_string();
+  const auto requests = server.requests();
+  ASSERT_EQ(requests.size(), 1U);
+  EXPECT_TRUE(
+      requests.front().headers.at("authorization").contains("Credential=environment-access/"));
+  EXPECT_EQ(requests.front().headers.at("x-amz-security-token"), "environment-token");
+
+  const auto refresh = (*provider)->acquire(S3CredentialRequest::kRefresh);
+  ASSERT_FALSE(refresh.has_value());
+  EXPECT_EQ(refresh.error().code(), common::StatusCode::kUnauthenticated);
+  EXPECT_TRUE(server.failure().empty()) << server.failure();
+}
+
+TEST(S3EnvironmentCredentialProviderTest, RejectsIncompleteEnvironmentWithoutLeakingSecrets) {
+  {
+    ScopedAwsEnvironment environment{{"environment-access", std::nullopt, std::nullopt}};
+    ASSERT_TRUE(environment.valid());
+    auto provider = S3EnvironmentCredentialProvider::create();
+    ASSERT_FALSE(provider.has_value());
+    EXPECT_EQ(provider.error().code(), common::StatusCode::kUnauthenticated);
+    EXPECT_FALSE(provider.error().to_string().contains("environment-access"));
+  }
+  {
+    const std::string overbound_access_key(1025U, 'x');
+    ScopedAwsEnvironment environment{{overbound_access_key, "environment-secret", std::nullopt}};
+    ASSERT_TRUE(environment.valid());
+    auto provider = S3EnvironmentCredentialProvider::create();
+    ASSERT_FALSE(provider.has_value());
+    EXPECT_EQ(provider.error().code(), common::StatusCode::kUnauthenticated);
+    EXPECT_FALSE(provider.error().to_string().contains(overbound_access_key));
+  }
 }
 
 TEST(S3ObjectStoreTest, SignsConditionalPutVerifiesRetryAndReadsExactRange) {

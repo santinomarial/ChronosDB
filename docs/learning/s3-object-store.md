@@ -10,7 +10,10 @@ eventually consistent or incomplete bucket listing must never determine query-vi
 
 `S3ObjectStore::create` owns its configuration and either owns static credentials or shares one
 caller-supplied credential provider. The provider may be called concurrently and owns its cache
-synchronization. `put_if_absent` borrows upload bytes only until the synchronous call returns.
+synchronization. `S3EnvironmentCredentialProvider` is one explicit built-in option: it snapshots
+the standard AWS access key, secret, and optional session-token variables once, rejects incomplete
+values, and stays immutable. `put_if_absent` borrows upload bytes only until the synchronous call
+returns.
 `stat` and `get_range` are const and each attempt owns a fresh libcurl easy handle, credential
 value, signature, header list, and bounded response buffer. The store itself is therefore safe for
 concurrent calls, while destruction still requires ordinary external lifetime exclusion.
@@ -61,14 +64,16 @@ Upload hashing and transfer are `O(object bytes)` and retain no second upload co
 constant response storage. A range read is `O(requested bytes)` and retains at most the configured
 bound. Multipart retains borrowed object bytes plus `O(part count)` ETags and completion XML. Every
 attempt currently creates one easy handle and is synchronous; connection pooling, the libcurl multi
-interface, parallel part scheduling, backoff jitter/`Retry-After`, and built-in provider
-implementations remain deferred.
+interface, parallel part scheduling, and backoff jitter/`Retry-After` remain deferred. Workload,
+instance-metadata, shared-file, and ordered-chain provider policies also remain deferred.
 
 Operators should grant only `PutObject`, multipart create/upload/complete/abort,
 `HeadObject`/`GetObject`, ranged `GetObject`, and conditional `DeleteObject` access for the configured
 prefix, enforce TLS, keep bucket policy compatible with `If-None-Match`, and configure incomplete
-multipart expiry. A provider can rotate credentials during the store lifetime;
-deployments using static fields must recreate the store to rotate them. Cold Location Manifest v1
+multipart expiry. A refreshable provider can rotate credentials during the store lifetime;
+deployments using static fields or the immutable environment snapshot must recreate the store to
+rotate them. Forced refresh of the environment provider fails closed rather than returning the
+server-rejected snapshot. Cold Location Manifest v1
 records the object key, store identity, and exact Manifest v2 part SHA-256; its durable
 installation, pair selection, and publication path is separate from the object backend. Bucket
 listings and ETags are not a replacement.

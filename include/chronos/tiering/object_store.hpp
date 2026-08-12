@@ -134,6 +134,28 @@ public:
   [[nodiscard]] virtual common::Result<S3Credentials> acquire(S3CredentialRequest request) = 0;
 };
 
+// Explicit opt-in provider for the standard AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and optional
+// AWS_SESSION_TOKEN variables. create() snapshots process environment once; acquire() is immutable
+// and thread-safe. The caller must exclude process-environment mutation while create() runs. A
+// forced refresh fails closed because concurrent environment mutation is not a supported
+// credential-rotation mechanism.
+class S3EnvironmentCredentialProvider final : public S3CredentialProvider {
+public:
+  S3EnvironmentCredentialProvider() = delete;
+  ~S3EnvironmentCredentialProvider() override = default;
+  S3EnvironmentCredentialProvider(const S3EnvironmentCredentialProvider&) = delete;
+  S3EnvironmentCredentialProvider& operator=(const S3EnvironmentCredentialProvider&) = delete;
+  S3EnvironmentCredentialProvider(S3EnvironmentCredentialProvider&&) = delete;
+  S3EnvironmentCredentialProvider& operator=(S3EnvironmentCredentialProvider&&) = delete;
+
+  [[nodiscard]] static common::Result<std::shared_ptr<S3EnvironmentCredentialProvider>> create();
+  [[nodiscard]] common::Result<S3Credentials> acquire(S3CredentialRequest request) override;
+
+private:
+  explicit S3EnvironmentCredentialProvider(S3Credentials credentials) noexcept;
+  S3Credentials credentials_;
+};
+
 // Synchronous S3-compatible HTTPS backend. Each operation owns an independent libcurl easy handle,
 // so callers may invoke const and non-const operations concurrently. Requests use SigV4, never
 // follow redirects, enforce finite timeouts and response bounds, and use If-None-Match for
