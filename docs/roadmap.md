@@ -741,8 +741,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   stream ownership now validates allocation-relevant fields before exact frame allocation and
   retains complete outbound bytes across short writes. An authenticated receiver now authorizes
   the claimed source, exact-matches the local destination, and admits the message through the
-  asynchronous durable runtime before exposing response bytes. Production mutual-TLS stream
-  scheduling, runtime timers, randomized simulation, and the full exit
+  asynchronous durable runtime before exposing response bytes. A persistent bounded inbound
+  mutual-TLS session now reads exact fragmented frames, admits one durable operation, and publishes
+  its complete result for embedding-owned routing. Outbound mutual-TLS pooling, runtime timers,
+  randomized simulation, and the full exit
   evidence remain deferred. Linearizable reads now use one bounded explicit current-term leadership
   probe, require a current-term committed entry, freeze stable or joint voter quorums at issuance,
   abandon pending work on leadership change, and return an exact committed read index that must be

@@ -530,22 +530,16 @@ common::Result<std::size_t> raft_transport_frame_length_v1(const common::ByteVie
 common::Result<std::vector<std::byte>>
 encode_raft_transport_envelope_v1(const RaftTransportEnvelope& envelope,
                                   const RaftTransportCodecLimits limits) {
-  if (!valid_limits(limits))
-    return common::make_unexpected(invalid("Raft transport codec limits are invalid"));
-  common::Status valid = validate_message(envelope, limits);
-  if (!valid.is_ok())
-    return common::make_unexpected(std::move(valid));
+  auto total_size = raft_transport_encoded_length_v1(envelope, limits);
+  if (!total_size.has_value())
+    return common::make_unexpected(total_size.error());
+  constexpr std::size_t kFraming = kRaftTransportHeaderSize + kRaftTransportTrailerSize;
+  const std::size_t payload_size = *total_size - kFraming;
   try {
-    auto size = message_payload_size(envelope.message, limits);
-    if (!size.has_value())
-      return common::make_unexpected(size.error());
-    constexpr std::size_t kFraming = kRaftTransportHeaderSize + kRaftTransportTrailerSize;
-    if (*size > limits.maximum_frame_bytes - kFraming)
-      return common::make_unexpected(exhausted("Raft transport frame exceeds its byte limit"));
-    auto payload = encode_payload(envelope.message, *size);
+    auto payload = encode_payload(envelope.message, payload_size);
     if (!payload.has_value())
       return common::make_unexpected(payload.error());
-    std::vector<std::byte> frame(kFraming + payload->size(), std::byte{0U});
+    std::vector<std::byte> frame(*total_size, std::byte{0U});
     common::ByteWriter writer{frame};
     common::Status status = common::Status::ok();
     advance(status, writer.write_exact(kMagic));
@@ -579,6 +573,23 @@ encode_raft_transport_envelope_v1(const RaftTransportEnvelope& envelope,
   } catch (const std::length_error&) {
     return common::make_unexpected(exhausted("Raft transport encoding exceeds container limits"));
   }
+}
+
+common::Result<std::size_t>
+raft_transport_encoded_length_v1(const RaftTransportEnvelope& envelope,
+                                 const RaftTransportCodecLimits limits) {
+  if (!valid_limits(limits))
+    return common::make_unexpected(invalid("Raft transport codec limits are invalid"));
+  common::Status valid = validate_message(envelope, limits);
+  if (!valid.is_ok())
+    return common::make_unexpected(std::move(valid));
+  auto size = message_payload_size(envelope.message, limits);
+  if (!size.has_value())
+    return common::make_unexpected(size.error());
+  constexpr std::size_t kFraming = kRaftTransportHeaderSize + kRaftTransportTrailerSize;
+  if (*size > limits.maximum_frame_bytes - kFraming)
+    return common::make_unexpected(exhausted("Raft transport frame exceeds its byte limit"));
+  return kFraming + *size;
 }
 
 common::Result<RaftTransportEnvelope>

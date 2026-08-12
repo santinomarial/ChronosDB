@@ -51,6 +51,10 @@ destinations before runtime admission; and surface an unknown group without term
 failure. Real mutual-TLS carrier scheduling, disconnect/retry ownership, output queue bounds,
 snapshot-install composition, and fault matrices remain in the Phase 18 ledger.
 
+**Retrospective note (2026-08-12):** [ADR 0247](0247-persistent-inbound-raft-mtls-carrier.md) composes
+the receiver with persistent bounded mutual-TLS input and publishes the complete durable result for
+embedding-owned routing and snapshot handling.
+
 ## References
 
 - [ADR 0243](0243-canonical-raft-transport-envelope.md)

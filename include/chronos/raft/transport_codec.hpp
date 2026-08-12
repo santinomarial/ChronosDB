@@ -42,6 +42,11 @@ encode_raft_transport_envelope_v1(const RaftTransportEnvelope& envelope,
 [[nodiscard]] common::Result<RaftTransportEnvelope>
 decode_raft_transport_envelope_v1(common::ByteView bytes, RaftTransportCodecLimits limits = {});
 
+// Applies every value and configured-size check used by the encoder without allocating bytes.
+[[nodiscard]] common::Result<std::size_t>
+raft_transport_encoded_length_v1(const RaftTransportEnvelope& envelope,
+                                 RaftTransportCodecLimits limits = {});
+
 // Validates one complete fixed header before returning its exact bounded frame length. This is the
 // allocation gate for stream carriers; payload and trailer integrity still require full decode.
 [[nodiscard]] common::Result<std::size_t>

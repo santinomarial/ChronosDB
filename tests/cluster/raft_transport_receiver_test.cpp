@@ -126,6 +126,25 @@ TEST(RaftTransportReceiverTest, RejectsTrustAndRouteFailuresBeforeRuntimeAdmissi
   EXPECT_EQ(metrics.admitted_batches, 0U);
   EXPECT_EQ(metrics.pending_batches, 0U);
   EXPECT_EQ(authorizer.calls, 2U);
+  auto small_receiver =
+      RaftTransportReceiver::create({.local_node_id = 2U,
+                                     .authorizer = &authorizer,
+                                     .runtime = &*runtime,
+                                     .codec_limits = {.maximum_entry_bytes = 1U}});
+  ASSERT_TRUE(small_receiver.has_value());
+  EXPECT_EQ(small_receiver
+                ->try_receive_decoded(
+                    {.group_id = group(),
+                     .source = 1U,
+                     .destination = 2U,
+                     .message =
+                         raft::AppendEntriesRequest{
+                             1U, 1U, 0U, 0U, {{1U, 1U, 1U, {std::byte{1U}, std::byte{2U}}}}, 0U}},
+                    {.authorized = true, .principal_id = 700U})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(runtime->metrics().admitted_batches, 0U);
   ASSERT_TRUE(runtime->shutdown().is_ok());
 }
 

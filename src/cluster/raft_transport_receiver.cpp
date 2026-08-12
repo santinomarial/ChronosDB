@@ -49,23 +49,42 @@ common::Result<RaftTransportAdmission> RaftTransportReceiver::try_receive(
     auto envelope = raft::decode_raft_transport_envelope_v1(frame, config_.codec_limits);
     if (!envelope.has_value())
       return common::make_unexpected(std::move(envelope).error());
+    return try_receive_decoded(std::move(*envelope), authenticated_peer);
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("Raft transport receive allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("Raft transport receive exceeded container limits"));
+  }
+}
+
+common::Result<RaftTransportAdmission> RaftTransportReceiver::try_receive_decoded(
+    raft::RaftTransportEnvelope envelope,
+    const network::PeerAuthenticationResult& authenticated_peer) const {
+  if (!authenticated_peer.authorized || authenticated_peer.principal_id == 0U) {
+    return common::make_unexpected(
+        unauthenticated("Raft transport requires an authenticated principal"));
+  }
+  try {
+    auto valid = raft::raft_transport_encoded_length_v1(envelope, config_.codec_limits);
+    if (!valid.has_value())
+      return common::make_unexpected(std::move(valid).error());
     auto authorized =
-        config_.authorizer->authorize_node(authenticated_peer.principal_id, envelope->source);
+        config_.authorizer->authorize_node(authenticated_peer.principal_id, envelope.source);
     if (!authorized.has_value())
       return common::make_unexpected(std::move(authorized).error());
     if (!*authorized) {
       return common::make_unexpected(
           unauthenticated("authenticated principal cannot claim the Raft source node"));
     }
-    if (envelope->destination != config_.local_node_id) {
+    if (envelope.destination != config_.local_node_id) {
       return common::make_unexpected(common::Status{common::StatusCode::kUnavailable,
                                                     "Raft transport targets a different node"});
     }
-    const raft::GroupId group_id = envelope->group_id;
-    const raft::NodeId source_node_id = envelope->source;
+    const raft::GroupId group_id = envelope.group_id;
+    const raft::NodeId source_node_id = envelope.source;
     std::vector<raft::DurableRaftRequest> requests;
     requests.emplace_back(group_id,
-                          raft::ReceiveOperation{source_node_id, std::move(envelope->message)});
+                          raft::ReceiveOperation{source_node_id, std::move(envelope.message)});
     auto completion = config_.runtime->try_submit(std::move(requests));
     if (!completion.has_value())
       return common::make_unexpected(std::move(completion).error());

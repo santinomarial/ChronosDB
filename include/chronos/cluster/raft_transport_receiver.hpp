@@ -52,6 +52,9 @@ public:
   [[nodiscard]] common::Result<RaftTransportAdmission>
   try_receive(common::ByteView frame,
               const network::PeerAuthenticationResult& authenticated_peer) const;
+  [[nodiscard]] common::Result<RaftTransportAdmission>
+  try_receive_decoded(raft::RaftTransportEnvelope envelope,
+                      const network::PeerAuthenticationResult& authenticated_peer) const;
 
 private:
   explicit RaftTransportReceiver(RaftTransportReceiverConfig config) noexcept;

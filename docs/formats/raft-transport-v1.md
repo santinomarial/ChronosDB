@@ -98,3 +98,8 @@ destination to the local node, and admits one owning receive operation to the as
 runtime. Outbound frames become available only through that runtime's post-synchronization
 completion. Outbound encoding borrows the completed transition so a size or encoding failure cannot
 consume the only owned response.
+
+The persistent inbound mutual-TLS carrier reads at most the current header/frame remainder, admits
+one frame at a time, pauses during durable execution, and publishes the entire group/source/result
+value rather than assuming every outbound message belongs on the inbound peer connection. It resumes
+the authenticated stream only after the embedding takes that result.

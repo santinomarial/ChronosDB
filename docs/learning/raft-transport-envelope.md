@@ -48,6 +48,13 @@ one owning receive operation through the bounded asynchronous runtime. Its compl
 acquire boundary for the already synchronized result. Outbound encoding borrows that result so the
 caller retains every message if a configured frame limit is too small.
 
+The inbound TLS carrier gives one event-loop thread exclusive session ownership. It reads through a
+fixed scratch buffer without crossing a frame boundary, pauses with one asynchronous durable
+operation in flight, and exposes the complete result for embedding-owned routing and snapshot work.
+Handshake and incomplete-frame reads expire; already admitted durable work does not, because it may
+have crossed an irreversible local synchronization boundary. Taking the asynchronous completion is
+the mutex acquire edge that publishes the result to the carrier thread.
+
 ## Complexity and tradeoffs
 
 Fixed messages encode and decode in constant time and space. Append messages are linear in entry
@@ -65,7 +72,8 @@ bound; explicit batching is preferable to unbounded socket ownership.
 Focused tests cover every variant, actual conflict repair, corruption, compatibility, identity,
 bounds, bytewise and coalesced reads, sticky failure, and short-write ownership. Phase 18 retains
 golden fixtures, hostile length matrices, fuzzing, allocation failure, authenticated routing,
-real mutual-TLS stream scheduling, partitions/reordering/duplication, and mixed-version processes.
+outbound mutual-TLS stream scheduling, partitions/reordering/duplication, and mixed-version
+processes. Focused real mutual-TLS inbound coverage exercises fragmented persistent input.
 
 Useful questions include: why is CRC not authentication; why must persistence precede sending; why
 does snapshot metadata travel separately from snapshot bytes; how does route identity prevent
