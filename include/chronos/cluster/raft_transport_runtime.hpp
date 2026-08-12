@@ -15,11 +15,16 @@ namespace chronos::cluster {
 
 struct RaftTransportRuntimeLimits {
   std::size_t maximum_pending_results{1024U};
+  std::size_t maximum_pending_application_requests{1024U};
   std::size_t maximum_results_per_poll{256U};
   std::size_t maximum_poll_descriptors{8192U};
 };
 
-enum class RaftTransportRuntimeResultOrigin : std::uint8_t { kInbound = 1, kTimer = 2 };
+enum class RaftTransportRuntimeResultOrigin : std::uint8_t {
+  kInbound = 1,
+  kTimer = 2,
+  kApplication = 3
+};
 
 struct RaftTransportRuntimeResult {
   std::uint64_t submission_sequence{};
@@ -36,10 +41,12 @@ struct RaftTransportRuntimeMetrics {
   std::uint64_t durable_wakeups{};
   std::uint64_t inbound_results{};
   std::uint64_t timer_results{};
+  std::uint64_t application_results{};
   std::uint64_t routed_results{};
   std::uint64_t routing_backpressure{};
   std::uint64_t completed_results{};
   std::size_t pending_results{};
+  std::size_t pending_application_requests{};
   bool failed{};
 };
 
@@ -64,6 +71,11 @@ public:
   [[nodiscard]] common::Status add_group(const raft::RaftGroupObservation& observation,
                                          TimePoint now);
   [[nodiscard]] common::Status remove_group(const raft::GroupId& group_id);
+  // Poll-owner-only admission for application work whose transition must share this runtime's
+  // exact outbound-routing FIFO. One ordered group observation is appended automatically. The
+  // returned durable submission sequence identifies the eventual kApplication result.
+  [[nodiscard]] common::Result<std::uint64_t>
+  try_submit_application(raft::DurableRaftRequest request);
   [[nodiscard]] common::Status poll_once(std::chrono::milliseconds maximum_wait);
   [[nodiscard]] common::Result<RaftTransportRuntimeResult> take_completed();
   [[nodiscard]] network::Ipv4Endpoint bound_endpoint() const noexcept;

@@ -169,7 +169,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 ## Learning
 
 - [Unified Raft transport runtime](learning/raft-transport-runtime.md): one bounded poll owner for
-  durable wakeups, exact deadlines, inbound/outbound mTLS, FIFO routing, and result ownership.
+  durable wakeups, exact deadlines, inbound/outbound mTLS, ordered application submissions, FIFO
+  routing, and result ownership.
 - [Recoverable single-node database owner](learning/single-node-database-owner.md): aggregate root,
   metadata Raft, catalog, WAL replay, retry/tablet state, vector-query handoff, and shutdown order.
 - [Tablet-state vector query pipeline](learning/tablet-state-query-pipeline.md): exact snapshot

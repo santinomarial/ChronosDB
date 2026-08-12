@@ -139,6 +139,7 @@ TEST(RaftTransportRuntimeTest, PollsDeadlineAndDurableWakeupIntoOwnedTimerResult
     auto transport = RaftTransportRuntime::create(&*durable, std::move(*timers),
                                                   std::move(*inbound), std::move(*outbound),
                                                   {.maximum_pending_results = 2U,
+                                                   .maximum_pending_application_requests = 1U,
                                                    .maximum_results_per_poll = 2U,
                                                    .maximum_poll_descriptors = 8U});
     ASSERT_TRUE(transport.has_value()) << transport.error().to_string();
@@ -172,6 +173,66 @@ TEST(RaftTransportRuntimeTest, PollsDeadlineAndDurableWakeupIntoOwnedTimerResult
     EXPECT_EQ(result->observation->role, raft::Role::kLeader);
     EXPECT_GE(transport->metrics().durable_wakeups, 1U);
     EXPECT_EQ(transport->metrics().completed_results, 1U);
+
+    auto invalid_application =
+        transport->try_submit_application({group(), raft::HeartbeatOperation{}});
+    ASSERT_FALSE(invalid_application.has_value());
+    EXPECT_EQ(invalid_application.error().code(), common::StatusCode::kInvalidArgument);
+    auto application = transport->try_submit_application(
+        {group(), raft::ProposeOperation{.type = 1U, .payload = {std::byte{0x42U}}}});
+    ASSERT_TRUE(application.has_value()) << application.error().to_string();
+    auto overflow = transport->try_submit_application({group(), raft::BeginReadBarrierOperation{}});
+    ASSERT_FALSE(overflow.has_value());
+    EXPECT_EQ(overflow.error().code(), common::StatusCode::kResourceExhausted);
+    std::optional<RaftTransportRuntimeResult> application_result;
+    for (std::size_t iteration = 0U; iteration < 1024U && !application_result.has_value();
+         ++iteration) {
+      ASSERT_TRUE(transport->poll_once(std::chrono::milliseconds{100}).is_ok())
+          << transport->failure().to_string();
+      auto next = transport->take_completed();
+      if (!next.has_value()) {
+        ASSERT_EQ(next.error().code(), common::StatusCode::kUnavailable);
+        continue;
+      }
+      if (next->submission_sequence == *application)
+        application_result.emplace(std::move(*next));
+    }
+    ASSERT_TRUE(application_result.has_value());
+    EXPECT_EQ(application_result->origin, RaftTransportRuntimeResultOrigin::kApplication);
+    EXPECT_EQ(application_result->group_id, group());
+    ASSERT_TRUE(application_result->result.status.is_ok())
+        << application_result->result.status.to_string();
+    ASSERT_TRUE(application_result->result.transition.has_value());
+    ASSERT_TRUE(application_result->observation.has_value());
+    EXPECT_EQ(application_result->observation->group_id, group());
+
+    auto barrier = transport->try_submit_application({group(), raft::BeginReadBarrierOperation{}});
+    ASSERT_TRUE(barrier.has_value()) << barrier.error().to_string();
+    application_result.reset();
+    for (std::size_t iteration = 0U; iteration < 1024U && !application_result.has_value();
+         ++iteration) {
+      ASSERT_TRUE(transport->poll_once(std::chrono::milliseconds{100}).is_ok())
+          << transport->failure().to_string();
+      auto next = transport->take_completed();
+      if (!next.has_value()) {
+        ASSERT_EQ(next.error().code(), common::StatusCode::kUnavailable);
+        continue;
+      }
+      if (next->submission_sequence == *barrier)
+        application_result.emplace(std::move(*next));
+    }
+    ASSERT_TRUE(application_result.has_value());
+    EXPECT_EQ(application_result->origin, RaftTransportRuntimeResultOrigin::kApplication);
+    ASSERT_TRUE(application_result->result.status.is_ok())
+        << application_result->result.status.to_string();
+    ASSERT_TRUE(application_result->result.transition.has_value());
+    ASSERT_TRUE(application_result->result.transition->read_barrier_ready.has_value());
+    EXPECT_EQ(application_result->result.transition->read_barrier_ready->group_id, group());
+    ASSERT_TRUE(application_result->observation.has_value());
+    EXPECT_LT(application_result->observation->applied_index,
+              application_result->result.transition->read_barrier_ready->barrier.read_index);
+    EXPECT_EQ(transport->metrics().application_results, 2U);
+    EXPECT_EQ(transport->metrics().pending_application_requests, 0U);
   }
   ASSERT_TRUE(durable->shutdown().is_ok());
 }

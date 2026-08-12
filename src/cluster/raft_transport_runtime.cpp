@@ -48,15 +48,21 @@ public:
     RaftTransportRuntimeResult value;
     bool routed{};
   };
+  struct PendingApplication {
+    raft::GroupId group_id;
+    raft::AsyncDurableRaftCompletion completion;
+  };
 
   Impl(raft::AsyncDurableMultiRaftRuntime* durable, raft::RaftTimerDriver timers,
        RaftTransportTcpServer server, RaftTransportPeerManager peers,
        const RaftTransportRuntimeLimits configured,
        std::vector<std::optional<PendingResult>> result_storage,
+       std::vector<std::optional<PendingApplication>> application_storage,
        std::vector<pollfd> descriptor_storage, std::vector<PollOwner> owner_storage) noexcept
       : durable_runtime(durable), timer_driver(std::move(timers)), inbound(std::move(server)),
         outbound(std::move(peers)), limits(configured), results(std::move(result_storage)),
-        descriptors(std::move(descriptor_storage)), owners(std::move(owner_storage)) {}
+        applications(std::move(application_storage)), descriptors(std::move(descriptor_storage)),
+        owners(std::move(owner_storage)) {}
 
   [[nodiscard]] common::Status fail(common::Status failure) noexcept {
     if (failure_status.is_ok())
@@ -78,15 +84,107 @@ public:
     return common::Status::ok();
   }
 
+  [[nodiscard]] std::optional<std::size_t> free_application_slot() const noexcept {
+    for (std::size_t index = 0U; index < applications.size(); ++index) {
+      if (!applications[index].has_value())
+        return index;
+    }
+    return std::nullopt;
+  }
+
+  [[nodiscard]] common::Result<std::uint64_t> submit_application(raft::DurableRaftRequest request) {
+    if (!failure_status.is_ok())
+      return common::make_unexpected(failure_status);
+    if (request.group_id.is_nil() ||
+        std::holds_alternative<raft::ObserveGroupOperation>(request.operation) ||
+        std::holds_alternative<raft::StartElectionOperation>(request.operation) ||
+        std::holds_alternative<raft::ReceiveOperation>(request.operation) ||
+        std::holds_alternative<raft::HeartbeatOperation>(request.operation)) {
+      return common::make_unexpected(status(common::StatusCode::kInvalidArgument,
+                                            "Raft application transition request is invalid"));
+    }
+    const std::optional<std::size_t> slot = free_application_slot();
+    if (!slot.has_value())
+      return common::make_unexpected(
+          status(common::StatusCode::kResourceExhausted, "Raft application request bound is full"));
+    const raft::GroupId group_id = request.group_id;
+    try {
+      std::vector<raft::DurableRaftRequest> batch;
+      batch.reserve(2U);
+      batch.push_back(std::move(request));
+      batch.emplace_back(group_id, raft::ObserveGroupOperation{});
+      auto completion = durable_runtime->try_submit(std::move(batch));
+      if (!completion.has_value())
+        return common::make_unexpected(completion.error());
+      const std::uint64_t sequence = completion->submission_sequence();
+      applications[*slot].emplace(PendingApplication{group_id, std::move(*completion)});
+      ++application_count;
+      runtime_metrics.pending_application_requests = application_count;
+      return sequence;
+    } catch (const std::bad_alloc&) {
+      return common::make_unexpected(status(common::StatusCode::kResourceExhausted,
+                                            "Raft application request allocation failed"));
+    }
+  }
+
+  [[nodiscard]] std::optional<std::size_t> next_ready_application() const noexcept {
+    std::optional<std::size_t> next;
+    for (std::size_t index = 0U; index < applications.size(); ++index) {
+      if (!applications[index].has_value() || !applications[index]->completion.is_ready())
+        continue;
+      if (!next.has_value() || applications[index]->completion.submission_sequence() <
+                                   applications[*next]->completion.submission_sequence())
+        next = index;
+    }
+    return next;
+  }
+
+  [[nodiscard]] common::Result<RaftTransportRuntimeResult>
+  take_application(const std::size_t index) {
+    PendingApplication& pending = *applications[index];
+    const std::uint64_t sequence = pending.completion.submission_sequence();
+    auto batch = pending.completion.wait();
+    if (!batch.has_value())
+      return common::make_unexpected(batch.error());
+    if (batch->size() != 2U || !(*batch)[1].status.is_ok() || (*batch)[1].transition.has_value() ||
+        !(*batch)[1].observation.has_value() ||
+        (*batch)[1].observation->group_id != pending.group_id) {
+      return common::make_unexpected(
+          status(common::StatusCode::kCorruption,
+                 "Raft application batch lacks its ordered group observation"));
+    }
+    raft::RaftGroupObservation observation = std::move(*(*batch)[1].observation);
+    const raft::GroupId group_id = pending.group_id;
+    raft::DurableRaftResult result = std::move((*batch)[0]);
+    applications[index].reset();
+    --application_count;
+    runtime_metrics.pending_application_requests = application_count;
+    return RaftTransportRuntimeResult{sequence,
+                                      RaftTransportRuntimeResultOrigin::kApplication,
+                                      group_id,
+                                      std::nullopt,
+                                      std::nullopt,
+                                      std::move(result),
+                                      std::move(observation)};
+  }
+
   [[nodiscard]] common::Status intake(const TimePoint now) {
     for (std::size_t admitted = 0U;
          admitted < limits.maximum_results_per_poll && result_count != results.size(); ++admitted) {
       const auto inbound_sequence = inbound.next_completed_sequence();
       const auto timer_sequence = timer_driver.next_completed_sequence();
-      if (!inbound_sequence.has_value() && !timer_sequence.has_value())
+      const std::optional<std::size_t> application = next_ready_application();
+      const std::optional<std::uint64_t> application_sequence =
+          application.has_value()
+              ? std::optional<std::uint64_t>{applications[*application]
+                                                 ->completion.submission_sequence()}
+              : std::nullopt;
+      if (!inbound_sequence.has_value() && !timer_sequence.has_value() &&
+          !application_sequence.has_value())
         break;
       if (inbound_sequence.has_value() &&
-          (!timer_sequence.has_value() || *inbound_sequence < *timer_sequence)) {
+          (!timer_sequence.has_value() || *inbound_sequence < *timer_sequence) &&
+          (!application_sequence.has_value() || *inbound_sequence < *application_sequence)) {
         auto completed = inbound.take_completed();
         if (!completed.has_value())
           return fail(completed.error());
@@ -106,7 +204,8 @@ public:
                   std::move(received.result), std::move(received.observation)});
         if (!stored.is_ok())
           return stored;
-      } else {
+      } else if (timer_sequence.has_value() &&
+                 (!application_sequence.has_value() || *timer_sequence < *application_sequence)) {
         auto completed = timer_driver.take_completed();
         if (!completed.has_value())
           return fail(completed.error());
@@ -118,6 +217,17 @@ public:
             push({completed->submission_sequence, RaftTransportRuntimeResultOrigin::kTimer,
                   completed->action.group_id, std::nullopt, completed->action,
                   std::move(completed->result), std::move(completed->observation)});
+        if (!stored.is_ok())
+          return stored;
+      } else {
+        auto completed = take_application(*application);
+        if (!completed.has_value())
+          return fail(completed.error());
+        if (completed->submission_sequence != *application_sequence)
+          return fail(status(common::StatusCode::kCorruption,
+                             "Raft application completion changed during ordered pickup"));
+        increment(runtime_metrics.application_results);
+        common::Status stored = push(std::move(*completed));
         if (!stored.is_ok())
           return stored;
       }
@@ -309,11 +419,13 @@ public:
   RaftTransportPeerManager outbound;
   RaftTransportRuntimeLimits limits;
   std::vector<std::optional<PendingResult>> results;
+  std::vector<std::optional<PendingApplication>> applications;
   std::vector<pollfd> descriptors;
   std::vector<PollOwner> owners;
   std::size_t result_head{};
   std::size_t result_tail{};
   std::size_t result_count{};
+  std::size_t application_count{};
   std::uint64_t last_submission_sequence{};
   RaftTransportRuntimeMetrics runtime_metrics;
   common::Status failure_status{};
@@ -332,19 +444,21 @@ RaftTransportRuntime::create(raft::AsyncDurableMultiRaftRuntime* durable_runtime
                              const RaftTransportRuntimeLimits limits) {
   if (durable_runtime == nullptr || durable_runtime->completion_descriptor() < 0 ||
       !inbound.is_running() || limits.maximum_pending_results == 0U ||
-      limits.maximum_results_per_poll == 0U || limits.maximum_poll_descriptors < 3U ||
-      limits.maximum_poll_descriptors > 65'536U)
+      limits.maximum_pending_application_requests == 0U || limits.maximum_results_per_poll == 0U ||
+      limits.maximum_poll_descriptors < 3U || limits.maximum_poll_descriptors > 65'536U)
     return common::make_unexpected(status(common::StatusCode::kInvalidArgument,
                                           "Raft transport runtime configuration is invalid"));
   try {
     std::vector<std::optional<Impl::PendingResult>> results(limits.maximum_pending_results);
+    std::vector<std::optional<Impl::PendingApplication>> applications(
+        limits.maximum_pending_application_requests);
     std::vector<pollfd> descriptors;
     descriptors.reserve(limits.maximum_poll_descriptors);
     std::vector<Impl::PollOwner> owners;
     owners.reserve(limits.maximum_poll_descriptors);
     return RaftTransportRuntime{std::make_unique<Impl>(
         durable_runtime, std::move(timer_driver), std::move(inbound), std::move(outbound), limits,
-        std::move(results), std::move(descriptors), std::move(owners))};
+        std::move(results), std::move(applications), std::move(descriptors), std::move(owners))};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(
         status(common::StatusCode::kResourceExhausted, "Raft transport runtime allocation failed"));
@@ -365,6 +479,14 @@ common::Status RaftTransportRuntime::remove_group(const raft::GroupId& group_id)
   if (!implementation_)
     return status(common::StatusCode::kInvalidArgument, "Raft transport runtime is empty");
   return implementation_->timer_driver.remove_group(group_id);
+}
+
+common::Result<std::uint64_t>
+RaftTransportRuntime::try_submit_application(raft::DurableRaftRequest request) {
+  if (!implementation_)
+    return common::make_unexpected(
+        status(common::StatusCode::kInvalidArgument, "Raft transport runtime is empty"));
+  return implementation_->submit_application(std::move(request));
 }
 
 common::Status RaftTransportRuntime::poll_once(const std::chrono::milliseconds maximum_wait) {

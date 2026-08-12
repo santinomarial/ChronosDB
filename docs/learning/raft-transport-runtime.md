@@ -9,11 +9,12 @@ of completed results. It borrows `AsyncDurableMultiRaftRuntime`; that owner and 
 authorization, TLS-context, receiver, and deadline-source dependencies must outlive it.
 
 `add_group` arms a recovered owning observation. `poll_once` blocks no longer than the caller's
-limit or the earliest exact monotonic deadline. `take_completed` moves one FIFO result only after its
-network output is queued; application, snapshot installation, and read-barrier handling remain with
-the embedding. A returned result identifies inbound versus timer origin, remote source or timer
-action, exact group, ordered observation, durable transition, and runtime-lifetime submission
-sequence.
+limit or the earliest exact monotonic deadline. `try_submit_application` lets that same poll owner
+admit one bounded application transition plus an automatically ordered group observation.
+`take_completed` moves one FIFO result only after its network output is queued; application,
+snapshot installation, and read-barrier handling remain with the embedding. A returned result
+identifies inbound, timer, or application origin; remote source or timer action; exact group;
+ordered observation; durable transition; and runtime-lifetime submission sequence.
 
 `service::ReplicatedRaftTransportRuntime` is the address-stable production composition above this
 poll owner. It owns the immutable certificate/address/node authority, receiver, one TLS client
@@ -29,15 +30,19 @@ The poll table is rebuilt into pre-reserved storage from four exact owner kinds:
 listener, stable inbound connection ID, and fixed outbound node ID. No pointer or compacting vector
 index crosses the poll call. Its configured bound includes all four categories.
 
-The result ring is fixed at construction. Inbound and timer owners each preserve durable FIFO
-submission identity; intake compares their heads. Results are routed in that same order and stop at
-the first missing/full route. A routed entry stays owned until pickup, but does not prevent later
-FIFO entries from being queued. This separates network liveness from potentially slower tablet
-application without creating another unbounded queue.
+The result ring and application-completion slots are fixed at construction. Inbound, timer, and
+application owners each preserve durable FIFO submission identity; intake compares all three heads.
+Results are routed in that same order and stop at the first missing/full route. A routed entry stays
+owned until pickup, but does not prevent later FIFO entries from being queued. This separates
+network liveness from potentially slower tablet application without creating another unbounded
+queue.
 
 Timer rearming uses the observation executed immediately after each inbound receive or timer action
 in the same durable batch. A newer inbound activity observation advances the timer generation, so a
 stale timer completion may still be returned and routed but cannot rewrite the newer deadline.
+Application submission also obtains an observation in its exact batch, but does not count as peer
+activity and therefore cannot postpone a follower election. Operations already owned by the timer,
+receiver, or observation API are rejected from the application lane.
 
 ## Ownership, lifetime, and synchronization
 
@@ -63,6 +68,8 @@ transfer complete original frames to capped reconnect; accepted inbound work sur
 until pickup. A full result ring leaves component completions owned where they are. Ordinary durable
 operation errors are returned as results. Corrupt sequencing, timer inconsistency, listener/poll
 failure, descriptor-bound overflow, and unexpected routing errors fail the aggregate owner closed.
+Application admission returns `RESOURCE_EXHAUSTED` before durable submission when its fixed slot
+bound is full.
 
 ## Complexity, tradeoffs, and interview questions
 
