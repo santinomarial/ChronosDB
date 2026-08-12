@@ -148,6 +148,10 @@ Outbound terminal closure now immediately transfers whole retry frames into capp
 of spinning on a terminal descriptor until its later TLS deadline.
 Outbound Raft TLS now starts with write readiness so a real poll loop emits ClientHello before
 following OpenSSL's subsequent readiness state.
+One bounded unified runtime now polls durable wakeups, listener/inbound sessions, and outbound peers;
+clamps waits to exact deadlines; merges inbound/timer results by FIFO submission identity; rearms
+activity; routes with backpressure; and retains application/snapshot/read work for explicit pickup.
+Focused gates cover synchronized election wakeup and a real two-node mutual-TLS vote round trip.
 A bounded deterministic simulator now records explicit and seeded virtual-network, crash/restart,
 atomic persistence-fault, application, membership, and snapshot actions; it runs an independent
 election/log/commit/leader-completeness checker after each step, replays exact traces, and performs

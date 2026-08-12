@@ -1,0 +1,66 @@
+# Unified Raft Transport Runtime
+
+## Purpose and public interface
+
+`RaftTransportRuntime` is the production-facing single-thread owner that turns the deterministic and
+durable Multi-Raft layers into a live node transport. It owns inbound TCP/TLS sessions, outbound
+peer connections and reconnect policy, election/heartbeat timing, one poll table, and a bounded FIFO
+of completed results. It borrows `AsyncDurableMultiRaftRuntime`; that owner and all authentication,
+authorization, TLS-context, receiver, and deadline-source dependencies must outlive it.
+
+`add_group` arms a recovered owning observation. `poll_once` blocks no longer than the caller's
+limit or the earliest exact monotonic deadline. `take_completed` moves one FIFO result only after its
+network output is queued; application, snapshot installation, and read-barrier handling remain with
+the embedding. A returned result identifies inbound versus timer origin, remote source or timer
+action, exact group, ordered observation, durable transition, and runtime-lifetime submission
+sequence.
+
+## Data structures and invariants
+
+The poll table is rebuilt into pre-reserved storage from four exact owner kinds: durable wakeup,
+listener, stable inbound connection ID, and fixed outbound node ID. No pointer or compacting vector
+index crosses the poll call. Its configured bound includes all four categories.
+
+The result ring is fixed at construction. Inbound and timer owners each preserve durable FIFO
+submission identity; intake compares their heads. Results are routed in that same order and stop at
+the first missing/full route. A routed entry stays owned until pickup, but does not prevent later
+FIFO entries from being queued. This separates network liveness from potentially slower tablet
+application without creating another unbounded queue.
+
+Timer rearming uses the observation executed immediately after each inbound receive or timer action
+in the same durable batch. A newer inbound activity observation advances the timer generation, so a
+stale timer completion may still be returned and routed but cannot rewrite the newer deadline.
+
+## Ownership, lifetime, and synchronization
+
+One event-loop thread owns every method; no runtime field is concurrently accessed. Cross-thread
+publication occurs only inside `AsyncDurableRaftCompletion`: the durable worker installs the owning
+result under its completion mutex and then signals the nonblocking completion pipe. Poll readability
+therefore follows result publication. Draining coalesced pipe bytes is safe because the loop scans
+all completion owners before blocking again.
+
+The runtime is the sole pipe consumer. After any durable wake, `poll_once` completes internal
+progress and returns, so its caller can inspect additional completion owners sharing the same durable
+worker. A second independent drainer would violate the wakeup contract.
+
+## Failure and backpressure
+
+Disconnected or full outbound routes retain the first unrouted result. Established terminal peers
+transfer complete original frames to capped reconnect; accepted inbound work survives disconnect
+until pickup. A full result ring leaves component completions owned where they are. Ordinary durable
+operation errors are returned as results. Corrupt sequencing, timer inconsistency, listener/poll
+failure, descriptor-bound overflow, and unexpected routing errors fail the aggregate owner closed.
+
+## Complexity, tradeoffs, and interview questions
+
+Each poll-table rebuild is linear in active inbound plus configured outbound peers. Deadline scans
+are linear in groups and sessions. Completion intake and routing are bounded by configured result
+counts and transport queue capacity. This favors auditable bounded ownership over a more complex
+incremental registration structure; profiling is required before changing it.
+
+- Why is FIFO submission sequence different from physical persistence sequence?
+- Why does result pickup wait for outbound routing, but not for socket delivery?
+- Why must accepted inbound work outlive peer disconnect?
+- What release/acquire edge publishes a durable completion before pipe readiness?
+- Why does routing stop at the first backpressured result?
+- Which dependencies must outlive the aggregate owner?

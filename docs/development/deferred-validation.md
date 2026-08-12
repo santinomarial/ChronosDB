@@ -166,6 +166,10 @@
   partial-write terminal matrices and reconnect-storm stress remain deferred.
   Outbound Raft TLS now begins with client-write readiness; handshake fragmentation/failure and
   reconnect matrices remain deferred.
+  One bounded Raft transport runtime now composes durable wakeups, exact deadline-clamped polling,
+  inbound/outbound readiness, FIFO activity/results, retry-safe routing, and application pickup.
+  Result-ring saturation, mixed external completion producers, many-group/peer skew, storage stalls,
+  disconnect/reconnect storms, and deterministic multi-node production-carrier faults remain.
 - Broad leader-churn and partition matrices, semantic/chunk trace shrinking, clock changes, physical
   disk failures, ASan/UBSan/TSan, fuzzing, independent model checking, commit/catch-up/snapshot
   benchmarks, and API review.

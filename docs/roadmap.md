@@ -776,7 +776,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   monotonic deadline. Runtime-lifetime FIFO submission identities now order timer and inbound
   completion queues; terminal outbound events immediately enter whole-frame capped reconnect.
   Outbound TLS begins with client-write readiness and then follows exact OpenSSL handshake interest.
-  Unified production routing orchestration remains.
+  A bounded unified production runtime now polls durable wakeups, inbound/outbound descriptors, and
+  exact deadlines; merges FIFO completions, rearms activity, routes with retry-safe backpressure, and
+  retains application/snapshot/read work for explicit pickup. Broader multi-node production-carrier
+  fault validation remains.
 
 - **Scope:** implement a deterministic Raft core for one logical group: elections, replication, commit, membership protocol as scoped by ADR, snapshots, read consistency mechanisms, and simulated transport/storage/time.
 - **Explicit non-scope:** multi-group multiplexing, production network integration, distributed queries, hidden third-party Raft implementation, and serving uncommitted or merely appended entries.

@@ -106,7 +106,8 @@ TEST(RaftTransportPeerManagerTest, ConnectsFixedRoutesRoutesAtomicallyAndRecycle
   ASSERT_EQ(interests->size(), 2U);
   for (const RaftTransportPeerInterest& interest : *interests) {
     EXPECT_GE(interest.descriptor, 0);
-    EXPECT_TRUE(interest.want_read);
+    EXPECT_FALSE(interest.want_read);
+    EXPECT_TRUE(interest.want_write);
   }
 
   ASSERT_TRUE(manager->on_transport_closed(2U, start + std::chrono::milliseconds{6}).is_ok());
