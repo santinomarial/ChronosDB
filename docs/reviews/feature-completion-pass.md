@@ -115,6 +115,8 @@ An authenticated receiver now rejects trust and route failures before durable ru
 encodes responses only from the asynchronous owner's post-synchronization completion.
 A persistent inbound mutual-TLS carrier now processes fragmented sequential frames with one bounded
 durable operation/result in flight and leaves multi-peer output and snapshot routing to its owner.
+A bounded TCP listener/poll table now admits those persistent sessions and retains each complete
+post-sync result until explicit embedding pickup.
 A persistent outbound mutual-TLS carrier now validates exact peer routes, bounds FIFO frames and
 bytes, and returns complete original frames for duplicate-safe reconnect after failure.
 A bounded exact-peer carrier pool now preflights every durable-result destination and aggregate

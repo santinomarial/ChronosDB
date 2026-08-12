@@ -82,6 +82,10 @@ pairs, and routes a durable transition only if every destination passes prefligh
 outbound ownership without adding a hidden unbounded queue; the embedding still owns the poll loop
 and the bounded durable-result completion that retries admission.
 
+The inbound TCP server supplies the symmetric listener and fixed connection/poll table. Accepted
+sockets derive their authentication address from the kernel peer endpoint and retain result-ready
+sessions without read interest until the embedding takes the exact post-sync transition.
+
 ## Complexity and tradeoffs
 
 Fixed messages encode and decode in constant time and space. Append messages are linear in entry

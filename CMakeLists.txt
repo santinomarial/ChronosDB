@@ -624,6 +624,7 @@ add_library(
   src/cluster/raft_transport_peer_pool.cpp
   src/cluster/raft_transport_peer_reconnect.cpp
   src/cluster/raft_transport_peer_manager.cpp
+  src/cluster/raft_transport_tcp_server.cpp
   src/cluster/raft_transport_tcp_connector.cpp
   src/cluster/raft_transport_tls_client.cpp
   src/cluster/raft_transport_tls_server.cpp
@@ -1043,6 +1044,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/cluster/raft_transport_peer_manager_test.cpp
     tests/cluster/raft_transport_tcp_connector_header_self_contained.cpp
     tests/cluster/raft_transport_tcp_connector_test.cpp
+    tests/cluster/raft_transport_tcp_server_header_self_contained.cpp
+    tests/cluster/raft_transport_tcp_server_test.cpp
     tests/cluster/raft_transport_tls_client_header_self_contained.cpp
     tests/cluster/raft_transport_tls_client_test.cpp
     tests/cluster/raft_transport_tls_server_header_self_contained.cpp

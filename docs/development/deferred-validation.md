@@ -124,6 +124,8 @@
   authorization, exact local routing, asynchronous durable admission, and post-sync response
   encoding have focused coverage. A persistent real mutual-TLS inbound session now authenticates,
   reads fragmented exact frames, pauses for durable completion, and publishes complete results.
+  A bounded TCP listener/poll owner now admits those sessions and retains result-ready connections
+  until explicit pickup; overload/churn and unified runtime polling remain deferred.
   A persistent peer-authenticated outbound session bounds FIFO frames/bytes, retains short writes,
   and drains complete originals for duplicate-safe reconnect retry. A fixed-capacity peer pool
   preflights every destination and aggregate queue bound before routing, and removes failed carriers

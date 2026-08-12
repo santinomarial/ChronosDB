@@ -752,8 +752,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   exact monotonic deadlines with capped exponential backoff and retakes complete failed-carrier
   frames. A fixed-capacity multi-peer manager now validates immutable routes, exposes exact
   descriptor interests, installs successful pairs, recycles failed pairs, and leaves unroutable
-  fresh durable results with their bounded upstream owner. Runtime event-loop polling and inbound/
-  timer/durable-completion composition remain deferred. A bounded deterministic simulator
+  fresh durable results with their bounded upstream owner. A bounded TCP listener/poll table now
+  admits persistent inbound mutual-TLS sessions and pins each post-sync result until explicit
+  pickup. Unified inbound/outbound/timer/durable-completion polling remains deferred. A bounded
+  deterministic simulator
   now records and replays explicit or seeded partitions, delay/reordering, duplicate/loss,
   crash/restart, atomic persistence faults, application, membership, and snapshot actions; it checks
   election, log, commit, and leader-completeness safety after every step and deletion-shrinks failing
