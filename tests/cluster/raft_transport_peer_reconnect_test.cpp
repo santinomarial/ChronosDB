@@ -77,14 +77,18 @@ TEST(RaftTransportPeerReconnectTest, AppliesCappedBackoffAtExactAttemptDeadlines
   ASSERT_TRUE(reconnect.has_value());
   const auto start = RaftTransportPeerReconnect::TimePoint{};
   ASSERT_TRUE(reconnect->drive(start).is_ok());
+  ASSERT_TRUE(reconnect->next_deadline().has_value());
+  EXPECT_EQ(*reconnect->next_deadline(), start + std::chrono::milliseconds{10});
   EXPECT_EQ(reconnect->attempts_started(), 1U);
   EXPECT_EQ(reconnect->on_ready(false, start + std::chrono::milliseconds{10}).code(),
             common::StatusCode::kUnavailable);
   ASSERT_TRUE(reconnect->next_attempt_not_before().has_value());
   EXPECT_EQ(*reconnect->next_attempt_not_before(), start + std::chrono::milliseconds{15});
+  EXPECT_EQ(*reconnect->next_deadline(), start + std::chrono::milliseconds{15});
   ASSERT_TRUE(reconnect->drive(start + std::chrono::milliseconds{14}).is_ok());
   EXPECT_EQ(reconnect->attempts_started(), 1U);
   ASSERT_TRUE(reconnect->drive(start + std::chrono::milliseconds{15}).is_ok());
+  EXPECT_EQ(*reconnect->next_deadline(), start + std::chrono::milliseconds{25});
   EXPECT_EQ(reconnect->attempts_started(), 2U);
   EXPECT_EQ(reconnect->on_ready(false, start + std::chrono::milliseconds{25}).code(),
             common::StatusCode::kUnavailable);

@@ -45,6 +45,7 @@ public:
   start(RaftTransportTcpServerConfig config);
   [[nodiscard]] common::Status poll_once(std::chrono::milliseconds maximum_wait);
   [[nodiscard]] common::Result<std::optional<RaftTransportCompletedReceive>> take_completed();
+  [[nodiscard]] std::optional<std::chrono::steady_clock::time_point> next_deadline() const noexcept;
   [[nodiscard]] common::Status shutdown();
   [[nodiscard]] network::Ipv4Endpoint bound_endpoint() const noexcept;
   [[nodiscard]] RaftTransportTcpServerMetrics metrics() const noexcept;

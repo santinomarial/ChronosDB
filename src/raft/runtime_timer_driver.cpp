@@ -246,6 +246,10 @@ common::Result<RaftTimerCompletedAction> RaftTimerDriver::take_completed() {
   return result;
 }
 
+std::optional<RaftTimerDriver::TimePoint> RaftTimerDriver::next_deadline() const noexcept {
+  return implementation_ ? implementation_->timers_.next_deadline() : std::nullopt;
+}
+
 std::size_t RaftTimerDriver::inflight_actions() const noexcept {
   return implementation_ ? implementation_->pending_count_ : 0U;
 }

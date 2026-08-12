@@ -222,6 +222,21 @@ RaftTransportPeerPool::take_failed_peer(const raft::NodeId peer) {
   return common::make_unexpected(status(common::StatusCode::kNotFound, "Raft peer does not exist"));
 }
 
+std::optional<RaftTransportPeerPool::TimePoint>
+RaftTransportPeerPool::next_deadline() const noexcept {
+  std::optional<TimePoint> next;
+  if (!implementation_)
+    return next;
+  for (const std::optional<Impl::Peer>& peer : implementation_->peers_) {
+    if (!peer.has_value())
+      continue;
+    const auto deadline = peer->carrier.next_deadline();
+    if (deadline.has_value() && (!next.has_value() || *deadline < *next))
+      next = deadline;
+  }
+  return next;
+}
+
 std::size_t RaftTransportPeerPool::peer_count() const noexcept {
   return implementation_ ? implementation_->count_ : 0U;
 }

@@ -86,6 +86,8 @@ TEST(RaftTimerDriverTest, DrivesBootstrapElectionAndHeartbeatThroughDurableOwner
   ASSERT_TRUE(driver.has_value()) << driver.error().to_string();
   const auto start = RaftTimerDriver::TimePoint{};
   ASSERT_TRUE(driver->add_group(follower(group()), start).is_ok());
+  ASSERT_TRUE(driver->next_deadline().has_value());
+  EXPECT_EQ(*driver->next_deadline(), start + 5ms);
   EXPECT_EQ(deadlines.last_term, 0U);
   EXPECT_TRUE(driver->drive(start + 4ms).is_ok());
   EXPECT_EQ(driver->inflight_actions(), 0U);
@@ -99,6 +101,8 @@ TEST(RaftTimerDriverTest, DrivesBootstrapElectionAndHeartbeatThroughDurableOwner
   EXPECT_TRUE(election->result.transition->persistence.has_value());
   EXPECT_EQ(election->observation.role, Role::kLeader);
   EXPECT_EQ(election->observation.current_term, 1U);
+  ASSERT_TRUE(driver->next_deadline().has_value());
+  EXPECT_EQ(*driver->next_deadline(), start + 7ms);
 
   drive_until_completed(*driver, start + 7ms, 1U);
   auto heartbeat = driver->take_completed();

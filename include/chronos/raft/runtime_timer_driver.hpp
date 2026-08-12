@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstddef>
 #include <memory>
+#include <optional>
 
 namespace chronos::raft {
 
@@ -60,6 +61,7 @@ public:
                                              TimePoint now);
   [[nodiscard]] common::Status drive(TimePoint now);
   [[nodiscard]] common::Result<RaftTimerCompletedAction> take_completed();
+  [[nodiscard]] std::optional<TimePoint> next_deadline() const noexcept;
   [[nodiscard]] std::size_t inflight_actions() const noexcept;
   [[nodiscard]] std::size_t completed_actions() const noexcept;
   [[nodiscard]] bool failed() const noexcept;

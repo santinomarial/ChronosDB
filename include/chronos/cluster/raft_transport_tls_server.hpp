@@ -69,6 +69,7 @@ public:
   [[nodiscard]] common::Result<RaftTransportCompletedReceive> take_completed(TimePoint now);
   [[nodiscard]] RaftTransportTlsServerState state() const noexcept;
   [[nodiscard]] RaftTransportTlsServerInterest interest() const noexcept;
+  [[nodiscard]] std::optional<TimePoint> next_deadline() const noexcept;
   [[nodiscard]] const common::Status& failure() const noexcept;
 
 private:

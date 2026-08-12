@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace chronos::cluster {
@@ -40,6 +41,7 @@ public:
   [[nodiscard]] common::Status route_result(const raft::GroupId& group_id,
                                             const raft::DurableRaftResult& result, TimePoint now);
   [[nodiscard]] common::Result<std::vector<RaftTransportPeerInterest>> interests() const;
+  [[nodiscard]] std::optional<TimePoint> next_deadline() const noexcept;
   [[nodiscard]] std::size_t configured_peer_count() const noexcept;
   [[nodiscard]] std::size_t connected_peer_count() const noexcept;
 

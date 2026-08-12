@@ -93,6 +93,8 @@ TEST(RaftTransportTcpConnectorTest, TransfersDescriptorAndRetryFrameIntoPersiste
         connector_config(listener->bound_endpoint(), *client_context, authenticator, authorizer),
         now);
     ASSERT_TRUE(connector.has_value()) << connector.error().to_string();
+    ASSERT_TRUE(connector->next_deadline().has_value());
+    EXPECT_EQ(*connector->next_deadline(), now + std::chrono::milliseconds{10});
     for (std::size_t iteration = 0U;
          iteration < 1024U && connector->state() == RaftTransportTcpConnectorState::kConnecting;
          ++iteration) {
@@ -167,8 +169,11 @@ TEST(RaftTransportTcpConnectorTest, TimeoutReturnsEveryCompleteRetryFrame) {
       connector_config(listener->bound_endpoint(), *client_context, authenticator, authorizer),
       now);
   ASSERT_TRUE(connector.has_value());
+  ASSERT_TRUE(connector->next_deadline().has_value());
+  EXPECT_EQ(*connector->next_deadline(), now + std::chrono::milliseconds{10});
   EXPECT_EQ(connector->on_ready(false, now + std::chrono::milliseconds{10}).code(),
             common::StatusCode::kUnavailable);
+  EXPECT_FALSE(connector->next_deadline().has_value());
   EXPECT_EQ(connector->descriptor(), -1);
   auto returned = connector->take_retry_frames();
   ASSERT_TRUE(returned.has_value());

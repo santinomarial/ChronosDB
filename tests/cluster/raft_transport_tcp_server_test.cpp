@@ -83,6 +83,7 @@ TEST(RaftTransportTcpServerTest, AcceptsPersistentTlsAndPublishesPostSyncResult)
        .maximum_connections = 2U,
        .maximum_accepts_per_poll = 2U});
   ASSERT_TRUE(server.has_value()) << server.error().to_string();
+  EXPECT_FALSE(server->next_deadline().has_value());
   auto client_context =
       network::TlsClientContext::create({.certificate_chain_file = fixture("client.pem").string(),
                                          .private_key_file = fixture("client-key.pem").string(),
@@ -141,6 +142,7 @@ TEST(RaftTransportTcpServerTest, AcceptsPersistentTlsAndPublishesPostSyncResult)
   EXPECT_EQ(completed->result.transition->outbound.front().outbound.destination, 1U);
   EXPECT_EQ(server->metrics().completed_results, 1U);
   EXPECT_EQ(server->metrics().active_connections, 1U);
+  EXPECT_TRUE(server->next_deadline().has_value());
   ASSERT_TRUE(server->shutdown().is_ok());
   ASSERT_TRUE(runtime->shutdown().is_ok());
 }

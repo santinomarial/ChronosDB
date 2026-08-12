@@ -293,3 +293,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0256](0256-bounded-inbound-raft-tcp-server.md) | Bounded inbound Raft TCP server | accepted |
 | [0257](0257-ordered-inbound-raft-observation.md) | Ordered inbound Raft observation | accepted |
 | [0258](0258-portable-durable-raft-completion-wakeup.md) | Portable durable Raft completion wakeup | accepted |
+| [0259](0259-exact-raft-runtime-deadline-introspection.md) | Exact Raft runtime deadline introspection | accepted |

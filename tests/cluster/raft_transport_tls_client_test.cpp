@@ -116,6 +116,8 @@ TEST(RaftTransportTlsClientTest, AuthenticatesQueuesAndWritesPersistentFrames) {
   auto client = RaftTransportTlsClient::create(std::move(*client_socket),
                                                client_config(authenticator, authorizer), now);
   ASSERT_TRUE(client.has_value());
+  ASSERT_TRUE(client->next_deadline().has_value());
+  EXPECT_EQ(*client->next_deadline(), now + std::chrono::milliseconds{100});
   auto first = frame(1U);
   auto second = frame(2U);
   auto overflow = frame(3U);
@@ -153,6 +155,7 @@ TEST(RaftTransportTlsClientTest, AuthenticatesQueuesAndWritesPersistentFrames) {
   EXPECT_EQ(std::get<raft::RequestVoteRequest>(received[1].message).term, 2U);
   EXPECT_EQ(client->queued_frames(), 0U);
   EXPECT_EQ(client->queued_bytes(), 0U);
+  EXPECT_FALSE(client->next_deadline().has_value());
   EXPECT_TRUE(authenticator.saw_fingerprint);
   EXPECT_EQ(first_copy.size(), frame(1U).size());
 }
@@ -165,6 +168,8 @@ TEST(RaftTransportTlsClientTest, RetainsWholeFramesAcrossFailureForReconnectRetr
   const auto start = RaftTransportTlsClient::TimePoint{};
   auto client = RaftTransportTlsClient::create(network::TlsSocket{}, config, start);
   ASSERT_TRUE(client.has_value());
+  ASSERT_TRUE(client->next_deadline().has_value());
+  EXPECT_EQ(*client->next_deadline(), start + std::chrono::milliseconds{5});
   auto queued = frame(1U);
   const auto expected = queued;
   ASSERT_TRUE(client->try_enqueue(queued, start).is_ok());
@@ -175,6 +180,7 @@ TEST(RaftTransportTlsClientTest, RetainsWholeFramesAcrossFailureForReconnectRetr
   ASSERT_EQ(retry->size(), 1U);
   EXPECT_EQ(retry->front(), expected);
   EXPECT_EQ(client->queued_frames(), 0U);
+  EXPECT_FALSE(client->next_deadline().has_value());
 
   auto wrong_route =
       raft::encode_raft_transport_envelope_v1({.group_id = group(),

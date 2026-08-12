@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace chronos::raft {
@@ -47,6 +48,7 @@ public:
   [[nodiscard]] common::Status complete(const RaftTimerAction& action,
                                         const RaftGroupObservation& observation, TimePoint now,
                                         TimePoint election_deadline);
+  [[nodiscard]] std::optional<TimePoint> next_deadline() const noexcept;
   [[nodiscard]] std::size_t group_count() const noexcept;
 
 private:

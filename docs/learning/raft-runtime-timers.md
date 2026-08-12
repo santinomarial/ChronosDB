@@ -15,6 +15,8 @@ Leader observations schedule the fixed heartbeat interval. Followers and candida
 strictly future caller-selected election deadline. Saturating heartbeat arithmetic avoids time-point
 overflow. Group storage is reserved at construction, deadline scans are linear in configured group
 count, and returned work is bounded by `maximum_actions_per_poll`.
+`next_deadline()` performs the same allocation-free scan over non-in-flight timers so a production
+poll owner can clamp its wait without advancing injected time.
 
 The scheduler is single-thread-affine. A production event loop owns every call; asynchronous durable
 results cross their existing completion mutex acquire edge before becoming observations here. This

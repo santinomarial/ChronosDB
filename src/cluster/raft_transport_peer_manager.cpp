@@ -176,6 +176,24 @@ common::Result<std::vector<RaftTransportPeerInterest>> RaftTransportPeerManager:
   }
 }
 
+std::optional<RaftTransportPeerManager::TimePoint>
+RaftTransportPeerManager::next_deadline() const noexcept {
+  std::optional<TimePoint> next;
+  if (!implementation_)
+    return next;
+  for (const std::optional<Impl::Route>& route : implementation_->routes) {
+    if (!route.has_value())
+      continue;
+    const auto deadline = route->reconnect.next_deadline();
+    if (deadline.has_value() && (!next.has_value() || *deadline < *next))
+      next = deadline;
+  }
+  const auto carrier_deadline = implementation_->pool.next_deadline();
+  if (carrier_deadline.has_value() && (!next.has_value() || *carrier_deadline < *next))
+    next = carrier_deadline;
+  return next;
+}
+
 std::size_t RaftTransportPeerManager::configured_peer_count() const noexcept {
   return implementation_ ? implementation_->route_count : 0U;
 }

@@ -84,6 +84,8 @@ TEST(RaftTransportPeerManagerTest, ConnectsFixedRoutesRoutesAtomicallyAndRecycle
   ASSERT_TRUE(manager.has_value()) << manager.error().to_string();
   const auto start = RaftTransportPeerManager::TimePoint{};
   ASSERT_TRUE(manager->drive(start).is_ok());
+  ASSERT_TRUE(manager->next_deadline().has_value());
+  EXPECT_EQ(*manager->next_deadline(), start + std::chrono::milliseconds{5});
   auto interests = manager->interests();
   ASSERT_TRUE(interests.has_value());
   ASSERT_EQ(interests->size(), 2U);
@@ -95,6 +97,8 @@ TEST(RaftTransportPeerManagerTest, ConnectsFixedRoutesRoutesAtomicallyAndRecycle
             .is_ok());
   }
   EXPECT_EQ(manager->connected_peer_count(), 2U);
+  ASSERT_TRUE(manager->next_deadline().has_value());
+  EXPECT_EQ(*manager->next_deadline(), start + std::chrono::milliseconds{6});
   auto result = outbound();
   ASSERT_TRUE(manager->route_result(group(), result, start).is_ok());
   interests = manager->interests();

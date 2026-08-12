@@ -176,11 +176,14 @@ TEST(RaftTransportTlsServerTest, AuthenticatesFragmentsAndServesPersistentFrames
   auto server = RaftTransportTlsServer::create(std::move(*server_socket),
                                                server_config(authenticator, *receiver), now);
   ASSERT_TRUE(server.has_value()) << server.error().to_string();
+  ASSERT_TRUE(server->next_deadline().has_value());
+  EXPECT_EQ(*server->next_deadline(), now + std::chrono::milliseconds{100});
   finish_handshake(*client_socket, *server, now + std::chrono::milliseconds{1});
   EXPECT_TRUE(authenticator.saw_fingerprint);
 
   const auto first = vote_request(1U);
   send_frame(*client_socket, *server, first, now + std::chrono::milliseconds{2});
+  EXPECT_FALSE(server->next_deadline().has_value());
   auto completed = server->take_completed(now + std::chrono::milliseconds{3});
   ASSERT_TRUE(completed.has_value()) << completed.error().to_string();
   EXPECT_EQ(completed->group_id, group());
@@ -192,6 +195,8 @@ TEST(RaftTransportTlsServerTest, AuthenticatesFragmentsAndServesPersistentFrames
   EXPECT_EQ(completed->observation->group_id, group());
   EXPECT_EQ(completed->observation->current_term, 1U);
   EXPECT_EQ(server->state(), RaftTransportTlsServerState::kReadingFrame);
+  ASSERT_TRUE(server->next_deadline().has_value());
+  EXPECT_EQ(*server->next_deadline(), now + std::chrono::milliseconds{103});
 
   const auto second = vote_request(2U);
   send_frame(*client_socket, *server, second, now + std::chrono::milliseconds{4});

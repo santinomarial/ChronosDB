@@ -46,6 +46,7 @@ public:
   [[nodiscard]] common::Status accept_failed_peer(RaftTransportFailedPeer&& failed, TimePoint now);
   [[nodiscard]] RaftTransportPeerReconnectState state() const noexcept;
   [[nodiscard]] std::optional<TimePoint> next_attempt_not_before() const noexcept;
+  [[nodiscard]] std::optional<TimePoint> next_deadline() const noexcept;
   [[nodiscard]] std::size_t attempts_started() const noexcept;
   [[nodiscard]] std::size_t retry_frame_count() const noexcept;
   [[nodiscard]] int descriptor() const noexcept;

@@ -172,6 +172,15 @@ common::Status RaftTimerRuntime::complete(const RaftTimerAction& action,
     return status(common::StatusCode::kInvalidArgument, "Raft timer completion is stale");
   return implementation_->arm(*timer, observation, now, election_deadline, true);
 }
+std::optional<RaftTimerRuntime::TimePoint> RaftTimerRuntime::next_deadline() const noexcept {
+  std::optional<TimePoint> next;
+  if (!implementation_)
+    return next;
+  for (const Impl::Timer& timer : implementation_->groups_)
+    if (!timer.in_flight && (!next.has_value() || timer.deadline < *next))
+      next = timer.deadline;
+  return next;
+}
 std::size_t RaftTimerRuntime::group_count() const noexcept {
   return implementation_ ? implementation_->groups_.size() : 0U;
 }

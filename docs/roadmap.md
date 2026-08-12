@@ -770,7 +770,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   retries rejected admission without shifting deadlines, and rejects stale completion rearming;
   its bounded driver now composes those actions with ordered asynchronous durable observations and
   retains complete results. The durable owner now publishes a portable coalescing completion
-  descriptor after owning results. Unified production routing orchestration remains.
+  descriptor after owning results, and every timer/transport aggregate exposes its exact earliest
+  monotonic deadline. Unified production routing orchestration remains.
 
 - **Scope:** implement a deterministic Raft core for one logical group: elections, replication, commit, membership protocol as scoped by ADR, snapshots, read consistency mechanisms, and simulated transport/storage/time.
 - **Explicit non-scope:** multi-group multiplexing, production network integration, distributed queries, hidden third-party Raft implementation, and serving uncommitted or merely appended entries.

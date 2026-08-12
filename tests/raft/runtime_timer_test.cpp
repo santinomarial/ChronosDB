@@ -23,9 +23,12 @@ TEST(RaftTimerRuntimeTest, EmitsRetriesAndRearmsElectionAndHeartbeatActions) {
       {.maximum_groups = 2U, .maximum_actions_per_poll = 1U, .heartbeat_interval = 5ms});
   ASSERT_TRUE(timers.has_value()) << timers.error().to_string();
   ASSERT_TRUE(timers->add_group(observation(Role::kFollower), start, start + 10ms).is_ok());
+  ASSERT_TRUE(timers->next_deadline().has_value());
+  EXPECT_EQ(*timers->next_deadline(), start + 10ms);
   EXPECT_TRUE(timers->poll(start + 9ms)->empty());
   auto due = timers->poll(start + 10ms);
   ASSERT_EQ(due->size(), 1U);
+  EXPECT_FALSE(timers->next_deadline().has_value());
   EXPECT_EQ(due->front().kind, RaftTimerActionKind::kStartElection);
   EXPECT_TRUE(std::holds_alternative<StartElectionOperation>(due->front().request().operation));
   EXPECT_TRUE(timers->poll(start + 10ms)->empty());
@@ -36,6 +39,8 @@ TEST(RaftTimerRuntimeTest, EmitsRetriesAndRearmsElectionAndHeartbeatActions) {
   ASSERT_TRUE(
       timers->complete(retry->front(), observation(Role::kLeader, 2U), start + 10ms, start + 20ms)
           .is_ok());
+  ASSERT_TRUE(timers->next_deadline().has_value());
+  EXPECT_EQ(*timers->next_deadline(), start + 15ms);
   EXPECT_TRUE(timers->poll(start + 14ms)->empty());
   auto heartbeat = timers->poll(start + 15ms);
   ASSERT_EQ(heartbeat->size(), 1U);

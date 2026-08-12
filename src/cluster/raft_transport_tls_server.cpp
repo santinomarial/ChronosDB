@@ -265,6 +265,14 @@ RaftTransportTlsServerInterest RaftTransportTlsServer::interest() const noexcept
   return implementation_ ? implementation_->interest_ : RaftTransportTlsServerInterest{};
 }
 
+std::optional<RaftTransportTlsServer::TimePoint>
+RaftTransportTlsServer::next_deadline() const noexcept {
+  if (!implementation_ || (implementation_->state_ != RaftTransportTlsServerState::kHandshaking &&
+                           implementation_->state_ != RaftTransportTlsServerState::kReadingFrame))
+    return std::nullopt;
+  return implementation_->deadline_;
+}
+
 const common::Status& RaftTransportTlsServer::failure() const noexcept {
   static const common::Status empty_failure{common::StatusCode::kInvalidArgument,
                                             "Raft TLS server is empty"};

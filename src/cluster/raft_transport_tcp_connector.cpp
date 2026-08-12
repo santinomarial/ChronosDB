@@ -192,6 +192,13 @@ bool RaftTransportTcpConnector::wants_write() const noexcept {
 int RaftTransportTcpConnector::descriptor() const noexcept {
   return implementation_ ? implementation_->socket.descriptor() : -1;
 }
+std::optional<RaftTransportTcpConnector::TimePoint>
+RaftTransportTcpConnector::next_deadline() const noexcept {
+  return implementation_ &&
+                 implementation_->connector_state == RaftTransportTcpConnectorState::kConnecting
+             ? std::optional<TimePoint>{implementation_->deadline}
+             : std::nullopt;
+}
 std::size_t RaftTransportTcpConnector::retry_frame_count() const noexcept {
   return implementation_ ? implementation_->retry_frames.size() : 0U;
 }

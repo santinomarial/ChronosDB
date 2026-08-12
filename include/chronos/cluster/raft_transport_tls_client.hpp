@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -71,6 +72,7 @@ public:
   [[nodiscard]] common::Result<std::vector<std::vector<std::byte>>> drain_retry_frames();
   [[nodiscard]] RaftTransportTlsClientState state() const noexcept;
   [[nodiscard]] RaftTransportTlsClientInterest interest() const noexcept;
+  [[nodiscard]] std::optional<TimePoint> next_deadline() const noexcept;
   [[nodiscard]] std::size_t queued_frames() const noexcept;
   [[nodiscard]] std::size_t queued_bytes() const noexcept;
   [[nodiscard]] std::size_t available_frames() const noexcept;

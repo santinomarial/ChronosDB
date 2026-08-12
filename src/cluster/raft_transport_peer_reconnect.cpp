@@ -154,6 +154,17 @@ std::optional<RaftTransportPeerReconnect::TimePoint>
 RaftTransportPeerReconnect::next_attempt_not_before() const noexcept {
   return implementation_ ? implementation_->next_attempt : std::nullopt;
 }
+std::optional<RaftTransportPeerReconnect::TimePoint>
+RaftTransportPeerReconnect::next_deadline() const noexcept {
+  if (!implementation_)
+    return std::nullopt;
+  if (implementation_->state == RaftTransportPeerReconnectState::kConnecting &&
+      implementation_->connector.has_value())
+    return implementation_->connector->next_deadline();
+  return implementation_->state == RaftTransportPeerReconnectState::kBackoff
+             ? implementation_->next_attempt
+             : std::nullopt;
+}
 std::size_t RaftTransportPeerReconnect::attempts_started() const noexcept {
   return implementation_ ? implementation_->attempts : 0U;
 }

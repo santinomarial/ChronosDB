@@ -305,6 +305,14 @@ RaftTransportTlsClientState RaftTransportTlsClient::state() const noexcept {
 RaftTransportTlsClientInterest RaftTransportTlsClient::interest() const noexcept {
   return implementation_ ? implementation_->interest_ : RaftTransportTlsClientInterest{};
 }
+std::optional<RaftTransportTlsClient::TimePoint>
+RaftTransportTlsClient::next_deadline() const noexcept {
+  if (!implementation_ || implementation_->state_ == RaftTransportTlsClientState::kFailed ||
+      (implementation_->state_ == RaftTransportTlsClientState::kReady &&
+       implementation_->count_ == 0U))
+    return std::nullopt;
+  return implementation_->deadline_;
+}
 std::size_t RaftTransportTlsClient::queued_frames() const noexcept {
   return implementation_ ? implementation_->count_ : 0U;
 }

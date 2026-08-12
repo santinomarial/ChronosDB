@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace chronos::cluster {
@@ -49,6 +50,7 @@ public:
   [[nodiscard]] RaftTransportTcpConnectorState state() const noexcept;
   [[nodiscard]] bool wants_write() const noexcept;
   [[nodiscard]] int descriptor() const noexcept;
+  [[nodiscard]] std::optional<TimePoint> next_deadline() const noexcept;
   [[nodiscard]] std::size_t retry_frame_count() const noexcept;
   [[nodiscard]] const common::Status& failure() const noexcept;
 

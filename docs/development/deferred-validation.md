@@ -151,10 +151,12 @@
   implemented read barrier through production transport and tablet snapshot acquisition.
 - Membership protocol, leader leases if ever proposed, completion-pipe saturation/shutdown races,
   timerfd integration, disk-error behavior, and storage fault injection. The asynchronous durable
-  owner now supplies a portable coalescing completion descriptor. A bounded generation-tagged timer scheduler now
-  emits exact election/heartbeat actions and rejects stale completion rearming; its bounded driver
+  owner now supplies a portable coalescing completion descriptor. A bounded generation-tagged timer
+  scheduler now emits exact election/heartbeat actions and rejects stale completion rearming; its bounded driver
   submits two-operation action/observation batches through the asynchronous durable owner and
   retains complete post-sync results for routing.
+  Timer and transport owners now expose their exact earliest monotonic deadlines; clock-change and
+  high-cardinality deadline-scan validation remain deferred.
 - Broad leader-churn and partition matrices, semantic/chunk trace shrinking, clock changes, physical
   disk failures, ASan/UBSan/TSan, fuzzing, independent model checking, commit/catch-up/snapshot
   benchmarks, and API review.

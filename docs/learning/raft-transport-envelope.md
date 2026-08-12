@@ -44,9 +44,10 @@ must synchronize the transition before transport sees its outbound envelope.
 
 The implemented receiver enforces that sequence. It rejects absent principals before parsing,
 delegates exact source authorization to the embedding, checks the local destination, and submits
-one owning receive operation through the bounded asynchronous runtime. Its completion is the
-acquire boundary for the already synchronized result. Outbound encoding borrows that result so the
-caller retains every message if a configured frame limit is too small.
+one owning receive operation followed immediately by its observation through the bounded
+asynchronous runtime. Its completion is the acquire boundary for the already synchronized result
+and post-message state. Outbound encoding borrows that result so the caller retains every message
+if a configured frame limit is too small.
 
 The inbound TLS carrier gives one event-loop thread exclusive session ownership. It reads through a
 fixed scratch buffer without crossing a frame boundary, pauses with one asynchronous durable
@@ -88,6 +89,11 @@ sessions without read interest until the embedding takes the exact post-sync tra
 Each authenticated message and its immediately following owning group observation execute in one
 durable FIFO batch, so timer rearming uses the exact post-message role and term rather than a later
 racy observation.
+
+Every timer and transport layer exposes its exact next monotonic deadline without mutation or
+allocation. Aggregate owners select the minimum child value; idle, durable-in-flight, and
+result-ready states return no invented deadline because descriptor readiness or explicit pickup is
+their progress source.
 
 ## Complexity and tradeoffs
 

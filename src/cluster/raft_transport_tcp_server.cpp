@@ -207,6 +207,19 @@ RaftTransportTcpServer::take_completed() {
   return std::optional<RaftTransportCompletedReceive>{};
 }
 
+std::optional<std::chrono::steady_clock::time_point>
+RaftTransportTcpServer::next_deadline() const noexcept {
+  std::optional<std::chrono::steady_clock::time_point> next;
+  if (!implementation_)
+    return next;
+  for (const std::unique_ptr<Impl::Connection>& connection : implementation_->connections) {
+    const auto deadline = connection->carrier.next_deadline();
+    if (deadline.has_value() && (!next.has_value() || *deadline < *next))
+      next = deadline;
+  }
+  return next;
+}
+
 common::Status RaftTransportTcpServer::shutdown() {
   if (!implementation_ || !implementation_->running)
     return common::Status::ok();
