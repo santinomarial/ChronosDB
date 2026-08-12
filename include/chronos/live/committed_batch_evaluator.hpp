@@ -25,6 +25,9 @@ struct CommittedBatchEvaluatorLimits {
   std::size_t maximum_workspace_bytes{128U * 1024U * 1024U};
 };
 
+// Checks whether the prepared pipeline is safe to evaluate independently per committed append.
+[[nodiscard]] common::Status validate_committed_batch_plan(const PreparedSubscriptionPlan& plan);
+
 // Evaluates one already-applied immutable append under one stateless row-preserving subscription
 // plan. The returned UPSERT advances exactly one committed source position. Its result key binds
 // the plan fingerprint and complete source position; its payload is one self-describing native

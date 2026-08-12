@@ -118,7 +118,10 @@ shard routing. Parser, binder, columnar, WAL, head, and response bounds fail bef
 reported; after WAL begins, the append executor's existing fail-closed rules remain authoritative.
 The configured committed-append observer must outlive the database and is called on the same owner
 thread. Database startup replay completes before the observer can receive online work and does not
-re-emit historical notifications.
+re-emit historical notifications. The bounded live fan-out is one concrete observer: its borrowed
+plans, coordinators, and query resource contexts must also outlive it. It routes only exact
+table/tablet/WAL matches and contains evaluation or publication failure by expiring the affected
+plan's old replay continuity; it never changes the applied write result.
 
 ## Complexity, tradeoffs, and review questions
 

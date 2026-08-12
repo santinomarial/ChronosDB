@@ -61,17 +61,6 @@ constexpr std::size_t kConservativeAllocationOverheadBytes = 64U;
          std::holds_alternative<query::ColumnOutputStage>(stage);
 }
 
-[[nodiscard]] common::Status validate_plan(const PreparedSubscriptionPlan& plan) {
-  for (const query::PhysicalPipelineStage& stage : plan.physical_plan().stages()) {
-    if (!row_preserving_stage(stage))
-      return unsupported("committed batch evaluation requires a stateless row-preserving plan");
-  }
-  if (plan.columns().empty() ||
-      plan.columns().size() != plan.physical_plan().output_columns().size())
-    return invalid("committed batch plan output metadata is invalid");
-  return common::Status::ok();
-}
-
 [[nodiscard]] common::Result<std::size_t>
 expected_chunks(const columnar::OwnedColumnarBatch& batch,
                 const CommittedBatchEvaluatorLimits& limits) {
@@ -190,6 +179,17 @@ result_key(const PreparedSubscriptionPlan& plan, const SourcePosition& position)
 
 } // namespace
 
+common::Status validate_committed_batch_plan(const PreparedSubscriptionPlan& plan) {
+  for (const query::PhysicalPipelineStage& stage : plan.physical_plan().stages()) {
+    if (!row_preserving_stage(stage))
+      return unsupported("committed batch evaluation requires a stateless row-preserving plan");
+  }
+  if (plan.columns().empty() ||
+      plan.columns().size() != plan.physical_plan().output_columns().size())
+    return invalid("committed batch plan output metadata is invalid");
+  return common::Status::ok();
+}
+
 common::Result<CommittedChange>
 evaluate_committed_batch(const PreparedSubscriptionPlan& plan, const SourcePosition position,
                          std::shared_ptr<const columnar::OwnedColumnarBatch> batch,
@@ -210,7 +210,7 @@ evaluate_committed_batch(const PreparedSubscriptionPlan& plan, const SourcePosit
       batch->schema().schema_id() != plan.schema_ptr()->schema_id() ||
       batch->schema().version() != plan.schema_ptr()->version())
     return common::make_unexpected(invalid("committed batch schema does not match the plan"));
-  if (const common::Status status = validate_plan(plan); !status.is_ok())
+  if (const common::Status status = validate_committed_batch_plan(plan); !status.is_ok())
     return common::make_unexpected(status);
   auto chunk_count = expected_chunks(*batch, limits);
   if (!chunk_count.has_value())

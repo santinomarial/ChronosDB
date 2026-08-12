@@ -43,6 +43,25 @@ subscription-change envelope and 80-byte key. Cancellation, resource exhaustion,
 stateful semantics, encoding failure, or allocation failure returns no change and performs no
 publication.
 
+## Applied-append fan-out
+
+`SingleNodeLiveAppendFanout` is the production service boundary between the database observer and
+durable plan coordinators. Its fixed, bounded binding vector borrows immutable plans, durable
+coordinators, and query resource contexts; every owner must outlive the fan-out. Admission validates
+the complete plan/coordinator identity and rejects stateful physical stages before writes begin.
+
+The database owner calls the fan-out synchronously after an append is applied. Matching table and
+tablet/WAL bindings are evaluated in configured order. Success publishes the exact result. A schema
+identity change drives the coordinator's terminal schema transition. Evaluation or publication
+failure instead advances the exact source through `mark_continuity_lost`, overflowing old sessions
+and tokens so no client can resume across the missing result. Failure of that containment disables
+the binding. None of these outcomes can reject or relabel the committed write.
+
+The fan-out and its counters are single-thread-affine. Routing is linear in configured plans and
+has an explicit maximum; indexing is not justified without a profile. Startup recovery does not
+replay observer callbacks, so durable coordinator recovery and committed suffix replay must be
+completed by the surrounding runtime before online admission.
+
 ## Complexity and review questions
 
 Vector execution and encoding are linear in input cells plus selected output bytes. Peak memory is
@@ -54,3 +73,4 @@ Retaining chunks is deliberate because the existing encoder consumes borrowed ce
 - Which physical stages are unsafe to evaluate independently per append?
 - Why must nested result size account for the outer subscription envelope?
 - At what exact point may the caller publish the returned change?
+- Why does fan-out failure overflow replay state instead of failing the append?

@@ -33,15 +33,17 @@
   memory/allocation profiles. Focused coverage now proves bounded canonical slicing and a checked
   row-preserving filter/projection pipeline. The plan-bound evaluator now constructs one
   deterministic key and bounded result payload per committed append and fits the existing live
-  coordinator/protocol contract. Forced failures across multi-chunk result collection, broad type
-  matrices, production ingest fan-out, incremental stateful-plan routing, and daemon delivery remain
-  integration work.
+  coordinator/protocol contract. A bounded service fan-out now routes applied table/tablet/WAL
+  matches and contains evaluator/publication failure as explicit continuity loss. Forced failures
+  across multi-chunk result collection, broad type matrices, incremental stateful-plan routing, and
+  daemon delivery remain integration work.
 - Single-node applied-append observation: the native ingest and SQL INSERT product paths now share
   one database-owned executor seam, and focused coverage proves that one applied mutation notifies
-  while its matching retry does not. Multiple registered-plan fan-out, evaluator failure
-  metrics, disconnect races, replay/startup interleavings, and sustained observer cost remain
-  integration and Phase 18 work. Coordinator failure containment now has an explicit durable
-  continuity-loss transition that overflows old sessions/tokens before allowing a fresh snapshot.
+  while its matching retry does not. Fixed multiple-plan fan-out, evaluator/publication metrics,
+  and continuity-loss containment are now composed at the service boundary. Dynamic plan
+  registration/retirement, disconnect races, replay/startup interleavings, and sustained observer
+  cost remain integration and Phase 18 work. Coordinator failure containment overflows old
+  sessions/tokens before allowing a fresh snapshot.
 - Commits injected at every historical-to-live handoff step across real snapshot execution.
 - Cross-tablet-owner wiring around the implemented canonical vector/admission-order coordinator,
   topology transitions, multi-plan retention registration/retirement, service SQL/plan-to-input
