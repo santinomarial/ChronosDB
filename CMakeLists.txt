@@ -423,6 +423,7 @@ add_library(
   src/query/executor.cpp
   src/query/explain.cpp
   src/query/head_scan.cpp
+  src/query/insert_batch.cpp
   src/query/lexer.cpp
   src/query/latest.cpp
   src/query/literal.cpp

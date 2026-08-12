@@ -45,8 +45,9 @@ The public headers under `include/chronos/query/` are self-contained and install
 - `executor.hpp` executes one bound SELECT and optionally returns deterministic operator-work
   counters.
 - `statement_binder.hpp` validates CREATE TABLE roles/policies, materializes an initial schema only
-  from caller-allocated durable identities, binds INSERT target ordinals, and materializes
-  source-free VALUES expressions into complete schema-ordinal rows.
+  from caller-allocated durable identities, binds INSERT target ordinals, materializes source-free
+  VALUES expressions into complete schema-ordinal rows, and transposes those rows into canonical
+  immutable columnar ownership for an external ingestion owner.
 - `explain.hpp` emits stable format version 1 logical/scalar-physical plan text and executes EXPLAIN
   ANALYZE once with measured counters.
 
@@ -90,6 +91,11 @@ type is checked against the narrower assignment rule. Thus the wrapper cannot ac
 explicitly permitted numeric/text/temporal CAST into an implicit INSERT conversion. Column
 references, stars, and aggregates are rejected because VALUES has no input source. Materialization
 fills omitted nullable columns with typed NULL and rejects an evaluated NULL for a non-null column.
+`materialize_sql_v1_insert_batch()` then validates the complete typed rows and transposes them into
+the same `OwnedColumnarBatch` accepted by native WAL ingestion. It pins the bound schema, uses
+little-endian fixed values, bitmap Boolean/validity values, checked u32 variable offsets, and accepts
+the canonical columnar resource limits. It still performs no durable write and creates no client or
+batch identity; those remain service/ingestion authority.
 
 ## Lexical and parsing invariants
 
@@ -223,8 +229,9 @@ execution/materialization. Allocation and container-length failures are translat
 
 Every public work entry has explicit bounds. The lexer bounds bytes and tokens; the parser bounds
 nodes, depth, and list sizes; SELECT binding bounds sources, expression records, and outputs; INSERT
-bounds rows and total values; snapshots and execution bound source, intermediate, output, and group
-rows. A configured zero bound is invalid rather than an accidental request for unlimited work.
+bounds rows and total values, and its columnar conversion applies row, column, logical-buffer, and
+retained-buffer bounds; snapshots and execution bound source, intermediate, output, and group rows.
+A configured zero bound is invalid rather than an accidental request for unlimited work.
 
 No failing operation partially mutates caller state. All plans/results are constructed privately
 and returned only when complete. The Phase 8 code performs no durable or externally visible write.

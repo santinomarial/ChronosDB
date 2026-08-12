@@ -259,3 +259,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0222](0222-bounded-native-vector-query-results.md) | Bounded native vector query results | accepted |
 | [0223](0223-native-create-table-dispatch.md) | Native CREATE TABLE dispatch | accepted |
 | [0224](0224-configured-single-node-chronosd.md) | Configured single-node chronosd | accepted |
+| [0225](0225-sql-insert-columnar-materialization.md) | SQL INSERT columnar materialization | accepted |

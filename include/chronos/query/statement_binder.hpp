@@ -1,6 +1,7 @@
 #ifndef CHRONOS_QUERY_STATEMENT_BINDER_HPP_
 #define CHRONOS_QUERY_STATEMENT_BINDER_HPP_
 
+#include "chronos/columnar/columnar_batch.hpp"
 #include "chronos/query/ast.hpp"
 #include "chronos/query/binder.hpp"
 #include "chronos/query/catalog.hpp"
@@ -132,6 +133,13 @@ bind_sql_v1_insert(ParsedSqlInsert syntax,
 // nullable columns become typed NULL; missing or evaluated NULL non-null columns fail.
 [[nodiscard]] SqlResult<MaterializedSqlInsert>
 materialize_sql_v1_insert_rows(const BoundSqlInsert& statement);
+
+// Transposes fully typed materialized INSERT rows into the canonical immutable columnar ownership
+// required by WAL ingestion. Fixed values use little-endian physical bytes, Boolean/null validity
+// use canonical bitmaps, and variable offsets are exact u32 prefix positions.
+[[nodiscard]] common::Result<columnar::OwnedColumnarBatch>
+materialize_sql_v1_insert_batch(const MaterializedSqlInsert& statement,
+                                columnar::ColumnarBatchLimits limits = {});
 
 } // namespace chronos::query
 

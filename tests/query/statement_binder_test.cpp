@@ -185,6 +185,27 @@ TEST(SqlStatementBinderTest, BindsAndMaterializesConstantInsertRowsInSchemaOrder
   EXPECT_EQ(price_type->kind(), schema::LogicalTypeKind::kFloat64);
   EXPECT_TRUE(materialized->rows()[0][4].is_null());
   EXPECT_EQ(std::get<std::string>(materialized->rows()[1][1].storage()), "B");
+
+  common::Result<columnar::OwnedColumnarBatch> batch =
+      materialize_sql_v1_insert_batch(*materialized);
+  ASSERT_TRUE(batch.has_value()) << batch.error().to_string();
+  ASSERT_EQ(batch->schema_ptr(), materialized->schema_ptr());
+  ASSERT_EQ(batch->row_count(), 2U);
+  ASSERT_EQ(batch->columns().size(), 5U);
+  const auto scalar = [&batch](const std::size_t column, const std::uint32_t row) {
+    return ScalarValue::from_column_cell(
+               batch->schema().columns()[column].type(),
+               batch->cell({.column_ordinal = column, .row = row}).value())
+        .value();
+  };
+  EXPECT_EQ(std::get<std::int64_t>(scalar(0U, 1U).storage()), 2);
+  EXPECT_EQ(std::get<std::string>(scalar(1U, 0U).storage()), "A");
+  EXPECT_EQ(std::get<std::int64_t>(scalar(2U, 0U).storage()), 42);
+  EXPECT_TRUE(scalar(3U, 0U).is_null());
+  EXPECT_TRUE(scalar(4U, 1U).is_null());
+
+  EXPECT_EQ(materialize_sql_v1_insert_batch(*materialized, {.max_rows = 1U}).error().code(),
+            common::StatusCode::kResourceExhausted);
 }
 
 TEST(SqlStatementBinderTest, RejectsInvalidInsertTargetsAssignmentsAndExpressions) {
