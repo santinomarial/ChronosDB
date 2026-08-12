@@ -28,10 +28,18 @@ Complete table policy applies only after its schema, atomically updates the comp
 view, and prevents a later legacy partial command from contradicting the complete authority.
 
 `catalog_snapshot()` creates one owning, deterministic recovery projection after replay. It carries
-the applied index, every complete definition in schema-ID order, active table/schema pairs in table
-order, tablet placements in tablet order, and complete policies in table order. Definition strings
-are copied while immutable schemas remain shared and pinned, so a composed runtime can retain the
-projection without borrowing the state machine's internal maps.
+the applied index, cluster nodes in node-ID order, every complete definition in schema-ID order,
+active table/schema pairs in table order, tablet placements in tablet order, and complete policies
+in table order. Endpoints and definition strings are copied while immutable schemas remain shared
+and pinned, so a composed runtime can retain the projection without borrowing the state machine's
+internal maps.
+
+`AsyncRaftMetadataApplication` owns the durable state machine on the asynchronous Raft worker. It
+recovers and publishes the first complete projection before admission opens, then applies and
+persists touched metadata-group batches before their completion is visible. Readers pin a
+`shared_ptr<const MetadataCatalogSnapshot>` under a short mutex acquisition. Untouched Raft groups
+reuse the exact prior projection; a retained projection remains valid after replacement or owner
+shutdown, while new acquisition fails once the owner stops.
 
 ## Recovery and failure behavior
 
@@ -69,3 +77,4 @@ and allocates only the explicitly bounded vectors and copied table names.
 - Why is a complete schema a separate Raft entry instead of a Metadata Command v1 extension?
 - What must a metadata application snapshot bind before log reclamation is safe?
 - Why does placement metadata not itself change Raft voting membership?
+- Why is an immutable catalog projection published only after `applied_index` persistence?

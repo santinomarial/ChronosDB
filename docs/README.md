@@ -290,6 +290,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   commands, dual-quorum elections and commits, learner behavior, recovery, and application no-ops.
 - [Committed Raft tablet application](learning/raft-tablet-application.md): committed-only command
   decoding, shared row/retry publication, applied-index ordering, and retained-log reconstruction.
+- [Durable metadata Raft state](learning/durable-metadata-state.md): exact committed catalog replay,
+  application snapshots, worker-affine publication, immutable reader pins, and failure behavior.
 - [Worker-affine asynchronous Raft tablet application](learning/async-raft-tablet-application.md):
   pre-admission recovery, touched-group application before completion, pinned snapshot publication,
   term-bound exact applied-quorum completions, ownership, and terminal failure behavior.

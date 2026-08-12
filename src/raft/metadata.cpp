@@ -312,10 +312,15 @@ common::Result<MetadataCatalogSnapshot> MetadataStateMachine::catalog_snapshot()
   try {
     MetadataCatalogSnapshot snapshot;
     snapshot.applied_index = impl_->applied;
+    snapshot.cluster_nodes.reserve(impl_->nodes.size());
     snapshot.schema_definitions.reserve(impl_->definitions.size());
     snapshot.active_schemas.reserve(impl_->active_schemas.size());
     snapshot.tablet_placements.reserve(impl_->tablets.size());
     snapshot.table_policies.reserve(impl_->policies.size());
+    for (const auto& [node_id, node] : impl_->nodes) {
+      static_cast<void>(node_id);
+      snapshot.cluster_nodes.push_back(node);
+    }
     for (const auto& [schema_id, definition] : impl_->definitions) {
       static_cast<void>(schema_id);
       snapshot.schema_definitions.push_back(definition);

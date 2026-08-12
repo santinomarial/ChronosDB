@@ -103,6 +103,7 @@ struct ActiveSchemaMetadata {
 // their immutable shared schemas pinned independently of the state machine lifetime.
 struct MetadataCatalogSnapshot {
   LogIndex applied_index{};
+  std::vector<ClusterNodeMetadata> cluster_nodes;
   std::vector<CatalogTableDefinition> schema_definitions;
   std::vector<ActiveSchemaMetadata> active_schemas;
   std::vector<TabletPlacementMetadata> tablet_placements;

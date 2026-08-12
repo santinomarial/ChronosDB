@@ -226,6 +226,8 @@ TEST(DurableMetadataStateMachineTest, ProjectsAnOwningDeterministicRecoveryCatal
   ASSERT_TRUE(runtime->execute_batch({{group_id(), StartElectionOperation{}}}).has_value());
   const CatalogTableDefinition definition = schema_definition();
   const auto tablet = id<schema::TabletId>(31U);
+  ASSERT_TRUE(runtime->execute_batch({{group_id(), proposal(ClusterNodeMetadata{1U, "node-1"})}})
+                  .has_value());
   ASSERT_TRUE(runtime->execute_batch({{group_id(), schema_proposal(definition)}}).has_value());
   ASSERT_TRUE(
       runtime
@@ -242,7 +244,9 @@ TEST(DurableMetadataStateMachineTest, ProjectsAnOwningDeterministicRecoveryCatal
   std::optional<DurableMetadataStateMachine> owner{std::move(*metadata)};
   auto projected = owner->state().catalog_snapshot();
   ASSERT_TRUE(projected.has_value()) << projected.error().to_string();
-  EXPECT_EQ(projected->applied_index, 3U);
+  EXPECT_EQ(projected->applied_index, 4U);
+  ASSERT_EQ(projected->cluster_nodes.size(), 1U);
+  EXPECT_EQ(projected->cluster_nodes.front(), (ClusterNodeMetadata{1U, "node-1"}));
   ASSERT_EQ(projected->schema_definitions.size(), 1U);
   EXPECT_TRUE(projected->schema_definitions.front() == definition);
   ASSERT_EQ(projected->active_schemas.size(), 1U);

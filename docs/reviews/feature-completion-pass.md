@@ -336,6 +336,9 @@ Focused executions passed:
 - Worker-extension composition continuation: 11 focused Raft tests passed for bounded definitions,
   direct child identity, ordered batch callbacks, reverse shutdown, partial-initialization cleanup,
   throwing-shutdown continuation, and terminal completion failure.
+- Worker-affine metadata continuation: 5 focused Raft tests passed for applied publication,
+  untouched-group isolation, pre-admission retained-log reconstruction, exact installed-snapshot
+  recovery, retained immutable snapshot lifetime, and terminal corrupt-command handling.
 
 The final C++ tree passed the repository-pinned clang-format 18 check. Full-suite, sanitizer, fuzz,
 broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were deliberately not run.
@@ -360,10 +363,9 @@ broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were d
 ### Concurrency
 
 - Live/materialized-view, metadata-application, movement, and tiering owners are intentionally
-  single-thread-affine. Multi-Raft has a bounded dedicated worker and committed tablet application
-  now has a concrete worker-affine owner. A bounded flat extension set can host tablet and metadata
-  application together; the concrete metadata extension and packaged transport/service composition
-  are still incomplete.
+  single-thread-affine. Multi-Raft has a bounded dedicated worker; committed tablet and metadata
+  application now have concrete worker-affine owners, and a bounded flat extension set can host
+  both. Packaged transport/service composition remains incomplete.
 - BoundedExchange and MemoryObjectStore use mutexes but have no TSan evidence in this pass.
 - io_uring protocol cancellation, forced in-flight shutdown, and close/completion races lack broad
   Linux and TSan evidence beyond the focused clean-shutdown lifecycle.

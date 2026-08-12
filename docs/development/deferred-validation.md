@@ -197,7 +197,9 @@
   context, and a bounded coordinator now owns fair multi-request polling, exact cancellation,
   deadlines, correlation, and metrics. A flat bounded extension set now composes multiple exact
   application owners with ordered callbacks, reverse partial-failure cleanup, and direct-child
-  identity proof; add metadata application, packaged reactor/daemon routing,
+  identity proof. The concrete metadata extension now performs pre-admission retained/snapshot
+  recovery, touched-group application, durable applied-index advancement, and immutable catalog
+  snapshot publication on that worker; add packaged reactor/daemon routing,
   completion-driven wakeup, broader failure matrices, long-running hook watchdog evidence, and TSan
   scheduling coverage.
 - Carry the implemented group-scoped read-barrier operation through authenticated production
