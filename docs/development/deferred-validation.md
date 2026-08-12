@@ -194,9 +194,10 @@
   group/leader-term/index receipt completions on the worker. The nonblocking replicated ingest
   operation now exact-validates proposal persistence, applied receipts, retry outcomes, and
   protocol-v2 acknowledgement projection. Reactor tasks now preserve exact negotiated protocol
-  context; add metadata application, reactor wakeup/deadline/
-  cancellation integration, broader failure matrices, long-running hook watchdog evidence, and
-  TSan scheduling coverage.
+  context, and a bounded coordinator now owns fair multi-request polling, exact cancellation,
+  deadlines, correlation, and metrics; add metadata application, packaged reactor/daemon routing,
+  completion-driven wakeup, broader failure matrices, long-running hook watchdog evidence, and TSan
+  scheduling coverage.
 - Carry the implemented group-scoped read-barrier operation through authenticated production
   transport, request deadlines/coalescing, apply waiting, and exact tablet snapshot acquisition.
 - Extend the implemented metadata Raft codec/application/reopen path and complete-schema-definition

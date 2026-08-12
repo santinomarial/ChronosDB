@@ -310,3 +310,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0273](0273-bounded-term-bound-applied-quorum-completions.md) | Bounded term-bound applied-quorum completions | accepted |
 | [0274](0274-nonblocking-replicated-ingest-operation.md) | Nonblocking replicated ingest operation | accepted |
 | [0275](0275-negotiated-network-task-context.md) | Preserve negotiated context in network tasks | accepted |
+| [0276](0276-bounded-replicated-ingest-coordinator.md) | Bounded replicated ingest coordinator | accepted |

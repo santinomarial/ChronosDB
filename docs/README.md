@@ -295,6 +295,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   term-bound exact applied-quorum completions, ownership, and terminal failure behavior.
 - [Replicated ingest operation](learning/replicated-ingest-operation.md): nonblocking exact-command
   proposal, post-sync result validation, applied receipt, retry outcome, and protocol-v2 projection.
+- [Replicated ingest coordinator](learning/replicated-ingest-coordinator.md): bounded multi-request
+  admission, fair polling, exact cancellation/deadlines, response correlation, and observability.
 - [Windowed materialized-view state](learning/windowed-materialized-view.md): committed/event-time
   separation, corrections, watermarks, exact checkpoints, durable recovery, and retention frontier.
 - [Multi-tablet subscription order](learning/multi-tablet-subscription-order.md): canonical source

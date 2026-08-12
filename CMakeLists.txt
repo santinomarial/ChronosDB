@@ -698,6 +698,7 @@ chronos_enable_static_analysis(chronos_tiering)
 add_library(
   chronos_service
   src/service/native_protocol_service.cpp
+  src/service/replicated_ingest_coordinator.cpp
   src/service/replicated_ingest_operation.cpp
   src/service/single_node_committed_append_router.cpp
   src/service/single_node_database.cpp
@@ -874,6 +875,7 @@ if(CHRONOS_BUILD_TESTS)
   add_executable(
     chronos_service_tests
     tests/service/native_protocol_service_header_self_contained.cpp
+    tests/service/replicated_ingest_coordinator_header_self_contained.cpp
     tests/service/replicated_ingest_operation_header_self_contained.cpp
     tests/service/replicated_ingest_operation_test.cpp
     tests/service/single_node_committed_append_router_header_self_contained.cpp
