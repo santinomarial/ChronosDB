@@ -64,6 +64,9 @@ and a concurrent caller-supplied credential provider with explicit forced refres
 Multipart upload, redirect/proxy policy, and built-in environment/workload/instance provider
 implementations remain outside this original carrier decision.
 
+[ADR 0197](0197-conditional-s3-multipart-upload.md) subsequently adds sequential signed multipart
+transfer, conditional completion, exact final verification, and best-effort abort for large objects.
+
 A local S3-compatible HTTP integration test checks TLS-default rejection of plaintext, SigV4 and
 session-token headers, conditional creation, exact retry verification, percent-encoded keys, HEAD
 metadata, and a two-byte range response. Live AWS/MinIO/LocalStack, credential-expiry, proxy, TLS-

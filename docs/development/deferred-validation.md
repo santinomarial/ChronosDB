@@ -179,7 +179,7 @@
 ## Phase 17 — object storage and interoperability
 
 - Live AWS/MinIO/LocalStack validation for the libcurl SigV4 backend; built-in environment/workload/
-  instance credential providers, proxy policy, retry jitter/`Retry-After`, multipart upload,
+  instance credential providers, proxy policy, retry jitter/`Retry-After`, parallel multipart parts,
   concurrent conditional writers, timeout/TLS/partial-response faults, eventual listing behavior,
   restore, conditional-delete races, encryption
   boundary, and broader object-store fault injection. Durable cold-history discovery now completes
@@ -188,6 +188,9 @@
   multiple-object partial failures, and live-provider qualification remain deferred.
   Bounded replay-safe retries, capped backoff, per-attempt signing, explicit provider refresh after
   401/403, transient-service recovery, and exact attempt exhaustion have focused local coverage.
+  Sequential multipart creation, encoded upload IDs, signed parts, conditional completion, exact
+  final verification, and abort after part failure have focused local coverage; embedded-200 errors,
+  completion races, abort failure, and bucket lifecycle cleanup remain deferred.
 - Subprocess/power-loss coverage for the implemented durable component and pair-commit installers;
   TSan coverage for the implemented atomic shared pair publisher; CSEG validation
   before upload, safe local deletion, snapshot/compaction pins, cache concurrency, cache index

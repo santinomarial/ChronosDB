@@ -42,6 +42,10 @@ All current operations are safe to replay:
 - DELETE follows exact HEAD validation and carries `If-Match`, so an ambiguous first success becomes
   an idempotent 404 on retry.
 
+[ADR 0197](0197-conditional-s3-multipart-upload.md) later adds multipart request kinds. UploadPart,
+Complete, and Abort retain operation-specific replay/reconciliation rules, while Create is
+deliberately not transport-retried because a successful attempt allocates a new upload ID.
+
 Each attempt retains the original request body and conditional validator only for the synchronous
 call. Retry does not weaken response bounds, TLS verification, redirect rejection, checksum
 validation, or final status classification.

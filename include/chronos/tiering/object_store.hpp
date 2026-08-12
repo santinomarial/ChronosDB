@@ -99,6 +99,8 @@ struct S3ObjectStoreConfig {
   std::size_t maximum_attempts{3U};
   std::chrono::milliseconds initial_retry_backoff{50};
   std::chrono::milliseconds maximum_retry_backoff{1'000};
+  std::size_t multipart_threshold_bytes{64U * 1024U * 1024U};
+  std::size_t multipart_part_bytes{16U * 1024U * 1024U};
   std::size_t maximum_response_bytes{std::size_t{4U} * 1024U * 1024U * 1024U};
   // Plain HTTP is rejected by default. This switch exists for explicitly isolated S3-compatible
   // deployments and local tests; credentials and object bytes are exposed to that network.

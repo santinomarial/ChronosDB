@@ -5,6 +5,7 @@
 #include <arpa/inet.h>
 #include <array>
 #include <cerrno>
+#include <charconv>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -44,6 +45,7 @@ struct LocalS3Behavior {
   std::string access_key_id{"test-access"};
   std::optional<std::string> session_token{"test-token"};
   std::size_t transient_put_failures{};
+  std::optional<std::size_t> fail_multipart_part;
 };
 
 class LocalS3Server final {
@@ -221,6 +223,114 @@ private:
       return;
     }
 
+    if (request->method == "POST" && request->target.ends_with("?uploads")) {
+      const auto checksum = request->headers.find("x-amz-meta-chronos-sha256");
+      if (checksum == request->headers.end() || checksum->second.empty()) {
+        static_cast<void>(send_all(descriptor,
+                                   "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: "
+                                   "close\r\n\r\n"));
+        return;
+      }
+      multipart_upload_active_ = true;
+      multipart_checksum_hex_ = checksum->second;
+      multipart_parts_.clear();
+      const std::string body =
+          "<InitiateMultipartUploadResult><Bucket>chronos-test</Bucket><Key>parts/multipart"
+          "</Key><UploadId>fixture-upload&amp;id</UploadId></InitiateMultipartUploadResult>";
+      const std::string response =
+          "HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(body.size()) +
+          "\r\nConnection: close\r\n\r\n" + body;
+      static_cast<void>(send_all(descriptor, response));
+      return;
+    }
+    if (request->method == "PUT" && request->target.contains("?partNumber=")) {
+      constexpr std::string_view upload_query{"&uploadId=fixture-upload%26id"};
+      const std::size_t part_begin = request->target.find("?partNumber=");
+      const std::size_t upload_begin = request->target.find(upload_query, part_begin);
+      const auto content_digest = request->headers.find("x-amz-content-sha256");
+      if (!multipart_upload_active_ || part_begin == std::string::npos ||
+          upload_begin == std::string::npos || content_digest == request->headers.end() ||
+          content_digest->second.empty()) {
+        static_cast<void>(send_all(descriptor,
+                                   "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: "
+                                   "close\r\n\r\n"));
+        return;
+      }
+      const std::string_view encoded_part{request->target.data() +
+                                              static_cast<std::ptrdiff_t>(part_begin + 12U),
+                                          upload_begin - (part_begin + 12U)};
+      std::size_t part_number{};
+      const auto parsed = std::from_chars(encoded_part.data(),
+                                          encoded_part.data() + encoded_part.size(), part_number);
+      if (parsed.ec != std::errc{} || parsed.ptr != encoded_part.data() + encoded_part.size() ||
+          part_number == 0U) {
+        static_cast<void>(send_all(descriptor,
+                                   "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: "
+                                   "close\r\n\r\n"));
+        return;
+      }
+      if (behavior_.fail_multipart_part == part_number) {
+        static_cast<void>(send_all(descriptor,
+                                   "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: "
+                                   "close\r\n\r\n"));
+        return;
+      }
+      multipart_parts_[part_number] = request->body;
+      const std::string response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nETag: \"part-" +
+                                   std::to_string(part_number) + "\"\r\nConnection: close\r\n\r\n";
+      static_cast<void>(send_all(descriptor, response));
+      return;
+    }
+    if (request->method == "POST" && request->target.ends_with("?uploadId=fixture-upload%26id")) {
+      const auto condition = request->headers.find("if-none-match");
+      const std::string_view body{reinterpret_cast<const char*>(request->body.data()),
+                                  request->body.size()};
+      if (!multipart_upload_active_ || condition == request->headers.end() ||
+          condition->second != "*" || !body.contains("<PartNumber>1</PartNumber>") ||
+          !body.contains("<ETag>\"part-1\"</ETag>")) {
+        static_cast<void>(send_all(descriptor,
+                                   "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: "
+                                   "close\r\n\r\n"));
+        return;
+      }
+      if (object_.has_value()) {
+        static_cast<void>(send_all(descriptor,
+                                   "HTTP/1.1 412 Precondition Failed\r\nContent-Length: "
+                                   "0\r\nConnection: close\r\n\r\n"));
+        return;
+      }
+      std::vector<std::byte> assembled;
+      for (std::size_t part_number = 1U; part_number <= multipart_parts_.size(); ++part_number) {
+        const auto found = multipart_parts_.find(part_number);
+        if (found == multipart_parts_.end()) {
+          static_cast<void>(send_all(
+              descriptor,
+              "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"));
+          return;
+        }
+        assembled.insert(assembled.end(), found->second.begin(), found->second.end());
+      }
+      object_ = std::move(assembled);
+      checksum_hex_ = multipart_checksum_hex_;
+      multipart_upload_active_ = false;
+      multipart_parts_.clear();
+      const std::string result =
+          "<CompleteMultipartUploadResult><Bucket>chronos-test</Bucket><Key>parts/multipart"
+          "</Key><ETag>\"complete-etag\"</ETag></CompleteMultipartUploadResult>";
+      const std::string response =
+          "HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(result.size()) +
+          "\r\nConnection: close\r\n\r\n" + result;
+      static_cast<void>(send_all(descriptor, response));
+      return;
+    }
+    if (request->method == "DELETE" && request->target.ends_with("?uploadId=fixture-upload%26id")) {
+      multipart_upload_active_ = false;
+      multipart_parts_.clear();
+      static_cast<void>(send_all(
+          descriptor, "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"));
+      return;
+    }
+
     if (request->method == "PUT") {
       if (behavior_.transient_put_failures > 0U) {
         --behavior_.transient_put_failures;
@@ -336,6 +446,9 @@ private:
   std::optional<std::vector<std::byte>> object_;
   std::string checksum_hex_;
   LocalS3Behavior behavior_;
+  bool multipart_upload_active_{};
+  std::string multipart_checksum_hex_;
+  std::map<std::size_t, std::vector<std::byte>> multipart_parts_;
 };
 
 class RefreshingCredentialProvider final : public S3CredentialProvider {
@@ -524,6 +637,88 @@ TEST(S3ObjectStoreTest, StopsAtTheConfiguredRetryAttemptLimit) {
   ASSERT_FALSE(uploaded.has_value());
   EXPECT_EQ(uploaded.error().code(), common::StatusCode::kUnavailable);
   EXPECT_EQ(server.requests().size(), 2U);
+  EXPECT_TRUE(server.failure().empty()) << server.failure();
+}
+
+TEST(S3ObjectStoreTest, MultipartUploadCompletesConditionallyAndVerifiesExactObject) {
+  LocalS3Server server;
+  ASSERT_TRUE(server.valid()) << server.failure();
+  constexpr std::size_t part_bytes = 5U * 1024U * 1024U;
+  S3ObjectStoreConfig config{.endpoint = "http://127.0.0.1:" + std::to_string(server.port()),
+                             .region = "us-east-1",
+                             .bucket = "chronos-test",
+                             .access_key_id = "test-access",
+                             .secret_access_key = "test-secret",
+                             .session_token = "test-token",
+                             .connect_timeout = std::chrono::milliseconds{1'000},
+                             .request_timeout = std::chrono::milliseconds{5'000},
+                             .multipart_threshold_bytes = part_bytes,
+                             .multipart_part_bytes = part_bytes,
+                             .maximum_response_bytes = part_bytes + 3U,
+                             .require_tls = false};
+  auto store = S3ObjectStore::create(std::move(config));
+  ASSERT_TRUE(store.has_value()) << store.error().to_string();
+
+  std::vector<std::byte> bytes(part_bytes + 3U, std::byte{0x5A});
+  bytes[part_bytes] = std::byte{1U};
+  bytes[part_bytes + 1U] = std::byte{2U};
+  bytes[part_bytes + 2U] = std::byte{3U};
+  const auto checksum = ingest::sha256(bytes).value();
+  auto uploaded = (*store)->put_if_absent("parts/multipart", bytes, checksum);
+  ASSERT_TRUE(uploaded.has_value()) << uploaded.error().to_string();
+  EXPECT_EQ(uploaded->size, bytes.size());
+  EXPECT_EQ(uploaded->checksum, checksum);
+
+  const auto requests = server.requests();
+  ASSERT_EQ(requests.size(), 6U);
+  EXPECT_EQ(requests[0].method, "HEAD");
+  EXPECT_EQ(requests[1].method, "POST");
+  EXPECT_TRUE(requests[1].target.ends_with("?uploads"));
+  EXPECT_EQ(requests[2].method, "PUT");
+  EXPECT_TRUE(requests[2].target.ends_with("?partNumber=1&uploadId=fixture-upload%26id"));
+  EXPECT_EQ(requests[2].body.size(), part_bytes);
+  EXPECT_EQ(requests[3].method, "PUT");
+  EXPECT_TRUE(requests[3].target.ends_with("?partNumber=2&uploadId=fixture-upload%26id"));
+  EXPECT_EQ(requests[3].body.size(), 3U);
+  EXPECT_EQ(requests[4].method, "POST");
+  EXPECT_TRUE(requests[4].target.ends_with("?uploadId=fixture-upload%26id"));
+  EXPECT_EQ(requests[4].headers.at("if-none-match"), "*");
+  EXPECT_EQ(requests[5].method, "HEAD");
+  EXPECT_TRUE(server.failure().empty()) << server.failure();
+}
+
+TEST(S3ObjectStoreTest, MultipartPartFailureAbortsWithoutPublishingAnObject) {
+  LocalS3Server server{LocalS3Behavior{.fail_multipart_part = 2U}};
+  ASSERT_TRUE(server.valid()) << server.failure();
+  constexpr std::size_t part_bytes = 5U * 1024U * 1024U;
+  S3ObjectStoreConfig config{.endpoint = "http://127.0.0.1:" + std::to_string(server.port()),
+                             .region = "us-east-1",
+                             .bucket = "chronos-test",
+                             .access_key_id = "test-access",
+                             .secret_access_key = "test-secret",
+                             .session_token = "test-token",
+                             .connect_timeout = std::chrono::milliseconds{1'000},
+                             .request_timeout = std::chrono::milliseconds{5'000},
+                             .multipart_threshold_bytes = part_bytes,
+                             .multipart_part_bytes = part_bytes,
+                             .maximum_response_bytes = part_bytes + 1U,
+                             .require_tls = false};
+  auto store = S3ObjectStore::create(std::move(config));
+  ASSERT_TRUE(store.has_value()) << store.error().to_string();
+
+  const std::vector<std::byte> bytes(part_bytes + 1U, std::byte{0x3C});
+  auto uploaded = (*store)->put_if_absent("parts/multipart", bytes, ingest::sha256(bytes).value());
+  ASSERT_FALSE(uploaded.has_value());
+  EXPECT_EQ(uploaded.error().code(), common::StatusCode::kIoError);
+  auto missing = (*store)->stat("parts/multipart");
+  ASSERT_FALSE(missing.has_value());
+  EXPECT_EQ(missing.error().code(), common::StatusCode::kNotFound);
+
+  const auto requests = server.requests();
+  ASSERT_EQ(requests.size(), 6U);
+  EXPECT_EQ(requests[4].method, "DELETE");
+  EXPECT_TRUE(requests[4].target.ends_with("?uploadId=fixture-upload%26id"));
+  EXPECT_EQ(requests[5].method, "HEAD");
   EXPECT_TRUE(server.failure().empty()) << server.failure();
 }
 

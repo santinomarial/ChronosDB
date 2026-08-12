@@ -939,8 +939,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   selected pair and remote metadata, and conditionally deletes routes absent from current logical
   and cold authority with idempotent retry. The S3 carrier now retries only replay-safe operations
   within a bounded capped-backoff budget, freshly signs every attempt, and force-refreshes one
-  caller-supplied concurrent credential provider after authorization rejection. WAL-local deletion,
-  other query paths, multipart upload, and built-in provider-chain integrations remain deferred. An
+  caller-supplied concurrent credential provider after authorization rejection. Large uploads now
+  use bounded sequential multipart sessions with per-part signing/retry, opaque ETag completion,
+  `If-None-Match: *`, exact final HEAD verification, and failure-path abort. WAL-local deletion,
+  other query paths, parallel multipart scheduling, and built-in provider-chain integrations remain
+  deferred. An
   optional Apache Arrow/Parquet provider now imports and exports files through an exact
   caller-supplied schema, maps all
   current logical types, bounds source/final canonical storage, rejects corruption and mismatch,

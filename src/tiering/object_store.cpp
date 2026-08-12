@@ -300,6 +300,100 @@ struct ResponseCapture {
            !contains_space(*credentials.session_token)));
 }
 
+[[nodiscard]] common::Result<std::string> extract_xml_element(const common::ByteView bytes,
+                                                              const std::string_view element,
+                                                              const std::size_t maximum_length) {
+  try {
+    const std::string_view xml{reinterpret_cast<const char*>(bytes.data()), bytes.size()};
+    const std::string opening = "<" + std::string{element} + ">";
+    const std::string closing = "</" + std::string{element} + ">";
+    const std::size_t opening_offset = xml.find(opening);
+    if (opening_offset == std::string_view::npos ||
+        xml.find(opening, opening_offset + opening.size()) != std::string_view::npos) {
+      return common::make_unexpected(common::Status{
+          common::StatusCode::kCorruption, "S3 XML response element is absent or repeated"});
+    }
+    const std::size_t value_offset = opening_offset + opening.size();
+    const std::size_t closing_offset = xml.find(closing, value_offset);
+    if (closing_offset == std::string_view::npos ||
+        xml.find(closing, closing_offset + closing.size()) != std::string_view::npos) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kCorruption, "S3 XML response element is incomplete"});
+    }
+    const std::string_view encoded = xml.substr(value_offset, closing_offset - value_offset);
+    std::string decoded;
+    decoded.reserve(encoded.size());
+    for (std::size_t index = 0U; index < encoded.size();) {
+      if (encoded[index] != '&') {
+        decoded.push_back(encoded[index++]);
+        continue;
+      }
+      const std::size_t semicolon = encoded.find(';', index + 1U);
+      if (semicolon == std::string_view::npos) {
+        return common::make_unexpected(common::Status{
+            common::StatusCode::kCorruption, "S3 XML response contains an invalid entity"});
+      }
+      const std::string_view entity = encoded.substr(index, semicolon - index + 1U);
+      if (entity == "&amp;")
+        decoded.push_back('&');
+      else if (entity == "&lt;")
+        decoded.push_back('<');
+      else if (entity == "&gt;")
+        decoded.push_back('>');
+      else if (entity == "&quot;")
+        decoded.push_back('"');
+      else if (entity == "&apos;")
+        decoded.push_back('\'');
+      else
+        return common::make_unexpected(common::Status{
+            common::StatusCode::kCorruption, "S3 XML response contains an unsupported entity"});
+      index = semicolon + 1U;
+    }
+    if (decoded.empty() || decoded.size() > maximum_length || contains_control(decoded)) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kCorruption, "S3 XML response element is invalid"});
+    }
+    return decoded;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("S3 XML response allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("S3 XML response exceeds limits"));
+  }
+}
+
+[[nodiscard]] common::Result<std::string>
+complete_multipart_xml(const std::span<const std::string> entity_tags) {
+  try {
+    std::string xml{"<CompleteMultipartUpload>"};
+    for (std::size_t index = 0U; index < entity_tags.size(); ++index) {
+      xml += "<Part><PartNumber>" + std::to_string(index + 1U) + "</PartNumber><ETag>";
+      for (const char value : entity_tags[index]) {
+        switch (value) {
+        case '&':
+          xml += "&amp;";
+          break;
+        case '<':
+          xml += "&lt;";
+          break;
+        case '>':
+          xml += "&gt;";
+          break;
+        default:
+          xml.push_back(value);
+          break;
+        }
+      }
+      xml += "</ETag></Part>";
+    }
+    xml += "</CompleteMultipartUpload>";
+    return xml;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("S3 multipart completion allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("S3 multipart completion exceeds limits"));
+  }
+}
+
 [[nodiscard]] common::Status append_header(HeaderList& headers, const std::string& header) {
   curl_slist* appended = curl_slist_append(headers.get(), header.c_str());
   if (appended == nullptr)
@@ -434,7 +528,16 @@ MemoryObjectStore::remove_if_exact(const std::string_view key, const std::size_t
 
 class S3ObjectStore::Impl {
 public:
-  enum class Method : std::uint8_t { kPut, kHead, kGetRange, kDelete };
+  enum class Method : std::uint8_t {
+    kPut,
+    kHead,
+    kGetRange,
+    kDelete,
+    kCreateMultipart,
+    kUploadPart,
+    kCompleteMultipart,
+    kAbortMultipart,
+  };
 
   struct Request {
     Method method{};
@@ -445,6 +548,8 @@ public:
     std::size_t range_length{};
     std::size_t maximum_body_bytes{};
     std::string_view match_validator;
+    std::string_view query;
+    std::optional<ingest::Sha256Digest> object_checksum;
   };
 
   struct Response {
@@ -507,8 +612,10 @@ public:
   [[nodiscard]] common::Result<Response> perform_once(const Request& request,
                                                       const S3Credentials& current) const {
     try {
-      const std::string url = config.endpoint + "/" + encode_path(config.bucket, false) + "/" +
-                              encode_path(request.key, true);
+      std::string url = config.endpoint + "/" + encode_path(config.bucket, false) + "/" +
+                        encode_path(request.key, true);
+      if (!request.query.empty())
+        url += "?" + std::string{request.query};
       const std::string credentials = current.access_key_id + ":" + current.secret_access_key;
       CurlHandle handle{curl_easy_init()};
       if (!handle)
@@ -586,6 +693,22 @@ public:
           configured = append_header(headers, "x-amz-meta-chronos-sha256: " + hexadecimal_checksum);
         }
       }
+      if (configured.is_ok() && request.method == Method::kCreateMultipart) {
+        configured = append_header(headers, "x-amz-meta-chronos-sha256: " +
+                                                digest_hex(*request.object_checksum));
+      }
+      if (configured.is_ok() &&
+          (request.method == Method::kUploadPart || request.method == Method::kCompleteMultipart)) {
+        const std::string hexadecimal_checksum = digest_hex(*request.checksum);
+        configured = append_header(headers, "Expect:");
+        if (configured.is_ok())
+          configured = append_header(headers, "x-amz-content-sha256: " + hexadecimal_checksum);
+        if (configured.is_ok() && request.method == Method::kCompleteMultipart) {
+          configured = append_header(headers, "Content-Type: application/xml");
+          if (configured.is_ok())
+            configured = append_header(headers, "If-None-Match: *");
+        }
+      }
       std::string range_header;
       if (configured.is_ok() && request.method == Method::kGetRange) {
         range_header = "Range: bytes=" + std::to_string(request.range_offset) + "-" +
@@ -600,8 +723,14 @@ public:
         configured = set(CURLOPT_HTTPHEADER, headers.get());
       if (configured.is_ok() && request.method == Method::kHead)
         configured = set(CURLOPT_NOBODY, 1L);
-      if (configured.is_ok() && request.method == Method::kPut) {
-        configured = set(CURLOPT_CUSTOMREQUEST, "PUT");
+      if (configured.is_ok() &&
+          (request.method == Method::kPut || request.method == Method::kUploadPart ||
+           request.method == Method::kCreateMultipart ||
+           request.method == Method::kCompleteMultipart)) {
+        configured =
+            set(CURLOPT_CUSTOMREQUEST,
+                request.method == Method::kPut || request.method == Method::kUploadPart ? "PUT"
+                                                                                        : "POST");
         if (configured.is_ok()) {
           const void* data =
               request.upload.empty() ? static_cast<const void*>("") : request.upload.data();
@@ -612,7 +741,8 @@ public:
               set(CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(request.upload.size()));
         }
       }
-      if (configured.is_ok() && request.method == Method::kDelete)
+      if (configured.is_ok() &&
+          (request.method == Method::kDelete || request.method == Method::kAbortMultipart))
         configured = set(CURLOPT_CUSTOMREQUEST, "DELETE");
       if (!configured.is_ok())
         return common::make_unexpected(configured);
@@ -656,7 +786,8 @@ public:
       }
       auto response = perform_once(request, *current);
       if (!response.has_value()) {
-        if (response.error().code() != common::StatusCode::kUnavailable ||
+        if (request.method == Method::kCreateMultipart ||
+            response.error().code() != common::StatusCode::kUnavailable ||
             attempt == config.maximum_attempts) {
           return common::make_unexpected(response.error());
         }
@@ -665,8 +796,11 @@ public:
         continue;
       }
       const bool authorization_rejected = response->status == 401L || response->status == 403L;
+      const bool replayable_status =
+          retryable_http_status(response->status) && request.method != Method::kCreateMultipart &&
+          !(request.method == Method::kCompleteMultipart && response->status == 409L);
       if (attempt == config.maximum_attempts ||
-          (!retryable_http_status(response->status) &&
+          (!replayable_status &&
            !(authorization_rejected && config.credential_provider != nullptr))) {
         return response;
       }
@@ -679,6 +813,18 @@ public:
 
   S3ObjectStoreConfig config;
   std::string signature;
+
+  void abort_multipart_best_effort(const std::string_view key,
+                                   const std::string_view upload_id) const noexcept {
+    try {
+      const std::string query = "uploadId=" + encode_path(upload_id, false);
+      static_cast<void>(perform({.method = Method::kAbortMultipart,
+                                 .key = key,
+                                 .maximum_body_bytes = 64U * 1024U,
+                                 .query = query}));
+    } catch (...) {
+    }
+  }
 };
 
 S3ObjectStore::S3ObjectStore(std::unique_ptr<Impl> impl) noexcept : impl_(std::move(impl)) {}
@@ -713,6 +859,9 @@ common::Result<std::unique_ptr<S3ObjectStore>> S3ObjectStore::create(S3ObjectSto
       config.initial_retry_backoff.count() < 0 || config.initial_retry_backoff > maximum_long ||
       config.maximum_retry_backoff.count() < 0 || config.maximum_retry_backoff > maximum_long ||
       config.initial_retry_backoff > config.maximum_retry_backoff ||
+      config.multipart_threshold_bytes == 0U || config.multipart_part_bytes < 5U * 1024U * 1024U ||
+      static_cast<std::uintmax_t>(config.multipart_part_bytes) >
+          static_cast<std::uintmax_t>(std::numeric_limits<curl_off_t>::max()) ||
       config.maximum_response_bytes == 0U ||
       static_cast<std::uintmax_t>(config.maximum_response_bytes) >
           static_cast<std::uintmax_t>(std::numeric_limits<curl_off_t>::max())) {
@@ -742,6 +891,163 @@ common::Result<ObjectMetadata> S3ObjectStore::put_if_absent(const std::string_vi
     return common::make_unexpected(actual.error());
   if (*actual != checksum)
     return common::make_unexpected(invalid("object checksum does not match upload bytes"));
+  const auto verify_existing = [&]() -> common::Result<ObjectMetadata> {
+    auto existing = stat(key);
+    if (!existing.has_value())
+      return common::make_unexpected(existing.error());
+    if (existing->size != bytes.size() || existing->checksum != checksum) {
+      return common::make_unexpected(common::Status{common::StatusCode::kAlreadyExists,
+                                                    "immutable S3 key has different content"});
+    }
+    return existing;
+  };
+  if (bytes.size() >= impl_->config.multipart_threshold_bytes) {
+    try {
+      const std::size_t part_count =
+          1U + ((bytes.size() - 1U) / impl_->config.multipart_part_bytes);
+      if (part_count > 10'000U) {
+        return common::make_unexpected(
+            exhausted("S3 multipart upload exceeds the provider part-count limit"));
+      }
+      auto before = verify_existing();
+      if (before.has_value() || before.error().code() != common::StatusCode::kNotFound)
+        return before;
+
+      auto created = impl_->perform({.method = Impl::Method::kCreateMultipart,
+                                     .key = key,
+                                     .maximum_body_bytes = 64U * 1024U,
+                                     .query = "uploads",
+                                     .object_checksum = checksum});
+      if (!created.has_value())
+        return common::make_unexpected(created.error());
+      if (created->status != 200L)
+        return common::make_unexpected(http_failure(created->status));
+      const common::ByteView creation_body{created->capture.body};
+      const std::string_view creation_xml{reinterpret_cast<const char*>(creation_body.data()),
+                                          creation_body.size()};
+      if (!creation_xml.contains("<InitiateMultipartUploadResult")) {
+        return common::make_unexpected(common::Status{common::StatusCode::kCorruption,
+                                                      "S3 multipart creation response is invalid"});
+      }
+      auto upload_id = extract_xml_element(creation_body, "UploadId", 2048U);
+      if (!upload_id.has_value())
+        return common::make_unexpected(upload_id.error());
+      struct MultipartAbortGuard {
+        const Impl* impl{};
+        std::string_view key;
+        std::string_view upload_id;
+        bool active{true};
+
+        ~MultipartAbortGuard() {
+          if (active)
+            impl->abort_multipart_best_effort(key, upload_id);
+        }
+
+        void release() noexcept {
+          active = false;
+        }
+      } abort_guard{impl_.get(), key, *upload_id};
+      const std::string upload_query = "uploadId=" + encode_path(*upload_id, false);
+
+      std::vector<std::string> entity_tags;
+      try {
+        entity_tags.reserve(part_count);
+      } catch (const std::bad_alloc&) {
+        return common::make_unexpected(exhausted("S3 multipart ETag allocation failed"));
+      } catch (const std::length_error&) {
+        return common::make_unexpected(exhausted("S3 multipart ETag count exceeds limits"));
+      }
+      for (std::size_t part_index = 0U; part_index < part_count; ++part_index) {
+        const std::size_t offset = part_index * impl_->config.multipart_part_bytes;
+        const std::size_t length =
+            std::min(impl_->config.multipart_part_bytes, bytes.size() - offset);
+        const common::ByteView part = bytes.subspan(offset, length);
+        auto part_checksum = ingest::sha256(part);
+        if (!part_checksum.has_value())
+          return common::make_unexpected(part_checksum.error());
+        const std::string query =
+            "partNumber=" + std::to_string(part_index + 1U) + "&" + upload_query;
+        auto uploaded = impl_->perform({.method = Impl::Method::kUploadPart,
+                                        .key = key,
+                                        .upload = part,
+                                        .checksum = *part_checksum,
+                                        .maximum_body_bytes = 64U * 1024U,
+                                        .query = query});
+        if (!uploaded.has_value() || uploaded->status != 200L ||
+            !uploaded->capture.entity_tag.has_value() || uploaded->capture.entity_tag->empty() ||
+            uploaded->capture.entity_tag->size() > 1024U ||
+            contains_control(*uploaded->capture.entity_tag)) {
+          common::Status failure =
+              !uploaded.has_value()
+                  ? uploaded.error()
+                  : (uploaded->status != 200L
+                         ? http_failure(uploaded->status)
+                         : common::Status{common::StatusCode::kCorruption,
+                                          "S3 multipart part ETag is absent or invalid"});
+          return common::make_unexpected(std::move(failure));
+        }
+        entity_tags.push_back(std::move(*uploaded->capture.entity_tag));
+      }
+
+      auto completion_xml = complete_multipart_xml(entity_tags);
+      if (!completion_xml.has_value())
+        return common::make_unexpected(completion_xml.error());
+      const common::ByteView completion_body{
+          reinterpret_cast<const std::byte*>(completion_xml->data()), completion_xml->size()};
+      auto completion_checksum = ingest::sha256(completion_body);
+      if (!completion_checksum.has_value())
+        return common::make_unexpected(completion_checksum.error());
+      auto completed = impl_->perform({.method = Impl::Method::kCompleteMultipart,
+                                       .key = key,
+                                       .upload = completion_body,
+                                       .checksum = *completion_checksum,
+                                       .maximum_body_bytes = 64U * 1024U,
+                                       .query = upload_query});
+      if (completed.has_value() && completed->status == 200L) {
+        const common::ByteView response_body{completed->capture.body};
+        const std::string_view response_xml{reinterpret_cast<const char*>(response_body.data()),
+                                            response_body.size()};
+        if (response_xml.contains("<CompleteMultipartUploadResult") &&
+            !response_xml.contains("<Error>")) {
+          auto verified = verify_existing();
+          if (verified.has_value()) {
+            abort_guard.release();
+            return verified;
+          }
+          if (verified.error().code() == common::StatusCode::kNotFound) {
+            return common::make_unexpected(
+                common::Status{common::StatusCode::kUnavailable,
+                               "S3 multipart completion is not visible during exact verification"});
+          }
+          return common::make_unexpected(verified.error());
+        }
+      }
+
+      auto verified = verify_existing();
+      if (verified.has_value()) {
+        abort_guard.release();
+        return verified;
+      }
+      if (!completed.has_value())
+        return common::make_unexpected(completed.error());
+      if (completed->status == 412L) {
+        if (verified.error().code() == common::StatusCode::kNotFound) {
+          return common::make_unexpected(
+              common::Status{common::StatusCode::kUnavailable,
+                             "S3 conditional multipart result changed before verification"});
+        }
+        return common::make_unexpected(verified.error());
+      }
+      if (completed->status != 200L)
+        return common::make_unexpected(http_failure(completed->status));
+      return common::make_unexpected(common::Status{common::StatusCode::kCorruption,
+                                                    "S3 multipart completion response is invalid"});
+    } catch (const std::bad_alloc&) {
+      return common::make_unexpected(exhausted("S3 multipart upload allocation failed"));
+    } catch (const std::length_error&) {
+      return common::make_unexpected(exhausted("S3 multipart upload exceeded limits"));
+    }
+  }
   auto response = impl_->perform({.method = Impl::Method::kPut,
                                   .key = key,
                                   .upload = bytes,
@@ -750,7 +1056,7 @@ common::Result<ObjectMetadata> S3ObjectStore::put_if_absent(const std::string_vi
   if (!response.has_value())
     return common::make_unexpected(response.error());
   if (response->status == 412L) {
-    auto existing = stat(key);
+    auto existing = verify_existing();
     if (!existing.has_value()) {
       if (existing.error().code() == common::StatusCode::kNotFound) {
         return common::make_unexpected(
@@ -758,10 +1064,6 @@ common::Result<ObjectMetadata> S3ObjectStore::put_if_absent(const std::string_vi
                            "S3 conditional-write result changed before verification"});
       }
       return common::make_unexpected(existing.error());
-    }
-    if (existing->size != bytes.size() || existing->checksum != checksum) {
-      return common::make_unexpected(common::Status{common::StatusCode::kAlreadyExists,
-                                                    "immutable S3 key has different content"});
     }
     return *existing;
   }

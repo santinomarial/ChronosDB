@@ -41,17 +41,33 @@ already-absent retry. Other failures do not retry. A provider-backed 401/403 req
 refresh on the next attempt, whereas rejected static credentials fail immediately. Provider errors
 and refresh attempts share the same finite budget.
 
+Objects at or above the configured multipart threshold use signed sequential parts of at least 5
+MiB except for the final part. Initiation records the whole-object Chronos SHA-256 metadata; each
+part retains its opaque ETag; completion submits ascending part numbers under `If-None-Match: *`;
+and exact HEAD revalidates final length and SHA-256. A bounded XML parser accepts one upload ID and
+percent-encodes it for every part/complete/abort query. HTTP 200 completion is not sufficient unless
+the bounded body is a completion result rather than an embedded error.
+
+UploadPart retries the same session/number/bytes. Complete reconciles ambiguous outcomes with exact
+HEAD, but a 409 is returned so the next caller attempt creates a fresh session. Create is not
+transport-retried because its success produces a new upload ID. After an ID is known, every failure
+path makes a bounded best-effort abort, including allocation unwinding. Operators must still apply
+an incomplete-multipart lifecycle rule for lost create responses and failed aborts; incomplete parts
+are never cold-manifest authority.
+
 ## Complexity, tradeoffs, and operations
 
 Upload hashing and transfer are `O(object bytes)` and retain no second upload copy. HEAD uses
 constant response storage. A range read is `O(requested bytes)` and retains at most the configured
-bound. Every attempt currently creates one easy handle and is synchronous; connection pooling, the
-libcurl multi interface, multipart upload, backoff jitter/`Retry-After`, and built-in provider
+bound. Multipart retains borrowed object bytes plus `O(part count)` ETags and completion XML. Every
+attempt currently creates one easy handle and is synchronous; connection pooling, the libcurl multi
+interface, parallel part scheduling, backoff jitter/`Retry-After`, and built-in provider
 implementations remain deferred.
 
-Operators should grant only `PutObject`, `HeadObject`/`GetObject`, ranged `GetObject`, and
-conditional `DeleteObject` access for the configured prefix, enforce TLS, keep bucket policy
-compatible with `If-None-Match`. A provider can rotate credentials during the store lifetime;
+Operators should grant only `PutObject`, multipart create/upload/complete/abort,
+`HeadObject`/`GetObject`, ranged `GetObject`, and conditional `DeleteObject` access for the configured
+prefix, enforce TLS, keep bucket policy compatible with `If-None-Match`, and configure incomplete
+multipart expiry. A provider can rotate credentials during the store lifetime;
 deployments using static fields must recreate the store to rotate them. Cold Location Manifest v1
 records the object key, store identity, and exact Manifest v2 part SHA-256; its durable
 installation, pair selection, and publication path is separate from the object backend. Bucket
