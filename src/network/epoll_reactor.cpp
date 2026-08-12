@@ -117,9 +117,15 @@ public:
     for (const std::uint64_t request_id : connection.state.active_request_ids()) {
       Frame cancel{.header = {.message_type = MessageType::kCancel, .request_id = request_id},
                    .payload = {}};
-      if (!requests->try_push({.connection_id = connection.id,
-                               .principal_id = connection.principal_id,
-                               .frame = std::move(cancel)}))
+      if (!requests->try_push(
+              {.connection_id = connection.id,
+               .principal_id = connection.principal_id,
+               .protocol = {.protocol_major = connection.state.negotiated_major(),
+                            .protocol_minor = connection.state.negotiated_minor(),
+                            .feature_bits = connection.state.negotiated_feature_bits(),
+                            .maximum_payload_size =
+                                connection.state.negotiated_maximum_payload_size()},
+               .frame = std::move(cancel)}))
         break;
     }
     connection.state.close();
@@ -206,9 +212,15 @@ public:
     case InboundActionKind::kSubscriptionAcknowledge:
       break;
     }
-    if (!requests->try_push({.connection_id = connection.id,
-                             .principal_id = connection.principal_id,
-                             .frame = std::move(frame)})) {
+    if (!requests->try_push(
+            {.connection_id = connection.id,
+             .principal_id = connection.principal_id,
+             .protocol = {.protocol_major = connection.state.negotiated_major(),
+                          .protocol_minor = connection.state.negotiated_minor(),
+                          .feature_bits = connection.state.negotiated_feature_bits(),
+                          .maximum_payload_size =
+                              connection.state.negotiated_maximum_payload_size()},
+             .frame = std::move(frame)})) {
       ++stats.queue_overloads;
       static_cast<void>(connection.state.complete(action->request_id));
       enqueue_error(connection, action->request_id, ProtocolErrorCode::kOverloaded,

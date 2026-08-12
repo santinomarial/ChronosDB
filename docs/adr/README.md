@@ -309,3 +309,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0272](0272-worker-affine-raft-application-extension.md) | Worker-affine durable Raft application extension | accepted |
 | [0273](0273-bounded-term-bound-applied-quorum-completions.md) | Bounded term-bound applied-quorum completions | accepted |
 | [0274](0274-nonblocking-replicated-ingest-operation.md) | Nonblocking replicated ingest operation | accepted |
+| [0275](0275-negotiated-network-task-context.md) | Preserve negotiated context in network tasks | accepted |

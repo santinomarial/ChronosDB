@@ -193,7 +193,8 @@
   applied-index persistence, pinned snapshots, latest receipts, and weakly owned exact
   group/leader-term/index receipt completions on the worker. The nonblocking replicated ingest
   operation now exact-validates proposal persistence, applied receipts, retry outcomes, and
-  protocol-v2 acknowledgement projection; add metadata application, reactor wakeup/deadline/
+  protocol-v2 acknowledgement projection. Reactor tasks now preserve exact negotiated protocol
+  context; add metadata application, reactor wakeup/deadline/
   cancellation integration, broader failure matrices, long-running hook watchdog evidence, and
   TSan scheduling coverage.
 - Carry the implemented group-scoped read-barrier operation through authenticated production

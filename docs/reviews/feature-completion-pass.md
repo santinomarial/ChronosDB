@@ -329,6 +329,8 @@ Focused executions passed:
   workspace sandbox.
 - Replicated ingest continuation: 2 focused service tests passed for exact applied/matching-retry
   acknowledgements and required-leader-term rejection.
+- Negotiated task continuation: the SPSC context test and affected non-socket network tests passed;
+  real-socket protocol-v2 propagation remains in the deferred environment matrix.
 
 The final C++ tree passed the repository-pinned clang-format 18 check. Full-suite, sanitizer, fuzz,
 broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were deliberately not run.

@@ -834,7 +834,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   exact-validates the canonical term-bound proposal result, waits for that applied receipt, derives
   APPLIED versus MATCHING_RETRY from the tablet publication, and projects the frozen protocol-v2
   acknowledgement. Metadata composition, reactor routing/deadlines/backpressure, and packaged
-  daemon composition remain.
+  daemon composition remain. Reactor-dispatched requests and cancellation events now retain the
+  exact negotiated version, feature bits, and payload bound through the SPSC handoff, so a service
+  can authorize QUORUM_SYNC without reconstructing connection capabilities.
   Group-scoped read barriers now flow through both Multi-Raft owners without fabricating a durable
   transition, while higher-term recipient state still crosses the existing sync-before-response
   boundary. Production transport and tablet snapshot acquisition remain deferred.

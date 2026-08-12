@@ -9,7 +9,12 @@ namespace chronos::network {
 namespace {
 
 [[nodiscard]] NetworkTask task(const std::uint64_t id) {
-  return {.connection_id = id, .frame = {.header = {.request_id = id}, .payload = {}}};
+  return {.connection_id = id,
+          .protocol = {.protocol_major = kProtocolV2Major,
+                       .protocol_minor = kProtocolV2LatestMinor,
+                       .feature_bits = std::uint64_t{1U} << 9U,
+                       .maximum_payload_size = 4096U},
+          .frame = {.header = {.request_id = id}, .payload = {}}};
 }
 
 TEST(SpscNetworkTaskQueueTest, PreservesFifoAndMakesSaturationExplicit) {
@@ -20,6 +25,9 @@ TEST(SpscNetworkTaskQueueTest, PreservesFifoAndMakesSaturationExplicit) {
   auto value = queue.try_pop();
   ASSERT_TRUE(value.has_value());
   EXPECT_EQ(value->connection_id, 1U); // NOLINT(bugprone-unchecked-optional-access)
+  EXPECT_EQ(value->protocol.protocol_major, kProtocolV2Major);
+  EXPECT_EQ(value->protocol.feature_bits, std::uint64_t{1U} << 9U);
+  EXPECT_EQ(value->protocol.maximum_payload_size, 4096U);
   EXPECT_TRUE(queue.try_push(task(3U)));
   value = queue.try_pop();
   ASSERT_TRUE(value.has_value());

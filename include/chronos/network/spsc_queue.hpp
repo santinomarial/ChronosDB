@@ -12,9 +12,22 @@
 
 namespace chronos::network {
 
+struct NetworkTaskProtocolContext {
+  std::uint16_t protocol_major{kProtocolMajor};
+  std::uint16_t protocol_minor{kProtocolMinor};
+  std::uint64_t feature_bits{};
+  std::uint32_t maximum_payload_size{kDefaultMaximumPayloadSize};
+
+  friend bool operator==(const NetworkTaskProtocolContext&,
+                         const NetworkTaskProtocolContext&) = default;
+};
+
 struct NetworkTask {
   std::uint64_t connection_id{};
   std::uint64_t principal_id{};
+  // Immutable negotiated connection facts captured by the reactor when it dispatches the task.
+  // Services must use these instead of reconstructing capabilities from frame bytes.
+  NetworkTaskProtocolContext protocol;
   Frame frame;
 };
 
