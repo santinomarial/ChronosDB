@@ -830,8 +830,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   applied indexes, and exposes pinned snapshots plus copied latest receipts without leaking the
   synchronous owner. Bounded weakly owned completions now correlate an exact group, admitting
   leader term, and applied log index, reject term loss, and publish only after the whole extension
-  batch succeeds. Metadata composition, proposal-result index extraction, reactor lifecycle, and
-  protocol-service response encoding remain deferred.
+  batch succeeds. A nonblocking service operation now
+  exact-validates the canonical term-bound proposal result, waits for that applied receipt, derives
+  APPLIED versus MATCHING_RETRY from the tablet publication, and projects the frozen protocol-v2
+  acknowledgement. Metadata composition, reactor routing/deadlines/backpressure, and packaged
+  daemon composition remain.
   Group-scoped read barriers now flow through both Multi-Raft owners without fabricating a durable
   transition, while higher-term recipient state still crosses the existing sync-before-response
   boundary. Production transport and tablet snapshot acquisition remain deferred.

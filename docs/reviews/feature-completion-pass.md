@@ -327,6 +327,8 @@ Focused executions passed:
   5 focused synchronous tablet application tests, and 8 concrete asynchronous tablet owner tests
   passed. Both real-socket unified transport tests rebuilt but could not bind/listen inside the
   workspace sandbox.
+- Replicated ingest continuation: 2 focused service tests passed for exact applied/matching-retry
+  acknowledgements and required-leader-term rejection.
 
 The final C++ tree passed the repository-pinned clang-format 18 check. Full-suite, sanitizer, fuzz,
 broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were deliberately not run.

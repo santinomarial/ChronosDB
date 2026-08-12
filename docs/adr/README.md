@@ -308,3 +308,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0271](0271-native-protocol-v2-quorum-sync-negotiation.md) | Native Protocol 2.0 QUORUM_SYNC negotiation | accepted |
 | [0272](0272-worker-affine-raft-application-extension.md) | Worker-affine durable Raft application extension | accepted |
 | [0273](0273-bounded-term-bound-applied-quorum-completions.md) | Bounded term-bound applied-quorum completions | accepted |
+| [0274](0274-nonblocking-replicated-ingest-operation.md) | Nonblocking replicated ingest operation | accepted |

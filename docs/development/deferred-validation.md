@@ -191,9 +191,11 @@
   initializes, prepares/completes each durable batch before publication, and shuts down on that
   owner. Its concrete bounded tablet application owns recovery, touched-group application,
   applied-index persistence, pinned snapshots, latest receipts, and weakly owned exact
-  group/leader-term/index receipt completions on the worker; add metadata application,
-  proposal-result extraction, reactor wakeup/deadline/cancellation integration, broader failure
-  matrices, long-running hook watchdog evidence, and TSan scheduling coverage.
+  group/leader-term/index receipt completions on the worker. The nonblocking replicated ingest
+  operation now exact-validates proposal persistence, applied receipts, retry outcomes, and
+  protocol-v2 acknowledgement projection; add metadata application, reactor wakeup/deadline/
+  cancellation integration, broader failure matrices, long-running hook watchdog evidence, and
+  TSan scheduling coverage.
 - Carry the implemented group-scoped read-barrier operation through authenticated production
   transport, request deadlines/coalescing, apply waiting, and exact tablet snapshot acquisition.
 - Extend the implemented metadata Raft codec/application/reopen path and complete-schema-definition
