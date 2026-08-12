@@ -1,4 +1,7 @@
 #include "chronos/raft/metadata_runtime.hpp"
+#include "chronos/raft/schema_definition_codec.hpp"
+#include "chronos/schema/column_definition.hpp"
+#include "chronos/schema/logical_type.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -52,6 +55,32 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
 [[nodiscard]] ProposeOperation proposal(MetadataCommand command) {
   return ProposeOperation{kRaftMetadataCommandEntryType,
                           encode_metadata_command_v1(std::move(command)).value()};
+}
+
+[[nodiscard]] CatalogTableDefinition schema_definition() {
+  const auto table = id<schema::TableId>(20U);
+  const auto schema_id = id<schema::SchemaId>(21U);
+  const auto timestamp = id<schema::ColumnId>(22U);
+  std::vector<schema::ColumnDefinition> columns;
+  columns.push_back(schema::ColumnDefinition::create(
+                        timestamp, "ts",
+                        schema::LogicalType::create(schema::LogicalTypeKind::kTimestampNs).value(),
+                        false)
+                        .value());
+  auto value = schema::TableSchema::create(table, schema_id, schema::SchemaVersion::initial(),
+                                           std::nullopt, std::move(columns),
+                                           {.event_time_column = timestamp,
+                                            .physical_ordering_key = {timestamp},
+                                            .partition_columns = {timestamp},
+                                            .shard_key = {timestamp},
+                                            .deduplication_key = {timestamp}});
+  return {.name = "events",
+          .quoted = false,
+          .schema = std::make_shared<const schema::TableSchema>(std::move(*value))};
+}
+
+[[nodiscard]] ProposeOperation schema_proposal(const CatalogTableDefinition& definition) {
+  return {kRaftSchemaDefinitionEntryType, encode_schema_definition_v1(definition).value()};
 }
 
 TEST(DurableMetadataStateMachineTest, AppliesAndRebuildsCommittedMetadataGroup) {
@@ -148,6 +177,34 @@ TEST(DurableMetadataStateMachineTest, AppliesReservedEntriesAsOrderedInternalNoo
   EXPECT_EQ(report->last_applied_index, 4U);
   EXPECT_EQ(report->applied_commands, 1U);
   EXPECT_EQ(metadata->state().find_node(1U)->endpoint, "node-1");
+}
+
+TEST(DurableMetadataStateMachineTest, RebuildsCompleteCatalogDefinitionFromRetainedRaftLog) {
+  TemporaryDirectory directory;
+  const RaftPersistentLogConfig log_config{.directory_path = directory.path().string()};
+  const std::vector<RaftGroupConfiguration> groups{{group_id(), {1U}}};
+  auto runtime = DurableMultiRaftRuntime::create_new(1U, log_config, groups);
+  ASSERT_TRUE(runtime.has_value());
+  ASSERT_TRUE(runtime->execute_batch({{group_id(), StartElectionOperation{}}}).has_value());
+  const CatalogTableDefinition definition = schema_definition();
+  ASSERT_TRUE(runtime->execute_batch({{group_id(), schema_proposal(definition)}}).has_value());
+  auto recovered = DurableMetadataStateMachine::recover(group_id(), *runtime);
+  ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
+  std::optional<DurableMetadataStateMachine> metadata{std::move(*recovered)};
+  const auto* installed =
+      metadata->state().find_active_table_definition(definition.schema->table_id());
+  ASSERT_NE(installed, nullptr);
+  EXPECT_TRUE(*installed == definition);
+
+  metadata.reset();
+  ASSERT_TRUE(runtime->close().is_ok());
+  auto reopened = DurableMultiRaftRuntime::open_existing(1U, log_config, {}, groups);
+  ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+  auto rebuilt = DurableMetadataStateMachine::recover(group_id(), *reopened);
+  ASSERT_TRUE(rebuilt.has_value()) << rebuilt.error().to_string();
+  installed = rebuilt->state().find_schema_definition(definition.schema->schema_id());
+  ASSERT_NE(installed, nullptr);
+  EXPECT_TRUE(*installed == definition);
 }
 
 } // namespace

@@ -3,6 +3,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
+#include <memory>
+#include <optional>
+#include <vector>
 
 namespace chronos::raft {
 namespace {
@@ -38,6 +41,68 @@ TEST(MetadataStateMachineTest, AppliesSchemaPlacementNodesAndRetentionOnlyInComm
   EXPECT_TRUE(metadata->apply_internal_noop(5U).is_ok());
   EXPECT_TRUE(metadata->apply_committed(6U, ClusterNodeMetadata{2U, "node-2"}).is_ok());
   EXPECT_EQ(metadata->applied_index(), 6U);
+}
+
+TEST(MetadataStateMachineTest, AppliesCompleteSchemasInLinearCommittedOrder) {
+  auto metadata = MetadataStateMachine::create();
+  ASSERT_TRUE(metadata.has_value());
+  const auto table = id<schema::TableId>(10U);
+  const auto first_schema = id<schema::SchemaId>(11U);
+  const auto timestamp = id<schema::ColumnId>(12U);
+  std::vector<schema::ColumnDefinition> columns;
+  columns.push_back(schema::ColumnDefinition::create(
+                        timestamp, "ts",
+                        schema::LogicalType::create(schema::LogicalTypeKind::kTimestampNs).value(),
+                        false)
+                        .value());
+  auto first = schema::TableSchema::create(table, first_schema, schema::SchemaVersion::initial(),
+                                           std::nullopt, std::move(columns),
+                                           {.event_time_column = timestamp,
+                                            .physical_ordering_key = {timestamp},
+                                            .partition_columns = {timestamp},
+                                            .shard_key = {timestamp},
+                                            .deduplication_key = {timestamp}});
+  ASSERT_TRUE(first.has_value());
+  auto first_shared = std::make_shared<const schema::TableSchema>(std::move(*first));
+  EXPECT_TRUE(metadata
+                  ->apply_committed_schema_definition(
+                      1U, {.name = "events", .quoted = false, .schema = first_shared})
+                  .is_ok());
+  ASSERT_NE(metadata->find_schema_definition(first_schema), nullptr);
+  EXPECT_EQ(metadata->find_active_table_definition(table)->schema.get(), first_shared.get());
+
+  std::vector<schema::ColumnDefinition> successor_columns;
+  successor_columns.push_back(
+      schema::ColumnDefinition::create(
+          timestamp, "event_time",
+          schema::LogicalType::create(schema::LogicalTypeKind::kTimestampNs).value(), false)
+          .value());
+  successor_columns.push_back(
+      schema::ColumnDefinition::create(
+          id<schema::ColumnId>(13U), "note",
+          schema::LogicalType::create(schema::LogicalTypeKind::kString).value(), true)
+          .value());
+  const auto second_version = schema::SchemaVersion::initial().next().value();
+  auto second = schema::TableSchema::create(table, id<schema::SchemaId>(14U), second_version,
+                                            first_schema, std::move(successor_columns),
+                                            {.event_time_column = timestamp,
+                                             .physical_ordering_key = {timestamp},
+                                             .partition_columns = {timestamp},
+                                             .shard_key = {timestamp},
+                                             .deduplication_key = {timestamp}});
+  ASSERT_TRUE(second.has_value());
+  const auto second_id = second->schema_id();
+  EXPECT_TRUE(
+      metadata
+          ->apply_committed_schema_definition(
+              2U, {.name = "events",
+                   .quoted = false,
+                   .schema = std::make_shared<const schema::TableSchema>(std::move(*second))})
+          .is_ok());
+  EXPECT_EQ(metadata->find_active_table_definition(table)->schema->schema_id(), second_id);
+  EXPECT_EQ(metadata->find_active_table_definition("events", false)->schema->schema_id(),
+            second_id);
+  EXPECT_EQ(metadata->find_active_table_definition("events", true), nullptr);
 }
 
 } // namespace

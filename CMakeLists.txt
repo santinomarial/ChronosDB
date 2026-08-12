@@ -572,6 +572,7 @@ add_library(
   src/raft/node.cpp
   src/raft/persistent_log.cpp
   src/raft/rebalancing.cpp
+  src/raft/schema_definition_codec.cpp
   src/raft/tablet_reconfiguration.cpp
   src/raft/tablet_reconfiguration_action_codec.cpp
   src/raft/tablet_reconfiguration_action_ledger.cpp
@@ -913,6 +914,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/raft/metadata_codec_test.cpp
     tests/raft/metadata_runtime_header_self_contained.cpp
     tests/raft/metadata_runtime_test.cpp
+    tests/raft/schema_definition_codec_header_self_contained.cpp
+    tests/raft/schema_definition_codec_test.cpp
     tests/raft/multiplexed_log_header_self_contained.cpp
     tests/raft/multiplexed_log_test.cpp
     tests/raft/persistent_log_header_self_contained.cpp

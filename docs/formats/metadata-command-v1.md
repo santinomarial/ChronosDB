@@ -4,8 +4,10 @@
 
 Metadata Command v1 is the application payload for logical Raft entry type `2` in the dedicated
 metadata group. It durably orders cluster nodes, schema identities, tablet placement epochs and
-leader hints, and retention policy. It is independent of WAL v1 and never uses native object
-representations. All integers are little-endian.
+leader hints, and retention policy. Complete immutable schemas use the separate additive
+[Schema Definition v1](schema-definition-v1.md) entry type `3`; existing type-2 bytes are never
+reinterpreted. It is independent of WAL v1 and never uses native object representations. All
+integers are little-endian.
 
 ## Envelope
 
@@ -51,4 +53,5 @@ new command kind/version; existing bytes are never reinterpreted.
 Only committed entries apply, strictly by Raft log index. The metadata state machine pre-decodes the
 available committed batch, applies it, and only afterward durably advances the group's applied index.
 Until a metadata application snapshot is defined, recovery starts from empty state and replays the
-complete retained committed log; a compacted prefix is rejected.
+complete retained committed log, including Schema Definition v1 entries; a compacted prefix is
+rejected.

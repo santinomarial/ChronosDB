@@ -113,9 +113,11 @@ and reopen state. The checksummed Multiplexed Raft Persistent-State Record v1 en
 term, vote, logical log, commit/applied indexes, manifest generation, and part-set checksum without
 native struct serialization.
 
-`MetadataStateMachine` applies nodes, schema identities, tablet placement/replicas/epochs/leader
-hints, and retention only at consecutive committed metadata-group indexes. Focused tests cover
-different leaders, group isolation, one-node loss, reopen, metadata order, and record corruption.
+`MetadataStateMachine` applies nodes, complete immutable table-schema generations and SQL names,
+tablet placement/replicas/epochs/leader hints, and retention only at consecutive committed
+metadata-group indexes. Focused tests cover deterministic schema bytes, strict damage rejection,
+legal schema succession, different leaders, group isolation, one-node loss, reopen, metadata order,
+and record corruption.
 
 No segmented file/fsync owner, batching worker pool, fairness policy, physical-log recovery scan,
 tablet state-machine adapter, membership protocol, or QUORUM_SYNC exists. QUORUM_SYNC is not aliased

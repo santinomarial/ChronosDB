@@ -5,6 +5,7 @@
 #include "chronos/raft/durable_runtime.hpp"
 #include "chronos/raft/metadata.hpp"
 #include "chronos/raft/metadata_codec.hpp"
+#include "chronos/raft/schema_definition_codec.hpp"
 
 #include <cstddef>
 #include <memory>
@@ -31,7 +32,8 @@ public:
 
   [[nodiscard]] static common::Result<DurableMetadataStateMachine>
   recover(GroupId group_id, DurableMultiRaftRuntime& runtime, MetadataLimits state_limits = {},
-          MetadataCommandCodecLimits codec_limits = {});
+          MetadataCommandCodecLimits codec_limits = {},
+          SchemaDefinitionCodecLimits schema_codec_limits = {});
 
   [[nodiscard]] common::Result<MetadataApplicationReport> apply_committed();
   [[nodiscard]] common::Result<QuorumSyncReceipt> prove_applied_quorum_sync(LogIndex index) const;

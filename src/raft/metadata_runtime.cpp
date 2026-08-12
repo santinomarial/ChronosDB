@@ -8,6 +8,7 @@
 #include <span>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace chronos::raft {
@@ -35,9 +36,11 @@ class DurableMetadataStateMachine::Impl {
 public:
   Impl(GroupId configured_group_id, DurableMultiRaftRuntime& configured_runtime,
        MetadataStateMachine configured_state,
-       const MetadataCommandCodecLimits configured_codec_limits) noexcept
+       const MetadataCommandCodecLimits configured_codec_limits,
+       const SchemaDefinitionCodecLimits configured_schema_codec_limits) noexcept
       : group_id(std::move(configured_group_id)), runtime(&configured_runtime),
-        metadata(std::move(configured_state)), codec_limits(configured_codec_limits) {}
+        metadata(std::move(configured_state)), codec_limits(configured_codec_limits),
+        schema_codec_limits(configured_schema_codec_limits) {}
 
   [[nodiscard]] common::Status fail(common::Status status) {
     if (failure.is_ok())
@@ -50,11 +53,19 @@ public:
     MetadataApplicationReport report;
     if (entries.empty())
       return report;
-    std::vector<std::optional<MetadataCommand>> commands;
+    using Application = std::variant<std::monostate, MetadataCommand, CatalogTableDefinition>;
+    std::vector<Application> commands;
     commands.reserve(entries.size());
     for (const LogEntry& entry : entries) {
       if (is_internal_raft_entry_type(entry.type)) {
-        commands.emplace_back(std::nullopt);
+        commands.emplace_back(std::monostate{});
+        continue;
+      }
+      if (entry.type == kRaftSchemaDefinitionEntryType) {
+        auto decoded = decode_schema_definition_v1(entry.payload, schema_codec_limits);
+        if (!decoded.has_value())
+          return common::make_unexpected(fail(decoded.error()));
+        commands.emplace_back(std::move(*decoded));
         continue;
       }
       if (entry.type != kRaftMetadataCommandEntryType) {
@@ -68,13 +79,18 @@ public:
     }
     report.first_applied_index = entries.front().index;
     for (std::size_t ordinal = 0U; ordinal < entries.size(); ++ordinal) {
-      common::Status status =
-          commands[ordinal].has_value()
-              ? metadata.apply_committed(entries[ordinal].index, std::move(*commands[ordinal]))
-              : metadata.apply_internal_noop(entries[ordinal].index);
+      common::Status status = common::Status::ok();
+      if (auto* command = std::get_if<MetadataCommand>(&commands[ordinal])) {
+        status = metadata.apply_committed(entries[ordinal].index, std::move(*command));
+      } else if (auto* definition = std::get_if<CatalogTableDefinition>(&commands[ordinal])) {
+        status = metadata.apply_committed_schema_definition(entries[ordinal].index,
+                                                            std::move(*definition));
+      } else {
+        status = metadata.apply_internal_noop(entries[ordinal].index);
+      }
       if (!status.is_ok())
         return common::make_unexpected(fail(status));
-      if (commands[ordinal].has_value()) {
+      if (!std::holds_alternative<std::monostate>(commands[ordinal])) {
         ++report.applied_commands;
       }
       report.last_applied_index = entries[ordinal].index;
@@ -97,6 +113,7 @@ public:
   DurableMultiRaftRuntime* runtime;
   MetadataStateMachine metadata;
   MetadataCommandCodecLimits codec_limits;
+  SchemaDefinitionCodecLimits schema_codec_limits;
   common::Status failure;
 };
 
@@ -111,7 +128,8 @@ DurableMetadataStateMachine::operator=(DurableMetadataStateMachine&&) noexcept =
 common::Result<DurableMetadataStateMachine>
 DurableMetadataStateMachine::recover(GroupId group_id, DurableMultiRaftRuntime& runtime,
                                      const MetadataLimits state_limits,
-                                     const MetadataCommandCodecLimits codec_limits) {
+                                     const MetadataCommandCodecLimits codec_limits,
+                                     const SchemaDefinitionCodecLimits schema_codec_limits) {
   if (group_id.is_nil())
     return common::make_unexpected(invalid("metadata Raft group identity is nil"));
   const RaftNode* const node = runtime.find_group(group_id);
@@ -130,7 +148,8 @@ DurableMetadataStateMachine::recover(GroupId group_id, DurableMultiRaftRuntime& 
   if (persistent.commit_index > persistent.log.size()) {
     return common::make_unexpected(corruption("metadata committed prefix exceeds retained log"));
   }
-  auto impl = std::make_unique<Impl>(group_id, runtime, std::move(*state), codec_limits);
+  auto impl = std::make_unique<Impl>(group_id, runtime, std::move(*state), codec_limits,
+                                     schema_codec_limits);
   const std::span<const LogEntry> committed{persistent.log.data(),
                                             static_cast<std::size_t>(persistent.commit_index)};
   auto recovered =

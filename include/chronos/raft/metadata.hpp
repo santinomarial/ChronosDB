@@ -4,6 +4,7 @@
 #include "chronos/common/result.hpp"
 #include "chronos/raft/types.hpp"
 #include "chronos/schema/identity.hpp"
+#include "chronos/schema/table_schema.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -11,6 +12,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -29,6 +31,19 @@ struct SchemaMetadata {
   schema::SchemaVersion schema_version;
 
   friend bool operator==(const SchemaMetadata&, const SchemaMetadata&) = default;
+};
+
+// One complete immutable catalog definition applied through the dedicated schema-definition
+// command format. The shared schema remains stable for every state reader until owner teardown.
+struct CatalogTableDefinition {
+  std::string name;
+  bool quoted{};
+  std::shared_ptr<const schema::TableSchema> schema;
+
+  friend bool operator==(const CatalogTableDefinition& left, const CatalogTableDefinition& right) {
+    return left.name == right.name && left.quoted == right.quoted && left.schema != nullptr &&
+           right.schema != nullptr && *left.schema == *right.schema;
+  }
 };
 
 struct TabletPlacementMetadata {
@@ -58,6 +73,8 @@ struct MetadataLimits {
   std::size_t maximum_tablets{1U << 20U};
   std::size_t maximum_replicas_per_tablet{9U};
   std::size_t maximum_endpoint_bytes{4096U};
+  std::size_t maximum_table_name_bytes{1024U};
+  std::size_t maximum_column_name_bytes{1024U};
 };
 
 // Deterministic application state for the dedicated metadata Raft group. Only committed commands
@@ -74,11 +91,19 @@ public:
 
   [[nodiscard]] static common::Result<MetadataStateMachine> create(MetadataLimits limits = {});
   [[nodiscard]] common::Status apply_committed(LogIndex index, MetadataCommand command);
+  [[nodiscard]] common::Status apply_committed_schema_definition(LogIndex index,
+                                                                 CatalogTableDefinition definition);
   [[nodiscard]] common::Status apply_internal_noop(LogIndex index);
 
   [[nodiscard]] LogIndex applied_index() const noexcept;
   [[nodiscard]] const ClusterNodeMetadata* find_node(NodeId node_id) const noexcept;
   [[nodiscard]] const SchemaMetadata* find_schema(const schema::SchemaId& schema_id) const noexcept;
+  [[nodiscard]] const CatalogTableDefinition*
+  find_schema_definition(const schema::SchemaId& schema_id) const noexcept;
+  [[nodiscard]] const CatalogTableDefinition*
+  find_active_table_definition(const schema::TableId& table_id) const noexcept;
+  [[nodiscard]] const CatalogTableDefinition*
+  find_active_table_definition(std::string_view name, bool quoted) const noexcept;
   [[nodiscard]] const TabletPlacementMetadata*
   find_tablet(const schema::TabletId& tablet_id) const noexcept;
   [[nodiscard]] const RetentionMetadata*

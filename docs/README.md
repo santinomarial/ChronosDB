@@ -109,6 +109,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   `COLUMNAR_APPEND` payload, group/index identity, ordering, and retained-log recovery contract.
 - [Metadata Command v1](formats/metadata-command-v1.md): canonical checksummed metadata-group
   commands for nodes, schemas, placements, and retention.
+- [Schema Definition v1](formats/schema-definition-v1.md): complete immutable table schemas and SQL
+  catalog names applied and reconstructed through the metadata Raft group.
 - [Temporal Mutation Command v1](formats/temporal-mutation-v1.md): checksummed columnar originals,
   corrections, replacements, tombstones, and dual-time metadata.
 - [Raft Membership Command v1](formats/raft-membership-command-v1.md): canonical joint and final
@@ -300,8 +302,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   database/table/schema/fingerprint bytes, CRC32C, immutable naming, and recovery validation.
 - [Durable subscription plan registry](adr/0103-durable-subscription-plan-registry.md): synchronized
   definition installation and exact catalog-bound reprepare before resumed execution.
-- [Durable metadata Raft state](learning/durable-metadata-state.md): checksummed commands,
-  commit-order catalog application, quorum proof, and retained-log reconstruction.
+- [Durable metadata Raft state](learning/durable-metadata-state.md): checksummed commands and
+  complete schemas, commit-order catalog application, quorum proof, and retained-log reconstruction.
 - [Phase 10 network exit review](reviews/phase-10-network-review.md): implemented transport
   boundary, Linux portability and validation evidence, nonblocking risks, and the phase decision.
 - [Feature completion pass review](reviews/feature-completion-pass.md): truthful Phase 11–17

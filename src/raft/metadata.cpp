@@ -1,9 +1,14 @@
 #include "chronos/raft/metadata.hpp"
 
+#include "chronos/schema/utf8.hpp"
+
 #include <algorithm>
 #include <cstddef>
 #include <map>
 #include <memory>
+#include <new>
+#include <ranges>
+#include <string>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -12,6 +17,18 @@ namespace chronos::raft {
 namespace {
 [[nodiscard]] common::Status invalid(const char* message) {
   return common::Status{common::StatusCode::kInvalidArgument, message};
+}
+
+[[nodiscard]] bool valid_unquoted_name(const std::string& name) noexcept {
+  if (name.empty())
+    return false;
+  const auto first = [](const char value) {
+    return (value >= 'a' && value <= 'z') || value == '_';
+  };
+  const auto rest = [&](const char value) {
+    return first(value) || (value >= '0' && value <= '9');
+  };
+  return first(name.front()) && std::ranges::all_of(name.begin() + 1, name.end(), rest);
 }
 } // namespace
 
@@ -22,6 +39,8 @@ public:
   LogIndex applied{};
   std::map<NodeId, ClusterNodeMetadata> nodes;
   std::map<schema::SchemaId, SchemaMetadata> schemas;
+  std::map<schema::SchemaId, CatalogTableDefinition> definitions;
+  std::map<schema::TableId, schema::SchemaId> active_schemas;
   std::map<schema::TabletId, TabletPlacementMetadata> tablets;
   std::map<schema::TableId, RetentionMetadata> retention;
 };
@@ -34,10 +53,90 @@ MetadataStateMachine& MetadataStateMachine::operator=(MetadataStateMachine&&) no
 
 common::Result<MetadataStateMachine> MetadataStateMachine::create(const MetadataLimits limits) {
   if (limits.maximum_nodes == 0U || limits.maximum_schemas == 0U || limits.maximum_tablets == 0U ||
-      limits.maximum_replicas_per_tablet == 0U || limits.maximum_endpoint_bytes == 0U) {
+      limits.maximum_replicas_per_tablet == 0U || limits.maximum_endpoint_bytes == 0U ||
+      limits.maximum_table_name_bytes == 0U || limits.maximum_column_name_bytes == 0U) {
     return common::make_unexpected(invalid("metadata state limits must be nonzero"));
   }
   return MetadataStateMachine{std::make_unique<Impl>(limits)};
+}
+
+common::Status
+MetadataStateMachine::apply_committed_schema_definition(const LogIndex index,
+                                                        CatalogTableDefinition definition) {
+  if (impl_ == nullptr || index == 0U || index != impl_->applied + 1U)
+    return invalid("schema definition must follow committed Raft log order");
+  if (definition.schema == nullptr || definition.name.empty() ||
+      definition.name.size() > impl_->limits.maximum_table_name_bytes ||
+      !schema::is_valid_utf8(definition.name) || definition.name.find('\0') != std::string::npos ||
+      (!definition.quoted && !valid_unquoted_name(definition.name))) {
+    return invalid("catalog schema definition has an invalid name or schema");
+  }
+  const schema::TableSchema& value = *definition.schema;
+  const schema::TableId table_id = value.table_id();
+  const schema::SchemaId schema_id = value.schema_id();
+  const schema::SchemaVersion schema_version = value.version();
+  if (std::ranges::any_of(value.columns(), [&](const schema::ColumnDefinition& column) {
+        return column.name().size() > impl_->limits.maximum_column_name_bytes;
+      })) {
+    return invalid("catalog schema definition has an oversized column name");
+  }
+  const auto identity = impl_->schemas.find(schema_id);
+  if (identity != impl_->schemas.end() && (identity->second.table_id != table_id ||
+                                           identity->second.schema_version != schema_version)) {
+    return invalid("catalog schema definition disagrees with schema identity metadata");
+  }
+  const auto existing = impl_->definitions.find(schema_id);
+  if (existing != impl_->definitions.end()) {
+    if (!(existing->second == definition))
+      return invalid("catalog schema identity cannot be redefined");
+    impl_->applied = index;
+    return common::Status::ok();
+  }
+  if (impl_->definitions.size() >= impl_->limits.maximum_schemas)
+    return invalid("catalog schema definition state is full");
+  if (identity == impl_->schemas.end() && impl_->schemas.size() >= impl_->limits.maximum_schemas)
+    return invalid("catalog schema identity state is full");
+  const auto active = impl_->active_schemas.find(table_id);
+  if (active == impl_->active_schemas.end()) {
+    if (schema_version != schema::SchemaVersion::initial())
+      return invalid("first catalog schema definition must be version one");
+  } else {
+    const CatalogTableDefinition& predecessor = impl_->definitions.at(active->second);
+    if (predecessor.name != definition.name || predecessor.quoted != definition.quoted)
+      return invalid("catalog table rename requires a dedicated metadata command");
+    if (!schema::validate_v1_successor(*predecessor.schema, value).is_ok())
+      return invalid("catalog schema definition is not the direct v1 successor");
+  }
+  for (const auto& [candidate_schema_id, candidate] : impl_->definitions) {
+    static_cast<void>(candidate_schema_id);
+    if (candidate.schema->table_id() != table_id && candidate.name == definition.name &&
+        candidate.quoted == definition.quoted) {
+      return invalid("catalog table name is already owned by another table");
+    }
+  }
+  const bool identity_was_present = identity != impl_->schemas.end();
+  const bool active_was_present = active != impl_->active_schemas.end();
+  const std::optional<schema::SchemaId> previous_active =
+      active_was_present ? std::optional<schema::SchemaId>{active->second} : std::nullopt;
+  try {
+    impl_->definitions.emplace(schema_id, std::move(definition));
+    impl_->active_schemas.insert_or_assign(table_id, schema_id);
+    if (!identity_was_present) {
+      impl_->schemas.emplace(schema_id, SchemaMetadata{table_id, schema_id, schema_version});
+    }
+  } catch (const std::bad_alloc&) {
+    if (active_was_present) {
+      impl_->active_schemas.insert_or_assign(table_id, *previous_active);
+    } else {
+      impl_->active_schemas.erase(table_id);
+    }
+    impl_->definitions.erase(schema_id);
+    if (!identity_was_present)
+      impl_->schemas.erase(schema_id);
+    return {common::StatusCode::kResourceExhausted, "catalog schema definition allocation failed"};
+  }
+  impl_->applied = index;
+  return common::Status::ok();
 }
 
 common::Status MetadataStateMachine::apply_committed(const LogIndex index,
@@ -122,6 +221,29 @@ const SchemaMetadata*
 MetadataStateMachine::find_schema(const schema::SchemaId& schema_id) const noexcept {
   const auto found = impl_->schemas.find(schema_id);
   return found == impl_->schemas.end() ? nullptr : &found->second;
+}
+const CatalogTableDefinition*
+MetadataStateMachine::find_schema_definition(const schema::SchemaId& schema_id) const noexcept {
+  const auto found = impl_->definitions.find(schema_id);
+  return found == impl_->definitions.end() ? nullptr : &found->second;
+}
+const CatalogTableDefinition*
+MetadataStateMachine::find_active_table_definition(const schema::TableId& table_id) const noexcept {
+  const auto active = impl_->active_schemas.find(table_id);
+  return active == impl_->active_schemas.end() ? nullptr : find_schema_definition(active->second);
+}
+const CatalogTableDefinition*
+MetadataStateMachine::find_active_table_definition(const std::string_view name,
+                                                   const bool quoted) const noexcept {
+  for (const auto& [table_id, schema_id] : impl_->active_schemas) {
+    static_cast<void>(table_id);
+    const auto definition = impl_->definitions.find(schema_id);
+    if (definition != impl_->definitions.end() && definition->second.name == name &&
+        definition->second.quoted == quoted) {
+      return &definition->second;
+    }
+  }
+  return nullptr;
 }
 const TabletPlacementMetadata*
 MetadataStateMachine::find_tablet(const schema::TabletId& tablet_id) const noexcept {

@@ -2,9 +2,11 @@
 
 ## Purpose and interfaces
 
-`DurableMetadataStateMachine` connects the dedicated Raft group to the deterministic catalog maps.
-Entry type 2 is decoded under [Metadata Command v1](../formats/metadata-command-v1.md). The owner
-provides read-only node, schema, tablet-placement, and retention lookups after committed application.
+`DurableMetadataStateMachine` connects the dedicated Raft group to deterministic catalog maps.
+Entry type 2 is decoded under [Metadata Command v1](../formats/metadata-command-v1.md); entry type 3
+is decoded under [Schema Definition v1](../formats/schema-definition-v1.md). The owner provides
+read-only node, schema identity, complete schema, active table-definition, tablet-placement, and
+retention lookups after committed application.
 
 ## Ordering and durability
 
@@ -16,10 +18,12 @@ committed metadata entries
   -> optional leader quorum-sync/application proof
 ```
 
-Pre-decoding prevents a corrupt later command in the current batch from being discovered only after
+Pre-decoding prevents a corrupt later entry in the current batch from being discovered only after
 earlier catalog mutation. The underlying state machine enforces monotonic placement epochs, stable
-tablet-to-table identity, canonical replica membership, leader-in-replica membership, stable schema
-identity ownership, and bounded maps.
+tablet-to-table identity, canonical replica membership, leader-in-replica membership, immutable
+schema identity ownership, direct schema succession, unique table-name ownership, and bounded maps.
+Complete definitions share immutable `TableSchema` ownership; readers retain stable definitions
+until state-machine teardown.
 
 ## Recovery and failure behavior
 
@@ -28,17 +32,21 @@ retained committed entry, then leaves or advances the durable applied index as a
 compacted prefix is rejected because no metadata application snapshot exists yet. A failed live
 application poisons the owner; restart revalidates authoritative log bytes.
 
-Command size, endpoint bytes, replicas, nodes, schemas, and tablets are explicitly bounded. Decoding
-validates the fixed header before length-driven work, owns endpoint and replica data, and never dumps
-or loads a native struct.
+Command/definition size, names, columns, role arrays, endpoint bytes, replicas, nodes, schemas, and
+tablets are explicitly bounded. Decoding validates fixed headers before length-driven work, owns
+variable data, reconstructs schemas through the public semantic validator, and never dumps or loads
+a native struct. A new definition updates schema identity, active-schema, and definition maps as one
+coherent operation or reports resource exhaustion without advancing the applied index.
 
 ## Complexity and likely interview questions
 
-Decode and apply are linear in command bytes and replica count; map updates are `O(log N)`. Startup
-is linear in retained committed history until snapshots exist.
+Decode and apply are linear in entry bytes, column roles, and replica count; map updates are
+`O(log N)`, with a linear catalog-name uniqueness check. Startup is linear in retained committed
+history until snapshots exist.
 
 - Why is metadata placement not safe as local last-writer-wins state?
 - Why must the command batch preflight before mutation?
 - Why does recovery replay commands when Raft says they were already applied?
+- Why is a complete schema a separate Raft entry instead of a Metadata Command v1 extension?
 - What must a metadata application snapshot bind before log reclamation is safe?
 - Why does placement metadata not itself change Raft voting membership?
