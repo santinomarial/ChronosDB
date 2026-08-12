@@ -755,6 +755,7 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   fresh durable results with their bounded upstream owner. A bounded TCP listener/poll table now
   admits persistent inbound mutual-TLS sessions and pins each post-sync result until explicit
   pickup; stable connection IDs and external readiness driving permit safe outer-loop composition.
+  Terminal peer closure now retains already admitted durable work through exact result pickup.
   Every inbound receive now executes with its immediately following owning observation in
   one durable FIFO batch, providing the exact post-message role and term for timer rearming.
   Unified inbound/outbound/timer/durable-completion polling remains deferred. A bounded

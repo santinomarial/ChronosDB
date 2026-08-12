@@ -142,6 +142,8 @@ Timer, connect, reconnect, TLS, peer, and inbound-server owners now expose exact
 deadlines so that wait cannot overrun a consensus or transport timeout.
 Nonzero runtime-lifetime FIFO submission identities now propagate through timer and inbound results,
 preventing reusable slots or connection-table order from reversing durable work.
+Inbound terminal closure now preserves an already admitted durable operation until its owning result
+is taken, rather than discarding possibly persisted state with the socket.
 A bounded deterministic simulator now records explicit and seeded virtual-network, crash/restart,
 atomic persistence-fault, application, membership, and snapshot actions; it runs an independent
 election/log/commit/leader-completeness checker after each step, replays exact traces, and performs

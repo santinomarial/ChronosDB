@@ -41,6 +41,7 @@ public:
     std::uint64_t id{};
     network::TcpSocket socket;
     RaftTransportTlsServer carrier;
+    bool transport_closed{};
   };
   Impl(RaftTransportTcpServerConfig configured, network::TcpListener listener_owner,
        network::TlsServerContext context,
@@ -53,6 +54,14 @@ public:
     connections.erase(connections.begin() + static_cast<std::ptrdiff_t>(index));
     ++metrics.failed_connections;
     metrics.active_connections = connections.size();
+  }
+  void note_transport_closed(const std::size_t index) {
+    Connection& connection = *connections[index];
+    connection.transport_closed = true;
+    const auto state = connection.carrier.state();
+    if (state != RaftTransportTlsServerState::kAwaitingDurableResult &&
+        state != RaftTransportTlsServerState::kResultReady)
+      remove(index);
   }
   [[nodiscard]] common::Status accept_ready(const std::chrono::steady_clock::time_point now) {
     for (std::size_t admitted = 0U; admitted < config.maximum_accepts_per_poll; ++admitted) {
@@ -184,14 +193,17 @@ common::Status RaftTransportTcpServer::poll_once(const std::chrono::milliseconds
     const bool readable = (events & POLLIN) != 0;
     const bool writable = (events & POLLOUT) != 0;
     if ((events & (POLLERR | POLLHUP | POLLNVAL)) != 0 && !readable && !writable) {
-      impl.remove(index);
+      impl.note_transport_closed(index);
       continue;
     }
     const common::Status progress =
         impl.connections[index]->carrier.on_ready(readable, writable, now);
     if (!progress.is_ok() ||
-        impl.connections[index]->carrier.state() == RaftTransportTlsServerState::kFailed)
+        impl.connections[index]->carrier.state() == RaftTransportTlsServerState::kFailed) {
       impl.remove(index);
+    } else if ((events & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+      impl.note_transport_closed(index);
+    }
   }
   if (ready > 0 && (impl.poll_descriptors[0].revents & POLLIN) != 0) {
     const common::Status accepted = impl.accept_ready(now);
@@ -232,7 +244,7 @@ common::Status RaftTransportTcpServer::on_transport_closed(const std::uint64_t c
   for (std::size_t index = 0U; index < implementation_->connections.size(); ++index) {
     if (implementation_->connections[index]->id != connection_id)
       continue;
-    implementation_->remove(index);
+    implementation_->note_transport_closed(index);
     return common::Status::ok();
   }
   return status(common::StatusCode::kNotFound, "Raft TCP server connection does not exist");
@@ -245,8 +257,13 @@ common::Status RaftTransportTcpServer::drive(const TimePoint now) {
     const std::size_t index = remaining - 1U;
     Impl::Connection& connection = *implementation_->connections[index];
     const common::Status progress = connection.carrier.on_ready(false, false, now);
-    if (!progress.is_ok() || connection.carrier.state() == RaftTransportTlsServerState::kFailed)
+    if (!progress.is_ok() || connection.carrier.state() == RaftTransportTlsServerState::kFailed) {
       implementation_->remove(index);
+    } else if (connection.transport_closed &&
+               connection.carrier.state() != RaftTransportTlsServerState::kAwaitingDurableResult &&
+               connection.carrier.state() != RaftTransportTlsServerState::kResultReady) {
+      implementation_->remove(index);
+    }
   }
   return common::Status::ok();
 }
@@ -260,6 +277,8 @@ RaftTransportTcpServer::interests() const {
     std::vector<RaftTransportTcpServerInterest> result;
     result.reserve(implementation_->connections.size());
     for (const std::unique_ptr<Impl::Connection>& connection : implementation_->connections) {
+      if (connection->transport_closed)
+        continue;
       const RaftTransportTlsServerInterest interest = connection->carrier.interest();
       result.push_back({connection->id, connection->socket.descriptor(), interest.want_read,
                         interest.want_write});
@@ -295,13 +314,17 @@ RaftTransportTcpServer::take_completed() {
   const auto next_sequence = next_completed_sequence();
   if (!next_sequence.has_value())
     return std::optional<RaftTransportCompletedReceive>{};
-  for (std::unique_ptr<Impl::Connection>& connection : implementation_->connections) {
-    if (connection->carrier.completed_submission_sequence() != next_sequence)
+  for (std::size_t index = 0U; index < implementation_->connections.size(); ++index) {
+    Impl::Connection& connection = *implementation_->connections[index];
+    if (connection.carrier.completed_submission_sequence() != next_sequence)
       continue;
-    auto completed = connection->carrier.take_completed(std::chrono::steady_clock::now());
+    auto completed = connection.carrier.take_completed(std::chrono::steady_clock::now());
     if (!completed.has_value())
       return common::make_unexpected(completed.error());
     ++implementation_->metrics.completed_results;
+    const bool remove_closed = connection.transport_closed;
+    if (remove_closed)
+      implementation_->remove(index);
     return std::optional<RaftTransportCompletedReceive>{std::move(*completed)};
   }
   return common::make_unexpected(

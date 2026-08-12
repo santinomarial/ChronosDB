@@ -160,6 +160,8 @@
   high-cardinality deadline-scan validation remain deferred.
   Runtime-lifetime FIFO submission identities now order timer and multi-connection inbound results;
   exhaustion and high-contention mixed-producer ordering remain deferred.
+  Inbound disconnect now retains already admitted durable work through result pickup; exhaustive
+  disconnect timing, descriptor-pressure, and crash matrices remain deferred.
 - Broad leader-churn and partition matrices, semantic/chunk trace shrinking, clock changes, physical
   disk failures, ASan/UBSan/TSan, fuzzing, independent model checking, commit/catch-up/snapshot
   benchmarks, and API review.

@@ -140,8 +140,8 @@ TEST(RaftTransportTcpServerTest, AcceptsPersistentTlsAndPublishesPostSyncResult)
   EXPECT_GE(server_interests->front().descriptor, 0);
   auto peer = connector->take_connected_peer();
   ASSERT_TRUE(peer.has_value());
-  std::optional<RaftTransportCompletedReceive> completed;
-  for (std::size_t iteration = 0U; iteration < 8192U && !completed.has_value(); ++iteration) {
+  for (std::size_t iteration = 0U;
+       iteration < 8192U && !server->next_completed_sequence().has_value(); ++iteration) {
     ASSERT_TRUE(peer->carrier.on_ready(true, true, start + std::chrono::milliseconds{2}).is_ok());
     const auto server_now = std::chrono::steady_clock::now();
     auto inbound = server->interests();
@@ -149,28 +149,28 @@ TEST(RaftTransportTcpServerTest, AcceptsPersistentTlsAndPublishesPostSyncResult)
     for (const RaftTransportTcpServerInterest& interest : *inbound)
       ASSERT_TRUE(server->on_ready(interest.connection_id, true, true, server_now).is_ok());
     ASSERT_TRUE(server->drive(server_now).is_ok());
-    auto next = server->take_completed();
-    ASSERT_TRUE(next.has_value()) << next.error().to_string();
-    if (next->has_value())
-      completed = std::move(**next);
   }
-  ASSERT_TRUE(completed.has_value());
-  EXPECT_EQ(completed->submission_sequence, 1U);
-  EXPECT_EQ(completed->group_id, group());
-  EXPECT_EQ(completed->source_node_id, 1U);
-  ASSERT_TRUE(completed->result.status.is_ok());
-  ASSERT_TRUE(completed->result.transition.has_value());
-  ASSERT_TRUE(completed->observation.has_value());
-  EXPECT_EQ(completed->observation->group_id, group());
-  EXPECT_EQ(completed->observation->current_term, 1U);
-  ASSERT_EQ(completed->result.transition->outbound.size(), 1U);
-  EXPECT_EQ(completed->result.transition->outbound.front().outbound.destination, 1U);
-  EXPECT_EQ(server->metrics().completed_results, 1U);
-  EXPECT_EQ(server->metrics().active_connections, 1U);
-  EXPECT_TRUE(server->next_deadline().has_value());
-  ASSERT_TRUE(server->drive(std::chrono::steady_clock::now()).is_ok());
+  ASSERT_TRUE(server->next_completed_sequence().has_value());
   ASSERT_TRUE(server->on_transport_closed(server_interests->front().connection_id).is_ok());
+  EXPECT_EQ(server->metrics().active_connections, 1U);
+  auto next = server->take_completed();
+  ASSERT_TRUE(next.has_value()) << next.error().to_string();
+  ASSERT_TRUE(next->has_value());
+  RaftTransportCompletedReceive completed = std::move(**next);
+  EXPECT_EQ(completed.submission_sequence, 1U);
+  EXPECT_EQ(completed.group_id, group());
+  EXPECT_EQ(completed.source_node_id, 1U);
+  ASSERT_TRUE(completed.result.status.is_ok());
+  ASSERT_TRUE(completed.result.transition.has_value());
+  ASSERT_TRUE(completed.observation.has_value());
+  EXPECT_EQ(completed.observation->group_id, group());
+  EXPECT_EQ(completed.observation->current_term, 1U);
+  ASSERT_EQ(completed.result.transition->outbound.size(), 1U);
+  EXPECT_EQ(completed.result.transition->outbound.front().outbound.destination, 1U);
+  EXPECT_EQ(server->metrics().completed_results, 1U);
   EXPECT_EQ(server->metrics().active_connections, 0U);
+  EXPECT_FALSE(server->next_deadline().has_value());
+  ASSERT_TRUE(server->drive(std::chrono::steady_clock::now()).is_ok());
   ASSERT_TRUE(server->shutdown().is_ok());
   ASSERT_TRUE(runtime->shutdown().is_ok());
 }

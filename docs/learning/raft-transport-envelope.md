@@ -91,6 +91,8 @@ connection IDs let an outer loop compose listener/session descriptors without re
 connection-table indexes.
 Each completed session also retains the asynchronous FIFO submission sequence. The server selects
 the smallest result-ready sequence across connections, so table order cannot reorder durable work.
+Peer closure removes handshake/incomplete-frame sessions immediately, but an already admitted
+durable operation remains owned without descriptor interest until its exact result is taken.
 Each authenticated message and its immediately following owning group observation execute in one
 durable FIFO batch, so timer rearming uses the exact post-message role and term rather than a later
 racy observation.
