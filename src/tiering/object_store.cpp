@@ -158,9 +158,11 @@ struct ResponseCapture {
   std::optional<std::string> checksum_hex;
   std::optional<std::string> content_range;
   std::optional<std::string> entity_tag;
+  std::optional<std::uint64_t> retry_after_seconds;
   bool checksum_conflict{};
   bool content_range_conflict{};
   bool entity_tag_conflict{};
+  bool retry_after_invalid{};
   bool body_limit_exhausted{};
 };
 
@@ -218,6 +220,7 @@ struct ResponseCapture {
   constexpr std::string_view checksum_name{"x-amz-meta-chronos-sha256:"};
   constexpr std::string_view content_range_name{"content-range:"};
   constexpr std::string_view entity_tag_name{"etag:"};
+  constexpr std::string_view retry_after_name{"retry-after:"};
   try {
     if (matches_name(checksum_name)) {
       const std::string value{trim_header_value(line.substr(checksum_name.size()))};
@@ -237,6 +240,17 @@ struct ResponseCapture {
         capture.entity_tag_conflict = true;
       else
         capture.entity_tag = value;
+    } else if (matches_name(retry_after_name)) {
+      const std::string_view value = trim_header_value(line.substr(retry_after_name.size()));
+      std::uint64_t seconds{};
+      const auto parsed = std::from_chars(value.data(), value.data() + value.size(), seconds);
+      if (capture.retry_after_seconds.has_value() || value.empty() || parsed.ec != std::errc{} ||
+          parsed.ptr != value.data() + value.size()) {
+        capture.retry_after_invalid = true;
+        capture.retry_after_seconds.reset();
+      } else if (!capture.retry_after_invalid) {
+        capture.retry_after_seconds = seconds;
+      }
     }
   } catch (...) {
     return 0U;
@@ -694,7 +708,9 @@ public:
     }
   }
 
-  void wait_before_retry(const std::size_t completed_attempts) const {
+  void
+  wait_before_retry(const std::size_t completed_attempts,
+                    const std::optional<std::uint64_t> retry_after_seconds = std::nullopt) const {
     auto delay = config.initial_retry_backoff;
     for (std::size_t exponent = 1U; exponent < completed_attempts; ++exponent) {
       if (delay >= config.maximum_retry_backoff ||
@@ -706,6 +722,15 @@ public:
     }
     if (delay > config.maximum_retry_backoff)
       delay = config.maximum_retry_backoff;
+    if (retry_after_seconds.has_value()) {
+      const auto maximum_count = static_cast<std::uint64_t>(config.maximum_retry_backoff.count());
+      const auto requested =
+          *retry_after_seconds > maximum_count / 1'000U
+              ? config.maximum_retry_backoff
+              : std::chrono::milliseconds{
+                    static_cast<std::chrono::milliseconds::rep>(*retry_after_seconds * 1'000U)};
+      delay = std::min(config.maximum_retry_backoff, std::max(delay, requested));
+    }
     if (delay.count() > 0)
       std::this_thread::sleep_for(delay);
   }
@@ -906,7 +931,9 @@ public:
         return response;
       }
       refresh_credentials = authorization_rejected;
-      wait_before_retry(attempt);
+      wait_before_retry(attempt, replayable_status && !response->capture.retry_after_invalid
+                                     ? response->capture.retry_after_seconds
+                                     : std::nullopt);
     }
     return common::make_unexpected(
         common::Status{common::StatusCode::kInternal, "S3 retry state is unreachable"});

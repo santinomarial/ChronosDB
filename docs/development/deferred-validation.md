@@ -179,7 +179,8 @@
 ## Phase 17 — object storage and interoperability
 
 - Live AWS/MinIO/LocalStack validation for the libcurl SigV4 backend; built-in workload/instance
-  credential providers and ordered-chain policy, proxy policy, retry jitter/`Retry-After`, parallel
+  credential providers and ordered-chain policy, proxy policy, retry jitter and HTTP-date
+  `Retry-After`, parallel
   multipart parts,
   concurrent conditional writers, timeout/TLS/partial-response faults, eventual listing behavior,
   restore, conditional-delete races, encryption
@@ -189,6 +190,7 @@
   multiple-object partial failures, and live-provider qualification remain deferred.
   Bounded replay-safe retries, capped backoff, per-attempt signing, explicit provider refresh after
   401/403, transient-service recovery, and exact attempt exhaustion have focused local coverage.
+  Delta-seconds Retry-After parsing and the configured ceiling have focused local coverage.
   The explicit immutable environment provider has focused standard-variable, signed-request,
   incomplete-value, secret-redaction, and fail-closed refresh coverage.
   Sequential multipart creation, encoded upload IDs, signed parts, conditional completion, exact

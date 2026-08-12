@@ -165,7 +165,8 @@ crash, a startup-only pass uses immutable consecutive cold generations as the du
 journal, exact-binds each one to its historical Manifest/catalog authority, and retries partially
 completed deletion without bucket listings. The S3 carrier now gives every replay-safe operation a
 finite capped-backoff attempt budget and fresh signature, and a concurrent caller-supplied provider
-is force-refreshed after 401/403. An explicit built-in provider now snapshots and validates the
+is force-refreshed after 401/403. Delta-seconds Retry-After hints are honored only within the
+configured maximum backoff. An explicit built-in provider now snapshots and validates the
 standard AWS environment credentials and fails closed on forced refresh. Workload/instance and
 ordered-chain provider integrations, retry jitter, parallel multipart scheduling, cache
 and broader Arrow/Parquet external fixture and resource-fault qualification remain incomplete. The

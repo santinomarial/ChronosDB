@@ -38,7 +38,8 @@ expected range digest when one is available. CSEG's internal checksums remain re
 framing and interpretation.
 
 Transport `UNAVAILABLE` and HTTP 409/425/429/5xx outcomes retry within a configured one-to-32
-attempt budget using capped exponential backoff. HEAD/range GET are read-only; conditional PUT
+attempt budget using capped exponential backoff. A valid delta-seconds `Retry-After` may raise the
+next delay but never above the configured ceiling; malformed/repeated hints are ignored. HEAD/range GET are read-only; conditional PUT
 turns an ambiguous success into exact 412 verification; exact conditional DELETE turns it into an
 already-absent retry. Other failures do not retry. A provider-backed 401/403 requests one forced
 refresh on the next attempt, whereas rejected static credentials fail immediately. Provider errors
@@ -65,7 +66,8 @@ Upload hashing and transfer are `O(object bytes)` and retain no second upload co
 constant response storage. A range read is `O(requested bytes)` and retains at most the configured
 bound. Multipart retains borrowed object bytes plus `O(part count)` ETags and completion XML. Every
 attempt currently creates one easy handle and is synchronous; connection pooling, the libcurl multi
-interface, parallel part scheduling, and backoff jitter/`Retry-After` remain deferred. Workload,
+interface, parallel part scheduling, and backoff jitter remain deferred. HTTP-date Retry-After
+parsing also remains deferred. Workload,
 instance-metadata, shared-file, and ordered-chain provider policies also remain deferred.
 
 Operators should grant only `PutObject`, multipart create/upload/complete/abort,

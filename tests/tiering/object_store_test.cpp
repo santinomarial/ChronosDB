@@ -46,6 +46,7 @@ struct LocalS3Behavior {
   std::string access_key_id{"test-access"};
   std::optional<std::string> session_token{"test-token"};
   std::size_t transient_put_failures{};
+  std::optional<std::string> transient_retry_after;
   std::optional<std::size_t> fail_multipart_part;
   bool embedded_multipart_completion_error{};
 };
@@ -346,9 +347,13 @@ private:
     if (request->method == "PUT") {
       if (behavior_.transient_put_failures > 0U) {
         --behavior_.transient_put_failures;
-        static_cast<void>(send_all(descriptor,
-                                   "HTTP/1.1 503 Service Unavailable\r\nContent-Length: "
-                                   "0\r\nConnection: close\r\n\r\n"));
+        const std::string retry_after =
+            behavior_.transient_retry_after.has_value()
+                ? "Retry-After: " + *behavior_.transient_retry_after + "\r\n"
+                : std::string{};
+        static_cast<void>(
+            send_all(descriptor, "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n" +
+                                     retry_after + "Connection: close\r\n\r\n"));
         return;
       }
       const auto condition = request->headers.find("if-none-match");
@@ -751,6 +756,37 @@ TEST(S3ObjectStoreTest, StopsAtTheConfiguredRetryAttemptLimit) {
   auto uploaded = (*store)->put_if_absent("parts/exhausted", bytes, ingest::sha256(bytes).value());
   ASSERT_FALSE(uploaded.has_value());
   EXPECT_EQ(uploaded.error().code(), common::StatusCode::kUnavailable);
+  EXPECT_EQ(server.requests().size(), 2U);
+  EXPECT_TRUE(server.failure().empty()) << server.failure();
+}
+
+TEST(S3ObjectStoreTest, HonorsRetryAfterWithinConfiguredBackoffCeiling) {
+  LocalS3Server server{LocalS3Behavior{.transient_put_failures = 1U, .transient_retry_after = "1"}};
+  ASSERT_TRUE(server.valid()) << server.failure();
+  S3ObjectStoreConfig config{.endpoint = "http://127.0.0.1:" + std::to_string(server.port()),
+                             .region = "us-east-1",
+                             .bucket = "chronos-test",
+                             .access_key_id = "test-access",
+                             .secret_access_key = "test-secret",
+                             .session_token = "test-token",
+                             .connect_timeout = std::chrono::milliseconds{1'000},
+                             .request_timeout = std::chrono::milliseconds{2'000},
+                             .maximum_attempts = 2U,
+                             .initial_retry_backoff = std::chrono::milliseconds{0},
+                             .maximum_retry_backoff = std::chrono::milliseconds{20},
+                             .maximum_response_bytes = 1024U,
+                             .require_tls = false};
+  auto store = S3ObjectStore::create(std::move(config));
+  ASSERT_TRUE(store.has_value()) << store.error().to_string();
+
+  const std::vector<std::byte> bytes{std::byte{0x17U}};
+  const auto started = std::chrono::steady_clock::now();
+  auto uploaded =
+      (*store)->put_if_absent("parts/retry-after", bytes, ingest::sha256(bytes).value());
+  const auto elapsed = std::chrono::steady_clock::now() - started;
+  ASSERT_TRUE(uploaded.has_value()) << uploaded.error().to_string();
+  EXPECT_GE(elapsed, std::chrono::milliseconds{15});
+  EXPECT_LT(elapsed, std::chrono::seconds{2});
   EXPECT_EQ(server.requests().size(), 2U);
   EXPECT_TRUE(server.failure().empty()) << server.failure();
 }
