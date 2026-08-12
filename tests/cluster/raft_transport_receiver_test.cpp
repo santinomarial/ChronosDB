@@ -81,10 +81,14 @@ TEST(RaftTransportReceiverTest, AuthenticatesRoutesPersistsAndEncodesResponse) {
   EXPECT_EQ(admission->source_node_id, 1U);
   auto completed = admission->completion.wait();
   ASSERT_TRUE(completed.has_value()) << completed.error().to_string();
-  ASSERT_EQ(completed->size(), 1U);
+  ASSERT_EQ(completed->size(), 2U);
   ASSERT_TRUE(completed->front().status.is_ok()) << completed->front().status.to_string();
   ASSERT_TRUE(completed->front().transition.has_value());
   EXPECT_TRUE(completed->front().transition->persistence.has_value());
+  ASSERT_TRUE((*completed)[1].status.is_ok());
+  ASSERT_TRUE((*completed)[1].observation.has_value());
+  EXPECT_EQ((*completed)[1].observation->group_id, group());
+  EXPECT_EQ((*completed)[1].observation->current_term, 1U);
   auto frames = encode_durable_raft_outbound_v1(group(), 2U, completed->front());
   ASSERT_TRUE(frames.has_value()) << frames.error().to_string();
   ASSERT_EQ(frames->size(), 1U);
@@ -163,8 +167,10 @@ TEST(RaftTransportReceiverTest, SurfacesUnknownGroupWithoutFailingRuntime) {
   ASSERT_TRUE(admission.has_value()) << admission.error().to_string();
   auto completed = admission->completion.wait();
   ASSERT_TRUE(completed.has_value()) << completed.error().to_string();
-  ASSERT_EQ(completed->size(), 1U);
+  ASSERT_EQ(completed->size(), 2U);
   EXPECT_EQ(completed->front().status.code(), common::StatusCode::kNotFound);
+  EXPECT_EQ((*completed)[1].status.code(), common::StatusCode::kNotFound);
+  EXPECT_FALSE((*completed)[1].observation.has_value());
   EXPECT_TRUE(runtime->terminal_status().is_ok());
   EXPECT_EQ(
       encode_durable_raft_outbound_v1(group(std::byte{8U}), 2U, completed->front()).error().code(),

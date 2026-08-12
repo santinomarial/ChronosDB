@@ -83,8 +83,10 @@ common::Result<RaftTransportAdmission> RaftTransportReceiver::try_receive_decode
     const raft::GroupId group_id = envelope.group_id;
     const raft::NodeId source_node_id = envelope.source;
     std::vector<raft::DurableRaftRequest> requests;
+    requests.reserve(2U);
     requests.emplace_back(group_id,
                           raft::ReceiveOperation{source_node_id, std::move(envelope.message)});
+    requests.emplace_back(group_id, raft::ObserveGroupOperation{});
     auto completion = config_.runtime->try_submit(std::move(requests));
     if (!completion.has_value())
       return common::make_unexpected(std::move(completion).error());

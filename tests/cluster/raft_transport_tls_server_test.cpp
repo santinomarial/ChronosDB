@@ -188,6 +188,9 @@ TEST(RaftTransportTlsServerTest, AuthenticatesFragmentsAndServesPersistentFrames
   ASSERT_TRUE(completed->result.status.is_ok()) << completed->result.status.to_string();
   ASSERT_TRUE(completed->result.transition.has_value());
   EXPECT_TRUE(completed->result.transition->persistence.has_value());
+  ASSERT_TRUE(completed->observation.has_value());
+  EXPECT_EQ(completed->observation->group_id, group());
+  EXPECT_EQ(completed->observation->current_term, 1U);
   EXPECT_EQ(server->state(), RaftTransportTlsServerState::kReadingFrame);
 
   const auto second = vote_request(2U);
@@ -195,6 +198,8 @@ TEST(RaftTransportTlsServerTest, AuthenticatesFragmentsAndServesPersistentFrames
   auto second_completed = server->take_completed(now + std::chrono::milliseconds{5});
   ASSERT_TRUE(second_completed.has_value()) << second_completed.error().to_string();
   EXPECT_EQ(second_completed->result.transition->persistence->state.current_term, 2U);
+  ASSERT_TRUE(second_completed->observation.has_value());
+  EXPECT_EQ(second_completed->observation->current_term, 2U);
   ASSERT_TRUE(runtime->shutdown().is_ok());
 }
 

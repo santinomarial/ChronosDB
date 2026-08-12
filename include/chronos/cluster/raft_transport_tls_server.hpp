@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 namespace chronos::cluster {
 
@@ -43,6 +44,7 @@ struct RaftTransportCompletedReceive {
   raft::GroupId group_id;
   raft::NodeId source_node_id{};
   raft::DurableRaftResult result;
+  std::optional<raft::RaftGroupObservation> observation;
 };
 
 // Owns one persistent inbound Raft byte stream over a borrowed nonblocking mutual-TLS socket. One

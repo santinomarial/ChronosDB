@@ -164,10 +164,19 @@ public:
     auto result = admission_->completion.wait();
     if (!result.has_value())
       return fail(result.error());
-    if (result->size() != 1U)
+    if (result->size() != 2U)
       return fail(corruption("Raft TLS receive completion has an invalid result count"));
-    completed_.emplace(RaftTransportCompletedReceive{
-        admission_->group_id, admission_->source_node_id, std::move(result->front())});
+    raft::DurableRaftResult& received = (*result)[0];
+    raft::DurableRaftResult& observed = (*result)[1];
+    if (observed.transition.has_value() ||
+        (observed.status.is_ok() != observed.observation.has_value()) ||
+        (observed.observation.has_value() &&
+         observed.observation->group_id != admission_->group_id) ||
+        (!observed.status.is_ok() && received.status.is_ok()))
+      return fail(corruption("Raft TLS receive completion has an invalid group observation"));
+    completed_.emplace(
+        RaftTransportCompletedReceive{admission_->group_id, admission_->source_node_id,
+                                      std::move(received), std::move(observed.observation)});
     admission_.reset();
     state_ = RaftTransportTlsServerState::kResultReady;
     return common::Status::ok();

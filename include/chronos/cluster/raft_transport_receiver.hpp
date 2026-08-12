@@ -22,8 +22,9 @@ struct RaftTransportReceiverConfig {
 };
 
 // Owns the asynchronous durable receive after authentication, authorization, and exact route
-// checks succeed. The completion releases a transition only after the runtime's local persistence
-// boundary. It may outlive the receiver, but not be consumed more than once.
+// checks succeed. The completion releases the transition and immediately following owning group
+// observation only after the runtime's local persistence boundary. It may outlive the receiver, but
+// not be consumed more than once.
 struct RaftTransportAdmission {
   RaftTransportAdmission(raft::GroupId admitted_group_id, raft::NodeId admitted_source_node_id,
                          raft::AsyncDurableRaftCompletion admitted_completion) noexcept

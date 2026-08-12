@@ -291,3 +291,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0254](0254-capped-raft-peer-reconnect-policy.md) | Capped Raft peer reconnect policy | accepted |
 | [0255](0255-bounded-raft-outbound-peer-manager.md) | Bounded Raft outbound peer manager | accepted |
 | [0256](0256-bounded-inbound-raft-tcp-server.md) | Bounded inbound Raft TCP server | accepted |
+| [0257](0257-ordered-inbound-raft-observation.md) | Ordered inbound Raft observation | accepted |

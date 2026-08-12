@@ -85,6 +85,9 @@ and the bounded durable-result completion that retries admission.
 The inbound TCP server supplies the symmetric listener and fixed connection/poll table. Accepted
 sockets derive their authentication address from the kernel peer endpoint and retain result-ready
 sessions without read interest until the embedding takes the exact post-sync transition.
+Each authenticated message and its immediately following owning group observation execute in one
+durable FIFO batch, so timer rearming uses the exact post-message role and term rather than a later
+racy observation.
 
 ## Complexity and tradeoffs
 

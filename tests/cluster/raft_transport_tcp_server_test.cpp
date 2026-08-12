@@ -134,6 +134,9 @@ TEST(RaftTransportTcpServerTest, AcceptsPersistentTlsAndPublishesPostSyncResult)
   EXPECT_EQ(completed->source_node_id, 1U);
   ASSERT_TRUE(completed->result.status.is_ok());
   ASSERT_TRUE(completed->result.transition.has_value());
+  ASSERT_TRUE(completed->observation.has_value());
+  EXPECT_EQ(completed->observation->group_id, group());
+  EXPECT_EQ(completed->observation->current_term, 1U);
   ASSERT_EQ(completed->result.transition->outbound.size(), 1U);
   EXPECT_EQ(completed->result.transition->outbound.front().outbound.destination, 1U);
   EXPECT_EQ(server->metrics().completed_results, 1U);

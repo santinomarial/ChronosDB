@@ -117,6 +117,8 @@ A persistent inbound mutual-TLS carrier now processes fragmented sequential fram
 durable operation/result in flight and leaves multi-peer output and snapshot routing to its owner.
 A bounded TCP listener/poll table now admits those persistent sessions and retains each complete
 post-sync result until explicit embedding pickup.
+Each authenticated inbound message now executes with an immediately following observation in one
+durable FIFO batch and retains that exact post-message role and term for timer rearming.
 A persistent outbound mutual-TLS carrier now validates exact peer routes, bounds FIFO frames and
 bytes, and returns complete original frames for duplicate-safe reconnect after failure.
 A bounded exact-peer carrier pool now preflights every durable-result destination and aggregate
