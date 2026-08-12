@@ -28,8 +28,25 @@ is documented in [Replicated Group Configuration](replicated-group-config.md). T
 elects only groups whose sole voter is the local node, and advertises Protocol 2 QUORUM_SYNC only
 after all owners are running. It serves canonical replicated ingest and exact retries. Native query
 and subscription requests fail explicitly in this mode until Raft-backed query snapshots are
-packaged. Multi-voter deployments additionally require the still-external authenticated Raft peer
-transport and election driver; the group file itself contains no endpoints or credentials.
+packaged. Multi-voter deployments additionally require the authenticated Raft peer transport
+bundle below; the group file itself contains no endpoints or credentials.
+
+For multi-voter groups, configure the complete transport bundle:
+
+```text
+--replicated-peers /etc/chronosdb/peers.conf \
+--raft-tls-cert /etc/chronosdb/node.pem \
+--raft-tls-key /etc/chronosdb/node-key.pem \
+--raft-tls-ca /etc/chronosdb/cluster-ca.pem
+```
+
+The [Replicated Peer Configuration](replicated-peer-config.md) must include the local node and every
+voter of every resident group. The key file must not be accessible to group or other. All four
+options are atomic at startup; partial configuration is rejected. `raft_transport=configured` in
+the startup line means the authenticated poll owner is running, while `raft_transport=local` means
+only exact local single-voter groups were accepted. Non-replicated modes report
+`raft_transport=disabled`. Transport failure stops the daemon. Raft snapshot installation and
+production read barriers are still fail-closed gaps rather than silently discarded completions.
 
 Set finite connection, event, frame, buffered-byte, queued-frame, in-flight request, handshake, and
 idle limits. Defaults are development bounds, not capacity guidance. Monitor accepted, rejected,

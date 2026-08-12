@@ -210,8 +210,8 @@
   metadata and explicit group membership before reopening the asynchronous runtime. A strict
   bounded group/voter deployment parser and secure packaged daemon loading/routing now exist. A
   strict authenticated peer route/identity parser and exact certificate/address/node authority also
-  exist, and an owning transport runtime composes them with TLS contexts and randomized timers;
-  add secure daemon credential loading/poll ownership, remote leader redirection,
+  exist, and an owning transport runtime plus packaged daemon poll thread composes them with TLS
+  contexts and randomized timers; add in-memory credential loading, remote leader redirection,
   metadata/tablet snapshot process recovery,
   joint-reconfiguration restart matrices, broader queue/disconnect failure matrices, long-running
   hook watchdog evidence, and TSan scheduling coverage.
@@ -358,8 +358,8 @@
   subprocess crashes after intent write/sync, each directory creation/sync, rename, and final root
   sync; concurrent multi-process creation; large-root scaling; Linux filesystem/power-loss and macOS
   persistence qualification; install/export and public API review.
-- Extend the packaged `chronosd` replicated-ingest lifecycle with authenticated Raft peer transport,
-  remote leader routing, Raft-backed query snapshots, live delivery, flush/CSEG/Manifest,
+- Extend the packaged `chronosd` authenticated Raft peer lifecycle with remote leader routing,
+  Raft-backed query snapshots, live delivery, flush/CSEG/Manifest,
   failover/movement, and object storage; then run it as three processes.
 - Configured `chronosd` Linux subprocess execution in CI, daemon ingest over real sockets, corrupt
   root/WAL/Raft startup cases, signals during ingest/query, queue saturation with multi-frame

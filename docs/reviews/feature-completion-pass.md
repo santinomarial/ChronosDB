@@ -191,7 +191,9 @@ SHA-256 fingerprints. One immutable authority maps an exact verified fingerprint
 that configured node ID for both inbound and outbound carriers. An address-stable service owner now
 composes those authorities and per-peer TLS contexts with the existing receiver, listener,
 reconnect pool, randomized timers, and unified poll runtime, arming each group only from a durable
-ordered observation. Daemon credential loading and poll-thread ownership remain external.
+ordered observation. The packaged daemon now loads the complete peer/TLS option bundle, validates
+voter coverage, runs the transport on its sole poll thread, and destroys it before the durable
+database. Snapshot-install and read-barrier results remain explicit fail-closed process gaps.
 
 ### Phase 15 — Multi-Raft tablets and metadata
 
@@ -415,8 +417,8 @@ broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were d
   fault matrices; the ordering protocols are implemented and focused restart tests pass.
 - QUORUM_SYNC receipts, Protocol 2.0 negotiation/acknowledgement bytes, metadata-derived local
   routing, bounded execution, queue-facing backpressure/drain composition, database-root reopen,
-  and explicit packaged daemon advertisement exist. Multi-node peer transport and leader routing
-  are still absent.
+  and explicit packaged daemon advertisement exist. Authenticated multi-node peer transport is now
+  packaged; remote client leader routing and real three-process failover evidence are still absent.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 

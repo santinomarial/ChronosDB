@@ -9,6 +9,8 @@
 #include "chronos/service/replicated_group_config.hpp"
 #include "chronos/service/replicated_ingest_database.hpp"
 #include "chronos/service/replicated_ingest_service.hpp"
+#include "chronos/service/replicated_peer_config.hpp"
+#include "chronos/service/replicated_raft_transport_runtime.hpp"
 #include "chronos/service/single_node_committed_append_router.hpp"
 #include "chronos/service/single_node_database.hpp"
 #include "chronos/service/single_node_subscription_runtime.hpp"
@@ -51,6 +53,7 @@ using chronos::network::SpscNetworkTaskQueue;
 using chronos::service::NativeProtocolService;
 using chronos::service::ReplicatedIngestDatabase;
 using chronos::service::ReplicatedIngestService;
+using chronos::service::ReplicatedRaftTransportRuntime;
 using chronos::service::SingleNodeCommittedAppendRouter;
 using chronos::service::SingleNodeDatabase;
 using chronos::service::SingleNodeSubscriptionRuntime;
@@ -69,6 +72,10 @@ struct Options {
   std::string subscription_sql;
   std::string subscription_key_file;
   std::string replicated_groups_file;
+  std::string replicated_peers_file;
+  std::string raft_tls_certificate_file;
+  std::string raft_tls_private_key_file;
+  std::string raft_tls_trust_store_file;
   bool help{};
   bool version{};
 };
@@ -78,6 +85,8 @@ void print_usage(const std::string_view program, std::ostream& stream) {
          << " [--listen 127.0.0.1] [--port PORT] [--backend epoll|io_uring]"
             " [--queue-capacity COUNT] [--data-dir PATH]"
             " [--replicated-groups FILE]"
+            " [--replicated-peers FILE --raft-tls-cert FILE --raft-tls-key FILE"
+            " --raft-tls-ca FILE]"
             " [--subscription-sql SQL --subscription-key-file PATH]\n"
             "       "
          << program << " --help\n"
@@ -164,6 +173,18 @@ template <typename Integer>
         return std::nullopt;
       }
       options.replicated_groups_file = value;
+    } else if (argument == "--replicated-peers") {
+      if (value.empty()) {
+        std::cerr << "chronosd: replicated peer configuration path must be nonempty\n";
+        return std::nullopt;
+      }
+      options.replicated_peers_file = value;
+    } else if (argument == "--raft-tls-cert") {
+      options.raft_tls_certificate_file = value;
+    } else if (argument == "--raft-tls-key") {
+      options.raft_tls_private_key_file = value;
+    } else if (argument == "--raft-tls-ca") {
+      options.raft_tls_trust_store_file = value;
     } else {
       std::cerr << "chronosd: unknown option " << argument << '\n';
       return std::nullopt;
@@ -188,6 +209,19 @@ template <typename Integer>
   if (!options.replicated_groups_file.empty() && !options.subscription_sql.empty()) {
     std::cerr
         << "chronosd: replicated ingest and single-node subscriptions are mutually exclusive\n";
+    return std::nullopt;
+  }
+  const std::array<bool, 4U> transport_fields{
+      !options.replicated_peers_file.empty(), !options.raft_tls_certificate_file.empty(),
+      !options.raft_tls_private_key_file.empty(), !options.raft_tls_trust_store_file.empty()};
+  const std::size_t transport_field_count =
+      static_cast<std::size_t>(std::ranges::count(transport_fields, true));
+  if (transport_field_count != 0U && transport_field_count != transport_fields.size()) {
+    std::cerr << "chronosd: replicated peers and all Raft TLS files must be configured together\n";
+    return std::nullopt;
+  }
+  if (transport_field_count != 0U && options.replicated_groups_file.empty()) {
+    std::cerr << "chronosd: Raft peer transport requires replicated group configuration\n";
     return std::nullopt;
   }
   return options;
@@ -263,19 +297,18 @@ load_subscription_key(const std::string& path) {
 }
 
 [[nodiscard]] chronos::common::Result<std::string>
-load_replicated_group_config(const std::string& path) {
+load_bounded_config(const std::string& path, const std::size_t maximum_bytes,
+                    const std::string_view kind) {
   const int descriptor = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
   if (descriptor < 0)
-    return chronos::common::make_unexpected(io_error("cannot open replicated group config"));
+    return chronos::common::make_unexpected(io_error("cannot open " + std::string{kind}));
   const auto close_descriptor = [&]() noexcept { static_cast<void>(::close(descriptor)); };
   struct stat metadata {};
-  constexpr std::size_t maximum_bytes =
-      chronos::service::ReplicatedGroupConfigLimits{}.maximum_bytes;
   if (::fstat(descriptor, &metadata) != 0 || !S_ISREG(metadata.st_mode) || metadata.st_size <= 0 ||
       static_cast<std::uintmax_t>(metadata.st_size) > maximum_bytes) {
     close_descriptor();
     return chronos::common::make_unexpected(
-        invalid("replicated group config must be a bounded nonempty regular file"));
+        invalid(std::string{kind} + " must be a bounded nonempty regular file"));
   }
   try {
     std::string bytes(static_cast<std::size_t>(metadata.st_size), '\0');
@@ -287,7 +320,7 @@ load_replicated_group_config(const std::string& path) {
       if (count <= 0) {
         close_descriptor();
         return chronos::common::make_unexpected(
-            io_error("cannot read complete replicated group config"));
+            io_error("cannot read complete " + std::string{kind}));
       }
       offset += static_cast<std::size_t>(count);
     }
@@ -298,21 +331,54 @@ load_replicated_group_config(const std::string& path) {
     } while (trailing < 0 && errno == EINTR);
     close_descriptor();
     if (trailing < 0)
-      return chronos::common::make_unexpected(io_error("cannot finish replicated group config"));
+      return chronos::common::make_unexpected(io_error("cannot finish " + std::string{kind}));
     if (trailing != 0)
       return chronos::common::make_unexpected(
-          invalid("replicated group config changed while being read"));
+          invalid(std::string{kind} + " changed while being read"));
     return bytes;
   } catch (const std::bad_alloc&) {
     close_descriptor();
-    return chronos::common::make_unexpected(
-        chronos::common::Status{chronos::common::StatusCode::kResourceExhausted,
-                                "replicated group config allocation failed"});
+    return chronos::common::make_unexpected(chronos::common::Status{
+        chronos::common::StatusCode::kResourceExhausted, std::string{kind} + " allocation failed"});
   } catch (const std::length_error&) {
     close_descriptor();
     return chronos::common::make_unexpected(
-        invalid("replicated group config size exceeds process limits"));
+        invalid(std::string{kind} + " size exceeds process limits"));
   }
+}
+
+[[nodiscard]] chronos::common::Status validate_tls_file(const std::string& path,
+                                                        const bool private_key) {
+  const int descriptor = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+  if (descriptor < 0)
+    return io_error("cannot open Raft TLS file");
+  struct stat metadata {};
+  constexpr std::uintmax_t maximum_bytes = 16U * 1024U * 1024U;
+  const bool valid = ::fstat(descriptor, &metadata) == 0 && S_ISREG(metadata.st_mode) &&
+                     metadata.st_size > 0 &&
+                     static_cast<std::uintmax_t>(metadata.st_size) <= maximum_bytes &&
+                     (!private_key || (metadata.st_mode & 0077) == 0);
+  static_cast<void>(::close(descriptor));
+  return valid ? chronos::common::Status::ok()
+               : invalid(
+                     private_key
+                         ? "Raft TLS key must be a bounded regular file inaccessible to group/other"
+                         : "Raft TLS certificate authority must be a bounded regular file");
+}
+
+[[nodiscard]] chronos::common::Status
+validate_transport_membership(const chronos::raft::NodeId local_node_id,
+                              const std::vector<chronos::raft::RaftGroupConfiguration>& groups,
+                              const std::vector<chronos::service::ReplicatedPeer>& peers) {
+  for (const auto& group : groups) {
+    if (!std::ranges::contains(group.voters, local_node_id))
+      return invalid("resident Raft group does not include the local node as a voter");
+    for (const chronos::raft::NodeId voter : group.voters) {
+      if (std::ranges::none_of(peers, [voter](const auto& peer) { return peer.node_id == voter; }))
+        return invalid("Raft group voter has no authenticated peer route");
+    }
+  }
+  return chronos::common::Status::ok();
 }
 
 [[nodiscard]] chronos::common::Status
@@ -774,6 +840,69 @@ private:
   std::thread thread_;
 };
 
+class RaftTransportWorker {
+public:
+  explicit RaftTransportWorker(ReplicatedRaftTransportRuntime& runtime) noexcept
+      : runtime_(&runtime) {}
+  RaftTransportWorker(const RaftTransportWorker&) = delete;
+  RaftTransportWorker& operator=(const RaftTransportWorker&) = delete;
+
+  [[nodiscard]] bool start() noexcept {
+    try {
+      thread_ = std::thread{[this] { run(); }};
+      return true;
+    } catch (const std::bad_alloc&) {
+      return false;
+    } catch (const std::system_error&) {
+      return false;
+    }
+  }
+
+  void request_stop() noexcept {
+    stopping_.store(true, std::memory_order_release);
+  }
+  void join() noexcept {
+    if (thread_.joinable())
+      thread_.join();
+  }
+  [[nodiscard]] bool failed() const noexcept {
+    return failed_.load(std::memory_order_acquire);
+  }
+
+private:
+  void run() noexcept {
+    while (!stopping_.load(std::memory_order_acquire)) {
+      const chronos::common::Status polled = runtime_->poll_once(std::chrono::milliseconds{10});
+      if (!polled.is_ok()) {
+        failed_.store(true, std::memory_order_release);
+        return;
+      }
+      for (std::size_t drained = 0U; drained < 256U; ++drained) {
+        auto completed = runtime_->take_completed();
+        if (!completed.has_value()) {
+          if (completed.error().code() != chronos::common::StatusCode::kUnavailable) {
+            failed_.store(true, std::memory_order_release);
+            return;
+          }
+          break;
+        }
+        if (!completed->result.status.is_ok() || !completed->result.transition.has_value())
+          continue;
+        const chronos::raft::MultiRaftTransition& transition = *completed->result.transition;
+        if (transition.snapshot_install.has_value() || transition.read_barrier_ready.has_value()) {
+          failed_.store(true, std::memory_order_release);
+          return;
+        }
+      }
+    }
+  }
+
+  ReplicatedRaftTransportRuntime* runtime_{};
+  std::atomic<bool> stopping_{false};
+  std::atomic<bool> failed_{false};
+  std::thread thread_;
+};
+
 } // namespace
 
 // NOLINTNEXTLINE(modernize-avoid-c-arrays)
@@ -797,7 +926,9 @@ int main(const int argc, const char* const argv[]) {
   SingleNodeCommittedAppendRouter append_router;
   std::optional<std::vector<chronos::raft::RaftGroupConfiguration>> replicated_groups;
   if (!options->replicated_groups_file.empty()) {
-    auto loaded = load_replicated_group_config(options->replicated_groups_file);
+    auto loaded = load_bounded_config(options->replicated_groups_file,
+                                      chronos::service::ReplicatedGroupConfigLimits{}.maximum_bytes,
+                                      "replicated group config");
     if (!loaded.has_value()) {
       std::cerr << "chronosd: replicated group config read failed: " << loaded.error().to_string()
                 << '\n';
@@ -811,6 +942,34 @@ int main(const int argc, const char* const argv[]) {
     }
     replicated_groups.emplace(std::move(*parsed));
   }
+  std::optional<std::vector<chronos::service::ReplicatedPeer>> replicated_peers;
+  if (!options->replicated_peers_file.empty()) {
+    auto loaded = load_bounded_config(options->replicated_peers_file,
+                                      chronos::service::ReplicatedPeerConfigLimits{}.maximum_bytes,
+                                      "replicated peer config");
+    if (!loaded.has_value()) {
+      std::cerr << "chronosd: replicated peer config read failed: " << loaded.error().to_string()
+                << '\n';
+      return 1;
+    }
+    auto parsed = chronos::service::parse_replicated_peer_config(*loaded);
+    if (!parsed.has_value()) {
+      std::cerr << "chronosd: replicated peer config is invalid: " << parsed.error().to_string()
+                << '\n';
+      return 1;
+    }
+    for (const auto& [path, private_key] : std::array<std::pair<std::string_view, bool>, 3U>{
+             std::pair<std::string_view, bool>{options->raft_tls_certificate_file, false},
+             {options->raft_tls_private_key_file, true},
+             {options->raft_tls_trust_store_file, false}}) {
+      const chronos::common::Status valid = validate_tls_file(std::string{path}, private_key);
+      if (!valid.is_ok()) {
+        std::cerr << "chronosd: Raft TLS file validation failed: " << valid.to_string() << '\n';
+        return 1;
+      }
+    }
+    replicated_peers.emplace(std::move(*parsed));
+  }
   std::optional<chronos::live::ResumeTokenMacKey> subscription_key;
   if (!options->subscription_sql.empty()) {
     auto loaded = load_subscription_key(options->subscription_key_file);
@@ -823,6 +982,7 @@ int main(const int argc, const char* const argv[]) {
   }
   std::optional<SingleNodeDatabase> database;
   std::optional<ReplicatedIngestDatabase> replicated_database;
+  std::optional<ReplicatedRaftTransportRuntime> raft_transport;
   std::optional<NativeProtocolService> service;
   std::unique_ptr<DaemonSubscription> subscription;
   if (!options->data_directory.empty()) {
@@ -835,13 +995,52 @@ int main(const int argc, const char* const argv[]) {
         return 1;
       }
       replicated_database.emplace(std::move(*opened));
-      const chronos::common::Status elected =
-          elect_single_node_groups(*replicated_database, *replicated_groups);
-      if (!elected.is_ok()) {
-        static_cast<void>(replicated_database->shutdown());
-        std::cerr << "chronosd: replicated single-node election failed: " << elected.to_string()
-                  << '\n';
-        return 1;
+      if (replicated_peers.has_value()) {
+        const chronos::common::Status membership = validate_transport_membership(
+            replicated_database->bootstrap().local_node_id, *replicated_groups, *replicated_peers);
+        if (!membership.is_ok()) {
+          static_cast<void>(replicated_database->shutdown());
+          std::cerr << "chronosd: replicated peer membership is invalid: " << membership.to_string()
+                    << '\n';
+          return 1;
+        }
+        std::vector<chronos::raft::GroupId> resident_groups;
+        resident_groups.reserve(replicated_groups->size());
+        for (const auto& group : *replicated_groups)
+          resident_groups.push_back(group.group_id);
+        auto transport = ReplicatedRaftTransportRuntime::create(
+            {.local_node_id = replicated_database->bootstrap().local_node_id,
+             .durable_runtime = replicated_database->ingest_runtime()->runtime(),
+             .peers = *replicated_peers,
+             .resident_groups = std::move(resident_groups),
+             .tls = {.certificate_chain_file = options->raft_tls_certificate_file,
+                     .private_key_file = options->raft_tls_private_key_file,
+                     .trust_store_file = options->raft_tls_trust_store_file}});
+        if (!transport.has_value()) {
+          static_cast<void>(replicated_database->shutdown());
+          std::cerr << "chronosd: Raft peer transport start failed: "
+                    << transport.error().to_string() << '\n';
+          return 1;
+        }
+        raft_transport.emplace(std::move(*transport));
+      } else {
+        const bool all_local = std::ranges::all_of(*replicated_groups, [&](const auto& group) {
+          return group.voters.size() == 1U &&
+                 group.voters.front() == replicated_database->bootstrap().local_node_id;
+        });
+        if (!all_local) {
+          static_cast<void>(replicated_database->shutdown());
+          std::cerr << "chronosd: multi-voter groups require configured Raft peer transport\n";
+          return 1;
+        }
+        const chronos::common::Status elected =
+            elect_single_node_groups(*replicated_database, *replicated_groups);
+        if (!elected.is_ok()) {
+          static_cast<void>(replicated_database->shutdown());
+          std::cerr << "chronosd: replicated single-node election failed: " << elected.to_string()
+                    << '\n';
+          return 1;
+        }
       }
     } else {
       auto descriptor = new_database_descriptor(identities);
@@ -881,6 +1080,8 @@ int main(const int argc, const char* const argv[]) {
   if (!requests.has_value() || !responses.has_value()) {
     const auto& error = !requests.has_value() ? requests.error() : responses.error();
     std::cerr << "chronosd: queue creation failed: " << error.to_string() << '\n';
+    if (raft_transport.has_value())
+      static_cast<void>(raft_transport->shutdown());
     if (replicated_database.has_value())
       static_cast<void>(replicated_database->shutdown());
     return 1;
@@ -893,6 +1094,8 @@ int main(const int argc, const char* const argv[]) {
          .requests = std::addressof(*requests),
          .responses = std::addressof(*responses)});
     if (!created.has_value()) {
+      if (raft_transport.has_value())
+        static_cast<void>(raft_transport->shutdown());
       static_cast<void>(replicated_database->shutdown());
       std::cerr << "chronosd: replicated ingest service start failed: "
                 << created.error().to_string() << '\n';
@@ -912,9 +1115,24 @@ int main(const int argc, const char* const argv[]) {
   if (!reactor.has_value()) {
     std::cerr << "chronosd: server start failed: " << reactor.error().to_string() << '\n';
     replicated_service.reset();
+    if (raft_transport.has_value())
+      static_cast<void>(raft_transport->shutdown());
     if (replicated_database.has_value())
       static_cast<void>(replicated_database->shutdown());
     return 1;
+  }
+
+  std::optional<RaftTransportWorker> raft_worker;
+  if (raft_transport.has_value()) {
+    raft_worker.emplace(*raft_transport);
+    if (!raft_worker->start()) {
+      static_cast<void>(reactor->shutdown());
+      replicated_service.reset();
+      static_cast<void>(raft_transport->shutdown());
+      static_cast<void>(replicated_database->shutdown());
+      std::cerr << "chronosd: Raft transport worker start failed\n";
+      return 1;
+    }
   }
 
   DataPlaneWorker worker{
@@ -927,6 +1145,11 @@ int main(const int argc, const char* const argv[]) {
       subscription != nullptr ? std::addressof(subscription->requests) : nullptr,
       subscription != nullptr ? std::addressof(subscription->responses) : nullptr};
   if (!worker.start()) {
+    if (raft_worker.has_value()) {
+      raft_worker->request_stop();
+      raft_worker->join();
+      static_cast<void>(raft_transport->shutdown());
+    }
     static_cast<void>(reactor->shutdown());
     subscription.reset();
     replicated_service.reset();
@@ -945,6 +1168,11 @@ int main(const int argc, const char* const argv[]) {
     while (!worker.stopped())
       static_cast<void>(reactor->poll_once(std::chrono::milliseconds{10}));
     worker.join();
+    if (raft_worker.has_value()) {
+      raft_worker->request_stop();
+      raft_worker->join();
+      static_cast<void>(raft_transport->shutdown());
+    }
     static_cast<void>(reactor->shutdown());
     subscription.reset();
     replicated_service.reset();
@@ -962,11 +1190,17 @@ int main(const int argc, const char* const argv[]) {
             << (replicated_service.has_value()
                     ? "replicated"
                     : (service.has_value() ? "configured" : "unconfigured"))
-            << " subscriptions=" << (subscription != nullptr ? "configured" : "disabled") << '\n'
+            << " subscriptions=" << (subscription != nullptr ? "configured" : "disabled")
+            << " raft_transport="
+            << (raft_transport.has_value()
+                    ? "configured"
+                    : (replicated_service.has_value() ? "local" : "disabled"))
+            << '\n'
             << std::flush;
 
   int exit_code = 0;
-  while (stop_requested == 0 && !worker.failed()) {
+  while (stop_requested == 0 && !worker.failed() &&
+         (!raft_worker.has_value() || !raft_worker->failed())) {
     const auto status = reactor->poll_once(std::chrono::milliseconds{10});
     if (!status.is_ok()) {
       std::cerr << "chronosd: reactor failure: " << status.to_string() << '\n';
@@ -976,6 +1210,10 @@ int main(const int argc, const char* const argv[]) {
   }
   if (worker.failed()) {
     std::cerr << "chronosd: data-plane worker failed\n";
+    exit_code = 1;
+  }
+  if (raft_worker.has_value() && raft_worker->failed()) {
+    std::cerr << "chronosd: Raft transport worker failed\n";
     exit_code = 1;
   }
 
@@ -1002,6 +1240,16 @@ int main(const int argc, const char* const argv[]) {
   }
   subscription.reset();
   replicated_service.reset();
+  if (raft_worker.has_value()) {
+    raft_worker->request_stop();
+    raft_worker->join();
+    const auto transport_shutdown = raft_transport->shutdown();
+    if (!transport_shutdown.is_ok()) {
+      std::cerr << "chronosd: Raft transport shutdown failed: " << transport_shutdown.to_string()
+                << '\n';
+      exit_code = 1;
+    }
+  }
   if (database.has_value()) {
     const auto database_shutdown = database->shutdown();
     if (!database_shutdown.is_ok()) {

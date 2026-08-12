@@ -522,6 +522,7 @@ TEST(ChronosdProcessTest, AppliesAndRecoversQuorumSyncThroughReplicatedDaemonMod
   ASSERT_TRUE(child.start(directory.path(), {}, {}, groups));
   std::string startup = child.read_startup_line();
   EXPECT_NE(startup.find("data_plane=replicated"), std::string::npos);
+  EXPECT_NE(startup.find("raft_transport=local"), std::string::npos);
   std::uint16_t port = parse_port(startup);
   ASSERT_NE(port, 0U);
   int client = connect_client(port);
@@ -539,6 +540,7 @@ TEST(ChronosdProcessTest, AppliesAndRecoversQuorumSyncThroughReplicatedDaemonMod
   ASSERT_TRUE(child.start(directory.path(), {}, {}, groups));
   startup = child.read_startup_line();
   EXPECT_NE(startup.find("data_plane=replicated"), std::string::npos);
+  EXPECT_NE(startup.find("raft_transport=local"), std::string::npos);
   port = parse_port(startup);
   ASSERT_NE(port, 0U);
   client = connect_client(port);
