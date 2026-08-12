@@ -8,10 +8,10 @@ final bootstrap exists. After success, callers can inspect the immutable query c
 lineage or tablet, execute appends through the global retry directory and WAL coordinator, and take
 tablet snapshots for vector query execution.
 
-The owner does not accept arbitrary metadata mutation yet. A table is visible only when recovered
-metadata contains its complete schema tail, complete policy, and local placement. This boundary
-prevents a crash prefix of future multi-entry table creation from becoming a partially configured
-runtime table.
+The owner accepts initial local `CREATE TABLE` as three exact-retained metadata proposals. A table is
+visible only when metadata contains its complete schema tail, complete policy, and local placement.
+Schema-only or schema+policy crash prefixes remain invisible and a matching retry reuses their
+durable identities before completing publication.
 
 ## Startup ownership and data flow
 
@@ -44,6 +44,11 @@ live service contract; repeated shutdown itself succeeds.
 Unknown WAL tablets, damaged log bytes, inconsistent lineage tails, missing active definitions,
 and nonlocal placement all fail startup. Incomplete metadata-only table prefixes remain invisible.
 No fallback schema, policy, durability downgrade, or empty-success response exists.
+
+DDL is thread-affine. The bound statement must retain the exact current query-catalog pointer; a
+catalog update makes older bound DDL stale. After all metadata applies, the owner constructs the new
+tablet state before replacing its immutable query catalog. Existing bound query plans keep their
+shared schema/catalog ownership and already-instantiated head scans keep generation pins.
 
 ## Complexity, tradeoffs, and review questions
 

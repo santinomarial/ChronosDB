@@ -240,7 +240,9 @@
 ## End-to-end integration
 
 - Single-node owner crash/fault injection at root, Raft, catalog projection, WAL creation/replay,
-  coordinator start/drain, and shutdown boundaries; interrupted table-creation state matrices;
+  coordinator start/drain, and shutdown boundaries; table creation fault injection after every
+  schema/policy/placement proposal, application, catalog rebuild, and tablet publication; all
+  incomplete/divergent prefix matrices; concurrent/stale DDL and identity generation;
   corrupt/unknown-table WAL; schema-evolution and multi-tablet recovery; concurrent ingest/query
   shutdown; Manifest/CSEG composition; subprocess lock/restart tests; ASan/UBSan/TSan; Linux/macOS
   persistence, installation/export, API, metrics, and startup/large-catalog profiling.

@@ -6,6 +6,7 @@
 #include "chronos/ingest/retry_directory.hpp"
 #include "chronos/ingest/tablet_state.hpp"
 #include "chronos/query/catalog.hpp"
+#include "chronos/query/statement_binder.hpp"
 #include "chronos/raft/metadata.hpp"
 #include "chronos/raft/persistent_log.hpp"
 #include "chronos/runtime/database_bootstrap.hpp"
@@ -15,6 +16,8 @@
 #include "chronos/wal/wal_recovery.hpp"
 
 #include <memory>
+#include <span>
+#include <vector>
 
 namespace chronos::service {
 
@@ -23,6 +26,21 @@ struct SingleNodeDatabaseConfig {
   wal::WalRecoveryOptions wal_recovery{};
   raft::RaftPersistentLogOpenOptions raft_recovery{};
   wal::WalCommitCoordinatorConfig wal_commit{};
+};
+
+struct NewTableIdentities {
+  schema::TableId table_id;
+  schema::SchemaId schema_id;
+  std::vector<schema::ColumnId> column_ids;
+  schema::TabletId tablet_id;
+};
+
+struct CreatedSingleNodeTable {
+  schema::TableId table_id;
+  schema::SchemaId schema_id;
+  schema::TabletId tablet_id;
+  raft::LogIndex metadata_index{};
+  bool resumed_incomplete_creation{};
 };
 
 // Recoverable single-process owner for the current WAL-backed single-node product boundary. The
@@ -53,6 +71,13 @@ public:
   find_tablet(const schema::TabletId& tablet_id) const noexcept;
   [[nodiscard]] ingest::RetryDirectory& retry_directory() noexcept;
   [[nodiscard]] wal::WalCommitCoordinator& wal_coordinator() noexcept;
+
+  // Publishes one initial schema, complete policy, and local placement through exact-retained
+  // metadata Raft proposals. A matching incomplete schema prefix is resumed using its durable
+  // identities; the table becomes routable only after all three records are applied.
+  [[nodiscard]] common::Result<CreatedSingleNodeTable>
+  create_table(const query::BoundSqlCreateTable& statement, NewTableIdentities identities,
+               std::uint64_t retry_retention_positions);
 
   // Stops WAL admission and synchronizes its final LOCAL_SYNC group, then closes metadata Raft and
   // finally releases the database-root lock. Repeated calls are safe.

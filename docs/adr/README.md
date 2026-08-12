@@ -253,3 +253,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0216](0216-durable-database-root-bootstrap.md) | Durable database-root bootstrap | accepted |
 | [0217](0217-vectorized-tablet-state-query-source.md) | Vectorized tablet-state query source | accepted |
 | [0218](0218-recoverable-single-node-database-owner.md) | Recoverable single-node database owner | accepted |
+| [0219](0219-restartable-single-node-table-creation.md) | Restartable single-node table creation | accepted |

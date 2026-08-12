@@ -19,6 +19,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <unistd.h>
 #include <utility>
@@ -52,6 +53,17 @@ private:
   bytes.front() = static_cast<std::byte>(seed);
   return common::Uuid{bytes};
 }
+
+template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t seed) {
+  return Identifier::from_uuid(uuid(seed)).value();
+}
+
+constexpr std::string_view kCreateSql =
+    "CREATE TABLE trades (ts TIMESTAMP_NS NOT NULL, symbol SYMBOL NOT NULL, price "
+    "DECIMAL(20, 8) NOT NULL, note STRING) EVENT TIME ts ORDER KEY (symbol, ts) "
+    "PARTITION BY time_bucket(INTERVAL '1 day', ts) SHARD KEY (symbol) DEDUP KEY "
+    "(symbol, ts) RETENTION INTERVAL '30 days' SYSTEM HISTORY RETENTION INTERVAL "
+    "'7 days' ALLOWED LATENESS INTERVAL '0 seconds'";
 
 [[nodiscard]] runtime::DatabaseBootstrapDescriptor descriptor() {
   return {.database_id = uuid(1U),
@@ -109,6 +121,49 @@ void seed_catalog(const TemporaryDirectory& directory) {
                                                schema->table_id(), tablet_id(), 1U, {1U}, 1U})}})
                   .has_value());
   ASSERT_TRUE(runtime->close().is_ok());
+}
+
+void seed_schema_prefix(const TemporaryDirectory& directory) {
+  auto bootstrap = runtime::DatabaseBootstrap::open_or_create(config(directory).bootstrap);
+  ASSERT_TRUE(bootstrap.has_value()) << bootstrap.error().to_string();
+  auto parsed = query::parse_sql_v1_create_table(kCreateSql);
+  ASSERT_TRUE(parsed.has_value()) << parsed.error().status().to_string();
+  auto empty = std::make_shared<const query::QueryCatalogSnapshot>(
+      query::QueryCatalogSnapshot::create(1U, {}).value());
+  auto bound = query::bind_sql_v1_create_table(std::move(*parsed), std::move(empty));
+  ASSERT_TRUE(bound.has_value()) << bound.error().status().to_string();
+  const std::vector columns{id<schema::ColumnId>(43U), id<schema::ColumnId>(44U),
+                            id<schema::ColumnId>(45U), id<schema::ColumnId>(46U)};
+  auto table = query::materialize_sql_v1_table_schema(*bound, id<schema::TableId>(41U),
+                                                      id<schema::SchemaId>(42U), columns);
+  ASSERT_TRUE(table.has_value()) << table.error().status().to_string();
+  const raft::CatalogTableDefinition definition{
+      .name = "trades",
+      .quoted = false,
+      .schema = std::make_shared<const schema::TableSchema>(std::move(*table))};
+  const raft::GroupId group = descriptor().metadata_group_id;
+  const raft::RaftPersistentLogConfig raft_config{
+      .directory_path = bootstrap->raft_directory_path(),
+      .target_segment_size = descriptor().raft_segment_target_bytes};
+  ASSERT_TRUE(bootstrap->close().is_ok());
+  auto raft_runtime = raft::DurableMultiRaftRuntime::create_new(1U, raft_config, {{group, {1U}}});
+  ASSERT_TRUE(raft_runtime.has_value()) << raft_runtime.error().to_string();
+  ASSERT_TRUE(raft_runtime->execute_batch({{group, raft::StartElectionOperation{}}}).has_value());
+  ASSERT_TRUE(raft_runtime
+                  ->execute_batch({{group,
+                                    raft::ProposeOperation{
+                                        raft::kRaftSchemaDefinitionEntryType,
+                                        raft::encode_schema_definition_v1(definition).value()}}})
+                  .has_value());
+  ASSERT_TRUE(raft_runtime->close().is_ok());
+}
+
+[[nodiscard]] query::SqlResult<query::BoundSqlCreateTable>
+bind_create(SingleNodeDatabase& database) {
+  auto parsed = query::parse_sql_v1_create_table(kCreateSql);
+  if (!parsed.has_value())
+    return std::unexpected(parsed.error());
+  return query::bind_sql_v1_create_table(std::move(*parsed), database.query_catalog());
 }
 
 [[nodiscard]] std::shared_ptr<const columnar::OwnedColumnarBatch> batch() {
@@ -181,6 +236,61 @@ TEST(SingleNodeDatabaseTest, RecoversCatalogWalRowsAndVectorQueryVisibility) {
   EXPECT_EQ(recovered->find_tablet(tablet_id())->snapshot()->visible_row_count(), 2U);
   EXPECT_EQ(query_count(*recovered), 2);
   EXPECT_TRUE(recovered->shutdown().is_ok());
+}
+
+TEST(SingleNodeDatabaseTest, CreatesACompleteTableAndReopensItsRuntimeCatalog) {
+  TemporaryDirectory directory;
+  auto database = SingleNodeDatabase::open_or_create(config(directory));
+  ASSERT_TRUE(database.has_value()) << database.error().to_string();
+  auto bound = bind_create(*database);
+  ASSERT_TRUE(bound.has_value()) << bound.error().status().to_string();
+  auto created =
+      database->create_table(*bound,
+                             {.table_id = id<schema::TableId>(11U),
+                              .schema_id = id<schema::SchemaId>(12U),
+                              .column_ids = {id<schema::ColumnId>(13U), id<schema::ColumnId>(14U),
+                                             id<schema::ColumnId>(15U), id<schema::ColumnId>(16U)},
+                              .tablet_id = id<schema::TabletId>(17U)},
+                             64U);
+  ASSERT_TRUE(created.has_value()) << created.error().to_string();
+  EXPECT_FALSE(created->resumed_incomplete_creation);
+  EXPECT_EQ(database->query_catalog()->tables().size(), 1U);
+  EXPECT_NE(database->find_tablet(created->tablet_id), nullptr);
+  EXPECT_NE(database->find_lineage(created->table_id), nullptr);
+  EXPECT_EQ(bind_create(*database).error().status().code(), common::StatusCode::kAlreadyExists);
+  ASSERT_TRUE(database->shutdown().is_ok());
+
+  auto reopened = SingleNodeDatabase::open_or_create(config(directory));
+  ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+  EXPECT_EQ(reopened->query_catalog()->tables().size(), 1U);
+  EXPECT_NE(reopened->find_tablet(created->tablet_id), nullptr);
+  EXPECT_EQ(reopened->metadata_catalog().table_policies.front().retry_retention_positions, 64U);
+  EXPECT_TRUE(reopened->shutdown().is_ok());
+}
+
+TEST(SingleNodeDatabaseTest, ResumesAnIncompleteSchemaPrefixUsingItsDurableIdentities) {
+  TemporaryDirectory directory;
+  seed_schema_prefix(directory);
+  auto database = SingleNodeDatabase::open_or_create(config(directory));
+  ASSERT_TRUE(database.has_value()) << database.error().to_string();
+  EXPECT_TRUE(database->query_catalog()->tables().empty());
+  auto bound = bind_create(*database);
+  ASSERT_TRUE(bound.has_value()) << bound.error().status().to_string();
+  auto created =
+      database->create_table(*bound,
+                             {.table_id = id<schema::TableId>(71U),
+                              .schema_id = id<schema::SchemaId>(72U),
+                              .column_ids = {id<schema::ColumnId>(73U), id<schema::ColumnId>(74U),
+                                             id<schema::ColumnId>(75U), id<schema::ColumnId>(76U)},
+                              .tablet_id = id<schema::TabletId>(77U)},
+                             32U);
+  ASSERT_TRUE(created.has_value()) << created.error().to_string();
+  EXPECT_TRUE(created->resumed_incomplete_creation);
+  EXPECT_EQ(created->table_id, id<schema::TableId>(41U));
+  EXPECT_EQ(created->schema_id, id<schema::SchemaId>(42U));
+  EXPECT_EQ(created->tablet_id, id<schema::TabletId>(77U));
+  EXPECT_EQ(database->query_catalog()->tables().size(), 1U);
+  EXPECT_TRUE(database->shutdown().is_ok());
 }
 
 } // namespace

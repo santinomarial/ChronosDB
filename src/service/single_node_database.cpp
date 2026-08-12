@@ -3,7 +3,9 @@
 #include "chronos/ingest/columnar_append_recovery.hpp"
 #include "chronos/io/posix_io.hpp"
 #include "chronos/raft/durable_runtime.hpp"
+#include "chronos/raft/metadata_codec.hpp"
 #include "chronos/raft/metadata_runtime.hpp"
+#include "chronos/raft/schema_definition_codec.hpp"
 #include "chronos/wal/wal_replay_sink.hpp"
 #include "chronos/wal/wal_writer.hpp"
 
@@ -189,7 +191,7 @@ struct FreshTablet {
 class SingleNodeDatabase::Impl {
 public:
   Impl(runtime::DatabaseBootstrap configured_bootstrap,
-       raft::DurableMultiRaftRuntime configured_raft,
+       std::unique_ptr<raft::DurableMultiRaftRuntime> configured_raft,
        raft::DurableMetadataStateMachine configured_metadata,
        raft::MetadataCatalogSnapshot configured_catalog,
        std::vector<RecoveredTable> configured_tables,
@@ -203,8 +205,32 @@ public:
         recovered(std::move(configured_recovered)), retry(std::move(configured_retry)),
         fresh_tablets(std::move(configured_fresh)), wal_coordinator(std::move(configured_wal)) {}
 
+  [[nodiscard]] common::Status refresh_catalog() {
+    auto projected = metadata.state().catalog_snapshot();
+    if (!projected.has_value())
+      return projected.error();
+    catalog = std::move(*projected);
+    return common::Status::ok();
+  }
+
+  [[nodiscard]] common::Status propose_and_apply(const std::uint8_t type,
+                                                 std::vector<std::byte> payload) {
+    auto proposed = raft_runtime->execute_batch(
+        {{metadata.group_id(), raft::ProposeExactRetainedOperation{type, std::move(payload)}}});
+    if (!proposed.has_value())
+      return with_context("propose table metadata", proposed.error());
+    if (proposed->size() != 1U)
+      return corruption("table metadata proposal returned an invalid result count");
+    if (!proposed->front().status.is_ok())
+      return with_context("propose table metadata", proposed->front().status);
+    auto applied = metadata.apply_committed();
+    if (!applied.has_value())
+      return with_context("apply table metadata", applied.error());
+    return refresh_catalog();
+  }
+
   runtime::DatabaseBootstrap bootstrap_owner;
-  raft::DurableMultiRaftRuntime raft_runtime;
+  std::unique_ptr<raft::DurableMultiRaftRuntime> raft_runtime;
   raft::DurableMetadataStateMachine metadata;
   raft::MetadataCatalogSnapshot catalog;
   std::vector<RecoveredTable> tables;
@@ -259,7 +285,13 @@ SingleNodeDatabase::open_or_create(SingleNodeDatabaseConfig config) {
   if (!election->front().status.is_ok())
     return common::make_unexpected(
         with_context("elect single-node metadata leader", election->front().status));
-  auto metadata = raft::DurableMetadataStateMachine::recover(metadata_group, *raft_runtime);
+  std::unique_ptr<raft::DurableMultiRaftRuntime> stable_raft;
+  try {
+    stable_raft = std::make_unique<raft::DurableMultiRaftRuntime>(std::move(*raft_runtime));
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("metadata Raft owner allocation failed"));
+  }
+  auto metadata = raft::DurableMetadataStateMachine::recover(metadata_group, *stable_raft);
   if (!metadata.has_value())
     return common::make_unexpected(with_context("recover metadata catalog", metadata.error()));
   auto catalog = metadata->state().catalog_snapshot();
@@ -360,7 +392,7 @@ SingleNodeDatabase::open_or_create(SingleNodeDatabaseConfig config) {
     if (!coordinator.has_value())
       return common::make_unexpected(coordinator.error());
     return SingleNodeDatabase{std::make_unique<Impl>(
-        std::move(*bootstrap), std::move(*raft_runtime), std::move(*metadata), std::move(*catalog),
+        std::move(*bootstrap), std::move(stable_raft), std::move(*metadata), std::move(*catalog),
         std::move(*tables), std::move(query_catalog), std::move(recovered), std::move(retry),
         std::move(fresh), std::move(*coordinator))};
   } catch (const std::bad_alloc&) {
@@ -415,13 +447,160 @@ common::Status SingleNodeDatabase::shutdown() {
     return common::Status::ok();
   impl_->shutdown = true;
   common::Status result = impl_->wal_coordinator.shutdown();
-  const common::Status raft = impl_->raft_runtime.close();
+  const common::Status raft = impl_->raft_runtime->close();
   if (result.is_ok())
     result = raft;
   const common::Status bootstrap = impl_->bootstrap_owner.close();
   if (result.is_ok())
     result = bootstrap;
   return result;
+}
+
+common::Result<CreatedSingleNodeTable>
+SingleNodeDatabase::create_table(const query::BoundSqlCreateTable& statement,
+                                 NewTableIdentities identities,
+                                 const std::uint64_t retry_retention_positions) {
+  if (impl_ == nullptr || impl_->shutdown)
+    return common::make_unexpected(invalid("database is not accepting table creation"));
+  if (statement.catalog().get() != impl_->query_catalog.get())
+    return common::make_unexpected(invalid("CREATE TABLE was bound against a stale catalog"));
+  if (retry_retention_positions == 0U ||
+      identities.column_ids.size() != statement.syntax().columns().size())
+    return common::make_unexpected(
+        invalid("CREATE TABLE identities or retry retention are invalid"));
+
+  try {
+    const query::SqlIdentifier& name = statement.syntax().table();
+    const raft::CatalogTableDefinition* existing =
+        impl_->metadata.state().find_active_table_definition(name.text(), name.quoted());
+    const bool resumed = existing != nullptr;
+    schema::TableId table_id = resumed ? existing->schema->table_id() : identities.table_id;
+    schema::SchemaId schema_id = resumed ? existing->schema->schema_id() : identities.schema_id;
+    std::vector<schema::ColumnId> column_ids;
+    if (resumed) {
+      column_ids.reserve(existing->schema->columns().size());
+      for (const schema::ColumnDefinition& column : existing->schema->columns())
+        column_ids.push_back(column.id());
+    } else {
+      column_ids = std::move(identities.column_ids);
+    }
+    auto materialized =
+        query::materialize_sql_v1_table_schema(statement, table_id, schema_id, column_ids);
+    if (!materialized.has_value())
+      return common::make_unexpected(materialized.error().status());
+    auto schema_ptr = std::make_shared<const schema::TableSchema>(std::move(*materialized));
+    raft::CatalogTableDefinition definition{
+        .name = name.text(), .quoted = name.quoted(), .schema = schema_ptr};
+    if (resumed && !(*existing == definition)) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kAlreadyExists,
+                         "incomplete table creation has the same name but a different definition"});
+    }
+    if (!resumed) {
+      auto encoded = raft::encode_schema_definition_v1(definition);
+      if (!encoded.has_value())
+        return common::make_unexpected(encoded.error());
+      const common::Status installed =
+          impl_->propose_and_apply(raft::kRaftSchemaDefinitionEntryType, std::move(*encoded));
+      if (!installed.is_ok())
+        return common::make_unexpected(installed);
+    }
+
+    const query::BoundSqlTablePolicy& bound_policy = statement.policy();
+    const raft::TablePolicyMetadata policy{
+        .table_id = table_id,
+        .partition_interval_ns = bound_policy.partition_interval_ns,
+        .retention_ns = bound_policy.retention_ns,
+        .system_history_ns = bound_policy.system_history_retention_ns,
+        .allowed_lateness_ns = bound_policy.allowed_lateness_ns,
+        .retry_retention_positions = retry_retention_positions};
+    if (const auto* current = impl_->metadata.state().find_table_policy(table_id);
+        current != nullptr && *current != policy) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kAlreadyExists,
+                         "incomplete table creation has a different complete policy"});
+    }
+    auto encoded_policy = raft::encode_metadata_command_v1(policy);
+    if (!encoded_policy.has_value())
+      return common::make_unexpected(encoded_policy.error());
+    common::Status installed =
+        impl_->propose_and_apply(raft::kRaftMetadataCommandEntryType, std::move(*encoded_policy));
+    if (!installed.is_ok())
+      return common::make_unexpected(installed);
+
+    schema::TabletId tablet_id = identities.tablet_id;
+    std::vector<const raft::TabletPlacementMetadata*> existing_placements;
+    for (const auto& placement : impl_->catalog.tablet_placements) {
+      if (placement.table_id == table_id)
+        existing_placements.push_back(&placement);
+    }
+    if (existing_placements.size() > 1U)
+      return common::make_unexpected(invalid("initial table creation has multiple placements"));
+    if (!existing_placements.empty())
+      tablet_id = existing_placements.front()->tablet_id;
+    const raft::TabletPlacementMetadata placement{
+        .table_id = table_id,
+        .tablet_id = tablet_id,
+        .placement_epoch = 1U,
+        .replicas = {impl_->bootstrap_owner.descriptor().local_node_id},
+        .leader_hint = impl_->bootstrap_owner.descriptor().local_node_id};
+    if (!existing_placements.empty() && *existing_placements.front() != placement) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kAlreadyExists,
+                         "incomplete table creation has a different initial placement"});
+    }
+    auto encoded_placement = raft::encode_metadata_command_v1(placement);
+    if (!encoded_placement.has_value())
+      return common::make_unexpected(encoded_placement.error());
+    installed = impl_->propose_and_apply(raft::kRaftMetadataCommandEntryType,
+                                         std::move(*encoded_placement));
+    if (!installed.is_ok())
+      return common::make_unexpected(installed);
+
+    auto rebuilt = build_complete_tables(impl_->catalog, impl_->bootstrap_owner.descriptor());
+    if (!rebuilt.has_value())
+      return common::make_unexpected(rebuilt.error());
+    std::vector<query::QueryCatalogTableInput> inputs;
+    inputs.reserve(rebuilt->size());
+    for (const RecoveredTable& table : *rebuilt)
+      inputs.push_back({table.name, table.quoted, table.lineage.current()});
+    auto query_catalog = query::QueryCatalogSnapshot::create(impl_->catalog.applied_index, inputs);
+    if (!query_catalog.has_value())
+      return common::make_unexpected(query_catalog.error().status());
+
+    if (find_tablet(tablet_id) == nullptr) {
+      const auto table = std::ranges::find_if(*rebuilt, [&](const RecoveredTable& candidate) {
+        return candidate.lineage.table_id() == table_id;
+      });
+      if (table == rebuilt->end())
+        return common::make_unexpected(corruption("created table is absent after metadata apply"));
+      auto state = ingest::TabletState::create(
+          table->lineage.at(0U), tablet_id,
+          tablet_config(*table, *table->lineage.at(0U), impl_->bootstrap_owner.descriptor()));
+      if (!state.has_value())
+        return common::make_unexpected(state.error());
+      for (std::size_t version = 1U; version < table->lineage.size(); ++version) {
+        const auto successor = table->lineage.at(version);
+        const common::Status registered = state->register_schema(
+            successor, head_capacity(*successor, impl_->bootstrap_owner.descriptor()));
+        if (!registered.is_ok())
+          return common::make_unexpected(registered);
+      }
+      impl_->fresh_tablets.push_back({tablet_id, std::move(*state)});
+    }
+    impl_->tables = std::move(*rebuilt);
+    impl_->query_catalog =
+        std::make_shared<const query::QueryCatalogSnapshot>(std::move(*query_catalog));
+    return CreatedSingleNodeTable{.table_id = table_id,
+                                  .schema_id = schema_id,
+                                  .tablet_id = tablet_id,
+                                  .metadata_index = impl_->catalog.applied_index,
+                                  .resumed_incomplete_creation = resumed};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("CREATE TABLE allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("CREATE TABLE exceeds container limits"));
+  }
 }
 
 } // namespace chronos::service

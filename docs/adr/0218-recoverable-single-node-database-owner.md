@@ -44,10 +44,11 @@ and lineages to the vectorized tablet-state pipeline accepted by ADR 0217.
 ## Consequences and current boundary
 
 The owner exposes the recovered bootstrap/catalog/query catalog, lineages, tablet states, global
-retry directory, and WAL coordinator to the service adapter. It supports `ASYNC` and `LOCAL_SYNC`
-through existing executor semantics. Dynamic DDL/catalog proposal, native-protocol dispatch,
-subscriptions, immutable-part flush/Manifest composition, and multi-node tablet Raft remain the next
-integration layers and are not represented as successful behavior here.
+retry directory, and WAL coordinator to the service adapter. It supports restartable initial local
+table creation plus `ASYNC` and `LOCAL_SYNC` through existing executor semantics. Native-protocol
+dispatch, schema evolution/drop, subscriptions, immutable-part flush/Manifest composition, and
+multi-node tablet Raft remain the next integration layers and are not represented as successful
+behavior here.
 
 Operational head/retry/segment limits come from the durable bootstrap. Table retry capacity is the
 smaller of bootstrap memory capacity and committed table policy. Nonlocal or replicated placements
