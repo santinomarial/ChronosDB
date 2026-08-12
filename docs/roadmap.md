@@ -949,6 +949,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   parallel multipart scheduling, and workload/instance provider-chain integrations remain deferred.
   An explicit built-in environment provider now snapshots and validates the standard AWS access
   key, secret, and optional session token without implicit precedence or unsafe refresh. The
+  carrier disables ambient proxy variables; one bounded credential-free HTTP(S) proxy requires
+  explicit configuration and cannot be bypassed by ambient `no_proxy`. The
   bounded full-object LRU now supports concurrent post-install readers while keeping remote I/O and
   digest validation outside its cache-state critical section. After restart, a fresh manager can
   transactionally restore a bounded exact-metadata-preflighted catalog from caller-selected durable

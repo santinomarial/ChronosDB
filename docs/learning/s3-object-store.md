@@ -28,6 +28,8 @@ never overwritten or accepted.
 HTTPS and certificate/hostname verification are the default. Plain HTTP must be selected
 explicitly and is appropriate only where the deployment accepts exposure of credentials and object
 bytes. Redirects are rejected so credentials are not silently replayed to another authority.
+Process proxy variables are disabled. One bounded credential-free HTTP(S) proxy may be configured
+explicitly; endpoint TLS verification remains active and ambient `no_proxy` cannot override it.
 Timeout/connectivity/server-overload failures are retryable `UNAVAILABLE`; authentication and TLS
 identity failures are `UNAUTHENTICATED`; conflicting immutable content is `ALREADY_EXISTS`; damaged
 or incomplete metadata and wrong-length ranges are `CORRUPTION`.

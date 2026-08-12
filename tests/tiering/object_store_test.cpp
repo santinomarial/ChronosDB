@@ -695,6 +695,46 @@ TEST(S3ObjectStoreTest, SignsConditionalPutVerifiesRetryAndReadsExactRange) {
   EXPECT_TRUE(server.failure().empty()) << server.failure();
 }
 
+TEST(S3ObjectStoreTest, IgnoresProcessProxyAndRejectsCredentialBearingProxyConfiguration) {
+  LocalS3Server server;
+  ASSERT_TRUE(server.valid()) << server.failure();
+  const char* previous = std::getenv("http_proxy");
+  const std::optional<std::string> saved =
+      previous == nullptr ? std::nullopt : std::optional<std::string>{previous};
+  ASSERT_EQ(::setenv("http_proxy", "http://127.0.0.1:1", 1), 0);
+  struct ProxyEnvironmentRestore {
+    std::optional<std::string> value;
+    ~ProxyEnvironmentRestore() {
+      if (value.has_value())
+        static_cast<void>(::setenv("http_proxy", value->c_str(), 1));
+      else
+        static_cast<void>(::unsetenv("http_proxy"));
+    }
+  } restore{saved};
+  S3ObjectStoreConfig config{.endpoint = "http://127.0.0.1:" + std::to_string(server.port()),
+                             .region = "us-east-1",
+                             .bucket = "chronos-test",
+                             .access_key_id = "test-access",
+                             .secret_access_key = "test-secret",
+                             .session_token = "test-token",
+                             .connect_timeout = std::chrono::milliseconds{1'000},
+                             .request_timeout = std::chrono::milliseconds{2'000},
+                             .maximum_response_bytes = 1024U,
+                             .require_tls = false};
+  auto store = S3ObjectStore::create(config);
+  ASSERT_TRUE(store.has_value()) << store.error().to_string();
+  const std::vector<std::byte> bytes{std::byte{0x44U}};
+  ASSERT_TRUE(
+      (*store)->put_if_absent("parts/no-proxy", bytes, ingest::sha256(bytes).value()).has_value());
+
+  config.proxy_url = "http://user:secret@proxy.example";
+  auto rejected = S3ObjectStore::create(std::move(config));
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_FALSE(rejected.error().to_string().contains("secret"));
+  EXPECT_TRUE(server.failure().empty()) << server.failure();
+}
+
 TEST(S3ObjectStoreTest, RefreshesRejectedCredentialsAndRetriesTransientConditionalPut) {
   LocalS3Server server{LocalS3Behavior{.access_key_id = "fresh-access",
                                        .session_token = "fresh-token",

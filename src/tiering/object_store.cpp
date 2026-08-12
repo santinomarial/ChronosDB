@@ -763,6 +763,11 @@ public:
         configured = set(CURLOPT_USERPWD, credentials.c_str());
       if (configured.is_ok())
         configured =
+            set(CURLOPT_PROXY, config.proxy_url.has_value() ? config.proxy_url->c_str() : "");
+      if (configured.is_ok() && config.proxy_url.has_value())
+        configured = set(CURLOPT_NOPROXY, "");
+      if (configured.is_ok())
+        configured =
             set(CURLOPT_CONNECTTIMEOUT_MS, static_cast<long>(config.connect_timeout.count()));
       if (configured.is_ok())
         configured = set(CURLOPT_TIMEOUT_MS, static_cast<long>(config.request_timeout.count()));
@@ -981,6 +986,13 @@ common::Result<std::unique_ptr<S3ObjectStore>> S3ObjectStore::create(S3ObjectSto
       (config.credential_provider != nullptr && static_credentials) ||
       (config.ca_bundle_path.has_value() &&
        (config.ca_bundle_path->empty() || config.ca_bundle_path->size() > 4096U)) ||
+      (config.proxy_url.has_value() &&
+       ((!config.proxy_url->starts_with("http://") && !config.proxy_url->starts_with("https://")) ||
+        config.proxy_url->ends_with("//") || config.proxy_url->size() > 4096U ||
+        config.proxy_url->contains('@') || config.proxy_url->contains('?') ||
+        config.proxy_url->contains('#') ||
+        config.proxy_url->substr(config.proxy_url->find("//") + 2U).contains('/') ||
+        contains_control(*config.proxy_url) || contains_space(*config.proxy_url))) ||
       config.connect_timeout.count() <= 0 || config.connect_timeout > maximum_long ||
       config.request_timeout.count() <= 0 || config.request_timeout > maximum_long ||
       config.maximum_attempts == 0U || config.maximum_attempts > 32U ||

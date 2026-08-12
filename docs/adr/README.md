@@ -239,3 +239,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0202](0202-source-general-tiered-local-reclamation.md) | Source-general tiered local reclamation | accepted |
 | [0203](0203-strict-s3-multipart-completion-result.md) | Strict S3 multipart completion result | accepted |
 | [0204](0204-bounded-s3-retry-after-hints.md) | Bounded S3 Retry-After hints | accepted |
+| [0205](0205-explicit-s3-proxy-policy.md) | Explicit S3 proxy policy | accepted |

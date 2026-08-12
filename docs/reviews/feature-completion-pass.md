@@ -167,9 +167,10 @@ completed deletion without bucket listings. The S3 carrier now gives every repla
 finite capped-backoff attempt budget and fresh signature, and a concurrent caller-supplied provider
 is force-refreshed after 401/403. Delta-seconds Retry-After hints are honored only within the
 configured maximum backoff. An explicit built-in provider now snapshots and validates the
-standard AWS environment credentials and fails closed on forced refresh. Workload/instance and
-ordered-chain provider integrations, retry jitter, parallel multipart scheduling, cache
-and broader Arrow/Parquet external fixture and resource-fault qualification remain incomplete. The
+standard AWS environment credentials and fails closed on forced refresh. Ambient proxy variables
+are disabled; proxy use requires one bounded credential-free HTTP(S) authority. Workload/instance
+and ordered-chain provider integrations, retry jitter, authenticated proxies, parallel multipart
+scheduling, and broader Arrow/Parquet external fixture and resource-fault qualification remain incomplete. The
 bounded full-object LRU now permits concurrent post-install reads without holding
 its cache mutex across object-store I/O. It is intentionally volatile: restart transactionally
 restores an exact-metadata-preflighted authoritative catalog and rebuilds cache bytes only on

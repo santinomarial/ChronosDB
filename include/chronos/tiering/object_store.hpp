@@ -94,6 +94,9 @@ struct S3ObjectStoreConfig {
   std::optional<std::string> session_token;
   std::shared_ptr<S3CredentialProvider> credential_provider;
   std::optional<std::string> ca_bundle_path;
+  // Process proxy variables are never inherited. Supplying this explicitly enables one HTTP(S)
+  // proxy for every request; TLS endpoint verification and redirect rejection remain unchanged.
+  std::optional<std::string> proxy_url;
   std::chrono::milliseconds connect_timeout{5'000};
   std::chrono::milliseconds request_timeout{30'000};
   std::size_t maximum_attempts{3U};
