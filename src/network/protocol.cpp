@@ -35,6 +35,7 @@ constexpr std::size_t kHeaderCrcOffset = 36U;
   case MessageType::kServerHello:
   case MessageType::kIngestRequest:
   case MessageType::kIngestAcknowledgement:
+  case MessageType::kQuorumSyncIngestAcknowledgement:
   case MessageType::kQueryRequest:
   case MessageType::kQueryResult:
   case MessageType::kQueryEnd:
@@ -53,7 +54,20 @@ constexpr std::size_t kHeaderCrcOffset = 36U;
   return false;
 }
 
-[[nodiscard]] std::uint16_t minimum_minor(const MessageType type) noexcept {
+[[nodiscard]] std::uint16_t minimum_major(const MessageType type) noexcept {
+  return type == MessageType::kQuorumSyncIngestAcknowledgement ? kProtocolV2Major : kProtocolMajor;
+}
+
+[[nodiscard]] bool supported_version(const std::uint16_t major,
+                                     const std::uint16_t minor) noexcept {
+  return (major == kProtocolMajor && minor <= kProtocolLatestMinor) ||
+         (major == kProtocolV2Major && minor <= kProtocolV2LatestMinor);
+}
+
+[[nodiscard]] std::uint16_t minimum_minor(const std::uint16_t major,
+                                          const MessageType type) noexcept {
+  if (major == kProtocolV2Major)
+    return 0U;
   switch (type) {
   case MessageType::kSubscribeRequest:
   case MessageType::kSubscriptionReady:
@@ -104,8 +118,9 @@ common::Result<std::vector<std::byte>> encode_frame(const FrameDescriptor& descr
                                                     const ProtocolLimits& limits) {
   const MessageType message_type = descriptor.message_type;
   const std::uint32_t flags = descriptor.flags;
-  if (descriptor.protocol_minor > kProtocolLatestMinor ||
-      descriptor.protocol_minor < minimum_minor(message_type)) {
+  if (!supported_version(descriptor.protocol_major, descriptor.protocol_minor) ||
+      descriptor.protocol_major < minimum_major(message_type) ||
+      descriptor.protocol_minor < minimum_minor(descriptor.protocol_major, message_type)) {
     return common::make_unexpected(
         invalid("protocol message is unavailable in this minor version"));
   }
@@ -121,7 +136,8 @@ common::Result<std::vector<std::byte>> encode_frame(const FrameDescriptor& descr
     common::ByteWriter writer{bytes};
     if (const common::Status status = writer.write_u32_le(kProtocolMagic); !status.is_ok())
       return common::make_unexpected(status);
-    if (const common::Status status = writer.write_u16_le(kProtocolMajor); !status.is_ok())
+    if (const common::Status status = writer.write_u16_le(descriptor.protocol_major);
+        !status.is_ok())
       return common::make_unexpected(status);
     if (const common::Status status = writer.write_u16_le(descriptor.protocol_minor);
         !status.is_ok())
@@ -182,8 +198,8 @@ common::Result<FrameHeader> decode_frame_header(const common::ByteView bytes,
     return common::make_unexpected(corrupt("protocol frame header cannot be decoded"));
   }
   if (*magic != kProtocolMagic)
-    return common::make_unexpected(corrupt("protocol frame magic does not match Protocol v1"));
-  if (*major != kProtocolMajor || *minor > kProtocolLatestMinor)
+    return common::make_unexpected(corrupt("protocol frame magic does not match ChronosDB"));
+  if (!supported_version(*major, *minor))
     return common::make_unexpected(corrupt("protocol frame version is unsupported"));
   if (*header_size != kFrameHeaderSize)
     return common::make_unexpected(corrupt("protocol frame header size is unsupported"));
@@ -192,7 +208,9 @@ common::Result<FrameHeader> decode_frame_header(const common::ByteView bytes,
   if (*reserved != 0U)
     return common::make_unexpected(corrupt("protocol frame reserved field is nonzero"));
   const MessageType type = static_cast<MessageType>(*raw_type);
-  if (*minor < minimum_minor(type))
+  if (*major < minimum_major(type))
+    return common::make_unexpected(corrupt("protocol message requires a newer major version"));
+  if (*minor < minimum_minor(*major, type))
     return common::make_unexpected(corrupt("protocol message requires a newer minor version"));
   if (const common::Status status = validate_flags(type, *flags); !status.is_ok())
     return common::make_unexpected(status);

@@ -16,6 +16,8 @@ enum class ClientSessionPhase : std::uint8_t { kCreated, kAwaitingServerHello, k
 struct NativeClientConfig {
   ConnectionBufferConfig buffers;
   std::size_t maximum_in_flight_requests{64U};
+  std::uint16_t minimum_protocol_major{kProtocolMajor};
+  std::uint16_t maximum_protocol_major{kProtocolMajor};
   std::uint16_t maximum_protocol_minor{kProtocolMinor};
   std::uint64_t requested_feature_bits{};
 };
@@ -51,6 +53,7 @@ public:
   [[nodiscard]] ClientSessionPhase phase() const noexcept;
   [[nodiscard]] std::size_t in_flight_requests() const noexcept;
   [[nodiscard]] std::uint32_t negotiated_maximum_payload_size() const noexcept;
+  [[nodiscard]] std::uint16_t negotiated_major() const noexcept;
   [[nodiscard]] std::uint16_t negotiated_minor() const noexcept;
   [[nodiscard]] std::uint64_t negotiated_feature_bits() const noexcept;
 
@@ -80,6 +83,7 @@ private:
   ClientSessionPhase phase_{ClientSessionPhase::kCreated};
   std::uint64_t last_request_id_{};
   std::uint32_t negotiated_maximum_payload_size_{};
+  std::uint16_t negotiated_major_{kProtocolMajor};
   std::uint16_t negotiated_minor_{};
   std::uint64_t negotiated_feature_bits_{};
 };

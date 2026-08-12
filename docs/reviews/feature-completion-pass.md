@@ -187,8 +187,9 @@ and record corruption.
 A single-owner segmented file/fsync/recovery log, bounded asynchronous persistence worker, committed
 tablet state-machine adapter, joint-consensus membership, exact application snapshots, and checked
 leader quorum-sync/application receipts are implemented. The shared physical log now performs
-caller-triggered all-group checkpoint reclamation without crossing group authority. QUORUM_SYNC is
-not yet negotiated as a native client durability mode, and measured group-aware scheduling remains
+caller-triggered all-group checkpoint reclamation without crossing group authority. Protocol 2.0
+now negotiates QUORUM_SYNC and carries the exact receipt-shaped acknowledgement without changing
+v1 bytes; replicated service advertisement/execution remains. Measured group-aware scheduling is
 deferred. Database namespaces, catalog tombstones, and placement-driven membership orchestration
 still need accepted durable/runtime composition before being added.
 
@@ -288,8 +289,8 @@ Important APIs include `SubscriptionManager`, `WindowedMaterializedView`,
 Accepted formats added during and after the pass include authenticated Resume Token v1,
 Multiplexed Raft Persistent-State Record v1, Raft transport, distributed exchange, temporal
 CSEG/Manifest v2, cold-location authority, tablet and metadata application snapshots, and the
-node-wide Raft recovery anchor. WAL v1, Columnar Batch v1, CSEG v1, Manifest v1, and native Protocol
-v1 bytes were not reinterpreted.
+node-wide Raft recovery anchor. Native Protocol 2.0 adds feature-gated QUORUM_SYNC without
+reinterpreting WAL v1, Columnar Batch v1, CSEG v1, Manifest v1, or native Protocol v1 bytes.
 
 ## Checks actually performed
 
@@ -319,6 +320,9 @@ Focused executions passed:
 - Continued ingest work: `chronos_ingest_tests`, 95 tests, including repeated tablet snapshot
   compaction/recovery and authoritative file reclamation.
 - Continued lightweight integration: `chronos_feature_smoke_tests`, 1 test.
+- Protocol 2.0 continuation: 52 non-socket network tests, 22 service tests, 5 runtime tests, and the
+  1-test feature smoke passed. The three loopback `TcpSocketTest` cases could not bind inside the
+  workspace sandbox and were excluded after their environment-specific failure was confirmed.
 
 The final C++ tree passed the repository-pinned clang-format 18 check. Full-suite, sanitizer, fuzz,
 broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were deliberately not run.
@@ -360,7 +364,8 @@ broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were d
   its routing catalog is restored from selected authority and bytes rebuild on verified demand.
 - Shared Raft-log and application-snapshot reclamation are caller-triggered and lack syscall/crash
   fault matrices; the ordering protocols are implemented and focused restart tests pass.
-- QUORUM_SYNC receipts exist internally but are not exposed through client protocol negotiation.
+- QUORUM_SYNC receipts and Protocol 2.0 negotiation/acknowledgement bytes exist, but no packaged
+  replicated service advertises or executes the client mode yet.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 
@@ -379,7 +384,8 @@ The exact subsystem/category ledger is
 [`deferred-validation.md`](../development/deferred-validation.md). Recommended order:
 
 1. Compose the packaged daemon with worker-affine committed Raft tablet/metadata application and
-   client QUORUM_SYNC negotiation; then run the real three-process data-plane smoke path.
+   advertise the implemented client QUORUM_SYNC negotiation only there; then run the real
+   three-process data-plane smoke path.
 2. Specify database namespaces/catalog tombstones and placement-driven membership orchestration
    without changing Metadata Command v1 or Metadata Application Snapshot v1 bytes in place.
 3. Finish direct vector temporal winner lowering, mixed WAL/Raft recovery, durable retention

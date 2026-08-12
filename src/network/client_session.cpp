@@ -25,9 +25,14 @@ NativeClientSession::NativeClientSession(NativeClientConfig config, ConnectionBu
 common::Result<NativeClientSession> NativeClientSession::create(const NativeClientConfig& config) {
   if (config.maximum_in_flight_requests == 0U || config.maximum_in_flight_requests > 65'536U)
     return common::make_unexpected(invalid("client in-flight request limit is invalid"));
-  if (config.maximum_protocol_minor > kProtocolLatestMinor ||
-      (config.requested_feature_bits & ~kProtocolV1SupportedFeatureBits) != 0U ||
-      (config.maximum_protocol_minor == 0U && config.requested_feature_bits != 0U))
+  if (config.minimum_protocol_major == 0U ||
+      config.minimum_protocol_major > config.maximum_protocol_major ||
+      config.maximum_protocol_major > kProtocolLatestMajor ||
+      config.maximum_protocol_minor > kProtocolLatestMinor ||
+      (config.requested_feature_bits & ~kProtocolV2SupportedFeatureBits) != 0U ||
+      (config.maximum_protocol_major == kProtocolMajor &&
+       ((config.maximum_protocol_minor == 0U && config.requested_feature_bits != 0U) ||
+        (config.requested_feature_bits & kProtocolV2QuorumSyncFeature) != 0U)))
     return common::make_unexpected(invalid("client protocol extension configuration is invalid"));
   auto buffers = ConnectionBuffers::create(config.buffers);
   if (!buffers.has_value())
@@ -45,10 +50,15 @@ common::Status NativeClientSession::queue_frame(const MessageType type,
                                                 const std::uint64_t request_id,
                                                 const common::ByteView payload,
                                                 const std::uint32_t flags) {
+  const std::uint16_t major =
+      type == MessageType::kClientHello ? kProtocolMajor : negotiated_major_;
   const std::uint16_t minor = type == MessageType::kClientHello ? 0U : negotiated_minor_;
-  auto encoded = encode_frame(
-      {.protocol_minor = minor, .message_type = type, .flags = flags, .request_id = request_id},
-      payload, config_.buffers.protocol);
+  auto encoded = encode_frame({.protocol_major = major,
+                               .protocol_minor = minor,
+                               .message_type = type,
+                               .flags = flags,
+                               .request_id = request_id},
+                              payload, config_.buffers.protocol);
   if (!encoded.has_value())
     return encoded.error();
   return buffers_.enqueue(std::move(*encoded));
@@ -58,7 +68,9 @@ common::Status NativeClientSession::queue_handshake() {
   if (phase_ != ClientSessionPhase::kCreated)
     return invalid("client handshake can be queued exactly once");
   auto payload =
-      encode_client_hello({.maximum_minor = config_.maximum_protocol_minor,
+      encode_client_hello({.minimum_major = config_.minimum_protocol_major,
+                           .maximum_major = config_.maximum_protocol_major,
+                           .maximum_minor = config_.maximum_protocol_minor,
                            .feature_bits = config_.requested_feature_bits,
                            .maximum_payload_size = config_.buffers.protocol.maximum_payload_size});
   if (!payload.has_value())
@@ -166,10 +178,17 @@ NativeClientSession::queue_ingest(const DurabilityMode durability,
                                   const common::ByteView encoded_columnar_append) {
   if (phase_ != ClientSessionPhase::kActive)
     return common::make_unexpected(invalid("client session is not active"));
+  if (durability == DurabilityMode::kQuorumSync &&
+      (negotiated_major_ != kProtocolV2Major ||
+       (negotiated_feature_bits_ & kProtocolV2QuorumSyncFeature) == 0U))
+    return common::make_unexpected(invalid("client QUORUM_SYNC feature is not active"));
   if (active_.size() == config_.maximum_in_flight_requests ||
       last_request_id_ == std::numeric_limits<std::uint64_t>::max())
     return common::make_unexpected(exhausted("client request admission is full"));
   auto payload = encode_ingest_request(durability, encoded_columnar_append,
+                                       {.protocol_major = negotiated_major_,
+                                        .protocol_minor = negotiated_minor_,
+                                        .feature_bits = negotiated_feature_bits_},
                                        {.maximum_payload_size = negotiated_maximum_payload_size_});
   if (!payload.has_value())
     return common::make_unexpected(payload.error());
@@ -211,13 +230,16 @@ common::Status NativeClientSession::accept_server_frame(const Frame& frame) {
     return invalid("server frame header and payload disagree");
   if (phase_ == ClientSessionPhase::kAwaitingServerHello) {
     if (frame.header.message_type != MessageType::kServerHello || frame.header.request_id != 0U ||
-        frame.header.protocol_minor != 0U)
+        frame.header.protocol_major != kProtocolMajor || frame.header.protocol_minor != 0U)
       return invalid("SERVER_HELLO with request ID zero is required");
     const auto hello = decode_server_hello(frame.payload);
-    if (!hello.has_value() || hello->selected_minor > config_.maximum_protocol_minor ||
+    if (!hello.has_value() || hello->selected_major < config_.minimum_protocol_major ||
+        hello->selected_major > config_.maximum_protocol_major ||
+        hello->selected_minor > config_.maximum_protocol_minor ||
         (hello->feature_bits & ~config_.requested_feature_bits) != 0U ||
         hello->maximum_payload_size > config_.buffers.protocol.maximum_payload_size)
       return invalid("SERVER_HELLO negotiation is invalid");
+    negotiated_major_ = hello->selected_major;
     negotiated_minor_ = hello->selected_minor;
     negotiated_feature_bits_ = hello->feature_bits;
     negotiated_maximum_payload_size_ = hello->maximum_payload_size;
@@ -226,8 +248,9 @@ common::Status NativeClientSession::accept_server_frame(const Frame& frame) {
   }
   if (phase_ != ClientSessionPhase::kActive)
     return invalid("client session is not accepting frames");
-  if (frame.header.protocol_minor != negotiated_minor_)
-    return invalid("server frame minor does not match the negotiated version");
+  if (frame.header.protocol_major != negotiated_major_ ||
+      frame.header.protocol_minor != negotiated_minor_)
+    return invalid("server frame version does not match the negotiated version");
   if (frame.payload.size() > negotiated_maximum_payload_size_)
     return exhausted("server payload exceeds negotiated limit");
   if (frame.header.message_type == MessageType::kPong)
@@ -258,10 +281,22 @@ common::Status NativeClientSession::accept_server_frame(const Frame& frame) {
     erase_active(offset);
     return common::Status::ok();
   case MessageType::kIngestAcknowledgement: {
-    const auto acknowledgement = decode_ingest_acknowledgement(frame.payload);
+    const auto acknowledgement =
+        decode_ingest_acknowledgement(frame.payload, {.protocol_major = negotiated_major_,
+                                                      .protocol_minor = negotiated_minor_,
+                                                      .feature_bits = negotiated_feature_bits_});
     if (found->type != MessageType::kIngestRequest || !acknowledgement.has_value() ||
+        found->durability == DurabilityMode::kQuorumSync ||
         acknowledgement->requested_durability != found->durability)
       return invalid("INGEST_ACKNOWLEDGEMENT response is invalid");
+    erase_active(offset);
+    return common::Status::ok();
+  }
+  case MessageType::kQuorumSyncIngestAcknowledgement: {
+    const auto acknowledgement = decode_quorum_sync_ingest_acknowledgement(frame.payload);
+    if (found->type != MessageType::kIngestRequest ||
+        found->durability != DurabilityMode::kQuorumSync || !acknowledgement.has_value())
+      return invalid("QUORUM_SYNC acknowledgement response is invalid");
     erase_active(offset);
     return common::Status::ok();
   }
@@ -355,6 +390,9 @@ std::size_t NativeClientSession::in_flight_requests() const noexcept {
 }
 std::uint32_t NativeClientSession::negotiated_maximum_payload_size() const noexcept {
   return negotiated_maximum_payload_size_;
+}
+std::uint16_t NativeClientSession::negotiated_major() const noexcept {
+  return negotiated_major_;
 }
 std::uint16_t NativeClientSession::negotiated_minor() const noexcept {
   return negotiated_minor_;

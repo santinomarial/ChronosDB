@@ -817,8 +817,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   applies explicit batch/operation backpressure, publishes owning completions, drains on shutdown,
   and fails queued work closed after terminal storage errors; group-aware fairness remains deferred. A leader
   under stable or joint membership can now produce a checked quorum-sync receipt after
-  majority-derived durable commit, and tablet application composes it with visibility; native
-  client mode exposure and end-to-end crash evidence remain. The phase exit gate is not claimed.
+  majority-derived durable commit, and tablet application composes it with visibility. Protocol
+  2.0 now negotiates the client capability, admits durability value 3 only under its feature bit,
+  and carries an exact receipt-shaped acknowledgement; replicated service advertisement/execution
+  and end-to-end crash evidence remain. The phase exit gate is not claimed.
   Group-scoped read barriers now flow through both Multi-Raft owners without fabricating a durable
   transition, while higher-term recipient state still crosses the existing sync-before-response
   boundary. Production transport and tablet snapshot acquisition remain deferred.

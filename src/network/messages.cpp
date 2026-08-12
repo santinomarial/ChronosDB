@@ -28,9 +28,32 @@ namespace {
   return {common::StatusCode::kResourceExhausted, "protocol message allocation failed"};
 }
 
-[[nodiscard]] bool valid_durability(const std::uint8_t value) noexcept {
+[[nodiscard]] bool valid_v1_durability(const std::uint8_t value) noexcept {
   return value == static_cast<std::uint8_t>(DurabilityMode::kAsync) ||
          value == static_cast<std::uint8_t>(DurabilityMode::kLocalSync);
+}
+
+[[nodiscard]] std::uint64_t supported_features(const std::uint16_t major) noexcept {
+  return major == kProtocolV2Major ? kProtocolV2SupportedFeatureBits
+                                   : kProtocolV1SupportedFeatureBits;
+}
+
+[[nodiscard]] bool valid_ingest_context(const IngestProtocolContext& context) noexcept {
+  const bool version = (context.protocol_major == kProtocolMajor &&
+                        context.protocol_minor <= kProtocolLatestMinor) ||
+                       (context.protocol_major == kProtocolV2Major &&
+                        context.protocol_minor <= kProtocolV2LatestMinor);
+  return version && (context.feature_bits & ~supported_features(context.protocol_major)) == 0U &&
+         (context.protocol_major != kProtocolMajor || context.protocol_minor != 0U ||
+          context.feature_bits == 0U);
+}
+
+[[nodiscard]] bool valid_durability(const std::uint8_t value,
+                                    const IngestProtocolContext& context) noexcept {
+  return valid_v1_durability(value) ||
+         (value == static_cast<std::uint8_t>(DurabilityMode::kQuorumSync) &&
+          context.protocol_major == kProtocolV2Major &&
+          (context.feature_bits & kProtocolV2QuorumSyncFeature) != 0U);
 }
 
 [[nodiscard]] std::optional<std::size_t>
@@ -154,27 +177,35 @@ fixed_query_cell_size(const schema::LogicalTypeKind kind) noexcept {
 }
 
 [[nodiscard]] common::Status validate_hello_range(const ClientHello& hello) {
-  if (hello.minimum_major == 0U || hello.minimum_major > hello.maximum_major)
+  if (hello.minimum_major == 0U || hello.minimum_major > hello.maximum_major ||
+      hello.maximum_major > kProtocolLatestMajor || hello.maximum_minor > kProtocolLatestMinor)
     return invalid("CLIENT_HELLO protocol range is invalid");
-  if ((hello.feature_bits & ~kProtocolV1SupportedFeatureBits) != 0U)
+  if ((hello.feature_bits & ~kProtocolV2SupportedFeatureBits) != 0U)
     return invalid("CLIENT_HELLO requests unknown feature bits");
-  if (hello.maximum_minor == 0U && hello.feature_bits != 0U)
+  if (hello.maximum_major == kProtocolMajor && hello.maximum_minor == 0U &&
+      hello.feature_bits != 0U)
     return invalid("CLIENT_HELLO Protocol 1.0 cannot request extension features");
+  if (hello.maximum_major == kProtocolMajor &&
+      (hello.feature_bits & kProtocolV2QuorumSyncFeature) != 0U)
+    return invalid("CLIENT_HELLO Protocol v1 cannot request QUORUM_SYNC");
   return validate_protocol_limits({.maximum_payload_size = hello.maximum_payload_size});
 }
 
 [[nodiscard]] common::Status validate_server_hello(const ServerHello& hello) {
-  if (hello.selected_major != kProtocolMajor || hello.selected_minor > kProtocolLatestMinor ||
-      (hello.feature_bits & ~kProtocolV1SupportedFeatureBits) != 0U ||
-      (hello.selected_minor == 0U && hello.feature_bits != 0U))
+  const bool version =
+      (hello.selected_major == kProtocolMajor && hello.selected_minor <= kProtocolLatestMinor) ||
+      (hello.selected_major == kProtocolV2Major && hello.selected_minor <= kProtocolV2LatestMinor);
+  if (!version || (hello.feature_bits & ~supported_features(hello.selected_major)) != 0U ||
+      (hello.selected_major == kProtocolMajor && hello.selected_minor == 0U &&
+       hello.feature_bits != 0U))
     return invalid("SERVER_HELLO selection is unsupported");
   return validate_protocol_limits({.maximum_payload_size = hello.maximum_payload_size});
 }
 
 [[nodiscard]] common::Status
 validate_acknowledgement(const IngestAcknowledgement& acknowledgement) {
-  if (!valid_durability(static_cast<std::uint8_t>(acknowledgement.requested_durability)) ||
-      !valid_durability(static_cast<std::uint8_t>(acknowledgement.effective_durability)) ||
+  if (!valid_v1_durability(static_cast<std::uint8_t>(acknowledgement.requested_durability)) ||
+      !valid_v1_durability(static_cast<std::uint8_t>(acknowledgement.effective_durability)) ||
       (acknowledgement.outcome != IngestOutcome::kApplied &&
        acknowledgement.outcome != IngestOutcome::kMatchingRetry))
     return invalid("INGEST_ACKNOWLEDGEMENT fields are unassigned");
@@ -185,6 +216,19 @@ validate_acknowledgement(const IngestAcknowledgement& acknowledgement) {
       (acknowledgement.record_sequence != 0U || acknowledgement.segment_number != 0U ||
        acknowledgement.byte_offset != 0U))
     return invalid("matching retry acknowledgement cannot invent a WAL position");
+  return common::Status::ok();
+}
+
+[[nodiscard]] common::Status
+validate_quorum_sync_acknowledgement(const QuorumSyncIngestAcknowledgement& acknowledgement) {
+  if (acknowledgement.requested_durability != DurabilityMode::kQuorumSync ||
+      acknowledgement.effective_durability != DurabilityMode::kQuorumSync ||
+      (acknowledgement.outcome != IngestOutcome::kApplied &&
+       acknowledgement.outcome != IngestOutcome::kMatchingRetry) ||
+      acknowledgement.group_id.is_nil() || acknowledgement.leader_node_id == 0U ||
+      acknowledgement.leader_term == 0U || acknowledgement.log_index == 0U ||
+      acknowledgement.entry_term == 0U || acknowledgement.local_durable_physical_sequence == 0U)
+    return invalid("QUORUM_SYNC acknowledgement fields are invalid");
   return common::Status::ok();
 }
 
@@ -313,7 +357,16 @@ common::Result<std::vector<std::byte>>
 encode_ingest_request(const DurabilityMode durability,
                       const common::ByteView encoded_columnar_append,
                       const ProtocolLimits& limits) {
-  if (!valid_durability(static_cast<std::uint8_t>(durability)))
+  return encode_ingest_request(durability, encoded_columnar_append, IngestProtocolContext{},
+                               limits);
+}
+
+common::Result<std::vector<std::byte>>
+encode_ingest_request(const DurabilityMode durability,
+                      const common::ByteView encoded_columnar_append,
+                      const IngestProtocolContext& context, const ProtocolLimits& limits) {
+  if (!valid_ingest_context(context) ||
+      !valid_durability(static_cast<std::uint8_t>(durability), context))
     return common::make_unexpected(invalid("INGEST_REQUEST durability mode is unassigned"));
   const auto size =
       variable_payload_size(kIngestEnvelopeSize, encoded_columnar_append.size(), limits);
@@ -341,8 +394,16 @@ encode_ingest_request(const DurabilityMode durability,
 
 common::Result<IngestRequestView> decode_ingest_request(const common::ByteView payload,
                                                         const ProtocolLimits& limits) {
+  return decode_ingest_request(payload, IngestProtocolContext{}, limits);
+}
+
+common::Result<IngestRequestView> decode_ingest_request(const common::ByteView payload,
+                                                        const IngestProtocolContext& context,
+                                                        const ProtocolLimits& limits) {
   if (payload.size() < kIngestEnvelopeSize || payload.size() > limits.maximum_payload_size)
     return common::make_unexpected(corrupt("INGEST_REQUEST payload size is invalid"));
+  if (!valid_ingest_context(context))
+    return common::make_unexpected(corrupt("INGEST_REQUEST protocol context is invalid"));
   common::ByteReader reader{payload};
   const auto format = reader.read_u16_le();
   const auto durability = reader.read_u8();
@@ -350,7 +411,7 @@ common::Result<IngestRequestView> decode_ingest_request(const common::ByteView p
   const auto body_size = reader.read_u32_le();
   if (!format.has_value() || !durability.has_value() || !reserved.has_value() ||
       !body_size.has_value() || *format != kMessagePayloadFormat || *reserved != 0U ||
-      !valid_durability(*durability) || *body_size != reader.remaining())
+      !valid_durability(*durability, context) || *body_size != reader.remaining())
     return common::make_unexpected(corrupt("INGEST_REQUEST envelope is invalid"));
   return IngestRequestView{.durability = static_cast<DurabilityMode>(*durability),
                            .encoded_columnar_append = *reader.read_exact(*body_size)};
@@ -392,6 +453,14 @@ encode_ingest_acknowledgement(const IngestAcknowledgement& acknowledgement) {
   return bytes;
 }
 
+common::Result<std::vector<std::byte>>
+encode_ingest_acknowledgement(const IngestAcknowledgement& acknowledgement,
+                              const IngestProtocolContext& context) {
+  if (!valid_ingest_context(context))
+    return common::make_unexpected(invalid("INGEST_ACKNOWLEDGEMENT protocol context is invalid"));
+  return encode_ingest_acknowledgement(acknowledgement);
+}
+
 common::Result<IngestAcknowledgement>
 decode_ingest_acknowledgement(const common::ByteView payload) {
   if (payload.size() != kIngestAcknowledgementSize)
@@ -408,7 +477,7 @@ decode_ingest_acknowledgement(const common::ByteView payload) {
   if (!format.has_value() || !requested.has_value() || !effective.has_value() ||
       !outcome.has_value() || !reserved.has_value() || !sequence.has_value() ||
       !segment.has_value() || !offset.has_value() || *format != kMessagePayloadFormat ||
-      !valid_durability(*requested) || !valid_durability(*effective) ||
+      !valid_v1_durability(*requested) || !valid_v1_durability(*effective) ||
       (*outcome != static_cast<std::uint8_t>(IngestOutcome::kApplied) &&
        *outcome != static_cast<std::uint8_t>(IngestOutcome::kMatchingRetry)) ||
       (*reserved)[0] != std::byte{0} || (*reserved)[1] != std::byte{0} ||
@@ -422,6 +491,102 @@ decode_ingest_acknowledgement(const common::ByteView payload) {
                               .byte_offset = *offset};
   if (!validate_acknowledgement(value).is_ok())
     return common::make_unexpected(corrupt("INGEST_ACKNOWLEDGEMENT semantics are invalid"));
+  return value;
+}
+
+common::Result<IngestAcknowledgement>
+decode_ingest_acknowledgement(const common::ByteView payload,
+                              const IngestProtocolContext& context) {
+  if (!valid_ingest_context(context))
+    return common::make_unexpected(corrupt("INGEST_ACKNOWLEDGEMENT protocol context is invalid"));
+  return decode_ingest_acknowledgement(payload);
+}
+
+common::Result<std::vector<std::byte>>
+encode_quorum_sync_ingest_acknowledgement(const QuorumSyncIngestAcknowledgement& acknowledgement) {
+  if (const common::Status status = validate_quorum_sync_acknowledgement(acknowledgement);
+      !status.is_ok())
+    return common::make_unexpected(status);
+  auto bytes = allocated(kQuorumSyncIngestAcknowledgementSize);
+  if (!bytes.has_value())
+    return common::make_unexpected(bytes.error());
+  common::ByteWriter writer{*bytes};
+  if (const common::Status status = writer.write_u16_le(kMessagePayloadFormat); !status.is_ok())
+    return common::make_unexpected(status);
+  if (const common::Status status =
+          writer.write_u8(static_cast<std::uint8_t>(acknowledgement.requested_durability));
+      !status.is_ok())
+    return common::make_unexpected(status);
+  if (const common::Status status =
+          writer.write_u8(static_cast<std::uint8_t>(acknowledgement.effective_durability));
+      !status.is_ok())
+    return common::make_unexpected(status);
+  if (const common::Status status =
+          writer.write_u8(static_cast<std::uint8_t>(acknowledgement.outcome));
+      !status.is_ok())
+    return common::make_unexpected(status);
+  if (const common::Status status = writer.zero_fill(3U); !status.is_ok())
+    return common::make_unexpected(status);
+  if (const common::Status status = writer.write_exact(acknowledgement.group_id.bytes());
+      !status.is_ok())
+    return common::make_unexpected(status);
+  if (const common::Status status = writer.write_u64_le(acknowledgement.leader_node_id);
+      !status.is_ok())
+    return common::make_unexpected(status);
+  if (const common::Status status = writer.write_u64_le(acknowledgement.leader_term);
+      !status.is_ok())
+    return common::make_unexpected(status);
+  if (const common::Status status = writer.write_u64_le(acknowledgement.log_index); !status.is_ok())
+    return common::make_unexpected(status);
+  if (const common::Status status = writer.write_u64_le(acknowledgement.entry_term);
+      !status.is_ok())
+    return common::make_unexpected(status);
+  if (const common::Status status =
+          writer.write_u64_le(acknowledgement.local_durable_physical_sequence);
+      !status.is_ok())
+    return common::make_unexpected(status);
+  return bytes;
+}
+
+common::Result<QuorumSyncIngestAcknowledgement>
+decode_quorum_sync_ingest_acknowledgement(const common::ByteView payload) {
+  if (payload.size() != kQuorumSyncIngestAcknowledgementSize)
+    return common::make_unexpected(
+        corrupt("QUORUM_SYNC acknowledgement payload size is not canonical"));
+  common::ByteReader reader{payload};
+  const auto format = reader.read_u16_le();
+  const auto requested = reader.read_u8();
+  const auto effective = reader.read_u8();
+  const auto outcome = reader.read_u8();
+  const auto reserved = reader.read_exact(3U);
+  const auto group = reader.read_exact(common::Uuid::kSize);
+  const auto leader = reader.read_u64_le();
+  const auto leader_term = reader.read_u64_le();
+  const auto log_index = reader.read_u64_le();
+  const auto entry_term = reader.read_u64_le();
+  const auto physical_sequence = reader.read_u64_le();
+  if (!format.has_value() || !requested.has_value() || !effective.has_value() ||
+      !outcome.has_value() || !reserved.has_value() || !group.has_value() || !leader.has_value() ||
+      !leader_term.has_value() || !log_index.has_value() || !entry_term.has_value() ||
+      !physical_sequence.has_value() || *format != kMessagePayloadFormat ||
+      (*reserved)[0] != std::byte{0} || (*reserved)[1] != std::byte{0} ||
+      (*reserved)[2] != std::byte{0})
+    return common::make_unexpected(corrupt("QUORUM_SYNC acknowledgement payload is invalid"));
+  common::Uuid::Bytes group_bytes{};
+  std::ranges::copy(*group, group_bytes.begin());
+  const common::Uuid group_id{group_bytes};
+  QuorumSyncIngestAcknowledgement value{
+      .requested_durability = static_cast<DurabilityMode>(*requested),
+      .effective_durability = static_cast<DurabilityMode>(*effective),
+      .outcome = static_cast<IngestOutcome>(*outcome),
+      .group_id = group_id,
+      .leader_node_id = *leader,
+      .leader_term = *leader_term,
+      .log_index = *log_index,
+      .entry_term = *entry_term,
+      .local_durable_physical_sequence = *physical_sequence};
+  if (!validate_quorum_sync_acknowledgement(value).is_ok())
+    return common::make_unexpected(corrupt("QUORUM_SYNC acknowledgement semantics are invalid"));
   return value;
 }
 

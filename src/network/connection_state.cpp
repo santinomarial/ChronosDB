@@ -18,6 +18,7 @@ namespace {
 
 [[nodiscard]] bool server_only_type(const MessageType type) noexcept {
   return type == MessageType::kServerHello || type == MessageType::kIngestAcknowledgement ||
+         type == MessageType::kQuorumSyncIngestAcknowledgement ||
          type == MessageType::kQueryResult || type == MessageType::kQueryEnd ||
          type == MessageType::kSubscriptionReady || type == MessageType::kSubscriptionChange ||
          type == MessageType::kSubscriptionCheckpoint || type == MessageType::kSubscriptionEnd ||
@@ -28,13 +29,15 @@ namespace {
 
 ServerConnectionState::ServerConnectionState(
     ConnectionStateConfig config, std::vector<std::uint64_t> active_requests,
-    std::vector<MessageType> active_request_types, std::vector<bool> query_result_ended,
+    std::vector<MessageType> active_request_types,
+    std::vector<DurabilityMode> active_request_durabilities, std::vector<bool> query_result_ended,
     std::vector<bool> subscription_ready, std::vector<bool> cancellation_requested,
     std::vector<std::uint64_t> subscription_last_delivery,
     std::vector<std::uint64_t> subscription_last_acknowledged,
     std::vector<std::uint64_t> subscription_last_checkpoint) noexcept
     : config_(config), active_requests_(std::move(active_requests)),
       active_request_types_(std::move(active_request_types)),
+      active_request_durabilities_(std::move(active_request_durabilities)),
       query_result_ended_(std::move(query_result_ended)),
       subscription_ready_(std::move(subscription_ready)),
       cancellation_requested_(std::move(cancellation_requested)),
@@ -48,11 +51,16 @@ ServerConnectionState::create(const ConnectionStateConfig& config) {
     return common::make_unexpected(status);
   if (config.maximum_in_flight_requests == 0U || config.maximum_in_flight_requests > 65'536U)
     return common::make_unexpected(invalid("connection in-flight request limit is invalid"));
-  if ((config.supported_feature_bits & ~kProtocolV1SupportedFeatureBits) != 0U)
+  if ((config.maximum_protocol_major != kProtocolMajor &&
+       config.maximum_protocol_major != kProtocolV2Major) ||
+      (config.supported_feature_bits & ~(config.maximum_protocol_major == kProtocolV2Major
+                                             ? kProtocolV2SupportedFeatureBits
+                                             : kProtocolV1SupportedFeatureBits)) != 0U)
     return common::make_unexpected(invalid("connection feature mask contains unknown bits"));
   try {
     std::vector<std::uint64_t> active;
     std::vector<MessageType> active_types;
+    std::vector<DurabilityMode> active_durabilities;
     std::vector<bool> result_ended;
     std::vector<bool> subscription_ready;
     std::vector<bool> cancellation_requested;
@@ -61,6 +69,7 @@ ServerConnectionState::create(const ConnectionStateConfig& config) {
     std::vector<std::uint64_t> last_checkpoint;
     active.reserve(config.maximum_in_flight_requests);
     active_types.reserve(config.maximum_in_flight_requests);
+    active_durabilities.reserve(config.maximum_in_flight_requests);
     result_ended.reserve(config.maximum_in_flight_requests);
     subscription_ready.reserve(config.maximum_in_flight_requests);
     cancellation_requested.reserve(config.maximum_in_flight_requests);
@@ -70,6 +79,7 @@ ServerConnectionState::create(const ConnectionStateConfig& config) {
     return ServerConnectionState{config,
                                  std::move(active),
                                  std::move(active_types),
+                                 std::move(active_durabilities),
                                  std::move(result_ended),
                                  std::move(subscription_ready),
                                  std::move(cancellation_requested),
@@ -91,30 +101,41 @@ common::Result<InboundAction> ServerConnectionState::accept(const Frame& frame) 
 
   if (phase_ == ConnectionPhase::kAwaitingHello) {
     if (frame.header.message_type != MessageType::kClientHello || frame.header.request_id != 0U ||
-        frame.header.protocol_minor != 0U)
+        frame.header.protocol_major != kProtocolMajor || frame.header.protocol_minor != 0U)
       return common::make_unexpected(
           invalid("CLIENT_HELLO with request ID zero is required first"));
     const auto hello = decode_client_hello(frame.payload);
     if (!hello.has_value())
       return common::make_unexpected(hello.error());
-    if (hello->minimum_major > kProtocolMajor || hello->maximum_major < kProtocolMajor)
-      return common::make_unexpected(invalid("CLIENT_HELLO has no compatible Protocol v1 version"));
-    negotiated_minor_ = std::min(hello->maximum_minor, kProtocolLatestMinor);
+    negotiated_major_ = std::min(hello->maximum_major, config_.maximum_protocol_major);
+    if (negotiated_major_ < hello->minimum_major)
+      return common::make_unexpected(invalid("CLIENT_HELLO has no compatible protocol version"));
+    const std::uint16_t latest_minor =
+        negotiated_major_ == kProtocolV2Major ? kProtocolV2LatestMinor : kProtocolLatestMinor;
+    negotiated_minor_ = std::min(hello->maximum_minor, latest_minor);
+    const std::uint64_t supported_features = negotiated_major_ == kProtocolV2Major
+                                                 ? kProtocolV2SupportedFeatureBits
+                                                 : kProtocolV1SupportedFeatureBits;
     negotiated_feature_bits_ =
-        negotiated_minor_ == 0U ? 0U : hello->feature_bits & config_.supported_feature_bits;
+        hello->feature_bits & config_.supported_feature_bits & supported_features;
+    if (negotiated_major_ == kProtocolMajor && negotiated_minor_ == 0U)
+      negotiated_feature_bits_ = 0U;
     negotiated_maximum_payload_size_ =
         std::min(config_.limits.maximum_payload_size, hello->maximum_payload_size);
     phase_ = ConnectionPhase::kActive;
     return InboundAction{.kind = InboundActionKind::kHandshake,
                          .negotiated_maximum_payload_size = negotiated_maximum_payload_size_,
+                         .negotiated_major = negotiated_major_,
                          .negotiated_minor = negotiated_minor_,
                          .negotiated_feature_bits = negotiated_feature_bits_};
   }
 
   if (frame.header.message_type == MessageType::kClientHello)
     return common::make_unexpected(invalid("CLIENT_HELLO cannot be repeated"));
-  if (frame.header.protocol_minor != negotiated_minor_)
-    return common::make_unexpected(invalid("message minor does not match the negotiated version"));
+  if (frame.header.protocol_major != negotiated_major_ ||
+      frame.header.protocol_minor != negotiated_minor_)
+    return common::make_unexpected(
+        invalid("message version does not match the negotiated version"));
   if (frame.payload.size() > negotiated_maximum_payload_size_)
     return common::make_unexpected(exhausted("message exceeds the negotiated payload limit"));
   if (frame.header.message_type == MessageType::kPing) {
@@ -176,11 +197,17 @@ common::Result<InboundAction> ServerConnectionState::accept(const Frame& frame) 
       (negotiated_feature_bits_ & kProtocolV1SubscriptionFeature) == 0U) {
     return common::make_unexpected(invalid("subscription feature was not negotiated"));
   }
+  DurabilityMode request_durability = DurabilityMode::kAsync;
   if (frame.header.message_type == MessageType::kIngestRequest) {
-    if (!decode_ingest_request(frame.payload,
-                               {.maximum_payload_size = negotiated_maximum_payload_size_})
-             .has_value())
+    const auto ingest =
+        decode_ingest_request(frame.payload,
+                              {.protocol_major = negotiated_major_,
+                               .protocol_minor = negotiated_minor_,
+                               .feature_bits = negotiated_feature_bits_},
+                              {.maximum_payload_size = negotiated_maximum_payload_size_});
+    if (!ingest.has_value())
       return common::make_unexpected(invalid("INGEST_REQUEST payload is invalid"));
+    request_durability = ingest->durability;
   } else if (frame.header.message_type == MessageType::kQueryRequest &&
              !decode_query_request(frame.payload,
                                    {.maximum_payload_size = negotiated_maximum_payload_size_})
@@ -195,6 +222,7 @@ common::Result<InboundAction> ServerConnectionState::accept(const Frame& frame) 
   }
   active_requests_.push_back(frame.header.request_id);
   active_request_types_.push_back(frame.header.message_type);
+  active_request_durabilities_.push_back(request_durability);
   query_result_ended_.push_back(false);
   subscription_ready_.push_back(false);
   cancellation_requested_.push_back(false);
@@ -230,8 +258,24 @@ common::Status ServerConnectionState::accept_response(const Frame& frame) {
     erase_active(offset);
     return common::Status::ok();
   case MessageType::kIngestAcknowledgement:
-    if (request_type != MessageType::kIngestRequest)
+    if (request_type != MessageType::kIngestRequest ||
+        active_request_durabilities_[offset] == DurabilityMode::kQuorumSync)
       return invalid("ingest acknowledgement response state is invalid");
+    if (const auto acknowledgement = decode_ingest_acknowledgement(
+            frame.payload, {.protocol_major = negotiated_major_,
+                            .protocol_minor = negotiated_minor_,
+                            .feature_bits = negotiated_feature_bits_});
+        !acknowledgement.has_value() ||
+        acknowledgement->requested_durability != active_request_durabilities_[offset])
+      return invalid("ingest acknowledgement payload disagrees with its request");
+    erase_active(offset);
+    return common::Status::ok();
+  case MessageType::kQuorumSyncIngestAcknowledgement:
+    if (request_type != MessageType::kIngestRequest ||
+        active_request_durabilities_[offset] != DurabilityMode::kQuorumSync ||
+        (negotiated_feature_bits_ & kProtocolV2QuorumSyncFeature) == 0U ||
+        !decode_quorum_sync_ingest_acknowledgement(frame.payload).has_value())
+      return invalid("QUORUM_SYNC acknowledgement response state is invalid");
     erase_active(offset);
     return common::Status::ok();
   case MessageType::kSubscriptionReady:
@@ -286,6 +330,8 @@ common::Status ServerConnectionState::accept_response(const Frame& frame) {
 void ServerConnectionState::erase_active(const std::size_t offset) noexcept {
   active_requests_.erase(active_requests_.begin() + static_cast<std::ptrdiff_t>(offset));
   active_request_types_.erase(active_request_types_.begin() + static_cast<std::ptrdiff_t>(offset));
+  active_request_durabilities_.erase(active_request_durabilities_.begin() +
+                                     static_cast<std::ptrdiff_t>(offset));
   query_result_ended_.erase(query_result_ended_.begin() + static_cast<std::ptrdiff_t>(offset));
   subscription_ready_.erase(subscription_ready_.begin() + static_cast<std::ptrdiff_t>(offset));
   cancellation_requested_.erase(cancellation_requested_.begin() +
@@ -310,6 +356,7 @@ bool ServerConnectionState::complete(const std::uint64_t request_id) noexcept {
 void ServerConnectionState::close() noexcept {
   active_requests_.clear();
   active_request_types_.clear();
+  active_request_durabilities_.clear();
   query_result_ended_.clear();
   subscription_ready_.clear();
   cancellation_requested_.clear();
@@ -330,6 +377,9 @@ std::uint64_t ServerConnectionState::last_request_id() const noexcept {
 }
 std::uint32_t ServerConnectionState::negotiated_maximum_payload_size() const noexcept {
   return negotiated_maximum_payload_size_;
+}
+std::uint16_t ServerConnectionState::negotiated_major() const noexcept {
+  return negotiated_major_;
 }
 std::uint16_t ServerConnectionState::negotiated_minor() const noexcept {
   return negotiated_minor_;

@@ -103,6 +103,25 @@ TEST(ProtocolFrameTest, GatesSubscriptionTypesOnMinorOneWithoutChangingMinorZero
           .has_value());
 }
 
+TEST(ProtocolFrameTest, ProtocolTwoIsExplicitAndDoesNotReinterpretProtocolOne) {
+  EXPECT_FALSE(encode_frame({.message_type = MessageType::kQuorumSyncIngestAcknowledgement}, {})
+                   .has_value());
+  const auto encoded = encode_frame({.protocol_major = kProtocolV2Major,
+                                     .message_type = MessageType::kQuorumSyncIngestAcknowledgement,
+                                     .request_id = 9U},
+                                    {});
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  const auto decoded = decode_frame(*encoded);
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  EXPECT_EQ(decoded->header.protocol_major, kProtocolV2Major);
+  EXPECT_EQ(decoded->header.protocol_minor, kProtocolV2LatestMinor);
+  EXPECT_EQ(decoded->header.message_type, MessageType::kQuorumSyncIngestAcknowledgement);
+  EXPECT_FALSE(
+      encode_frame(
+          {.protocol_major = kProtocolLatestMajor + 1U, .message_type = MessageType::kPing}, {})
+          .has_value());
+}
+
 TEST(ProtocolFrameTest, RejectsUnassignedU16TypeThatAliasesAnAssignedLowByte) {
   std::vector<std::byte> encoded =
       *encode_frame({.protocol_minor = 1U, .message_type = MessageType::kSubscribeRequest}, {});

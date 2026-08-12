@@ -2,7 +2,8 @@
 
 > **Status: accepted specification; Protocol 1.0 and feature-gated 1.1 subscriptions implemented.**
 > This document controls the Protocol v1 byte layout and compatibility rules. ADR 0060 accepts the
-> frame contract and ADR 0094 accepts the minor-1 subscription extension.
+> frame contract and ADR 0094 accepts the minor-1 subscription extension. Protocol v1 never accepts
+> `QUORUM_SYNC`; the separately negotiated [Protocol v2](native-v2.md) owns that extension.
 
 ## Scope and normative language
 

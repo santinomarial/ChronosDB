@@ -201,10 +201,11 @@
   application-snapshot creation/compaction plus prefix/suffix recovery with mismatch/fault matrices,
   obsolete-file and physical-log reclamation fault matrices and scheduling; version CSEG/Manifest
   row identities for Raft source/group positions, and cover query row-version columns and
-  compaction migration. Carry the implemented joint-
-  membership quorum-sync/application receipt through authenticated transport, protocol negotiation,
-  explicit configuration identity, metrics, timeouts, and minority-loss crash reconciliation before exposing
-  the client mode.
+  compaction migration. Protocol 2.0 now negotiates the implemented joint-membership
+  quorum-sync/application receipt without changing v1 bytes. Carry that request through the
+  authenticated replicated service owner, enable advertisement only there, and add explicit
+  configuration identity, metrics, cancellation/timeouts, mixed-version fixtures/fuzzing, and
+  minority-loss crash reconciliation before deployment exposure.
 - Thousands-of-groups simulation, one-node loss, group lifecycle, persisted reopen, noisy-neighbor,
   TSan/chaos, physical amplification, group density, memory, and tail benchmarks.
 

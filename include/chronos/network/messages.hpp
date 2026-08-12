@@ -3,6 +3,7 @@
 
 #include "chronos/common/bytes.hpp"
 #include "chronos/common/result.hpp"
+#include "chronos/common/uuid.hpp"
 #include "chronos/network/protocol.hpp"
 #include "chronos/schema/logical_type.hpp"
 
@@ -18,16 +19,20 @@ inline constexpr std::uint16_t kMessagePayloadFormat = 1U;
 // Zero remains the Protocol 1.0 feature set. Minor-1 features are declared by their owning
 // extension headers and validated against the complete supported mask in messages.cpp.
 inline constexpr std::uint64_t kProtocolV1FeatureBits = 0U;
+inline constexpr std::uint64_t kProtocolV2QuorumSyncFeature = std::uint64_t{1U} << 1U;
+inline constexpr std::uint64_t kProtocolV2SupportedFeatureBits =
+    kProtocolV1SubscriptionFeature | kProtocolV2QuorumSyncFeature;
 inline constexpr std::size_t kHelloPayloadSize = 24U;
 inline constexpr std::size_t kIngestEnvelopeSize = 8U;
 inline constexpr std::size_t kIngestAcknowledgementSize = 32U;
+inline constexpr std::size_t kQuorumSyncIngestAcknowledgementSize = 64U;
 inline constexpr std::size_t kQueryEnvelopeSize = 8U;
 inline constexpr std::size_t kErrorEnvelopeSize = 8U;
 inline constexpr std::size_t kQueryResultEnvelopeSize = 16U;
 inline constexpr std::size_t kQueryResultColumnEnvelopeSize = 16U;
 inline constexpr std::uint32_t kQueryResultNullCellLength = 0xffff'ffffU;
 
-enum class DurabilityMode : std::uint8_t { kAsync = 1, kLocalSync = 2 };
+enum class DurabilityMode : std::uint8_t { kAsync = 1, kLocalSync = 2, kQuorumSync = 3 };
 enum class IngestOutcome : std::uint8_t { kApplied = 1, kMatchingRetry = 2 };
 enum class ProtocolErrorCode : std::uint8_t {
   kMalformedFrame = 1,
@@ -58,6 +63,12 @@ struct ServerHello {
   std::uint32_t maximum_payload_size{kDefaultMaximumPayloadSize};
 };
 
+struct IngestProtocolContext {
+  std::uint16_t protocol_major{kProtocolMajor};
+  std::uint16_t protocol_minor{kProtocolMinor};
+  std::uint64_t feature_bits{};
+};
+
 struct IngestRequestView {
   DurabilityMode durability{DurabilityMode::kAsync};
   common::ByteView encoded_columnar_append;
@@ -72,6 +83,21 @@ struct IngestAcknowledgement {
   std::uint64_t byte_offset{};
 
   friend bool operator==(const IngestAcknowledgement&, const IngestAcknowledgement&) = default;
+};
+
+struct QuorumSyncIngestAcknowledgement {
+  DurabilityMode requested_durability{DurabilityMode::kQuorumSync};
+  DurabilityMode effective_durability{DurabilityMode::kQuorumSync};
+  IngestOutcome outcome{IngestOutcome::kApplied};
+  common::Uuid group_id;
+  std::uint64_t leader_node_id{};
+  std::uint64_t leader_term{};
+  std::uint64_t log_index{};
+  std::uint64_t entry_term{};
+  std::uint64_t local_durable_physical_sequence{};
+
+  friend bool operator==(const QuorumSyncIngestAcknowledgement&,
+                         const QuorumSyncIngestAcknowledgement&) = default;
 };
 
 struct ErrorMessageView {
@@ -124,12 +150,27 @@ private:
 [[nodiscard]] common::Result<std::vector<std::byte>>
 encode_ingest_request(DurabilityMode durability, common::ByteView encoded_columnar_append,
                       const ProtocolLimits& limits = {});
+[[nodiscard]] common::Result<std::vector<std::byte>>
+encode_ingest_request(DurabilityMode durability, common::ByteView encoded_columnar_append,
+                      const IngestProtocolContext& context, const ProtocolLimits& limits = {});
 [[nodiscard]] common::Result<IngestRequestView>
 decode_ingest_request(common::ByteView payload, const ProtocolLimits& limits = {});
+[[nodiscard]] common::Result<IngestRequestView>
+decode_ingest_request(common::ByteView payload, const IngestProtocolContext& context,
+                      const ProtocolLimits& limits = {});
 [[nodiscard]] common::Result<std::vector<std::byte>>
 encode_ingest_acknowledgement(const IngestAcknowledgement& acknowledgement);
+[[nodiscard]] common::Result<std::vector<std::byte>>
+encode_ingest_acknowledgement(const IngestAcknowledgement& acknowledgement,
+                              const IngestProtocolContext& context);
 [[nodiscard]] common::Result<IngestAcknowledgement>
 decode_ingest_acknowledgement(common::ByteView payload);
+[[nodiscard]] common::Result<IngestAcknowledgement>
+decode_ingest_acknowledgement(common::ByteView payload, const IngestProtocolContext& context);
+[[nodiscard]] common::Result<std::vector<std::byte>>
+encode_quorum_sync_ingest_acknowledgement(const QuorumSyncIngestAcknowledgement& acknowledgement);
+[[nodiscard]] common::Result<QuorumSyncIngestAcknowledgement>
+decode_quorum_sync_ingest_acknowledgement(common::ByteView payload);
 [[nodiscard]] common::Result<std::vector<std::byte>>
 encode_query_request(std::string_view sql, const ProtocolLimits& limits = {});
 [[nodiscard]] common::Result<common::ByteView>

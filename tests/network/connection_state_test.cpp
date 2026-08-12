@@ -7,12 +7,60 @@ namespace chronos::network {
 namespace {
 
 [[nodiscard]] Frame frame(const MessageType type, const std::uint64_t id,
-                          std::vector<std::byte> payload = {}, const std::uint16_t minor = 0U) {
-  return {.header = {.protocol_minor = minor,
+                          std::vector<std::byte> payload = {}, const std::uint16_t minor = 0U,
+                          const std::uint16_t major = kProtocolMajor) {
+  return {.header = {.protocol_major = major,
+                     .protocol_minor = minor,
                      .message_type = type,
                      .request_id = id,
                      .payload_size = static_cast<std::uint32_t>(payload.size())},
           .payload = std::move(payload)};
+}
+
+TEST(ServerConnectionStateTest, NegotiatesProtocolTwoQuorumSyncAndRequiresItsReceipt) {
+  ServerConnectionState state =
+      ServerConnectionState::create({.maximum_protocol_major = kProtocolV2Major,
+                                     .supported_feature_bits = kProtocolV2QuorumSyncFeature})
+          .value();
+  const auto hello = encode_client_hello({.minimum_major = kProtocolV2Major,
+                                          .maximum_major = kProtocolV2Major,
+                                          .maximum_minor = kProtocolV2LatestMinor,
+                                          .feature_bits = kProtocolV2QuorumSyncFeature});
+  ASSERT_TRUE(hello.has_value());
+  const auto handshake = state.accept(frame(MessageType::kClientHello, 0U, *hello));
+  ASSERT_TRUE(handshake.has_value()) << handshake.error().to_string();
+  EXPECT_EQ(handshake->negotiated_major, kProtocolV2Major);
+  EXPECT_EQ(state.negotiated_major(), kProtocolV2Major);
+  EXPECT_EQ(state.negotiated_feature_bits(), kProtocolV2QuorumSyncFeature);
+
+  const IngestProtocolContext context{.protocol_major = kProtocolV2Major,
+                                      .feature_bits = kProtocolV2QuorumSyncFeature};
+  const auto request = encode_ingest_request(DurabilityMode::kQuorumSync, {}, context);
+  ASSERT_TRUE(request.has_value());
+  ASSERT_TRUE(state.accept(frame(MessageType::kIngestRequest, 1U, *request, 0U, kProtocolV2Major))
+                  .has_value());
+  EXPECT_FALSE(state
+                   .accept_response(frame(
+                       MessageType::kIngestAcknowledgement, 1U,
+                       *encode_ingest_acknowledgement({.outcome = IngestOutcome::kMatchingRetry}),
+                       0U, kProtocolV2Major))
+                   .is_ok());
+
+  common::Uuid::Bytes group_bytes{};
+  group_bytes.fill(std::byte{1});
+  const auto acknowledgement =
+      encode_quorum_sync_ingest_acknowledgement({.group_id = common::Uuid{group_bytes},
+                                                 .leader_node_id = 1U,
+                                                 .leader_term = 3U,
+                                                 .log_index = 4U,
+                                                 .entry_term = 3U,
+                                                 .local_durable_physical_sequence = 8U});
+  ASSERT_TRUE(acknowledgement.has_value());
+  EXPECT_TRUE(state
+                  .accept_response(frame(MessageType::kQuorumSyncIngestAcknowledgement, 1U,
+                                         *acknowledgement, 0U, kProtocolV2Major))
+                  .is_ok());
+  EXPECT_EQ(state.in_flight_requests(), 0U);
 }
 
 [[nodiscard]] common::Uuid uuid(const std::byte seed) {

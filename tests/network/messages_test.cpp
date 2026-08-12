@@ -29,6 +29,60 @@ TEST(ProtocolMessageTest, NegotiatesOnlyTheAcceptedVersionAndFiniteLimit) {
   const auto server_decoded = decode_server_hello(*server_bytes);
   ASSERT_TRUE(server_decoded.has_value());
   EXPECT_EQ(server_decoded->maximum_payload_size, 2048U);
+
+  const auto v2 = encode_client_hello({.minimum_major = kProtocolV2Major,
+                                       .maximum_major = kProtocolV2Major,
+                                       .maximum_minor = kProtocolV2LatestMinor,
+                                       .feature_bits = kProtocolV2QuorumSyncFeature});
+  ASSERT_TRUE(v2.has_value()) << v2.error().to_string();
+  EXPECT_EQ(decode_client_hello(*v2)->maximum_major, kProtocolV2Major);
+  EXPECT_FALSE(encode_client_hello({.feature_bits = kProtocolV2QuorumSyncFeature}).has_value());
+  EXPECT_TRUE(encode_server_hello({.selected_major = kProtocolV2Major,
+                                   .feature_bits = kProtocolV2QuorumSyncFeature})
+                  .has_value());
+}
+
+TEST(ProtocolMessageTest, QuorumSyncRequiresProtocolTwoNegotiation) {
+  const std::array<std::byte, 3> command{std::byte{1}, std::byte{2}, std::byte{3}};
+  EXPECT_FALSE(encode_ingest_request(DurabilityMode::kQuorumSync, command).has_value());
+  EXPECT_FALSE(encode_ingest_request(
+                   DurabilityMode::kQuorumSync, command,
+                   {.protocol_major = kProtocolV2Major, .protocol_minor = kProtocolV2LatestMinor})
+                   .has_value());
+  const IngestProtocolContext context{.protocol_major = kProtocolV2Major,
+                                      .protocol_minor = kProtocolV2LatestMinor,
+                                      .feature_bits = kProtocolV2QuorumSyncFeature};
+  const auto encoded = encode_ingest_request(DurabilityMode::kQuorumSync, command, context);
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  EXPECT_FALSE(decode_ingest_request(*encoded).has_value());
+  const auto decoded = decode_ingest_request(*encoded, context);
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  EXPECT_EQ(decoded->durability, DurabilityMode::kQuorumSync);
+  EXPECT_TRUE(std::ranges::equal(decoded->encoded_columnar_append, command));
+}
+
+TEST(ProtocolMessageTest, QuorumSyncAcknowledgementCarriesTheCompleteReceipt) {
+  common::Uuid::Bytes group_bytes{};
+  group_bytes.fill(std::byte{0x42});
+  QuorumSyncIngestAcknowledgement input{.outcome = IngestOutcome::kMatchingRetry,
+                                        .group_id = common::Uuid{group_bytes},
+                                        .leader_node_id = 2U,
+                                        .leader_term = 7U,
+                                        .log_index = 11U,
+                                        .entry_term = 6U,
+                                        .local_durable_physical_sequence = 19U};
+  const auto encoded = encode_quorum_sync_ingest_acknowledgement(input);
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  EXPECT_EQ(encoded->size(), kQuorumSyncIngestAcknowledgementSize);
+  const auto decoded = decode_quorum_sync_ingest_acknowledgement(*encoded);
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  EXPECT_EQ(*decoded, input);
+
+  std::vector<std::byte> corrupt = *encoded;
+  corrupt[2] = std::byte{0};
+  EXPECT_FALSE(decode_quorum_sync_ingest_acknowledgement(corrupt).has_value());
+  input.local_durable_physical_sequence = 0U;
+  EXPECT_FALSE(encode_quorum_sync_ingest_acknowledgement(input).has_value());
 }
 
 TEST(ProtocolMessageTest, IngestEnvelopeNamesDurabilityAndBorrowsCanonicalCommand) {

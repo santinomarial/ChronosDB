@@ -18,11 +18,62 @@ namespace {
 [[nodiscard]] std::vector<std::byte> server_frame(const MessageType type, const std::uint64_t id,
                                                   const common::ByteView payload = {},
                                                   const std::uint32_t flags = 0U,
-                                                  const std::uint16_t minor = 0U) {
-  return encode_frame(
-             {.protocol_minor = minor, .message_type = type, .flags = flags, .request_id = id},
-             payload)
+                                                  const std::uint16_t minor = 0U,
+                                                  const std::uint16_t major = kProtocolMajor) {
+  return encode_frame({.protocol_major = major,
+                       .protocol_minor = minor,
+                       .message_type = type,
+                       .flags = flags,
+                       .request_id = id},
+                      payload)
       .value();
+}
+
+TEST(NativeClientSessionTest, NegotiatesAndValidatesProtocolTwoQuorumSync) {
+  NativeClientSession client =
+      NativeClientSession::create({.minimum_protocol_major = kProtocolV2Major,
+                                   .maximum_protocol_major = kProtocolV2Major,
+                                   .maximum_protocol_minor = kProtocolV2LatestMinor,
+                                   .requested_feature_bits = kProtocolV2QuorumSyncFeature})
+          .value();
+  ASSERT_TRUE(client.queue_handshake().is_ok());
+  const auto hello_frame = decode_frame(take_pending(client));
+  ASSERT_TRUE(hello_frame.has_value());
+  EXPECT_EQ(hello_frame->header.protocol_major, kProtocolMajor);
+  EXPECT_EQ(decode_client_hello(hello_frame->payload)->minimum_major, kProtocolV2Major);
+  ASSERT_TRUE(client
+                  .receive(server_frame(
+                      MessageType::kServerHello, 0U,
+                      *encode_server_hello({.selected_major = kProtocolV2Major,
+                                            .feature_bits = kProtocolV2QuorumSyncFeature})))
+                  .has_value());
+  EXPECT_EQ(client.negotiated_major(), kProtocolV2Major);
+
+  const auto request_id = client.queue_ingest(DurabilityMode::kQuorumSync, {});
+  ASSERT_TRUE(request_id.has_value()) << request_id.error().to_string();
+  const auto request = decode_frame(take_pending(client));
+  ASSERT_TRUE(request.has_value());
+  EXPECT_EQ(request->header.protocol_major, kProtocolV2Major);
+  EXPECT_EQ(decode_ingest_request(request->payload, {.protocol_major = kProtocolV2Major,
+                                                     .feature_bits = kProtocolV2QuorumSyncFeature})
+                ->durability,
+            DurabilityMode::kQuorumSync);
+
+  common::Uuid::Bytes group_bytes{};
+  group_bytes.fill(std::byte{2});
+  const auto acknowledgement =
+      encode_quorum_sync_ingest_acknowledgement({.group_id = common::Uuid{group_bytes},
+                                                 .leader_node_id = 3U,
+                                                 .leader_term = 5U,
+                                                 .log_index = 9U,
+                                                 .entry_term = 5U,
+                                                 .local_durable_physical_sequence = 12U});
+  ASSERT_TRUE(acknowledgement.has_value());
+  EXPECT_TRUE(client
+                  .receive(server_frame(MessageType::kQuorumSyncIngestAcknowledgement, *request_id,
+                                        *acknowledgement, 0U, 0U, kProtocolV2Major))
+                  .has_value());
+  EXPECT_EQ(client.in_flight_requests(), 0U);
 }
 
 void complete_subscription_handshake(NativeClientSession& client) {
@@ -64,6 +115,12 @@ void complete_handshake(NativeClientSession& client) {
   ASSERT_TRUE(client.receive(common::ByteView{response}.first(split)).has_value());
   ASSERT_TRUE(client.receive(common::ByteView{response}.subspan(split)).has_value());
   ASSERT_EQ(client.phase(), ClientSessionPhase::kActive);
+}
+
+TEST(NativeClientSessionTest, RefusesQuorumSyncWithoutProtocolTwoFeature) {
+  NativeClientSession client = NativeClientSession::create().value();
+  complete_handshake(client);
+  EXPECT_FALSE(client.queue_ingest(DurabilityMode::kQuorumSync, {}).has_value());
 }
 
 TEST(NativeClientSessionTest, OwnsPartialIoAndValidatesQueryStream) {

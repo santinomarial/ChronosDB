@@ -127,6 +127,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 
 - [Native Protocol v1](protocol/native-v1.md): fixed checksummed 1.0 framing plus negotiated 1.1
   subscription delivery, finite limits, compatibility, and rejection rules.
+- [Native Protocol v2](protocol/native-v2.md): explicitly negotiated 2.0 framing, feature-gated
+  `QUORUM_SYNC` ingest, and the exact Raft receipt acknowledgement.
 - [Remote Tablet Reconfiguration Request v1](protocol/remote-tablet-reconfiguration-v1.md):
   principal-authorized source/target and exact leader-term binding around one canonical action.
 - [Remote Tablet Reconfiguration Response v1](protocol/remote-tablet-reconfiguration-response-v1.md):

@@ -20,6 +20,7 @@
 #include <limits>
 #include <memory>
 #include <new>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -35,9 +36,17 @@ protocol_durability(const wal::WalDurabilityMode mode) noexcept {
                                                     : network::DurabilityMode::kAsync;
 }
 
-[[nodiscard]] wal::WalDurabilityMode wal_durability(const network::DurabilityMode mode) noexcept {
-  return mode == network::DurabilityMode::kLocalSync ? wal::WalDurabilityMode::kLocalSync
-                                                     : wal::WalDurabilityMode::kAsync;
+[[nodiscard]] std::optional<wal::WalDurabilityMode>
+wal_durability(const network::DurabilityMode mode) noexcept {
+  switch (mode) {
+  case network::DurabilityMode::kAsync:
+    return wal::WalDurabilityMode::kAsync;
+  case network::DurabilityMode::kLocalSync:
+    return wal::WalDurabilityMode::kLocalSync;
+  case network::DurabilityMode::kQuorumSync:
+    return std::nullopt;
+  }
+  return std::nullopt;
 }
 
 [[nodiscard]] network::ProtocolErrorCode error_code(const common::StatusCode code) noexcept {
@@ -329,6 +338,11 @@ NativeProtocolService::execute_ingest(network::NetworkTask request) {
   if (!envelope.has_value())
     return error_response(std::move(request), invalid(envelope.error().message()),
                           limits_.protocol);
+  const std::optional<wal::WalDurabilityMode> durability = wal_durability(envelope->durability);
+  if (!durability.has_value())
+    return error_response(std::move(request),
+                          unsupported("single-node ingest cannot provide QUORUM_SYNC"),
+                          limits_.protocol);
   const auto command = ingest::decode_columnar_append_v1_exact(envelope->encoded_columnar_append,
                                                                limits_.columnar_append);
   if (!command.has_value())
@@ -356,7 +370,7 @@ NativeProtocolService::execute_ingest(network::NetworkTask request) {
                                             {.client_id = command->client_id(),
                                              .client_batch_id = command->client_batch_id(),
                                              .batch = std::move(*batch),
-                                             .durability = wal_durability(envelope->durability)});
+                                             .durability = *durability});
   if (!executed.has_value())
     return error_response(std::move(request), executed.error(), limits_.protocol);
   auto flushed = database_->flush_ready_heads();

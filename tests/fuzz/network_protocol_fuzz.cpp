@@ -14,6 +14,12 @@ namespace {
 
 void exercise_message(const chronos::network::Frame& frame) {
   using namespace chronos::network;
+  const IngestProtocolContext ingest_context{.protocol_major = frame.header.protocol_major,
+                                             .protocol_minor = frame.header.protocol_minor,
+                                             .feature_bits =
+                                                 frame.header.protocol_major == kProtocolV2Major
+                                                     ? kProtocolV2SupportedFeatureBits
+                                                     : kProtocolV1SupportedFeatureBits};
   switch (frame.header.message_type) {
   case MessageType::kClientHello:
     static_cast<void>(decode_client_hello(frame.payload));
@@ -22,10 +28,13 @@ void exercise_message(const chronos::network::Frame& frame) {
     static_cast<void>(decode_server_hello(frame.payload));
     break;
   case MessageType::kIngestRequest:
-    static_cast<void>(decode_ingest_request(frame.payload));
+    static_cast<void>(decode_ingest_request(frame.payload, ingest_context));
     break;
   case MessageType::kIngestAcknowledgement:
-    static_cast<void>(decode_ingest_acknowledgement(frame.payload));
+    static_cast<void>(decode_ingest_acknowledgement(frame.payload, ingest_context));
+    break;
+  case MessageType::kQuorumSyncIngestAcknowledgement:
+    static_cast<void>(decode_quorum_sync_ingest_acknowledgement(frame.payload));
     break;
   case MessageType::kQueryRequest:
     static_cast<void>(decode_query_request(frame.payload));
@@ -67,7 +76,8 @@ void exercise(const chronos::common::ByteView bytes) {
   constexpr ProtocolLimits kLimits{.maximum_payload_size = 65'536U};
   const auto decoded = decode_frame(bytes, kLimits);
   if (decoded.has_value()) {
-    const auto encoded = encode_frame({.protocol_minor = decoded->header.protocol_minor,
+    const auto encoded = encode_frame({.protocol_major = decoded->header.protocol_major,
+                                       .protocol_minor = decoded->header.protocol_minor,
                                        .message_type = decoded->header.message_type,
                                        .flags = decoded->header.flags,
                                        .request_id = decoded->header.request_id},

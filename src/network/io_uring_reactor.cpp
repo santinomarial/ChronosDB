@@ -181,11 +181,16 @@ public:
                                        const std::uint64_t request_id,
                                        const common::ByteView payload,
                                        const std::uint32_t flags = 0U) {
+    const std::uint16_t major =
+        type == MessageType::kServerHello ? kProtocolMajor : connection.state.negotiated_major();
     const std::uint16_t minor =
         type == MessageType::kServerHello ? 0U : connection.state.negotiated_minor();
-    auto encoded = encode_frame(
-        {.protocol_minor = minor, .message_type = type, .flags = flags, .request_id = request_id},
-        payload, config.buffers.protocol);
+    auto encoded = encode_frame({.protocol_major = major,
+                                 .protocol_minor = minor,
+                                 .message_type = type,
+                                 .flags = flags,
+                                 .request_id = request_id},
+                                payload, config.buffers.protocol);
     if (!encoded.has_value())
       return encoded.error();
     return connection.buffers.enqueue(std::move(*encoded));
@@ -217,7 +222,8 @@ public:
     switch (action->kind) {
     case InboundActionKind::kHandshake: {
       auto hello =
-          encode_server_hello({.selected_minor = action->negotiated_minor,
+          encode_server_hello({.selected_major = action->negotiated_major,
+                               .selected_minor = action->negotiated_minor,
                                .feature_bits = action->negotiated_feature_bits,
                                .maximum_payload_size = action->negotiated_maximum_payload_size});
       if (!hello.has_value() ||
@@ -320,6 +326,8 @@ public:
         continue;
       Frame& frame = task->frame;
       const bool ingest = frame.header.message_type == MessageType::kIngestAcknowledgement;
+      const bool quorum_sync =
+          frame.header.message_type == MessageType::kQuorumSyncIngestAcknowledgement;
       const bool terminal_error = frame.header.message_type == MessageType::kError;
       const SubscriptionMessageLimits subscription_limits{.protocol = config.buffers.protocol};
       const bool payload_is_valid =
@@ -330,7 +338,13 @@ public:
                                                      .maximum_column_name_bytes = 1024U})
                .has_value()) ||
           (frame.header.message_type == MessageType::kQueryEnd && frame.payload.empty()) ||
-          (ingest && decode_ingest_acknowledgement(frame.payload).has_value()) ||
+          (ingest &&
+           decode_ingest_acknowledgement(
+               frame.payload, {.protocol_major = found->second.state.negotiated_major(),
+                               .protocol_minor = found->second.state.negotiated_minor(),
+                               .feature_bits = found->second.state.negotiated_feature_bits()})
+               .has_value()) ||
+          (quorum_sync && decode_quorum_sync_ingest_acknowledgement(frame.payload).has_value()) ||
           (frame.header.message_type == MessageType::kSubscriptionReady &&
            decode_subscription_ready(frame.payload, subscription_limits).has_value()) ||
           (frame.header.message_type == MessageType::kSubscriptionChange &&
@@ -345,7 +359,8 @@ public:
         ++stats.dropped_responses;
         continue;
       }
-      auto encoded = encode_frame({.protocol_minor = found->second.state.negotiated_minor(),
+      auto encoded = encode_frame({.protocol_major = found->second.state.negotiated_major(),
+                                   .protocol_minor = found->second.state.negotiated_minor(),
                                    .message_type = frame.header.message_type,
                                    .flags = frame.header.flags,
                                    .request_id = frame.header.request_id},
