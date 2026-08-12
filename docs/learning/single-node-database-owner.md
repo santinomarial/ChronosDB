@@ -82,10 +82,12 @@ head boundary.
 ## Shutdown and failures
 
 `shutdown()` drains ready sealed heads, closes admission, finishes the last required local
-synchronization, and joins the WAL worker. It then destroys flush coordinators before releasing
-Manifest ownership, closing Raft, and releasing the root lock. The first failure is returned while
-later close operations are still attempted. Calls after shutdown are outside the live service
-contract; repeated shutdown itself succeeds.
+synchronization, and joins the WAL worker. With the WAL lock released, it proves the longest covered
+prefix from the exact selected parts and publishes a checkpoint-only successor when that coordinate
+advances. It then destroys flush coordinators before releasing Manifest ownership, closing Raft, and
+releasing the root lock. The next startup enables conservative deletion of wholly covered closed
+segments. The first failure is returned while later close operations are still attempted. Calls
+after shutdown are outside the live service contract; repeated shutdown itself succeeds.
 
 Unknown WAL tablets, damaged log bytes, inconsistent lineage tails, missing active definitions,
 and nonlocal placement all fail startup. Incomplete metadata-only table prefixes remain invisible.

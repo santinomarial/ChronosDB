@@ -110,7 +110,9 @@ The single-node service owner now supplies its durable metadata catalog as the r
 uses this composition for every live startup. A selected-identity preflight exact-decodes the
 checksummed generation to discover its WAL and durable tablet identities; full catalog/part binding
 still occurs only inside this recovery function. The live owner now attaches sealed-head flush and
-native aggregate CSEG/head query composition after recovery returns.
+native aggregate CSEG/head query composition after recovery returns. Its orderly shutdown publishes
+a proven checkpoint successor, and later service startup enables this recovery boundary's covered
+closed-segment reclamation.
 
 Remaining work includes multi-kind application dispatch, crash injection inside this composition's
 cleanup/recovery ordering, and future query-state reconstruction.

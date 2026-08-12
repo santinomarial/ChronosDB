@@ -1,9 +1,12 @@
 #include "chronos/service/single_node_database.hpp"
 
+#include "chronos/common/checked_math.hpp"
 #include "chronos/common/uuid_generator.hpp"
 #include "chronos/ingest/columnar_append_recovery.hpp"
 #include "chronos/ingest/sealed_head_flush_queue.hpp"
 #include "chronos/io/posix_io.hpp"
+#include "chronos/manifest/checkpoint_builder.hpp"
+#include "chronos/manifest/codec.hpp"
 #include "chronos/manifest/naming.hpp"
 #include "chronos/manifest/sealed_head_flush_coordinator.hpp"
 #include "chronos/manifest/startup_recovery.hpp"
@@ -469,7 +472,7 @@ SingleNodeDatabase::open_or_create(SingleNodeDatabaseConfig config) {
                            .part_validation_limits = {}},
          .wal_writer = wal_config,
          .wal_recovery = config.wal_recovery,
-         .reclaim_checkpointed_wal_segments = false,
+         .reclaim_checkpointed_wal_segments = true,
          .columnar_recovery = std::move(recovery_config)});
     if (!recovered.has_value())
       return common::make_unexpected(
@@ -729,6 +732,119 @@ common::Result<std::size_t> SingleNodeDatabase::flush_ready_heads() {
     return common::make_unexpected(exhausted("sealed-head flush exceeds container limits"));
   }
 }
+
+common::Status SingleNodeDatabase::checkpoint_flushed_wal() {
+  if (impl_ == nullptr || !impl_->recovered.has_value())
+    return invalid("database storage is unavailable for WAL checkpointing");
+  try {
+    auto snapshot = impl_->recovered->snapshot();
+    if (!snapshot.has_value())
+      return snapshot.error();
+    if (snapshot->parts().empty())
+      return common::Status::ok();
+    const std::optional<std::uint64_t> generation =
+        common::checked_add(snapshot->generation(), std::uint64_t{1U});
+    if (!generation.has_value())
+      return exhausted("Manifest generation overflowed during WAL checkpointing");
+
+    auto predecessor = manifest::decode_manifest_v1_exact(snapshot->manifest_bytes());
+    if (!predecessor.has_value())
+      return corruption("published Manifest failed exact decode during WAL checkpointing");
+    auto candidate =
+        manifest::encode_manifest_v1({.generation = *generation,
+                                      .database_id = snapshot->database_id(),
+                                      .wal_id = snapshot->wal_id(),
+                                      .reclaim_checkpoint = snapshot->reclaim_checkpoint(),
+                                      .tablets = snapshot->durable_tablets(),
+                                      .parts = snapshot->parts(),
+                                      .retries = snapshot->retries()});
+    if (!candidate.has_value())
+      return candidate.error();
+    auto decoded_candidate = manifest::decode_manifest_v1_exact(candidate->bytes());
+    if (!decoded_candidate.has_value())
+      return corruption("checkpoint candidate failed exact decode");
+
+    std::vector<manifest::TabletSchemaBinding> schema_bindings;
+    schema_bindings.reserve(snapshot->durable_tablets().size());
+    for (const manifest::TabletDescriptor& durable : snapshot->durable_tablets()) {
+      const auto table =
+          std::ranges::find_if(impl_->tables, [&](const RecoveredTable& candidate_table) {
+            return candidate_table.lineage.table_id() == durable.table_id &&
+                   std::ranges::find(candidate_table.tablets, durable.tablet_id) !=
+                       candidate_table.tablets.end();
+          });
+      if (table == impl_->tables.end())
+        return corruption("durable Manifest tablet has no checkpoint schema lineage");
+      schema_bindings.push_back(
+          {.tablet_id = durable.tablet_id, .lineage = std::cref(table->lineage)});
+    }
+
+    std::vector<manifest::SnapshotPartImage> owned_images;
+    std::vector<std::string> image_names;
+    owned_images.reserve(snapshot->parts().size());
+    image_names.reserve(snapshot->parts().size());
+    for (const manifest::PartDescriptor& part : snapshot->parts()) {
+      const std::array ids{part.part_id};
+      auto loaded = impl_->recovered->manifest_storage().load_snapshot_part_images(
+          *snapshot, ids, schema_bindings, {});
+      if (!loaded.has_value())
+        return loaded.error();
+      if (loaded->size() != 1U)
+        return corruption("checkpoint part-image load returned an invalid count");
+      owned_images.push_back(std::move(loaded->front()));
+      image_names.push_back(manifest::part_file_name(part.part_id));
+    }
+    std::vector<manifest::ReferencedPartImage> referenced_images;
+    referenced_images.reserve(owned_images.size());
+    for (std::size_t index = 0U; index < owned_images.size(); ++index)
+      referenced_images.push_back(
+          {.file_name = image_names[index], .bytes = owned_images[index].bytes()});
+
+    auto checkpointed = manifest::build_manifest_v1_checkpointed_generation(
+        {.wal_directory = impl_->bootstrap_owner.wal_directory_path(),
+         .predecessor = std::cref(*predecessor),
+         .candidate = std::cref(*decoded_candidate),
+         .schema_bindings = schema_bindings,
+         .referenced_parts = referenced_images,
+         .command_decode_limits = {},
+         .part_validation_limits = {}});
+    if (!checkpointed.has_value())
+      return checkpointed.error();
+    if (checkpointed->reclaim_checkpoint == snapshot->reclaim_checkpoint())
+      return common::Status::ok();
+    common::SystemUuidGenerator identities;
+    auto nonce = identities.generate();
+    if (!nonce.has_value())
+      return nonce.error();
+    auto installed = impl_->recovered->manifest_storage().install_manifest(
+        {.encoded_manifest = std::cref(checkpointed->encoded_manifest),
+         .schema_bindings = schema_bindings,
+         .nonce = *nonce,
+         .decode_limits = {},
+         .part_validation_limits = {},
+         .compaction_replacement = nullptr,
+         .compaction_equivalence_limits = {}});
+    if (!installed.has_value())
+      return installed.error();
+    auto selected = impl_->recovered->manifest_storage().load_selected_manifest(
+        {.expected_database_id = snapshot->database_id(),
+         .expected_wal_id = snapshot->wal_id(),
+         .schema_bindings = schema_bindings,
+         .decode_limits = {},
+         .part_validation_limits = {}});
+    if (!selected.has_value())
+      return selected.error();
+    auto selected_owner =
+        std::make_shared<const manifest::LoadedManifestGeneration>(std::move(*selected));
+    auto published = impl_->recovered->storage_publisher().publish_manifest(
+        {.selected_manifest = std::move(selected_owner), .replacements = {}});
+    return published.has_value() ? common::Status::ok() : published.error();
+  } catch (const std::bad_alloc&) {
+    return exhausted("WAL checkpoint allocation failed");
+  } catch (const std::length_error&) {
+    return exhausted("WAL checkpoint exceeds container limits");
+  }
+}
 common::Status SingleNodeDatabase::shutdown() {
   if (impl_ == nullptr || impl_->shutdown)
     return common::Status::ok();
@@ -740,6 +856,11 @@ common::Status SingleNodeDatabase::shutdown() {
   const common::Status wal = impl_->wal_coordinator.shutdown();
   if (result.is_ok())
     result = wal;
+  if (wal.is_ok()) {
+    const common::Status checkpoint = checkpoint_flushed_wal();
+    if (result.is_ok())
+      result = checkpoint;
+  }
   impl_->flush_owners.clear();
   impl_->recovered.reset();
   const common::Status raft = impl_->raft_runtime->close();

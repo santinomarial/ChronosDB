@@ -103,6 +103,7 @@ public:
   [[nodiscard]] common::Status shutdown();
 
 private:
+  [[nodiscard]] common::Status checkpoint_flushed_wal();
   class Impl;
   explicit SingleNodeDatabase(std::unique_ptr<Impl> impl) noexcept;
   std::unique_ptr<Impl> impl_;

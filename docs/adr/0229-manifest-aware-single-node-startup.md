@@ -39,7 +39,8 @@ heads and retains selected CSEG descriptors plus the head suffix in one publicat
 undergo a one-time exact initialization after complete WAL validation.
 
 ADRs 0230 and 0231 subsequently attach live sealed-head flush and route native SELECT through the
-aggregate CSEG/head snapshot. Checkpoint advancement and WAL reclamation remain separate work.
+aggregate CSEG/head snapshot. ADR 0232 adds quiescent shutdown checkpoint publication and enables
+conservative covered-segment reclamation on the next startup.
 
 ## Validation
 

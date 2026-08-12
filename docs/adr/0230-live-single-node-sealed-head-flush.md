@@ -37,8 +37,8 @@ suffix. Queues remain bounded and per-tablet ownership avoids cross-tablet deque
 
 Flush execution is currently synchronous on the service owner and uses uncompressed CSEG pages.
 ADR 0231 subsequently routes native SELECT through the aggregate CSEG/head snapshot. Checkpoint
-advancement, WAL reclamation, background scheduling, compression policy, and flush metrics export
-remain separate work.
+advancement and restart reclamation are composed by ADR 0232. Background scheduling, compression
+policy, abrupt-stop checkpointing, and flush metrics export remain separate work.
 
 ## Validation
 

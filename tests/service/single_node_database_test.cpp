@@ -404,7 +404,8 @@ TEST(NativeProtocolServiceTest, FlushesSealedHeadsAndRecoversOnlyTheWalSuffix) {
   ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
   auto recovered_storage = recovered->storage_snapshot();
   ASSERT_TRUE(recovered_storage.has_value()) << recovered_storage.error().to_string();
-  EXPECT_EQ(recovered_storage->generation(), 2U);
+  EXPECT_EQ(recovered_storage->generation(), 3U);
+  EXPECT_EQ(recovered_storage->reclaim_checkpoint().record_sequence, 2U);
   ASSERT_EQ(recovered_storage->parts().size(), 1U);
   EXPECT_EQ(recovered_storage->parts().front().row_count, 4U);
   EXPECT_EQ(recovered_storage->visible_head_row_count(), 2U);

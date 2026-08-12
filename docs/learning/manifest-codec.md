@@ -87,6 +87,9 @@ owns a newly encoded candidate with only the proven coordinate changed; no WAL, 
 or input object is mutated.
 The function takes no lock: the database owner must invoke it while its serialized WAL owner
 prevents append, rotation, repair, or reclamation and while referenced images remain immutable.
+The single-node owner now supplies that quiescence during orderly shutdown: it closes the WAL
+coordinator, reloads every selected part image, proves the coordinate, installs a metadata-only next
+generation only when the prefix advances, and lets the next startup reclaim covered closed segments.
 
 ## Canonical model validation
 

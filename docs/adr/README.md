@@ -266,3 +266,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0229](0229-manifest-aware-single-node-startup.md) | Manifest-aware single-node startup | accepted |
 | [0230](0230-live-single-node-sealed-head-flush.md) | Live single-node sealed-head flush | accepted |
 | [0231](0231-manifest-snapshot-native-query-source.md) | Manifest-snapshot native query source | accepted |
+| [0232](0232-shutdown-wal-checkpoint-publication.md) | Shutdown WAL checkpoint publication | accepted |
