@@ -42,6 +42,7 @@ public:
   [[nodiscard]] static common::Result<RaftTransportTcpConnector>
   begin(std::vector<std::vector<std::byte>>&& retry_frames, RaftTransportTcpConnectorConfig config,
         TimePoint now);
+  [[nodiscard]] static common::Status validate_config(RaftTransportTcpConnectorConfig config);
   [[nodiscard]] common::Status on_ready(bool writable, TimePoint now);
   [[nodiscard]] common::Result<RaftTransportConnectedPeer> take_connected_peer();
   [[nodiscard]] common::Result<std::vector<std::vector<std::byte>>> take_retry_frames();

@@ -70,22 +70,13 @@ common::Result<RaftTransportTcpConnector>
 RaftTransportTcpConnector::begin(std::vector<std::vector<std::byte>>&& retry_frames,
                                  const RaftTransportTcpConnectorConfig config,
                                  const TimePoint now) {
+  const common::Status valid = validate_config(config);
+  if (!valid.is_ok())
+    return common::make_unexpected(valid);
   const auto& limits = config.carrier.limits;
-  if (config.tls_context == nullptr || config.carrier.local_node_id == 0U ||
-      config.carrier.peer_node_id == 0U ||
-      config.carrier.local_node_id == config.carrier.peer_node_id ||
-      config.carrier.authenticator == nullptr || config.carrier.node_authorizer == nullptr ||
-      config.carrier.peer_ipv4_address != config.remote_endpoint.address ||
-      !valid_timeout(config.connect_timeout) || !valid_timeout(limits.handshake_timeout) ||
-      !valid_timeout(limits.frame_write_timeout) || limits.maximum_queued_frames == 0U ||
-      limits.maximum_queued_bytes <
-          raft::kRaftTransportHeaderSize + raft::kRaftTransportTrailerSize ||
-      retry_frames.size() > limits.maximum_queued_frames)
+  if (retry_frames.size() > limits.maximum_queued_frames)
     return common::make_unexpected(status(common::StatusCode::kInvalidArgument,
-                                          "Raft TCP connector configuration is invalid"));
-  auto valid_codec = raft::RaftTransportFrameReader::create(limits.codec);
-  if (!valid_codec.has_value())
-    return common::make_unexpected(valid_codec.error());
+                                          "Raft TCP retry frame count exceeds carrier capacity"));
   try {
     std::size_t bytes{};
     for (const std::vector<std::byte>& frame : retry_frames) {
@@ -117,6 +108,24 @@ RaftTransportTcpConnector::begin(std::vector<std::vector<std::byte>>&& retry_fra
     return common::make_unexpected(status(common::StatusCode::kResourceExhausted,
                                           "Raft TCP connector exceeds container limits"));
   }
+}
+
+common::Status
+RaftTransportTcpConnector::validate_config(const RaftTransportTcpConnectorConfig config) {
+  const auto& limits = config.carrier.limits;
+  if (config.tls_context == nullptr || config.carrier.local_node_id == 0U ||
+      config.carrier.peer_node_id == 0U ||
+      config.carrier.local_node_id == config.carrier.peer_node_id ||
+      config.carrier.authenticator == nullptr || config.carrier.node_authorizer == nullptr ||
+      config.carrier.peer_ipv4_address != config.remote_endpoint.address ||
+      !valid_timeout(config.connect_timeout) || !valid_timeout(limits.handshake_timeout) ||
+      !valid_timeout(limits.frame_write_timeout) || limits.maximum_queued_frames == 0U ||
+      limits.maximum_queued_bytes <
+          raft::kRaftTransportHeaderSize + raft::kRaftTransportTrailerSize)
+    return status(common::StatusCode::kInvalidArgument,
+                  "Raft TCP connector configuration is invalid");
+  auto valid_codec = raft::RaftTransportFrameReader::create(limits.codec);
+  return valid_codec.has_value() ? common::Status::ok() : valid_codec.error();
 }
 
 common::Status RaftTransportTcpConnector::on_ready(const bool writable, const TimePoint now) {

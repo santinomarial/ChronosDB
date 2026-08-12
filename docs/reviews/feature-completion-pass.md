@@ -122,7 +122,8 @@ queue demand before routing, and returns failed carriers with their complete ret
 of silently dropping or replacing them.
 One nonblocking exact-route TCP attempt now retains complete retry frames through connection,
 creates TLS only after authoritative connect completion, and transfers descriptor/carrier ownership
-together into that pool; address selection and replacement backoff remain external.
+together into that pool. One exact peer now has capped monotonic reconnect backoff and complete frame
+custody between attempts; multi-peer poll/catalog composition remains external.
 A bounded injected-time scheduler now emits generation-tagged election and heartbeat actions,
 preserves due work across admission backpressure, and rejects stale completion rearming.
 A bounded driver now submits each timer action plus its ordered observation through the asynchronous

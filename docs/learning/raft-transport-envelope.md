@@ -71,6 +71,11 @@ after `SO_ERROR` proves success, and transfers the descriptor plus borrowing car
 The pool owns that pair in TLS-before-descriptor destruction order. Connect failure returns the
 unchanged retry set; address selection, backoff, and replacement timing remain policy-owned.
 
+The per-peer reconnect owner now supplies that timing for one immutable route. It permits one
+connector at a time, doubles a positive delay to an inclusive cap, resets after successful handoff,
+and retakes the pool's complete failed frame set. It intentionally has no fresh-result side queue;
+the bounded upstream owner must retain work until the peer can accept it.
+
 ## Complexity and tradeoffs
 
 Fixed messages encode and decode in constant time and space. Append messages are linear in entry

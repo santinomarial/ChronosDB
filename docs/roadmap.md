@@ -748,8 +748,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   exact-peer pool now preflights whole durable results against every route and aggregate queue bound,
   then returns failed carriers with complete retry frames. An exact-route nonblocking TCP attempt
   now retains complete retry frames through connect, creates TLS only after `SO_ERROR`, and transfers
-  descriptor/carrier ownership together into the pool. Address catalogs, backoff/replacement
-  automation, and runtime event-loop composition remain deferred. A bounded deterministic simulator
+  descriptor/carrier ownership together into the pool. A per-peer owner now retries indefinitely at
+  exact monotonic deadlines with capped exponential backoff and retakes complete failed-carrier
+  frames. A bounded multi-peer route catalog, fresh-result backpressure composition, and runtime
+  event-loop polling remain deferred. A bounded deterministic simulator
   now records and replays explicit or seeded partitions, delay/reordering, duplicate/loss,
   crash/restart, atomic persistence faults, application, membership, and snapshot actions; it checks
   election, log, commit, and leader-completeness safety after every step and deletion-shrinks failing

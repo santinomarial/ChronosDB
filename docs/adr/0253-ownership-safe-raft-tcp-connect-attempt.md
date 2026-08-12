@@ -36,10 +36,13 @@ frame through the pool, proving the descriptor remains alive. Additional tests p
 returns all frames and a foreign route is rejected without consuming caller ownership. Connection
 churn, address catalogs, capped backoff, and replacement scheduling remain separate work.
 
+**Retrospective note (2026-08-12):** [ADR 0254](0254-capped-raft-peer-reconnect-policy.md) now owns
+one exact peer's retry deadlines, capped exponential delay, and complete frames between attempts.
+A bounded multi-peer poll/catalog owner remains separate.
+
 ## References
 
 - [ADR 0175](0175-nonblocking-ipv4-tcp-descriptor-ownership.md)
 - [ADR 0177](0177-deadline-bound-distributed-query-tcp-client.md)
 - [ADR 0248](0248-persistent-outbound-raft-mtls-carrier.md)
 - [ADR 0251](0251-bounded-raft-peer-carrier-pool.md)
-

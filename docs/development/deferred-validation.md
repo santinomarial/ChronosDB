@@ -115,7 +115,7 @@
 
 - Raft Transport Envelope v1 cross-compiler golden fixtures, hostile length/count/reserved-byte
   matrices, sustained fuzzing, allocation-failure sweeps, carrier-wide admission schedules,
-  address catalogs/backoff replacement automation, mixed-version processes, and
+  bounded multi-peer route/poll composition, mixed-version processes, and
   carrier-integrated duplicate/loss/reorder/partition simulation. Focused coverage round-trips every
   current message, including an actual conflict-repair response, rejects damage, unknown kinds,
   route mismatch and bounds, and exercises the header-first exact-allocation reader and owned
@@ -128,8 +128,9 @@
   preflights every destination and aggregate queue bound before routing, and removes failed carriers
   only through a complete retry-frame handoff.
   One exact-route TCP attempt now retains retry bytes across connect/timeout and transfers descriptor
-  ownership with the borrowing TLS carrier. Connection churn, multi-address policy, and automated
-  capped-backoff replacement remain deferred.
+  ownership with the borrowing TLS carrier. Connection churn, multi-address policy, and multi-peer
+  scheduling remain deferred. One immutable peer now has exact-deadline capped exponential
+  reconnect and lossless failed-frame custody.
 - Long seed matrices, exhaustive bounded schedules, chunk/dependency trace shrinking, timer/clock
   changes, physical segmented-log syscall faults, and automated randomized membership/snapshot/read-
   barrier generation. The bounded simulator now has focused explicit and seeded coverage for
