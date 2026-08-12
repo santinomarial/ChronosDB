@@ -138,6 +138,26 @@ common::Status RaftTransportPeerManager::on_ready(const raft::NodeId peer, const
   return retained.is_ok() ? common::Status::ok() : retained;
 }
 
+common::Status RaftTransportPeerManager::on_transport_closed(const raft::NodeId peer,
+                                                             const TimePoint now) {
+  if (!implementation_)
+    return status(common::StatusCode::kInvalidArgument, "Raft peer manager is empty");
+  Impl::Route* route = implementation_->find(peer);
+  if (route == nullptr)
+    return status(common::StatusCode::kNotFound, "Raft peer manager route does not exist");
+  if (route->reconnect.state() == RaftTransportPeerReconnectState::kConnecting)
+    return on_ready(peer, false, true, now);
+  if (route->reconnect.state() != RaftTransportPeerReconnectState::kConnected)
+    return common::Status::ok();
+  const common::Status closed = implementation_->pool.on_transport_closed(peer);
+  if (!closed.is_ok())
+    return closed;
+  auto failed = implementation_->pool.take_failed_peer(peer);
+  if (!failed.has_value())
+    return failed.error();
+  return route->reconnect.accept_failed_peer(std::move(*failed), now);
+}
+
 common::Status RaftTransportPeerManager::route_result(const raft::GroupId& group,
                                                       const raft::DurableRaftResult& result,
                                                       const TimePoint now) {

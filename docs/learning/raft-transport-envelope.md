@@ -82,6 +82,8 @@ exposes exact connecting/connected descriptor interests, installs completed pair
 pairs, and routes a durable transition only if every destination passes preflight. This completes
 outbound ownership without adding a hidden unbounded queue; the embedding still owns the poll loop
 and the bounded durable-result completion that retries admission.
+Terminal descriptor events immediately finish a connecting attempt or transfer an established
+carrier's complete retry frames into capped backoff, avoiding poll spin until a later deadline.
 
 The inbound TCP server supplies the symmetric listener and fixed connection/poll table. Accepted
 sockets derive their authentication address from the kernel peer endpoint and retain result-ready

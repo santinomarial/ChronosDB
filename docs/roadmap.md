@@ -774,7 +774,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   retains complete results. The durable owner now publishes a portable coalescing completion
   descriptor after owning results, and every timer/transport aggregate exposes its exact earliest
   monotonic deadline. Runtime-lifetime FIFO submission identities now order timer and inbound
-  completion queues. Unified production routing orchestration remains.
+  completion queues; terminal outbound events immediately enter whole-frame capped reconnect.
+  Unified production routing orchestration remains.
 
 - **Scope:** implement a deterministic Raft core for one logical group: elections, replication, commit, membership protocol as scoped by ADR, snapshots, read consistency mechanisms, and simulated transport/storage/time.
 - **Explicit non-scope:** multi-group multiplexing, production network integration, distributed queries, hidden third-party Raft implementation, and serving uncommitted or merely appended entries.

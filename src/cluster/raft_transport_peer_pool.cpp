@@ -199,6 +199,19 @@ common::Status RaftTransportPeerPool::on_ready(const raft::NodeId peer, const bo
                           : found->carrier.on_ready(readable, writable, now);
 }
 
+common::Status RaftTransportPeerPool::on_transport_closed(const raft::NodeId peer) {
+  if (!implementation_)
+    return status(common::StatusCode::kInvalidArgument, "Raft peer pool is empty");
+  Impl::Peer* found = implementation_->find(peer);
+  if (found == nullptr)
+    return status(common::StatusCode::kNotFound, "Raft peer does not exist");
+  static_cast<void>(found->carrier.on_transport_closed());
+  return found->carrier.state() == RaftTransportTlsClientState::kFailed
+             ? common::Status::ok()
+             : status(common::StatusCode::kCorruption,
+                      "Raft peer carrier did not retain terminal closure");
+}
+
 common::Result<RaftTransportFailedPeer>
 RaftTransportPeerPool::take_failed_peer(const raft::NodeId peer) {
   if (!implementation_)

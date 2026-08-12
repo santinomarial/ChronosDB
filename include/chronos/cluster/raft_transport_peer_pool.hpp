@@ -50,6 +50,7 @@ public:
                                             const raft::DurableRaftResult& result, TimePoint now);
   [[nodiscard]] common::Status on_ready(raft::NodeId peer_node_id, bool readable, bool writable,
                                         TimePoint now);
+  [[nodiscard]] common::Status on_transport_closed(raft::NodeId peer_node_id);
   [[nodiscard]] common::Result<RaftTransportFailedPeer> take_failed_peer(raft::NodeId peer_node_id);
   [[nodiscard]] std::optional<TimePoint> next_deadline() const noexcept;
   [[nodiscard]] std::size_t peer_count() const noexcept;

@@ -69,6 +69,7 @@ public:
 
   [[nodiscard]] common::Status try_enqueue(std::vector<std::byte>& encoded_frame, TimePoint now);
   [[nodiscard]] common::Status on_ready(bool readable, bool writable, TimePoint now);
+  [[nodiscard]] common::Status on_transport_closed();
   [[nodiscard]] common::Result<std::vector<std::vector<std::byte>>> drain_retry_frames();
   [[nodiscard]] RaftTransportTlsClientState state() const noexcept;
   [[nodiscard]] RaftTransportTlsClientInterest interest() const noexcept;

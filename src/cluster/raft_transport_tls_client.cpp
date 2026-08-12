@@ -274,6 +274,14 @@ common::Status RaftTransportTlsClient::on_ready(const bool readable, const bool 
   return impl.advance_write(readable, writable, now);
 }
 
+common::Status RaftTransportTlsClient::on_transport_closed() {
+  if (!implementation_)
+    return invalid("Raft TLS client is empty");
+  if (implementation_->state_ == RaftTransportTlsClientState::kFailed)
+    return implementation_->failure_;
+  return implementation_->fail(unavailable("Raft TLS output transport closed"));
+}
+
 common::Result<std::vector<std::vector<std::byte>>> RaftTransportTlsClient::drain_retry_frames() {
   std::vector<std::vector<std::byte>> frames;
   if (!implementation_)

@@ -38,6 +38,7 @@ public:
   [[nodiscard]] common::Status drive(TimePoint now);
   [[nodiscard]] common::Status on_ready(raft::NodeId peer_node_id, bool readable, bool writable,
                                         TimePoint now);
+  [[nodiscard]] common::Status on_transport_closed(raft::NodeId peer_node_id, TimePoint now);
   [[nodiscard]] common::Status route_result(const raft::GroupId& group_id,
                                             const raft::DurableRaftResult& result, TimePoint now);
   [[nodiscard]] common::Result<std::vector<RaftTransportPeerInterest>> interests() const;
