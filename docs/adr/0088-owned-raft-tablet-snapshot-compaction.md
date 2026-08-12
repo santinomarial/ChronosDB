@@ -43,8 +43,8 @@ reinterpreting immutable bytes.
 
 Repeated compaction reloads the prior application prefix, so logical Raft-log reclamation does not
 lose rows or retry identities. This command-preserving v1 representation favors correctness over
-snapshot size. Physical reclamation of superseded shared log records and obsolete application
-snapshot files remains a separate pin/retention protocol.
+snapshot size. ADRs 0269 and 0270 subsequently add caller-triggered shared-log and application-file
+reclamation after their exact durable authorities are validated.
 
 Compacting Raft first was rejected because a crash could remove the only recovery source. Letting
 callers supply voters, terms, or configuration indexes was rejected because those fields are
@@ -58,4 +58,4 @@ owned snapshot, applies an exact retry, extends the snapshot to a second boundar
 committed suffix unapplied, restarts, and reconstructs both the compacted prefix and suffix with
 their exact row/retry counts and final group/index frontier. Fault injection at every installation
 and runtime-persistence boundary, obsolete-file reclamation, follower transfer, and physical shared-
-log reclamation remain deferred.
+log/application-file reclamation fault injection remains deferred.

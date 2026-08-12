@@ -208,6 +208,13 @@ TEST(RaftTabletStateMachineTest, RebuildsCompactedPrefixThenCommittedSuffixFromI
     EXPECT_EQ(compacted_again->snapshot.last_included_index, 2U);
     EXPECT_EQ(compacted_again->application_entries, 2U);
     EXPECT_TRUE(durable.find_group(group_id())->persistent_state().log.empty());
+    auto reclaimed = machine->reclaim_obsolete_snapshots();
+    ASSERT_TRUE(reclaimed.has_value()) << reclaimed.error().to_string();
+    EXPECT_EQ(reclaimed->authoritative_index, 2U);
+    EXPECT_EQ(reclaimed->reclaimed_files, 1U);
+    EXPECT_FALSE(
+        std::filesystem::exists(snapshot_directory / "snapshot-00000000000000000001.rtas"));
+    EXPECT_TRUE(std::filesystem::exists(snapshot_directory / "snapshot-00000000000000000002.rtas"));
 
     ASSERT_TRUE(
         durable

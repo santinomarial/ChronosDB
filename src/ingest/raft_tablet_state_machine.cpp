@@ -505,6 +505,32 @@ RaftTabletStateMachine::compact_applied_prefix(const raft::LogIndex last_include
                                        std::move(part_set_checksum));
 }
 
+common::Result<RaftTabletSnapshotReclamationReport>
+RaftTabletStateMachine::reclaim_obsolete_snapshots() {
+  if (!impl_->failure.is_ok())
+    return common::make_unexpected(impl_->failure);
+  if (!impl_->snapshot_storage.has_value()) {
+    return common::make_unexpected(
+        unsupported("Raft tablet snapshot reclamation requires snapshot-storage ownership"));
+  }
+  const raft::RaftNode* const node = impl_->runtime->find_group(impl_->group_id);
+  if (node == nullptr)
+    return common::make_unexpected(impl_->fail(unavailable("Raft tablet group disappeared")));
+  const raft::SnapshotMetadata& snapshot = node->persistent_state().snapshot;
+  if (snapshot.last_included_index == 0U) {
+    if (impl_->installed_snapshot.has_value()) {
+      return common::make_unexpected(
+          impl_->fail(corruption("Raft application snapshot boundary moved backward")));
+    }
+    return impl_->snapshot_storage->reclaim_obsolete(std::nullopt);
+  }
+  if (!impl_->installed_snapshot.has_value() || *impl_->installed_snapshot != snapshot) {
+    return common::make_unexpected(impl_->fail(
+        unsupported("Raft tablet reclamation cannot cross a different application snapshot")));
+  }
+  return impl_->snapshot_storage->reclaim_obsolete(snapshot.last_included_index);
+}
+
 common::Result<raft::QuorumSyncReceipt>
 RaftTabletStateMachine::prove_applied_quorum_sync(const raft::LogIndex index) const {
   if (!impl_->failure.is_ok()) {

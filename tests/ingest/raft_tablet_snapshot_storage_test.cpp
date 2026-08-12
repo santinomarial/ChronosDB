@@ -154,5 +154,31 @@ TEST(RaftTabletSnapshotStorageTest, CleansInterruptedTemporaryAndRejectsCorruptI
   EXPECT_EQ(latest.error().code(), common::StatusCode::kCorruption);
 }
 
+TEST(RaftTabletSnapshotStorageTest, ReclaimsOnlyFilesOutsideDurableRaftAuthority) {
+  TemporaryDirectory directory;
+  auto storage = RaftTabletSnapshotStorage::create(config(directory));
+  ASSERT_TRUE(storage.has_value()) << storage.error().to_string();
+  ASSERT_TRUE(storage->install(snapshot(9U)).has_value());
+  ASSERT_TRUE(storage->install(snapshot(10U)).has_value());
+  ASSERT_TRUE(storage->install(snapshot(11U)).has_value());
+
+  auto reclaimed = storage->reclaim_obsolete(10U);
+
+  ASSERT_TRUE(reclaimed.has_value()) << reclaimed.error().to_string();
+  EXPECT_EQ(reclaimed->authoritative_index, 10U);
+  EXPECT_EQ(reclaimed->reclaimed_files, 2U);
+  EXPECT_EQ(storage->load(9U).error().code(), common::StatusCode::kNotFound);
+  EXPECT_TRUE(storage->load(10U).has_value());
+  EXPECT_EQ(storage->load(11U).error().code(), common::StatusCode::kNotFound);
+
+  auto orphaned = storage->reclaim_obsolete(std::nullopt);
+  ASSERT_TRUE(orphaned.has_value()) << orphaned.error().to_string();
+  EXPECT_FALSE(orphaned->authoritative_index.has_value());
+  EXPECT_EQ(orphaned->reclaimed_files, 1U);
+  auto latest = storage->load_latest();
+  ASSERT_TRUE(latest.has_value()) << latest.error().to_string();
+  EXPECT_FALSE(latest->has_value());
+}
+
 } // namespace
 } // namespace chronos::ingest

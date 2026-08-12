@@ -810,8 +810,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   exact application commands to a newer applied boundary, installs them durably first, and then
   compacts Raft to matching metadata. Node-wide shared physical-log reclamation now persists one
   fresh full state per resident group in a new segment, installs a checksummed recovery anchor, and
-  only then removes older whole segments. Obsolete application snapshot-file reclamation is not
-  implemented. A bounded FIFO asynchronous owner now exclusively runs the durable runtime,
+  only then removes older whole segments. Tablet and metadata owners now exact-match durable Raft
+  snapshot authority before explicitly reclaiming every older or crash-orphaned future application
+  snapshot and directory-syncing cleanup. A bounded FIFO asynchronous owner now exclusively runs
+  the durable runtime,
   applies explicit batch/operation backpressure, publishes owning completions, drains on shutdown,
   and fails queued work closed after terminal storage errors; group-aware fairness remains deferred. A leader
   under stable or joint membership can now produce a checked quorum-sync receipt after

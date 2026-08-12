@@ -46,8 +46,9 @@ A real-filesystem test applies a complete schema and table policy, installs the 
 snapshot, compacts Raft, commits a suffix node command, closes both owners, proves recovery without
 the snapshot is rejected, and reconstructs the exact complete catalog from snapshot plus suffix.
 ADR 0269 now provides node-wide shared-log reclamation after every resident group has a fresh full
-state record. Crash injection, snapshot transfer, old application-snapshot reclamation, fuzzing, and
-large catalogs remain deferred.
+state record, and ADR 0270 removes every application snapshot except the exact Raft authority. Crash
+injection, snapshot transfer, reclamation fault injection, fuzzing, and large catalogs remain
+deferred.
 
 Invariants 1–6, 8, 10, 11, 14, and 18 apply.
 

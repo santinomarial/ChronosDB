@@ -199,8 +199,9 @@
 - Extend the implemented committed-only tablet command application and full retained-log rebuild
   with crash injection around publication/applied-index persistence. Extend the implemented durable
   application-snapshot creation/compaction plus prefix/suffix recovery with mismatch/fault matrices,
-  obsolete-file reclamation and wider physical-log fault matrices; version CSEG/Manifest row identities for Raft source/
-  group positions, and cover query row-version columns and compaction migration. Carry the implemented joint-
+  obsolete-file and physical-log reclamation fault matrices and scheduling; version CSEG/Manifest
+  row identities for Raft source/group positions, and cover query row-version columns and
+  compaction migration. Carry the implemented joint-
   membership quorum-sync/application receipt through authenticated transport, protocol negotiation,
   explicit configuration identity, metrics, timeouts, and minority-loss crash reconciliation before exposing
   the client mode.

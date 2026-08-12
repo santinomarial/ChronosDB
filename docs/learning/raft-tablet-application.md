@@ -92,6 +92,12 @@ the Raft applied index and tablet group/index publication frontier. Client proto
 transport of completed snapshot responses, and automatic scheduling of the implemented node-wide
 physical-log reclamation remain absent.
 
+Application snapshot-file reclamation is explicit and Raft-authoritative. The tablet owner first
+requires its adopted application snapshot to equal durable Raft metadata, exact-loads that file,
+then removes every other canonical final and directory-syncs the cleanup. A higher-index file is not
+preferred: it may be an orphan from a crash before Raft compaction. Snapshot decoding owns all
+bytes, so no live tablet reader retains a file mapping or borrowed span that needs a reclamation pin.
+
 ## Complexity and likely interview questions
 
 Application is linear in committed commands plus decoded column bytes. Retry lookup is `O(log N)`

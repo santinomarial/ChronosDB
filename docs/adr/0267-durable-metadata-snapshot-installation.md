@@ -25,9 +25,10 @@ idempotent retry; different bytes for the same included index are corruption. Fa
 poisons the live owner because durability is uncertain. Loading validates size, framing, group, and
 index/name binding. Highest-index selection does not fall back past a damaged selected final.
 
-This owner proves only immutable local application-snapshot durability. It does not decode nested
-metadata commands, compact Raft, select which applied boundary is safe, reclaim an older snapshot,
-or publish recovered metadata state.
+This owner proves immutable local application-snapshot durability. ADR 0268 composes nested-command
+recovery and owned Raft compaction; ADR 0270 adds explicit cleanup only after exact durable Raft
+authority is supplied. The storage owner alone does not select which applied boundary is safe or
+publish recovered metadata state.
 
 ## Consequences and validation
 
@@ -37,8 +38,8 @@ protocol, with a separate directory and filename namespace so the two authoritie
 
 Real-filesystem tests cover exclusive ownership, first install, exact retry, same-index conflict,
 highest selection after reopen, temporary cleanup, and damaged-final rejection. Crash injection,
-directory/device qualification, old-snapshot reclamation, and runtime recovery composition remain
-deferred.
+directory/device qualification, reclamation fault injection, and wider runtime recovery composition
+remain deferred.
 
 Invariants 1, 2, 4–6, 8, 10, 11, 14, and 18 apply.
 

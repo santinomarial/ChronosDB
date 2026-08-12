@@ -4,6 +4,7 @@
 #include "chronos/common/result.hpp"
 #include "chronos/ingest/raft_tablet_snapshot.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -29,6 +30,11 @@ struct LoadedRaftTabletSnapshot {
   std::string file_name;
   RaftTabletApplicationSnapshot snapshot;
   std::vector<std::byte> bytes;
+};
+
+struct RaftTabletSnapshotReclamationReport {
+  std::optional<raft::LogIndex> authoritative_index;
+  std::size_t reclaimed_files{};
 };
 
 [[nodiscard]] common::Result<std::string>
@@ -57,6 +63,10 @@ public:
   [[nodiscard]] common::Result<LoadedRaftTabletSnapshot>
   load(raft::LogIndex last_included_index) const;
   [[nodiscard]] common::Result<std::optional<LoadedRaftTabletSnapshot>> load_latest() const;
+  // Revalidates the optional Raft-authoritative snapshot, then removes every other canonical final
+  // and synchronizes the directory. A null authority reclaims all crash-orphaned finals.
+  [[nodiscard]] common::Result<RaftTabletSnapshotReclamationReport>
+  reclaim_obsolete(std::optional<raft::LogIndex> authoritative_index);
 
   [[nodiscard]] bool is_usable() const noexcept;
   [[nodiscard]] common::Status poison_status() const;

@@ -135,5 +135,30 @@ TEST(MetadataSnapshotStorageTest, CleansTemporaryAndRejectsDamagedInstalledBytes
   EXPECT_EQ(latest.error().code(), common::StatusCode::kCorruption);
 }
 
+TEST(MetadataSnapshotStorageTest, ReclaimsOlderAndCrashOrphanedFutureSnapshots) {
+  TemporaryDirectory directory;
+  auto storage = MetadataSnapshotStorage::create(config(directory));
+  ASSERT_TRUE(storage.has_value()) << storage.error().to_string();
+  ASSERT_TRUE(storage->install(snapshot(7U)).has_value());
+  ASSERT_TRUE(storage->install(snapshot(8U)).has_value());
+  ASSERT_TRUE(storage->install(snapshot(9U)).has_value());
+
+  auto reclaimed = storage->reclaim_obsolete(8U);
+
+  ASSERT_TRUE(reclaimed.has_value()) << reclaimed.error().to_string();
+  EXPECT_EQ(reclaimed->authoritative_index, 8U);
+  EXPECT_EQ(reclaimed->reclaimed_files, 2U);
+  EXPECT_EQ(storage->load(7U).error().code(), common::StatusCode::kNotFound);
+  EXPECT_TRUE(storage->load(8U).has_value());
+  EXPECT_EQ(storage->load(9U).error().code(), common::StatusCode::kNotFound);
+
+  auto orphaned = storage->reclaim_obsolete(std::nullopt);
+  ASSERT_TRUE(orphaned.has_value()) << orphaned.error().to_string();
+  EXPECT_EQ(orphaned->reclaimed_files, 1U);
+  auto latest = storage->load_latest();
+  ASSERT_TRUE(latest.has_value()) << latest.error().to_string();
+  EXPECT_FALSE(latest->has_value());
+}
+
 } // namespace
 } // namespace chronos::raft

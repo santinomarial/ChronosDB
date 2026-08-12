@@ -1,0 +1,52 @@
+# ADR 0270: Raft-Authoritative Application Snapshot Reclamation
+
+- **Status:** accepted
+- **Date:** 2026-08-12
+- **Owners:** ChronosDB ingestion, metadata, storage, and recoverability maintainers
+- **Extends:** [ADR 0088](0088-owned-raft-tablet-snapshot-compaction.md) and
+  [ADR 0268](0268-owned-metadata-snapshot-compaction.md)
+
+## Context
+
+Tablet and metadata compaction install immutable application snapshots before advancing durable
+Raft snapshot metadata. Repeated compaction therefore leaves older files, and a crash between
+application installation and Raft compaction can leave a higher-index orphan. Selecting the highest
+application file is not safe because only durable Raft state decides which snapshot and retained
+suffix form the authoritative history.
+
+## Decision
+
+Both snapshot-storage owners expose explicit `reclaim_obsolete` operations. A nonzero authoritative
+index is exact-loaded and fully revalidated before mutation. The owner then removes every other
+canonical final snapshot, including older generations and higher-index crash orphans, and
+synchronizes the directory. If durable Raft state has no snapshot, a null authority removes every
+canonical final as an orphan.
+
+`RaftTabletStateMachine` and `DurableMetadataStateMachine` expose the operation only through their
+owned snapshot storage. They first require that the live durable Raft `SnapshotMetadata` exactly
+matches the application snapshot adopted during recovery or compaction. The zero-snapshot case
+requires that no application snapshot was adopted. A cleanup error is returned for retry but does
+not change Raft or application authority and does not fail the state machine closed.
+
+The operation ignores unrelated non-prefixed files consistently with existing storage discovery,
+but rejects malformed or nonregular entries in its recognized snapshot namespace. It never deletes
+the authoritative filename. Partial deletion is safe and retryable because every removal targets a
+non-authoritative immutable file; directory synchronization determines only whether cleanup itself
+survives a crash.
+
+## Consequences and alternatives
+
+Reclamation is caller-triggered rather than part of compaction's success result. This avoids an
+ambiguous error after application installation and Raft compaction have already become durable.
+Automatic highest-file retention was rejected because a pre-Raft crash orphan may have the greatest
+index. Reader pins are unnecessary for v1 because snapshot loads own and decode all bytes before the
+file handle is released; no live state retains mapped or borrowed file storage.
+
+Scheduling, cleanup metrics, syscall fault injection, process-kill matrices, and device
+qualification remain hardening work.
+
+## Validation and invariants
+
+Invariants 1–5, 8, 10, 11, 14, and 18 apply. Real-filesystem tests retain an exact middle authority
+while deleting older and future files, reclaim all files for a zero-snapshot boundary, and exercise
+the tablet and metadata state-machine wrappers after repeated compaction.

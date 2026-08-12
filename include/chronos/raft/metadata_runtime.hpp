@@ -54,6 +54,7 @@ public:
   [[nodiscard]] common::Result<MetadataApplicationReport> apply_committed();
   [[nodiscard]] common::Result<MetadataSnapshotCompactionReport>
   compact_applied_prefix(LogIndex last_included_index);
+  [[nodiscard]] common::Result<MetadataSnapshotReclamationReport> reclaim_obsolete_snapshots();
   [[nodiscard]] common::Result<QuorumSyncReceipt> prove_applied_quorum_sync(LogIndex index) const;
 
   [[nodiscard]] const MetadataStateMachine& state() const noexcept;

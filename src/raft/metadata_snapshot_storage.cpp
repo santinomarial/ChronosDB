@@ -342,6 +342,52 @@ common::Result<std::optional<LoadedMetadataSnapshot>> MetadataSnapshotStorage::l
   return std::optional<LoadedMetadataSnapshot>{std::move(*loaded)};
 }
 
+common::Result<MetadataSnapshotReclamationReport>
+MetadataSnapshotStorage::reclaim_obsolete(const std::optional<LogIndex> authoritative_index) {
+  if (!implementation_)
+    return common::make_unexpected(invalid("metadata snapshot storage was moved from"));
+  Impl& impl = *implementation_;
+  common::Status usable = impl.check_usable();
+  if (!usable.is_ok())
+    return common::make_unexpected(std::move(usable));
+  if (authoritative_index.has_value()) {
+    auto authoritative = load(*authoritative_index);
+    if (!authoritative.has_value())
+      return common::make_unexpected(authoritative.error());
+  }
+  auto entries = impl.directory.list_entries();
+  if (!entries.has_value())
+    return common::make_unexpected(entries.error());
+  std::vector<std::string> obsolete;
+  try {
+    for (const io::DirectoryEntry& entry : *entries) {
+      if (entry.name == kLockFileName || !entry.name.starts_with(kPrefix))
+        continue;
+      auto parsed = parse_name(entry.name, false);
+      if (!parsed.has_value() || entry.type != io::DirectoryEntryType::kRegularFile)
+        return common::make_unexpected(corruption("metadata snapshot directory is noncanonical"));
+      if (!authoritative_index.has_value() || *parsed != *authoritative_index)
+        obsolete.push_back(entry.name);
+    }
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("metadata snapshot reclamation allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("metadata snapshot reclamation exceeded limits"));
+  }
+  for (const std::string& file_name : obsolete) {
+    common::Status removed = impl.directory.remove_file(file_name);
+    if (!removed.is_ok())
+      return common::make_unexpected(with_context("remove obsolete metadata snapshot", removed));
+  }
+  if (!obsolete.empty()) {
+    common::Status synchronized = impl.directory.sync();
+    if (!synchronized.is_ok())
+      return common::make_unexpected(
+          with_context("synchronize metadata snapshot reclamation", synchronized));
+  }
+  return MetadataSnapshotReclamationReport{authoritative_index, obsolete.size()};
+}
+
 bool MetadataSnapshotStorage::is_usable() const noexcept {
   return implementation_ && implementation_->poison.is_ok();
 }

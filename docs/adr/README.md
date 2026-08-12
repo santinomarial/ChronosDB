@@ -304,3 +304,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0267](0267-durable-metadata-snapshot-installation.md) | Durable metadata snapshot installation | accepted |
 | [0268](0268-owned-metadata-snapshot-compaction.md) | Owned metadata snapshot compaction and recovery | accepted |
 | [0269](0269-node-wide-raft-log-reclamation.md) | Node-wide checkpointed Raft log reclamation | accepted |
+| [0270](0270-raft-authoritative-application-snapshot-reclamation.md) | Raft-authoritative application snapshot reclamation | accepted |

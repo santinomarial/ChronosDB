@@ -4,6 +4,7 @@
 #include "chronos/common/result.hpp"
 #include "chronos/raft/metadata_snapshot.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -31,6 +32,11 @@ struct LoadedMetadataSnapshot {
   std::vector<std::byte> bytes;
 };
 
+struct MetadataSnapshotReclamationReport {
+  std::optional<LogIndex> authoritative_index;
+  std::size_t reclaimed_files{};
+};
+
 [[nodiscard]] common::Result<std::string> metadata_snapshot_file_name(LogIndex last_included_index);
 
 // One lock-protected durable directory for one metadata group. Installation exact-validates,
@@ -54,6 +60,8 @@ public:
   install(const MetadataApplicationSnapshot& snapshot);
   [[nodiscard]] common::Result<LoadedMetadataSnapshot> load(LogIndex last_included_index) const;
   [[nodiscard]] common::Result<std::optional<LoadedMetadataSnapshot>> load_latest() const;
+  [[nodiscard]] common::Result<MetadataSnapshotReclamationReport>
+  reclaim_obsolete(std::optional<LogIndex> authoritative_index);
 
   [[nodiscard]] bool is_usable() const noexcept;
   [[nodiscard]] common::Status poison_status() const;

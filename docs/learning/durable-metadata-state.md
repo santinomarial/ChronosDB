@@ -44,6 +44,12 @@ matching metadata. Recovery requires that snapshot, recomputes its entry digest,
 nested command, and then applies only the committed retained suffix. A failed live application
 poisons the owner; restart revalidates authoritative snapshot and log bytes.
 
+Obsolete application snapshots are reclaimed only against the current durable Raft boundary. The
+owner exact-matches its adopted snapshot, revalidates that file, removes every older or future
+canonical final, and synchronizes the directory. With a zero Raft snapshot it can remove all
+pre-compaction crash orphans. Cleanup failure is retryable and does not reinterpret the already
+durable catalog authority.
+
 Command/definition size, names, columns, role arrays, endpoint bytes, replicas, nodes, schemas, and
 tablets are explicitly bounded. Decoding validates fixed headers before length-driven work, owns
 variable data, reconstructs schemas through the public semantic validator, and never dumps or loads

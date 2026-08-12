@@ -68,6 +68,7 @@ public:
   [[nodiscard]] common::Result<RaftTabletSnapshotCompactionReport>
   compact_applied_prefix(raft::LogIndex last_included_index, std::uint64_t manifest_generation,
                          std::array<std::byte, 32U> part_set_checksum);
+  [[nodiscard]] common::Result<RaftTabletSnapshotReclamationReport> reclaim_obsolete_snapshots();
   [[nodiscard]] common::Result<raft::QuorumSyncReceipt>
   prove_applied_quorum_sync(raft::LogIndex index) const;
 

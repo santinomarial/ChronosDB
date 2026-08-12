@@ -460,6 +460,32 @@ DurableMetadataStateMachine::compact_applied_prefix(const LogIndex last_included
   return impl_->compact_applied_prefix(last_included_index);
 }
 
+common::Result<MetadataSnapshotReclamationReport>
+DurableMetadataStateMachine::reclaim_obsolete_snapshots() {
+  if (!impl_->failure.is_ok())
+    return common::make_unexpected(impl_->failure);
+  if (!impl_->snapshot_storage.has_value()) {
+    return common::make_unexpected(
+        unsupported("metadata snapshot reclamation requires snapshot-storage ownership"));
+  }
+  const RaftNode* const node = impl_->runtime->find_group(impl_->group_id);
+  if (node == nullptr)
+    return common::make_unexpected(impl_->fail(unavailable("metadata Raft group disappeared")));
+  const SnapshotMetadata& snapshot = node->persistent_state().snapshot;
+  if (snapshot.last_included_index == 0U) {
+    if (impl_->installed_snapshot.has_value()) {
+      return common::make_unexpected(
+          impl_->fail(corruption("metadata snapshot boundary moved backward")));
+    }
+    return impl_->snapshot_storage->reclaim_obsolete(std::nullopt);
+  }
+  if (!impl_->installed_snapshot.has_value() || *impl_->installed_snapshot != snapshot) {
+    return common::make_unexpected(
+        impl_->fail(unsupported("metadata reclamation cannot cross a different snapshot")));
+  }
+  return impl_->snapshot_storage->reclaim_obsolete(snapshot.last_included_index);
+}
+
 common::Result<QuorumSyncReceipt>
 DurableMetadataStateMachine::prove_applied_quorum_sync(const LogIndex index) const {
   if (!impl_->failure.is_ok())

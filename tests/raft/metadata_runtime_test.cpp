@@ -289,6 +289,10 @@ TEST(DurableMetadataStateMachineTest, InstallsCompactsAndReopensSnapshotPlusComm
   ASSERT_TRUE(applied.has_value()) << applied.error().to_string();
   ASSERT_EQ(applied->last_applied_index, 2U);
 
+  auto first_compaction = metadata->compact_applied_prefix(2U);
+  ASSERT_TRUE(first_compaction.has_value()) << first_compaction.error().to_string();
+  EXPECT_EQ(first_compaction->snapshot.last_included_index, 2U);
+
   ASSERT_TRUE(runtime->execute_batch({{group_id(), StartElectionOperation{}}}).has_value());
   ASSERT_TRUE(runtime->execute_batch({{group_id(), CommitCurrentTermOperation{}}}).has_value());
   applied = metadata->apply_committed();
@@ -303,6 +307,14 @@ TEST(DurableMetadataStateMachineTest, InstallsCompactsAndReopensSnapshotPlusComm
   EXPECT_EQ(compacted->application_entries, 2U);
   EXPECT_FALSE(compacted->application_snapshot_already_present);
   EXPECT_TRUE(runtime->find_group(group_id())->persistent_state().log.empty());
+  auto reclaimed = metadata->reclaim_obsolete_snapshots();
+  ASSERT_TRUE(reclaimed.has_value()) << reclaimed.error().to_string();
+  EXPECT_EQ(reclaimed->authoritative_index, 3U);
+  EXPECT_EQ(reclaimed->reclaimed_files, 1U);
+  EXPECT_FALSE(
+      std::filesystem::exists(snapshot_directory / "metadata-snapshot-00000000000000000002.rmas"));
+  EXPECT_TRUE(
+      std::filesystem::exists(snapshot_directory / "metadata-snapshot-00000000000000000003.rmas"));
 
   ASSERT_TRUE(runtime->execute_batch({{group_id(), proposal(ClusterNodeMetadata{1U, "node-1"})}})
                   .has_value());
