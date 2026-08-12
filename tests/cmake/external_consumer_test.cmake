@@ -206,6 +206,8 @@ int main() {
   const auto create_s3_environment_provider =
       &chronos::tiering::S3EnvironmentCredentialProvider::create;
   const auto create_s3_provider_chain = &chronos::tiering::S3CredentialProviderChain::create;
+  const auto create_s3_container_provider =
+      &chronos::tiering::S3ContainerCredentialProvider::create;
   using RestoreTieredCatalog = chronos::common::Status (
       chronos::tiering::TieredPartManager::*)(
       std::span<const chronos::tiering::ColdPartDescriptor>);

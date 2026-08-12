@@ -47,6 +47,17 @@ namespace {
   return std::string{encoded.data(), length};
 }
 
+[[nodiscard]] std::string future_iso_expiration() {
+  const std::time_t future = std::time(nullptr) + 3'600;
+  std::tm utc{};
+  if (::gmtime_r(&future, &utc) == nullptr)
+    return {};
+  std::array<char, 64U> encoded{};
+  const std::size_t length =
+      std::strftime(encoded.data(), encoded.size(), "%Y-%m-%dT%H:%M:%SZ", &utc);
+  return std::string{encoded.data(), length};
+}
+
 struct RecordedRequest {
   std::string method;
   std::string target;
@@ -62,6 +73,8 @@ struct LocalS3Behavior {
   std::optional<std::size_t> fail_multipart_part;
   bool embedded_multipart_completion_error{};
   std::optional<std::string> head_encryption_override;
+  std::optional<std::string> container_credential_response;
+  std::optional<std::string> container_authorization;
 };
 
 class LocalS3Server final {
@@ -221,6 +234,25 @@ private:
     {
       std::scoped_lock lock{mutex_};
       requests_.push_back(*request);
+    }
+    if (behavior_.container_credential_response.has_value()) {
+      const auto authorization = request->headers.find("authorization");
+      const bool authorized = behavior_.container_authorization.has_value()
+                                  ? authorization != request->headers.end() &&
+                                        authorization->second == *behavior_.container_authorization
+                                  : authorization == request->headers.end();
+      if (request->method != "GET" || !authorized) {
+        static_cast<void>(
+            send_all(descriptor,
+                     "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"));
+        return;
+      }
+      const std::string& body = *behavior_.container_credential_response;
+      static_cast<void>(send_all(descriptor, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                                             "Content-Length: " +
+                                                 std::to_string(body.size()) +
+                                                 "\r\nConnection: close\r\n\r\n" + body));
+      return;
     }
     const auto authorization = request->headers.find("authorization");
     const auto signed_date = request->headers.find("x-amz-date");
@@ -816,6 +848,83 @@ TEST(S3CredentialProviderChainTest, StopsOnProviderFailureAndRejectsInvalidCompo
 
   EXPECT_FALSE(S3CredentialProviderChain::create({}).has_value());
   EXPECT_FALSE(S3CredentialProviderChain::create({nullptr}).has_value());
+}
+
+TEST(S3ContainerCredentialProviderTest, CachesRefreshesAndSignsWithTemporaryCredentials) {
+  const std::string response =
+      "{\"AccessKeyId\":\"container-access\",\"SecretAccessKey\":\"container-secret\","
+      "\"Token\":\"container-token\",\"Expiration\":\"" +
+      future_iso_expiration() + "\"}";
+  LocalS3Server credential_server{LocalS3Behavior{.container_credential_response = response,
+                                                  .container_authorization = "Bearer fixture"}};
+  ASSERT_TRUE(credential_server.valid()) << credential_server.failure();
+  S3ContainerCredentialProviderConfig provider_config{
+      .endpoint = "http://127.0.0.1:" + std::to_string(credential_server.port()) + "/credentials",
+      .authorization_token = "Bearer fixture",
+      .connect_timeout = std::chrono::milliseconds{1'000},
+      .request_timeout = std::chrono::milliseconds{2'000},
+      .require_tls = false};
+  auto provider = S3ContainerCredentialProvider::create(provider_config);
+  ASSERT_TRUE(provider.has_value()) << provider.error().to_string();
+
+  auto first = (*provider)->acquire(S3CredentialRequest::kCurrent);
+  ASSERT_TRUE(first.has_value()) << first.error().to_string();
+  EXPECT_EQ(first->access_key_id, "container-access");
+  ASSERT_TRUE(first->session_token.has_value());
+  EXPECT_EQ(*first->session_token, "container-token");
+  ASSERT_TRUE((*provider)->acquire(S3CredentialRequest::kCurrent).has_value());
+  EXPECT_EQ(credential_server.requests().size(), 1U);
+  ASSERT_TRUE((*provider)->acquire(S3CredentialRequest::kRefresh).has_value());
+  EXPECT_EQ(credential_server.requests().size(), 2U);
+  EXPECT_EQ(credential_server.requests().front().headers.at("authorization"), "Bearer fixture");
+
+  LocalS3Server s3_server{
+      LocalS3Behavior{.access_key_id = "container-access", .session_token = "container-token"}};
+  ASSERT_TRUE(s3_server.valid()) << s3_server.failure();
+  S3ObjectStoreConfig store_config{.endpoint =
+                                       "http://127.0.0.1:" + std::to_string(s3_server.port()),
+                                   .region = "us-east-1",
+                                   .bucket = "chronos-test",
+                                   .credential_provider = *provider,
+                                   .connect_timeout = std::chrono::milliseconds{1'000},
+                                   .request_timeout = std::chrono::milliseconds{2'000},
+                                   .maximum_response_bytes = 1024U,
+                                   .require_tls = false};
+  auto store = S3ObjectStore::create(std::move(store_config));
+  ASSERT_TRUE(store.has_value()) << store.error().to_string();
+  const std::vector<std::byte> bytes{std::byte{0x51U}};
+  ASSERT_TRUE(
+      (*store)->put_if_absent("parts/container", bytes, ingest::sha256(bytes).value()).has_value());
+  EXPECT_EQ(credential_server.requests().size(), 2U);
+  EXPECT_TRUE(s3_server.failure().empty()) << s3_server.failure();
+  EXPECT_TRUE(credential_server.failure().empty()) << credential_server.failure();
+}
+
+TEST(S3ContainerCredentialProviderTest, RejectsMalformedResponseAndInsecureDefault) {
+  const std::string secret{"do-not-leak-container-secret"};
+  LocalS3Server credential_server{
+      LocalS3Behavior{.container_credential_response =
+                          "{\"AccessKeyId\":\"container-access\",\"SecretAccessKey\":\"" + secret +
+                          "\",\"Expiration\":\"" + future_iso_expiration() + "\"}"}};
+  ASSERT_TRUE(credential_server.valid()) << credential_server.failure();
+  S3ContainerCredentialProviderConfig config{
+      .endpoint = "http://127.0.0.1:" + std::to_string(credential_server.port()) + "/credentials",
+      .connect_timeout = std::chrono::milliseconds{1'000},
+      .request_timeout = std::chrono::milliseconds{2'000}};
+  EXPECT_FALSE(S3ContainerCredentialProvider::create(config).has_value());
+  config.require_tls = false;
+  auto provider = S3ContainerCredentialProvider::create(config);
+  ASSERT_TRUE(provider.has_value()) << provider.error().to_string();
+  auto credentials = (*provider)->acquire(S3CredentialRequest::kCurrent);
+  ASSERT_FALSE(credentials.has_value());
+  EXPECT_EQ(credentials.error().code(), common::StatusCode::kUnauthenticated);
+  EXPECT_FALSE(credentials.error().to_string().contains(secret));
+
+  config.endpoint = "http://user:secret@127.0.0.1/credentials";
+  auto rejected = S3ContainerCredentialProvider::create(std::move(config));
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_FALSE(rejected.error().to_string().contains("secret"));
+  EXPECT_TRUE(credential_server.failure().empty()) << credential_server.failure();
 }
 
 TEST(S3ObjectStoreTest, SignsConditionalPutVerifiesRetryAndReadsExactRange) {

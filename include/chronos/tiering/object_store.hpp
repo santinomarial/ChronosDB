@@ -200,6 +200,40 @@ private:
   std::unique_ptr<Impl> impl_;
 };
 
+struct S3ContainerCredentialProviderConfig {
+  // Explicit container-agent credential URL. Redirects and ambient proxies are disabled.
+  std::string endpoint;
+  std::optional<std::string> authorization_token;
+  std::optional<std::string> ca_bundle_path;
+  std::chrono::milliseconds connect_timeout{1'000};
+  std::chrono::milliseconds request_timeout{2'000};
+  std::chrono::seconds refresh_before_expiration{300};
+  std::size_t maximum_response_bytes{64U * 1024U};
+  bool require_tls{true};
+};
+
+// Explicit ECS/EKS-compatible container credential provider. It never reads process environment,
+// token files, proxies, or metadata endpoints implicitly. Cached credentials are returned only
+// before the configured expiration refresh window; kRefresh always contacts the configured agent.
+class S3ContainerCredentialProvider final : public S3CredentialProvider {
+public:
+  S3ContainerCredentialProvider() = delete;
+  ~S3ContainerCredentialProvider() override;
+  S3ContainerCredentialProvider(const S3ContainerCredentialProvider&) = delete;
+  S3ContainerCredentialProvider& operator=(const S3ContainerCredentialProvider&) = delete;
+  S3ContainerCredentialProvider(S3ContainerCredentialProvider&&) = delete;
+  S3ContainerCredentialProvider& operator=(S3ContainerCredentialProvider&&) = delete;
+
+  [[nodiscard]] static common::Result<std::shared_ptr<S3ContainerCredentialProvider>>
+  create(S3ContainerCredentialProviderConfig config);
+  [[nodiscard]] common::Result<S3Credentials> acquire(S3CredentialRequest request) override;
+
+private:
+  class Impl;
+  explicit S3ContainerCredentialProvider(std::unique_ptr<Impl> impl) noexcept;
+  std::unique_ptr<Impl> impl_;
+};
+
 // Synchronous S3-compatible HTTPS backend. Each operation owns an independent libcurl easy handle,
 // so callers may invoke const and non-const operations concurrently. Requests use SigV4, never
 // follow redirects, enforce finite timeouts and response bounds, and use If-None-Match for

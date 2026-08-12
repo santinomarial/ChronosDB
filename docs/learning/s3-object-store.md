@@ -16,6 +16,10 @@ values, and stays immutable. `put_if_absent` borrows upload bytes only until the
 returns. `S3CredentialProviderChain` composes an explicit ordered provider list: only `NOT_FOUND`
 advances initial selection, and the first successful identity remains pinned for current and refresh
 requests so authorization rejection cannot downgrade credentials.
+`S3ContainerCredentialProvider` is an explicit refreshable workload option for ECS/EKS-compatible
+agents: it owns one reviewed endpoint/token/CA/timeout policy, parses bounded temporary credentials,
+and caches them only outside an expiration refresh window. It never reads environment or token files
+and never inherits redirects or proxies.
 `stat` and `get_range` are const and each attempt owns a fresh libcurl easy handle, credential
 value, signature, header list, and bounded response buffer. The store itself is therefore safe for
 concurrent calls, while destruction still requires ordinary external lifetime exclusion.

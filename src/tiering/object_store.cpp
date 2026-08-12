@@ -853,6 +853,244 @@ S3CredentialProviderChain::acquire(const S3CredentialRequest request) {
                                                 "S3 credential provider chain found no identity"});
 }
 
+[[nodiscard]] common::Result<std::string>
+extract_json_string_field(const std::string_view json, const std::string_view field,
+                          const std::size_t maximum_length) {
+  try {
+    const std::string needle = "\"" + std::string{field} + "\"";
+    const std::size_t field_offset = json.find(needle);
+    if (field_offset == std::string_view::npos ||
+        json.find(needle, field_offset + needle.size()) != std::string_view::npos) {
+      return common::make_unexpected(common::Status{
+          common::StatusCode::kUnauthenticated, "container credential response field is absent"});
+    }
+    std::size_t cursor = field_offset + needle.size();
+    while (cursor < json.size() && (json[cursor] == ' ' || json[cursor] == '\t' ||
+                                    json[cursor] == '\r' || json[cursor] == '\n'))
+      ++cursor;
+    if (cursor == json.size() || json[cursor++] != ':') {
+      return common::make_unexpected(common::Status{
+          common::StatusCode::kUnauthenticated, "container credential response field is invalid"});
+    }
+    while (cursor < json.size() && (json[cursor] == ' ' || json[cursor] == '\t' ||
+                                    json[cursor] == '\r' || json[cursor] == '\n'))
+      ++cursor;
+    if (cursor == json.size() || json[cursor++] != '"') {
+      return common::make_unexpected(common::Status{
+          common::StatusCode::kUnauthenticated, "container credential response value is invalid"});
+    }
+    std::string value;
+    value.reserve(std::min(maximum_length, json.size() - cursor));
+    while (cursor < json.size() && json[cursor] != '"') {
+      const unsigned char byte = static_cast<unsigned char>(json[cursor++]);
+      if (byte < 0x20U || byte == '\\') {
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kUnauthenticated,
+                           "container credential response value uses unsupported escaping"});
+      }
+      if (value.size() == maximum_length) {
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kUnauthenticated,
+                           "container credential response value is oversized"});
+      }
+      value.push_back(static_cast<char>(byte));
+    }
+    if (cursor == json.size() || value.empty()) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kUnauthenticated,
+                         "container credential response value is incomplete"});
+    }
+    return value;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("container credential response allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("container credential response exceeds limits"));
+  }
+}
+
+[[nodiscard]] std::optional<std::chrono::sys_seconds>
+parse_utc_expiration(const std::string_view encoded) noexcept {
+  if (encoded.size() != 20U || encoded[4] != '-' || encoded[7] != '-' || encoded[10] != 'T' ||
+      encoded[13] != ':' || encoded[16] != ':' || encoded[19] != 'Z')
+    return std::nullopt;
+  unsigned year_value{};
+  HttpDateFields fields;
+  if (!parse_decimal_exact(encoded.substr(0U, 4U), year_value) ||
+      !parse_decimal_exact(encoded.substr(5U, 2U), fields.month) ||
+      !parse_decimal_exact(encoded.substr(8U, 2U), fields.day) ||
+      !parse_decimal_exact(encoded.substr(11U, 2U), fields.hour) ||
+      !parse_decimal_exact(encoded.substr(14U, 2U), fields.minute) ||
+      !parse_decimal_exact(encoded.substr(17U, 2U), fields.second))
+    return std::nullopt;
+  fields.year = static_cast<int>(year_value);
+  using namespace std::chrono;
+  const year_month_day date{year{fields.year}, month{fields.month}, day{fields.day}};
+  if (!date.ok() || fields.hour >= 24U || fields.minute >= 60U || fields.second >= 60U)
+    return std::nullopt;
+  return sys_days{date} + hours{fields.hour} + minutes{fields.minute} + seconds{fields.second};
+}
+
+class S3ContainerCredentialProvider::Impl {
+public:
+  explicit Impl(S3ContainerCredentialProviderConfig configured) : config(std::move(configured)) {}
+
+  struct Cached {
+    S3Credentials credentials;
+    std::chrono::sys_seconds expiration;
+  };
+
+  [[nodiscard]] common::Result<Cached> fetch() const {
+    try {
+      CurlHandle handle{curl_easy_init()};
+      if (!handle)
+        return common::make_unexpected(
+            exhausted("container credential HTTP handle allocation failed"));
+      ResponseCapture capture;
+      capture.maximum_body_bytes = config.maximum_response_bytes;
+      auto set = [&](const CURLoption option, const auto value) -> bool {
+        return curl_easy_setopt(handle.get(), option, value) == CURLE_OK;
+      };
+      const bool https = config.endpoint.starts_with("https://");
+      if (!set(CURLOPT_URL, config.endpoint.c_str()) || !set(CURLOPT_PROXY, "") ||
+          !set(CURLOPT_CONNECTTIMEOUT_MS, static_cast<long>(config.connect_timeout.count())) ||
+          !set(CURLOPT_TIMEOUT_MS, static_cast<long>(config.request_timeout.count())) ||
+          !set(CURLOPT_NOSIGNAL, 1L) || !set(CURLOPT_FOLLOWLOCATION, 0L) ||
+          !set(CURLOPT_MAXREDIRS, 0L) || !set(CURLOPT_PROTOCOLS_STR, https ? "https" : "http") ||
+          !set(CURLOPT_HTTP_CONTENT_DECODING, 0L) ||
+          !set(CURLOPT_SSL_VERIFYPEER, https ? 1L : 0L) ||
+          !set(CURLOPT_SSL_VERIFYHOST, https ? 2L : 0L) ||
+          !set(CURLOPT_WRITEFUNCTION, &capture_body) || !set(CURLOPT_WRITEDATA, &capture) ||
+          (config.ca_bundle_path.has_value() &&
+           !set(CURLOPT_CAINFO, config.ca_bundle_path->c_str()))) {
+        return common::make_unexpected(common::Status{
+            common::StatusCode::kInternal, "container credential HTTP configuration failed"});
+      }
+      HeaderList headers;
+      if (config.authorization_token.has_value()) {
+        const common::Status appended =
+            append_header(headers, "Authorization: " + *config.authorization_token);
+        if (!appended.is_ok())
+          return common::make_unexpected(appended);
+        if (!set(CURLOPT_HTTPHEADER, headers.get())) {
+          return common::make_unexpected(common::Status{
+              common::StatusCode::kInternal, "container credential HTTP configuration failed"});
+        }
+      }
+      const CURLcode performed = curl_easy_perform(handle.get());
+      if (performed != CURLE_OK)
+        return common::make_unexpected(curl_failure(performed, capture.body_limit_exhausted));
+      long status{};
+      if (curl_easy_getinfo(handle.get(), CURLINFO_RESPONSE_CODE, &status) != CURLE_OK)
+        return common::make_unexpected(common::Status{
+            common::StatusCode::kIoError, "container credential response status is unavailable"});
+      if (status == 401L || status == 403L || status == 404L) {
+        return common::make_unexpected(common::Status{common::StatusCode::kUnauthenticated,
+                                                      "container credential request was rejected"});
+      }
+      if (status != 200L)
+        return common::make_unexpected(common::Status{
+            common::StatusCode::kUnavailable, "container credential endpoint is unavailable"});
+      const std::string_view json{reinterpret_cast<const char*>(capture.body.data()),
+                                  capture.body.size()};
+      auto access = extract_json_string_field(json, "AccessKeyId", 1024U);
+      auto secret = extract_json_string_field(json, "SecretAccessKey", 4096U);
+      auto token = extract_json_string_field(json, "Token", 8192U);
+      auto expiration = extract_json_string_field(json, "Expiration", 64U);
+      if (!access.has_value())
+        return common::make_unexpected(access.error());
+      if (!secret.has_value())
+        return common::make_unexpected(secret.error());
+      if (!token.has_value())
+        return common::make_unexpected(token.error());
+      if (!expiration.has_value())
+        return common::make_unexpected(expiration.error());
+      auto expires_at = parse_utc_expiration(*expiration);
+      S3Credentials credentials{.access_key_id = std::move(*access),
+                                .secret_access_key = std::move(*secret),
+                                .session_token = std::move(*token)};
+      if (!expires_at.has_value() || !valid_credentials(credentials) ||
+          *expires_at <=
+              std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now())) {
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kUnauthenticated,
+                           "container credential response is expired or invalid"});
+      }
+      return Cached{.credentials = std::move(credentials), .expiration = *expires_at};
+    } catch (const std::bad_alloc&) {
+      return common::make_unexpected(
+          exhausted("container credential acquisition allocation failed"));
+    } catch (const std::length_error&) {
+      return common::make_unexpected(exhausted("container credential acquisition exceeds limits"));
+    }
+  }
+
+  S3ContainerCredentialProviderConfig config;
+  mutable std::mutex mutex;
+  std::optional<Cached> cached;
+};
+
+S3ContainerCredentialProvider::S3ContainerCredentialProvider(std::unique_ptr<Impl> impl) noexcept
+    : impl_(std::move(impl)) {}
+S3ContainerCredentialProvider::~S3ContainerCredentialProvider() = default;
+
+common::Result<std::shared_ptr<S3ContainerCredentialProvider>>
+S3ContainerCredentialProvider::create(S3ContainerCredentialProviderConfig config) {
+  const bool https = config.endpoint.starts_with("https://");
+  const bool http = config.endpoint.starts_with("http://");
+  const std::size_t scheme_length = https ? 8U : 7U;
+  const auto maximum_long = std::chrono::milliseconds{std::numeric_limits<long>::max()};
+  if ((!https && !http) || (config.require_tls && !https) ||
+      config.endpoint.size() <= scheme_length || config.endpoint[scheme_length] == '/' ||
+      config.endpoint.size() > 4096U || config.endpoint.contains('@') ||
+      config.endpoint.contains('#') || contains_control(config.endpoint) ||
+      contains_space(config.endpoint) ||
+      (config.authorization_token.has_value() &&
+       (config.authorization_token->empty() || config.authorization_token->size() > 8192U ||
+        contains_control(*config.authorization_token))) ||
+      (config.ca_bundle_path.has_value() &&
+       (config.ca_bundle_path->empty() || config.ca_bundle_path->size() > 4096U)) ||
+      config.connect_timeout.count() <= 0 || config.connect_timeout > maximum_long ||
+      config.request_timeout.count() <= 0 || config.request_timeout > maximum_long ||
+      config.refresh_before_expiration.count() < 0 ||
+      config.refresh_before_expiration > std::chrono::hours{24 * 7} ||
+      config.maximum_response_bytes == 0U || config.maximum_response_bytes > 1024U * 1024U) {
+    return common::make_unexpected(
+        invalid("container credential provider configuration is invalid"));
+  }
+  if (initialize_curl() != CURLE_OK)
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInternal, "libcurl global initialization failed"});
+  try {
+    return std::shared_ptr<S3ContainerCredentialProvider>{
+        new S3ContainerCredentialProvider{std::make_unique<Impl>(std::move(config))}};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("container credential provider allocation failed"));
+  }
+}
+
+common::Result<S3Credentials>
+S3ContainerCredentialProvider::acquire(const S3CredentialRequest request) {
+  if (request != S3CredentialRequest::kCurrent && request != S3CredentialRequest::kRefresh)
+    return common::make_unexpected(invalid("S3 credential request is invalid"));
+  try {
+    std::scoped_lock lock{impl_->mutex};
+    const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    if (request == S3CredentialRequest::kCurrent && impl_->cached.has_value() &&
+        now + impl_->config.refresh_before_expiration < impl_->cached->expiration) {
+      return impl_->cached->credentials;
+    }
+    auto fetched = impl_->fetch();
+    if (!fetched.has_value())
+      return common::make_unexpected(fetched.error());
+    impl_->cached = std::move(*fetched);
+    return impl_->cached->credentials;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("container credential copy allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("container credential copy exceeds limits"));
+  }
+}
+
 class S3ObjectStore::Impl {
 public:
   enum class Method : std::uint8_t {
