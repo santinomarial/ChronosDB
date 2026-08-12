@@ -4,8 +4,7 @@ include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
 function(chronos_configure_installation)
-  install(
-    TARGETS
+  set(chronos_install_targets
       chronos_common
       chronos_schema
       chronos_columnar
@@ -26,7 +25,12 @@ function(chronos_configure_installation)
       chronos-csegdump
       chronos-flushbench
       chronos-waldump
-      chronos-walbench
+      chronos-walbench)
+  if(CHRONOS_ENABLE_ARROW_INTEROP)
+    list(APPEND chronos_install_targets chronos_interop)
+  endif()
+  install(
+    TARGETS ${chronos_install_targets}
     EXPORT ChronosTargets
     ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
     LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"

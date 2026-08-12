@@ -375,5 +375,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   checksummed object-location authority, exact Manifest v2 binding, add-only installation,
   restart selection, atomic pair publication, reader-pin lifetime, failure poisoning, and lifecycle
   boundaries.
+- [Arrow and Parquet interoperability](learning/arrow-parquet-interoperability.md): optional exact
+  schema-bound import/export, all-logical-type mapping, canonical normalization, limits, atomic
+  output publication, ownership, failure behavior, and CSEG boundary.
 
 Future format, protocol, subsystem, operations, and learning documents should be linked here when they are added by their corresponding roadmap phase.

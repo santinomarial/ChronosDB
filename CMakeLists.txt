@@ -62,6 +62,16 @@ if(NOT TARGET zstd::libzstd)
     message(FATAL_ERROR "The resolved zstd package exports no supported library target")
   endif()
 endif()
+if(CHRONOS_ENABLE_ARROW_INTEROP)
+  find_package(Arrow CONFIG REQUIRED)
+  find_package(Parquet CONFIG REQUIRED)
+  if(ARROW_VERSION VERSION_LESS 25.0 OR ARROW_VERSION VERSION_GREATER_EQUAL 26.0)
+    message(FATAL_ERROR "ChronosDB requires Apache Arrow 25.x")
+  endif()
+  if(PARQUET_VERSION VERSION_LESS 25.0 OR PARQUET_VERSION VERSION_GREATER_EQUAL 26.0)
+    message(FATAL_ERROR "ChronosDB requires Apache Parquet 25.x")
+  endif()
+endif()
 
 set(CHRONOS_BUILD_TYPE "${CMAKE_BUILD_TYPE}")
 if(CHRONOS_BUILD_TYPE STREQUAL "")
@@ -166,6 +176,27 @@ target_link_libraries(chronos_columnar PUBLIC chronos::schema)
 chronos_set_project_warnings(chronos_columnar)
 chronos_enable_sanitizers(chronos_columnar)
 chronos_enable_static_analysis(chronos_columnar)
+
+if(CHRONOS_ENABLE_ARROW_INTEROP)
+  add_library(chronos_interop src/interop/arrow_parquet.cpp)
+  add_library(chronos::interop ALIAS chronos_interop)
+  set_target_properties(chronos_interop PROPERTIES EXPORT_NAME interop CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_interop PUBLIC cxx_std_23)
+  target_include_directories(
+    chronos_interop
+    PUBLIC
+      "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+      "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+  )
+  target_link_libraries(
+    chronos_interop
+    PUBLIC chronos::columnar
+    PRIVATE Arrow::arrow_shared Parquet::parquet_shared
+  )
+  chronos_set_project_warnings(chronos_interop)
+  chronos_enable_sanitizers(chronos_interop)
+  chronos_enable_static_analysis(chronos_interop)
+endif()
 
 add_library(
   chronos_cseg
@@ -1015,6 +1046,22 @@ if(CHRONOS_BUILD_TESTS)
   chronos_enable_sanitizers(chronos_columnar_tests)
   chronos_enable_static_analysis(chronos_columnar_tests)
   gtest_discover_tests(chronos_columnar_tests DISCOVERY_TIMEOUT 30)
+
+  if(CHRONOS_ENABLE_ARROW_INTEROP)
+    add_executable(
+      chronos_interop_tests
+      tests/interop/arrow_parquet_header_self_contained.cpp
+      tests/interop/arrow_parquet_test.cpp
+    )
+    set_target_properties(chronos_interop_tests PROPERTIES CXX_EXTENSIONS OFF)
+    target_compile_features(chronos_interop_tests PRIVATE cxx_std_23)
+    target_include_directories(chronos_interop_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+    target_link_libraries(chronos_interop_tests PRIVATE chronos::interop GTest::gtest_main)
+    chronos_set_project_warnings(chronos_interop_tests)
+    chronos_enable_sanitizers(chronos_interop_tests)
+    chronos_enable_static_analysis(chronos_interop_tests)
+    gtest_discover_tests(chronos_interop_tests DISCOVERY_TIMEOUT 30)
+  endif()
 
   add_executable(
     chronos_cseg_tests

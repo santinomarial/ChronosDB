@@ -228,3 +228,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0191](0191-manifest-retirement-bound-cold-route-removal.md) | Manifest-retirement-bound cold route removal | accepted |
 | [0192](0192-exact-conditional-object-deletion.md) | Exact conditional object deletion | accepted |
 | [0193](0193-reader-pinned-remote-object-reclamation.md) | Reader-pinned remote object reclamation | accepted |
+| [0194](0194-optional-arrow-parquet-interoperability.md) | Optional Apache Arrow and Parquet interoperability | accepted |

@@ -17,7 +17,8 @@ correctness support is not a power-loss durability claim.
 - a C++23 compiler and standard library that provide `std::expected`: GCC 13+, Clang 17+ paired
   with a capable libc++/libstdc++, or a current AppleClang
 - Git, so CMake can fetch pinned test dependencies and optionally record revision metadata
-- OpenSSL 3, Zstandard 1.5.5 or newer, and libcurl 7.75 or newer production development packages
+- OpenSSL 3, Zstandard 1.5.5 or newer, and libcurl 7.75 or newer production development packages;
+  Apache Arrow and Parquet 25.x when optional interoperability is enabled
 - Python only as required by CMake/GoogleTest test discovery
 - clang-format 18 and clang-tidy 18 exactly
 
@@ -50,7 +51,7 @@ Install Xcode Command Line Tools and CMake/Ninja. Homebrew users can run:
 
 ```sh
 xcode-select --install
-brew install cmake ninja llvm llvm@18 openssl@3 zstd
+brew install cmake ninja llvm llvm@18 openssl@3 zstd apache-arrow
 ```
 
 Homebrew's versioned LLVM tools may not be on `PATH`. `scripts/format.sh` searches the standard
@@ -60,6 +61,15 @@ AppleClang builds the implemented portable targets plus the macOS POSIX I/O back
 `fsync` where Linux uses `fdatasync`; this does not advertise a macOS power-loss envelope. Future
 server, direct-I/O, and reactor components may require Linux and will be guarded by explicit platform
 checks rather than weakened portable interfaces.
+
+Arrow IPC and Parquet file import/export are built explicitly and keep third-party types out of
+public headers:
+
+```sh
+cmake --preset debug -DCHRONOS_ENABLE_ARROW_INTEROP=ON
+cmake --build --preset debug --target chronos_interop_tests
+ctest --preset debug -R ArrowParquet
+```
 
 ## Configure, build, and test
 

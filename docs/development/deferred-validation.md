@@ -187,8 +187,10 @@
   TSan coverage for the implemented atomic shared pair publisher; CSEG validation
   before upload, safe local deletion, snapshot/compaction pins, cache concurrency, cache index
   recovery, remote corruption, and page-range checksum integration.
-- Arrow IPC and Parquet import/export providers, schema/logical-type mapping, fixtures, round trips,
-  dependency/SBOM review, and explicit proof that CSEG remains the primary store.
+- Independent Arrow IPC/Parquet fixtures and multi-version compatibility; hostile compression-ratio
+  and allocator-failure injection; Linux package qualification and broader SBOM automation for the
+  implemented optional provider. Every current logical type, schema rejection, corruption, file
+  limits, round trips, dependency ownership, and the CSEG boundary have focused coverage.
 - Cache-hit, upload/download/range scan/restore/request-cost/egress/foreground-impact profiles;
   eviction/property/fuzz/corruption tests; Linux/macOS and install/export validation.
 

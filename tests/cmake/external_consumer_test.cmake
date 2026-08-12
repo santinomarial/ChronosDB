@@ -22,6 +22,10 @@ project(ChronosIngestConsumer LANGUAGES CXX)
 find_package(ChronosDB 0.1 CONFIG REQUIRED)
 add_executable(consumer main.cpp)
 target_link_libraries(consumer PRIVATE chronos::cluster chronos::cseg chronos::head chronos::ingest chronos::manifest chronos::query chronos::network chronos::tiering)
+if(TARGET chronos::interop)
+  target_link_libraries(consumer PRIVATE chronos::interop)
+  target_compile_definitions(consumer PRIVATE CHRONOS_TEST_HAS_INTEROP=1)
+endif()
 target_compile_features(consumer PRIVATE cxx_std_23)
 set(consumer_sanitizers "")
 if(CHRONOS_TEST_ENABLE_ASAN)
@@ -44,6 +48,9 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/columnar/columnar_batch_codec.hpp>
 #include <chronos/columnar/columnar_batch_format.hpp>
 #include <chronos/columnar/column_vector.hpp>
+#ifdef CHRONOS_TEST_HAS_INTEROP
+#include <chronos/interop/arrow_parquet.hpp>
+#endif
 #include <chronos/cluster/tablet_physical_receipt_reclamation.hpp>
 #include <chronos/cluster/distributed_query_transport.hpp>
 #include <chronos/cluster/distributed_query_execution.hpp>

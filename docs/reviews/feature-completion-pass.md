@@ -158,8 +158,10 @@ binding it to an exact Manifest v2 value. One release/acquire tiered publication
 retains a complete compatible Manifest-v2/cold pair to concurrent readers. A fixed checksummed pair
 commit record now makes exact already-durable component generations crash-selectable while ignoring
 higher uncommitted finals. Credential refresh/provider policy, automatic retry/backoff, multipart
-upload, safe deletion, CSEG pre-upload validator
-connection, cache concurrency, and Arrow/Parquet import/export remain incomplete.
+upload, CSEG pre-upload validator connection, cache concurrency, and broader Arrow/Parquet external
+fixture and resource-fault qualification remain incomplete. The optional Arrow/Parquet provider now
+round-trips all current logical types through an exact caller-supplied schema and keeps CSEG as the
+primary store.
 
 ## End-to-end integration state
 
