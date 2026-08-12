@@ -107,9 +107,10 @@ public:
   };
 
   Impl(DurableMultiRaftRuntime runtime, const AsyncDurableMultiRaftLimits configured,
-       const std::array<int, 2> completion_pipe) noexcept
+       const std::array<int, 2> completion_pipe,
+       std::shared_ptr<AsyncDurableRaftWorkerExtension> extension) noexcept
       : runtime_(std::move(runtime)), limits_(configured), completion_pipe_(completion_pipe) {
-    metrics_.accepting = true;
+    extension_ = std::move(extension);
   }
 
   ~Impl() noexcept {
@@ -131,7 +132,9 @@ public:
       return common::Status{common::StatusCode::kResourceExhausted,
                             std::string{"cannot start durable Multi-Raft worker: "} + error.what()};
     }
-    return common::Status::ok();
+    std::unique_lock lock{initialization_mutex_};
+    initialization_condition_.wait(lock, [this] { return initialization_complete_; });
+    return initialization_status_;
   }
 
   [[nodiscard]] common::Result<AsyncDurableRaftCompletion>
@@ -294,7 +297,26 @@ private:
 
   [[nodiscard]] BatchResult execute(Task& task) {
     try {
-      return runtime_.execute_batch(std::move(task.requests));
+      std::unique_ptr<AsyncDurableRaftWorkerBatchContext> context;
+      if (extension_ != nullptr) {
+        auto prepared = extension_->prepare_batch(runtime_, task.requests);
+        if (!prepared.has_value())
+          return common::make_unexpected(prepared.error());
+        if (*prepared == nullptr) {
+          return common::make_unexpected(
+              common::Status{common::StatusCode::kInternal,
+                             "durable Raft worker extension returned a missing batch context"});
+        }
+        context = std::move(*prepared);
+      }
+      BatchResult result = runtime_.execute_batch(std::move(task.requests));
+      if (!result.has_value() || extension_ == nullptr)
+        return result;
+      const common::Status completed =
+          extension_->complete_batch(runtime_, std::move(context), *result);
+      if (!completed.is_ok())
+        return common::make_unexpected(completed);
+      return result;
     } catch (const std::bad_alloc&) {
       return common::make_unexpected(common::Status{
           common::StatusCode::kResourceExhausted,
@@ -311,6 +333,30 @@ private:
   }
 
   void close_runtime() {
+    if (extension_ != nullptr) {
+      common::Status extension_closed = common::Status::ok();
+      try {
+        extension_closed = extension_->shutdown(runtime_);
+      } catch (const std::bad_alloc&) {
+        extension_closed =
+            common::Status{common::StatusCode::kResourceExhausted,
+                           "durable Raft worker extension shutdown exhausted memory"};
+      } catch (const std::exception& error) {
+        extension_closed = common::Status{
+            common::StatusCode::kInternal,
+            std::string{"durable Raft worker extension shutdown threw: "} + error.what()};
+      } catch (...) {
+        extension_closed = common::Status{common::StatusCode::kInternal,
+                                          "durable Raft worker extension shutdown threw"};
+      }
+      if (!extension_closed.is_ok()) {
+        const std::lock_guard lock{mutex_};
+        if (terminal_status_.is_ok())
+          terminal_status_ = extension_closed;
+        metrics_.terminal_failure = true;
+        metrics_.accepting = false;
+      }
+    }
     const common::Status closed = runtime_.close();
     if (!closed.is_ok()) {
       const std::lock_guard lock{mutex_};
@@ -322,6 +368,41 @@ private:
   }
 
   void run() {
+    common::Status initialized = common::Status::ok();
+    try {
+      if (extension_ != nullptr)
+        initialized = extension_->initialize(runtime_);
+    } catch (const std::bad_alloc&) {
+      initialized = common::Status{common::StatusCode::kResourceExhausted,
+                                   "durable Raft worker extension initialization exhausted memory"};
+    } catch (const std::exception& error) {
+      initialized = common::Status{
+          common::StatusCode::kInternal,
+          std::string{"durable Raft worker extension initialization threw: "} + error.what()};
+    } catch (...) {
+      initialized = common::Status{common::StatusCode::kInternal,
+                                   "durable Raft worker extension initialization threw"};
+    }
+    {
+      const std::lock_guard lock{mutex_};
+      if (initialized.is_ok()) {
+        metrics_.accepting = true;
+      } else {
+        terminal_status_ = initialized;
+        metrics_.terminal_failure = true;
+        metrics_.accepting = false;
+      }
+    }
+    {
+      const std::lock_guard lock{initialization_mutex_};
+      initialization_status_ = initialized;
+      initialization_complete_ = true;
+    }
+    initialization_condition_.notify_all();
+    if (!initialized.is_ok()) {
+      close_runtime();
+      return;
+    }
     while (true) {
       std::unique_ptr<Task> task;
       {
@@ -361,6 +442,7 @@ private:
 
   DurableMultiRaftRuntime runtime_;
   AsyncDurableMultiRaftLimits limits_;
+  std::shared_ptr<AsyncDurableRaftWorkerExtension> extension_;
   mutable std::mutex mutex_;
   std::condition_variable condition_;
   std::deque<std::unique_ptr<Task>> queue_;
@@ -369,6 +451,10 @@ private:
   bool shutdown_requested_{};
   std::thread worker_;
   std::mutex shutdown_mutex_;
+  std::mutex initialization_mutex_;
+  std::condition_variable initialization_condition_;
+  common::Status initialization_status_;
+  bool initialization_complete_{};
   std::array<int, 2> completion_pipe_{-1, -1};
   std::uint64_t next_submission_sequence_{1U};
 };
@@ -415,7 +501,8 @@ AsyncDurableMultiRaftRuntime::AsyncDurableMultiRaftRuntime(std::unique_ptr<Impl>
 
 common::Result<AsyncDurableMultiRaftRuntime> AsyncDurableMultiRaftRuntime::create_new(
     const NodeId local_node_id, const RaftPersistentLogConfig& log_config,
-    std::vector<RaftGroupConfiguration> groups, const AsyncDurableMultiRaftLimits limits) {
+    std::vector<RaftGroupConfiguration> groups, const AsyncDurableMultiRaftLimits limits,
+    std::shared_ptr<AsyncDurableRaftWorkerExtension> extension) {
   if (limits.maximum_pending_batches == 0U || limits.maximum_pending_operations == 0U) {
     return common::make_unexpected(invalid("asynchronous durable Multi-Raft limits are invalid"));
   }
@@ -428,7 +515,8 @@ common::Result<AsyncDurableMultiRaftRuntime> AsyncDurableMultiRaftRuntime::creat
     return common::make_unexpected(completion_pipe.error());
   std::unique_ptr<Impl> impl;
   try {
-    impl = std::make_unique<Impl>(std::move(*runtime), limits, *completion_pipe);
+    impl =
+        std::make_unique<Impl>(std::move(*runtime), limits, *completion_pipe, std::move(extension));
   } catch (const std::bad_alloc&) {
     ::close((*completion_pipe)[0]);
     ::close((*completion_pipe)[1]);
@@ -447,7 +535,8 @@ common::Result<AsyncDurableMultiRaftRuntime> AsyncDurableMultiRaftRuntime::creat
 common::Result<AsyncDurableMultiRaftRuntime> AsyncDurableMultiRaftRuntime::open_existing(
     const NodeId local_node_id, const RaftPersistentLogConfig& log_config,
     const RaftPersistentLogOpenOptions& open_options, std::vector<RaftGroupConfiguration> groups,
-    const AsyncDurableMultiRaftLimits limits) {
+    const AsyncDurableMultiRaftLimits limits,
+    std::shared_ptr<AsyncDurableRaftWorkerExtension> extension) {
   if (limits.maximum_pending_batches == 0U || limits.maximum_pending_operations == 0U) {
     return common::make_unexpected(invalid("asynchronous durable Multi-Raft limits are invalid"));
   }
@@ -460,7 +549,8 @@ common::Result<AsyncDurableMultiRaftRuntime> AsyncDurableMultiRaftRuntime::open_
     return common::make_unexpected(completion_pipe.error());
   std::unique_ptr<Impl> impl;
   try {
-    impl = std::make_unique<Impl>(std::move(*runtime), limits, *completion_pipe);
+    impl =
+        std::make_unique<Impl>(std::move(*runtime), limits, *completion_pipe, std::move(extension));
   } catch (const std::bad_alloc&) {
     ::close((*completion_pipe)[0]);
     ::close((*completion_pipe)[1]);

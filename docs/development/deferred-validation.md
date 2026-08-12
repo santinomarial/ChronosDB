@@ -187,7 +187,12 @@
 - Extend the implemented one-worker bounded durable Multi-Raft FIFO and ordered owning observations
   with allocation/worker-start/I/O failure injection, reactor continuations, observation
   deadlines/coalescing, timer batching, thread placement, and measured group-aware
-  fairness/no-starvation under hot/cold skew.
+  fairness/no-starvation under hot/cold skew. The worker-affine application extension seam now
+  initializes, prepares/completes each durable batch before publication, and shuts down on that
+  owner. Its concrete bounded tablet application owns recovery, touched-group application,
+  applied-index persistence, pinned snapshots, and latest receipts on the worker; add metadata
+  application, proposal receipt correlation, cancellation/failure matrices, long-running hook
+  watchdog evidence, and TSan scheduling coverage.
 - Carry the implemented group-scoped read-barrier operation through authenticated production
   transport, request deadlines/coalescing, apply waiting, and exact tablet snapshot acquisition.
 - Extend the implemented metadata Raft codec/application/reopen path and complete-schema-definition

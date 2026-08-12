@@ -1,0 +1,68 @@
+#ifndef CHRONOS_INGEST_ASYNC_RAFT_TABLET_APPLICATION_HPP_
+#define CHRONOS_INGEST_ASYNC_RAFT_TABLET_APPLICATION_HPP_
+
+#include "chronos/common/result.hpp"
+#include "chronos/ingest/raft_tablet_state_machine.hpp"
+#include "chronos/raft/async_durable_runtime.hpp"
+
+#include <cstddef>
+#include <memory>
+#include <optional>
+#include <span>
+#include <vector>
+
+namespace chronos::ingest {
+
+struct AsyncRaftTabletApplicationConfig {
+  raft::GroupId group_id;
+  std::optional<RaftTabletSnapshotStorage> snapshot_storage;
+  RetryDirectory retry_directory;
+  TabletState tablet;
+  std::vector<std::shared_ptr<const schema::TableSchema>> retained_schemas;
+  ColumnarAppendDecodeLimits decode_limits;
+};
+
+struct AsyncRaftTabletApplicationLimits {
+  std::size_t maximum_tablets{4096U};
+};
+
+// Concrete worker extension that owns every configured tablet state machine on the same thread as
+// DurableMultiRaftRuntime. External readers receive pinned immutable snapshots or copied receipts;
+// no machine, mutable tablet, or synchronous runtime reference escapes the worker.
+class AsyncRaftTabletApplication final : public raft::AsyncDurableRaftWorkerExtension {
+public:
+  AsyncRaftTabletApplication(const AsyncRaftTabletApplication&) = delete;
+  AsyncRaftTabletApplication& operator=(const AsyncRaftTabletApplication&) = delete;
+  ~AsyncRaftTabletApplication() override;
+
+  [[nodiscard]] static common::Result<std::shared_ptr<AsyncRaftTabletApplication>>
+  create(std::vector<AsyncRaftTabletApplicationConfig> tablets,
+         AsyncRaftTabletApplicationLimits limits = {});
+
+  [[nodiscard]] common::Result<TabletSnapshot> snapshot(const raft::GroupId& group_id) const;
+  [[nodiscard]] std::optional<raft::QuorumSyncReceipt>
+  latest_quorum_sync_receipt(const raft::GroupId& group_id) const;
+  [[nodiscard]] std::size_t tablet_count() const;
+  [[nodiscard]] bool initialized() const;
+  [[nodiscard]] bool failed() const;
+  [[nodiscard]] common::Status failure_status() const;
+
+  [[nodiscard]] common::Status initialize(raft::DurableMultiRaftRuntime& runtime) override;
+  [[nodiscard]] common::Result<std::unique_ptr<raft::AsyncDurableRaftWorkerBatchContext>>
+  prepare_batch(raft::DurableMultiRaftRuntime& runtime,
+                std::span<const raft::DurableRaftRequest> requests) override;
+  [[nodiscard]] common::Status
+  complete_batch(raft::DurableMultiRaftRuntime& runtime,
+                 std::unique_ptr<raft::AsyncDurableRaftWorkerBatchContext> context,
+                 std::span<const raft::DurableRaftResult> results) override;
+  [[nodiscard]] common::Status shutdown(raft::DurableMultiRaftRuntime& runtime) override;
+
+private:
+  class Impl;
+  explicit AsyncRaftTabletApplication(std::unique_ptr<Impl> impl) noexcept;
+  std::unique_ptr<Impl> impl_;
+};
+
+} // namespace chronos::ingest
+
+#endif // CHRONOS_INGEST_ASYNC_RAFT_TABLET_APPLICATION_HPP_

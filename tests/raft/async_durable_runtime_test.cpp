@@ -3,9 +3,13 @@
 #include <cstddef>
 #include <filesystem>
 #include <gtest/gtest.h>
+#include <memory>
+#include <mutex>
 #include <poll.h>
+#include <span>
 #include <string>
 #include <system_error>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 
@@ -39,6 +43,152 @@ private:
   common::Uuid::Bytes bytes{};
   bytes.fill(seed);
   return GroupId{bytes};
+}
+
+class RecordingBatchContext final : public AsyncDurableRaftWorkerBatchContext {
+public:
+  explicit RecordingBatchContext(const std::size_t count) noexcept : request_count(count) {}
+  std::size_t request_count;
+};
+
+class ApplyingWorkerExtension final : public AsyncDurableRaftWorkerExtension {
+public:
+  explicit ApplyingWorkerExtension(GroupId group, const bool fail_initialization = false) noexcept
+      : group_(group), fail_initialization_(fail_initialization) {}
+
+  common::Status initialize(DurableMultiRaftRuntime& runtime) override {
+    std::lock_guard lock{mutex_};
+    worker_thread_ = std::this_thread::get_id();
+    if (fail_initialization_)
+      return {common::StatusCode::kUnavailable, "worker extension initialization failed"};
+    initialized_ = runtime.find_group(group_) != nullptr;
+    return initialized_
+               ? common::Status::ok()
+               : common::Status{common::StatusCode::kNotFound, "worker extension group is absent"};
+  }
+
+  common::Result<std::unique_ptr<AsyncDurableRaftWorkerBatchContext>>
+  prepare_batch(DurableMultiRaftRuntime&,
+                const std::span<const DurableRaftRequest> requests) override {
+    std::lock_guard lock{mutex_};
+    if (std::this_thread::get_id() != worker_thread_)
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kInternal, "worker extension thread changed"});
+    ++prepared_;
+    return std::unique_ptr<AsyncDurableRaftWorkerBatchContext>{
+        std::make_unique<RecordingBatchContext>(requests.size())};
+  }
+
+  common::Status complete_batch(DurableMultiRaftRuntime& runtime,
+                                std::unique_ptr<AsyncDurableRaftWorkerBatchContext> context,
+                                const std::span<const DurableRaftResult> results) override {
+    std::lock_guard lock{mutex_};
+    if (std::this_thread::get_id() != worker_thread_)
+      return {common::StatusCode::kInternal, "worker extension thread changed"};
+    const auto* const recorded = dynamic_cast<const RecordingBatchContext*>(context.get());
+    if (recorded == nullptr || recorded->request_count != results.size())
+      return {common::StatusCode::kCorruption, "worker extension batch context changed"};
+    ++completed_;
+    for (const DurableRaftResult& result : results) {
+      if (!result.status.is_ok() || !result.transition.has_value() ||
+          !result.transition->advanced_commit_index.has_value())
+        continue;
+      const LogIndex committed = *result.transition->advanced_commit_index;
+      auto applied = runtime.execute_batch({{group_, MarkAppliedOperation{committed}}});
+      if (!applied.has_value())
+        return applied.error();
+      if (applied->size() != 1U || !applied->front().status.is_ok())
+        return {common::StatusCode::kInternal, "worker extension could not mark applied"};
+      auto receipt = runtime.prove_quorum_sync(group_, committed);
+      if (!receipt.has_value())
+        return receipt.error();
+      receipt_ = *receipt;
+    }
+    return common::Status::ok();
+  }
+
+  common::Status shutdown(DurableMultiRaftRuntime&) override {
+    std::lock_guard lock{mutex_};
+    shutdown_on_worker_ = std::this_thread::get_id() == worker_thread_;
+    return common::Status::ok();
+  }
+
+  [[nodiscard]] bool initialized() const {
+    std::lock_guard lock{mutex_};
+    return initialized_;
+  }
+  [[nodiscard]] bool shutdown_on_worker() const {
+    std::lock_guard lock{mutex_};
+    return shutdown_on_worker_;
+  }
+  [[nodiscard]] std::size_t prepared() const {
+    std::lock_guard lock{mutex_};
+    return prepared_;
+  }
+  [[nodiscard]] std::size_t completed() const {
+    std::lock_guard lock{mutex_};
+    return completed_;
+  }
+  [[nodiscard]] std::optional<QuorumSyncReceipt> receipt() const {
+    std::lock_guard lock{mutex_};
+    return receipt_;
+  }
+
+private:
+  GroupId group_;
+  bool fail_initialization_{};
+  mutable std::mutex mutex_;
+  std::thread::id worker_thread_;
+  bool initialized_{};
+  bool shutdown_on_worker_{};
+  std::size_t prepared_{};
+  std::size_t completed_{};
+  std::optional<QuorumSyncReceipt> receipt_;
+};
+
+TEST(AsyncDurableMultiRaftRuntimeTest, RunsApplicationExtensionBeforePublishingCompletion) {
+  TemporaryDirectory directory;
+  const GroupId group = group_id(std::byte{8U});
+  auto extension = std::make_shared<ApplyingWorkerExtension>(group);
+  auto runtime = AsyncDurableMultiRaftRuntime::create_new(
+      1U, {.directory_path = directory.path().string()}, {{group, {1U}}}, {}, extension);
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  EXPECT_TRUE(extension->initialized());
+
+  auto election = runtime->try_submit({{group, StartElectionOperation{}}});
+  ASSERT_TRUE(election.has_value());
+  ASSERT_TRUE(election->wait().has_value());
+  auto proposal =
+      runtime->try_submit({{group, ProposeOperation{.type = 1U, .payload = {std::byte{0x5aU}}}}});
+  ASSERT_TRUE(proposal.has_value());
+  const auto proposed = proposal->wait();
+  ASSERT_TRUE(proposed.has_value()) << proposed.error().to_string();
+
+  const auto receipt = extension->receipt();
+  ASSERT_TRUE(receipt.has_value());
+  EXPECT_EQ(receipt->group_id, group);
+  EXPECT_EQ(receipt->log_index, 1U);
+  EXPECT_EQ(extension->prepared(), 2U);
+  EXPECT_EQ(extension->completed(), 2U);
+  EXPECT_TRUE(runtime->shutdown().is_ok());
+  EXPECT_TRUE(extension->shutdown_on_worker());
+
+  auto reopened = DurableMultiRaftRuntime::open_existing(
+      1U, {.directory_path = directory.path().string()}, {}, {{group, {1U}}});
+  ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+  EXPECT_EQ(reopened->find_group(group)->applied_index(), 1U);
+}
+
+TEST(AsyncDurableMultiRaftRuntimeTest, FailsCreationClosedWhenExtensionCannotInitialize) {
+  TemporaryDirectory directory;
+  const GroupId group = group_id(std::byte{9U});
+  auto extension = std::make_shared<ApplyingWorkerExtension>(group, true);
+  auto runtime = AsyncDurableMultiRaftRuntime::create_new(
+      1U, {.directory_path = directory.path().string()}, {{group, {1U}}}, {}, extension);
+  ASSERT_FALSE(runtime.has_value());
+  EXPECT_EQ(runtime.error().code(), common::StatusCode::kUnavailable);
+  EXPECT_FALSE(extension->initialized());
+  EXPECT_TRUE(extension->shutdown_on_worker());
 }
 
 TEST(AsyncDurableMultiRaftRuntimeTest, DrainsAcceptedFifoBatchesObservesAndRecoversAppliedState) {

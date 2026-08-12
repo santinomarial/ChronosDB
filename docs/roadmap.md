@@ -821,6 +821,14 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   2.0 now negotiates the client capability, admits durability value 3 only under its feature bit,
   and carries an exact receipt-shaped acknowledgement; replicated service advertisement/execution
   and end-to-end crash evidence remain. The phase exit gate is not claimed.
+  The asynchronous owner now also accepts one optional application extension whose initialize,
+  per-batch prepare/complete, and shutdown hooks all run on the durable worker. Completion is not
+  published until that extension finishes, providing the ownership-safe seam for tablet/metadata
+  application and receipt construction without a Raft-to-ingest dependency cycle.
+  A concrete bounded tablet extension now recovers every configured tablet before admission,
+  applies only request-touched committed groups before completion publication, durably advances
+  applied indexes, and exposes pinned snapshots plus copied latest receipts without leaking the
+  synchronous owner. Metadata composition and exact proposal receipt correlation remain deferred.
   Group-scoped read barriers now flow through both Multi-Raft owners without fabricating a durable
   transition, while higher-term recipient state still crosses the existing sync-before-response
   boundary. Production transport and tablet snapshot acquisition remain deferred.

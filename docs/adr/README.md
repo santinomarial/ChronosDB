@@ -306,3 +306,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0269](0269-node-wide-raft-log-reclamation.md) | Node-wide checkpointed Raft log reclamation | accepted |
 | [0270](0270-raft-authoritative-application-snapshot-reclamation.md) | Raft-authoritative application snapshot reclamation | accepted |
 | [0271](0271-native-protocol-v2-quorum-sync-negotiation.md) | Native Protocol 2.0 QUORUM_SYNC negotiation | accepted |
+| [0272](0272-worker-affine-raft-application-extension.md) | Worker-affine durable Raft application extension | accepted |

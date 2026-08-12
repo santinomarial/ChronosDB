@@ -323,6 +323,10 @@ Focused executions passed:
 - Protocol 2.0 continuation: 52 non-socket network tests, 22 service tests, 5 runtime tests, and the
   1-test feature smoke passed. The three loopback `TcpSocketTest` cases could not bind inside the
   workspace sandbox and were excluded after their environment-specific failure was confirmed.
+- Worker-affine Raft continuation: all 125 Raft tests, 3 non-socket authenticated receiver tests,
+  5 focused synchronous tablet application tests, and 4 concrete asynchronous tablet owner tests
+  passed. Both real-socket unified transport tests rebuilt but could not bind/listen inside the
+  workspace sandbox.
 
 The final C++ tree passed the repository-pinned clang-format 18 check. Full-suite, sanitizer, fuzz,
 broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were deliberately not run.
@@ -347,8 +351,9 @@ broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were d
 ### Concurrency
 
 - Live/materialized-view, metadata-application, movement, and tiering owners are intentionally
-  single-thread-affine. Multi-Raft has a bounded dedicated worker, but committed tablet/metadata
-  application still lacks one packaged worker-affine service composition.
+  single-thread-affine. Multi-Raft has a bounded dedicated worker and committed tablet application
+  now has a concrete worker-affine owner; metadata application and packaged transport/service
+  composition are still incomplete.
 - BoundedExchange and MemoryObjectStore use mutexes but have no TSan evidence in this pass.
 - io_uring protocol cancellation, forced in-flight shutdown, and close/completion races lack broad
   Linux and TSan evidence beyond the focused clean-shutdown lifecycle.

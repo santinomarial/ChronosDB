@@ -14,6 +14,16 @@ The runtime also exposes one borrowed nonblocking completion descriptor. Its wor
 owning completion first and then signals that descriptor; one event loop drains the coalesced signal
 and inspects every completion owner it coordinates.
 
+An optional `AsyncDurableRaftWorkerExtension` composes application state with that same owner.
+`initialize` runs before construction returns and admission opens. For each accepted batch,
+`prepare_batch` sees the still-owned requests before payload moves and creates one opaque context;
+`complete_batch` receives that context and the post-sync results before completion publication.
+`shutdown` runs before the log closes. These hooks let a higher-level ingest/metadata library own
+state machines that borrow the synchronous runtime without creating a reverse Raft dependency.
+`AsyncRaftTabletApplication` is the first concrete consumer: it recovers bounded tablet machines on
+the worker, applies only request-touched groups before completion publication, and exposes only
+pinned immutable snapshots and copied receipts to other threads.
+
 Tablet reconfiguration uses `try_submit_local_prepared_tablet_reconfiguration`. It accepts only the
 sealed capability produced after durable action-ledger preparation, copies its exact request into a
 one-operation batch, and leaves the capability valid when admission rejects overload or shutdown.
@@ -37,6 +47,9 @@ node-global physical sequence, append/sync batch, and persist-before-outbound co
 serialized exactly as in the synchronous owner. FIFO batch order is observable and deterministic.
 An observation is a point-in-order fact rather than a lease: leadership can change after completion,
 and callers must still validate term, placement epoch, commit, and application requirements.
+An extension hook error is a top-level owner failure, not a per-operation rejection: the durable
+transition may already exist, so no result can be advertised until restart recovery reconciles
+application state.
 
 ## Ownership, lifetime, and synchronization
 
@@ -52,6 +65,9 @@ destruction joins the worker before closing either pipe descriptor.
 Completion state is shared ownership, so it can outlive the runtime. Requests are unique ownership
 and are released after exactly one completion. Runtime destruction stops admission, drains or
 terminally rejects every accepted task, closes storage, and joins before destroying state.
+An extension object may be shared with an embedding for separately synchronized admission/result
+coordination, but its application owners and batch contexts remain worker-affine. A hook must never
+wait on a completion submitted to this same runtime; the sole worker would be waiting on itself.
 
 ## Failure behavior
 
@@ -59,6 +75,7 @@ Capacity rejection changes no Raft or disk state. Per-operation statuses remain 
 batch results. A top-level durable failure or unexpected exception is ambiguous with respect to
 partial in-memory progress, so the worker fails closed, gives all remaining accepted work the same
 terminal failure, and stops. Shutdown returns the retained storage/worker failure.
+Initialization failure prevents admission and still invokes extension shutdown for partial cleanup.
 
 ## Complexity, tradeoffs, and interview questions
 
@@ -67,6 +84,8 @@ the synchronous batch complexity. One worker enables physical batching but canno
 single log; fairness is FIFO and only bounded by maximum batch size.
 
 - Why does active work continue consuming admission capacity?
+- Why does extension completion precede external result publication?
+- Why may an extension call the synchronous runtime but not submit and wait on the async owner?
 - Which mutex edges publish tasks and results?
 - Why is a top-level execution exception terminal rather than retryable?
 - Why does shutdown drain normal work but reject queued work after a terminal failure?

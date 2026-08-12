@@ -303,6 +303,7 @@ chronos_enable_static_analysis(chronos_head)
 
 add_library(
   chronos_ingest
+  src/ingest/async_raft_tablet_application.cpp
   src/ingest/columnar_append.cpp
   src/ingest/columnar_append_executor.cpp
   src/ingest/columnar_append_recovery.cpp
@@ -1363,6 +1364,8 @@ if(CHRONOS_BUILD_TESTS)
 
   add_executable(
     chronos_ingest_tests
+    tests/ingest/async_raft_tablet_application_header_self_contained.cpp
+    tests/ingest/async_raft_tablet_application_test.cpp
     tests/ingest/columnar_append_corruption_test.cpp
     tests/ingest/columnar_append_executor_header_self_contained.cpp
     tests/ingest/columnar_append_executor_test.cpp
