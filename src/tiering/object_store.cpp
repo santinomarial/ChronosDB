@@ -377,6 +377,41 @@ copy_environment_value(const char* name, const std::size_t maximum_length) {
   }
 }
 
+[[nodiscard]] bool is_complete_multipart_result(const common::ByteView bytes) noexcept {
+  std::string_view xml{reinterpret_cast<const char*>(bytes.data()), bytes.size()};
+  const auto trim_leading = [&xml] {
+    while (!xml.empty() && (xml.front() == ' ' || xml.front() == '\t' || xml.front() == '\r' ||
+                            xml.front() == '\n')) {
+      xml.remove_prefix(1U);
+    }
+  };
+  trim_leading();
+  if (xml.starts_with("<?xml")) {
+    const std::size_t declaration_end = xml.find("?>");
+    if (declaration_end == std::string_view::npos)
+      return false;
+    xml.remove_prefix(declaration_end + 2U);
+    trim_leading();
+  }
+  constexpr std::string_view opening{"<CompleteMultipartUploadResult"};
+  constexpr std::string_view closing{"</CompleteMultipartUploadResult>"};
+  if (!xml.starts_with(opening) || xml.size() == opening.size() ||
+      (xml[opening.size()] != '>' && xml[opening.size()] != ' ' && xml[opening.size()] != '\t' &&
+       xml[opening.size()] != '\r' && xml[opening.size()] != '\n') ||
+      xml.find("<Error") != std::string_view::npos) {
+    return false;
+  }
+  const std::size_t closing_offset = xml.find(closing, opening.size());
+  if (closing_offset == std::string_view::npos ||
+      xml.find(closing, closing_offset + closing.size()) != std::string_view::npos) {
+    return false;
+  }
+  xml.remove_prefix(closing_offset + closing.size());
+  return std::ranges::all_of(xml, [](const char value) {
+    return value == ' ' || value == '\t' || value == '\r' || value == '\n';
+  });
+}
+
 [[nodiscard]] common::Result<std::string>
 complete_multipart_xml(const std::span<const std::string> entity_tags) {
   try {
@@ -1071,10 +1106,7 @@ common::Result<ObjectMetadata> S3ObjectStore::put_if_absent(const std::string_vi
                                        .query = upload_query});
       if (completed.has_value() && completed->status == 200L) {
         const common::ByteView response_body{completed->capture.body};
-        const std::string_view response_xml{reinterpret_cast<const char*>(response_body.data()),
-                                            response_body.size()};
-        if (response_xml.contains("<CompleteMultipartUploadResult") &&
-            !response_xml.contains("<Error>")) {
+        if (is_complete_multipart_result(response_body)) {
           auto verified = verify_existing();
           if (verified.has_value()) {
             abort_guard.release();

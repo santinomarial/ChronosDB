@@ -47,6 +47,7 @@ struct LocalS3Behavior {
   std::optional<std::string> session_token{"test-token"};
   std::size_t transient_put_failures{};
   std::optional<std::size_t> fail_multipart_part;
+  bool embedded_multipart_completion_error{};
 };
 
 class LocalS3Server final {
@@ -298,6 +299,16 @@ private:
         static_cast<void>(send_all(descriptor,
                                    "HTTP/1.1 412 Precondition Failed\r\nContent-Length: "
                                    "0\r\nConnection: close\r\n\r\n"));
+        return;
+      }
+      if (behavior_.embedded_multipart_completion_error) {
+        const std::string result =
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>InternalError</Code>"
+            "<Message>fixture completion failure</Message></Error>";
+        const std::string response =
+            "HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(result.size()) +
+            "\r\nConnection: close\r\n\r\n" + result;
+        static_cast<void>(send_all(descriptor, response));
         return;
       }
       std::vector<std::byte> assembled;
@@ -823,6 +834,43 @@ TEST(S3ObjectStoreTest, MultipartPartFailureAbortsWithoutPublishingAnObject) {
   EXPECT_EQ(requests[4].method, "DELETE");
   EXPECT_TRUE(requests[4].target.ends_with("?uploadId=fixture-upload%26id"));
   EXPECT_EQ(requests[5].method, "HEAD");
+  EXPECT_TRUE(server.failure().empty()) << server.failure();
+}
+
+TEST(S3ObjectStoreTest, EmbeddedMultipartCompletionErrorAbortsWithoutPublishingAnObject) {
+  LocalS3Server server{LocalS3Behavior{.embedded_multipart_completion_error = true}};
+  ASSERT_TRUE(server.valid()) << server.failure();
+  constexpr std::size_t part_bytes = 5U * 1024U * 1024U;
+  S3ObjectStoreConfig config{.endpoint = "http://127.0.0.1:" + std::to_string(server.port()),
+                             .region = "us-east-1",
+                             .bucket = "chronos-test",
+                             .access_key_id = "test-access",
+                             .secret_access_key = "test-secret",
+                             .session_token = "test-token",
+                             .connect_timeout = std::chrono::milliseconds{1'000},
+                             .request_timeout = std::chrono::milliseconds{5'000},
+                             .multipart_threshold_bytes = part_bytes,
+                             .multipart_part_bytes = part_bytes,
+                             .maximum_response_bytes = part_bytes + 1U,
+                             .require_tls = false};
+  auto store = S3ObjectStore::create(std::move(config));
+  ASSERT_TRUE(store.has_value()) << store.error().to_string();
+
+  const std::vector<std::byte> bytes(part_bytes + 1U, std::byte{0x6D});
+  auto uploaded = (*store)->put_if_absent("parts/multipart", bytes, ingest::sha256(bytes).value());
+  ASSERT_FALSE(uploaded.has_value());
+  EXPECT_EQ(uploaded.error().code(), common::StatusCode::kCorruption);
+  auto missing = (*store)->stat("parts/multipart");
+  ASSERT_FALSE(missing.has_value());
+  EXPECT_EQ(missing.error().code(), common::StatusCode::kNotFound);
+
+  const auto requests = server.requests();
+  ASSERT_EQ(requests.size(), 8U);
+  EXPECT_EQ(requests[4].method, "POST");
+  EXPECT_EQ(requests[5].method, "HEAD");
+  EXPECT_EQ(requests[6].method, "DELETE");
+  EXPECT_TRUE(requests[6].target.ends_with("?uploadId=fixture-upload%26id"));
+  EXPECT_EQ(requests[7].method, "HEAD");
   EXPECT_TRUE(server.failure().empty()) << server.failure();
 }
 

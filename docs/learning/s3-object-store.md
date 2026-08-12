@@ -48,8 +48,9 @@ Objects at or above the configured multipart threshold use signed sequential par
 MiB except for the final part. Initiation records the whole-object Chronos SHA-256 metadata; each
 part retains its opaque ETag; completion submits ascending part numbers under `If-None-Match: *`;
 and exact HEAD revalidates final length and SHA-256. A bounded XML parser accepts one upload ID and
-percent-encodes it for every part/complete/abort query. HTTP 200 completion is not sufficient unless
-the bounded body is a completion result rather than an embedded error.
+percent-encodes it for every part/complete/abort query. HTTP 200 completion is not sufficient: the
+bounded body must have one top-level completion-result root, no error element, and no non-whitespace
+trailing content, after which exact HEAD remains the final authority.
 
 UploadPart retries the same session/number/bytes. Complete reconciles ambiguous outcomes with exact
 HEAD, but a 409 is returned so the next caller attempt creates a fresh session. Create is not

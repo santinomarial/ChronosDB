@@ -174,7 +174,8 @@ its cache mutex across object-store I/O. It is intentionally volatile: restart t
 restores an exact-metadata-preflighted authoritative catalog and rebuilds cache bytes only on
 verified demand, so no second durable cache index is required. Large objects now
 use sequential signed parts, conditional completion, exact final verification, and failure-path
-abort. The optional Arrow/Parquet
+abort. HTTP-200 completion bodies are now strictly classified as one top-level success result or an
+embedded/malformed error before exact HEAD reconciliation. The optional Arrow/Parquet
 provider now round-trips all current logical types through an exact
 caller-supplied schema and keeps CSEG as the primary store.
 
