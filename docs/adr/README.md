@@ -264,3 +264,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0227](0227-empty-manifest-namespace-initialization.md) | Empty Manifest namespace initialization | accepted |
 | [0228](0228-single-node-manifest-root-ownership.md) | Single-node Manifest root ownership | accepted |
 | [0229](0229-manifest-aware-single-node-startup.md) | Manifest-aware single-node startup | accepted |
+| [0230](0230-live-single-node-sealed-head-flush.md) | Live single-node sealed-head flush | accepted |

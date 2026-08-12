@@ -28,6 +28,11 @@ delete WAL/CSEG/Manifest files. The single storage owner supplies fresh nonzero 
 nonces, the exact retry descriptors, and retained schema lineages. Checkpoint proof and WAL
 reclamation remain explicit later operations over the newly selected generation.
 
+The single-node owner now performs that outer policy. It uses one queue/coordinator per local tablet,
+projects retry descriptors from the exact sealed generation's WAL row sequences, supplies system
+UUID identities, and drains after native writes and before shutdown. The service currently runs the
+coordinator synchronously and requests uncompressed pages.
+
 ## Public interface and ownership
 
 `create(queue, storage, publisher)` retains shared ownership of the queue and borrows the

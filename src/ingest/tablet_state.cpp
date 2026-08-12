@@ -1006,6 +1006,20 @@ TabletSnapshot::retry_outcome(const RetryIdentity& identity) const noexcept {
   return found == publication_->retries_->end() ? nullptr : found->second;
 }
 
+common::Result<std::vector<TabletRetryEntry>> TabletSnapshot::retry_entries() const {
+  try {
+    std::vector<TabletRetryEntry> entries;
+    entries.reserve(publication_->retries_->size());
+    for (const auto& [identity, outcome] : *publication_->retries_)
+      entries.push_back({.identity = identity, .outcome = outcome});
+    return entries;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("tablet retry snapshot allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("tablet retry snapshot exceeds container limits"));
+  }
+}
+
 PreparedTabletAppend::PreparedTabletAppend() noexcept = default;
 PreparedTabletAppend::~PreparedTabletAppend() = default;
 PreparedTabletAppend::PreparedTabletAppend(PreparedTabletAppend&&) noexcept = default;

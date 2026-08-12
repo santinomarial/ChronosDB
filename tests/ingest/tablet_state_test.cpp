@@ -204,6 +204,13 @@ TEST(TabletStateTest, SwitchesOnlyAcrossRegisteredSuccessorsAndPinsAncestorSnaps
   EXPECT_EQ(second.snapshot.active_generation().column_count(), 4U);
   EXPECT_EQ(second.snapshot.visible_row_count(), 4U);
   EXPECT_EQ(second.snapshot.retry_entry_count(), 2U);
+  const auto retries = second.snapshot.retry_entries();
+  ASSERT_TRUE(retries.has_value()) << retries.error().to_string();
+  ASSERT_EQ(retries->size(), 2U);
+  EXPECT_EQ(retries->at(0U).identity, retry_identity(1U));
+  EXPECT_EQ(retries->at(0U).outcome.get(), first.outcome.get());
+  EXPECT_EQ(retries->at(1U).identity, retry_identity(2U));
+  EXPECT_EQ(retries->at(1U).outcome.get(), second.outcome.get());
   EXPECT_EQ(target.metrics().active_schema_version, 2U);
 
   EXPECT_EQ(ancestor_epoch.schema_ptr().get(), initial_schema.get());

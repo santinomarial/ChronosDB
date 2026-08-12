@@ -1,8 +1,11 @@
 #include "chronos/service/single_node_database.hpp"
 
+#include "chronos/common/uuid_generator.hpp"
 #include "chronos/ingest/columnar_append_recovery.hpp"
+#include "chronos/ingest/sealed_head_flush_queue.hpp"
 #include "chronos/io/posix_io.hpp"
 #include "chronos/manifest/naming.hpp"
+#include "chronos/manifest/sealed_head_flush_coordinator.hpp"
 #include "chronos/manifest/startup_recovery.hpp"
 #include "chronos/raft/durable_runtime.hpp"
 #include "chronos/raft/metadata_codec.hpp"
@@ -12,6 +15,7 @@
 #include "chronos/wal/wal_writer.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -188,14 +192,15 @@ build_complete_tables(const raft::MetadataCatalogSnapshot& catalog,
 
 [[nodiscard]] ingest::TabletStateConfig
 tablet_config(const RecoveredTable& table, const schema::TableSchema& schema,
-              const runtime::DatabaseBootstrapDescriptor& bootstrap) {
+              const runtime::DatabaseBootstrapDescriptor& bootstrap,
+              std::shared_ptr<ingest::SealedHeadFlushQueue> flush_queue) {
   const std::uint64_t retry_limit =
       std::min(table.policy.retry_retention_positions, bootstrap.maximum_retry_entries);
   return {.head_capacity = head_capacity(schema, bootstrap),
           .maximum_schema_versions = table.lineage.size(),
           .maximum_sealed_generations = bootstrap.maximum_sealed_generations,
           .maximum_retry_entries = static_cast<std::size_t>(retry_limit),
-          .flush_queue = nullptr};
+          .flush_queue = std::move(flush_queue)};
 }
 
 class EmptyWalReplaySink final : public wal::WalReplaySink {
@@ -213,6 +218,17 @@ struct FreshTablet {
   ingest::TabletState state;
 };
 
+struct TabletFlushOwner {
+  schema::TabletId tablet_id;
+  std::shared_ptr<ingest::SealedHeadFlushQueue> queue;
+  manifest::SealedHeadFlushCoordinator coordinator;
+};
+
+struct PendingFlushQueue {
+  schema::TabletId tablet_id;
+  std::shared_ptr<ingest::SealedHeadFlushQueue> queue;
+};
+
 } // namespace
 
 class SingleNodeDatabase::Impl {
@@ -224,12 +240,14 @@ public:
        std::vector<RecoveredTable> configured_tables,
        std::shared_ptr<const query::QueryCatalogSnapshot> configured_query_catalog,
        manifest::RecoveredManifestColumnarState configured_recovered,
+       std::vector<TabletFlushOwner> configured_flush_owners,
        std::vector<FreshTablet> configured_fresh, wal::WalCommitCoordinator configured_wal) noexcept
       : bootstrap_owner(std::move(configured_bootstrap)), raft_runtime(std::move(configured_raft)),
         metadata(std::move(configured_metadata)), catalog(std::move(configured_catalog)),
         tables(std::move(configured_tables)), query_catalog(std::move(configured_query_catalog)),
-        recovered(std::move(configured_recovered)), fresh_tablets(std::move(configured_fresh)),
-        wal_coordinator(std::move(configured_wal)) {}
+        recovered(std::move(configured_recovered)),
+        flush_owners(std::move(configured_flush_owners)),
+        fresh_tablets(std::move(configured_fresh)), wal_coordinator(std::move(configured_wal)) {}
 
   [[nodiscard]] common::Status refresh_catalog() {
     auto projected = metadata.state().catalog_snapshot();
@@ -262,6 +280,7 @@ public:
   std::vector<RecoveredTable> tables;
   std::shared_ptr<const query::QueryCatalogSnapshot> query_catalog;
   std::optional<manifest::RecoveredManifestColumnarState> recovered;
+  std::vector<TabletFlushOwner> flush_owners;
   std::vector<FreshTablet> fresh_tablets;
   wal::WalCommitCoordinator wal_coordinator;
   bool shutdown{};
@@ -343,15 +362,21 @@ SingleNodeDatabase::open_or_create(SingleNodeDatabaseConfig config) {
     ingest::ColumnarAppendRecoveryConfig recovery_config;
     recovery_config.retry_directory = {
         .maximum_entries = static_cast<std::size_t>(descriptor.maximum_retry_entries)};
+    std::vector<PendingFlushQueue> pending_flush_queues;
     for (const RecoveredTable& table : *tables) {
       for (const schema::TabletId tablet_id : table.tablets) {
+        auto flush_queue = ingest::SealedHeadFlushQueue::create(
+            {.capacity = descriptor.maximum_sealed_generations});
+        if (!flush_queue.has_value())
+          return common::make_unexpected(flush_queue.error());
+        pending_flush_queues.push_back({.tablet_id = tablet_id, .queue = *flush_queue});
         auto initial = table.lineage.at(0U);
-        ingest::ColumnarRecoveryTabletConfig tablet{.schema = initial,
-                                                    .tablet_id = tablet_id,
-                                                    .state =
-                                                        tablet_config(table, *initial, descriptor),
-                                                    .successors = {},
-                                                    .durable_seed = std::nullopt};
+        ingest::ColumnarRecoveryTabletConfig tablet{
+            .schema = initial,
+            .tablet_id = tablet_id,
+            .state = tablet_config(table, *initial, descriptor, *flush_queue),
+            .successors = {},
+            .durable_seed = std::nullopt};
         for (std::size_t version = 1U; version < table.lineage.size(); ++version) {
           const auto successor = table.lineage.at(version);
           tablet.successors.push_back(
@@ -449,6 +474,17 @@ SingleNodeDatabase::open_or_create(SingleNodeDatabaseConfig config) {
     if (!recovered.has_value())
       return common::make_unexpected(
           with_context("recover Manifest-backed database", recovered.error()));
+    std::vector<TabletFlushOwner> flush_owners;
+    flush_owners.reserve(pending_flush_queues.size());
+    for (PendingFlushQueue& pending : pending_flush_queues) {
+      auto flush = manifest::SealedHeadFlushCoordinator::create(
+          pending.queue, recovered->manifest_storage(), recovered->storage_publisher());
+      if (!flush.has_value())
+        return common::make_unexpected(flush.error());
+      flush_owners.push_back({.tablet_id = pending.tablet_id,
+                              .queue = std::move(pending.queue),
+                              .coordinator = std::move(*flush)});
+    }
     auto writer = recovered->release_writer();
     if (!writer.has_value())
       return common::make_unexpected(writer.error());
@@ -458,7 +494,7 @@ SingleNodeDatabase::open_or_create(SingleNodeDatabaseConfig config) {
     return SingleNodeDatabase{std::make_unique<Impl>(
         std::move(*bootstrap), std::move(stable_raft), std::move(*metadata), std::move(*catalog),
         std::move(*tables), std::move(query_catalog), std::move(*recovered),
-        std::vector<FreshTablet>{}, std::move(*coordinator))};
+        std::move(flush_owners), std::vector<FreshTablet>{}, std::move(*coordinator))};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("single-node database allocation failed"));
   } catch (const std::length_error&) {
@@ -535,11 +571,145 @@ ingest::RetryDirectory& SingleNodeDatabase::retry_directory() noexcept {
 wal::WalCommitCoordinator& SingleNodeDatabase::wal_coordinator() noexcept {
   return impl_->wal_coordinator;
 }
+common::Result<manifest::DatabaseStorageSnapshot> SingleNodeDatabase::storage_snapshot() const {
+  if (impl_ == nullptr || !impl_->recovered.has_value())
+    return common::make_unexpected(invalid("database storage publication is unavailable"));
+  return impl_->recovered->snapshot();
+}
+
+common::Result<std::size_t> SingleNodeDatabase::flush_ready_heads() {
+  if (impl_ == nullptr || impl_->shutdown || !impl_->recovered.has_value())
+    return common::make_unexpected(invalid("database is not accepting storage maintenance"));
+  try {
+    common::SystemUuidGenerator identities;
+    std::size_t completed = 0U;
+    for (TabletFlushOwner& owner : impl_->flush_owners) {
+      while (owner.queue->metrics().ready != 0U) {
+        ingest::TabletState* const tablet = find_tablet(owner.tablet_id);
+        if (tablet == nullptr)
+          return common::make_unexpected(corruption("flush queue has no tablet owner"));
+        auto snapshot = tablet->snapshot();
+        if (!snapshot.has_value())
+          return common::make_unexpected(snapshot.error());
+        if (snapshot->sealed_generations().empty())
+          return common::make_unexpected(
+              corruption("ready flush queue has no visible sealed generation"));
+        const head::HeadSnapshot& sealed = snapshot->sealed_generations().front();
+
+        std::vector<std::uint64_t> record_sequences;
+        for (std::uint32_t row = 0U; row < sealed.row_count(); ++row) {
+          auto metadata = sealed.row_metadata(row);
+          if (!metadata.has_value())
+            return common::make_unexpected(metadata.error());
+          if (metadata->commit_position.source != head::CommitSource::kWal)
+            return common::make_unexpected(
+                invalid("Manifest v1 flush requires WAL-backed sealed rows"));
+          const std::uint64_t sequence = metadata->commit_position.record_sequence;
+          if (std::ranges::find(record_sequences, sequence) == record_sequences.end())
+            record_sequences.push_back(sequence);
+        }
+        std::ranges::sort(record_sequences);
+        auto retry_entries = snapshot->retry_entries();
+        if (!retry_entries.has_value())
+          return common::make_unexpected(retry_entries.error());
+        std::vector<manifest::RetryDescriptor> retries;
+        retries.reserve(record_sequences.size());
+        for (const std::uint64_t sequence : record_sequences) {
+          const auto entry = std::ranges::find_if(*retry_entries, [&](const auto& candidate) {
+            return candidate.outcome != nullptr &&
+                   candidate.outcome->commit_source == head::CommitSource::kWal &&
+                   candidate.outcome->record_sequence == sequence;
+          });
+          if (entry == retry_entries->end())
+            return common::make_unexpected(corruption("sealed WAL record has no retry outcome"));
+          retries.push_back({.client_id = entry->identity.client_id,
+                             .client_batch_id = entry->identity.client_batch_id,
+                             .table_id = entry->outcome->mutation.table_id,
+                             .tablet_id = entry->outcome->mutation.tablet_id,
+                             .request_digest = entry->outcome->mutation.request_digest,
+                             .wal_id = entry->outcome->wal_id,
+                             .record_sequence = entry->outcome->record_sequence,
+                             .applied_row_count = entry->outcome->applied_row_count});
+        }
+
+        auto storage = impl_->recovered->snapshot();
+        if (!storage.has_value())
+          return common::make_unexpected(storage.error());
+        std::vector<schema::TabletId> binding_tablets;
+        binding_tablets.reserve(storage->durable_tablets().size() + 1U);
+        for (const manifest::TabletDescriptor& durable : storage->durable_tablets())
+          binding_tablets.push_back(durable.tablet_id);
+        if (std::ranges::find(binding_tablets, owner.tablet_id) == binding_tablets.end())
+          binding_tablets.push_back(owner.tablet_id);
+        std::ranges::sort(binding_tablets);
+        std::vector<manifest::TabletSchemaBinding> schema_bindings;
+        schema_bindings.reserve(binding_tablets.size());
+        for (const schema::TabletId& tablet_id : binding_tablets) {
+          const auto table =
+              std::ranges::find_if(impl_->tables, [&](const RecoveredTable& candidate) {
+                return std::ranges::find(candidate.tablets, tablet_id) != candidate.tablets.end();
+              });
+          if (table == impl_->tables.end())
+            return common::make_unexpected(
+                corruption("durable Manifest tablet has no retained schema lineage"));
+          schema_bindings.push_back({.tablet_id = tablet_id, .lineage = std::cref(table->lineage)});
+        }
+
+        std::array<common::Uuid, 3U> generated;
+        for (std::size_t index = 0U; index < generated.size(); ++index) {
+          bool unique = false;
+          for (std::size_t attempt = 0U; attempt < 8U && !unique; ++attempt) {
+            auto identity = identities.generate();
+            if (!identity.has_value())
+              return common::make_unexpected(identity.error());
+            unique = std::ranges::find(generated.begin(), generated.begin() + index, *identity) ==
+                     generated.begin() + index;
+            if (unique)
+              generated[index] = *identity;
+          }
+          if (!unique)
+            return common::make_unexpected(
+                common::Status{common::StatusCode::kUnavailable,
+                               "storage identity source repeatedly returned duplicates"});
+        }
+        auto part_id = cseg::PartId::from_uuid(generated[0U]);
+        if (!part_id.has_value())
+          return common::make_unexpected(part_id.error());
+        auto flushed =
+            owner.coordinator.try_flush_one(*tablet, {.part_id = *part_id,
+                                                      .part_nonce = generated[1U],
+                                                      .manifest_nonce = generated[2U],
+                                                      .compression = cseg::PageCompression::kNone,
+                                                      .new_retries = retries,
+                                                      .schema_bindings = schema_bindings,
+                                                      .manifest_decode_limits = {},
+                                                      .part_validation_limits = {}});
+        if (!flushed.has_value())
+          return common::make_unexpected(flushed.error());
+        if (!flushed->has_value())
+          break;
+        ++completed;
+      }
+    }
+    return completed;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("sealed-head flush allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("sealed-head flush exceeds container limits"));
+  }
+}
 common::Status SingleNodeDatabase::shutdown() {
   if (impl_ == nullptr || impl_->shutdown)
     return common::Status::ok();
+  common::Status result = common::Status::ok();
+  auto flushed = flush_ready_heads();
+  if (!flushed.has_value())
+    result = with_context("drain sealed heads during shutdown", flushed.error());
   impl_->shutdown = true;
-  common::Status result = impl_->wal_coordinator.shutdown();
+  const common::Status wal = impl_->wal_coordinator.shutdown();
+  if (result.is_ok())
+    result = wal;
+  impl_->flush_owners.clear();
   impl_->recovered.reset();
   const common::Status raft = impl_->raft_runtime->close();
   if (result.is_ok())
@@ -668,9 +838,14 @@ SingleNodeDatabase::create_table(const query::BoundSqlCreateTable& statement,
       });
       if (table == rebuilt->end())
         return common::make_unexpected(corruption("created table is absent after metadata apply"));
-      auto state = ingest::TabletState::create(
-          table->lineage.at(0U), tablet_id,
-          tablet_config(*table, *table->lineage.at(0U), impl_->bootstrap_owner.descriptor()));
+      auto flush_queue = ingest::SealedHeadFlushQueue::create(
+          {.capacity = impl_->bootstrap_owner.descriptor().maximum_sealed_generations});
+      if (!flush_queue.has_value())
+        return common::make_unexpected(flush_queue.error());
+      auto state = ingest::TabletState::create(table->lineage.at(0U), tablet_id,
+                                               tablet_config(*table, *table->lineage.at(0U),
+                                                             impl_->bootstrap_owner.descriptor(),
+                                                             *flush_queue));
       if (!state.has_value())
         return common::make_unexpected(state.error());
       for (std::size_t version = 1U; version < table->lineage.size(); ++version) {
@@ -683,11 +858,21 @@ SingleNodeDatabase::create_table(const query::BoundSqlCreateTable& statement,
       auto tablet_snapshot = state->snapshot();
       if (!tablet_snapshot.has_value())
         return common::make_unexpected(tablet_snapshot.error());
+      auto flush = manifest::SealedHeadFlushCoordinator::create(
+          *flush_queue, impl_->recovered->manifest_storage(),
+          impl_->recovered->storage_publisher());
+      if (!flush.has_value())
+        return common::make_unexpected(flush.error());
+      impl_->fresh_tablets.reserve(impl_->fresh_tablets.size() + 1U);
+      impl_->flush_owners.reserve(impl_->flush_owners.size() + 1U);
       auto published =
           impl_->recovered->storage_publisher().publish_tablet_snapshot(*tablet_snapshot);
       if (!published.has_value())
         return common::make_unexpected(published.error());
       impl_->fresh_tablets.push_back({tablet_id, std::move(*state)});
+      impl_->flush_owners.push_back({.tablet_id = tablet_id,
+                                     .queue = std::move(*flush_queue),
+                                     .coordinator = std::move(*flush)});
     }
     impl_->tables = std::move(*rebuilt);
     impl_->query_catalog =

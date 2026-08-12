@@ -13,6 +13,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <vector>
 
 namespace chronos::manifest::detail {
 class DatabaseStoragePublisherImpl;
@@ -111,6 +112,11 @@ class TabletPublication;
 class TabletStateCore;
 } // namespace detail
 
+struct TabletRetryEntry {
+  RetryIdentity identity;
+  std::shared_ptr<const ColumnarAppendRetryOutcome> outcome;
+};
+
 // One owning acquire-observed tablet epoch. The active boundary, sealed-generation set, applied
 // position, and retry table all come from the same outer publication. Returned generation views
 // and retry outcomes remain pinned by this object or by their own shared ownership.
@@ -133,6 +139,9 @@ public:
   [[nodiscard]] std::size_t retry_entry_count() const noexcept;
   [[nodiscard]] std::shared_ptr<const ColumnarAppendRetryOutcome>
   retry_outcome(const RetryIdentity& identity) const noexcept;
+  // Returns the complete identity-sorted retry publication pinned by this snapshot. The bounded
+  // copy lets storage owners construct durable retry descriptors without exposing map internals.
+  [[nodiscard]] common::Result<std::vector<TabletRetryEntry>> retry_entries() const;
 
 private:
   TabletSnapshot(std::shared_ptr<detail::TabletStateCore> state,

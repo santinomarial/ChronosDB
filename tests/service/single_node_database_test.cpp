@@ -185,16 +185,22 @@ bind_create(SingleNodeDatabase& database) {
   return query::bind_sql_v1_create_table(std::move(*parsed), database.query_catalog());
 }
 
-[[nodiscard]] std::shared_ptr<const columnar::OwnedColumnarBatch> batch() {
+[[nodiscard]] std::shared_ptr<const columnar::OwnedColumnarBatch>
+batch(const std::byte timestamp_tail = std::byte{0U}) {
+  std::vector<columnar::OwnedColumnVector> columns = columnar::test::batch_columns();
+  std::vector<std::byte> timestamps(16U);
+  timestamps.back() = timestamp_tail;
+  columns[0] =
+      columnar::test::fixed_vector(1U, columnar::test::type(schema::LogicalTypeKind::kTimestampNs),
+                                   false, 2U, {}, 0U, std::move(timestamps));
   return std::make_shared<const columnar::OwnedColumnarBatch>(
-      columnar::OwnedColumnarBatch::create(columnar::test::batch_schema(),
-                                           columnar::test::batch_columns())
+      columnar::OwnedColumnarBatch::create(columnar::test::batch_schema(), std::move(columns))
           .value());
 }
 
 [[nodiscard]] network::NetworkTask ingest_task(const std::uint8_t seed,
                                                const network::DurabilityMode durability) {
-  const auto input = batch();
+  const auto input = batch(static_cast<std::byte>(seed));
   const auto encoded_batch = columnar::encode_columnar_batch_v1(*input).value();
   const auto append =
       ingest::encode_columnar_append_v1(
@@ -351,6 +357,41 @@ TEST(NativeProtocolServiceTest, AppliesLocalSyncIngestAndReturnsPositionlessMatc
   common::ByteReader count{cell->value};
   EXPECT_EQ(count.read_i64_le().value(), 2);
   EXPECT_TRUE(database->shutdown().is_ok());
+}
+
+TEST(NativeProtocolServiceTest, FlushesSealedHeadsAndRecoversOnlyTheWalSuffix) {
+  TemporaryDirectory directory;
+  seed_catalog(directory);
+  auto database = SingleNodeDatabase::open_or_create(config(directory));
+  ASSERT_TRUE(database.has_value()) << database.error().to_string();
+  NativeProtocolService service{*database};
+
+  for (std::uint8_t seed = 10U; seed < 13U; ++seed) {
+    auto response = service.execute_ingest(ingest_task(seed, network::DurabilityMode::kLocalSync));
+    ASSERT_TRUE(response.has_value()) << response.error().to_string();
+    EXPECT_EQ(response->frame.header.message_type, network::MessageType::kIngestAcknowledgement);
+  }
+  auto storage = database->storage_snapshot();
+  ASSERT_TRUE(storage.has_value()) << storage.error().to_string();
+  EXPECT_EQ(storage->generation(), 2U);
+  ASSERT_EQ(storage->parts().size(), 1U);
+  EXPECT_EQ(storage->parts().front().row_count, 4U);
+  ASSERT_EQ(storage->durable_tablets().size(), 1U);
+  EXPECT_EQ(storage->durable_tablets().front().durable_row_count, 4U);
+  EXPECT_EQ(storage->retries().size(), 2U);
+  EXPECT_EQ(storage->visible_head_row_count(), 2U);
+  EXPECT_TRUE(database->shutdown().is_ok());
+
+  auto recovered = SingleNodeDatabase::open_or_create(config(directory));
+  ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
+  auto recovered_storage = recovered->storage_snapshot();
+  ASSERT_TRUE(recovered_storage.has_value()) << recovered_storage.error().to_string();
+  EXPECT_EQ(recovered_storage->generation(), 2U);
+  ASSERT_EQ(recovered_storage->parts().size(), 1U);
+  EXPECT_EQ(recovered_storage->parts().front().row_count, 4U);
+  EXPECT_EQ(recovered_storage->visible_head_row_count(), 2U);
+  EXPECT_EQ(recovered->find_tablet(tablet_id())->snapshot()->visible_row_count(), 2U);
+  EXPECT_TRUE(recovered->shutdown().is_ok());
 }
 
 TEST(NativeProtocolServiceTest, RejectsMalformedIngestWithProtocolError) {

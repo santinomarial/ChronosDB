@@ -360,6 +360,9 @@ NativeProtocolService::execute_ingest(network::NetworkTask request) {
       database_->retry_directory(), *tablet, database_->wal_coordinator());
   if (!executed.has_value())
     return error_response(std::move(request), executed.error(), limits_.protocol);
+  auto flushed = database_->flush_ready_heads();
+  if (!flushed.has_value())
+    return error_response(std::move(request), flushed.error(), limits_.protocol);
 
   network::IngestAcknowledgement acknowledgement{
       .requested_durability = protocol_durability(executed->requested_durability),
@@ -517,6 +520,9 @@ NativeProtocolService::execute_query(network::NetworkTask request) {
           database_->retry_directory(), *tablet, database_->wal_coordinator());
       if (!executed.has_value())
         return query_error(target, executed.error(), limits_.protocol);
+      auto flushed = database_->flush_ready_heads();
+      if (!flushed.has_value())
+        return query_error(target, flushed.error(), limits_.protocol);
       return insert_result(target, applied_rows, *executed, limits_);
     }
     if (statement_tokens.front().keyword() != query::SqlKeyword::kSelect)

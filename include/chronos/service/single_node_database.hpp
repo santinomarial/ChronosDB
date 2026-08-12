@@ -5,6 +5,7 @@
 #include "chronos/common/status.hpp"
 #include "chronos/ingest/retry_directory.hpp"
 #include "chronos/ingest/tablet_state.hpp"
+#include "chronos/manifest/publication.hpp"
 #include "chronos/query/catalog.hpp"
 #include "chronos/query/statement_binder.hpp"
 #include "chronos/raft/metadata.hpp"
@@ -15,6 +16,7 @@
 #include "chronos/wal/wal_commit_coordinator.hpp"
 #include "chronos/wal/wal_recovery.hpp"
 
+#include <cstddef>
 #include <memory>
 #include <span>
 #include <vector>
@@ -75,6 +77,11 @@ public:
   table_snapshots(const schema::TableId& table_id) const;
   [[nodiscard]] ingest::RetryDirectory& retry_directory() noexcept;
   [[nodiscard]] wal::WalCommitCoordinator& wal_coordinator() noexcept;
+  [[nodiscard]] common::Result<manifest::DatabaseStorageSnapshot> storage_snapshot() const;
+
+  // Synchronously drains every ready per-tablet sealed-head queue through durable CSEG/Manifest
+  // publication. Returns the number of completed replacements; no work is also successful.
+  [[nodiscard]] common::Result<std::size_t> flush_ready_heads();
 
   // Publishes one initial schema, complete policy, and local placement through exact-retained
   // metadata Raft proposals. A matching incomplete schema prefix is resumed using its durable

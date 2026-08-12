@@ -62,6 +62,7 @@ database root lock + bootstrap
   -> validate selected Manifest/CSEGs + derive durable seeds
   -> replay required WAL suffix into bounded RetryDirectory + TabletState publications
   -> aggregate Manifest/part/head publication + retained manifest/LOCK
+  -> one bounded sealed-head queue and durable flush coordinator per local tablet
   -> live WalCommitCoordinator admission
 ```
 
@@ -72,14 +73,17 @@ and replay succeed.
 
 `RecoveredManifestColumnarState` owns the startup retry directory and tablets and releases only the
 verified/repositioned writer to the coordinator. Tables created later retain separate tablet owners
-but publish their empty epochs into the same aggregate storage owner.
+but publish their empty epochs into the same aggregate storage owner. Every tablet uses a separate
+bounded flush queue. Native writes synchronously drain ready work through CSEG installation,
+Manifest installation, aggregate replacement, tablet retirement, and queue completion.
 
 ## Shutdown and failures
 
-`shutdown()` closes admission, drains requests, finishes the last required local synchronization,
-and joins the WAL worker before releasing Manifest ownership, closing Raft, and releasing the root
-lock. The first failure is returned while later close operations are still attempted. Calls after
-shutdown are outside the live service contract; repeated shutdown itself succeeds.
+`shutdown()` drains ready sealed heads, closes admission, finishes the last required local
+synchronization, and joins the WAL worker. It then destroys flush coordinators before releasing
+Manifest ownership, closing Raft, and releasing the root lock. The first failure is returned while
+later close operations are still attempted. Calls after shutdown are outside the live service
+contract; repeated shutdown itself succeeds.
 
 Unknown WAL tablets, damaged log bytes, inconsistent lineage tails, missing active definitions,
 and nonlocal placement all fail startup. Incomplete metadata-only table prefixes remain invisible.
