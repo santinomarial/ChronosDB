@@ -188,6 +188,11 @@ TEST(DurableMetadataStateMachineTest, RebuildsCompleteCatalogDefinitionFromRetai
   ASSERT_TRUE(runtime->execute_batch({{group_id(), StartElectionOperation{}}}).has_value());
   const CatalogTableDefinition definition = schema_definition();
   ASSERT_TRUE(runtime->execute_batch({{group_id(), schema_proposal(definition)}}).has_value());
+  ASSERT_TRUE(
+      runtime
+          ->execute_batch({{group_id(), proposal(TablePolicyMetadata{definition.schema->table_id(),
+                                                                     100, 1000, 500, 10, 100U})}})
+          .has_value());
   auto recovered = DurableMetadataStateMachine::recover(group_id(), *runtime);
   ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
   std::optional<DurableMetadataStateMachine> metadata{std::move(*recovered)};
@@ -195,6 +200,8 @@ TEST(DurableMetadataStateMachineTest, RebuildsCompleteCatalogDefinitionFromRetai
       metadata->state().find_active_table_definition(definition.schema->table_id());
   ASSERT_NE(installed, nullptr);
   EXPECT_TRUE(*installed == definition);
+  ASSERT_NE(metadata->state().find_table_policy(definition.schema->table_id()), nullptr);
+  EXPECT_EQ(metadata->state().find_table_policy(definition.schema->table_id())->retention_ns, 1000);
 
   metadata.reset();
   ASSERT_TRUE(runtime->close().is_ok());
@@ -205,6 +212,9 @@ TEST(DurableMetadataStateMachineTest, RebuildsCompleteCatalogDefinitionFromRetai
   installed = rebuilt->state().find_schema_definition(definition.schema->schema_id());
   ASSERT_NE(installed, nullptr);
   EXPECT_TRUE(*installed == definition);
+  ASSERT_NE(rebuilt->state().find_table_policy(definition.schema->table_id()), nullptr);
+  EXPECT_EQ(rebuilt->state().find_table_policy(definition.schema->table_id())->allowed_lateness_ns,
+            10);
 }
 
 } // namespace

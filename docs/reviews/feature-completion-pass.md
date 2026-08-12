@@ -114,7 +114,8 @@ term, vote, logical log, commit/applied indexes, manifest generation, and part-s
 native struct serialization.
 
 `MetadataStateMachine` applies nodes, complete immutable table-schema generations and SQL names,
-tablet placement/replicas/epochs/leader hints, and retention only at consecutive committed
+complete partition/retention/history/lateness/retry policy, tablet
+placement/replicas/epochs/leader hints, and legacy retention only at consecutive committed
 metadata-group indexes. Focused tests cover deterministic schema bytes, strict damage rejection,
 legal schema succession, different leaders, group isolation, one-node loss, reopen, metadata order,
 and record corruption.

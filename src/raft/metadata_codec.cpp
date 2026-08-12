@@ -32,6 +32,7 @@ enum class CommandKind : std::uint8_t {
   kSchema = 2U,
   kTablet = 3U,
   kRetention = 4U,
+  kTablePolicy = 5U,
 };
 
 [[nodiscard]] common::Status invalid(std::string message) {
@@ -132,13 +133,21 @@ encode_payload(MetadataCommand command, const MetadataCommandCodecLimits& limits
             return invalid("metadata tablet command is invalid");
           }
           size = 56U + value.replicas.size() * sizeof(NodeId);
-        } else {
+        } else if constexpr (std::is_same_v<T, RetentionMetadata>) {
           kind = CommandKind::kRetention;
           if (value.table_id.uuid().is_nil() || value.system_history_ns < 0 ||
               value.retry_retention_positions == 0U) {
             return invalid("metadata retention command is invalid");
           }
           size = 32U;
+        } else {
+          kind = CommandKind::kTablePolicy;
+          if (value.table_id.uuid().is_nil() || value.partition_interval_ns <= 0 ||
+              value.retention_ns <= 0 || value.system_history_ns <= 0 ||
+              value.allowed_lateness_ns < 0 || value.retry_retention_positions == 0U) {
+            return invalid("metadata complete table policy command is invalid");
+          }
+          size = 64U;
         }
         return common::Status::ok();
       },
@@ -190,12 +199,24 @@ encode_payload(MetadataCommand command, const MetadataCommandCodecLimits& limits
               return result;
           }
           return common::Status::ok();
-        } else {
+        } else if constexpr (std::is_same_v<T, RetentionMetadata>) {
           if (auto result = write_uuid(writer, value.table_id.uuid()); !result.is_ok())
             return result;
           if (auto result = writer.write_i64_le(value.system_history_ns); !result.is_ok())
             return result;
           return writer.write_u64_le(value.retry_retention_positions);
+        } else {
+          for (const common::Status& result :
+               {write_uuid(writer, value.table_id.uuid()),
+                writer.write_i64_le(value.partition_interval_ns),
+                writer.write_i64_le(value.retention_ns),
+                writer.write_i64_le(value.system_history_ns),
+                writer.write_i64_le(value.allowed_lateness_ns),
+                writer.write_u64_le(value.retry_retention_positions), writer.zero_fill(8U)}) {
+            if (!result.is_ok())
+              return result;
+          }
+          return common::Status::ok();
         }
       },
       command);
@@ -280,6 +301,25 @@ decode_payload(const CommandKind kind, const common::ByteView payload,
       return common::make_unexpected(corruption("metadata retention payload is invalid"));
     }
     return MetadataCommand{RetentionMetadata{*table_id, *history, *retries}};
+  }
+  if (kind == CommandKind::kTablePolicy) {
+    auto table_id = read_identifier<schema::TableId>(reader);
+    auto partition = reader.read_i64_le();
+    auto retention = reader.read_i64_le();
+    auto history = reader.read_i64_le();
+    auto lateness = reader.read_i64_le();
+    auto retries = reader.read_u64_le();
+    auto reserved = reader.read_exact(8U);
+    if (!table_id.has_value() || !partition.has_value() || !retention.has_value() ||
+        !history.has_value() || !lateness.has_value() || !retries.has_value() ||
+        !reserved.has_value() || !reader.empty() || *partition <= 0 || *retention <= 0 ||
+        *history <= 0 || *lateness < 0 || *retries == 0U ||
+        std::ranges::any_of(*reserved,
+                            [](const std::byte byte) { return byte != std::byte{0U}; })) {
+      return common::make_unexpected(corruption("metadata complete table policy is invalid"));
+    }
+    return MetadataCommand{
+        TablePolicyMetadata{*table_id, *partition, *retention, *history, *lateness, *retries}};
   }
   return common::make_unexpected(unsupported("metadata command kind is unsupported"));
 }

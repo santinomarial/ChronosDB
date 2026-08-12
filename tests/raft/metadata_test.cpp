@@ -47,6 +47,9 @@ TEST(MetadataStateMachineTest, AppliesCompleteSchemasInLinearCommittedOrder) {
   auto metadata = MetadataStateMachine::create();
   ASSERT_TRUE(metadata.has_value());
   const auto table = id<schema::TableId>(10U);
+  EXPECT_FALSE(
+      metadata->apply_committed(1U, TablePolicyMetadata{table, 100, 1000, 500, 10, 100U}).is_ok());
+  EXPECT_EQ(metadata->applied_index(), 0U);
   const auto first_schema = id<schema::SchemaId>(11U);
   const auto timestamp = id<schema::ColumnId>(12U);
   std::vector<schema::ColumnDefinition> columns;
@@ -103,6 +106,17 @@ TEST(MetadataStateMachineTest, AppliesCompleteSchemasInLinearCommittedOrder) {
   EXPECT_EQ(metadata->find_active_table_definition("events", false)->schema->schema_id(),
             second_id);
   EXPECT_EQ(metadata->find_active_table_definition("events", true), nullptr);
+  EXPECT_TRUE(
+      metadata
+          ->apply_committed(3U, TablePolicyMetadata{table, 60'000'000'000LL, 86'400'000'000'000LL,
+                                                    3'600'000'000'000LL, 5'000'000'000LL, 8192U})
+          .is_ok());
+  ASSERT_NE(metadata->find_table_policy(table), nullptr);
+  EXPECT_EQ(metadata->find_table_policy(table)->allowed_lateness_ns, 5'000'000'000LL);
+  EXPECT_EQ(metadata->find_retention(table)->system_history_ns, 3'600'000'000'000LL);
+  EXPECT_FALSE(
+      metadata->apply_committed(4U, RetentionMetadata{table, 3'600'000'000'001LL, 8192U}).is_ok());
+  EXPECT_EQ(metadata->applied_index(), 3U);
 }
 
 } // namespace

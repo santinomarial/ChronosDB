@@ -786,9 +786,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   remains.
   The dedicated metadata group now has canonical versioned/checksummed command bytes and committed
   application/reopen recovery for nodes, schema identities, tablet placement epochs, leader hints,
-  retention, and complete immutable table schemas with SQL catalog names. Metadata snapshots,
-  database namespaces, and catalog tombstones remain; placement-driven membership orchestration is
-  not yet integrated.
+  complete partition/retention/history/lateness policy, and complete immutable table schemas with
+  SQL catalog names. Metadata snapshots, database namespaces, and catalog tombstones remain;
+  placement-driven membership orchestration is not yet integrated.
 
 - **Scope:** map tablets to Raft groups; multiplex logical records over physical logs, threads, timers, and connections; lifecycle, placement, snapshot transfer, fairness, and safe per-group reclamation.
 - **Explicit non-scope:** globally ordered logs, cross-tablet atomic transactions, distributed query execution, automatic rebalancing beyond scoped placement mechanics, and conflating physical offsets with logical indexes.

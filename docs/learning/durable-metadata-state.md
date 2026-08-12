@@ -6,7 +6,7 @@
 Entry type 2 is decoded under [Metadata Command v1](../formats/metadata-command-v1.md); entry type 3
 is decoded under [Schema Definition v1](../formats/schema-definition-v1.md). The owner provides
 read-only node, schema identity, complete schema, active table-definition, tablet-placement, and
-retention lookups after committed application.
+complete/legacy-compatible table-policy lookups after committed application.
 
 ## Ordering and durability
 
@@ -24,6 +24,8 @@ tablet-to-table identity, canonical replica membership, leader-in-replica member
 schema identity ownership, direct schema succession, unique table-name ownership, and bounded maps.
 Complete definitions share immutable `TableSchema` ownership; readers retain stable definitions
 until state-machine teardown.
+Complete table policy applies only after its schema, atomically updates the compatibility retention
+view, and prevents a later legacy partial command from contradicting the complete authority.
 
 ## Recovery and failure behavior
 

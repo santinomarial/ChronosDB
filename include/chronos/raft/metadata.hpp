@@ -64,8 +64,22 @@ struct RetentionMetadata {
   friend bool operator==(const RetentionMetadata&, const RetentionMetadata&) = default;
 };
 
-using MetadataCommand =
-    std::variant<ClusterNodeMetadata, SchemaMetadata, TabletPlacementMetadata, RetentionMetadata>;
+// Complete SQL table behavior. RetentionMetadata remains decodable as the legacy partial policy;
+// new table creation must publish this command so partitioning, event retention, history,
+// lateness, and retry retention share one committed authority.
+struct TablePolicyMetadata {
+  schema::TableId table_id;
+  std::int64_t partition_interval_ns{};
+  std::int64_t retention_ns{};
+  std::int64_t system_history_ns{};
+  std::int64_t allowed_lateness_ns{};
+  std::uint64_t retry_retention_positions{};
+
+  friend bool operator==(const TablePolicyMetadata&, const TablePolicyMetadata&) = default;
+};
+
+using MetadataCommand = std::variant<ClusterNodeMetadata, SchemaMetadata, TabletPlacementMetadata,
+                                     RetentionMetadata, TablePolicyMetadata>;
 
 struct MetadataLimits {
   std::size_t maximum_nodes{1024U};
@@ -108,6 +122,8 @@ public:
   find_tablet(const schema::TabletId& tablet_id) const noexcept;
   [[nodiscard]] const RetentionMetadata*
   find_retention(const schema::TableId& table_id) const noexcept;
+  [[nodiscard]] const TablePolicyMetadata*
+  find_table_policy(const schema::TableId& table_id) const noexcept;
 
 private:
   class Impl;

@@ -116,8 +116,9 @@
 - Carry the implemented group-scoped read-barrier operation through authenticated production
   transport, request deadlines/coalescing, apply waiting, and exact tablet snapshot acquisition.
 - Extend the implemented metadata Raft codec/application/reopen path and complete-schema-definition
-  entry with cluster epochs, metadata application snapshots, golden fixtures, fuzzing, allocation/
-  crash injection, and large-catalog limits/measurements.
+  entry and complete table-policy command with cluster epochs, metadata application snapshots,
+  golden fixtures, fuzzing, allocation/crash injection, policy-transition matrices, and
+  large-catalog limits/measurements.
 - Extend the implemented committed-only tablet command application and full retained-log rebuild
   with crash injection around publication/applied-index persistence. Extend the implemented durable
   application-snapshot creation/compaction plus prefix/suffix recovery with mismatch/fault matrices,

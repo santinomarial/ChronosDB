@@ -4,7 +4,8 @@
 
 Metadata Command v1 is the application payload for logical Raft entry type `2` in the dedicated
 metadata group. It durably orders cluster nodes, schema identities, tablet placement epochs and
-leader hints, and retention policy. Complete immutable schemas use the separate additive
+leader hints, legacy retention policy, and complete table policy. Complete immutable schemas use
+the separate additive
 [Schema Definition v1](schema-definition-v1.md) entry type `3`; existing type-2 bytes are never
 reinterpreted. It is independent of WAL v1 and never uses native object representations. All
 integers are little-endian.
@@ -42,7 +43,13 @@ trailer checksums, bounded fields, canonical membership order, and exact payload
   (4), leader-present byte (1), three zero bytes, leader node (8; zero iff absent), then ascending
   unique nonzero replica node IDs (8 each). A present leader must be a replica.
 - **4 — retention:** table UUID (16), nonnegative system-history nanoseconds (`i64`), and nonzero
-  retry-retention positions (`u64`).
+  retry-retention positions (`u64`). This legacy partial record remains decodable. After kind 5 is
+  present for a table, a later kind 4 must exactly match those two complete-policy fields.
+- **5 — complete table policy:** table UUID (16), positive partition interval nanoseconds (`i64`),
+  positive event-data retention nanoseconds (`i64`), positive system-history retention nanoseconds
+  (`i64`), nonnegative allowed lateness nanoseconds (`i64`), nonzero retry-retention positions
+  (`u64`), then eight required-zero bytes. Application requires an installed complete schema for
+  the table and derives the legacy retention view from this record.
 
 Encoders canonicalize replica order. Unknown major/minor versions or kinds report unsupported;
 checksum or semantic damage reports corruption. Adding fields requires a compatible minor rule or a

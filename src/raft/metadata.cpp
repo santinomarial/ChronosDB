@@ -43,6 +43,7 @@ public:
   std::map<schema::TableId, schema::SchemaId> active_schemas;
   std::map<schema::TabletId, TabletPlacementMetadata> tablets;
   std::map<schema::TableId, RetentionMetadata> retention;
+  std::map<schema::TableId, TablePolicyMetadata> policies;
 };
 
 MetadataStateMachine::MetadataStateMachine(std::unique_ptr<Impl> impl) noexcept
@@ -188,12 +189,44 @@ common::Status MetadataStateMachine::apply_committed(const LogIndex index,
             return invalid("tablet placement must preserve table and advance epoch");
           }
           impl_->tablets.insert_or_assign(value.tablet_id, std::move(value));
-        } else {
+        } else if constexpr (std::is_same_v<T, RetentionMetadata>) {
           if (value.table_id.uuid().is_nil() || value.system_history_ns < 0 ||
               value.retry_retention_positions == 0U) {
             return invalid("retention metadata is invalid");
           }
+          const auto complete = impl_->policies.find(value.table_id);
+          if (complete != impl_->policies.end() &&
+              (complete->second.system_history_ns != value.system_history_ns ||
+               complete->second.retry_retention_positions != value.retry_retention_positions)) {
+            return invalid("legacy retention metadata conflicts with complete table policy");
+          }
           impl_->retention.insert_or_assign(value.table_id, value);
+        } else {
+          if (value.table_id.uuid().is_nil() || value.partition_interval_ns <= 0 ||
+              value.retention_ns <= 0 || value.system_history_ns <= 0 ||
+              value.allowed_lateness_ns < 0 || value.retry_retention_positions == 0U ||
+              !impl_->active_schemas.contains(value.table_id)) {
+            return invalid("complete table policy metadata is invalid or has no table schema");
+          }
+          const auto existing_policy = impl_->policies.find(value.table_id);
+          const std::optional<TablePolicyMetadata> previous_policy =
+              existing_policy == impl_->policies.end()
+                  ? std::nullopt
+                  : std::optional<TablePolicyMetadata>{existing_policy->second};
+          try {
+            impl_->policies.insert_or_assign(value.table_id, value);
+            impl_->retention.insert_or_assign(
+                value.table_id, RetentionMetadata{value.table_id, value.system_history_ns,
+                                                  value.retry_retention_positions});
+          } catch (const std::bad_alloc&) {
+            if (previous_policy.has_value()) {
+              impl_->policies.insert_or_assign(value.table_id, *previous_policy);
+            } else {
+              impl_->policies.erase(value.table_id);
+            }
+            return {common::StatusCode::kResourceExhausted,
+                    "complete table policy allocation failed"};
+          }
         }
         return common::Status::ok();
       },
@@ -254,6 +287,11 @@ const RetentionMetadata*
 MetadataStateMachine::find_retention(const schema::TableId& table_id) const noexcept {
   const auto found = impl_->retention.find(table_id);
   return found == impl_->retention.end() ? nullptr : &found->second;
+}
+const TablePolicyMetadata*
+MetadataStateMachine::find_table_policy(const schema::TableId& table_id) const noexcept {
+  const auto found = impl_->policies.find(table_id);
+  return found == impl_->policies.end() ? nullptr : &found->second;
 }
 
 } // namespace chronos::raft

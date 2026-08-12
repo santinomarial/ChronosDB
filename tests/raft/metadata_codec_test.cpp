@@ -39,6 +39,8 @@ TEST(MetadataCommandCodecTest, RoundTripsEveryCommandAndCanonicalizesReplicas) {
       SchemaMetadata{table, schema_id, schema::SchemaVersion::initial()},
       TabletPlacementMetadata{table, tablet, 11U, {3U, 1U, 2U}, 2U},
       RetentionMetadata{table, 1'000'000, 4096U},
+      TablePolicyMetadata{table, 60'000'000'000LL, 86'400'000'000'000LL, 3'600'000'000'000LL,
+                          5'000'000'000LL, 8192U},
   };
   for (const MetadataCommand& command : commands) {
     auto encoded = encode_metadata_command_v1(command);
@@ -65,6 +67,17 @@ TEST(MetadataCommandCodecTest, RejectsDamageUnknownVersionAndRuntimeLimits) {
   encoded[8U] = std::byte{2U};
   refresh_checksums(encoded);
   EXPECT_EQ(decode_metadata_command_v1(encoded).error().code(), common::StatusCode::kNotSupported);
+
+  encoded = encode_metadata_command_v1(
+                TablePolicyMetadata{id<schema::TableId>(1U), 100, 1000, 500, 10, 100U})
+                .value();
+  encoded[encoded.size() - kMetadataCommandTrailerSize - 1U] = std::byte{1U};
+  store_u32(encoded, 32U,
+            common::crc32c(common::ByteView{encoded}.subspan(
+                kMetadataCommandHeaderSize,
+                encoded.size() - kMetadataCommandHeaderSize - kMetadataCommandTrailerSize)));
+  refresh_checksums(encoded);
+  EXPECT_EQ(decode_metadata_command_v1(encoded).error().code(), common::StatusCode::kCorruption);
 
   EXPECT_EQ(
       encode_metadata_command_v1(ClusterNodeMetadata{1U, "long"}, {.maximum_endpoint_bytes = 3U})

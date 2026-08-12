@@ -3,8 +3,10 @@
 - **Status:** accepted
 - **Date:** 2026-08-08
 - **Owners:** ChronosDB catalog and distributed-systems maintainers
-- **Extended by:** [ADR 0136](0136-idempotent-retained-reconfiguration-action-replay.md) and
-  [ADR 0137](0137-current-term-raft-progress-noop.md)
+- **Extended by:** [ADR 0136](0136-idempotent-retained-reconfiguration-action-replay.md),
+  [ADR 0137](0137-current-term-raft-progress-noop.md),
+  [ADR 0214](0214-durable-complete-schema-definitions.md), and
+  [ADR 0215](0215-complete-table-policy-metadata.md)
 
 ## Context
 
