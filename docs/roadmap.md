@@ -839,9 +839,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   can authorize QUORUM_SYNC without reconstructing connection capabilities.
   A bounded service coordinator now owns multiple such operations, validates negotiated task
   authority, derives the tablet group from committed placement/binding metadata, queues an ordered
-  group observation, and admits only stable local leadership under its exact term. It polls requests
-  round-robin, enforces exact cancellation/deadlines, reports finite metrics, and releases one
-  correlated acknowledgement or error for response-queue backpressure.
+  group observation, exact-validates the committed active schema before and after that observation,
+  and admits only stable local leadership under its exact term. It polls requests round-robin,
+  enforces exact cancellation/deadlines, reports finite metrics, and releases one correlated
+  acknowledgement or error for response-queue backpressure.
   Group-scoped read barriers now flow through both Multi-Raft owners without fabricating a durable
   transition, while higher-term recipient state still crosses the existing sync-before-response
   boundary. Production transport and tablet snapshot acquisition remain deferred.

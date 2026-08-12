@@ -172,7 +172,8 @@ Additive Snapshot 1.1 retains exact Tablet Group Binding v1 type-4 entries, givi
 immutable committed tablet-to-group identity without changing Metadata Command v1 or minor-0 bytes.
 Replicated-ingest coordination now derives that route from committed metadata, obtains an ordered
 local role/term observation, exact-compares stable membership with placement, and term-fences the
-proposal. Callers no longer supply group or term authority.
+proposal. It also binds the complete command shape to the committed active schema on both sides of
+the observation. Callers no longer supply group, term, or schema authority.
 
 ### Phase 15 — Multi-Raft tablets and metadata
 

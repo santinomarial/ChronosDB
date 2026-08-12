@@ -4,6 +4,7 @@
 #include "chronos/raft/async_durable_worker_extension_set.hpp"
 #include "chronos/raft/async_metadata_application.hpp"
 #include "chronos/raft/metadata_codec.hpp"
+#include "chronos/raft/schema_definition_codec.hpp"
 #include "chronos/raft/tablet_group_binding_codec.hpp"
 #include "chronos/service/replicated_ingest_coordinator.hpp"
 #include "chronos/service/replicated_ingest_operation.hpp"
@@ -147,17 +148,33 @@ struct RoutedApplications {
               .value()};
 }
 
+[[nodiscard]] raft::ProposeOperation
+schema_proposal(std::shared_ptr<const schema::TableSchema> schema) {
+  return {raft::kRaftSchemaDefinitionEntryType,
+          raft::encode_schema_definition_v1(
+              {.name = "events", .quoted = false, .schema = std::move(schema)})
+              .value()};
+}
+
 [[nodiscard]] raft::ProposeOperation binding_proposal() {
   return {raft::kRaftTabletGroupBindingEntryType,
           raft::encode_tablet_group_binding_v1({tablet_id(), group_id()}).value()};
 }
 
 void publish_route(raft::AsyncDurableMultiRaftRuntime& runtime,
-                   std::vector<raft::NodeId> replicas = {1U}, const bool include_binding = true) {
+                   std::vector<raft::NodeId> replicas = {1U}, const bool include_binding = true,
+                   const bool publish_successor = false, const bool include_schema = true) {
   auto election = runtime.try_submit({{metadata_group_id(), raft::StartElectionOperation{}}});
   ASSERT_TRUE(election.has_value()) << election.error().to_string();
   ASSERT_TRUE(election->wait().has_value());
   std::vector<raft::DurableRaftRequest> proposals;
+  if (include_schema) {
+    proposals.emplace_back(metadata_group_id(), schema_proposal(columnar::test::batch_schema()));
+    if (publish_successor) {
+      proposals.emplace_back(metadata_group_id(),
+                             schema_proposal(columnar::test::successor_batch_schema()));
+    }
+  }
   proposals.emplace_back(metadata_group_id(), placement_proposal(std::move(replicas)));
   if (include_binding)
     proposals.emplace_back(metadata_group_id(), binding_proposal());
@@ -321,6 +338,86 @@ TEST(ReplicatedIngestCoordinatorTest, RejectsAPlacedTabletWithoutAnAuthoritative
   EXPECT_EQ(coordinator->admit(quorum_request(10U, 1U, 1U)).code(),
             common::StatusCode::kUnavailable);
   EXPECT_EQ(coordinator->metrics().pending_requests, 0U);
+  EXPECT_TRUE(runtime->shutdown().is_ok());
+}
+
+TEST(ReplicatedIngestCoordinatorTest, RequiresTheCommittedActiveSchemaBeforeRouting) {
+  TemporaryDirectory directory;
+  auto applications = routed_applications();
+  ASSERT_TRUE(applications.has_value());
+  auto runtime = raft::AsyncDurableMultiRaftRuntime::create_new(
+      1U, {.directory_path = directory.path().string()},
+      {{metadata_group_id(), {1U}}, {group_id(), {1U}}}, {}, applications->extensions);
+  ASSERT_TRUE(runtime.has_value());
+  publish_route(*runtime, {1U}, true, false, false);
+  auto coordinator = ReplicatedIngestCoordinator::create(*runtime, *applications->tablets,
+                                                         *applications->metadata);
+  ASSERT_TRUE(coordinator.has_value());
+  EXPECT_EQ(coordinator->admit(quorum_request(10U, 1U, 1U)).code(),
+            common::StatusCode::kUnavailable);
+  EXPECT_EQ(coordinator->metrics().pending_requests, 0U);
+  EXPECT_TRUE(runtime->shutdown().is_ok());
+}
+
+TEST(ReplicatedIngestCoordinatorTest, RejectsACommandForAnInactiveCommittedSchema) {
+  TemporaryDirectory directory;
+  auto applications = routed_applications();
+  ASSERT_TRUE(applications.has_value());
+  auto runtime = raft::AsyncDurableMultiRaftRuntime::create_new(
+      1U, {.directory_path = directory.path().string()},
+      {{metadata_group_id(), {1U}}, {group_id(), {1U}}}, {}, applications->extensions);
+  ASSERT_TRUE(runtime.has_value());
+  publish_route(*runtime, {1U}, true, true);
+  auto coordinator = ReplicatedIngestCoordinator::create(*runtime, *applications->tablets,
+                                                         *applications->metadata);
+  ASSERT_TRUE(coordinator.has_value());
+  EXPECT_EQ(coordinator->admit(quorum_request(10U, 1U, 1U)).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(coordinator->metrics().pending_requests, 0U);
+  EXPECT_TRUE(runtime->shutdown().is_ok());
+}
+
+TEST(ReplicatedIngestCoordinatorTest, RevalidatesActiveSchemaAfterTheOrderedObservation) {
+  TemporaryDirectory directory;
+  auto applications = routed_applications();
+  ASSERT_TRUE(applications.has_value());
+  auto runtime = raft::AsyncDurableMultiRaftRuntime::create_new(
+      1U, {.directory_path = directory.path().string()},
+      {{metadata_group_id(), {1U}}, {group_id(), {1U}}}, {}, applications->extensions);
+  ASSERT_TRUE(runtime.has_value());
+  publish_route(*runtime);
+  auto election = runtime->try_submit({{group_id(), raft::StartElectionOperation{}}});
+  ASSERT_TRUE(election.has_value());
+  ASSERT_TRUE(election->wait().has_value());
+  auto coordinator = ReplicatedIngestCoordinator::create(*runtime, *applications->tablets,
+                                                         *applications->metadata);
+  ASSERT_TRUE(coordinator.has_value());
+  EXPECT_TRUE(coordinator->admit(quorum_request(10U, 1U, 1U)).is_ok());
+
+  auto successor = runtime->try_submit(
+      {{metadata_group_id(), schema_proposal(columnar::test::successor_batch_schema())}});
+  ASSERT_TRUE(successor.has_value());
+  ASSERT_TRUE(successor->wait().has_value());
+
+  std::optional<network::NetworkTask> response;
+  for (std::size_t attempt = 0U; attempt < 10'000U && !response.has_value(); ++attempt) {
+    auto polled = coordinator->poll();
+    ASSERT_TRUE(polled.has_value()) << polled.error().to_string();
+    response = std::move(*polled);
+    std::this_thread::yield();
+  }
+  ASSERT_TRUE(response.has_value());
+  EXPECT_EQ(response->frame.header.message_type, network::MessageType::kError);
+  const auto error = network::decode_error_message(response->frame.payload);
+  ASSERT_TRUE(error.has_value());
+  EXPECT_EQ(error->code, network::ProtocolErrorCode::kInvalidRequest);
+  auto observed = runtime->try_observe_group(group_id());
+  ASSERT_TRUE(observed.has_value());
+  auto result = observed->wait();
+  ASSERT_TRUE(result.has_value());
+  ASSERT_EQ(result->size(), 1U);
+  ASSERT_TRUE(result->front().observation.has_value());
+  EXPECT_EQ(result->front().observation->last_log_index, 0U);
   EXPECT_TRUE(runtime->shutdown().is_ok());
 }
 

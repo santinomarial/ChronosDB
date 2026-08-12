@@ -31,8 +31,8 @@ Node-wide pending count, high water, admissions, completions, cancellations, tim
 rejections are observable. Focused tests cover finite overload, exact cancellation, successful
 correlated acknowledgement, deadline error, metrics, and refusal without negotiated authority.
 
-Authoritative tablet/group placement and local leader routing are added by ADR 0280. Active-schema
-authorization, remote leader redirection, integration into the packaged daemon loop,
+Authoritative tablet/group placement and local leader routing are added by ADR 0280, and committed
+active-schema authorization by ADR 0281. Remote leader redirection, packaged daemon integration,
 completion-driven wakeup, multi-node delayed commit, queue saturation, disconnect races, TSan, and
 load/latency measurement remain subsequent work. No durable or network bytes change.
 

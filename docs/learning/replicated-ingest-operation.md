@@ -11,6 +11,10 @@ and queues an ordered observation of that derived group. Polling revalidates the
 requires stable voters to exactly equal placement replicas, and admits only when this node is the
 current leader. The proposal is fenced by the exact observed term. Leader hints never authorize a
 write, and a joint or placement-divergent group fails closed until its authorities converge.
+Before observation admission, the coordinator also requires the command's schema identity and
+version to be the committed active definition and validates its complete columnar shape. It repeats
+the active identity check after observation, preventing a concurrent schema activation from
+allowing an old-schema command into the data log.
 
 The operation has proposal, receipt, and complete phases. `poll` never waits: the service event loop
 retains the move-only owner and calls it only when coordinating completions. Destruction abandons

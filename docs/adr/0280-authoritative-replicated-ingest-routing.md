@@ -3,6 +3,7 @@
 - **Status:** accepted
 - **Date:** 2026-08-12
 - **Owners:** ChronosDB service, metadata, Raft, and ingest maintainers
+- **Extended by:** [ADR 0281](0281-committed-schema-replicated-ingest-admission.md)
 
 ## Context
 

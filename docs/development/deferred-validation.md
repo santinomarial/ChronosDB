@@ -195,8 +195,9 @@
   operation now exact-validates proposal persistence, applied receipts, retry outcomes, and
   protocol-v2 acknowledgement projection. Reactor tasks now preserve exact negotiated protocol
   context, and a bounded coordinator now derives routes from committed placement/binding metadata,
-  verifies ordered stable local leadership, and owns fair multi-request polling, exact
-  cancellation, deadlines, correlation, and metrics. A flat bounded extension set composes exact
+  validates complete active-schema authority before and after observation, verifies ordered stable
+  local leadership, and owns fair multi-request polling, exact cancellation, deadlines,
+  correlation, and metrics. A flat bounded extension set composes exact
   application owners with ordered callbacks, reverse partial-failure cleanup, and direct-child
   identity proof. The concrete metadata extension now performs pre-admission retained/snapshot
   recovery, touched-group application, durable applied-index advancement, and immutable catalog

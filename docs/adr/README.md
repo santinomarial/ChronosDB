@@ -315,3 +315,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0278](0278-worker-affine-metadata-application.md) | Worker-affine asynchronous metadata application | accepted |
 | [0279](0279-authoritative-tablet-group-binding.md) | Authoritative tablet-to-Raft-group binding | accepted |
 | [0280](0280-authoritative-replicated-ingest-routing.md) | Authoritative replicated-ingest routing | accepted |
+| [0281](0281-committed-schema-replicated-ingest-admission.md) | Committed-schema replicated-ingest admission | accepted |

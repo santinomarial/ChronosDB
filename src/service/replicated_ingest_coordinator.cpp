@@ -64,6 +64,8 @@ public:
     raft::GroupId group_id;
     schema::TableId table_id;
     schema::TabletId tablet_id;
+    schema::SchemaId schema_id;
+    schema::SchemaVersion schema_version;
     std::vector<std::byte> command;
     raft::AsyncDurableRaftCompletion observation;
   };
@@ -83,6 +85,35 @@ public:
        const ReplicatedIngestCoordinatorLimits configured_limits) noexcept
       : runtime(&configured_runtime), application(&configured_application),
         metadata(&configured_metadata), limits(configured_limits) {}
+
+  [[nodiscard]] common::Result<const schema::TableSchema*>
+  active_schema(const raft::MetadataCatalogSnapshot& catalog, const schema::TableId& table_id,
+                const schema::SchemaId& schema_id,
+                const schema::SchemaVersion schema_version) const {
+    const auto active = std::ranges::lower_bound(catalog.active_schemas, table_id, {},
+                                                 &raft::ActiveSchemaMetadata::table_id);
+    if (active == catalog.active_schemas.end() || active->table_id != table_id)
+      return common::make_unexpected(
+          unavailable("replicated ingest table has no committed active schema"));
+    if (active->schema_id != schema_id)
+      return common::make_unexpected(
+          invalid("replicated ingest requires the committed active schema"));
+    const schema::TableSchema* definition = nullptr;
+    for (const raft::CatalogTableDefinition& candidate : catalog.schema_definitions) {
+      if (candidate.schema == nullptr)
+        return common::make_unexpected(
+            corruption("replicated ingest catalog contains an empty schema definition"));
+      if (candidate.schema->schema_id() == schema_id) {
+        definition = candidate.schema.get();
+        break;
+      }
+    }
+    if (definition == nullptr || definition->table_id() != table_id ||
+        definition->version() != schema_version)
+      return common::make_unexpected(
+          corruption("replicated ingest active schema definition is inconsistent"));
+    return definition;
+  }
 
   [[nodiscard]] common::Status admit(network::NetworkTask request,
                                      const std::chrono::steady_clock::time_point now) {
@@ -124,6 +155,14 @@ public:
     auto catalog = metadata->catalog_snapshot();
     if (!catalog.has_value())
       return reject(catalog.error());
+    auto schema = active_schema(**catalog, decoded->table_id(), decoded->schema_id(),
+                                decoded->schema_version());
+    if (!schema.has_value())
+      return reject(schema.error());
+    const common::Status schema_status =
+        ingest::validate_columnar_append_schema(*decoded, **schema);
+    if (!schema_status.is_ok())
+      return reject(schema_status);
     const auto placement =
         std::ranges::lower_bound((*catalog)->tablet_placements, decoded->tablet_id(), {},
                                  &raft::TabletPlacementMetadata::tablet_id);
@@ -153,7 +192,8 @@ public:
            .protocol = request.protocol,
            .deadline = now + limits.request_timeout,
            .work = Routing{binding->group_id, decoded->table_id(), decoded->tablet_id(),
-                           std::move(command), std::move(*observation)}});
+                           decoded->schema_id(), decoded->schema_version(), std::move(command),
+                           std::move(*observation)}});
       stats.pending_requests = pending.size();
       stats.high_water_pending_requests =
           std::max(stats.high_water_pending_requests, stats.pending_requests);
@@ -175,6 +215,9 @@ public:
     auto catalog = metadata->catalog_snapshot();
     if (!catalog.has_value())
       return catalog.error();
+    auto schema = active_schema(**catalog, route.table_id, route.schema_id, route.schema_version);
+    if (!schema.has_value())
+      return schema.error();
     const auto placement = std::ranges::lower_bound((*catalog)->tablet_placements, route.tablet_id,
                                                     {}, &raft::TabletPlacementMetadata::tablet_id);
     if (placement == (*catalog)->tablet_placements.end() || placement->tablet_id != route.tablet_id)
