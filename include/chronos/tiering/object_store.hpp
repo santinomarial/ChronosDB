@@ -7,6 +7,7 @@
 
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -83,6 +84,11 @@ private:
 
 class S3CredentialProvider;
 
+enum class S3ServerSideEncryption : std::uint8_t {
+  kS3ManagedAes256 = 1U,
+  kKms = 2U,
+};
+
 struct S3ObjectStoreConfig {
   // A scheme and authority with an optional base path, for example
   // https://s3.us-east-1.amazonaws.com or https://minio.example/storage.
@@ -105,6 +111,11 @@ struct S3ObjectStoreConfig {
   std::size_t multipart_threshold_bytes{64U * 1024U * 1024U};
   std::size_t multipart_part_bytes{16U * 1024U * 1024U};
   std::size_t maximum_response_bytes{std::size_t{4U} * 1024U * 1024U * 1024U};
+  // When set, every object creation requests this encryption mode and every successful HEAD must
+  // report it. SSE-KMS also requires kms_key_id; use the canonical identifier expected in the
+  // provider's HEAD response (normally a key ARN) so exact verification remains deterministic.
+  std::optional<S3ServerSideEncryption> server_side_encryption;
+  std::optional<std::string> kms_key_id;
   // Plain HTTP is rejected by default. This switch exists for explicitly isolated S3-compatible
   // deployments and local tests; credentials and object bytes are exposed to that network.
   bool require_tls{true};

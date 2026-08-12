@@ -49,6 +49,7 @@ struct LocalS3Behavior {
   std::optional<std::string> transient_retry_after;
   std::optional<std::size_t> fail_multipart_part;
   bool embedded_multipart_completion_error{};
+  std::optional<std::string> head_encryption_override;
 };
 
 class LocalS3Server final {
@@ -236,6 +237,14 @@ private:
       }
       multipart_upload_active_ = true;
       multipart_checksum_hex_ = checksum->second;
+      const auto encryption = request->headers.find("x-amz-server-side-encryption");
+      const auto kms_key = request->headers.find("x-amz-server-side-encryption-aws-kms-key-id");
+      multipart_encryption_ = encryption == request->headers.end()
+                                  ? std::nullopt
+                                  : std::optional<std::string>{encryption->second};
+      multipart_kms_key_id_ = kms_key == request->headers.end()
+                                  ? std::nullopt
+                                  : std::optional<std::string>{kms_key->second};
       multipart_parts_.clear();
       const std::string body =
           "<InitiateMultipartUploadResult><Bucket>chronos-test</Bucket><Key>parts/multipart"
@@ -325,6 +334,8 @@ private:
       }
       object_ = std::move(assembled);
       checksum_hex_ = multipart_checksum_hex_;
+      server_side_encryption_ = multipart_encryption_;
+      kms_key_id_ = multipart_kms_key_id_;
       multipart_upload_active_ = false;
       multipart_parts_.clear();
       const std::string result =
@@ -377,6 +388,13 @@ private:
       }
       object_ = request->body;
       checksum_hex_ = digest->second;
+      const auto encryption = request->headers.find("x-amz-server-side-encryption");
+      const auto kms_key = request->headers.find("x-amz-server-side-encryption-aws-kms-key-id");
+      server_side_encryption_ = encryption == request->headers.end()
+                                    ? std::nullopt
+                                    : std::optional<std::string>{encryption->second};
+      kms_key_id_ = kms_key == request->headers.end() ? std::nullopt
+                                                      : std::optional<std::string>{kms_key->second};
       static_cast<void>(send_all(
           descriptor, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"));
       return;
@@ -387,9 +405,19 @@ private:
       return;
     }
     if (request->method == "HEAD") {
+      const std::optional<std::string> encryption = behavior_.head_encryption_override.has_value()
+                                                        ? behavior_.head_encryption_override
+                                                        : server_side_encryption_;
+      const std::string encryption_headers =
+          encryption.has_value()
+              ? "\r\nx-amz-server-side-encryption: " + *encryption +
+                    (*encryption == "aws:kms" && kms_key_id_.has_value()
+                         ? "\r\nx-amz-server-side-encryption-aws-kms-key-id: " + *kms_key_id_
+                         : std::string{})
+              : std::string{};
       const std::string response =
           "HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(object_->size()) +
-          "\r\nx-amz-meta-chronos-sha256: " + checksum_hex_ +
+          "\r\nx-amz-meta-chronos-sha256: " + checksum_hex_ + encryption_headers +
           "\r\nETag: \"fixture-etag\"\r\nConnection: close\r\n\r\n";
       static_cast<void>(send_all(descriptor, response));
       return;
@@ -462,9 +490,13 @@ private:
   std::string failure_;
   std::optional<std::vector<std::byte>> object_;
   std::string checksum_hex_;
+  std::optional<std::string> server_side_encryption_;
+  std::optional<std::string> kms_key_id_;
   LocalS3Behavior behavior_;
   bool multipart_upload_active_{};
   std::string multipart_checksum_hex_;
+  std::optional<std::string> multipart_encryption_;
+  std::optional<std::string> multipart_kms_key_id_;
   std::map<std::size_t, std::vector<std::byte>> multipart_parts_;
 };
 
@@ -735,6 +767,75 @@ TEST(S3ObjectStoreTest, IgnoresProcessProxyAndRejectsCredentialBearingProxyConfi
   EXPECT_TRUE(server.failure().empty()) << server.failure();
 }
 
+TEST(S3ObjectStoreTest, RequestsAndVerifiesS3ManagedEncryption) {
+  LocalS3Server server;
+  ASSERT_TRUE(server.valid()) << server.failure();
+  S3ObjectStoreConfig config{.endpoint = "http://127.0.0.1:" + std::to_string(server.port()),
+                             .region = "us-east-1",
+                             .bucket = "chronos-test",
+                             .access_key_id = "test-access",
+                             .secret_access_key = "test-secret",
+                             .session_token = "test-token",
+                             .connect_timeout = std::chrono::milliseconds{1'000},
+                             .request_timeout = std::chrono::milliseconds{2'000},
+                             .maximum_response_bytes = 1024U,
+                             .server_side_encryption = S3ServerSideEncryption::kS3ManagedAes256,
+                             .require_tls = false};
+  auto store = S3ObjectStore::create(std::move(config));
+  ASSERT_TRUE(store.has_value()) << store.error().to_string();
+
+  const std::vector<std::byte> bytes{std::byte{0x45U}};
+  auto uploaded = (*store)->put_if_absent("parts/encrypted", bytes, ingest::sha256(bytes).value());
+  ASSERT_TRUE(uploaded.has_value()) << uploaded.error().to_string();
+
+  const auto requests = server.requests();
+  ASSERT_EQ(requests.size(), 2U);
+  EXPECT_EQ(requests[0].method, "PUT");
+  EXPECT_EQ(requests[0].headers.at("x-amz-server-side-encryption"), "AES256");
+  EXPECT_FALSE(requests[0].headers.contains("x-amz-server-side-encryption-aws-kms-key-id"));
+  EXPECT_EQ(requests[1].method, "HEAD");
+  EXPECT_FALSE(requests[1].headers.contains("x-amz-server-side-encryption"));
+  EXPECT_TRUE(server.failure().empty()) << server.failure();
+}
+
+TEST(S3ObjectStoreTest, RejectsEncryptionMetadataMismatchAndInvalidKmsConfiguration) {
+  LocalS3Server server{LocalS3Behavior{.head_encryption_override = "AES256"}};
+  ASSERT_TRUE(server.valid()) << server.failure();
+  const std::string kms_key_arn{
+      "arn:aws:kms:us-east-1:123456789012:key/01234567-89ab-cdef-0123-456789abcdef"};
+  S3ObjectStoreConfig config{.endpoint = "http://127.0.0.1:" + std::to_string(server.port()),
+                             .region = "us-east-1",
+                             .bucket = "chronos-test",
+                             .access_key_id = "test-access",
+                             .secret_access_key = "test-secret",
+                             .session_token = "test-token",
+                             .connect_timeout = std::chrono::milliseconds{1'000},
+                             .request_timeout = std::chrono::milliseconds{2'000},
+                             .maximum_response_bytes = 1024U,
+                             .server_side_encryption = S3ServerSideEncryption::kKms,
+                             .kms_key_id = kms_key_arn,
+                             .require_tls = false};
+  auto store = S3ObjectStore::create(config);
+  ASSERT_TRUE(store.has_value()) << store.error().to_string();
+
+  const std::vector<std::byte> bytes{std::byte{0x46U}};
+  auto uploaded =
+      (*store)->put_if_absent("parts/kms-mismatch", bytes, ingest::sha256(bytes).value());
+  ASSERT_FALSE(uploaded.has_value());
+  EXPECT_EQ(uploaded.error().code(), common::StatusCode::kCorruption);
+  const auto requests = server.requests();
+  ASSERT_EQ(requests.size(), 2U);
+  EXPECT_EQ(requests[0].headers.at("x-amz-server-side-encryption"), "aws:kms");
+  EXPECT_EQ(requests[0].headers.at("x-amz-server-side-encryption-aws-kms-key-id"), kms_key_arn);
+
+  config.kms_key_id.reset();
+  EXPECT_FALSE(S3ObjectStore::create(config).has_value());
+  config.server_side_encryption = S3ServerSideEncryption::kS3ManagedAes256;
+  config.kms_key_id = kms_key_arn;
+  EXPECT_FALSE(S3ObjectStore::create(std::move(config)).has_value());
+  EXPECT_TRUE(server.failure().empty()) << server.failure();
+}
+
 TEST(S3ObjectStoreTest, RefreshesRejectedCredentialsAndRetriesTransientConditionalPut) {
   LocalS3Server server{LocalS3Behavior{.access_key_id = "fresh-access",
                                        .session_token = "fresh-token",
@@ -835,6 +936,8 @@ TEST(S3ObjectStoreTest, MultipartUploadCompletesConditionallyAndVerifiesExactObj
   LocalS3Server server;
   ASSERT_TRUE(server.valid()) << server.failure();
   constexpr std::size_t part_bytes = 5U * 1024U * 1024U;
+  const std::string kms_key_arn{
+      "arn:aws:kms:us-east-1:123456789012:key/01234567-89ab-cdef-0123-456789abcdef"};
   S3ObjectStoreConfig config{.endpoint = "http://127.0.0.1:" + std::to_string(server.port()),
                              .region = "us-east-1",
                              .bucket = "chronos-test",
@@ -846,6 +949,8 @@ TEST(S3ObjectStoreTest, MultipartUploadCompletesConditionallyAndVerifiesExactObj
                              .multipart_threshold_bytes = part_bytes,
                              .multipart_part_bytes = part_bytes,
                              .maximum_response_bytes = part_bytes + 3U,
+                             .server_side_encryption = S3ServerSideEncryption::kKms,
+                             .kms_key_id = kms_key_arn,
                              .require_tls = false};
   auto store = S3ObjectStore::create(std::move(config));
   ASSERT_TRUE(store.has_value()) << store.error().to_string();
@@ -865,6 +970,8 @@ TEST(S3ObjectStoreTest, MultipartUploadCompletesConditionallyAndVerifiesExactObj
   EXPECT_EQ(requests[0].method, "HEAD");
   EXPECT_EQ(requests[1].method, "POST");
   EXPECT_TRUE(requests[1].target.ends_with("?uploads"));
+  EXPECT_EQ(requests[1].headers.at("x-amz-server-side-encryption"), "aws:kms");
+  EXPECT_EQ(requests[1].headers.at("x-amz-server-side-encryption-aws-kms-key-id"), kms_key_arn);
   EXPECT_EQ(requests[2].method, "PUT");
   EXPECT_TRUE(requests[2].target.ends_with("?partNumber=1&uploadId=fixture-upload%26id"));
   EXPECT_EQ(requests[2].body.size(), part_bytes);

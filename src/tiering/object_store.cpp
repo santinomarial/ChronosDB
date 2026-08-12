@@ -158,10 +158,14 @@ struct ResponseCapture {
   std::optional<std::string> checksum_hex;
   std::optional<std::string> content_range;
   std::optional<std::string> entity_tag;
+  std::optional<std::string> server_side_encryption;
+  std::optional<std::string> kms_key_id;
   std::optional<std::uint64_t> retry_after_seconds;
   bool checksum_conflict{};
   bool content_range_conflict{};
   bool entity_tag_conflict{};
+  bool server_side_encryption_conflict{};
+  bool kms_key_id_conflict{};
   bool retry_after_invalid{};
   bool body_limit_exhausted{};
 };
@@ -220,6 +224,8 @@ struct ResponseCapture {
   constexpr std::string_view checksum_name{"x-amz-meta-chronos-sha256:"};
   constexpr std::string_view content_range_name{"content-range:"};
   constexpr std::string_view entity_tag_name{"etag:"};
+  constexpr std::string_view server_side_encryption_name{"x-amz-server-side-encryption:"};
+  constexpr std::string_view kms_key_id_name{"x-amz-server-side-encryption-aws-kms-key-id:"};
   constexpr std::string_view retry_after_name{"retry-after:"};
   try {
     if (matches_name(checksum_name)) {
@@ -240,6 +246,18 @@ struct ResponseCapture {
         capture.entity_tag_conflict = true;
       else
         capture.entity_tag = value;
+    } else if (matches_name(kms_key_id_name)) {
+      const std::string value{trim_header_value(line.substr(kms_key_id_name.size()))};
+      if (capture.kms_key_id.has_value())
+        capture.kms_key_id_conflict = true;
+      else
+        capture.kms_key_id = value;
+    } else if (matches_name(server_side_encryption_name)) {
+      const std::string value{trim_header_value(line.substr(server_side_encryption_name.size()))};
+      if (capture.server_side_encryption.has_value())
+        capture.server_side_encryption_conflict = true;
+      else
+        capture.server_side_encryption = value;
     } else if (matches_name(retry_after_name)) {
       const std::string_view value = trim_header_value(line.substr(retry_after_name.size()));
       std::uint64_t seconds{};
@@ -829,6 +847,17 @@ public:
                                                 digest_hex(*request.object_checksum));
       }
       if (configured.is_ok() &&
+          (request.method == Method::kPut || request.method == Method::kCreateMultipart) &&
+          config.server_side_encryption.has_value()) {
+        const bool kms = *config.server_side_encryption == S3ServerSideEncryption::kKms;
+        configured = append_header(headers, std::string{"x-amz-server-side-encryption: "} +
+                                                (kms ? "aws:kms" : "AES256"));
+        if (configured.is_ok() && kms) {
+          configured = append_header(headers, "x-amz-server-side-encryption-aws-kms-key-id: " +
+                                                  *config.kms_key_id);
+        }
+      }
+      if (configured.is_ok() &&
           (request.method == Method::kUploadPart || request.method == Method::kCompleteMultipart)) {
         const std::string hexadecimal_checksum = digest_hex(*request.checksum);
         configured = append_header(headers, "Expect:");
@@ -890,7 +919,9 @@ public:
             common::Status{common::StatusCode::kIoError, "S3 response metadata is unavailable"});
       }
       if (response.capture.checksum_conflict || response.capture.content_range_conflict ||
-          response.capture.entity_tag_conflict) {
+          response.capture.entity_tag_conflict ||
+          response.capture.server_side_encryption_conflict ||
+          response.capture.kms_key_id_conflict) {
         return common::make_unexpected(
             common::Status{common::StatusCode::kCorruption, "S3 response metadata conflicts"});
       }
@@ -972,6 +1003,10 @@ common::Result<std::unique_ptr<S3ObjectStore>> S3ObjectStore::create(S3ObjectSto
   const bool static_credentials = !config.access_key_id.empty() ||
                                   !config.secret_access_key.empty() ||
                                   config.session_token.has_value();
+  const bool kms_encryption = config.server_side_encryption == S3ServerSideEncryption::kKms;
+  const bool valid_encryption =
+      !config.server_side_encryption.has_value() ||
+      *config.server_side_encryption == S3ServerSideEncryption::kS3ManagedAes256 || kms_encryption;
   if ((!https && !http) || (config.require_tls && !https) || config.endpoint.contains('?') ||
       config.endpoint.contains('#') || config.endpoint.contains('@') ||
       config.endpoint.size() <= scheme_length || config.endpoint[scheme_length] == '/' ||
@@ -1002,6 +1037,10 @@ common::Result<std::unique_ptr<S3ObjectStore>> S3ObjectStore::create(S3ObjectSto
       config.multipart_threshold_bytes == 0U || config.multipart_part_bytes < 5U * 1024U * 1024U ||
       static_cast<std::uintmax_t>(config.multipart_part_bytes) >
           static_cast<std::uintmax_t>(std::numeric_limits<curl_off_t>::max()) ||
+      !valid_encryption || (kms_encryption != config.kms_key_id.has_value()) ||
+      (config.kms_key_id.has_value() &&
+       (config.kms_key_id->empty() || config.kms_key_id->size() > 2048U ||
+        contains_control(*config.kms_key_id) || contains_space(*config.kms_key_id))) ||
       config.maximum_response_bytes == 0U ||
       static_cast<std::uintmax_t>(config.maximum_response_bytes) >
           static_cast<std::uintmax_t>(std::numeric_limits<curl_off_t>::max())) {
@@ -1206,6 +1245,15 @@ common::Result<ObjectMetadata> S3ObjectStore::put_if_absent(const std::string_vi
   }
   if (response->status != 200L && response->status != 201L)
     return common::make_unexpected(http_failure(response->status));
+  if (impl_->config.server_side_encryption.has_value()) {
+    auto verified = verify_existing();
+    if (!verified.has_value() && verified.error().code() == common::StatusCode::kNotFound) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kUnavailable,
+                         "S3 encrypted object is not visible during exact verification"});
+    }
+    return verified;
+  }
   return ObjectMetadata{std::string{key}, bytes.size(), checksum};
 }
 
@@ -1218,6 +1266,17 @@ common::Result<ObjectMetadata> S3ObjectStore::stat(const std::string_view key) c
     return common::make_unexpected(response.error());
   if (response->status != 200L)
     return common::make_unexpected(http_failure(response->status));
+  if (impl_->config.server_side_encryption.has_value()) {
+    const bool kms = *impl_->config.server_side_encryption == S3ServerSideEncryption::kKms;
+    const std::string_view expected = kms ? "aws:kms" : "AES256";
+    if (!response->capture.server_side_encryption.has_value() ||
+        *response->capture.server_side_encryption != expected ||
+        (kms && response->capture.kms_key_id != impl_->config.kms_key_id) ||
+        (!kms && response->capture.kms_key_id.has_value())) {
+      return common::make_unexpected(common::Status{
+          common::StatusCode::kCorruption, "S3 object server-side encryption metadata is invalid"});
+    }
+  }
   if (response->content_length < 0 ||
       static_cast<std::uintmax_t>(response->content_length) >
           std::numeric_limits<std::size_t>::max() ||

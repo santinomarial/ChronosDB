@@ -184,8 +184,8 @@
   `Retry-After`, parallel
   multipart parts,
   concurrent conditional writers, timeout/TLS/partial-response faults, eventual listing behavior,
-  restore, conditional-delete races, encryption
-  boundary, and broader object-store fault injection. Durable cold-history discovery now completes
+  restore, conditional-delete races, live SSE-S3/SSE-KMS and bucket-policy qualification, and
+  broader object-store fault injection. Durable cold-history discovery now completes
   interrupted remote reclamation before reader admission with focused evolving-catalog, bound,
   metadata-mismatch, deletion, and idempotent-retry coverage; subprocess crash points,
   multiple-object partial failures, and live-provider qualification remain deferred.
@@ -193,6 +193,9 @@
   401/403, transient-service recovery, and exact attempt exhaustion have focused local coverage.
   Delta-seconds Retry-After parsing and the configured ceiling have focused local coverage.
   Ambient-proxy exclusion and secret-bearing explicit-proxy rejection have focused local coverage.
+  Explicit SSE-S3/SSE-KMS upload headers, exact HEAD verification, malformed configuration, and
+  fail-closed stored-mode mismatch have focused local coverage. SSE-C, DSSE-KMS, encryption context,
+  Bucket Keys, and live KMS identity normalization remain deferred.
   The explicit immutable environment provider has focused standard-variable, signed-request,
   incomplete-value, secret-redaction, and fail-closed refresh coverage.
   Sequential multipart creation, encoded upload IDs, signed parts, conditional completion, exact

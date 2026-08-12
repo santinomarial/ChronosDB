@@ -30,6 +30,11 @@ explicitly and is appropriate only where the deployment accepts exposure of cred
 bytes. Redirects are rejected so credentials are not silently replayed to another authority.
 Process proxy variables are disabled. One bounded credential-free HTTP(S) proxy may be configured
 explicitly; endpoint TLS verification remains active and ambient `no_proxy` cannot override it.
+Operators may require SSE-S3 or SSE-KMS. The selected headers are signed on a single PUT or
+multipart initiation, and an authoritative HEAD must return the exact algorithm before ChronosDB
+accepts the object. SSE-KMS additionally requires an exact canonical key identifier. Encryption
+headers are never sent on HEAD or GET. With no explicit setting, bucket-default encryption remains
+unverified and ChronosDB makes no at-rest-encryption assertion.
 Timeout/connectivity/server-overload failures are retryable `UNAVAILABLE`; authentication and TLS
 identity failures are `UNAUTHENTICATED`; conflicting immutable content is `ALREADY_EXISTS`; damaged
 or incomplete metadata and wrong-length ranges are `CORRUPTION`.
