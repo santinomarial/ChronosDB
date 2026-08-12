@@ -289,8 +289,9 @@
 - Empty Manifest namespace initialization syscall-fault injection at every create/write/read/sync/
   rename boundary, subprocess crash images, concurrent process attempts under the aggregate root
   lock, permission/ownership qualification, hostile namespace matrices, Linux power-loss evidence,
-  and integration with Manifest-aware single-node startup. Focused filesystem coverage now proves
-  exact create/reopen, identity binding, temporary cleanup, and missing-lock fail-closed behavior.
+  and full Manifest-aware single-node startup. Focused filesystem coverage now proves exact
+  create/reopen, identity binding, temporary cleanup, and missing-lock fail-closed behavior; focused
+  owner coverage proves live lock exclusion and WAL-before-Manifest shutdown ordering.
 - Execute the complete requested three-node scenario with real sockets/processes and retained logs:
   create table, ingest, historical SQL, vector distributed aggregate, subscribe/update, leader kill,
   failover ingest/query, movement/query, tier/query, restart, and result reconciliation.

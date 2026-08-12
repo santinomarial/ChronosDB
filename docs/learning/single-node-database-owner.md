@@ -8,6 +8,12 @@ final bootstrap exists. After success, callers can inspect the immutable query c
 lineage or tablet, execute appends through the global retry directory and WAL coordinator, and take
 tablet snapshots for vector query execution.
 
+After the WAL writer's durable identity is known, the owner explicitly initializes or verifies an
+empty Manifest generation 1 bound to the Bootstrap database identity and that WAL identity. It
+retains `manifest/LOCK` for the live lifetime. This is currently a storage-readiness and ownership
+boundary: restart still replays the complete WAL into mutable heads and does not yet select CSEG
+parts or an advanced Manifest generation.
+
 The owner accepts initial local `CREATE TABLE` as three exact-retained metadata proposals. A table is
 visible only when metadata contains its complete schema tail, complete policy, and local placement.
 Schema-only or schema+policy crash prefixes remain invisible and a matching retry reuses their
@@ -53,6 +59,7 @@ database root lock + bootstrap
   -> retained schema lineages + immutable query catalog
   -> WAL create OR whole-log semantic preflight/replay
   -> bounded RetryDirectory + TabletState publications
+  -> identity-bound empty Manifest generation + retained manifest/LOCK
   -> live WalCommitCoordinator admission
 ```
 
@@ -68,9 +75,9 @@ the verified/repositioned writer to the coordinator. Lookup hides this represent
 ## Shutdown and failures
 
 `shutdown()` closes admission, drains requests, finishes the last required local synchronization,
-and joins the WAL worker before closing Raft and releasing the root lock. The first failure is
-returned while later close operations are still attempted. Calls after shutdown are outside the
-live service contract; repeated shutdown itself succeeds.
+and joins the WAL worker before releasing Manifest ownership, closing Raft, and releasing the root
+lock. The first failure is returned while later close operations are still attempted. Calls after
+shutdown are outside the live service contract; repeated shutdown itself succeeds.
 
 Unknown WAL tablets, damaged log bytes, inconsistent lineage tails, missing active definitions,
 and nonlocal placement all fail startup. Incomplete metadata-only table prefixes remain invisible.

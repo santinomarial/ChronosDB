@@ -39,8 +39,9 @@ migration. Ordinary `ManifestStorage::open_existing()` remains strictly non-crea
 startup must call this initializer only when it has classified an uninitialized storage namespace;
 established databases use ordinary highest-generation recovery.
 
-This decision provides the durable prerequisite but does not itself switch the single-node owner to
-Manifest recovery, configure flush queues, publish aggregate storage epochs, or reclaim WAL.
+ADR 0228 composes this durable prerequisite into the single-node root lifetime. It does not yet
+switch the owner to Manifest recovery, configure flush queues, publish aggregate storage epochs, or
+reclaim WAL.
 
 ## Validation
 

@@ -2,6 +2,7 @@
 
 #include "chronos/ingest/columnar_append_recovery.hpp"
 #include "chronos/io/posix_io.hpp"
+#include "chronos/manifest/storage.hpp"
 #include "chronos/raft/durable_runtime.hpp"
 #include "chronos/raft/metadata_codec.hpp"
 #include "chronos/raft/metadata_runtime.hpp"
@@ -198,12 +199,16 @@ public:
        std::shared_ptr<const query::QueryCatalogSnapshot> configured_query_catalog,
        std::optional<ingest::RecoveredColumnarAppendState> configured_recovered,
        std::optional<ingest::RetryDirectory> configured_retry,
-       std::vector<FreshTablet> configured_fresh, wal::WalCommitCoordinator configured_wal) noexcept
+       std::vector<FreshTablet> configured_fresh,
+       manifest::ManifestStorage configured_manifest_storage,
+       wal::WalCommitCoordinator configured_wal) noexcept
       : bootstrap_owner(std::move(configured_bootstrap)), raft_runtime(std::move(configured_raft)),
         metadata(std::move(configured_metadata)), catalog(std::move(configured_catalog)),
         tables(std::move(configured_tables)), query_catalog(std::move(configured_query_catalog)),
         recovered(std::move(configured_recovered)), retry(std::move(configured_retry)),
-        fresh_tablets(std::move(configured_fresh)), wal_coordinator(std::move(configured_wal)) {}
+        fresh_tablets(std::move(configured_fresh)),
+        manifest_storage(std::move(configured_manifest_storage)),
+        wal_coordinator(std::move(configured_wal)) {}
 
   [[nodiscard]] common::Status refresh_catalog() {
     auto projected = metadata.state().catalog_snapshot();
@@ -238,6 +243,7 @@ public:
   std::optional<ingest::RecoveredColumnarAppendState> recovered;
   std::optional<ingest::RetryDirectory> retry;
   std::vector<FreshTablet> fresh_tablets;
+  std::optional<manifest::ManifestStorage> manifest_storage;
   wal::WalCommitCoordinator wal_coordinator;
   bool shutdown{};
 };
@@ -388,13 +394,24 @@ SingleNodeDatabase::open_or_create(SingleNodeDatabaseConfig config) {
       writer = std::move(*released);
       recovered.emplace(std::move(*state));
     }
+    auto database_id = manifest::DatabaseId::from_uuid(descriptor.database_id);
+    if (!database_id.has_value())
+      return common::make_unexpected(
+          corruption("database bootstrap identity is invalid for Manifest storage"));
+    auto manifest_storage =
+        manifest::ManifestStorage::initialize_empty({.database_root = bootstrap->database_root(),
+                                                     .database_id = *database_id,
+                                                     .wal_id = writer->wal_id()});
+    if (!manifest_storage.has_value())
+      return common::make_unexpected(
+          with_context("initialize database Manifest storage", manifest_storage.error()));
     auto coordinator = wal::WalCommitCoordinator::start(std::move(*writer), config.wal_commit);
     if (!coordinator.has_value())
       return common::make_unexpected(coordinator.error());
     return SingleNodeDatabase{std::make_unique<Impl>(
         std::move(*bootstrap), std::move(stable_raft), std::move(*metadata), std::move(*catalog),
         std::move(*tables), std::move(query_catalog), std::move(recovered), std::move(retry),
-        std::move(fresh), std::move(*coordinator))};
+        std::move(fresh), std::move(*manifest_storage), std::move(*coordinator))};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("single-node database allocation failed"));
   } catch (const std::length_error&) {
@@ -476,6 +493,7 @@ common::Status SingleNodeDatabase::shutdown() {
     return common::Status::ok();
   impl_->shutdown = true;
   common::Status result = impl_->wal_coordinator.shutdown();
+  impl_->manifest_storage.reset();
   const common::Status raft = impl_->raft_runtime->close();
   if (result.is_ok())
     result = raft;

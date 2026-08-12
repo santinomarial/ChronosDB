@@ -1,5 +1,7 @@
 #include "chronos/common/byte_reader.hpp"
 #include "chronos/ingest/columnar_append_executor.hpp"
+#include "chronos/manifest/naming.hpp"
+#include "chronos/manifest/storage.hpp"
 #include "chronos/network/messages.hpp"
 #include "chronos/query/binder.hpp"
 #include "chronos/query/parser.hpp"
@@ -253,7 +255,19 @@ TEST(SingleNodeDatabaseTest, CreatesAndReopensAnEmptyDatabaseWithoutConfiguredTa
   auto created = SingleNodeDatabase::open_or_create(config(directory));
   ASSERT_TRUE(created.has_value()) << created.error().to_string();
   EXPECT_TRUE(created->query_catalog()->tables().empty());
+  EXPECT_TRUE(std::filesystem::is_directory(directory.path() / manifest::kPartsDirectoryName));
+  EXPECT_TRUE(std::filesystem::is_regular_file(directory.path() / manifest::kManifestDirectoryName /
+                                               *manifest::manifest_file_name(1U)));
+  EXPECT_EQ(manifest::ManifestStorage::open_existing({.database_root = directory.path().string()})
+                .error()
+                .code(),
+            common::StatusCode::kUnavailable);
   ASSERT_TRUE(created->shutdown().is_ok());
+  {
+    auto storage =
+        manifest::ManifestStorage::open_existing({.database_root = directory.path().string()});
+    ASSERT_TRUE(storage.has_value()) << storage.error().to_string();
+  }
   auto reopened = SingleNodeDatabase::open_or_create(config(directory));
   ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
   EXPECT_TRUE(reopened->query_catalog()->tables().empty());
