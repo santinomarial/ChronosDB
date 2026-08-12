@@ -126,6 +126,9 @@ public:
   [[nodiscard]] common::Status apply_committed_schema_definition(LogIndex index,
                                                                  CatalogTableDefinition definition);
   [[nodiscard]] common::Status apply_internal_noop(LogIndex index);
+  // Efficient equivalent of applying only internal Raft entries through index. The caller must
+  // have independently proved that the skipped range contains no application entry.
+  [[nodiscard]] common::Status apply_internal_noops_through(LogIndex index);
 
   [[nodiscard]] LogIndex applied_index() const noexcept;
   [[nodiscard]] const ClusterNodeMetadata* find_node(NodeId node_id) const noexcept;

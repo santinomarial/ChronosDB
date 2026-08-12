@@ -259,5 +259,81 @@ TEST(DurableMetadataStateMachineTest, ProjectsAnOwningDeterministicRecoveryCatal
   EXPECT_TRUE(retained->schema_definitions.front() == definition);
 }
 
+TEST(DurableMetadataStateMachineTest, InstallsCompactsAndReopensSnapshotPlusCommittedSuffix) {
+  TemporaryDirectory directory;
+  const std::filesystem::path log_directory = directory.path() / "raft";
+  const std::filesystem::path snapshot_directory = directory.path() / "metadata-snapshots";
+  ASSERT_TRUE(std::filesystem::create_directories(log_directory));
+  ASSERT_TRUE(std::filesystem::create_directories(snapshot_directory));
+  const RaftPersistentLogConfig log_config{.directory_path = log_directory.string()};
+  const std::vector<RaftGroupConfiguration> groups{{group_id(), {1U}}};
+  auto runtime = DurableMultiRaftRuntime::create_new(1U, log_config, groups);
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  ASSERT_TRUE(runtime->execute_batch({{group_id(), StartElectionOperation{}}}).has_value());
+  auto snapshot_storage = MetadataSnapshotStorage::create(
+      {.directory_path = snapshot_directory.string(), .group_id = group_id()});
+  ASSERT_TRUE(snapshot_storage.has_value()) << snapshot_storage.error().to_string();
+  auto recovered =
+      DurableMetadataStateMachine::recover(group_id(), *runtime, std::move(*snapshot_storage));
+  ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
+  std::optional<DurableMetadataStateMachine> metadata{std::move(*recovered)};
+
+  const CatalogTableDefinition definition = schema_definition();
+  ASSERT_TRUE(runtime->execute_batch({{group_id(), schema_proposal(definition)}}).has_value());
+  ASSERT_TRUE(
+      runtime
+          ->execute_batch({{group_id(), proposal(TablePolicyMetadata{definition.schema->table_id(),
+                                                                     100, 1000, 500, 10, 100U})}})
+          .has_value());
+  auto applied = metadata->apply_committed();
+  ASSERT_TRUE(applied.has_value()) << applied.error().to_string();
+  ASSERT_EQ(applied->last_applied_index, 2U);
+
+  ASSERT_TRUE(runtime->execute_batch({{group_id(), StartElectionOperation{}}}).has_value());
+  ASSERT_TRUE(runtime->execute_batch({{group_id(), CommitCurrentTermOperation{}}}).has_value());
+  applied = metadata->apply_committed();
+  ASSERT_TRUE(applied.has_value()) << applied.error().to_string();
+  ASSERT_EQ(applied->last_applied_index, 3U);
+  ASSERT_EQ(applied->applied_commands, 0U);
+
+  auto compacted = metadata->compact_applied_prefix(3U);
+  ASSERT_TRUE(compacted.has_value()) << compacted.error().to_string();
+  EXPECT_EQ(compacted->snapshot.last_included_index, 3U);
+  EXPECT_EQ(compacted->snapshot.manifest_generation, 3U);
+  EXPECT_EQ(compacted->application_entries, 2U);
+  EXPECT_FALSE(compacted->application_snapshot_already_present);
+  EXPECT_TRUE(runtime->find_group(group_id())->persistent_state().log.empty());
+
+  ASSERT_TRUE(runtime->execute_batch({{group_id(), proposal(ClusterNodeMetadata{1U, "node-1"})}})
+                  .has_value());
+  applied = metadata->apply_committed();
+  ASSERT_TRUE(applied.has_value()) << applied.error().to_string();
+  EXPECT_EQ(applied->first_applied_index, 4U);
+  EXPECT_EQ(metadata->state().find_node(1U)->endpoint, "node-1");
+
+  metadata.reset();
+  ASSERT_TRUE(runtime->close().is_ok());
+  auto reopened = DurableMultiRaftRuntime::open_existing(1U, log_config, {}, groups);
+  ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+  auto missing_snapshot = DurableMetadataStateMachine::recover(group_id(), *reopened);
+  ASSERT_FALSE(missing_snapshot.has_value());
+  EXPECT_EQ(missing_snapshot.error().code(), common::StatusCode::kNotSupported);
+  auto reopened_snapshots = MetadataSnapshotStorage::open_existing(
+      {.directory_path = snapshot_directory.string(), .group_id = group_id()});
+  ASSERT_TRUE(reopened_snapshots.has_value()) << reopened_snapshots.error().to_string();
+  auto rebuilt =
+      DurableMetadataStateMachine::recover(group_id(), *reopened, std::move(*reopened_snapshots));
+  ASSERT_TRUE(rebuilt.has_value()) << rebuilt.error().to_string();
+  EXPECT_EQ(rebuilt->state().applied_index(), 4U);
+  const auto* installed =
+      rebuilt->state().find_active_table_definition(definition.schema->table_id());
+  ASSERT_NE(installed, nullptr);
+  EXPECT_TRUE(*installed == definition);
+  ASSERT_NE(rebuilt->state().find_table_policy(definition.schema->table_id()), nullptr);
+  EXPECT_EQ(rebuilt->state().find_table_policy(definition.schema->table_id())->retention_ns, 1000);
+  ASSERT_NE(rebuilt->state().find_node(1U), nullptr);
+  EXPECT_EQ(rebuilt->state().find_node(1U)->endpoint, "node-1");
+}
+
 } // namespace
 } // namespace chronos::raft

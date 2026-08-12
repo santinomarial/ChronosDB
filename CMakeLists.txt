@@ -608,7 +608,8 @@ target_include_directories(
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
 )
-target_link_libraries(chronos_raft PUBLIC chronos::common chronos::schema PRIVATE chronos::io)
+target_link_libraries(
+  chronos_raft PUBLIC chronos::common chronos::schema PRIVATE OpenSSL::Crypto chronos::io)
 chronos_set_project_warnings(chronos_raft)
 chronos_enable_sanitizers(chronos_raft)
 chronos_enable_static_analysis(chronos_raft)

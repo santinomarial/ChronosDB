@@ -35,14 +35,14 @@ projection without borrowing the state machine's internal maps.
 
 ## Recovery and failure behavior
 
-The applied index is not a catalog snapshot. Startup constructs empty state and replays every
-retained committed entry, then leaves or advances the durable applied index as appropriate. A
-compacted prefix is still rejected until the canonical Metadata Application Snapshot v1 bytes are
-composed with recovery. Its locked storage now durably installs and reopens exact immutable bytes;
-the format retains exact original metadata and
-schema-definition entries plus the Raft membership checkpoint, rather than inventing a second
-latest-state catalog grammar. A failed live
-application poisons the owner; restart revalidates authoritative log bytes.
+The applied index is not a catalog snapshot. Without compaction, startup constructs empty state and
+replays every retained committed entry, then leaves or advances the durable applied index as
+appropriate. Metadata Application Snapshot v1 retains exact original metadata and schema-definition
+entries plus the Raft membership checkpoint rather than inventing a second latest-state catalog
+grammar. Its locked storage installs exact immutable bytes before the owner compacts Raft to
+matching metadata. Recovery requires that snapshot, recomputes its entry digest, decodes every
+nested command, and then applies only the committed retained suffix. A failed live application
+poisons the owner; restart revalidates authoritative snapshot and log bytes.
 
 Command/definition size, names, columns, role arrays, endpoint bytes, replicas, nodes, schemas, and
 tablets are explicitly bounded. Decoding validates fixed headers before length-driven work, owns
@@ -53,8 +53,8 @@ coherent operation or reports resource exhaustion without advancing the applied 
 ## Complexity and likely interview questions
 
 Decode and apply are linear in entry bytes, column roles, and replica count; map updates are
-`O(log N)`, with a linear catalog-name uniqueness check. Startup is linear in retained committed
-history until snapshots exist. Building the recovery projection is linear in current catalog size
+`O(log N)`, with a linear catalog-name uniqueness check. Startup is linear in the installed snapshot
+application entries plus retained committed suffix. Building the recovery projection is linear in current catalog size
 and allocates only the explicitly bounded vectors and copied table names.
 
 - Why is metadata placement not safe as local last-writer-wins state?

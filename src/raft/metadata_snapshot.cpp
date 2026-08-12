@@ -66,7 +66,8 @@ constexpr std::size_t kReservedOffset = 124U;
                                   const MetadataSnapshotCodecLimits& limits) noexcept {
   const SnapshotMetadata& metadata = snapshot.raft_snapshot;
   return !snapshot.group_id.is_nil() && metadata.last_included_index != 0U &&
-         metadata.last_included_term != 0U && metadata.manifest_generation != 0U &&
+         metadata.last_included_term != 0U &&
+         metadata.manifest_generation == metadata.last_included_index &&
          metadata.configuration_index <= metadata.last_included_index && !metadata.voters.empty() &&
          metadata.voters.size() <= limits.maximum_voters && metadata.voters.front() != 0U &&
          std::ranges::is_sorted(metadata.voters) &&

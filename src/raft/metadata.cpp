@@ -248,6 +248,13 @@ common::Status MetadataStateMachine::apply_internal_noop(const LogIndex index) {
   return common::Status::ok();
 }
 
+common::Status MetadataStateMachine::apply_internal_noops_through(const LogIndex index) {
+  if (impl_ == nullptr || index < impl_->applied)
+    return invalid("metadata internal range cannot move application backward");
+  impl_->applied = index;
+  return common::Status::ok();
+}
+
 LogIndex MetadataStateMachine::applied_index() const noexcept {
   return impl_->applied;
 }

@@ -60,6 +60,12 @@ TEST(MetadataSnapshotTest, RejectsDamageUnknownTypesAndNoncanonicalOrder) {
   auto duplicate_result = encode_metadata_application_snapshot_v1(duplicate);
   ASSERT_FALSE(duplicate_result.has_value());
   EXPECT_EQ(duplicate_result.error().code(), common::StatusCode::kInvalidArgument);
+
+  MetadataApplicationSnapshot wrong_generation = snapshot();
+  ++wrong_generation.raft_snapshot.manifest_generation;
+  auto generation_result = encode_metadata_application_snapshot_v1(wrong_generation);
+  ASSERT_FALSE(generation_result.has_value());
+  EXPECT_EQ(generation_result.error().code(), common::StatusCode::kInvalidArgument);
 }
 
 TEST(MetadataSnapshotTest, SupportsInternalOnlyPrefixAndEnforcesResourceBounds) {

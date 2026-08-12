@@ -162,8 +162,10 @@ before observing a higher term, preserving the persist-before-response contract 
 
 Metadata Application Snapshot v1 now provides a bounded canonical structural codec for exact
 metadata/schema application entries and internal Raft gaps under one complete snapshot membership
-identity. Durable installation, nested replay validation, Raft compaction, and reopen composition
-remain the next metadata lifecycle checkpoint.
+identity. A locked storage owner exact-installs those bytes, and the metadata application owner now
+installs them before Raft compaction and exact-reopens a compacted catalog from the validated
+snapshot plus committed suffix. Snapshot transfer and obsolete application/physical-log
+reclamation remain.
 
 ### Phase 15 — Multi-Raft tablets and metadata
 

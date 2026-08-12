@@ -30,10 +30,10 @@ nonempty bounded payloads, canonical voters, explicit zero padding, per-entry CR
 and whole-file CRC32C. It owns all decoded bytes and rejects unknown versions, reserved fields,
 damage, trailing bytes, and caller-limit violations before unbounded allocation.
 
-This checkpoint freezes the portable bytes and structural codec. The durable owner must separately
-decode every nested command, replay gaps as internal no-ops, install the immutable snapshot before
-compacting Raft, and exact-match both owners during recovery. Until that composition exists, the
-metadata physical log prefix remains retained.
+This checkpoint freezes the portable bytes and structural codec. The durable composition in
+[ADR 0268](0268-owned-metadata-snapshot-compaction.md) separately decodes every nested command,
+replays gaps as internal no-ops, installs the immutable snapshot before compacting Raft, and
+exact-matches both owners during recovery.
 
 ## Consequences and validation
 

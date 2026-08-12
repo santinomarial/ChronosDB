@@ -1,7 +1,7 @@
 # Metadata Application Snapshot v1
 
-> **Status: canonical structural codec and lock-protected local durable installation implemented;
-> recovery composition follows separately.**
+> **Status: canonical codec, lock-protected local installation, install-before-Raft compaction, and
+> exact snapshot-plus-suffix recovery implemented.**
 
 All integers are unsigned little-endian. The object is caller-bounded and has a 1 GiB format
 maximum. Its magic is `CHRMASN\0`, major version 1, minor version 0.
@@ -23,7 +23,7 @@ The fixed header is 128 bytes:
 | 48 | 8 | Last included Raft index |
 | 56 | 8 | Last included Raft term |
 | 64 | 8 | Metadata application-snapshot generation |
-| 72 | 32 | Application entry-set checksum identity |
+| 72 | 32 | Application entry-set SHA-256 identity |
 | 104 | 8 | Membership configuration index |
 | 112 | 8 | Entry-area offset |
 | 120 | 4 | Header CRC32C with this field zero |
@@ -33,6 +33,11 @@ The header is followed by `voter_count` sorted, unique, nonzero `UINT64` node ID
 offset equals `128 + voter_count * 8`. Snapshot generation is carried in Raft's existing
 `manifest_generation` field but is scoped to this metadata application format; it is not a storage
 Manifest generation.
+
+The application identity is SHA-256 over the eight-byte domain `CHRMASN\x01`, followed for each
+stored entry by its little-endian `UINT64` index, little-endian `UINT64` term, one-byte type,
+little-endian `UINT64` payload size, and exact payload. Empty application entry sets hash only the
+domain. Metadata snapshot generation equals the included index in v1.
 
 ## Application entries
 

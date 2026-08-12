@@ -302,3 +302,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0265](0265-unified-raft-transport-runtime.md) | Unified Raft transport runtime | accepted |
 | [0266](0266-metadata-application-snapshot-v1.md) | Metadata Application Snapshot v1 | accepted |
 | [0267](0267-durable-metadata-snapshot-installation.md) | Durable metadata snapshot installation | accepted |
+| [0268](0268-owned-metadata-snapshot-compaction.md) | Owned metadata snapshot compaction and recovery | accepted |
