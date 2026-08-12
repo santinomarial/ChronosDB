@@ -244,3 +244,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0207](0207-bounded-parallel-s3-multipart-parts.md) | Bounded parallel S3 multipart parts | accepted |
 | [0208](0208-strict-http-date-retry-after.md) | Strict HTTP-date Retry-After parsing | accepted |
 | [0209](0209-bounded-s3-retry-jitter.md) | Bounded S3 retry jitter | accepted |
+| [0210](0210-pinned-ordered-s3-credential-chain.md) | Pinned ordered S3 credential chain | accepted |

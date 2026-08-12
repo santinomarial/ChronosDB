@@ -179,7 +179,7 @@
 ## Phase 17 — object storage and interoperability
 
 - Live AWS/MinIO/LocalStack validation for the libcurl SigV4 backend; built-in workload/instance
-  credential providers and ordered-chain policy, authenticated-proxy/live CONNECT qualification,
+  credential providers, authenticated-proxy/live CONNECT qualification,
   fleet-scale jitter distribution/recovery and clock-step/skew simulation, high-concurrency
   multipart stress and live throughput tuning, live concurrent-writer qualification,
   timeout/TLS/partial-response faults, eventual
@@ -203,6 +203,8 @@
   Bucket Keys, and live KMS identity normalization remain deferred.
   The explicit immutable environment provider has focused standard-variable, signed-request,
   incomplete-value, secret-redaction, and fail-closed refresh coverage.
+  The ordered provider chain has focused absence-only fallback, stable precedence, pinned refresh,
+  outage-stop, and invalid-composition coverage; workload/instance integrations remain deferred.
   Bounded parallel multipart creation, encoded upload IDs, signed parts, conditional completion,
   exact final verification, strict HTTP-200 embedded-error rejection, and abort after part/completion
   failure have focused local coverage. A two-worker overlap barrier and sorted completion test cover

@@ -177,6 +177,29 @@ private:
   S3Credentials credentials_;
 };
 
+// Explicit ordered precedence across caller-selected providers. During initial selection only,
+// NOT_FOUND means "not configured" and advances to the next provider; every other failure stops.
+// Once selected, one provider remains pinned for current and refresh requests so authorization
+// rejection cannot silently downgrade to a lower-priority identity.
+class S3CredentialProviderChain final : public S3CredentialProvider {
+public:
+  S3CredentialProviderChain() = delete;
+  ~S3CredentialProviderChain() override;
+  S3CredentialProviderChain(const S3CredentialProviderChain&) = delete;
+  S3CredentialProviderChain& operator=(const S3CredentialProviderChain&) = delete;
+  S3CredentialProviderChain(S3CredentialProviderChain&&) = delete;
+  S3CredentialProviderChain& operator=(S3CredentialProviderChain&&) = delete;
+
+  [[nodiscard]] static common::Result<std::shared_ptr<S3CredentialProviderChain>>
+  create(std::vector<std::shared_ptr<S3CredentialProvider>> providers);
+  [[nodiscard]] common::Result<S3Credentials> acquire(S3CredentialRequest request) override;
+
+private:
+  class Impl;
+  explicit S3CredentialProviderChain(std::unique_ptr<Impl> impl) noexcept;
+  std::unique_ptr<Impl> impl_;
+};
+
 // Synchronous S3-compatible HTTPS backend. Each operation owns an independent libcurl easy handle,
 // so callers may invoke const and non-const operations concurrently. Requests use SigV4, never
 // follow redirects, enforce finite timeouts and response bounds, and use If-None-Match for

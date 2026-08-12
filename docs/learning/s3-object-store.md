@@ -13,7 +13,9 @@ caller-supplied credential provider. The provider may be called concurrently and
 synchronization. `S3EnvironmentCredentialProvider` is one explicit built-in option: it snapshots
 the standard AWS access key, secret, and optional session-token variables once, rejects incomplete
 values, and stays immutable. `put_if_absent` borrows upload bytes only until the synchronous call
-returns.
+returns. `S3CredentialProviderChain` composes an explicit ordered provider list: only `NOT_FOUND`
+advances initial selection, and the first successful identity remains pinned for current and refresh
+requests so authorization rejection cannot downgrade credentials.
 `stat` and `get_range` are const and each attempt owns a fresh libcurl easy handle, credential
 value, signature, header list, and bounded response buffer. The store itself is therefore safe for
 concurrent calls, while destruction still requires ordinary external lifetime exclusion.
@@ -80,7 +82,7 @@ bound. Multipart retains borrowed object bytes plus `O(part count)` ETags and co
 bounded number of simultaneous handles. Every attempt currently creates one easy handle and the
 public call is synchronous; connection pooling and the libcurl multi interface remain deferred.
 Workload,
-instance-metadata, shared-file, and ordered-chain provider policies also remain deferred.
+instance-metadata and shared-file providers remain deferred.
 
 Operators should grant only `PutObject`, multipart create/upload/complete/abort,
 `HeadObject`/`GetObject`, ranged `GetObject`, and conditional `DeleteObject` access for the configured

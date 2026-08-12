@@ -614,6 +614,30 @@ private:
   bool released_{};
 };
 
+class ScriptedCredentialProvider final : public S3CredentialProvider {
+public:
+  ScriptedCredentialProvider(common::Result<S3Credentials> current,
+                             common::Result<S3Credentials> refresh)
+      : current_(std::move(current)), refresh_(std::move(refresh)) {}
+
+  [[nodiscard]] common::Result<S3Credentials> acquire(S3CredentialRequest request) override {
+    std::scoped_lock lock{mutex_};
+    requests_.push_back(request);
+    return request == S3CredentialRequest::kRefresh ? refresh_ : current_;
+  }
+
+  [[nodiscard]] std::vector<S3CredentialRequest> requests() const {
+    std::scoped_lock lock{mutex_};
+    return requests_;
+  }
+
+private:
+  mutable std::mutex mutex_;
+  common::Result<S3Credentials> current_;
+  common::Result<S3Credentials> refresh_;
+  std::vector<S3CredentialRequest> requests_;
+};
+
 class ScopedAwsEnvironment final {
 public:
   explicit ScopedAwsEnvironment(std::array<std::optional<std::string>, 3U> values)
@@ -742,6 +766,56 @@ TEST(S3EnvironmentCredentialProviderTest, RejectsIncompleteEnvironmentWithoutLea
     EXPECT_EQ(provider.error().code(), common::StatusCode::kUnauthenticated);
     EXPECT_FALSE(provider.error().to_string().contains(overbound_access_key));
   }
+}
+
+TEST(S3CredentialProviderChainTest, SelectsInOrderAndPinsRefreshToTheWinningIdentity) {
+  const common::Status absent{common::StatusCode::kNotFound, "fixture identity is absent"};
+  const common::Status stale{common::StatusCode::kUnauthenticated, "fixture identity was rejected"};
+  auto first = std::make_shared<ScriptedCredentialProvider>(common::make_unexpected(absent),
+                                                            common::make_unexpected(absent));
+  auto second = std::make_shared<ScriptedCredentialProvider>(
+      S3Credentials{.access_key_id = "selected-access", .secret_access_key = "selected-secret"},
+      common::make_unexpected(stale));
+  auto third = std::make_shared<ScriptedCredentialProvider>(
+      S3Credentials{.access_key_id = "fallback-access", .secret_access_key = "fallback-secret"},
+      S3Credentials{.access_key_id = "fallback-refresh", .secret_access_key = "fallback-secret"});
+  auto chain = S3CredentialProviderChain::create({first, second, third});
+  ASSERT_TRUE(chain.has_value()) << chain.error().to_string();
+
+  auto current = (*chain)->acquire(S3CredentialRequest::kCurrent);
+  ASSERT_TRUE(current.has_value()) << current.error().to_string();
+  EXPECT_EQ(current->access_key_id, "selected-access");
+  auto repeated = (*chain)->acquire(S3CredentialRequest::kCurrent);
+  ASSERT_TRUE(repeated.has_value());
+  EXPECT_EQ(repeated->access_key_id, "selected-access");
+  auto refresh = (*chain)->acquire(S3CredentialRequest::kRefresh);
+  ASSERT_FALSE(refresh.has_value());
+  EXPECT_EQ(refresh.error().code(), common::StatusCode::kUnauthenticated);
+
+  EXPECT_EQ(first->requests(), (std::vector{S3CredentialRequest::kCurrent}));
+  EXPECT_EQ(second->requests(),
+            (std::vector{S3CredentialRequest::kCurrent, S3CredentialRequest::kCurrent,
+                         S3CredentialRequest::kRefresh}));
+  EXPECT_TRUE(third->requests().empty());
+}
+
+TEST(S3CredentialProviderChainTest, StopsOnProviderFailureAndRejectsInvalidComposition) {
+  const common::Status unavailable{common::StatusCode::kUnavailable,
+                                   "fixture identity service is unavailable"};
+  auto failing = std::make_shared<ScriptedCredentialProvider>(common::make_unexpected(unavailable),
+                                                              common::make_unexpected(unavailable));
+  auto fallback = std::make_shared<ScriptedCredentialProvider>(
+      S3Credentials{.access_key_id = "fallback-access", .secret_access_key = "fallback-secret"},
+      S3Credentials{.access_key_id = "fallback-access", .secret_access_key = "fallback-secret"});
+  auto chain = S3CredentialProviderChain::create({failing, fallback});
+  ASSERT_TRUE(chain.has_value());
+  auto current = (*chain)->acquire(S3CredentialRequest::kCurrent);
+  ASSERT_FALSE(current.has_value());
+  EXPECT_EQ(current.error().code(), common::StatusCode::kUnavailable);
+  EXPECT_TRUE(fallback->requests().empty());
+
+  EXPECT_FALSE(S3CredentialProviderChain::create({}).has_value());
+  EXPECT_FALSE(S3CredentialProviderChain::create({nullptr}).has_value());
 }
 
 TEST(S3ObjectStoreTest, SignsConditionalPutVerifiesRetryAndReadsExactRange) {

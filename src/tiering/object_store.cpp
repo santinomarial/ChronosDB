@@ -798,6 +798,61 @@ S3EnvironmentCredentialProvider::acquire(const S3CredentialRequest request) {
   }
 }
 
+class S3CredentialProviderChain::Impl {
+public:
+  explicit Impl(std::vector<std::shared_ptr<S3CredentialProvider>> configured) noexcept
+      : providers(std::move(configured)) {}
+
+  std::mutex mutex;
+  std::vector<std::shared_ptr<S3CredentialProvider>> providers;
+  std::optional<std::size_t> selected;
+};
+
+S3CredentialProviderChain::S3CredentialProviderChain(std::unique_ptr<Impl> impl) noexcept
+    : impl_(std::move(impl)) {}
+S3CredentialProviderChain::~S3CredentialProviderChain() = default;
+
+common::Result<std::shared_ptr<S3CredentialProviderChain>>
+S3CredentialProviderChain::create(std::vector<std::shared_ptr<S3CredentialProvider>> providers) {
+  if (providers.empty() || providers.size() > 32U ||
+      std::ranges::any_of(providers, [](const auto& provider) { return provider == nullptr; })) {
+    return common::make_unexpected(invalid("S3 credential provider chain is invalid"));
+  }
+  try {
+    return std::shared_ptr<S3CredentialProviderChain>{
+        new S3CredentialProviderChain{std::make_unique<Impl>(std::move(providers))}};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("S3 credential provider chain allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("S3 credential provider chain exceeds limits"));
+  }
+}
+
+common::Result<S3Credentials>
+S3CredentialProviderChain::acquire(const S3CredentialRequest request) {
+  if (request != S3CredentialRequest::kCurrent && request != S3CredentialRequest::kRefresh)
+    return common::make_unexpected(invalid("S3 credential request is invalid"));
+  std::scoped_lock lock{impl_->mutex};
+  if (impl_->selected.has_value())
+    return impl_->providers[*impl_->selected]->acquire(request);
+  if (request == S3CredentialRequest::kRefresh) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kUnauthenticated,
+                       "S3 credential provider chain cannot refresh before identity selection"});
+  }
+  for (std::size_t index = 0U; index < impl_->providers.size(); ++index) {
+    auto credentials = impl_->providers[index]->acquire(S3CredentialRequest::kCurrent);
+    if (credentials.has_value()) {
+      impl_->selected = index;
+      return credentials;
+    }
+    if (credentials.error().code() != common::StatusCode::kNotFound)
+      return common::make_unexpected(credentials.error());
+  }
+  return common::make_unexpected(common::Status{common::StatusCode::kUnauthenticated,
+                                                "S3 credential provider chain found no identity"});
+}
+
 class S3ObjectStore::Impl {
 public:
   enum class Method : std::uint8_t {
