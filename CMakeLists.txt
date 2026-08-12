@@ -704,6 +704,7 @@ add_library(
   src/service/replicated_ingest_coordinator.cpp
   src/service/replicated_ingest_operation.cpp
   src/service/replicated_ingest_runtime.cpp
+  src/service/replicated_ingest_service.cpp
   src/service/single_node_committed_append_router.cpp
   src/service/single_node_database.cpp
   src/service/single_node_live_append_fanout.cpp
@@ -884,6 +885,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/service/replicated_ingest_operation_test.cpp
     tests/service/replicated_ingest_runtime_header_self_contained.cpp
     tests/service/replicated_ingest_runtime_test.cpp
+    tests/service/replicated_ingest_service_header_self_contained.cpp
+    tests/service/replicated_ingest_service_test.cpp
     tests/service/single_node_committed_append_router_header_self_contained.cpp
     tests/service/single_node_committed_append_router_test.cpp
     tests/service/single_node_live_append_fanout_header_self_contained.cpp

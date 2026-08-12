@@ -176,6 +176,9 @@ proposal. It also binds the complete command shape to the committed active schem
 the observation. Callers no longer supply group, term, or schema authority.
 An address-stable outer service owner now composes tablet and metadata applications, their shared
 durable worker, and that coordinator through create, shutdown, and exact reopen.
+A bounded queue-facing adapter now connects negotiated reactor tasks to that coordinator, preserves
+one exact response across response-ring saturation, exposes wakeup information, and drains admitted
+work after shutdown closes new admission. Packaged daemon configuration remains external.
 
 ### Phase 15 — Multi-Raft tablets and metadata
 
@@ -393,8 +396,8 @@ broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were d
 - Shared Raft-log and application-snapshot reclamation are caller-triggered and lack syscall/crash
   fault matrices; the ordering protocols are implemented and focused restart tests pass.
 - QUORUM_SYNC receipts, Protocol 2.0 negotiation/acknowledgement bytes, metadata-derived local
-  routing, and bounded execution exist, but no packaged replicated daemon advertises the client
-  mode yet.
+  routing, bounded execution, and queue-facing backpressure/drain composition exist, but no packaged
+  replicated daemon advertises the client mode yet.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 

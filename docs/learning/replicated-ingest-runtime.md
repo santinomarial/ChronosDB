@@ -35,6 +35,9 @@ Steady-state cost remains in the coordinator and underlying Raft/application own
 object adds no per-request synchronization. It intentionally does not own elections, transport,
 metadata provisioning, or native-protocol advertisement.
 
+The separate `ReplicatedIngestService` borrows the coordinator and queue pair. It must be destroyed
+or drained before this owner shuts down; the eventual packaged lifecycle owns that ordering.
+
 Likely review questions: why must the runtime address stabilize before coordinator creation, why
 must every resident group have an application owner, why is coordinator destruction first, and why
 does this owner not automatically elect a group during recovery?

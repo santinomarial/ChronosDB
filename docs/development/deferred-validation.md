@@ -204,9 +204,10 @@
   snapshot publication on that worker. The metadata log now durably binds placed tablets to their
   Raft groups through additive entry type 4 and Snapshot minor 1; add administrative legacy binding
   backfill. An owning replicated runtime now fixes group/application identity and address-stable
-  create/reopen/shutdown ordering; add remote leader redirection, packaged reactor/daemon routing,
-  completion-driven wakeup, broader failure matrices, long-running hook watchdog evidence, and TSan
-  scheduling coverage.
+  create/reopen/shutdown ordering. A bounded queue-facing service now preserves negotiated tasks,
+  exact cancellation, one retained response, response-wakeup reporting, and admission-close/drain;
+  add remote leader redirection, packaged daemon ownership/configuration, broader queue/disconnect
+  failure matrices, long-running hook watchdog evidence, and TSan scheduling coverage.
 - Carry the implemented group-scoped read-barrier operation through authenticated production
   transport, request deadlines/coalescing, apply waiting, and exact tablet snapshot acquisition.
 - Extend the implemented metadata Raft codec/application/reopen path and complete-schema-definition
