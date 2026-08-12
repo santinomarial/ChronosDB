@@ -1,6 +1,7 @@
 #include "chronos/cluster/raft_transport_tls_client.hpp"
 
 #include <chrono>
+#include <limits>
 #include <new>
 #include <optional>
 #include <utility>
@@ -223,21 +224,33 @@ common::Status RaftTransportTlsClient::try_enqueue(std::vector<std::byte>& encod
 common::Status
 RaftTransportTlsClient::try_enqueue_prevalidated(std::vector<std::byte>& encoded_frame,
                                                  const TimePoint now) {
+  return try_enqueue_prevalidated_batch(std::span<std::vector<std::byte>>{&encoded_frame, 1U}, now);
+}
+
+common::Status RaftTransportTlsClient::try_enqueue_prevalidated_batch(
+    const std::span<std::vector<std::byte>> encoded_frames, const TimePoint now) {
   if (!implementation_)
     return invalid("Raft TLS client is empty");
   Impl& impl = *implementation_;
   if (impl.state_ == RaftTransportTlsClientState::kFailed)
     return impl.failure_;
-  if (impl.count_ == impl.slots_.size() ||
-      encoded_frame.size() > impl.config_.limits.maximum_queued_bytes - impl.queued_bytes_)
+  std::size_t bytes{};
+  for (const std::vector<std::byte>& frame : encoded_frames) {
+    if (frame.size() > std::numeric_limits<std::size_t>::max() - bytes)
+      return exhausted("Raft TLS output batch bytes overflow");
+    bytes += frame.size();
+  }
+  if (encoded_frames.size() > impl.slots_.size() - impl.count_ ||
+      bytes > impl.config_.limits.maximum_queued_bytes - impl.queued_bytes_)
     return exhausted("Raft TLS output queue is full");
   const bool was_empty = impl.count_ == 0U;
-  const std::size_t size = encoded_frame.size();
-  impl.slots_[impl.tail_].emplace(Impl::PendingFrame{std::move(encoded_frame), 0U});
-  impl.tail_ = (impl.tail_ + 1U) % impl.slots_.size();
-  ++impl.count_;
-  impl.queued_bytes_ += size;
-  if (was_empty && impl.state_ == RaftTransportTlsClientState::kReady) {
+  for (std::vector<std::byte>& frame : encoded_frames) {
+    impl.slots_[impl.tail_].emplace(Impl::PendingFrame{std::move(frame), 0U});
+    impl.tail_ = (impl.tail_ + 1U) % impl.slots_.size();
+    ++impl.count_;
+  }
+  impl.queued_bytes_ += bytes;
+  if (was_empty && !encoded_frames.empty() && impl.state_ == RaftTransportTlsClientState::kReady) {
     impl.interest_ = {.want_write = true};
     impl.deadline_ = deadline_after(now, impl.config_.limits.frame_write_timeout);
   }

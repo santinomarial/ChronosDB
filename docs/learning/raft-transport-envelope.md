@@ -66,6 +66,11 @@ and only then distributes frames. A missing or ordinarily full route therefore c
 Failed peers leave the map only through an explicit handoff that returns their carrier and complete
 retry frames; address lookup, TCP connect, backoff, and replacement timing remain caller-owned.
 
+The one-attempt TCP connector now retains complete retry frames while connecting, creates TLS only
+after `SO_ERROR` proves success, and transfers the descriptor plus borrowing carrier as one value.
+The pool owns that pair in TLS-before-descriptor destruction order. Connect failure returns the
+unchanged retry set; address selection, backoff, and replacement timing remain policy-owned.
+
 ## Complexity and tradeoffs
 
 Fixed messages encode and decode in constant time and space. Append messages are linear in entry

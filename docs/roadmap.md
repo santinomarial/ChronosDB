@@ -746,8 +746,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   its complete result for embedding-owned routing. A persistent peer-authenticated outbound session
   now bounds FIFO frames/bytes and preserves complete frames for reconnect retry. A fixed-capacity
   exact-peer pool now preflights whole durable results against every route and aggregate queue bound,
-  then returns failed carriers with complete retry frames. TCP connect/address/backoff replacement
-  automation and runtime event-loop composition remain deferred. A bounded deterministic simulator
+  then returns failed carriers with complete retry frames. An exact-route nonblocking TCP attempt
+  now retains complete retry frames through connect, creates TLS only after `SO_ERROR`, and transfers
+  descriptor/carrier ownership together into the pool. Address catalogs, backoff/replacement
+  automation, and runtime event-loop composition remain deferred. A bounded deterministic simulator
   now records and replays explicit or seeded partitions, delay/reordering, duplicate/loss,
   crash/restart, atomic persistence faults, application, membership, and snapshot actions; it checks
   election, log, commit, and leader-completeness safety after every step and deletion-shrinks failing

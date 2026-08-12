@@ -17,6 +17,7 @@ namespace {
 class RaftTransportPeerPool::Impl {
 public:
   struct Peer {
+    std::optional<network::TcpSocket> socket;
     raft::NodeId node_id{};
     RaftTransportTlsClient carrier;
   };
@@ -82,7 +83,33 @@ common::Status RaftTransportPeerPool::add_peer(RaftTransportTlsClient&& carrier)
     return status(common::StatusCode::kResourceExhausted, "Raft peer pool is full");
   for (std::optional<Impl::Peer>& slot : implementation_->peers_) {
     if (!slot.has_value()) {
-      slot.emplace(Impl::Peer{peer, std::move(carrier)});
+      slot.emplace(Impl::Peer{std::nullopt, peer, std::move(carrier)});
+      ++implementation_->count_;
+      return common::Status::ok();
+    }
+  }
+  return status(common::StatusCode::kCorruption, "Raft peer pool accounting is inconsistent");
+}
+
+common::Status RaftTransportPeerPool::add_connected_peer(RaftTransportConnectedPeer&& connected) {
+  if (!connected.socket.valid())
+    return status(common::StatusCode::kInvalidArgument,
+                  "Raft connected peer has no TCP descriptor");
+  if (!implementation_)
+    return status(common::StatusCode::kInvalidArgument, "Raft peer pool is empty");
+  const raft::NodeId peer = connected.carrier.peer_node_id();
+  if (connected.carrier.local_node_id() != implementation_->local_ || peer == 0U)
+    return status(common::StatusCode::kInvalidArgument,
+                  "Raft peer carrier route differs from pool ownership");
+  if (connected.carrier.state() == RaftTransportTlsClientState::kFailed)
+    return status(common::StatusCode::kUnavailable, "Raft peer carrier has already failed");
+  if (implementation_->find(peer) != nullptr)
+    return status(common::StatusCode::kAlreadyExists, "Raft peer already exists");
+  if (implementation_->count_ == implementation_->peers_.size())
+    return status(common::StatusCode::kResourceExhausted, "Raft peer pool is full");
+  for (std::optional<Impl::Peer>& slot : implementation_->peers_) {
+    if (!slot.has_value()) {
+      slot.emplace(Impl::Peer{std::move(connected.socket), peer, std::move(connected.carrier)});
       ++implementation_->count_;
       return common::Status::ok();
     }
@@ -186,7 +213,8 @@ RaftTransportPeerPool::take_failed_peer(const raft::NodeId peer) {
     auto retry = slot->carrier.drain_retry_frames();
     if (!retry.has_value())
       return common::make_unexpected(retry.error());
-    RaftTransportFailedPeer failed{slot->node_id, std::move(slot->carrier), std::move(*retry)};
+    RaftTransportFailedPeer failed{std::move(slot->socket), slot->node_id, std::move(slot->carrier),
+                                   std::move(*retry)};
     slot.reset();
     --implementation_->count_;
     return failed;

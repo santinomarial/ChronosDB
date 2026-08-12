@@ -43,6 +43,10 @@ the fixed-capacity exact-peer map, durable-result routing preflight, and explici
 handoff. TCP connection establishment, address policy, backoff, and replacement automation remain
 outside the carrier and pool.
 
+**Retrospective note (2026-08-12):** [ADR 0253](0253-ownership-safe-raft-tcp-connect-attempt.md)
+adds exact-route nonblocking TCP establishment and transfers descriptor/carrier ownership together.
+Address catalogs, capped backoff, and automated replacement remain above that one-attempt owner.
+
 The default 64 MiB queue can hold only one maximum-size default frame; operators must configure
 append batching and carrier budgets together. Queue admission never truncates a message.
 

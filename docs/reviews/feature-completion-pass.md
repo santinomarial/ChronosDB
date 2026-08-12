@@ -120,6 +120,9 @@ bytes, and returns complete original frames for duplicate-safe reconnect after f
 A bounded exact-peer carrier pool now preflights every durable-result destination and aggregate
 queue demand before routing, and returns failed carriers with their complete retry frames instead
 of silently dropping or replacing them.
+One nonblocking exact-route TCP attempt now retains complete retry frames through connection,
+creates TLS only after authoritative connect completion, and transfers descriptor/carrier ownership
+together into that pool; address selection and replacement backoff remain external.
 A bounded injected-time scheduler now emits generation-tagged election and heartbeat actions,
 preserves due work across admission backpressure, and rejects stale completion rearming.
 A bounded driver now submits each timer action plus its ordered observation through the asynchronous

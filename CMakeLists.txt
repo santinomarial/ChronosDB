@@ -622,6 +622,7 @@ add_library(
   src/cluster/distributed_query_transport.cpp
   src/cluster/raft_transport_receiver.cpp
   src/cluster/raft_transport_peer_pool.cpp
+  src/cluster/raft_transport_tcp_connector.cpp
   src/cluster/raft_transport_tls_client.cpp
   src/cluster/raft_transport_tls_server.cpp
   src/cluster/remote_tablet_reconfiguration.cpp
@@ -1034,6 +1035,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/cluster/raft_transport_receiver_test.cpp
     tests/cluster/raft_transport_peer_pool_header_self_contained.cpp
     tests/cluster/raft_transport_peer_pool_test.cpp
+    tests/cluster/raft_transport_tcp_connector_header_self_contained.cpp
+    tests/cluster/raft_transport_tcp_connector_test.cpp
     tests/cluster/raft_transport_tls_client_header_self_contained.cpp
     tests/cluster/raft_transport_tls_client_test.cpp
     tests/cluster/raft_transport_tls_server_header_self_contained.cpp

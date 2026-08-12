@@ -4,9 +4,11 @@
 #include "chronos/cluster/raft_transport_receiver.hpp"
 #include "chronos/cluster/raft_transport_tls_client.hpp"
 #include "chronos/common/result.hpp"
+#include "chronos/network/tcp_socket.hpp"
 
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace chronos::cluster {
@@ -16,9 +18,17 @@ struct RaftTransportPeerPoolLimits {
   raft::RaftTransportCodecLimits codec;
 };
 struct RaftTransportFailedPeer {
+  std::optional<network::TcpSocket> socket;
   raft::NodeId peer_node_id{};
   RaftTransportTlsClient carrier;
   std::vector<std::vector<std::byte>> retry_frames;
+};
+
+// Production outbound ownership keeps the TCP descriptor alive until after its borrowing TLS
+// carrier is destroyed. Tests and embeddings with a separate descriptor owner may use add_peer().
+struct RaftTransportConnectedPeer {
+  network::TcpSocket socket;
+  RaftTransportTlsClient carrier;
 };
 
 // Single-event-loop fixed-capacity map of exact-peer outbound TLS carriers. Routing preflights all
@@ -35,6 +45,7 @@ public:
   [[nodiscard]] static common::Result<RaftTransportPeerPool>
   create(raft::NodeId local_node_id, RaftTransportPeerPoolLimits limits = {});
   [[nodiscard]] common::Status add_peer(RaftTransportTlsClient&& carrier);
+  [[nodiscard]] common::Status add_connected_peer(RaftTransportConnectedPeer&& peer);
   [[nodiscard]] common::Status route_result(const raft::GroupId& group_id,
                                             const raft::DurableRaftResult& result, TimePoint now);
   [[nodiscard]] common::Status on_ready(raft::NodeId peer_node_id, bool readable, bool writable,

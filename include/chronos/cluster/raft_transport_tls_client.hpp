@@ -12,11 +12,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <vector>
 
 namespace chronos::cluster {
 
 class RaftTransportPeerPool;
+class RaftTransportTcpConnector;
 
 struct RaftTransportTlsClientLimits {
   std::size_t maximum_queued_frames{1024U};
@@ -79,10 +81,13 @@ public:
 
 private:
   friend class RaftTransportPeerPool;
+  friend class RaftTransportTcpConnector;
   class Impl;
   explicit RaftTransportTlsClient(std::unique_ptr<Impl> implementation) noexcept;
   [[nodiscard]] common::Status try_enqueue_prevalidated(std::vector<std::byte>& encoded_frame,
                                                         TimePoint now);
+  [[nodiscard]] common::Status
+  try_enqueue_prevalidated_batch(std::span<std::vector<std::byte>> encoded_frames, TimePoint now);
   std::unique_ptr<Impl> implementation_;
 };
 
