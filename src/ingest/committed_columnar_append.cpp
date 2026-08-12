@@ -107,6 +107,20 @@ matching_result(const DecodedColumnarAppendView& command, const RetryIdentity& r
 
 } // namespace
 
+common::Result<std::shared_ptr<const columnar::OwnedColumnarBatch>>
+own_decoded_columnar_append_batch(const DecodedColumnarAppendView& command,
+                                  std::shared_ptr<const schema::TableSchema> retained_schema,
+                                  const ColumnarAppendDecodeLimits limits) {
+  if (retained_schema == nullptr) {
+    return common::make_unexpected(invalid("decoded append ownership requires a schema"));
+  }
+  const common::Status schema_status = validate_columnar_append_schema(command, *retained_schema);
+  if (!schema_status.is_ok()) {
+    return common::make_unexpected(schema_status);
+  }
+  return own_batch(command.batch(), std::move(retained_schema), limits);
+}
+
 common::Result<CommittedColumnarAppendResult>
 apply_committed_columnar_append(const DecodedColumnarAppendView& command,
                                 std::shared_ptr<const schema::TableSchema> retained_schema,
@@ -153,7 +167,7 @@ apply_committed_columnar_append(const DecodedColumnarAppendView& command,
     return common::make_unexpected(internal("committed append reservation has no owner"));
   }
   RetryReservation reservation = std::move(*decision->reservation());
-  auto batch = own_batch(command.batch(), std::move(retained_schema), limits);
+  auto batch = own_decoded_columnar_append_batch(command, std::move(retained_schema), limits);
   if (!batch.has_value()) {
     return common::make_unexpected(batch.error());
   }

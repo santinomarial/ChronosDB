@@ -24,6 +24,14 @@ struct CommittedColumnarAppendResult {
   std::shared_ptr<const ColumnarAppendRetryOutcome> outcome;
 };
 
+// Validates a borrowed decoded command against its retained schema and copies every canonical
+// column buffer into immutable ownership. The returned batch is independent of the encoded command
+// bytes and is suitable for asynchronous WAL admission or tablet preparation.
+[[nodiscard]] common::Result<std::shared_ptr<const columnar::OwnedColumnarBatch>>
+own_decoded_columnar_append_batch(const DecodedColumnarAppendView& command,
+                                  std::shared_ptr<const schema::TableSchema> retained_schema,
+                                  ColumnarAppendDecodeLimits limits = {});
+
 // Applies one already durable and committed COLUMNAR_APPEND command. The decoded view and schema
 // must describe the same command. This boundary performs no WAL or Raft I/O; it atomically updates
 // tablet rows and retry state at the supplied source-specific commit position. The legacy

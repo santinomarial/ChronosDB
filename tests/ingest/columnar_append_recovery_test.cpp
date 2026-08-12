@@ -1,5 +1,6 @@
 #include "chronos/ingest/columnar_append_executor.hpp"
 #include "chronos/ingest/columnar_append_recovery.hpp"
+#include "chronos/ingest/committed_columnar_append.hpp"
 #include "columnar/columnar_test_support.hpp"
 #include "ingest/ingest_test_support.hpp"
 #include "wal/wal_writer_test_support.hpp"
@@ -140,6 +141,24 @@ struct ReplayTargets {
   schema::TabletId first;
   schema::TabletId second;
 };
+
+TEST(ColumnarAppendRecoveryTest, OwnsDecodedCommandBeyondEncodedPayloadLifetime) {
+  std::shared_ptr<const columnar::OwnedColumnarBatch> owned;
+  {
+    const auto input = batch(std::byte{42U});
+    const auto payload = command(1U, tablet_id(70U), input);
+    const auto decoded = decode_columnar_append_v1_exact(payload.bytes());
+    ASSERT_TRUE(decoded.has_value());
+    auto result = own_decoded_columnar_append_batch(*decoded, input->schema_ptr());
+    ASSERT_TRUE(result.has_value()) << result.error().to_string();
+    owned = std::move(*result);
+  }
+
+  ASSERT_NE(owned, nullptr);
+  EXPECT_EQ(owned->row_count(), 2U);
+  ASSERT_EQ(owned->columns().size(), 3U);
+  EXPECT_EQ(owned->columns()[0].view().values().back(), std::byte{42U});
+}
 
 [[nodiscard]] wal::WalId write_replay_history(const wal::WalWriterConfig& config,
                                               const ReplayTargets& targets) {
