@@ -114,10 +114,12 @@
 ## Phase 14 — deterministic Raft
 
 - Raft Transport Envelope v1 cross-compiler golden fixtures, hostile length/count/reserved-byte
-  matrices, sustained fuzzing, allocation-failure sweeps, fixed-storage partial readers/writers,
-  authenticated principal/source carrier integration, mixed-version processes, and duplicate/loss/
-  reorder/partition simulation. Focused coverage round-trips every current message, including an
-  actual conflict-repair response, and rejects damage, unknown kinds, route mismatch, and bounds.
+  matrices, sustained fuzzing, allocation-failure sweeps, real-socket/TLS partial-I/O and carrier-
+  wide admission schedules, authenticated principal/source carrier integration, mixed-version
+  processes, and duplicate/loss/reorder/partition simulation. Focused coverage round-trips every
+  current message, including an actual conflict-repair response, rejects damage, unknown kinds,
+  route mismatch and bounds, and exercises the header-first exact-allocation reader and owned
+  short-write cursor across fragmentation and coalescing.
 - Extend the implemented hostile higher-term/payload-identity and pre-observation term/position/
   response-state regression checks into exhaustive persistence-before-response, committed-log
   overwrite, sequence-exhaustion, response-state, and snapshot-boundary properties.

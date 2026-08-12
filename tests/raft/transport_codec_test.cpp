@@ -131,6 +131,75 @@ TEST(RaftTransportCodecTest, CarriesConflictRepairResponseProducedByTheCore) {
   EXPECT_EQ(*decoded, expected);
 }
 
+TEST(RaftTransportCodecTest, ReadsFragmentedAndCoalescedFramesWithBoundedState) {
+  const RaftTransportEnvelope first = envelope(RequestVoteResponse{4U, true});
+  const RaftTransportEnvelope second = envelope(ReadBarrierResponse{4U, 19U, true});
+  const auto first_bytes = encode_raft_transport_envelope_v1(first).value();
+  const auto second_bytes = encode_raft_transport_envelope_v1(second).value();
+
+  auto fragmented = RaftTransportFrameReader::create();
+  ASSERT_TRUE(fragmented.has_value());
+  std::optional<RaftTransportEnvelope> received;
+  for (const std::byte value : first_bytes) {
+    const std::array one{value};
+    auto step = fragmented->consume(one);
+    ASSERT_TRUE(step.has_value()) << step.error().to_string();
+    EXPECT_EQ(step->consumed_bytes, 1U);
+    if (step->envelope.has_value())
+      received = std::move(step->envelope);
+  }
+  ASSERT_TRUE(received.has_value());
+  EXPECT_EQ(*received, first);
+  EXPECT_EQ(fragmented->buffered_bytes(), 0U);
+  EXPECT_FALSE(fragmented->expected_frame_bytes().has_value());
+
+  std::vector<std::byte> coalesced = first_bytes;
+  coalesced.insert(coalesced.end(), second_bytes.begin(), second_bytes.end());
+  auto reader = RaftTransportFrameReader::create();
+  ASSERT_TRUE(reader.has_value());
+  auto one = reader->consume(coalesced);
+  ASSERT_TRUE(one.has_value()) << one.error().to_string();
+  ASSERT_TRUE(one->envelope.has_value());
+  EXPECT_EQ(*one->envelope, first);
+  EXPECT_EQ(one->consumed_bytes, first_bytes.size());
+  auto two = reader->consume(common::ByteView{coalesced}.subspan(one->consumed_bytes));
+  ASSERT_TRUE(two.has_value()) << two.error().to_string();
+  ASSERT_TRUE(two->envelope.has_value());
+  EXPECT_EQ(*two->envelope, second);
+
+  std::vector<std::byte> damaged = first_bytes;
+  damaged[24U] ^= std::byte{1U};
+  auto sticky = RaftTransportFrameReader::create();
+  ASSERT_TRUE(sticky.has_value());
+  auto rejected = sticky->consume(damaged);
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_TRUE(sticky->failed());
+  EXPECT_EQ(sticky->consume(first_bytes).error(), rejected.error());
+}
+
+TEST(RaftTransportCodecTest, OwnsOneValidatedFrameAcrossShortWritesAndMoves) {
+  const auto encoded =
+      encode_raft_transport_envelope_v1(envelope(RequestVoteResponse{4U, true})).value();
+  auto cursor = RaftTransportFrameWriteCursor::create(encoded);
+  ASSERT_TRUE(cursor.has_value()) << cursor.error().to_string();
+  EXPECT_EQ(cursor->pending_write().size(), encoded.size());
+  ASSERT_TRUE(cursor->consume_written(7U).is_ok());
+  EXPECT_EQ(cursor->written_bytes(), 7U);
+
+  RaftTransportFrameWriteCursor moved{std::move(*cursor)};
+  EXPECT_TRUE(cursor->complete());
+  EXPECT_TRUE(std::ranges::equal(moved.pending_write(), common::ByteView{encoded}.subspan(7U)));
+  EXPECT_FALSE(moved.consume_written(encoded.size()).is_ok());
+  ASSERT_TRUE(moved.consume_written(moved.pending_write().size()).is_ok());
+  EXPECT_TRUE(moved.complete());
+  EXPECT_TRUE(moved.pending_write().empty());
+
+  std::vector<std::byte> damaged = encoded;
+  damaged.back() ^= std::byte{1U};
+  EXPECT_EQ(RaftTransportFrameWriteCursor::create(std::move(damaged)).error().code(),
+            common::StatusCode::kCorruption);
+}
+
 TEST(RaftTransportCodecTest, EnforcesFrameEntryAndSnapshotBoundsBeforeAllocation) {
   RaftTransportCodecLimits small;
   small.maximum_frame_bytes = 120U;

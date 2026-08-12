@@ -13,6 +13,7 @@
 #include <new>
 #include <ranges>
 #include <span>
+#include <stdexcept>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -496,6 +497,36 @@ decode_snapshot(common::ByteReader& reader, const RaftTransportCodecLimits& limi
 
 } // namespace
 
+common::Result<std::size_t> raft_transport_frame_length_v1(const common::ByteView header,
+                                                           const RaftTransportCodecLimits limits) {
+  if (!valid_limits(limits))
+    return common::make_unexpected(invalid("Raft transport codec limits are invalid"));
+  if (header.size() != kRaftTransportHeaderSize)
+    return common::make_unexpected(corruption("Raft transport header is truncated"));
+  if (!std::ranges::equal(header.first(kMagic.size()), kMagic))
+    return common::make_unexpected(corruption("Raft transport magic is invalid"));
+  if (load_u32(header, kHeaderCrcOffset) != header_crc(header))
+    return common::make_unexpected(corruption("Raft transport header checksum mismatch"));
+  if (load_u16(header, 8U) != kMajor || load_u16(header, 10U) != kMinor)
+    return common::make_unexpected(unsupported("Raft transport version is unsupported"));
+  if (load_u32(header, 12U) != kRaftTransportHeaderSize || header[57U] != std::byte{0U} ||
+      !zero_bytes(header.subspan(58U, 6U)) || !zero_bytes(header.subspan(80U, 16U)) ||
+      zero_bytes(header.subspan(24U, 16U)))
+    return common::make_unexpected(corruption("Raft transport fixed header is invalid"));
+  const std::uint8_t raw_kind = std::to_integer<std::uint8_t>(header[56U]);
+  if (raw_kind < static_cast<std::uint8_t>(MessageKind::kRequestVoteRequest) ||
+      raw_kind > static_cast<std::uint8_t>(MessageKind::kReadBarrierResponse))
+    return common::make_unexpected(unsupported("Raft transport message kind is unsupported"));
+  const std::uint64_t total = load_u64(header, 16U);
+  const std::uint64_t payload = load_u64(header, 64U);
+  constexpr std::size_t kFraming = kRaftTransportHeaderSize + kRaftTransportTrailerSize;
+  if (total < kFraming || total > limits.maximum_frame_bytes || payload != total - kFraming ||
+      load_u64(header, 40U) == 0U || load_u64(header, 48U) == 0U ||
+      load_u64(header, 40U) == load_u64(header, 48U))
+    return common::make_unexpected(corruption("Raft transport declared frame or route is invalid"));
+  return static_cast<std::size_t>(total);
+}
+
 common::Result<std::vector<std::byte>>
 encode_raft_transport_envelope_v1(const RaftTransportEnvelope& envelope,
                                   const RaftTransportCodecLimits limits) {
@@ -606,6 +637,132 @@ decode_raft_transport_envelope_v1(const common::ByteView bytes,
   } catch (const std::length_error&) {
     return common::make_unexpected(exhausted("Raft transport decoding exceeds container limits"));
   }
+}
+
+RaftTransportFrameReader::RaftTransportFrameReader(const RaftTransportCodecLimits limits) noexcept
+    : limits_(limits) {}
+
+common::Result<RaftTransportFrameReader>
+RaftTransportFrameReader::create(const RaftTransportCodecLimits limits) {
+  if (!valid_limits(limits))
+    return common::make_unexpected(invalid("Raft transport reader limits are invalid"));
+  return RaftTransportFrameReader{limits};
+}
+
+common::Result<RaftTransportReadStep> RaftTransportFrameReader::fail(common::Status status) {
+  failure_.emplace(std::move(status));
+  return common::make_unexpected(*failure_);
+}
+
+void RaftTransportFrameReader::reset_frame() noexcept {
+  header_bytes_ = 0U;
+  frame_.clear();
+  frame_bytes_ = 0U;
+  expected_frame_bytes_.reset();
+}
+
+common::Result<RaftTransportReadStep>
+RaftTransportFrameReader::consume(const common::ByteView bytes) {
+  if (failure_.has_value())
+    return common::make_unexpected(*failure_);
+  std::size_t consumed = 0U;
+  if (!expected_frame_bytes_.has_value()) {
+    const std::size_t copied = std::min(bytes.size(), kRaftTransportHeaderSize - header_bytes_);
+    std::ranges::copy(bytes.first(copied),
+                      header_.begin() + static_cast<std::ptrdiff_t>(header_bytes_));
+    header_bytes_ += copied;
+    consumed += copied;
+    if (header_bytes_ != kRaftTransportHeaderSize)
+      return RaftTransportReadStep{consumed, std::nullopt};
+    auto expected = raft_transport_frame_length_v1(header_, limits_);
+    if (!expected.has_value())
+      return fail(expected.error());
+    try {
+      frame_.resize(*expected);
+    } catch (const std::bad_alloc&) {
+      return fail(exhausted("Raft transport reader allocation failed"));
+    } catch (const std::length_error&) {
+      return fail(exhausted("Raft transport reader frame exceeds container limits"));
+    }
+    std::ranges::copy(header_, frame_.begin());
+    frame_bytes_ = kRaftTransportHeaderSize;
+    expected_frame_bytes_ = *expected;
+  }
+
+  const common::ByteView remainder = bytes.subspan(consumed);
+  const std::size_t copied = std::min(remainder.size(), *expected_frame_bytes_ - frame_bytes_);
+  std::ranges::copy(remainder.first(copied),
+                    frame_.begin() + static_cast<std::ptrdiff_t>(frame_bytes_));
+  frame_bytes_ += copied;
+  consumed += copied;
+  if (frame_bytes_ != *expected_frame_bytes_)
+    return RaftTransportReadStep{consumed, std::nullopt};
+  auto decoded = decode_raft_transport_envelope_v1(frame_, limits_);
+  if (!decoded.has_value())
+    return fail(decoded.error());
+  RaftTransportEnvelope envelope = std::move(*decoded);
+  reset_frame();
+  return RaftTransportReadStep{consumed, std::move(envelope)};
+}
+
+std::size_t RaftTransportFrameReader::buffered_bytes() const noexcept {
+  return expected_frame_bytes_.has_value() ? frame_bytes_ : header_bytes_;
+}
+
+std::optional<std::size_t> RaftTransportFrameReader::expected_frame_bytes() const noexcept {
+  return expected_frame_bytes_;
+}
+
+bool RaftTransportFrameReader::failed() const noexcept {
+  return failure_.has_value();
+}
+
+RaftTransportFrameWriteCursor::RaftTransportFrameWriteCursor(
+    std::vector<std::byte> encoded_frame) noexcept
+    : encoded_frame_(std::move(encoded_frame)) {}
+
+RaftTransportFrameWriteCursor::RaftTransportFrameWriteCursor(
+    RaftTransportFrameWriteCursor&& other) noexcept
+    : encoded_frame_(std::move(other.encoded_frame_)), written_bytes_(other.written_bytes_) {
+  other.written_bytes_ = other.encoded_frame_.size();
+}
+
+RaftTransportFrameWriteCursor&
+RaftTransportFrameWriteCursor::operator=(RaftTransportFrameWriteCursor&& other) noexcept {
+  if (this == &other)
+    return *this;
+  encoded_frame_ = std::move(other.encoded_frame_);
+  written_bytes_ = other.written_bytes_;
+  other.written_bytes_ = other.encoded_frame_.size();
+  return *this;
+}
+
+common::Result<RaftTransportFrameWriteCursor>
+RaftTransportFrameWriteCursor::create(std::vector<std::byte> encoded_frame,
+                                      const RaftTransportCodecLimits limits) {
+  auto decoded = decode_raft_transport_envelope_v1(encoded_frame, limits);
+  if (!decoded.has_value())
+    return common::make_unexpected(decoded.error());
+  return RaftTransportFrameWriteCursor{std::move(encoded_frame)};
+}
+
+common::ByteView RaftTransportFrameWriteCursor::pending_write() const noexcept {
+  return common::ByteView{encoded_frame_}.subspan(written_bytes_);
+}
+
+common::Status RaftTransportFrameWriteCursor::consume_written(const std::size_t bytes) noexcept {
+  if (bytes > encoded_frame_.size() - written_bytes_)
+    return invalid("Raft transport write completion exceeds pending bytes");
+  written_bytes_ += bytes;
+  return common::Status::ok();
+}
+
+std::size_t RaftTransportFrameWriteCursor::written_bytes() const noexcept {
+  return written_bytes_;
+}
+
+bool RaftTransportFrameWriteCursor::complete() const noexcept {
+  return written_bytes_ == encoded_frame_.size();
 }
 
 } // namespace chronos::raft

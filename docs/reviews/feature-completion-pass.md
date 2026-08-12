@@ -108,6 +108,8 @@ snapshot transfer bytes, and randomized simulation remain incomplete.
 Later work accepted and implemented a bounded canonical group/source/destination Raft transport
 envelope for every current vote, append, snapshot, and read-barrier message. Authenticated socket
 carrier scheduling, timers, retransmission, and randomized simulation remain incomplete.
+Header-first stream ownership now validates the fixed header before exact frame allocation, returns
+precise consumed prefixes for coalesced input, and owns complete output across short writes.
 The core now also rejects zero terms and noncanonical vote/append predecessor and response state
 before observing a higher term, preserving the persist-before-response contract on invalid input.
 

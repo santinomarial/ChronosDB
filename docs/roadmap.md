@@ -737,7 +737,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   pass. A two-stage snapshot protocol now withholds acknowledgment until external application
   installation is confirmed and the compacted Raft state is synchronized. A bounded canonical
   group/source/destination transport envelope now round-trips vote, append, snapshot, and read-
-  barrier messages without introducing sockets into the deterministic core. Production
+  barrier messages without introducing sockets into the deterministic core. Header-first bounded
+  stream ownership now validates allocation-relevant fields before exact frame allocation and
+  retains complete outbound bytes across short writes. Production
   authenticated carrier scheduling, runtime timers, randomized simulation, and the full exit
   evidence remain deferred. Linearizable reads now use one bounded explicit current-term leadership
   probe, require a current-term committed entry, freeze stable or joint voter quorums at issuance,

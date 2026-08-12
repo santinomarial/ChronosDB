@@ -6,6 +6,8 @@
 `RaftTransportEnvelope` between owned in-memory values and canonical bytes. The envelope binds a
 logical group UUID, source node, destination node, and one of the eight current deterministic Raft
 messages. `RaftTransportCodecLimits` provides finite frame, entry, entry-byte, and voter bounds.
+`RaftTransportFrameReader` and `RaftTransportFrameWriteCursor` retain one frame safely across
+arbitrary short reads and writes.
 
 ## Data and ownership
 
@@ -13,6 +15,12 @@ Encoding borrows the envelope for the call and returns one owned byte vector. De
 input bytes only while validating and copies all variable append payloads and snapshot voters into
 an owned result. Neither operation stores pointers, opens sockets, or mutates Raft state. Allocation
 failure returns `RESOURCE_EXHAUSTED` without a partial value.
+
+The move-only stream reader owns a fixed header until it can validate every allocation-relevant
+field, then owns one exactly sized frame until full decode. A successful step reports its exact
+consumed prefix and returns at most one envelope, leaving a coalesced suffix with the caller. Any
+failure is sticky. The move-only write cursor validates and owns a complete encoded frame; its
+pending span remains valid until the cursor advances or moves.
 
 The 96-byte header protects lengths and route fields before variable parsing. A payload checksum
 localizes damage, and the trailer covers the complete header and payload. Integers are explicit
@@ -37,8 +45,9 @@ must synchronize the transition before transport sees its outbound envelope.
 
 Fixed messages encode and decode in constant time and space. Append messages are linear in entry
 count and payload bytes; snapshot messages are linear in voter count. Decoding deliberately copies
-payloads because the runtime owns messages beyond a network read buffer's lifetime. A future
-carrier may add fixed-storage partial framing outside this API, but cannot reinterpret v1 bytes.
+payloads because the runtime owns messages beyond a network read buffer's lifetime. Partial reading
+adds one exact frame allocation after fixed-header validation; the default 64 MiB limit therefore
+requires a separate carrier-wide admission budget.
 
 The separate envelope keeps clocks, retry, TLS, and descriptors out of the consensus core. It costs
 one outer CRC pass and can reject a core-produced append batch that exceeds its configured transport
@@ -46,10 +55,10 @@ bound; explicit batching is preferable to unbounded socket ownership.
 
 ## Verification and likely interview questions
 
-Focused tests cover every variant, actual conflict repair, corruption, compatibility, identity, and
-bounds. Phase 18 retains golden fixtures, hostile length matrices, fuzzing, allocation failure,
-partial read/write ownership, authenticated routing, partitions/reordering/duplication, and mixed
-version processes.
+Focused tests cover every variant, actual conflict repair, corruption, compatibility, identity,
+bounds, bytewise and coalesced reads, sticky failure, and short-write ownership. Phase 18 retains
+golden fixtures, hostile length matrices, fuzzing, allocation failure, authenticated routing,
+real-socket partial I/O, partitions/reordering/duplication, and mixed-version processes.
 
 Useful questions include: why is CRC not authentication; why must persistence precede sending; why
 does snapshot metadata travel separately from snapshot bytes; how does route identity prevent

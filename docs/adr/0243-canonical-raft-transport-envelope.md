@@ -45,8 +45,11 @@ changing deterministic state-machine semantics.
 Focused tests round-trip all eight message kinds with exact route identity, carry a conflict-repair
 response produced by `RaftNode`, reject damaged and checksum-valid unknown-kind frames, reject
 source/embedded-identity mismatch, and enforce frame, entry, and voter bounds. Full golden fixtures,
-fuzzing, authenticated carrier integration, partial-I/O framing, mixed-version processes, and
-network fault simulation remain in the Phase 18 ledger.
+fuzzing, authenticated carrier integration, mixed-version processes, and network fault simulation
+remain in the Phase 18 ledger.
+
+**Retrospective note (2026-08-12):** [ADR 0245](0245-bounded-raft-transport-partial-io.md) adds the
+header-first reader and owning short-write cursor without changing the v1 bytes.
 
 ## References
 

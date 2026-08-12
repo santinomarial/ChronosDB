@@ -76,3 +76,16 @@ outbound bytes are released only after any associated persistent transition has 
 
 Minor-version compatibility is exact in v1. Reserved fields must remain zero until a later accepted
 version defines them.
+
+## Stream ownership
+
+`RaftTransportFrameReader` supports fragmented and coalesced byte streams without trusting a wire
+length before validation. It buffers only the fixed 96-byte header first, validates its checksum,
+route, version, reserved fields, and configured complete-frame bound, then allocates exactly the
+declared frame. It returns at most one owned envelope and the exact consumed prefix per call; callers
+retain and resubmit any suffix containing another frame. Corruption, unsupported versions, bounds,
+and allocation failures are sticky for that reader instance.
+
+`RaftTransportFrameWriteCursor` owns one complete canonically decoded frame and exposes only its
+unwritten suffix. Checked advancement supports short writes, and moving the cursor leaves the source
+complete. Descriptor, TLS, retry, and readiness ownership remain outside both types.
