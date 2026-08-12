@@ -769,7 +769,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   A bounded generation-tagged monotonic timer scheduler now emits election and heartbeat actions,
   retries rejected admission without shifting deadlines, and rejects stale completion rearming;
   its bounded driver now composes those actions with ordered asynchronous durable observations and
-  retains complete results. Production event-loop wakeups and routing orchestration remain.
+  retains complete results. The durable owner now publishes a portable coalescing completion
+  descriptor after owning results. Unified production routing orchestration remains.
 
 - **Scope:** implement a deterministic Raft core for one logical group: elections, replication, commit, membership protocol as scoped by ADR, snapshots, read consistency mechanisms, and simulated transport/storage/time.
 - **Explicit non-scope:** multi-group multiplexing, production network integration, distributed queries, hidden third-party Raft implementation, and serving uncommitted or merely appended entries.

@@ -1,9 +1,12 @@
 #include "chronos/raft/async_durable_runtime.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cerrno>
 #include <condition_variable>
 #include <deque>
 #include <exception>
+#include <fcntl.h>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -12,6 +15,7 @@
 #include <string>
 #include <system_error>
 #include <thread>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -27,6 +31,31 @@ void saturating_increment(std::uint64_t& value) noexcept {
 
 [[nodiscard]] common::Status invalid(const char* message) {
   return common::Status{common::StatusCode::kInvalidArgument, message};
+}
+
+[[nodiscard]] common::Status io_error(const char* operation, const int error = errno) {
+  return common::Status{common::StatusCode::kIoError,
+                        std::string(operation) + ": " +
+                            std::error_code(error, std::generic_category()).message()};
+}
+
+[[nodiscard]] common::Result<std::array<int, 2>> create_completion_pipe() {
+  std::array<int, 2> descriptors{-1, -1};
+  if (::pipe(descriptors.data()) != 0)
+    return common::make_unexpected(io_error("creating durable Raft completion pipe"));
+  for (const int descriptor : descriptors) {
+    const int status_flags = ::fcntl(descriptor, F_GETFL, 0);
+    const int descriptor_flags = ::fcntl(descriptor, F_GETFD, 0);
+    if (status_flags < 0 || descriptor_flags < 0 ||
+        ::fcntl(descriptor, F_SETFL, status_flags | O_NONBLOCK) != 0 ||
+        ::fcntl(descriptor, F_SETFD, descriptor_flags | FD_CLOEXEC) != 0) {
+      const common::Status failure = io_error("configuring durable Raft completion pipe");
+      ::close(descriptors[0]);
+      ::close(descriptors[1]);
+      return common::make_unexpected(failure);
+    }
+  }
+  return descriptors;
 }
 
 } // namespace
@@ -77,8 +106,9 @@ public:
     std::size_t operation_count{};
   };
 
-  Impl(DurableMultiRaftRuntime runtime, const AsyncDurableMultiRaftLimits configured)
-      : runtime_(std::move(runtime)), limits_(configured) {
+  Impl(DurableMultiRaftRuntime runtime, const AsyncDurableMultiRaftLimits configured,
+       const std::array<int, 2> completion_pipe) noexcept
+      : runtime_(std::move(runtime)), limits_(configured), completion_pipe_(completion_pipe) {
     metrics_.accepting = true;
   }
 
@@ -88,6 +118,9 @@ public:
     } catch (...) {
       std::terminate();
     }
+    for (const int descriptor : completion_pipe_)
+      if (descriptor >= 0)
+        ::close(descriptor);
   }
 
   [[nodiscard]] common::Status start() {
@@ -162,6 +195,38 @@ public:
     return terminal_status_;
   }
 
+  [[nodiscard]] common::Status signal_completion() {
+    const std::uint8_t signal = 1U;
+    while (true) {
+      const ssize_t written = ::write(completion_pipe_[1], &signal, sizeof(signal));
+      if (written == static_cast<ssize_t>(sizeof(signal)))
+        return common::Status::ok();
+      if (written < 0 && errno == EINTR)
+        continue;
+      if (written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+        return common::Status::ok();
+      return io_error("signaling durable Raft completion");
+    }
+  }
+
+  [[nodiscard]] common::Status drain_completion_notifications() {
+    std::array<std::uint8_t, 256> signals{};
+    while (true) {
+      const ssize_t read = ::read(completion_pipe_[0], signals.data(), signals.size());
+      if (read > 0)
+        continue;
+      if (read < 0 && errno == EINTR)
+        continue;
+      if (read < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+        return common::Status::ok();
+      return io_error("draining durable Raft completion notifications", read == 0 ? EPIPE : errno);
+    }
+  }
+
+  [[nodiscard]] int completion_descriptor() const noexcept {
+    return completion_pipe_[0];
+  }
+
   [[nodiscard]] AsyncDurableMultiRaftMetrics metrics() const {
     const std::lock_guard lock{mutex_};
     return metrics_;
@@ -216,6 +281,8 @@ private:
     }
     for (auto& task : failed)
       task->completion->complete(common::make_unexpected(terminal_status()));
+    if (!failed.empty())
+      static_cast<void>(signal_completion());
   }
 
   [[nodiscard]] BatchResult execute(Task& task) {
@@ -272,9 +339,15 @@ private:
       if (!succeeded) {
         fail_pending(failure);
         task->completion->complete(std::move(result));
+        static_cast<void>(signal_completion());
         break;
       }
       task->completion->complete(std::move(result));
+      const common::Status signaled = signal_completion();
+      if (!signaled.is_ok()) {
+        fail_pending(signaled);
+        break;
+      }
     }
     close_runtime();
   }
@@ -289,6 +362,7 @@ private:
   bool shutdown_requested_{};
   std::thread worker_;
   std::mutex shutdown_mutex_;
+  std::array<int, 2> completion_pipe_{-1, -1};
 };
 
 AsyncDurableRaftCompletion::AsyncDurableRaftCompletion() noexcept = default;
@@ -336,7 +410,19 @@ common::Result<AsyncDurableMultiRaftRuntime> AsyncDurableMultiRaftRuntime::creat
                                                      limits.durable);
   if (!runtime.has_value())
     return common::make_unexpected(runtime.error());
-  auto impl = std::make_unique<Impl>(std::move(*runtime), limits);
+  auto completion_pipe = create_completion_pipe();
+  if (!completion_pipe.has_value())
+    return common::make_unexpected(completion_pipe.error());
+  std::unique_ptr<Impl> impl;
+  try {
+    impl = std::make_unique<Impl>(std::move(*runtime), limits, *completion_pipe);
+  } catch (const std::bad_alloc&) {
+    ::close((*completion_pipe)[0]);
+    ::close((*completion_pipe)[1]);
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "cannot allocate asynchronous durable Multi-Raft runtime owner"});
+  }
   const common::Status started = impl->start();
   if (!started.is_ok()) {
     static_cast<void>(impl->shutdown());
@@ -356,7 +442,19 @@ common::Result<AsyncDurableMultiRaftRuntime> AsyncDurableMultiRaftRuntime::open_
                                                         std::move(groups), limits.durable);
   if (!runtime.has_value())
     return common::make_unexpected(runtime.error());
-  auto impl = std::make_unique<Impl>(std::move(*runtime), limits);
+  auto completion_pipe = create_completion_pipe();
+  if (!completion_pipe.has_value())
+    return common::make_unexpected(completion_pipe.error());
+  std::unique_ptr<Impl> impl;
+  try {
+    impl = std::make_unique<Impl>(std::move(*runtime), limits, *completion_pipe);
+  } catch (const std::bad_alloc&) {
+    ::close((*completion_pipe)[0]);
+    ::close((*completion_pipe)[1]);
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "cannot allocate asynchronous durable Multi-Raft runtime owner"});
+  }
   const common::Status started = impl->start();
   if (!started.is_ok()) {
     static_cast<void>(impl->shutdown());
@@ -381,6 +479,15 @@ AsyncDurableMultiRaftRuntime::try_observe_group(const GroupId& group_id) {
 
 common::Status AsyncDurableMultiRaftRuntime::shutdown() {
   return impl_ == nullptr ? common::Status::ok() : impl_->shutdown();
+}
+
+int AsyncDurableMultiRaftRuntime::completion_descriptor() const noexcept {
+  return impl_ == nullptr ? -1 : impl_->completion_descriptor();
+}
+
+common::Status AsyncDurableMultiRaftRuntime::drain_completion_notifications() {
+  return impl_ == nullptr ? invalid("asynchronous durable Multi-Raft runtime is not open")
+                          : impl_->drain_completion_notifications();
 }
 
 AsyncDurableMultiRaftMetrics AsyncDurableMultiRaftRuntime::metrics() const {

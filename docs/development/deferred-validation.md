@@ -149,8 +149,9 @@
 - Persistent file owner, vote/log fsync ordering, crash/restart at every transition, idempotent
   recovery, application to tablet state, snapshot creation/install, and log compaction. Extend the
   implemented read barrier through production transport and tablet snapshot acquisition.
-- Membership protocol, leader leases if ever proposed, timerfd/event-loop wakeup integration,
-  disk-error behavior, and storage fault injection. A bounded generation-tagged timer scheduler now
+- Membership protocol, leader leases if ever proposed, completion-pipe saturation/shutdown races,
+  timerfd integration, disk-error behavior, and storage fault injection. The asynchronous durable
+  owner now supplies a portable coalescing completion descriptor. A bounded generation-tagged timer scheduler now
   emits exact election/heartbeat actions and rejects stale completion rearming; its bounded driver
   submits two-operation action/observation batches through the asynchronous durable owner and
   retains complete post-sync results for routing.

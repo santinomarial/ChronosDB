@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <gtest/gtest.h>
+#include <poll.h>
 #include <string>
 #include <system_error>
 #include <unistd.h>
@@ -157,6 +158,30 @@ TEST(AsyncDurableMultiRaftRuntimeTest, FailsClosedAfterTerminalDurableRuntimeErr
   EXPECT_TRUE(runtime->metrics().terminal_failure);
   EXPECT_EQ(runtime->try_submit({{group, HeartbeatOperation{}}}).error(), failed.error());
   EXPECT_EQ(runtime->shutdown(), failed.error());
+}
+
+TEST(AsyncDurableMultiRaftRuntimeTest, WakesAndDrainsCompletionDescriptor) {
+  TemporaryDirectory directory;
+  const GroupId group = group_id(std::byte{4U});
+  auto runtime = AsyncDurableMultiRaftRuntime::create_new(
+      1U, {.directory_path = directory.path().string()}, {{group, {1U}}});
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  ASSERT_GE(runtime->completion_descriptor(), 0);
+  auto election = runtime->try_submit({{group, StartElectionOperation{}}});
+  ASSERT_TRUE(election.has_value());
+
+  pollfd descriptor{.fd = runtime->completion_descriptor(), .events = POLLIN};
+  ASSERT_EQ(::poll(&descriptor, 1U, 1000), 1);
+  EXPECT_NE(descriptor.revents & POLLIN, 0);
+  ASSERT_TRUE(runtime->drain_completion_notifications().is_ok());
+  descriptor.revents = 0;
+  EXPECT_EQ(::poll(&descriptor, 1U, 0), 0);
+  EXPECT_TRUE(election->is_ready());
+  auto result = election->wait();
+  ASSERT_TRUE(result.has_value()) << result.error().to_string();
+  ASSERT_EQ(result->size(), 1U);
+  EXPECT_TRUE(result->front().status.is_ok());
+  EXPECT_TRUE(runtime->shutdown().is_ok());
 }
 
 } // namespace

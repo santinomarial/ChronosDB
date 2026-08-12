@@ -88,6 +88,10 @@ public:
   // Idempotently stops admission, drains all accepted batches in FIFO order, closes the log, and
   // joins the worker. A terminal worker failure rejects all not-yet-executed accepted batches.
   [[nodiscard]] common::Status shutdown();
+  // Borrowed nonblocking descriptor readable after one or more completions are published. A single
+  // event-loop consumer drains it, then inspects every completion owner that it coordinates.
+  [[nodiscard]] int completion_descriptor() const noexcept;
+  [[nodiscard]] common::Status drain_completion_notifications();
   [[nodiscard]] AsyncDurableMultiRaftMetrics metrics() const;
   [[nodiscard]] bool is_accepting() const;
   [[nodiscard]] common::Status terminal_status() const;

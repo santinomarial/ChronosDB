@@ -7,6 +7,9 @@ existing physical log single-owned. `try_submit` either transfers a complete bat
 `AsyncDurableRaftCompletion`, or immediately reports invalid input, overload, or closed admission.
 The completion can be polled with `is_ready` or consumed with `wait`. Because transitions may own
 large message batches, `wait` moves the result out exactly once instead of copying it.
+The runtime also exposes one borrowed nonblocking completion descriptor. Its worker publishes the
+owning completion first and then signals that descriptor; one event loop drains the coalesced signal
+and inspects every completion owner it coordinates.
 
 Tablet reconfiguration uses `try_submit_local_prepared_tablet_reconfiguration`. It accepts only the
 sealed capability produced after durable action-ledger preparation, copies its exact request into a
@@ -38,6 +41,10 @@ The producer fully initializes a task before publishing it while holding the que
 acquisition of that mutex is the release/acquire edge for the task and operations. The worker
 similarly installs a complete result under the completion mutex before notifying waiters. No atomic
 counter participates in publication, and no thread is detached.
+
+The completion pipe is nonblocking and close-on-exec. A successful write follows result publication;
+pipe saturation coalesces wakeups because unread data already keeps the descriptor readable. Runtime
+destruction joins the worker before closing either pipe descriptor.
 
 Completion state is shared ownership, so it can outlive the runtime. Requests are unique ownership
 and are released after exactly one completion. Runtime destruction stops admission, drains or
