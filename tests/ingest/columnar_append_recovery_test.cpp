@@ -142,6 +142,29 @@ struct ReplayTargets {
   schema::TabletId second;
 };
 
+TEST(ColumnarAppendRecoveryTest, RecoversAnEmptyWalWithoutConfiguredTablets) {
+  wal::test::TemporaryDirectory directory{"chronos-empty-columnar-recovery"};
+  ASSERT_TRUE(directory.valid());
+  const wal::WalWriterConfig writer_config{.directory_path = directory.path().string()};
+
+  common::Result<wal::WalWriter> created = wal::WalWriter::create_new(writer_config);
+  ASSERT_TRUE(created.has_value()) << created.error().to_string();
+  const wal::WalId expected_wal_id = created->wal_id();
+  ASSERT_TRUE(created->close().is_ok());
+
+  common::Result<RecoveredColumnarAppendState> recovered =
+      recover_columnar_append_wal(writer_config, {}, recovery_config({}));
+  ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
+  EXPECT_EQ(recovered->tablet_count(), 0U);
+  EXPECT_EQ(recovered->retry_directory().metrics().committed_entries, 0U);
+
+  common::Result<wal::WalWriter> writer = recovered->release_writer();
+  ASSERT_TRUE(writer.has_value()) << writer.error().to_string();
+  EXPECT_EQ(writer->wal_id(), expected_wal_id);
+  EXPECT_EQ(writer->next_record_sequence(), 1U);
+  EXPECT_TRUE(writer->close().is_ok());
+}
+
 TEST(ColumnarAppendRecoveryTest, OwnsDecodedCommandBeyondEncodedPayloadLifetime) {
   std::shared_ptr<const columnar::OwnedColumnarBatch> owned;
   {

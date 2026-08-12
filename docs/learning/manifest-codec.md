@@ -250,6 +250,12 @@ regular `manifest/LOCK`, and requires final manifest generations to be nonempty 
 from one. Final CSEG parts need not yet be referenced: an interrupted flush may legitimately leave
 an immutable orphan, which later recovery must retain until ownership is proven.
 
+`selected_identity()` is the narrow bootstrap inspection boundary used while that same lock is
+held. It exact-decodes the selected final generation and returns only its generation, database ID,
+WAL ID, and tablet IDs. The single-node owner uses those durable identities to configure full
+Manifest recovery; the helper neither validates referenced parts nor publishes recovered state, so
+it is not a substitute for `load_selected_manifest()`.
+
 `cleanup_temporaries()` first performs that complete scan, then removes only recognized temporary
 files and synchronizes each directory whose entries changed. It never promotes a candidate and
 never removes a final generation or part. A failed directory sync poisons the live owner because a

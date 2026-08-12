@@ -1306,6 +1306,12 @@ TEST(ManifestStorageTest, InstallsExactNextManifestAfterRevalidatingReferencedPa
                                          .referenced_parts_validated = 1U,
                                          .file_syncs = 1U,
                                          .directory_syncs = 1U}));
+  const auto identity = owner.selected_identity();
+  ASSERT_TRUE(identity.has_value()) << identity.error().to_string();
+  EXPECT_EQ(identity->generation, 2U);
+  EXPECT_EQ(identity->database_id, fixture.database_id);
+  EXPECT_EQ(identity->wal_id, fixture.wal_id);
+  EXPECT_EQ(identity->tablet_ids, std::vector<schema::TabletId>{fixture.tablet_id});
   const common::Result<ManifestNamespaceSnapshot> snapshot = owner.scan_namespace();
   ASSERT_TRUE(snapshot.has_value());
   EXPECT_EQ(snapshot->generations, (std::vector<std::uint64_t>{1U, 2U}));

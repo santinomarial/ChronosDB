@@ -106,6 +106,12 @@ lock acquisition, caller durable overrides, and a selected Manifest tablet absen
 registry. Existing storage and WAL suites cover missing parts, sync faults, tail repair, and crash
 transitions below this composition.
 
-Remaining work includes durable catalog/tablet-map reconstruction, multi-kind application dispatch,
-service activation, crash injection inside this composition's cleanup/recovery ordering, and future
-query-state reconstruction.
+The single-node service owner now supplies its durable metadata catalog as the retained registry and
+uses this composition for every live startup. A selected-identity preflight exact-decodes the
+checksummed generation to discover its WAL and durable tablet identities; full catalog/part binding
+still occurs only inside this recovery function. Native CSEG query scanning and live flush
+scheduling remain outside that integration.
+
+Remaining work includes multi-kind application dispatch, crash injection inside this composition's
+cleanup/recovery ordering, CSEG-backed service query activation, and future query-state
+reconstruction.

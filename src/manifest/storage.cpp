@@ -1648,6 +1648,46 @@ common::Result<ManifestNamespaceSnapshot> ManifestStorage::scan_namespace() cons
   return snapshot;
 }
 
+common::Result<SelectedManifestIdentity> ManifestStorage::selected_identity() const {
+  if (!implementation_)
+    return common::make_unexpected(invalid("Manifest storage owner was moved from"));
+  auto snapshot = scan_namespace();
+  if (!snapshot.has_value())
+    return common::make_unexpected(snapshot.error());
+  const std::uint64_t generation = snapshot->generations.back();
+  auto name = manifest_file_name(generation);
+  if (!name.has_value())
+    return common::make_unexpected(name.error());
+  auto bytes = read_final_file(implementation_->manifests_,
+                               {.name = *name,
+                                .maximum_length = format::kMaximumFileLength,
+                                .exact_length = std::nullopt,
+                                .description = "selected Manifest identity generation"});
+  if (!bytes.has_value())
+    return common::make_unexpected(bytes.error());
+  auto decoded = decode_manifest_v1_exact(*bytes);
+  if (!decoded.has_value())
+    return common::make_unexpected(
+        manifest_decode_failure(decoded.error(), "selected Manifest identity generation"));
+  if (decoded->generation() != generation)
+    return common::make_unexpected(
+        corruption("selected Manifest identity disagrees with its final filename"));
+  try {
+    std::vector<schema::TabletId> tablet_ids;
+    tablet_ids.reserve(decoded->tablets().size());
+    for (const TabletDescriptor& tablet : decoded->tablets())
+      tablet_ids.push_back(tablet.tablet_id);
+    return SelectedManifestIdentity{.generation = generation,
+                                    .database_id = decoded->database_id(),
+                                    .wal_id = decoded->wal_id(),
+                                    .tablet_ids = std::move(tablet_ids)};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "selected Manifest identity tablet allocation failed"});
+  }
+}
+
 common::Result<TemporaryCleanupReport> ManifestStorage::cleanup_temporaries() {
   common::Result<ManifestNamespaceSnapshot> snapshot = scan_namespace();
   if (!snapshot.has_value()) {

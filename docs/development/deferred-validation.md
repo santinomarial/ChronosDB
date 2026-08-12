@@ -292,6 +292,12 @@
   and full Manifest-aware single-node startup. Focused filesystem coverage now proves exact
   create/reopen, identity binding, temporary cleanup, and missing-lock fail-closed behavior; focused
   owner coverage proves live lock exclusion and WAL-before-Manifest shutdown ordering.
+- Manifest-aware single-node startup with advanced CSEG generations through the public owner,
+  covered-segment reclamation, selected-identity corruption/namespace races, missing catalog
+  bindings, multi-tablet schema evolution, legacy migration crash points, allocation faults,
+  subprocess restarts, and ASan/UBSan/TSan. Focused owner coverage now routes empty, WAL-backed, DDL,
+  and SQL INSERT restarts through aggregate Manifest recovery; subsystem tests retain advanced-CSEG
+  and WAL-suffix evidence.
 - Execute the complete requested three-node scenario with real sockets/processes and retained logs:
   create table, ingest, historical SQL, vector distributed aggregate, subscribe/update, leader kill,
   failover ingest/query, movement/query, tier/query, restart, and result reconciliation.

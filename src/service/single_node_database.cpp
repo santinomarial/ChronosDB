@@ -2,7 +2,8 @@
 
 #include "chronos/ingest/columnar_append_recovery.hpp"
 #include "chronos/io/posix_io.hpp"
-#include "chronos/manifest/storage.hpp"
+#include "chronos/manifest/naming.hpp"
+#include "chronos/manifest/startup_recovery.hpp"
 #include "chronos/raft/durable_runtime.hpp"
 #include "chronos/raft/metadata_codec.hpp"
 #include "chronos/raft/metadata_runtime.hpp"
@@ -55,6 +56,31 @@ namespace {
     return true;
   return entries->size() == 1U && entries->front().name == "LOCK" &&
          entries->front().type == io::DirectoryEntryType::kRegularFile;
+}
+
+[[nodiscard]] common::Result<bool> has_final_manifest(const std::string& database_root) {
+  auto root = io::PosixDirectory::open(database_root);
+  if (!root.has_value())
+    return common::make_unexpected(root.error());
+  auto entries = root->list_entries();
+  if (!entries.has_value())
+    return common::make_unexpected(entries.error());
+  const auto manifest_entry =
+      std::ranges::find(*entries, manifest::kManifestDirectoryName, &io::DirectoryEntry::name);
+  if (manifest_entry == entries->end())
+    return false;
+  if (manifest_entry->type != io::DirectoryEntryType::kDirectory)
+    return common::make_unexpected(corruption("Manifest namespace is not a directory"));
+  auto directory = root->open_directory(manifest::kManifestDirectoryName);
+  if (!directory.has_value())
+    return common::make_unexpected(directory.error());
+  auto manifests = directory->list_entries();
+  if (!manifests.has_value())
+    return common::make_unexpected(manifests.error());
+  return std::ranges::any_of(*manifests, [](const io::DirectoryEntry& entry) {
+    return entry.type == io::DirectoryEntryType::kRegularFile &&
+           manifest::parse_manifest_file_name(entry.name).has_value();
+  });
 }
 
 [[nodiscard]] head::MutableHeadCapacity
@@ -197,17 +223,12 @@ public:
        raft::MetadataCatalogSnapshot configured_catalog,
        std::vector<RecoveredTable> configured_tables,
        std::shared_ptr<const query::QueryCatalogSnapshot> configured_query_catalog,
-       std::optional<ingest::RecoveredColumnarAppendState> configured_recovered,
-       std::optional<ingest::RetryDirectory> configured_retry,
-       std::vector<FreshTablet> configured_fresh,
-       manifest::ManifestStorage configured_manifest_storage,
-       wal::WalCommitCoordinator configured_wal) noexcept
+       manifest::RecoveredManifestColumnarState configured_recovered,
+       std::vector<FreshTablet> configured_fresh, wal::WalCommitCoordinator configured_wal) noexcept
       : bootstrap_owner(std::move(configured_bootstrap)), raft_runtime(std::move(configured_raft)),
         metadata(std::move(configured_metadata)), catalog(std::move(configured_catalog)),
         tables(std::move(configured_tables)), query_catalog(std::move(configured_query_catalog)),
-        recovered(std::move(configured_recovered)), retry(std::move(configured_retry)),
-        fresh_tablets(std::move(configured_fresh)),
-        manifest_storage(std::move(configured_manifest_storage)),
+        recovered(std::move(configured_recovered)), fresh_tablets(std::move(configured_fresh)),
         wal_coordinator(std::move(configured_wal)) {}
 
   [[nodiscard]] common::Status refresh_catalog() {
@@ -240,10 +261,8 @@ public:
   raft::MetadataCatalogSnapshot catalog;
   std::vector<RecoveredTable> tables;
   std::shared_ptr<const query::QueryCatalogSnapshot> query_catalog;
-  std::optional<ingest::RecoveredColumnarAppendState> recovered;
-  std::optional<ingest::RetryDirectory> retry;
+  std::optional<manifest::RecoveredManifestColumnarState> recovered;
   std::vector<FreshTablet> fresh_tablets;
-  std::optional<manifest::ManifestStorage> manifest_storage;
   wal::WalCommitCoordinator wal_coordinator;
   bool shutdown{};
 };
@@ -345,73 +364,101 @@ SingleNodeDatabase::open_or_create(SingleNodeDatabaseConfig config) {
     const wal::WalWriterConfig wal_config{.directory_path = bootstrap->wal_directory_path(),
                                           .target_segment_size =
                                               descriptor.wal_segment_target_bytes};
-    auto new_wal = is_new_log_directory(wal_config.directory_path);
-    if (!new_wal.has_value())
-      return common::make_unexpected(with_context("classify WAL directory", new_wal.error()));
-    std::optional<ingest::RecoveredColumnarAppendState> recovered;
-    std::optional<ingest::RetryDirectory> retry;
-    std::vector<FreshTablet> fresh;
-    common::Result<wal::WalWriter> writer = common::make_unexpected(invalid("WAL not opened"));
-    if (*new_wal) {
-      writer = wal::WalWriter::create_new(wal_config);
-      if (!writer.has_value())
-        return common::make_unexpected(with_context("create database WAL", writer.error()));
-      auto directory = ingest::RetryDirectory::create(recovery_config.retry_directory);
-      if (!directory.has_value())
-        return common::make_unexpected(directory.error());
-      retry.emplace(std::move(*directory));
-      fresh.reserve(recovery_config.tablets.size());
-      for (const auto& configured : recovery_config.tablets) {
-        auto state =
-            ingest::TabletState::create(configured.schema, configured.tablet_id, configured.state);
-        if (!state.has_value())
-          return common::make_unexpected(state.error());
-        for (const auto& successor : configured.successors) {
-          const common::Status registered =
-              state->register_schema(successor.schema, successor.head_capacity);
-          if (!registered.is_ok())
-            return common::make_unexpected(registered);
-        }
-        fresh.push_back({configured.tablet_id, std::move(*state)});
-      }
-    } else if (recovery_config.tablets.empty()) {
-      EmptyWalReplaySink sink;
-      writer = wal::WalWriter::open_existing(wal_config, config.wal_recovery, sink);
-      if (!writer.has_value())
-        return common::make_unexpected(with_context("open empty database WAL", writer.error()));
-      auto directory = ingest::RetryDirectory::create(recovery_config.retry_directory);
-      if (!directory.has_value())
-        return common::make_unexpected(directory.error());
-      retry.emplace(std::move(*directory));
-    } else {
-      auto state = ingest::recover_columnar_append_wal(wal_config, config.wal_recovery,
-                                                       std::move(recovery_config));
-      if (!state.has_value())
-        return common::make_unexpected(with_context("recover database WAL", state.error()));
-      auto released = state->release_writer();
-      if (!released.has_value())
-        return common::make_unexpected(released.error());
-      writer = std::move(*released);
-      recovered.emplace(std::move(*state));
-    }
     auto database_id = manifest::DatabaseId::from_uuid(descriptor.database_id);
     if (!database_id.has_value())
       return common::make_unexpected(
           corruption("database bootstrap identity is invalid for Manifest storage"));
-    auto manifest_storage =
-        manifest::ManifestStorage::initialize_empty({.database_root = bootstrap->database_root(),
-                                                     .database_id = *database_id,
-                                                     .wal_id = writer->wal_id()});
-    if (!manifest_storage.has_value())
+
+    auto established = has_final_manifest(bootstrap->database_root());
+    if (!established.has_value())
       return common::make_unexpected(
-          with_context("initialize database Manifest storage", manifest_storage.error()));
+          with_context("classify database Manifest namespace", established.error()));
+    wal::WalId manifest_wal_id{};
+    std::vector<schema::TabletId> durable_tablet_ids;
+    if (*established) {
+      auto storage =
+          manifest::ManifestStorage::open_existing({.database_root = bootstrap->database_root()});
+      if (!storage.has_value())
+        return common::make_unexpected(storage.error());
+      auto identity = storage->selected_identity();
+      if (!identity.has_value())
+        return common::make_unexpected(identity.error());
+      if (identity->database_id != *database_id)
+        return common::make_unexpected(
+            corruption("selected Manifest database identity disagrees with Bootstrap"));
+      manifest_wal_id = identity->wal_id;
+      durable_tablet_ids = std::move(identity->tablet_ids);
+    } else {
+      auto new_wal = is_new_log_directory(wal_config.directory_path);
+      if (!new_wal.has_value())
+        return common::make_unexpected(with_context("classify WAL directory", new_wal.error()));
+      common::Result<wal::WalWriter> writer =
+          common::make_unexpected(invalid("WAL not opened for Manifest initialization"));
+      if (*new_wal) {
+        writer = wal::WalWriter::create_new(wal_config);
+      } else if (recovery_config.tablets.empty()) {
+        EmptyWalReplaySink sink;
+        writer = wal::WalWriter::open_existing(wal_config, config.wal_recovery, sink);
+      } else {
+        auto bootstrap_recovery = recovery_config;
+        auto state = ingest::recover_columnar_append_wal(wal_config, config.wal_recovery,
+                                                         std::move(bootstrap_recovery));
+        if (!state.has_value())
+          return common::make_unexpected(
+              with_context("recover pre-Manifest database WAL", state.error()));
+        writer = state->release_writer();
+      }
+      if (!writer.has_value())
+        return common::make_unexpected(
+            with_context("open WAL for Manifest initialization", writer.error()));
+      manifest_wal_id = writer->wal_id();
+      {
+        auto storage = manifest::ManifestStorage::initialize_empty(
+            {.database_root = bootstrap->database_root(),
+             .database_id = *database_id,
+             .wal_id = manifest_wal_id});
+        if (!storage.has_value())
+          return common::make_unexpected(
+              with_context("initialize database Manifest storage", storage.error()));
+      }
+      const common::Status closed = writer->close();
+      if (!closed.is_ok())
+        return common::make_unexpected(with_context("close initialized database WAL", closed));
+    }
+
+    std::vector<manifest::TabletSchemaBinding> schema_bindings;
+    for (const RecoveredTable& table : *tables) {
+      for (const schema::TabletId& tablet_id : table.tablets) {
+        if (std::ranges::binary_search(durable_tablet_ids, tablet_id))
+          schema_bindings.push_back({.tablet_id = tablet_id, .lineage = std::cref(table.lineage)});
+      }
+    }
+    std::ranges::sort(schema_bindings, {}, &manifest::TabletSchemaBinding::tablet_id);
+
+    auto recovered = manifest::recover_manifest_columnar_database(
+        {.manifest_storage = {.database_root = bootstrap->database_root()},
+         .manifest_load = {.expected_database_id = *database_id,
+                           .expected_wal_id = manifest_wal_id,
+                           .schema_bindings = schema_bindings,
+                           .decode_limits = {},
+                           .part_validation_limits = {}},
+         .wal_writer = wal_config,
+         .wal_recovery = config.wal_recovery,
+         .reclaim_checkpointed_wal_segments = false,
+         .columnar_recovery = std::move(recovery_config)});
+    if (!recovered.has_value())
+      return common::make_unexpected(
+          with_context("recover Manifest-backed database", recovered.error()));
+    auto writer = recovered->release_writer();
+    if (!writer.has_value())
+      return common::make_unexpected(writer.error());
     auto coordinator = wal::WalCommitCoordinator::start(std::move(*writer), config.wal_commit);
     if (!coordinator.has_value())
       return common::make_unexpected(coordinator.error());
     return SingleNodeDatabase{std::make_unique<Impl>(
         std::move(*bootstrap), std::move(stable_raft), std::move(*metadata), std::move(*catalog),
-        std::move(*tables), std::move(query_catalog), std::move(recovered), std::move(retry),
-        std::move(fresh), std::move(*manifest_storage), std::move(*coordinator))};
+        std::move(*tables), std::move(query_catalog), std::move(*recovered),
+        std::vector<FreshTablet>{}, std::move(*coordinator))};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("single-node database allocation failed"));
   } catch (const std::length_error&) {
@@ -447,7 +494,7 @@ ingest::TabletState* SingleNodeDatabase::find_tablet(const schema::TabletId& tab
 const ingest::TabletState*
 SingleNodeDatabase::find_tablet(const schema::TabletId& tablet_id) const noexcept {
   if (impl_->recovered.has_value()) {
-    if (const auto* tablet = std::as_const(*impl_->recovered).tablet(tablet_id); tablet != nullptr)
+    if (const auto* tablet = impl_->recovered->tablet(tablet_id); tablet != nullptr)
       return tablet;
   }
   const auto found = std::ranges::find(impl_->fresh_tablets, tablet_id, &FreshTablet::tablet_id);
@@ -483,7 +530,7 @@ SingleNodeDatabase::table_snapshots(const schema::TableId& table_id) const {
   }
 }
 ingest::RetryDirectory& SingleNodeDatabase::retry_directory() noexcept {
-  return impl_->recovered.has_value() ? impl_->recovered->retry_directory() : *impl_->retry;
+  return impl_->recovered->retry_directory();
 }
 wal::WalCommitCoordinator& SingleNodeDatabase::wal_coordinator() noexcept {
   return impl_->wal_coordinator;
@@ -493,7 +540,7 @@ common::Status SingleNodeDatabase::shutdown() {
     return common::Status::ok();
   impl_->shutdown = true;
   common::Status result = impl_->wal_coordinator.shutdown();
-  impl_->manifest_storage.reset();
+  impl_->recovered.reset();
   const common::Status raft = impl_->raft_runtime->close();
   if (result.is_ok())
     result = raft;
@@ -633,6 +680,13 @@ SingleNodeDatabase::create_table(const query::BoundSqlCreateTable& statement,
         if (!registered.is_ok())
           return common::make_unexpected(registered);
       }
+      auto tablet_snapshot = state->snapshot();
+      if (!tablet_snapshot.has_value())
+        return common::make_unexpected(tablet_snapshot.error());
+      auto published =
+          impl_->recovered->storage_publisher().publish_tablet_snapshot(*tablet_snapshot);
+      if (!published.has_value())
+        return common::make_unexpected(published.error());
       impl_->fresh_tablets.push_back({tablet_id, std::move(*state)});
     }
     impl_->tables = std::move(*rebuilt);

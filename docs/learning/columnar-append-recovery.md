@@ -32,8 +32,13 @@ This API is intentionally not a catalog. The first schema config is the earliest
 retained WAL may append. Each successor must be a direct accepted v1 transition and carries the
 capacity for one empty generation of its shape. A command naming an unconfigured tablet or absent
 retained schema fails with `NOT_FOUND`; a known schema whose immutable definition disagrees with
-the command or embedded batch is corruption. An empty or duplicate tablet configuration, invalid
+the command or embedded batch is corruption. A duplicate tablet configuration, invalid
 lineage, invalid limits, or invalid bounded state is a caller configuration error.
+
+A zero-tablet configuration is valid for an exactly empty verified WAL. It yields an empty retry
+directory/tablet set and positioned writer so a new database can enter aggregate Manifest ownership
+before its first CREATE TABLE. Any application record still resolves no tablet and fails recovery;
+zero tablets never means “ignore unknown records.”
 
 ## Whole-history and checkpoint-suffix ordering
 

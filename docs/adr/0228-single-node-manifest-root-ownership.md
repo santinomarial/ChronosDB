@@ -29,13 +29,9 @@ than replaces it.
 
 Every configured single-node database now has a checksummed Manifest generation 1 and stable
 Manifest writer ownership before it can accept requests. The frozen Bootstrap v1 file remains
-unchanged. This step intentionally retains the prior WAL-only logical replay and mutable-head query
-path; full selected-Manifest/CSEG recovery, aggregate publication, flush queue composition, and
-checkpoint reclamation follow separately.
-
-An established nonempty or advanced Manifest namespace is not yet accepted by this owner because it
-still invokes the initialization-only boundary. The next composition must classify that namespace
-and use `recover_manifest_columnar_database()` instead of replaying covered WAL rows into heads.
+unchanged. ADR 0229 replaces the prior WAL-only logical replay with selected-Manifest/CSEG recovery
+and aggregate publication. Flush queue composition, CSEG-backed native query scans, and checkpoint
+reclamation remain separate.
 
 ## Validation
 

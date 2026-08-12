@@ -61,6 +61,13 @@ struct EmptyManifestStorageInitialization {
   std::uint16_t directory_permissions{0700U};
 };
 
+struct SelectedManifestIdentity {
+  std::uint64_t generation{};
+  DatabaseId database_id;
+  wal::WalId wal_id;
+  std::vector<schema::TabletId> tablet_ids;
+};
+
 struct PartInstallRequest {
   std::reference_wrapper<const cseg::EncodedCsegPart> encoded_part;
   PartDescriptor descriptor;
@@ -513,6 +520,11 @@ public:
   // must be nonempty and consecutive from one; every other entry must be an exact regular final or
   // recognized temporary name (plus manifest/LOCK). Final parts may be unreferenced orphans.
   [[nodiscard]] common::Result<ManifestNamespaceSnapshot> scan_namespace() const;
+
+  // Reads and exact-decodes only the selected final Manifest framing under the writer lock. This
+  // bootstrap aid exposes checksummed database/WAL identities before catalog-bound part loading;
+  // it does not validate referenced parts and cannot initialize a query publication.
+  [[nodiscard]] common::Result<SelectedManifestIdentity> selected_identity() const;
 
   // Re-scans first, removes only recognized temporaries, and synchronizes each changed directory.
   // It never promotes a candidate or removes a final part/generation.

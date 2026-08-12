@@ -8,11 +8,12 @@ final bootstrap exists. After success, callers can inspect the immutable query c
 lineage or tablet, execute appends through the global retry directory and WAL coordinator, and take
 tablet snapshots for vector query execution.
 
-After the WAL writer's durable identity is known, the owner explicitly initializes or verifies an
-empty Manifest generation 1 bound to the Bootstrap database identity and that WAL identity. It
-retains `manifest/LOCK` for the live lifetime. This is currently a storage-readiness and ownership
-boundary: restart still replays the complete WAL into mutable heads and does not yet select CSEG
-parts or an advanced Manifest generation.
+For a pre-Manifest root, the owner opens the WAL only long enough to validate it and obtain its
+durable identity, then installs exact empty generation 1. Every live startup proceeds through
+`recover_manifest_columnar_database()`: it validates the selected Manifest/CSEGs, restores durable
+retry/tablet boundaries, replays only the WAL suffix, and retains one aggregate Manifest/part/head
+publication plus `manifest/LOCK`. Native queries do not yet consume selected CSEG descriptors, so
+their current results remain head-only after a nonempty Manifest recovery.
 
 The owner accepts initial local `CREATE TABLE` as three exact-retained metadata proposals. A table is
 visible only when metadata contains its complete schema tail, complete policy, and local placement.
@@ -57,9 +58,10 @@ database root lock + bootstrap
   -> one-node metadata Raft open/election/replay
   -> owning complete-table catalog projection
   -> retained schema lineages + immutable query catalog
-  -> WAL create OR whole-log semantic preflight/replay
-  -> bounded RetryDirectory + TabletState publications
-  -> identity-bound empty Manifest generation + retained manifest/LOCK
+  -> classify final Manifest OR initialize generation 1 from the opened WAL identity
+  -> validate selected Manifest/CSEGs + derive durable seeds
+  -> replay required WAL suffix into bounded RetryDirectory + TabletState publications
+  -> aggregate Manifest/part/head publication + retained manifest/LOCK
   -> live WalCommitCoordinator admission
 ```
 
@@ -68,9 +70,9 @@ aggregate process-ownership boundary. WAL recovery receives exact schema lineage
 head capacities derived from the durable bootstrap. It publishes nothing until whole-log preflight
 and replay succeed.
 
-For a new or logically empty WAL, the owner creates the global retry directory and tablet states
-directly. For a nonempty configured WAL, `RecoveredColumnarAppendState` owns them and releases only
-the verified/repositioned writer to the coordinator. Lookup hides this representation difference.
+`RecoveredManifestColumnarState` owns the startup retry directory and tablets and releases only the
+verified/repositioned writer to the coordinator. Tables created later retain separate tablet owners
+but publish their empty epochs into the same aggregate storage owner.
 
 ## Shutdown and failures
 

@@ -313,10 +313,6 @@ common::Result<RecoveredColumnarAppendState>
 recover_columnar_append_wal(const wal::WalWriterConfig& writer_config,
                             const wal::WalRecoveryOptions& recovery_options,
                             ColumnarAppendRecoveryConfig recovery_config) {
-  if (recovery_config.tablets.empty()) {
-    return common::make_unexpected(
-        invalid("COLUMNAR_APPEND recovery requires at least one configured tablet"));
-  }
   if (recovery_config.decode_limits.max_application_payload_length == 0U ||
       recovery_config.decode_limits.max_application_payload_length >
           columnar_append_v1::kMaximumApplicationPayloadLength ||
