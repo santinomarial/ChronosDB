@@ -154,6 +154,9 @@ TEST(AsyncDurableMultiRaftRuntimeTest, RunsApplicationExtensionBeforePublishingC
       1U, {.directory_path = directory.path().string()}, {{group, {1U}}}, {}, extension);
   ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
   EXPECT_TRUE(extension->initialized());
+  EXPECT_TRUE(runtime->owns_worker_extension(*extension));
+  const auto different_extension = std::make_shared<ApplyingWorkerExtension>(group);
+  EXPECT_FALSE(runtime->owns_worker_extension(*different_extension));
 
   auto election = runtime->try_submit({{group, StartElectionOperation{}}});
   ASSERT_TRUE(election.has_value());

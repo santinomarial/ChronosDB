@@ -49,8 +49,8 @@ group/tablet recovery configurations, sorts them once, and recovers every `RaftT
 on the worker before admission. Each batch context retains the sorted unique group identities from
 the still-owned requests. Completion applies only configured groups touched by that batch, advances
 their durable applied indexes, and records a leader receipt after visibility. External code may
-copy the latest receipt or acquire a pinned immutable `TabletSnapshot`; it cannot borrow a mutable
-machine or the synchronous runtime.
+copy the latest receipt, acquire a pinned immutable `TabletSnapshot`, or own a bounded exact
+group/term/index receipt completion; it cannot borrow a mutable machine or the synchronous runtime.
 
 ## Consequences
 
@@ -76,8 +76,8 @@ thread, reopen retains the applied frontier, and initialization failure prevents
 concrete tablet tests prove touched-group application before completion, untouched-group isolation,
 pre-admission restart reconstruction, duplicate-group rejection, and terminal corruption handling.
 
-The metadata extension, proposal-to-receipt correlation, cancellation, transport/client
-integration, crash cut points, TSan, and scheduling measurements remain subsequent work.
+The metadata extension, proposal-result index extraction, transport/client integration, crash cut
+points, TSan, and scheduling measurements remain subsequent work.
 
 ## References
 

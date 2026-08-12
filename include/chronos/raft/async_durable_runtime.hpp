@@ -127,6 +127,10 @@ public:
   [[nodiscard]] common::Status drain_completion_notifications();
   [[nodiscard]] AsyncDurableMultiRaftMetrics metrics() const;
   [[nodiscard]] bool is_accepting() const;
+  // Immutable identity check for higher-level owners that must enqueue follow-up work on the same
+  // worker that hosts their extension.
+  [[nodiscard]] bool
+  owns_worker_extension(const AsyncDurableRaftWorkerExtension& extension) const noexcept;
   [[nodiscard]] common::Status terminal_status() const;
 
 private:

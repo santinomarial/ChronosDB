@@ -247,6 +247,11 @@ public:
     return metrics_.accepting;
   }
 
+  [[nodiscard]] bool
+  owns_worker_extension(const AsyncDurableRaftWorkerExtension& extension) const noexcept {
+    return extension_.get() == &extension;
+  }
+
   [[nodiscard]] common::Status terminal_status() const {
     const std::lock_guard lock{mutex_};
     return terminal_status_;
@@ -599,6 +604,11 @@ AsyncDurableMultiRaftMetrics AsyncDurableMultiRaftRuntime::metrics() const {
 
 bool AsyncDurableMultiRaftRuntime::is_accepting() const {
   return impl_ != nullptr && impl_->is_accepting();
+}
+
+bool AsyncDurableMultiRaftRuntime::owns_worker_extension(
+    const AsyncDurableRaftWorkerExtension& extension) const noexcept {
+  return impl_ != nullptr && impl_->owns_worker_extension(extension);
 }
 
 common::Status AsyncDurableMultiRaftRuntime::terminal_status() const {

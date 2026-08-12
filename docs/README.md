@@ -292,7 +292,7 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   decoding, shared row/retry publication, applied-index ordering, and retained-log reconstruction.
 - [Worker-affine asynchronous Raft tablet application](learning/async-raft-tablet-application.md):
   pre-admission recovery, touched-group application before completion, pinned snapshot publication,
-  applied quorum receipts, ownership, and terminal failure behavior.
+  term-bound exact applied-quorum completions, ownership, and terminal failure behavior.
 - [Windowed materialized-view state](learning/windowed-materialized-view.md): committed/event-time
   separation, corrections, watermarks, exact checkpoints, durable recovery, and retention frontier.
 - [Multi-tablet subscription order](learning/multi-tablet-subscription-order.md): canonical source

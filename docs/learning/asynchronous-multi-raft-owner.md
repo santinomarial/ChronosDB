@@ -22,7 +22,8 @@ An optional `AsyncDurableRaftWorkerExtension` composes application state with th
 state machines that borrow the synchronous runtime without creating a reverse Raft dependency.
 `AsyncRaftTabletApplication` is the first concrete consumer: it recovers bounded tablet machines on
 the worker, applies only request-touched groups before completion publication, and exposes only
-pinned immutable snapshots and copied receipts to other threads.
+pinned immutable snapshots, copied observations, and bounded exact term/index receipt completions
+to other threads.
 
 Tablet reconfiguration uses `try_submit_local_prepared_tablet_reconfiguration`. It accepts only the
 sealed capability produced after durable action-ledger preparation, copies its exact request into a

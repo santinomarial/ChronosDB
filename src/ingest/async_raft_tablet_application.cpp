@@ -1,6 +1,7 @@
 #include "chronos/ingest/async_raft_tablet_application.hpp"
 
 #include <algorithm>
+#include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <new>
@@ -13,6 +14,8 @@
 
 namespace chronos::ingest {
 namespace {
+
+using QuorumResult = common::Result<raft::QuorumSyncReceipt>;
 
 [[nodiscard]] common::Status invalid(std::string message) {
   return {common::StatusCode::kInvalidArgument, std::move(message)};
@@ -38,21 +41,95 @@ public:
 
 } // namespace
 
+namespace detail {
+
+class AsyncRaftTabletQuorumCompletionState {
+public:
+  void complete(QuorumResult result) {
+    {
+      const std::lock_guard lock{mutex_};
+      if (result_.has_value())
+        return;
+      result_.emplace(std::move(result));
+    }
+    condition_.notify_all();
+  }
+
+  [[nodiscard]] bool is_ready() const {
+    const std::lock_guard lock{mutex_};
+    return result_.has_value() && !consumed_;
+  }
+
+  [[nodiscard]] QuorumResult wait() {
+    std::unique_lock lock{mutex_};
+    condition_.wait(lock, [this] { return result_.has_value(); });
+    if (consumed_) {
+      return common::make_unexpected(invalid("Raft tablet quorum completion was already consumed"));
+    }
+    consumed_ = true;
+    return std::move(*result_);
+  }
+
+private:
+  mutable std::mutex mutex_;
+  std::condition_variable condition_;
+  std::optional<QuorumResult> result_;
+  bool consumed_{};
+};
+
+} // namespace detail
+
 class AsyncRaftTabletApplication::Impl {
 public:
+  struct PendingQuorumCompletion {
+    raft::Term leader_term{};
+    raft::LogIndex log_index{};
+    std::weak_ptr<detail::AsyncRaftTabletQuorumCompletionState> state;
+    bool resolved{};
+  };
+
+  struct ReadyQuorumCompletion {
+    std::shared_ptr<detail::AsyncRaftTabletQuorumCompletionState> state;
+    QuorumResult result;
+  };
+
   struct OwnedTablet {
     raft::GroupId group_id;
     RaftTabletStateMachine machine;
     std::optional<raft::QuorumSyncReceipt> latest_receipt;
+    std::vector<PendingQuorumCompletion> pending_receipts;
   };
 
-  explicit Impl(std::vector<AsyncRaftTabletApplicationConfig> configured) noexcept
-      : pending(std::move(configured)) {}
+  Impl(std::vector<AsyncRaftTabletApplicationConfig> configured,
+       const AsyncRaftTabletApplicationLimits configured_limits) noexcept
+      : pending(std::move(configured)), limits(configured_limits) {}
+
+  void complete_pending(const common::Status& status) {
+    for (OwnedTablet& owned : tablets) {
+      for (const PendingQuorumCompletion& pending_receipt : owned.pending_receipts)
+        if (auto state = pending_receipt.state.lock(); state != nullptr)
+          state->complete(common::make_unexpected(status));
+      pending_quorum_count -= owned.pending_receipts.size();
+      owned.pending_receipts.clear();
+    }
+  }
 
   [[nodiscard]] common::Status fail(common::Status status) {
-    if (failure.is_ok())
+    if (failure.is_ok()) {
       failure = std::move(status);
+      complete_pending(failure);
+    }
     return failure;
+  }
+
+  void prune_expired_receipts() {
+    for (OwnedTablet& owned : tablets) {
+      const std::size_t prior = owned.pending_receipts.size();
+      std::erase_if(owned.pending_receipts, [](const PendingQuorumCompletion& pending_receipt) {
+        return pending_receipt.state.expired();
+      });
+      pending_quorum_count -= prior - owned.pending_receipts.size();
+    }
   }
 
   [[nodiscard]] common::Status initialize(raft::DurableMultiRaftRuntime& runtime) {
@@ -74,7 +151,7 @@ public:
                       config.decode_limits);
         if (!recovered.has_value())
           return fail(recovered.error());
-        tablets.push_back(OwnedTablet{config.group_id, std::move(*recovered), std::nullopt});
+        tablets.push_back(OwnedTablet{config.group_id, std::move(*recovered), std::nullopt, {}});
       }
       pending.clear();
       initialized = true;
@@ -93,30 +170,68 @@ public:
       return failure;
     if (!initialized || shutdown)
       return fail(unavailable("Raft tablet application owner is not active"));
-    for (const raft::GroupId& group_id : group_ids) {
-      const auto found = std::ranges::lower_bound(tablets, group_id, {}, &OwnedTablet::group_id);
-      if (found == tablets.end() || found->group_id != group_id)
-        continue;
-      OwnedTablet& owned = *found;
-      auto applied = owned.machine.apply_committed();
-      if (!applied.has_value())
-        return fail(applied.error());
-      const raft::RaftNode* const node = runtime.find_group(owned.group_id);
-      if (node == nullptr)
-        return fail(unavailable("Raft tablet application group disappeared"));
-      if (node->role() != raft::Role::kLeader || node->applied_index() == 0U)
-        continue;
-      auto receipt = owned.machine.prove_applied_quorum_sync(node->applied_index());
-      if (!receipt.has_value())
-        return fail(receipt.error());
-      owned.latest_receipt = *receipt;
+    try {
+      std::vector<ReadyQuorumCompletion> ready;
+      for (const raft::GroupId& group_id : group_ids) {
+        const auto found = std::ranges::lower_bound(tablets, group_id, {}, &OwnedTablet::group_id);
+        if (found == tablets.end() || found->group_id != group_id)
+          continue;
+        OwnedTablet& owned = *found;
+        auto applied = owned.machine.apply_committed();
+        if (!applied.has_value())
+          return fail(applied.error());
+        const raft::RaftNode* const node = runtime.find_group(owned.group_id);
+        if (node == nullptr)
+          return fail(unavailable("Raft tablet application group disappeared"));
+        for (PendingQuorumCompletion& pending_receipt : owned.pending_receipts) {
+          auto state = pending_receipt.state.lock();
+          if (state == nullptr)
+            continue;
+          if (node->role() != raft::Role::kLeader ||
+              node->current_term() != pending_receipt.leader_term) {
+            ready.push_back({std::move(state),
+                             common::make_unexpected(
+                                 unavailable("Raft tablet quorum request lost its leader term"))});
+            pending_receipt.resolved = true;
+            continue;
+          }
+          if (pending_receipt.log_index > node->applied_index())
+            continue;
+          auto exact = owned.machine.prove_applied_quorum_sync(pending_receipt.log_index);
+          if (!exact.has_value())
+            return fail(exact.error());
+          ready.push_back({std::move(state), std::move(*exact)});
+          pending_receipt.resolved = true;
+        }
+        if (node->role() != raft::Role::kLeader || node->applied_index() == 0U)
+          continue;
+        auto receipt = owned.machine.prove_applied_quorum_sync(node->applied_index());
+        if (!receipt.has_value())
+          return fail(receipt.error());
+        owned.latest_receipt = *receipt;
+      }
+      for (OwnedTablet& owned : tablets) {
+        const std::size_t prior = owned.pending_receipts.size();
+        std::erase_if(owned.pending_receipts, [](const PendingQuorumCompletion& pending_receipt) {
+          return pending_receipt.resolved || pending_receipt.state.expired();
+        });
+        pending_quorum_count -= prior - owned.pending_receipts.size();
+      }
+      for (ReadyQuorumCompletion& completion : ready)
+        completion.state->complete(std::move(completion.result));
+      return common::Status::ok();
+    } catch (const std::bad_alloc&) {
+      return fail(exhausted("Raft tablet quorum resolution allocation failed"));
+    } catch (const std::length_error&) {
+      return fail(exhausted("Raft tablet quorum resolution exceeds container limits"));
     }
-    return common::Status::ok();
   }
 
   mutable std::mutex mutex;
   std::vector<AsyncRaftTabletApplicationConfig> pending;
   std::vector<OwnedTablet> tablets;
+  AsyncRaftTabletApplicationLimits limits;
+  std::size_t pending_quorum_count{};
   common::Status failure;
   bool initialized{};
   bool shutdown{};
@@ -129,7 +244,9 @@ AsyncRaftTabletApplication::~AsyncRaftTabletApplication() = default;
 common::Result<std::shared_ptr<AsyncRaftTabletApplication>>
 AsyncRaftTabletApplication::create(std::vector<AsyncRaftTabletApplicationConfig> tablets,
                                    const AsyncRaftTabletApplicationLimits limits) {
-  if (limits.maximum_tablets == 0U || limits.maximum_tablets > 65'536U || tablets.empty() ||
+  if (limits.maximum_tablets == 0U || limits.maximum_tablets > 65'536U ||
+      limits.maximum_pending_quorum_completions == 0U ||
+      limits.maximum_pending_quorum_completions > 1'048'576U || tablets.empty() ||
       tablets.size() > limits.maximum_tablets)
     return common::make_unexpected(invalid("Raft tablet application limits are invalid"));
   for (const AsyncRaftTabletApplicationConfig& tablet : tablets)
@@ -141,7 +258,7 @@ AsyncRaftTabletApplication::create(std::vector<AsyncRaftTabletApplicationConfig>
         tablets.end())
       return common::make_unexpected(invalid("Raft tablet application group is duplicated"));
     return std::shared_ptr<AsyncRaftTabletApplication>{
-        new AsyncRaftTabletApplication{std::make_unique<Impl>(std::move(tablets))}};
+        new AsyncRaftTabletApplication{std::make_unique<Impl>(std::move(tablets), limits)}};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("Raft tablet application allocation failed"));
   } catch (const std::length_error&) {
@@ -171,9 +288,58 @@ AsyncRaftTabletApplication::latest_quorum_sync_receipt(const raft::GroupId& grou
              : found->latest_receipt;
 }
 
+common::Result<AsyncRaftTabletQuorumCompletion> AsyncRaftTabletApplication::request_quorum_sync(
+    raft::AsyncDurableMultiRaftRuntime& runtime, const raft::GroupId& group_id,
+    const raft::Term required_leader_term, const raft::LogIndex log_index) {
+  if (required_leader_term == 0U || log_index == 0U)
+    return common::make_unexpected(invalid("Raft tablet quorum term or index is zero"));
+  if (!runtime.owns_worker_extension(*this)) {
+    return common::make_unexpected(
+        invalid("Raft tablet quorum request uses a different asynchronous owner"));
+  }
+  std::shared_ptr<detail::AsyncRaftTabletQuorumCompletionState> state;
+  {
+    std::lock_guard lock{impl_->mutex};
+    if (!impl_->failure.is_ok())
+      return common::make_unexpected(impl_->failure);
+    if (!impl_->initialized || impl_->shutdown)
+      return common::make_unexpected(unavailable("Raft tablet application owner is not active"));
+    impl_->prune_expired_receipts();
+    const auto found =
+        std::ranges::lower_bound(impl_->tablets, group_id, {}, &Impl::OwnedTablet::group_id);
+    if (found == impl_->tablets.end() || found->group_id != group_id)
+      return common::make_unexpected(invalid("Raft tablet quorum group is not configured"));
+    if (impl_->pending_quorum_count >= impl_->limits.maximum_pending_quorum_completions)
+      return common::make_unexpected(exhausted("Raft tablet quorum completion capacity is full"));
+    try {
+      state = std::make_shared<detail::AsyncRaftTabletQuorumCompletionState>();
+      found->pending_receipts.push_back({required_leader_term, log_index, state, false});
+      ++impl_->pending_quorum_count;
+    } catch (const std::bad_alloc&) {
+      return common::make_unexpected(exhausted("Raft tablet quorum completion allocation failed"));
+    } catch (const std::length_error&) {
+      return common::make_unexpected(
+          exhausted("Raft tablet quorum completion exceeds container limits"));
+    }
+  }
+  auto observation = runtime.try_observe_group(group_id);
+  if (!observation.has_value()) {
+    state->complete(common::make_unexpected(observation.error()));
+    return common::make_unexpected(observation.error());
+  }
+  return AsyncRaftTabletQuorumCompletion{std::move(state), group_id, required_leader_term,
+                                         log_index};
+}
+
 std::size_t AsyncRaftTabletApplication::tablet_count() const {
   std::lock_guard lock{impl_->mutex};
   return impl_->initialized && !impl_->shutdown ? impl_->tablets.size() : 0U;
+}
+
+std::size_t AsyncRaftTabletApplication::pending_quorum_completions() const {
+  std::lock_guard lock{impl_->mutex};
+  impl_->prune_expired_receipts();
+  return impl_->pending_quorum_count;
 }
 
 bool AsyncRaftTabletApplication::initialized() const {
@@ -236,9 +402,51 @@ common::Status AsyncRaftTabletApplication::complete_batch(
 common::Status AsyncRaftTabletApplication::shutdown(raft::DurableMultiRaftRuntime&) {
   std::lock_guard lock{impl_->mutex};
   impl_->shutdown = true;
+  impl_->complete_pending(impl_->failure.is_ok()
+                              ? unavailable("Raft tablet application owner shut down")
+                              : impl_->failure);
   impl_->tablets.clear();
   impl_->pending.clear();
   return impl_->failure;
+}
+
+AsyncRaftTabletQuorumCompletion::AsyncRaftTabletQuorumCompletion() noexcept = default;
+AsyncRaftTabletQuorumCompletion::~AsyncRaftTabletQuorumCompletion() = default;
+AsyncRaftTabletQuorumCompletion::AsyncRaftTabletQuorumCompletion(
+    AsyncRaftTabletQuorumCompletion&&) noexcept = default;
+AsyncRaftTabletQuorumCompletion&
+AsyncRaftTabletQuorumCompletion::operator=(AsyncRaftTabletQuorumCompletion&&) noexcept = default;
+
+AsyncRaftTabletQuorumCompletion::AsyncRaftTabletQuorumCompletion(
+    std::shared_ptr<detail::AsyncRaftTabletQuorumCompletionState> state, raft::GroupId group_id,
+    const raft::Term leader_term, const raft::LogIndex log_index) noexcept
+    : state_(std::move(state)), group_id_(group_id), leader_term_(leader_term),
+      log_index_(log_index) {}
+
+bool AsyncRaftTabletQuorumCompletion::is_valid() const noexcept {
+  return state_ != nullptr;
+}
+
+bool AsyncRaftTabletQuorumCompletion::is_ready() const {
+  return state_ != nullptr && state_->is_ready();
+}
+
+const raft::GroupId& AsyncRaftTabletQuorumCompletion::group_id() const noexcept {
+  return group_id_;
+}
+
+raft::Term AsyncRaftTabletQuorumCompletion::leader_term() const noexcept {
+  return leader_term_;
+}
+
+raft::LogIndex AsyncRaftTabletQuorumCompletion::log_index() const noexcept {
+  return log_index_;
+}
+
+QuorumResult AsyncRaftTabletQuorumCompletion::wait() {
+  if (state_ == nullptr)
+    return common::make_unexpected(invalid("Raft tablet quorum completion is invalid"));
+  return state_->wait();
 }
 
 } // namespace chronos::ingest

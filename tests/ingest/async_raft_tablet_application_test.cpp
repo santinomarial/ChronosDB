@@ -102,11 +102,12 @@ private:
           {.group_id = group_id(0x42U), .voters = {1U}}};
 }
 
-[[nodiscard]] common::Result<std::shared_ptr<AsyncRaftTabletApplication>> application() {
+[[nodiscard]] common::Result<std::shared_ptr<AsyncRaftTabletApplication>>
+application(const AsyncRaftTabletApplicationLimits limits = {}) {
   std::vector<AsyncRaftTabletApplicationConfig> configured;
   configured.push_back(application_config(group_id(0x42U), 72U));
   configured.push_back(application_config(group_id(0x41U), 71U));
-  return AsyncRaftTabletApplication::create(std::move(configured));
+  return AsyncRaftTabletApplication::create(std::move(configured), limits);
 }
 
 TEST(AsyncRaftTabletApplicationTest, AppliesOnlyTouchedGroupsBeforePublishingCompletion) {
@@ -145,11 +146,152 @@ TEST(AsyncRaftTabletApplicationTest, AppliesOnlyTouchedGroupsBeforePublishingCom
   EXPECT_EQ(receipt->group_id, group_id(0x41U));
   EXPECT_EQ(receipt->log_index, 1U);
   EXPECT_FALSE((*extension)->latest_quorum_sync_receipt(group_id(0x42U)).has_value());
+  raft::AsyncDurableMultiRaftRuntime wrong_runtime;
+  auto mismatched = (*extension)->request_quorum_sync(wrong_runtime, group_id(0x41U), 1U, 1U);
+  ASSERT_FALSE(mismatched.has_value());
+  EXPECT_EQ(mismatched.error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_EQ((*extension)->pending_quorum_completions(), 0U);
+  auto exact = (*extension)->request_quorum_sync(*runtime, group_id(0x41U), 1U, 1U);
+  ASSERT_TRUE(exact.has_value()) << exact.error().to_string();
+  EXPECT_EQ(exact->group_id(), group_id(0x41U));
+  EXPECT_EQ(exact->leader_term(), 1U);
+  EXPECT_EQ(exact->log_index(), 1U);
+  auto exact_receipt = exact->wait();
+  ASSERT_TRUE(exact_receipt.has_value()) << exact_receipt.error().to_string();
+  EXPECT_EQ(exact_receipt->log_index, 1U);
+  EXPECT_EQ(exact->wait().error().code(), common::StatusCode::kInvalidArgument);
+  AsyncRaftTabletQuorumCompletion invalid_completion;
+  EXPECT_FALSE(invalid_completion.is_valid());
+  EXPECT_EQ(invalid_completion.wait().error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_EQ((*extension)->pending_quorum_completions(), 0U);
 
   EXPECT_TRUE(runtime->shutdown().is_ok());
   EXPECT_EQ((*extension)->tablet_count(), 0U);
   EXPECT_EQ((*extension)->snapshot(group_id(0x41U)).error().code(),
             common::StatusCode::kUnavailable);
+}
+
+TEST(AsyncRaftTabletApplicationTest, ResolvesExactReceiptOnlyAfterDelayedMajorityApplication) {
+  TemporaryDirectory directory;
+  const raft::RaftPersistentLogConfig log_config{.directory_path = directory.path().string()};
+  auto extension = application();
+  ASSERT_TRUE(extension.has_value()) << extension.error().to_string();
+  auto configured_groups = groups();
+  configured_groups.front().voters = {1U, 2U, 3U};
+  auto runtime = raft::AsyncDurableMultiRaftRuntime::create_new(
+      1U, log_config, std::move(configured_groups), {}, *extension);
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+
+  auto election = runtime->try_submit({{group_id(0x41U), raft::StartElectionOperation{}}});
+  ASSERT_TRUE(election.has_value());
+  ASSERT_TRUE(election->wait().has_value());
+  auto vote = runtime->try_submit(
+      {{group_id(0x41U),
+        raft::ReceiveOperation{2U, raft::RequestVoteResponse{.term = 1U, .granted = true}}}});
+  ASSERT_TRUE(vote.has_value());
+  ASSERT_TRUE(vote->wait().has_value());
+  auto proposal = runtime->try_submit(
+      {{group_id(0x41U), raft::ProposeOperation{kRaftColumnarAppendEntryType, command(71U)}}});
+  ASSERT_TRUE(proposal.has_value());
+  ASSERT_TRUE(proposal->wait().has_value());
+  EXPECT_EQ((*extension)->snapshot(group_id(0x41U))->visible_row_count(), 0U);
+
+  auto receipt = (*extension)->request_quorum_sync(*runtime, group_id(0x41U), 1U, 1U);
+  ASSERT_TRUE(receipt.has_value()) << receipt.error().to_string();
+  auto barrier = runtime->try_observe_group(group_id(0x41U));
+  ASSERT_TRUE(barrier.has_value());
+  ASSERT_TRUE(barrier->wait().has_value());
+  EXPECT_FALSE(receipt->is_ready());
+  EXPECT_EQ((*extension)->pending_quorum_completions(), 1U);
+
+  auto replicated = runtime->try_submit(
+      {{group_id(0x41U),
+        raft::ReceiveOperation{
+            2U, raft::AppendEntriesResponse{.term = 1U, .success = true, .match_index = 1U}}}});
+  ASSERT_TRUE(replicated.has_value());
+  ASSERT_TRUE(replicated->wait().has_value());
+  EXPECT_TRUE(receipt->is_ready());
+  auto exact = receipt->wait();
+  ASSERT_TRUE(exact.has_value()) << exact.error().to_string();
+  EXPECT_EQ(exact->group_id, group_id(0x41U));
+  EXPECT_EQ(exact->leader_node_id, 1U);
+  EXPECT_EQ(exact->leader_term, 1U);
+  EXPECT_EQ(exact->log_index, 1U);
+  EXPECT_EQ((*extension)->snapshot(group_id(0x41U))->visible_row_count(), 2U);
+  EXPECT_EQ((*extension)->pending_quorum_completions(), 0U);
+  EXPECT_TRUE(runtime->shutdown().is_ok());
+}
+
+TEST(AsyncRaftTabletApplicationTest, BoundsAndReleasesDroppedReceiptWaiters) {
+  TemporaryDirectory directory;
+  const raft::RaftPersistentLogConfig log_config{.directory_path = directory.path().string()};
+  auto extension = application({.maximum_tablets = 2U, .maximum_pending_quorum_completions = 1U});
+  ASSERT_TRUE(extension.has_value()) << extension.error().to_string();
+  auto configured_groups = groups();
+  configured_groups.front().voters = {1U, 2U, 3U};
+  auto runtime = raft::AsyncDurableMultiRaftRuntime::create_new(
+      1U, log_config, std::move(configured_groups), {}, *extension);
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  auto election = runtime->try_submit({{group_id(0x41U), raft::StartElectionOperation{}}});
+  ASSERT_TRUE(election.has_value());
+  ASSERT_TRUE(election->wait().has_value());
+  auto vote = runtime->try_submit(
+      {{group_id(0x41U),
+        raft::ReceiveOperation{2U, raft::RequestVoteResponse{.term = 1U, .granted = true}}}});
+  ASSERT_TRUE(vote.has_value());
+  ASSERT_TRUE(vote->wait().has_value());
+  {
+    auto first = (*extension)->request_quorum_sync(*runtime, group_id(0x41U), 1U, 1U);
+    ASSERT_TRUE(first.has_value()) << first.error().to_string();
+    auto overflow = (*extension)->request_quorum_sync(*runtime, group_id(0x41U), 1U, 2U);
+    ASSERT_FALSE(overflow.has_value());
+    EXPECT_EQ(overflow.error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ((*extension)->pending_quorum_completions(), 1U);
+  }
+  EXPECT_EQ((*extension)->pending_quorum_completions(), 0U);
+  auto surviving = (*extension)->request_quorum_sync(*runtime, group_id(0x41U), 1U, 2U);
+  ASSERT_TRUE(surviving.has_value()) << surviving.error().to_string();
+  EXPECT_TRUE(runtime->shutdown().is_ok());
+  EXPECT_TRUE(surviving->is_ready());
+  auto stopped = surviving->wait();
+  ASSERT_FALSE(stopped.has_value());
+  EXPECT_EQ(stopped.error().code(), common::StatusCode::kUnavailable);
+}
+
+TEST(AsyncRaftTabletApplicationTest, RejectsWaiterAfterItsLeaderTermIsLost) {
+  TemporaryDirectory directory;
+  const raft::RaftPersistentLogConfig log_config{.directory_path = directory.path().string()};
+  auto extension = application();
+  ASSERT_TRUE(extension.has_value()) << extension.error().to_string();
+  auto configured_groups = groups();
+  configured_groups.front().voters = {1U, 2U, 3U};
+  auto runtime = raft::AsyncDurableMultiRaftRuntime::create_new(
+      1U, log_config, std::move(configured_groups), {}, *extension);
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  auto election = runtime->try_submit({{group_id(0x41U), raft::StartElectionOperation{}}});
+  ASSERT_TRUE(election.has_value());
+  ASSERT_TRUE(election->wait().has_value());
+  auto vote = runtime->try_submit(
+      {{group_id(0x41U),
+        raft::ReceiveOperation{2U, raft::RequestVoteResponse{.term = 1U, .granted = true}}}});
+  ASSERT_TRUE(vote.has_value());
+  ASSERT_TRUE(vote->wait().has_value());
+
+  auto waiting = (*extension)->request_quorum_sync(*runtime, group_id(0x41U), 1U, 1U);
+  ASSERT_TRUE(waiting.has_value()) << waiting.error().to_string();
+  auto higher_term = runtime->try_submit(
+      {{group_id(0x41U),
+        raft::ReceiveOperation{
+            2U, raft::RequestVoteRequest{
+                    .term = 2U, .candidate_id = 2U, .last_log_index = 0U, .last_log_term = 0U}}}});
+  ASSERT_TRUE(higher_term.has_value());
+  ASSERT_TRUE(higher_term->wait().has_value());
+  EXPECT_TRUE(waiting->is_ready());
+  auto lost = waiting->wait();
+  ASSERT_FALSE(lost.has_value());
+  EXPECT_EQ(lost.error().code(), common::StatusCode::kUnavailable);
+  EXPECT_EQ((*extension)->pending_quorum_completions(), 0U);
+  EXPECT_TRUE(runtime->shutdown().is_ok());
 }
 
 TEST(AsyncRaftTabletApplicationTest, RebuildsCommittedTabletStateBeforeReopenAdmission) {
@@ -204,6 +346,8 @@ TEST(AsyncRaftTabletApplicationTest, FailsOwnerClosedOnCorruptCommittedCommand) 
   auto election = runtime->try_submit({{group_id(0x41U), raft::StartElectionOperation{}}});
   ASSERT_TRUE(election.has_value());
   ASSERT_TRUE(election->wait().has_value());
+  auto waiting = (*extension)->request_quorum_sync(*runtime, group_id(0x41U), 1U, 2U);
+  ASSERT_TRUE(waiting.has_value()) << waiting.error().to_string();
 
   auto corrupt =
       runtime->try_submit({{group_id(0x41U), raft::ProposeOperation{kRaftColumnarAppendEntryType,
@@ -214,6 +358,42 @@ TEST(AsyncRaftTabletApplicationTest, FailsOwnerClosedOnCorruptCommittedCommand) 
   EXPECT_TRUE((*extension)->failed());
   EXPECT_FALSE(runtime->is_accepting());
   EXPECT_FALSE(runtime->terminal_status().is_ok());
+  EXPECT_EQ((*extension)->snapshot(group_id(0x41U)).error(), (*extension)->failure_status());
+  EXPECT_TRUE(waiting->is_ready());
+  EXPECT_EQ(waiting->wait().error(), (*extension)->failure_status());
+  EXPECT_FALSE(runtime->shutdown().is_ok());
+}
+
+TEST(AsyncRaftTabletApplicationTest, PublishesNoStagedReceiptWhenAnotherTouchedGroupFails) {
+  TemporaryDirectory directory;
+  const raft::RaftPersistentLogConfig log_config{.directory_path = directory.path().string()};
+  auto extension = application();
+  ASSERT_TRUE(extension.has_value()) << extension.error().to_string();
+  auto runtime =
+      raft::AsyncDurableMultiRaftRuntime::create_new(1U, log_config, groups(), {}, *extension);
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  auto elections = runtime->try_submit({{group_id(0x41U), raft::StartElectionOperation{}},
+                                        {group_id(0x42U), raft::StartElectionOperation{}}});
+  ASSERT_TRUE(elections.has_value());
+  ASSERT_TRUE(elections->wait().has_value());
+  auto first = runtime->try_submit(
+      {{group_id(0x41U), raft::ProposeOperation{kRaftColumnarAppendEntryType, command(71U)}}});
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(first->wait().has_value());
+  auto waiting = (*extension)->request_quorum_sync(*runtime, group_id(0x41U), 1U, 2U);
+  ASSERT_TRUE(waiting.has_value()) << waiting.error().to_string();
+
+  auto mixed = runtime->try_submit(
+      {{group_id(0x41U), raft::ProposeOperation{kRaftColumnarAppendEntryType, command(71U, 2U)}},
+       {group_id(0x42U),
+        raft::ProposeOperation{kRaftColumnarAppendEntryType, {std::byte{0xFFU}}}}});
+  ASSERT_TRUE(mixed.has_value());
+  auto failed = mixed->wait();
+  ASSERT_FALSE(failed.has_value());
+  EXPECT_TRUE(waiting->is_ready());
+  auto receipt = waiting->wait();
+  ASSERT_FALSE(receipt.has_value());
+  EXPECT_EQ(receipt.error(), (*extension)->failure_status());
   EXPECT_EQ((*extension)->snapshot(group_id(0x41U)).error(), (*extension)->failure_status());
   EXPECT_FALSE(runtime->shutdown().is_ok());
 }
