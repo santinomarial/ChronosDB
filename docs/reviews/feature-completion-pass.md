@@ -101,13 +101,14 @@ an explicit persist-before-send state copy.
 
 The focused minimum gate passes for 3-node election, one committed command, leader loss, replacement
 leader, a second command, stale-leader rejection, and restarted follower catch-up. Joint membership,
-two-stage snapshot installation, and a current-term quorum read barrier are implemented. Disk
-persistence fault matrices, runtime timers, network encoding, production tablet read integration,
-snapshot transfer bytes, and randomized simulation remain incomplete.
+two-stage snapshot installation, and a current-term quorum read barrier are implemented. Physical
+disk persistence fault matrices, production tablet read integration, snapshot transfer bytes, and
+long/exhaustive randomized simulation remain incomplete.
 
 Later work accepted and implemented a bounded canonical group/source/destination Raft transport
-envelope for every current vote, append, snapshot, and read-barrier message. Authenticated socket
-carrier scheduling, timers, retransmission, and randomized simulation remain incomplete.
+envelope for every current vote, append, snapshot, and read-barrier message. Production socket
+connection establishment/backoff, event-loop composition, and retransmission policy remain
+incomplete.
 Header-first stream ownership now validates the fixed header before exact frame allocation, returns
 precise consumed prefixes for coalesced input, and owns complete output across short writes.
 An authenticated receiver now rejects trust and route failures before durable runtime admission and
@@ -123,6 +124,11 @@ A bounded injected-time scheduler now emits generation-tagged election and heart
 preserves due work across admission backpressure, and rejects stale completion rearming.
 A bounded driver now submits each timer action plus its ordered observation through the asynchronous
 durable owner and retains every post-sync transition for embedding-owned transport/snapshot routing.
+A bounded deterministic simulator now records explicit and seeded virtual-network, crash/restart,
+atomic persistence-fault, application, membership, and snapshot actions; it runs an independent
+election/log/commit/leader-completeness checker after each step, replays exact traces, and performs
+bounded deletion shrinking. Focused coverage runs 4,000 generated actions reproducibly; long and
+exhaustive campaigns, clock changes, and physical-log syscall faults remain hardening work.
 The core now also rejects zero terms and noncanonical vote/append predecessor and response state
 before observing a higher term, preserving the persist-before-response contract on invalid input.
 

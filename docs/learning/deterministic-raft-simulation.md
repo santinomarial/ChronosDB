@@ -1,0 +1,75 @@
+# Deterministic Raft Simulation
+
+## Purpose and public interface
+
+`DeterministicRaftSimulator` turns distributed nondeterminism into a sequence of owned
+`RaftSimulationAction` values. Callers can execute one action, replay a retained trace, generate a
+seeded schedule, inspect active and durable node state, list queued message routes, or shrink a
+failing trace. The simulator uses the production deterministic `RaftNode`; it does not contain a
+second consensus implementation.
+
+## Data structures and ownership
+
+Each configured node has two distinct owners: an optional live core and a durable `PersistentState`
+image. Crash destroys only the live core. Restart reconstructs it from the image. The virtual
+network is a preallocated vector of optional slots containing exact message identity, source, and
+owned outbound message. A preallocated directional-link matrix decides delivery at the moment a
+message is selected. Queued messages survive sender crashes, just as bytes already handed to a real
+network may outlive a process.
+
+The action trace owns proposal and membership payloads. Message and action identities are stable
+within a replay. A repository-defined fixed PRNG makes seeded choices independent of the standard
+library. One caller thread exclusively owns nodes, links, queues, durable images, the trace, and
+safety-model state.
+
+## Persistence and failure behavior
+
+A transition's full persistent state is copied into a candidate, installed as the durable image,
+and only then are its outbound messages enqueued. `RaftSimulationFailNextPersistence` instead drops
+those messages, destroys volatile state, and leaves the old image unchanged. A restart therefore
+cannot observe half of a transition. This represents the logical atomic persistence contract; the
+segmented log's write/sync/rotation failure points require separate file-backed campaigns.
+
+Disabled links, delivery to crashed nodes, and explicit drops consume a selected message as loss.
+Messages left queued are delayed and can be delivered in any order. Duplication allocates a new
+identity for the same value message. Ordinary capacity failures are statuses, never silent growth.
+A terminal step error is sticky so its trace remains a stable reproducer.
+
+## Safety model
+
+After each successful action the simulator checks:
+
+- no two different nodes have ever been observed as leader in one term;
+- durable term and commit index never regress across restart;
+- applied index never exceeds commit and commit never exceeds the local durable log end;
+- replicas that share an index/term share every comparable retained prefix entry;
+- every retained committed index has one canonical entry across replicas; and
+- every later-term leader retains or snapshots every known earlier committed entry.
+
+The committed-entry map is a small independent reference model. Snapshot-covered entries are
+accepted as compacted; equal snapshot positions must retain the same membership checkpoint, while
+node-local physical manifest fields may differ.
+
+## Complexity and tradeoffs
+
+Step cost includes safety checking. Durable-state and committed-prefix checks are linear in retained
+entries; pairwise log matching is intentionally quadratic in simulated nodes and comparable log
+length. Network lookup is linear in the configured message bound. These choices make ownership and
+failure reproduction obvious. Optimizing them requires measured simulation-rate evidence.
+
+Deletion shrinking is also deliberately simple: replay candidates with one action removed and keep
+the deletion when the original failure status code remains. It is bounded by
+`maximum_shrink_replays`; semantic dependency-aware and chunk-based shrinking can be added after
+corpus evidence shows a need.
+
+## Verification and likely interview questions
+
+Focused coverage includes partition, duplicate, commit propagation, crash/restart, atomic
+persistence failure, exact replay, seeded schedules, joint membership, compaction, trace shrinking,
+and bound validation. Long seed campaigns, exhaustive schedules, timer clock changes, physical disk
+faults, and minimized corpus retention remain in the hardening ledger.
+
+Useful questions include: why can a queued message survive a sender crash; why must durable state be
+installed before outbound admission; why does replay use explicit message IDs; why is a snapshot
+allowed to hide a committed entry; and why does seeded generation avoid `std::uniform_distribution`?
+

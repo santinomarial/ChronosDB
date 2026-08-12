@@ -286,3 +286,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0249](0249-generation-tagged-raft-runtime-timers.md) | Generation-tagged Raft runtime timers | accepted |
 | [0250](0250-async-durable-raft-timer-driver.md) | Asynchronous durable Raft timer driver | accepted |
 | [0251](0251-bounded-raft-peer-carrier-pool.md) | Bounded Raft peer carrier pool | accepted |
+| [0252](0252-replayable-deterministic-raft-fault-simulator.md) | Replayable deterministic Raft fault simulator | accepted |

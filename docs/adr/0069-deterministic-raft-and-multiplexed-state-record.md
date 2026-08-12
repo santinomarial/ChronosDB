@@ -40,3 +40,9 @@ different leaders, node loss, reopen, metadata order, record round trip, and cor
 tests additionally cover rotation, reopen, explicit incomplete-tail repair, and corruption
 rejection. Randomized simulation, partitions, application snapshot codecs, coordinated fsync
 batching/crash testing, and production transport remain deferred.
+
+**Retrospective note (2026-08-12):** [ADR 0252](0252-replayable-deterministic-raft-fault-simulator.md)
+now supplies bounded explicit and seeded schedules for partitions, delay/reordering, duplication,
+loss, crash/restart, atomic full-state persistence faults, membership, snapshots, safety checking,
+replay, and deletion shrinking. Long/exhaustive campaigns, clock changes, and physical log syscall
+faults remain deferred.

@@ -747,7 +747,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   now bounds FIFO frames/bytes and preserves complete frames for reconnect retry. A fixed-capacity
   exact-peer pool now preflights whole durable results against every route and aggregate queue bound,
   then returns failed carriers with complete retry frames. TCP connect/address/backoff replacement
-  automation, runtime event-loop composition, randomized simulation, and the full exit evidence
+  automation and runtime event-loop composition remain deferred. A bounded deterministic simulator
+  now records and replays explicit or seeded partitions, delay/reordering, duplicate/loss,
+  crash/restart, atomic persistence faults, application, membership, and snapshot actions; it checks
+  election, log, commit, and leader-completeness safety after every step and deletion-shrinks failing
+  traces. Long/exhaustive campaigns, clock changes, physical-log faults, and the full exit evidence
   remain deferred. Linearizable reads now use one bounded explicit current-term leadership
   probe, require a current-term committed entry, freeze stable or joint voter quorums at issuance,
   abandon pending work on leadership change, and return an exact committed read index that must be

@@ -116,7 +116,7 @@
 - Raft Transport Envelope v1 cross-compiler golden fixtures, hostile length/count/reserved-byte
   matrices, sustained fuzzing, allocation-failure sweeps, carrier-wide admission schedules,
   TCP connect/address/backoff replacement automation, mixed-version processes, and
-  duplicate/loss/reorder/partition simulation. Focused coverage round-trips every
+  carrier-integrated duplicate/loss/reorder/partition simulation. Focused coverage round-trips every
   current message, including an actual conflict-repair response, rejects damage, unknown kinds,
   route mismatch and bounds, and exercises the header-first exact-allocation reader and owned
   short-write cursor across fragmentation and coalescing. Authenticated principal/source
@@ -127,6 +127,12 @@
   and drains complete originals for duplicate-safe reconnect retry. A fixed-capacity peer pool
   preflights every destination and aggregate queue bound before routing, and removes failed carriers
   only through a complete retry-frame handoff.
+- Long seed matrices, exhaustive bounded schedules, chunk/dependency trace shrinking, timer/clock
+  changes, physical segmented-log syscall faults, and automated randomized membership/snapshot/read-
+  barrier generation. The bounded simulator now has focused explicit and seeded coverage for
+  partition, delay/reordering, duplicate/loss, crash/restart, atomic persistence failure,
+  application, joint membership, local compaction, exact replay, safety-model comparison, and
+  deletion shrinking (eight seeds and 4,000 generated actions in the focused test).
 - Extend the implemented hostile higher-term/payload-identity and pre-observation term/position/
   response-state regression checks into exhaustive persistence-before-response, committed-log
   overwrite, sequence-exhaustion, response-state, and snapshot-boundary properties.
@@ -138,9 +144,9 @@
   emits exact election/heartbeat actions and rejects stale completion rearming; its bounded driver
   submits two-operation action/observation batches through the asynchronous durable owner and
   retains complete post-sync results for routing.
-- Exhaustive bounded schedules, long randomized deterministic simulation with trace replay/shrink,
-  partitions, loss/duplication/reordering, clock changes, leader churn, disk failures, ASan/UBSan/
-  TSan, fuzzing, model checking, commit/catch-up/snapshot benchmarks, and API review.
+- Broad leader-churn and partition matrices, semantic/chunk trace shrinking, clock changes, physical
+  disk failures, ASan/UBSan/TSan, fuzzing, independent model checking, commit/catch-up/snapshot
+  benchmarks, and API review.
 
 ## Phase 15 — Multi-Raft tablets and metadata
 
