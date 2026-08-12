@@ -177,7 +177,7 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Durable database bootstrap](learning/database-bootstrap.md): root-lock ownership, checksummed
   identity/config authority, directory synchronization ordering, and interrupted-install recovery.
 - [Packaged native daemon lifecycle](learning/packaged-native-daemon.md): bounded process, queue,
-  socket, and shutdown ownership plus the explicit unconfigured-data-plane boundary.
+  socket, replicated QUORUM_SYNC/native SELECT, and shutdown ownership.
 - [Project foundation](learning/project-foundation.md): rationale and extension guide for the Phase
   1A build graph.
 - [Common binary foundations](learning/common-binary-foundations.md): ownership, bounds, encoding,

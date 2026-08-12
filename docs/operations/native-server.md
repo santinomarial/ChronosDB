@@ -27,9 +27,13 @@ is documented in [Replicated Group Configuration](replicated-group-config.md). T
 `data_plane=replicated`, reconstructs resident tablet owners from committed metadata, automatically
 elects only groups whose sole voter is the local node, and advertises Protocol 2 QUORUM_SYNC only
 after all owners are running. It serves canonical replicated ingest and exact retries. Native query
-and subscription requests fail explicitly in this mode until Raft-backed query snapshots are
-packaged. Multi-voter deployments additionally require the authenticated Raft peer transport
-bundle below; the group file itself contains no endpoints or credentials.
+SELECT uses a stable local-applied Raft snapshot and the normal bounded result sequence when every
+committed tablet placement for the selected table is resident on this process. A partially resident
+table fails explicitly instead of returning a local subset. This is not a quorum read barrier or a
+cross-group linearizable read. Replicated CREATE, SQL INSERT, ASOF, historical query, and
+subscription requests remain explicit errors. Multi-voter deployments additionally require the
+authenticated Raft peer transport bundle below; the group file itself contains no endpoints or
+credentials.
 
 For multi-voter groups, configure the complete transport bundle:
 

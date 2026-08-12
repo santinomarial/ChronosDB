@@ -995,6 +995,7 @@ int main(const int argc, const char* const argv[]) {
         return 1;
       }
       replicated_database.emplace(std::move(*opened));
+      service.emplace(*replicated_database);
       if (replicated_peers.has_value()) {
         const chronos::common::Status membership = validate_transport_membership(
             replicated_database->bootstrap().local_node_id, *replicated_groups, *replicated_peers);
@@ -1091,6 +1092,7 @@ int main(const int argc, const char* const argv[]) {
   if (replicated_database.has_value()) {
     auto created = ReplicatedIngestService::create(
         {.coordinator = replicated_database->ingest_runtime()->coordinator(),
+         .queries = service.has_value() ? std::addressof(*service) : nullptr,
          .requests = std::addressof(*requests),
          .responses = std::addressof(*responses)});
     if (!created.has_value()) {

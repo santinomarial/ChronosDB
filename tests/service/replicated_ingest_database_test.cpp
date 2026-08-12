@@ -7,7 +7,9 @@
 #include "chronos/raft/metadata_codec.hpp"
 #include "chronos/raft/schema_definition_codec.hpp"
 #include "chronos/raft/tablet_group_binding_codec.hpp"
+#include "chronos/service/native_protocol_service.hpp"
 #include "chronos/service/replicated_ingest_database.hpp"
+#include "chronos/service/replicated_ingest_service.hpp"
 #include "columnar/columnar_test_support.hpp"
 #include "ingest/ingest_test_support.hpp"
 
@@ -15,6 +17,7 @@
 #include <gtest/gtest.h>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <thread>
 #include <unistd.h>
@@ -114,6 +117,22 @@ private:
                                .protocol_minor = context.protocol_minor,
                                .message_type = network::MessageType::kIngestRequest,
                                .request_id = 1U,
+                               .payload_size = static_cast<std::uint32_t>(payload.size())},
+                    .payload = std::move(payload)}};
+}
+
+[[nodiscard]] network::NetworkTask query_request(const std::string_view sql) {
+  auto payload = network::encode_query_request(sql).value();
+  return {.connection_id = 21U,
+          .principal_id = 19U,
+          .protocol = {.protocol_major = network::kProtocolV2Major,
+                       .protocol_minor = network::kProtocolV2LatestMinor,
+                       .feature_bits = network::kProtocolV2QuorumSyncFeature,
+                       .maximum_payload_size = network::kDefaultMaximumPayloadSize},
+          .frame = {.header = {.protocol_major = network::kProtocolV2Major,
+                               .protocol_minor = network::kProtocolV2LatestMinor,
+                               .message_type = network::MessageType::kQueryRequest,
+                               .request_id = 4U,
                                .payload_size = static_cast<std::uint32_t>(payload.size())},
                     .payload = std::move(payload)}};
 }
@@ -268,6 +287,52 @@ TEST(ReplicatedIngestDatabaseTest, PinsCommittedWholeTableQueryStateBeyondOwnerS
   auto database =
       ReplicatedIngestDatabase::open_existing({.bootstrap = bootstrap_config, .groups = groups()});
   ASSERT_TRUE(database.has_value()) << database.error().to_string();
+  NativeProtocolService native_queries{*database};
+  auto requests = network::SpscNetworkTaskQueue::create(4U).value();
+  auto responses = network::SpscNetworkTaskQueue::create(1U).value();
+  ASSERT_TRUE(responses.try_push(
+      {.connection_id = 99U, .frame = {.header = {.message_type = network::MessageType::kPong}}}));
+  auto native_service =
+      ReplicatedIngestService::create({.coordinator = database->ingest_runtime()->coordinator(),
+                                       .queries = &native_queries,
+                                       .requests = &requests,
+                                       .responses = &responses});
+  ASSERT_TRUE(native_service.has_value()) << native_service.error().to_string();
+  ASSERT_TRUE(requests.try_push(query_request("SELECT count(*) AS rows FROM events")));
+  auto polled = native_service->poll_once();
+  ASSERT_TRUE(polled.has_value()) << polled.error().to_string();
+  ASSERT_FALSE(polled->response_enqueued);
+  ASSERT_TRUE(native_service->metrics().response_retained);
+  ASSERT_TRUE(responses.try_pop().has_value());
+  polled = native_service->poll_once();
+  ASSERT_TRUE(polled.has_value());
+  ASSERT_TRUE(polled->response_enqueued);
+  auto native_result = responses.try_pop();
+  ASSERT_TRUE(native_result.has_value());
+  ASSERT_EQ(native_result->frame.header.message_type, network::MessageType::kQueryResult);
+  auto batch = network::decode_query_result_batch(native_result->frame.payload);
+  ASSERT_TRUE(batch.has_value()) << batch.error().to_string();
+  common::ByteReader native_count{batch->cell(0U, 0U)->value};
+  EXPECT_EQ(native_count.read_i64_le().value(), 2);
+  polled = native_service->poll_once();
+  ASSERT_TRUE(polled.has_value());
+  ASSERT_TRUE(polled->response_enqueued);
+  native_result = responses.try_pop();
+  ASSERT_TRUE(native_result.has_value());
+  EXPECT_EQ(native_result->frame.header.message_type, network::MessageType::kQueryEnd);
+  EXPECT_EQ(native_service->metrics().query_requests, 1U);
+  EXPECT_EQ(native_service->metrics().response_backpressure, 1U);
+  native_service->begin_shutdown();
+  EXPECT_TRUE(native_service->drained());
+  auto unsupported_ddl = native_queries.execute_query(query_request("CREATE TABLE denied"));
+  ASSERT_TRUE(unsupported_ddl.has_value()) << unsupported_ddl.error().to_string();
+  ASSERT_EQ(unsupported_ddl->responses.size(), 1U);
+  ASSERT_EQ(unsupported_ddl->responses.front().frame.header.message_type,
+            network::MessageType::kError);
+  auto ddl_error = network::decode_error_message(unsupported_ddl->responses.front().frame.payload);
+  ASSERT_TRUE(ddl_error.has_value());
+  EXPECT_EQ(ddl_error->code, network::ProtocolErrorCode::kExecutionFailure);
+
   auto snapshot = database->acquire_query_snapshot();
   ASSERT_TRUE(snapshot.has_value()) << snapshot.error().to_string();
   ASSERT_EQ(snapshot->catalog()->tables().size(), 1U);

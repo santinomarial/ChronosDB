@@ -402,6 +402,21 @@ void provision_replicated_database(const std::string& path) {
   return response.value_or(network::Frame{});
 }
 
+[[nodiscard]] network::Frame send_replicated_query(const int client, const std::uint64_t request_id,
+                                                   const std::string_view sql) {
+  const auto payload = network::encode_query_request(sql).value();
+  EXPECT_TRUE(
+      send_all(client, network::encode_frame({.protocol_major = network::kProtocolV2Major,
+                                              .protocol_minor = network::kProtocolV2LatestMinor,
+                                              .message_type = network::MessageType::kQueryRequest,
+                                              .request_id = request_id},
+                                             payload)
+                           .value()));
+  auto response = network::decode_frame(receive_frame(client));
+  EXPECT_TRUE(response.has_value());
+  return response.value_or(network::Frame{});
+}
+
 [[nodiscard]] network::Frame send_query(const int client, const std::uint64_t request_id,
                                         const std::string_view sql) {
   const auto payload = network::encode_query_request(sql).value();
@@ -534,6 +549,14 @@ TEST(ChronosdProcessTest, AppliesAndRecoversQuorumSyncThroughReplicatedDaemonMod
   ASSERT_TRUE(acknowledgement.has_value()) << acknowledgement.error().to_string();
   EXPECT_EQ(acknowledgement->outcome, network::IngestOutcome::kApplied);
   EXPECT_EQ(acknowledgement->group_id, replicated_tablet_group());
+  response = send_replicated_query(client, 2U, "SELECT count(*) AS rows FROM events");
+  ASSERT_EQ(response.header.message_type, network::MessageType::kQueryResult);
+  auto count = network::decode_query_result_batch(response.payload);
+  ASSERT_TRUE(count.has_value()) << count.error().to_string();
+  common::ByteReader applied_count{count->cell(0U, 0U)->value};
+  EXPECT_EQ(applied_count.read_i64_le().value(), 2);
+  response = network::decode_frame(receive_frame(client)).value();
+  EXPECT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
   ::close(client);
   ASSERT_EQ(child.stop(), 0);
 
@@ -552,6 +575,14 @@ TEST(ChronosdProcessTest, AppliesAndRecoversQuorumSyncThroughReplicatedDaemonMod
   ASSERT_TRUE(acknowledgement.has_value()) << acknowledgement.error().to_string();
   EXPECT_EQ(acknowledgement->outcome, network::IngestOutcome::kMatchingRetry);
   EXPECT_EQ(acknowledgement->group_id, replicated_tablet_group());
+  response = send_replicated_query(client, 3U, "SELECT count(*) AS rows FROM events");
+  ASSERT_EQ(response.header.message_type, network::MessageType::kQueryResult);
+  count = network::decode_query_result_batch(response.payload);
+  ASSERT_TRUE(count.has_value()) << count.error().to_string();
+  common::ByteReader recovered_count{count->cell(0U, 0U)->value};
+  EXPECT_EQ(recovered_count.read_i64_le().value(), 2);
+  response = network::decode_frame(receive_frame(client)).value();
+  EXPECT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
   ::close(client);
   EXPECT_EQ(child.stop(), 0);
 }

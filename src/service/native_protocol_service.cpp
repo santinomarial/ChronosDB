@@ -326,6 +326,9 @@ NativeProtocolService::NativeProtocolService(SingleNodeDatabase& database,
                                              NativeIdentityGenerator& identities,
                                              NativeProtocolServiceLimits limits) noexcept
     : database_(&database), identities_(&identities), limits_(limits) {}
+NativeProtocolService::NativeProtocolService(ReplicatedIngestDatabase& database,
+                                             NativeProtocolServiceLimits limits) noexcept
+    : replicated_database_(&database), limits_(limits) {}
 
 common::Result<network::NetworkTask>
 NativeProtocolService::execute_ingest(network::NetworkTask request) {
@@ -337,6 +340,10 @@ NativeProtocolService::execute_ingest(network::NetworkTask request) {
   const auto envelope = network::decode_ingest_request(request.frame.payload, limits_.protocol);
   if (!envelope.has_value())
     return error_response(std::move(request), invalid(envelope.error().message()),
+                          limits_.protocol);
+  if (database_ == nullptr)
+    return error_response(std::move(request),
+                          unsupported("replicated ingest uses the asynchronous QUORUM_SYNC path"),
                           limits_.protocol);
   const std::optional<wal::WalDurabilityMode> durability = wal_durability(envelope->durability);
   if (!durability.has_value())
@@ -427,6 +434,9 @@ NativeProtocolService::execute_query(network::NetworkTask request) {
       return query_error(target, invalid("native SQL requires a supported statement keyword"),
                          limits_.protocol);
     if (statement_tokens.front().keyword() == query::SqlKeyword::kCreate) {
+      if (database_ == nullptr)
+        return query_error(target, unsupported("replicated native CREATE TABLE is not implemented"),
+                           limits_.protocol);
       if (identities_ == nullptr)
         return query_error(target, unsupported("native CREATE TABLE has no identity source"),
                            limits_.protocol);
@@ -482,6 +492,9 @@ NativeProtocolService::execute_query(network::NetworkTask request) {
       return ddl_result(target, *created, limits_);
     }
     if (statement_tokens.front().keyword() == query::SqlKeyword::kInsert) {
+      if (database_ == nullptr)
+        return query_error(target, unsupported("replicated native INSERT is not implemented"),
+                           limits_.protocol);
       if (identities_ == nullptr)
         return query_error(target, unsupported("native INSERT has no identity source"),
                            limits_.protocol);
@@ -543,8 +556,22 @@ NativeProtocolService::execute_query(network::NetworkTask request) {
     auto parsed = query::parse_sql_v1_select(sql_text, limits_.sql_parser);
     if (!parsed.has_value())
       return query_error(target, parsed.error().status(), limits_.protocol);
-    auto bound = query::bind_sql_v1_select(std::move(*parsed), database_->query_catalog(),
-                                           limits_.sql_binder);
+    std::optional<ReplicatedQuerySnapshot> replicated_snapshot;
+    std::shared_ptr<const query::QueryCatalogSnapshot> query_catalog;
+    if (replicated_database_ != nullptr) {
+      auto acquired = replicated_database_->acquire_query_snapshot();
+      if (!acquired.has_value())
+        return query_error(target, acquired.error(), limits_.protocol);
+      replicated_snapshot.emplace(std::move(*acquired));
+      query_catalog = replicated_snapshot->catalog();
+    } else if (database_ != nullptr) {
+      query_catalog = database_->query_catalog();
+    } else {
+      return query_error(target, internal("native query database is unavailable"),
+                         limits_.protocol);
+    }
+    auto bound =
+        query::bind_sql_v1_select(std::move(*parsed), std::move(query_catalog), limits_.sql_binder);
     if (!bound.has_value())
       return query_error(target, bound.error().status(), limits_.protocol);
     if (bound->syntax().system_time().has_value()) {
@@ -564,13 +591,21 @@ NativeProtocolService::execute_query(network::NetworkTask request) {
                            limits_.protocol);
       const std::shared_ptr<const schema::TableSchema>& source_schema =
           bound->sources().front().schema_ptr();
-      auto instantiated = database_->instantiate_table_pipeline(
-          *resources, source_schema->table_id(), source_schema->schema_id(), *physical,
-          limits_.tablet_pipeline);
+      common::Result<std::unique_ptr<query::PhysicalOperator>> instantiated =
+          replicated_snapshot.has_value()
+              ? replicated_snapshot->instantiate_table_pipeline(
+                    *resources, source_schema->table_id(), source_schema->schema_id(), *physical,
+                    limits_.replicated_tablet_pipeline)
+              : database_->instantiate_table_pipeline(*resources, source_schema->table_id(),
+                                                      source_schema->schema_id(), *physical,
+                                                      limits_.tablet_pipeline);
       if (!instantiated.has_value())
         return query_error(target, instantiated.error(), limits_.protocol);
       pipeline = std::move(*instantiated);
     } else {
+      if (replicated_snapshot.has_value())
+        return query_error(target, unsupported("replicated native ASOF JOIN is not implemented"),
+                           limits_.protocol);
       auto physical = query::lower_bound_sql_asof_select(*bound, limits_.physical_lowering);
       if (!physical.has_value())
         return query_error(target, physical.error().status(), limits_.protocol);

@@ -1,13 +1,16 @@
 #include "chronos/service/replicated_ingest_service.hpp"
 
 #include "chronos/network/messages.hpp"
+#include "chronos/service/native_protocol_service.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <limits>
 #include <memory>
 #include <new>
 #include <optional>
 #include <utility>
+#include <vector>
 
 namespace chronos::service {
 namespace {
@@ -92,6 +95,18 @@ public:
     return publish(std::move(request));
   }
 
+  [[nodiscard]] common::Result<ReplicatedIngestServicePoll> publish_sequence() {
+    if (next_sequence_response >= pending_sequence.size())
+      return common::make_unexpected(common::Status{
+          common::StatusCode::kInternal, "replicated native response sequence is empty"});
+    network::NetworkTask response = std::move(pending_sequence[next_sequence_response++]);
+    if (next_sequence_response == pending_sequence.size()) {
+      std::vector<network::NetworkTask>{}.swap(pending_sequence);
+      next_sequence_response = 0U;
+    }
+    return publish(std::move(response));
+  }
+
   [[nodiscard]] common::Result<ReplicatedIngestServicePoll>
   accept(network::NetworkTask request, const std::chrono::steady_clock::time_point now) {
     increment(stats.consumed_requests);
@@ -99,6 +114,27 @@ public:
       if (config.coordinator->cancel(request.connection_id, request.frame.header.request_id))
         increment(stats.cancelled_requests);
       return ReplicatedIngestServicePoll{};
+    }
+    if (request.frame.header.message_type == network::MessageType::kQueryRequest) {
+      if (!accepting) {
+        increment(stats.shutdown_rejections);
+        return reject(std::move(request),
+                      common::Status{common::StatusCode::kUnavailable,
+                                     "replicated native service is shutting down"});
+      }
+      if (config.queries == nullptr)
+        return reject(std::move(request),
+                      invalid("replicated native query service is not configured"));
+      auto result = config.queries->execute_query(std::move(request));
+      if (!result.has_value())
+        return common::make_unexpected(result.error());
+      if (result->responses.empty())
+        return common::make_unexpected(common::Status{
+            common::StatusCode::kInternal, "replicated native query returned no response"});
+      pending_sequence = std::move(result->responses);
+      next_sequence_response = 0U;
+      increment(stats.query_requests);
+      return publish_sequence();
     }
     if (request.frame.header.message_type != network::MessageType::kIngestRequest)
       return reject(std::move(request),
@@ -129,6 +165,8 @@ public:
       pending_response.reset();
       return ReplicatedIngestServicePoll{.response_enqueued = true};
     }
+    if (!pending_sequence.empty())
+      return publish_sequence();
     if (auto request = config.requests->try_pop(); request.has_value()) {
       auto accepted = accept(std::move(*request), now);
       if (!accepted.has_value() || accepted->response_enqueued || pending_response.has_value())
@@ -144,6 +182,8 @@ public:
 
   ReplicatedIngestServiceConfig config;
   std::optional<network::NetworkTask> pending_response;
+  std::vector<network::NetworkTask> pending_sequence;
+  std::size_t next_sequence_response{};
   ReplicatedIngestServiceMetrics stats;
   bool accepting{true};
 };
@@ -179,6 +219,7 @@ void ReplicatedIngestService::begin_shutdown() noexcept {
 
 bool ReplicatedIngestService::drained() const noexcept {
   return impl_->config.requests->empty() && !impl_->pending_response.has_value() &&
+         impl_->pending_sequence.empty() &&
          impl_->config.coordinator->metrics().pending_requests == 0U;
 }
 
@@ -189,7 +230,7 @@ bool ReplicatedIngestService::accepting() const noexcept {
 ReplicatedIngestServiceMetrics ReplicatedIngestService::metrics() const noexcept {
   ReplicatedIngestServiceMetrics value = impl_->stats;
   value.accepting = impl_->accepting;
-  value.response_retained = impl_->pending_response.has_value();
+  value.response_retained = impl_->pending_response.has_value() || !impl_->pending_sequence.empty();
   return value;
 }
 

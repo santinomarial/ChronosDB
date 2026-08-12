@@ -13,6 +13,8 @@
 #include "chronos/query/physical_lowering.hpp"
 #include "chronos/query/snapshot_pipeline.hpp"
 #include "chronos/query/statement_binder.hpp"
+#include "chronos/query/tablet_state_pipeline.hpp"
+#include "chronos/service/replicated_ingest_database.hpp"
 #include "chronos/service/single_node_database.hpp"
 
 #include <cstddef>
@@ -29,6 +31,7 @@ struct NativeProtocolServiceLimits {
   query::SqlInsertBinderLimits sql_insert{};
   query::PhysicalSelectLoweringLimits physical_lowering{};
   query::SnapshotTabletPipelineLimits tablet_pipeline{};
+  query::TabletStatePipelineLimits replicated_tablet_pipeline{};
   columnar::ColumnarBatchLimits insert_batch{};
   network::QueryResultLimits query_result{};
   std::size_t maximum_query_memory_bytes{64U * 1024U * 1024U};
@@ -46,8 +49,10 @@ struct NativeProtocolResponseSequence {
 
 using NativeIdentityGenerator = common::UuidGenerator;
 
-// Thread-affine synchronous translation between an already accepted native request and the
-// single-node database owner. Returned tasks retain the connection/principal routing envelope.
+// Thread-affine synchronous translation between an already accepted native request and one
+// database owner. The replicated constructor serves current local-applied SELECT only; replicated
+// ingest remains asynchronous and CREATE/INSERT/ASOF fail explicitly. Returned tasks retain the
+// connection/principal routing envelope.
 // Ingest returns one terminal response; query returns a bounded result sequence ending in QUERY_END
 // or one terminal ERROR. Queueing and socket backpressure remain owned by the reactor worker.
 class NativeProtocolService {
@@ -56,13 +61,16 @@ public:
                                  NativeProtocolServiceLimits limits = {}) noexcept;
   NativeProtocolService(SingleNodeDatabase& database, NativeIdentityGenerator& identities,
                         NativeProtocolServiceLimits limits = {}) noexcept;
+  explicit NativeProtocolService(ReplicatedIngestDatabase& database,
+                                 NativeProtocolServiceLimits limits = {}) noexcept;
 
   [[nodiscard]] common::Result<network::NetworkTask> execute_ingest(network::NetworkTask request);
   [[nodiscard]] common::Result<NativeProtocolResponseSequence>
   execute_query(network::NetworkTask request);
 
 private:
-  SingleNodeDatabase* database_;
+  SingleNodeDatabase* database_{};
+  ReplicatedIngestDatabase* replicated_database_{};
   NativeIdentityGenerator* identities_{};
   NativeProtocolServiceLimits limits_;
 };

@@ -20,6 +20,12 @@ worker may retain one owned response when the response ring is full. It retries 
 without moving from it, blocking the data-plane consumer rather than allocating an unbounded side
 queue. The SPSC release/acquire proof remains the one documented by ADR 0063.
 
+Replicated mode keeps that same single queue consumer. Its adapter sends canonical ingest to the
+nonblocking Raft coordinator and sends native SELECT to the synchronous query dispatcher over a
+fresh owning local-applied snapshot. A finite query sequence is emitted before another request or
+coordinator completion is polled. Every table placement must be resident; remote fragments and
+stronger read barriers are not inferred from local state.
+
 The subscription composition uses a stable committed-append router as the database's pre-open
 observer address. After recovery and before socket admission, one per-plan runtime binds its fan-out
 and borrows the database's exact snapshot storage context. The runtime owns neither the plan,
@@ -41,8 +47,9 @@ handshake, idle, and buffering limits remain the `EpollServerConfig` bounds. Pla
 restricted to exact IPv4 loopback. Invalid options and unavailable reactor backends fail before the
 startup banner. Worker publication or reactor failures terminate the process with a nonzero status.
 
-The startup banner reports `data_plane=configured` only after the database and reactor both start;
-otherwise the explicit unconfigured mode remains distinguishable. Configured ingest acknowledges
+The startup banner reports `data_plane=configured` or `data_plane=replicated` only after the
+corresponding database path and reactor both start; otherwise the explicit unconfigured mode
+remains distinguishable. Configured single-node ingest acknowledges
 the exact requested/effective ASYNC or LOCAL_SYNC mode. Bootstrap and native DDL/DML identities use
 the common nonnil system UUID source; deterministic service tests inject the same interface.
 
@@ -59,9 +66,10 @@ the same finite ownership contract.
 The Linux subprocess test starts the actual binary on an ephemeral port, negotiates Protocol v1,
 checks PING/PONG and explicit unconfigured rejection, then starts a configured root, creates and
 queries a table, sends `SIGTERM`, and verifies queryability after restart. Install-layout validation
-checks that the binary is packaged and its help path runs. On non-Linux hosts, daemon/service build
-and durable-root initialization run, but the socket subprocess is not registered because the server
-reactor is Linux-only.
+checks that the binary is packaged and its help path runs. Its replicated case negotiates Protocol
+2, applies QUORUM_SYNC, queries the applied rows, restarts, verifies an exact retry, and queries the
+same recovered row count. On non-Linux hosts, daemon/service build and durable-root initialization
+run, but the socket subprocess is not registered because the server reactor is Linux-only.
 
 Reviewers should ask: Which thread owns each queue endpoint? Can saturation allocate elsewhere? Can
 liveness imply data readiness? What happens to active socket work on `SIGTERM`? Which acknowledged
