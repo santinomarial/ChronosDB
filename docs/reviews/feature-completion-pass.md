@@ -188,8 +188,10 @@ election, reactor routing/wakeup, and ordered shutdown.
 Authenticated Raft deployment routes now also have a separate strict bounded text parser binding
 ordered node IDs to unique IPv4 endpoints, TLS server identities, and unique leaf-certificate
 SHA-256 fingerprints. One immutable authority maps an exact verified fingerprint/address pair to
-that configured node ID for both inbound and outbound carriers. Daemon transport ownership and
-credential loading remain external.
+that configured node ID for both inbound and outbound carriers. An address-stable service owner now
+composes those authorities and per-peer TLS contexts with the existing receiver, listener,
+reconnect pool, randomized timers, and unified poll runtime, arming each group only from a durable
+ordered observation. Daemon credential loading and poll-thread ownership remain external.
 
 ### Phase 15 — Multi-Raft tablets and metadata
 

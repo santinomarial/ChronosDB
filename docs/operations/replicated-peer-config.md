@@ -29,3 +29,8 @@ resolution are not implemented.
 The runtime authority revalidates local-node presence, ordering, and uniqueness even after parsing.
 It uses the configured Raft node ID directly as the stable principal: a verified fingerprint and
 IPv4 address must select that exact node before a Raft frame may claim it.
+
+Transport construction creates one expected-identity TLS client context per remote node and binds
+the local entry's endpoint for inbound traffic. The local leaf certificate and key are used in both
+directions, so the certificate must be valid for TLS server and client authentication and its SAN
+must match this node's configured TLS identity.

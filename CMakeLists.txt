@@ -707,6 +707,7 @@ add_library(
   src/service/replicated_group_config.cpp
   src/service/replicated_peer_authority.cpp
   src/service/replicated_peer_config.cpp
+  src/service/replicated_raft_transport_runtime.cpp
   src/service/replicated_ingest_runtime.cpp
   src/service/replicated_ingest_service.cpp
   src/service/single_node_committed_append_router.cpp
@@ -726,6 +727,7 @@ target_include_directories(
 target_link_libraries(
   chronos_service
   PUBLIC chronos::ingest
+         chronos::cluster
          chronos::live
          chronos::network
          chronos::query
@@ -895,6 +897,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/service/replicated_peer_authority_test.cpp
     tests/service/replicated_peer_config_header_self_contained.cpp
     tests/service/replicated_peer_config_test.cpp
+    tests/service/replicated_raft_transport_runtime_header_self_contained.cpp
+    tests/service/replicated_raft_transport_runtime_test.cpp
     tests/service/replicated_ingest_runtime_header_self_contained.cpp
     tests/service/replicated_ingest_runtime_test.cpp
     tests/service/replicated_ingest_service_header_self_contained.cpp
@@ -911,6 +915,10 @@ if(CHRONOS_BUILD_TESTS)
   set_target_properties(chronos_service_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_service_tests PRIVATE cxx_std_23)
   target_include_directories(chronos_service_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+  target_compile_definitions(
+    chronos_service_tests
+    PRIVATE CHRONOS_NETWORK_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/network"
+  )
   target_link_libraries(chronos_service_tests PRIVATE chronos::service GTest::gtest_main)
   chronos_set_project_warnings(chronos_service_tests)
   chronos_enable_sanitizers(chronos_service_tests)

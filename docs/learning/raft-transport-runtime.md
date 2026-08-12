@@ -15,6 +15,14 @@ the embedding. A returned result identifies inbound versus timer origin, remote 
 action, exact group, ordered observation, durable transition, and runtime-lifetime submission
 sequence.
 
+`service::ReplicatedRaftTransportRuntime` is the address-stable production composition above this
+poll owner. It owns the immutable certificate/address/node authority, receiver, one TLS client
+context per remote identity, randomized election source, and the unified runtime in destruction-safe
+order. Creation obtains each initial observation from the asynchronous durable owner and rejects a
+group/local-node mismatch before returning. Its completed-result API intentionally remains visible;
+the service layer cannot discard snapshot-install or read-barrier work merely because ordinary
+election traffic needs no additional handling.
+
 ## Data structures and invariants
 
 The poll table is rebuilt into pre-reserved storage from four exact owner kinds: durable wakeup,
@@ -42,6 +50,11 @@ all completion owners before blocking again.
 The runtime is the sole pipe consumer. After any durable wake, `poll_once` completes internal
 progress and returns, so its caller can inspect additional completion owners sharing the same durable
 worker. A second independent drainer would violate the wakeup contract.
+
+The service owner must be created while consensus admission is quiescent, then polled by exactly one
+thread. It must be shut down before `ReplicatedIngestRuntime` closes the borrowed durable worker.
+Moving the outer owner moves only its PIMPL pointer; borrowed addresses inside that allocation remain
+stable.
 
 ## Failure and backpressure
 

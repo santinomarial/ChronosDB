@@ -323,3 +323,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0286](0286-explicit-replicated-native-daemon-mode.md) | Explicit replicated native-daemon mode | accepted |
 | [0287](0287-strict-authenticated-raft-peer-config.md) | Strict authenticated Raft peer deployment configuration | accepted |
 | [0288](0288-exact-raft-certificate-node-authority.md) | Exact Raft certificate-to-node authority | accepted |
+| [0289](0289-owning-authenticated-raft-transport-runtime.md) | Owning authenticated Raft transport runtime | accepted |
