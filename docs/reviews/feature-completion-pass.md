@@ -116,6 +116,8 @@ A persistent inbound mutual-TLS carrier now processes fragmented sequential fram
 durable operation/result in flight and leaves multi-peer output and snapshot routing to its owner.
 A persistent outbound mutual-TLS carrier now validates exact peer routes, bounds FIFO frames and
 bytes, and returns complete original frames for duplicate-safe reconnect after failure.
+A bounded injected-time scheduler now emits generation-tagged election and heartbeat actions,
+preserves due work across admission backpressure, and rejects stale completion rearming.
 The core now also rejects zero terms and noncanonical vote/append predecessor and response state
 before observing a higher term, preserving the persist-before-response contract on invalid input.
 

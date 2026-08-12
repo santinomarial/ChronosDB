@@ -745,11 +745,14 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   mutual-TLS session now reads exact fragmented frames, admits one durable operation, and publishes
   its complete result for embedding-owned routing. A persistent peer-authenticated outbound session
   now bounds FIFO frames/bytes and preserves complete frames for reconnect retry. Connection pooling,
-  runtime timers, randomized simulation, and the full exit
+  runtime event-loop composition, randomized simulation, and the full exit
   evidence remain deferred. Linearizable reads now use one bounded explicit current-term leadership
   probe, require a current-term committed entry, freeze stable or joint voter quorums at issuance,
   abandon pending work on leadership change, and return an exact committed read index that must be
   applied before visibility.
+  A bounded generation-tagged monotonic timer scheduler now emits election and heartbeat actions,
+  retries rejected admission without shifting deadlines, and rejects stale completion rearming;
+  production event-loop/completion wiring remains.
 
 - **Scope:** implement a deterministic Raft core for one logical group: elections, replication, commit, membership protocol as scoped by ADR, snapshots, read consistency mechanisms, and simulated transport/storage/time.
 - **Explicit non-scope:** multi-group multiplexing, production network integration, distributed queries, hidden third-party Raft implementation, and serving uncommitted or merely appended entries.
