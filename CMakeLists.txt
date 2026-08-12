@@ -674,6 +674,25 @@ chronos_set_project_warnings(chronos_tiering)
 chronos_enable_sanitizers(chronos_tiering)
 chronos_enable_static_analysis(chronos_tiering)
 
+add_library(chronos_service src/service/single_node_database.cpp)
+add_library(chronos::service ALIAS chronos_service)
+set_target_properties(chronos_service PROPERTIES EXPORT_NAME service CXX_EXTENSIONS OFF)
+target_compile_features(chronos_service PUBLIC cxx_std_23)
+target_include_directories(
+  chronos_service
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+)
+target_link_libraries(
+  chronos_service
+  PUBLIC chronos::ingest chronos::query chronos::raft chronos::runtime chronos::schema chronos::wal
+  PRIVATE chronos::io
+)
+chronos_set_project_warnings(chronos_service)
+chronos_enable_sanitizers(chronos_service)
+chronos_enable_static_analysis(chronos_service)
+
 add_executable(chronosctl tools/chronosctl/main.cpp)
 set_target_properties(chronosctl PROPERTIES CXX_EXTENSIONS OFF)
 target_compile_features(chronosctl PRIVATE cxx_std_23)
@@ -813,6 +832,20 @@ if(CHRONOS_BUILD_TESTS)
   chronos_enable_sanitizers(chronos_runtime_tests)
   chronos_enable_static_analysis(chronos_runtime_tests)
   gtest_discover_tests(chronos_runtime_tests DISCOVERY_TIMEOUT 30)
+
+  add_executable(
+    chronos_service_tests
+    tests/service/single_node_database_header_self_contained.cpp
+    tests/service/single_node_database_test.cpp
+  )
+  set_target_properties(chronos_service_tests PROPERTIES CXX_EXTENSIONS OFF)
+  target_compile_features(chronos_service_tests PRIVATE cxx_std_23)
+  target_include_directories(chronos_service_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+  target_link_libraries(chronos_service_tests PRIVATE chronos::service GTest::gtest_main)
+  chronos_set_project_warnings(chronos_service_tests)
+  chronos_enable_sanitizers(chronos_service_tests)
+  chronos_enable_static_analysis(chronos_service_tests)
+  gtest_discover_tests(chronos_service_tests DISCOVERY_TIMEOUT 30)
 
   add_executable(
     chronos_network_allocation_failure_tests

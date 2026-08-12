@@ -1,0 +1,69 @@
+#ifndef CHRONOS_SERVICE_SINGLE_NODE_DATABASE_HPP_
+#define CHRONOS_SERVICE_SINGLE_NODE_DATABASE_HPP_
+
+#include "chronos/common/result.hpp"
+#include "chronos/common/status.hpp"
+#include "chronos/ingest/retry_directory.hpp"
+#include "chronos/ingest/tablet_state.hpp"
+#include "chronos/query/catalog.hpp"
+#include "chronos/raft/metadata.hpp"
+#include "chronos/raft/persistent_log.hpp"
+#include "chronos/runtime/database_bootstrap.hpp"
+#include "chronos/schema/identity.hpp"
+#include "chronos/schema/schema_lineage.hpp"
+#include "chronos/wal/wal_commit_coordinator.hpp"
+#include "chronos/wal/wal_recovery.hpp"
+
+#include <memory>
+
+namespace chronos::service {
+
+struct SingleNodeDatabaseConfig {
+  runtime::DatabaseBootstrapConfig bootstrap;
+  wal::WalRecoveryOptions wal_recovery{};
+  raft::RaftPersistentLogOpenOptions raft_recovery{};
+  wal::WalCommitCoordinatorConfig wal_commit{};
+};
+
+// Recoverable single-process owner for the current WAL-backed single-node product boundary. The
+// object is thread-affine except for the independently synchronized WAL coordinator and query-safe
+// immutable snapshots returned by TabletState. Metadata Raft, WAL admission, and the database root
+// remain exclusively owned until shutdown.
+class SingleNodeDatabase {
+public:
+  SingleNodeDatabase() = delete;
+  ~SingleNodeDatabase();
+
+  SingleNodeDatabase(const SingleNodeDatabase&) = delete;
+  SingleNodeDatabase& operator=(const SingleNodeDatabase&) = delete;
+  SingleNodeDatabase(SingleNodeDatabase&&) noexcept;
+  SingleNodeDatabase& operator=(SingleNodeDatabase&&) noexcept;
+
+  [[nodiscard]] static common::Result<SingleNodeDatabase>
+  open_or_create(SingleNodeDatabaseConfig config);
+
+  [[nodiscard]] const runtime::DatabaseBootstrapDescriptor& bootstrap() const noexcept;
+  [[nodiscard]] const raft::MetadataCatalogSnapshot& metadata_catalog() const noexcept;
+  [[nodiscard]] const std::shared_ptr<const query::QueryCatalogSnapshot>&
+  query_catalog() const noexcept;
+  [[nodiscard]] const schema::SchemaLineage*
+  find_lineage(const schema::TableId& table_id) const noexcept;
+  [[nodiscard]] ingest::TabletState* find_tablet(const schema::TabletId& tablet_id) noexcept;
+  [[nodiscard]] const ingest::TabletState*
+  find_tablet(const schema::TabletId& tablet_id) const noexcept;
+  [[nodiscard]] ingest::RetryDirectory& retry_directory() noexcept;
+  [[nodiscard]] wal::WalCommitCoordinator& wal_coordinator() noexcept;
+
+  // Stops WAL admission and synchronizes its final LOCAL_SYNC group, then closes metadata Raft and
+  // finally releases the database-root lock. Repeated calls are safe.
+  [[nodiscard]] common::Status shutdown();
+
+private:
+  class Impl;
+  explicit SingleNodeDatabase(std::unique_ptr<Impl> impl) noexcept;
+  std::unique_ptr<Impl> impl_;
+};
+
+} // namespace chronos::service
+
+#endif // CHRONOS_SERVICE_SINGLE_NODE_DATABASE_HPP_

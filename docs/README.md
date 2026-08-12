@@ -162,6 +162,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 
 ## Learning
 
+- [Recoverable single-node database owner](learning/single-node-database-owner.md): aggregate root,
+  metadata Raft, catalog, WAL replay, retry/tablet state, vector-query handoff, and shutdown order.
 - [Tablet-state vector query pipeline](learning/tablet-state-query-pipeline.md): exact snapshot
   shape, sealed/active source composition, one global physical pipeline, and query-credit ownership.
 - [Durable database bootstrap](learning/database-bootstrap.md): root-lock ownership, checksummed

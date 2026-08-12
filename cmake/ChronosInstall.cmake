@@ -21,6 +21,7 @@ function(chronos_configure_installation)
       chronos_raft
       chronos_cluster
       chronos_tiering
+      chronos_service
       chronosctl
       chronosd
       chronos-csegdump
