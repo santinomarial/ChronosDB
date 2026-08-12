@@ -89,3 +89,12 @@ and allocation failures are sticky for that reader instance.
 `RaftTransportFrameWriteCursor` owns one complete canonically decoded frame and exposes only its
 unwritten suffix. Checked advancement supports short writes, and moving the cursor leaves the source
 complete. Descriptor, TLS, retry, and readiness ownership remain outside both types.
+
+## Authenticated dispatch
+
+`RaftTransportReceiver` requires a transport-authenticated nonzero stable principal before it
+decodes a complete frame. It then authorizes that principal for the claimed source, exact-matches the
+destination to the local node, and admits one owning receive operation to the asynchronous durable
+runtime. Outbound frames become available only through that runtime's post-synchronization
+completion. Outbound encoding borrows the completed transition so a size or encoding failure cannot
+consume the only owned response.

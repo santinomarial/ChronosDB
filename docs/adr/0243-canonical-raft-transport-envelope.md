@@ -49,7 +49,8 @@ fuzzing, authenticated carrier integration, mixed-version processes, and network
 remain in the Phase 18 ledger.
 
 **Retrospective note (2026-08-12):** [ADR 0245](0245-bounded-raft-transport-partial-io.md) adds the
-header-first reader and owning short-write cursor without changing the v1 bytes.
+header-first reader and owning short-write cursor without changing the v1 bytes. [ADR 0246](0246-authenticated-raft-transport-receiver.md)
+adds authenticated source authorization, exact local routing, and asynchronous durable admission.
 
 ## References
 

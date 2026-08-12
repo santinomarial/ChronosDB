@@ -617,6 +617,7 @@ add_library(
   src/cluster/distributed_query_tls_client.cpp
   src/cluster/distributed_query_tls_server.cpp
   src/cluster/distributed_query_transport.cpp
+  src/cluster/raft_transport_receiver.cpp
   src/cluster/remote_tablet_reconfiguration.cpp
   src/cluster/tablet_physical_part_install.cpp
   src/cluster/tablet_physical_movement_readiness.cpp
@@ -1017,6 +1018,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/cluster/distributed_query_tls_server_test.cpp
     tests/cluster/distributed_query_transport_header_self_contained.cpp
     tests/cluster/distributed_query_transport_test.cpp
+    tests/cluster/raft_transport_receiver_header_self_contained.cpp
+    tests/cluster/raft_transport_receiver_test.cpp
     tests/cluster/remote_tablet_reconfiguration_header_self_contained.cpp
     tests/cluster/remote_tablet_reconfiguration_test.cpp
     tests/cluster/tablet_physical_part_install_header_self_contained.cpp

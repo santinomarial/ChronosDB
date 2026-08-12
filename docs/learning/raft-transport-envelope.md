@@ -7,7 +7,8 @@
 logical group UUID, source node, destination node, and one of the eight current deterministic Raft
 messages. `RaftTransportCodecLimits` provides finite frame, entry, entry-byte, and voter bounds.
 `RaftTransportFrameReader` and `RaftTransportFrameWriteCursor` retain one frame safely across
-arbitrary short reads and writes.
+arbitrary short reads and writes. The cluster-level `RaftTransportReceiver` authenticates and
+authorizes a complete frame before asynchronously dispatching it to the durable Multi-Raft owner.
 
 ## Data and ownership
 
@@ -41,6 +42,12 @@ authorizes the stable principal for the claimed source, and checks the local des
 dispatch. Likewise, the codec does not satisfy persist-before-send: the durable Multi-Raft owner
 must synchronize the transition before transport sees its outbound envelope.
 
+The implemented receiver enforces that sequence. It rejects absent principals before parsing,
+delegates exact source authorization to the embedding, checks the local destination, and submits
+one owning receive operation through the bounded asynchronous runtime. Its completion is the
+acquire boundary for the already synchronized result. Outbound encoding borrows that result so the
+caller retains every message if a configured frame limit is too small.
+
 ## Complexity and tradeoffs
 
 Fixed messages encode and decode in constant time and space. Append messages are linear in entry
@@ -58,7 +65,7 @@ bound; explicit batching is preferable to unbounded socket ownership.
 Focused tests cover every variant, actual conflict repair, corruption, compatibility, identity,
 bounds, bytewise and coalesced reads, sticky failure, and short-write ownership. Phase 18 retains
 golden fixtures, hostile length matrices, fuzzing, allocation failure, authenticated routing,
-real-socket partial I/O, partitions/reordering/duplication, and mixed-version processes.
+real mutual-TLS stream scheduling, partitions/reordering/duplication, and mixed-version processes.
 
 Useful questions include: why is CRC not authentication; why must persistence precede sending; why
 does snapshot metadata travel separately from snapshot bytes; how does route identity prevent
