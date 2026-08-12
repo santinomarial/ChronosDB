@@ -23,3 +23,14 @@ keeps timing policy outside `RaftNode` and avoids adding atomics without a shari
 Focused tests cover boundary firing, backpressure retry, heartbeat rearm, stale generations, and
 bounds. End-to-end event-loop composition, randomized timeout selection, trace replay, clock-change
 tests, and scheduling benchmarks remain future validation.
+
+`RaftTimerDriver` performs the production-facing asynchronous composition. It submits each action
+and one following group observation in the same FIFO durable batch, then rearms from that exact
+post-action observation. Its separate fixed pending and completed rings bound ownership. A full
+completed ring leaves ready async completions untouched, while admission backpressure releases the
+due action for retry. The complete action result remains available to transport and snapshot owners.
+
+The driver accepts fresh group activity from other completed runtime work. That activity increments
+the scheduler generation, so an older timer operation may still finish and be routed but cannot
+restore stale timing state. Term 0 is valid before the first election; only group and node identity
+must be established to arm the initial deadline.

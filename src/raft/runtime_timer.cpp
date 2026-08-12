@@ -11,7 +11,7 @@ namespace {
   return {code, message};
 }
 [[nodiscard]] bool valid_observation(const RaftGroupObservation& value) noexcept {
-  return !value.group_id.is_nil() && value.node_id != 0U && value.current_term != 0U;
+  return !value.group_id.is_nil() && value.node_id != 0U;
 }
 [[nodiscard]] RaftTimerRuntime::TimePoint
 deadline_after(const RaftTimerRuntime::TimePoint now,

@@ -582,6 +582,7 @@ add_library(
   src/raft/node.cpp
   src/raft/persistent_log.cpp
   src/raft/runtime_timer.cpp
+  src/raft/runtime_timer_driver.cpp
   src/raft/rebalancing.cpp
   src/raft/schema_definition_codec.cpp
   src/raft/tablet_reconfiguration.cpp
@@ -965,6 +966,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/raft/rebalancing_test.cpp
     tests/raft/runtime_timer_header_self_contained.cpp
     tests/raft/runtime_timer_test.cpp
+    tests/raft/runtime_timer_driver_header_self_contained.cpp
+    tests/raft/runtime_timer_driver_test.cpp
     tests/raft/tablet_reconfiguration_header_self_contained.cpp
     tests/raft/tablet_reconfiguration_test.cpp
     tests/raft/tablet_reconfiguration_action_codec_header_self_contained.cpp

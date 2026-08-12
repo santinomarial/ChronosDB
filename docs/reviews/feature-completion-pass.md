@@ -118,6 +118,8 @@ A persistent outbound mutual-TLS carrier now validates exact peer routes, bounds
 bytes, and returns complete original frames for duplicate-safe reconnect after failure.
 A bounded injected-time scheduler now emits generation-tagged election and heartbeat actions,
 preserves due work across admission backpressure, and rejects stale completion rearming.
+A bounded driver now submits each timer action plus its ordered observation through the asynchronous
+durable owner and retains every post-sync transition for embedding-owned transport/snapshot routing.
 The core now also rejects zero terms and noncanonical vote/append predecessor and response state
 before observing a higher term, preserving the persist-before-response contract on invalid input.
 

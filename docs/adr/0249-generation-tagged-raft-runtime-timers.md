@@ -43,6 +43,9 @@ shift, follower election, leader heartbeat cadence, generation advance, stale-co
 invalid deadlines, and group/action bounds. Async-runtime composition, clock jumps, thousands of
 groups, long randomized schedules, and timing measurements remain in Phase 18.
 
+**Retrospective note (2026-08-12):** [ADR 0250](0250-async-durable-raft-timer-driver.md) composes
+actions with the asynchronous durable owner and retains ordered post-action results/observations.
+
 ## References
 
 - [ADR 0069](0069-deterministic-raft-and-multiplexed-state-record.md)
