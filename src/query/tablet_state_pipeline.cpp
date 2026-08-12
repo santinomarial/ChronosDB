@@ -4,6 +4,7 @@
 #include "chronos/common/status.hpp"
 #include "chronos/query/snapshot_shape.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <memory>
 #include <new>
@@ -101,16 +102,15 @@ private:
 
 } // namespace
 
-common::Result<std::unique_ptr<PhysicalOperator>> instantiate_tablet_state_pipeline(
-    const QueryResourceContext& resources, ingest::TabletSnapshot snapshot,
+common::Result<std::unique_ptr<PhysicalOperator>> instantiate_tablet_states_pipeline(
+    const QueryResourceContext& resources, const std::span<const ingest::TabletSnapshot> snapshots,
     const schema::SchemaLineage& lineage, const schema::SchemaId destination_schema_id,
     const PhysicalPipelinePlan& pipeline, TabletStatePipelineLimits limits) {
-  if (limits.maximum_source_configuration_bytes == 0U)
+  if (limits.maximum_source_configuration_bytes == 0U || snapshots.empty())
     return common::make_unexpected(invalid("tablet-state pipeline limits are invalid"));
   const std::shared_ptr<const schema::TableSchema> destination =
       lineage.find(destination_schema_id);
-  if (destination == nullptr || destination->table_id() != lineage.table_id() ||
-      snapshot.table_id() != lineage.table_id() || snapshot.tablet_id().uuid().is_nil()) {
+  if (destination == nullptr || destination->table_id() != lineage.table_id()) {
     return common::make_unexpected(
         invalid("tablet-state snapshot, lineage, and destination schema disagree"));
   }
@@ -121,30 +121,55 @@ common::Result<std::unique_ptr<PhysicalOperator>> instantiate_tablet_state_pipel
   limits.scan.row_version_columns = *row_version_mode;
 
   try {
+    std::vector<schema::TabletId> tablet_ids;
+    tablet_ids.reserve(snapshots.size());
+    std::size_t source_count{};
+    for (const ingest::TabletSnapshot& snapshot : snapshots) {
+      if (snapshot.table_id() != lineage.table_id() || snapshot.tablet_id().uuid().is_nil()) {
+        return common::make_unexpected(
+            invalid("tablet-state snapshots contain a mismatched or nil tablet"));
+      }
+      tablet_ids.push_back(snapshot.tablet_id());
+      const auto generations =
+          common::checked_add(snapshot.sealed_generations().size(), std::size_t{1U});
+      if (!generations.has_value())
+        return common::make_unexpected(exhausted("tablet-state source count exceeds limits"));
+      const auto total = common::checked_add(source_count, *generations);
+      if (!total.has_value())
+        return common::make_unexpected(exhausted("tablet-state source count exceeds limits"));
+      source_count = *total;
+    }
+    std::ranges::sort(tablet_ids);
+    if (std::ranges::adjacent_find(tablet_ids) != tablet_ids.end())
+      return common::make_unexpected(invalid("tablet-state snapshots contain a duplicate tablet"));
+
     std::vector<std::uint32_t> ordinals;
     ordinals.reserve(destination->columns().size());
     for (std::size_t ordinal = 0U; ordinal < destination->columns().size(); ++ordinal)
       ordinals.push_back(static_cast<std::uint32_t>(ordinal));
 
     std::vector<std::unique_ptr<PhysicalOperator>> sources;
-    sources.reserve(snapshot.sealed_generations().size() + 1U);
-    const auto add = [&](head::HeadSnapshot generation) -> common::Result<void> {
+    sources.reserve(source_count);
+    const auto add = [&](head::HeadSnapshot generation,
+                         const schema::TabletId& tablet_id) -> common::Result<void> {
       auto source =
           HeadScanOperator::create(resources, std::move(generation), lineage, destination_schema_id,
-                                   snapshot.tablet_id(), ordinals, limits.scan);
+                                   tablet_id, ordinals, limits.scan);
       if (!source.has_value())
         return common::make_unexpected(source.error());
       sources.push_back(std::move(*source));
       return {};
     };
-    for (const head::HeadSnapshot& sealed : snapshot.sealed_generations()) {
-      auto added = add(sealed);
-      if (!added.has_value())
-        return common::make_unexpected(added.error());
+    for (const ingest::TabletSnapshot& snapshot : snapshots) {
+      for (const head::HeadSnapshot& sealed : snapshot.sealed_generations()) {
+        auto added = add(sealed, snapshot.tablet_id());
+        if (!added.has_value())
+          return common::make_unexpected(added.error());
+      }
+      auto active = add(snapshot.active_generation(), snapshot.tablet_id());
+      if (!active.has_value())
+        return common::make_unexpected(active.error());
     }
-    auto active = add(snapshot.active_generation());
-    if (!active.has_value())
-      return common::make_unexpected(active.error());
 
     std::unique_ptr<PhysicalOperator> source;
     if (sources.size() == 1U) {
@@ -162,6 +187,14 @@ common::Result<std::unique_ptr<PhysicalOperator>> instantiate_tablet_state_pipel
   } catch (const std::length_error&) {
     return common::make_unexpected(exhausted("tablet-state pipeline exceeds container limits"));
   }
+}
+
+common::Result<std::unique_ptr<PhysicalOperator>> instantiate_tablet_state_pipeline(
+    const QueryResourceContext& resources, ingest::TabletSnapshot snapshot,
+    const schema::SchemaLineage& lineage, const schema::SchemaId destination_schema_id,
+    const PhysicalPipelinePlan& pipeline, TabletStatePipelineLimits limits) {
+  return instantiate_tablet_states_pipeline(resources, std::span{&snapshot, 1U}, lineage,
+                                            destination_schema_id, pipeline, limits);
 }
 
 } // namespace chronos::query

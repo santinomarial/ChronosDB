@@ -37,13 +37,14 @@ namespace {
           .value());
 }
 
-void append(ingest::TabletState& target, const std::uint8_t seed, const std::uint64_t sequence) {
+void append(ingest::TabletState& target, const schema::TabletId& target_id, const std::uint8_t seed,
+            const std::uint64_t sequence) {
   const ingest::RetryIdentity retry{
       .client_id = ingest::test::request_id<ingest::ClientId>(seed),
       .client_batch_id = ingest::test::request_id<ingest::ClientBatchId>(seed + 32U)};
   const ingest::ColumnarAppendMutationIdentity mutation{
       .table_id = columnar::test::batch_schema()->table_id(),
-      .tablet_id = tablet_id(),
+      .tablet_id = target_id,
       .request_digest = digest(seed)};
   auto prepared = target.prepare_append(retry, mutation, batch());
   ASSERT_TRUE(prepared.has_value()) << prepared.error().to_string();
@@ -78,8 +79,8 @@ TEST(TabletStatePipelineTest, ExecutesOneGlobalVectorPipelineAcrossSealedAndActi
        .maximum_retry_entries = 4U,
        .flush_queue = nullptr});
   ASSERT_TRUE(target.has_value()) << target.error().to_string();
-  append(*target, 1U, 1U);
-  append(*target, 2U, 2U);
+  append(*target, tablet_id(), 1U, 1U);
+  append(*target, tablet_id(), 2U, 2U);
   auto snapshot = target->snapshot();
   ASSERT_TRUE(snapshot.has_value()) << snapshot.error().to_string();
   ASSERT_EQ(snapshot->sealed_generations().size(), 1U);
@@ -108,6 +109,40 @@ TEST(TabletStatePipelineTest, ExecutesOneGlobalVectorPipelineAcrossSealedAndActi
   EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
 }
 
+TEST(TabletStatePipelineTest, ExecutesOneGlobalAggregateAcrossMultipleTablets) {
+  auto schema = columnar::test::batch_schema();
+  const schema::TabletId first_id = tablet_id();
+  const schema::TabletId second_id = columnar::test::id<schema::TabletId>(71U);
+  const ingest::TabletStateConfig config{
+      .head_capacity = {.row_capacity = 4U, .variable_value_bytes = {0U, 2U, 0U}},
+      .maximum_schema_versions = 1U,
+      .maximum_sealed_generations = 1U,
+      .maximum_retry_entries = 2U,
+      .flush_queue = nullptr};
+  auto first = ingest::TabletState::create(schema, first_id, config).value();
+  auto second = ingest::TabletState::create(schema, second_id, config).value();
+  append(first, first_id, 1U, 1U);
+  append(second, second_id, 2U, 2U);
+  const std::vector snapshots{first.snapshot().value(), second.snapshot().value()};
+  auto lineage = schema::SchemaLineage::create(*schema).value();
+  QueryResourceContext resources = QueryResourceContext::create(16U * 1024U * 1024U).value();
+
+  auto pipeline =
+      instantiate_tablet_states_pipeline(resources, snapshots, lineage, schema->schema_id(),
+                                         lower("SELECT count(*) AS rows FROM events"));
+  ASSERT_TRUE(pipeline.has_value()) << pipeline.error().to_string();
+  auto step = (*pipeline)->next(resources);
+  ASSERT_TRUE(step.has_value()) << step.error().to_string();
+  ASSERT_EQ(step->kind(), PhysicalOperatorStepKind::kChunk);
+  const auto cell = step->chunk()->chunk().cell({.column_ordinal = 0U, .selected_row = 0U});
+  ASSERT_TRUE(cell.has_value());
+  common::ByteReader count{cell->bytes().value()};
+  EXPECT_EQ(count.read_i64_le().value(), 4);
+  step = (*pipeline)->next(resources);
+  ASSERT_TRUE(step.has_value());
+  EXPECT_EQ(step->kind(), PhysicalOperatorStepKind::kEnd);
+}
+
 TEST(TabletStatePipelineTest, RejectsAPlanWhoseSourceShapeDisagreesWithTheSnapshotSchema) {
   auto schema = columnar::test::batch_schema();
   auto target = ingest::TabletState::create(
@@ -127,6 +162,28 @@ TEST(TabletStatePipelineTest, RejectsAPlanWhoseSourceShapeDisagreesWithTheSnapsh
   QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
   auto pipeline = instantiate_tablet_state_pipeline(resources, target.snapshot().value(), lineage,
                                                     schema->schema_id(), wrong);
+  ASSERT_FALSE(pipeline.has_value());
+  EXPECT_EQ(pipeline.error().code(), common::StatusCode::kInvalidArgument);
+}
+
+TEST(TabletStatePipelineTest, RejectsDuplicateTabletSnapshots) {
+  auto schema = columnar::test::batch_schema();
+  auto target = ingest::TabletState::create(
+                    schema, tablet_id(),
+                    {.head_capacity = {.row_capacity = 2U, .variable_value_bytes = {0U, 2U, 0U}},
+                     .maximum_schema_versions = 1U,
+                     .maximum_sealed_generations = 1U,
+                     .maximum_retry_entries = 1U,
+                     .flush_queue = nullptr})
+                    .value();
+  const auto snapshot = target.snapshot().value();
+  const std::vector snapshots{snapshot, snapshot};
+  auto lineage = schema::SchemaLineage::create(*schema).value();
+  QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+
+  auto pipeline =
+      instantiate_tablet_states_pipeline(resources, snapshots, lineage, schema->schema_id(),
+                                         lower("SELECT count(*) AS rows FROM events"));
   ASSERT_FALSE(pipeline.has_value());
   EXPECT_EQ(pipeline.error().code(), common::StatusCode::kInvalidArgument);
 }

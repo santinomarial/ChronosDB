@@ -12,6 +12,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <span>
 
 namespace chronos::query {
 
@@ -19,6 +20,15 @@ struct TabletStatePipelineLimits {
   HeadScanLimits scan{};
   std::size_t maximum_source_configuration_bytes{8U * 1024U * 1024U};
 };
+
+// Instantiates one checked physical SQL pipeline over a stable set of TabletState publications for
+// the same table. Every sealed/active generation from every tablet is placed below one shared
+// physical pipeline, preserving table-wide aggregate/sort/latest/limit semantics. Tablet IDs must
+// be nonnil and unique.
+[[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>> instantiate_tablet_states_pipeline(
+    const QueryResourceContext& resources, std::span<const ingest::TabletSnapshot> snapshots,
+    const schema::SchemaLineage& lineage, schema::SchemaId destination_schema_id,
+    const PhysicalPipelinePlan& pipeline, TabletStatePipelineLimits limits = {});
 
 // Instantiates one checked physical SQL pipeline over a stable TabletState publication. Sealed
 // generations are scanned in retained order and the active generation last; global pipeline stages
