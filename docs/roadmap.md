@@ -940,7 +940,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   and cold authority with idempotent retry. The S3 carrier now retries only replay-safe operations
   within a bounded capped-backoff budget, freshly signs every attempt, and force-refreshes one
   caller-supplied concurrent credential provider after authorization rejection. Bounded
-  delta-seconds Retry-After hints may raise—but never exceed—the configured delay ceiling. Large uploads now
+  delta-seconds and strict RFC HTTP-date Retry-After hints may raise—but never exceed—the configured
+  delay ceiling. Large uploads now
   use bounded parallel multipart workers with per-part signing/retry, sorted opaque ETag completion,
   `If-None-Match: *`, strict embedded-error-aware completion parsing, exact final HEAD verification,
   and failure-path abort. Upload admission now

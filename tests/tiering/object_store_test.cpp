@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <ctime>
 #include <gtest/gtest.h>
 #include <map>
 #include <mutex>
@@ -34,6 +35,16 @@ namespace {
                                                                   : character);
   });
   return value;
+}
+
+[[nodiscard]] std::string future_http_date(const char* format) {
+  const std::time_t future = std::time(nullptr) + 2;
+  std::tm utc{};
+  if (::gmtime_r(&future, &utc) == nullptr)
+    return {};
+  std::array<char, 64U> encoded{};
+  const std::size_t length = std::strftime(encoded.data(), encoded.size(), format, &utc);
+  return std::string{encoded.data(), length};
 }
 
 struct RecordedRequest {
@@ -972,6 +983,75 @@ TEST(S3ObjectStoreTest, HonorsRetryAfterWithinConfiguredBackoffCeiling) {
   ASSERT_TRUE(uploaded.has_value()) << uploaded.error().to_string();
   EXPECT_GE(elapsed, std::chrono::milliseconds{15});
   EXPECT_LT(elapsed, std::chrono::seconds{2});
+  EXPECT_EQ(server.requests().size(), 2U);
+  EXPECT_TRUE(server.failure().empty()) << server.failure();
+}
+
+TEST(S3ObjectStoreTest, HonorsEveryHttpDateRetryAfterFormWithinBackoffCeiling) {
+  constexpr std::array<const char*, 3U> formats{
+      "%a, %d %b %Y %H:%M:%S GMT", "%A, %d-%b-%y %H:%M:%S GMT", "%a %b %e %H:%M:%S %Y"};
+  for (const char* format : formats) {
+    const std::string retry_after = future_http_date(format);
+    ASSERT_FALSE(retry_after.empty());
+    LocalS3Server server{
+        LocalS3Behavior{.transient_put_failures = 1U, .transient_retry_after = retry_after}};
+    ASSERT_TRUE(server.valid()) << server.failure();
+    S3ObjectStoreConfig config{.endpoint = "http://127.0.0.1:" + std::to_string(server.port()),
+                               .region = "us-east-1",
+                               .bucket = "chronos-test",
+                               .access_key_id = "test-access",
+                               .secret_access_key = "test-secret",
+                               .session_token = "test-token",
+                               .connect_timeout = std::chrono::milliseconds{1'000},
+                               .request_timeout = std::chrono::milliseconds{2'000},
+                               .maximum_attempts = 2U,
+                               .initial_retry_backoff = std::chrono::milliseconds{0},
+                               .maximum_retry_backoff = std::chrono::milliseconds{20},
+                               .maximum_response_bytes = 1024U,
+                               .require_tls = false};
+    auto store = S3ObjectStore::create(std::move(config));
+    ASSERT_TRUE(store.has_value()) << store.error().to_string();
+
+    const std::vector<std::byte> bytes{std::byte{0x18U}};
+    const auto started = std::chrono::steady_clock::now();
+    auto uploaded =
+        (*store)->put_if_absent("parts/http-date", bytes, ingest::sha256(bytes).value());
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    ASSERT_TRUE(uploaded.has_value()) << uploaded.error().to_string();
+    EXPECT_GE(elapsed, std::chrono::milliseconds{15}) << retry_after;
+    EXPECT_LT(elapsed, std::chrono::seconds{2}) << retry_after;
+    EXPECT_EQ(server.requests().size(), 2U);
+    EXPECT_TRUE(server.failure().empty()) << server.failure();
+  }
+}
+
+TEST(S3ObjectStoreTest, IgnoresInvalidHttpDateRetryAfter) {
+  LocalS3Server server{LocalS3Behavior{.transient_put_failures = 1U,
+                                       .transient_retry_after = "Sun, 31 Feb 2099 25:61:61 GMT"}};
+  ASSERT_TRUE(server.valid()) << server.failure();
+  S3ObjectStoreConfig config{.endpoint = "http://127.0.0.1:" + std::to_string(server.port()),
+                             .region = "us-east-1",
+                             .bucket = "chronos-test",
+                             .access_key_id = "test-access",
+                             .secret_access_key = "test-secret",
+                             .session_token = "test-token",
+                             .connect_timeout = std::chrono::milliseconds{1'000},
+                             .request_timeout = std::chrono::milliseconds{2'000},
+                             .maximum_attempts = 2U,
+                             .initial_retry_backoff = std::chrono::milliseconds{0},
+                             .maximum_retry_backoff = std::chrono::milliseconds{200},
+                             .maximum_response_bytes = 1024U,
+                             .require_tls = false};
+  auto store = S3ObjectStore::create(std::move(config));
+  ASSERT_TRUE(store.has_value()) << store.error().to_string();
+
+  const std::vector<std::byte> bytes{std::byte{0x19U}};
+  const auto started = std::chrono::steady_clock::now();
+  auto uploaded =
+      (*store)->put_if_absent("parts/invalid-http-date", bytes, ingest::sha256(bytes).value());
+  const auto elapsed = std::chrono::steady_clock::now() - started;
+  ASSERT_TRUE(uploaded.has_value()) << uploaded.error().to_string();
+  EXPECT_LT(elapsed, std::chrono::milliseconds{180});
   EXPECT_EQ(server.requests().size(), 2U);
   EXPECT_TRUE(server.failure().empty()) << server.failure();
 }

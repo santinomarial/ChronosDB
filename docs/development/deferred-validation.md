@@ -180,8 +180,8 @@
 
 - Live AWS/MinIO/LocalStack validation for the libcurl SigV4 backend; built-in workload/instance
   credential providers and ordered-chain policy, authenticated-proxy/live CONNECT qualification,
-  retry jitter and HTTP-date
-  `Retry-After`, high-concurrency multipart stress and live throughput tuning,
+  retry jitter, clock-step/skew simulation, high-concurrency multipart stress and live throughput
+  tuning,
   concurrent conditional writers, timeout/TLS/partial-response faults, eventual listing behavior,
   restore, conditional-delete races, live SSE-S3/SSE-KMS and bucket-policy qualification, and
   broader object-store fault injection. Durable cold-history discovery now completes
@@ -191,14 +191,16 @@
   Bounded replay-safe retries, capped backoff, per-attempt signing, explicit provider refresh after
   401/403, transient-service recovery, and exact attempt exhaustion have focused local coverage.
   Delta-seconds Retry-After parsing and the configured ceiling have focused local coverage.
+  Strict IMF-fixdate, RFC 850, and asctime Retry-After parsing with calendar/weekday validation has
+  focused local coverage under the same ceiling.
   Ambient-proxy exclusion and secret-bearing explicit-proxy rejection have focused local coverage.
   Explicit SSE-S3/SSE-KMS upload headers, exact HEAD verification, malformed configuration, and
   fail-closed stored-mode mismatch have focused local coverage. SSE-C, DSSE-KMS, encryption context,
   Bucket Keys, and live KMS identity normalization remain deferred.
   The explicit immutable environment provider has focused standard-variable, signed-request,
   incomplete-value, secret-redaction, and fail-closed refresh coverage.
-  Bounded parallel multipart creation, encoded upload IDs, signed parts, conditional completion, exact
-  final verification, strict HTTP-200 embedded-error rejection, and abort after part/completion
+  Bounded parallel multipart creation, encoded upload IDs, signed parts, conditional completion,
+  exact final verification, strict HTTP-200 embedded-error rejection, and abort after part/completion
   failure have focused local coverage. A two-worker overlap barrier and sorted completion test cover
   the bounded scheduler; TSan, high-part-count stress, completion races, abort failure, and bucket
   lifecycle cleanup remain deferred.

@@ -162,7 +162,7 @@ struct ResponseCapture {
   std::optional<std::string> entity_tag;
   std::optional<std::string> server_side_encryption;
   std::optional<std::string> kms_key_id;
-  std::optional<std::uint64_t> retry_after_seconds;
+  std::optional<std::string> retry_after;
   bool checksum_conflict{};
   bool content_range_conflict{};
   bool entity_tag_conflict{};
@@ -180,6 +180,145 @@ struct ResponseCapture {
     value.remove_suffix(1U);
   }
   return value;
+}
+
+[[nodiscard]] std::optional<unsigned> month_number(const std::string_view month) noexcept {
+  constexpr std::array<std::string_view, 12U> months{"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                                     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+  const auto found = std::ranges::find(months, month);
+  if (found == months.end())
+    return std::nullopt;
+  return static_cast<unsigned>(std::distance(months.begin(), found) + 1);
+}
+
+[[nodiscard]] std::optional<unsigned> weekday_number(const std::string_view weekday) noexcept {
+  constexpr std::array<std::string_view, 7U> short_names{"Sun", "Mon", "Tue", "Wed",
+                                                         "Thu", "Fri", "Sat"};
+  constexpr std::array<std::string_view, 7U> long_names{
+      "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+  auto found = std::ranges::find(short_names, weekday);
+  if (found != short_names.end())
+    return static_cast<unsigned>(std::distance(short_names.begin(), found));
+  found = std::ranges::find(long_names, weekday);
+  if (found == long_names.end())
+    return std::nullopt;
+  return static_cast<unsigned>(std::distance(long_names.begin(), found));
+}
+
+[[nodiscard]] bool parse_decimal_exact(const std::string_view encoded, unsigned& value) noexcept {
+  if (encoded.empty())
+    return false;
+  const auto parsed = std::from_chars(encoded.data(), encoded.data() + encoded.size(), value);
+  return parsed.ec == std::errc{} && parsed.ptr == encoded.data() + encoded.size();
+}
+
+struct HttpDateFields {
+  unsigned weekday{};
+  int year{};
+  unsigned month{};
+  unsigned day{};
+  unsigned hour{};
+  unsigned minute{};
+  unsigned second{};
+};
+
+[[nodiscard]] bool valid_http_date(const HttpDateFields& fields) noexcept {
+  using namespace std::chrono;
+  const year_month_day date{year{fields.year}, month{fields.month}, day{fields.day}};
+  return date.ok() && fields.hour < 24U && fields.minute < 60U && fields.second < 60U &&
+         weekday{sys_days{date}}.c_encoding() == fields.weekday;
+}
+
+[[nodiscard]] std::optional<std::uint64_t>
+http_date_epoch_seconds(const std::string_view encoded) noexcept {
+  HttpDateFields fields;
+  unsigned parsed_year{};
+  if (encoded.size() == 29U && encoded[3] == ',' && encoded[4] == ' ' && encoded[7] == ' ' &&
+      encoded[11] == ' ' && encoded[16] == ' ' && encoded[19] == ':' && encoded[22] == ':' &&
+      encoded.substr(25U) == " GMT") {
+    auto weekday = weekday_number(encoded.substr(0U, 3U));
+    auto month = month_number(encoded.substr(8U, 3U));
+    if (!weekday.has_value() || !month.has_value() ||
+        !parse_decimal_exact(encoded.substr(5U, 2U), fields.day) ||
+        !parse_decimal_exact(encoded.substr(12U, 4U), parsed_year) ||
+        !parse_decimal_exact(encoded.substr(17U, 2U), fields.hour) ||
+        !parse_decimal_exact(encoded.substr(20U, 2U), fields.minute) ||
+        !parse_decimal_exact(encoded.substr(23U, 2U), fields.second)) {
+      return std::nullopt;
+    }
+    fields.weekday = *weekday;
+    fields.month = *month;
+    fields.year = static_cast<int>(parsed_year);
+  } else if (encoded.size() >= 30U && encoded.size() <= 33U) {
+    const std::size_t comma = encoded.find(',');
+    if (comma < 6U || comma > 9U || encoded.size() != comma + 24U || encoded[comma + 1U] != ' ' ||
+        encoded[comma + 4U] != '-' || encoded[comma + 8U] != '-' || encoded[comma + 11U] != ' ' ||
+        encoded[comma + 14U] != ':' || encoded[comma + 17U] != ':' ||
+        encoded.substr(comma + 20U) != " GMT") {
+      return std::nullopt;
+    }
+    auto weekday = weekday_number(encoded.substr(0U, comma));
+    auto month = month_number(encoded.substr(comma + 5U, 3U));
+    if (!weekday.has_value() || !month.has_value() ||
+        !parse_decimal_exact(encoded.substr(comma + 2U, 2U), fields.day) ||
+        !parse_decimal_exact(encoded.substr(comma + 9U, 2U), parsed_year) ||
+        !parse_decimal_exact(encoded.substr(comma + 12U, 2U), fields.hour) ||
+        !parse_decimal_exact(encoded.substr(comma + 15U, 2U), fields.minute) ||
+        !parse_decimal_exact(encoded.substr(comma + 18U, 2U), fields.second)) {
+      return std::nullopt;
+    }
+    fields.weekday = *weekday;
+    fields.month = *month;
+    const int current_year = static_cast<int>(std::chrono::year_month_day{
+        std::chrono::floor<std::chrono::days>(std::chrono::system_clock::now())}
+                                                  .year());
+    fields.year = (current_year / 100) * 100 + static_cast<int>(parsed_year);
+    if (fields.year > current_year + 50)
+      fields.year -= 100;
+  } else if (encoded.size() == 24U && encoded[3] == ' ' && encoded[7] == ' ' &&
+             encoded[10] == ' ' && encoded[13] == ':' && encoded[16] == ':' && encoded[19] == ' ') {
+    auto weekday = weekday_number(encoded.substr(0U, 3U));
+    auto month = month_number(encoded.substr(4U, 3U));
+    std::string_view day = encoded.substr(8U, 2U);
+    if (day.front() == ' ')
+      day.remove_prefix(1U);
+    if (!weekday.has_value() || !month.has_value() || !parse_decimal_exact(day, fields.day) ||
+        !parse_decimal_exact(encoded.substr(20U, 4U), parsed_year) ||
+        !parse_decimal_exact(encoded.substr(11U, 2U), fields.hour) ||
+        !parse_decimal_exact(encoded.substr(14U, 2U), fields.minute) ||
+        !parse_decimal_exact(encoded.substr(17U, 2U), fields.second)) {
+      return std::nullopt;
+    }
+    fields.weekday = *weekday;
+    fields.month = *month;
+    fields.year = static_cast<int>(parsed_year);
+  } else {
+    return std::nullopt;
+  }
+  if (!valid_http_date(fields))
+    return std::nullopt;
+  using namespace std::chrono;
+  const sys_seconds instant = sys_days{year{fields.year} / month{fields.month} / day{fields.day}} +
+                              hours{fields.hour} + minutes{fields.minute} + seconds{fields.second};
+  const auto count = instant.time_since_epoch().count();
+  return count < 0 ? std::nullopt : std::optional<std::uint64_t>{static_cast<std::uint64_t>(count)};
+}
+
+[[nodiscard]] std::optional<std::uint64_t>
+retry_after_delay_seconds(const std::string_view encoded) noexcept {
+  std::uint64_t delta{};
+  const auto parsed = std::from_chars(encoded.data(), encoded.data() + encoded.size(), delta);
+  if (!encoded.empty() && parsed.ec == std::errc{} && parsed.ptr == encoded.data() + encoded.size())
+    return delta;
+  auto target = http_date_epoch_seconds(encoded);
+  if (!target.has_value())
+    return std::nullopt;
+  const auto current = std::chrono::duration_cast<std::chrono::seconds>(
+                           std::chrono::system_clock::now().time_since_epoch())
+                           .count();
+  if (current < 0 || *target <= static_cast<std::uint64_t>(current))
+    return 0U;
+  return *target - static_cast<std::uint64_t>(current);
 }
 
 [[nodiscard]] std::size_t capture_body(char* data, const std::size_t size, const std::size_t count,
@@ -262,14 +401,12 @@ struct ResponseCapture {
         capture.server_side_encryption = value;
     } else if (matches_name(retry_after_name)) {
       const std::string_view value = trim_header_value(line.substr(retry_after_name.size()));
-      std::uint64_t seconds{};
-      const auto parsed = std::from_chars(value.data(), value.data() + value.size(), seconds);
-      if (capture.retry_after_seconds.has_value() || value.empty() || parsed.ec != std::errc{} ||
-          parsed.ptr != value.data() + value.size()) {
+      if (capture.retry_after.has_value() || value.empty() || value.size() > 64U ||
+          contains_control(value)) {
         capture.retry_after_invalid = true;
-        capture.retry_after_seconds.reset();
+        capture.retry_after.reset();
       } else if (!capture.retry_after_invalid) {
-        capture.retry_after_seconds = seconds;
+        capture.retry_after = value;
       }
     }
   } catch (...) {
@@ -969,8 +1106,9 @@ public:
         return response;
       }
       refresh_credentials = authorization_rejected;
-      wait_before_retry(attempt, replayable_status && !response->capture.retry_after_invalid
-                                     ? response->capture.retry_after_seconds
+      wait_before_retry(attempt, replayable_status && !response->capture.retry_after_invalid &&
+                                         response->capture.retry_after.has_value()
+                                     ? retry_after_delay_seconds(*response->capture.retry_after)
                                      : std::nullopt);
     }
     return common::make_unexpected(
