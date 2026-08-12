@@ -40,6 +40,12 @@ current latest positions, and overflows active sessions. Old tokens then fail ra
 missing result. Unlike schema invalidation, a new subscriber may take a fresh snapshot at the new
 vector and resume future publication under the same plan.
 
+Durable installation failure is a different transition because the current in-memory positions
+have already advanced. `mark_replay_unavailable` does not invent another source position. It clears
+the retained admission order, expires every source through its current latest position, and
+overflows active snapshot/live sessions. The single-node applied-append fan-out uses this transition
+before disabling a plan whose synchronous checkpoint could not be installed.
+
 `DurableMultiTabletSubscription` couples that logical state to a lock-owning immutable-generation
 store. Reopen treats the latest installed checkpoint vector as the authoritative replay boundary;
 committed log entries after it must be fed back through `publish_committed` in each source's exact

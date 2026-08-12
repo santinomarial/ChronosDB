@@ -84,11 +84,35 @@ void SingleNodeLiveAppendFanout::on_applied(AppliedSingleNodeColumnarAppend appe
       continue;
     const live::SourcePosition position{append.tablet_id, append.position.wal_id,
                                         append.position.record_sequence};
+    const auto persist = [&]() noexcept {
+      try {
+        auto checkpoint = entry.binding.coordinator->checkpoint();
+        if (checkpoint.has_value()) {
+          ++metrics_.checkpoint_successes;
+          return true;
+        }
+      } catch (...) {
+      }
+      ++metrics_.checkpoint_failures;
+      try {
+        const common::Status invalidated = entry.binding.coordinator->mark_replay_unavailable();
+        if (invalidated.is_ok())
+          ++metrics_.replay_invalidations;
+        else
+          ++metrics_.containment_failures;
+      } catch (...) {
+        ++metrics_.containment_failures;
+      }
+      entry.enabled = false;
+      ++metrics_.disabled_plans;
+      return false;
+    };
     const auto contain = [&]() noexcept {
       try {
         const common::Status contained = entry.binding.coordinator->mark_continuity_lost(position);
         if (contained.is_ok()) {
           ++metrics_.continuity_losses;
+          static_cast<void>(persist());
           return;
         }
       } catch (...) {
@@ -110,6 +134,7 @@ void SingleNodeLiveAppendFanout::on_applied(AppliedSingleNodeColumnarAppend appe
             entry.binding.coordinator->publish_committed(std::move(incompatible));
         if (published.is_ok()) {
           ++metrics_.schema_invalidations;
+          static_cast<void>(persist());
           continue;
         }
       } catch (...) {
@@ -127,6 +152,7 @@ void SingleNodeLiveAppendFanout::on_applied(AppliedSingleNodeColumnarAppend appe
               entry.binding.coordinator->publish_committed(std::move(*change));
           if (published.is_ok()) {
             ++metrics_.published_changes;
+            static_cast<void>(persist());
             continue;
           }
           ++metrics_.publication_failures;

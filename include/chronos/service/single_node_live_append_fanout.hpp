@@ -28,6 +28,9 @@ struct SingleNodeLiveAppendFanoutMetrics {
   std::uint64_t evaluation_failures{};
   std::uint64_t publication_failures{};
   std::uint64_t continuity_losses{};
+  std::uint64_t checkpoint_successes{};
+  std::uint64_t checkpoint_failures{};
+  std::uint64_t replay_invalidations{};
   std::uint64_t containment_failures{};
   std::size_t configured_plans{};
   std::size_t disabled_plans{};

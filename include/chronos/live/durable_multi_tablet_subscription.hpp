@@ -49,6 +49,7 @@ public:
   [[nodiscard]] common::Status complete_snapshot(const common::Uuid& subscription_id);
   [[nodiscard]] common::Status publish_committed(CommittedChange change);
   [[nodiscard]] common::Status mark_continuity_lost(SourcePosition position);
+  [[nodiscard]] common::Status mark_replay_unavailable();
   [[nodiscard]] common::Result<std::vector<DeliveryRecord>>
   poll(const common::Uuid& subscription_id, std::size_t maximum_records) const;
   [[nodiscard]] common::Result<std::vector<std::byte>>

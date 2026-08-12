@@ -23,10 +23,11 @@ be evaluated independently per append.
 On the single database-owner thread, one observed append is routed only to coordinators with the
 same table and exact tablet/WAL source. A matching schema is evaluated and published. A different
 schema is published through the coordinator's existing incompatible-schema transition. Evaluation
-or publication failure invokes `mark_continuity_lost` at the exact applied source position. If even
-that containment transition fails, the affected binding is permanently disabled. The callback is
-`noexcept`, and metrics distinguish observation, evaluation, publication, invalidation, continuity
-loss, and containment failure.
+or publication failure invokes `mark_continuity_lost` at the exact applied source position. Every
+result, schema, or continuity transition is synchronously checkpointed before the callback returns.
+Checkpoint failure invalidates replay and permanently disables the binding. The callback is
+`noexcept`, and metrics distinguish observation, evaluation, publication, schema invalidation,
+continuity loss, checkpoint outcome, replay invalidation, and containment failure.
 
 Bindings and all borrowed owners must outlive the fan-out. The fan-out and its metrics are
 thread-affine; no atomics or internal locks imply cross-thread authority. Dynamic registration,

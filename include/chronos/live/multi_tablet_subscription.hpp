@@ -102,6 +102,9 @@ public:
   // failed. Existing subscriptions overflow, all retained suffixes expire, and new subscriptions
   // may start only from the resulting current vector.
   [[nodiscard]] common::Status mark_continuity_lost(SourcePosition position);
+  // Invalidates every replay suffix at the current source vector after durable installation has
+  // failed. Active snapshot/live subscribers overflow and no retained change remains deliverable.
+  [[nodiscard]] common::Status mark_replay_unavailable();
   [[nodiscard]] common::Result<std::vector<DeliveryRecord>>
   poll(const common::Uuid& subscription_id, std::size_t maximum_records) const;
   [[nodiscard]] common::Result<std::vector<std::byte>>

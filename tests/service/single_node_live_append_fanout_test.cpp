@@ -6,6 +6,7 @@
 #include <array>
 #include <cstddef>
 #include <filesystem>
+#include <fstream>
 #include <gtest/gtest.h>
 #include <memory>
 #include <string>
@@ -141,6 +142,10 @@ TEST(SingleNodeLiveAppendFanoutTest, EvaluatesAndPublishesOneAppliedAppend) {
   EXPECT_EQ(metrics.evaluated_plans, 1U);
   EXPECT_EQ(metrics.published_changes, 1U);
   EXPECT_EQ(metrics.continuity_losses, 0U);
+  EXPECT_EQ(metrics.checkpoint_successes, 1U);
+  EXPECT_EQ(metrics.checkpoint_failures, 0U);
+  EXPECT_EQ(coordinator->checkpoint_generation(), 1U);
+  EXPECT_FALSE(coordinator->has_uncheckpointed_changes());
   EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
 }
 
@@ -174,6 +179,7 @@ TEST(SingleNodeLiveAppendFanoutTest, ContainsPostApplyPublicationFailureAsContin
   const SingleNodeLiveAppendFanoutMetrics metrics = (*fanout)->metrics();
   EXPECT_EQ(metrics.publication_failures, 1U);
   EXPECT_EQ(metrics.continuity_losses, 1U);
+  EXPECT_EQ(metrics.checkpoint_successes, 1U);
   EXPECT_EQ(metrics.containment_failures, 0U);
   EXPECT_EQ(metrics.disabled_plans, 0U);
 }
@@ -202,6 +208,7 @@ TEST(SingleNodeLiveAppendFanoutTest, ContainsPostApplyEvaluationFailureAsContinu
   const SingleNodeLiveAppendFanoutMetrics metrics = (*fanout)->metrics();
   EXPECT_EQ(metrics.evaluation_failures, 1U);
   EXPECT_EQ(metrics.continuity_losses, 1U);
+  EXPECT_EQ(metrics.checkpoint_successes, 1U);
   EXPECT_EQ(metrics.publication_failures, 0U);
   EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
 }
@@ -231,6 +238,43 @@ TEST(SingleNodeLiveAppendFanoutTest, TerminatesOldPlanWhenAppliedSchemaChanges) 
   EXPECT_EQ(metrics.schema_invalidations, 1U);
   EXPECT_EQ(metrics.evaluated_plans, 0U);
   EXPECT_EQ(metrics.continuity_losses, 0U);
+  EXPECT_EQ(metrics.checkpoint_successes, 1U);
+}
+
+TEST(SingleNodeLiveAppendFanoutTest, DisablesPlanAndOverflowsDeliveryOnCheckpointFailure) {
+  TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  const auto input = batch();
+  auto plan = live::prepare_subscription_plan("SUBSCRIBE SELECT tag FROM events", catalog(input));
+  ASSERT_TRUE(plan.has_value());
+  auto coordinator =
+      live::DurableMultiTabletSubscription::create_new(config(directory.path(), *plan));
+  ASSERT_TRUE(coordinator.has_value()) << coordinator.error().to_string();
+  const common::Uuid subscription_id = uuid(std::byte{10});
+  ASSERT_TRUE(coordinator->register_subscription(plan->request(subscription_id)).has_value());
+  ASSERT_TRUE(coordinator->complete_snapshot(subscription_id).is_ok());
+  auto first_name = live::multi_tablet_subscription_checkpoint_generation_file_name(1U);
+  ASSERT_TRUE(first_name.has_value());
+  {
+    std::ofstream corrupt{directory.path() / *first_name, std::ios::binary};
+    ASSERT_TRUE(corrupt.is_open());
+    corrupt.put('x');
+  }
+  query::QueryResourceContext resources = query::QueryResourceContext::create(1U << 20U).value();
+  auto fanout = SingleNodeLiveAppendFanout::create({{&*plan, &*coordinator, &resources, {}}});
+  ASSERT_TRUE(fanout.has_value());
+
+  (*fanout)->on_applied(applied(input));
+
+  auto status = coordinator->status(subscription_id);
+  ASSERT_TRUE(status.has_value());
+  EXPECT_EQ(status->phase, live::SubscriptionPhase::kOverflowed);
+  const SingleNodeLiveAppendFanoutMetrics metrics = (*fanout)->metrics();
+  EXPECT_EQ(metrics.published_changes, 1U);
+  EXPECT_EQ(metrics.checkpoint_failures, 1U);
+  EXPECT_EQ(metrics.replay_invalidations, 1U);
+  EXPECT_EQ(metrics.disabled_plans, 1U);
+  EXPECT_EQ(metrics.checkpoint_successes, 0U);
 }
 
 TEST(SingleNodeLiveAppendFanoutTest, RejectsUnsupportedAndDuplicateBindingsAtAdmission) {

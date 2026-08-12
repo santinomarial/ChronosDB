@@ -55,7 +55,10 @@ tablet/WAL bindings are evaluated in configured order. Success publishes the exa
 identity change drives the coordinator's terminal schema transition. Evaluation or publication
 failure instead advances the exact source through `mark_continuity_lost`, overflowing old sessions
 and tokens so no client can resume across the missing result. Failure of that containment disables
-the binding. None of these outcomes can reject or relabel the committed write.
+the binding. After every applied-position transition, the fan-out synchronously installs the next
+durable coordinator generation before returning to the write path. Checkpoint failure clears replay
+at the current vector, overflows active delivery, and disables the binding. None of these outcomes
+can reject or relabel the committed write.
 
 The fan-out and its counters are single-thread-affine. Routing is linear in configured plans and
 has an explicit maximum; indexing is not justified without a profile. Startup recovery does not
@@ -74,3 +77,4 @@ Retaining chunks is deliberate because the existing encoder consumes borrowed ce
 - Why must nested result size account for the outer subscription envelope?
 - At what exact point may the caller publish the returned change?
 - Why does fan-out failure overflow replay state instead of failing the append?
+- Why is coordinator checkpointing still synchronous with the current write callback?

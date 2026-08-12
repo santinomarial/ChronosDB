@@ -506,6 +506,19 @@ common::Status MultiTabletSubscriptionManager::mark_continuity_lost(const Source
   return common::Status::ok();
 }
 
+common::Status MultiTabletSubscriptionManager::mark_replay_unavailable() {
+  impl_->retained_changes.clear();
+  impl_->retained_change_bytes = 0U;
+  for (Impl::SourceState& source : impl_->sources)
+    source.expired_through_sequence = source.latest_sequence;
+  for (auto& [identity, state] : impl_->subscriptions) {
+    static_cast<void>(identity);
+    if (state.phase == SubscriptionPhase::kSnapshot || state.phase == SubscriptionPhase::kLive)
+      Impl::overflow(state);
+  }
+  return common::Status::ok();
+}
+
 common::Result<std::vector<DeliveryRecord>>
 MultiTabletSubscriptionManager::poll(const common::Uuid& subscription_id,
                                      const std::size_t maximum_records) const {

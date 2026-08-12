@@ -274,3 +274,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0237](0237-single-node-applied-append-observation.md) | Single-node applied append observation | accepted |
 | [0238](0238-fail-closed-subscription-continuity-loss.md) | Fail-closed subscription continuity loss | accepted |
 | [0239](0239-bounded-single-node-live-append-fanout.md) | Bounded single-node live append fan-out | accepted |
+| [0240](0240-write-synchronous-live-checkpoint-gate.md) | Write-synchronous live checkpoint gate | accepted |
