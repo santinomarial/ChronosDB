@@ -933,9 +933,12 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   validates length/SHA-256 with HEAD and conditions DELETE on the observed ETag. Cross-layer remote
   reclamation now requires the exact selected pair to omit the logical part/route/key, waits for all
   historical aggregate readers that can expose the route, preflights every object's metadata, and
-  conditionally deletes with idempotent absent retry. Durable post-crash garbage discovery,
-  WAL-local deletion, other query paths,
-  multipart/retry and credential-refresh ownership remain deferred. An optional Apache Arrow/
+  conditionally deletes with idempotent absent retry. Restart reclamation now treats immutable
+  consecutive cold-generation history as its durable garbage journal: before reader admission it
+  exact-binds every historical generation to its own Manifest/catalog authority, revalidates the
+  selected pair and remote metadata, and conditionally deletes routes absent from current logical
+  and cold authority with idempotent retry. WAL-local deletion, other query paths, multipart/retry,
+  and credential-refresh ownership remain deferred. An optional Apache Arrow/
   Parquet provider now imports and exports files through an exact caller-supplied schema, maps all
   current logical types, bounds source/final canonical storage, rejects corruption and mismatch,
   and atomically publishes completed exports without changing CSEG or Manifest bytes. Independent

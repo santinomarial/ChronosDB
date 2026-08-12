@@ -16,7 +16,9 @@ The important public operations are:
 - install generation one or the exact next generation;
 - recover the highest consecutive generation only when it binds to the supplied Manifest v2; and
 - release-publish one compatible Manifest-v2/cold shared epoch for readers; and
-- crash-commit exact component lengths and SHA-256 values through a separate pair registry.
+- crash-commit exact component lengths and SHA-256 values through a separate pair registry; and
+- exact-load historical metadata for a startup garbage pass that separately rebinds every
+  generation to its historical Manifest.
 
 ## Data structures and invariants
 
@@ -72,12 +74,21 @@ generations named by the highest marker; later component finals remain uncommitt
 acquisition order is Manifest, cold manifest, then pair commit. Reclamation must still wait for every
 older reader and verify the remaining source before unlinking anything.
 
+After a crash, immutable consecutive cold generations are also the durable remote-garbage journal.
+Before publishing the recovered pair, startup exact-loads every generation through the selected
+one, binds it to its own historical Manifest and catalog/source bindings, validates adjacent
+transitions, and identifies routes absent from current logical and cold authority. Remote metadata
+and the selected pair are rechecked before exact conditional deletion. An interrupted pass is
+idempotent because already-absent objects are successful progress. Historical metadata loading by
+itself is never publishable authority.
+
 ## Complexity and tradeoffs
 
 Encoding and binding are linear in descriptor count and key bytes. Installation adds one complete
-write and readback plus two synchronization calls. Recovery enumerates generation names and reads
-only the selected generation. Full snapshots and retained generations amplify space, but avoid a
-mutable pointer, edit-log repair, or listing-derived truth.
+write and readback plus two synchronization calls. Pair recovery enumerates generation names and
+reads only the selected generation. Restart garbage discovery reads every retained generation and
+its historical base Manifest. Full snapshots and retained generations amplify space and startup
+work, but avoid a mutable pointer, edit-log repair, separate garbage log, or listing-derived truth.
 
 The object-store UUID intentionally names deployment configuration rather than embedding endpoints
 or credentials. This keeps secrets out of durable bytes, but operators must preserve a stable UUID
@@ -92,6 +103,8 @@ concurrent old/new pair acquisition, and predecessor-owner retention.
 Pair tests additionally cover every fixed-record truncation, unknown versions/flags, idempotent
 commit, uncommitted higher component finals, committed pair advancement, and no fallback from a
 damaged highest marker.
+Restart garbage tests additionally cover evolving historical catalog bindings, work limits,
+missing authority, remote metadata mismatch, exact deletion, and absent-object retry.
 
 Useful design questions include:
 

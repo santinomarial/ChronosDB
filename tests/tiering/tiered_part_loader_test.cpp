@@ -814,6 +814,70 @@ TEST(TieredRemoteObjectReclamationTest,
   EXPECT_EQ(mismatch.error().code(), common::StatusCode::kCorruption);
   EXPECT_EQ(wrong_store.object_count(), 1U);
 
+  MemoryObjectStore restart_store;
+  ASSERT_TRUE(restart_store
+                  .put_if_absent(fixture->part.object_key, fixture->part.encoded.bytes(),
+                                 fixture->part.descriptor.content_sha256)
+                  .has_value());
+  const auto restart_schema_bindings = fixture->part.bindings();
+  const auto restart_source_bindings = fixture->part.source_bindings();
+  const std::span<const manifest::TabletSchemaBinding> no_schema_bindings;
+  const std::span<const manifest::TemporalTabletSourceBinding> no_source_bindings;
+  const manifest::TemporalManifestLoadRequest recovery_manifest_request{
+      .expected_database_id = fixture->part.database_id,
+      .schema_bindings = no_schema_bindings,
+      .source_bindings = no_source_bindings,
+      .decode_limits = {},
+      .part_validation_limits = {}};
+  auto recovered = pair_storage->recover(
+      fixture->manifest_storage, *fixture->cold_storage,
+      {.manifest_request = recovery_manifest_request, .remote_store = &restart_store});
+  ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
+  ASSERT_TRUE(recovered->has_value());
+  const std::array historical_bindings{
+      TieredRestartManifestBinding{.manifest_generation = 1U,
+                                   .schema_bindings = restart_schema_bindings,
+                                   .source_bindings = restart_source_bindings},
+      TieredRestartManifestBinding{.manifest_generation = 2U,
+                                   .schema_bindings = no_schema_bindings,
+                                   .source_bindings = no_source_bindings}};
+  auto bounded = TieredRestartRemoteGarbageCoordinator::reclaim_unreachable(
+      **recovered, *pair_storage, fixture->manifest_storage, *fixture->cold_storage,
+      historical_bindings, restart_store, {.maximum_cold_generations = 1U, .maximum_objects = 1U});
+  ASSERT_FALSE(bounded.has_value());
+  EXPECT_EQ(bounded.error().code(), common::StatusCode::kResourceExhausted);
+  EXPECT_EQ(restart_store.object_count(), 1U);
+  auto missing_binding = TieredRestartRemoteGarbageCoordinator::reclaim_unreachable(
+      **recovered, *pair_storage, fixture->manifest_storage, *fixture->cold_storage,
+      std::span{historical_bindings}.subspan(1U), restart_store);
+  ASSERT_FALSE(missing_binding.has_value());
+  EXPECT_EQ(missing_binding.error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(restart_store.object_count(), 1U);
+  auto restart_mismatch = TieredRestartRemoteGarbageCoordinator::reclaim_unreachable(
+      **recovered, *pair_storage, fixture->manifest_storage, *fixture->cold_storage,
+      historical_bindings, wrong_store);
+  ASSERT_FALSE(restart_mismatch.has_value());
+  EXPECT_EQ(restart_mismatch.error().code(), common::StatusCode::kCorruption);
+  EXPECT_EQ(wrong_store.object_count(), 1U);
+  auto restart_reclaimed = TieredRestartRemoteGarbageCoordinator::reclaim_unreachable(
+      **recovered, *pair_storage, fixture->manifest_storage, *fixture->cold_storage,
+      historical_bindings, restart_store);
+  ASSERT_TRUE(restart_reclaimed.has_value()) << restart_reclaimed.error().to_string();
+  EXPECT_EQ(restart_reclaimed->pair_generation, 2U);
+  EXPECT_EQ(restart_reclaimed->manifest_generation, 2U);
+  EXPECT_EQ(restart_reclaimed->cold_generations_validated, 2U);
+  EXPECT_EQ(restart_reclaimed->candidate_objects, 1U);
+  EXPECT_EQ(restart_reclaimed->metadata_validated, 1U);
+  EXPECT_EQ(restart_reclaimed->removed_objects, 1U);
+  EXPECT_EQ(restart_reclaimed->already_absent_objects, 0U);
+  EXPECT_EQ(restart_store.object_count(), 0U);
+  auto restart_retry = TieredRestartRemoteGarbageCoordinator::reclaim_unreachable(
+      **recovered, *pair_storage, fixture->manifest_storage, *fixture->cold_storage,
+      historical_bindings, restart_store);
+  ASSERT_TRUE(restart_retry.has_value());
+  EXPECT_EQ(restart_retry->removed_objects, 0U);
+  EXPECT_EQ(restart_retry->already_absent_objects, 1U);
+
   auto reclaimed = TieredRemoteObjectReclamationCoordinator::reclaim(*proof, *pair_storage,
                                                                      fixture->object_store);
   ASSERT_TRUE(reclaimed.has_value()) << reclaimed.error().to_string();

@@ -72,7 +72,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Cold Location Manifest v1](formats/cold-location-manifest-v1.md): separate immutable object-store
   location authority bound to an exact Manifest v2 database/generation, deployment store identity,
   and part length/SHA-256, with a strict checksummed codec, exact binding validation, synchronized
-  immutable generation installation, and highest-generation/no-fallback recovery.
+  immutable generation installation, highest-generation/no-fallback recovery, and startup remote
+  garbage discovery from exact historical generations without bucket listings.
 - [Tiered Pair Commit v1](formats/tiered-pair-commit-v1.md): fixed checksummed aggregate commit
   binding exact Manifest v2 and cold generations by length/SHA-256, with synchronized installation,
   uncommitted-final isolation, and no-fallback recovery.
@@ -168,6 +169,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   contract, reopening, bounded-memory behavior, and failure handling.
 - [WAL commit coordination](learning/wal-commit-coordinator.md): bounded admission, single-worker
   ownership, mixed durability, group commit, shutdown, metrics, and synchronization argument.
+- [Restart remote garbage discovery](learning/restart-remote-garbage-discovery.md): durable cold
+  history, historical Manifest rebinding, startup ownership, exact deletion, and idempotent retry.
 - [Columnar ingestion design](learning/columnar-ingestion-design.md): batch/schema boundaries, WAL
   command flow, retry identity, publication proof, recovery model, and implementation questions.
 - [Logical schema foundation](learning/schema-foundation.md): implemented UUID/identity/type/schema

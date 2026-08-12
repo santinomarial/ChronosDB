@@ -45,8 +45,8 @@ conditional `DeleteObject` access for the configured prefix, enforce TLS, keep b
 compatible with
 `If-None-Match`, and rotate credentials outside the current store lifetime. Cold Location Manifest
 v1 records the object key, store identity, and exact Manifest v2 part SHA-256; its durable
-installation/publication path is still separate work. Bucket listings and ETags are not a
-replacement.
+installation, pair selection, and publication path is separate from the object backend. Bucket
+listings and ETags are not a replacement.
 
 ## Cold location authority
 
@@ -62,8 +62,10 @@ The codec is not a deletion receipt. Production publication must acquire a compa
 cold pair, and local reclamation must wait for every older reader pin. The object backend can now
 delete only after exact length/SHA-256 verification and, for S3, an ETag `If-Match`.
 `TieredRemoteObjectReclamationCoordinator` supplies the separate current-pair and historical-reader
-proof before invoking it. Interrupted deletion remains safely retryable, although restart garbage
-discovery for leaked unreachable objects is not yet implemented.
+proof before invoking it. After a crash, `TieredRestartRemoteGarbageCoordinator` uses consecutive
+local cold-generation history—not a bucket listing—to rediscover unreachable routes before reader
+admission, rebinds each generation to its exact historical Manifest, preflights all metadata, and
+retries already-absent objects safely.
 
 Likely review questions include why conditional PUT precedes HEAD, why ETag is insufficient, why
 redirects are disabled, what verifies a range, and why the memory backend is not a durability

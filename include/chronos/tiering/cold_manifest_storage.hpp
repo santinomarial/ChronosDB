@@ -118,6 +118,12 @@ public:
   load_generation(std::uint64_t generation,
                   const manifest::DecodedTemporalManifestView& base_manifest) const;
 
+  // Reads and exact-decodes one installed generation and validates the configured database/store
+  // ownership without accepting it as publishable authority. Restart garbage discovery binds this
+  // metadata to its exact historical Manifest before using any route.
+  [[nodiscard]] common::Result<DecodedColdLocationManifest>
+  load_generation_metadata(std::uint64_t generation) const;
+
   [[nodiscard]] bool is_usable() const noexcept;
   [[nodiscard]] common::Status poison_status() const;
   [[nodiscard]] ColdLocationManifestStorageMetrics metrics() const noexcept;

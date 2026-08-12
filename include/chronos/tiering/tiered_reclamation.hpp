@@ -129,6 +129,31 @@ struct TieredRemoteObjectReclamationReport {
                          const TieredRemoteObjectReclamationReport&) = default;
 };
 
+struct TieredRestartManifestBinding {
+  std::uint64_t manifest_generation{};
+  std::span<const manifest::TabletSchemaBinding> schema_bindings;
+  std::span<const manifest::TemporalTabletSourceBinding> source_bindings;
+};
+
+struct TieredRestartRemoteGarbageLimits {
+  manifest::ManifestDecodeLimits manifest_decode;
+  std::size_t maximum_cold_generations{1U << 20U};
+  std::size_t maximum_objects{1U << 20U};
+};
+
+struct TieredRestartRemoteGarbageReport {
+  std::uint64_t pair_generation{};
+  std::uint64_t manifest_generation{};
+  std::uint64_t cold_generations_validated{};
+  std::uint64_t candidate_objects{};
+  std::uint64_t metadata_validated{};
+  std::uint64_t removed_objects{};
+  std::uint64_t already_absent_objects{};
+
+  friend bool operator==(const TieredRestartRemoteGarbageReport&,
+                         const TieredRestartRemoteGarbageReport&) = default;
+};
+
 class TieredRemoteObjectReclamationCoordinator {
 public:
   TieredRemoteObjectReclamationCoordinator() = delete;
@@ -147,6 +172,21 @@ public:
   [[nodiscard]] static common::Result<TieredRemoteObjectReclamationReport>
   reclaim(const TieredRemoteObjectReclamationProof& proof,
           const TieredPairCommitStorage& pair_storage, ObjectStore& remote_store);
+};
+
+class TieredRestartRemoteGarbageCoordinator {
+public:
+  TieredRestartRemoteGarbageCoordinator() = delete;
+
+  // Startup-only control-plane operation. The caller must not publish recovered_pair or admit
+  // readers until this call returns. Immutable local cold history, never an object-store listing,
+  // identifies routes removed by the exact selected pair. Every historical cold generation is
+  // rebound to its historical Manifest and every transition is revalidated before deletion.
+  [[nodiscard]] static common::Result<TieredRestartRemoteGarbageReport> reclaim_unreachable(
+      const RecoveredTieredPair& recovered_pair, const TieredPairCommitStorage& pair_storage,
+      manifest::ManifestStorage& manifest_storage, const ColdLocationManifestStorage& cold_storage,
+      std::span<const TieredRestartManifestBinding> manifest_bindings, ObjectStore& remote_store,
+      TieredRestartRemoteGarbageLimits limits = {});
 };
 
 } // namespace chronos::tiering
