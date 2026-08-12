@@ -592,6 +592,7 @@ add_library(
   src/raft/tablet_movement_checkpoint_storage.cpp
   src/raft/tablet_movement_snapshot_chunk.cpp
   src/raft/tablet_movement_snapshot_chunk_storage.cpp
+  src/raft/transport_codec.cpp
 )
 add_library(chronos::raft ALIAS chronos_raft)
 set_target_properties(chronos_raft PROPERTIES EXPORT_NAME raft CXX_EXTENSIONS OFF)
@@ -976,6 +977,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/raft/tablet_movement_snapshot_chunk_test.cpp
     tests/raft/tablet_movement_snapshot_chunk_storage_header_self_contained.cpp
     tests/raft/tablet_movement_snapshot_chunk_storage_test.cpp
+    tests/raft/transport_codec_header_self_contained.cpp
+    tests/raft/transport_codec_test.cpp
     tests/raft/multi_raft_header_self_contained.cpp
     tests/raft/multi_raft_test.cpp
     tests/raft/metadata_header_self_contained.cpp

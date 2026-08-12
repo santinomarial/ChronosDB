@@ -108,6 +108,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   window/aggregate state, committed progress, IEEE-754 preservation, and CRC32C rejection rules.
 - [Multiplexed Raft Persistent-State Record v1](formats/multiplexed-raft-log-v1.md): checksummed,
   group-tagged full-state records plus the implemented segmented append/sync/recovery envelope.
+- [Raft Transport Envelope v1](formats/raft-transport-v1.md): bounded checksummed group/source/
+  destination routing for every deterministic Raft message.
 - [Raft Tablet Command v1](formats/raft-tablet-command-v1.md): exact committed
   `COLUMNAR_APPEND` payload, group/index identity, ordering, and retained-log recovery contract.
 - [Metadata Command v1](formats/metadata-command-v1.md): canonical checksummed metadata-group
@@ -278,6 +280,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Segmented Multi-Raft persistent log](learning/raft-persistent-log.md): shared physical segments,
   append/sync frontiers, durable runtime batching, rotation, recovery, repair, ownership, and
   reclamation boundary.
+- [Raft transport envelope](learning/raft-transport-envelope.md): canonical message bytes, route and
+  ownership boundaries, validation order, authentication separation, and persist-before-send.
 - [Joint-consensus membership](learning/joint-consensus-membership.md): canonical membership
   commands, dual-quorum elections and commits, learner behavior, recovery, and application no-ops.
 - [Committed Raft tablet application](learning/raft-tablet-application.md): committed-only command

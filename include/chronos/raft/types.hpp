@@ -52,11 +52,15 @@ struct RequestVoteRequest {
   NodeId candidate_id{};
   LogIndex last_log_index{};
   Term last_log_term{};
+
+  friend bool operator==(const RequestVoteRequest&, const RequestVoteRequest&) = default;
 };
 
 struct RequestVoteResponse {
   Term term{};
   bool granted{};
+
+  friend bool operator==(const RequestVoteResponse&, const RequestVoteResponse&) = default;
 };
 
 struct AppendEntriesRequest {
@@ -66,6 +70,8 @@ struct AppendEntriesRequest {
   Term previous_log_term{};
   std::vector<LogEntry> entries;
   LogIndex leader_commit{};
+
+  friend bool operator==(const AppendEntriesRequest&, const AppendEntriesRequest&) = default;
 };
 
 struct AppendEntriesResponse {
@@ -74,18 +80,24 @@ struct AppendEntriesResponse {
   LogIndex match_index{};
   std::optional<Term> conflict_term;
   LogIndex conflict_index{};
+
+  friend bool operator==(const AppendEntriesResponse&, const AppendEntriesResponse&) = default;
 };
 
 struct InstallSnapshotRequest {
   Term term{};
   NodeId leader_id{};
   SnapshotMetadata snapshot;
+
+  friend bool operator==(const InstallSnapshotRequest&, const InstallSnapshotRequest&) = default;
 };
 
 struct InstallSnapshotResponse {
   Term term{};
   bool success{};
   LogIndex last_included_index{};
+
+  friend bool operator==(const InstallSnapshotResponse&, const InstallSnapshotResponse&) = default;
 };
 
 // A read barrier is an in-memory leadership proof, not durable state. The opaque context is scoped

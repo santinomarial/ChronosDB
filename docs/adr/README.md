@@ -277,3 +277,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0240](0240-write-synchronous-live-checkpoint-gate.md) | Write-synchronous live checkpoint gate | accepted |
 | [0241](0241-single-node-subscription-runtime-composition.md) | Single-node subscription runtime composition | accepted |
 | [0242](0242-configured-chronosd-subscription-lifecycle.md) | Configured chronosd subscription lifecycle | accepted |
+| [0243](0243-canonical-raft-transport-envelope.md) | Canonical group-scoped Raft transport envelope | accepted |

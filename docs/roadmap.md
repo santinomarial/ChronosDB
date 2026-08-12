@@ -734,12 +734,14 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   old-and-new election and commit quorums, recover from the retained log, and safely remove leaders.
   Focused 3-node election, commit, failover, stale leader, restart catch-up, and membership tests
   pass. A two-stage snapshot protocol now withholds acknowledgment until external application
-  installation is confirmed and the compacted Raft state is synchronized; versioned application
-  snapshot bytes, production transport, randomized simulation, and the full exit evidence remain
-  deferred. Linearizable reads now use one bounded explicit current-term leadership probe, require
-  a current-term committed entry, freeze stable or joint voter quorums at issuance, abandon pending
-  work on leadership change, and return an exact committed read index that must be applied before
-  visibility.
+  installation is confirmed and the compacted Raft state is synchronized. A bounded canonical
+  group/source/destination transport envelope now round-trips vote, append, snapshot, and read-
+  barrier messages without introducing sockets into the deterministic core. Production
+  authenticated carrier scheduling, runtime timers, randomized simulation, and the full exit
+  evidence remain deferred. Linearizable reads now use one bounded explicit current-term leadership
+  probe, require a current-term committed entry, freeze stable or joint voter quorums at issuance,
+  abandon pending work on leadership change, and return an exact committed read index that must be
+  applied before visibility.
 
 - **Scope:** implement a deterministic Raft core for one logical group: elections, replication, commit, membership protocol as scoped by ADR, snapshots, read consistency mechanisms, and simulated transport/storage/time.
 - **Explicit non-scope:** multi-group multiplexing, production network integration, distributed queries, hidden third-party Raft implementation, and serving uncommitted or merely appended entries.

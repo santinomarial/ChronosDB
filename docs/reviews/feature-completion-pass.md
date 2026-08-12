@@ -105,6 +105,10 @@ two-stage snapshot installation, and a current-term quorum read barrier are impl
 persistence fault matrices, runtime timers, network encoding, production tablet read integration,
 snapshot transfer bytes, and randomized simulation remain incomplete.
 
+Later work accepted and implemented a bounded canonical group/source/destination Raft transport
+envelope for every current vote, append, snapshot, and read-barrier message. Authenticated socket
+carrier scheduling, timers, retransmission, and randomized simulation remain incomplete.
+
 ### Phase 15 — Multi-Raft tablets and metadata
 
 `MultiRaftRuntime` multiplexes bounded logical groups on one owner with group-tagged messages,
@@ -217,10 +221,10 @@ Important APIs include `SubscriptionManager`, `WindowedMaterializedView`,
 `MetadataStateMachine`, `TabletMovement`, `BoundedExchange`, `DistributedAggregateCoordinator`,
 `ObjectStore`, `TieredPartManager`, `Reactor`, and `apply_current_thread_placement`.
 
-New bytes are limited to authenticated Resume Token v1 and Multiplexed Raft Persistent-State Record
-v1, specified under `docs/formats/`. WAL v1, Columnar Batch v1, CSEG v1, Manifest v1, and native
-Protocol v1 bytes were not changed. No Raft wire, distributed exchange wire, correction/CSEG v2, or
-cold Manifest v2 bytes are claimed.
+At this review boundary, new bytes were limited to authenticated Resume Token v1 and Multiplexed
+Raft Persistent-State Record v1. Subsequent accepted formats now include Raft transport, distributed
+exchange, temporal CSEG/Manifest v2, and cold-location authority. WAL v1, Columnar Batch v1, CSEG v1,
+Manifest v1, and native Protocol v1 bytes were not reinterpreted.
 
 ## Checks actually performed
 
