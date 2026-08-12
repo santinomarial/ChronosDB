@@ -84,6 +84,9 @@ TEST(RaftTransportTcpServerTest, AcceptsPersistentTlsAndPublishesPostSyncResult)
        .maximum_accepts_per_poll = 2U});
   ASSERT_TRUE(server.has_value()) << server.error().to_string();
   EXPECT_FALSE(server->next_deadline().has_value());
+  EXPECT_GE(server->listener_descriptor(), 0);
+  ASSERT_TRUE(server->interests().has_value());
+  EXPECT_TRUE(server->interests()->empty());
   auto client_context =
       network::TlsClientContext::create({.certificate_chain_file = fixture("client.pem").string(),
                                          .private_key_file = fixture("client-key.pem").string(),
@@ -115,16 +118,37 @@ TEST(RaftTransportTcpServerTest, AcceptsPersistentTlsAndPublishesPostSyncResult)
   for (std::size_t iteration = 0U;
        iteration < 1024U && connector->state() == RaftTransportTcpConnectorState::kConnecting;
        ++iteration) {
-    ASSERT_TRUE(server->poll_once(std::chrono::milliseconds{0}).is_ok());
+    const auto server_now = std::chrono::steady_clock::now();
+    ASSERT_TRUE(server->accept_ready(server_now).is_ok());
+    auto inbound = server->interests();
+    ASSERT_TRUE(inbound.has_value());
+    for (const RaftTransportTcpServerInterest& interest : *inbound)
+      ASSERT_TRUE(server->on_ready(interest.connection_id, true, true, server_now).is_ok());
+    ASSERT_TRUE(server->drive(server_now).is_ok());
     ASSERT_TRUE(connector->on_ready(true, start + std::chrono::milliseconds{1}).is_ok());
   }
   ASSERT_EQ(connector->state(), RaftTransportTcpConnectorState::kCarrierReady);
+  auto server_interests = server->interests();
+  ASSERT_TRUE(server_interests.has_value());
+  for (std::size_t iteration = 0U; iteration < 1024U && server_interests->empty(); ++iteration) {
+    ASSERT_TRUE(server->accept_ready(std::chrono::steady_clock::now()).is_ok());
+    server_interests = server->interests();
+    ASSERT_TRUE(server_interests.has_value());
+  }
+  ASSERT_EQ(server_interests->size(), 1U);
+  EXPECT_NE(server_interests->front().connection_id, 0U);
+  EXPECT_GE(server_interests->front().descriptor, 0);
   auto peer = connector->take_connected_peer();
   ASSERT_TRUE(peer.has_value());
   std::optional<RaftTransportCompletedReceive> completed;
   for (std::size_t iteration = 0U; iteration < 8192U && !completed.has_value(); ++iteration) {
     ASSERT_TRUE(peer->carrier.on_ready(true, true, start + std::chrono::milliseconds{2}).is_ok());
-    ASSERT_TRUE(server->poll_once(std::chrono::milliseconds{0}).is_ok());
+    const auto server_now = std::chrono::steady_clock::now();
+    auto inbound = server->interests();
+    ASSERT_TRUE(inbound.has_value());
+    for (const RaftTransportTcpServerInterest& interest : *inbound)
+      ASSERT_TRUE(server->on_ready(interest.connection_id, true, true, server_now).is_ok());
+    ASSERT_TRUE(server->drive(server_now).is_ok());
     auto next = server->take_completed();
     ASSERT_TRUE(next.has_value()) << next.error().to_string();
     if (next->has_value())
@@ -143,6 +167,9 @@ TEST(RaftTransportTcpServerTest, AcceptsPersistentTlsAndPublishesPostSyncResult)
   EXPECT_EQ(server->metrics().completed_results, 1U);
   EXPECT_EQ(server->metrics().active_connections, 1U);
   EXPECT_TRUE(server->next_deadline().has_value());
+  ASSERT_TRUE(server->drive(std::chrono::steady_clock::now()).is_ok());
+  ASSERT_TRUE(server->on_transport_closed(server_interests->front().connection_id).is_ok());
+  EXPECT_EQ(server->metrics().active_connections, 0U);
   ASSERT_TRUE(server->shutdown().is_ok());
   ASSERT_TRUE(runtime->shutdown().is_ok());
 }

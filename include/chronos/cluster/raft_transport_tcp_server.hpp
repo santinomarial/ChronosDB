@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <vector>
 
 namespace chronos::cluster {
 
@@ -30,11 +31,19 @@ struct RaftTransportTcpServerMetrics {
   std::uint64_t completed_results{};
   std::size_t active_connections{};
 };
+struct RaftTransportTcpServerInterest {
+  std::uint64_t connection_id{};
+  int descriptor{-1};
+  bool want_read{};
+  bool want_write{};
+};
 
-// Portable bounded poll owner for persistent inbound Raft TLS sessions. Result-ready sessions stay
-// admitted and backpressured until the embedding takes their complete post-sync transition.
+// Portable bounded owner for persistent inbound Raft TLS sessions. It can poll internally or expose
+// stable connection IDs and borrowed descriptor interests to one embedding poll loop. Result-ready
+// sessions stay admitted and backpressured until their complete post-sync transition is taken.
 class RaftTransportTcpServer {
 public:
+  using TimePoint = std::chrono::steady_clock::time_point;
   RaftTransportTcpServer() noexcept;
   ~RaftTransportTcpServer();
   RaftTransportTcpServer(const RaftTransportTcpServer&) = delete;
@@ -44,8 +53,15 @@ public:
   [[nodiscard]] static common::Result<RaftTransportTcpServer>
   start(RaftTransportTcpServerConfig config);
   [[nodiscard]] common::Status poll_once(std::chrono::milliseconds maximum_wait);
+  [[nodiscard]] common::Status accept_ready(TimePoint now);
+  [[nodiscard]] common::Status on_ready(std::uint64_t connection_id, bool readable, bool writable,
+                                        TimePoint now);
+  [[nodiscard]] common::Status on_transport_closed(std::uint64_t connection_id);
+  [[nodiscard]] common::Status drive(TimePoint now);
+  [[nodiscard]] common::Result<std::vector<RaftTransportTcpServerInterest>> interests() const;
+  [[nodiscard]] int listener_descriptor() const noexcept;
   [[nodiscard]] common::Result<std::optional<RaftTransportCompletedReceive>> take_completed();
-  [[nodiscard]] std::optional<std::chrono::steady_clock::time_point> next_deadline() const noexcept;
+  [[nodiscard]] std::optional<TimePoint> next_deadline() const noexcept;
   [[nodiscard]] common::Status shutdown();
   [[nodiscard]] network::Ipv4Endpoint bound_endpoint() const noexcept;
   [[nodiscard]] RaftTransportTcpServerMetrics metrics() const noexcept;

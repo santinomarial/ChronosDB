@@ -754,7 +754,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   descriptor interests, installs successful pairs, recycles failed pairs, and leaves unroutable
   fresh durable results with their bounded upstream owner. A bounded TCP listener/poll table now
   admits persistent inbound mutual-TLS sessions and pins each post-sync result until explicit
-  pickup. Every inbound receive now executes with its immediately following owning observation in
+  pickup; stable connection IDs and external readiness driving permit safe outer-loop composition.
+  Every inbound receive now executes with its immediately following owning observation in
   one durable FIFO batch, providing the exact post-message role and term for timer rearming.
   Unified inbound/outbound/timer/durable-completion polling remains deferred. A bounded
   deterministic simulator

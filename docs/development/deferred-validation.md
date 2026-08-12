@@ -125,7 +125,8 @@
   encoding have focused coverage. A persistent real mutual-TLS inbound session now authenticates,
   reads fragmented exact frames, pauses for durable completion, and publishes complete results.
   A bounded TCP listener/poll owner now admits those sessions and retains result-ready connections
-  until explicit pickup; overload/churn and unified runtime polling remain deferred.
+  until explicit pickup. Stable connection IDs and external readiness/closure driving now permit one
+  outer poll table; overload/churn and unified runtime polling remain deferred.
   Each admitted inbound message now returns its exact ordered post-message group observation for
   timer rearming; high-contention observation ordering remains part of cluster stress validation.
   A persistent peer-authenticated outbound session bounds FIFO frames/bytes, retains short writes,

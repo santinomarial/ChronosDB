@@ -4,8 +4,10 @@
 #include <chrono>
 #include <climits>
 #include <cstddef>
+#include <limits>
 #include <memory>
 #include <new>
+#include <optional>
 #include <poll.h>
 #include <stdexcept>
 #include <string>
@@ -33,8 +35,10 @@ namespace {
 class RaftTransportTcpServer::Impl {
 public:
   struct Connection {
-    Connection(network::TcpSocket owned_socket, RaftTransportTlsServer owned_carrier) noexcept
-        : socket(std::move(owned_socket)), carrier(std::move(owned_carrier)) {}
+    Connection(const std::uint64_t assigned_id, network::TcpSocket owned_socket,
+               RaftTransportTlsServer owned_carrier) noexcept
+        : id(assigned_id), socket(std::move(owned_socket)), carrier(std::move(owned_carrier)) {}
+    std::uint64_t id{};
     network::TcpSocket socket;
     RaftTransportTlsServer carrier;
   };
@@ -50,16 +54,17 @@ public:
     ++metrics.failed_connections;
     metrics.active_connections = connections.size();
   }
-  void accept_ready(const std::chrono::steady_clock::time_point now) {
+  [[nodiscard]] common::Status accept_ready(const std::chrono::steady_clock::time_point now) {
     for (std::size_t admitted = 0U; admitted < config.maximum_accepts_per_poll; ++admitted) {
       auto next = listener.accept_one();
       if (!next.has_value()) {
         ++metrics.accept_errors;
-        return;
+        return next.error();
       }
       if (!next->has_value())
-        return;
-      if (connections.size() == config.maximum_connections) {
+        return common::Status::ok();
+      if (connections.size() == config.maximum_connections ||
+          next_connection_id == std::numeric_limits<std::uint64_t>::max()) {
         ++metrics.rejected_connections;
         continue;
       }
@@ -86,15 +91,17 @@ public:
         continue;
       }
       try {
-        connections.emplace_back(
-            std::make_unique<Connection>(std::move(socket), std::move(*carrier)));
+        connections.emplace_back(std::make_unique<Connection>(next_connection_id, std::move(socket),
+                                                              std::move(*carrier)));
       } catch (const std::bad_alloc&) {
         ++metrics.rejected_connections;
         continue;
       }
+      ++next_connection_id;
       ++metrics.accepted_connections;
       metrics.active_connections = connections.size();
     }
+    return common::Status::ok();
   }
   RaftTransportTcpServerConfig config;
   network::TcpListener listener;
@@ -102,6 +109,7 @@ public:
   std::vector<std::unique_ptr<Connection>> connections;
   std::vector<pollfd> poll_descriptors;
   RaftTransportTcpServerMetrics metrics;
+  std::uint64_t next_connection_id{1U};
   bool running{true};
 };
 
@@ -185,9 +193,86 @@ common::Status RaftTransportTcpServer::poll_once(const std::chrono::milliseconds
         impl.connections[index]->carrier.state() == RaftTransportTlsServerState::kFailed)
       impl.remove(index);
   }
-  if (ready > 0 && (impl.poll_descriptors[0].revents & POLLIN) != 0)
-    impl.accept_ready(now);
+  if (ready > 0 && (impl.poll_descriptors[0].revents & POLLIN) != 0) {
+    const common::Status accepted = impl.accept_ready(now);
+    if (!accepted.is_ok())
+      return accepted;
+  }
   return common::Status::ok();
+}
+
+common::Status RaftTransportTcpServer::accept_ready(const TimePoint now) {
+  if (!implementation_ || !implementation_->running)
+    return status(common::StatusCode::kInvalidArgument, "Raft TCP server is not running");
+  return implementation_->accept_ready(now);
+}
+
+common::Status RaftTransportTcpServer::on_ready(const std::uint64_t connection_id,
+                                                const bool readable, const bool writable,
+                                                const TimePoint now) {
+  if (!implementation_ || !implementation_->running || connection_id == 0U)
+    return status(common::StatusCode::kInvalidArgument, "Raft TCP server readiness is invalid");
+  for (std::size_t index = 0U; index < implementation_->connections.size(); ++index) {
+    Impl::Connection& connection = *implementation_->connections[index];
+    if (connection.id != connection_id)
+      continue;
+    const common::Status progress = connection.carrier.on_ready(readable, writable, now);
+    if (!progress.is_ok() || connection.carrier.state() == RaftTransportTlsServerState::kFailed) {
+      implementation_->remove(index);
+      return common::Status::ok();
+    }
+    return progress;
+  }
+  return status(common::StatusCode::kNotFound, "Raft TCP server connection does not exist");
+}
+
+common::Status RaftTransportTcpServer::on_transport_closed(const std::uint64_t connection_id) {
+  if (!implementation_ || !implementation_->running || connection_id == 0U)
+    return status(common::StatusCode::kInvalidArgument, "Raft TCP server close event is invalid");
+  for (std::size_t index = 0U; index < implementation_->connections.size(); ++index) {
+    if (implementation_->connections[index]->id != connection_id)
+      continue;
+    implementation_->remove(index);
+    return common::Status::ok();
+  }
+  return status(common::StatusCode::kNotFound, "Raft TCP server connection does not exist");
+}
+
+common::Status RaftTransportTcpServer::drive(const TimePoint now) {
+  if (!implementation_ || !implementation_->running)
+    return status(common::StatusCode::kInvalidArgument, "Raft TCP server is not running");
+  for (std::size_t remaining = implementation_->connections.size(); remaining > 0U; --remaining) {
+    const std::size_t index = remaining - 1U;
+    Impl::Connection& connection = *implementation_->connections[index];
+    const common::Status progress = connection.carrier.on_ready(false, false, now);
+    if (!progress.is_ok() || connection.carrier.state() == RaftTransportTlsServerState::kFailed)
+      implementation_->remove(index);
+  }
+  return common::Status::ok();
+}
+
+common::Result<std::vector<RaftTransportTcpServerInterest>>
+RaftTransportTcpServer::interests() const {
+  if (!implementation_ || !implementation_->running)
+    return common::make_unexpected(
+        status(common::StatusCode::kInvalidArgument, "Raft TCP server is not running"));
+  try {
+    std::vector<RaftTransportTcpServerInterest> result;
+    result.reserve(implementation_->connections.size());
+    for (const std::unique_ptr<Impl::Connection>& connection : implementation_->connections) {
+      const RaftTransportTlsServerInterest interest = connection->carrier.interest();
+      result.push_back({connection->id, connection->socket.descriptor(), interest.want_read,
+                        interest.want_write});
+    }
+    return result;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(status(common::StatusCode::kResourceExhausted,
+                                          "Raft TCP server interest allocation failed"));
+  }
+}
+
+int RaftTransportTcpServer::listener_descriptor() const noexcept {
+  return implementation_ && implementation_->running ? implementation_->listener.descriptor() : -1;
 }
 
 common::Result<std::optional<RaftTransportCompletedReceive>>
@@ -207,9 +292,9 @@ RaftTransportTcpServer::take_completed() {
   return std::optional<RaftTransportCompletedReceive>{};
 }
 
-std::optional<std::chrono::steady_clock::time_point>
+std::optional<RaftTransportTcpServer::TimePoint>
 RaftTransportTcpServer::next_deadline() const noexcept {
-  std::optional<std::chrono::steady_clock::time_point> next;
+  std::optional<TimePoint> next;
   if (!implementation_)
     return next;
   for (const std::unique_ptr<Impl::Connection>& connection : implementation_->connections) {
