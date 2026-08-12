@@ -114,6 +114,7 @@ add_library(
   src/common/byte_writer.cpp
   src/common/crc32c.cpp
   src/common/status.cpp
+  src/common/uuid_generator.cpp
   src/common/version.cpp
 )
 add_library(chronos::common ALIAS chronos_common)
@@ -773,6 +774,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/common/status_result_test.cpp
     tests/common/uuid_header_self_contained.cpp
     tests/common/uuid_test.cpp
+    tests/common/uuid_generator_header_self_contained.cpp
+    tests/common/uuid_generator_test.cpp
     tests/common/version_header_self_contained.cpp
     tests/common/version_test.cpp
   )

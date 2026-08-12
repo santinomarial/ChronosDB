@@ -108,6 +108,11 @@ error_response(network::NetworkTask request, const common::Status& status,
   return common::Status{common::StatusCode::kNotSupported, std::string{message}};
 }
 
+[[nodiscard]] common::UuidGenerator& system_identity_generator() {
+  static common::SystemUuidGenerator generator;
+  return generator;
+}
+
 struct ResponseRoute {
   std::uint64_t connection_id;
   std::uint64_t principal_id;
@@ -307,7 +312,7 @@ insert_result(const ResponseRoute& target, const std::uint32_t applied_rows,
 
 NativeProtocolService::NativeProtocolService(SingleNodeDatabase& database,
                                              NativeProtocolServiceLimits limits) noexcept
-    : database_(&database), limits_(limits) {}
+    : database_(&database), identities_(&system_identity_generator()), limits_(limits) {}
 NativeProtocolService::NativeProtocolService(SingleNodeDatabase& database,
                                              NativeIdentityGenerator& identities,
                                              NativeProtocolServiceLimits limits) noexcept

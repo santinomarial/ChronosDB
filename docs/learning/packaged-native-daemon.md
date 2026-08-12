@@ -29,7 +29,8 @@ startup banner. Worker publication or reactor failures terminate the process wit
 
 The startup banner reports `data_plane=configured` only after the database and reactor both start;
 otherwise the explicit unconfigured mode remains distinguishable. Configured ingest acknowledges
-the exact requested/effective ASYNC or LOCAL_SYNC mode.
+the exact requested/effective ASYNC or LOCAL_SYNC mode. Bootstrap and native DDL/DML identities use
+the common nonnil system UUID source; deterministic service tests inject the same interface.
 
 ## Complexity and tradeoffs
 

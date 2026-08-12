@@ -42,8 +42,9 @@ UUID structs.
 
 The four schema identifier types are different template specializations and cannot be implicitly
 converted. Their factories reject a nil UUID, so a valid identifier object is always nonzero.
-Generation is intentionally absent: choosing an operating-system/random UUID generator remains a
-catalog responsibility under ADR 0014 and the dependency policy.
+`SystemUuidGenerator` supplies nonnil uninterpreted UUID bytes from the Linux/macOS operating-system
+entropy source, while `UuidGenerator` preserves deterministic injection. Assigning those bytes to a
+specific catalog/storage identity remains the owning subsystem's responsibility under ADR 0014.
 
 `SchemaVersion` similarly has no zero/default state. Version 1 is the initial value; `next()` checks
 `uint64` exhaustion rather than wrapping.
@@ -174,5 +175,6 @@ silently bind historical bytes to the wrong column.
 **Why keep shared schema pointers?** Snapshots and future heads need immutable schema lifetime that
 survives catalog-lineage growth.
 
-**Why no UUID generator or catalog file?** Both are outside this model foundation and require their
-own platform, durability, and installation decisions.
+**Why is the UUID generator separate from schema IDs?** Entropy acquisition is platform policy;
+deciding whether one generated value names a table, schema, tablet, part, or request belongs to the
+owning catalog/service operation.

@@ -16,6 +16,7 @@
 #include "columnar/columnar_test_support.hpp"
 #include "ingest/ingest_test_support.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -461,6 +462,28 @@ TEST(NativeProtocolServiceTest, CreatesTableWithInjectedIdentitiesAndReturnsDura
   ASSERT_TRUE(count_result.has_value()) << count_result.error().to_string();
   common::ByteReader count_value{count_result->cell(0U, 0U)->value};
   EXPECT_EQ(count_value.read_i64_le().value(), 0);
+  EXPECT_TRUE(database->shutdown().is_ok());
+}
+
+TEST(NativeProtocolServiceTest, CreatesTableWithDefaultSystemIdentities) {
+  TemporaryDirectory directory;
+  auto database = SingleNodeDatabase::open_or_create(config(directory));
+  ASSERT_TRUE(database.has_value()) << database.error().to_string();
+  NativeProtocolService service{*database};
+
+  auto ddl = service.execute_query(query_task(45U, kCreateSql));
+  ASSERT_TRUE(ddl.has_value()) << ddl.error().to_string();
+  ASSERT_EQ(ddl->responses.size(), 2U);
+  ASSERT_EQ(ddl->responses[0].frame.header.message_type, network::MessageType::kQueryResult);
+  const auto result = network::decode_query_result_batch(ddl->responses[0].frame.payload);
+  ASSERT_TRUE(result.has_value()) << result.error().to_string();
+  ASSERT_EQ(result->row_count(), 1U);
+  for (std::size_t column = 0U; column < 3U; ++column) {
+    const auto* const identity = result->cell(0U, column);
+    ASSERT_NE(identity, nullptr);
+    EXPECT_TRUE(std::ranges::any_of(identity->value,
+                                    [](const std::byte value) { return value != std::byte{0U}; }));
+  }
   EXPECT_TRUE(database->shutdown().is_ok());
 }
 

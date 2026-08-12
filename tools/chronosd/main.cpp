@@ -1,3 +1,4 @@
+#include "chronos/common/uuid_generator.hpp"
 #include "chronos/common/version.hpp"
 #include "chronos/network/messages.hpp"
 #include "chronos/network/reactor.hpp"
@@ -5,7 +6,6 @@
 #include "chronos/service/native_protocol_service.hpp"
 #include "chronos/service/single_node_database.hpp"
 
-#include <array>
 #include <atomic>
 #include <charconv>
 #include <chrono>
@@ -16,7 +16,6 @@
 #include <limits>
 #include <memory>
 #include <new>
-#include <openssl/rand.h>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -134,29 +133,8 @@ template <typename Integer>
   return options;
 }
 
-class OpenSslIdentityGenerator final : public chronos::service::NativeIdentityGenerator {
-public:
-  [[nodiscard]] chronos::common::Result<chronos::common::Uuid> generate() override {
-    for (std::size_t attempt = 0U; attempt < 8U; ++attempt) {
-      std::array<unsigned char, chronos::common::Uuid::kSize> random{};
-      if (RAND_bytes(random.data(), static_cast<int>(random.size())) != 1) {
-        return chronos::common::make_unexpected(chronos::common::Status{
-            chronos::common::StatusCode::kUnavailable, "secure UUID generation failed"});
-      }
-      chronos::common::Uuid::Bytes bytes{};
-      for (std::size_t index = 0U; index < bytes.size(); ++index)
-        bytes[index] = static_cast<std::byte>(random[index]);
-      chronos::common::Uuid result{bytes};
-      if (!result.is_nil())
-        return result;
-    }
-    return chronos::common::make_unexpected(chronos::common::Status{
-        chronos::common::StatusCode::kUnavailable, "secure UUID source repeatedly returned nil"});
-  }
-};
-
 [[nodiscard]] chronos::common::Result<chronos::runtime::DatabaseBootstrapDescriptor>
-new_database_descriptor(OpenSslIdentityGenerator& identities) {
+new_database_descriptor(chronos::common::UuidGenerator& identities) {
   auto database_id = identities.generate();
   if (!database_id.has_value())
     return chronos::common::make_unexpected(database_id.error());
@@ -324,7 +302,7 @@ int main(const int argc, const char* const argv[]) {
     return 0;
   }
 
-  OpenSslIdentityGenerator identities;
+  chronos::common::SystemUuidGenerator identities;
   std::optional<SingleNodeDatabase> database;
   std::optional<NativeProtocolService> service;
   if (!options->data_directory.empty()) {

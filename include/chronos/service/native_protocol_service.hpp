@@ -3,6 +3,7 @@
 
 #include "chronos/common/result.hpp"
 #include "chronos/common/uuid.hpp"
+#include "chronos/common/uuid_generator.hpp"
 #include "chronos/ingest/columnar_append.hpp"
 #include "chronos/network/messages.hpp"
 #include "chronos/network/protocol.hpp"
@@ -43,17 +44,7 @@ struct NativeProtocolResponseSequence {
   std::size_t payload_bytes{};
 };
 
-class NativeIdentityGenerator {
-public:
-  NativeIdentityGenerator() = default;
-  NativeIdentityGenerator(const NativeIdentityGenerator&) = delete;
-  NativeIdentityGenerator& operator=(const NativeIdentityGenerator&) = delete;
-  NativeIdentityGenerator(NativeIdentityGenerator&&) = delete;
-  NativeIdentityGenerator& operator=(NativeIdentityGenerator&&) = delete;
-  virtual ~NativeIdentityGenerator() = default;
-
-  [[nodiscard]] virtual common::Result<common::Uuid> generate() = 0;
-};
+using NativeIdentityGenerator = common::UuidGenerator;
 
 // Thread-affine synchronous translation between an already accepted native request and the
 // single-node database owner. Returned tasks retain the connection/principal routing envelope.
