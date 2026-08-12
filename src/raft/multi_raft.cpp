@@ -5,6 +5,8 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <new>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -292,6 +294,40 @@ common::Result<MultiRaftTransition> MultiRaftRuntime::mark_applied(const GroupId
         common::Status{common::StatusCode::kNotFound, "Multi-Raft group does not exist"});
   }
   return impl_->wrap(group_id, group->second.node.mark_applied(index));
+}
+
+common::Result<std::vector<GroupPersistentState>>
+MultiRaftRuntime::create_persistence_checkpoint() {
+  if (impl_->failed_state) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kUnavailable, "Multi-Raft runtime has failed closed"});
+  }
+  if (impl_->groups.empty()) {
+    return common::make_unexpected(
+        invalid("Multi-Raft persistence checkpoint requires at least one group"));
+  }
+  if (impl_->groups.size() > std::numeric_limits<std::uint64_t>::max() - impl_->physical_sequence) {
+    impl_->failed_state = true;
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kOutOfRange, "Multi-Raft physical persistence sequence is exhausted"});
+  }
+  try {
+    std::vector<GroupPersistentState> checkpoint;
+    checkpoint.reserve(impl_->groups.size());
+    std::uint64_t sequence = impl_->physical_sequence;
+    for (const auto& [group_id, group] : impl_->groups) {
+      checkpoint.push_back(
+          GroupPersistentState{group_id, ++sequence, group.node.persistent_state()});
+    }
+    impl_->physical_sequence = sequence;
+    return checkpoint;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                  "Multi-Raft checkpoint allocation failed"});
+  } catch (const std::length_error&) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kResourceExhausted, "Multi-Raft checkpoint exceeds container limits"});
+  }
 }
 
 const RaftNode* MultiRaftRuntime::find_group(const GroupId& group_id) const noexcept {

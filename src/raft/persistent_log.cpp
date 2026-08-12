@@ -28,12 +28,22 @@ inline constexpr std::array<std::byte, 8U> kSegmentMagic{
     std::byte{0x43}, std::byte{0x48}, std::byte{0x52}, std::byte{0x4e},
     std::byte{0x52}, std::byte{0x53}, std::byte{0x47}, std::byte{0x00},
 };
+inline constexpr std::array<std::byte, 8U> kRecoveryAnchorMagic{
+    std::byte{0x43}, std::byte{0x48}, std::byte{0x52}, std::byte{0x4e},
+    std::byte{0x52}, std::byte{0x42}, std::byte{0x41}, std::byte{0x00},
+};
 inline constexpr std::uint16_t kSegmentMajor = 1U;
 inline constexpr std::uint16_t kSegmentMinor = 0U;
+inline constexpr std::uint16_t kRecoveryAnchorMajor = 1U;
+inline constexpr std::uint16_t kRecoveryAnchorMinor = 0U;
+inline constexpr std::size_t kRecoveryAnchorSize = 64U;
 inline constexpr std::string_view kLockName = "LOCK";
 inline constexpr std::string_view kSegmentPrefix = "raft-";
 inline constexpr std::string_view kSegmentSuffix = ".rlog";
 inline constexpr std::string_view kTemporarySuffix = ".tmp";
+inline constexpr std::string_view kRecoveryAnchorPrefix = "raft-base-";
+inline constexpr std::string_view kRecoveryAnchorSuffix = ".rbase";
+inline constexpr std::string_view kRecoveryAnchorTemporarySuffix = ".rbase.tmp";
 inline constexpr std::size_t kSegmentDigits = 20U;
 inline constexpr std::uint64_t kMinimumTargetSize =
     kRaftSegmentHeaderSize + kMultiplexedLogHeaderSize + kMultiplexedLogTrailerSize + 96U;
@@ -92,6 +102,131 @@ inline constexpr std::uint64_t kMinimumTargetSize =
   }
   const std::string_view digits = name.substr(kSegmentPrefix.size(), kSegmentDigits);
   return std::ranges::all_of(digits, [](const char value) { return value >= '0' && value <= '9'; });
+}
+
+[[nodiscard]] std::string recovery_anchor_name(const std::uint64_t number,
+                                               const std::string_view suffix) {
+  std::array<char, kSegmentDigits> digits{};
+  digits.fill('0');
+  std::array<char, 32U> encoded{};
+  const auto result = std::to_chars(encoded.data(), encoded.data() + encoded.size(), number);
+  const std::size_t length = static_cast<std::size_t>(result.ptr - encoded.data());
+  std::copy_n(encoded.data(), length, digits.data() + (digits.size() - length));
+  std::string name{kRecoveryAnchorPrefix};
+  name.append(digits.data(), digits.size());
+  name.append(suffix);
+  return name;
+}
+
+[[nodiscard]] common::Result<std::uint64_t>
+parse_recovery_anchor_name(const std::string_view name, const std::string_view suffix) {
+  const std::size_t expected = kRecoveryAnchorPrefix.size() + kSegmentDigits + suffix.size();
+  if (name.size() != expected || !name.starts_with(kRecoveryAnchorPrefix) ||
+      !name.ends_with(suffix)) {
+    return common::make_unexpected(invalid("Raft recovery-anchor filename is invalid"));
+  }
+  const std::string_view digits = name.substr(kRecoveryAnchorPrefix.size(), kSegmentDigits);
+  std::uint64_t number{};
+  const auto parsed = std::from_chars(digits.data(), digits.data() + digits.size(), number);
+  if (parsed.ec != std::errc{} || parsed.ptr != digits.data() + digits.size() || number == 0U) {
+    return common::make_unexpected(invalid("Raft recovery-anchor number is invalid"));
+  }
+  return number;
+}
+
+[[nodiscard]] bool is_recovery_anchor_temporary_name(const std::string_view name) {
+  return parse_recovery_anchor_name(name, kRecoveryAnchorTemporarySuffix).has_value();
+}
+
+struct RecoveryAnchor {
+  std::uint64_t base_segment_number{};
+  std::uint64_t checkpoint_first_sequence{};
+  std::uint64_t checkpoint_last_sequence{};
+  std::uint64_t checkpoint_group_count{};
+};
+
+[[nodiscard]] common::Result<std::array<std::byte, kRecoveryAnchorSize>>
+encode_recovery_anchor(const RecoveryAnchor& anchor) {
+  if (anchor.base_segment_number == 0U || anchor.checkpoint_first_sequence == 0U ||
+      anchor.checkpoint_last_sequence < anchor.checkpoint_first_sequence ||
+      anchor.checkpoint_group_count == 0U ||
+      anchor.checkpoint_last_sequence - anchor.checkpoint_first_sequence + 1U !=
+          anchor.checkpoint_group_count) {
+    return common::make_unexpected(invalid("Raft recovery anchor is invalid"));
+  }
+  std::array<std::byte, kRecoveryAnchorSize> bytes{};
+  common::ByteWriter writer{bytes};
+  common::Status status = writer.write_exact(kRecoveryAnchorMagic);
+  if (status.is_ok())
+    status = writer.write_u16_le(kRecoveryAnchorMajor);
+  if (status.is_ok())
+    status = writer.write_u16_le(kRecoveryAnchorMinor);
+  if (status.is_ok())
+    status = writer.write_u32_le(kRecoveryAnchorSize);
+  if (status.is_ok())
+    status = writer.write_u64_le(anchor.base_segment_number);
+  if (status.is_ok())
+    status = writer.write_u64_le(anchor.checkpoint_first_sequence);
+  if (status.is_ok())
+    status = writer.write_u64_le(anchor.checkpoint_last_sequence);
+  if (status.is_ok())
+    status = writer.write_u64_le(anchor.checkpoint_group_count);
+  if (status.is_ok())
+    status = writer.write_u32_le(0U);
+  if (status.is_ok())
+    status = writer.zero_fill(12U);
+  if (!status.is_ok() || !writer.full()) {
+    return common::make_unexpected(
+        status.is_ok()
+            ? common::Status{common::StatusCode::kInternal, "Raft recovery-anchor layout mismatch"}
+            : status);
+  }
+  common::ByteWriter checksum_writer{common::MutableByteView{bytes}.subspan(48U, 4U)};
+  status = checksum_writer.write_u32_le(common::crc32c(bytes));
+  if (!status.is_ok())
+    return common::make_unexpected(status);
+  return bytes;
+}
+
+[[nodiscard]] common::Result<RecoveryAnchor>
+decode_recovery_anchor(const common::ByteView encoded, const std::uint64_t expected_number) {
+  if (encoded.size() != kRecoveryAnchorSize)
+    return common::make_unexpected(corrupt("Raft recovery anchor has an invalid size"));
+  std::array<std::byte, kRecoveryAnchorSize> checked{};
+  std::copy(encoded.begin(), encoded.end(), checked.begin());
+  common::ByteReader checksum_reader{common::ByteView{checked}.subspan(48U, 4U)};
+  auto stored_checksum = checksum_reader.read_u32_le();
+  std::fill(checked.begin() + 48, checked.begin() + 52, std::byte{0});
+  if (!stored_checksum.has_value() || common::crc32c(checked) != *stored_checksum)
+    return common::make_unexpected(corrupt("Raft recovery-anchor checksum mismatch"));
+  common::ByteReader reader{encoded};
+  auto magic = reader.read_exact(8U);
+  auto major = reader.read_u16_le();
+  auto minor = reader.read_u16_le();
+  auto header_size = reader.read_u32_le();
+  auto base_segment = reader.read_u64_le();
+  auto first_sequence = reader.read_u64_le();
+  auto last_sequence = reader.read_u64_le();
+  auto group_count = reader.read_u64_le();
+  auto ignored_checksum = reader.read_u32_le();
+  auto reserved = reader.read_exact(12U);
+  static_cast<void>(ignored_checksum);
+  if (!magic || !major || !minor || !header_size || !base_segment || !first_sequence ||
+      !last_sequence || !group_count || !reserved ||
+      !std::ranges::equal(*magic, kRecoveryAnchorMagic)) {
+    return common::make_unexpected(corrupt("Raft recovery anchor is invalid"));
+  }
+  if (*major != kRecoveryAnchorMajor || *minor > kRecoveryAnchorMinor) {
+    return common::make_unexpected(common::Status{common::StatusCode::kNotSupported,
+                                                  "Raft recovery-anchor version is unsupported"});
+  }
+  if (*header_size != kRecoveryAnchorSize || *base_segment != expected_number ||
+      *first_sequence == 0U || *last_sequence < *first_sequence || *group_count == 0U ||
+      *last_sequence - *first_sequence + 1U != *group_count ||
+      std::ranges::any_of(*reserved, [](const std::byte value) { return value != std::byte{0}; })) {
+    return common::make_unexpected(corrupt("Raft recovery-anchor fields are invalid"));
+  }
+  return RecoveryAnchor{*base_segment, *first_sequence, *last_sequence, *group_count};
 }
 
 [[nodiscard]] common::Result<std::array<std::byte, kRaftSegmentHeaderSize>>
@@ -212,6 +347,31 @@ install_segment(const io::PosixDirectory& directory, const RaftPersistentLogConf
   return InstalledSegment{std::move(*file), kRaftSegmentHeaderSize};
 }
 
+[[nodiscard]] common::Status install_recovery_anchor(const io::PosixDirectory& directory,
+                                                     const RaftPersistentLogConfig& config,
+                                                     const RecoveryAnchor& anchor) {
+  auto encoded = encode_recovery_anchor(anchor);
+  if (!encoded.has_value())
+    return encoded.error();
+  const std::string temporary =
+      recovery_anchor_name(anchor.base_segment_number, kRecoveryAnchorTemporarySuffix);
+  const std::string final = recovery_anchor_name(anchor.base_segment_number, kRecoveryAnchorSuffix);
+  auto file = directory.create_exclusive_regular_file(temporary, config.file_permissions);
+  if (!file.has_value())
+    return file.error();
+  common::Status status = file->write_all_at(0U, *encoded);
+  if (status.is_ok())
+    status = file->sync_all();
+  if (status.is_ok())
+    status = directory.rename_no_replace({temporary, final});
+  if (status.is_ok())
+    status = directory.sync();
+  const common::Status close_status = file->close();
+  if (status.is_ok() && !close_status.is_ok())
+    status = close_status;
+  return status;
+}
+
 } // namespace
 
 class RaftPersistentLog::Impl {
@@ -222,6 +382,8 @@ public:
   io::PosixFile active_file;
   RaftPersistentLogRecovery recovered;
   std::set<GroupId> known_groups;
+  std::map<std::uint64_t, std::uint64_t> segment_record_counts;
+  std::set<std::uint64_t> recovery_anchors;
   common::Status failure;
   bool open{};
 
@@ -278,6 +440,7 @@ RaftPersistentLog::create_new(const RaftPersistentLogConfig& config) {
   impl->active_file = std::move(installed->file);
   impl->recovered.written_position = {1U, installed->end_offset, 0U};
   impl->recovered.segment_count = 1U;
+  impl->segment_record_counts.emplace(1U, 0U);
   impl->open = true;
   return RaftPersistentLog{std::move(impl)};
 }
@@ -299,6 +462,7 @@ RaftPersistentLog::open_existing(const RaftPersistentLogConfig& config,
     return common::make_unexpected(entries.error());
 
   std::vector<std::pair<std::uint64_t, std::string>> segments;
+  std::vector<std::pair<std::uint64_t, std::string>> anchors;
   std::vector<std::string> temporaries;
   for (const io::DirectoryEntry& entry : *entries) {
     if (entry.name == kLockName) {
@@ -309,8 +473,13 @@ RaftPersistentLog::open_existing(const RaftPersistentLogConfig& config,
     if (entry.type != io::DirectoryEntryType::kRegularFile) {
       return common::make_unexpected(corrupt("Raft directory contains a non-regular entry"));
     }
-    if (is_temporary_name(entry.name)) {
+    if (is_temporary_name(entry.name) || is_recovery_anchor_temporary_name(entry.name)) {
       temporaries.push_back(entry.name);
+      continue;
+    }
+    auto anchor_number = parse_recovery_anchor_name(entry.name, kRecoveryAnchorSuffix);
+    if (anchor_number.has_value()) {
+      anchors.emplace_back(*anchor_number, entry.name);
       continue;
     }
     auto number = parse_segment_name(entry.name);
@@ -318,23 +487,64 @@ RaftPersistentLog::open_existing(const RaftPersistentLogConfig& config,
       return common::make_unexpected(corrupt("Raft directory contains an unknown entry"));
     segments.emplace_back(*number, entry.name);
   }
-  if (segments.empty() || segments.size() > config.maximum_segments) {
-    return common::make_unexpected(corrupt("Raft segment set is empty or exceeds limits"));
-  }
+  if (segments.empty())
+    return common::make_unexpected(corrupt("Raft segment set is empty"));
   std::ranges::sort(segments);
-  for (std::size_t index = 0U; index < segments.size(); ++index) {
-    if (segments[index].first != index + 1U) {
-      return common::make_unexpected(corrupt("Raft segment numbering is not contiguous"));
-    }
+  std::ranges::sort(anchors);
+
+  std::optional<RecoveryAnchor> recovery_anchor;
+  if (!anchors.empty()) {
+    const auto& [number, name] = anchors.back();
+    auto file = directory->open_regular_file(name, io::FileOpenMode::kReadOnly);
+    if (!file.has_value())
+      return common::make_unexpected(file.error());
+    auto size = file->size();
+    if (!size.has_value())
+      return common::make_unexpected(size.error());
+    if (*size != kRecoveryAnchorSize)
+      return common::make_unexpected(corrupt("Raft recovery anchor has an invalid size"));
+    std::array<std::byte, kRecoveryAnchorSize> bytes{};
+    common::Status status = read_exact(*file, 0U, bytes);
+    if (!status.is_ok())
+      return common::make_unexpected(status);
+    auto decoded = decode_recovery_anchor(bytes, number);
+    if (!decoded.has_value())
+      return common::make_unexpected(decoded.error());
+    recovery_anchor = *decoded;
+  }
+  if (recovery_anchor.has_value() &&
+      recovery_anchor->checkpoint_group_count > config.maximum_groups) {
+    return common::make_unexpected(corrupt("Raft recovery checkpoint group count exceeds limits"));
+  }
+
+  const std::uint64_t base_segment =
+      recovery_anchor.has_value() ? recovery_anchor->base_segment_number : 1U;
+  const auto retained_begin = std::ranges::lower_bound(
+      segments, base_segment, {},
+      [](const std::pair<std::uint64_t, std::string>& segment) { return segment.first; });
+  if (retained_begin == segments.end() || retained_begin->first != base_segment) {
+    return common::make_unexpected(corrupt("Raft recovery base segment is absent"));
+  }
+  std::vector<std::pair<std::uint64_t, std::string>> retained_segments{retained_begin,
+                                                                       segments.end()};
+  if (retained_segments.size() > config.maximum_segments)
+    return common::make_unexpected(corrupt("Raft retained segment set exceeds limits"));
+  for (std::size_t index = 0U; index < retained_segments.size(); ++index) {
+    if (retained_segments[index].first != base_segment + index)
+      return common::make_unexpected(corrupt("Raft retained segment numbering is not contiguous"));
   }
 
   std::map<GroupId, GroupPersistentState> latest;
+  std::map<std::uint64_t, std::uint64_t> segment_record_counts;
+  std::set<GroupId> checkpoint_groups;
   RaftPersistentLogRecovery recovery;
-  std::uint64_t last_sequence = 0U;
+  recovery.base_segment_number = base_segment;
+  std::uint64_t last_sequence =
+      recovery_anchor.has_value() ? recovery_anchor->checkpoint_first_sequence - 1U : 0U;
   std::uint64_t active_end = kRaftSegmentHeaderSize;
-  for (std::size_t segment_index = 0U; segment_index < segments.size(); ++segment_index) {
-    const auto& [number, name] = segments[segment_index];
-    auto file = directory->open_regular_file(name, segment_index + 1U == segments.size()
+  for (std::size_t segment_index = 0U; segment_index < retained_segments.size(); ++segment_index) {
+    const auto& [number, name] = retained_segments[segment_index];
+    auto file = directory->open_regular_file(name, segment_index + 1U == retained_segments.size()
                                                        ? io::FileOpenMode::kReadWrite
                                                        : io::FileOpenMode::kReadOnly);
     if (!file.has_value())
@@ -358,6 +568,7 @@ RaftPersistentLog::open_existing(const RaftPersistentLogConfig& config,
     }
 
     std::uint64_t offset = kRaftSegmentHeaderSize;
+    std::uint64_t segment_record_count = 0U;
     while (offset < *file_size) {
       const std::uint64_t remaining = *file_size - offset;
       bool incomplete = remaining < kMultiplexedLogHeaderSize;
@@ -374,7 +585,13 @@ RaftPersistentLog::open_existing(const RaftPersistentLogConfig& config,
         incomplete = inspected->encoded_size > remaining;
       }
       if (incomplete) {
-        if (segment_index + 1U != segments.size() || !options.repair_incomplete_final_tail) {
+        if (recovery_anchor.has_value() &&
+            last_sequence < recovery_anchor->checkpoint_last_sequence) {
+          return common::make_unexpected(
+              corrupt("Raft recovery checkpoint contains an incomplete record"));
+        }
+        if (segment_index + 1U != retained_segments.size() ||
+            !options.repair_incomplete_final_tail) {
           return common::make_unexpected(corrupt("Raft final record is incomplete"));
         }
         recovery.repaired_bytes = *file_size - offset;
@@ -403,6 +620,14 @@ RaftPersistentLog::open_existing(const RaftPersistentLogConfig& config,
         return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
                                                       "Raft recovery record limit exceeded"});
       }
+      ++segment_record_count;
+      if (recovery_anchor.has_value() &&
+          decoded->persistent.physical_sequence <= recovery_anchor->checkpoint_last_sequence) {
+        if (!checkpoint_groups.insert(decoded->persistent.group_id).second) {
+          return common::make_unexpected(
+              corrupt("Raft recovery checkpoint repeats a logical group"));
+        }
+      }
       latest[decoded->persistent.group_id] = std::move(decoded->persistent);
       if (latest.size() > config.maximum_groups) {
         return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
@@ -411,22 +636,46 @@ RaftPersistentLog::open_existing(const RaftPersistentLogConfig& config,
       last_sequence = decoded->persistent.physical_sequence;
       offset += inspected->encoded_size;
     }
+    segment_record_counts.emplace(number, segment_record_count);
     active_end = offset;
   }
 
-  bool removed_temporary = false;
+  if (recovery_anchor.has_value() &&
+      (last_sequence < recovery_anchor->checkpoint_last_sequence ||
+       checkpoint_groups.size() != recovery_anchor->checkpoint_group_count)) {
+    return common::make_unexpected(corrupt("Raft recovery checkpoint is incomplete"));
+  }
+
+  bool removed_stale = false;
   for (const std::string& temporary : temporaries) {
     common::Status status = directory->remove_file(temporary);
     if (!status.is_ok())
       return common::make_unexpected(status);
-    removed_temporary = true;
+    removed_stale = true;
   }
-  if (removed_temporary) {
+  for (const auto& [number, name] : segments) {
+    if (number >= base_segment)
+      break;
+    common::Status status = directory->remove_file(name);
+    if (!status.is_ok())
+      return common::make_unexpected(status);
+    removed_stale = true;
+  }
+  for (const auto& [number, name] : anchors) {
+    if (number == base_segment)
+      continue;
+    common::Status status = directory->remove_file(name);
+    if (!status.is_ok())
+      return common::make_unexpected(status);
+    removed_stale = true;
+  }
+  if (removed_stale) {
     common::Status status = directory->sync();
     if (!status.is_ok())
       return common::make_unexpected(status);
   }
-  auto active = directory->open_regular_file(segments.back().second, io::FileOpenMode::kReadWrite);
+  auto active =
+      directory->open_regular_file(retained_segments.back().second, io::FileOpenMode::kReadWrite);
   if (!active.has_value())
     return common::make_unexpected(active.error());
   common::Status status = active->sync_all();
@@ -435,8 +684,8 @@ RaftPersistentLog::open_existing(const RaftPersistentLogConfig& config,
   if (!status.is_ok())
     return common::make_unexpected(status);
 
-  recovery.segment_count = segments.size();
-  recovery.written_position = {segments.back().first, active_end, last_sequence};
+  recovery.segment_count = retained_segments.size();
+  recovery.written_position = {retained_segments.back().first, active_end, last_sequence};
   recovery.durable_physical_sequence = last_sequence;
   recovery.latest_group_states.reserve(latest.size());
   for (auto& [group, persistent] : latest) {
@@ -449,6 +698,9 @@ RaftPersistentLog::open_existing(const RaftPersistentLogConfig& config,
   impl->lock = std::move(*lock);
   impl->active_file = std::move(*active);
   impl->recovered = std::move(recovery);
+  impl->segment_record_counts = std::move(segment_record_counts);
+  if (recovery_anchor.has_value())
+    impl->recovery_anchors.insert(recovery_anchor->base_segment_number);
   for (const GroupPersistentState& persistent : impl->recovered.latest_group_states)
     impl->known_groups.insert(persistent.group_id);
   impl->open = true;
@@ -509,6 +761,7 @@ RaftPersistentLog::append(const GroupPersistentState& persistent) {
     ++position.segment_number;
     position.end_offset = installed->end_offset;
     ++impl_->recovered.segment_count;
+    impl_->segment_record_counts.emplace(position.segment_number, 0U);
   }
   common::Status status = impl_->active_file.write_all_at(position.end_offset, *encoded);
   if (!status.is_ok())
@@ -516,6 +769,7 @@ RaftPersistentLog::append(const GroupPersistentState& persistent) {
   position.end_offset += encoded->size();
   position.physical_sequence = persistent.physical_sequence;
   ++impl_->recovered.record_count;
+  ++impl_->segment_record_counts[position.segment_number];
   return position;
 }
 
@@ -530,6 +784,137 @@ common::Result<RaftPhysicalPosition> RaftPersistentLog::synchronize() {
     return common::make_unexpected(impl_->fail(status));
   impl_->recovered.durable_physical_sequence = impl_->recovered.written_position.physical_sequence;
   return impl_->recovered.written_position;
+}
+
+common::Result<RaftPersistentLogReclamation>
+RaftPersistentLog::checkpoint_and_reclaim(const std::vector<GroupPersistentState>& checkpoint) {
+  if (!impl_ || !impl_->open)
+    return common::make_unexpected(invalid("Raft persistent log is not open"));
+  if (!impl_->failure.is_ok())
+    return common::make_unexpected(impl_->failure);
+  if (checkpoint.empty() || checkpoint.size() < impl_->known_groups.size() ||
+      checkpoint.size() > impl_->config.maximum_groups) {
+    return common::make_unexpected(invalid("Raft reclamation checkpoint group count is invalid"));
+  }
+  if (checkpoint.size() > impl_->config.maximum_records - impl_->recovered.record_count) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "Raft reclamation checkpoint exceeds the transitional record limit"});
+  }
+
+  std::set<GroupId> checkpoint_groups;
+  std::vector<std::size_t> encoded_sizes;
+  encoded_sizes.reserve(checkpoint.size());
+  std::uint64_t expected_sequence = impl_->recovered.written_position.physical_sequence;
+  for (const GroupPersistentState& persistent : checkpoint) {
+    if (expected_sequence == std::numeric_limits<std::uint64_t>::max() ||
+        persistent.physical_sequence != ++expected_sequence ||
+        !checkpoint_groups.insert(persistent.group_id).second) {
+      return common::make_unexpected(
+          invalid("Raft reclamation checkpoint identity or sequence is invalid"));
+    }
+    auto encoded = encode_multiplexed_log_record_v1(persistent);
+    if (!encoded.has_value())
+      return common::make_unexpected(encoded.error());
+    if (encoded->size() + kRaftSegmentHeaderSize > impl_->config.target_segment_size) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kResourceExhausted,
+                         "Raft reclamation checkpoint record exceeds segment target size"});
+    }
+    encoded_sizes.push_back(encoded->size());
+  }
+  if (!std::ranges::includes(checkpoint_groups, impl_->known_groups)) {
+    return common::make_unexpected(invalid("Raft reclamation checkpoint group set is incomplete"));
+  }
+
+  std::uint64_t additional_segments = 1U;
+  std::uint64_t simulated_end = kRaftSegmentHeaderSize;
+  for (const std::size_t encoded_size : encoded_sizes) {
+    if (simulated_end > impl_->config.target_segment_size - encoded_size) {
+      ++additional_segments;
+      simulated_end = kRaftSegmentHeaderSize;
+    }
+    simulated_end += encoded_size;
+  }
+  const auto& old_position = impl_->recovered.written_position;
+  if (old_position.segment_number == std::numeric_limits<std::uint64_t>::max() ||
+      additional_segments > impl_->config.maximum_segments - impl_->recovered.segment_count) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "Raft reclamation checkpoint exceeds the transitional segment limit"});
+  }
+
+  common::Status status = impl_->active_file.sync_data();
+  if (status.is_ok()) {
+    impl_->recovered.durable_physical_sequence = old_position.physical_sequence;
+    status = impl_->active_file.close();
+  }
+  if (!status.is_ok())
+    return common::make_unexpected(impl_->fail(status));
+
+  const std::uint64_t base_segment = old_position.segment_number + 1U;
+  auto installed = install_segment(impl_->directory, impl_->config, base_segment,
+                                   checkpoint.front().physical_sequence);
+  if (!installed.has_value())
+    return common::make_unexpected(impl_->fail(installed.error()));
+  impl_->active_file = std::move(installed->file);
+  impl_->recovered.written_position.segment_number = base_segment;
+  impl_->recovered.written_position.end_offset = installed->end_offset;
+  ++impl_->recovered.segment_count;
+  impl_->segment_record_counts.emplace(base_segment, 0U);
+
+  for (const GroupPersistentState& persistent : checkpoint) {
+    auto appended = append(persistent);
+    if (!appended.has_value())
+      return common::make_unexpected(impl_->fail(appended.error()));
+  }
+  auto synchronized = synchronize();
+  if (!synchronized.has_value())
+    return common::make_unexpected(impl_->fail(synchronized.error()));
+
+  const RecoveryAnchor anchor{base_segment, checkpoint.front().physical_sequence,
+                              checkpoint.back().physical_sequence, checkpoint.size()};
+  status = install_recovery_anchor(impl_->directory, impl_->config, anchor);
+  if (!status.is_ok())
+    return common::make_unexpected(impl_->fail(status));
+  impl_->recovery_anchors.insert(base_segment);
+
+  std::uint64_t reclaimed_segments = 0U;
+  std::uint64_t reclaimed_records = 0U;
+  for (auto record_count = impl_->segment_record_counts.begin();
+       record_count != impl_->segment_record_counts.end() && record_count->first < base_segment;) {
+    status = impl_->directory.remove_file(segment_name(record_count->first, kSegmentSuffix));
+    if (!status.is_ok())
+      return common::make_unexpected(impl_->fail(status));
+    ++reclaimed_segments;
+    reclaimed_records += record_count->second;
+    record_count = impl_->segment_record_counts.erase(record_count);
+  }
+  status = impl_->directory.sync();
+  if (!status.is_ok())
+    return common::make_unexpected(impl_->fail(status));
+
+  for (auto anchor_number = impl_->recovery_anchors.begin();
+       anchor_number != impl_->recovery_anchors.end() && *anchor_number < base_segment;) {
+    status =
+        impl_->directory.remove_file(recovery_anchor_name(*anchor_number, kRecoveryAnchorSuffix));
+    if (!status.is_ok())
+      return common::make_unexpected(impl_->fail(status));
+    anchor_number = impl_->recovery_anchors.erase(anchor_number);
+  }
+  status = impl_->directory.sync();
+  if (!status.is_ok())
+    return common::make_unexpected(impl_->fail(status));
+
+  impl_->recovered.base_segment_number = base_segment;
+  impl_->recovered.segment_count -= reclaimed_segments;
+  impl_->recovered.record_count -= reclaimed_records;
+  return RaftPersistentLogReclamation{
+      .base_segment_number = base_segment,
+      .checkpoint_first_physical_sequence = checkpoint.front().physical_sequence,
+      .checkpoint_last_physical_sequence = checkpoint.back().physical_sequence,
+      .reclaimed_segments = reclaimed_segments,
+      .reclaimed_records = reclaimed_records};
 }
 
 const RaftPersistentLogRecovery& RaftPersistentLog::recovery() const noexcept {

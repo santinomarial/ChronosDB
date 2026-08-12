@@ -47,6 +47,15 @@ struct RaftPersistentLogRecovery {
   std::uint64_t segment_count{};
   std::uint64_t record_count{};
   std::uint64_t repaired_bytes{};
+  std::uint64_t base_segment_number{1U};
+};
+
+struct RaftPersistentLogReclamation {
+  std::uint64_t base_segment_number{};
+  std::uint64_t checkpoint_first_physical_sequence{};
+  std::uint64_t checkpoint_last_physical_sequence{};
+  std::uint64_t reclaimed_segments{};
+  std::uint64_t reclaimed_records{};
 };
 
 // Single-thread-affine owner of one node-level multiplexed Raft log. append() establishes only the
@@ -69,6 +78,11 @@ public:
 
   [[nodiscard]] common::Result<RaftPhysicalPosition> append(const GroupPersistentState& persistent);
   [[nodiscard]] common::Result<RaftPhysicalPosition> synchronize();
+  // Installs a complete node-wide full-state checkpoint in a fresh segment before publishing a
+  // recovery anchor and reclaiming older whole segments. The checkpoint must contain every known
+  // group exactly once with consecutive next physical sequences.
+  [[nodiscard]] common::Result<RaftPersistentLogReclamation>
+  checkpoint_and_reclaim(const std::vector<GroupPersistentState>& checkpoint);
 
   [[nodiscard]] const RaftPersistentLogRecovery& recovery() const noexcept;
   [[nodiscard]] RaftPhysicalPosition written_position() const noexcept;

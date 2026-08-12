@@ -153,6 +153,9 @@ public:
   [[nodiscard]] const RaftNode* find_group(const GroupId& group_id) const noexcept;
   [[nodiscard]] common::Result<QuorumSyncReceipt> prove_quorum_sync(const GroupId& group_id,
                                                                     LogIndex index) const;
+  // Persists a complete full-state checkpoint for all groups and only then reclaims shared-log
+  // segments that precede it.
+  [[nodiscard]] common::Result<RaftPersistentLogReclamation> checkpoint_and_reclaim();
   [[nodiscard]] RaftPhysicalPosition written_position() const noexcept;
   [[nodiscard]] std::uint64_t durable_physical_sequence() const noexcept;
   [[nodiscard]] bool failed() const noexcept;

@@ -97,6 +97,10 @@ public:
   [[nodiscard]] common::Result<MultiRaftTransition> begin_read_barrier(const GroupId& group_id);
   [[nodiscard]] common::Result<MultiRaftTransition> mark_applied(const GroupId& group_id,
                                                                  LogIndex index);
+  // Returns one full persistent state per resident group and advances the node-global physical
+  // sequence for those checkpoint records. A caller must fail closed if durable installation of
+  // any returned record fails.
+  [[nodiscard]] common::Result<std::vector<GroupPersistentState>> create_persistence_checkpoint();
 
   [[nodiscard]] const RaftNode* find_group(const GroupId& group_id) const noexcept;
   [[nodiscard]] std::size_t group_count() const noexcept;

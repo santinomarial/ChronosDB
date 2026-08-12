@@ -89,7 +89,8 @@ log.
 
 `prove_applied_quorum_sync` composes the leader's committed/joint-membership durability receipt with
 the Raft applied index and tablet group/index publication frontier. Client protocol exposure,
-transport of completed snapshot responses, and physical-log reclamation remain absent.
+transport of completed snapshot responses, and automatic scheduling of the implemented node-wide
+physical-log reclamation remain absent.
 
 ## Complexity and likely interview questions
 

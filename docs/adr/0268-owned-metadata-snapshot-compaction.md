@@ -45,8 +45,9 @@ ChronosDB is a private implementation dependency; no cryptographic type enters t
 A real-filesystem test applies a complete schema and table policy, installs the application
 snapshot, compacts Raft, commits a suffix node command, closes both owners, proves recovery without
 the snapshot is rejected, and reconstructs the exact complete catalog from snapshot plus suffix.
-Crash injection, snapshot transfer, old-file/shared-log reclamation, fuzzing, and large catalogs
-remain deferred.
+ADR 0269 now provides node-wide shared-log reclamation after every resident group has a fresh full
+state record. Crash injection, snapshot transfer, old application-snapshot reclamation, fuzzing, and
+large catalogs remain deferred.
 
 Invariants 1–6, 8, 10, 11, 14, and 18 apply.
 

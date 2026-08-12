@@ -47,19 +47,21 @@ the proof can authorize a query-visible write acknowledgment.
 
 ## Recovery and failure behavior
 
-Recovery holds the lock and rejects gaps, unknown entries, symlinks/non-regular files, invalid
-headers, noncontiguous sequences, hostile lengths, and checksum failure. Explicit repair truncates
-only a structurally incomplete suffix in the highest segment, then synchronizes file and directory.
-It never treats a complete checksum-invalid record as a tail. Repeating recovery over the repaired
-or unchanged bytes produces the same group states and positions.
+Recovery holds the lock and rejects retained gaps, unknown entries, symlinks/non-regular files,
+invalid headers, noncontiguous sequences, hostile lengths, and checksum failure. Explicit repair
+truncates only a structurally incomplete suffix in the highest segment, then synchronizes file and
+directory. It never treats a complete checksum-invalid record as a tail. After reclamation, the
+highest immutable recovery anchor names the exact retained base and a complete one-record-per-group
+checkpoint. Lower segments are removed only after that checkpoint validates. Repeating recovery
+over the repaired or unchanged bytes produces the same group states and positions.
 
 ## Complexity and tradeoffs
 
-Recovery is linear in physical bytes and records, with memory proportional to one bounded record
-plus the latest full state of each group. Full-state checkpoints simplify audit and reopen but may
-amplify writes. Per-group snapshot checkpoints now exist, but segment-prefix reclamation still
-requires proving that every group represented in a shared prefix has a later durable checkpoint;
-deleting records merely because one group advanced would remain unsafe.
+Recovery is linear in retained physical bytes and records, with memory proportional to one bounded
+record plus the latest full state of each group. Full-state checkpoints simplify audit and reopen
+but may amplify writes. The node-wide reclamation operation proves that every resident group has a
+fresh durable checkpoint before deleting a shared prefix; deleting records merely because one group
+advanced remains unsafe.
 
 ## Likely interview questions
 
@@ -68,3 +70,4 @@ deleting records merely because one group advanced would remain unsafe.
 - Why can only an incomplete highest-segment suffix be repaired?
 - Why does a physical sequence not replace a group's logical Raft index?
 - What proof is required before reclaiming an old shared segment?
+- Why must the recovery anchor become durable before the first old segment is removed?

@@ -88,6 +88,44 @@ TEST(DurableMultiRaftRuntimeTest, BatchesGroupsBehindOneDurableFrontierAndReopen
   EXPECT_EQ(reopened->durable_physical_sequence(), 6U);
 }
 
+TEST(DurableMultiRaftRuntimeTest, NodeWideCheckpointReclaimsAndContinuesGlobalSequence) {
+  TemporaryDirectory directory;
+  const RaftPersistentLogConfig log_config{.directory_path = directory.path().string(),
+                                           .target_segment_size = 300U};
+  const GroupId first = group_id(std::byte{18U});
+  const GroupId second = group_id(std::byte{19U});
+  const GroupId never_changed = group_id(std::byte{20U});
+  const std::vector<RaftGroupConfiguration> groups{
+      {first, {1U}}, {second, {1U}}, {never_changed, {1U}}};
+  auto runtime = DurableMultiRaftRuntime::create_new(1U, log_config, groups);
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  ASSERT_TRUE(
+      runtime
+          ->execute_batch({{first, StartElectionOperation{}}, {second, StartElectionOperation{}}})
+          .has_value());
+  ASSERT_EQ(runtime->durable_physical_sequence(), 2U);
+
+  auto reclaimed = runtime->checkpoint_and_reclaim();
+
+  ASSERT_TRUE(reclaimed.has_value()) << reclaimed.error().to_string();
+  EXPECT_EQ(reclaimed->checkpoint_first_physical_sequence, 3U);
+  EXPECT_EQ(reclaimed->checkpoint_last_physical_sequence, 5U);
+  EXPECT_EQ(reclaimed->reclaimed_records, 2U);
+  EXPECT_EQ(runtime->durable_physical_sequence(), 5U);
+  auto proposed = runtime->execute_batch(
+      {{first, ProposeOperation{.type = 1U, .payload = {std::byte{0x55U}}}}});
+  ASSERT_TRUE(proposed.has_value()) << proposed.error().to_string();
+  EXPECT_EQ(runtime->durable_physical_sequence(), 6U);
+  ASSERT_TRUE(runtime->close().is_ok());
+
+  auto reopened = DurableMultiRaftRuntime::open_existing(1U, log_config, {}, groups);
+  ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+  EXPECT_EQ(reopened->durable_physical_sequence(), 6U);
+  EXPECT_EQ(reopened->find_group(first)->commit_index(), 1U);
+  EXPECT_EQ(reopened->find_group(second)->current_term(), 1U);
+  EXPECT_EQ(reopened->find_group(never_changed)->current_term(), 0U);
+}
+
 TEST(DurableMultiRaftRuntimeTest, ReturnsVoteMessagesOnlyAfterStateIsDurable) {
   TemporaryDirectory directory;
   const RaftPersistentLogConfig log_config{.directory_path = directory.path().string()};

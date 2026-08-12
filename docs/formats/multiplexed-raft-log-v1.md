@@ -72,9 +72,11 @@ Each segment starts with this 64-byte little-endian header:
 | 32 | 4 | CRC32C of the complete header with this field zero |
 | 36 | 28 | Required-zero bytes |
 
-The remainder is an exact concatenation of complete record-v1 values. Segment numbers and physical
-sequences are contiguous from one. A segment is at most 1 GiB; the runtime target may rotate sooner.
-The maximum physical record remains 16 MiB.
+The remainder is an exact concatenation of complete record-v1 values. Before the first reclamation,
+segment numbers and physical sequences are contiguous from one. After node-wide checkpoint
+reclamation, they are contiguous from the base and first sequence named by a valid
+[Raft Recovery Anchor v1](raft-recovery-anchor-v1.md). A segment is at most 1 GiB; the runtime target
+may rotate sooner. The maximum physical record remains 16 MiB.
 
 ## Installation and durability
 
@@ -84,10 +86,10 @@ first data-synchronizes and closes the predecessor. A successful append means on
 bytes completed the write path. A successful explicit synchronization advances the locally durable
 physical sequence through the then-complete active-file prefix.
 
-Recovery validates the namespace, every segment header, and every record in physical order before
-returning latest per-group state. It may explicitly truncate only a structurally incomplete suffix
-in the highest segment. Complete checksum failure, gaps, unknown entries, and non-regular entries
-fail closed.
+Recovery validates the namespace, authoritative anchor when present, every retained segment header,
+and every retained record in physical order before returning latest per-group state. It may
+explicitly truncate only a structurally incomplete suffix in the highest segment. Complete
+checksum failure, retained gaps, unknown entries, and non-regular entries fail closed.
 
 ## Remaining limitation
 
@@ -95,6 +97,7 @@ fail closed.
 `DurableMultiRaftRuntime` can execute a bounded caller-provided operation batch, append all resulting
 persistent states through `RaftPersistentLog`, cover them with one local sync, and then release the
 outbound messages. On a stable or joint-consensus leader, its checked quorum-sync receipt composes
-the required Raft quorum commit with those durable follower-response and leader-commit boundaries. No current
-asynchronous worker reclaims checkpoint-covered segments, and native protocol/client acknowledgment
-does not yet expose the receipt as a requested durability mode.
+the required Raft quorum commit with those durable follower-response and leader-commit boundaries.
+No current asynchronous worker schedules the implemented caller-triggered all-group checkpoint
+reclamation, and native protocol/client acknowledgment does not yet expose the receipt as a
+requested durability mode.

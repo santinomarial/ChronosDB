@@ -328,6 +328,18 @@ DurableMultiRaftRuntime::prove_quorum_sync(const GroupId& group_id, const LogInd
                                impl_->log.durable_physical_sequence()};
 }
 
+common::Result<RaftPersistentLogReclamation> DurableMultiRaftRuntime::checkpoint_and_reclaim() {
+  if (failed())
+    return common::make_unexpected(failure_status());
+  auto checkpoint = impl_->runtime.create_persistence_checkpoint();
+  if (!checkpoint.has_value())
+    return common::make_unexpected(checkpoint.error());
+  auto reclaimed = impl_->log.checkpoint_and_reclaim(*checkpoint);
+  if (!reclaimed.has_value())
+    return common::make_unexpected(impl_->fail(reclaimed.error()));
+  return reclaimed;
+}
+
 RaftPhysicalPosition DurableMultiRaftRuntime::written_position() const noexcept {
   return impl_->log.written_position();
 }

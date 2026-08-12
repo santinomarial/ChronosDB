@@ -1,0 +1,50 @@
+# ADR 0269: Node-Wide Checkpointed Raft Log Reclamation
+
+- **Status:** accepted
+- **Date:** 2026-08-12
+- **Owners:** ChronosDB distributed-systems and recoverability maintainers
+- **Extends:** [ADR 0071](0071-segmented-multi-raft-persistence.md)
+
+## Context
+
+Raft application snapshots compact each group's logical retained log, but the multiplexed physical
+log remained append-only. Removing a segment after only one group advanced is unsafe because its
+latest record may be the only durable state for another group. Requiring retained segment numbers
+to start at one also made a missing segment indistinguishable from deliberate prefix reclamation.
+
+## Decision
+
+`DurableMultiRaftRuntime::checkpoint_and_reclaim` is the node-wide reclamation boundary. The
+single-thread-affine Multi-Raft owner copies the current persistent state of every resident group in
+canonical group order and assigns consecutive next physical sequences. The physical-log owner
+starts a fresh segment, appends the complete set, and synchronizes it before publishing a
+checksummed [Raft Recovery Anchor v1](../formats/raft-recovery-anchor-v1.md).
+
+The immutable, no-replace-installed anchor names the first retained segment, exact checkpoint
+sequence interval, and logical-group count. Its directory entry is synchronized before any older
+segment is removed. Recovery selects the highest anchor, validates the exact contiguous checkpoint
+and distinct group set, then processes later records normally. Obsolete lower segments and anchors
+are cleanup residue only after that validation succeeds.
+
+The operation admits no empty checkpoint and requires every currently known group exactly once.
+The existing record and segment bounds also cover the transitional old-plus-checkpoint history. Any
+I/O failure poisons the owner; restart either sees the complete old history or a complete anchored
+checkpoint. Physical sequences and segment numbers remain monotonic and are never renumbered.
+
+## Consequences and alternatives
+
+Reclamation is coarse and writes one full state per resident group, but it proves that no group's
+only recovery record is removed. Per-group segment deletion was rejected because records are
+interleaved. In-place segment renumbering was rejected because it mutates durable identity and adds
+ambiguous crash states. A replaceable singleton pointer was rejected in favor of immutable
+generational anchors compatible with the existing no-replace filesystem primitive.
+
+The first implementation is synchronous and caller-triggered. Scheduling policy, high-cardinality
+incremental checkpointing, process-kill fault points, metrics, and physical-device qualification
+remain hardening work.
+
+## Validation and invariants
+
+Invariants 1, 4, 5, 8, 10, 11, 14, and 18 apply. Real-filesystem tests cover multi-group shared
+prefix reclamation, exact reopen and sequence continuation, stale old-segment cleanup after an
+interrupted deletion, damaged-anchor rejection, and durable-runtime composition.

@@ -47,8 +47,8 @@ persist the final applied index only after the whole batch succeeds.
 
 Quorum checks are linear in the bounded voter count. Membership derivation is linear in retained
 log entries and decodes only reserved membership entries. Full replay is intentionally simple and
-auditable; the implemented snapshot membership checkpoint now makes later shared-log reclamation
-possible once application snapshot installation is wired.
+auditable; the implemented snapshot membership and application checkpoints now allow the node-wide
+full-state checkpoint to reclaim older shared-log segments safely.
 Joint consensus temporarily reduces availability because both configurations must form majorities.
 ChronosDB accepts that cost in preference to unsafe direct replacement.
 

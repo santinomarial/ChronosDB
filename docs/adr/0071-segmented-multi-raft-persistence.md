@@ -35,7 +35,9 @@ file and directory. Repeated recovery over unchanged bytes is idempotent.
 The initial implementation uses full-state records and a bounded caller-provided batch.
 `DurableMultiRaftRuntime` executes deterministic operations, appends every persistent transition,
 performs one sync for the batch, and only then releases its transitions and outbound messages. It
-does not yet claim majority durability, expose `QUORUM_SYNC`, or reclaim segment prefixes.
+also composes a complete all-group full-state checkpoint with the immutable recovery anchor from
+ADR 0269 before reclaiming older whole segments. It does not yet expose `QUORUM_SYNC` through the
+native client durability negotiation.
 
 ## Consequences and alternatives
 
@@ -49,7 +51,7 @@ because it could hide loss of a previously durable record.
 
 Invariants 1, 4, 5, 8, 10, 14, and 18 apply. Focused tests cover rotation, shared-group recovery,
 latest-state reconstruction, sequence continuation, exclusive ownership, explicit incomplete-tail
-repair, fail-closed complete-record corruption, batched persist-before-send release, and durable
-applied-index recovery. Injected syscall failures, process crash points, asynchronous worker
-scheduling, reclamation, sustained corruption campaigns, and Linux power-loss qualification remain
-required.
+repair, fail-closed complete-record corruption, batched persist-before-send release, durable
+applied-index recovery, and anchored all-group prefix reclamation. Injected syscall failures,
+process crash points, asynchronous reclamation scheduling, sustained corruption campaigns, and
+Linux power-loss qualification remain required.

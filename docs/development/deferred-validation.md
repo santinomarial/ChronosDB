@@ -177,8 +177,9 @@
 ## Phase 15 — Multi-Raft tablets and metadata
 
 - Extend the implemented segmented node-level writer, rotation, complete recovery scan, explicit
-  tail repair, corruption rejection, and caller-batched sync with injected I/O failures, per-group
-  reclamation/checkpointing, process-crash testing, and metrics.
+  tail repair, corruption rejection, caller-batched sync, and anchored all-group physical-prefix
+  reclamation with injected I/O failures, process-crash testing, asynchronous scheduling, and
+  metrics.
 - Exercise the v1.1 snapshot membership checkpoint with golden minor-0/minor-1 fixtures,
   mixed-version processes, hostile voter counts, snapshot-install crash points, and reclamation.
 - Connect the implemented two-stage Raft snapshot request/completion boundary to versioned tablet
@@ -198,7 +199,7 @@
 - Extend the implemented committed-only tablet command application and full retained-log rebuild
   with crash injection around publication/applied-index persistence. Extend the implemented durable
   application-snapshot creation/compaction plus prefix/suffix recovery with mismatch/fault matrices,
-  obsolete-file and physical-log reclamation; version CSEG/Manifest row identities for Raft source/
+  obsolete-file reclamation and wider physical-log fault matrices; version CSEG/Manifest row identities for Raft source/
   group positions, and cover query row-version columns and compaction migration. Carry the implemented joint-
   membership quorum-sync/application receipt through authenticated transport, protocol negotiation,
   explicit configuration identity, metrics, timeouts, and minority-loss crash reconciliation before exposing

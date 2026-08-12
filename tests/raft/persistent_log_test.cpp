@@ -62,6 +62,14 @@ private:
   return selected;
 }
 
+[[nodiscard]] std::filesystem::path recovery_anchor(const std::filesystem::path& directory) {
+  for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+    if (entry.path().extension() == ".rbase")
+      return entry.path();
+  }
+  return {};
+}
+
 TEST(RaftPersistentLogTest, RotatesRecoversLatestGroupStatesAndContinuesSequence) {
   TemporaryDirectory directory;
   const RaftPersistentLogConfig config{.directory_path = directory.path().string(),
@@ -88,6 +96,127 @@ TEST(RaftPersistentLogTest, RotatesRecoversLatestGroupStatesAndContinuesSequence
   auto appended = reopened->append(state(second, 4U, 0x44U));
   ASSERT_TRUE(appended.has_value()) << appended.error().to_string();
   EXPECT_EQ(appended->physical_sequence, 4U);
+}
+
+TEST(RaftPersistentLogTest, CheckpointsEveryGroupBeforeReclaimingSharedSegmentPrefix) {
+  TemporaryDirectory directory;
+  const RaftPersistentLogConfig config{.directory_path = directory.path().string(),
+                                       .target_segment_size = 300U};
+  auto log = RaftPersistentLog::create_new(config);
+  ASSERT_TRUE(log.has_value()) << log.error().to_string();
+  const GroupId first = group_id(std::byte{11U});
+  const GroupId second = group_id(std::byte{12U});
+  ASSERT_TRUE(log->append(state(first, 1U, 0x11U)).has_value());
+  ASSERT_TRUE(log->append(state(second, 2U, 0x22U)).has_value());
+  ASSERT_TRUE(log->append(state(first, 3U, 0x33U)).has_value());
+  ASSERT_TRUE(log->synchronize().has_value());
+
+  const std::vector<GroupPersistentState> checkpoint{state(first, 4U, 0x33U),
+                                                     state(second, 5U, 0x22U)};
+  auto reclaimed = log->checkpoint_and_reclaim(checkpoint);
+
+  ASSERT_TRUE(reclaimed.has_value()) << reclaimed.error().to_string();
+  EXPECT_EQ(reclaimed->base_segment_number, 4U);
+  EXPECT_EQ(reclaimed->checkpoint_first_physical_sequence, 4U);
+  EXPECT_EQ(reclaimed->checkpoint_last_physical_sequence, 5U);
+  EXPECT_EQ(reclaimed->reclaimed_segments, 3U);
+  EXPECT_EQ(reclaimed->reclaimed_records, 3U);
+  EXPECT_EQ(log->recovery().base_segment_number, 4U);
+  EXPECT_EQ(log->recovery().segment_count, 2U);
+  EXPECT_EQ(log->recovery().record_count, 2U);
+  ASSERT_TRUE(log->close().is_ok());
+
+  auto reopened = RaftPersistentLog::open_existing(config);
+  ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+  EXPECT_EQ(reopened->recovery().base_segment_number, 4U);
+  ASSERT_EQ(reopened->recovery().latest_group_states.size(), 2U);
+  EXPECT_EQ(reopened->recovery().latest_group_states[0], checkpoint[0]);
+  EXPECT_EQ(reopened->recovery().latest_group_states[1], checkpoint[1]);
+  auto appended = reopened->append(state(first, 6U, 0x44U));
+  ASSERT_TRUE(appended.has_value()) << appended.error().to_string();
+  EXPECT_EQ(appended->physical_sequence, 6U);
+}
+
+TEST(RaftPersistentLogTest, RecoveryAnchorIgnoresAndCleansInterruptedOldSegmentDeletion) {
+  TemporaryDirectory directory;
+  const RaftPersistentLogConfig config{.directory_path = directory.path().string(),
+                                       .target_segment_size = 300U};
+  auto log = RaftPersistentLog::create_new(config);
+  ASSERT_TRUE(log.has_value());
+  const GroupId group = group_id(std::byte{13U});
+  ASSERT_TRUE(log->append(state(group, 1U, 0x11U)).has_value());
+  ASSERT_TRUE(log->synchronize().has_value());
+  const std::filesystem::path old_segment = directory.path() / "raft-00000000000000000001.rlog";
+  std::ifstream old_input(old_segment, std::ios::binary);
+  const std::vector<char> old_bytes{std::istreambuf_iterator<char>{old_input},
+                                    std::istreambuf_iterator<char>{}};
+  ASSERT_FALSE(old_bytes.empty());
+  auto reclaimed = log->checkpoint_and_reclaim({state(group, 2U, 0x11U)});
+  ASSERT_TRUE(reclaimed.has_value()) << reclaimed.error().to_string();
+  ASSERT_TRUE(log->close().is_ok());
+
+  std::ofstream restored(old_segment, std::ios::binary);
+  restored.write(old_bytes.data(), static_cast<std::streamsize>(old_bytes.size()));
+  restored.close();
+  ASSERT_TRUE(std::filesystem::exists(old_segment));
+
+  auto reopened = RaftPersistentLog::open_existing(config);
+
+  ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+  EXPECT_EQ(reopened->recovery().base_segment_number, reclaimed->base_segment_number);
+  EXPECT_FALSE(std::filesystem::exists(old_segment));
+  ASSERT_EQ(reopened->recovery().latest_group_states.size(), 1U);
+  EXPECT_EQ(reopened->recovery().latest_group_states.front(), state(group, 2U, 0x11U));
+}
+
+TEST(RaftPersistentLogTest, CorruptRecoveryAnchorNeverFallsBackToReclaimedHistory) {
+  TemporaryDirectory directory;
+  const RaftPersistentLogConfig config{.directory_path = directory.path().string()};
+  auto log = RaftPersistentLog::create_new(config);
+  ASSERT_TRUE(log.has_value());
+  const GroupId group = group_id(std::byte{14U});
+  ASSERT_TRUE(log->append(state(group, 1U, 0x14U)).has_value());
+  ASSERT_TRUE(log->synchronize().has_value());
+  ASSERT_TRUE(log->checkpoint_and_reclaim({state(group, 2U, 0x14U)}).has_value());
+  ASSERT_TRUE(log->close().is_ok());
+  const std::filesystem::path anchor = recovery_anchor(directory.path());
+  ASSERT_FALSE(anchor.empty());
+  std::fstream bytes(anchor, std::ios::in | std::ios::out | std::ios::binary);
+  ASSERT_TRUE(bytes.is_open());
+  bytes.seekg(24);
+  char value{};
+  bytes.read(&value, 1);
+  value ^= 1;
+  bytes.seekp(24);
+  bytes.write(&value, 1);
+  bytes.close();
+
+  auto corrupted = RaftPersistentLog::open_existing(config);
+
+  ASSERT_FALSE(corrupted.has_value());
+  EXPECT_EQ(corrupted.error().code(), common::StatusCode::kCorruption);
+}
+
+TEST(RaftPersistentLogTest, AnchoredCheckpointIsNeverTreatedAsRepairableTail) {
+  TemporaryDirectory directory;
+  const RaftPersistentLogConfig config{.directory_path = directory.path().string()};
+  auto log = RaftPersistentLog::create_new(config);
+  ASSERT_TRUE(log.has_value());
+  const GroupId group = group_id(std::byte{15U});
+  ASSERT_TRUE(log->append(state(group, 1U, 0x15U)).has_value());
+  ASSERT_TRUE(log->synchronize().has_value());
+  ASSERT_TRUE(log->checkpoint_and_reclaim({state(group, 2U, 0x15U)}).has_value());
+  ASSERT_TRUE(log->close().is_ok());
+  const std::filesystem::path segment = highest_segment(directory.path());
+  const std::uintmax_t complete_size = std::filesystem::file_size(segment);
+  std::filesystem::resize_file(segment, complete_size - 8U);
+
+  auto rejected = RaftPersistentLog::open_existing(
+      config, RaftPersistentLogOpenOptions{.repair_incomplete_final_tail = true});
+
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kCorruption);
+  EXPECT_EQ(std::filesystem::file_size(segment), complete_size - 8U);
 }
 
 TEST(RaftPersistentLogTest, ExclusiveOwnerRejectsConcurrentOpen) {
