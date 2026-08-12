@@ -22,6 +22,15 @@ and `SIGTERM` request orderly worker join, reactor shutdown, WAL drain, Raft clo
 release. Active configured subscriptions receive resumable server-shutdown termination while the
 reactor is still draining responses.
 
+For an already provisioned replicated root, add `--replicated-groups FILE`. The strict file format
+is documented in [Replicated Group Configuration](replicated-group-config.md). This mode reports
+`data_plane=replicated`, reconstructs resident tablet owners from committed metadata, automatically
+elects only groups whose sole voter is the local node, and advertises Protocol 2 QUORUM_SYNC only
+after all owners are running. It serves canonical replicated ingest and exact retries. Native query
+and subscription requests fail explicitly in this mode until Raft-backed query snapshots are
+packaged. Multi-voter deployments additionally require the still-external authenticated Raft peer
+transport and election driver; the group file itself contains no endpoints or credentials.
+
 Set finite connection, event, frame, buffered-byte, queued-frame, in-flight request, handshake, and
 idle limits. Defaults are development bounds, not capacity guidance. Monitor accepted, rejected,
 active, closed, and timed-out connections; decoded/dispatched frames; overloads; dropped responses;

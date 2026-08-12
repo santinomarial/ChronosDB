@@ -1,7 +1,15 @@
+#include "chronos/columnar/columnar_batch_codec.hpp"
 #include "chronos/common/byte_reader.hpp"
 #include "chronos/network/messages.hpp"
 #include "chronos/network/protocol.hpp"
 #include "chronos/network/subscription_messages.hpp"
+#include "chronos/raft/metadata_codec.hpp"
+#include "chronos/raft/schema_definition_codec.hpp"
+#include "chronos/raft/tablet_group_binding_codec.hpp"
+#include "chronos/runtime/database_bootstrap.hpp"
+#include "chronos/service/replicated_ingest_runtime.hpp"
+#include "columnar/columnar_test_support.hpp"
+#include "ingest/ingest_test_support.hpp"
 
 #include <arpa/inet.h>
 #include <array>
@@ -14,6 +22,7 @@
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <netinet/in.h>
+#include <optional>
 #include <poll.h>
 #include <span>
 #include <string>
@@ -39,7 +48,8 @@ public:
 
   [[nodiscard]] bool start(const std::string& data_directory = {},
                            const std::string& subscription_sql = {},
-                           const std::string& subscription_key_file = {}) {
+                           const std::string& subscription_key_file = {},
+                           const std::string& replicated_groups_file = {}) {
     int output[2]{};
     if (::pipe(output) != 0)
       return false;
@@ -56,6 +66,9 @@ public:
       ::close(output[1]);
       if (data_directory.empty())
         ::execl(CHRONOSD_PATH, CHRONOSD_PATH, "--port", "0", nullptr);
+      else if (!replicated_groups_file.empty())
+        ::execl(CHRONOSD_PATH, CHRONOSD_PATH, "--port", "0", "--data-dir", data_directory.c_str(),
+                "--replicated-groups", replicated_groups_file.c_str(), nullptr);
       else if (subscription_sql.empty())
         ::execl(CHRONOSD_PATH, CHRONOSD_PATH, "--port", "0", "--data-dir", data_directory.c_str(),
                 nullptr);
@@ -229,6 +242,166 @@ void handshake_subscriptions(const int client) {
   EXPECT_EQ(hello->feature_bits, network::kProtocolV1SubscriptionFeature);
 }
 
+void handshake_quorum_sync(const int client) {
+  const auto hello_payload =
+      network::encode_client_hello({.maximum_major = network::kProtocolV2Major,
+                                    .maximum_minor = network::kProtocolV2LatestMinor,
+                                    .feature_bits = network::kProtocolV2QuorumSyncFeature})
+          .value();
+  ASSERT_TRUE(
+      send_all(client, network::encode_frame({.message_type = network::MessageType::kClientHello},
+                                             hello_payload)
+                           .value()));
+  const auto response = network::decode_frame(receive_frame(client));
+  ASSERT_TRUE(response.has_value());
+  ASSERT_EQ(response->header.message_type, network::MessageType::kServerHello);
+  const auto hello = network::decode_server_hello(response->payload);
+  ASSERT_TRUE(hello.has_value());
+  EXPECT_EQ(hello->selected_major, network::kProtocolV2Major);
+  EXPECT_EQ(hello->selected_minor, network::kProtocolV2LatestMinor);
+  EXPECT_EQ(hello->feature_bits, network::kProtocolV2QuorumSyncFeature);
+}
+
+[[nodiscard]] common::Uuid repeated_id(const std::uint8_t seed) {
+  common::Uuid::Bytes bytes{};
+  bytes.fill(static_cast<std::byte>(seed));
+  return common::Uuid{bytes};
+}
+
+[[nodiscard]] raft::GroupId replicated_metadata_group() {
+  return repeated_id(0x90U);
+}
+
+[[nodiscard]] raft::GroupId replicated_tablet_group() {
+  return repeated_id(0x91U);
+}
+
+[[nodiscard]] schema::TabletId replicated_tablet_id() {
+  return columnar::test::id<schema::TabletId>(90U);
+}
+
+[[nodiscard]] std::vector<std::byte> replicated_command() {
+  auto batch = columnar::OwnedColumnarBatch::create(columnar::test::batch_schema(),
+                                                    columnar::test::batch_columns())
+                   .value();
+  const auto batch_bytes = columnar::encode_columnar_batch_v1(batch).value();
+  const auto append = ingest::encode_columnar_append_v1(
+                          {.client_id = ingest::test::request_id<ingest::ClientId>(9U),
+                           .client_batch_id = ingest::test::request_id<ingest::ClientBatchId>(90U),
+                           .tablet_id = replicated_tablet_id()},
+                          batch_bytes)
+                          .value();
+  return {append.bytes().begin(), append.bytes().end()};
+}
+
+void provision_replicated_database(const std::string& path) {
+  const runtime::DatabaseBootstrapDescriptor descriptor{.database_id = repeated_id(0x92U),
+                                                        .metadata_group_id =
+                                                            replicated_metadata_group(),
+                                                        .local_node_id = 1U,
+                                                        .mutable_head_rows = 8U,
+                                                        .maximum_sealed_generations = 2U,
+                                                        .variable_column_bytes = 8U,
+                                                        .maximum_retry_entries = 8U,
+                                                        .wal_segment_target_bytes = 64U * 1024U,
+                                                        .raft_segment_target_bytes = 64U * 1024U};
+  auto bootstrap = runtime::DatabaseBootstrap::open_or_create(
+      {.database_root = path, .new_database = descriptor});
+  ASSERT_TRUE(bootstrap.has_value()) << bootstrap.error().to_string();
+  auto tablet = ingest::TabletState::create(
+      columnar::test::batch_schema(), replicated_tablet_id(),
+      {.head_capacity = {.row_capacity = 8U, .variable_value_bytes = {0U, 8U, 0U}},
+       .maximum_schema_versions = 1U,
+       .maximum_sealed_generations = 2U,
+       .maximum_retry_entries = 8U});
+  auto retries = ingest::RetryDirectory::create({.maximum_entries = 8U});
+  ASSERT_TRUE(tablet.has_value());
+  ASSERT_TRUE(retries.has_value());
+  std::vector<ingest::AsyncRaftTabletApplicationConfig> tablets;
+  tablets.push_back({.group_id = replicated_tablet_group(),
+                     .snapshot_storage = std::nullopt,
+                     .retry_directory = std::move(*retries),
+                     .tablet = std::move(*tablet),
+                     .retained_schemas = {columnar::test::batch_schema()},
+                     .decode_limits = {}});
+  auto owner = service::ReplicatedIngestRuntime::create_new(
+      {.local_node_id = 1U,
+       .log = {.directory_path = bootstrap->raft_directory_path(),
+               .target_segment_size = descriptor.raft_segment_target_bytes},
+       .groups = {{replicated_metadata_group(), {1U}}, {replicated_tablet_group(), {1U}}},
+       .tablets = std::move(tablets),
+       .metadata = {.group_id = replicated_metadata_group()}});
+  ASSERT_TRUE(owner.has_value()) << owner.error().to_string();
+  auto election =
+      owner->runtime()->try_submit({{replicated_metadata_group(), raft::StartElectionOperation{}}});
+  ASSERT_TRUE(election.has_value());
+  ASSERT_TRUE(election->wait().has_value());
+  const raft::ProposeOperation schema{
+      raft::kRaftSchemaDefinitionEntryType,
+      raft::encode_schema_definition_v1(
+          {.name = "events", .quoted = false, .schema = columnar::test::batch_schema()})
+          .value()};
+  const raft::ProposeOperation policy{
+      raft::kRaftMetadataCommandEntryType,
+      raft::encode_metadata_command_v1(
+          raft::TablePolicyMetadata{columnar::test::batch_schema()->table_id(), 1'000'000'000LL,
+                                    86'400'000'000'000LL, 86'400'000'000'000LL, 0LL, 8U})
+          .value()};
+  const raft::ProposeOperation placement{
+      raft::kRaftMetadataCommandEntryType,
+      raft::encode_metadata_command_v1(
+          raft::TabletPlacementMetadata{
+              columnar::test::batch_schema()->table_id(), replicated_tablet_id(), 1U, {1U}, 1U})
+          .value()};
+  const raft::ProposeOperation binding{
+      raft::kRaftTabletGroupBindingEntryType,
+      raft::encode_tablet_group_binding_v1({replicated_tablet_id(), replicated_tablet_group()})
+          .value()};
+  auto metadata = owner->runtime()->try_submit({{replicated_metadata_group(), schema},
+                                                {replicated_metadata_group(), policy},
+                                                {replicated_metadata_group(), placement},
+                                                {replicated_metadata_group(), binding}});
+  ASSERT_TRUE(metadata.has_value());
+  ASSERT_TRUE(metadata->wait().has_value());
+  EXPECT_TRUE(owner->shutdown().is_ok());
+  EXPECT_TRUE(bootstrap->close().is_ok());
+}
+
+[[nodiscard]] std::string write_replicated_groups(const std::string& directory) {
+  const std::string path = directory + "/replicated-groups.conf";
+  constexpr std::string_view bytes = "CHRONOSDB_REPLICATED_GROUPS_V1\n"
+                                     "90909090-9090-9090-9090-909090909090=1\n"
+                                     "91919191-9191-9191-9191-919191919191=1\n";
+  const int file = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+  EXPECT_GE(file, 0);
+  if (file < 0)
+    return {};
+  EXPECT_EQ(::write(file, bytes.data(), bytes.size()), static_cast<ssize_t>(bytes.size()));
+  EXPECT_EQ(::fsync(file), 0);
+  EXPECT_EQ(::close(file), 0);
+  return path;
+}
+
+[[nodiscard]] network::Frame send_replicated_ingest(const int client) {
+  const network::IngestProtocolContext context{.protocol_major = network::kProtocolV2Major,
+                                               .protocol_minor = network::kProtocolV2LatestMinor,
+                                               .feature_bits =
+                                                   network::kProtocolV2QuorumSyncFeature};
+  const auto payload = network::encode_ingest_request(network::DurabilityMode::kQuorumSync,
+                                                      replicated_command(), context);
+  EXPECT_TRUE(payload.has_value());
+  EXPECT_TRUE(
+      send_all(client, network::encode_frame({.protocol_major = network::kProtocolV2Major,
+                                              .protocol_minor = network::kProtocolV2LatestMinor,
+                                              .message_type = network::MessageType::kIngestRequest,
+                                              .request_id = 1U},
+                                             *payload)
+                           .value()));
+  auto response = network::decode_frame(receive_frame(client));
+  EXPECT_TRUE(response.has_value());
+  return response.value_or(network::Frame{});
+}
+
 [[nodiscard]] network::Frame send_query(const int client, const std::uint64_t request_id,
                                         const std::string_view sql) {
   const auto payload = network::encode_query_request(sql).value();
@@ -334,6 +507,49 @@ TEST(ChronosdProcessTest, CreatesQueriesAndRecoversAConfiguredDatabase) {
   EXPECT_EQ(recovered.read_i64_le().value(), 0);
   response = network::decode_frame(receive_frame(client)).value();
   EXPECT_EQ(response.header.message_type, network::MessageType::kQueryEnd);
+  ::close(client);
+  EXPECT_EQ(child.stop(), 0);
+}
+
+TEST(ChronosdProcessTest, AppliesAndRecoversQuorumSyncThroughReplicatedDaemonMode) {
+  TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  provision_replicated_database(directory.path());
+  const std::string groups = write_replicated_groups(directory.path());
+  ASSERT_FALSE(groups.empty());
+
+  ChildProcess child;
+  ASSERT_TRUE(child.start(directory.path(), {}, {}, groups));
+  std::string startup = child.read_startup_line();
+  EXPECT_NE(startup.find("data_plane=replicated"), std::string::npos);
+  std::uint16_t port = parse_port(startup);
+  ASSERT_NE(port, 0U);
+  int client = connect_client(port);
+  ASSERT_GE(client, 0);
+  handshake_quorum_sync(client);
+  auto response = send_replicated_ingest(client);
+  ASSERT_EQ(response.header.message_type, network::MessageType::kQuorumSyncIngestAcknowledgement);
+  auto acknowledgement = network::decode_quorum_sync_ingest_acknowledgement(response.payload);
+  ASSERT_TRUE(acknowledgement.has_value()) << acknowledgement.error().to_string();
+  EXPECT_EQ(acknowledgement->outcome, network::IngestOutcome::kApplied);
+  EXPECT_EQ(acknowledgement->group_id, replicated_tablet_group());
+  ::close(client);
+  ASSERT_EQ(child.stop(), 0);
+
+  ASSERT_TRUE(child.start(directory.path(), {}, {}, groups));
+  startup = child.read_startup_line();
+  EXPECT_NE(startup.find("data_plane=replicated"), std::string::npos);
+  port = parse_port(startup);
+  ASSERT_NE(port, 0U);
+  client = connect_client(port);
+  ASSERT_GE(client, 0);
+  handshake_quorum_sync(client);
+  response = send_replicated_ingest(client);
+  ASSERT_EQ(response.header.message_type, network::MessageType::kQuorumSyncIngestAcknowledgement);
+  acknowledgement = network::decode_quorum_sync_ingest_acknowledgement(response.payload);
+  ASSERT_TRUE(acknowledgement.has_value()) << acknowledgement.error().to_string();
+  EXPECT_EQ(acknowledgement->outcome, network::IngestOutcome::kMatchingRetry);
+  EXPECT_EQ(acknowledgement->group_id, replicated_tablet_group());
   ::close(client);
   EXPECT_EQ(child.stop(), 0);
 }

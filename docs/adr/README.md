@@ -320,3 +320,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0283](0283-bounded-reactor-facing-replicated-ingest-service.md) | Bounded reactor-facing replicated-ingest service | accepted |
 | [0284](0284-committed-metadata-replicated-database-recovery.md) | Committed-metadata replicated database recovery | accepted |
 | [0285](0285-strict-replicated-group-deployment-config.md) | Strict replicated-group deployment configuration | accepted |
+| [0286](0286-explicit-replicated-native-daemon-mode.md) | Explicit replicated native-daemon mode | accepted |

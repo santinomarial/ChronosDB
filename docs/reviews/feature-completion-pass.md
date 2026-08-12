@@ -183,7 +183,8 @@ A database-level recovery owner now holds Database Bootstrap authority, uses exp
 membership to recover the committed global metadata catalog, reconstructs only local tablet/retry
 owners, and reopens the asynchronous runtime before exposing service access.
 The external resident group/voter set now has a strict bounded canonical text parser; daemon file
-loading and mode selection remain the next packaging boundary.
+loading and explicit mode selection now compose it with Protocol 2 advertisement, local single-voter
+election, reactor routing/wakeup, and ordered shutdown.
 
 ### Phase 15 — Multi-Raft tablets and metadata
 
@@ -281,10 +282,12 @@ distributed partial aggregation, a committed single-group Raft command, verified
 manifest callback, cache/range read, and byte-identical result in one process. Separate deterministic
 tests cover the requested 3-node Raft failover and Multi-Raft different-leader cases.
 
-A packaged `chronosd` lifecycle now owns the bounded native reactor and worker handoff, supports
-real loopback handshake/PING sockets, and fails data-plane requests explicitly because durable
-runtime composition is not configured. The requested real three-process/data-plane workflow does
-not exist. A later focused
+A packaged `chronosd` lifecycle now owns the bounded native reactor and worker handoff. Its default
+and single-node modes preserve Protocol 1 behavior. An explicit replicated mode securely loads
+resident group membership, recovers committed metadata/tablets, advertises Protocol 2 QUORUM_SYNC,
+and routes bounded ingest/cancellation/completion work. A Linux-only process gate performs a real
+loopback applied write and matching retry after daemon restart. The requested real
+three-process/data-plane workflow does not exist. A later focused
 gate uses real mutual-TLS query sockets around the complete movement state machine, but simulates the
 externally committed promotion/removal milestones and deterministic worker aggregates. It does not
 start three server processes, execute SQL through the native protocol, kill a process, apply a Raft
@@ -358,6 +361,9 @@ Focused executions passed:
 - Tablet-group authority continuation: 20 focused Raft tests passed for binding codec damage and
   version rejection, immutable ordered application, retained-log and Snapshot 1.1 recovery,
   minor-0 isolation, compaction, owning projection, and asynchronous publication.
+- Packaged replicated-ingest continuation: all 39 service tests passed, `chronosd` built, and the
+  Linux-only real-socket process test source passed a standalone syntax check on macOS. The new
+  process case itself remains a Linux execution gate.
 
 The final C++ tree passed the repository-pinned clang-format 18 check. Full-suite, sanitizer, fuzz,
 broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were deliberately not run.
@@ -401,8 +407,9 @@ broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were d
 - Shared Raft-log and application-snapshot reclamation are caller-triggered and lack syscall/crash
   fault matrices; the ordering protocols are implemented and focused restart tests pass.
 - QUORUM_SYNC receipts, Protocol 2.0 negotiation/acknowledgement bytes, metadata-derived local
-  routing, bounded execution, queue-facing backpressure/drain composition, and database-root reopen
-  from committed metadata exist, but no packaged replicated daemon advertises the client mode yet.
+  routing, bounded execution, queue-facing backpressure/drain composition, database-root reopen,
+  and explicit packaged daemon advertisement exist. Multi-node peer transport and leader routing
+  are still absent.
 - Production S3 semantics are implemented through the libcurl SigV4 backend but still require
   object-store fault and deployment qualification.
 

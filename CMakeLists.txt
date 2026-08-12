@@ -1161,7 +1161,8 @@ if(CHRONOS_BUILD_TESTS)
     add_executable(chronosd_process_tests tests/integration/chronosd_process_test.cpp)
     set_target_properties(chronosd_process_tests PROPERTIES CXX_EXTENSIONS OFF)
     target_compile_features(chronosd_process_tests PRIVATE cxx_std_23)
-    target_link_libraries(chronosd_process_tests PRIVATE chronos::network GTest::gtest_main)
+    target_include_directories(chronosd_process_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+    target_link_libraries(chronosd_process_tests PRIVATE chronos::service GTest::gtest_main)
     target_compile_definitions(
       chronosd_process_tests PRIVATE CHRONOSD_PATH="$<TARGET_FILE:chronosd>"
     )

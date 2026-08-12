@@ -208,8 +208,8 @@
   exact cancellation, one retained response, response-wakeup reporting, and admission-close/drain;
   a database-root owner now reconstructs resident tablet applications from committed global
   metadata and explicit group membership before reopening the asynchronous runtime. A strict
-  bounded group/voter deployment parser now exists; add secure daemon file loading, remote leader
-  redirection, packaged daemon ownership, metadata/tablet snapshot process recovery,
+  bounded group/voter deployment parser and secure packaged daemon loading/routing now exist; add
+  remote leader redirection, authenticated peer transport, metadata/tablet snapshot process recovery,
   joint-reconfiguration restart matrices, broader queue/disconnect failure matrices, long-running
   hook watchdog evidence, and TSan scheduling coverage.
 - Carry the implemented group-scoped read-barrier operation through authenticated production
@@ -355,9 +355,9 @@
   subprocess crashes after intent write/sync, each directory creation/sync, rename, and final root
   sync; concurrent multi-process creation; large-root scaling; Linux filesystem/power-loss and macOS
   persistence qualification; install/export and public API review.
-- Compose the packaged `chronosd` lifecycle with a durable service adapter connecting native
-  protocol, auth, ingest, WAL/Raft, mutable heads, flush/CSEG/manifest, SQL execution, live delivery,
-  metadata routing, failover, movement, and object storage; then run it as three processes.
+- Extend the packaged `chronosd` replicated-ingest lifecycle with authenticated Raft peer transport,
+  remote leader routing, Raft-backed query snapshots, live delivery, flush/CSEG/Manifest,
+  failover/movement, and object storage; then run it as three processes.
 - Configured `chronosd` Linux subprocess execution in CI, daemon ingest over real sockets, corrupt
   root/WAL/Raft startup cases, signals during ingest/query, queue saturation with multi-frame
   responses, cancellation, concurrent clients, TLS/auth configuration, secure UUID entropy-failure

@@ -873,8 +873,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   from explicit resident group configuration, reconstructs bounded local tablet owners while
   ignoring nonresident remote bindings, and reopens the complete asynchronous service under the
   root lock. A strict bounded deployment-text parser now supplies the external resident group/voter
-  set without overriding recovered consensus. Transport, elections, provisioning, file loading,
-  and native daemon advertisement remain external.
+  set without overriding recovered consensus. The packaged daemon now securely loads that file,
+  recovers the replicated owner, auto-elects exact local single-voter groups, advertises Protocol 2
+  QUORUM_SYNC only in that mode, routes reactor tasks through the bounded service, and drains in
+  ownership order. Multi-node peer transport/elections, provisioning, leader redirection, and
+  Raft-backed native queries remain external.
 
 - **Scope:** map tablets to Raft groups; multiplex logical records over physical logs, threads, timers, and connections; lifecycle, placement, snapshot transfer, fairness, and safe per-group reclamation.
 - **Explicit non-scope:** globally ordered logs, cross-tablet atomic transactions, distributed query execution, automatic rebalancing beyond scoped placement mechanics, and conflating physical offsets with logical indexes.

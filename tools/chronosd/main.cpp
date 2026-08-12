@@ -6,6 +6,9 @@
 #include "chronos/network/reactor.hpp"
 #include "chronos/network/spsc_queue.hpp"
 #include "chronos/service/native_protocol_service.hpp"
+#include "chronos/service/replicated_group_config.hpp"
+#include "chronos/service/replicated_ingest_database.hpp"
+#include "chronos/service/replicated_ingest_service.hpp"
 #include "chronos/service/single_node_committed_append_router.hpp"
 #include "chronos/service/single_node_database.hpp"
 #include "chronos/service/single_node_subscription_runtime.hpp"
@@ -27,6 +30,7 @@
 #include <new>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <sys/stat.h>
@@ -45,6 +49,8 @@ using chronos::network::Reactor;
 using chronos::network::ReactorBackend;
 using chronos::network::SpscNetworkTaskQueue;
 using chronos::service::NativeProtocolService;
+using chronos::service::ReplicatedIngestDatabase;
+using chronos::service::ReplicatedIngestService;
 using chronos::service::SingleNodeCommittedAppendRouter;
 using chronos::service::SingleNodeDatabase;
 using chronos::service::SingleNodeSubscriptionRuntime;
@@ -62,6 +68,7 @@ struct Options {
   std::string data_directory;
   std::string subscription_sql;
   std::string subscription_key_file;
+  std::string replicated_groups_file;
   bool help{};
   bool version{};
 };
@@ -70,6 +77,7 @@ void print_usage(const std::string_view program, std::ostream& stream) {
   stream << "Usage: " << program
          << " [--listen 127.0.0.1] [--port PORT] [--backend epoll|io_uring]"
             " [--queue-capacity COUNT] [--data-dir PATH]"
+            " [--replicated-groups FILE]"
             " [--subscription-sql SQL --subscription-key-file PATH]\n"
             "       "
          << program << " --help\n"
@@ -150,6 +158,12 @@ template <typename Integer>
         return std::nullopt;
       }
       options.subscription_key_file = value;
+    } else if (argument == "--replicated-groups") {
+      if (value.empty()) {
+        std::cerr << "chronosd: replicated group configuration path must be nonempty\n";
+        return std::nullopt;
+      }
+      options.replicated_groups_file = value;
     } else {
       std::cerr << "chronosd: unknown option " << argument << '\n';
       return std::nullopt;
@@ -165,6 +179,15 @@ template <typename Integer>
   }
   if (!options.subscription_sql.empty() && options.data_directory.empty()) {
     std::cerr << "chronosd: subscriptions require a configured data directory\n";
+    return std::nullopt;
+  }
+  if (!options.replicated_groups_file.empty() && options.data_directory.empty()) {
+    std::cerr << "chronosd: replicated group configuration requires a data directory\n";
+    return std::nullopt;
+  }
+  if (!options.replicated_groups_file.empty() && !options.subscription_sql.empty()) {
+    std::cerr
+        << "chronosd: replicated ingest and single-node subscriptions are mutually exclusive\n";
     return std::nullopt;
   }
   return options;
@@ -237,6 +260,93 @@ load_subscription_key(const std::string& path) {
   if (std::ranges::all_of(key, [](const std::byte value) { return value == std::byte{0}; }))
     return chronos::common::make_unexpected(invalid("subscription key must be nonzero"));
   return key;
+}
+
+[[nodiscard]] chronos::common::Result<std::string>
+load_replicated_group_config(const std::string& path) {
+  const int descriptor = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+  if (descriptor < 0)
+    return chronos::common::make_unexpected(io_error("cannot open replicated group config"));
+  const auto close_descriptor = [&]() noexcept { static_cast<void>(::close(descriptor)); };
+  struct stat metadata {};
+  constexpr std::size_t maximum_bytes =
+      chronos::service::ReplicatedGroupConfigLimits{}.maximum_bytes;
+  if (::fstat(descriptor, &metadata) != 0 || !S_ISREG(metadata.st_mode) || metadata.st_size <= 0 ||
+      static_cast<std::uintmax_t>(metadata.st_size) > maximum_bytes) {
+    close_descriptor();
+    return chronos::common::make_unexpected(
+        invalid("replicated group config must be a bounded nonempty regular file"));
+  }
+  try {
+    std::string bytes(static_cast<std::size_t>(metadata.st_size), '\0');
+    std::size_t offset = 0U;
+    while (offset < bytes.size()) {
+      const ssize_t count = ::read(descriptor, bytes.data() + offset, bytes.size() - offset);
+      if (count < 0 && errno == EINTR)
+        continue;
+      if (count <= 0) {
+        close_descriptor();
+        return chronos::common::make_unexpected(
+            io_error("cannot read complete replicated group config"));
+      }
+      offset += static_cast<std::size_t>(count);
+    }
+    char extra{};
+    ssize_t trailing{};
+    do {
+      trailing = ::read(descriptor, &extra, 1U);
+    } while (trailing < 0 && errno == EINTR);
+    close_descriptor();
+    if (trailing < 0)
+      return chronos::common::make_unexpected(io_error("cannot finish replicated group config"));
+    if (trailing != 0)
+      return chronos::common::make_unexpected(
+          invalid("replicated group config changed while being read"));
+    return bytes;
+  } catch (const std::bad_alloc&) {
+    close_descriptor();
+    return chronos::common::make_unexpected(
+        chronos::common::Status{chronos::common::StatusCode::kResourceExhausted,
+                                "replicated group config allocation failed"});
+  } catch (const std::length_error&) {
+    close_descriptor();
+    return chronos::common::make_unexpected(
+        invalid("replicated group config size exceeds process limits"));
+  }
+}
+
+[[nodiscard]] chronos::common::Status
+elect_single_node_groups(ReplicatedIngestDatabase& database,
+                         const std::vector<chronos::raft::RaftGroupConfiguration>& groups) {
+  for (const chronos::raft::RaftGroupConfiguration& group : groups) {
+    if (group.voters.size() != 1U || group.voters.front() != database.bootstrap().local_node_id)
+      continue;
+    auto election = database.ingest_runtime()->runtime()->try_submit(
+        {{group.group_id, chronos::raft::StartElectionOperation{}}});
+    if (!election.has_value())
+      return election.error();
+    auto completed = election->wait();
+    if (!completed.has_value())
+      return completed.error();
+    if (completed->size() != 1U)
+      return invalid("single-node Raft election returned an invalid result count");
+    if (!completed->front().status.is_ok())
+      return completed->front().status;
+    auto observation = database.ingest_runtime()->runtime()->try_observe_group(group.group_id);
+    if (!observation.has_value())
+      return observation.error();
+    auto observed = observation->wait();
+    if (!observed.has_value())
+      return observed.error();
+    if (observed->size() != 1U || !observed->front().status.is_ok() ||
+        !observed->front().observation.has_value() ||
+        observed->front().observation->role != chronos::raft::Role::kLeader ||
+        observed->front().observation->leader_id != database.bootstrap().local_node_id) {
+      return {chronos::common::StatusCode::kUnavailable,
+              "single-node Raft group did not become local leader"};
+    }
+  }
+  return chronos::common::Status::ok();
 }
 
 [[nodiscard]] chronos::common::Result<bool>
@@ -464,11 +574,13 @@ configure_subscription(SingleNodeDatabase& database, SingleNodeCommittedAppendRo
 class DataPlaneWorker {
 public:
   DataPlaneWorker(SpscNetworkTaskQueue& requests, SpscNetworkTaskQueue& responses, Reactor& reactor,
-                  NativeProtocolService* service, SingleNodeSubscriptionRuntime* subscriptions,
+                  NativeProtocolService* service, ReplicatedIngestService* replicated,
+                  SingleNodeSubscriptionRuntime* subscriptions,
                   SpscNetworkTaskQueue* subscription_requests,
                   SpscNetworkTaskQueue* subscription_responses) noexcept
       : requests_(&requests), responses_(&responses), reactor_(&reactor), service_(service),
-        subscriptions_(subscriptions), subscription_requests_(subscription_requests),
+        replicated_(replicated), subscriptions_(subscriptions),
+        subscription_requests_(subscription_requests),
         subscription_responses_(subscription_responses) {}
 
   DataPlaneWorker(const DataPlaneWorker&) = delete;
@@ -538,8 +650,26 @@ private:
     for (;;) {
       if (stopping_.load(std::memory_order_acquire) && !shutdown_started) {
         shutdown_started = true;
+        if (replicated_ != nullptr)
+          replicated_->begin_shutdown();
         if (subscriptions_ != nullptr)
           subscriptions_->begin_shutdown();
+      }
+      if (replicated_ != nullptr) {
+        auto polled = replicated_->poll_once();
+        if (!polled.has_value()) {
+          failed_.store(true, std::memory_order_release);
+          return;
+        }
+        if (polled->response_enqueued && !reactor_->notify_response_ready().is_ok()) {
+          failed_.store(true, std::memory_order_release);
+          return;
+        }
+        if (shutdown_started && replicated_->drained() && responses_->empty())
+          return;
+        if (!polled->response_enqueued)
+          std::this_thread::sleep_for(std::chrono::milliseconds{1});
+        continue;
       }
       if (pending.has_value()) {
         if (!responses_->try_push_preserving(*pending)) {
@@ -634,6 +764,7 @@ private:
   SpscNetworkTaskQueue* responses_;
   Reactor* reactor_;
   NativeProtocolService* service_;
+  ReplicatedIngestService* replicated_;
   SingleNodeSubscriptionRuntime* subscriptions_;
   SpscNetworkTaskQueue* subscription_requests_;
   SpscNetworkTaskQueue* subscription_responses_;
@@ -664,6 +795,22 @@ int main(const int argc, const char* const argv[]) {
 
   chronos::common::SystemUuidGenerator identities;
   SingleNodeCommittedAppendRouter append_router;
+  std::optional<std::vector<chronos::raft::RaftGroupConfiguration>> replicated_groups;
+  if (!options->replicated_groups_file.empty()) {
+    auto loaded = load_replicated_group_config(options->replicated_groups_file);
+    if (!loaded.has_value()) {
+      std::cerr << "chronosd: replicated group config read failed: " << loaded.error().to_string()
+                << '\n';
+      return 1;
+    }
+    auto parsed = chronos::service::parse_replicated_group_config(*loaded);
+    if (!parsed.has_value()) {
+      std::cerr << "chronosd: replicated group config is invalid: " << parsed.error().to_string()
+                << '\n';
+      return 1;
+    }
+    replicated_groups.emplace(std::move(*parsed));
+  }
   std::optional<chronos::live::ResumeTokenMacKey> subscription_key;
   if (!options->subscription_sql.empty()) {
     auto loaded = load_subscription_key(options->subscription_key_file);
@@ -675,37 +822,57 @@ int main(const int argc, const char* const argv[]) {
     subscription_key.emplace(*loaded);
   }
   std::optional<SingleNodeDatabase> database;
+  std::optional<ReplicatedIngestDatabase> replicated_database;
   std::optional<NativeProtocolService> service;
   std::unique_ptr<DaemonSubscription> subscription;
   if (!options->data_directory.empty()) {
-    auto descriptor = new_database_descriptor(identities);
-    if (!descriptor.has_value()) {
-      std::cerr << "chronosd: secure identity setup failed: " << descriptor.error().to_string()
-                << '\n';
-      return 1;
-    }
-    chronos::service::SingleNodeDatabaseConfig database_config{
-        .bootstrap = {.database_root = options->data_directory, .new_database = *descriptor},
-        .wal_recovery = {.repair_incomplete_final_tail = false},
-        .raft_recovery = {.repair_incomplete_final_tail = false},
-        .committed_append_observer = subscription_key.has_value() ? &append_router : nullptr};
-    auto opened = SingleNodeDatabase::open_or_create(std::move(database_config));
-    if (!opened.has_value()) {
-      std::cerr << "chronosd: database start failed: " << opened.error().to_string() << '\n';
-      return 1;
-    }
-    database.emplace(std::move(*opened));
-    service.emplace(*database, identities);
-    if (subscription_key.has_value()) {
-      auto configured =
-          configure_subscription(*database, append_router, *options, *subscription_key);
-      if (!configured.has_value()) {
-        static_cast<void>(database->shutdown());
-        std::cerr << "chronosd: subscription runtime start failed: "
-                  << configured.error().to_string() << '\n';
+    if (replicated_groups.has_value()) {
+      auto opened = ReplicatedIngestDatabase::open_existing(
+          {.bootstrap = {.database_root = options->data_directory}, .groups = *replicated_groups});
+      if (!opened.has_value()) {
+        std::cerr << "chronosd: replicated database start failed: " << opened.error().to_string()
+                  << '\n';
         return 1;
       }
-      subscription = std::move(*configured);
+      replicated_database.emplace(std::move(*opened));
+      const chronos::common::Status elected =
+          elect_single_node_groups(*replicated_database, *replicated_groups);
+      if (!elected.is_ok()) {
+        static_cast<void>(replicated_database->shutdown());
+        std::cerr << "chronosd: replicated single-node election failed: " << elected.to_string()
+                  << '\n';
+        return 1;
+      }
+    } else {
+      auto descriptor = new_database_descriptor(identities);
+      if (!descriptor.has_value()) {
+        std::cerr << "chronosd: secure identity setup failed: " << descriptor.error().to_string()
+                  << '\n';
+        return 1;
+      }
+      chronos::service::SingleNodeDatabaseConfig database_config{
+          .bootstrap = {.database_root = options->data_directory, .new_database = *descriptor},
+          .wal_recovery = {.repair_incomplete_final_tail = false},
+          .raft_recovery = {.repair_incomplete_final_tail = false},
+          .committed_append_observer = subscription_key.has_value() ? &append_router : nullptr};
+      auto opened = SingleNodeDatabase::open_or_create(std::move(database_config));
+      if (!opened.has_value()) {
+        std::cerr << "chronosd: database start failed: " << opened.error().to_string() << '\n';
+        return 1;
+      }
+      database.emplace(std::move(*opened));
+      service.emplace(*database, identities);
+      if (subscription_key.has_value()) {
+        auto configured =
+            configure_subscription(*database, append_router, *options, *subscription_key);
+        if (!configured.has_value()) {
+          static_cast<void>(database->shutdown());
+          std::cerr << "chronosd: subscription runtime start failed: "
+                    << configured.error().to_string() << '\n';
+          return 1;
+        }
+        subscription = std::move(*configured);
+      }
     }
   }
 
@@ -714,31 +881,59 @@ int main(const int argc, const char* const argv[]) {
   if (!requests.has_value() || !responses.has_value()) {
     const auto& error = !requests.has_value() ? requests.error() : responses.error();
     std::cerr << "chronosd: queue creation failed: " << error.to_string() << '\n';
+    if (replicated_database.has_value())
+      static_cast<void>(replicated_database->shutdown());
     return 1;
+  }
+
+  std::optional<ReplicatedIngestService> replicated_service;
+  if (replicated_database.has_value()) {
+    auto created = ReplicatedIngestService::create(
+        {.coordinator = replicated_database->ingest_runtime()->coordinator(),
+         .requests = std::addressof(*requests),
+         .responses = std::addressof(*responses)});
+    if (!created.has_value()) {
+      static_cast<void>(replicated_database->shutdown());
+      std::cerr << "chronosd: replicated ingest service start failed: "
+                << created.error().to_string() << '\n';
+      return 1;
+    }
+    replicated_service.emplace(std::move(*created));
   }
 
   chronos::network::EpollServerConfig config;
   config.port = options->port;
+  if (replicated_service.has_value()) {
+    config.state.maximum_protocol_major = chronos::network::kProtocolV2Major;
+    config.state.supported_feature_bits = chronos::network::kProtocolV2QuorumSyncFeature;
+  }
   auto reactor =
       Reactor::start(options->backend, config, {.requests = &*requests, .responses = &*responses});
   if (!reactor.has_value()) {
     std::cerr << "chronosd: server start failed: " << reactor.error().to_string() << '\n';
+    replicated_service.reset();
+    if (replicated_database.has_value())
+      static_cast<void>(replicated_database->shutdown());
     return 1;
   }
 
-  DataPlaneWorker worker{*requests,
-                         *responses,
-                         *reactor,
-                         service.has_value() ? std::addressof(*service) : nullptr,
-                         subscription != nullptr ? std::addressof(*subscription->runtime) : nullptr,
-                         subscription != nullptr ? std::addressof(subscription->requests) : nullptr,
-                         subscription != nullptr ? std::addressof(subscription->responses)
-                                                 : nullptr};
+  DataPlaneWorker worker{
+      *requests,
+      *responses,
+      *reactor,
+      service.has_value() ? std::addressof(*service) : nullptr,
+      replicated_service.has_value() ? std::addressof(*replicated_service) : nullptr,
+      subscription != nullptr ? std::addressof(*subscription->runtime) : nullptr,
+      subscription != nullptr ? std::addressof(subscription->requests) : nullptr,
+      subscription != nullptr ? std::addressof(subscription->responses) : nullptr};
   if (!worker.start()) {
     static_cast<void>(reactor->shutdown());
     subscription.reset();
+    replicated_service.reset();
     if (database.has_value())
       static_cast<void>(database->shutdown());
+    if (replicated_database.has_value())
+      static_cast<void>(replicated_database->shutdown());
     std::cerr << "chronosd: worker start failed\n";
     return 1;
   }
@@ -752,15 +947,21 @@ int main(const int argc, const char* const argv[]) {
     worker.join();
     static_cast<void>(reactor->shutdown());
     subscription.reset();
+    replicated_service.reset();
     if (database.has_value())
       static_cast<void>(database->shutdown());
+    if (replicated_database.has_value())
+      static_cast<void>(replicated_database->shutdown());
     std::cerr << "chronosd: signal handler installation failed\n";
     return 1;
   }
 
   std::cout << "chronosd listening on 127.0.0.1:" << reactor->bound_port()
             << " backend=" << chronos::network::reactor_backend_name(options->backend)
-            << " data_plane=" << (service.has_value() ? "configured" : "unconfigured")
+            << " data_plane="
+            << (replicated_service.has_value()
+                    ? "replicated"
+                    : (service.has_value() ? "configured" : "unconfigured"))
             << " subscriptions=" << (subscription != nullptr ? "configured" : "disabled") << '\n'
             << std::flush;
 
@@ -800,10 +1001,19 @@ int main(const int argc, const char* const argv[]) {
     exit_code = 1;
   }
   subscription.reset();
+  replicated_service.reset();
   if (database.has_value()) {
     const auto database_shutdown = database->shutdown();
     if (!database_shutdown.is_ok()) {
       std::cerr << "chronosd: database shutdown failed: " << database_shutdown.to_string() << '\n';
+      exit_code = 1;
+    }
+  }
+  if (replicated_database.has_value()) {
+    const auto database_shutdown = replicated_database->shutdown();
+    if (!database_shutdown.is_ok()) {
+      std::cerr << "chronosd: replicated database shutdown failed: "
+                << database_shutdown.to_string() << '\n';
       exit_code = 1;
     }
   }
