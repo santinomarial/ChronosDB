@@ -161,10 +161,12 @@ higher uncommitted finals. Reader-pinned remote reclamation requires selected au
 logical part, route, and key, then preflights metadata before exact conditional deletion. After a
 crash, a startup-only pass uses immutable consecutive cold generations as the durable garbage
 journal, exact-binds each one to its historical Manifest/catalog authority, and retries partially
-completed deletion without bucket listings. Credential refresh/provider policy, automatic
-retry/backoff, multipart upload, CSEG pre-upload validator connection, cache concurrency, and
-broader Arrow/Parquet external fixture and resource-fault qualification remain incomplete. The
-optional Arrow/Parquet provider now round-trips all current logical types through an exact
+completed deletion without bucket listings. The S3 carrier now gives every replay-safe operation a
+finite capped-backoff attempt budget and fresh signature, and a concurrent caller-supplied provider
+is force-refreshed after 401/403. Built-in environment/workload provider integrations, retry jitter,
+multipart upload, CSEG pre-upload validator connection, cache concurrency, and broader Arrow/Parquet
+external fixture and resource-fault qualification remain incomplete. The optional Arrow/Parquet
+provider now round-trips all current logical types through an exact
 caller-supplied schema and keeps CSEG as the primary store.
 
 ## End-to-end integration state

@@ -59,6 +59,11 @@ proxy policy, and a credential-provider chain. [ADR 0192](0192-exact-conditional
 adds the exact conditional delete primitive, while its invocation still requires a separate
 reader/authority lifecycle owner.
 
+[ADR 0196](0196-bounded-s3-retry-and-credential-refresh.md) subsequently adds bounded retry/backoff
+and a concurrent caller-supplied credential provider with explicit forced refresh after 401/403.
+Multipart upload, redirect/proxy policy, and built-in environment/workload/instance provider
+implementations remain outside this original carrier decision.
+
 A local S3-compatible HTTP integration test checks TLS-default rejection of plaintext, SigV4 and
 session-token headers, conditional creation, exact retry verification, percent-encoded keys, HEAD
 metadata, and a two-byte range response. Live AWS/MinIO/LocalStack, credential-expiry, proxy, TLS-

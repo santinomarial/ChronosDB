@@ -17,6 +17,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -250,6 +251,13 @@ struct ResponseCapture {
   case CURLE_COULDNT_CONNECT:
   case CURLE_COULDNT_RESOLVE_HOST:
   case CURLE_COULDNT_RESOLVE_PROXY:
+  case CURLE_SEND_ERROR:
+  case CURLE_RECV_ERROR:
+  case CURLE_GOT_NOTHING:
+  case CURLE_PARTIAL_FILE:
+  case CURLE_SSL_CONNECT_ERROR:
+  case CURLE_HTTP2_STREAM:
+  case CURLE_QUIC_CONNECT_ERROR:
     return {common::StatusCode::kUnavailable, "S3 endpoint is unavailable"};
   case CURLE_PEER_FAILED_VERIFICATION:
   case CURLE_SSL_CERTPROBLEM:
@@ -266,11 +274,30 @@ struct ResponseCapture {
     return {common::StatusCode::kUnauthenticated, "S3 request was not authorized"};
   if (status == 404L)
     return {common::StatusCode::kNotFound, "S3 object does not exist"};
-  if (status == 409L || status == 425L || status == 429L || status >= 500L)
+  if (status == 409L || status == 425L || status == 429L || (status >= 500L && status <= 599L))
     return {common::StatusCode::kUnavailable, "S3 request should be retried"};
   if (status == 416L)
     return invalid("S3 object range is outside immutable content");
   return {common::StatusCode::kIoError, "S3 endpoint returned an unsuccessful status"};
+}
+
+[[nodiscard]] bool retryable_http_status(const long status) noexcept {
+  return status == 409L || status == 425L || status == 429L || (status >= 500L && status <= 599L);
+}
+
+[[nodiscard]] bool valid_credentials(const S3Credentials& credentials) noexcept {
+  return !credentials.access_key_id.empty() && !credentials.secret_access_key.empty() &&
+         credentials.access_key_id.size() <= 1024U &&
+         credentials.secret_access_key.size() <= 4096U &&
+         !credentials.access_key_id.contains(':') && !credentials.secret_access_key.contains(':') &&
+         !contains_control(credentials.access_key_id) &&
+         !contains_control(credentials.secret_access_key) &&
+         !contains_space(credentials.access_key_id) &&
+         !contains_space(credentials.secret_access_key) &&
+         (!credentials.session_token.has_value() ||
+          (!credentials.session_token->empty() && credentials.session_token->size() <= 8192U &&
+           !contains_control(*credentials.session_token) &&
+           !contains_space(*credentials.session_token)));
 }
 
 [[nodiscard]] common::Status append_header(HeaderList& headers, const std::string& header) {
@@ -432,13 +459,57 @@ public:
       config.endpoint.pop_back();
     }
     signature = "aws:amz:" + config.region + ":s3";
-    credentials = config.access_key_id + ":" + config.secret_access_key;
   }
 
-  [[nodiscard]] common::Result<Response> perform(const Request& request) const {
+  [[nodiscard]] common::Result<S3Credentials>
+  acquire_credentials(const S3CredentialRequest request) const {
+    try {
+      if (config.credential_provider != nullptr) {
+        auto credentials = config.credential_provider->acquire(request);
+        if (!credentials.has_value())
+          return common::make_unexpected(credentials.error());
+        if (!valid_credentials(*credentials)) {
+          return common::make_unexpected(
+              common::Status{common::StatusCode::kUnauthenticated,
+                             "S3 credential provider returned invalid data"});
+        }
+        return credentials;
+      }
+      return S3Credentials{.access_key_id = config.access_key_id,
+                           .secret_access_key = config.secret_access_key,
+                           .session_token = config.session_token};
+    } catch (const std::bad_alloc&) {
+      return common::make_unexpected(exhausted("S3 credential acquisition allocation failed"));
+    } catch (const std::length_error&) {
+      return common::make_unexpected(exhausted("S3 credential acquisition exceeded limits"));
+    } catch (...) {
+      return common::make_unexpected(common::Status{common::StatusCode::kInternal,
+                                                    "S3 credential provider raised an exception"});
+    }
+  }
+
+  void wait_before_retry(const std::size_t completed_attempts) const {
+    auto delay = config.initial_retry_backoff;
+    for (std::size_t exponent = 1U; exponent < completed_attempts; ++exponent) {
+      if (delay >= config.maximum_retry_backoff ||
+          delay.count() > config.maximum_retry_backoff.count() / 2) {
+        delay = config.maximum_retry_backoff;
+        break;
+      }
+      delay *= 2;
+    }
+    if (delay > config.maximum_retry_backoff)
+      delay = config.maximum_retry_backoff;
+    if (delay.count() > 0)
+      std::this_thread::sleep_for(delay);
+  }
+
+  [[nodiscard]] common::Result<Response> perform_once(const Request& request,
+                                                      const S3Credentials& current) const {
     try {
       const std::string url = config.endpoint + "/" + encode_path(config.bucket, false) + "/" +
                               encode_path(request.key, true);
+      const std::string credentials = current.access_key_id + ":" + current.secret_access_key;
       CurlHandle handle{curl_easy_init()};
       if (!handle)
         return common::make_unexpected(exhausted("S3 HTTP handle allocation failed"));
@@ -496,8 +567,8 @@ public:
         return common::make_unexpected(configured);
 
       HeaderList headers;
-      if (config.session_token.has_value()) {
-        configured = append_header(headers, "x-amz-security-token: " + *config.session_token);
+      if (current.session_token.has_value()) {
+        configured = append_header(headers, "x-amz-security-token: " + *current.session_token);
       }
       if (configured.is_ok() && request.method == Method::kPut) {
         const std::string hexadecimal_checksum = digest_hex(*request.checksum);
@@ -570,9 +641,44 @@ public:
     }
   }
 
+  [[nodiscard]] common::Result<Response> perform(const Request& request) const {
+    bool refresh_credentials{};
+    for (std::size_t attempt = 1U; attempt <= config.maximum_attempts; ++attempt) {
+      auto current = acquire_credentials(refresh_credentials ? S3CredentialRequest::kRefresh
+                                                             : S3CredentialRequest::kCurrent);
+      if (!current.has_value()) {
+        if (current.error().code() != common::StatusCode::kUnavailable ||
+            attempt == config.maximum_attempts) {
+          return common::make_unexpected(current.error());
+        }
+        wait_before_retry(attempt);
+        continue;
+      }
+      auto response = perform_once(request, *current);
+      if (!response.has_value()) {
+        if (response.error().code() != common::StatusCode::kUnavailable ||
+            attempt == config.maximum_attempts) {
+          return common::make_unexpected(response.error());
+        }
+        refresh_credentials = false;
+        wait_before_retry(attempt);
+        continue;
+      }
+      const bool authorization_rejected = response->status == 401L || response->status == 403L;
+      if (attempt == config.maximum_attempts ||
+          (!retryable_http_status(response->status) &&
+           !(authorization_rejected && config.credential_provider != nullptr))) {
+        return response;
+      }
+      refresh_credentials = authorization_rejected;
+      wait_before_retry(attempt);
+    }
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInternal, "S3 retry state is unreachable"});
+  }
+
   S3ObjectStoreConfig config;
   std::string signature;
-  std::string credentials;
 };
 
 S3ObjectStore::S3ObjectStore(std::unique_ptr<Impl> impl) noexcept : impl_(std::move(impl)) {}
@@ -584,25 +690,29 @@ common::Result<std::unique_ptr<S3ObjectStore>> S3ObjectStore::create(S3ObjectSto
   const std::size_t scheme_length =
       https ? std::string_view{"https://"}.size() : std::string_view{"http://"}.size();
   const auto maximum_long = std::chrono::milliseconds{std::numeric_limits<long>::max()};
+  const bool static_credentials = !config.access_key_id.empty() ||
+                                  !config.secret_access_key.empty() ||
+                                  config.session_token.has_value();
   if ((!https && !http) || (config.require_tls && !https) || config.endpoint.contains('?') ||
       config.endpoint.contains('#') || config.endpoint.contains('@') ||
       config.endpoint.size() <= scheme_length || config.endpoint[scheme_length] == '/' ||
       config.endpoint.size() > 4096U || contains_control(config.endpoint) ||
       contains_space(config.endpoint) || config.region.empty() || config.region.size() > 64U ||
       contains_control(config.region) || contains_space(config.region) ||
-      config.region.contains(':') || !valid_bucket(config.bucket) || config.access_key_id.empty() ||
-      config.secret_access_key.empty() || config.access_key_id.size() > 1024U ||
-      config.secret_access_key.size() > 4096U || config.access_key_id.contains(':') ||
-      config.secret_access_key.contains(':') || contains_control(config.access_key_id) ||
-      contains_control(config.secret_access_key) || contains_space(config.access_key_id) ||
-      contains_space(config.secret_access_key) ||
-      (config.session_token.has_value() &&
-       (config.session_token->empty() || config.session_token->size() > 8192U ||
-        contains_control(*config.session_token) || contains_space(*config.session_token))) ||
+      config.region.contains(':') || !valid_bucket(config.bucket) ||
+      (config.credential_provider == nullptr &&
+       !valid_credentials({.access_key_id = config.access_key_id,
+                           .secret_access_key = config.secret_access_key,
+                           .session_token = config.session_token})) ||
+      (config.credential_provider != nullptr && static_credentials) ||
       (config.ca_bundle_path.has_value() &&
        (config.ca_bundle_path->empty() || config.ca_bundle_path->size() > 4096U)) ||
       config.connect_timeout.count() <= 0 || config.connect_timeout > maximum_long ||
       config.request_timeout.count() <= 0 || config.request_timeout > maximum_long ||
+      config.maximum_attempts == 0U || config.maximum_attempts > 32U ||
+      config.initial_retry_backoff.count() < 0 || config.initial_retry_backoff > maximum_long ||
+      config.maximum_retry_backoff.count() < 0 || config.maximum_retry_backoff > maximum_long ||
+      config.initial_retry_backoff > config.maximum_retry_backoff ||
       config.maximum_response_bytes == 0U ||
       static_cast<std::uintmax_t>(config.maximum_response_bytes) >
           static_cast<std::uintmax_t>(std::numeric_limits<curl_off_t>::max())) {

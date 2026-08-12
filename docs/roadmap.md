@@ -937,9 +937,12 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   consecutive cold-generation history as its durable garbage journal: before reader admission it
   exact-binds every historical generation to its own Manifest/catalog authority, revalidates the
   selected pair and remote metadata, and conditionally deletes routes absent from current logical
-  and cold authority with idempotent retry. WAL-local deletion, other query paths, multipart/retry,
-  and credential-refresh ownership remain deferred. An optional Apache Arrow/
-  Parquet provider now imports and exports files through an exact caller-supplied schema, maps all
+  and cold authority with idempotent retry. The S3 carrier now retries only replay-safe operations
+  within a bounded capped-backoff budget, freshly signs every attempt, and force-refreshes one
+  caller-supplied concurrent credential provider after authorization rejection. WAL-local deletion,
+  other query paths, multipart upload, and built-in provider-chain integrations remain deferred. An
+  optional Apache Arrow/Parquet provider now imports and exports files through an exact
+  caller-supplied schema, maps all
   current logical types, bounds source/final canonical storage, rejects corruption and mismatch,
   and atomically publishes completed exports without changing CSEG or Manifest bytes. Independent
   ecosystem fixtures and broader resource/fault qualification remain deferred; the phase exit gate

@@ -81,6 +81,8 @@ private:
   std::unique_ptr<Impl> impl_;
 };
 
+class S3CredentialProvider;
+
 struct S3ObjectStoreConfig {
   // A scheme and authority with an optional base path, for example
   // https://s3.us-east-1.amazonaws.com or https://minio.example/storage.
@@ -90,20 +92,52 @@ struct S3ObjectStoreConfig {
   std::string access_key_id;
   std::string secret_access_key;
   std::optional<std::string> session_token;
+  std::shared_ptr<S3CredentialProvider> credential_provider;
   std::optional<std::string> ca_bundle_path;
   std::chrono::milliseconds connect_timeout{5'000};
   std::chrono::milliseconds request_timeout{30'000};
+  std::size_t maximum_attempts{3U};
+  std::chrono::milliseconds initial_retry_backoff{50};
+  std::chrono::milliseconds maximum_retry_backoff{1'000};
   std::size_t maximum_response_bytes{std::size_t{4U} * 1024U * 1024U * 1024U};
   // Plain HTTP is rejected by default. This switch exists for explicitly isolated S3-compatible
   // deployments and local tests; credentials and object bytes are exposed to that network.
   bool require_tls{true};
 };
 
+struct S3Credentials {
+  std::string access_key_id;
+  std::string secret_access_key;
+  std::optional<std::string> session_token;
+};
+
+enum class S3CredentialRequest : std::uint8_t {
+  kCurrent = 1U,
+  kRefresh = 2U,
+};
+
+// A provider may implement environment, workload-identity, instance-role, or ordered-chain policy.
+// acquire() may be called concurrently and must synchronize its own mutable cache. kRefresh follows
+// an authenticated request rejected with HTTP 401/403 and must not return a knowingly expired
+// cached value as successful refresh.
+class S3CredentialProvider {
+public:
+  S3CredentialProvider() = default;
+  S3CredentialProvider(const S3CredentialProvider&) = delete;
+  S3CredentialProvider& operator=(const S3CredentialProvider&) = delete;
+  S3CredentialProvider(S3CredentialProvider&&) = delete;
+  S3CredentialProvider& operator=(S3CredentialProvider&&) = delete;
+  virtual ~S3CredentialProvider() = default;
+
+  [[nodiscard]] virtual common::Result<S3Credentials> acquire(S3CredentialRequest request) = 0;
+};
+
 // Synchronous S3-compatible HTTPS backend. Each operation owns an independent libcurl easy handle,
 // so callers may invoke const and non-const operations concurrently. Requests use SigV4, never
 // follow redirects, enforce finite timeouts and response bounds, and use If-None-Match for
-// immutable object creation. The configuration (including credentials) is owned for the store
-// lifetime.
+// immutable object creation. Retryable requests use bounded capped backoff. Credentials are either
+// static values owned for the store lifetime or are acquired per attempt from a caller-owned shared
+// provider; the two modes are mutually exclusive.
 class S3ObjectStore final : public ObjectStore {
 public:
   S3ObjectStore() = delete;

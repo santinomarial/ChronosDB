@@ -40,9 +40,15 @@ struct RecordedRequest {
   std::vector<std::byte> body;
 };
 
+struct LocalS3Behavior {
+  std::string access_key_id{"test-access"};
+  std::optional<std::string> session_token{"test-token"};
+  std::size_t transient_put_failures{};
+};
+
 class LocalS3Server final {
 public:
-  LocalS3Server() {
+  explicit LocalS3Server(LocalS3Behavior behavior = {}) : behavior_(std::move(behavior)) {
     listener_ = ::socket(AF_INET, SOCK_STREAM, 0);
     if (listener_ < 0) {
       failure_ = "socket creation failed";
@@ -201,18 +207,28 @@ private:
     const auto authorization = request->headers.find("authorization");
     const auto signed_date = request->headers.find("x-amz-date");
     const auto token = request->headers.find("x-amz-security-token");
+    const bool token_matches =
+        behavior_.session_token.has_value()
+            ? token != request->headers.end() && token->second == *behavior_.session_token
+            : token == request->headers.end();
     if (authorization == request->headers.end() ||
         !authorization->second.starts_with("AWS4-HMAC-SHA256 ") ||
-        !authorization->second.contains("Credential=test-access/") ||
+        !authorization->second.contains("Credential=" + behavior_.access_key_id + "/") ||
         !authorization->second.contains("SignedHeaders=") ||
-        signed_date == request->headers.end() || token == request->headers.end() ||
-        token->second != "test-token") {
+        signed_date == request->headers.end() || !token_matches) {
       static_cast<void>(send_all(
           descriptor, "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"));
       return;
     }
 
     if (request->method == "PUT") {
+      if (behavior_.transient_put_failures > 0U) {
+        --behavior_.transient_put_failures;
+        static_cast<void>(send_all(descriptor,
+                                   "HTTP/1.1 503 Service Unavailable\r\nContent-Length: "
+                                   "0\r\nConnection: close\r\n\r\n"));
+        return;
+      }
       const auto condition = request->headers.find("if-none-match");
       const auto digest = request->headers.find("x-amz-meta-chronos-sha256");
       const auto content_digest = request->headers.find("x-amz-content-sha256");
@@ -319,6 +335,35 @@ private:
   std::string failure_;
   std::optional<std::vector<std::byte>> object_;
   std::string checksum_hex_;
+  LocalS3Behavior behavior_;
+};
+
+class RefreshingCredentialProvider final : public S3CredentialProvider {
+public:
+  [[nodiscard]] common::Result<S3Credentials> acquire(const S3CredentialRequest request) override {
+    std::scoped_lock lock{mutex_};
+    requests_.push_back(request);
+    if (request == S3CredentialRequest::kRefresh)
+      refreshed_ = true;
+    if (!refreshed_) {
+      return S3Credentials{.access_key_id = "expired-access",
+                           .secret_access_key = "expired-secret",
+                           .session_token = "expired-token"};
+    }
+    return S3Credentials{.access_key_id = "fresh-access",
+                         .secret_access_key = "fresh-secret",
+                         .session_token = "fresh-token"};
+  }
+
+  [[nodiscard]] std::vector<S3CredentialRequest> requests() const {
+    std::scoped_lock lock{mutex_};
+    return requests_;
+  }
+
+private:
+  mutable std::mutex mutex_;
+  bool refreshed_{};
+  std::vector<S3CredentialRequest> requests_;
 };
 
 TEST(MemoryObjectStoreTest, ImmutablePutIsIdempotentAndRangesAreBounded) {
@@ -414,6 +459,71 @@ TEST(S3ObjectStoreTest, SignsConditionalPutVerifiesRetryAndReadsExactRange) {
   EXPECT_EQ(requests[9].method, "DELETE");
   EXPECT_EQ(requests[9].headers.at("if-match"), "\"fixture-etag\"");
   EXPECT_EQ(requests[10].method, "HEAD");
+  EXPECT_TRUE(server.failure().empty()) << server.failure();
+}
+
+TEST(S3ObjectStoreTest, RefreshesRejectedCredentialsAndRetriesTransientConditionalPut) {
+  LocalS3Server server{LocalS3Behavior{.access_key_id = "fresh-access",
+                                       .session_token = "fresh-token",
+                                       .transient_put_failures = 1U}};
+  ASSERT_TRUE(server.valid()) << server.failure();
+  auto provider = std::make_shared<RefreshingCredentialProvider>();
+  S3ObjectStoreConfig config{.endpoint = "http://127.0.0.1:" + std::to_string(server.port()),
+                             .region = "us-east-1",
+                             .bucket = "chronos-test",
+                             .credential_provider = provider,
+                             .connect_timeout = std::chrono::milliseconds{1'000},
+                             .request_timeout = std::chrono::milliseconds{2'000},
+                             .maximum_attempts = 3U,
+                             .initial_retry_backoff = std::chrono::milliseconds{0},
+                             .maximum_retry_backoff = std::chrono::milliseconds{0},
+                             .maximum_response_bytes = 1024U,
+                             .require_tls = false};
+  auto store = S3ObjectStore::create(std::move(config));
+  ASSERT_TRUE(store.has_value()) << store.error().to_string();
+
+  const std::vector<std::byte> bytes{std::byte{4U}, std::byte{5U}, std::byte{6U}};
+  const auto checksum = ingest::sha256(bytes).value();
+  auto uploaded = (*store)->put_if_absent("parts/retried", bytes, checksum);
+  ASSERT_TRUE(uploaded.has_value()) << uploaded.error().to_string();
+  EXPECT_EQ(uploaded->size, bytes.size());
+  EXPECT_EQ(uploaded->checksum, checksum);
+
+  EXPECT_EQ(provider->requests(),
+            (std::vector{S3CredentialRequest::kCurrent, S3CredentialRequest::kRefresh,
+                         S3CredentialRequest::kCurrent}));
+  const auto requests = server.requests();
+  ASSERT_EQ(requests.size(), 3U);
+  EXPECT_TRUE(requests[0].headers.at("authorization").contains("Credential=expired-access/"));
+  EXPECT_TRUE(requests[1].headers.at("authorization").contains("Credential=fresh-access/"));
+  EXPECT_TRUE(requests[2].headers.at("authorization").contains("Credential=fresh-access/"));
+  EXPECT_TRUE(server.failure().empty()) << server.failure();
+}
+
+TEST(S3ObjectStoreTest, StopsAtTheConfiguredRetryAttemptLimit) {
+  LocalS3Server server{LocalS3Behavior{.transient_put_failures = 3U}};
+  ASSERT_TRUE(server.valid()) << server.failure();
+  S3ObjectStoreConfig config{.endpoint = "http://127.0.0.1:" + std::to_string(server.port()),
+                             .region = "us-east-1",
+                             .bucket = "chronos-test",
+                             .access_key_id = "test-access",
+                             .secret_access_key = "test-secret",
+                             .session_token = "test-token",
+                             .connect_timeout = std::chrono::milliseconds{1'000},
+                             .request_timeout = std::chrono::milliseconds{2'000},
+                             .maximum_attempts = 2U,
+                             .initial_retry_backoff = std::chrono::milliseconds{0},
+                             .maximum_retry_backoff = std::chrono::milliseconds{0},
+                             .maximum_response_bytes = 1024U,
+                             .require_tls = false};
+  auto store = S3ObjectStore::create(std::move(config));
+  ASSERT_TRUE(store.has_value()) << store.error().to_string();
+
+  const std::vector<std::byte> bytes{std::byte{7U}};
+  auto uploaded = (*store)->put_if_absent("parts/exhausted", bytes, ingest::sha256(bytes).value());
+  ASSERT_FALSE(uploaded.has_value());
+  EXPECT_EQ(uploaded.error().code(), common::StatusCode::kUnavailable);
+  EXPECT_EQ(server.requests().size(), 2U);
   EXPECT_TRUE(server.failure().empty()) << server.failure();
 }
 

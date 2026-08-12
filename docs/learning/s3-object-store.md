@@ -8,10 +8,12 @@ and does not claim remote durability. The API contains conditional upload, autho
 metadata, exact range read, and exact conditional deletion. It has no listing operation because an
 eventually consistent or incomplete bucket listing must never determine query-visible state.
 
-`S3ObjectStore::create` owns its configuration and credentials. `put_if_absent` borrows upload
-bytes only until the synchronous call returns. `stat` and `get_range` are const and each call owns a
-fresh libcurl easy handle, header list, and bounded response buffer. The store itself is therefore
-safe for concurrent calls, while destruction still requires ordinary external lifetime exclusion.
+`S3ObjectStore::create` owns its configuration and either owns static credentials or shares one
+caller-supplied credential provider. The provider may be called concurrently and owns its cache
+synchronization. `put_if_absent` borrows upload bytes only until the synchronous call returns.
+`stat` and `get_range` are const and each attempt owns a fresh libcurl easy handle, credential
+value, signature, header list, and bounded response buffer. The store itself is therefore safe for
+concurrent calls, while destruction still requires ordinary external lifetime exclusion.
 
 ## Invariants and failure behavior
 
@@ -32,19 +34,26 @@ manager separately verifies a whole-object digest when it populates the full-obj
 expected range digest when one is available. CSEG's internal checksums remain responsible for page
 framing and interpretation.
 
+Transport `UNAVAILABLE` and HTTP 409/425/429/5xx outcomes retry within a configured one-to-32
+attempt budget using capped exponential backoff. HEAD/range GET are read-only; conditional PUT
+turns an ambiguous success into exact 412 verification; exact conditional DELETE turns it into an
+already-absent retry. Other failures do not retry. A provider-backed 401/403 requests one forced
+refresh on the next attempt, whereas rejected static credentials fail immediately. Provider errors
+and refresh attempts share the same finite budget.
+
 ## Complexity, tradeoffs, and operations
 
 Upload hashing and transfer are `O(object bytes)` and retain no second upload copy. HEAD uses
 constant response storage. A range read is `O(requested bytes)` and retains at most the configured
-bound. Every operation currently creates one easy handle and is synchronous; connection pooling,
-the libcurl multi interface, multipart upload, retries/backoff, and rotating credential providers
-are deferred until their ownership and cancellation contracts are defined.
+bound. Every attempt currently creates one easy handle and is synchronous; connection pooling, the
+libcurl multi interface, multipart upload, backoff jitter/`Retry-After`, and built-in provider
+implementations remain deferred.
 
 Operators should grant only `PutObject`, `HeadObject`/`GetObject`, ranged `GetObject`, and
 conditional `DeleteObject` access for the configured prefix, enforce TLS, keep bucket policy
-compatible with
-`If-None-Match`, and rotate credentials outside the current store lifetime. Cold Location Manifest
-v1 records the object key, store identity, and exact Manifest v2 part SHA-256; its durable
+compatible with `If-None-Match`. A provider can rotate credentials during the store lifetime;
+deployments using static fields must recreate the store to rotate them. Cold Location Manifest v1
+records the object key, store identity, and exact Manifest v2 part SHA-256; its durable
 installation, pair selection, and publication path is separate from the object backend. Bucket
 listings and ETags are not a replacement.
 
@@ -68,5 +77,5 @@ admission, rebinds each generation to its exact historical Manifest, preflights 
 retries already-absent objects safely.
 
 Likely review questions include why conditional PUT precedes HEAD, why ETag is insufficient, why
-redirects are disabled, what verifies a range, and why the memory backend is not a durability
-implementation.
+redirects are disabled, what makes every retried method replay-safe, who synchronizes a credential
+provider, what verifies a range, and why the memory backend is not a durability implementation.
