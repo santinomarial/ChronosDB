@@ -250,3 +250,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0213](0213-packaged-native-daemon-lifecycle.md) | Packaged native daemon lifecycle | accepted |
 | [0214](0214-durable-complete-schema-definitions.md) | Durable complete schema definitions | accepted |
 | [0215](0215-complete-table-policy-metadata.md) | Complete table policy metadata | accepted |
+| [0216](0216-durable-database-root-bootstrap.md) | Durable database-root bootstrap | accepted |

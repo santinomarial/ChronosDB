@@ -238,6 +238,10 @@
 
 ## End-to-end integration
 
+- Database Bootstrap v1 golden fixture and fuzz corpus; allocation and syscall-fault injection;
+  subprocess crashes after intent write/sync, each directory creation/sync, rename, and final root
+  sync; concurrent multi-process creation; large-root scaling; Linux filesystem/power-loss and macOS
+  persistence qualification; install/export and public API review.
 - Compose the packaged `chronosd` lifecycle with a durable service adapter connecting native
   protocol, auth, ingest, WAL/Raft, mutable heads, flush/CSEG/manifest, SQL execution, live delivery,
   metadata routing, failover, movement, and object storage; then run it as three processes.

@@ -28,6 +28,9 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 
 ## Durable formats
 
+- [Database Bootstrap v1](formats/database-bootstrap-v1.md): fixed checksummed database/root,
+  metadata-group, node, and restart-limit authority with restartable intent installation and durable
+  WAL/Raft directory creation.
 - [WAL v1](formats/wal-v1.md): authoritative single-node WAL directory, segment, record, integrity,
   limits, and compatibility specification; its physical codec, writer, durability coordinator,
   locked discovery, verification, explicit tail repair, replay interface, and existing-history
@@ -159,6 +162,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 
 ## Learning
 
+- [Durable database bootstrap](learning/database-bootstrap.md): root-lock ownership, checksummed
+  identity/config authority, directory synchronization ordering, and interrupted-install recovery.
 - [Packaged native daemon lifecycle](learning/packaged-native-daemon.md): bounded process, queue,
   socket, and shutdown ownership plus the explicit unconfigured-data-plane boundary.
 - [Project foundation](learning/project-foundation.md): rationale and extension guide for the Phase

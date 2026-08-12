@@ -382,7 +382,11 @@ chronos_set_project_warnings(chronos_manifest)
 chronos_enable_sanitizers(chronos_manifest)
 chronos_enable_static_analysis(chronos_manifest)
 
-add_library(chronos_runtime src/runtime/thread_placement.cpp)
+add_library(
+  chronos_runtime
+  src/runtime/database_bootstrap.cpp
+  src/runtime/thread_placement.cpp
+)
 add_library(chronos::runtime ALIAS chronos_runtime)
 set_target_properties(chronos_runtime PROPERTIES EXPORT_NAME runtime CXX_EXTENSIONS OFF)
 target_compile_features(chronos_runtime PUBLIC cxx_std_23)
@@ -392,7 +396,7 @@ target_include_directories(
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
 )
-target_link_libraries(chronos_runtime PUBLIC chronos::common)
+target_link_libraries(chronos_runtime PUBLIC chronos::common PRIVATE chronos::io)
 chronos_set_project_warnings(chronos_runtime)
 chronos_enable_sanitizers(chronos_runtime)
 chronos_enable_static_analysis(chronos_runtime)
@@ -795,6 +799,8 @@ if(CHRONOS_BUILD_TESTS)
 
   add_executable(
     chronos_runtime_tests
+    tests/runtime/database_bootstrap_header_self_contained.cpp
+    tests/runtime/database_bootstrap_test.cpp
     tests/runtime/thread_placement_header_self_contained.cpp
     tests/runtime/thread_placement_test.cpp
   )
