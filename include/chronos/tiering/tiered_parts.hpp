@@ -44,9 +44,11 @@ struct TieredPartAdmission {
 
 using ColdManifestInstaller = std::function<common::Status(const ColdPartDescriptor& descriptor)>;
 
-// Single-owner cold-tier coordinator. Exact schema/source-bound CSEG validation, upload, and remote
-// verification happen before the caller's atomic manifest installer. The local source becomes
-// releasable only after that callback succeeds.
+// Cold-tier coordinator. Exact schema/source-bound CSEG validation, upload, and remote verification
+// happen before the caller's atomic manifest installer. Upload/catalog mutation remains
+// single-owner and must not overlap reads. After installation quiesces, read_range and cache
+// metrics may be called concurrently; destruction and moves require ordinary external lifetime
+// exclusion. The local source becomes releasable only after the installer callback succeeds.
 class TieredPartManager {
 public:
   TieredPartManager() = delete;
@@ -71,8 +73,8 @@ public:
              const std::optional<ingest::Sha256Digest>& expected_range_checksum = std::nullopt);
 
   [[nodiscard]] std::optional<ColdPartDescriptor> find(const cseg::PartId& part_id) const;
-  [[nodiscard]] std::size_t cached_bytes() const noexcept;
-  [[nodiscard]] std::size_t cached_entries() const noexcept;
+  [[nodiscard]] std::size_t cached_bytes() const;
+  [[nodiscard]] std::size_t cached_entries() const;
 
 private:
   class Impl;

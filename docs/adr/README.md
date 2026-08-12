@@ -234,3 +234,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0197](0197-conditional-s3-multipart-upload.md) | Conditional S3 multipart upload | accepted |
 | [0198](0198-schema-source-bound-cseg-upload-admission.md) | Schema/source-bound CSEG upload admission | accepted |
 | [0199](0199-explicit-s3-environment-credential-provider.md) | Explicit S3 environment credential provider | accepted |
+| [0200](0200-concurrent-bounded-tiered-part-cache.md) | Concurrent bounded tiered-part cache | accepted |

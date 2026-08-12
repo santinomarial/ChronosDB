@@ -168,8 +168,9 @@ finite capped-backoff attempt budget and fresh signature, and a concurrent calle
 is force-refreshed after 401/403. An explicit built-in provider now snapshots and validates the
 standard AWS environment credentials and fails closed on forced refresh. Workload/instance and
 ordered-chain provider integrations, retry jitter, parallel multipart scheduling, cache
-concurrency, and broader Arrow/Parquet external fixture and resource-fault qualification remain
-incomplete. Large objects now
+index recovery, and broader Arrow/Parquet external fixture and resource-fault qualification remain
+incomplete. The bounded full-object LRU now permits concurrent post-install reads without holding
+its cache mutex across object-store I/O. Large objects now
 use sequential signed parts, conditional completion, exact final verification, and failure-path
 abort. The optional Arrow/Parquet
 provider now round-trips all current logical types through an exact

@@ -9,6 +9,7 @@
 #include <list>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <utility>
@@ -29,9 +30,8 @@ public:
   };
   Impl(ObjectStore& remote, TieringLimits configured) : store(&remote), limits(configured) {}
 
-  void touch(const cseg::PartId& part, CacheEntry& entry) {
-    recency.erase(entry.recency);
-    recency.push_front(part);
+  void touch(CacheEntry& entry) {
+    recency.splice(recency.begin(), recency, entry.recency);
     entry.recency = recency.begin();
   }
   void evict_for(const std::size_t bytes) {
@@ -51,6 +51,7 @@ public:
   std::map<cseg::PartId, CacheEntry> cache;
   std::list<cseg::PartId> recency;
   std::size_t cache_bytes{};
+  mutable std::mutex cache_mutex;
 };
 
 TieredPartManager::TieredPartManager(std::unique_ptr<Impl> impl) noexcept
@@ -143,18 +144,25 @@ TieredPartManager::read_range(const cseg::PartId& part_id, const std::size_t off
   if (offset > size || length > size - offset) {
     return common::make_unexpected(invalid("cold part range is outside object bounds"));
   }
-  const auto cached = impl_->cache.find(part_id);
-  if (cached != impl_->cache.end()) {
-    impl_->touch(part_id, cached->second);
-    return std::vector<std::byte>{
-        cached->second.bytes.begin() + static_cast<std::ptrdiff_t>(offset),
-        cached->second.bytes.begin() + static_cast<std::ptrdiff_t>(offset + length)};
+  {
+    std::scoped_lock lock{impl_->cache_mutex};
+    const auto cached = impl_->cache.find(part_id);
+    if (cached != impl_->cache.end()) {
+      impl_->touch(cached->second);
+      return std::vector<std::byte>{
+          cached->second.bytes.begin() + static_cast<std::ptrdiff_t>(offset),
+          cached->second.bytes.begin() + static_cast<std::ptrdiff_t>(offset + length)};
+    }
   }
 
   if (size <= impl_->limits.maximum_cache_bytes) {
     auto full = impl_->store->get_range(part->second.object_key, 0U, size);
     if (!full.has_value())
       return common::make_unexpected(full.error());
+    if (full->size() != size) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kCorruption, "cold object length mismatch"});
+    }
     auto checksum = ingest::sha256(*full);
     if (!checksum.has_value())
       return common::make_unexpected(checksum.error());
@@ -162,12 +170,30 @@ TieredPartManager::read_range(const cseg::PartId& part_id, const std::size_t off
       return common::make_unexpected(
           common::Status{common::StatusCode::kCorruption, "cold object checksum mismatch"});
     }
+    std::scoped_lock lock{impl_->cache_mutex};
+    auto entry = impl_->cache.find(part_id);
+    if (entry != impl_->cache.end()) {
+      impl_->touch(entry->second);
+      return std::vector<std::byte>{
+          entry->second.bytes.begin() + static_cast<std::ptrdiff_t>(offset),
+          entry->second.bytes.begin() + static_cast<std::ptrdiff_t>(offset + length)};
+    }
     impl_->evict_for(size);
     impl_->recency.push_front(part_id);
+    try {
+      auto [inserted_entry, inserted] =
+          impl_->cache.emplace(part_id, Impl::CacheEntry{std::move(*full), impl_->recency.begin()});
+      if (!inserted) {
+        impl_->recency.pop_front();
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kInternal, "cold cache insertion raced"});
+      }
+      entry = inserted_entry;
+    } catch (...) {
+      impl_->recency.pop_front();
+      throw;
+    }
     impl_->cache_bytes += size;
-    auto [entry, inserted] =
-        impl_->cache.emplace(part_id, Impl::CacheEntry{std::move(*full), impl_->recency.begin()});
-    static_cast<void>(inserted);
     return std::vector<std::byte>{entry->second.bytes.begin() + static_cast<std::ptrdiff_t>(offset),
                                   entry->second.bytes.begin() +
                                       static_cast<std::ptrdiff_t>(offset + length)};
@@ -192,10 +218,12 @@ std::optional<ColdPartDescriptor> TieredPartManager::find(const cseg::PartId& pa
   return found == impl_->parts.end() ? std::nullopt
                                      : std::optional<ColdPartDescriptor>{found->second};
 }
-std::size_t TieredPartManager::cached_bytes() const noexcept {
+std::size_t TieredPartManager::cached_bytes() const {
+  std::scoped_lock lock{impl_->cache_mutex};
   return impl_->cache_bytes;
 }
-std::size_t TieredPartManager::cached_entries() const noexcept {
+std::size_t TieredPartManager::cached_entries() const {
+  std::scoped_lock lock{impl_->cache_mutex};
   return impl_->cache.size();
 }
 

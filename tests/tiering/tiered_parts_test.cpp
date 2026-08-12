@@ -5,12 +5,15 @@
 #include "chronos/tiering/tiered_parts.hpp"
 #include "cseg/cseg_test_fixture.hpp"
 
+#include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <gtest/gtest.h>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -157,6 +160,40 @@ TEST(TieredPartManagerTest, RejectsInvalidCsegAndWrongWalBeforeRemoteMutation) {
   EXPECT_EQ(wrong_source.error().code(), common::StatusCode::kCorruption);
   EXPECT_FALSE(installed);
   EXPECT_EQ(store.object_count(), 0U);
+}
+
+TEST(TieredPartManagerTest, ConcurrentReadersShareBoundedEvictingCacheSafely) {
+  MemoryObjectStore store;
+  const std::array fixtures{PartFixture{5U}, PartFixture{6U}, PartFixture{7U}};
+  const std::size_t cache_limit = fixtures.front().part.size() * 2U;
+  auto manager = TieredPartManager::create(store, TieringLimits{8U, 1U << 20U, cache_limit, 2U});
+  ASSERT_TRUE(manager.has_value());
+  for (const auto& fixture : fixtures) {
+    auto receipt =
+        manager->upload_and_install(fixture.cold(), fixture.part.bytes(), fixture.admission(),
+                                    [](const ColdPartDescriptor&) { return common::Status::ok(); });
+    ASSERT_TRUE(receipt.has_value()) << receipt.error().to_string();
+  }
+
+  std::atomic_bool failed{};
+  std::vector<std::jthread> readers;
+  for (std::size_t worker = 0U; worker < 8U; ++worker) {
+    readers.emplace_back([&, worker] {
+      for (std::size_t iteration = 0U; iteration < 100U; ++iteration) {
+        const auto& fixture = fixtures[(worker + iteration) % fixtures.size()];
+        auto bytes = manager->read_range(fixture.descriptor.part_id, 0U, fixture.part.size());
+        if (!bytes.has_value() || !std::ranges::equal(*bytes, fixture.part.bytes())) {
+          failed.store(true, std::memory_order_relaxed);
+          return;
+        }
+      }
+    });
+  }
+  readers.clear();
+
+  EXPECT_FALSE(failed.load(std::memory_order_relaxed));
+  EXPECT_LE(manager->cached_entries(), 2U);
+  EXPECT_LE(manager->cached_bytes(), cache_limit);
 }
 
 } // namespace

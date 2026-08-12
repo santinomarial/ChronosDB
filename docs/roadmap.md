@@ -946,7 +946,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   WAL source before any remote request or manifest callback. WAL-local deletion, other query paths,
   parallel multipart scheduling, and workload/instance provider-chain integrations remain deferred.
   An explicit built-in environment provider now snapshots and validates the standard AWS access
-  key, secret, and optional session token without implicit precedence or unsafe refresh. An
+  key, secret, and optional session token without implicit precedence or unsafe refresh. The
+  bounded full-object LRU now supports concurrent post-install readers while keeping remote I/O and
+  digest validation outside its cache-state critical section. An
   optional Apache Arrow/Parquet provider now imports and exports files through an exact
   caller-supplied schema, maps all
   current logical types, bounds source/final canonical storage, rejects corruption and mismatch,
