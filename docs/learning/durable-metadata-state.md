@@ -27,6 +27,12 @@ until state-machine teardown.
 Complete table policy applies only after its schema, atomically updates the compatibility retention
 view, and prevents a later legacy partial command from contradicting the complete authority.
 
+`catalog_snapshot()` creates one owning, deterministic recovery projection after replay. It carries
+the applied index, every complete definition in schema-ID order, active table/schema pairs in table
+order, tablet placements in tablet order, and complete policies in table order. Definition strings
+are copied while immutable schemas remain shared and pinned, so a composed runtime can retain the
+projection without borrowing the state machine's internal maps.
+
 ## Recovery and failure behavior
 
 The applied index is not a catalog snapshot. Startup constructs empty state and replays every
@@ -44,7 +50,8 @@ coherent operation or reports resource exhaustion without advancing the applied 
 
 Decode and apply are linear in entry bytes, column roles, and replica count; map updates are
 `O(log N)`, with a linear catalog-name uniqueness check. Startup is linear in retained committed
-history until snapshots exist.
+history until snapshots exist. Building the recovery projection is linear in current catalog size
+and allocates only the explicitly bounded vectors and copied table names.
 
 - Why is metadata placement not safe as local last-writer-wins state?
 - Why must the command batch preflight before mutation?

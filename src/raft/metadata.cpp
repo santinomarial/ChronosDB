@@ -8,6 +8,7 @@
 #include <memory>
 #include <new>
 #include <ranges>
+#include <stdexcept>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -17,6 +18,10 @@ namespace chronos::raft {
 namespace {
 [[nodiscard]] common::Status invalid(const char* message) {
   return common::Status{common::StatusCode::kInvalidArgument, message};
+}
+
+[[nodiscard]] common::Status exhausted(const char* message) {
+  return common::Status{common::StatusCode::kResourceExhausted, message};
 }
 
 [[nodiscard]] bool valid_unquoted_name(const std::string& name) noexcept {
@@ -292,6 +297,38 @@ const TablePolicyMetadata*
 MetadataStateMachine::find_table_policy(const schema::TableId& table_id) const noexcept {
   const auto found = impl_->policies.find(table_id);
   return found == impl_->policies.end() ? nullptr : &found->second;
+}
+
+common::Result<MetadataCatalogSnapshot> MetadataStateMachine::catalog_snapshot() const {
+  if (impl_ == nullptr)
+    return common::make_unexpected(invalid("metadata state machine was moved from"));
+  try {
+    MetadataCatalogSnapshot snapshot;
+    snapshot.applied_index = impl_->applied;
+    snapshot.schema_definitions.reserve(impl_->definitions.size());
+    snapshot.active_schemas.reserve(impl_->active_schemas.size());
+    snapshot.tablet_placements.reserve(impl_->tablets.size());
+    snapshot.table_policies.reserve(impl_->policies.size());
+    for (const auto& [schema_id, definition] : impl_->definitions) {
+      static_cast<void>(schema_id);
+      snapshot.schema_definitions.push_back(definition);
+    }
+    for (const auto& [table_id, schema_id] : impl_->active_schemas)
+      snapshot.active_schemas.push_back({table_id, schema_id});
+    for (const auto& [tablet_id, placement] : impl_->tablets) {
+      static_cast<void>(tablet_id);
+      snapshot.tablet_placements.push_back(placement);
+    }
+    for (const auto& [table_id, policy] : impl_->policies) {
+      static_cast<void>(table_id);
+      snapshot.table_policies.push_back(policy);
+    }
+    return snapshot;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("metadata catalog snapshot allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("metadata catalog snapshot exceeds container limits"));
+  }
 }
 
 } // namespace chronos::raft

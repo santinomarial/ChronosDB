@@ -217,5 +217,47 @@ TEST(DurableMetadataStateMachineTest, RebuildsCompleteCatalogDefinitionFromRetai
             10);
 }
 
+TEST(DurableMetadataStateMachineTest, ProjectsAnOwningDeterministicRecoveryCatalog) {
+  TemporaryDirectory directory;
+  const RaftPersistentLogConfig log_config{.directory_path = directory.path().string()};
+  const std::vector<RaftGroupConfiguration> groups{{group_id(), {1U}}};
+  auto runtime = DurableMultiRaftRuntime::create_new(1U, log_config, groups);
+  ASSERT_TRUE(runtime.has_value());
+  ASSERT_TRUE(runtime->execute_batch({{group_id(), StartElectionOperation{}}}).has_value());
+  const CatalogTableDefinition definition = schema_definition();
+  const auto tablet = id<schema::TabletId>(31U);
+  ASSERT_TRUE(runtime->execute_batch({{group_id(), schema_proposal(definition)}}).has_value());
+  ASSERT_TRUE(
+      runtime
+          ->execute_batch({{group_id(), proposal(TablePolicyMetadata{definition.schema->table_id(),
+                                                                     100, 1000, 500, 10, 100U})}})
+          .has_value());
+  ASSERT_TRUE(
+      runtime
+          ->execute_batch({{group_id(), proposal(TabletPlacementMetadata{
+                                            definition.schema->table_id(), tablet, 1U, {1U}, 1U})}})
+          .has_value());
+  auto metadata = DurableMetadataStateMachine::recover(group_id(), *runtime);
+  ASSERT_TRUE(metadata.has_value()) << metadata.error().to_string();
+  std::optional<DurableMetadataStateMachine> owner{std::move(*metadata)};
+  auto projected = owner->state().catalog_snapshot();
+  ASSERT_TRUE(projected.has_value()) << projected.error().to_string();
+  EXPECT_EQ(projected->applied_index, 3U);
+  ASSERT_EQ(projected->schema_definitions.size(), 1U);
+  EXPECT_TRUE(projected->schema_definitions.front() == definition);
+  ASSERT_EQ(projected->active_schemas.size(), 1U);
+  EXPECT_EQ(projected->active_schemas.front(),
+            (ActiveSchemaMetadata{definition.schema->table_id(), definition.schema->schema_id()}));
+  ASSERT_EQ(projected->tablet_placements.size(), 1U);
+  EXPECT_EQ(projected->tablet_placements.front().tablet_id, tablet);
+  ASSERT_EQ(projected->table_policies.size(), 1U);
+  EXPECT_EQ(projected->table_policies.front().allowed_lateness_ns, 10);
+
+  std::optional<MetadataCatalogSnapshot> retained{std::move(*projected)};
+  owner.reset();
+  ASSERT_TRUE(runtime->close().is_ok());
+  EXPECT_TRUE(retained->schema_definitions.front() == definition);
+}
+
 } // namespace
 } // namespace chronos::raft

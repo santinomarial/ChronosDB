@@ -91,6 +91,24 @@ struct MetadataLimits {
   std::size_t maximum_column_name_bytes{1024U};
 };
 
+struct ActiveSchemaMetadata {
+  schema::TableId table_id;
+  schema::SchemaId schema_id;
+
+  friend bool operator==(const ActiveSchemaMetadata&, const ActiveSchemaMetadata&) = default;
+};
+
+// One immutable owning projection used to reconstruct runtime catalogs and tablet owners after
+// committed metadata replay. Vectors retain deterministic map-key order; complete definitions keep
+// their immutable shared schemas pinned independently of the state machine lifetime.
+struct MetadataCatalogSnapshot {
+  LogIndex applied_index{};
+  std::vector<CatalogTableDefinition> schema_definitions;
+  std::vector<ActiveSchemaMetadata> active_schemas;
+  std::vector<TabletPlacementMetadata> tablet_placements;
+  std::vector<TablePolicyMetadata> table_policies;
+};
+
 // Deterministic application state for the dedicated metadata Raft group. Only committed commands
 // in exact log-index order may call apply_committed; this class supplies no alternative consensus
 // or last-writer-wins path.
@@ -124,6 +142,7 @@ public:
   find_retention(const schema::TableId& table_id) const noexcept;
   [[nodiscard]] const TablePolicyMetadata*
   find_table_policy(const schema::TableId& table_id) const noexcept;
+  [[nodiscard]] common::Result<MetadataCatalogSnapshot> catalog_snapshot() const;
 
 private:
   class Impl;
