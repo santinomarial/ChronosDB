@@ -601,6 +601,41 @@ SingleNodeDatabase::instantiate_table_pipeline(
       table->lineage, destination_schema_id, pipeline, limits);
 }
 
+common::Result<std::unique_ptr<query::PhysicalOperator>>
+SingleNodeDatabase::instantiate_asof_pipeline(
+    const query::QueryResourceContext& resources,
+    const std::span<const SingleNodeAsofSourceBinding> sources,
+    const query::PhysicalAsofPlan& plan) const {
+  if (impl_ == nullptr || impl_->shutdown || !impl_->recovered.has_value())
+    return common::make_unexpected(invalid("database query storage is unavailable"));
+  try {
+    std::vector<query::SnapshotTableSourceBinding> bindings;
+    bindings.reserve(sources.size());
+    for (const SingleNodeAsofSourceBinding& source : sources) {
+      const auto table = std::ranges::find_if(impl_->tables, [&](const RecoveredTable& candidate) {
+        return candidate.lineage.table_id() == source.table_id;
+      });
+      if (table == impl_->tables.end()) {
+        return common::make_unexpected(common::Status{
+            common::StatusCode::kNotFound, "ASOF query table has no local runtime state"});
+      }
+      bindings.push_back({.target_tablets = table->tablets,
+                          .lineage = std::cref(table->lineage),
+                          .destination_schema_id = source.destination_schema_id,
+                          .limits = source.limits});
+    }
+    auto snapshot = impl_->recovered->snapshot();
+    if (!snapshot.has_value())
+      return common::make_unexpected(snapshot.error());
+    return query::instantiate_snapshot_tables_asof_plan(
+        resources, std::as_const(*impl_->recovered).manifest_storage(), *snapshot, bindings, plan);
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("single-node ASOF query allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("single-node ASOF query exceeds container limits"));
+  }
+}
+
 common::Result<std::size_t> SingleNodeDatabase::flush_ready_heads() {
   if (impl_ == nullptr || impl_->shutdown || !impl_->recovered.has_value())
     return common::make_unexpected(invalid("database is not accepting storage maintenance"));

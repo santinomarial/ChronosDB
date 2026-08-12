@@ -415,6 +415,41 @@ TEST(NativeProtocolServiceTest, FlushesSealedHeadsAndRecoversOnlyTheWalSuffix) {
   EXPECT_TRUE(recovered->shutdown().is_ok());
 }
 
+TEST(NativeProtocolServiceTest, ExecutesAsofAcrossTheCompleteManifestSnapshotAfterRestart) {
+  TemporaryDirectory directory;
+  seed_catalog(directory);
+  auto database = SingleNodeDatabase::open_or_create(config(directory));
+  ASSERT_TRUE(database.has_value()) << database.error().to_string();
+  NativeProtocolService service{*database};
+
+  for (std::uint8_t seed = 20U; seed < 23U; ++seed) {
+    auto response = service.execute_ingest(ingest_task(seed, network::DurabilityMode::kLocalSync));
+    ASSERT_TRUE(response.has_value()) << response.error().to_string();
+  }
+  constexpr std::string_view sql = "SELECT count(*) AS rows FROM events AS l ASOF JOIN events AS r "
+                                   "ON l.ts = r.ts AND r.ts <= l.ts";
+  auto joined = service.execute_query(query_task(48U, sql));
+  ASSERT_TRUE(joined.has_value()) << joined.error().to_string();
+  ASSERT_EQ(joined->responses.size(), 2U);
+  auto result = network::decode_query_result_batch(joined->responses.front().frame.payload);
+  ASSERT_TRUE(result.has_value()) << result.error().to_string();
+  common::ByteReader count{result->cell(0U, 0U)->value};
+  EXPECT_EQ(count.read_i64_le().value(), 6);
+  ASSERT_TRUE(database->shutdown().is_ok());
+
+  auto reopened = SingleNodeDatabase::open_or_create(config(directory));
+  ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+  NativeProtocolService reopened_service{*reopened};
+  auto recovered = reopened_service.execute_query(query_task(49U, sql));
+  ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
+  ASSERT_EQ(recovered->responses.size(), 2U);
+  result = network::decode_query_result_batch(recovered->responses.front().frame.payload);
+  ASSERT_TRUE(result.has_value()) << result.error().to_string();
+  common::ByteReader recovered_count{result->cell(0U, 0U)->value};
+  EXPECT_EQ(recovered_count.read_i64_le().value(), 6);
+  EXPECT_TRUE(reopened->shutdown().is_ok());
+}
+
 TEST(NativeProtocolServiceTest, RejectsMalformedIngestWithProtocolError) {
   TemporaryDirectory directory;
   auto database = SingleNodeDatabase::open_or_create(config(directory));

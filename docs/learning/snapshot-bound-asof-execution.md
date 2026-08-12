@@ -6,7 +6,11 @@
 one query resource context, Manifest storage, one held aggregate database snapshot, source bindings
 in SQL order, and the reusable plan. It returns one thread-affine pull operator.
 
-Each `SnapshotTabletSourceBinding` identifies a tablet, borrows its retained schema lineage for the
+`instantiate_snapshot_tables_asof_plan` is the whole-table form. Each SQL source supplies a
+canonical nonempty tablet vector; all tablets are concatenated below that source's preparation
+pipeline. The original one-tablet function delegates to this boundary.
+
+Each source binding borrows its retained schema lineage and tablet identity or tablet vector for the
 duration of construction, selects a destination schema, and carries the existing bounded planning,
 validation, CSEG, head, and composition limits.
 
@@ -18,9 +22,9 @@ destination-schema columns followed by either nothing or the complete four-colum
 suffix. The connector infers and applies that suffix mode uniformly to every durable and mutable
 component of that source.
 
-All sources are planned and loaded from the same `DatabaseStorageSnapshot`. This is stronger than
-receiving arbitrary source operators: a caller cannot accidentally join independently acquired
-epochs. SQL source order is explicit even when aliases repeat the same table or tablet.
+All tablets of all sources are planned and loaded from the same `DatabaseStorageSnapshot`. This is
+stronger than receiving arbitrary source operators: a caller cannot accidentally join independently
+acquired epochs. SQL source order is explicit even when aliases repeat the same table or tablet.
 
 The connector does not add order. Exact ASOF winner selection and final SQL ORDER BY ties remain
 encoded in the checked plan. Physical scan arrival order is never a SQL tie-break.
@@ -40,18 +44,19 @@ through the existing operator contract.
 
 ## Complexity and tradeoffs
 
-For `S` sources with `C_i` schema columns, `P_i` selected parts, and `H_i` heads, connector setup is
-`O(sum(C_i + P_i + H_i))` plus synchronous authenticated part I/O. ASOF execution retains the
-bounded right-side state specified by each join. Repeated aliases share one aggregate-publication
-charge but retain independent source, image, preparation, join-state, and output credit.
+For `S` sources with `T_i` tablets, `C_i` schema columns, `P_i` selected parts, and `H_i` heads,
+connector setup is `O(sum(T_i + C_i + P_i + H_i))` plus synchronous authenticated part I/O. ASOF
+execution retains the bounded right-side state specified by each join. Repeated aliases share one
+aggregate-publication charge but retain independent tablet scans, images, preparation, join-state,
+and output credit.
 
 ## Evidence
 
 A three-source self-join executes from one epoch with descending ORDER BY, LIMIT, and no visible
-identity helpers. Hostile tests cover source counts, schema identities, and a later source failing
-its head limit after an earlier source exists. Allocation injection sweeps the complete connector,
-the authenticated snapshot fuzzer varies count/schema/limit/cancellation paths, and a benchmark
-measures source construction plus bounded ASOF execution.
+identity helpers. A whole-table aggregate proves both aliases consume both tablets before the join.
+Hostile tests cover source counts, schema identities, and a later source failing its head limit
+after an earlier source exists. Allocation injection sweeps the one-tablet connector; extending
+that sweep and the authenticated snapshot fuzzer across whole-table bindings remains deferred.
 
 ## Review questions
 

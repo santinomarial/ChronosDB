@@ -27,9 +27,9 @@ directory and WAL coordinator used by direct callers. A new append acknowledges 
 start and exact requested/effective durability. A matching retry performs no second WAL operation
 and therefore returns zero position fields.
 
-For SELECT, the same adapter parses and binds against the owner's immutable catalog, acquires stable
-publications for every local tablet in the bound table, lowers the supported SQL subset, and places
-one physical pipeline above the full tablet/generation source. Bound output descriptors and
+For SELECT, the same adapter parses and binds against the owner's immutable catalog, acquires one
+aggregate Manifest publication, lowers the supported unary or ASOF SQL subset, and places each
+physical source above every local tablet/generation of its bound table. Bound output descriptors and
 canonical vector cells become Protocol v1 result batches. Query memory, total rows, batches, and
 aggregate encoded payload bytes all have independent finite caps. A successful empty query still
 emits a described zero-row result before `QUERY_END`; a local failure discards accumulated frames

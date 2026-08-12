@@ -37,6 +37,16 @@ struct SnapshotTabletSourceBinding {
   SnapshotTabletPipelineLimits limits{};
 };
 
+// One whole-table SQL source binding for a checked multi-source ASOF plan. Tablet identifiers are
+// borrowed only during instantiation and must form a nonempty canonical vector. The returned
+// operator owns every constructed source and does not retain this binding or its tablet span.
+struct SnapshotTableSourceBinding {
+  std::span<const schema::TabletId> target_tablets;
+  std::reference_wrapper<const schema::SchemaLineage> lineage;
+  schema::SchemaId destination_schema_id;
+  SnapshotTabletPipelineLimits limits{};
+};
+
 // Instantiates a checked unary physical pipeline over one exact append-only tablet snapshot.
 // The pipeline input must be every destination-schema column in ordinal order, optionally followed
 // by the shared row-version suffix. Suffix mode is inferred from that checked shape and applied
@@ -78,6 +88,16 @@ instantiate_optimized_snapshot_tablet_pipeline(
     const QueryResourceContext& resources, const manifest::ManifestStorage& storage,
     const manifest::DatabaseStorageSnapshot& snapshot,
     std::span<const SnapshotTabletSourceBinding> sources, const PhysicalAsofPlan& plan);
+
+// Instantiates every SQL source over all of its canonical local tablets while retaining one shared
+// aggregate database epoch. Each table source is concatenated below its ASOF preparation pipeline,
+// so join and final aggregate/sort/limit semantics run once over the complete source.
+[[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>>
+instantiate_snapshot_tables_asof_plan(const QueryResourceContext& resources,
+                                      const manifest::ManifestStorage& storage,
+                                      const manifest::DatabaseStorageSnapshot& snapshot,
+                                      std::span<const SnapshotTableSourceBinding> sources,
+                                      const PhysicalAsofPlan& plan);
 
 } // namespace chronos::query
 

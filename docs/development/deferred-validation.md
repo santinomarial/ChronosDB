@@ -268,10 +268,12 @@
   coverage now proves LOCAL_SYNC application, exact WAL acknowledgement, positionless matching
   retry, routing-envelope retention, and malformed-request conversion.
 - Native vector query adapter allocation/fault injection, response-limit boundary/property tests,
-  source-free SELECT, ASOF and Manifest/CSEG composition, streaming response backpressure,
+  source-free SELECT, streaming response backpressure,
   cancellation, concurrent query/DDL/shutdown, every logical cell type, scalar/vector differential
   coverage, ASan/UBSan/TSan, and latency/memory profiles. Focused coverage now proves table-wide
-  count encoding, bounded overflow, and described zero-row completion.
+  count encoding, bounded overflow, described zero-row completion, and whole-table ASOF execution
+  over one mixed Manifest/CSEG/head epoch before and after restart. Whole-table ASOF allocation
+  injection, fuzzing, large tablet/source counts, and profiles remain deferred.
 - Native CREATE TABLE system-identity entropy failure injection, duplicate/nil generator tests, DDL
   response boundary tests, client retry identities, fully complete duplicate-request behavior,
   concurrent/stale DDL, authorization, ALTER/DROP/rename, crash matrices through protocol dispatch,
@@ -300,8 +302,8 @@
   ASan/UBSan/TSan. Focused owner
   coverage now routes empty and WAL-backed restarts through aggregate recovery and proves a live
   generation-2 CSEG flush, shutdown generation-3 checkpoint through record 2, and exact record-3
-  suffix recovery. Native queries count the complete mixed CSEG/head epoch before and after restart;
-  ASOF/distributed query sources remain uncomposed here.
+  suffix recovery. Native unary and ASOF queries count the complete mixed CSEG/head epoch before and
+  after restart; distributed query sources remain uncomposed here.
 - Execute the complete requested three-node scenario with real sockets/processes and retained logs:
   create table, ingest, historical SQL, vector distributed aggregate, subscribe/update, leader kill,
   failover ingest/query, movement/query, tier/query, restart, and result reconciliation.

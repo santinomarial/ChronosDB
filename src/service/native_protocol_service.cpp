@@ -535,26 +535,42 @@ NativeProtocolService::execute_query(network::NetworkTask request) {
                                            limits_.sql_binder);
     if (!bound.has_value())
       return query_error(target, bound.error().status(), limits_.protocol);
-    auto physical = query::lower_bound_sql_select(*bound, limits_.physical_lowering);
-    if (!physical.has_value())
-      return query_error(target, physical.error().status(), limits_.protocol);
-    if (bound->sources().size() != 1U)
-      return query_error(target, invalid("native SELECT requires exactly one table source"),
-                         limits_.protocol);
-    const std::shared_ptr<const schema::TableSchema>& source_schema =
-        bound->sources().front().schema_ptr();
-    const schema::SchemaLineage* const lineage = database_->find_lineage(source_schema->table_id());
-    if (lineage == nullptr)
-      return query_error(target, internal("bound query table has no runtime lineage"),
-                         limits_.protocol);
     auto resources = query::QueryResourceContext::create(limits_.maximum_query_memory_bytes);
     if (!resources.has_value())
       return query_error(target, resources.error(), limits_.protocol);
-    auto pipeline = database_->instantiate_table_pipeline(*resources, source_schema->table_id(),
-                                                          source_schema->schema_id(), *physical,
-                                                          limits_.tablet_pipeline);
-    if (!pipeline.has_value())
-      return query_error(target, pipeline.error(), limits_.protocol);
+    std::unique_ptr<query::PhysicalOperator> pipeline;
+    if (bound->asof_joins().empty()) {
+      auto physical = query::lower_bound_sql_select(*bound, limits_.physical_lowering);
+      if (!physical.has_value())
+        return query_error(target, physical.error().status(), limits_.protocol);
+      if (bound->sources().size() != 1U)
+        return query_error(target, invalid("native SELECT requires exactly one table source"),
+                           limits_.protocol);
+      const std::shared_ptr<const schema::TableSchema>& source_schema =
+          bound->sources().front().schema_ptr();
+      auto instantiated = database_->instantiate_table_pipeline(
+          *resources, source_schema->table_id(), source_schema->schema_id(), *physical,
+          limits_.tablet_pipeline);
+      if (!instantiated.has_value())
+        return query_error(target, instantiated.error(), limits_.protocol);
+      pipeline = std::move(*instantiated);
+    } else {
+      auto physical = query::lower_bound_sql_asof_select(*bound, limits_.physical_lowering);
+      if (!physical.has_value())
+        return query_error(target, physical.error().status(), limits_.protocol);
+      std::vector<SingleNodeAsofSourceBinding> sources;
+      sources.reserve(bound->sources().size());
+      for (const query::BoundSqlSource& source : bound->sources()) {
+        const std::shared_ptr<const schema::TableSchema>& source_schema = source.schema_ptr();
+        sources.push_back({.table_id = source_schema->table_id(),
+                           .destination_schema_id = source_schema->schema_id(),
+                           .limits = limits_.tablet_pipeline});
+      }
+      auto instantiated = database_->instantiate_asof_pipeline(*resources, sources, *physical);
+      if (!instantiated.has_value())
+        return query_error(target, instantiated.error(), limits_.protocol);
+      pipeline = std::move(*instantiated);
+    }
 
     std::vector<network::QueryResultColumn> columns;
     columns.reserve(bound->outputs().size());
@@ -567,7 +583,7 @@ NativeProtocolService::execute_query(network::NetworkTask request) {
     result.responses.reserve(limits_.maximum_result_batches + 1U);
     bool emitted_result{};
     for (;;) {
-      auto step = (*pipeline)->next(*resources);
+      auto step = pipeline->next(*resources);
       if (!step.has_value())
         return query_error(target, step.error(), limits_.protocol);
       if (step->kind() == query::PhysicalOperatorStepKind::kEnd)

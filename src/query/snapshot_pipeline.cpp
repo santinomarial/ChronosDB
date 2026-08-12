@@ -162,6 +162,43 @@ validate_tablet_vector(const std::span<const schema::TabletId> tablets) {
       lineage, destination_schema_id, ordinals, limits.scan);
 }
 
+[[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>> create_snapshot_tablets_source(
+    const QueryResourceContext& resources, const manifest::ManifestStorage& storage,
+    const manifest::DatabaseStorageSnapshot& snapshot,
+    const std::span<const schema::TabletId> target_tablets, const schema::SchemaLineage& lineage,
+    const schema::SchemaId destination_schema_id,
+    const std::span<const PhysicalColumnShape> input_shape,
+    QuerySharedMemoryReservation publication_reservation,
+    const SnapshotTabletPipelineLimits limits) {
+  common::Status canonical = validate_tablet_vector(target_tablets);
+  if (!canonical.is_ok())
+    return common::make_unexpected(std::move(canonical));
+  if (target_tablets.size() == 1U) {
+    return create_snapshot_tablet_source(resources, storage, snapshot, target_tablets.front(),
+                                         lineage, destination_schema_id, input_shape,
+                                         std::move(publication_reservation), limits);
+  }
+  auto charge = sequential_tablet_source_charge(target_tablets.size());
+  if (!charge.has_value())
+    return common::make_unexpected(charge.error());
+  auto reservation = resources.reserve(*charge);
+  if (!reservation.has_value())
+    return common::make_unexpected(reservation.error());
+  std::vector<std::unique_ptr<PhysicalOperator>> sources;
+  sources.reserve(target_tablets.size());
+  for (const schema::TabletId& tablet : target_tablets) {
+    auto source = create_snapshot_tablet_source(resources, storage, snapshot, tablet, lineage,
+                                                destination_schema_id, input_shape,
+                                                publication_reservation, limits);
+    if (!source.has_value())
+      return common::make_unexpected(source.error());
+    sources.push_back(std::move(*source));
+  }
+  std::unique_ptr<PhysicalOperator> combined{new SequentialTabletSources{
+      std::move(sources), std::move(publication_reservation), std::move(*reservation)}};
+  return combined;
+}
+
 } // namespace
 
 common::Result<std::unique_ptr<PhysicalOperator>> instantiate_snapshot_tablet_pipeline(
@@ -196,25 +233,12 @@ common::Result<std::unique_ptr<PhysicalOperator>> instantiate_snapshot_tablets_p
     auto publication = resources.reserve_shared(snapshot.retained_buffer_bytes());
     if (!publication.has_value())
       return common::make_unexpected(publication.error());
-    auto charge = sequential_tablet_source_charge(target_tablets.size());
-    if (!charge.has_value())
-      return common::make_unexpected(charge.error());
-    auto reservation = resources.reserve(*charge);
-    if (!reservation.has_value())
-      return common::make_unexpected(reservation.error());
-    std::vector<std::unique_ptr<PhysicalOperator>> sources;
-    sources.reserve(target_tablets.size());
-    for (const schema::TabletId& tablet : target_tablets) {
-      auto source = create_snapshot_tablet_source(resources, storage, snapshot, tablet, lineage,
-                                                  destination_schema_id, pipeline.input_columns(),
-                                                  *publication, limits);
-      if (!source.has_value())
-        return common::make_unexpected(source.error());
-      sources.push_back(std::move(*source));
-    }
-    std::unique_ptr<PhysicalOperator> combined{new SequentialTabletSources{
-        std::move(sources), std::move(*publication), std::move(*reservation)}};
-    return pipeline.instantiate(std::move(combined));
+    auto combined = create_snapshot_tablets_source(
+        resources, storage, snapshot, target_tablets, lineage, destination_schema_id,
+        pipeline.input_columns(), std::move(*publication), limits);
+    if (!combined.has_value())
+      return common::make_unexpected(combined.error());
+    return pipeline.instantiate(std::move(*combined));
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("multi-tablet snapshot allocation failed"));
   } catch (const std::length_error&) {
@@ -259,6 +283,29 @@ common::Result<std::unique_ptr<PhysicalOperator>> instantiate_snapshot_asof_plan
   if (sources.size() != plan.source_count())
     return common::make_unexpected(invalid("snapshot ASOF source count mismatch"));
   try {
+    std::vector<SnapshotTableSourceBinding> tables;
+    tables.reserve(sources.size());
+    for (const SnapshotTabletSourceBinding& source : sources) {
+      tables.push_back({.target_tablets = std::span{&source.target_tablet, std::size_t{1U}},
+                        .lineage = source.lineage,
+                        .destination_schema_id = source.destination_schema_id,
+                        .limits = source.limits});
+    }
+    return instantiate_snapshot_tables_asof_plan(resources, storage, snapshot, tables, plan);
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("snapshot ASOF plan allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("snapshot ASOF plan exceeds container limits"));
+  }
+}
+
+common::Result<std::unique_ptr<PhysicalOperator>> instantiate_snapshot_tables_asof_plan(
+    const QueryResourceContext& resources, const manifest::ManifestStorage& storage,
+    const manifest::DatabaseStorageSnapshot& snapshot,
+    const std::span<const SnapshotTableSourceBinding> sources, const PhysicalAsofPlan& plan) {
+  if (sources.size() != plan.source_count())
+    return common::make_unexpected(invalid("snapshot ASOF source count mismatch"));
+  try {
     common::Result<QuerySharedMemoryReservation> publication_reservation =
         resources.reserve_shared(snapshot.retained_buffer_bytes());
     if (!publication_reservation.has_value())
@@ -267,12 +314,12 @@ common::Result<std::unique_ptr<PhysicalOperator>> instantiate_snapshot_asof_plan
     operators.reserve(sources.size());
     const std::span<const PhysicalAsofPlanJoin> joins = plan.joins();
     for (std::size_t ordinal = 0U; ordinal < sources.size(); ++ordinal) {
-      const SnapshotTabletSourceBinding& source = sources[ordinal];
+      const SnapshotTableSourceBinding& source = sources[ordinal];
       const std::span<const PhysicalColumnShape> expected =
           ordinal == 0U ? joins.front().left_preparation.input_columns()
                         : joins[ordinal - 1U].right_preparation.input_columns();
-      common::Result<std::unique_ptr<PhysicalOperator>> created = create_snapshot_tablet_source(
-          resources, storage, snapshot, source.target_tablet, source.lineage.get(),
+      common::Result<std::unique_ptr<PhysicalOperator>> created = create_snapshot_tablets_source(
+          resources, storage, snapshot, source.target_tablets, source.lineage.get(),
           source.destination_schema_id, expected, *publication_reservation, source.limits);
       if (!created.has_value())
         return common::make_unexpected(created.error());

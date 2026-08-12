@@ -49,6 +49,12 @@ struct CreatedSingleNodeTable {
   bool resumed_incomplete_creation{};
 };
 
+struct SingleNodeAsofSourceBinding {
+  schema::TableId table_id;
+  schema::SchemaId destination_schema_id;
+  query::SnapshotTabletPipelineLimits limits{};
+};
+
 // Recoverable single-process owner for the current WAL-backed single-node product boundary. The
 // object is thread-affine except for the independently synchronized WAL coordinator and query-safe
 // immutable snapshots returned by TabletState. Metadata Raft, WAL admission, and the database root
@@ -86,6 +92,10 @@ public:
       const query::QueryResourceContext& resources, const schema::TableId& table_id,
       const schema::SchemaId& destination_schema_id, const query::PhysicalPipelinePlan& pipeline,
       query::SnapshotTabletPipelineLimits limits = {}) const;
+  [[nodiscard]] common::Result<std::unique_ptr<query::PhysicalOperator>>
+  instantiate_asof_pipeline(const query::QueryResourceContext& resources,
+                            std::span<const SingleNodeAsofSourceBinding> sources,
+                            const query::PhysicalAsofPlan& plan) const;
 
   // Synchronously drains every ready per-tablet sealed-head queue through durable CSEG/Manifest
   // publication. Returns the number of completed replacements; no work is also successful.

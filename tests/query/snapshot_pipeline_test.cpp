@@ -310,8 +310,30 @@ TEST(SnapshotAsofPlanTest, InstantiatesEverySourceFromOneEpochAndExecutesHiddenI
   EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
 }
 
+TEST(SnapshotAsofPlanTest, ExecutesEveryTabletBelowEachWholeTableSource) {
+  test::SnapshotTabletScanFixture fixture{2U, 3U};
+  PhysicalAsofPlan plan =
+      lower_asof(fixture, "SELECT count(*) FROM metrics AS l ASOF JOIN metrics AS r "
+                          "ON l.event_time = r.event_time AND r.event_time <= l.event_time");
+  const std::array tablets{test::SnapshotTabletScanFixture::tablet_id(),
+                           test::SnapshotTabletScanFixture::second_tablet_id()};
+  const SnapshotTableSourceBinding source{.target_tablets = tablets,
+                                          .lineage = std::cref(fixture.lineage()),
+                                          .destination_schema_id =
+                                              fixture.schema_ptr()->schema_id()};
+  const std::array sources{source, source};
+  QueryResourceContext resources =
+      QueryResourceContext::create(std::size_t{32U} * 1024U * 1024U).value();
+  auto pipeline = instantiate_snapshot_tables_asof_plan(resources, fixture.storage(),
+                                                        fixture.snapshot(), sources, plan);
+  ASSERT_TRUE(pipeline.has_value()) << pipeline.error().to_string();
+  EXPECT_EQ(drain_signed(**pipeline, resources), (std::vector<std::int64_t>{5}));
+  pipeline->reset();
+  EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
+}
+
 TEST(SnapshotAsofPlanTest, RejectsSourceCountSchemaAndLateLimitsWithoutLeakingCredit) {
-  test::SnapshotTabletScanFixture fixture{2U};
+  test::SnapshotTabletScanFixture fixture{2U, 1U};
   PhysicalAsofPlan plan =
       lower_asof(fixture, "SELECT r.event_time FROM metrics AS l ASOF JOIN metrics AS r "
                           "ON l.event_time = r.event_time AND r.event_time <= l.event_time");
@@ -347,6 +369,18 @@ TEST(SnapshotAsofPlanTest, RejectsSourceCountSchemaAndLateLimitsWithoutLeakingCr
                                             late_limit, plan);
   ASSERT_FALSE(rejected.has_value());
   EXPECT_EQ(rejected.error().code(), common::StatusCode::kResourceExhausted);
+
+  const std::array reversed_tablets{test::SnapshotTabletScanFixture::second_tablet_id(),
+                                    test::SnapshotTabletScanFixture::tablet_id()};
+  const SnapshotTableSourceBinding reversed{.target_tablets = reversed_tablets,
+                                            .lineage = std::cref(fixture.lineage()),
+                                            .destination_schema_id =
+                                                fixture.schema_ptr()->schema_id()};
+  const std::array reversed_sources{reversed, reversed};
+  rejected = instantiate_snapshot_tables_asof_plan(resources, fixture.storage(), fixture.snapshot(),
+                                                   reversed_sources, plan);
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kInvalidArgument);
   EXPECT_EQ(resources.reserved_memory_bytes(), 0U);
 }
 
