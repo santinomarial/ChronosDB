@@ -3,8 +3,8 @@
 > **Pre-alpha — architecture-phase implementation.** The accepted single-node foundation through
 > Phase 10 is implemented and tested, including WAL/recovery, columnar storage, the supported SQL
 > and vectorized-query surface, and a bounded native networking library. A packaged `chronosd`
-> process now optionally composes a durable single-node data plane for native CREATE, ingest, and
-> the supported vector SELECT subset.
+> process now optionally composes a durable single-node data plane for native CREATE, SQL INSERT,
+> canonical ingest, and the supported vector SELECT subset.
 > ChronosDB is not a production server or production database service.
 
 ChronosDB is a greenfield, Linux-first distributed real-time analytical database planned primarily in C++23. It is intended to unite durable, low-latency ingestion of event-heavy data with historical columnar SQL, event-time-aware live analytics, system-time history, and resumable subscriptions—through purpose-built storage, query, networking, and replication subsystems rather than an existing database engine hidden behind a new interface.

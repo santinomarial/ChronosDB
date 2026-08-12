@@ -10,6 +10,7 @@
 #include "chronos/query/binder.hpp"
 #include "chronos/query/parser.hpp"
 #include "chronos/query/physical_lowering.hpp"
+#include "chronos/query/statement_binder.hpp"
 #include "chronos/query/tablet_state_pipeline.hpp"
 #include "chronos/service/single_node_database.hpp"
 
@@ -24,8 +25,10 @@ struct NativeProtocolServiceLimits {
   ingest::ColumnarAppendDecodeLimits columnar_append{};
   query::SqlParserLimits sql_parser{};
   query::SqlBinderLimits sql_binder{};
+  query::SqlInsertBinderLimits sql_insert{};
   query::PhysicalSelectLoweringLimits physical_lowering{};
   query::TabletStatePipelineLimits tablet_pipeline{};
+  columnar::ColumnarBatchLimits insert_batch{};
   network::QueryResultLimits query_result{};
   std::size_t maximum_query_memory_bytes{64U * 1024U * 1024U};
   std::uint64_t maximum_result_rows{1'048'576U};

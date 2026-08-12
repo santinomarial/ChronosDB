@@ -281,6 +281,11 @@
   boundary, hostile maximum-width variable values, exact preflight byte accounting before allocation,
   codec round trips, fuzz/property coverage, and ASan/UBSan. Focused coverage now proves schema-order
   transposition, schema pinning, typed NULL preservation, scalar round trips, and row-limit rejection.
+- Native SQL INSERT client-supplied durable retry identity, multi-tablet event-time/shard routing,
+  concurrent INSERT/query/shutdown schedules, identity-source collision/exhaustion faults, response
+  boundary tests, every logical type, authorization, sustained head rotation with Manifest/CSEG
+  flush, real-socket daemon execution, and ASan/UBSan/TSan. Focused coverage now proves LOCAL_SYNC
+  WAL acknowledgement, immediate vector-query visibility, and restart recovery for one local tablet.
 - Execute the complete requested three-node scenario with real sockets/processes and retained logs:
   create table, ingest, historical SQL, vector distributed aggregate, subscribe/update, leader kill,
   failover ingest/query, movement/query, tier/query, restart, and result reconciliation.

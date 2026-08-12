@@ -450,6 +450,61 @@ TEST(NativeProtocolServiceTest, CreatesTableWithInjectedIdentitiesAndReturnsDura
   EXPECT_TRUE(database->shutdown().is_ok());
 }
 
+TEST(NativeProtocolServiceTest, AppliesLocalSyncSqlInsertAndRecoversItsRows) {
+  TemporaryDirectory directory;
+  seed_catalog(directory);
+  auto database = SingleNodeDatabase::open_or_create(config(directory));
+  ASSERT_TRUE(database.has_value()) << database.error().to_string();
+  DeterministicIdentityGenerator identities{80U};
+  NativeProtocolService service{*database, identities};
+
+  auto inserted = service.execute_query(
+      query_task(45U, "INSERT INTO events VALUES "
+                      "(TIMESTAMP '1970-01-01 00:00:00.000000001Z', 'first', true), "
+                      "(TIMESTAMP '1970-01-01 00:00:00.000000002Z', NULL, false)"));
+  ASSERT_TRUE(inserted.has_value()) << inserted.error().to_string();
+  ASSERT_EQ(inserted->responses.size(), 2U);
+  EXPECT_EQ(inserted->result_rows, 1U);
+  EXPECT_EQ(inserted->responses[0].frame.header.message_type, network::MessageType::kQueryResult);
+  EXPECT_EQ(inserted->responses[1].frame.header.message_type, network::MessageType::kQueryEnd);
+  const auto result = network::decode_query_result_batch(inserted->responses[0].frame.payload);
+  ASSERT_TRUE(result.has_value()) << result.error().to_string();
+  ASSERT_EQ(result->row_count(), 1U);
+  ASSERT_EQ(result->columns().size(), 5U);
+  EXPECT_EQ(result->columns()[0].name, "applied_rows");
+  EXPECT_EQ(result->columns()[1].name, "record_sequence");
+  EXPECT_EQ(result->columns()[4].name, "matching_retry");
+  common::ByteReader rows{result->cell(0U, 0U)->value};
+  common::ByteReader sequence{result->cell(0U, 1U)->value};
+  common::ByteReader segment{result->cell(0U, 2U)->value};
+  EXPECT_EQ(rows.read_u64_le().value(), 2U);
+  EXPECT_NE(sequence.read_u64_le().value(), 0U);
+  EXPECT_NE(segment.read_u64_le().value(), 0U);
+  ASSERT_EQ(result->cell(0U, 4U)->value.size(), 1U);
+  EXPECT_EQ(result->cell(0U, 4U)->value.front(), std::byte{0U});
+
+  auto count = service.execute_query(query_task(46U, "SELECT count(*) AS rows FROM events"));
+  ASSERT_TRUE(count.has_value()) << count.error().to_string();
+  const auto count_result = network::decode_query_result_batch(count->responses[0].frame.payload);
+  ASSERT_TRUE(count_result.has_value()) << count_result.error().to_string();
+  common::ByteReader count_value{count_result->cell(0U, 0U)->value};
+  EXPECT_EQ(count_value.read_i64_le().value(), 2);
+  ASSERT_TRUE(database->shutdown().is_ok());
+
+  auto recovered = SingleNodeDatabase::open_or_create(config(directory));
+  ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
+  NativeProtocolService recovered_service{*recovered, identities};
+  auto recovered_count =
+      recovered_service.execute_query(query_task(47U, "SELECT count(*) AS rows FROM events"));
+  ASSERT_TRUE(recovered_count.has_value()) << recovered_count.error().to_string();
+  const auto recovered_result =
+      network::decode_query_result_batch(recovered_count->responses[0].frame.payload);
+  ASSERT_TRUE(recovered_result.has_value()) << recovered_result.error().to_string();
+  common::ByteReader recovered_value{recovered_result->cell(0U, 0U)->value};
+  EXPECT_EQ(recovered_value.read_i64_le().value(), 2);
+  EXPECT_TRUE(recovered->shutdown().is_ok());
+}
+
 TEST(SingleNodeDatabaseTest, CreatesACompleteTableAndReopensItsRuntimeCatalog) {
   TemporaryDirectory directory;
   auto database = SingleNodeDatabase::open_or_create(config(directory));

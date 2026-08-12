@@ -9,9 +9,12 @@ deployments should bind explicitly.
 Run `chronosd --help` for bounded startup options. The binary accepts plaintext only on `127.0.0.1`.
 Without `--data-dir` it reports `data_plane=unconfigured` and explicitly rejects data work. With
 `--data-dir PATH` it initializes or reopens an existing directory as a durable single-node root and
-reports `data_plane=configured`; native CREATE TABLE, canonical ingest, and supported vector SELECT
-execute, while subscriptions fail explicitly. `SIGINT` and `SIGTERM` request orderly worker join,
-reactor shutdown, WAL drain, Raft close, and root-lock release.
+reports `data_plane=configured`; native CREATE TABLE, single-local-tablet SQL INSERT VALUES,
+canonical ingest, and supported vector SELECT execute, while subscriptions fail explicitly. SQL
+INSERT acknowledges only after `LOCAL_SYNC`, but its query envelope has no durable client retry key;
+use canonical ingest when an ambiguous response must be retried without duplicating rows. `SIGINT`
+and `SIGTERM` request orderly worker join, reactor shutdown, WAL drain, Raft close, and root-lock
+release.
 
 Set finite connection, event, frame, buffered-byte, queued-frame, in-flight request, handshake, and
 idle limits. Defaults are development bounds, not capacity guidance. Monitor accepted, rejected,

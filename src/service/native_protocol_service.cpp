@@ -9,6 +9,7 @@
 #include "chronos/query/parser.hpp"
 #include "chronos/query/physical_lowering.hpp"
 #include "chronos/query/resource_context.hpp"
+#include "chronos/query/statement_binder.hpp"
 #include "chronos/query/tablet_state_pipeline.hpp"
 
 #include <algorithm>
@@ -243,6 +244,65 @@ ddl_result(const ResponseRoute& target, const CreatedSingleNodeTable& created,
   }
 }
 
+[[nodiscard]] std::array<std::byte, sizeof(std::uint64_t)>
+u64_bytes(const std::uint64_t value) noexcept {
+  std::array<std::byte, sizeof(std::uint64_t)> bytes{};
+  for (std::size_t index = 0U; index < bytes.size(); ++index)
+    bytes[index] = static_cast<std::byte>((value >> (index * 8U)) & 0xffU);
+  return bytes;
+}
+
+[[nodiscard]] common::Result<NativeProtocolResponseSequence>
+insert_result(const ResponseRoute& target, const std::uint32_t applied_rows,
+              const ingest::ColumnarAppendExecutionResult& executed,
+              const NativeProtocolServiceLimits& limits) {
+  auto uint64_type = schema::LogicalType::create(schema::LogicalTypeKind::kUInt64);
+  auto bool_type = schema::LogicalType::create(schema::LogicalTypeKind::kBool);
+  if (!uint64_type.has_value() || !bool_type.has_value())
+    return query_error(target, internal("INSERT result logical types are unavailable"),
+                       limits.protocol);
+  const std::array columns{network::QueryResultColumn{"applied_rows", *uint64_type, false},
+                           network::QueryResultColumn{"record_sequence", *uint64_type, false},
+                           network::QueryResultColumn{"segment_number", *uint64_type, false},
+                           network::QueryResultColumn{"byte_offset", *uint64_type, false},
+                           network::QueryResultColumn{"matching_retry", *bool_type, false}};
+  const auto rows = u64_bytes(applied_rows);
+  const auto record_sequence =
+      u64_bytes(executed.wal_commit.has_value() ? executed.wal_commit->append.record_sequence : 0U);
+  const auto segment_number = u64_bytes(
+      executed.wal_commit.has_value() ? executed.wal_commit->append.record_start.segment_number
+                                      : 0U);
+  const auto byte_offset = u64_bytes(
+      executed.wal_commit.has_value() ? executed.wal_commit->append.record_start.byte_offset : 0U);
+  const std::byte matching_retry =
+      executed.kind == ingest::ColumnarAppendExecutionKind::kMatchingRetry ? std::byte{1U}
+                                                                           : std::byte{0U};
+  const std::array cells{network::QueryResultCell{.value = rows},
+                         network::QueryResultCell{.value = record_sequence},
+                         network::QueryResultCell{.value = segment_number},
+                         network::QueryResultCell{.value = byte_offset},
+                         network::QueryResultCell{.value = {&matching_retry, 1U}}};
+  network::QueryResultLimits result_limits = limits.query_result;
+  result_limits.protocol = limits.protocol;
+  auto payload = network::encode_query_result_batch(1U, columns, cells, result_limits);
+  if (!payload.has_value())
+    return query_error(target, payload.error(), limits.protocol);
+  if (payload->size() > limits.maximum_response_payload_bytes)
+    return query_error(target, exhausted("INSERT response byte limit exceeded"), limits.protocol);
+  try {
+    NativeProtocolResponseSequence result;
+    result.result_rows = 1U;
+    result.payload_bytes = payload->size();
+    result.responses.reserve(2U);
+    result.responses.push_back(
+        make_response(target, network::MessageType::kQueryResult, std::move(*payload)));
+    result.responses.push_back(make_response(target, network::MessageType::kQueryEnd));
+    return result;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("INSERT response allocation failed"));
+  }
+}
+
 } // namespace
 
 NativeProtocolService::NativeProtocolService(SingleNodeDatabase& database,
@@ -399,6 +459,60 @@ NativeProtocolService::execute_query(network::NetworkTask request) {
       if (!created.has_value())
         return query_error(target, created.error(), limits_.protocol);
       return ddl_result(target, *created, limits_);
+    }
+    if (statement_tokens.front().keyword() == query::SqlKeyword::kInsert) {
+      if (identities_ == nullptr)
+        return query_error(target, unsupported("native INSERT has no identity source"),
+                           limits_.protocol);
+      auto parsed = query::parse_sql_v1_insert(sql_text, limits_.sql_parser);
+      if (!parsed.has_value())
+        return query_error(target, parsed.error().status(), limits_.protocol);
+      auto bound = query::bind_sql_v1_insert(std::move(*parsed), database_->query_catalog(),
+                                             limits_.sql_insert);
+      if (!bound.has_value())
+        return query_error(target, bound.error().status(), limits_.protocol);
+      auto materialized = query::materialize_sql_v1_insert_rows(*bound);
+      if (!materialized.has_value())
+        return query_error(target, materialized.error().status(), limits_.protocol);
+      auto owned_batch =
+          query::materialize_sql_v1_insert_batch(*materialized, limits_.insert_batch);
+      if (!owned_batch.has_value())
+        return query_error(target, owned_batch.error(), limits_.protocol);
+      auto snapshots = database_->table_snapshots(bound->schema_ptr()->table_id());
+      if (!snapshots.has_value())
+        return query_error(target, snapshots.error(), limits_.protocol);
+      if (snapshots->size() != 1U)
+        return query_error(target, unsupported("native INSERT requires exactly one local tablet"),
+                           limits_.protocol);
+      ingest::TabletState* const tablet = database_->find_tablet(snapshots->front().tablet_id());
+      if (tablet == nullptr)
+        return query_error(target, internal("INSERT target tablet disappeared"), limits_.protocol);
+      auto client_uuid = identities_->generate();
+      auto batch_uuid = identities_->generate();
+      if (!client_uuid.has_value())
+        return query_error(target, client_uuid.error(), limits_.protocol);
+      if (!batch_uuid.has_value())
+        return query_error(target, batch_uuid.error(), limits_.protocol);
+      if (client_uuid->is_nil() || batch_uuid->is_nil() || *client_uuid == *batch_uuid)
+        return query_error(target, internal("identity source returned invalid INSERT UUIDs"),
+                           limits_.protocol);
+      auto client_id = ingest::ClientId::from_uuid(*client_uuid);
+      auto client_batch_id = ingest::ClientBatchId::from_uuid(*batch_uuid);
+      if (!client_id.has_value() || !client_batch_id.has_value())
+        return query_error(target, internal("identity source returned invalid INSERT identities"),
+                           limits_.protocol);
+      const std::uint32_t applied_rows = owned_batch->row_count();
+      auto retained_batch =
+          std::make_shared<const columnar::OwnedColumnarBatch>(std::move(*owned_batch));
+      auto executed = ingest::execute_columnar_append(
+          {.client_id = *client_id,
+           .client_batch_id = *client_batch_id,
+           .batch = std::move(retained_batch),
+           .durability = wal::WalDurabilityMode::kLocalSync},
+          database_->retry_directory(), *tablet, database_->wal_coordinator());
+      if (!executed.has_value())
+        return query_error(target, executed.error(), limits_.protocol);
+      return insert_result(target, applied_rows, *executed, limits_);
     }
     if (statement_tokens.front().keyword() != query::SqlKeyword::kSelect)
       return query_error(target, unsupported("native SQL statement is not implemented"),

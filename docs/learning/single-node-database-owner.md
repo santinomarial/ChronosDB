@@ -35,6 +35,15 @@ containing those durable identities, the applied metadata index, and whether an 
 was resumed. The reusable service does not choose entropy policy; its process owner must inject a
 secure generator.
 
+For INSERT VALUES, token dispatch selects the INSERT parser/binder, evaluates source-free constant
+rows, and transposes them into canonical immutable columnar ownership. The adapter currently
+requires exactly one local tablet, allocates distinct nonnil client/batch identities through the
+same injected generator, and executes the canonical append with `LOCAL_SYNC`. Its described result
+reports the row count, real WAL location, and retry outcome before `QUERY_END`; the rows are already
+query-visible when it returns. Because Protocol v1's SQL query envelope carries no durable client
+mutation key, an ambiguous SQL INSERT response is not safe to retry. Canonical ingest remains the
+retry-safe surface.
+
 ## Startup ownership and data flow
 
 ```text
@@ -77,6 +86,9 @@ DDL is thread-affine. The bound statement must retain the exact current query-ca
 catalog update makes older bound DDL stale. After all metadata applies, the owner constructs the new
 tablet state before replacing its immutable query catalog. Existing bound query plans keep their
 shared schema/catalog ownership and already-instantiated head scans keep generation pins.
+SQL INSERT is also thread-affine and rejects multi-tablet targets rather than guessing event-time or
+shard routing. Parser, binder, columnar, WAL, head, and response bounds fail before success is
+reported; after WAL begins, the append executor's existing fail-closed rules remain authoritative.
 
 ## Complexity, tradeoffs, and review questions
 
