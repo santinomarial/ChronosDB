@@ -254,3 +254,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0217](0217-vectorized-tablet-state-query-source.md) | Vectorized tablet-state query source | accepted |
 | [0218](0218-recoverable-single-node-database-owner.md) | Recoverable single-node database owner | accepted |
 | [0219](0219-restartable-single-node-table-creation.md) | Restartable single-node table creation | accepted |
+| [0220](0220-native-protocol-ingest-service-adapter.md) | Native protocol ingest service adapter | accepted |

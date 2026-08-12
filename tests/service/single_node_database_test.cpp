@@ -1,5 +1,6 @@
 #include "chronos/common/byte_reader.hpp"
 #include "chronos/ingest/columnar_append_executor.hpp"
+#include "chronos/network/messages.hpp"
 #include "chronos/query/binder.hpp"
 #include "chronos/query/parser.hpp"
 #include "chronos/query/physical_lowering.hpp"
@@ -8,6 +9,7 @@
 #include "chronos/raft/durable_runtime.hpp"
 #include "chronos/raft/metadata_codec.hpp"
 #include "chronos/raft/schema_definition_codec.hpp"
+#include "chronos/service/native_protocol_service.hpp"
 #include "chronos/service/single_node_database.hpp"
 #include "columnar/columnar_test_support.hpp"
 #include "ingest/ingest_test_support.hpp"
@@ -173,6 +175,26 @@ bind_create(SingleNodeDatabase& database) {
           .value());
 }
 
+[[nodiscard]] network::NetworkTask ingest_task(const std::uint8_t seed,
+                                               const network::DurabilityMode durability) {
+  const auto input = batch();
+  const auto encoded_batch = columnar::encode_columnar_batch_v1(*input).value();
+  const auto append =
+      ingest::encode_columnar_append_v1(
+          {.client_id = ingest::test::request_id<ingest::ClientId>(seed),
+           .client_batch_id = ingest::test::request_id<ingest::ClientBatchId>(seed + 32U),
+           .tablet_id = tablet_id()},
+          encoded_batch)
+          .value();
+  auto payload = network::encode_ingest_request(durability, append.bytes()).value();
+  return {.connection_id = 9U,
+          .principal_id = 7U,
+          .frame = {.header = {.message_type = network::MessageType::kIngestRequest,
+                               .request_id = seed,
+                               .payload_size = static_cast<std::uint32_t>(payload.size())},
+                    .payload = std::move(payload)}};
+}
+
 [[nodiscard]] std::int64_t query_count(SingleNodeDatabase& database) {
   auto parsed = query::parse_sql_v1_select("SELECT count(*) AS rows FROM events");
   EXPECT_TRUE(parsed.has_value()) << parsed.error().status().to_string();
@@ -236,6 +258,57 @@ TEST(SingleNodeDatabaseTest, RecoversCatalogWalRowsAndVectorQueryVisibility) {
   EXPECT_EQ(recovered->find_tablet(tablet_id())->snapshot()->visible_row_count(), 2U);
   EXPECT_EQ(query_count(*recovered), 2);
   EXPECT_TRUE(recovered->shutdown().is_ok());
+}
+
+TEST(NativeProtocolServiceTest, AppliesLocalSyncIngestAndReturnsPositionlessMatchingRetry) {
+  TemporaryDirectory directory;
+  seed_catalog(directory);
+  auto database = SingleNodeDatabase::open_or_create(config(directory));
+  ASSERT_TRUE(database.has_value()) << database.error().to_string();
+  NativeProtocolService service{*database};
+
+  auto applied = service.execute_ingest(ingest_task(3U, network::DurabilityMode::kLocalSync));
+  ASSERT_TRUE(applied.has_value()) << applied.error().to_string();
+  EXPECT_EQ(applied->connection_id, 9U);
+  EXPECT_EQ(applied->principal_id, 7U);
+  EXPECT_EQ(applied->frame.header.message_type, network::MessageType::kIngestAcknowledgement);
+  const auto applied_ack = network::decode_ingest_acknowledgement(applied->frame.payload);
+  ASSERT_TRUE(applied_ack.has_value()) << applied_ack.error().to_string();
+  EXPECT_EQ(applied_ack->requested_durability, network::DurabilityMode::kLocalSync);
+  EXPECT_EQ(applied_ack->effective_durability, network::DurabilityMode::kLocalSync);
+  EXPECT_EQ(applied_ack->outcome, network::IngestOutcome::kApplied);
+  EXPECT_NE(applied_ack->record_sequence, 0U);
+  EXPECT_NE(applied_ack->segment_number, 0U);
+
+  auto matching = service.execute_ingest(ingest_task(3U, network::DurabilityMode::kAsync));
+  ASSERT_TRUE(matching.has_value()) << matching.error().to_string();
+  const auto matching_ack = network::decode_ingest_acknowledgement(matching->frame.payload);
+  ASSERT_TRUE(matching_ack.has_value()) << matching_ack.error().to_string();
+  EXPECT_EQ(matching_ack->requested_durability, network::DurabilityMode::kAsync);
+  EXPECT_EQ(matching_ack->effective_durability, network::DurabilityMode::kAsync);
+  EXPECT_EQ(matching_ack->outcome, network::IngestOutcome::kMatchingRetry);
+  EXPECT_EQ(matching_ack->record_sequence, 0U);
+  EXPECT_EQ(matching_ack->segment_number, 0U);
+  EXPECT_EQ(matching_ack->byte_offset, 0U);
+  EXPECT_EQ(database->find_tablet(tablet_id())->snapshot()->visible_row_count(), 2U);
+  EXPECT_TRUE(database->shutdown().is_ok());
+}
+
+TEST(NativeProtocolServiceTest, RejectsMalformedIngestWithProtocolError) {
+  TemporaryDirectory directory;
+  auto database = SingleNodeDatabase::open_or_create(config(directory));
+  ASSERT_TRUE(database.has_value()) << database.error().to_string();
+  NativeProtocolService service{*database};
+  auto task = ingest_task(4U, network::DurabilityMode::kAsync);
+  task.frame.payload.resize(3U);
+
+  auto response = service.execute_ingest(std::move(task));
+  ASSERT_TRUE(response.has_value()) << response.error().to_string();
+  EXPECT_EQ(response->frame.header.message_type, network::MessageType::kError);
+  const auto error = network::decode_error_message(response->frame.payload);
+  ASSERT_TRUE(error.has_value()) << error.error().to_string();
+  EXPECT_EQ(error->code, network::ProtocolErrorCode::kInvalidRequest);
+  EXPECT_TRUE(database->shutdown().is_ok());
 }
 
 TEST(SingleNodeDatabaseTest, CreatesACompleteTableAndReopensItsRuntimeCatalog) {

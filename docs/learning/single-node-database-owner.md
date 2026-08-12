@@ -13,6 +13,13 @@ visible only when metadata contains its complete schema tail, complete policy, a
 Schema-only or schema+policy crash prefixes remain invisible and a matching retry reuses their
 durable identities before completing publication.
 
+`NativeProtocolService` supplies the first transport-to-owner boundary. It exactly decodes an
+accepted Protocol v1 ingest request, resolves only the active durable schema and local tablet, copies
+borrowed canonical column buffers into immutable ownership, and executes through the same retry
+directory and WAL coordinator used by direct callers. A new append acknowledges its real WAL record
+start and exact requested/effective durability. A matching retry performs no second WAL operation
+and therefore returns zero position fields.
+
 ## Startup ownership and data flow
 
 ```text
@@ -44,6 +51,11 @@ live service contract; repeated shutdown itself succeeds.
 Unknown WAL tablets, damaged log bytes, inconsistent lineage tails, missing active definitions,
 and nonlocal placement all fail startup. Incomplete metadata-only table prefixes remain invisible.
 No fallback schema, policy, durability downgrade, or empty-success response exists.
+
+Malformed transport/command bytes become client-invalid protocol errors. Database corruption stays
+distinguishable as an internal error; I/O, unavailability, and unsupported operations are execution
+failures. The adapter is synchronous and thread-affine: the daemon worker owns queue backpressure
+and will later own cancellation/concurrency policy.
 
 DDL is thread-affine. The bound statement must retain the exact current query-catalog pointer; a
 catalog update makes older bound DDL stale. After all metadata applies, the owner constructs the new
