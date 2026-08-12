@@ -308,6 +308,8 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   metadata, durable worker, and coordinator startup/shutdown/reopen composition.
 - [Replicated-ingest database recovery](learning/replicated-ingest-database.md): database-root
   ownership, committed metadata projection, resident tablet reconstruction, and ordered shutdown.
+- [Replicated group configuration](operations/replicated-group-config.md): strict bounded external
+  resident-group and voter declarations for replicated database recovery.
 - [Windowed materialized-view state](learning/windowed-materialized-view.md): committed/event-time
   separation, corrections, watermarks, exact checkpoints, durable recovery, and retention frontier.
 - [Multi-tablet subscription order](learning/multi-tablet-subscription-order.md): canonical source

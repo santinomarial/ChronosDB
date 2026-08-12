@@ -207,10 +207,11 @@
   create/reopen/shutdown ordering. A bounded queue-facing service now preserves negotiated tasks,
   exact cancellation, one retained response, response-wakeup reporting, and admission-close/drain;
   a database-root owner now reconstructs resident tablet applications from committed global
-  metadata and explicit group membership before reopening the asynchronous runtime. Add external
-  group-configuration parsing, remote leader redirection, packaged daemon ownership, metadata/tablet
-  snapshot process recovery, joint-reconfiguration restart matrices, broader queue/disconnect
-  failure matrices, long-running hook watchdog evidence, and TSan scheduling coverage.
+  metadata and explicit group membership before reopening the asynchronous runtime. A strict
+  bounded group/voter deployment parser now exists; add secure daemon file loading, remote leader
+  redirection, packaged daemon ownership, metadata/tablet snapshot process recovery,
+  joint-reconfiguration restart matrices, broader queue/disconnect failure matrices, long-running
+  hook watchdog evidence, and TSan scheduling coverage.
 - Carry the implemented group-scoped read-barrier operation through authenticated production
   transport, request deadlines/coalescing, apply waiting, and exact tablet snapshot acquisition.
 - Extend the implemented metadata Raft codec/application/reopen path and complete-schema-definition

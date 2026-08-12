@@ -182,6 +182,8 @@ work after shutdown closes new admission. Packaged daemon configuration remains 
 A database-level recovery owner now holds Database Bootstrap authority, uses explicit resident group
 membership to recover the committed global metadata catalog, reconstructs only local tablet/retry
 owners, and reopens the asynchronous runtime before exposing service access.
+The external resident group/voter set now has a strict bounded canonical text parser; daemon file
+loading and mode selection remain the next packaging boundary.
 
 ### Phase 15 — Multi-Raft tablets and metadata
 
