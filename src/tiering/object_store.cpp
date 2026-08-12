@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <charconv>
 #include <chrono>
 #include <cstddef>
@@ -18,6 +19,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -1037,6 +1039,7 @@ common::Result<std::unique_ptr<S3ObjectStore>> S3ObjectStore::create(S3ObjectSto
       config.multipart_threshold_bytes == 0U || config.multipart_part_bytes < 5U * 1024U * 1024U ||
       static_cast<std::uintmax_t>(config.multipart_part_bytes) >
           static_cast<std::uintmax_t>(std::numeric_limits<curl_off_t>::max()) ||
+      config.multipart_maximum_concurrency == 0U || config.multipart_maximum_concurrency > 64U ||
       !valid_encryption || (kms_encryption != config.kms_key_id.has_value()) ||
       (config.kms_key_id.has_value() &&
        (config.kms_key_id->empty() || config.kms_key_id->size() > 2048U ||
@@ -1129,43 +1132,90 @@ common::Result<ObjectMetadata> S3ObjectStore::put_if_absent(const std::string_vi
       const std::string upload_query = "uploadId=" + encode_path(*upload_id, false);
 
       std::vector<std::string> entity_tags;
+      std::vector<std::optional<common::Status>> part_failures;
       try {
-        entity_tags.reserve(part_count);
+        entity_tags.resize(part_count);
+        part_failures.resize(part_count);
       } catch (const std::bad_alloc&) {
-        return common::make_unexpected(exhausted("S3 multipart ETag allocation failed"));
+        return common::make_unexpected(exhausted("S3 multipart worker-state allocation failed"));
       } catch (const std::length_error&) {
-        return common::make_unexpected(exhausted("S3 multipart ETag count exceeds limits"));
+        return common::make_unexpected(exhausted("S3 multipart worker-state count exceeds limits"));
       }
-      for (std::size_t part_index = 0U; part_index < part_count; ++part_index) {
-        const std::size_t offset = part_index * impl_->config.multipart_part_bytes;
-        const std::size_t length =
-            std::min(impl_->config.multipart_part_bytes, bytes.size() - offset);
-        const common::ByteView part = bytes.subspan(offset, length);
-        auto part_checksum = ingest::sha256(part);
-        if (!part_checksum.has_value())
-          return common::make_unexpected(part_checksum.error());
-        const std::string query =
-            "partNumber=" + std::to_string(part_index + 1U) + "&" + upload_query;
-        auto uploaded = impl_->perform({.method = Impl::Method::kUploadPart,
-                                        .key = key,
-                                        .upload = part,
-                                        .checksum = *part_checksum,
-                                        .maximum_body_bytes = 64U * 1024U,
-                                        .query = query});
-        if (!uploaded.has_value() || uploaded->status != 200L ||
-            !uploaded->capture.entity_tag.has_value() || uploaded->capture.entity_tag->empty() ||
-            uploaded->capture.entity_tag->size() > 1024U ||
-            contains_control(*uploaded->capture.entity_tag)) {
-          common::Status failure =
-              !uploaded.has_value()
-                  ? uploaded.error()
-                  : (uploaded->status != 200L
-                         ? http_failure(uploaded->status)
-                         : common::Status{common::StatusCode::kCorruption,
-                                          "S3 multipart part ETag is absent or invalid"});
-          return common::make_unexpected(std::move(failure));
+      std::atomic_size_t next_part{};
+      std::atomic_bool part_failed{};
+      const auto upload_worker = [&] {
+        while (!part_failed.load()) {
+          const std::size_t part_index = next_part.fetch_add(1U);
+          if (part_index >= part_count)
+            return;
+          try {
+            const std::size_t offset = part_index * impl_->config.multipart_part_bytes;
+            const std::size_t length =
+                std::min(impl_->config.multipart_part_bytes, bytes.size() - offset);
+            const common::ByteView part = bytes.subspan(offset, length);
+            auto part_checksum = ingest::sha256(part);
+            if (!part_checksum.has_value()) {
+              part_failures[part_index] = part_checksum.error();
+              part_failed.store(true);
+              return;
+            }
+            const std::string query =
+                "partNumber=" + std::to_string(part_index + 1U) + "&" + upload_query;
+            auto uploaded = impl_->perform({.method = Impl::Method::kUploadPart,
+                                            .key = key,
+                                            .upload = part,
+                                            .checksum = *part_checksum,
+                                            .maximum_body_bytes = 64U * 1024U,
+                                            .query = query});
+            if (!uploaded.has_value() || uploaded->status != 200L ||
+                !uploaded->capture.entity_tag.has_value() ||
+                uploaded->capture.entity_tag->empty() ||
+                uploaded->capture.entity_tag->size() > 1024U ||
+                contains_control(*uploaded->capture.entity_tag)) {
+              part_failures[part_index] =
+                  !uploaded.has_value()
+                      ? uploaded.error()
+                      : (uploaded->status != 200L
+                             ? http_failure(uploaded->status)
+                             : common::Status{common::StatusCode::kCorruption,
+                                              "S3 multipart part ETag is absent or invalid"});
+              part_failed.store(true);
+              return;
+            }
+            entity_tags[part_index] = std::move(*uploaded->capture.entity_tag);
+          } catch (const std::bad_alloc&) {
+            part_failures[part_index] = exhausted("S3 multipart worker allocation failed");
+            part_failed.store(true);
+            return;
+          } catch (const std::length_error&) {
+            part_failures[part_index] = exhausted("S3 multipart worker exceeded limits");
+            part_failed.store(true);
+            return;
+          } catch (...) {
+            part_failures[part_index] = common::Status{common::StatusCode::kInternal,
+                                                       "S3 multipart worker raised an exception"};
+            part_failed.store(true);
+            return;
+          }
         }
-        entity_tags.push_back(std::move(*uploaded->capture.entity_tag));
+      };
+      try {
+        std::vector<std::jthread> workers;
+        const std::size_t worker_count =
+            std::min(part_count, impl_->config.multipart_maximum_concurrency);
+        workers.reserve(worker_count);
+        for (std::size_t worker = 0U; worker < worker_count; ++worker)
+          workers.emplace_back(upload_worker);
+      } catch (const std::system_error&) {
+        return common::make_unexpected(exhausted("S3 multipart worker creation failed"));
+      }
+      if (part_failed.load()) {
+        for (auto& failure : part_failures) {
+          if (failure.has_value())
+            return common::make_unexpected(std::move(*failure));
+        }
+        return common::make_unexpected(common::Status{common::StatusCode::kInternal,
+                                                      "S3 multipart failure state is incomplete"});
       }
 
       auto completion_xml = complete_multipart_xml(entity_tags);

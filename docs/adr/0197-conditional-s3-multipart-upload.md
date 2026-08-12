@@ -30,7 +30,7 @@ For a multipart object, `put_if_absent`:
 1. checks an existing key by exact HEAD, returning idempotent success or immutable conflict;
 2. initiates one signed multipart upload and stores the full Chronos SHA-256 as object metadata;
 3. strict-decodes one bounded XML upload ID and percent-encodes it in subsequent query parameters;
-4. uploads sequential numbered borrowed spans, signing each exact part payload and retaining one
+4. uploads bounded parallel numbered borrowed spans, signing each exact part payload and retaining one
    bounded opaque ETag per part;
 5. builds a bounded escaped completion document in ascending part order;
 6. completes with `If-None-Match: *`, requiring a non-error completion result; and
@@ -50,16 +50,17 @@ and therefore are never query-visible.
 
 ## Consequences and validation
 
-The current implementation is synchronous and uploads parts sequentially. It retains no second
-copy of part bytes, but keeps the caller's whole object borrowed until return plus `O(part count)`
-ETag/completion metadata. Each part receives the existing request retry budget. A caller retry after
-409 begins with a new HEAD and, if still absent, a new multipart session.
+The implementation is synchronous to its caller while [ADR 0207](0207-bounded-parallel-s3-multipart-parts.md)
+bounds concurrent part transfers within the call. It retains no second copy of part bytes, but keeps
+the caller's whole object borrowed until all workers join plus `O(part count)` ETag/completion
+metadata. Each part receives the existing request retry budget. A caller retry after 409 begins with
+a new HEAD and, if still absent, a new multipart session.
 
 The local S3-compatible success test transfers a 5 MiB part and a short final part, checks encoded
 upload-ID queries and conditional completion, assembles exact bytes, and verifies the final HEAD.
 The failure test rejects part two, observes an abort for the exact upload ID, and proves no object
-was published. Live providers, embedded-200 errors, completion races, abort failure, parallel parts,
-and lifecycle-rule qualification remain deferred.
+was published. Live providers, completion races, abort failure, high-concurrency stress, and
+lifecycle-rule qualification remain deferred.
 
 Invariants 2, 3, 8, 10, 14, and 18 apply.
 

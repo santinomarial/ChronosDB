@@ -110,6 +110,9 @@ struct S3ObjectStoreConfig {
   std::chrono::milliseconds maximum_retry_backoff{1'000};
   std::size_t multipart_threshold_bytes{64U * 1024U * 1024U};
   std::size_t multipart_part_bytes{16U * 1024U * 1024U};
+  // Bounds simultaneously active UploadPart requests for one object. All workers are joined before
+  // completion or abort, and completion retains ascending part-number order.
+  std::size_t multipart_maximum_concurrency{4U};
   std::size_t maximum_response_bytes{std::size_t{4U} * 1024U * 1024U * 1024U};
   // When set, every object creation requests this encryption mode and every successful HEAD must
   // report it. SSE-KMS also requires kms_key_id; use the canonical identifier expected in the

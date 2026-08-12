@@ -7,6 +7,7 @@
 #include <cerrno>
 #include <charconv>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -528,6 +529,49 @@ private:
   std::vector<S3CredentialRequest> requests_;
 };
 
+class MultipartConcurrencyCredentialProvider final : public S3CredentialProvider {
+public:
+  [[nodiscard]] common::Result<S3Credentials> acquire(S3CredentialRequest request) override {
+    if (request != S3CredentialRequest::kCurrent)
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kUnauthenticated, "fixture refresh is unsupported"});
+    std::unique_lock lock{mutex_};
+    ++calls_;
+    if (calls_ == 3U || calls_ == 4U) {
+      ++active_part_acquires_;
+      maximum_active_part_acquires_ =
+          std::max(maximum_active_part_acquires_, active_part_acquires_);
+      if (active_part_acquires_ == 2U)
+        part_workers_released_ = true;
+      condition_.notify_all();
+      if (!condition_.wait_for(lock, std::chrono::seconds{2},
+                               [this] { return part_workers_released_; })) {
+        --active_part_acquires_;
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kUnavailable, "multipart workers did not overlap"});
+      }
+      --active_part_acquires_;
+      condition_.notify_all();
+    }
+    return S3Credentials{.access_key_id = "test-access",
+                         .secret_access_key = "test-secret",
+                         .session_token = "test-token"};
+  }
+
+  [[nodiscard]] std::size_t maximum_active_part_acquires() const {
+    std::scoped_lock lock{mutex_};
+    return maximum_active_part_acquires_;
+  }
+
+private:
+  mutable std::mutex mutex_;
+  std::condition_variable condition_;
+  std::size_t calls_{};
+  std::size_t active_part_acquires_{};
+  std::size_t maximum_active_part_acquires_{};
+  bool part_workers_released_{};
+};
+
 class ScopedAwsEnvironment final {
 public:
   explicit ScopedAwsEnvironment(std::array<std::optional<std::string>, 3U> values)
@@ -972,17 +1016,74 @@ TEST(S3ObjectStoreTest, MultipartUploadCompletesConditionallyAndVerifiesExactObj
   EXPECT_TRUE(requests[1].target.ends_with("?uploads"));
   EXPECT_EQ(requests[1].headers.at("x-amz-server-side-encryption"), "aws:kms");
   EXPECT_EQ(requests[1].headers.at("x-amz-server-side-encryption-aws-kms-key-id"), kms_key_arn);
-  EXPECT_EQ(requests[2].method, "PUT");
-  EXPECT_TRUE(requests[2].target.ends_with("?partNumber=1&uploadId=fixture-upload%26id"));
-  EXPECT_EQ(requests[2].body.size(), part_bytes);
-  EXPECT_EQ(requests[3].method, "PUT");
-  EXPECT_TRUE(requests[3].target.ends_with("?partNumber=2&uploadId=fixture-upload%26id"));
-  EXPECT_EQ(requests[3].body.size(), 3U);
+  const auto first_part = std::ranges::find_if(requests, [](const RecordedRequest& request) {
+    return request.target.ends_with("?partNumber=1&uploadId=fixture-upload%26id");
+  });
+  const auto second_part = std::ranges::find_if(requests, [](const RecordedRequest& request) {
+    return request.target.ends_with("?partNumber=2&uploadId=fixture-upload%26id");
+  });
+  ASSERT_NE(first_part, requests.end());
+  ASSERT_NE(second_part, requests.end());
+  EXPECT_EQ(first_part->method, "PUT");
+  EXPECT_EQ(first_part->body.size(), part_bytes);
+  EXPECT_EQ(second_part->method, "PUT");
+  EXPECT_EQ(second_part->body.size(), 3U);
   EXPECT_EQ(requests[4].method, "POST");
   EXPECT_TRUE(requests[4].target.ends_with("?uploadId=fixture-upload%26id"));
   EXPECT_EQ(requests[4].headers.at("if-none-match"), "*");
   EXPECT_EQ(requests[5].method, "HEAD");
   EXPECT_TRUE(server.failure().empty()) << server.failure();
+}
+
+TEST(S3ObjectStoreTest, BoundsParallelPartWorkersAndPreservesCompletionOrder) {
+  LocalS3Server server;
+  ASSERT_TRUE(server.valid()) << server.failure();
+  constexpr std::size_t part_bytes = 5U * 1024U * 1024U;
+  auto provider = std::make_shared<MultipartConcurrencyCredentialProvider>();
+  S3ObjectStoreConfig config{.endpoint = "http://127.0.0.1:" + std::to_string(server.port()),
+                             .region = "us-east-1",
+                             .bucket = "chronos-test",
+                             .credential_provider = provider,
+                             .connect_timeout = std::chrono::milliseconds{1'000},
+                             .request_timeout = std::chrono::milliseconds{5'000},
+                             .multipart_threshold_bytes = part_bytes,
+                             .multipart_part_bytes = part_bytes,
+                             .multipart_maximum_concurrency = 2U,
+                             .maximum_response_bytes = part_bytes + 3U,
+                             .require_tls = false};
+  auto store = S3ObjectStore::create(std::move(config));
+  ASSERT_TRUE(store.has_value()) << store.error().to_string();
+
+  std::vector<std::byte> bytes(part_bytes + 3U, std::byte{0x6A});
+  auto uploaded = (*store)->put_if_absent("parts/multipart", bytes, ingest::sha256(bytes).value());
+  ASSERT_TRUE(uploaded.has_value()) << uploaded.error().to_string();
+  EXPECT_EQ(provider->maximum_active_part_acquires(), 2U);
+
+  const auto requests = server.requests();
+  const auto completion = std::ranges::find_if(requests, [](const RecordedRequest& request) {
+    return request.method == "POST" && request.target.contains("?uploadId=");
+  });
+  ASSERT_NE(completion, requests.end());
+  const std::string_view completion_body{reinterpret_cast<const char*>(completion->body.data()),
+                                         completion->body.size()};
+  const std::size_t first = completion_body.find("<PartNumber>1</PartNumber>");
+  const std::size_t second = completion_body.find("<PartNumber>2</PartNumber>");
+  EXPECT_NE(first, std::string_view::npos);
+  EXPECT_NE(second, std::string_view::npos);
+  EXPECT_LT(first, second);
+  EXPECT_TRUE(server.failure().empty()) << server.failure();
+}
+
+TEST(S3ObjectStoreTest, RejectsInvalidMultipartWorkerBound) {
+  S3ObjectStoreConfig config{.endpoint = "https://s3.example",
+                             .region = "us-east-1",
+                             .bucket = "chronos-test",
+                             .access_key_id = "test-access",
+                             .secret_access_key = "test-secret",
+                             .multipart_maximum_concurrency = 0U};
+  auto rejected = S3ObjectStore::create(std::move(config));
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kInvalidArgument);
 }
 
 TEST(S3ObjectStoreTest, MultipartPartFailureAbortsWithoutPublishingAnObject) {

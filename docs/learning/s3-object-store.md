@@ -52,8 +52,10 @@ already-absent retry. Other failures do not retry. A provider-backed 401/403 req
 refresh on the next attempt, whereas rejected static credentials fail immediately. Provider errors
 and refresh attempts share the same finite budget.
 
-Objects at or above the configured multipart threshold use signed sequential parts of at least 5
-MiB except for the final part. Initiation records the whole-object Chronos SHA-256 metadata; each
+Objects at or above the configured multipart threshold use a bounded set of signed parallel part
+workers with parts of at least 5 MiB except for the final part. Every worker owns its HTTP state and
+exclusive ETag slot; all workers join before completion or abort. Initiation records the whole-object
+Chronos SHA-256 metadata; each
 part retains its opaque ETag; completion submits ascending part numbers under `If-None-Match: *`;
 and exact HEAD revalidates final length and SHA-256. A bounded XML parser accepts one upload ID and
 percent-encodes it for every part/complete/abort query. HTTP 200 completion is not sufficient: the
@@ -71,9 +73,10 @@ are never cold-manifest authority.
 
 Upload hashing and transfer are `O(object bytes)` and retain no second upload copy. HEAD uses
 constant response storage. A range read is `O(requested bytes)` and retains at most the configured
-bound. Multipart retains borrowed object bytes plus `O(part count)` ETags and completion XML. Every
-attempt currently creates one easy handle and is synchronous; connection pooling, the libcurl multi
-interface, parallel part scheduling, and backoff jitter remain deferred. HTTP-date Retry-After
+bound. Multipart retains borrowed object bytes plus `O(part count)` ETags and completion XML, with a
+bounded number of simultaneous handles. Every attempt currently creates one easy handle and the
+public call is synchronous; connection pooling, the libcurl multi interface, and backoff jitter
+remain deferred. HTTP-date Retry-After
 parsing also remains deferred. Workload,
 instance-metadata, shared-file, and ordered-chain provider policies also remain deferred.
 

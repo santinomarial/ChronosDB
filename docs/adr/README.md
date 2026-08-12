@@ -241,3 +241,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0204](0204-bounded-s3-retry-after-hints.md) | Bounded S3 Retry-After hints | accepted |
 | [0205](0205-explicit-s3-proxy-policy.md) | Explicit S3 proxy policy | accepted |
 | [0206](0206-explicit-s3-server-side-encryption.md) | Explicit S3 server-side encryption | accepted |
+| [0207](0207-bounded-parallel-s3-multipart-parts.md) | Bounded parallel S3 multipart parts | accepted |

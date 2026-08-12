@@ -181,8 +181,7 @@
 - Live AWS/MinIO/LocalStack validation for the libcurl SigV4 backend; built-in workload/instance
   credential providers and ordered-chain policy, authenticated-proxy/live CONNECT qualification,
   retry jitter and HTTP-date
-  `Retry-After`, parallel
-  multipart parts,
+  `Retry-After`, high-concurrency multipart stress and live throughput tuning,
   concurrent conditional writers, timeout/TLS/partial-response faults, eventual listing behavior,
   restore, conditional-delete races, live SSE-S3/SSE-KMS and bucket-policy qualification, and
   broader object-store fault injection. Durable cold-history discovery now completes
@@ -198,10 +197,11 @@
   Bucket Keys, and live KMS identity normalization remain deferred.
   The explicit immutable environment provider has focused standard-variable, signed-request,
   incomplete-value, secret-redaction, and fail-closed refresh coverage.
-  Sequential multipart creation, encoded upload IDs, signed parts, conditional completion, exact
+  Bounded parallel multipart creation, encoded upload IDs, signed parts, conditional completion, exact
   final verification, strict HTTP-200 embedded-error rejection, and abort after part/completion
-  failure have focused local coverage; completion races, abort failure, and bucket lifecycle cleanup
-  remain deferred.
+  failure have focused local coverage. A two-worker overlap barrier and sorted completion test cover
+  the bounded scheduler; TSan, high-part-count stress, completion races, abort failure, and bucket
+  lifecycle cleanup remain deferred.
 - Subprocess/power-loss coverage for the implemented durable component and pair-commit installers;
   TSan coverage for the implemented atomic shared pair publisher; broader snapshot/compaction pins,
   remote corruption, and

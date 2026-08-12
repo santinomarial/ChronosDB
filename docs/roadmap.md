@@ -941,12 +941,12 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   within a bounded capped-backoff budget, freshly signs every attempt, and force-refreshes one
   caller-supplied concurrent credential provider after authorization rejection. Bounded
   delta-seconds Retry-After hints may raise—but never exceed—the configured delay ceiling. Large uploads now
-  use bounded sequential multipart sessions with per-part signing/retry, opaque ETag completion,
+  use bounded parallel multipart workers with per-part signing/retry, sorted opaque ETag completion,
   `If-None-Match: *`, strict embedded-error-aware completion parsing, exact final HEAD verification,
   and failure-path abort. Upload admission now
   performs full Manifest-v1 CSEG validation against the exact schema, tablet, part descriptor, and
   WAL source before any remote request or manifest callback. Other query paths,
-  parallel multipart scheduling, and workload/instance provider-chain integrations remain deferred.
+  high-concurrency stress and workload/instance provider-chain integrations remain deferred.
   An explicit built-in environment provider now snapshots and validates the standard AWS access
   key, secret, and optional session token without implicit precedence or unsafe refresh. The
   carrier disables ambient proxy variables; one bounded credential-free HTTP(S) proxy requires
