@@ -55,6 +55,9 @@ handshake at the exact deadline. Receiver tests reject values outside its own co
 Disconnect races, storage stalls/failures, connection churn, and process-level fault matrices remain
 in the Phase 18 ledger.
 
+**Retrospective note (2026-08-12):** [ADR 0248](0248-persistent-outbound-raft-mtls-carrier.md) adds
+the symmetric peer-authenticated bounded FIFO sender and complete-frame reconnect drain.
+
 ## References
 
 - [ADR 0245](0245-bounded-raft-transport-partial-io.md)

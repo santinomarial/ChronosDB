@@ -114,6 +114,8 @@ An authenticated receiver now rejects trust and route failures before durable ru
 encodes responses only from the asynchronous owner's post-synchronization completion.
 A persistent inbound mutual-TLS carrier now processes fragmented sequential frames with one bounded
 durable operation/result in flight and leaves multi-peer output and snapshot routing to its owner.
+A persistent outbound mutual-TLS carrier now validates exact peer routes, bounds FIFO frames and
+bytes, and returns complete original frames for duplicate-safe reconnect after failure.
 The core now also rejects zero terms and noncanonical vote/append predecessor and response state
 before observing a higher term, preserving the persist-before-response contract on invalid input.
 

@@ -115,7 +115,7 @@
 
 - Raft Transport Envelope v1 cross-compiler golden fixtures, hostile length/count/reserved-byte
   matrices, sustained fuzzing, allocation-failure sweeps, carrier-wide admission schedules,
-  disconnect/retry output ownership, outbound connection pooling, mixed-version processes, and
+  outbound connection pooling/replacement, mixed-version processes, and
   duplicate/loss/reorder/partition simulation. Focused coverage round-trips every
   current message, including an actual conflict-repair response, rejects damage, unknown kinds,
   route mismatch and bounds, and exercises the header-first exact-allocation reader and owned
@@ -123,6 +123,8 @@
   authorization, exact local routing, asynchronous durable admission, and post-sync response
   encoding have focused coverage. A persistent real mutual-TLS inbound session now authenticates,
   reads fragmented exact frames, pauses for durable completion, and publishes complete results.
+  A persistent peer-authenticated outbound session bounds FIFO frames/bytes, retains short writes,
+  and drains complete originals for duplicate-safe reconnect retry.
 - Extend the implemented hostile higher-term/payload-identity and pre-observation term/position/
   response-state regression checks into exhaustive persistence-before-response, committed-log
   overwrite, sequence-exhaustion, response-state, and snapshot-boundary properties.

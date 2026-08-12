@@ -282,3 +282,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0245](0245-bounded-raft-transport-partial-io.md) | Bounded Raft transport partial-I/O ownership | accepted |
 | [0246](0246-authenticated-raft-transport-receiver.md) | Authenticated Raft transport receiver | accepted |
 | [0247](0247-persistent-inbound-raft-mtls-carrier.md) | Persistent inbound Raft mutual-TLS carrier | accepted |
+| [0248](0248-persistent-outbound-raft-mtls-carrier.md) | Persistent outbound Raft mutual-TLS carrier | accepted |

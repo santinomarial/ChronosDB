@@ -103,3 +103,9 @@ The persistent inbound mutual-TLS carrier reads at most the current header/frame
 one frame at a time, pauses during durable execution, and publishes the entire group/source/result
 value rather than assuming every outbound message belongs on the inbound peer connection. It resumes
 the authenticated stream only after the embedding takes that result.
+
+The outbound mutual-TLS carrier owns a bounded FIFO for one exact peer. It validates the frame route
+before moving caller bytes, authenticates and authorizes the peer before writing, and retains each
+complete original frame across short writes. Failure drain restarts a partially sent front frame at
+offset zero on a new connection; whole-message duplication is valid Raft retry behavior, while a
+suffix alone is not a frame.

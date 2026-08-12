@@ -55,6 +55,11 @@ Handshake and incomplete-frame reads expire; already admitted durable work does 
 have crossed an irreversible local synchronization boundary. Taking the asynchronous completion is
 the mutex acquire edge that publishes the result to the carrier thread.
 
+The outbound TLS carrier uses one preallocated fixed-slot ring per peer. Queue admission validates
+the canonical source/destination and both frame/byte limits before moving caller bytes. One event-
+loop thread owns all offsets, so no atomics are needed. A failed connection can drain complete FIFO
+frames for whole-message retry; the partially written front is deliberately restarted at byte zero.
+
 ## Complexity and tradeoffs
 
 Fixed messages encode and decode in constant time and space. Append messages are linear in entry
@@ -71,9 +76,9 @@ bound; explicit batching is preferable to unbounded socket ownership.
 
 Focused tests cover every variant, actual conflict repair, corruption, compatibility, identity,
 bounds, bytewise and coalesced reads, sticky failure, and short-write ownership. Phase 18 retains
-golden fixtures, hostile length matrices, fuzzing, allocation failure, authenticated routing,
-outbound mutual-TLS stream scheduling, partitions/reordering/duplication, and mixed-version
-processes. Focused real mutual-TLS inbound coverage exercises fragmented persistent input.
+golden fixtures, hostile length matrices, fuzzing, allocation failure, connection pooling,
+partitions/reordering/duplication, and mixed-version processes. Focused real mutual-TLS coverage
+exercises fragmented persistent input and bounded authenticated FIFO output.
 
 Useful questions include: why is CRC not authentication; why must persistence precede sending; why
 does snapshot metadata travel separately from snapshot bytes; how does route identity prevent

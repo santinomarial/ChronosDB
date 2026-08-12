@@ -743,8 +743,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   the claimed source, exact-matches the local destination, and admits the message through the
   asynchronous durable runtime before exposing response bytes. A persistent bounded inbound
   mutual-TLS session now reads exact fragmented frames, admits one durable operation, and publishes
-  its complete result for embedding-owned routing. Outbound mutual-TLS pooling, runtime timers,
-  randomized simulation, and the full exit
+  its complete result for embedding-owned routing. A persistent peer-authenticated outbound session
+  now bounds FIFO frames/bytes and preserves complete frames for reconnect retry. Connection pooling,
+  runtime timers, randomized simulation, and the full exit
   evidence remain deferred. Linearizable reads now use one bounded explicit current-term leadership
   probe, require a current-term committed entry, freeze stable or joint voter quorums at issuance,
   abandon pending work on leadership change, and return an exact committed read index that must be
