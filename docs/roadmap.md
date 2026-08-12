@@ -941,9 +941,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   within a bounded capped-backoff budget, freshly signs every attempt, and force-refreshes one
   caller-supplied concurrent credential provider after authorization rejection. Large uploads now
   use bounded sequential multipart sessions with per-part signing/retry, opaque ETag completion,
-  `If-None-Match: *`, exact final HEAD verification, and failure-path abort. WAL-local deletion,
-  other query paths, parallel multipart scheduling, and built-in provider-chain integrations remain
-  deferred. An
+  `If-None-Match: *`, exact final HEAD verification, and failure-path abort. Upload admission now
+  performs full Manifest-v1 CSEG validation against the exact schema, tablet, part descriptor, and
+  WAL source before any remote request or manifest callback. WAL-local deletion, other query paths,
+  parallel multipart scheduling, and built-in provider-chain integrations remain deferred. An
   optional Apache Arrow/Parquet provider now imports and exports files through an exact
   caller-supplied schema, maps all
   current logical types, bounds source/final canonical storage, rejects corruption and mismatch,

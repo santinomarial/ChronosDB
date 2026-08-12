@@ -147,8 +147,10 @@ TLS-by-default, finite timeouts and response bounds, checksum metadata, conditio
 exact retry verification, and exact range responses. `TieredPartManager` checks SHA-256 content,
 verifies remote metadata, calls the atomic manifest installer before allowing local release, rejects
 part/key identity conflicts, caches bounded complete objects with eviction, and supports
-authenticated range reads for larger objects. A smoke test exposed and fixed a 32-bit constant-
-expression overflow that made the default 4 GiB object limit zero.
+authenticated range reads for larger objects. Upload admission now reuses the full Manifest-v1
+CSEG validator with the exact schema, tablet, descriptor, and WAL source before any remote request
+or manifest callback. A smoke test exposed and fixed a 32-bit constant-expression overflow that
+made the default 4 GiB object limit zero.
 
 Manifest v1/v2 bytes remain unchanged. A subsequent Cold Location Manifest v1 codec binds bounded
 object keys and deployment store identity to exact Manifest v2 part length/SHA-256 without trusting
@@ -164,8 +166,8 @@ journal, exact-binds each one to its historical Manifest/catalog authority, and 
 completed deletion without bucket listings. The S3 carrier now gives every replay-safe operation a
 finite capped-backoff attempt budget and fresh signature, and a concurrent caller-supplied provider
 is force-refreshed after 401/403. Built-in environment/workload provider integrations, retry jitter,
-parallel multipart scheduling, CSEG pre-upload validator connection, cache concurrency, and broader
-Arrow/Parquet external fixture and resource-fault qualification remain incomplete. Large objects now
+parallel multipart scheduling, cache concurrency, and broader Arrow/Parquet external fixture and
+resource-fault qualification remain incomplete. Large objects now
 use sequential signed parts, conditional completion, exact final verification, and failure-path
 abort. The optional Arrow/Parquet
 provider now round-trips all current logical types through an exact
@@ -238,7 +240,8 @@ broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were d
 - The distributed implementation covers numeric global aggregate state, not arbitrary plans,
   grouping, order, top-N, limits, or exchange retries.
 - The movement state machine is not the Raft membership protocol itself.
-- Cold upload does not independently parse/validate the candidate as CSEG before upload.
+- Cold upload independently performs exact schema/source-bound CSEG validation before remote
+  mutation, but broader corruption, allocation-failure, and fuzz evidence remains deferred.
 - Raft now prevalidates malformed higher-term messages and divergent matching-term entries, but
   snapshot boundaries, response-state combinations, and membership still need broader model evidence.
 

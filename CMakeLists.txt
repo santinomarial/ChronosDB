@@ -993,6 +993,7 @@ if(CHRONOS_BUILD_TESTS)
   add_executable(chronos_feature_smoke_tests tests/integration/feature_smoke_test.cpp)
   set_target_properties(chronos_feature_smoke_tests PROPERTIES CXX_EXTENSIONS OFF)
   target_compile_features(chronos_feature_smoke_tests PRIVATE cxx_std_23)
+  target_include_directories(chronos_feature_smoke_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
   target_link_libraries(
     chronos_feature_smoke_tests
     PRIVATE chronos::live chronos::query chronos::raft chronos::tiering GTest::gtest_main

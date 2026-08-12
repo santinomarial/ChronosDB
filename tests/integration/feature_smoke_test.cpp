@@ -10,6 +10,7 @@
 #include "chronos/schema/logical_type.hpp"
 #include "chronos/schema/table_schema.hpp"
 #include "chronos/tiering/tiered_parts.hpp"
+#include "cseg/cseg_test_fixture.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -68,6 +69,29 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
 [[nodiscard]] wal::WalId wal_id() {
   wal::WalId value{};
   value.bytes.front() = std::byte{9U};
+  return value;
+}
+
+[[nodiscard]] schema::TableSchema tiering_schema() {
+  const auto timestamp = id<schema::ColumnId>(5U);
+  std::vector<schema::ColumnDefinition> columns;
+  columns.push_back(schema::ColumnDefinition::create(
+                        timestamp, "event_time", type(schema::LogicalTypeKind::kTimestampNs), false)
+                        .value());
+  return schema::TableSchema::create(id<schema::TableId>(2U), id<schema::SchemaId>(4U),
+                                     schema::SchemaVersion::initial(), std::nullopt,
+                                     std::move(columns),
+                                     {.event_time_column = timestamp,
+                                      .physical_ordering_key = {timestamp},
+                                      .partition_columns = {timestamp},
+                                      .shard_key = {timestamp},
+                                      .deduplication_key = {}})
+      .value();
+}
+
+[[nodiscard]] wal::WalId tiering_wal_id() {
+  wal::WalId value{};
+  value.bytes.front() = std::byte{0x70U};
   return value;
 }
 
@@ -160,20 +184,22 @@ TEST(FeatureCompletionSmokeTest, CommittedDataFlowsAcrossTemporalLiveDistributed
   tiering::MemoryObjectStore object_store;
   auto tiering = tiering::TieredPartManager::create(object_store);
   ASSERT_TRUE(tiering.has_value()) << tiering.error().to_string();
-  const std::vector<std::byte> immutable_part{std::byte{1U}, std::byte{2U}, std::byte{3U}};
-  const auto part_id = id<cseg::PartId>(14U);
+  const auto immutable_part = cseg::test::make_valid_part();
+  const schema::TableSchema cold_schema = tiering_schema();
+  const auto part_id = id<cseg::PartId>(1U);
   tiering::ColdPartDescriptor cold{
-      manifest::PartDescriptor{part_id, table_schema->table_id(), tablet, table_schema->schema_id(),
-                               table_schema->version(), immutable_part.size(), 1U, 1U, 1U, 100,
-                               100},
-      "parts/smoke", ingest::sha256(immutable_part).value()};
+      manifest::PartDescriptor{part_id, cold_schema.table_id(), id<schema::TabletId>(3U),
+                               cold_schema.schema_id(), cold_schema.version(),
+                               immutable_part.size(), 2U, 7U, 7U, -5, 10},
+      "parts/smoke", ingest::sha256(immutable_part.bytes()).value()};
   const auto tiered = tiering->upload_and_install(
-      std::move(cold), immutable_part,
+      std::move(cold), immutable_part.bytes(),
+      {.wal_id = tiering_wal_id(), .schema = std::cref(cold_schema), .validation_limits = {}},
       [](const tiering::ColdPartDescriptor&) { return common::Status::ok(); });
   ASSERT_TRUE(tiered.has_value());
   const auto reread = tiering->read_range(part_id, 0U, immutable_part.size());
   ASSERT_TRUE(reread.has_value());
-  EXPECT_EQ(*reread, immutable_part);
+  EXPECT_TRUE(std::ranges::equal(*reread, immutable_part.bytes()));
 }
 
 } // namespace

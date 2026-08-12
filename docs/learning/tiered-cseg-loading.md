@@ -28,6 +28,14 @@ can override the Manifest. Corrupt local files remain observable. Missing routes
 metadata, incomplete reads, digest differences, schema absence, and CSEG/source violations all fail
 closed without returning a partial image.
 
+Cold admission uses the complementary rule. `TieredPartManager::upload_and_install` receives an
+exact WAL identity, table schema, and validation limits. Before the first object-store operation it
+derives the canonical part name and reuses the Manifest-v1 referenced-part validator over the full
+candidate image. That proves the page/checksum structure, schema and tablet identities, system-row
+WAL source, record and event-time extrema, row count, declared length, and whole-object digest.
+Only then may immutable upload, exact remote verification, and the caller's atomic manifest install
+run. A failure at the admission boundary performs no remote mutation and invokes no installer.
+
 ## Ownership, complexity, and tradeoffs
 
 A local image owns its complete byte buffer through `LoadedTemporalPartImage`; a remote image owns a
@@ -61,7 +69,8 @@ Manifest gates run before a synchronous tiered batch loader exposes image views 
 temporal resolver. WAL-owned startup and other local-only entry points are not eligible for local
 reclamation yet. Remote deletion is separately authorized only after the part and route leave the
 selected pair and every route-bearing aggregate reader drains; it never follows from a loader miss.
-The loader does not authorize multipart upload, cache eviction, or retry policy.
+The loader does not authorize multipart upload, cache eviction, or retry policy. Those remain the
+single-owner manager and provider carrier's responsibility after admission succeeds.
 
 Likely review questions include why only `NOT_FOUND` permits fallback, why the cold key is not data
 authority, why metadata and a recomputed digest are both checked, why the complete CSEG validator is

@@ -1,6 +1,7 @@
 #include "chronos/tiering/tiered_parts.hpp"
 
 #include "chronos/ingest/sha256.hpp"
+#include "chronos/manifest/naming.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -67,14 +68,27 @@ common::Result<TieredPartManager> TieredPartManager::create(ObjectStore& store,
   return TieredPartManager{std::make_unique<Impl>(store, limits)};
 }
 
-common::Result<TieringReceipt>
-TieredPartManager::upload_and_install(ColdPartDescriptor descriptor,
-                                      const common::ByteView local_cseg,
-                                      const ColdManifestInstaller& install_manifest) {
+common::Result<TieringReceipt> TieredPartManager::upload_and_install(
+    ColdPartDescriptor descriptor, const common::ByteView local_cseg,
+    const TieredPartAdmission& admission, const ColdManifestInstaller& install_manifest) {
   if (descriptor.object_key.empty() || descriptor.part.file_length != local_cseg.size() ||
       local_cseg.empty() || local_cseg.size() > impl_->limits.maximum_object_bytes ||
       !install_manifest) {
     return common::make_unexpected(invalid("cold part descriptor, bytes, or installer is invalid"));
+  }
+  try {
+    const std::string file_name = manifest::part_file_name(descriptor.part.part_id);
+    common::Status valid = manifest::validate_manifest_v1_part_image(
+        descriptor.part, admission.wal_id, admission.schema.get(),
+        {.file_name = file_name, .bytes = local_cseg}, admission.validation_limits);
+    if (!valid.is_ok())
+      return common::make_unexpected(std::move(valid));
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted, "CSEG admission allocation failed"});
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted, "CSEG admission exceeded limits"});
   }
   auto checksum = ingest::sha256(local_cseg);
   if (!checksum.has_value())

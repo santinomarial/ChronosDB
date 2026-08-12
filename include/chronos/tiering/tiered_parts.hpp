@@ -3,6 +3,7 @@
 
 #include "chronos/common/result.hpp"
 #include "chronos/ingest/sha256.hpp"
+#include "chronos/manifest/part_validation.hpp"
 #include "chronos/manifest/types.hpp"
 #include "chronos/tiering/object_store.hpp"
 
@@ -35,10 +36,17 @@ struct TieringReceipt {
   bool local_source_may_be_released{};
 };
 
+struct TieredPartAdmission {
+  wal::WalId wal_id;
+  std::reference_wrapper<const schema::TableSchema> schema;
+  manifest::ReferencedPartValidationLimits validation_limits;
+};
+
 using ColdManifestInstaller = std::function<common::Status(const ColdPartDescriptor& descriptor)>;
 
-// Single-owner cold-tier coordinator. Upload and remote verification happen before the caller's
-// atomic manifest installer. The local source becomes releasable only after that callback succeeds.
+// Single-owner cold-tier coordinator. Exact schema/source-bound CSEG validation, upload, and remote
+// verification happen before the caller's atomic manifest installer. The local source becomes
+// releasable only after that callback succeeds.
 class TieredPartManager {
 public:
   TieredPartManager() = delete;
@@ -53,6 +61,7 @@ public:
 
   [[nodiscard]] common::Result<TieringReceipt>
   upload_and_install(ColdPartDescriptor descriptor, common::ByteView local_cseg,
+                     const TieredPartAdmission& admission,
                      const ColdManifestInstaller& install_manifest);
 
   // Large objects use range access. Supplying expected_range_checksum makes the range independently

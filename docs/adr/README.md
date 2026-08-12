@@ -232,3 +232,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0195](0195-durable-cold-history-remote-garbage-discovery.md) | Durable cold-history remote garbage discovery | accepted |
 | [0196](0196-bounded-s3-retry-and-credential-refresh.md) | Bounded S3 retry and credential refresh | accepted |
 | [0197](0197-conditional-s3-multipart-upload.md) | Conditional S3 multipart upload | accepted |
+| [0198](0198-schema-source-bound-cseg-upload-admission.md) | Schema/source-bound CSEG upload admission | accepted |
