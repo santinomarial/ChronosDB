@@ -147,6 +147,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/tiering/object_store.hpp>
 #include <chronos/tiering/tiered_distributed_fragment_worker.hpp>
 #include <chronos/tiering/tiered_part_loader.hpp>
+#include <chronos/tiering/tiered_parts.hpp>
 #include <chronos/tiering/tiered_publication.hpp>
 #include <chronos/tiering/tiered_reclamation.hpp>
 #include <chronos/tiering/tiered_pair_commit.hpp>
@@ -204,6 +205,11 @@ int main() {
   const auto create_s3_object_store = &chronos::tiering::S3ObjectStore::create;
   const auto create_s3_environment_provider =
       &chronos::tiering::S3EnvironmentCredentialProvider::create;
+  using RestoreTieredCatalog = chronos::common::Status (
+      chronos::tiering::TieredPartManager::*)(
+      std::span<const chronos::tiering::ColdPartDescriptor>);
+  const RestoreTieredCatalog restore_tiered_catalog =
+      &chronos::tiering::TieredPartManager::restore_catalog;
   const auto remove_exact_object = &chronos::tiering::ObjectStore::remove_if_exact;
   const auto encode_cold_manifest = &chronos::tiering::encode_cold_location_manifest_v1;
   const auto decode_cold_manifest = &chronos::tiering::decode_cold_location_manifest_v1_exact;
@@ -249,6 +255,7 @@ int main() {
   (void)bind_tcp_listener;
   (void)create_s3_object_store;
   (void)create_s3_environment_provider;
+  (void)restore_tiered_catalog;
   (void)remove_exact_object;
   (void)encode_cold_manifest;
   (void)decode_cold_manifest;

@@ -196,11 +196,14 @@
   completion races, abort failure, and bucket lifecycle cleanup remain deferred.
 - Subprocess/power-loss coverage for the implemented durable component and pair-commit installers;
   TSan coverage for the implemented atomic shared pair publisher; safe local deletion,
-  snapshot/compaction pins, cache index recovery, remote corruption, and
+  snapshot/compaction pins, remote corruption, and
   page-range checksum integration. Exact schema/source-bound Manifest-v1 CSEG validation now runs
   before upload and has focused corrupt-bytes and wrong-WAL tests proving zero remote mutation.
   Mutex-linearized cache concurrency has focused eight-reader eviction and exact-byte coverage;
   TSan, adversarial scheduling, duplicate-download accounting, and latency evidence remain deferred.
+  The cache is intentionally volatile rather than a second durable index; exact catalog restoration,
+  empty-cache restart, verified demand rebuild, and all-or-nothing metadata mismatch have focused
+  coverage. Subprocess restart and large-catalog/object-store fault matrices remain deferred.
 - Independent Arrow IPC/Parquet fixtures and multi-version compatibility; hostile compression-ratio
   and allocator-failure injection; Linux package qualification and broader SBOM automation for the
   implemented optional provider. Every current logical type, schema rejection, corruption, file

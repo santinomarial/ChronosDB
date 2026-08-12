@@ -1,5 +1,6 @@
 #include "chronos/tiering/tiered_parts.hpp"
 
+#include "chronos/cseg/format.hpp"
 #include "chronos/ingest/sha256.hpp"
 #include "chronos/manifest/naming.hpp"
 
@@ -125,6 +126,54 @@ common::Result<TieringReceipt> TieredPartManager::upload_and_install(
     return common::make_unexpected(installed);
   impl_->parts.emplace(descriptor.part.part_id, descriptor);
   return TieringReceipt{std::move(descriptor), true};
+}
+
+common::Status
+TieredPartManager::restore_catalog(const std::span<const ColdPartDescriptor> authoritative_parts) {
+  if (!impl_->parts.empty())
+    return invalid("cold part catalog restore requires an empty manager");
+  if (authoritative_parts.size() > impl_->limits.maximum_parts) {
+    return {common::StatusCode::kResourceExhausted,
+            "restored cold part catalog exceeds its entry limit"};
+  }
+  try {
+    std::map<cseg::PartId, ColdPartDescriptor> restored;
+    std::optional<cseg::PartId> previous;
+    for (const ColdPartDescriptor& descriptor : authoritative_parts) {
+      if (descriptor.object_key.empty() ||
+          descriptor.part.file_length > impl_->limits.maximum_object_bytes ||
+          descriptor.part.file_length == 0U ||
+          descriptor.part.file_length > cseg::format::kMaximumFileLength ||
+          (descriptor.part.file_length % cseg::format::kAlignment) != 0U ||
+          descriptor.part.row_count == 0U ||
+          descriptor.part.row_count > cseg::format::kMaximumRowCount ||
+          descriptor.part.minimum_record_sequence == 0U ||
+          descriptor.part.minimum_record_sequence > descriptor.part.maximum_record_sequence ||
+          descriptor.part.minimum_event_time > descriptor.part.maximum_event_time ||
+          (previous.has_value() && descriptor.part.part_id <= *previous)) {
+        return invalid("restored cold part descriptor sequence is invalid");
+      }
+      auto metadata = impl_->store->stat(descriptor.object_key);
+      if (!metadata.has_value())
+        return metadata.error();
+      if (metadata->key != descriptor.object_key || metadata->size != descriptor.part.file_length ||
+          metadata->checksum != descriptor.checksum) {
+        return {common::StatusCode::kCorruption,
+                "restored cold part does not match exact remote metadata"};
+      }
+      auto [entry, inserted] = restored.emplace(descriptor.part.part_id, descriptor);
+      static_cast<void>(entry);
+      if (!inserted)
+        return invalid("restored cold part identity is duplicated");
+      previous = descriptor.part.part_id;
+    }
+    impl_->parts.swap(restored);
+    return common::Status::ok();
+  } catch (const std::bad_alloc&) {
+    return {common::StatusCode::kResourceExhausted, "cold part catalog restore allocation failed"};
+  } catch (const std::length_error&) {
+    return {common::StatusCode::kResourceExhausted, "cold part catalog restore exceeded limits"};
+  }
 }
 
 common::Result<std::vector<std::byte>>

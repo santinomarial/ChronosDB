@@ -168,9 +168,11 @@ finite capped-backoff attempt budget and fresh signature, and a concurrent calle
 is force-refreshed after 401/403. An explicit built-in provider now snapshots and validates the
 standard AWS environment credentials and fails closed on forced refresh. Workload/instance and
 ordered-chain provider integrations, retry jitter, parallel multipart scheduling, cache
-index recovery, and broader Arrow/Parquet external fixture and resource-fault qualification remain
-incomplete. The bounded full-object LRU now permits concurrent post-install reads without holding
-its cache mutex across object-store I/O. Large objects now
+and broader Arrow/Parquet external fixture and resource-fault qualification remain incomplete. The
+bounded full-object LRU now permits concurrent post-install reads without holding
+its cache mutex across object-store I/O. It is intentionally volatile: restart transactionally
+restores an exact-metadata-preflighted authoritative catalog and rebuilds cache bytes only on
+verified demand, so no second durable cache index is required. Large objects now
 use sequential signed parts, conditional completion, exact final verification, and failure-path
 abort. The optional Arrow/Parquet
 provider now round-trips all current logical types through an exact
@@ -255,13 +257,16 @@ broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were d
 - BoundedExchange and MemoryObjectStore use mutexes but have no TSan evidence in this pass.
 - io_uring protocol cancellation, forced in-flight shutdown, and close/completion races lack broad
   Linux and TSan evidence beyond the focused clean-shutdown lifecycle.
-- Cache/tiering catalog access is single-owner and unsafe for concurrent query access without the
-  planned owner/locking integration.
+- Tiering upload/catalog restoration remains single-owner, while quiesced catalog reads and the
+  bounded LRU support concurrent query access. TSan evidence and production worker scheduling remain
+  deferred.
 
 ### Durability
 
 - No persistent materialized-view checkpoint, temporal correction log/part, Raft segmented writer,
-  metadata command codec/file, durable movement receipt, Manifest v2 cold location, or cache index.
+  metadata command codec/file, durable movement receipt, or Manifest v2 cold location. The
+  full-object cache intentionally has no durable index; its routing catalog is restored from selected
+  authority and its bytes rebuild on verified demand.
 - Multiplexed records are codecs only; no append/sync/recovery/reclamation owner exists.
 - QUORUM_SYNC is unavailable.
 - The in-memory object store explicitly makes no remote durability claim; production S3 semantics

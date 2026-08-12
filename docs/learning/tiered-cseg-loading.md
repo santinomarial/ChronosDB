@@ -56,6 +56,14 @@ installs after bounded eviction or reuses the entry won by another reader. Hits 
 eviction cannot invalidate their source. Upload/catalog mutation remains single-owner and must
 quiesce before these reads; manager destruction likewise requires external lifetime exclusion.
 
+The LRU is deliberately volatile and has no durable cache index. At restart, an empty manager can
+restore a strictly sorted descriptor catalog supplied by already selected Manifest/cold-manifest
+authority. Restoration preflights exact remote key, length, and SHA-256 metadata into a private map
+and publishes it only after the complete set succeeds. Cache state remains empty until the first
+read repeats exact length and whole-object digest validation and repopulates it on demand. This
+keeps durable truth in the existing manifests and makes cache loss a performance event rather than
+a recovery decision.
+
 ## Current boundary and review questions
 
 Pair recovery now uses the same remote validation primitive for absent local finals. It first

@@ -196,5 +196,41 @@ TEST(TieredPartManagerTest, ConcurrentReadersShareBoundedEvictingCacheSafely) {
   EXPECT_LE(manager->cached_bytes(), cache_limit);
 }
 
+TEST(TieredPartManagerTest, RestoresExactCatalogWithAnEmptyRebuildableCache) {
+  MemoryObjectStore store;
+  const std::array fixtures{PartFixture{8U}, PartFixture{9U}};
+  std::vector<ColdPartDescriptor> descriptors;
+  for (const auto& fixture : fixtures) {
+    const ColdPartDescriptor descriptor = fixture.cold();
+    ASSERT_TRUE(
+        store.put_if_absent(descriptor.object_key, fixture.part.bytes(), descriptor.checksum)
+            .has_value());
+    descriptors.push_back(descriptor);
+  }
+
+  auto restarted = TieredPartManager::create(store);
+  ASSERT_TRUE(restarted.has_value());
+  const common::Status restored = restarted->restore_catalog(descriptors);
+  ASSERT_TRUE(restored.is_ok()) << restored.to_string();
+  EXPECT_EQ(restarted->cached_entries(), 0U);
+  EXPECT_EQ(restarted->cached_bytes(), 0U);
+  for (const auto& fixture : fixtures) {
+    auto bytes = restarted->read_range(fixture.descriptor.part_id, 0U, fixture.part.size());
+    ASSERT_TRUE(bytes.has_value()) << bytes.error().to_string();
+    EXPECT_TRUE(std::ranges::equal(*bytes, fixture.part.bytes()));
+  }
+  EXPECT_EQ(restarted->cached_entries(), fixtures.size());
+
+  auto rejected = TieredPartManager::create(store);
+  ASSERT_TRUE(rejected.has_value());
+  auto damaged = descriptors;
+  ingest::Sha256Digest::Bytes wrong_bytes = damaged.back().checksum.bytes();
+  wrong_bytes.back() ^= std::byte{1U};
+  damaged.back().checksum = ingest::Sha256Digest{wrong_bytes};
+  const common::Status mismatch = rejected->restore_catalog(damaged);
+  EXPECT_EQ(mismatch.code(), common::StatusCode::kCorruption);
+  EXPECT_FALSE(rejected->find(descriptors.front().part.part_id).has_value());
+}
+
 } // namespace
 } // namespace chronos::tiering

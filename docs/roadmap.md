@@ -948,7 +948,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   An explicit built-in environment provider now snapshots and validates the standard AWS access
   key, secret, and optional session token without implicit precedence or unsafe refresh. The
   bounded full-object LRU now supports concurrent post-install readers while keeping remote I/O and
-  digest validation outside its cache-state critical section. An
+  digest validation outside its cache-state critical section. After restart, a fresh manager can
+  transactionally restore a bounded exact-metadata-preflighted catalog from caller-selected durable
+  authority; its nonauthoritative cache starts empty and rebuilds on verified demand. An
   optional Apache Arrow/Parquet provider now imports and exports files through an exact
   caller-supplied schema, maps all
   current logical types, bounds source/final canonical storage, rejects corruption and mismatch,

@@ -11,6 +11,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -46,7 +47,7 @@ using ColdManifestInstaller = std::function<common::Status(const ColdPartDescrip
 
 // Cold-tier coordinator. Exact schema/source-bound CSEG validation, upload, and remote verification
 // happen before the caller's atomic manifest installer. Upload/catalog mutation remains
-// single-owner and must not overlap reads. After installation quiesces, read_range and cache
+// single-owner and must not overlap reads. After installation quiesces, read_range, find, and cache
 // metrics may be called concurrently; destruction and moves require ordinary external lifetime
 // exclusion. The local source becomes releasable only after the installer callback succeeds.
 class TieredPartManager {
@@ -65,6 +66,12 @@ public:
   upload_and_install(ColdPartDescriptor descriptor, common::ByteView local_cseg,
                      const TieredPartAdmission& admission,
                      const ColdManifestInstaller& install_manifest);
+
+  // Restores an empty manager from strictly sorted descriptors already selected by durable
+  // Manifest/cold-manifest authority. Every remote object is exact-metadata preflighted before the
+  // catalog is published. The volatile cache always starts empty and repopulates on verified reads.
+  [[nodiscard]] common::Status
+  restore_catalog(std::span<const ColdPartDescriptor> authoritative_parts);
 
   // Large objects use range access. Supplying expected_range_checksum makes the range independently
   // authenticated; otherwise CSEG page validation remains responsible for the returned bytes.
