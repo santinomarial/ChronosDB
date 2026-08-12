@@ -1,0 +1,33 @@
+#ifndef CHRONOS_QUERY_TABLET_STATE_PIPELINE_HPP_
+#define CHRONOS_QUERY_TABLET_STATE_PIPELINE_HPP_
+
+#include "chronos/common/result.hpp"
+#include "chronos/ingest/tablet_state.hpp"
+#include "chronos/query/head_scan.hpp"
+#include "chronos/query/physical_operator.hpp"
+#include "chronos/query/physical_plan.hpp"
+#include "chronos/query/resource_context.hpp"
+#include "chronos/schema/identity.hpp"
+#include "chronos/schema/schema_lineage.hpp"
+
+#include <cstddef>
+#include <memory>
+
+namespace chronos::query {
+
+struct TabletStatePipelineLimits {
+  HeadScanLimits scan{};
+  std::size_t maximum_source_configuration_bytes{8U * 1024U * 1024U};
+};
+
+// Instantiates one checked physical SQL pipeline over a stable TabletState publication. Sealed
+// generations are scanned in retained order and the active generation last; global pipeline stages
+// are instantiated once above that serial source, preserving aggregate/sort/latest/limit semantics.
+[[nodiscard]] common::Result<std::unique_ptr<PhysicalOperator>> instantiate_tablet_state_pipeline(
+    const QueryResourceContext& resources, ingest::TabletSnapshot snapshot,
+    const schema::SchemaLineage& lineage, schema::SchemaId destination_schema_id,
+    const PhysicalPipelinePlan& pipeline, TabletStatePipelineLimits limits = {});
+
+} // namespace chronos::query
+
+#endif // CHRONOS_QUERY_TABLET_STATE_PIPELINE_HPP_

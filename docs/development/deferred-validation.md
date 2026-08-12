@@ -238,6 +238,9 @@
 
 ## End-to-end integration
 
+- Tablet-state vector pipeline allocation fault injection, concurrent sealed/active publication
+  schedules, schema-evolution generations, multi-tablet composition, every physical operator, full
+  scalar/vector SQL differential testing, ASan/UBSan/TSan, and generation-count/chunk-size profiles.
 - Database Bootstrap v1 golden fixture and fuzz corpus; allocation and syscall-fault injection;
   subprocess crashes after intent write/sync, each directory creation/sync, rename, and final root
   sync; concurrent multi-process creation; large-root scaling; Linux filesystem/power-loss and macOS

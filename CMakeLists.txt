@@ -438,6 +438,7 @@ add_library(
   src/query/scalar_snapshot_scan.cpp
   src/query/snapshot.cpp
   src/query/snapshot_pipeline.cpp
+  src/query/snapshot_shape.cpp
   src/query/sort.cpp
   src/query/spill_sort.cpp
   src/query/statement_binder.cpp
@@ -446,6 +447,7 @@ add_library(
   src/query/temporal_cseg_snapshot.cpp
   src/query/temporal_recovery.cpp
   src/query/temporal_snapshot.cpp
+  src/query/tablet_state_pipeline.cpp
   src/query/timestamp_filter_kernel.cpp
   src/query/value.cpp
   src/query/vector_chunk.cpp
@@ -463,8 +465,8 @@ target_include_directories(
 )
 target_link_libraries(
   chronos_query
-  PUBLIC chronos::columnar chronos::common chronos::cseg chronos::head chronos::io chronos::manifest
-         chronos::runtime chronos::schema chronos::wal
+  PUBLIC chronos::columnar chronos::common chronos::cseg chronos::head chronos::ingest chronos::io
+         chronos::manifest chronos::runtime chronos::schema chronos::wal
   PRIVATE Threads::Threads
 )
 chronos_set_project_warnings(chronos_query)
@@ -1473,6 +1475,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/snapshot_header_self_contained.cpp
     tests/query/snapshot_pipeline_header_self_contained.cpp
     tests/query/snapshot_pipeline_test.cpp
+    tests/query/snapshot_shape_header_self_contained.cpp
     tests/query/snapshot_test.cpp
     tests/query/sort_header_self_contained.cpp
     tests/query/sort_test.cpp
@@ -1480,6 +1483,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/spill_sort_test.cpp
     tests/query/statement_binder_header_self_contained.cpp
     tests/query/statement_binder_test.cpp
+    tests/query/tablet_state_pipeline_header_self_contained.cpp
+    tests/query/tablet_state_pipeline_test.cpp
     tests/query/temporal_command_header_self_contained.cpp
     tests/query/temporal_command_test.cpp
     tests/query/temporal_command_executor_header_self_contained.cpp
