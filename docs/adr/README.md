@@ -270,3 +270,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0233](0233-native-whole-table-asof-query-composition.md) | Native whole-table ASOF query composition | accepted |
 | [0234](0234-fail-closed-native-historical-query-admission.md) | Fail-closed native historical query admission | accepted |
 | [0235](0235-query-accounted-columnar-batch-source.md) | Query-accounted columnar batch source | accepted |
+| [0236](0236-committed-append-subscription-result-changes.md) | Committed append subscription result changes | accepted |

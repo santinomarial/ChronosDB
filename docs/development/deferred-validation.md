@@ -31,8 +31,11 @@
 - Committed columnar-batch vector source: forced-allocation sweeps, all logical types, cancellation
   at every column, hostile chunk limits, large batches, scalar/vector differential coverage, and
   memory/allocation profiles. Focused coverage now proves bounded canonical slicing and a checked
-  row-preserving filter/projection pipeline; deterministic result-key/payload construction and
-  publication into the live coordinator remain integration work.
+  row-preserving filter/projection pipeline. The plan-bound evaluator now constructs one
+  deterministic key and bounded result payload per committed append and fits the existing live
+  coordinator/protocol contract. Forced failures across multi-chunk result collection, broad type
+  matrices, production ingest fan-out, incremental stateful-plan routing, and daemon delivery remain
+  integration work.
 - Commits injected at every historical-to-live handoff step across real snapshot execution.
 - Cross-tablet-owner wiring around the implemented canonical vector/admission-order coordinator,
   topology transitions, multi-plan retention registration/retirement, service SQL/plan-to-input

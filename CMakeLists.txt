@@ -523,6 +523,7 @@ endif()
 add_library(
   chronos_live
   src/live/bound_materialized_view_checkpoint.cpp
+  src/live/committed_batch_evaluator.cpp
   src/live/durable_multi_tablet_subscription.cpp
   src/live/durable_materialized_view.cpp
   src/live/incremental_aggregate.cpp
@@ -885,6 +886,8 @@ if(CHRONOS_BUILD_TESTS)
     chronos_live_tests
     tests/live/incremental_aggregate_header_self_contained.cpp
     tests/live/incremental_aggregate_test.cpp
+    tests/live/committed_batch_evaluator_header_self_contained.cpp
+    tests/live/committed_batch_evaluator_test.cpp
     tests/live/durable_multi_tablet_subscription_header_self_contained.cpp
     tests/live/durable_multi_tablet_subscription_test.cpp
     tests/live/durable_materialized_view_header_self_contained.cpp
