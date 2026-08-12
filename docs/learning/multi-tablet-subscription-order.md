@@ -33,6 +33,13 @@ source through its current latest position. Checkpoint minor 1 records that stat
 restart cannot accidentally reactivate the old fingerprint. Existing sessions end with
 `SCHEMA_CHANGED`; all old tokens and new registrations require a newly prepared plan and snapshot.
 
+A post-apply evaluator failure is different again: the plan remains valid, but one required result
+cannot be reconstructed by the live owner. `mark_continuity_lost` advances only the exact next
+source position, drops the complete retained admission order, expires all components through their
+current latest positions, and overflows active sessions. Old tokens then fail rather than skip the
+missing result. Unlike schema invalidation, a new subscriber may take a fresh snapshot at the new
+vector and resume future publication under the same plan.
+
 `DurableMultiTabletSubscription` couples that logical state to a lock-owning immutable-generation
 store. Reopen treats the latest installed checkpoint vector as the authoritative replay boundary;
 committed log entries after it must be fed back through `publish_committed` in each source's exact

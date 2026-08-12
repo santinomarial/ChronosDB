@@ -189,6 +189,13 @@ common::Status DurableMultiTabletSubscription::publish_committed(CommittedChange
   return applied;
 }
 
+common::Status DurableMultiTabletSubscription::mark_continuity_lost(const SourcePosition position) {
+  common::Status applied = impl_->manager.mark_continuity_lost(position);
+  if (applied.is_ok())
+    impl_->dirty = true;
+  return applied;
+}
+
 common::Result<std::vector<DeliveryRecord>>
 DurableMultiTabletSubscription::poll(const common::Uuid& subscription_id,
                                      const std::size_t maximum_records) const {

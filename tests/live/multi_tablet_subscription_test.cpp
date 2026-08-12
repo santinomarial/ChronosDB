@@ -170,6 +170,41 @@ TEST(MultiTabletSubscriptionTest, FailsResumeWhenAnyRequiredSourceSuffixExpired)
   EXPECT_EQ(resumed.error().code(), common::StatusCode::kNotFound);
 }
 
+TEST(MultiTabletSubscriptionTest, ContinuityLossOverflowsActiveStateAndExpiresEveryOldSuffix) {
+  Fixture fixture;
+  auto manager = MultiTabletSubscriptionManager::create(fixture.source());
+  ASSERT_TRUE(manager.has_value());
+  const auto registration = manager->register_subscription(fixture.request());
+  ASSERT_TRUE(registration.has_value());
+  ASSERT_TRUE(manager->complete_snapshot(fixture.subscription_id).is_ok());
+  ASSERT_TRUE(
+      manager->publish_committed(fixture.change(fixture.tablet_a, fixture.wal_a, 1U)).is_ok());
+  ASSERT_TRUE(manager->mark_continuity_lost({fixture.tablet_b, fixture.wal_b, 1U}).is_ok());
+
+  const auto status = manager->status(fixture.subscription_id);
+  ASSERT_TRUE(status.has_value());
+  EXPECT_EQ(status->phase, SubscriptionPhase::kOverflowed);
+  EXPECT_EQ(manager->poll(fixture.subscription_id, 1U).error().code(),
+            common::StatusCode::kResourceExhausted);
+  const auto checkpoint = manager->checkpoint();
+  ASSERT_TRUE(checkpoint.has_value());
+  EXPECT_TRUE(checkpoint->retained_changes.empty());
+  ASSERT_EQ(checkpoint->sources.size(), 2U);
+  EXPECT_EQ(checkpoint->sources[0].expired_through_sequence,
+            checkpoint->sources[0].latest_position.record_sequence);
+  EXPECT_EQ(checkpoint->sources[1].expired_through_sequence,
+            checkpoint->sources[1].latest_position.record_sequence);
+  EXPECT_EQ(manager->resume_subscription(registration->initial_resume_token).error().code(),
+            common::StatusCode::kNotFound);
+
+  SubscriptionRequest replacement = fixture.request();
+  replacement.subscription_id = uuid(std::byte{14});
+  auto replacement_registration = manager->register_subscription(replacement);
+  ASSERT_TRUE(replacement_registration.has_value()) << replacement_registration.error().to_string();
+  EXPECT_EQ(replacement_registration->snapshot_boundaries[0].record_sequence, 1U);
+  EXPECT_EQ(replacement_registration->snapshot_boundaries[1].record_sequence, 1U);
+}
+
 TEST(MultiTabletSubscriptionTest, CheckpointsAndRestoresExactAdmissionOrderForResume) {
   Fixture fixture;
   auto manager = MultiTabletSubscriptionManager::create(fixture.source());

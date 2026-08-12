@@ -480,6 +480,32 @@ common::Status MultiTabletSubscriptionManager::publish_committed(CommittedChange
   return common::Status::ok();
 }
 
+common::Status MultiTabletSubscriptionManager::mark_continuity_lost(const SourcePosition position) {
+  const auto source = impl_->source_indexes.find(position.tablet_id);
+  if (source == impl_->source_indexes.end())
+    return invalid("lost subscription continuity belongs to an unconfigured tablet");
+  Impl::SourceState& source_state = impl_->sources[source->second];
+  if (position.wal_id != source_state.wal_id ||
+      source_state.latest_sequence == std::numeric_limits<std::uint64_t>::max() ||
+      position.record_sequence != source_state.latest_sequence + 1U)
+    return invalid("lost subscription continuity does not follow the exact source sequence");
+  if (!impl_->plan_schema_compatible)
+    return common::Status{common::StatusCode::kNotSupported,
+                          "subscription coordinator plan schema has already changed"};
+
+  source_state.latest_sequence = position.record_sequence;
+  impl_->retained_changes.clear();
+  impl_->retained_change_bytes = 0U;
+  for (Impl::SourceState& state : impl_->sources)
+    state.expired_through_sequence = state.latest_sequence;
+  for (auto& [identity, state] : impl_->subscriptions) {
+    static_cast<void>(identity);
+    if (state.phase == SubscriptionPhase::kSnapshot || state.phase == SubscriptionPhase::kLive)
+      Impl::overflow(state);
+  }
+  return common::Status::ok();
+}
+
 common::Result<std::vector<DeliveryRecord>>
 MultiTabletSubscriptionManager::poll(const common::Uuid& subscription_id,
                                      const std::size_t maximum_records) const {
