@@ -108,6 +108,10 @@ struct S3ObjectStoreConfig {
   std::size_t maximum_attempts{3U};
   std::chrono::milliseconds initial_retry_backoff{50};
   std::chrono::milliseconds maximum_retry_backoff{1'000};
+  // Adds a uniformly distributed nonnegative delay after exponential/provider floors, without
+  // exceeding maximum_retry_backoff. A fixed seed is intended only for deterministic testing.
+  std::chrono::milliseconds maximum_retry_jitter{50};
+  std::optional<std::uint64_t> retry_jitter_seed;
   std::size_t multipart_threshold_bytes{64U * 1024U * 1024U};
   std::size_t multipart_part_bytes{16U * 1024U * 1024U};
   // Bounds simultaneously active UploadPart requests for one object. All workers are joined before

@@ -48,7 +48,8 @@ framing and interpretation.
 Transport `UNAVAILABLE` and HTTP 409/425/429/5xx outcomes retry within a configured one-to-32
 attempt budget using capped exponential backoff. Valid delta-seconds or any of the three RFC HTTP-date
 `Retry-After` forms may raise the next delay but never above the configured ceiling;
-malformed/repeated hints are ignored. HEAD/range GET are read-only; conditional PUT
+malformed/repeated hints are ignored. Bounded nonnegative jitter then spreads concurrent retries
+within the same hard ceiling. HEAD/range GET are read-only; conditional PUT
 turns an ambiguous success into exact 412 verification; exact conditional DELETE turns it into an
 already-absent retry. Other failures do not retry. A provider-backed 401/403 requests one forced
 refresh on the next attempt, whereas rejected static credentials fail immediately. Provider errors
@@ -77,8 +78,8 @@ Upload hashing and transfer are `O(object bytes)` and retain no second upload co
 constant response storage. A range read is `O(requested bytes)` and retains at most the configured
 bound. Multipart retains borrowed object bytes plus `O(part count)` ETags and completion XML, with a
 bounded number of simultaneous handles. Every attempt currently creates one easy handle and the
-public call is synchronous; connection pooling, the libcurl multi interface, and backoff jitter
-remain deferred. Workload,
+public call is synchronous; connection pooling and the libcurl multi interface remain deferred.
+Workload,
 instance-metadata, shared-file, and ordered-chain provider policies also remain deferred.
 
 Operators should grant only `PutObject`, multipart create/upload/complete/abort,

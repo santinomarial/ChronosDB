@@ -12,8 +12,8 @@ provider `Retry-After` guidance. Retrying earlier than requested can amplify thr
 an untrusted endpoint must not use an enormous, malformed, or duplicated header to exceed the
 operator's configured retry-delay bound.
 
-`Retry-After` also supports an HTTP-date form, which depends on a wall clock and date parser. The
-existing retry contract is duration-based and does not otherwise need wall time.
+`Retry-After` also supports an HTTP-date form, subsequently implemented by
+[ADR 0208](0208-strict-http-date-retry-after.md).
 
 ## Decision
 
@@ -33,8 +33,8 @@ provider delay header.
 Operators retain one hard maximum-delay control while cooperating with short provider throttling
 hints. A provider request longer than that ceiling is deliberately shortened; production operators
 should configure a ceiling suitable for their service quota and synchronous latency budget. HTTP
-date-form support and randomized jitter remain deferred because each adds a separate clock/random
-policy.
+ADR 0208 and [ADR 0209](0209-bounded-s3-retry-jitter.md) subsequently add strict HTTP-date support
+and bounded per-store jitter.
 
 The local S3 fixture returns one transient 503 with `Retry-After: 1`. A focused test configures zero
 local delay and a 20 ms ceiling, proves the request succeeds on its second exact signed attempt,

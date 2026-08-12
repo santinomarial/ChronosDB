@@ -53,8 +53,9 @@ validation, or final status classification.
 ## Consequences and validation
 
 Worst-case synchronous latency is bounded by the configured attempt count, per-attempt request
-timeout, and capped sleeps. The current backoff deliberately has no jitter or `Retry-After` support;
-large deployments should qualify and extend that policy before synchronized fleet-wide recovery.
+timeout, and capped sleeps. [ADR 0204](0204-bounded-s3-retry-after-hints.md) and
+[ADR 0209](0209-bounded-s3-retry-jitter.md) subsequently add bounded provider hints and per-store
+jitter without weakening that ceiling.
 The public provider seam supports refresh and ordered chains without embedding provider-specific
 network clients or secret discovery in the core library.
 

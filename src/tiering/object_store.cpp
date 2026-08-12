@@ -830,12 +830,36 @@ public:
     ResponseCapture capture;
   };
 
-  explicit Impl(S3ObjectStoreConfig configured) : config(std::move(configured)) {
+  explicit Impl(S3ObjectStoreConfig configured)
+      : config(std::move(configured)),
+        jitter_sequence(config.retry_jitter_seed.value_or(default_jitter_seed(this))) {
     while (config.endpoint.size() > std::string_view{"https://"}.size() &&
            config.endpoint.back() == '/') {
       config.endpoint.pop_back();
     }
     signature = "aws:amz:" + config.region + ":s3";
+  }
+
+  [[nodiscard]] static std::uint64_t default_jitter_seed(const void* instance) noexcept {
+    static std::atomic_uint64_t sequence{0x9E3779B97F4A7C15ULL};
+    const auto steady =
+        static_cast<std::uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto wall =
+        static_cast<std::uint64_t>(std::chrono::system_clock::now().time_since_epoch().count());
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(instance));
+    return steady ^ (wall << 1U) ^ address ^ sequence.fetch_add(0x9E3779B97F4A7C15ULL);
+  }
+
+  [[nodiscard]] std::chrono::milliseconds
+  random_jitter(const std::chrono::milliseconds maximum) const noexcept {
+    if (maximum.count() <= 0)
+      return std::chrono::milliseconds{0};
+    std::uint64_t value = jitter_sequence.fetch_add(0x9E3779B97F4A7C15ULL);
+    value = (value ^ (value >> 30U)) * 0xBF58476D1CE4E5B9ULL;
+    value = (value ^ (value >> 27U)) * 0x94D049BB133111EBULL;
+    value ^= value >> 31U;
+    const auto bound = static_cast<std::uint64_t>(maximum.count()) + 1U;
+    return std::chrono::milliseconds{static_cast<std::chrono::milliseconds::rep>(value % bound)};
   }
 
   [[nodiscard]] common::Result<S3Credentials>
@@ -888,6 +912,8 @@ public:
                     static_cast<std::chrono::milliseconds::rep>(*retry_after_seconds * 1'000U)};
       delay = std::min(config.maximum_retry_backoff, std::max(delay, requested));
     }
+    const auto available = config.maximum_retry_backoff - delay;
+    delay += random_jitter(std::min(config.maximum_retry_jitter, available));
     if (delay.count() > 0)
       std::this_thread::sleep_for(delay);
   }
@@ -1117,6 +1143,7 @@ public:
 
   S3ObjectStoreConfig config;
   std::string signature;
+  mutable std::atomic_uint64_t jitter_sequence;
 
   void abort_multipart_best_effort(const std::string_view key,
                                    const std::string_view upload_id) const noexcept {
@@ -1173,6 +1200,7 @@ common::Result<std::unique_ptr<S3ObjectStore>> S3ObjectStore::create(S3ObjectSto
       config.maximum_attempts == 0U || config.maximum_attempts > 32U ||
       config.initial_retry_backoff.count() < 0 || config.initial_retry_backoff > maximum_long ||
       config.maximum_retry_backoff.count() < 0 || config.maximum_retry_backoff > maximum_long ||
+      config.maximum_retry_jitter.count() < 0 || config.maximum_retry_jitter > maximum_long ||
       config.initial_retry_backoff > config.maximum_retry_backoff ||
       config.multipart_threshold_bytes == 0U || config.multipart_part_bytes < 5U * 1024U * 1024U ||
       static_cast<std::uintmax_t>(config.multipart_part_bytes) >

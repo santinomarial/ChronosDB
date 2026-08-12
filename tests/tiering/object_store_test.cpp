@@ -1075,6 +1075,7 @@ TEST(S3ObjectStoreTest, HonorsRetryAfterWithinConfiguredBackoffCeiling) {
                              .maximum_attempts = 2U,
                              .initial_retry_backoff = std::chrono::milliseconds{0},
                              .maximum_retry_backoff = std::chrono::milliseconds{20},
+                             .maximum_retry_jitter = std::chrono::milliseconds{0},
                              .maximum_response_bytes = 1024U,
                              .require_tls = false};
   auto store = S3ObjectStore::create(std::move(config));
@@ -1112,6 +1113,7 @@ TEST(S3ObjectStoreTest, HonorsEveryHttpDateRetryAfterFormWithinBackoffCeiling) {
                                .maximum_attempts = 2U,
                                .initial_retry_backoff = std::chrono::milliseconds{0},
                                .maximum_retry_backoff = std::chrono::milliseconds{20},
+                               .maximum_retry_jitter = std::chrono::milliseconds{0},
                                .maximum_response_bytes = 1024U,
                                .require_tls = false};
     auto store = S3ObjectStore::create(std::move(config));
@@ -1145,6 +1147,7 @@ TEST(S3ObjectStoreTest, IgnoresInvalidHttpDateRetryAfter) {
                              .maximum_attempts = 2U,
                              .initial_retry_backoff = std::chrono::milliseconds{0},
                              .maximum_retry_backoff = std::chrono::milliseconds{200},
+                             .maximum_retry_jitter = std::chrono::milliseconds{0},
                              .maximum_response_bytes = 1024U,
                              .require_tls = false};
   auto store = S3ObjectStore::create(std::move(config));
@@ -1158,6 +1161,42 @@ TEST(S3ObjectStoreTest, IgnoresInvalidHttpDateRetryAfter) {
   ASSERT_TRUE(uploaded.has_value()) << uploaded.error().to_string();
   EXPECT_LT(elapsed, std::chrono::milliseconds{180});
   EXPECT_EQ(server.requests().size(), 2U);
+  EXPECT_TRUE(server.failure().empty()) << server.failure();
+}
+
+TEST(S3ObjectStoreTest, AppliesDeterministicJitterWithoutExceedingBackoffCeiling) {
+  LocalS3Server server{LocalS3Behavior{.transient_put_failures = 1U}};
+  ASSERT_TRUE(server.valid()) << server.failure();
+  S3ObjectStoreConfig config{.endpoint = "http://127.0.0.1:" + std::to_string(server.port()),
+                             .region = "us-east-1",
+                             .bucket = "chronos-test",
+                             .access_key_id = "test-access",
+                             .secret_access_key = "test-secret",
+                             .session_token = "test-token",
+                             .connect_timeout = std::chrono::milliseconds{1'000},
+                             .request_timeout = std::chrono::milliseconds{2'000},
+                             .maximum_attempts = 2U,
+                             .initial_retry_backoff = std::chrono::milliseconds{20},
+                             .maximum_retry_backoff = std::chrono::milliseconds{100},
+                             .maximum_retry_jitter = std::chrono::milliseconds{80},
+                             .retry_jitter_seed = 1U,
+                             .maximum_response_bytes = 1024U,
+                             .require_tls = false};
+  auto store = S3ObjectStore::create(config);
+  ASSERT_TRUE(store.has_value()) << store.error().to_string();
+
+  const std::vector<std::byte> bytes{std::byte{0x1AU}};
+  const auto started = std::chrono::steady_clock::now();
+  auto uploaded = (*store)->put_if_absent("parts/jitter", bytes, ingest::sha256(bytes).value());
+  const auto elapsed = std::chrono::steady_clock::now() - started;
+  ASSERT_TRUE(uploaded.has_value()) << uploaded.error().to_string();
+  EXPECT_GE(elapsed, std::chrono::milliseconds{60});
+  EXPECT_LT(elapsed, std::chrono::milliseconds{180});
+
+  config.maximum_retry_jitter = std::chrono::milliseconds{-1};
+  auto rejected = S3ObjectStore::create(std::move(config));
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kInvalidArgument);
   EXPECT_TRUE(server.failure().empty()) << server.failure();
 }
 

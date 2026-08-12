@@ -180,8 +180,9 @@
 
 - Live AWS/MinIO/LocalStack validation for the libcurl SigV4 backend; built-in workload/instance
   credential providers and ordered-chain policy, authenticated-proxy/live CONNECT qualification,
-  retry jitter, clock-step/skew simulation, high-concurrency multipart stress and live throughput
-  tuning, live concurrent-writer qualification, timeout/TLS/partial-response faults, eventual
+  fleet-scale jitter distribution/recovery and clock-step/skew simulation, high-concurrency
+  multipart stress and live throughput tuning, live concurrent-writer qualification,
+  timeout/TLS/partial-response faults, eventual
   listing behavior, restore, conditional-delete races, live SSE-S3/SSE-KMS and bucket-policy
   qualification, and broader object-store fault injection. Durable cold-history discovery now completes
   interrupted remote reclamation before reader admission with focused evolving-catalog, bound,
@@ -192,6 +193,8 @@
   Delta-seconds Retry-After parsing and the configured ceiling have focused local coverage.
   Strict IMF-fixdate, RFC 850, and asctime Retry-After parsing with calendar/weekday validation has
   focused local coverage under the same ceiling.
+  Per-store atomic bounded retry jitter has focused deterministic floor/ceiling and invalid-bound
+  coverage; statistical distribution and fleet recovery simulation remain deferred.
   Two independent signed clients racing one key have focused equal-body convergence and unequal-body
   single-winner/no-overwrite coverage; multi-process and live-provider races remain deferred.
   Ambient-proxy exclusion and secret-bearing explicit-proxy rejection have focused local coverage.
