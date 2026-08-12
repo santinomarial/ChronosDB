@@ -65,6 +65,7 @@ public:
   void begin_shutdown() noexcept;
   [[nodiscard]] bool drained() const noexcept;
   [[nodiscard]] bool accepting() const noexcept;
+  [[nodiscard]] bool owns(std::uint64_t connection_id, std::uint64_t request_id) const noexcept;
   [[nodiscard]] SubscriptionServiceMetrics metrics() const noexcept;
 
 private:

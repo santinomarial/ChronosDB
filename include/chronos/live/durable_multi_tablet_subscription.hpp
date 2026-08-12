@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <vector>
 
 namespace chronos::live {
@@ -50,6 +51,8 @@ public:
   [[nodiscard]] common::Status publish_committed(CommittedChange change);
   [[nodiscard]] common::Status mark_continuity_lost(SourcePosition position);
   [[nodiscard]] common::Status mark_replay_unavailable();
+  [[nodiscard]] common::Status
+  mark_replay_unavailable_through(std::span<const SourcePosition> positions);
   [[nodiscard]] common::Result<std::vector<DeliveryRecord>>
   poll(const common::Uuid& subscription_id, std::size_t maximum_records) const;
   [[nodiscard]] common::Result<std::vector<std::byte>>

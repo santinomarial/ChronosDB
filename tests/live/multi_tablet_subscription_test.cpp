@@ -234,6 +234,36 @@ TEST(MultiTabletSubscriptionTest, ReplayInvalidationExpiresTheCurrentVectorWitho
             common::StatusCode::kNotFound);
 }
 
+TEST(MultiTabletSubscriptionTest, RecoveryRebaseInvalidatesReplayThroughAStorageVector) {
+  Fixture fixture;
+  auto manager = MultiTabletSubscriptionManager::create(fixture.source());
+  ASSERT_TRUE(manager.has_value());
+  const auto registration = manager->register_subscription(fixture.request());
+  ASSERT_TRUE(registration.has_value());
+  ASSERT_TRUE(manager->complete_snapshot(fixture.subscription_id).is_ok());
+  ASSERT_TRUE(
+      manager->publish_committed(fixture.change(fixture.tablet_a, fixture.wal_a, 1U)).is_ok());
+
+  const std::vector<SourcePosition> current{{fixture.tablet_a, fixture.wal_a, 3U},
+                                            {fixture.tablet_b, fixture.wal_b, 2U}};
+  ASSERT_TRUE(manager->mark_replay_unavailable_through(current).is_ok());
+
+  auto checkpoint = manager->checkpoint();
+  ASSERT_TRUE(checkpoint.has_value());
+  EXPECT_TRUE(checkpoint->retained_changes.empty());
+  ASSERT_EQ(checkpoint->sources.size(), 2U);
+  EXPECT_EQ(checkpoint->sources[0].latest_position.record_sequence, 3U);
+  EXPECT_EQ(checkpoint->sources[0].expired_through_sequence, 3U);
+  EXPECT_EQ(checkpoint->sources[1].latest_position.record_sequence, 2U);
+  EXPECT_EQ(checkpoint->sources[1].expired_through_sequence, 2U);
+  EXPECT_EQ(manager->resume_subscription(registration->initial_resume_token).error().code(),
+            common::StatusCode::kNotFound);
+
+  std::vector<SourcePosition> backward = current;
+  backward.front().record_sequence = 2U;
+  EXPECT_FALSE(manager->mark_replay_unavailable_through(backward).is_ok());
+}
+
 TEST(MultiTabletSubscriptionTest, CheckpointsAndRestoresExactAdmissionOrderForResume) {
   Fixture fixture;
   auto manager = MultiTabletSubscriptionManager::create(fixture.source());

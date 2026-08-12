@@ -39,8 +39,10 @@ the CLI still does not expose production TLS/authentication configuration.
 
 The worker is single-threaded and synchronous. A long WAL wait or query delays later tasks and makes
 queued CANCEL unable to interrupt it. Query responses are bounded but accumulated before queueing.
-Live subscriptions, flush/CSEG/manifest composition, metrics, and multi-node ownership remain
-outside this step. Native SQL INSERT was composed later by [ADR 0226](0226-native-sql-insert-dispatch.md).
+Configured single-plan live subscriptions were composed later by
+[ADR 0242](0242-configured-chronosd-subscription-lifecycle.md). Metrics export and multi-node
+ownership remain outside this step. Native SQL INSERT was composed by
+[ADR 0226](0226-native-sql-insert-dispatch.md).
 
 ## Validation
 

@@ -478,6 +478,11 @@ bool SubscriptionService::accepting() const noexcept {
   return impl_->accepting;
 }
 
+bool SubscriptionService::owns(const std::uint64_t connection_id,
+                               const std::uint64_t request_id) const noexcept {
+  return impl_->active.contains({connection_id, request_id});
+}
+
 SubscriptionServiceMetrics SubscriptionService::metrics() const noexcept {
   SubscriptionServiceMetrics value = impl_->stats;
   value.active_subscriptions = impl_->active.size();

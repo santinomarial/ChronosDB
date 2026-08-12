@@ -36,7 +36,7 @@
   coordinator/protocol contract. A bounded service fan-out now routes applied table/tablet/WAL
   matches and contains evaluator/publication failure as explicit continuity loss. Forced failures
   across multi-chunk result collection, broad type matrices, incremental stateful-plan routing, and
-  daemon delivery remain integration work.
+  broader daemon delivery matrices remain integration work.
 - Single-node applied-append observation: the native ingest and SQL INSERT product paths now share
   one database-owned executor seam, and focused coverage proves that one applied mutation notifies
   while its matching retry does not. Fixed multiple-plan fan-out, evaluator/publication metrics,
@@ -60,8 +60,9 @@
   implemented subscription messages and lifecycle.
 - The single-plan service runtime now composes the stable pre-open observer address, durable fan-out,
   historical/live lifecycle, acknowledgement, and shutdown over dedicated bounded queues. Daemon
-  plan registry/key configuration, multi-plan routing, real reactor queue multiplexing, and Linux
-  subprocess coverage remain integration work.
+  plan registry/key configuration and real reactor queue multiplexing now exist for one configured
+  row-preserving plan. Multi-plan routing, key rotation, hostile startup namespaces, and Linux
+  subprocess execution across disconnect/backpressure variants remain integration work.
 - Full unit/property coverage for token hostile sizes/versions, retention expiry disclosure,
   subscriber fan-out, slow consumers, window expiration, negative event times, overflow, NaN,
   floating reproducibility, integer/decimal overflow, VWAP zero weight, OHLC endpoint removal,

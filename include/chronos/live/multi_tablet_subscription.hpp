@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <vector>
 
 namespace chronos::live {
@@ -105,6 +106,10 @@ public:
   // Invalidates every replay suffix at the current source vector after durable installation has
   // failed. Active snapshot/live subscribers overflow and no retained change remains deliverable.
   [[nodiscard]] common::Status mark_replay_unavailable();
+  // Recovery-only fail-closed rebase to an exact current vector when committed storage is ahead of
+  // the installed checkpoint. Positions may advance but never change source identity or decrease.
+  [[nodiscard]] common::Status
+  mark_replay_unavailable_through(std::span<const SourcePosition> positions);
   [[nodiscard]] common::Result<std::vector<DeliveryRecord>>
   poll(const common::Uuid& subscription_id, std::size_t maximum_records) const;
   [[nodiscard]] common::Result<std::vector<std::byte>>

@@ -40,8 +40,9 @@ separate bounded internal queues so each SPSC ring still has one producer and on
 
 One production-shaped component now owns the complete in-process historical/live/acknowledgement/
 shutdown lifecycle and the exact post-apply feed. Binding cannot be accidentally replaced while
-active. The runtime does not yet create plan definitions, MAC-key configuration, or coordinator
-directories; those are daemon registry responsibilities and must fail closed before socket
+active. The runtime itself does not create plan definitions, MAC-key configuration, or coordinator
+directories; those daemon registry responsibilities were composed later by
+[ADR 0242](0242-configured-chronosd-subscription-lifecycle.md) and fail closed before socket
 admission.
 
 The observer router's unbound count is an operational invariant: any nonzero online value means an

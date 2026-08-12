@@ -94,6 +94,11 @@ bool SingleNodeSubscriptionRuntime::drained() const noexcept {
   return impl_->service.drained();
 }
 
+bool SingleNodeSubscriptionRuntime::owns(const std::uint64_t connection_id,
+                                         const std::uint64_t request_id) const noexcept {
+  return impl_->service.owns(connection_id, request_id);
+}
+
 SingleNodeSubscriptionRuntimeMetrics SingleNodeSubscriptionRuntime::metrics() const noexcept {
   return {.fanout = impl_->fanout->metrics(), .service = impl_->service.metrics()};
 }

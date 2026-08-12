@@ -133,6 +133,7 @@ TEST(SingleNodeSubscriptionRuntimeTest, ComposesSnapshotLiveAckAndShutdownAround
   ASSERT_TRUE(requests.try_push(
       request_task(network::MessageType::kSubscribeRequest, std::move(*subscribe))));
   ASSERT_TRUE(runtime->poll_once().is_ok());
+  EXPECT_TRUE(runtime->owns(1U, 11U));
 
   bool ready = false;
   for (std::size_t attempt = 0U; attempt < 8U && !ready; ++attempt) {
@@ -175,6 +176,7 @@ TEST(SingleNodeSubscriptionRuntimeTest, ComposesSnapshotLiveAckAndShutdownAround
   ASSERT_TRUE(decoded_end.has_value());
   EXPECT_EQ(decoded_end->reason, network::SubscriptionEndReason::kServerShutdown);
   EXPECT_TRUE(runtime->drained());
+  EXPECT_FALSE(runtime->owns(1U, 11U));
   EXPECT_EQ(runtime->metrics().fanout.checkpoint_successes, 1U);
 }
 

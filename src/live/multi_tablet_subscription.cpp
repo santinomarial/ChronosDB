@@ -519,6 +519,22 @@ common::Status MultiTabletSubscriptionManager::mark_replay_unavailable() {
   return common::Status::ok();
 }
 
+common::Status MultiTabletSubscriptionManager::mark_replay_unavailable_through(
+    const std::span<const SourcePosition> positions) {
+  if (positions.size() != impl_->sources.size())
+    return invalid("replay rebase source count does not match the coordinator");
+  for (std::size_t index = 0U; index < positions.size(); ++index) {
+    const SourcePosition& position = positions[index];
+    const Impl::SourceState& source = impl_->sources[index];
+    if (position.tablet_id != source.tablet_id || position.wal_id != source.wal_id ||
+        position.record_sequence < source.latest_sequence)
+      return invalid("replay rebase changes source identity or moves a position backward");
+  }
+  for (std::size_t index = 0U; index < positions.size(); ++index)
+    impl_->sources[index].latest_sequence = positions[index].record_sequence;
+  return mark_replay_unavailable();
+}
+
 common::Result<std::vector<DeliveryRecord>>
 MultiTabletSubscriptionManager::poll(const common::Uuid& subscription_id,
                                      const std::size_t maximum_records) const {

@@ -203,6 +203,14 @@ common::Status DurableMultiTabletSubscription::mark_replay_unavailable() {
   return applied;
 }
 
+common::Status DurableMultiTabletSubscription::mark_replay_unavailable_through(
+    const std::span<const SourcePosition> positions) {
+  common::Status applied = impl_->manager.mark_replay_unavailable_through(positions);
+  if (applied.is_ok())
+    impl_->dirty = true;
+  return applied;
+}
+
 common::Result<std::vector<DeliveryRecord>>
 DurableMultiTabletSubscription::poll(const common::Uuid& subscription_id,
                                      const std::size_t maximum_records) const {

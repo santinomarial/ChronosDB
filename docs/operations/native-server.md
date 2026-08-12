@@ -10,11 +10,17 @@ Run `chronosd --help` for bounded startup options. The binary accepts plaintext 
 Without `--data-dir` it reports `data_plane=unconfigured` and explicitly rejects data work. With
 `--data-dir PATH` it initializes or reopens an existing directory as a durable single-node root and
 reports `data_plane=configured`; native CREATE TABLE, single-local-tablet SQL INSERT VALUES,
-canonical ingest, and supported vector SELECT execute, while subscriptions fail explicitly. SQL
+canonical ingest, and supported vector SELECT execute. Without subscription options, subscriptions
+fail explicitly. To serve one durable row-preserving plan, add both `--subscription-sql SQL` and
+`--subscription-key-file PATH`. The table must already exist. The key file must contain exactly 32
+nonzero bytes and be inaccessible to group/other; preserve the same secret across restarts or old
+resume tokens will fail authentication. The daemon reports `subscriptions=configured` only after
+the plan, coordinator, snapshot context, internal queues, and applied-append observer are ready. SQL
 INSERT acknowledges only after `LOCAL_SYNC`, but its query envelope has no durable client retry key;
 use canonical ingest when an ambiguous response must be retried without duplicating rows. `SIGINT`
 and `SIGTERM` request orderly worker join, reactor shutdown, WAL drain, Raft close, and root-lock
-release.
+release. Active configured subscriptions receive resumable server-shutdown termination while the
+reactor is still draining responses.
 
 Set finite connection, event, frame, buffered-byte, queued-frame, in-flight request, handshake, and
 idle limits. Defaults are development bounds, not capacity guidance. Monitor accepted, rejected,

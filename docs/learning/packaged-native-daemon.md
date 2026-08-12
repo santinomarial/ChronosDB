@@ -27,6 +27,13 @@ coordinator, resources, nor queues; all outlive it. A daemon registry must use s
 internal SPSC queues for subscription requests and responses rather than letting two consumers race
 on the reactor request ring.
 
+With explicit SQL and MAC-key-file options, startup installs or reopens one immutable plan and its
+coordinator below the database root. It compares the checkpoint vector with the recovered database
+publication. Equality resumes normally; storage ahead of the checkpoint invalidates replay through
+the current vector and checkpoints before admission, while storage behind or source drift fails.
+The worker routes subscription tasks into the internal queues and continues polling the reactor
+during signal shutdown until resumable terminal responses have left the worker ring.
+
 ## Failure behavior and limits
 
 Queue capacity is finite and validated before allocation. Reactor admission, frame, connection,

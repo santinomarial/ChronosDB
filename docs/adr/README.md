@@ -276,3 +276,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0239](0239-bounded-single-node-live-append-fanout.md) | Bounded single-node live append fan-out | accepted |
 | [0240](0240-write-synchronous-live-checkpoint-gate.md) | Write-synchronous live checkpoint gate | accepted |
 | [0241](0241-single-node-subscription-runtime-composition.md) | Single-node subscription runtime composition | accepted |
+| [0242](0242-configured-chronosd-subscription-lifecycle.md) | Configured chronosd subscription lifecycle | accepted |

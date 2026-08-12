@@ -7,6 +7,7 @@
 #include "chronos/service/single_node_live_append_fanout.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 
 namespace chronos::service {
@@ -52,6 +53,7 @@ public:
   [[nodiscard]] common::Status poll_once();
   void begin_shutdown() noexcept;
   [[nodiscard]] bool drained() const noexcept;
+  [[nodiscard]] bool owns(std::uint64_t connection_id, std::uint64_t request_id) const noexcept;
   [[nodiscard]] SingleNodeSubscriptionRuntimeMetrics metrics() const noexcept;
 
 private:

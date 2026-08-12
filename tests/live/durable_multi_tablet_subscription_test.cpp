@@ -207,6 +207,40 @@ TEST(DurableMultiTabletSubscriptionTest, DoesNotAdvanceFrontierWhenInstallationF
   EXPECT_FALSE(frontiers->has_value());
 }
 
+TEST(DurableMultiTabletSubscriptionTest, PersistsRecoveryReplayRebaseBeforeReopen) {
+  TemporaryDirectory directory;
+  ASSERT_FALSE(directory.path().empty());
+  Fixture fixture;
+  std::vector<std::byte> initial_token;
+  {
+    auto owner = DurableMultiTabletSubscription::create_new(fixture.config(directory.path()));
+    ASSERT_TRUE(owner.has_value()) << owner.error().to_string();
+    const auto registration = owner->register_subscription(fixture.request());
+    ASSERT_TRUE(registration.has_value()) << registration.error().to_string();
+    initial_token = registration->initial_resume_token;
+
+    auto current = owner->latest_positions();
+    ASSERT_TRUE(current.has_value()) << current.error().to_string();
+    ASSERT_EQ(current->size(), 2U);
+    (*current)[0].record_sequence = 4U;
+    (*current)[1].record_sequence = 7U;
+    ASSERT_TRUE(owner->mark_replay_unavailable_through(*current).is_ok());
+    EXPECT_TRUE(owner->has_uncheckpointed_changes());
+    const auto installed = owner->checkpoint();
+    ASSERT_TRUE(installed.has_value()) << installed.error().to_string();
+  }
+
+  auto reopened = DurableMultiTabletSubscription::open_existing(fixture.config(directory.path()));
+  ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+  const auto latest = reopened->latest_positions();
+  ASSERT_TRUE(latest.has_value()) << latest.error().to_string();
+  ASSERT_EQ(latest->size(), 2U);
+  EXPECT_EQ((*latest)[0].record_sequence, 4U);
+  EXPECT_EQ((*latest)[1].record_sequence, 7U);
+  EXPECT_EQ(reopened->resume_subscription(initial_token).error().code(),
+            common::StatusCode::kNotFound);
+}
+
 TEST(DurableMultiTabletSubscriptionTest, RecoversTerminalSchemaInvalidation) {
   TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
