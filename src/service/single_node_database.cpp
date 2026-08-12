@@ -436,6 +436,35 @@ SingleNodeDatabase::find_tablet(const schema::TabletId& tablet_id) const noexcep
   const auto found = std::ranges::find(impl_->fresh_tablets, tablet_id, &FreshTablet::tablet_id);
   return found == impl_->fresh_tablets.end() ? nullptr : &found->state;
 }
+common::Result<std::vector<ingest::TabletSnapshot>>
+SingleNodeDatabase::table_snapshots(const schema::TableId& table_id) const {
+  const auto table = std::ranges::find_if(impl_->tables, [&](const RecoveredTable& candidate) {
+    return candidate.lineage.table_id() == table_id;
+  });
+  if (table == impl_->tables.end())
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kNotFound, "table has no local runtime state"});
+  try {
+    std::vector<ingest::TabletSnapshot> snapshots;
+    snapshots.reserve(table->tablets.size());
+    for (const schema::TabletId& tablet_id : table->tablets) {
+      const ingest::TabletState* const tablet = find_tablet(tablet_id);
+      if (tablet == nullptr)
+        return common::make_unexpected(corruption("local table placement has no tablet state"));
+      auto snapshot = tablet->snapshot();
+      if (!snapshot.has_value())
+        return common::make_unexpected(snapshot.error());
+      snapshots.push_back(std::move(*snapshot));
+    }
+    if (snapshots.empty())
+      return common::make_unexpected(corruption("routable table has no tablet state"));
+    return snapshots;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("tablet snapshot allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("tablet snapshot count exceeds container limits"));
+  }
+}
 ingest::RetryDirectory& SingleNodeDatabase::retry_directory() noexcept {
   return impl_->recovered.has_value() ? impl_->recovered->retry_directory() : *impl_->retry;
 }

@@ -195,6 +195,17 @@ bind_create(SingleNodeDatabase& database) {
                     .payload = std::move(payload)}};
 }
 
+[[nodiscard]] network::NetworkTask query_task(const std::uint64_t request_id,
+                                              const std::string_view sql) {
+  auto payload = network::encode_query_request(sql).value();
+  return {.connection_id = 9U,
+          .principal_id = 7U,
+          .frame = {.header = {.message_type = network::MessageType::kQueryRequest,
+                               .request_id = request_id,
+                               .payload_size = static_cast<std::uint32_t>(payload.size())},
+                    .payload = std::move(payload)}};
+}
+
 [[nodiscard]] std::int64_t query_count(SingleNodeDatabase& database) {
   auto parsed = query::parse_sql_v1_select("SELECT count(*) AS rows FROM events");
   EXPECT_TRUE(parsed.has_value()) << parsed.error().status().to_string();
@@ -291,6 +302,25 @@ TEST(NativeProtocolServiceTest, AppliesLocalSyncIngestAndReturnsPositionlessMatc
   EXPECT_EQ(matching_ack->segment_number, 0U);
   EXPECT_EQ(matching_ack->byte_offset, 0U);
   EXPECT_EQ(database->find_tablet(tablet_id())->snapshot()->visible_row_count(), 2U);
+
+  auto query = service.execute_query(query_task(40U, "SELECT count(*) AS rows FROM events"));
+  ASSERT_TRUE(query.has_value()) << query.error().to_string();
+  ASSERT_EQ(query->responses.size(), 2U);
+  EXPECT_EQ(query->result_rows, 1U);
+  EXPECT_GT(query->payload_bytes, 0U);
+  EXPECT_EQ(query->responses[0].frame.header.message_type, network::MessageType::kQueryResult);
+  EXPECT_EQ(query->responses[1].frame.header.message_type, network::MessageType::kQueryEnd);
+  EXPECT_EQ(query->responses[0].frame.header.request_id, 40U);
+  const auto result = network::decode_query_result_batch(query->responses[0].frame.payload);
+  ASSERT_TRUE(result.has_value()) << result.error().to_string();
+  ASSERT_EQ(result->row_count(), 1U);
+  ASSERT_EQ(result->columns().size(), 1U);
+  EXPECT_EQ(result->columns()[0].name, "rows");
+  const network::QueryResultCell* const cell = result->cell(0U, 0U);
+  ASSERT_NE(cell, nullptr);
+  ASSERT_FALSE(cell->is_null);
+  common::ByteReader count{cell->value};
+  EXPECT_EQ(count.read_i64_le().value(), 2);
   EXPECT_TRUE(database->shutdown().is_ok());
 }
 
@@ -308,6 +338,53 @@ TEST(NativeProtocolServiceTest, RejectsMalformedIngestWithProtocolError) {
   const auto error = network::decode_error_message(response->frame.payload);
   ASSERT_TRUE(error.has_value()) << error.error().to_string();
   EXPECT_EQ(error->code, network::ProtocolErrorCode::kInvalidRequest);
+  EXPECT_TRUE(database->shutdown().is_ok());
+}
+
+TEST(NativeProtocolServiceTest, ConvertsBoundedQueryOverflowToOneTerminalError) {
+  TemporaryDirectory directory;
+  seed_catalog(directory);
+  auto database = SingleNodeDatabase::open_or_create(config(directory));
+  ASSERT_TRUE(database.has_value()) << database.error().to_string();
+  ASSERT_TRUE(ingest::execute_columnar_append(
+                  {.client_id = ingest::test::request_id<ingest::ClientId>(1U),
+                   .client_batch_id = ingest::test::request_id<ingest::ClientBatchId>(2U),
+                   .batch = batch()},
+                  database->retry_directory(), *database->find_tablet(tablet_id()),
+                  database->wal_coordinator())
+                  .has_value());
+  NativeProtocolServiceLimits limits;
+  limits.maximum_result_rows = 1U;
+  NativeProtocolService service{*database, limits};
+
+  auto query = service.execute_query(query_task(41U, "SELECT * FROM events"));
+  ASSERT_TRUE(query.has_value()) << query.error().to_string();
+  ASSERT_EQ(query->responses.size(), 1U);
+  EXPECT_EQ(query->result_rows, 0U);
+  EXPECT_EQ(query->responses[0].frame.header.message_type, network::MessageType::kError);
+  const auto error = network::decode_error_message(query->responses[0].frame.payload);
+  ASSERT_TRUE(error.has_value()) << error.error().to_string();
+  EXPECT_EQ(error->code, network::ProtocolErrorCode::kOverloaded);
+  EXPECT_TRUE(database->shutdown().is_ok());
+}
+
+TEST(NativeProtocolServiceTest, EmitsDescribedZeroRowResultBeforeQueryEnd) {
+  TemporaryDirectory directory;
+  seed_catalog(directory);
+  auto database = SingleNodeDatabase::open_or_create(config(directory));
+  ASSERT_TRUE(database.has_value()) << database.error().to_string();
+  NativeProtocolService service{*database};
+
+  auto query = service.execute_query(query_task(42U, "SELECT * FROM events WHERE false"));
+  ASSERT_TRUE(query.has_value()) << query.error().to_string();
+  ASSERT_EQ(query->responses.size(), 2U);
+  EXPECT_EQ(query->result_rows, 0U);
+  EXPECT_EQ(query->responses[0].frame.header.message_type, network::MessageType::kQueryResult);
+  EXPECT_EQ(query->responses[1].frame.header.message_type, network::MessageType::kQueryEnd);
+  const auto result = network::decode_query_result_batch(query->responses[0].frame.payload);
+  ASSERT_TRUE(result.has_value()) << result.error().to_string();
+  EXPECT_EQ(result->row_count(), 0U);
+  EXPECT_EQ(result->columns().size(), 3U);
   EXPECT_TRUE(database->shutdown().is_ok());
 }
 

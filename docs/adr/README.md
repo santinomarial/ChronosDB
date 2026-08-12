@@ -256,3 +256,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0219](0219-restartable-single-node-table-creation.md) | Restartable single-node table creation | accepted |
 | [0220](0220-native-protocol-ingest-service-adapter.md) | Native protocol ingest service adapter | accepted |
 | [0221](0221-global-multi-tablet-vector-source.md) | Global multi-tablet vector source | accepted |
+| [0222](0222-bounded-native-vector-query-results.md) | Bounded native vector query results | accepted |

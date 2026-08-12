@@ -261,6 +261,11 @@
   integration, daemon subprocess/restart, ASan/UBSan/TSan, and throughput/latency profiles. Focused
   coverage now proves LOCAL_SYNC application, exact WAL acknowledgement, positionless matching
   retry, routing-envelope retention, and malformed-request conversion.
+- Native vector query adapter allocation/fault injection, response-limit boundary/property tests,
+  source-free SELECT, ASOF and Manifest/CSEG composition, streaming response backpressure,
+  cancellation, concurrent query/DDL/shutdown, every logical cell type, scalar/vector differential
+  coverage, ASan/UBSan/TSan, and latency/memory profiles. Focused coverage now proves table-wide
+  count encoding, bounded overflow, and described zero-row completion.
 - Execute the complete requested three-node scenario with real sockets/processes and retained logs:
   create table, ingest, historical SQL, vector distributed aggregate, subscribe/update, leader kill,
   failover ingest/query, movement/query, tier/query, restart, and result reconciliation.

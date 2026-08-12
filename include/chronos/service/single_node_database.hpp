@@ -69,6 +69,10 @@ public:
   [[nodiscard]] ingest::TabletState* find_tablet(const schema::TabletId& tablet_id) noexcept;
   [[nodiscard]] const ingest::TabletState*
   find_tablet(const schema::TabletId& tablet_id) const noexcept;
+  // Acquires one stable publication for every currently local tablet of table_id in deterministic
+  // metadata placement order. The returned pins are independent of later tablet publications.
+  [[nodiscard]] common::Result<std::vector<ingest::TabletSnapshot>>
+  table_snapshots(const schema::TableId& table_id) const;
   [[nodiscard]] ingest::RetryDirectory& retry_directory() noexcept;
   [[nodiscard]] wal::WalCommitCoordinator& wal_coordinator() noexcept;
 

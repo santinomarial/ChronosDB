@@ -20,6 +20,14 @@ directory and WAL coordinator used by direct callers. A new append acknowledges 
 start and exact requested/effective durability. A matching retry performs no second WAL operation
 and therefore returns zero position fields.
 
+For SELECT, the same adapter parses and binds against the owner's immutable catalog, acquires stable
+publications for every local tablet in the bound table, lowers the supported SQL subset, and places
+one physical pipeline above the full tablet/generation source. Bound output descriptors and
+canonical vector cells become Protocol v1 result batches. Query memory, total rows, batches, and
+aggregate encoded payload bytes all have independent finite caps. A successful empty query still
+emits a described zero-row result before `QUERY_END`; a local failure discards accumulated frames
+and returns one terminal error.
+
 ## Startup ownership and data flow
 
 ```text
@@ -54,8 +62,9 @@ No fallback schema, policy, durability downgrade, or empty-success response exis
 
 Malformed transport/command bytes become client-invalid protocol errors. Database corruption stays
 distinguishable as an internal error; I/O, unavailability, and unsupported operations are execution
-failures. The adapter is synchronous and thread-affine: the daemon worker owns queue backpressure
-and will later own cancellation/concurrency policy.
+failures. The adapter is synchronous and thread-affine: it retains a complete result sequence within
+its explicit cap, while the daemon worker owns queue backpressure and will later own
+cancellation/concurrency policy.
 
 DDL is thread-affine. The bound statement must retain the exact current query-catalog pointer; a
 catalog update makes older bound DDL stale. After all metadata applies, the owner constructs the new
