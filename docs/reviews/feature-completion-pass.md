@@ -187,7 +187,9 @@ loading and explicit mode selection now compose it with Protocol 2 advertisement
 election, reactor routing/wakeup, and ordered shutdown.
 Authenticated Raft deployment routes now also have a separate strict bounded text parser binding
 ordered node IDs to unique IPv4 endpoints, TLS server identities, and unique leaf-certificate
-SHA-256 fingerprints. Daemon transport ownership and credential loading remain external.
+SHA-256 fingerprints. One immutable authority maps an exact verified fingerprint/address pair to
+that configured node ID for both inbound and outbound carriers. Daemon transport ownership and
+credential loading remain external.
 
 ### Phase 15 — Multi-Raft tablets and metadata
 

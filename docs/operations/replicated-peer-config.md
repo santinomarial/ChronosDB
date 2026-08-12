@@ -25,3 +25,7 @@ configuration and never appear in this shared routing file.
 This is deployment configuration, not consensus state. It cannot change Raft membership or
 committed tablet placement. The daemon reads it once during startup; live reload and DNS endpoint
 resolution are not implemented.
+
+The runtime authority revalidates local-node presence, ordering, and uniqueness even after parsing.
+It uses the configured Raft node ID directly as the stable principal: a verified fingerprint and
+IPv4 address must select that exact node before a Raft frame may claim it.

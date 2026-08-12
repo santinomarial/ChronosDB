@@ -705,6 +705,7 @@ add_library(
   src/service/replicated_ingest_database.cpp
   src/service/replicated_ingest_operation.cpp
   src/service/replicated_group_config.cpp
+  src/service/replicated_peer_authority.cpp
   src/service/replicated_peer_config.cpp
   src/service/replicated_ingest_runtime.cpp
   src/service/replicated_ingest_service.cpp
@@ -890,6 +891,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/service/replicated_ingest_operation_test.cpp
     tests/service/replicated_group_config_header_self_contained.cpp
     tests/service/replicated_group_config_test.cpp
+    tests/service/replicated_peer_authority_header_self_contained.cpp
+    tests/service/replicated_peer_authority_test.cpp
     tests/service/replicated_peer_config_header_self_contained.cpp
     tests/service/replicated_peer_config_test.cpp
     tests/service/replicated_ingest_runtime_header_self_contained.cpp
