@@ -105,7 +105,12 @@ reconfigure. The generated header is rewritten only when its content changes:
 ```sh
 build/dev/chronosctl version
 build/dev/chronosctl version --json
+build/dev/chronosd --help
 ```
+
+`chronosd` currently packages the loopback native-protocol lifecycle only. Its startup banner says
+`data_plane=unconfigured`; ingest, query, and subscription requests fail explicitly until the
+durable runtime adapter is implemented.
 
 The read-only WAL inspector acquires the existing writer lock, verifies the complete physical log,
 preflights every record, and then prints record metadata in deterministic order without dumping

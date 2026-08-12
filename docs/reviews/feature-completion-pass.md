@@ -193,7 +193,10 @@ distributed partial aggregation, a committed single-group Raft command, verified
 manifest callback, cache/range read, and byte-identical result in one process. Separate deterministic
 tests cover the requested 3-node Raft failover and Multi-Raft different-leader cases.
 
-A packaged daemon and the requested real three-process/socket workflow do not exist. A later focused
+A packaged `chronosd` lifecycle now owns the bounded native reactor and worker handoff, supports
+real loopback handshake/PING sockets, and fails data-plane requests explicitly because durable
+runtime composition is not configured. The requested real three-process/data-plane workflow does
+not exist. A later focused
 gate uses real mutual-TLS query sockets around the complete movement state machine, but simulates the
 externally committed promotion/removal milestones and deterministic worker aggregates. It does not
 start three server processes, execute SQL through the native protocol, kill a process, apply a Raft
@@ -303,7 +306,8 @@ The exact subsystem/category ledger is
 4. Build real coordinator/worker fragment and exchange protocols with consistency proofs, then wire
    safe Raft membership and durable snapshot movement.
 5. Add production S3 and Arrow/Parquet providers with dependency/security/compatibility review.
-6. Build the packaged three-node daemon/service adapter and run the complete small end-to-end path.
+6. Compose the packaged daemon with the durable three-node service adapter and run the complete
+   small end-to-end path.
 7. Run full compiler/Debug/Release/install suites, then ASan/UBSan/TSan, fuzz/corruption/crash,
    deterministic/chaos campaigns, SQL differential tests, and only afterward benchmarks/profiling/
    epoll-io_uring/SIMD/NUMA comparison and final tuning.

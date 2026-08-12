@@ -237,9 +237,9 @@
 
 ## End-to-end integration
 
-- Packaged three-node daemon and service adapter connecting native protocol, auth, ingest, WAL/Raft,
-  mutable heads, flush/CSEG/manifest, SQL execution, live delivery, metadata routing, failover,
-  movement, and object storage.
+- Compose the packaged `chronosd` lifecycle with a durable service adapter connecting native
+  protocol, auth, ingest, WAL/Raft, mutable heads, flush/CSEG/manifest, SQL execution, live delivery,
+  metadata routing, failover, movement, and object storage; then run it as three processes.
 - Execute the complete requested three-node scenario with real sockets/processes and retained logs:
   create table, ingest, historical SQL, vector distributed aggregate, subscribe/update, leader kill,
   failover ingest/query, movement/query, tier/query, restart, and result reconciliation.

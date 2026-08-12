@@ -22,6 +22,7 @@ function(chronos_configure_installation)
       chronos_cluster
       chronos_tiering
       chronosctl
+      chronosd
       chronos-csegdump
       chronos-flushbench
       chronos-waldump

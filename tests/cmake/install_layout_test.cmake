@@ -20,13 +20,26 @@ if(NOT DEFINED CHRONOS_TEST_INSTALL_LIBDIR)
   message(FATAL_ERROR "CHRONOS_TEST_INSTALL_LIBDIR is required")
 endif()
 
-foreach(tool IN ITEMS chronosctl chronos-csegdump chronos-flushbench chronos-waldump chronos-walbench)
+foreach(tool IN ITEMS chronosctl chronosd chronos-csegdump chronos-flushbench chronos-waldump
+                      chronos-walbench)
   set(installed_tool
       "${install_prefix}/${CHRONOS_TEST_INSTALL_BINDIR}/${tool}${CHRONOS_TEST_EXECUTABLE_SUFFIX}")
   if(NOT EXISTS "${installed_tool}")
     message(FATAL_ERROR "staging install omitted ${installed_tool}")
   endif()
 endforeach()
+
+set(installed_daemon
+    "${install_prefix}/${CHRONOS_TEST_INSTALL_BINDIR}/chronosd${CHRONOS_TEST_EXECUTABLE_SUFFIX}")
+execute_process(
+  COMMAND "${installed_daemon}" --help
+  RESULT_VARIABLE daemon_help_result
+  OUTPUT_QUIET
+  ERROR_QUIET
+)
+if(NOT daemon_help_result EQUAL 0)
+  message(FATAL_ERROR "installed chronosd --help failed with status ${daemon_help_result}")
+endif()
 
 set(installed_flushbench
     "${install_prefix}/${CHRONOS_TEST_INSTALL_BINDIR}/chronos-flushbench${CHRONOS_TEST_EXECUTABLE_SUFFIX}")

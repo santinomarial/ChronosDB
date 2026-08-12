@@ -2,9 +2,9 @@
 
 > **Pre-alpha — architecture-phase implementation.** The accepted single-node foundation through
 > Phase 10 is implemented and tested, including WAL/recovery, columnar storage, the supported SQL
-> and vectorized-query surface, and a bounded native networking library. ChronosDB is not a
-> production server: there is no packaged daemon, maintained TLS backend, distributed execution,
-> replication, or Phase 11 live-query implementation.
+> and vectorized-query surface, and a bounded native networking library. A packaged `chronosd`
+> process now exercises the native lifecycle but explicitly has no configured durable data plane.
+> ChronosDB is not a production server or production database service.
 
 ChronosDB is a greenfield, Linux-first distributed real-time analytical database planned primarily in C++23. It is intended to unite durable, low-latency ingestion of event-heavy data with historical columnar SQL, event-time-aware live analytics, system-time history, and resumable subscriptions—through purpose-built storage, query, networking, and replication subsystems rather than an existing database engine hidden behind a new interface.
 
@@ -47,7 +47,9 @@ Phases 0 through 10 have reached their documented development boundaries. The cu
 contains the checksummed WAL and recovery path, append-only mutable and immutable columnar storage,
 manifest/checkpoint/compaction machinery, the explicitly supported SQL v1 and bounded vectorized
 execution surface, and Protocol v1 with a portable client/session layer plus the Linux `epoll`
-reactor. The networking layer is embeddable library code: plaintext is loopback-only, while epoll
+reactor. The networking layer remains embeddable library code, and `chronosd` packages its bounded
+process/socket lifecycle while explicitly rejecting data-plane requests until durable runtime
+composition exists. Plaintext is loopback-only, while epoll
 `TLS_REQUIRED` uses maintained OpenSSL mutual TLS and authorizes the verified client-certificate
 fingerprint before protocol decoding. io_uring TLS remains explicitly unsupported. Published
 measurements are reproducible subsystem baselines, not production capacity or service-level claims.
@@ -66,6 +68,7 @@ ctest --preset dev
 
 build/dev/chronosctl version
 build/dev/chronosctl version --json
+build/dev/chronosd --help
 ```
 
 Run the normal local format, build, test, and static-analysis sequence with `scripts/check.sh`.

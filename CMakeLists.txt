@@ -675,6 +675,14 @@ chronos_set_project_warnings(chronosctl)
 chronos_enable_sanitizers(chronosctl)
 chronos_enable_static_analysis(chronosctl)
 
+add_executable(chronosd tools/chronosd/main.cpp)
+set_target_properties(chronosd PROPERTIES CXX_EXTENSIONS OFF)
+target_compile_features(chronosd PRIVATE cxx_std_23)
+target_link_libraries(chronosd PRIVATE chronos::network Threads::Threads)
+chronos_set_project_warnings(chronosd)
+chronos_enable_sanitizers(chronosd)
+chronos_enable_static_analysis(chronosd)
+
 add_executable(chronos-waldump tools/chronos-waldump/main.cpp)
 set_target_properties(chronos-waldump PROPERTIES CXX_EXTENSIONS OFF)
 target_compile_features(chronos-waldump PRIVATE cxx_std_23)
@@ -1002,6 +1010,21 @@ if(CHRONOS_BUILD_TESTS)
   chronos_enable_sanitizers(chronos_feature_smoke_tests)
   chronos_enable_static_analysis(chronos_feature_smoke_tests)
   gtest_discover_tests(chronos_feature_smoke_tests DISCOVERY_TIMEOUT 30)
+
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(chronosd_process_tests tests/integration/chronosd_process_test.cpp)
+    set_target_properties(chronosd_process_tests PROPERTIES CXX_EXTENSIONS OFF)
+    target_compile_features(chronosd_process_tests PRIVATE cxx_std_23)
+    target_link_libraries(chronosd_process_tests PRIVATE chronos::network GTest::gtest_main)
+    target_compile_definitions(
+      chronosd_process_tests PRIVATE CHRONOSD_PATH="$<TARGET_FILE:chronosd>"
+    )
+    add_dependencies(chronosd_process_tests chronosd)
+    chronos_set_project_warnings(chronosd_process_tests)
+    chronos_enable_sanitizers(chronosd_process_tests)
+    chronos_enable_static_analysis(chronosd_process_tests)
+    gtest_discover_tests(chronosd_process_tests DISCOVERY_TIMEOUT 30)
+  endif()
 
   add_executable(
     chronos_schema_tests

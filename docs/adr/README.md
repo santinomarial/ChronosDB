@@ -247,3 +247,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0210](0210-pinned-ordered-s3-credential-chain.md) | Pinned ordered S3 credential chain | accepted |
 | [0211](0211-explicit-s3-container-credential-provider.md) | Explicit S3 container credential provider | accepted |
 | [0212](0212-imdsv2-only-s3-instance-credentials.md) | IMDSv2-only S3 instance credentials | accepted |
+| [0213](0213-packaged-native-daemon-lifecycle.md) | Packaged native daemon lifecycle | accepted |
