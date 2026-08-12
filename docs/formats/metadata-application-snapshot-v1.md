@@ -1,7 +1,7 @@
 # Metadata Application Snapshot v1
 
-> **Status: canonical structural codec implemented; durable installation and recovery composition
-> follow separately.**
+> **Status: canonical structural codec and lock-protected local durable installation implemented;
+> recovery composition follows separately.**
 
 All integers are unsigned little-endian. The object is caller-bounded and has a 1 GiB format
 maximum. Its magic is `CHRMASN\0`, major version 1, minor version 0.
@@ -56,3 +56,7 @@ term. Internal Raft entries are omitted and therefore appear as index gaps.
 The final four bytes are CRC32C over every preceding byte. No trailing bytes are allowed. The
 structural codec does not reinterpret nested Metadata Command v1 or Schema Definition v1 bytes;
 durable installation and recovery must exact-decode them before accepting application state.
+
+Local durable files use `metadata-snapshot-<20-digit-index>.rmas` in a directory exclusively owned
+by one metadata group. Installation exact-validates before and after write, file-syncs, renames
+without replacement, and directory-syncs before reporting success.

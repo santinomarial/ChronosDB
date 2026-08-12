@@ -38,7 +38,8 @@ projection without borrowing the state machine's internal maps.
 The applied index is not a catalog snapshot. Startup constructs empty state and replays every
 retained committed entry, then leaves or advances the durable applied index as appropriate. A
 compacted prefix is still rejected until the canonical Metadata Application Snapshot v1 bytes are
-durably installed and composed with recovery. That format now retains exact original metadata and
+composed with recovery. Its locked storage now durably installs and reopens exact immutable bytes;
+the format retains exact original metadata and
 schema-definition entries plus the Raft membership checkpoint, rather than inventing a second
 latest-state catalog grammar. A failed live
 application poisons the owner; restart revalidates authoritative log bytes.
