@@ -261,3 +261,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0224](0224-configured-single-node-chronosd.md) | Configured single-node chronosd | accepted |
 | [0225](0225-sql-insert-columnar-materialization.md) | SQL INSERT columnar materialization | accepted |
 | [0226](0226-native-sql-insert-dispatch.md) | Native SQL INSERT dispatch | accepted |
+| [0227](0227-empty-manifest-namespace-initialization.md) | Empty Manifest namespace initialization | accepted |

@@ -255,6 +255,41 @@ void saturating_add(std::uint64_t& target, const std::uint64_t value) noexcept {
   return common::Status::ok();
 }
 
+[[nodiscard]] common::Status
+validate_initialization(const EmptyManifestStorageInitialization& initialization) {
+  const common::Status storage =
+      validate_config({.database_root = initialization.database_root,
+                       .file_permissions = initialization.file_permissions});
+  if (!storage.is_ok())
+    return storage;
+  if (!initialization.wal_id.is_valid())
+    return invalid("Manifest storage initialization WAL identity must be nonzero");
+  if (initialization.directory_permissions == 0U ||
+      (initialization.directory_permissions & static_cast<std::uint16_t>(~0777U)) != 0U)
+    return invalid("Manifest storage directory permissions are invalid");
+  return common::Status::ok();
+}
+
+[[nodiscard]] const io::DirectoryEntry* find_entry(const std::vector<io::DirectoryEntry>& entries,
+                                                   const std::string_view name) noexcept {
+  const auto found = std::ranges::find(entries, name, &io::DirectoryEntry::name);
+  return found == entries.end() ? nullptr : &*found;
+}
+
+[[nodiscard]] common::Status ensure_initialization_directory(
+    io::PosixDirectory& root, const std::vector<io::DirectoryEntry>& entries,
+    const std::string_view name, const std::uint16_t permissions, bool& created) {
+  const io::DirectoryEntry* entry = find_entry(entries, name);
+  if (entry != nullptr)
+    return entry->type == io::DirectoryEntryType::kDirectory
+               ? common::Status::ok()
+               : corruption(std::string{name}.append(" is not a directory"));
+  common::Status status = root.create_exclusive_directory(name, permissions);
+  if (status.is_ok())
+    created = true;
+  return status;
+}
+
 } // namespace
 
 class LoadedManifestGeneration::Impl {
@@ -578,6 +613,249 @@ ManifestStorage& ManifestStorage::operator=(ManifestStorage&&) noexcept = defaul
 common::Result<ManifestStorage>
 ManifestStorage::open_existing(const ManifestStorageConfig& config) {
   return open_existing_with(config, io::detail::system_posix_syscalls());
+}
+
+common::Result<ManifestStorage>
+ManifestStorage::initialize_empty(const EmptyManifestStorageInitialization& initialization) {
+  const common::Status initialization_status = validate_initialization(initialization);
+  if (!initialization_status.is_ok())
+    return common::make_unexpected(initialization_status);
+  auto root = io::PosixDirectory::open(initialization.database_root);
+  if (!root.has_value())
+    return common::make_unexpected(with_context("open Manifest initialization root", root.error()));
+  auto root_entries = root->list_entries();
+  if (!root_entries.has_value())
+    return common::make_unexpected(
+        with_context("list Manifest initialization root", root_entries.error()));
+  const io::DirectoryEntry* const existing_parts = find_entry(*root_entries, kPartsDirectoryName);
+  const io::DirectoryEntry* const existing_manifests =
+      find_entry(*root_entries, kManifestDirectoryName);
+  if ((existing_parts == nullptr) != (existing_manifests == nullptr)) {
+    const std::string_view existing_name =
+        existing_parts != nullptr ? kPartsDirectoryName : kManifestDirectoryName;
+    auto existing = root->open_directory(existing_name);
+    if (!existing.has_value())
+      return common::make_unexpected(
+          with_context("open partial Manifest initialization directory", existing.error()));
+    auto entries = existing->list_entries();
+    if (!entries.has_value())
+      return common::make_unexpected(
+          with_context("list partial Manifest initialization directory", entries.error()));
+    if (!entries->empty())
+      return common::make_unexpected(
+          corruption("partial Manifest initialization contains post-directory state"));
+  }
+  bool created_directory = false;
+  common::Status status =
+      ensure_initialization_directory(*root, *root_entries, kPartsDirectoryName,
+                                      initialization.directory_permissions, created_directory);
+  if (!status.is_ok())
+    return common::make_unexpected(with_context("establish Manifest parts directory", status));
+  status = ensure_initialization_directory(*root, *root_entries, kManifestDirectoryName,
+                                           initialization.directory_permissions, created_directory);
+  if (!status.is_ok())
+    return common::make_unexpected(with_context("establish Manifest generation directory", status));
+  if (created_directory) {
+    status = root->sync();
+    if (!status.is_ok())
+      return common::make_unexpected(with_context("synchronize Manifest directory names", status));
+  }
+  auto parts = root->open_directory(kPartsDirectoryName);
+  if (!parts.has_value())
+    return common::make_unexpected(
+        with_context("open initialized Manifest parts directory", parts.error()));
+  auto manifests = root->open_directory(kManifestDirectoryName);
+  if (!manifests.has_value())
+    return common::make_unexpected(
+        with_context("open initialized Manifest generation directory", manifests.error()));
+  auto manifest_entries = manifests->list_entries();
+  if (!manifest_entries.has_value())
+    return common::make_unexpected(
+        with_context("list initialized Manifest generation directory", manifest_entries.error()));
+  const io::DirectoryEntry* lock_entry = find_entry(*manifest_entries, kManifestLockFileName);
+  common::Result<io::PosixAdvisoryLock> lock =
+      common::make_unexpected(invalid("Manifest initialization lock was not acquired"));
+  if (lock_entry == nullptr) {
+    if (!manifest_entries->empty())
+      return common::make_unexpected(
+          corruption("Manifest initialization state exists without its writer LOCK"));
+    lock =
+        manifests->acquire_exclusive_lock(kManifestLockFileName, initialization.file_permissions);
+    if (!lock.has_value())
+      return common::make_unexpected(
+          with_context("create Manifest initialization lock", lock.error()));
+    status = manifests->sync();
+    if (!status.is_ok())
+      return common::make_unexpected(
+          with_context("synchronize Manifest initialization lock", status));
+  } else {
+    if (lock_entry->type != io::DirectoryEntryType::kRegularFile)
+      return common::make_unexpected(corruption("Manifest initialization LOCK is not regular"));
+    lock = manifests->acquire_existing_exclusive_lock(kManifestLockFileName);
+    if (!lock.has_value())
+      return common::make_unexpected(
+          with_context("acquire Manifest initialization lock", lock.error()));
+  }
+
+  std::unique_ptr<Impl> implementation;
+  try {
+    implementation =
+        std::make_unique<Impl>(std::move(*root), std::move(*parts), std::move(*manifests),
+                               std::move(*lock), initialization.file_permissions);
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kResourceExhausted, "Manifest initialization owner allocation failed"});
+  }
+  ManifestStorage storage{std::move(implementation)};
+  auto part_entries = storage.implementation_->parts_.list_entries();
+  if (!part_entries.has_value())
+    return common::make_unexpected(
+        with_context("relist Manifest initialization parts", part_entries.error()));
+  manifest_entries = storage.implementation_->manifests_.list_entries();
+  if (!manifest_entries.has_value())
+    return common::make_unexpected(
+        with_context("relist Manifest initialization generations", manifest_entries.error()));
+
+  bool has_final = false;
+  std::vector<std::string> initialization_temporaries;
+  try {
+    for (const io::DirectoryEntry& entry : *manifest_entries) {
+      if (entry.name == kManifestLockFileName)
+        continue;
+      if (entry.type != io::DirectoryEntryType::kRegularFile)
+        return common::make_unexpected(
+            corruption("Manifest initialization namespace contains a non-regular entry"));
+      if (parse_manifest_file_name(entry.name).has_value()) {
+        has_final = true;
+        continue;
+      }
+      auto temporary = parse_temporary_manifest_file_name(entry.name);
+      if (!temporary.has_value() || temporary->generation != 1U)
+        return common::make_unexpected(
+            corruption("Manifest initialization namespace contains unrelated state"));
+      initialization_temporaries.push_back(entry.name);
+    }
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                  "Manifest initialization allocation failed"});
+  }
+
+  if (has_final) {
+    auto snapshot = storage.scan_namespace();
+    if (!snapshot.has_value())
+      return common::make_unexpected(snapshot.error());
+    if (snapshot->generations.size() != 1U || !snapshot->final_parts.empty())
+      return common::make_unexpected(
+          corruption("Manifest initialization found a nonempty or advanced namespace"));
+    auto loaded =
+        storage.load_selected_manifest({.expected_database_id = initialization.database_id,
+                                        .expected_wal_id = initialization.wal_id,
+                                        .schema_bindings = {},
+                                        .decode_limits = {},
+                                        .part_validation_limits = {}});
+    if (!loaded.has_value())
+      return common::make_unexpected(loaded.error());
+    if (!loaded->tablets().empty() || !loaded->parts().empty() || !loaded->retries().empty() ||
+        loaded->reclaim_checkpoint() !=
+            WalCheckpoint{.record_sequence = 0U, .segment_number = 1U, .byte_offset = 64U})
+      return common::make_unexpected(
+          corruption("Manifest initialization generation one is not exactly empty"));
+    auto cleanup = storage.cleanup_temporaries();
+    if (!cleanup.has_value())
+      return common::make_unexpected(cleanup.error());
+    return storage;
+  }
+
+  bool removed_parts = false;
+  for (const io::DirectoryEntry& entry : *part_entries) {
+    if (entry.type != io::DirectoryEntryType::kRegularFile ||
+        !parse_temporary_part_file_name(entry.name).has_value())
+      return common::make_unexpected(
+          corruption("Manifest initialization parts directory contains unrelated state"));
+    status = storage.implementation_->parts_.remove_file(entry.name);
+    if (!status.is_ok())
+      return common::make_unexpected(
+          with_context("remove interrupted Manifest part temporary", status));
+    removed_parts = true;
+  }
+  if (removed_parts) {
+    status = storage.implementation_->parts_.sync();
+    if (!status.is_ok())
+      return common::make_unexpected(
+          with_context("synchronize interrupted Manifest part cleanup", status));
+  }
+  for (const std::string& name : initialization_temporaries) {
+    status = storage.implementation_->manifests_.remove_file(name);
+    if (!status.is_ok())
+      return common::make_unexpected(
+          with_context("remove interrupted initial Manifest candidate", status));
+  }
+  if (!initialization_temporaries.empty()) {
+    status = storage.implementation_->manifests_.sync();
+    if (!status.is_ok())
+      return common::make_unexpected(
+          with_context("synchronize initial Manifest candidate cleanup", status));
+  }
+
+  auto encoded = encode_manifest_v1(
+      {.generation = 1U,
+       .database_id = initialization.database_id,
+       .wal_id = initialization.wal_id,
+       .reclaim_checkpoint = {.record_sequence = 0U, .segment_number = 1U, .byte_offset = 64U},
+       .tablets = {},
+       .parts = {},
+       .retries = {}});
+  if (!encoded.has_value())
+    return common::make_unexpected(encoded.error());
+  const common::Uuid nonce{initialization.wal_id.bytes};
+  auto final_name = manifest_file_name(1U);
+  auto temporary_name = temporary_manifest_file_name(1U, nonce);
+  if (!final_name.has_value() || !temporary_name.has_value())
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInternal, "initial Manifest names are invalid"});
+  auto temporary = storage.implementation_->manifests_.create_exclusive_regular_file(
+      *temporary_name, initialization.file_permissions);
+  if (!temporary.has_value())
+    return common::make_unexpected(
+        with_context("create initial Manifest candidate", temporary.error()));
+  status = temporary->write_all_at(0U, encoded->bytes());
+  if (!status.is_ok())
+    return common::make_unexpected(with_context("write initial Manifest candidate", status));
+  auto readback = read_final_file(storage.implementation_->manifests_,
+                                  {.name = *temporary_name,
+                                   .maximum_length = format::kMaximumFileLength,
+                                   .exact_length = encoded->size(),
+                                   .description = "initial Manifest candidate"});
+  if (!readback.has_value())
+    return common::make_unexpected(readback.error());
+  auto decoded = decode_manifest_v1_exact(*readback);
+  if (!decoded.has_value() || !std::ranges::equal(*readback, encoded->bytes()))
+    return common::make_unexpected(corruption("initial Manifest candidate readback disagrees"));
+  status = temporary->sync_all();
+  if (!status.is_ok())
+    return common::make_unexpected(with_context("synchronize initial Manifest candidate", status));
+  status = temporary->close();
+  if (!status.is_ok())
+    return common::make_unexpected(with_context("close initial Manifest candidate", status));
+  status = storage.implementation_->manifests_.rename_no_replace(
+      {.old_name = *temporary_name, .new_name = *final_name});
+  if (!status.is_ok())
+    return common::make_unexpected(with_context("install initial Manifest generation", status));
+  status = storage.implementation_->manifests_.sync();
+  if (!status.is_ok()) {
+    storage.implementation_->poisoned_ = true;
+    storage.implementation_->poison_status_ =
+        with_context("synchronize initial Manifest generation", status);
+    return common::make_unexpected(storage.implementation_->poison_status_);
+  }
+  storage.implementation_->manifest_metrics_ = {.attempts = 1U,
+                                                .failures = 0U,
+                                                .installed_generations = 1U,
+                                                .installed_bytes = encoded->size(),
+                                                .referenced_parts_validated = 0U,
+                                                .file_syncs = 1U,
+                                                .directory_syncs = 1U};
+  return storage;
 }
 
 common::Result<ManifestStorage>

@@ -53,6 +53,14 @@ struct ManifestStorageConfig {
   std::uint16_t file_permissions{0600U};
 };
 
+struct EmptyManifestStorageInitialization {
+  std::string database_root;
+  DatabaseId database_id;
+  wal::WalId wal_id;
+  std::uint16_t file_permissions{0600U};
+  std::uint16_t directory_permissions{0700U};
+};
+
 struct PartInstallRequest {
   std::reference_wrapper<const cseg::EncodedCsegPart> encoded_part;
   PartDescriptor descriptor;
@@ -468,6 +476,14 @@ public:
 
   [[nodiscard]] static common::Result<ManifestStorage>
   open_existing(const ManifestStorageConfig& config);
+
+  // Establishes parts/, manifest/, manifest/LOCK, and an exact empty generation 1 while the caller
+  // holds aggregate database-root ownership. A crash-created recognized generation-1 temporary is
+  // removed, synchronized, and rebuilt; it is never promoted. An existing final generation must be
+  // exactly the same empty identity-bound generation 1. This boundary never opens a nonempty or
+  // advanced namespace and does not alter the frozen database Bootstrap v1 descriptor.
+  [[nodiscard]] static common::Result<ManifestStorage>
+  initialize_empty(const EmptyManifestStorageInitialization& initialization);
 
   // Implements the complete per-part installation ordering. The input and exact readback are both
   // validated before file sync. A final name is never replaced. Failure after rename but before

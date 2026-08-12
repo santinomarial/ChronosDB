@@ -34,8 +34,9 @@ The public headers are:
   one sealed-head part and its retry outcomes;
 - `chronos/manifest/checkpoint_builder.hpp`: read-only proof of the longest globally consecutive
   WAL prefix represented by one checked candidate; and
-- `chronos/manifest/storage.hpp`: locked, directory-anchored immutable part and generation
-  installation, strict namespace scanning, and temporary cleanup.
+- `chronos/manifest/storage.hpp`: explicit empty namespace initialization plus locked,
+  directory-anchored immutable part and generation installation, strict namespace scanning, and
+  temporary cleanup.
 
 Referenced-part validation borrows exact file images supplied in descriptor order. It validates
 the catalog lineage first, then requires the canonical identity-derived filename and exact length,
@@ -228,6 +229,13 @@ application kind have been accepted.
 children without following final-component symlinks, then acquires the already-existing
 `manifest/LOCK`. The move-only owner holds all descriptors and the lock for its lifetime and is
 single-writer rather than internally synchronized.
+
+`ManifestStorage::initialize_empty()` is separate from ordinary open. Under caller-held aggregate
+root ownership it creates and synchronizes missing empty directory prerequisites, establishes and
+synchronizes the writer lock, cleans only recognized pre-readiness temporaries, and installs an
+exact database/WAL-bound empty generation 1. It accepts only that exact final state on replay and
+rejects advanced, nonempty, malformed, identity-mismatched, or impossible partially deleted state.
+Candidate readback is byte-compared and decoded before file and directory durability boundaries.
 
 `install_part()` rejects invalid input before filesystem mutation. It exclusively creates the
 recognized temporary name, writes all bytes, verifies size, reads back and repeats full validation,

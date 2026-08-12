@@ -92,9 +92,19 @@ manifest generation 1 for the existing WAL identity. Generation 1 may contain no
 retry, or record coverage and uses the exact empty-prefix WAL coordinate `(segment 1, offset 64,
 record sequence 0)`.
 
+`ManifestStorage::initialize_empty()` is the explicit implementation boundary for that transition.
+Its caller already owns the aggregate database root and passes the durable database identity plus
+the opened WAL identity. Recognized pre-readiness temporaries are removed and synchronized before
+the exact generation is rebuilt; they are never promoted. The initializer accepts an existing
+final only when it is exactly the same identity-bound empty generation 1. Missing-lock/sibling
+states after a final exists, identity mismatch, nonempty descriptors, final parts, and later
+generations fail closed.
+
 Opening and creating are distinct. An existing database without a final manifest generation is not
-silently initialized. Likewise, an existing WAL identity cannot be paired with a newly generated
-database/manifest identity by an ordinary recovery path.
+silently initialized by `open_existing()` or an ordinary recovery path. Only the explicit
+root-owner initialization transition may complete a classified pre-readiness namespace. Likewise,
+an existing WAL identity cannot be paired with a newly generated database/manifest identity by an
+ordinary recovery path.
 
 All temporary/final renames stay within one directory and use atomic no-replace semantics. The
 reference Linux durability contract requires regular local files, one filesystem for each rename,

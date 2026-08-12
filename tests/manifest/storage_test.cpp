@@ -434,6 +434,105 @@ TEST(ManifestStorageTest, RequiresExactExistingDirectoryAndLockLayout) {
             common::StatusCode::kInvalidArgument);
 }
 
+TEST(ManifestStorageTest, InitializesAndReopensExactEmptyGenerationOne) {
+  TemporaryDirectory temporary;
+  ASSERT_TRUE(temporary.valid());
+  const PartFixture fixture;
+  const EmptyManifestStorageInitialization initialization{.database_root =
+                                                              temporary.path().string(),
+                                                          .database_id = fixture.database_id,
+                                                          .wal_id = fixture.wal_id};
+  {
+    auto initialized = ManifestStorage::initialize_empty(initialization);
+    ASSERT_TRUE(initialized.has_value()) << initialized.error().to_string();
+    EXPECT_TRUE(std::filesystem::is_directory(temporary.path() / kPartsDirectoryName));
+    EXPECT_TRUE(std::filesystem::is_regular_file(temporary.path() / kManifestDirectoryName /
+                                                 std::string{kManifestLockFileName}));
+    EXPECT_TRUE(std::filesystem::is_regular_file(temporary.path() / kManifestDirectoryName /
+                                                 *manifest_file_name(1U)));
+    EXPECT_EQ(initialized->manifest_metrics().installed_generations, 1U);
+    auto selected =
+        initialized->load_selected_manifest({.expected_database_id = fixture.database_id,
+                                             .expected_wal_id = fixture.wal_id,
+                                             .schema_bindings = {},
+                                             .decode_limits = {},
+                                             .part_validation_limits = {}});
+    ASSERT_TRUE(selected.has_value()) << selected.error().to_string();
+    EXPECT_EQ(selected->generation(), 1U);
+    EXPECT_TRUE(selected->tablets().empty());
+    EXPECT_TRUE(selected->parts().empty());
+    EXPECT_TRUE(selected->retries().empty());
+  }
+
+  {
+    auto reopened = ManifestStorage::initialize_empty(initialization);
+    ASSERT_TRUE(reopened.has_value()) << reopened.error().to_string();
+    EXPECT_EQ(reopened->manifest_metrics().installed_generations, 0U);
+  }
+  EXPECT_EQ(ManifestStorage::initialize_empty({.database_root = temporary.path().string(),
+                                               .database_id = id<DatabaseId>(90U),
+                                               .wal_id = fixture.wal_id})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+}
+
+TEST(ManifestStorageTest, CleansRecognizedInterruptedInitializationCandidates) {
+  TemporaryDirectory temporary;
+  ASSERT_TRUE(temporary.valid());
+  const PartFixture fixture;
+  establish_layout(temporary.path());
+  const common::Uuid nonce{fixture.wal_id.bytes};
+  const std::array corrupt_manifest{std::byte{0xffU}};
+  const std::array abandoned_part{std::byte{0xeeU}};
+  create_entry(temporary.path(),
+               std::filesystem::path{kManifestDirectoryName} /
+                   *temporary_manifest_file_name(1U, nonce),
+               corrupt_manifest);
+  create_entry(temporary.path(),
+               std::filesystem::path{kPartsDirectoryName} /
+                   temporary_part_file_name(fixture.part_id, nonce),
+               abandoned_part);
+
+  auto initialized = ManifestStorage::initialize_empty({.database_root = temporary.path().string(),
+                                                        .database_id = fixture.database_id,
+                                                        .wal_id = fixture.wal_id});
+  ASSERT_TRUE(initialized.has_value()) << initialized.error().to_string();
+  EXPECT_TRUE(std::filesystem::is_empty(temporary.path() / kPartsDirectoryName));
+  const auto snapshot = initialized->scan_namespace();
+  ASSERT_TRUE(snapshot.has_value()) << snapshot.error().to_string();
+  EXPECT_EQ(snapshot->generations, std::vector<std::uint64_t>{1U});
+  EXPECT_TRUE(snapshot->temporary_manifests.empty());
+}
+
+TEST(ManifestStorageTest, RejectsFinalInitializationStateWithoutDurableLock) {
+  TemporaryDirectory temporary;
+  ASSERT_TRUE(temporary.valid());
+  const PartFixture fixture;
+  establish_layout(temporary.path(), false);
+  const auto empty = encode_manifest_v1(
+      {.generation = 1U,
+       .database_id = fixture.database_id,
+       .wal_id = fixture.wal_id,
+       .reclaim_checkpoint = {.record_sequence = 0U, .segment_number = 1U, .byte_offset = 64U},
+       .tablets = {},
+       .parts = {},
+       .retries = {}});
+  ASSERT_TRUE(empty.has_value()) << empty.error().to_string();
+  create_entry(temporary.path(),
+               std::filesystem::path{kManifestDirectoryName} / *manifest_file_name(1U),
+               empty->bytes());
+
+  EXPECT_EQ(ManifestStorage::initialize_empty({.database_root = temporary.path().string(),
+                                               .database_id = fixture.database_id,
+                                               .wal_id = fixture.wal_id})
+                .error()
+                .code(),
+            common::StatusCode::kCorruption);
+  EXPECT_FALSE(std::filesystem::exists(temporary.path() / kManifestDirectoryName /
+                                       std::string{kManifestLockFileName}));
+}
+
 TEST(ManifestStorageTest, HoldsTheManifestLockForItsCompleteLifetime) {
   TemporaryDirectory temporary;
   ASSERT_TRUE(temporary.valid());

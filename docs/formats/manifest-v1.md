@@ -41,6 +41,15 @@ name exists and before either directory can establish a `LOCAL_SYNC` durability 
 operations below are relative to already opened directory descriptors; basenames cannot contain a
 slash, `.` component, or `..` component.
 
+The explicit empty-namespace initializer binds generation 1 to an already durable nonzero database
+identity and the actual opened WAL identity. It creates and synchronizes both directory names,
+creates and synchronizes `manifest/LOCK`, then installs an empty generation 1 through the same
+write/readback/decode/sync/no-replace-rename/directory-sync ordering used by later generations. The
+final generation is the readiness marker; the initializer does not rewrite an enclosing database
+bootstrap descriptor. Recognized pre-readiness temporaries are removed and synchronized, never
+promoted. A final generation without its previously established lock or sibling directory is not a
+repairable initialization prefix.
+
 ### Installed part names
 
 An installed CSEG part is named exactly:
