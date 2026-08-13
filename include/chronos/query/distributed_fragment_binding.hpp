@@ -150,6 +150,30 @@ bind_group_backed_distributed_aggregate_snapshot(
     const GroupBackedDistributedAggregateSnapshotBinding& binding,
     DistributedAggregateSnapshotBindingLimits limits = {});
 
+struct DistributedAggregateFollowerReadAuthority {
+  raft::RaftGroupObservation leader_observation;
+  raft::RaftGroupObservation follower_observation;
+};
+
+struct FollowerGroupBackedDistributedAggregateSnapshotBinding {
+  std::reference_wrapper<const raft::MetadataCatalogSnapshot> catalog;
+  schema::TableId table_id;
+  // Canonical unique order by follower_observation.group_id. Each selected tablet group must have
+  // one same-term current-leader/follower pair; unrelated groups are ignored.
+  std::span<const DistributedAggregateFollowerReadAuthority> group_authorities;
+  std::span<const std::uint32_t> destination_column_ordinals;
+  std::uint32_t aggregate_input_index{};
+  std::optional<cseg::EventTimePredicate> event_time_predicate;
+};
+
+// Derives the leader-commit position only from a correlated same-group, same-term leader/follower
+// observation pair, then delegates placement, lag, and Manifest coverage to the metadata binder.
+[[nodiscard]] common::Result<CompatibleDistributedAggregateSnapshot>
+bind_follower_group_backed_distributed_aggregate_snapshot(
+    const DistributedAggregatePlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
+    const FollowerGroupBackedDistributedAggregateSnapshotBinding& binding,
+    DistributedAggregateSnapshotBindingLimits limits = {});
+
 } // namespace chronos::query
 
 #endif // CHRONOS_QUERY_DISTRIBUTED_FRAGMENT_BINDING_HPP_

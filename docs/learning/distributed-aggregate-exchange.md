@@ -127,9 +127,11 @@ to plan-ordered tablets through committed immutable tablet-to-group bindings and
 groups. The packaged replicated-query constructor first requires the committed catalog to cover the
 exact metadata-group barrier, then carries the authority through binding, committed route
 resolution, execution creation, and the TCP lifecycle owner without exposing intermediate
-correlation vectors. Follower leader-commit acquisition, DNS and multi-address resolution, remote
-worker-interrupt delivery, pooled multiplexing, asynchronous worker completion, and broader
-multi-node fault handling remain embedding work.
+correlation vectors. Bounded-stale binding now derives the commit frontier from a same-group,
+same-term leader/follower observation pair rather than a caller scalar. Transport acquisition of
+those observations, DNS and multi-address resolution, remote worker-interrupt delivery, pooled
+multiplexing, asynchronous worker completion, and broader multi-node fault handling remain
+embedding work.
 
 ## Verification and review questions
 

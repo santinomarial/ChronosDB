@@ -337,3 +337,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0300](0300-group-keyed-distributed-query-proof-binding.md) | Group-keyed distributed query proof binding | accepted |
 | [0301](0301-bound-snapshot-distributed-query-execution.md) | Bound-snapshot distributed query execution | accepted |
 | [0302](0302-packaged-replicated-distributed-query-construction.md) | Packaged replicated distributed query construction | accepted |
+| [0303](0303-correlated-follower-read-proof-binding.md) | Correlated follower read proof binding | accepted |

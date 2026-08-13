@@ -552,6 +552,40 @@ TEST(DistributedFragmentBindingTest, DerivesBoundedStaleAndLocalEventualAdmissio
   value.plan.read_policy = {.consistency = DistributedReadConsistency::kFollowerBoundedStale,
                             .maximum_staleness_positions = 2U};
 
+  std::array follower_authorities{DistributedAggregateFollowerReadAuthority{
+      .leader_observation = {.group_id = group_id,
+                             .node_id = 11U,
+                             .role = raft::Role::kLeader,
+                             .current_term = 2U,
+                             .leader_id = 11U,
+                             .last_log_index = 11U,
+                             .commit_index = 11U,
+                             .applied_index = 11U,
+                             .voters = {11U, 12U},
+                             .committed_voters = {11U, 12U}},
+      .follower_observation = observation}};
+  auto correlated = bind_follower_group_backed_distributed_aggregate_snapshot(
+      value.plan, *snapshot,
+      {.catalog = std::cref(catalog),
+       .table_id = schema_value.table_id(),
+       .group_authorities = follower_authorities,
+       .destination_column_ordinals = projection,
+       .aggregate_input_index = 1U});
+  ASSERT_TRUE(correlated.has_value()) << correlated.error().to_string();
+  EXPECT_EQ(correlated->dispatches().front().fragment.serving_node, 12U);
+  EXPECT_EQ(correlated->dispatches().front().fragment.observed_leader_commit_position, 11U);
+  follower_authorities[0].leader_observation.current_term = 3U;
+  EXPECT_EQ(bind_follower_group_backed_distributed_aggregate_snapshot(
+                value.plan, *snapshot,
+                {.catalog = std::cref(catalog),
+                 .table_id = schema_value.table_id(),
+                 .group_authorities = follower_authorities,
+                 .destination_column_ordinals = projection,
+                 .aggregate_input_index = 1U})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+
   auto bounded = bind_metadata_backed_distributed_aggregate_snapshot(
       value.plan, *snapshot,
       {.catalog = std::cref(catalog),
