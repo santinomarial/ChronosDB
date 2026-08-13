@@ -16,6 +16,7 @@ static_assert(!std::is_constructible_v<chronos::cluster::DistributedVectorResult
                                        const chronos::query::DistributedVectorResultSchema&>);
 static_assert(
     !std::is_copy_constructible_v<chronos::cluster::DistributedVectorResultExchangeWriteCursor>);
+static_assert(std::is_move_constructible_v<chronos::cluster::DistributedVectorResultCoordinatorV2>);
 
 namespace {
 [[maybe_unused]] const auto kEncode =
@@ -24,4 +25,6 @@ namespace {
     &chronos::cluster::decode_distributed_vector_result_exchange_message_v2_exact;
 [[maybe_unused]] const auto kCreateCursor =
     &chronos::cluster::DistributedVectorResultExchangeWriteCursor::create;
+[[maybe_unused]] const auto kCreateCoordinator =
+    &chronos::cluster::DistributedVectorResultCoordinatorV2::create;
 } // namespace

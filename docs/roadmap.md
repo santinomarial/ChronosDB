@@ -1062,8 +1062,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   inbound TCP owner now adds finite listener admission, stable connection records, metrics,
   per-carrier deadlines, and deterministic shutdown. A finite one-tablet sender now owns immutable
   whole attempts, exact schema/correlation revalidation, independent response count/byte bounds,
-  advisory hints, and capped retry/backoff without authority rebinding. Schema-bound coordination
-  and execution remain deferred. A distinct
+  advisory hints, and capped retry/backoff without authority rebinding. A schema-owning v2
+  coordinator now independently validates canonical messages, arbitrates exact retries, bounds
+  complete retained frame bytes, and releases plan-ordered schema-plus-results only after every
+  tablet terminates. Sender delivery and execution remain deferred. A distinct
   group-scoped grouped dispatch now
   preserves exact Raft authority without reinterpreting ungrouped dispatch bytes. Its worker reuses
   every local authority gate, resolves real temporal CSEG winners, and emits canonical grouped

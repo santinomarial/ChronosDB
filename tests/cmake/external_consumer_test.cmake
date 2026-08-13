@@ -1132,6 +1132,8 @@ int main() {
       &chronos::cluster::DistributedVectorQueryTcpServerV2::start;
   const auto create_distributed_vector_query_sender_v2 =
       &chronos::cluster::DistributedVectorQuerySenderV2::create;
+  const auto create_distributed_vector_result_coordinator_v2 =
+      &chronos::cluster::DistributedVectorResultCoordinatorV2::create;
   using ExecuteDistributedFragment = chronos::common::Result<chronos::query::ExchangeMessage> (*)(
       const chronos::query::DistributedAggregateWorkerRequest&);
   const ExecuteDistributedFragment execute_distributed_fragment =
@@ -1431,6 +1433,7 @@ int main() {
                  begin_distributed_vector_query_tcp_client_v2 != nullptr &&
                  start_distributed_vector_query_tcp_server_v2 != nullptr &&
                  create_distributed_vector_query_sender_v2 != nullptr &&
+                 create_distributed_vector_result_coordinator_v2 != nullptr &&
                  execute_distributed_fragment != nullptr &&
                  execute_distributed_grouped_fragment != nullptr &&
                  bind_select != nullptr && bind_create != nullptr && bind_insert != nullptr &&

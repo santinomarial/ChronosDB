@@ -78,5 +78,65 @@ TEST(DistributedVectorResultExchangeAllocationFailureTest, ClassifiesOwnedCodecA
   EXPECT_TRUE(decoded_success);
 }
 
+TEST(DistributedVectorResultCoordinatorV2AllocationFailureTest,
+     ClassifiesConstructionRetentionAndFinalPublication) {
+  const schema::LogicalType type_value =
+      schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
+  const query::DistributedVectorResultSchema stable_schema{
+      .columns = {{"value", type_value, false}}};
+  const schema::TabletId tablet_id = schema::TabletId::from_uuid(uuid(2U)).value();
+  const DistributedVectorResultExchangeMessage message{
+      .query_id = uuid(1U), .tablet_id = tablet_id, .sequence = 1U, .terminal = true};
+
+  bool construction_succeeded = false;
+  for (std::size_t fail_after = 0U; fail_after < 64U; ++fail_after) {
+    query::DistributedVectorResultSchema schema_value = stable_schema;
+    std::vector<schema::TabletId> tablets{tablet_id};
+    auto result = run_failure(fail_after, [&] {
+      return DistributedVectorResultCoordinatorV2::create(uuid(1U), std::move(tablets),
+                                                          std::move(schema_value));
+    });
+    if (result.has_value()) {
+      construction_succeeded = true;
+      break;
+    }
+    EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted);
+  }
+  EXPECT_TRUE(construction_succeeded);
+
+  bool retention_succeeded = false;
+  for (std::size_t fail_after = 0U; fail_after < 64U; ++fail_after) {
+    auto coordinator =
+        DistributedVectorResultCoordinatorV2::create(uuid(1U), {tablet_id}, stable_schema);
+    ASSERT_TRUE(coordinator.has_value());
+    const common::Status accepted =
+        run_failure(fail_after, [&] { return coordinator->accept(message); });
+    if (accepted.is_ok()) {
+      retention_succeeded = true;
+      break;
+    }
+    EXPECT_EQ(accepted.code(), common::StatusCode::kResourceExhausted);
+    ASSERT_TRUE(coordinator->accept(message).is_ok());
+    EXPECT_TRUE(std::move(*coordinator).finish().has_value());
+  }
+  EXPECT_TRUE(retention_succeeded);
+
+  bool finish_succeeded = false;
+  for (std::size_t fail_after = 0U; fail_after < 16U; ++fail_after) {
+    auto coordinator =
+        DistributedVectorResultCoordinatorV2::create(uuid(1U), {tablet_id}, stable_schema);
+    ASSERT_TRUE(coordinator.has_value());
+    ASSERT_TRUE(coordinator->accept(message).is_ok());
+    auto result = run_failure(fail_after, [&] { return std::move(*coordinator).finish(); });
+    if (result.has_value()) {
+      finish_succeeded = true;
+      break;
+    }
+    EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_TRUE(std::move(*coordinator).finish().has_value());
+  }
+  EXPECT_TRUE(finish_succeeded);
+}
+
 } // namespace
 } // namespace chronos::cluster

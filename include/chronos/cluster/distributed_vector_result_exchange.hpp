@@ -5,12 +5,14 @@
 #include "chronos/common/result.hpp"
 #include "chronos/common/uuid.hpp"
 #include "chronos/network/messages.hpp"
+#include "chronos/query/distributed.hpp"
 #include "chronos/query/distributed_vector_result_schema.hpp"
 #include "chronos/schema/identity.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -133,6 +135,48 @@ private:
       EncodedDistributedVectorResultExchangeMessage encoded) noexcept;
   EncodedDistributedVectorResultExchangeMessage encoded_;
   std::size_t written_bytes_{};
+};
+
+inline constexpr std::size_t kDefaultDistributedVectorResultCoordinatorBytesV2 =
+    std::size_t{64U} * 1024U * 1024U;
+inline constexpr std::size_t kMaximumDistributedVectorResultCoordinatorBytesV2 =
+    std::size_t{1024U} * 1024U * 1024U;
+
+struct DistributedVectorResultCoordinatorLimitsV2 {
+  query::DistributedCoordinatorLimits messages;
+  std::size_t maximum_total_encoded_bytes{kDefaultDistributedVectorResultCoordinatorBytesV2};
+};
+
+struct DistributedVectorQueryResultV2 {
+  query::DistributedVectorResultSchema result_schema;
+  std::vector<DistributedVectorResultExchangeMessage> messages;
+};
+
+// Single-owner coordinator for schema-bound v2 result streams. Successful finish transfers the
+// admitted schema and retained messages together in plan-tablet and sequence order.
+class DistributedVectorResultCoordinatorV2 {
+public:
+  DistributedVectorResultCoordinatorV2() = delete;
+  ~DistributedVectorResultCoordinatorV2();
+  DistributedVectorResultCoordinatorV2(const DistributedVectorResultCoordinatorV2&) = delete;
+  DistributedVectorResultCoordinatorV2&
+  operator=(const DistributedVectorResultCoordinatorV2&) = delete;
+  DistributedVectorResultCoordinatorV2(DistributedVectorResultCoordinatorV2&&) noexcept;
+  DistributedVectorResultCoordinatorV2& operator=(DistributedVectorResultCoordinatorV2&&) noexcept;
+
+  [[nodiscard]] static common::Result<DistributedVectorResultCoordinatorV2>
+  create(common::Uuid query_id, std::vector<schema::TabletId> tablets,
+         query::DistributedVectorResultSchema result_schema,
+         DistributedVectorResultCoordinatorLimitsV2 limits = {});
+  [[nodiscard]] common::Status accept(const DistributedVectorResultExchangeMessage& message);
+  [[nodiscard]] common::Status worker_failed(const schema::TabletId& tablet_id,
+                                             common::Status failure);
+  [[nodiscard]] common::Result<DistributedVectorQueryResultV2> finish() &&;
+
+private:
+  class Impl;
+  explicit DistributedVectorResultCoordinatorV2(std::unique_ptr<Impl> implementation) noexcept;
+  std::unique_ptr<Impl> implementation_;
 };
 
 } // namespace chronos::cluster

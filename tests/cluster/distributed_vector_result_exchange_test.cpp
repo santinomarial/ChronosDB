@@ -52,6 +52,12 @@ namespace {
   return network::encode_query_result_batch(2U, columns, cells).value();
 }
 
+[[nodiscard]] std::vector<std::byte> wrong_result_batch() {
+  const std::array<network::QueryResultColumn, 1U> columns{
+      network::QueryResultColumn{"wrong", type(schema::LogicalTypeKind::kInt64), false}};
+  return network::encode_query_result_batch(0U, columns, {}).value();
+}
+
 void store_u32_le(std::vector<std::byte>& bytes, const std::size_t offset,
                   const std::uint32_t value) {
   for (std::size_t index = 0U; index < 4U; ++index)
@@ -219,8 +225,12 @@ TEST(DistributedVectorResultExchangeTest, OwnsBoundedPartialReadsAndShortWritePr
         << "split=" << split;
     const auto suffix = reader.consume(first_encoded->bytes().subspan(split));
     ASSERT_TRUE(suffix.has_value()) << "split=" << split;
+    ASSERT_TRUE(prefix->message.has_value() || suffix->message.has_value()) << "split=" << split;
+    // Guarded by the assertion above.
+    // NOLINTBEGIN(bugprone-unchecked-optional-access)
     const DistributedVectorResultExchangeMessage* decoded =
         prefix->message.has_value() ? &*prefix->message : &*suffix->message;
+    // NOLINTEND(bugprone-unchecked-optional-access)
     EXPECT_EQ(decoded->sequence, 1U) << "split=" << split;
     EXPECT_EQ(decoded->encoded_result_batch, batch) << "split=" << split;
     EXPECT_EQ(reader.buffered_bytes(), 0U) << "split=" << split;
@@ -237,6 +247,8 @@ TEST(DistributedVectorResultExchangeTest, OwnsBoundedPartialReadsAndShortWritePr
       coalesced_reader.consume(common::ByteView{coalesced}.subspan(first->consumed_bytes));
   ASSERT_TRUE(second.has_value());
   ASSERT_TRUE(second->message.has_value());
+  // Guarded by the message assertion above.
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
   EXPECT_TRUE(second->message->terminal);
 
   std::vector<std::byte> corrupt(first_encoded->bytes().begin(), first_encoded->bytes().end());
@@ -267,6 +279,141 @@ TEST(DistributedVectorResultExchangeTest, OwnsBoundedPartialReadsAndShortWritePr
   EXPECT_TRUE(cursor->pending_write().empty());
   ASSERT_TRUE(moved.consume_written(moved.pending_write().size()).is_ok());
   EXPECT_TRUE(moved.complete());
+}
+
+TEST(DistributedVectorResultCoordinatorV2Test, CoordinatesExactRetriesAndReturnsPlanOrderedSchema) {
+  const common::Uuid query_id = uuid(0x21U);
+  const schema::TabletId first_tablet = tablet(0x23U);
+  const schema::TabletId second_tablet = tablet(0x22U);
+  const auto schema_value = result_schema();
+  const auto batch = result_batch();
+  auto coordinator = DistributedVectorResultCoordinatorV2::create(
+      query_id, {first_tablet, second_tablet}, schema_value);
+  ASSERT_TRUE(coordinator.has_value()) << coordinator.error().to_string();
+
+  DistributedVectorResultExchangeMessage first{.query_id = query_id,
+                                               .tablet_id = first_tablet,
+                                               .sequence = 1U,
+                                               .encoded_result_batch = batch};
+  const DistributedVectorResultExchangeMessage terminal{.query_id = query_id,
+                                                        .tablet_id = first_tablet,
+                                                        .sequence = 2U,
+                                                        .terminal = true,
+                                                        .encoded_result_batch = batch};
+  EXPECT_EQ(coordinator->accept(terminal).code(), common::StatusCode::kUnavailable);
+  auto unrelated = first;
+  unrelated.query_id = uuid(0x24U);
+  EXPECT_EQ(coordinator->accept(unrelated).code(), common::StatusCode::kInvalidArgument);
+  unrelated = first;
+  unrelated.tablet_id = tablet(0x24U);
+  EXPECT_EQ(coordinator->accept(unrelated).code(), common::StatusCode::kInvalidArgument);
+  EXPECT_TRUE(coordinator->accept(first).is_ok());
+  EXPECT_TRUE(coordinator->accept(first).is_ok());
+  auto conflict = first;
+  conflict.terminal = true;
+  EXPECT_EQ(coordinator->accept(conflict).code(), common::StatusCode::kAlreadyExists);
+  auto schema_mismatch = terminal;
+  schema_mismatch.encoded_result_batch = wrong_result_batch();
+  EXPECT_EQ(coordinator->accept(schema_mismatch).code(), common::StatusCode::kInvalidArgument);
+  EXPECT_TRUE(coordinator->accept(terminal).is_ok());
+  EXPECT_TRUE(coordinator->accept(terminal).is_ok());
+  EXPECT_EQ(
+      coordinator
+          ->accept(
+              {.query_id = query_id, .tablet_id = first_tablet, .sequence = 3U, .terminal = true})
+          .code(),
+      common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(std::move(*coordinator).finish().error().code(), common::StatusCode::kUnavailable);
+
+  EXPECT_TRUE(
+      coordinator
+          ->accept(
+              {.query_id = query_id, .tablet_id = second_tablet, .sequence = 1U, .terminal = true})
+          .is_ok());
+  first.encoded_result_batch.clear();
+  auto result = std::move(*coordinator).finish();
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->result_schema, schema_value);
+  ASSERT_EQ(result->messages.size(), 3U);
+  EXPECT_EQ(result->messages[0].tablet_id, first_tablet);
+  EXPECT_EQ(result->messages[0].sequence, 1U);
+  EXPECT_EQ(result->messages[0].encoded_result_batch, batch);
+  EXPECT_EQ(result->messages[1].tablet_id, first_tablet);
+  EXPECT_EQ(result->messages[2].tablet_id, second_tablet);
+  EXPECT_TRUE(result->messages[2].terminal);
+  EXPECT_TRUE(result->messages[2].encoded_result_batch.empty());
+  EXPECT_EQ(std::move(*coordinator).finish().error().code(), common::StatusCode::kInvalidArgument);
+}
+
+TEST(DistributedVectorResultCoordinatorV2Test, BoundsRetentionAndOwnsFirstFailure) {
+  const common::Uuid query_id = uuid(0x31U);
+  const schema::TabletId first_tablet = tablet(0x32U);
+  const schema::TabletId second_tablet = tablet(0x33U);
+  const auto schema_value = result_schema();
+  const DistributedVectorResultExchangeMessage first{.query_id = query_id,
+                                                     .tablet_id = first_tablet,
+                                                     .sequence = 1U,
+                                                     .encoded_result_batch = result_batch()};
+  const auto encoded = encode_distributed_vector_result_exchange_message_v2(first, schema_value);
+  ASSERT_TRUE(encoded.has_value());
+
+  EXPECT_EQ(
+      DistributedVectorResultCoordinatorV2::create({}, {first_tablet}, schema_value).error().code(),
+      common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(DistributedVectorResultCoordinatorV2::create(query_id, {}, schema_value).error().code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(DistributedVectorResultCoordinatorV2::create(query_id, {first_tablet, first_tablet},
+                                                         schema_value)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(DistributedVectorResultCoordinatorV2::create(query_id, {first_tablet}, {},
+                                                         {.maximum_total_encoded_bytes = 84U})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+
+  auto byte_bounded = DistributedVectorResultCoordinatorV2::create(
+      query_id, {first_tablet}, schema_value,
+      {.maximum_total_encoded_bytes = encoded->bytes().size() - 1U});
+  ASSERT_TRUE(byte_bounded.has_value());
+  EXPECT_EQ(byte_bounded->accept(first).code(), common::StatusCode::kResourceExhausted);
+
+  auto message_bounded = DistributedVectorResultCoordinatorV2::create(
+      query_id, {first_tablet}, schema_value,
+      {.messages = {.maximum_messages_per_fragment = 1U, .maximum_total_messages = 1U}});
+  ASSERT_TRUE(message_bounded.has_value());
+  ASSERT_TRUE(message_bounded->accept(first).is_ok());
+  EXPECT_EQ(message_bounded
+                ->accept({.query_id = query_id,
+                          .tablet_id = first_tablet,
+                          .sequence = 2U,
+                          .terminal = true,
+                          .encoded_result_batch = result_batch()})
+                .code(),
+            common::StatusCode::kResourceExhausted);
+
+  auto failed = DistributedVectorResultCoordinatorV2::create(
+      query_id, {first_tablet, second_tablet}, schema_value);
+  ASSERT_TRUE(failed.has_value());
+  const common::Status first_failure{common::StatusCode::kUnavailable, "first"};
+  ASSERT_TRUE(failed->worker_failed(first_tablet, first_failure).is_ok());
+  EXPECT_EQ(failed->worker_failed(second_tablet, {common::StatusCode::kInternal, "second"}),
+            first_failure);
+  EXPECT_EQ(std::move(*failed).finish().error(), first_failure);
+
+  auto completed =
+      DistributedVectorResultCoordinatorV2::create(query_id, {first_tablet}, schema_value);
+  ASSERT_TRUE(completed.has_value());
+  ASSERT_TRUE(
+      completed
+          ->accept(
+              {.query_id = query_id, .tablet_id = first_tablet, .sequence = 1U, .terminal = true})
+          .is_ok());
+  EXPECT_TRUE(
+      completed->worker_failed(first_tablet, {common::StatusCode::kUnavailable, "late disconnect"})
+          .is_ok());
+  EXPECT_TRUE(std::move(*completed).finish().has_value());
 }
 
 } // namespace

@@ -329,6 +329,11 @@ Fragment-v2 request, revalidates every complete response against the owned resul
 publishes no payload until exact sequence/terminal/count/byte checks all pass. Retryable outcomes
 schedule only finite whole attempts under capped backoff; authenticated leader hints remain
 advisory and cannot rewrite the target.
+The v2 result coordinator independently re-encodes every admitted in-memory message against one
+owned schema, then sequences and deduplicates it per planned tablet. Count and exact exchange-frame
+bytes bound retention. Finish first proves every tablet terminal, then transfers the schema and
+plan-ordered message vector together so downstream consumers cannot detach values from descriptor
+authority.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated

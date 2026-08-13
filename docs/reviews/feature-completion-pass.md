@@ -798,12 +798,21 @@ Focused executions passed:
   covers schema-validation and publication copies. Header self-containment and installed
   consumption cover the API. Coordinator delivery, multi-tablet TCP scheduling, production worker
   execution, and process integration remain incomplete.
+- Schema-bound vector-result-coordinator-v2 continuation: one move-only owner now retains the
+  admitted schema, canonically revalidates direct in-memory messages, arbitrates exact retries and
+  gaps per planned tablet, bounds message count and full exchange-frame bytes, owns first failure,
+  and transfers schema plus plan-ordered results only after all-tablet terminal closure. Focused
+  cases cover schema mismatch, exact retry/conflict, gaps, empty terminals, ordering, count/byte
+  exhaustion, completed-worker loss, and one-shot finish; allocation injection covers construction,
+  admission rollback, and retryable final publication. Header self-containment and installed
+  consumption cover the API. Sender delivery, TCP scheduling, production worker execution, global
+  vector result semantics, and process integration remain incomplete.
 
 The C++ files changed by the grouped-, vector-exchange-, Fragment-v2-, and vector-transport-v2
 continuations pass the repository-pinned clang-format 18 check. A full-tree check was also run and
 still reports pre-existing violations in the subscription protocol, subscription, multi-tablet
 checkpoint implementation, and focused subscription test files; these slices do not rewrite those
-unrelated files or claim a full-tree formatting pass. The full serialized 1,584-test developer
+unrelated files or claim a full-tree formatting pass. The full serialized 1,587-test developer
 suite, focused ASan/UBSan cases, and a deterministic 10,000-run transport-v2 fuzz campaign pass.
 Apple's sanitizer runtime does not support LeakSanitizer, so those sanitizer runs explicitly
 disabled leak detection. Broader cross-compiler/Linux parity, benchmark, profile, and chaos checks

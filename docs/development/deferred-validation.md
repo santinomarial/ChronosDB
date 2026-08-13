@@ -302,8 +302,10 @@
   its borrowed descriptor. A bounded inbound owner now supplies finite admission, stable
   carrier/descriptor records, per-connection deadlines, metrics, and deterministic shutdown.
   Finite one-tablet retry now owns immutable attempts, exact response count/byte bounds, schema
-  revalidation, capped backoff, and advisory hints without authority rebinding. Add schema-bound
-  coordination and general worker execution next.
+  revalidation, capped backoff, and advisory hints without authority rebinding. A v2 coordinator
+  now owns the shared schema through exact retry arbitration, count/frame-byte bounds, all-tablet
+  closure, and plan-ordered schema-plus-result transfer. Add sender delivery and general worker
+  execution next.
   A distinct terminal-only frame closes an empty tablet stream without inventing a SQL NULL group.
   Its separate fixed reader and move-only cursor own every terminal fragmentation boundary,
   coalesced successor bytes, sticky damage, and checked short writes without introducing an

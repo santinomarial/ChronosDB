@@ -6,9 +6,13 @@
 
 #include <algorithm>
 #include <array>
+#include <iterator>
 #include <limits>
+#include <map>
+#include <memory>
 #include <new>
 #include <ranges>
+#include <set>
 #include <stdexcept>
 #include <utility>
 
@@ -447,6 +451,185 @@ std::size_t DistributedVectorResultExchangeWriteCursor::written_bytes() const no
 
 bool DistributedVectorResultExchangeWriteCursor::complete() const noexcept {
   return written_bytes_ == encoded_.bytes().size();
+}
+
+namespace {
+
+[[nodiscard]] bool same_message(const DistributedVectorResultExchangeMessage& left,
+                                const DistributedVectorResultExchangeMessage& right) noexcept {
+  return left.query_id == right.query_id && left.tablet_id == right.tablet_id &&
+         left.sequence == right.sequence && left.terminal == right.terminal &&
+         left.encoded_result_batch == right.encoded_result_batch;
+}
+
+} // namespace
+
+class DistributedVectorResultCoordinatorV2::Impl {
+public:
+  struct FragmentProgress {
+    std::vector<DistributedVectorResultExchangeMessage> messages;
+    bool terminal{};
+  };
+
+  Impl(common::Uuid id, std::vector<schema::TabletId> tablets,
+       query::DistributedVectorResultSchema schema,
+       const DistributedVectorResultCoordinatorLimitsV2 configured)
+      : query_id(id), tablet_order(std::move(tablets)), result_schema(std::move(schema)),
+        limits(configured) {
+    for (const schema::TabletId& tablet_id : tablet_order)
+      fragments.emplace(tablet_id, FragmentProgress{});
+  }
+
+  common::Uuid query_id;
+  std::vector<schema::TabletId> tablet_order;
+  query::DistributedVectorResultSchema result_schema;
+  DistributedVectorResultCoordinatorLimitsV2 limits;
+  std::map<schema::TabletId, FragmentProgress> fragments;
+  std::size_t retained_messages{};
+  std::size_t retained_encoded_bytes{};
+  std::optional<common::Status> failure;
+  bool finished{};
+};
+
+DistributedVectorResultCoordinatorV2::DistributedVectorResultCoordinatorV2(
+    std::unique_ptr<Impl> implementation) noexcept
+    : implementation_(std::move(implementation)) {}
+DistributedVectorResultCoordinatorV2::~DistributedVectorResultCoordinatorV2() = default;
+DistributedVectorResultCoordinatorV2::DistributedVectorResultCoordinatorV2(
+    DistributedVectorResultCoordinatorV2&&) noexcept = default;
+DistributedVectorResultCoordinatorV2& DistributedVectorResultCoordinatorV2::operator=(
+    DistributedVectorResultCoordinatorV2&&) noexcept = default;
+
+common::Result<DistributedVectorResultCoordinatorV2> DistributedVectorResultCoordinatorV2::create(
+    common::Uuid query_id, std::vector<schema::TabletId> tablets,
+    query::DistributedVectorResultSchema result_schema,
+    const DistributedVectorResultCoordinatorLimitsV2 limits) {
+  constexpr std::size_t kMinimumMessageBytes =
+      distributed_vector_result_exchange_v2_format::kHeaderLength +
+      distributed_vector_result_exchange_v2_format::kTrailerLength;
+  const common::Status schema_status =
+      query::validate_distributed_vector_result_schema_value(result_schema);
+  if (!schema_status.is_ok())
+    return common::make_unexpected(schema_status);
+  if (query_id.is_nil() || tablets.empty())
+    return common::make_unexpected(invalid("vector result v2 coordinator identity is invalid"));
+  if (limits.messages.maximum_messages_per_fragment == 0U ||
+      limits.messages.maximum_messages_per_fragment > limits.messages.maximum_total_messages ||
+      limits.messages.maximum_total_messages > query::kMaximumDistributedCoordinatorMessages ||
+      limits.messages.maximum_total_messages < tablets.size() ||
+      limits.maximum_total_encoded_bytes > kMaximumDistributedVectorResultCoordinatorBytesV2 ||
+      tablets.size() > limits.maximum_total_encoded_bytes / kMinimumMessageBytes) {
+    return common::make_unexpected(invalid("vector result v2 coordinator limits are invalid"));
+  }
+  try {
+    std::set<schema::TabletId> unique_tablets;
+    for (const schema::TabletId& tablet_id : tablets) {
+      if (tablet_id.uuid().is_nil() || !unique_tablets.insert(tablet_id).second) {
+        return common::make_unexpected(
+            invalid("vector result v2 coordinator tablet set is invalid"));
+      }
+    }
+    return DistributedVectorResultCoordinatorV2{
+        std::make_unique<Impl>(query_id, std::move(tablets), std::move(result_schema), limits)};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("vector result v2 coordinator allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("vector result v2 coordinator exceeds limits"));
+  }
+}
+
+common::Status DistributedVectorResultCoordinatorV2::accept(
+    const DistributedVectorResultExchangeMessage& message) {
+  Impl& impl = *implementation_;
+  if (impl.finished)
+    return invalid("vector result v2 coordinator is already finished");
+  if (impl.failure.has_value())
+    return *impl.failure;
+  auto fragment = impl.fragments.find(message.tablet_id);
+  if (message.query_id != impl.query_id || fragment == impl.fragments.end())
+    return invalid("vector result v2 message does not belong to the coordinator");
+  auto encoded = encode_distributed_vector_result_exchange_message_v2(message, impl.result_schema);
+  if (!encoded.has_value())
+    return encoded.error();
+  if (message.encoded_result_batch.empty() && message.sequence != 1U)
+    return invalid("vector result v2 empty terminal is not sequence one");
+
+  Impl::FragmentProgress& progress = fragment->second;
+  if (message.sequence <= progress.messages.size()) {
+    return same_message(message, progress.messages[message.sequence - 1U])
+               ? common::Status::ok()
+               : common::Status{common::StatusCode::kAlreadyExists,
+                                "vector result v2 sequence conflicts with retained state"};
+  }
+  if (progress.terminal)
+    return invalid("vector result v2 fragment emitted after its terminal message");
+  if (message.sequence != progress.messages.size() + 1U) {
+    return {common::StatusCode::kUnavailable, "vector result v2 fragment sequence has a gap"};
+  }
+  if (progress.messages.size() == impl.limits.messages.maximum_messages_per_fragment ||
+      impl.retained_messages == impl.limits.messages.maximum_total_messages ||
+      encoded->bytes().size() >
+          impl.limits.maximum_total_encoded_bytes - impl.retained_encoded_bytes) {
+    return exhausted("vector result v2 coordinator retention is exhausted");
+  }
+  try {
+    progress.messages.push_back(message);
+  } catch (const std::bad_alloc&) {
+    return exhausted("vector result v2 coordinator retention allocation failed");
+  } catch (const std::length_error&) {
+    return exhausted("vector result v2 coordinator retention exceeds limits");
+  }
+  progress.terminal = message.terminal;
+  ++impl.retained_messages;
+  impl.retained_encoded_bytes += encoded->bytes().size();
+  return common::Status::ok();
+}
+
+common::Status
+DistributedVectorResultCoordinatorV2::worker_failed(const schema::TabletId& tablet_id,
+                                                    common::Status failure) {
+  Impl& impl = *implementation_;
+  if (impl.finished)
+    return invalid("vector result v2 coordinator is already finished");
+  const auto fragment = impl.fragments.find(tablet_id);
+  if (fragment == impl.fragments.end() || failure.is_ok())
+    return invalid("vector result v2 worker failure is invalid or unplanned");
+  if (fragment->second.terminal)
+    return common::Status::ok();
+  if (impl.failure.has_value())
+    return *impl.failure;
+  impl.failure = std::move(failure);
+  return common::Status::ok();
+}
+
+common::Result<DistributedVectorQueryResultV2> DistributedVectorResultCoordinatorV2::finish() && {
+  Impl& impl = *implementation_;
+  if (impl.finished)
+    return common::make_unexpected(invalid("vector result v2 coordinator is already finished"));
+  if (impl.failure.has_value())
+    return common::make_unexpected(*impl.failure);
+  for (const schema::TabletId& tablet_id : impl.tablet_order) {
+    if (!impl.fragments.at(tablet_id).terminal) {
+      return common::make_unexpected(common::Status{
+          common::StatusCode::kUnavailable, "vector result v2 query has incomplete fragments"});
+    }
+  }
+  std::vector<DistributedVectorResultExchangeMessage> messages;
+  try {
+    messages.reserve(impl.retained_messages);
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("vector result v2 allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("vector result v2 exceeds limits"));
+  }
+  for (const schema::TabletId& tablet_id : impl.tablet_order) {
+    auto& retained = impl.fragments.at(tablet_id).messages;
+    std::ranges::move(retained, std::back_inserter(messages));
+  }
+  DistributedVectorQueryResultV2 result{.result_schema = std::move(impl.result_schema),
+                                        .messages = std::move(messages)};
+  impl.finished = true;
+  return result;
 }
 
 } // namespace chronos::cluster
