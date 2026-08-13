@@ -23,6 +23,8 @@
 
 namespace chronos::service {
 
+class ReplicatedReadBarrier;
+
 struct NativeProtocolServiceLimits {
   network::ProtocolLimits protocol{};
   ingest::ColumnarAppendDecodeLimits columnar_append{};
@@ -50,9 +52,10 @@ struct NativeProtocolResponseSequence {
 using NativeIdentityGenerator = common::UuidGenerator;
 
 // Thread-affine synchronous translation between an already accepted native request and one
-// database owner. The replicated constructor serves current local-applied SELECT only; replicated
-// ingest remains asynchronous and CREATE/INSERT/ASOF fail explicitly. Returned tasks retain the
-// connection/principal routing envelope.
+// database owner. The one-argument replicated constructor serves current local-applied SELECT;
+// the read-barrier constructor first confirms every resident group and then requires publication
+// coverage. Replicated ingest remains asynchronous and CREATE/INSERT/ASOF fail explicitly.
+// Returned tasks retain the connection/principal routing envelope.
 // Ingest returns one terminal response; query returns a bounded result sequence ending in QUERY_END
 // or one terminal ERROR. Queueing and socket backpressure remain owned by the reactor worker.
 class NativeProtocolService {
@@ -63,6 +66,8 @@ public:
                         NativeProtocolServiceLimits limits = {}) noexcept;
   explicit NativeProtocolService(ReplicatedIngestDatabase& database,
                                  NativeProtocolServiceLimits limits = {}) noexcept;
+  NativeProtocolService(ReplicatedIngestDatabase& database, ReplicatedReadBarrier& read_barrier,
+                        NativeProtocolServiceLimits limits = {}) noexcept;
 
   [[nodiscard]] common::Result<network::NetworkTask> execute_ingest(network::NetworkTask request);
   [[nodiscard]] common::Result<NativeProtocolResponseSequence>
@@ -71,6 +76,7 @@ public:
 private:
   SingleNodeDatabase* database_{};
   ReplicatedIngestDatabase* replicated_database_{};
+  ReplicatedReadBarrier* replicated_read_barrier_{};
   NativeIdentityGenerator* identities_{};
   NativeProtocolServiceLimits limits_;
 };

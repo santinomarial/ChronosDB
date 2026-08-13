@@ -9,6 +9,13 @@ confirmation. Query code must still wait for `applied_index` to reach the barrie
 `MultiRaftRuntime` tags that result with its group, and `DurableMultiRaftRuntime` accepts a
 `BeginReadBarrierOperation` through the same serialized batch interface.
 
+The packaged replicated query path composes that primitive through `ReplicatedReadBarrier`. Its
+transport poll owner first submits `CommitCurrentTermOperation`, then begins each barrier through
+the ordered application lane. It records the submission sequence for the initial transition and
+the exact group, term, and context for later peer responses. A query-thread waiter has one finite
+deadline; a timed-out request releases its bounded slot, and a stale completion cannot match a new
+context. Local one-voter mode executes the same no-op/barrier pair directly.
+
 ## Data structures and invariants
 
 One pending barrier stores its leader term, nonzero context, committed index, frozen stable or joint
@@ -20,6 +27,12 @@ and source voter all match. During joint consensus both old and new majorities a
 Barrier completion is not application visibility. The read index names a committed prefix, while
 `applied_index` names the prefix installed in the state machine. Serving before the latter reaches
 the former would violate the committed-and-applied read contract.
+
+`ReplicatedIngestDatabase::acquire_query_snapshot` closes that second half of the proof. It checks
+the metadata catalog's applied index and each tablet publication's matching Raft commit position
+against the returned group vector before pinning query state. Because worker-extension application
+finishes before asynchronous completion publication, the check observes either a covering immutable
+publication or a fail-closed error.
 
 ## Ownership, lifetime, and synchronization
 

@@ -14,6 +14,7 @@
 
 #include <memory>
 #include <optional>
+#include <span>
 #include <vector>
 
 namespace chronos::service {
@@ -82,6 +83,12 @@ public:
   // applied Raft state; the returned vector records a stable per-tablet boundary, not a linearized
   // cross-group read. Tables with any nonresident placement remain bindable but fail execution.
   [[nodiscard]] common::Result<ReplicatedQuerySnapshot> acquire_query_snapshot() const;
+  // The barrier vector must contain exactly query_barrier_groups(). Acquisition fails closed
+  // unless the immutable metadata catalog and every resident tablet publication cover its
+  // corresponding leader-confirmed read index.
+  [[nodiscard]] common::Result<ReplicatedQuerySnapshot>
+  acquire_query_snapshot(std::span<const raft::GroupReadBarrier> barriers) const;
+  [[nodiscard]] std::span<const raft::GroupId> query_barrier_groups() const noexcept;
   [[nodiscard]] bool is_running() const noexcept;
   [[nodiscard]] common::Status shutdown();
 

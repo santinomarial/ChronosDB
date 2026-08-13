@@ -845,7 +845,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   acknowledgement or error for response-queue backpressure.
   Group-scoped read barriers now flow through both Multi-Raft owners without fabricating a durable
   transition, while higher-term recipient state still crosses the existing sync-before-response
-  boundary. Production transport and tablet snapshot acquisition remain deferred.
+  boundary. The packaged query gate now submits current-term progress and barriers through the
+  authenticated transport owner, correlates exact group/term/context completions under one finite
+  waiter, and requires metadata/tablet application publications to cover every returned read index.
   The asynchronous owner now exposes FIFO-ordered bounded owning group observations for local
   leader, commit/apply, and stable/joint membership state without releasing worker-owned pointers.
   Those observations now feed the same semantically validated, checkpoint-first and ledger-
@@ -876,8 +878,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   set without overriding recovered consensus. The packaged daemon now securely loads that file,
   recovers the replicated owner, auto-elects exact local single-voter groups, advertises Protocol 2
   QUORUM_SYNC only in that mode, routes reactor tasks through the bounded service, and drains in
-  ownership order. Multi-node peer transport/elections, provisioning, leader redirection, and
-  Raft-backed native queries remain external.
+  ownership order. Authenticated multi-node peer transport/elections and applied-vector native
+  SELECT are now composed. Provisioning, leader redirection, remote query fragments, snapshot
+  installation handling, and real three-process failover remain external.
 
 - **Scope:** map tablets to Raft groups; multiplex logical records over physical logs, threads, timers, and connections; lifecycle, placement, snapshot transfer, fairness, and safe per-group reclamation.
 - **Explicit non-scope:** globally ordered logs, cross-tablet atomic transactions, distributed query execution, automatic rebalancing beyond scoped placement mechanics, and conflating physical offsets with logical indexes.

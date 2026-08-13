@@ -328,3 +328,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0291](0291-stable-local-applied-replicated-query-snapshot.md) | Stable local-applied replicated query snapshot | accepted |
 | [0292](0292-packaged-replicated-native-select.md) | Packaged replicated native SELECT | accepted |
 | [0293](0293-ordered-application-raft-transport-submissions.md) | Ordered application Raft transport submissions | accepted |
+| [0294](0294-applied-replicated-read-barrier-vector.md) | Applied replicated read-barrier vector | accepted |

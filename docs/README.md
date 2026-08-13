@@ -308,8 +308,10 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Owning replicated-ingest runtime](learning/replicated-ingest-runtime.md): address-stable tablet,
   metadata, durable worker, and coordinator startup/shutdown/reopen composition.
 - [Replicated-ingest database recovery](learning/replicated-ingest-database.md): database-root
-  ownership, committed metadata projection, resident tablet reconstruction, stable local-applied
+  ownership, committed metadata projection, resident tablet reconstruction, applied read-barrier
   vector query snapshots, fail-closed partial residency, and ordered shutdown.
+- [Linearizable Raft read barriers](learning/linearizable-raft-read-barrier.md): current-term quorum
+  proofs, exact transported correlation, finite query waiting, and application-publication coverage.
 - [Replicated group configuration](operations/replicated-group-config.md): strict bounded external
   resident-group and voter declarations for replicated database recovery.
 - [Replicated peer configuration](operations/replicated-peer-config.md): strict bounded IPv4 route,

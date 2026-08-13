@@ -59,6 +59,10 @@ public:
 
   [[nodiscard]] static common::Result<ReplicatedRaftTransportRuntime>
   create(ReplicatedRaftTransportRuntimeConfig config);
+  // Poll-owner-only application admission. The returned sequence identifies the eventual
+  // kApplication completion observed through take_completed().
+  [[nodiscard]] common::Result<std::uint64_t>
+  try_submit_application(raft::DurableRaftRequest request);
   [[nodiscard]] common::Status poll_once(std::chrono::milliseconds maximum_wait);
   [[nodiscard]] common::Result<cluster::RaftTransportRuntimeResult> take_completed();
   [[nodiscard]] network::Ipv4Endpoint bound_endpoint() const noexcept;

@@ -11,6 +11,7 @@
 #include "chronos/service/replicated_ingest_service.hpp"
 #include "chronos/service/replicated_peer_config.hpp"
 #include "chronos/service/replicated_raft_transport_runtime.hpp"
+#include "chronos/service/replicated_read_barrier.hpp"
 #include "chronos/service/single_node_committed_append_router.hpp"
 #include "chronos/service/single_node_database.hpp"
 #include "chronos/service/single_node_subscription_runtime.hpp"
@@ -54,6 +55,7 @@ using chronos::service::NativeProtocolService;
 using chronos::service::ReplicatedIngestDatabase;
 using chronos::service::ReplicatedIngestService;
 using chronos::service::ReplicatedRaftTransportRuntime;
+using chronos::service::ReplicatedReadBarrier;
 using chronos::service::SingleNodeCommittedAppendRouter;
 using chronos::service::SingleNodeDatabase;
 using chronos::service::SingleNodeSubscriptionRuntime;
@@ -388,16 +390,19 @@ elect_single_node_groups(ReplicatedIngestDatabase& database,
     if (group.voters.size() != 1U || group.voters.front() != database.bootstrap().local_node_id)
       continue;
     auto election = database.ingest_runtime()->runtime()->try_submit(
-        {{group.group_id, chronos::raft::StartElectionOperation{}}});
+        {{group.group_id, chronos::raft::StartElectionOperation{}},
+         {group.group_id, chronos::raft::CommitCurrentTermOperation{}}});
     if (!election.has_value())
       return election.error();
     auto completed = election->wait();
     if (!completed.has_value())
       return completed.error();
-    if (completed->size() != 1U)
+    if (completed->size() != 2U)
       return invalid("single-node Raft election returned an invalid result count");
     if (!completed->front().status.is_ok())
       return completed->front().status;
+    if (!completed->back().status.is_ok())
+      return completed->back().status;
     auto observation = database.ingest_runtime()->runtime()->try_observe_group(group.group_id);
     if (!observation.has_value())
       return observation.error();
@@ -842,8 +847,9 @@ private:
 
 class RaftTransportWorker {
 public:
-  explicit RaftTransportWorker(ReplicatedRaftTransportRuntime& runtime) noexcept
-      : runtime_(&runtime) {}
+  RaftTransportWorker(ReplicatedRaftTransportRuntime& runtime,
+                      ReplicatedReadBarrier& read_barrier) noexcept
+      : runtime_(&runtime), read_barrier_(&read_barrier) {}
   RaftTransportWorker(const RaftTransportWorker&) = delete;
   RaftTransportWorker& operator=(const RaftTransportWorker&) = delete;
 
@@ -872,6 +878,11 @@ public:
 private:
   void run() noexcept {
     while (!stopping_.load(std::memory_order_acquire)) {
+      const chronos::common::Status driven = read_barrier_->poll_owner_drive(*runtime_);
+      if (!driven.is_ok()) {
+        failed_.store(true, std::memory_order_release);
+        return;
+      }
       const chronos::common::Status polled = runtime_->poll_once(std::chrono::milliseconds{10});
       if (!polled.is_ok()) {
         failed_.store(true, std::memory_order_release);
@@ -886,10 +897,15 @@ private:
           }
           break;
         }
+        const chronos::common::Status observed = read_barrier_->poll_owner_observe(*completed);
+        if (!observed.is_ok()) {
+          failed_.store(true, std::memory_order_release);
+          return;
+        }
         if (!completed->result.status.is_ok() || !completed->result.transition.has_value())
           continue;
         const chronos::raft::MultiRaftTransition& transition = *completed->result.transition;
-        if (transition.snapshot_install.has_value() || transition.read_barrier_ready.has_value()) {
+        if (transition.snapshot_install.has_value()) {
           failed_.store(true, std::memory_order_release);
           return;
         }
@@ -898,6 +914,7 @@ private:
   }
 
   ReplicatedRaftTransportRuntime* runtime_{};
+  ReplicatedReadBarrier* read_barrier_{};
   std::atomic<bool> stopping_{false};
   std::atomic<bool> failed_{false};
   std::thread thread_;
@@ -983,6 +1000,7 @@ int main(const int argc, const char* const argv[]) {
   std::optional<SingleNodeDatabase> database;
   std::optional<ReplicatedIngestDatabase> replicated_database;
   std::optional<ReplicatedRaftTransportRuntime> raft_transport;
+  std::optional<ReplicatedReadBarrier> replicated_read_barrier;
   std::optional<NativeProtocolService> service;
   std::unique_ptr<DaemonSubscription> subscription;
   if (!options->data_directory.empty()) {
@@ -995,7 +1013,6 @@ int main(const int argc, const char* const argv[]) {
         return 1;
       }
       replicated_database.emplace(std::move(*opened));
-      service.emplace(*replicated_database);
       if (replicated_peers.has_value()) {
         const chronos::common::Status membership = validate_transport_membership(
             replicated_database->bootstrap().local_node_id, *replicated_groups, *replicated_peers);
@@ -1024,6 +1041,17 @@ int main(const int argc, const char* const argv[]) {
           return 1;
         }
         raft_transport.emplace(std::move(*transport));
+        auto read_barrier = ReplicatedReadBarrier::create_transported(
+            {replicated_database->query_barrier_groups().begin(),
+             replicated_database->query_barrier_groups().end()});
+        if (!read_barrier.has_value()) {
+          static_cast<void>(raft_transport->shutdown());
+          static_cast<void>(replicated_database->shutdown());
+          std::cerr << "chronosd: replicated read barrier start failed: "
+                    << read_barrier.error().to_string() << '\n';
+          return 1;
+        }
+        replicated_read_barrier.emplace(std::move(*read_barrier));
       } else {
         const bool all_local = std::ranges::all_of(*replicated_groups, [&](const auto& group) {
           return group.voters.size() == 1U &&
@@ -1042,7 +1070,19 @@ int main(const int argc, const char* const argv[]) {
                     << '\n';
           return 1;
         }
+        auto read_barrier = ReplicatedReadBarrier::create_local(
+            replicated_database->ingest_runtime()->runtime(),
+            {replicated_database->query_barrier_groups().begin(),
+             replicated_database->query_barrier_groups().end()});
+        if (!read_barrier.has_value()) {
+          static_cast<void>(replicated_database->shutdown());
+          std::cerr << "chronosd: replicated read barrier start failed: "
+                    << read_barrier.error().to_string() << '\n';
+          return 1;
+        }
+        replicated_read_barrier.emplace(std::move(*read_barrier));
       }
+      service.emplace(*replicated_database, *replicated_read_barrier);
     } else {
       auto descriptor = new_database_descriptor(identities);
       if (!descriptor.has_value()) {
@@ -1126,7 +1166,7 @@ int main(const int argc, const char* const argv[]) {
 
   std::optional<RaftTransportWorker> raft_worker;
   if (raft_transport.has_value()) {
-    raft_worker.emplace(*raft_transport);
+    raft_worker.emplace(*raft_transport, *replicated_read_barrier);
     if (!raft_worker->start()) {
       static_cast<void>(reactor->shutdown());
       replicated_service.reset();
@@ -1170,6 +1210,8 @@ int main(const int argc, const char* const argv[]) {
     while (!worker.stopped())
       static_cast<void>(reactor->poll_once(std::chrono::milliseconds{10}));
     worker.join();
+    if (replicated_read_barrier.has_value())
+      static_cast<void>(replicated_read_barrier->shutdown());
     if (raft_worker.has_value()) {
       raft_worker->request_stop();
       raft_worker->join();
@@ -1242,6 +1284,14 @@ int main(const int argc, const char* const argv[]) {
   }
   subscription.reset();
   replicated_service.reset();
+  if (replicated_read_barrier.has_value()) {
+    const auto barrier_shutdown = replicated_read_barrier->shutdown();
+    if (!barrier_shutdown.is_ok()) {
+      std::cerr << "chronosd: replicated read barrier shutdown failed: "
+                << barrier_shutdown.to_string() << '\n';
+      exit_code = 1;
+    }
+  }
   if (raft_worker.has_value()) {
     raft_worker->request_stop();
     raft_worker->join();

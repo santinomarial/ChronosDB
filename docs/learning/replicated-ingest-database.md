@@ -42,10 +42,11 @@ pins the immutable publications available from the resident tablet application. 
 `ReplicatedQuerySnapshot` owns all of those objects, so binding and vector execution use the same
 catalog generation and execution can outlive the database owner.
 
-This is a stable local-applied vector, not a cross-group linearizable read. Each tablet publication
-contains only committed applied entries, but separate groups can contribute different applied
-positions. A later quorum/read-index coordinator can establish a stronger declared contract without
-changing this pinning primitive. If any placement is nonresident, the table remains visible to the
-binder but execution fails `UNAVAILABLE`; a local subset is never presented as a whole-table result.
-The physical source concatenates all pinned tablet generations beneath one pipeline, so global SQL
-operators run once rather than independently per shard.
+The no-argument overload remains a stable local-applied vector. The barrier overload accepts exactly
+one leader-confirmed read index for the metadata group and every resident data group, then fails
+unless the immutable catalog and matching tablet publications cover those indexes. The packaged
+native service uses this stronger overload. Separate groups can still contribute different applied
+positions, so this is not a globally atomic cross-group instant. If any placement is nonresident,
+the table remains visible to the binder but execution fails `UNAVAILABLE`; a local subset is never
+presented as a whole-table result. The physical source concatenates all pinned tablet generations
+beneath one pipeline, so global SQL operators run once rather than independently per shard.

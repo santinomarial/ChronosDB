@@ -31,6 +31,17 @@ namespace {
   return {common::StatusCode::kResourceExhausted, std::move(message)};
 }
 
+[[nodiscard]] common::Status unavailable(std::string message) {
+  return {common::StatusCode::kUnavailable, std::move(message)};
+}
+
+[[nodiscard]] const raft::GroupReadBarrier*
+find_barrier(const std::span<const raft::GroupReadBarrier> barriers,
+             const raft::GroupId& group_id) noexcept {
+  const auto found = std::ranges::find(barriers, group_id, &raft::GroupReadBarrier::group_id);
+  return found == barriers.end() ? nullptr : std::addressof(*found);
+}
+
 [[nodiscard]] const raft::RaftGroupConfiguration*
 find_group(const std::vector<raft::RaftGroupConfiguration>& groups, const raft::GroupId& group_id) {
   const auto found = std::ranges::find(groups, group_id, &raft::RaftGroupConfiguration::group_id);
@@ -288,13 +299,19 @@ ReplicatedQuerySnapshot::instantiate_table_pipeline(
 class ReplicatedIngestDatabase::Impl {
 public:
   Impl(runtime::DatabaseBootstrap configured_bootstrap, ReplicatedIngestRuntime configured_runtime,
-       std::vector<raft::GroupId> configured_resident_groups) noexcept
+       std::vector<raft::GroupId> configured_resident_groups)
       : bootstrap_owner(std::move(configured_bootstrap)), runtime(std::move(configured_runtime)),
-        resident_groups(std::move(configured_resident_groups)) {}
+        resident_groups(std::move(configured_resident_groups)) {
+    query_groups.reserve(resident_groups.size() + 1U);
+    query_groups.push_back(bootstrap_owner.descriptor().metadata_group_id);
+    query_groups.insert(query_groups.end(), resident_groups.begin(), resident_groups.end());
+    std::ranges::sort(query_groups);
+  }
 
   runtime::DatabaseBootstrap bootstrap_owner;
   ReplicatedIngestRuntime runtime;
   std::vector<raft::GroupId> resident_groups;
+  std::vector<raft::GroupId> query_groups;
   bool shutdown_complete{};
   common::Status shutdown_status;
 };
@@ -382,8 +399,27 @@ ReplicatedIngestRuntime* ReplicatedIngestDatabase::ingest_runtime() noexcept {
 }
 
 common::Result<ReplicatedQuerySnapshot> ReplicatedIngestDatabase::acquire_query_snapshot() const {
+  return acquire_query_snapshot({});
+}
+
+common::Result<ReplicatedQuerySnapshot> ReplicatedIngestDatabase::acquire_query_snapshot(
+    const std::span<const raft::GroupReadBarrier> barriers) const {
   if (!is_running())
     return common::make_unexpected(invalid("replicated query database is unavailable"));
+  if (!barriers.empty()) {
+    if (barriers.size() != impl_->query_groups.size())
+      return common::make_unexpected(
+          invalid("replicated query barrier vector has the wrong group count"));
+    for (const raft::GroupId& group_id : impl_->query_groups) {
+      const raft::GroupReadBarrier* barrier = find_barrier(barriers, group_id);
+      if (barrier == nullptr || barrier->barrier.term == 0U || barrier->barrier.context == 0U ||
+          barrier->barrier.read_index == 0U ||
+          std::ranges::count(barriers, group_id, &raft::GroupReadBarrier::group_id) != 1U) {
+        return common::make_unexpected(
+            invalid("replicated query barrier vector identity is invalid"));
+      }
+    }
+  }
   raft::AsyncRaftMetadataApplication* const metadata = impl_->runtime.metadata_application();
   ingest::AsyncRaftTabletApplication* const tablets = impl_->runtime.tablet_application();
   if (metadata == nullptr || tablets == nullptr)
@@ -391,6 +427,14 @@ common::Result<ReplicatedQuerySnapshot> ReplicatedIngestDatabase::acquire_query_
   auto catalog = metadata->catalog_snapshot();
   if (!catalog.has_value())
     return common::make_unexpected(catalog.error());
+  if (!barriers.empty()) {
+    const raft::GroupReadBarrier* metadata_barrier =
+        find_barrier(barriers, impl_->bootstrap_owner.descriptor().metadata_group_id);
+    if (metadata_barrier == nullptr ||
+        (*catalog)->applied_index < metadata_barrier->barrier.read_index)
+      return common::make_unexpected(
+          unavailable("replicated metadata publication trails its confirmed read barrier"));
+  }
   try {
     std::vector<query::QueryCatalogTableInput> inputs;
     std::vector<ReplicatedQuerySnapshot::Impl::Table> tables;
@@ -427,6 +471,17 @@ common::Result<ReplicatedQuerySnapshot> ReplicatedIngestDatabase::acquire_query_
         auto snapshot = tablets->snapshot(binding->group_id);
         if (!snapshot.has_value())
           return common::make_unexpected(snapshot.error());
+        if (!barriers.empty()) {
+          const raft::GroupReadBarrier* tablet_barrier = find_barrier(barriers, binding->group_id);
+          const std::optional<head::HeadCommitPosition>& position = snapshot->applied_position();
+          if (tablet_barrier == nullptr || !position.has_value() ||
+              position->source != head::CommitSource::kRaft ||
+              position->raft_group_id != binding->group_id ||
+              position->record_sequence < tablet_barrier->barrier.read_index) {
+            return common::make_unexpected(
+                unavailable("replicated tablet publication trails its confirmed read barrier"));
+          }
+        }
         if (snapshot->tablet_id() != placement.tablet_id ||
             snapshot->table_id() != active.table_id ||
             lineage->find(snapshot->schema_ptr()->schema_id()) == nullptr) {
@@ -457,6 +512,11 @@ common::Result<ReplicatedQuerySnapshot> ReplicatedIngestDatabase::acquire_query_
   } catch (const std::length_error&) {
     return common::make_unexpected(exhausted("replicated query snapshot exceeds limits"));
   }
+}
+
+std::span<const raft::GroupId> ReplicatedIngestDatabase::query_barrier_groups() const noexcept {
+  return is_running() ? std::span<const raft::GroupId>{impl_->query_groups}
+                      : std::span<const raft::GroupId>{};
 }
 
 bool ReplicatedIngestDatabase::is_running() const noexcept {

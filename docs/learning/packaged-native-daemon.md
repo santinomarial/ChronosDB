@@ -22,9 +22,11 @@ queue. The SPSC release/acquire proof remains the one documented by ADR 0063.
 
 Replicated mode keeps that same single queue consumer. Its adapter sends canonical ingest to the
 nonblocking Raft coordinator and sends native SELECT to the synchronous query dispatcher over a
-fresh owning local-applied snapshot. A finite query sequence is emitted before another request or
-coordinator completion is polled. Every table placement must be resident; remote fragments and
-stronger read barriers are not inferred from local state.
+fresh owning applied read-barrier snapshot. Local one-voter startup commits a current-term no-op;
+multi-voter mode lets the authenticated transport poll owner submit and exactly correlate the
+barriers. A finite query sequence is emitted before another request or coordinator completion is
+polled. Every table placement must be resident. The barrier result is a per-group vector rather
+than a globally atomic cross-group instant, and remote fragments are not inferred from local state.
 
 The subscription composition uses a stable committed-append router as the database's pre-open
 observer address. After recovery and before socket admission, one per-plan runtime binds its fan-out

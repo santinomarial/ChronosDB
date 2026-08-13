@@ -11,6 +11,7 @@
 #include "chronos/query/resource_context.hpp"
 #include "chronos/query/snapshot_pipeline.hpp"
 #include "chronos/query/statement_binder.hpp"
+#include "chronos/service/replicated_read_barrier.hpp"
 
 #include <algorithm>
 #include <array>
@@ -329,6 +330,10 @@ NativeProtocolService::NativeProtocolService(SingleNodeDatabase& database,
 NativeProtocolService::NativeProtocolService(ReplicatedIngestDatabase& database,
                                              NativeProtocolServiceLimits limits) noexcept
     : replicated_database_(&database), limits_(limits) {}
+NativeProtocolService::NativeProtocolService(ReplicatedIngestDatabase& database,
+                                             ReplicatedReadBarrier& read_barrier,
+                                             NativeProtocolServiceLimits limits) noexcept
+    : replicated_database_(&database), replicated_read_barrier_(&read_barrier), limits_(limits) {}
 
 common::Result<network::NetworkTask>
 NativeProtocolService::execute_ingest(network::NetworkTask request) {
@@ -559,7 +564,14 @@ NativeProtocolService::execute_query(network::NetworkTask request) {
     std::optional<ReplicatedQuerySnapshot> replicated_snapshot;
     std::shared_ptr<const query::QueryCatalogSnapshot> query_catalog;
     if (replicated_database_ != nullptr) {
-      auto acquired = replicated_database_->acquire_query_snapshot();
+      common::Result<ReplicatedQuerySnapshot> acquired =
+          replicated_read_barrier_ == nullptr ? replicated_database_->acquire_query_snapshot()
+                                              : [&]() -> common::Result<ReplicatedQuerySnapshot> {
+        auto barriers = replicated_read_barrier_->await();
+        if (!barriers.has_value())
+          return common::make_unexpected(barriers.error());
+        return replicated_database_->acquire_query_snapshot(*barriers);
+      }();
       if (!acquired.has_value())
         return query_error(target, acquired.error(), limits_.protocol);
       replicated_snapshot.emplace(std::move(*acquired));

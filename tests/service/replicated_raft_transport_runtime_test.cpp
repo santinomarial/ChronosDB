@@ -1,7 +1,10 @@
 #include "chronos/network/tcp_socket.hpp"
 #include "chronos/service/replicated_raft_transport_runtime.hpp"
+#include "chronos/service/replicated_read_barrier.hpp"
 
+#include <chrono>
 #include <filesystem>
+#include <future>
 #include <gtest/gtest.h>
 #include <string>
 #include <system_error>
@@ -77,6 +80,61 @@ TEST(ReplicatedRaftTransportRuntimeTest, OwnsAuthenticatedTransportAndDurableTim
   EXPECT_GE(transport->metrics().polls, 1U);
   EXPECT_TRUE(transport->shutdown().is_ok());
   EXPECT_FALSE(transport->is_running());
+  EXPECT_TRUE(durable->shutdown().is_ok());
+}
+
+TEST(ReplicatedRaftTransportRuntimeTest, DrivesTransportedSingleVoterReadBarrier) {
+  TemporaryDirectory directory;
+  auto remote_listener = network::TcpListener::bind({});
+  auto local_reservation = network::TcpListener::bind({});
+  if (!remote_listener.has_value() || !local_reservation.has_value())
+    GTEST_SKIP() << "workspace does not permit loopback listener creation";
+  const network::Ipv4Endpoint local_endpoint = local_reservation->bound_endpoint();
+  ASSERT_TRUE(local_reservation->close().is_ok());
+  auto durable = raft::AsyncDurableMultiRaftRuntime::create_new(
+      1U, {.directory_path = directory.path().string()}, {{group(), {1U}}});
+  ASSERT_TRUE(durable.has_value()) << durable.error().to_string();
+  auto election = durable->try_submit({{group(), raft::StartElectionOperation{}}});
+  ASSERT_TRUE(election.has_value());
+  ASSERT_TRUE(election->wait().has_value());
+  auto transport = ReplicatedRaftTransportRuntime::create(
+      {.local_node_id = 1U,
+       .durable_runtime = &*durable,
+       .peers = {peer(1U, local_endpoint, 11U), peer(2U, remote_listener->bound_endpoint(), 22U)},
+       .resident_groups = {group()},
+       .tls = {.certificate_chain_file = fixture("server.pem").string(),
+               .private_key_file = fixture("server-key.pem").string(),
+               .trust_store_file = fixture("ca.pem").string()},
+       .limits = {.minimum_election_timeout = std::chrono::milliseconds{1000},
+                  .maximum_election_timeout = std::chrono::milliseconds{1000},
+                  .peer_pool = {.maximum_peers = 1U}}});
+  ASSERT_TRUE(transport.has_value()) << transport.error().to_string();
+  auto barrier = ReplicatedReadBarrier::create_transported(
+      {group()}, {.maximum_groups = 1U, .request_timeout = std::chrono::seconds{2}});
+  ASSERT_TRUE(barrier.has_value()) << barrier.error().to_string();
+  auto waiting = std::async(std::launch::async, [&] { return barrier->await(); });
+  for (std::size_t iteration = 0U;
+       iteration < 1024U &&
+       waiting.wait_for(std::chrono::milliseconds{0}) != std::future_status::ready;
+       ++iteration) {
+    ASSERT_TRUE(barrier->poll_owner_drive(*transport).is_ok());
+    ASSERT_TRUE(transport->poll_once(std::chrono::milliseconds{10}).is_ok());
+    for (;;) {
+      auto completed = transport->take_completed();
+      if (!completed.has_value()) {
+        ASSERT_EQ(completed.error().code(), common::StatusCode::kUnavailable);
+        break;
+      }
+      ASSERT_TRUE(barrier->poll_owner_observe(*completed).is_ok());
+    }
+  }
+  auto ready = waiting.get();
+  ASSERT_TRUE(ready.has_value()) << ready.error().to_string();
+  ASSERT_EQ(ready->size(), 1U);
+  EXPECT_EQ(ready->front().group_id, group());
+  EXPECT_EQ(ready->front().barrier.read_index, 1U);
+  EXPECT_TRUE(barrier->shutdown().is_ok());
+  EXPECT_TRUE(transport->shutdown().is_ok());
   EXPECT_TRUE(durable->shutdown().is_ok());
 }
 

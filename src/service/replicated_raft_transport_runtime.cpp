@@ -230,6 +230,14 @@ ReplicatedRaftTransportRuntime::poll_once(const std::chrono::milliseconds maximu
   return impl_->transport->poll_once(maximum_wait);
 }
 
+common::Result<std::uint64_t>
+ReplicatedRaftTransportRuntime::try_submit_application(raft::DurableRaftRequest request) {
+  if (!is_running())
+    return common::make_unexpected(
+        status(common::StatusCode::kUnavailable, "replicated Raft transport is not running"));
+  return impl_->transport->try_submit_application(std::move(request));
+}
+
 common::Result<cluster::RaftTransportRuntimeResult>
 ReplicatedRaftTransportRuntime::take_completed() {
   if (!is_running())

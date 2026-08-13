@@ -27,13 +27,13 @@ is documented in [Replicated Group Configuration](replicated-group-config.md). T
 `data_plane=replicated`, reconstructs resident tablet owners from committed metadata, automatically
 elects only groups whose sole voter is the local node, and advertises Protocol 2 QUORUM_SYNC only
 after all owners are running. It serves canonical replicated ingest and exact retries. Native query
-SELECT uses a stable local-applied Raft snapshot and the normal bounded result sequence when every
-committed tablet placement for the selected table is resident on this process. A partially resident
-table fails explicitly instead of returning a local subset. This is not a quorum read barrier or a
-cross-group linearizable read. Replicated CREATE, SQL INSERT, ASOF, historical query, and
-subscription requests remain explicit errors. Multi-voter deployments additionally require the
-authenticated Raft peer transport bundle below; the group file itself contains no endpoints or
-credentials.
+SELECT confirms a current-term quorum read index for the metadata group and every resident tablet
+group, requires each immutable application publication to cover its index, and then emits the normal
+bounded result sequence. A partially resident table fails explicitly instead of returning a local
+subset. The resulting component vector is not a globally atomic cross-group instant. Replicated
+CREATE, SQL INSERT, ASOF, historical query, and subscription requests remain explicit errors.
+Multi-voter deployments additionally require the authenticated Raft peer transport bundle below;
+the group file itself contains no endpoints or credentials.
 
 For multi-voter groups, configure the complete transport bundle:
 
@@ -49,8 +49,9 @@ voter of every resident group. The key file must not be accessible to group or o
 options are atomic at startup; partial configuration is rejected. `raft_transport=configured` in
 the startup line means the authenticated poll owner is running, while `raft_transport=local` means
 only exact local single-voter groups were accepted. Non-replicated modes report
-`raft_transport=disabled`. Transport failure stops the daemon. Raft snapshot installation and
-production read barriers are still fail-closed gaps rather than silently discarded completions.
+`raft_transport=disabled`. Transport failure stops the daemon. Read barriers are handled by the
+bounded query gate; Raft snapshot installation remains a fail-closed gap rather than a silently
+discarded completion.
 
 Set finite connection, event, frame, buffered-byte, queued-frame, in-flight request, handshake, and
 idle limits. Defaults are development bounds, not capacity guidance. Monitor accepted, rejected,

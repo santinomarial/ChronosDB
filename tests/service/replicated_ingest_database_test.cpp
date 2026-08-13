@@ -10,6 +10,7 @@
 #include "chronos/service/native_protocol_service.hpp"
 #include "chronos/service/replicated_ingest_database.hpp"
 #include "chronos/service/replicated_ingest_service.hpp"
+#include "chronos/service/replicated_read_barrier.hpp"
 #include "columnar/columnar_test_support.hpp"
 #include "ingest/ingest_test_support.hpp"
 
@@ -287,7 +288,17 @@ TEST(ReplicatedIngestDatabaseTest, PinsCommittedWholeTableQueryStateBeyondOwnerS
   auto database =
       ReplicatedIngestDatabase::open_existing({.bootstrap = bootstrap_config, .groups = groups()});
   ASSERT_TRUE(database.has_value()) << database.error().to_string();
-  NativeProtocolService native_queries{*database};
+  for (const raft::GroupId group_id : {metadata_group(), tablet_group()}) {
+    auto election = database->ingest_runtime()->runtime()->try_submit(
+        {{group_id, raft::StartElectionOperation{}}});
+    ASSERT_TRUE(election.has_value());
+    ASSERT_TRUE(election->wait().has_value());
+  }
+  auto read_barrier = ReplicatedReadBarrier::create_local(
+      database->ingest_runtime()->runtime(),
+      {database->query_barrier_groups().begin(), database->query_barrier_groups().end()});
+  ASSERT_TRUE(read_barrier.has_value()) << read_barrier.error().to_string();
+  NativeProtocolService native_queries{*database, *read_barrier};
   auto requests = network::SpscNetworkTaskQueue::create(4U).value();
   auto responses = network::SpscNetworkTaskQueue::create(1U).value();
   ASSERT_TRUE(responses.try_push(
@@ -336,6 +347,31 @@ TEST(ReplicatedIngestDatabaseTest, PinsCommittedWholeTableQueryStateBeyondOwnerS
   auto snapshot = database->acquire_query_snapshot();
   ASSERT_TRUE(snapshot.has_value()) << snapshot.error().to_string();
   ASSERT_EQ(snapshot->catalog()->tables().size(), 1U);
+  const auto catalog_publication =
+      database->ingest_runtime()->metadata_application()->catalog_snapshot();
+  const auto tablet_publication =
+      database->ingest_runtime()->tablet_application()->snapshot(tablet_group());
+  ASSERT_TRUE(catalog_publication.has_value());
+  ASSERT_TRUE(tablet_publication.has_value());
+  ASSERT_TRUE(tablet_publication->applied_position().has_value());
+  std::vector<raft::GroupReadBarrier> barriers{
+      {metadata_group(),
+       {.term = 1U, .context = 1U, .read_index = (*catalog_publication)->applied_index}},
+      {tablet_group(),
+       {.term = 1U,
+        .context = 2U,
+        .read_index = tablet_publication->applied_position()->record_sequence}}};
+  auto confirmed = database->acquire_query_snapshot(barriers);
+  ASSERT_TRUE(confirmed.has_value()) << confirmed.error().to_string();
+  ++barriers.back().barrier.read_index;
+  auto trailing = database->acquire_query_snapshot(barriers);
+  ASSERT_FALSE(trailing.has_value());
+  EXPECT_EQ(trailing.error().code(), common::StatusCode::kUnavailable);
+  barriers.pop_back();
+  auto incomplete = database->acquire_query_snapshot(barriers);
+  ASSERT_FALSE(incomplete.has_value());
+  EXPECT_EQ(incomplete.error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(database->query_barrier_groups().size(), 2U);
   auto parsed = query::parse_sql_v1_select("SELECT count(*) AS rows FROM events");
   ASSERT_TRUE(parsed.has_value()) << parsed.error().status().to_string();
   auto bound = query::bind_sql_v1_select(std::move(*parsed), snapshot->catalog());
