@@ -1017,8 +1017,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   its exact validated group and intent into that canonical dispatch, eliminating a second
   caller-side authority join. Distinct bounded grouped request/response codecs now carry that
   dispatch and explicitly discriminate correlated partial, empty-terminal, and failure payloads
-  without changing ungrouped transport bytes. Authenticated grouped receiver/stream ownership and
-  packaged multi-tablet grouped execution remain.
+  without changing ungrouped transport bytes. Fixed-storage readers and a move-only validated write
+  cursor own fragmented/coalesced reads and short writes. Authenticated grouped receiver/sender
+  ownership and packaged multi-tablet grouped execution remain.
   Multi-key/non-FLOAT64 state/transport, ordering, top-N, and LIMIT remain deferred. A distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
   catalog, Manifest, route, and execution gates;

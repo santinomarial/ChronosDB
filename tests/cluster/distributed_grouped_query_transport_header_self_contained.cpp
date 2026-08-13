@@ -4,6 +4,12 @@
 
 static_assert(std::is_aggregate_v<chronos::cluster::DistributedGroupedQueryRequest>);
 static_assert(std::is_aggregate_v<chronos::cluster::DistributedGroupedQueryResponse>);
+static_assert(
+    !std::is_move_constructible_v<chronos::cluster::DistributedGroupedQueryRequestReader>);
+static_assert(
+    !std::is_move_constructible_v<chronos::cluster::DistributedGroupedQueryResponseReader>);
+static_assert(
+    std::is_move_constructible_v<chronos::cluster::DistributedGroupedQueryFrameWriteCursor>);
 
 namespace {
 [[maybe_unused]] const auto kEncodeRequest =

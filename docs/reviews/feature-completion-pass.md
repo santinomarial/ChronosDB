@@ -493,6 +493,11 @@ Focused executions passed:
   future-version, type-confusion, and payload-kind substitution behavior. The installed-consumer
   gate covers both public codec directions. Authenticated receiver/partial-I/O and packaged
   multi-tablet grouped execution are not claimed.
+- Grouped-query partial-I/O continuation: 3 new stream cases and all 5 grouped transport cases passed
+  across every request split, every partial/terminal/failure response split, coalesced successors,
+  sticky damage, checksum-valid oversized header rejection, and move-only checked short writes. The
+  installed-consumer gate covers both readers and the cursor. Authenticated receiver, sender, and
+  packaged multi-tablet grouped execution are not claimed.
 
 The C++ files changed by the grouped-exchange continuations pass the repository-pinned clang-format
 18 check. A full-tree check was also run and still reports pre-existing violations in the

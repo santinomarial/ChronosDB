@@ -148,6 +148,83 @@ inline constexpr std::size_t kMinimumDispatchSize =
           length == query::grouped_exchange_terminal_format::kFrameLength);
 }
 
+[[nodiscard]] common::Result<std::size_t> request_frame_length(const common::ByteView header) {
+  if (header.size() != kDistributedGroupedQueryRequestHeaderSize)
+    return common::make_unexpected(corruption("grouped query request header is truncated"));
+  if (!std::ranges::equal(header.first(kRequestMagic.size()), kRequestMagic))
+    return common::make_unexpected(corruption("grouped query request magic is invalid"));
+  common::ByteReader crc_reader{header.last(4U)};
+  const auto stored_crc = crc_reader.read_u32_le();
+  if (!stored_crc.has_value() ||
+      *stored_crc != common::crc32c(header.first(kRequestHeaderCrcOffset))) {
+    return common::make_unexpected(corruption("grouped query request header checksum differs"));
+  }
+  common::ByteReader reader{header.subspan(kRequestMagic.size())};
+  const auto major = reader.read_u16_le();
+  const auto minor = reader.read_u16_le();
+  const auto header_length = reader.read_u32_le();
+  const auto total_length = reader.read_u64_le();
+  const auto source = reader.read_u64_le();
+  const auto target = reader.read_u64_le();
+  const auto payload_length = reader.read_u64_le();
+  const auto payload_crc = reader.read_u32_le();
+  const auto reserved = reader.read_exact(24U);
+  const auto header_crc = reader.read_u32_le();
+  if (!major.has_value() || !minor.has_value() || !header_length.has_value() ||
+      !total_length.has_value() || !source.has_value() || !target.has_value() ||
+      !payload_length.has_value() || !payload_crc.has_value() || !reserved.has_value() ||
+      !header_crc.has_value()) {
+    return common::make_unexpected(corruption("grouped query request header is truncated"));
+  }
+  if (*major != kMajor || *minor != kMinor)
+    return common::make_unexpected(unsupported("grouped query request version is unsupported"));
+  if (*header_length != kDistributedGroupedQueryRequestHeaderSize || *source == 0U ||
+      *target == 0U || *source == *target || !zero(*reserved) ||
+      *payload_length < kMinimumDispatchSize ||
+      *payload_length >
+          query::distributed_grouped_float64_fragment_dispatch_format::kMaximumFrameLength ||
+      *total_length != kDistributedGroupedQueryRequestHeaderSize + *payload_length +
+                           kDistributedGroupedQueryRequestTrailerSize ||
+      *total_length > kMaximumDistributedGroupedQueryRequestSize) {
+    return common::make_unexpected(corruption("grouped query request header is invalid"));
+  }
+  return static_cast<std::size_t>(*total_length);
+}
+
+[[nodiscard]] common::Result<std::size_t> response_frame_length(const common::ByteView header) {
+  if (header.size() != kDistributedGroupedQueryResponseHeaderSize)
+    return common::make_unexpected(corruption("grouped query response header is truncated"));
+  if (!std::ranges::equal(header.first(kResponseMagic.size()), kResponseMagic))
+    return common::make_unexpected(corruption("grouped query response magic is invalid"));
+  common::ByteReader crc_reader{header.last(4U)};
+  const auto stored_crc = crc_reader.read_u32_le();
+  if (!stored_crc.has_value() ||
+      *stored_crc != common::crc32c(header.first(kResponseHeaderCrcOffset))) {
+    return common::make_unexpected(corruption("grouped query response header checksum differs"));
+  }
+  common::ByteReader reader{header.subspan(kResponseMagic.size())};
+  const auto major = reader.read_u16_le();
+  const auto minor = reader.read_u16_le();
+  const auto header_length = reader.read_u32_le();
+  const auto total_length = reader.read_u64_le();
+  if (!major.has_value() || !minor.has_value() || !header_length.has_value() ||
+      !total_length.has_value()) {
+    return common::make_unexpected(corruption("grouped query response header is truncated"));
+  }
+  if (*major != kMajor || *minor != kMinor)
+    return common::make_unexpected(unsupported("grouped query response version is unsupported"));
+  constexpr std::size_t kFailureLength =
+      kDistributedGroupedQueryResponseHeaderSize + kDistributedGroupedQueryResponseTrailerSize;
+  constexpr std::size_t kTerminalLength =
+      kFailureLength + query::grouped_exchange_terminal_format::kFrameLength;
+  if (*header_length != kDistributedGroupedQueryResponseHeaderSize ||
+      (*total_length != kFailureLength && *total_length != kTerminalLength &&
+       *total_length != kMaximumDistributedGroupedQueryResponseSize)) {
+    return common::make_unexpected(corruption("grouped query response header is invalid"));
+  }
+  return static_cast<std::size_t>(*total_length);
+}
+
 } // namespace
 
 common::Result<std::vector<std::byte>>
@@ -462,6 +539,175 @@ decode_distributed_grouped_query_response_v1(const common::ByteView bytes) {
     leader_hint = DistributedQueryLeaderHint{*leader_node, *placement_epoch};
   return DistributedGroupedQueryResponse{
       *source, *target, *query_id, *tablet_id, *status, std::move(payload), leader_hint};
+}
+
+common::Result<DistributedGroupedQueryRequestReadStep>
+DistributedGroupedQueryRequestReader::consume(const common::ByteView bytes) {
+  if (failure_.has_value())
+    return common::make_unexpected(*failure_);
+  std::size_t consumed = 0U;
+  if (!expected_frame_bytes_.has_value()) {
+    const std::size_t header_bytes =
+        std::min(bytes.size(), kDistributedGroupedQueryRequestHeaderSize - buffered_bytes_);
+    std::ranges::copy(bytes.first(header_bytes),
+                      bytes_.begin() + static_cast<std::ptrdiff_t>(buffered_bytes_));
+    buffered_bytes_ += header_bytes;
+    consumed += header_bytes;
+    if (buffered_bytes_ != kDistributedGroupedQueryRequestHeaderSize)
+      return DistributedGroupedQueryRequestReadStep{.consumed_bytes = consumed};
+    auto length = request_frame_length(
+        common::ByteView{bytes_}.first(kDistributedGroupedQueryRequestHeaderSize));
+    if (!length.has_value()) {
+      failure_.emplace(std::move(length).error());
+      return common::make_unexpected(*failure_);
+    }
+    expected_frame_bytes_ = *length;
+  }
+  const std::size_t frame_bytes =
+      std::min(bytes.size() - consumed, *expected_frame_bytes_ - buffered_bytes_);
+  std::ranges::copy(bytes.subspan(consumed, frame_bytes),
+                    bytes_.begin() + static_cast<std::ptrdiff_t>(buffered_bytes_));
+  buffered_bytes_ += frame_bytes;
+  consumed += frame_bytes;
+  if (buffered_bytes_ != *expected_frame_bytes_)
+    return DistributedGroupedQueryRequestReadStep{.consumed_bytes = consumed};
+  auto decoded = decode_distributed_grouped_query_request_v1(
+      common::ByteView{bytes_}.first(*expected_frame_bytes_));
+  if (!decoded.has_value()) {
+    failure_.emplace(std::move(decoded).error());
+    return common::make_unexpected(*failure_);
+  }
+  buffered_bytes_ = 0U;
+  expected_frame_bytes_.reset();
+  return DistributedGroupedQueryRequestReadStep{.consumed_bytes = consumed,
+                                                .request = std::move(*decoded)};
+}
+
+std::size_t DistributedGroupedQueryRequestReader::buffered_bytes() const noexcept {
+  return buffered_bytes_;
+}
+
+std::optional<std::size_t>
+DistributedGroupedQueryRequestReader::expected_frame_bytes() const noexcept {
+  return expected_frame_bytes_;
+}
+
+bool DistributedGroupedQueryRequestReader::failed() const noexcept {
+  return failure_.has_value();
+}
+
+common::Result<DistributedGroupedQueryResponseReadStep>
+DistributedGroupedQueryResponseReader::consume(const common::ByteView bytes) {
+  if (failure_.has_value())
+    return common::make_unexpected(*failure_);
+  std::size_t consumed = 0U;
+  if (!expected_frame_bytes_.has_value()) {
+    const std::size_t header_bytes =
+        std::min(bytes.size(), kDistributedGroupedQueryResponseHeaderSize - buffered_bytes_);
+    std::ranges::copy(bytes.first(header_bytes),
+                      bytes_.begin() + static_cast<std::ptrdiff_t>(buffered_bytes_));
+    buffered_bytes_ += header_bytes;
+    consumed += header_bytes;
+    if (buffered_bytes_ != kDistributedGroupedQueryResponseHeaderSize)
+      return DistributedGroupedQueryResponseReadStep{.consumed_bytes = consumed};
+    auto length = response_frame_length(
+        common::ByteView{bytes_}.first(kDistributedGroupedQueryResponseHeaderSize));
+    if (!length.has_value()) {
+      failure_.emplace(std::move(length).error());
+      return common::make_unexpected(*failure_);
+    }
+    expected_frame_bytes_ = *length;
+  }
+  const std::size_t frame_bytes =
+      std::min(bytes.size() - consumed, *expected_frame_bytes_ - buffered_bytes_);
+  std::ranges::copy(bytes.subspan(consumed, frame_bytes),
+                    bytes_.begin() + static_cast<std::ptrdiff_t>(buffered_bytes_));
+  buffered_bytes_ += frame_bytes;
+  consumed += frame_bytes;
+  if (buffered_bytes_ != *expected_frame_bytes_)
+    return DistributedGroupedQueryResponseReadStep{.consumed_bytes = consumed};
+  auto decoded = decode_distributed_grouped_query_response_v1(
+      common::ByteView{bytes_}.first(*expected_frame_bytes_));
+  if (!decoded.has_value()) {
+    failure_.emplace(std::move(decoded).error());
+    return common::make_unexpected(*failure_);
+  }
+  buffered_bytes_ = 0U;
+  expected_frame_bytes_.reset();
+  return DistributedGroupedQueryResponseReadStep{.consumed_bytes = consumed,
+                                                 .response = std::move(*decoded)};
+}
+
+std::size_t DistributedGroupedQueryResponseReader::buffered_bytes() const noexcept {
+  return buffered_bytes_;
+}
+
+std::optional<std::size_t>
+DistributedGroupedQueryResponseReader::expected_frame_bytes() const noexcept {
+  return expected_frame_bytes_;
+}
+
+bool DistributedGroupedQueryResponseReader::failed() const noexcept {
+  return failure_.has_value();
+}
+
+DistributedGroupedQueryFrameWriteCursor::DistributedGroupedQueryFrameWriteCursor(
+    std::vector<std::byte> encoded_frame) noexcept
+    : encoded_frame_(std::move(encoded_frame)) {}
+
+DistributedGroupedQueryFrameWriteCursor::DistributedGroupedQueryFrameWriteCursor(
+    DistributedGroupedQueryFrameWriteCursor&& other) noexcept
+    : encoded_frame_(std::move(other.encoded_frame_)), written_bytes_(other.written_bytes_) {
+  other.written_bytes_ = other.encoded_frame_.size();
+}
+
+DistributedGroupedQueryFrameWriteCursor& DistributedGroupedQueryFrameWriteCursor::operator=(
+    DistributedGroupedQueryFrameWriteCursor&& other) noexcept {
+  if (this != &other) {
+    encoded_frame_ = std::move(other.encoded_frame_);
+    written_bytes_ = other.written_bytes_;
+    other.written_bytes_ = other.encoded_frame_.size();
+  }
+  return *this;
+}
+
+common::Result<DistributedGroupedQueryFrameWriteCursor>
+DistributedGroupedQueryFrameWriteCursor::create(std::vector<std::byte> encoded_frame) {
+  if (encoded_frame.size() < kRequestMagic.size())
+    return common::make_unexpected(corruption("grouped query frame is truncated"));
+  const common::ByteView bytes{encoded_frame};
+  if (std::ranges::equal(bytes.first(kRequestMagic.size()), kRequestMagic)) {
+    auto decoded = decode_distributed_grouped_query_request_v1(bytes);
+    if (!decoded.has_value())
+      return common::make_unexpected(decoded.error());
+  } else if (std::ranges::equal(bytes.first(kResponseMagic.size()), kResponseMagic)) {
+    auto decoded = decode_distributed_grouped_query_response_v1(bytes);
+    if (!decoded.has_value())
+      return common::make_unexpected(decoded.error());
+  } else {
+    return common::make_unexpected(corruption("grouped query frame magic is invalid"));
+  }
+  return DistributedGroupedQueryFrameWriteCursor{std::move(encoded_frame)};
+}
+
+common::ByteView DistributedGroupedQueryFrameWriteCursor::pending_write() const noexcept {
+  return common::ByteView{encoded_frame_}.subspan(written_bytes_);
+}
+
+common::Status
+DistributedGroupedQueryFrameWriteCursor::consume_written(const std::size_t bytes) noexcept {
+  if (bytes > encoded_frame_.size() - written_bytes_)
+    return invalid("written byte count exceeds the grouped query frame");
+  written_bytes_ += bytes;
+  return common::Status::ok();
+}
+
+std::size_t DistributedGroupedQueryFrameWriteCursor::written_bytes() const noexcept {
+  return written_bytes_;
+}
+
+bool DistributedGroupedQueryFrameWriteCursor::complete() const noexcept {
+  return written_bytes_ == encoded_frame_.size();
 }
 
 } // namespace chronos::cluster

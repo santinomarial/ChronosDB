@@ -2,11 +2,13 @@
 #include "chronos/cluster/distributed_query_transport.hpp"
 #include "chronos/common/crc32c.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
 #include <optional>
+#include <ranges>
 #include <variant>
 #include <vector>
 
@@ -64,6 +66,11 @@ void store_u16(std::vector<std::byte>& bytes, const std::size_t offset, const st
 }
 
 void store_u32(std::vector<std::byte>& bytes, const std::size_t offset, const std::uint32_t value) {
+  for (std::size_t index = 0U; index < sizeof(value); ++index)
+    bytes[offset + index] = static_cast<std::byte>(value >> (index * 8U));
+}
+
+void store_u64(std::vector<std::byte>& bytes, const std::size_t offset, const std::uint64_t value) {
   for (std::size_t index = 0U; index < sizeof(value); ++index)
     bytes[offset + index] = static_cast<std::byte>(value >> (index * 8U));
 }
@@ -250,6 +257,154 @@ TEST(DistributedGroupedQueryTransportCodecTest, RejectsDamageTypeConfusionAndMis
   rewrite_response_checksums(future_response);
   EXPECT_EQ(decode_distributed_grouped_query_response_v1(future_response).error().code(),
             common::StatusCode::kNotSupported);
+}
+
+TEST(DistributedGroupedQueryStreamTest, RequestReaderOwnsEverySplitAndOneCoalescedFrame) {
+  const auto encoded = encode_distributed_grouped_query_request_v1({1U, 2U, dispatch()}).value();
+  for (std::size_t split = 0U; split <= encoded.size(); ++split) {
+    DistributedGroupedQueryRequestReader reader;
+    const auto first = reader.consume(common::ByteView{encoded}.first(split));
+    ASSERT_TRUE(first.has_value()) << "split " << split;
+    EXPECT_EQ(first->consumed_bytes, split);
+    if (split == encoded.size()) {
+      ASSERT_TRUE(first->request.has_value());
+      EXPECT_EQ(first->request->dispatch.fragment.aggregate.query_id, uuid(1U));
+      continue;
+    }
+    EXPECT_FALSE(first->request.has_value());
+    const auto second = reader.consume(common::ByteView{encoded}.subspan(split));
+    ASSERT_TRUE(second.has_value()) << "split " << split;
+    ASSERT_TRUE(second->request.has_value());
+    EXPECT_EQ(second->consumed_bytes, encoded.size() - split);
+    EXPECT_EQ(second->request->dispatch.raft_group_id, uuid(9U));
+  }
+
+  std::vector<std::byte> coalesced = encoded;
+  coalesced.insert(coalesced.end(), encoded.begin(), encoded.end());
+  DistributedGroupedQueryRequestReader reader;
+  const auto first = reader.consume(coalesced);
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(first->request.has_value());
+  EXPECT_EQ(first->consumed_bytes, encoded.size());
+  const auto second = reader.consume(common::ByteView{coalesced}.subspan(first->consumed_bytes));
+  ASSERT_TRUE(second.has_value());
+  EXPECT_TRUE(second->request.has_value());
+  EXPECT_EQ(second->consumed_bytes, encoded.size());
+}
+
+TEST(DistributedGroupedQueryStreamTest, ResponseReaderOwnsAllThreeLengthsAndCoalescing) {
+  const std::vector<std::vector<std::byte>> frames{
+      encode_distributed_grouped_query_response_v1(
+          {.source_node_id = 2U,
+           .target_node_id = 1U,
+           .query_id = uuid(1U),
+           .tablet_id = id<schema::TabletId>(4U),
+           .status_code = common::StatusCode::kOk,
+           .payload = DistributedGroupedQueryResponsePayload{partial()}})
+          .value(),
+      encode_distributed_grouped_query_response_v1(
+          {.source_node_id = 2U,
+           .target_node_id = 1U,
+           .query_id = uuid(1U),
+           .tablet_id = id<schema::TabletId>(4U),
+           .status_code = common::StatusCode::kOk,
+           .payload = DistributedGroupedQueryResponsePayload{query::GroupedExchangeTerminalMessage{
+               .query_id = uuid(1U), .tablet_id = id<schema::TabletId>(4U), .sequence = 1U}}})
+          .value(),
+      encode_distributed_grouped_query_response_v1(
+          {.source_node_id = 2U,
+           .target_node_id = 1U,
+           .query_id = uuid(1U),
+           .tablet_id = id<schema::TabletId>(4U),
+           .status_code = common::StatusCode::kUnavailable})
+          .value()};
+  for (const auto& frame : frames) {
+    for (std::size_t split = 0U; split <= frame.size(); ++split) {
+      DistributedGroupedQueryResponseReader reader;
+      const auto first = reader.consume(common::ByteView{frame}.first(split));
+      ASSERT_TRUE(first.has_value()) << "size " << frame.size() << " split " << split;
+      if (split == frame.size()) {
+        EXPECT_TRUE(first->response.has_value());
+        continue;
+      }
+      EXPECT_FALSE(first->response.has_value());
+      const auto second = reader.consume(common::ByteView{frame}.subspan(split));
+      ASSERT_TRUE(second.has_value()) << "size " << frame.size() << " split " << split;
+      ASSERT_TRUE(second->response.has_value());
+      EXPECT_EQ(second->response->query_id, uuid(1U));
+    }
+  }
+
+  std::vector<std::byte> coalesced;
+  for (const auto& frame : frames)
+    coalesced.insert(coalesced.end(), frame.begin(), frame.end());
+  DistributedGroupedQueryResponseReader reader;
+  std::size_t consumed = 0U;
+  for (const auto& frame : frames) {
+    const auto step = reader.consume(common::ByteView{coalesced}.subspan(consumed));
+    ASSERT_TRUE(step.has_value());
+    ASSERT_TRUE(step->response.has_value());
+    EXPECT_EQ(step->consumed_bytes, frame.size());
+    consumed += step->consumed_bytes;
+  }
+  EXPECT_EQ(consumed, coalesced.size());
+}
+
+TEST(DistributedGroupedQueryStreamTest, FailureIsStickyAndWriteCursorOwnsOneFrame) {
+  auto damaged = encode_distributed_grouped_query_request_v1({1U, 2U, dispatch()}).value();
+  damaged[24U] ^= std::byte{1U};
+  DistributedGroupedQueryRequestReader reader;
+  const auto rejected = reader.consume(damaged);
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kCorruption);
+  EXPECT_TRUE(reader.failed());
+  const auto retry =
+      reader.consume(encode_distributed_grouped_query_request_v1({1U, 2U, dispatch()}).value());
+  ASSERT_FALSE(retry.has_value());
+  EXPECT_EQ(retry.error(), rejected.error());
+
+  auto oversized = encode_distributed_grouped_query_request_v1({1U, 2U, dispatch()}).value();
+  store_u64(oversized, 16U, kMaximumDistributedGroupedQueryRequestSize + 1U);
+  store_u32(oversized, 76U, common::crc32c(common::ByteView{oversized}.first(76U)));
+  DistributedGroupedQueryRequestReader oversized_reader;
+  const auto oversized_result = oversized_reader.consume(
+      common::ByteView{oversized}.first(kDistributedGroupedQueryRequestHeaderSize));
+  ASSERT_FALSE(oversized_result.has_value());
+  EXPECT_EQ(oversized_result.error().code(), common::StatusCode::kCorruption);
+  EXPECT_EQ(oversized_reader.buffered_bytes(), kDistributedGroupedQueryRequestHeaderSize);
+  EXPECT_FALSE(oversized_reader.expected_frame_bytes().has_value());
+
+  const auto expected = encode_distributed_grouped_query_request_v1({1U, 2U, dispatch()}).value();
+  auto cursor = DistributedGroupedQueryFrameWriteCursor::create(expected);
+  ASSERT_TRUE(cursor.has_value()) << cursor.error().to_string();
+  EXPECT_TRUE(std::ranges::equal(cursor->pending_write(), expected));
+  ASSERT_TRUE(cursor->consume_written(17U).is_ok());
+  EXPECT_EQ(cursor->written_bytes(), 17U);
+  EXPECT_TRUE(std::ranges::equal(cursor->pending_write(), common::ByteView{expected}.subspan(17U)));
+  EXPECT_EQ(cursor->consume_written(cursor->pending_write().size() + 1U).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(cursor->written_bytes(), 17U);
+  DistributedGroupedQueryFrameWriteCursor moved = std::move(*cursor);
+  EXPECT_TRUE(cursor->complete());
+  EXPECT_TRUE(cursor->pending_write().empty());
+  ASSERT_TRUE(moved.consume_written(moved.pending_write().size()).is_ok());
+  EXPECT_TRUE(moved.complete());
+
+  auto corrupt = expected;
+  corrupt.back() ^= std::byte{1U};
+  EXPECT_EQ(DistributedGroupedQueryFrameWriteCursor::create(std::move(corrupt)).error().code(),
+            common::StatusCode::kCorruption);
+
+  auto response = encode_distributed_grouped_query_response_v1(
+                      {.source_node_id = 2U,
+                       .target_node_id = 1U,
+                       .query_id = uuid(1U),
+                       .tablet_id = id<schema::TabletId>(4U),
+                       .status_code = common::StatusCode::kUnavailable})
+                      .value();
+  auto response_cursor = DistributedGroupedQueryFrameWriteCursor::create(response);
+  ASSERT_TRUE(response_cursor.has_value());
+  EXPECT_TRUE(std::ranges::equal(response_cursor->pending_write(), response));
 }
 
 } // namespace

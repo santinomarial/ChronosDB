@@ -30,9 +30,9 @@ physical lengths are 116, 180, or 252 response bytes; requests are bounded at 16
 dispatch/exchange/terminal integrity and semantic checks remain authoritative. CRC32C is not
 authentication.
 
-This decision implements exact value-owned codecs only. It does not yet define stream readers,
-write ownership, authenticated receiver dispatch, multi-response connection closure, retries, TLS,
-or TCP lifecycle ownership.
+This decision initially implemented exact value-owned codecs only. ADR 0331 subsequently supplies
+fixed-storage stream readers and move-only write ownership. Authenticated receiver dispatch,
+multi-response connection closure, retries, TLS, and TCP lifecycle ownership remain separate.
 
 ## Consequences and validation
 
@@ -47,9 +47,9 @@ confusion, checksum-valid future versions, nested request/response damage, misma
 and checksum-valid payload-kind substitution. The public header is self-contained and the
 installed-consumer gate references both directions.
 
-Authenticated receiver/service ownership, bounded partial I/O, sender/coordinator integration,
-packaged multi-tablet grouped execution, and broad fault/measurement evidence remain incomplete.
-No Phase 16 exit gate is claimed.
+Authenticated receiver/service ownership, sender/coordinator integration, packaged multi-tablet
+grouped execution, and broad fault/measurement evidence remain incomplete. No Phase 16 exit gate is
+claimed.
 
 Invariants 4–6, 10, 11, 14, 15, and 18 apply.
 

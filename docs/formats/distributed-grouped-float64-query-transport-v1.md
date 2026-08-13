@@ -1,7 +1,7 @@
 # Distributed Grouped FLOAT64 Query Transport v1
 
-> **Status:** accepted with implemented exact request/response codecs. Authentication, stream
-> ownership, and worker dispatch remain separate follow-up boundaries.
+> **Status:** accepted with implemented exact request/response codecs and bounded partial-I/O
+> ownership. Authentication and worker dispatch remain separate follow-up boundaries.
 
 This cluster protocol carries one group-scoped grouped FLOAT64 fragment dispatch to a remote worker
 and correlates each returned grouped partial, empty-stream terminal, or failure. It is distinct from
@@ -77,8 +77,13 @@ Distinct request and response magics make these frames invalid to the ungrouped 
 and vice versa. Minor-version compatibility is exact in v1. Reserved fields and flags must remain
 zero unless a later accepted version defines them.
 
-The exact codecs return value-owned dispatches and payloads. They do not define fragmented stream
-I/O, multiple-response connection closure, retry arbitration, authentication, authorization,
-receiver service ownership, TLS, or TCP. A future authenticated receiver must authorize the claimed
-source, exact-match the target, invoke the proof-revalidating grouped worker, and preserve response
-sequence order without publishing partial query success.
+The exact codecs return value-owned dispatches and payloads. Fixed-storage request and response
+readers first integrity-check the complete header, retain no more than their protocol maximum,
+consume at most one frame, leave coalesced successors caller-owned, and fail sticky. A move-only
+write cursor accepts only an exact grouped request or response and exposes its checked unwritten
+suffix; moving leaves the source complete.
+
+These primitives do not define multiple-response connection closure, retry arbitration,
+authentication, authorization, receiver service ownership, TLS, or TCP. A future authenticated
+receiver must authorize the claimed source, exact-match the target, invoke the proof-revalidating
+grouped worker, and preserve response sequence order without publishing partial query success.
