@@ -1,3 +1,4 @@
+#include "chronos/cluster/distributed_grouped_query_execution.hpp"
 #include "chronos/cluster/distributed_query_execution.hpp"
 #include "chronos/cluster/distributed_query_tcp_execution.hpp"
 #include "chronos/cluster/distributed_query_tcp_server.hpp"
@@ -96,6 +97,7 @@ struct ExecutionInput {
   query::DistributedAggregatePlan plan;
   std::vector<query::DistributedReadAdmission> admissions;
   query::CompatibleDistributedAggregateSnapshot snapshot;
+  query::CompatibleDistributedGroupedFloat64Snapshot grouped_snapshot;
 };
 
 [[nodiscard]] common::Result<ExecutionInput>
@@ -191,12 +193,18 @@ make_input(const TemporaryDirectory& directory, const std::uint8_t query_seed = 
                             query::DistributedAggregateSnapshotFragmentBinding{
                                 std::cref(admissions[1]), std::cref(schema), groups[1],
                                 std::cref(placements[1]), projection, 1U, std::nullopt}};
+  auto grouped = query::bind_compatible_distributed_grouped_float64_snapshot(
+      plan, *snapshot, bindings, 1U,
+      {.maximum_fragments = 2U, .maximum_total_projection_ordinals = 4U});
+  if (!grouped.has_value())
+    return common::make_unexpected(grouped.error());
   auto compatible = query::bind_compatible_distributed_aggregate_snapshot(
       plan, std::move(*snapshot), bindings,
       {.maximum_fragments = 2U, .maximum_total_projection_ordinals = 4U});
   if (!compatible.has_value())
     return common::make_unexpected(compatible.error());
-  return ExecutionInput{std::move(plan), std::move(admissions), std::move(*compatible)};
+  return ExecutionInput{std::move(plan), std::move(admissions), std::move(*compatible),
+                        std::move(*grouped)};
 }
 
 [[nodiscard]] query::ExchangeMessage message(const schema::TabletId& tablet, const double value) {
@@ -352,6 +360,83 @@ TEST(DistributedQueryExecutionTest, RetryBackoffDoesNotFailUntilSenderBecomesTer
   EXPECT_EQ(*execution->sender_state(tablet), DistributedQuerySenderState::kBackoff);
   EXPECT_EQ(*execution->next_attempt_not_before(tablet), now + std::chrono::milliseconds{10});
   EXPECT_EQ(*execution->suggested_leader(tablet), DistributedQueryLeaderHint(13U, 14U));
+  ASSERT_TRUE(execution->begin_attempt(tablet, now + std::chrono::milliseconds{10}).has_value());
+  ASSERT_TRUE(execution
+                  ->record_transport_failure(tablet, common::StatusCode::kIoError,
+                                             now + std::chrono::milliseconds{10})
+                  .is_ok());
+  EXPECT_EQ(*execution->sender_state(tablet), DistributedQuerySenderState::kFailed);
+  EXPECT_EQ(execution->finish().error().code(), common::StatusCode::kIoError);
+}
+
+TEST(DistributedGroupedQueryExecutionTest, WithholdsResultsUntilEverySenderCloses) {
+  TemporaryDirectory directory;
+  auto input = make_input(directory);
+  ASSERT_TRUE(input.has_value()) << input.error().to_string();
+  const auto dispatches = input->grouped_snapshot.dispatches();
+  const std::array tablets{dispatches[0].fragment.aggregate.tablet_id,
+                           dispatches[1].fragment.aggregate.tablet_id};
+  auto execution = DistributedGroupedQueryExecution::create(1U, std::move(input->grouped_snapshot));
+  ASSERT_TRUE(execution.has_value()) << execution.error().to_string();
+  EXPECT_EQ(execution->snapshot().snapshot().generation(), 1U);
+  EXPECT_EQ(execution->finish().error().code(), common::StatusCode::kUnavailable);
+
+  const auto now = DistributedGroupedQueryExecution::TimePoint{};
+  ASSERT_TRUE(execution->begin_attempt(tablets[0], now).has_value());
+  ASSERT_TRUE(execution->begin_attempt(tablets[1], now).has_value());
+  query::MergeableAggregateState partial;
+  ASSERT_TRUE(partial.add(2.5).is_ok());
+  const std::array first{DistributedGroupedQueryResponse{
+      .source_node_id = 11U,
+      .target_node_id = 1U,
+      .query_id = uuid(7U),
+      .tablet_id = tablets[0],
+      .status_code = common::StatusCode::kOk,
+      .payload = DistributedGroupedQueryResponsePayload{
+          query::GroupedFloat64ExchangeMessage{uuid(7U), tablets[0], 1U, 5.0, partial, true}}}};
+  ASSERT_TRUE(execution->accept_responses(tablets[0], first, now).is_ok());
+  EXPECT_EQ(execution->finish().error().code(), common::StatusCode::kUnavailable);
+
+  const std::array second{DistributedGroupedQueryResponse{
+      .source_node_id = 12U,
+      .target_node_id = 1U,
+      .query_id = uuid(7U),
+      .tablet_id = tablets[1],
+      .status_code = common::StatusCode::kOk,
+      .payload = DistributedGroupedQueryResponsePayload{
+          query::GroupedExchangeTerminalMessage{uuid(7U), tablets[1], 1U}}}};
+  ASSERT_TRUE(execution->accept_responses(tablets[1], second, now).is_ok());
+  auto result = execution->finish();
+  ASSERT_TRUE(result.has_value()) << result.error().to_string();
+  ASSERT_EQ(result->size(), 1U);
+  EXPECT_EQ(result->front().group_key, 5.0);
+  EXPECT_EQ(result->front().aggregate.count, 1U);
+  EXPECT_EQ(result->front().aggregate.sum, 2.5);
+  EXPECT_EQ(execution->accept_responses(tablets[1], second, now).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(execution->begin_attempt(id<schema::TabletId>(99U), now).error().code(),
+            common::StatusCode::kInvalidArgument);
+}
+
+TEST(DistributedGroupedQueryExecutionTest, PublishesOnlyTerminalSenderFailure) {
+  TemporaryDirectory directory;
+  auto input = make_input(directory);
+  ASSERT_TRUE(input.has_value()) << input.error().to_string();
+  const schema::TabletId tablet =
+      input->grouped_snapshot.dispatches().front().fragment.aggregate.tablet_id;
+  auto execution = DistributedGroupedQueryExecution::create(
+      1U, std::move(input->grouped_snapshot),
+      {.coordinator = {},
+       .retry = {.maximum_attempts = 2U,
+                 .initial_backoff = std::chrono::milliseconds{10},
+                 .maximum_backoff = std::chrono::milliseconds{10}}});
+  ASSERT_TRUE(execution.has_value()) << execution.error().to_string();
+  const auto now = DistributedGroupedQueryExecution::TimePoint{};
+  ASSERT_TRUE(execution->begin_attempt(tablet, now).has_value());
+  ASSERT_TRUE(
+      execution->record_transport_failure(tablet, common::StatusCode::kIoError, now).is_ok());
+  EXPECT_EQ(*execution->sender_state(tablet), DistributedQuerySenderState::kBackoff);
+  EXPECT_EQ(execution->finish().error().code(), common::StatusCode::kUnavailable);
   ASSERT_TRUE(execution->begin_attempt(tablet, now + std::chrono::milliseconds{10}).has_value());
   ASSERT_TRUE(execution
                   ->record_transport_failure(tablet, common::StatusCode::kIoError,

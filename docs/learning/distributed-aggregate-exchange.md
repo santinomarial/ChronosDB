@@ -167,6 +167,10 @@ backoff. Advisory hints never mutate its proof-bound target.
 `CompatibleDistributedGroupedFloat64Snapshot` delegates complete multi-tablet authority to the
 aggregate batch binder, proves the shared key input under every exact schema, derives every grouped
 dispatch in plan order, and retains the one pinned Manifest epoch.
+`DistributedGroupedQueryExecution` accepts only that proof-carrying owner, constructs one finite
+sender per bound tablet, and delivers a sender's already-validated terminal payload vector to the
+grouped coordinator once. Backoff never mutates coordinator state; terminal failure does. Its
+`finish` method therefore cannot publish before every tablet closes successfully.
 `DistributedQueryTcpServer` owns the dedicated listener, long-lived TLS context, fixed-capacity poll
 storage, bounded stable connection records, deadline driving, metrics, and carrier-before-descriptor
 shutdown order for real multi-connection serving.
@@ -198,7 +202,7 @@ A fixed ungrouped-aggregate frame gives partial-I/O carriers an unambiguous payl
 prematurely defining a general physical-fragment language. The cost is a specialized first exchange
 type. A separate first grouped frame now carries one nullable FLOAT64 key with bounded
 coordination and authenticated multi-response TLS ownership, but multi-key and non-FLOAT64
-grouping, general physical plans, coordinator/scheduler packaging, ordering/top-N, cancellation
+grouping, general physical plans, TCP scheduler packaging, ordering/top-N, cancellation
 delivery, and durable recovery require their own bounded contracts. A leader hint never mutates an existing
 proof-bound dispatch: following it requires explicit coordinator rebinding.
 The replicated read-barrier owner now returns exact correlated leader observations for

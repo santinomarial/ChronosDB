@@ -375,3 +375,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0338](0338-owned-real-cseg-grouped-query-tcp-service.md) | Owned real-CSEG grouped-query TCP service | accepted |
 | [0339](0339-finite-grouped-query-sender.md) | Finite grouped-query sender | accepted |
 | [0340](0340-compatible-grouped-float64-snapshot-binding.md) | Compatible grouped FLOAT64 snapshot binding | accepted |
+| [0341](0341-fail-closed-grouped-query-execution-owner.md) | Fail-closed grouped query execution owner | accepted |

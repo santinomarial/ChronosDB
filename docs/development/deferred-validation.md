@@ -264,14 +264,13 @@
   implicit stream discriminator.
   A bounded single-owner coordinator now enforces contiguous per-tablet grouped sequences, exact
   canonical retry history, empty-tablet terminals, first-failure arbitration, all-tablet closure,
-  and cross-tablet nullable-FLOAT64 group merging. Sender/coordinator integration remains
-  incomplete. A distinct exact grouped-intent envelope now binds one
-  projected key index around the existing snapshot/route/proof-bound Fragment v1 bytes; schema/type
-  authority binding now reuses the complete aggregate binder and proves the grouped key against the
-  same pinned schema. A distinct group-scoped executable dispatch now binds that intent to its
-  nonnil Raft group without changing ungrouped bytes, and the authority binder can now package its
-  exact validated owned values directly into that dispatch without a second caller-side join. The
-  grouped worker now reuses every local
+  and cross-tablet nullable-FLOAT64 group merging. A distinct exact grouped-intent envelope now
+  binds one projected key index around the existing snapshot/route/proof-bound Fragment v1 bytes;
+  schema/type authority binding now reuses the complete aggregate binder and proves the grouped key
+  against the same pinned schema. A distinct group-scoped executable dispatch now binds that intent
+  to its nonnil Raft group without changing ungrouped bytes, and the authority binder can now
+  package its exact validated owned values directly into that dispatch without a second caller-side
+  join. The grouped worker now reuses every local
   authority gate, resolves real temporal CSEG winners, emits canonical terminal partials, and uses
   the terminal-only value for empty selected input. Distinct exact grouped request/response codecs
   now carry the canonical dispatch and discriminate one correlated partial, empty terminal, or
@@ -291,7 +290,10 @@
   A finite one-tablet sender now owns complete-stream correlation, immutable attempts, advisory
   hints, and capped whole-attempt retry/backoff. A compatible batch binder now retains one pinned
   Manifest epoch while deriving every plan-ordered grouped dispatch under its exact FLOAT64 schema
-  proof. Coordinator integration plus packaged grouped execution remain incomplete.
+  proof. A portable single-owner execution now retains that pin, correlates exactly one finite sender
+  per bound tablet, delivers a complete terminal stream once, reports only terminal sender failure,
+  and delegates all-tablet publication to the grouped coordinator. Multi-tablet TCP scheduling and
+  packaged grouped construction remain incomplete.
 - Proof-bound leader-linearizable/bounded-stale/local-eventual admissions now remain attached through
   compatible pinned multi-tablet snapshots and protocol/carrier scheduling. Whole-query replacement
   now validates fresh caller-proved authority, identical logical shape, nonregressing generation,

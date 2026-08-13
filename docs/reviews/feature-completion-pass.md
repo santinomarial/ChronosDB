@@ -247,8 +247,10 @@ outbound TCP composite owns one validated connection attempt. A bounded inbound 
 finite admission and stable carrier/descriptor lifetime, and a production owner composes it with
 the real-CSEG grouped worker. A finite sender owns complete response-vector correlation and
 whole-attempt retry/backoff. A compatible grouped binder retains one pinned Manifest epoch across
-every plan-ordered, schema-proved dispatch. Coordinator integration, packaged grouped execution,
-and multi-key/non-FLOAT64 state remain incomplete. A distinct
+every plan-ordered, schema-proved dispatch. A portable execution owner now retains that snapshot,
+owns one finite sender per tablet, delivers complete terminal streams once, and preserves the
+coordinator's all-tablet result boundary. TCP scheduling, packaged grouped construction, and
+multi-key/non-FLOAT64 state remain incomplete. A distinct
 canonical observation protocol, authenticated receiver, mTLS clients/servers, finite multi-address
 acquisition, correlated
 leader/follower pairs, canonical all-group batches, placement-backed construction, and packaged
@@ -552,6 +554,12 @@ Focused executions passed:
   grouped dispatch construction, plus out-of-bounds and TIMESTAMP key rejection. The
   installed-consumer gate covers the public binder. Coordinator execution, TCP scheduling, and
   packaged grouped construction are not claimed.
+- Grouped execution-owner continuation: 2 focused cases passed for retained Manifest generation,
+  one sender per compatible dispatch, terminal-only closure, no result before all tablets close,
+  exact-once coordinator delivery, duplicate/foreign-tablet rejection, nonterminal retry backoff,
+  and exact terminal failure propagation. Header self-containment and the installed-consumer gate
+  cover the public owner. Multi-tablet TCP scheduling and packaged grouped construction are not
+  claimed.
 
 The C++ files changed by the grouped-exchange continuations pass the repository-pinned clang-format
 18 check. A full-tree check was also run and still reports pre-existing violations in the

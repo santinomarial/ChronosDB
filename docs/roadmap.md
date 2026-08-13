@@ -1034,8 +1034,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   attempts, exact-correlates only complete terminal response vectors, exposes advisory hints without
   rebinding authority, and retries whole attempts under capped backoff. A compatible grouped
   snapshot binder now derives every plan-ordered grouped dispatch under the same pinned Manifest
-  epoch and exact per-tablet FLOAT64 schema proof. Coordinator integration and packaged multi-tablet
-  grouped execution remain.
+  epoch and exact per-tablet FLOAT64 schema proof. A portable execution owner now constructs one
+  finite sender per bound tablet, delivers each complete terminal stream to the grouped coordinator
+  exactly once, reports only terminal sender failure, retains the Manifest pin, and withholds the
+  result until every tablet closes. Multi-tablet TCP scheduling and packaged grouped construction
+  remain.
   Multi-key/non-FLOAT64 state/transport, ordering, top-N, and LIMIT remain deferred. A distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
   catalog, Manifest, route, and execution gates;
