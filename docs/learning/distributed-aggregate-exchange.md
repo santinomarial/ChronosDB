@@ -391,7 +391,10 @@ canonical Native Protocol result payload. LIMIT zero produces a zero-row schema-
 The first aggregate transport boundary reuses the canonical Fragment-v2 request but gives aggregate
 states a distinct `CHDVARP2` response. Its API requires the complete definition vector on every
 path and query resource authority for decode, while the header-first reader enforces nested and
-outer bounds before allocation. Authenticated receiver/service, retry, TLS/TCP, and process
+outer bounds before allocation. The receiver now authenticates and authorizes the node route,
+rejects non-aggregate plans, binds definitions from local authority before execution, and requires
+the independently proof-derived worker definitions to exact-match before retaining a complete
+count- and byte-bounded response vector. Production worker service, retry, TLS/TCP, and process
 integration still remain.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority

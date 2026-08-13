@@ -1,8 +1,9 @@
 # Distributed Vector Aggregate Query Transport v2
 
 > **Status:** accepted and implemented exact response codec/partial-I/O contract. Requests reuse
-> the exact Fragment-v2 `CHDVREQ2` carrier. Authenticated receiver/sender, TLS/TCP lifecycle,
-> retries, worker service integration, and process ownership remain separate.
+> the exact Fragment-v2 `CHDVREQ2` carrier. An authenticated receiver owns definition binding,
+> worker handoff, and complete bounded response publication. Sender retry, TLS/TCP lifecycle,
+> production worker service integration, and process ownership remain separate.
 
 All integers are unsigned little-endian. Reserved bytes are zero. CRC32C detects accidental damage
 and is not authentication. The nested payload retains its own independent checksums.
@@ -59,3 +60,21 @@ coalesced successor caller-owned, and retains sticky frame failure. The move-onl
 only its unwritten suffix and leaves a moved-from cursor complete. Unknown versions are
 unsupported; damage and wire contradiction are corruption; invalid local contracts are invalid
 arguments; lower deployment bounds are resource exhaustion.
+
+## Authenticated receiver
+
+The receiver rejects missing peer authentication before decode, authorizes the claimed source
+node, exact-matches the local target, and admits only `UNGROUPED_AGGREGATE`. It first asks the
+embedding worker service to bind definitions from current local authority, checks operation, input
+ordinal, output type/nullability, and width against the admitted Fragment v2, and only then invokes
+execution. Definition binding failure publishes no response because no definition authority exists
+for even a failure carrier.
+
+Execution returns its independently proof-derived definitions beside exactly one state per
+aggregate. The receiver exact-matches both definition vectors, query/tablet identity, ordinal,
+sequence, and terminal position, then encodes and retains the complete response vector. A worker
+failure after definition binding becomes one correlated failure response; `UNAVAILABLE` may carry
+an authenticated metadata-derived leader hint. Frame-count and total exact encoded-byte ceilings
+turn an otherwise valid oversized result into one `RESOURCE_EXHAUSTED` response. Any contract,
+encoding, or allocation failure exposes no success prefix. TLS and socket ownership remain outside
+this synchronous borrowed-service boundary.

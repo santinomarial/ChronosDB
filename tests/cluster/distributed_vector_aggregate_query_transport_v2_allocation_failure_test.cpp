@@ -36,6 +36,28 @@ template <typename Operation>
   return {{.operation = query::VectorAggregateOperation::kCountStar, .input = std::nullopt}};
 }
 
+[[nodiscard]] query::DistributedVectorFragmentDispatchV2 dispatch_v2() {
+  return {
+      .dispatch =
+          {.query_id = uuid(1U),
+           .database_id = manifest::DatabaseId::from_uuid(uuid(3U)).value(),
+           .table_id = schema::TableId::from_uuid(uuid(4U)).value(),
+           .tablet_id = schema::TabletId::from_uuid(uuid(2U)).value(),
+           .destination_schema_id = schema::SchemaId::from_uuid(uuid(5U)).value(),
+           .raft_group_id = uuid(6U),
+           .snapshot_generation = 1U,
+           .serving_node = 2U,
+           .placement_epoch = 1U,
+           .read_policy = {.consistency = query::DistributedReadConsistency::kLocalEventual},
+           .destination_column_ordinals = {0U},
+           .plan = {.mode = query::DistributedVectorPlanMode::kUngroupedAggregate,
+                    .aggregates = {{.operation = query::VectorAggregateOperation::kCountStar}}}},
+      .result_schema = {
+          .columns = {{.name = "count",
+                       .type = schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value(),
+                       .nullable = false}}}};
+}
+
 [[nodiscard]] DistributedVectorAggregateQueryResponseV2 response() {
   const auto expected = definitions();
   auto state = query::MergeableVectorAggregateState::create(expected.front()).value();
@@ -53,6 +75,41 @@ template <typename Operation>
                .terminal = true},
               std::move(state)}};
 }
+
+class Authorizer final : public ClusterNodePrincipalAuthorizer {
+public:
+  common::Result<bool> authorize_node(const std::uint64_t principal_id,
+                                      const raft::NodeId claimed_node_id) const override {
+    return principal_id == 91U && claimed_node_id == 1U;
+  }
+};
+
+class AllocationWorker final : public DistributedVectorAggregateQueryWorkerServiceV2 {
+public:
+  common::Result<std::vector<query::VectorAggregateDefinition>>
+  bind_definitions(const query::DistributedVectorFragmentDispatchV2&) override {
+    return definitions();
+  }
+
+  common::Result<query::DistributedVectorAggregateWorkerResultV2>
+  execute(const query::DistributedVectorFragmentDispatchV2&) override {
+    auto expected = definitions();
+    auto state = query::MergeableVectorAggregateState::create(expected.front()).value();
+    const auto accumulated = state.accumulate_count_star();
+    if (!accumulated.has_value())
+      return common::make_unexpected(accumulated.error());
+    query::DistributedVectorAggregateWorkerResultV2 result{.definitions = expected};
+    result.messages.emplace_back(
+        query::DistributedVectorAggregateExchangePosition{
+            .query_id = uuid(1U),
+            .tablet_id = schema::TabletId::from_uuid(uuid(2U)).value(),
+            .sequence = 1U,
+            .aggregate_ordinal = 0U,
+            .terminal = true},
+        std::move(state));
+    return result;
+  }
+};
 
 TEST(DistributedVectorAggregateQueryTransportV2AllocationFailureTest,
      ClassifiesEveryOwnedFrameAllocation) {
@@ -105,6 +162,31 @@ TEST(DistributedVectorAggregateQueryTransportV2AllocationFailureTest,
     EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted);
   }
   EXPECT_TRUE(reader_success);
+}
+
+TEST(DistributedVectorAggregateQueryReceiverV2AllocationFailureTest,
+     ClassifiesEveryOwnedDefinitionExecutionAndPublicationAllocation) {
+  Authorizer authorizer;
+  const auto request = encode_distributed_vector_query_request_v2(
+      {.source_node_id = 1U, .target_node_id = 2U, .dispatch = dispatch_v2()});
+  ASSERT_TRUE(request.has_value());
+  bool success = false;
+  for (std::size_t fail_after = 0U; fail_after < 256U; ++fail_after) {
+    AllocationWorker worker;
+    auto receiver = DistributedVectorAggregateQueryReceiverV2::create(
+        {.local_node_id = 2U, .authorizer = &authorizer, .worker = &worker});
+    ASSERT_TRUE(receiver.has_value());
+    auto result = run_failure(fail_after, [&] {
+      return receiver->receive(*request, {.authorized = true, .principal_id = 91U});
+    });
+    if (result.has_value()) {
+      ASSERT_EQ(result->size(), 1U);
+      success = true;
+      break;
+    }
+    EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted);
+  }
+  EXPECT_TRUE(success);
 }
 
 } // namespace

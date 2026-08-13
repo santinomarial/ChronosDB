@@ -422,3 +422,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0385](0385-bounded-vector-aggregate-coordinator-v2.md) | Bounded vector aggregate coordinator v2 | accepted |
 | [0386](0386-native-vector-aggregate-result-finalization-v2.md) | Native vector aggregate result finalization v2 | accepted |
 | [0387](0387-definition-bound-vector-aggregate-query-response-v2.md) | Definition-bound vector aggregate query response v2 | accepted |
+| [0388](0388-authenticated-vector-aggregate-query-receiver-v2.md) | Authenticated vector aggregate query receiver v2 | accepted |

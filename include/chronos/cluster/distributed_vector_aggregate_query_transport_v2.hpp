@@ -4,6 +4,7 @@
 #include "chronos/cluster/distributed_vector_query_transport_v2.hpp"
 #include "chronos/common/bytes.hpp"
 #include "chronos/common/result.hpp"
+#include "chronos/query/distributed_fragment_worker.hpp"
 #include "chronos/query/distributed_vector_aggregate_exchange.hpp"
 
 #include <array>
@@ -110,6 +111,50 @@ private:
       std::vector<std::byte> encoded_frame) noexcept;
   std::vector<std::byte> encoded_frame_;
   std::size_t written_bytes_{};
+};
+
+inline constexpr std::size_t kDefaultDistributedVectorAggregateQueryV2ResponseBytes =
+    std::size_t{64U} * 1024U * 1024U;
+inline constexpr std::size_t kMaximumDistributedVectorAggregateQueryV2ResponseBytes =
+    std::size_t{1024U} * 1024U * 1024U;
+
+// The embedding first binds definitions from current local authority, then independently executes
+// and returns the proof-revalidated definitions beside the complete canonical state vector. It
+// must outlive the receiver; one caller serializes both methods for a request.
+class DistributedVectorAggregateQueryWorkerServiceV2 {
+public:
+  virtual ~DistributedVectorAggregateQueryWorkerServiceV2() = default;
+  [[nodiscard]] virtual common::Result<std::vector<query::VectorAggregateDefinition>>
+  bind_definitions(const query::DistributedVectorFragmentDispatchV2& dispatch) = 0;
+  [[nodiscard]] virtual common::Result<query::DistributedVectorAggregateWorkerResultV2>
+  execute(const query::DistributedVectorFragmentDispatchV2& dispatch) = 0;
+};
+
+struct DistributedVectorAggregateQueryReceiverV2Config {
+  raft::NodeId local_node_id{};
+  const ClusterNodePrincipalAuthorizer* authorizer{};
+  DistributedVectorAggregateQueryWorkerServiceV2* worker{};
+  const DistributedQueryLeaderHintProvider* leader_hint_provider{};
+  std::size_t maximum_response_frames{query::kMaximumUngroupedAggregateWidth};
+  std::size_t maximum_response_bytes{kDefaultDistributedVectorAggregateQueryV2ResponseBytes};
+};
+
+// Authentication, source authorization, local-target validation, and definition binding precede
+// execution. No encoded success prefix is returned before the complete exact state vector passes.
+class DistributedVectorAggregateQueryReceiverV2 {
+public:
+  DistributedVectorAggregateQueryReceiverV2() = delete;
+
+  [[nodiscard]] static common::Result<DistributedVectorAggregateQueryReceiverV2>
+  create(DistributedVectorAggregateQueryReceiverV2Config config);
+  [[nodiscard]] common::Result<std::vector<std::vector<std::byte>>>
+  receive(common::ByteView request_bytes,
+          const network::PeerAuthenticationResult& authenticated_peer);
+
+private:
+  explicit DistributedVectorAggregateQueryReceiverV2(
+      DistributedVectorAggregateQueryReceiverV2Config config) noexcept;
+  DistributedVectorAggregateQueryReceiverV2Config config_;
 };
 
 } // namespace chronos::cluster
