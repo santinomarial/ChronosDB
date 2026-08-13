@@ -241,11 +241,13 @@ cover those barriers, binds one compatible Manifest epoch, and creates the compl
 lifecycle. A distinct bounded-stale constructor applies the same catalog, Manifest, route, and
 execution gates to stable same-term leader/follower observation pairs. General vector-plan
 grouping/order/top-N/LIMIT and transport acquisition of remote follower observations remain
-incomplete. Committed numeric or lowercase-DNS routes now acquire a fresh bounded ordered unique
-IPv4 candidate set before polling, and finite sender retries rotate candidates without changing
-node/proof/TLS authority. Live DNS churn/latency/cache policy, IPv6, a packaged multi-process
-runtime, remote CSEG execution in the movement gate, and broad failure/measurement evidence remain
-incomplete; the Phase 16 exit gate is not claimed.
+incomplete. A distinct canonical observation protocol and authenticated receiver now provide the
+remote ordered-evidence serving boundary, but stream/mTLS carriers and complete leader/follower
+pair acquisition are not yet composed. Committed numeric or lowercase-DNS routes acquire a fresh
+bounded ordered unique IPv4 candidate set before polling, and finite sender retries rotate
+candidates without changing node/proof/TLS authority. Live DNS churn/latency/cache policy, IPv6, a
+packaged multi-process runtime, remote CSEG execution in the movement gate, and broad
+failure/measurement evidence remain incomplete; the Phase 16 exit gate is not claimed.
 
 ### Phase 17 — object storage and interoperability
 
@@ -393,6 +395,11 @@ Focused executions passed:
   second address. The socket subset required the approved host execution boundary because the
   workspace sandbox prohibits loopback bind. The full incremental `dev` build and installed
   external-consumer check also passed after the public resolver was added to that consumer.
+- Raft-observation transport continuation: `chronos_cluster_tests` built cleanly and all 4 focused
+  codec/receiver cases passed for correlation, canonical observation state, damage/version/bounds,
+  authentication/authorization ordering, service failure, and exception containment. The full
+  `dev` build and installed external-consumer check passed. Stream/TLS carrier and multi-node pair
+  acquisition were not claimed.
 
 The final C++ tree passed the repository-pinned clang-format 18 check. Full-suite, sanitizer, fuzz,
 broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were deliberately not run.

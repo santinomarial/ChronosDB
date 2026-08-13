@@ -627,6 +627,7 @@ add_library(
   src/cluster/distributed_query_tls_client.cpp
   src/cluster/distributed_query_tls_server.cpp
   src/cluster/distributed_query_transport.cpp
+  src/cluster/raft_observation_transport.cpp
   src/cluster/raft_transport_receiver.cpp
   src/cluster/raft_transport_peer_pool.cpp
   src/cluster/raft_transport_peer_reconnect.cpp
@@ -1089,6 +1090,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/cluster/distributed_query_tls_server_test.cpp
     tests/cluster/distributed_query_transport_header_self_contained.cpp
     tests/cluster/distributed_query_transport_test.cpp
+    tests/cluster/raft_observation_transport_header_self_contained.cpp
+    tests/cluster/raft_observation_transport_test.cpp
     tests/cluster/raft_transport_receiver_header_self_contained.cpp
     tests/cluster/raft_transport_receiver_test.cpp
     tests/cluster/raft_transport_peer_pool_header_self_contained.cpp

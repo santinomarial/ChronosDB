@@ -59,6 +59,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/cluster/distributed_query_tcp_server.hpp>
 #include <chronos/cluster/distributed_query_tcp_client.hpp>
 #include <chronos/cluster/distributed_query_tcp_execution.hpp>
+#include <chronos/cluster/raft_observation_transport.hpp>
 #include <chronos/service/replicated_distributed_query.hpp>
 #include <chronos/cseg/compression.hpp>
 #include <chronos/cseg/format.hpp>
@@ -199,6 +200,10 @@ int main() {
       &chronos::cluster::DistributedQueryTcpClient::begin;
   const auto create_distributed_query_tcp_execution =
       &chronos::cluster::DistributedQueryTcpExecution::create;
+  const auto encode_raft_observation_request =
+      &chronos::cluster::encode_raft_observation_request_v1;
+  const auto decode_raft_observation_response =
+      &chronos::cluster::decode_raft_observation_response_v1;
   const auto cancel_distributed_query_tcp_execution =
       &chronos::cluster::DistributedQueryTcpExecution::cancel;
   const auto rebind_distributed_query_tcp_execution =
@@ -264,6 +269,8 @@ int main() {
   (void)start_distributed_query_tcp_server;
   (void)begin_distributed_query_tcp_client;
   (void)create_distributed_query_tcp_execution;
+  (void)encode_raft_observation_request;
+  (void)decode_raft_observation_response;
   (void)cancel_distributed_query_tcp_execution;
   (void)rebind_distributed_query_tcp_execution;
   (void)bind_compatible_distributed_snapshot;

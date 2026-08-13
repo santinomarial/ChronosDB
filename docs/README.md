@@ -110,6 +110,9 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   group-tagged full-state records plus the implemented segmented append/sync/recovery envelope.
 - [Raft Transport Envelope v1](formats/raft-transport-v1.md): bounded checksummed group/source/
   destination routing for every deterministic Raft message.
+- [Raft Observation Transport v1](formats/raft-observation-transport-v1.md): authenticated,
+  correlated request/response frames carrying one canonical ordered Raft-group observation with
+  bounded membership sets and explicit failure status.
 - [Raft Tablet Command v1](formats/raft-tablet-command-v1.md): exact committed
   `COLUMNAR_APPEND` payload, group/index identity, ordering, and retained-log recovery contract.
 - [Metadata Command v1](formats/metadata-command-v1.md): canonical checksummed metadata-group

@@ -1002,7 +1002,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   execution creation, and the move-only TCP lifecycle owner. General vector-plan
   fragments/exchanges remain deferred. A distinct bounded-stale constructor carries correlated
   leader/follower observations through the same catalog, Manifest, route, and execution gates;
-  transport acquisition of those observations and broader multi-node failure validation remain
+  a separate canonical checksummed cluster protocol now requests one group-correlated ordered
+  observation from an authenticated exact node, with receiver-side principal/source authorization
+  and a durable-owner service boundary. Header-first stream ownership, mTLS client/server carriers,
+  complete leader/follower pair acquisition, and broader multi-node failure validation remain
   deferred. Live DNS churn, resolver-latency policy, caching, and IPv6 remain qualification gaps. A
   focused real-mTLS gate now queries two tablets, drives one through checksummed learner-first
   movement and externally committed promotion/removal milestones, rebinds it to the target, and

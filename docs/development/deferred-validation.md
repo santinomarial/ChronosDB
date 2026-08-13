@@ -270,6 +270,14 @@
   refresh, live DNS churn/failure, resolver-latency and cache policy, IPv6, allocation/cancellation
   fault injection at every construction boundary, and broad multi-node failure matrices remain
   deferred.
+- Raft Observation Transport v1 now carries one exact source/target/group/correlation request and
+  one complete bounded ordered observation or failure response. The authenticated receiver checks
+  trust, principal/source authority, and local target before invoking an embedding-owned durable
+  observation service. Request/success/failure codec, corruption/version/bound rejection, trust
+  ordering, service failure, and exception containment have focused coverage. Add fixed-storage
+  header-first partial I/O, move-only short writes, maintained mTLS client/server deadlines, finite
+  retries, leader/follower fan-out, pair correlation/freshness selection, packaged-constructor
+  acquisition, cancellation/allocation faults, and real multi-process validation.
 - Shard-key pruning and statistics in addition to event-time pruning; multi-node scalar/distributed
   differential SQL and partial-aggregation equivalence.
 - Carry the implemented authenticated remote-action receiver bytes and atomic current-leader-term

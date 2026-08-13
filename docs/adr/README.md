@@ -340,3 +340,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0303](0303-correlated-follower-read-proof-binding.md) | Correlated follower read proof binding | accepted |
 | [0304](0304-packaged-bounded-stale-query-construction.md) | Packaged bounded-stale query construction | accepted |
 | [0305](0305-bounded-dns-multi-address-query-routing.md) | Bounded DNS and multi-address distributed query routing | accepted |
+| [0306](0306-authenticated-raft-observation-transport.md) | Authenticated Raft observation transport | accepted |
