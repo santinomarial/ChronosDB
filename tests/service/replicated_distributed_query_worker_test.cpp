@@ -1,5 +1,6 @@
 #include "chronos/cluster/distributed_grouped_query_tcp_client.hpp"
 #include "chronos/cluster/distributed_query_tcp_client.hpp"
+#include "chronos/cluster/distributed_vector_aggregate_query_tcp_client_v2.hpp"
 #include "chronos/cluster/distributed_vector_query_tcp_client_v2.hpp"
 #include "chronos/common/crc32c.hpp"
 #include "chronos/manifest/naming.hpp"
@@ -13,6 +14,7 @@
 #include "chronos/service/replicated_distributed_grouped_query_tcp_server.hpp"
 #include "chronos/service/replicated_distributed_query_tcp_server.hpp"
 #include "chronos/service/replicated_distributed_query_worker.hpp"
+#include "chronos/service/replicated_distributed_vector_aggregate_query_tcp_server_v2.hpp"
 #include "chronos/service/replicated_distributed_vector_query_tcp_server_v2.hpp"
 #include "cseg/cseg_test_fixture.hpp"
 
@@ -434,7 +436,9 @@ TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesReal
   EXPECT_FALSE((*aggregate_definitions)[0].input.has_value());
   EXPECT_EQ((*aggregate_definitions)[1].operation, query::VectorAggregateOperation::kSum);
   ASSERT_TRUE((*aggregate_definitions)[1].input.has_value());
-  EXPECT_EQ((*aggregate_definitions)[1].input->type, schema_value->columns()[1].type());
+  // Guarded by the input assertion above.
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+  EXPECT_EQ(aggregate_definitions->at(1U).input->type, schema_value->columns()[1].type());
   EXPECT_EQ(provider.vector_calls, 3U);
 
   provider.set_placement_epoch(13U);
@@ -458,6 +462,90 @@ TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesReal
   auto aggregate_sum = std::move(aggregate_vector_result->messages[1].state).take_result();
   ASSERT_TRUE(aggregate_sum.has_value());
   EXPECT_EQ(std::get<double>(aggregate_sum->storage()), 4.0);
+
+  NodeAuthorizer aggregate_vector_authorizer;
+  EXPECT_EQ(ReplicatedDistributedVectorAggregateQueryTcpServerV2::start({}).error().code(),
+            common::StatusCode::kInvalidArgument);
+  Authenticator aggregate_vector_client_authenticator{91U};
+  Authenticator aggregate_vector_server_authenticator{92U};
+  const std::size_t aggregate_calls_before_tcp = provider.vector_calls;
+  auto aggregate_vector_server = ReplicatedDistributedVectorAggregateQueryTcpServerV2::start(
+      {.worker = {.local_node_id = 11U, .storage = &*storage, .context_provider = &provider},
+       .listener = {},
+       .tls = tls_server_config(),
+       .authenticator = &aggregate_vector_client_authenticator,
+       .node_authorizer = &aggregate_vector_authorizer,
+       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                          .exchange_timeout = std::chrono::milliseconds{1000},
+                          .maximum_response_frames = 4U,
+                          .maximum_response_bytes = std::size_t{1024U} * 1024U},
+       .maximum_connections = 4U,
+       .maximum_accepts_per_poll = 4U});
+  ASSERT_TRUE(aggregate_vector_server.has_value()) << aggregate_vector_server.error().to_string();
+  auto moved_aggregate_vector_server = std::move(*aggregate_vector_server);
+  auto aggregate_vector_tls_context = network::TlsClientContext::create(tls_client_config());
+  auto aggregate_vector_request = cluster::encode_distributed_vector_query_request_v2(
+      {.source_node_id = 1U, .target_node_id = 11U, .dispatch = aggregate_vector});
+  auto aggregate_resources = query::QueryResourceContext::create(1U << 20U);
+  ASSERT_TRUE(aggregate_vector_tls_context.has_value())
+      << aggregate_vector_tls_context.error().to_string();
+  ASSERT_TRUE(aggregate_vector_request.has_value()) << aggregate_vector_request.error().to_string();
+  ASSERT_TRUE(aggregate_resources.has_value()) << aggregate_resources.error().to_string();
+  auto client_definitions = *aggregate_definitions;
+  const auto aggregate_vector_start =
+      cluster::DistributedVectorAggregateQueryTcpClientV2::TimePoint::clock::now();
+  auto aggregate_vector_client = cluster::DistributedVectorAggregateQueryTcpClientV2::begin(
+      {1U, 11U, std::move(*aggregate_vector_request)}, std::move(client_definitions),
+      std::move(*aggregate_resources),
+      {.remote_endpoint = moved_aggregate_vector_server.bound_endpoint(),
+       .tls_context = std::addressof(*aggregate_vector_tls_context),
+       .carrier = {.authenticator = &aggregate_vector_server_authenticator,
+                   .node_authorizer = &aggregate_vector_authorizer,
+                   .peer_ipv4_address = {127U, 0U, 0U, 1U},
+                   .limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                              .exchange_timeout = std::chrono::milliseconds{1000},
+                              .maximum_response_frames = 4U,
+                              .maximum_response_bytes = std::size_t{1024U} * 1024U}},
+       .connect_timeout = std::chrono::milliseconds{1000}},
+      aggregate_vector_start);
+  ASSERT_TRUE(aggregate_vector_client.has_value()) << aggregate_vector_client.error().to_string();
+  for (std::size_t iteration = 0U;
+       iteration < 4096U && aggregate_vector_client->state() !=
+                                cluster::DistributedVectorAggregateQueryTcpClientStateV2::kComplete;
+       ++iteration) {
+    const auto interest = aggregate_vector_client->interest();
+    pollfd descriptor{.fd = aggregate_vector_client->descriptor(),
+                      .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
+                                                   (interest.want_write ? POLLOUT : 0))};
+    ASSERT_GE(::poll(&descriptor, 1U, 1), 0);
+    ASSERT_TRUE(
+        aggregate_vector_client
+            ->on_ready((descriptor.revents & POLLIN) != 0, (descriptor.revents & POLLOUT) != 0,
+                       cluster::DistributedVectorAggregateQueryTcpClientV2::TimePoint::clock::now())
+            .is_ok())
+        << aggregate_vector_client->failure().to_string();
+    ASSERT_TRUE(moved_aggregate_vector_server.poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  ASSERT_EQ(aggregate_vector_client->state(),
+            cluster::DistributedVectorAggregateQueryTcpClientStateV2::kComplete)
+      << aggregate_vector_client->failure().to_string();
+  const auto aggregate_tcp_responses = aggregate_vector_client->responses();
+  ASSERT_TRUE(aggregate_tcp_responses.has_value()) << aggregate_tcp_responses.error().to_string();
+  ASSERT_EQ(aggregate_tcp_responses->size(), aggregate_definitions->size());
+  for (std::size_t ordinal = 0U; ordinal < aggregate_tcp_responses->size(); ++ordinal) {
+    ASSERT_TRUE((*aggregate_tcp_responses)[ordinal].payload.has_value());
+    EXPECT_EQ((*aggregate_tcp_responses)[ordinal].status_code, common::StatusCode::kOk);
+    // Guarded by the payload assertion above.
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+    const auto& payload = *(*aggregate_tcp_responses)[ordinal].payload;
+    EXPECT_EQ(payload.aggregate_ordinal, ordinal);
+    EXPECT_EQ(payload.state.definition(), (*aggregate_definitions)[ordinal]);
+  }
+  EXPECT_EQ(provider.vector_calls, aggregate_calls_before_tcp + 2U);
+  EXPECT_TRUE(aggregate_vector_client_authenticator.saw_fingerprint);
+  EXPECT_TRUE(aggregate_vector_server_authenticator.saw_fingerprint);
+  EXPECT_EQ(moved_aggregate_vector_server.metrics().completed_connections, 1U);
+  EXPECT_TRUE(moved_aggregate_vector_server.shutdown().is_ok());
 
   auto empty_vector = vector_dispatch;
   empty_vector.dispatch.event_time_predicate =

@@ -407,8 +407,10 @@ server receives the worker-bound definitions beside the complete response bytes 
 both before any cursor write. The outbound TCP owner retains the same definition/resource bundle
 through a separately deadline-bound nonblocking connect and transfers it only after `SO_ERROR`
 success. The inbound TCP owner bounds listener admission, keeps descriptor/carrier addresses stable,
-and drives each authenticated aggregate session under finite per-poll work. Process integration
-remains.
+and drives each authenticated aggregate session under finite per-poll work. The production service
+pins the real-CSEG aggregate worker, receiver, and TCP server in dependency order so every request
+binds and then independently revalidates fresh local authority without dangling borrowed addresses.
+Broader process integration remains.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated

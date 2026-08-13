@@ -92,6 +92,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/service/replicated_distributed_grouped_query_tcp_server.hpp>
 #include <chronos/service/replicated_distributed_query_tcp_server.hpp>
 #include <chronos/service/replicated_distributed_query_worker.hpp>
+#include <chronos/service/replicated_distributed_vector_aggregate_query_tcp_server_v2.hpp>
 #include <chronos/service/replicated_distributed_vector_query_tcp_server_v2.hpp>
 #include <chronos/cseg/compression.hpp>
 #include <chronos/cseg/format.hpp>
@@ -390,6 +391,8 @@ int main() {
       &chronos::service::ReplicatedDistributedGroupedQueryWorker::create;
   const auto create_replicated_vector_query_worker_v2 =
       &chronos::service::ReplicatedDistributedVectorQueryWorkerV2::create;
+  const auto create_replicated_vector_aggregate_query_worker_v2 =
+      &chronos::service::ReplicatedDistributedVectorAggregateQueryWorkerV2::create;
   const auto create_replicated_grouped_query_receiver =
       &chronos::service::ReplicatedDistributedGroupedQueryReceiver::create;
   const auto start_replicated_grouped_query_server =
@@ -398,6 +401,8 @@ int main() {
       &chronos::service::ReplicatedDistributedQueryTcpServer::start;
   const auto start_replicated_vector_query_server_v2 =
       &chronos::service::ReplicatedDistributedVectorQueryTcpServerV2::start;
+  const auto start_replicated_vector_aggregate_query_server_v2 =
+      &chronos::service::ReplicatedDistributedVectorAggregateQueryTcpServerV2::start;
   const auto create_distributed_query_tls_client =
       &chronos::cluster::DistributedQueryTlsClient::create;
   const auto create_distributed_query_tls_server =
@@ -574,10 +579,12 @@ int main() {
   (void)create_vector_query_tls_server_v2;
   (void)create_replicated_query_worker;
   (void)create_replicated_grouped_query_worker;
+  (void)create_replicated_vector_aggregate_query_worker_v2;
   (void)create_replicated_grouped_query_receiver;
   (void)start_replicated_grouped_query_server;
   (void)start_replicated_query_server;
   (void)start_replicated_vector_query_server_v2;
+  (void)start_replicated_vector_aggregate_query_server_v2;
   (void)create_distributed_query_tls_client;
   (void)create_distributed_query_tls_server;
   (void)start_distributed_query_tcp_server;
