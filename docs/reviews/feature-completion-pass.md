@@ -240,10 +240,12 @@ group-correlated quorum read-barrier observations, requires metadata and tablet 
 cover those barriers, binds one compatible Manifest epoch, and creates the complete TCP execution
 lifecycle. A distinct bounded-stale constructor applies the same catalog, Manifest, route, and
 execution gates to stable same-term leader/follower observation pairs. General vector-plan
-grouping/order/top-N/LIMIT, transport acquisition of remote follower observations, DNS and
-multi-address routing, a packaged multi-process runtime, remote CSEG execution in the movement
-gate, and broad failure/measurement evidence remain incomplete; the Phase 16 exit gate is not
-claimed.
+grouping/order/top-N/LIMIT and transport acquisition of remote follower observations remain
+incomplete. Committed numeric or lowercase-DNS routes now acquire a fresh bounded ordered unique
+IPv4 candidate set before polling, and finite sender retries rotate candidates without changing
+node/proof/TLS authority. Live DNS churn/latency/cache policy, IPv6, a packaged multi-process
+runtime, remote CSEG execution in the movement gate, and broad failure/measurement evidence remain
+incomplete; the Phase 16 exit gate is not claimed.
 
 ### Phase 17 — object storage and interoperability
 
@@ -385,6 +387,12 @@ Focused executions passed:
   committed metadata binding, exact route resolution, group-correlated read authority, compatible
   Manifest binding, and packaged leader-linearizable and bounded-stale TCP lifecycle construction.
   The full incremental build and installed external-consumer check also passed.
+- DNS/multi-address query routing continuation: `chronos_network_tests` and `chronos_cluster_tests`
+  built cleanly; all 11 affected `TcpSocketTest` and `DistributedQueryTcpExecutionTest` cases passed,
+  including fresh `localhost` resolution and real-mTLS retry from a refused first address to a live
+  second address. The socket subset required the approved host execution boundary because the
+  workspace sandbox prohibits loopback bind. The full incremental `dev` build and installed
+  external-consumer check also passed after the public resolver was added to that consumer.
 
 The final C++ tree passed the repository-pinned clang-format 18 check. Full-suite, sanitizer, fuzz,
 broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were deliberately not run.

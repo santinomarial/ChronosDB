@@ -104,8 +104,10 @@ failure, and publishes only the all-tablet coordinator result. The pinned Manife
 outlives every attempt and retry. Its optional whole-query monotonic deadline and explicit
 cancellation both close every active client, retain no partial result, and remain sticky.
 `resolve_distributed_query_node_routes` constructs those immutable routes for only the selected
-serving nodes from one committed node-metadata snapshot. Node-specific TLS contexts remain explicit;
-the current carrier accepts only strict canonical nonzero IPv4 endpoints.
+serving nodes from one committed node-metadata snapshot. Node-specific TLS contexts remain explicit.
+Strict numeric endpoints bypass resolution; lowercase DNS endpoints acquire one fresh bounded,
+ordered, unique IPv4 candidate set before the poll owner starts. Finite sender retries rotate those
+candidates without changing the target node, proof, retry budget, or TLS certificate identity.
 After a retryable terminal failure, explicit finite rebinding accepts only an independently proved
 execution for the same plan-ordered logical query and a nonregressing Manifest generation. It
 discards every old partial and pin together before new attempts begin; leader hints remain advisory.
@@ -130,8 +132,8 @@ resolution, execution creation, and the TCP lifecycle owner without exposing int
 correlation vectors. Bounded-stale binding now derives the commit frontier from a same-group,
 same-term leader/follower observation pair rather than a caller scalar, and a distinct packaged
 constructor carries that pair through the metadata barrier, Manifest binding, follower route, and
-TCP owner. Transport acquisition of those observations, DNS and multi-address resolution, remote
-worker-interrupt delivery, pooled multiplexing, asynchronous worker completion, and broader
+TCP owner. Transport acquisition of those observations, remote worker-interrupt delivery, pooled
+multiplexing, asynchronous worker completion, live DNS churn qualification, and broader
 multi-node fault handling remain embedding work.
 
 ## Verification and review questions

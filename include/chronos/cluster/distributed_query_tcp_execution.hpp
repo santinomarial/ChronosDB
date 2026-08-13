@@ -23,7 +23,7 @@ namespace chronos::cluster {
 
 struct DistributedQueryNodeRoute {
   raft::NodeId node_id{};
-  network::Ipv4Endpoint endpoint;
+  std::vector<network::Ipv4Endpoint> endpoints;
   const network::TlsClientContext* tls_context{};
 };
 
@@ -35,11 +35,13 @@ struct DistributedQueryNodeTlsContext {
 struct DistributedQueryRouteResolutionLimits {
   std::size_t maximum_routes{65'536U};
   std::size_t maximum_endpoint_bytes{raft::MetadataLimits{}.maximum_endpoint_bytes};
+  std::size_t maximum_addresses_per_route{16U};
 };
 
 // Resolves only serving nodes named by the immutable dispatches. The committed catalog and TLS
-// context spans must be canonical by node ID. Generic metadata endpoints remain valid metadata,
-// but this IPv4-only carrier returns unavailable unless each selected endpoint is canonical.
+// context spans must be canonical by node ID. Selected lowercase DNS endpoints are resolved into a
+// fresh bounded ordered IPv4 candidate set before execution; this blocking system lookup must not
+// run on the execution's event-loop thread.
 [[nodiscard]] common::Result<std::vector<DistributedQueryNodeRoute>>
 resolve_distributed_query_node_routes(
     const raft::MetadataCatalogSnapshot& catalog,

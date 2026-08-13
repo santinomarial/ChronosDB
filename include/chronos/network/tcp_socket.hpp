@@ -4,10 +4,12 @@
 #include "chronos/common/result.hpp"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string_view>
+#include <vector>
 
 namespace chronos::network {
 
@@ -21,6 +23,18 @@ struct Ipv4Endpoint {
 // Parses canonical dotted-decimal IPv4 plus a nonzero decimal port. Leading zeroes, signs,
 // whitespace, names, extra separators, and zero addresses are rejected.
 [[nodiscard]] common::Result<Ipv4Endpoint> parse_ipv4_endpoint(std::string_view text);
+
+struct Ipv4EndpointResolutionLimits {
+  std::size_t maximum_addresses{16U};
+  std::size_t maximum_hostname_bytes{253U};
+};
+
+// Resolves one strict lowercase DNS-name:port or canonical IPv4 endpoint into an ordered, unique,
+// bounded IPv4 candidate set. DNS resolution is a blocking system operation and must run before an
+// event-loop owner starts; no answer is cached, so a later whole-operation rebind acquires a fresh
+// set. Numeric IPv4 endpoints do not enter the system resolver.
+[[nodiscard]] common::Result<std::vector<Ipv4Endpoint>>
+resolve_ipv4_endpoints(std::string_view text, Ipv4EndpointResolutionLimits limits = {});
 
 enum class TcpConnectState : std::uint8_t { kInProgress = 1, kConnected = 2 };
 

@@ -1,18 +1,23 @@
 #include "chronos/network/tcp_socket.hpp"
 
+#include <algorithm>
 #include <arpa/inet.h>
 #include <cerrno>
 #include <charconv>
 #include <fcntl.h>
 #include <limits>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <new>
+#include <ranges>
 #include <string>
+#include <string_view>
 #include <sys/socket.h>
 #include <system_error>
 #include <unistd.h>
 #include <utility>
+#include <vector>
 
 namespace chronos::network {
 namespace {
@@ -33,6 +38,10 @@ template <typename Integer>
   return {common::StatusCode::kResourceExhausted, message};
 }
 
+[[nodiscard]] common::Status unavailable(const std::string& message) {
+  return {common::StatusCode::kUnavailable, message};
+}
+
 [[nodiscard]] common::Status socket_error(const char* operation, const int error = errno) {
   return {common::StatusCode::kIoError,
           std::string(operation) + ": " +
@@ -41,6 +50,56 @@ template <typename Integer>
 
 [[nodiscard]] bool zero_address(const std::array<std::uint8_t, 4>& address) noexcept {
   return address[0] == 0U && address[1] == 0U && address[2] == 0U && address[3] == 0U;
+}
+
+struct DnsEndpoint {
+  std::string_view hostname;
+  std::uint16_t port{};
+};
+
+[[nodiscard]] bool is_lowercase_dns_name(const std::string_view text,
+                                         const std::size_t maximum_bytes) noexcept {
+  if (text.empty() || text.size() > maximum_bytes || text.size() > 253U || text.front() == '.' ||
+      text.back() == '.') {
+    return false;
+  }
+  std::size_t label_start{};
+  for (std::size_t index = 0U; index <= text.size(); ++index) {
+    if (index != text.size() && text[index] != '.')
+      continue;
+    const std::size_t label_size = index - label_start;
+    if (label_size == 0U || label_size > 63U || text[label_start] == '-' ||
+        text[index - 1U] == '-') {
+      return false;
+    }
+    for (std::size_t character = label_start; character < index; ++character) {
+      const char value = text[character];
+      if (!((value >= 'a' && value <= 'z') || (value >= '0' && value <= '9') || value == '-'))
+        return false;
+    }
+    label_start = index + 1U;
+  }
+  return true;
+}
+
+[[nodiscard]] common::Result<DnsEndpoint>
+parse_dns_endpoint(const std::string_view text, const std::size_t maximum_hostname_bytes) {
+  const std::size_t colon = text.find(':');
+  const std::string_view hostname = text.substr(0U, colon);
+  const bool numeric_looking =
+      !hostname.empty() && std::ranges::all_of(hostname, [](const char value) {
+        return (value >= '0' && value <= '9') || value == '.';
+      });
+  if (colon == std::string_view::npos || text.find(':', colon + 1U) != std::string_view::npos ||
+      numeric_looking || !is_lowercase_dns_name(hostname, maximum_hostname_bytes)) {
+    return common::make_unexpected(invalid("DNS endpoint is not canonical"));
+  }
+  unsigned int port{};
+  if (!parse_canonical_decimal(text.substr(colon + 1U), port) || port == 0U ||
+      port > std::numeric_limits<std::uint16_t>::max()) {
+    return common::make_unexpected(invalid("DNS endpoint port is invalid"));
+  }
+  return DnsEndpoint{.hostname = hostname, .port = static_cast<std::uint16_t>(port)};
 }
 
 [[nodiscard]] sockaddr_in socket_address(const Ipv4Endpoint& endpoint_value) noexcept {
@@ -132,6 +191,67 @@ common::Result<Ipv4Endpoint> parse_ipv4_endpoint(const std::string_view text) {
     return common::make_unexpected(invalid("IPv4 endpoint address is zero"));
   parsed.port = static_cast<std::uint16_t>(port);
   return parsed;
+}
+
+common::Result<std::vector<Ipv4Endpoint>>
+resolve_ipv4_endpoints(const std::string_view text, const Ipv4EndpointResolutionLimits limits) {
+  if (limits.maximum_addresses == 0U || limits.maximum_addresses > 1024U ||
+      limits.maximum_hostname_bytes == 0U || limits.maximum_hostname_bytes > 253U) {
+    return common::make_unexpected(invalid("IPv4 resolution limits are invalid"));
+  }
+  try {
+    if (auto numeric = parse_ipv4_endpoint(text); numeric.has_value())
+      return std::vector<Ipv4Endpoint>{*numeric};
+
+    auto endpoint_value = parse_dns_endpoint(text, limits.maximum_hostname_bytes);
+    if (!endpoint_value.has_value())
+      return common::make_unexpected(endpoint_value.error());
+    const std::string hostname{endpoint_value->hostname};
+    const std::string service = std::to_string(endpoint_value->port);
+    addrinfo hints{};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+    hints.ai_flags = AI_NUMERICSERV;
+    addrinfo* raw_results{};
+    const int resolved = ::getaddrinfo(hostname.c_str(), service.c_str(), &hints, &raw_results);
+    if (resolved != 0) {
+      if (resolved == EAI_MEMORY)
+        return common::make_unexpected(exhausted("IPv4 DNS resolution allocation failed"));
+      return common::make_unexpected(
+          unavailable(std::string("resolving IPv4 DNS endpoint: ") + ::gai_strerror(resolved)));
+    }
+    const std::unique_ptr<addrinfo, decltype(&::freeaddrinfo)> results(raw_results,
+                                                                       &::freeaddrinfo);
+    std::vector<Ipv4Endpoint> addresses;
+    addresses.reserve(std::min<std::size_t>(limits.maximum_addresses, 16U));
+    for (const addrinfo* candidate = results.get(); candidate != nullptr;
+         candidate = candidate->ai_next) {
+      if (candidate->ai_family != AF_INET || candidate->ai_addr == nullptr ||
+          candidate->ai_addrlen < sizeof(sockaddr_in)) {
+        continue;
+      }
+      // POSIX returns an initialized sockaddr_in behind the generic address pointer for AF_INET.
+      // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+      const auto* ipv4 = reinterpret_cast<const sockaddr_in*>(candidate->ai_addr);
+      Ipv4Endpoint address = endpoint(*ipv4);
+      if (address.port != endpoint_value->port || zero_address(address.address) ||
+          std::ranges::find(addresses, address) != addresses.end()) {
+        continue;
+      }
+      if (addresses.size() >= limits.maximum_addresses) {
+        return common::make_unexpected(exhausted("IPv4 DNS answer limit is exhausted"));
+      }
+      addresses.push_back(address);
+    }
+    if (addresses.empty())
+      return common::make_unexpected(unavailable("IPv4 DNS endpoint has no usable addresses"));
+    return addresses;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("IPv4 DNS resolution allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("IPv4 DNS resolution exceeds container limits"));
+  }
 }
 
 class TcpSocket::Impl {

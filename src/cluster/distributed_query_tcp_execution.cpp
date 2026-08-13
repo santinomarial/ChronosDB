@@ -101,7 +101,8 @@ common::Result<std::vector<DistributedQueryNodeRoute>> resolve_distributed_query
     const DistributedQueryRouteResolutionLimits limits) {
   if (limits.maximum_routes == 0U || limits.maximum_routes > 65'536U ||
       limits.maximum_endpoint_bytes == 0U ||
-      limits.maximum_endpoint_bytes > raft::MetadataLimits{}.maximum_endpoint_bytes) {
+      limits.maximum_endpoint_bytes > raft::MetadataLimits{}.maximum_endpoint_bytes ||
+      limits.maximum_addresses_per_route == 0U || limits.maximum_addresses_per_route > 1024U) {
     return common::make_unexpected(
         invalid("distributed query route resolution limits are invalid"));
   }
@@ -152,12 +153,18 @@ common::Result<std::vector<DistributedQueryNodeRoute>> resolve_distributed_query
         return common::make_unexpected(
             unavailable("distributed query serving node has no TLS route context"));
       }
-      auto endpoint = network::parse_ipv4_endpoint(node->endpoint);
-      if (!endpoint.has_value()) {
+      auto endpoints = network::resolve_ipv4_endpoints(
+          node->endpoint,
+          {.maximum_addresses = limits.maximum_addresses_per_route,
+           .maximum_hostname_bytes = std::min<std::size_t>(limits.maximum_endpoint_bytes, 253U)});
+      if (!endpoints.has_value() &&
+          endpoints.error().code() == common::StatusCode::kInvalidArgument) {
         return common::make_unexpected(unavailable(
-            "distributed query serving node endpoint is not supported by the IPv4 carrier"));
+            "distributed query serving node endpoint is not a supported IPv4 or DNS route"));
       }
-      routes.push_back({target, *endpoint, tls->tls_context});
+      if (!endpoints.has_value())
+        return common::make_unexpected(endpoints.error());
+      routes.push_back({target, std::move(*endpoints), tls->tls_context});
     }
     return routes;
   } catch (const std::bad_alloc&) {
@@ -241,13 +248,15 @@ public:
         return attempt.error();
       const bool retry = attempt->attempt_number > 1U;
       const DistributedQueryNodeRoute& route = config.routes[slot.route_index];
+      const network::Ipv4Endpoint& endpoint =
+          route.endpoints[(attempt->attempt_number - 1U) % route.endpoints.size()];
       auto client =
           DistributedQueryTcpClient::begin(std::move(*attempt),
-                                           {.remote_endpoint = route.endpoint,
+                                           {.remote_endpoint = endpoint,
                                             .tls_context = route.tls_context,
                                             .carrier = {.authenticator = config.authenticator,
                                                         .node_authorizer = config.node_authorizer,
-                                                        .peer_ipv4_address = route.endpoint.address,
+                                                        .peer_ipv4_address = endpoint.address,
                                                         .limits = config.carrier_limits},
                                             .connect_timeout = config.connect_timeout},
                                            now);
@@ -351,11 +360,21 @@ DistributedQueryTcpExecution::create(DistributedQueryExecution execution,
     std::map<raft::NodeId, std::size_t> route_indexes;
     for (std::size_t index = 0U; index < config.routes.size(); ++index) {
       const DistributedQueryNodeRoute& route = config.routes[index];
-      if (route.node_id == 0U || route.endpoint.port == 0U ||
-          zero_address(route.endpoint.address) || route.tls_context == nullptr ||
-          !route_indexes.emplace(route.node_id, index).second) {
+      if (route.node_id == 0U || route.endpoints.empty() || route.endpoints.size() > 1024U ||
+          route.tls_context == nullptr || !route_indexes.emplace(route.node_id, index).second) {
         return common::make_unexpected(
             invalid("distributed query TCP execution route is invalid or duplicated"));
+      }
+      for (std::size_t endpoint_index = 0U; endpoint_index < route.endpoints.size();
+           ++endpoint_index) {
+        const network::Ipv4Endpoint& endpoint = route.endpoints[endpoint_index];
+        const std::span<const network::Ipv4Endpoint> prior_endpoints{route.endpoints.data(),
+                                                                     endpoint_index};
+        if (endpoint.port == 0U || zero_address(endpoint.address) ||
+            std::ranges::find(prior_endpoints, endpoint) != prior_endpoints.end()) {
+          return common::make_unexpected(
+              invalid("distributed query TCP route address is invalid or duplicated"));
+        }
       }
     }
     std::vector<Impl::Slot> slots;

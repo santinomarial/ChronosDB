@@ -31,6 +31,10 @@ carrier accepts only the shared `parse_ipv4_endpoint` grammar: four canonical do
 a nonzero canonical decimal port, and a nonzero address. A selected generic endpoint outside that
 grammar is unavailable, not corrupt metadata. DNS and multi-address resolution remain unsupported.
 
+[ADR 0305](0305-bounded-dns-multi-address-query-routing.md) subsequently extends this boundary with
+fresh bounded DNS acquisition and ordered multi-address retry while preserving the same committed
+node and explicit TLS-context authority.
+
 The TLS context is never derived from the endpoint. It retains the caller-configured trust store,
 client credentials, and expected server certificate identity, while the authenticated query
 carrier continues to authorize the resulting principal for the exact target node.

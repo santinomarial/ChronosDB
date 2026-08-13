@@ -9,10 +9,13 @@
 #include <netinet/tcp.h>
 #include <optional>
 #include <poll.h>
+#include <ranges>
+#include <span>
 #include <string_view>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <utility>
+#include <vector>
 
 namespace chronos::network {
 namespace {
@@ -31,6 +34,30 @@ TEST(TcpSocketTest, ParsesOnlyCanonicalNonzeroIpv4Endpoints) {
     EXPECT_EQ(parse_ipv4_endpoint(invalid).error().code(), common::StatusCode::kInvalidArgument)
         << invalid;
   }
+}
+
+TEST(TcpSocketTest, ResolvesBoundedCanonicalDnsEndpointsWithoutChangingTheirPort) {
+  auto resolved = resolve_ipv4_endpoints("localhost:7441");
+  ASSERT_TRUE(resolved.has_value()) << resolved.error().to_string();
+  ASSERT_FALSE(resolved->empty());
+  EXPECT_LE(resolved->size(), Ipv4EndpointResolutionLimits{}.maximum_addresses);
+  for (std::size_t index = 0U; index < resolved->size(); ++index) {
+    EXPECT_EQ((*resolved)[index].port, 7441U);
+    EXPECT_NE((*resolved)[index].address, (std::array<std::uint8_t, 4>{0U, 0U, 0U, 0U}));
+    const std::span<const Ipv4Endpoint> prior{resolved->data(), index};
+    EXPECT_EQ(std::ranges::find(prior, (*resolved)[index]), prior.end());
+  }
+  EXPECT_EQ(*resolve_ipv4_endpoints("127.0.0.1:7441"),
+            (std::vector<Ipv4Endpoint>{{{127U, 0U, 0U, 1U}, 7441U}}));
+
+  for (const std::string_view invalid :
+       {"Localhost:1", "-node.example:1", "node..example:1", "node.example-:1", "node.example:01",
+        "node.example:0", "127.00.0.1:1"}) {
+    EXPECT_EQ(resolve_ipv4_endpoints(invalid).error().code(), common::StatusCode::kInvalidArgument)
+        << invalid;
+  }
+  EXPECT_EQ(resolve_ipv4_endpoints("localhost:1", {.maximum_addresses = 0U}).error().code(),
+            common::StatusCode::kInvalidArgument);
 }
 
 void wait_for_connection(TcpListener& listener, TcpSocket& client,

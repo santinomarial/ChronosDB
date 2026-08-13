@@ -990,17 +990,20 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   failed scheduler without treating it as authority. Coordinator aggregate binding now resolves
   active schema, placement, and immutable group identity from one committed metadata snapshot and
   derives policy admissions only from matching stable Raft observations. Selected serving-node TCP
-  routes now resolve from the same committed node metadata through a strict IPv4 endpoint grammar
-  while retaining explicit node-specific TLS contexts. The replicated barrier owner can now return
-  each leader-linearizable barrier with the exact ordered leader observation that validated it; a
-  group-keyed binder joins those proofs to plan-ordered tablets through committed immutable group
-  bindings. A packaged constructor requires the catalog to cover the exact metadata-group barrier,
+  routes now resolve from the same committed node metadata through strict IPv4 or lowercase DNS
+  endpoint grammars while retaining explicit node-specific TLS contexts. Fresh bounded DNS answer
+  sets retain order and exact node authority; finite sender retries rotate their IPv4 candidates
+  without expanding the retry budget or changing TLS identity. The replicated barrier owner can
+  now return each leader-linearizable barrier with the exact ordered leader observation that
+  validated it; a group-keyed binder joins those proofs to plan-ordered tablets through committed
+  immutable group bindings. A packaged constructor requires the catalog to cover the exact
+  metadata-group barrier,
   then carries that authority through compatible Manifest binding, committed route resolution,
   execution creation, and the move-only TCP lifecycle owner. General vector-plan
   fragments/exchanges remain deferred. A distinct bounded-stale constructor carries correlated
   leader/follower observations through the same catalog, Manifest, route, and execution gates;
-  transport acquisition of those observations, DNS/multi-address routing, and broader multi-node
-  failure validation remain deferred. A
+  transport acquisition of those observations and broader multi-node failure validation remain
+  deferred. Live DNS churn, resolver-latency policy, caching, and IPv6 remain qualification gaps. A
   focused real-mTLS gate now queries two tablets, drives one through checksummed learner-first
   movement and externally committed promotion/removal milestones, rebinds it to the target, and
   proves the complete aggregate state is identical before and after. The full phase exit gate is

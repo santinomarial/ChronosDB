@@ -261,12 +261,15 @@
   from a committed metadata-provider boundary. Add automatic metadata acquisition and broader
   leader/placement-change integration during long scans without silent downgrade.
 - Packaged leader-linearizable construction now derives active schema, placement, group bindings,
-  exact IPv4/TLS routes, correlated quorum barriers, and one compatible Manifest epoch from
+  exact IPv4-or-DNS/TLS routes, correlated quorum barriers, and one compatible Manifest epoch from
   committed owners before creating the TCP lifecycle. Packaged bounded-stale construction applies
-  the same gates to stable same-term leader/follower observations. Remote transport acquisition of
-  those observations, DNS/multi-address resolution, native protocol/process integration, stale
-  metadata refresh, allocation/cancellation fault injection at every construction boundary, and
-  broad multi-node failure matrices remain deferred.
+  the same gates to stable same-term leader/follower observations. Fresh bounded DNS acquisition,
+  ordered unique IPv4 candidates, and finite candidate rotation under the existing sender retry
+  budget have focused parser, route, and real-mTLS refused-address coverage. Remote transport
+  acquisition of follower observations, native protocol/process integration, stale metadata
+  refresh, live DNS churn/failure, resolver-latency and cache policy, IPv6, allocation/cancellation
+  fault injection at every construction boundary, and broad multi-node failure matrices remain
+  deferred.
 - Shard-key pruning and statistics in addition to event-time pruning; multi-node scalar/distributed
   differential SQL and partial-aggregation equivalence.
 - Carry the implemented authenticated remote-action receiver bytes and atomic current-leader-term

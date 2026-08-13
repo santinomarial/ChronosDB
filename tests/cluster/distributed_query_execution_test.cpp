@@ -10,6 +10,7 @@
 #include "chronos/schema/logical_type.hpp"
 #include "chronos/schema/schema_lineage.hpp"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -20,6 +21,7 @@
 #include <gtest/gtest.h>
 #include <memory>
 #include <optional>
+#include <ranges>
 #include <string>
 #include <system_error>
 #include <unistd.h>
@@ -377,17 +379,22 @@ TEST(DistributedQueryTcpExecutionTest, ResolvesSelectedRoutesFromCommittedNodeMe
   ASSERT_TRUE(routes.has_value()) << routes.error().to_string();
   ASSERT_EQ(routes->size(), 2U);
   EXPECT_EQ((*routes)[0].node_id, 11U);
-  EXPECT_EQ((*routes)[0].endpoint, (network::Ipv4Endpoint{{127U, 0U, 0U, 1U}, 7411U}));
+  EXPECT_EQ((*routes)[0].endpoints,
+            (std::vector<network::Ipv4Endpoint>{{{127U, 0U, 0U, 1U}, 7411U}}));
   EXPECT_EQ((*routes)[0].tls_context, &first_tls);
   EXPECT_EQ((*routes)[1].node_id, 12U);
-  EXPECT_EQ((*routes)[1].endpoint, (network::Ipv4Endpoint{{127U, 0U, 0U, 2U}, 7412U}));
+  EXPECT_EQ((*routes)[1].endpoints,
+            (std::vector<network::Ipv4Endpoint>{{{127U, 0U, 0U, 2U}, 7412U}}));
   EXPECT_EQ((*routes)[1].tls_context, &second_tls);
 
-  catalog.cluster_nodes[2].endpoint = "node-12.example:7412";
-  EXPECT_EQ(resolve_distributed_query_node_routes(catalog, input->snapshot.dispatches(), contexts)
-                .error()
-                .code(),
-            common::StatusCode::kUnavailable);
+  catalog.cluster_nodes[2].endpoint = "localhost:7412";
+  routes = resolve_distributed_query_node_routes(catalog, input->snapshot.dispatches(), contexts);
+  ASSERT_TRUE(routes.has_value()) << routes.error().to_string();
+  ASSERT_FALSE((*routes)[1].endpoints.empty());
+  EXPECT_TRUE(std::ranges::all_of((*routes)[1].endpoints, [](const auto& endpoint) {
+    return endpoint.port == 7412U &&
+           endpoint.address != std::array<std::uint8_t, 4>{0U, 0U, 0U, 0U};
+  }));
   catalog.cluster_nodes[2].endpoint = "127.0.0.2:7412";
   EXPECT_EQ(resolve_distributed_query_node_routes(catalog, input->snapshot.dispatches(),
                                                   std::span{contexts}.first(1U))
@@ -399,6 +406,12 @@ TEST(DistributedQueryTcpExecutionTest, ResolvesSelectedRoutesFromCommittedNodeMe
                 .error()
                 .code(),
             common::StatusCode::kResourceExhausted);
+  catalog.cluster_nodes[2].endpoint = "Node-12.example:7412";
+  EXPECT_EQ(resolve_distributed_query_node_routes(catalog, input->snapshot.dispatches(), contexts)
+                .error()
+                .code(),
+            common::StatusCode::kUnavailable);
+  catalog.cluster_nodes[2].endpoint = "127.0.0.2:7412";
   std::swap(catalog.cluster_nodes[0], catalog.cluster_nodes[2]);
   EXPECT_EQ(resolve_distributed_query_node_routes(catalog, input->snapshot.dispatches(), contexts)
                 .error()
@@ -442,8 +455,8 @@ TEST(DistributedQueryTcpExecutionTest, SchedulesPlanOrderedTabletsAndRetriesWith
       std::move(*execution),
       {.authenticator = &server_authenticator,
        .node_authorizer = &authorizer,
-       .routes = {{11U, first_server->bound_endpoint(), &*tls_context},
-                  {12U, second_server->bound_endpoint(), &*tls_context}},
+       .routes = {{11U, {first_server->bound_endpoint()}, &*tls_context},
+                  {12U, {second_server->bound_endpoint()}, &*tls_context}},
        .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
                           .exchange_timeout = std::chrono::milliseconds{1000}},
        .connect_timeout = std::chrono::milliseconds{1000}});
@@ -475,6 +488,77 @@ TEST(DistributedQueryTcpExecutionTest, SchedulesPlanOrderedTabletsAndRetriesWith
   EXPECT_EQ(metrics.active_attempts, 0U);
 }
 
+TEST(DistributedQueryTcpExecutionTest, RotatesBoundedNodeAddressesAcrossFiniteRetries) {
+  TemporaryDirectory directory;
+  auto input = make_input(directory);
+  ASSERT_TRUE(input.has_value()) << input.error().to_string();
+  auto execution = DistributedQueryExecution::create(
+      1U, std::move(input->plan), std::move(input->admissions), std::move(input->snapshot),
+      {.coordinator = {},
+       .retry = {.maximum_attempts = 2U,
+                 .initial_backoff = std::chrono::milliseconds{1},
+                 .maximum_backoff = std::chrono::milliseconds{1}}});
+  ASSERT_TRUE(execution.has_value()) << execution.error().to_string();
+
+  auto refused_listener = network::TcpListener::bind();
+  ASSERT_TRUE(refused_listener.has_value());
+  const network::Ipv4Endpoint refused_endpoint = refused_listener->bound_endpoint();
+  ASSERT_TRUE(refused_listener->close().is_ok());
+
+  ExecutionNodeAuthorizer authorizer;
+  ExecutionWorker first_worker{2.5, false};
+  ExecutionWorker second_worker{3.5, false};
+  auto first_receiver = DistributedQueryReceiver::create(
+      {.local_node_id = 11U, .authorizer = &authorizer, .worker = &first_worker});
+  auto second_receiver = DistributedQueryReceiver::create(
+      {.local_node_id = 12U, .authorizer = &authorizer, .worker = &second_worker});
+  ASSERT_TRUE(first_receiver.has_value());
+  ASSERT_TRUE(second_receiver.has_value());
+  ExecutionAuthenticator client_authenticator{91U};
+  auto first_server = DistributedQueryTcpServer::start(
+      execution_server_config(client_authenticator, *first_receiver));
+  auto second_server = DistributedQueryTcpServer::start(
+      execution_server_config(client_authenticator, *second_receiver));
+  ASSERT_TRUE(first_server.has_value()) << first_server.error().to_string();
+  ASSERT_TRUE(second_server.has_value()) << second_server.error().to_string();
+
+  auto tls_context = network::TlsClientContext::create(execution_tls_client_config());
+  ASSERT_TRUE(tls_context.has_value()) << tls_context.error().to_string();
+  ExecutionAuthenticator server_authenticator{92U};
+  auto scheduled = DistributedQueryTcpExecution::create(
+      std::move(*execution),
+      {.authenticator = &server_authenticator,
+       .node_authorizer = &authorizer,
+       .routes = {{11U, {refused_endpoint, first_server->bound_endpoint()}, &*tls_context},
+                  {12U, {second_server->bound_endpoint()}, &*tls_context}},
+       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                          .exchange_timeout = std::chrono::milliseconds{1000}},
+       .connect_timeout = std::chrono::milliseconds{1000}});
+  ASSERT_TRUE(scheduled.has_value()) << scheduled.error().to_string();
+
+  for (std::size_t iteration = 0U;
+       iteration < 4096U && scheduled->state() == DistributedQueryTcpExecutionState::kRunning;
+       ++iteration) {
+    const common::Status status = scheduled->poll_once(std::chrono::milliseconds{1});
+    ASSERT_TRUE(status.is_ok()) << status.to_string();
+    ASSERT_TRUE(first_server->poll_once(std::chrono::milliseconds{1}).is_ok());
+    ASSERT_TRUE(second_server->poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  ASSERT_EQ(scheduled->state(), DistributedQueryTcpExecutionState::kComplete)
+      << scheduled->failure().to_string();
+  auto result = scheduled->result();
+  ASSERT_TRUE(result.has_value()) << result.error().to_string();
+  EXPECT_EQ(result->count, 2U);
+  EXPECT_EQ(result->sum, 6.0);
+  EXPECT_EQ(first_worker.calls, 1U);
+  EXPECT_EQ(second_worker.calls, 1U);
+  const auto metrics = scheduled->metrics();
+  EXPECT_EQ(metrics.attempts_started, 3U);
+  EXPECT_EQ(metrics.retries_started, 1U);
+  EXPECT_EQ(metrics.transport_completed_attempts, 2U);
+  EXPECT_EQ(metrics.transport_failed_attempts, 1U);
+}
+
 TEST(DistributedQueryTcpExecutionTest, RejectsIncompleteRoutesBeforeOpeningAttempts) {
   TemporaryDirectory directory;
   auto input = make_input(directory);
@@ -486,13 +570,14 @@ TEST(DistributedQueryTcpExecutionTest, RejectsIncompleteRoutesBeforeOpeningAttem
   ExecutionAuthenticator authenticator{92U};
   auto tls_context = network::TlsClientContext::create(execution_tls_client_config());
   ASSERT_TRUE(tls_context.has_value());
-  EXPECT_EQ(DistributedQueryTcpExecution::create(
-                std::move(*execution), {.authenticator = &authenticator,
-                                        .node_authorizer = &authorizer,
-                                        .routes = {{11U, {{127U, 0U, 0U, 1U}, 1U}, &*tls_context}}})
-                .error()
-                .code(),
-            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(
+      DistributedQueryTcpExecution::create(
+          std::move(*execution), {.authenticator = &authenticator,
+                                  .node_authorizer = &authorizer,
+                                  .routes = {{11U, {{{127U, 0U, 0U, 1U}, 1U}}, &*tls_context}}})
+          .error()
+          .code(),
+      common::StatusCode::kInvalidArgument);
 }
 
 TEST(DistributedQueryTcpExecutionTest, DeadlineAndCancellationReleaseEveryAttempt) {
@@ -512,8 +597,8 @@ TEST(DistributedQueryTcpExecutionTest, DeadlineAndCancellationReleaseEveryAttemp
       std::move(*expired_execution),
       {.authenticator = &authenticator,
        .node_authorizer = &authorizer,
-       .routes = {{11U, {{127U, 0U, 0U, 1U}, 1U}, &*tls_context},
-                  {12U, {{127U, 0U, 0U, 1U}, 2U}, &*tls_context}},
+       .routes = {{11U, {{{127U, 0U, 0U, 1U}, 1U}}, &*tls_context},
+                  {12U, {{{127U, 0U, 0U, 1U}, 2U}}, &*tls_context}},
        .execution_deadline = DistributedQueryExecution::TimePoint{}});
   ASSERT_TRUE(expired.has_value());
   const common::Status deadline = expired->poll_once(std::chrono::milliseconds{100});
@@ -536,8 +621,8 @@ TEST(DistributedQueryTcpExecutionTest, DeadlineAndCancellationReleaseEveryAttemp
       std::move(*cancelled_execution),
       {.authenticator = &authenticator,
        .node_authorizer = &authorizer,
-       .routes = {{11U, listener->bound_endpoint(), &*tls_context},
-                  {12U, listener->bound_endpoint(), &*tls_context}}});
+       .routes = {{11U, {listener->bound_endpoint()}, &*tls_context},
+                  {12U, {listener->bound_endpoint()}, &*tls_context}}});
   ASSERT_TRUE(cancelled.has_value());
   ASSERT_TRUE(cancelled->poll_once(std::chrono::milliseconds{0}).is_ok());
   EXPECT_EQ(cancelled->metrics().attempts_started, 2U);
@@ -592,8 +677,8 @@ TEST(DistributedQueryTcpExecutionTest, RebindsWholeQueryAndDiscardsPriorEpochPar
       std::move(*old_execution),
       {.authenticator = &server_authenticator,
        .node_authorizer = &authorizer,
-       .routes = {{11U, old_first_server->bound_endpoint(), &*tls_context},
-                  {12U, old_second_server->bound_endpoint(), &*tls_context}},
+       .routes = {{11U, {old_first_server->bound_endpoint()}, &*tls_context},
+                  {12U, {old_second_server->bound_endpoint()}, &*tls_context}},
        .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
                           .exchange_timeout = std::chrono::milliseconds{1000}},
        .connect_timeout = std::chrono::milliseconds{1000},
@@ -632,8 +717,8 @@ TEST(DistributedQueryTcpExecutionTest, RebindsWholeQueryAndDiscardsPriorEpochPar
                 ->rebind(std::move(*wrong_execution),
                          {.authenticator = &server_authenticator,
                           .node_authorizer = &authorizer,
-                          .routes = {{11U, old_first_server->bound_endpoint(), &*tls_context},
-                                     {12U, old_second_server->bound_endpoint(), &*tls_context}},
+                          .routes = {{11U, {old_first_server->bound_endpoint()}, &*tls_context},
+                                     {12U, {old_second_server->bound_endpoint()}, &*tls_context}},
                           .maximum_rebindings = 1U})
                 .code(),
             common::StatusCode::kInvalidArgument);
@@ -665,8 +750,8 @@ TEST(DistributedQueryTcpExecutionTest, RebindsWholeQueryAndDiscardsPriorEpochPar
                   ->rebind(std::move(*new_execution),
                            {.authenticator = &server_authenticator,
                             .node_authorizer = &authorizer,
-                            .routes = {{11U, new_first_server->bound_endpoint(), &*tls_context},
-                                       {12U, new_second_server->bound_endpoint(), &*tls_context}},
+                            .routes = {{11U, {new_first_server->bound_endpoint()}, &*tls_context},
+                                       {12U, {new_second_server->bound_endpoint()}, &*tls_context}},
                             .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
                                                .exchange_timeout = std::chrono::milliseconds{1000}},
                             .connect_timeout = std::chrono::milliseconds{1000},
@@ -734,8 +819,8 @@ TEST(DistributedQueryMovementGateTest, QueryResultIsStableAcrossCompletedTabletM
       std::move(*before_execution),
       {.authenticator = &server_authenticator,
        .node_authorizer = &authorizer,
-       .routes = {{11U, source_server->bound_endpoint(), &*tls_context},
-                  {12U, stable_server->bound_endpoint(), &*tls_context}}});
+       .routes = {{11U, {source_server->bound_endpoint()}, &*tls_context},
+                  {12U, {stable_server->bound_endpoint()}, &*tls_context}}});
   ASSERT_TRUE(before.has_value());
   for (std::size_t iteration = 0U;
        iteration < 2048U && before->state() == DistributedQueryTcpExecutionState::kRunning;
@@ -776,8 +861,8 @@ TEST(DistributedQueryMovementGateTest, QueryResultIsStableAcrossCompletedTabletM
       std::move(*after_execution),
       {.authenticator = &server_authenticator,
        .node_authorizer = &authorizer,
-       .routes = {{13U, target_server->bound_endpoint(), &*tls_context},
-                  {12U, stable_server->bound_endpoint(), &*tls_context}}});
+       .routes = {{13U, {target_server->bound_endpoint()}, &*tls_context},
+                  {12U, {stable_server->bound_endpoint()}, &*tls_context}}});
   ASSERT_TRUE(after.has_value());
   for (std::size_t iteration = 0U;
        iteration < 2048U && after->state() == DistributedQueryTcpExecutionState::kRunning;

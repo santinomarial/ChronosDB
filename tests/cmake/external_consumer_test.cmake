@@ -211,6 +211,7 @@ int main() {
   const auto connect_tls_socket = &chronos::network::TlsSocket::connect;
   const auto begin_tcp_connect = &chronos::network::TcpSocket::begin_connect;
   const auto bind_tcp_listener = &chronos::network::TcpListener::bind;
+  const auto resolve_ipv4_endpoints = &chronos::network::resolve_ipv4_endpoints;
   const auto create_s3_object_store = &chronos::tiering::S3ObjectStore::create;
   const auto create_s3_environment_provider =
       &chronos::tiering::S3EnvironmentCredentialProvider::create;
@@ -271,6 +272,7 @@ int main() {
   (void)connect_tls_socket;
   (void)begin_tcp_connect;
   (void)bind_tcp_listener;
+  (void)resolve_ipv4_endpoints;
   (void)create_s3_object_store;
   (void)create_s3_environment_provider;
   (void)restore_tiered_catalog;
