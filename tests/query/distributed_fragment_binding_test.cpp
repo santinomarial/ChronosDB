@@ -789,6 +789,22 @@ TEST(DistributedFragmentBindingTest, DerivesBoundedStaleAndLocalEventualAdmissio
   ASSERT_TRUE(correlated.has_value()) << correlated.error().to_string();
   EXPECT_EQ(correlated->dispatches().front().fragment.serving_node, 12U);
   EXPECT_EQ(correlated->dispatches().front().fragment.observed_leader_commit_position, 11U);
+  const DistributedVectorQueryPlan follower_vector_plan{
+      .query_id = value.plan.query_id,
+      .read_policy = value.plan.read_policy,
+      .fragments = value.plan.fragments,
+      .intent = {.mode = DistributedVectorPlanMode::kRows, .row_output_indices = {0U, 1U}}};
+  auto correlated_vector = bind_follower_group_backed_distributed_vector_snapshot(
+      follower_vector_plan, *snapshot,
+      {.catalog = std::cref(catalog),
+       .table_id = schema_value.table_id(),
+       .group_authorities = follower_authorities,
+       .destination_column_ordinals = projection});
+  ASSERT_TRUE(correlated_vector.has_value()) << correlated_vector.error().to_string();
+  ASSERT_EQ(correlated_vector->dispatches().size(), 1U);
+  EXPECT_EQ(correlated_vector->dispatches().front().serving_node, 12U);
+  EXPECT_EQ(correlated_vector->dispatches().front().observed_leader_commit_position, 11U);
+  EXPECT_EQ(correlated_vector->dispatches().front().plan, follower_vector_plan.intent);
   follower_authorities[0].leader_observation.current_term = 3U;
   EXPECT_EQ(bind_follower_group_backed_distributed_aggregate_snapshot(
                 value.plan, *snapshot,
@@ -797,6 +813,15 @@ TEST(DistributedFragmentBindingTest, DerivesBoundedStaleAndLocalEventualAdmissio
                  .group_authorities = follower_authorities,
                  .destination_column_ordinals = projection,
                  .aggregate_input_index = 1U})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(bind_follower_group_backed_distributed_vector_snapshot(
+                follower_vector_plan, *snapshot,
+                {.catalog = std::cref(catalog),
+                 .table_id = schema_value.table_id(),
+                 .group_authorities = follower_authorities,
+                 .destination_column_ordinals = projection})
                 .error()
                 .code(),
             common::StatusCode::kInvalidArgument);

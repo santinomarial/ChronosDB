@@ -674,8 +674,14 @@ Focused executions passed:
   tablet-to-group bindings into plan-ordered vector dispatches. A span missing one selected group
   rejected before binding; the shared aggregate reversed-order and metadata/proof-policy cases
   remained green. Header self-containment and installed consumption cover the public constructor.
-  Correlated follower group binding, remote acquisition, execution, coordination, authenticated
-  transport, and process integration are not claimed.
+  At that slice, correlated follower group binding was not claimed; remote acquisition, execution,
+  coordination, authenticated transport, and process integration remain unclaimed.
+- Correlated follower vector-proof continuation: the focused bounded-stale authority case now also
+  derived a row-output vector dispatch from one same-group, same-term stable leader/follower pair,
+  preserving the follower serving node and leader commit frontier without a caller scalar. A term
+  mismatch rejected both vector and aggregate binding before publication. Header self-containment
+  and installed consumption cover the public constructor. Remote acquisition, execution,
+  coordination, authenticated transport, and process integration are not claimed.
 
 The C++ files changed by the grouped- and vector-exchange continuations pass the repository-pinned
 clang-format 18 check. A full-tree check was also run and still reports pre-existing violations in

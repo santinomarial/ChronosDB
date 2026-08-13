@@ -1025,8 +1025,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   group, and policy-specific admission for every vector fragment from one committed catalog before
   entering that compatible owner. A leader-linearizable group-backed constructor now maps one
   canonical correlated barrier/observation vector through committed tablet-to-group bindings into
-  plan order without exposing a caller-side authority join. Correlated follower group binding,
-  remote acquisition, and execution remain deferred; a distinct all-type
+  plan order without exposing a caller-side authority join. A bounded-stale group-backed
+  constructor likewise derives the commit frontier only from same-group, same-term stable
+  leader/follower observations. Remote acquisition and execution remain deferred; a distinct
+  all-type
   vector-result envelope now has a header-first
   bounded reader and move-only short-write cursor that preserve coalesced suffix ownership without
   allocating from unchecked lengths. A distinct group-scoped grouped dispatch now

@@ -280,6 +280,63 @@ resolve_group_backed_proofs(
   }
 }
 
+[[nodiscard]] common::Result<std::vector<DistributedAggregateReplicaProof>>
+resolve_follower_group_backed_proofs(
+    const std::span<const DistributedTablet> fragments, const DistributedReadPolicy read_policy,
+    const raft::MetadataCatalogSnapshot& catalog,
+    const std::span<const DistributedAggregateFollowerReadAuthority> group_authorities) {
+  const common::Status catalog_status = validate_metadata_catalog_order(catalog);
+  if (!catalog_status.is_ok())
+    return common::make_unexpected(catalog_status);
+  if (read_policy.consistency != DistributedReadConsistency::kFollowerBoundedStale ||
+      !read_policy.maximum_staleness_positions.has_value() || group_authorities.empty() ||
+      !std::ranges::is_sorted(
+          group_authorities, {},
+          [](const auto& authority) { return authority.follower_observation.group_id; }) ||
+      std::ranges::adjacent_find(group_authorities, {},
+                                 [](const auto& authority) {
+                                   return authority.follower_observation.group_id;
+                                 }) != group_authorities.end() ||
+      std::ranges::any_of(group_authorities, [](const auto& authority) {
+        return !is_valid_distributed_aggregate_follower_read_authority(authority);
+      })) {
+    return common::make_unexpected(
+        invalid("follower-backed distributed proof authority is not canonical"));
+  }
+  try {
+    std::vector<DistributedAggregateReplicaProof> ordered;
+    ordered.reserve(fragments.size());
+    for (const DistributedTablet& fragment : fragments) {
+      const auto group = std::ranges::lower_bound(catalog.tablet_group_bindings, fragment.tablet_id,
+                                                  {}, &raft::TabletGroupBindingMetadata::tablet_id);
+      if (group == catalog.tablet_group_bindings.end() || group->tablet_id != fragment.tablet_id)
+        return common::make_unexpected(
+            unavailable("distributed tablet has no committed Raft group binding"));
+      const auto authority =
+          std::ranges::lower_bound(group_authorities, group->group_id, {}, [](const auto& value) {
+            return value.follower_observation.group_id;
+          });
+      if (authority == group_authorities.end() ||
+          authority->follower_observation.group_id != group->group_id) {
+        return common::make_unexpected(
+            unavailable("distributed tablet group has no correlated follower proof"));
+      }
+      ordered.push_back(
+          {.observation = std::cref(authority->follower_observation),
+           .observed_leader_commit_position = authority->leader_observation.commit_index});
+    }
+    return ordered;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "follower-backed distributed proof allocation failed"});
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "follower-backed distributed proof exceeds container limits"});
+  }
+}
+
 } // namespace
 
 common::Result<DistributedAggregateFragmentDispatch>
@@ -969,65 +1026,38 @@ bind_follower_group_backed_distributed_aggregate_snapshot(
     const DistributedAggregatePlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
     const FollowerGroupBackedDistributedAggregateSnapshotBinding& binding,
     const DistributedAggregateSnapshotBindingLimits limits) {
-  const raft::MetadataCatalogSnapshot& catalog = binding.catalog.get();
-  const common::Status catalog_status = validate_metadata_catalog_order(catalog);
-  if (!catalog_status.is_ok())
-    return common::make_unexpected(catalog_status);
-  if (plan.read_policy.consistency != DistributedReadConsistency::kFollowerBoundedStale ||
-      !plan.read_policy.maximum_staleness_positions.has_value() ||
-      binding.group_authorities.empty() ||
-      !std::ranges::is_sorted(
-          binding.group_authorities, {},
-          [](const auto& authority) { return authority.follower_observation.group_id; }) ||
-      std::ranges::adjacent_find(binding.group_authorities, {},
-                                 [](const auto& authority) {
-                                   return authority.follower_observation.group_id;
-                                 }) != binding.group_authorities.end() ||
-      std::ranges::any_of(binding.group_authorities, [](const auto& authority) {
-        return !is_valid_distributed_aggregate_follower_read_authority(authority);
-      })) {
-    return common::make_unexpected(
-        invalid("follower-backed distributed proof authority is not canonical"));
-  }
-  try {
-    std::vector<DistributedAggregateReplicaProof> ordered;
-    ordered.reserve(plan.fragments.size());
-    for (const DistributedTablet& fragment : plan.fragments) {
-      const auto group = std::ranges::lower_bound(catalog.tablet_group_bindings, fragment.tablet_id,
-                                                  {}, &raft::TabletGroupBindingMetadata::tablet_id);
-      if (group == catalog.tablet_group_bindings.end() || group->tablet_id != fragment.tablet_id)
-        return common::make_unexpected(
-            unavailable("distributed tablet has no committed Raft group binding"));
-      const auto authority = std::ranges::lower_bound(
-          binding.group_authorities, group->group_id, {},
-          [](const auto& value) { return value.follower_observation.group_id; });
-      if (authority == binding.group_authorities.end() ||
-          authority->follower_observation.group_id != group->group_id) {
-        return common::make_unexpected(
-            unavailable("distributed tablet group has no correlated follower proof"));
-      }
-      ordered.push_back(
-          {.observation = std::cref(authority->follower_observation),
-           .observed_leader_commit_position = authority->leader_observation.commit_index});
-    }
-    return bind_metadata_backed_distributed_aggregate_snapshot(
-        plan, std::move(snapshot),
-        {.catalog = binding.catalog,
-         .table_id = binding.table_id,
-         .replica_proofs = ordered,
-         .destination_column_ordinals = binding.destination_column_ordinals,
-         .aggregate_input_index = binding.aggregate_input_index,
-         .event_time_predicate = binding.event_time_predicate},
-        limits);
-  } catch (const std::bad_alloc&) {
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kResourceExhausted,
-                       "follower-backed distributed snapshot binding allocation failed"});
-  } catch (const std::length_error&) {
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kResourceExhausted,
-                       "follower-backed distributed snapshot binding exceeds container limits"});
-  }
+  auto ordered = resolve_follower_group_backed_proofs(
+      plan.fragments, plan.read_policy, binding.catalog.get(), binding.group_authorities);
+  if (!ordered.has_value())
+    return common::make_unexpected(ordered.error());
+  return bind_metadata_backed_distributed_aggregate_snapshot(
+      plan, std::move(snapshot),
+      {.catalog = binding.catalog,
+       .table_id = binding.table_id,
+       .replica_proofs = *ordered,
+       .destination_column_ordinals = binding.destination_column_ordinals,
+       .aggregate_input_index = binding.aggregate_input_index,
+       .event_time_predicate = binding.event_time_predicate},
+      limits);
+}
+
+common::Result<CompatibleDistributedVectorSnapshot>
+bind_follower_group_backed_distributed_vector_snapshot(
+    const DistributedVectorQueryPlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
+    const FollowerGroupBackedDistributedVectorSnapshotBinding& binding,
+    const DistributedVectorSnapshotBindingLimits limits) {
+  auto ordered = resolve_follower_group_backed_proofs(
+      plan.fragments, plan.read_policy, binding.catalog.get(), binding.group_authorities);
+  if (!ordered.has_value())
+    return common::make_unexpected(ordered.error());
+  return bind_metadata_backed_distributed_vector_snapshot(
+      plan, std::move(snapshot),
+      {.catalog = binding.catalog,
+       .table_id = binding.table_id,
+       .replica_proofs = *ordered,
+       .destination_column_ordinals = binding.destination_column_ordinals,
+       .event_time_predicate = binding.event_time_predicate},
+      limits);
 }
 
 } // namespace chronos::query

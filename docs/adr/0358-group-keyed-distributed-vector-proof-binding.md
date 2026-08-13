@@ -31,9 +31,9 @@ in tablet-plan order, and rejects an authority span missing one selected tablet 
 authority rejection and all metadata/proof-policy regressions remain covered by the shared aggregate
 tests. Header self-containment and installed consumption cover the public vector entry point.
 
-Correlated follower group authority, remote proof acquisition, vector worker execution, global
-coordination, authenticated transport, and process integration remain incomplete. No Phase 16 exit
-gate is claimed.
+Correlated follower group authority is implemented separately. Remote proof acquisition, vector
+worker execution, global coordination, authenticated transport, and process integration remain
+incomplete. No Phase 16 exit gate is claimed.
 
 Invariants 4–6, 11, 14, 15, and 18 apply.
 

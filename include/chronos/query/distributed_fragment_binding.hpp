@@ -333,6 +333,8 @@ struct DistributedAggregateFollowerReadAuthority {
   raft::RaftGroupObservation follower_observation;
 };
 
+using DistributedVectorFollowerReadAuthority = DistributedAggregateFollowerReadAuthority;
+
 // Validates the complete same-group, same-term, stable-membership leader/follower correlation
 // required before a remote acquisition may be used as bounded-stale read authority.
 [[nodiscard]] bool is_valid_distributed_aggregate_follower_read_authority(
@@ -356,6 +358,22 @@ bind_follower_group_backed_distributed_aggregate_snapshot(
     const DistributedAggregatePlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
     const FollowerGroupBackedDistributedAggregateSnapshotBinding& binding,
     DistributedAggregateSnapshotBindingLimits limits = {});
+
+struct FollowerGroupBackedDistributedVectorSnapshotBinding {
+  std::reference_wrapper<const raft::MetadataCatalogSnapshot> catalog;
+  schema::TableId table_id;
+  // Canonical unique order by follower group. Every selected tablet group must have one same-term
+  // leader/follower pair; unrelated groups are ignored.
+  std::span<const DistributedVectorFollowerReadAuthority> group_authorities;
+  std::span<const std::uint32_t> destination_column_ordinals;
+  std::optional<cseg::EventTimePredicate> event_time_predicate;
+};
+
+[[nodiscard]] common::Result<CompatibleDistributedVectorSnapshot>
+bind_follower_group_backed_distributed_vector_snapshot(
+    const DistributedVectorQueryPlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
+    const FollowerGroupBackedDistributedVectorSnapshotBinding& binding,
+    DistributedVectorSnapshotBindingLimits limits = {});
 
 } // namespace chronos::query
 

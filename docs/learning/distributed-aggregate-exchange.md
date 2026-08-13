@@ -266,6 +266,10 @@ For leader-linearizable reads, the group-backed vector entry point shares the ag
 canonical group-authority resolver. It uses committed tablet-to-group bindings to select exact
 barrier/observation pairs, ignores unrelated groups, and removes the caller-side plan-order join
 before entering the metadata-backed vector boundary.
+The follower group-backed vector entry point similarly shares the aggregate pair validator and
+group resolver. It derives the lag frontier only from the correlated leader observation, retains
+the follower's exact applied position and serving identity, and then delegates every remaining
+bounded-stale authority check to metadata-backed vector binding.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated
