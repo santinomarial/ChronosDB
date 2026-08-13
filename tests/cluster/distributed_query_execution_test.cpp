@@ -5,6 +5,8 @@
 #include "chronos/cluster/distributed_query_tcp_execution.hpp"
 #include "chronos/cluster/distributed_query_tcp_server.hpp"
 #include "chronos/cluster/distributed_vector_query_execution_v2.hpp"
+#include "chronos/cluster/distributed_vector_query_tcp_execution_v2.hpp"
+#include "chronos/cluster/distributed_vector_query_tcp_server_v2.hpp"
 #include "chronos/common/crc32c.hpp"
 #include "chronos/manifest/naming.hpp"
 #include "chronos/manifest/storage.hpp"
@@ -24,6 +26,7 @@
 #include <functional>
 #include <gtest/gtest.h>
 #include <memory>
+#include <new>
 #include <optional>
 #include <ranges>
 #include <string>
@@ -373,6 +376,35 @@ private:
   bool fail_first_{};
 };
 
+class VectorExecutionWorkerV2 final : public DistributedVectorQueryWorkerServiceV2 {
+public:
+  common::Result<std::vector<DistributedVectorResultExchangeMessage>>
+  execute(const query::DistributedVectorFragmentDispatchV2& dispatch) override {
+    ++calls;
+    std::vector<network::QueryResultColumn> columns;
+    try {
+      columns.reserve(dispatch.result_schema.columns.size());
+      for (const query::DistributedVectorResultColumn& column : dispatch.result_schema.columns)
+        columns.push_back({column.name, column.type, column.nullable});
+    } catch (const std::bad_alloc&) {
+      return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                    "vector execution test allocation failed"});
+    }
+    auto batch = network::encode_query_result_batch(0U, columns, {});
+    if (!batch.has_value())
+      return common::make_unexpected(batch.error());
+    return std::vector<DistributedVectorResultExchangeMessage>{{
+        .query_id = dispatch.dispatch.query_id,
+        .tablet_id = dispatch.dispatch.tablet_id,
+        .sequence = 1U,
+        .terminal = true,
+        .encoded_result_batch = std::move(*batch),
+    }};
+  }
+
+  std::size_t calls{};
+};
+
 [[nodiscard]] DistributedQueryTcpServerConfig
 execution_server_config(ExecutionAuthenticator& authenticator, DistributedQueryReceiver& receiver) {
   return {.listener = {},
@@ -395,6 +427,21 @@ grouped_execution_server_config(ExecutionAuthenticator& authenticator,
           .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
                              .exchange_timeout = std::chrono::milliseconds{1000},
                              .maximum_response_frames = 4U},
+          .maximum_connections = 8U,
+          .maximum_accepts_per_poll = 8U};
+}
+
+[[nodiscard]] DistributedVectorQueryTcpServerConfigV2
+vector_execution_server_config(ExecutionAuthenticator& authenticator,
+                               DistributedVectorQueryReceiverV2& receiver) {
+  return {.listener = {},
+          .tls = execution_tls_server_config(),
+          .authenticator = &authenticator,
+          .receiver = &receiver,
+          .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                             .exchange_timeout = std::chrono::milliseconds{1000},
+                             .maximum_response_frames = 4U,
+                             .maximum_response_bytes = std::size_t{1024U} * 1024U},
           .maximum_connections = 8U,
           .maximum_accepts_per_poll = 8U};
 }
@@ -561,6 +608,163 @@ TEST(DistributedVectorQueryExecutionV2Test, CoordinatorAdmissionFailurePoisonsCo
   EXPECT_EQ(execution->accept_responses(tablet, responses, now).code(),
             common::StatusCode::kResourceExhausted);
   EXPECT_EQ(execution->finish().error().code(), common::StatusCode::kResourceExhausted);
+}
+
+TEST(DistributedVectorQueryTcpExecutionV2Test,
+     SchedulesAllTabletsAndRotatesOnlyPrevalidatedAddresses) {
+  TemporaryDirectory directory;
+  auto input = make_input(directory);
+  ASSERT_TRUE(input.has_value()) << input.error().to_string();
+  auto execution = DistributedVectorQueryExecutionV2::create(
+      1U, std::move(input->vector_snapshot),
+      {.sender = {.retry = {.maximum_attempts = 2U,
+                            .initial_backoff = std::chrono::milliseconds{1},
+                            .maximum_backoff = std::chrono::milliseconds{1}},
+                  .maximum_response_frames = 4U,
+                  .maximum_response_bytes = std::size_t{1024U} * 1024U},
+       .coordinator = {
+           .messages = {.maximum_messages_per_fragment = 4U, .maximum_total_messages = 8U},
+           .maximum_total_encoded_bytes = std::size_t{2U} * 1024U * 1024U}});
+  ASSERT_TRUE(execution.has_value()) << execution.error().to_string();
+
+  auto refused_listener = network::TcpListener::bind();
+  ASSERT_TRUE(refused_listener.has_value()) << refused_listener.error().to_string();
+  const network::Ipv4Endpoint refused_endpoint = refused_listener->bound_endpoint();
+  ASSERT_TRUE(refused_listener->close().is_ok());
+
+  ExecutionNodeAuthorizer authorizer;
+  VectorExecutionWorkerV2 first_worker;
+  VectorExecutionWorkerV2 second_worker;
+  auto first_receiver = DistributedVectorQueryReceiverV2::create(
+      {.local_node_id = 11U, .authorizer = &authorizer, .worker = &first_worker});
+  auto second_receiver = DistributedVectorQueryReceiverV2::create(
+      {.local_node_id = 12U, .authorizer = &authorizer, .worker = &second_worker});
+  ASSERT_TRUE(first_receiver.has_value()) << first_receiver.error().to_string();
+  ASSERT_TRUE(second_receiver.has_value()) << second_receiver.error().to_string();
+  ExecutionAuthenticator client_authenticator{91U};
+  auto first_server = DistributedVectorQueryTcpServerV2::start(
+      vector_execution_server_config(client_authenticator, *first_receiver));
+  auto second_server = DistributedVectorQueryTcpServerV2::start(
+      vector_execution_server_config(client_authenticator, *second_receiver));
+  ASSERT_TRUE(first_server.has_value()) << first_server.error().to_string();
+  ASSERT_TRUE(second_server.has_value()) << second_server.error().to_string();
+  auto tls_context = network::TlsClientContext::create(execution_tls_client_config());
+  ASSERT_TRUE(tls_context.has_value()) << tls_context.error().to_string();
+  ExecutionAuthenticator server_authenticator{92U};
+  auto scheduled = DistributedVectorQueryTcpExecutionV2::create(
+      std::move(*execution),
+      {.authenticator = &server_authenticator,
+       .node_authorizer = &authorizer,
+       .routes = {{.node_id = 11U,
+                   .endpoints = {refused_endpoint, first_server->bound_endpoint()},
+                   .tls_context = std::addressof(*tls_context)},
+                  {.node_id = 12U,
+                   .endpoints = {second_server->bound_endpoint()},
+                   .tls_context = std::addressof(*tls_context)}},
+       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                          .exchange_timeout = std::chrono::milliseconds{1000},
+                          .maximum_response_frames = 4U,
+                          .maximum_response_bytes = std::size_t{1024U} * 1024U},
+       .connect_timeout = std::chrono::milliseconds{1000},
+       .execution_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5}});
+  ASSERT_TRUE(scheduled.has_value()) << scheduled.error().to_string();
+  for (std::size_t iteration = 0U;
+       iteration < 4096U &&
+       scheduled->state() == DistributedVectorQueryTcpExecutionStateV2::kRunning;
+       ++iteration) {
+    ASSERT_TRUE(scheduled->poll_once(std::chrono::milliseconds{1}).is_ok())
+        << scheduled->failure().to_string();
+    ASSERT_TRUE(first_server->poll_once(std::chrono::milliseconds{0}).is_ok());
+    ASSERT_TRUE(second_server->poll_once(std::chrono::milliseconds{0}).is_ok());
+  }
+  ASSERT_EQ(scheduled->state(), DistributedVectorQueryTcpExecutionStateV2::kComplete)
+      << scheduled->failure().to_string();
+  ASSERT_TRUE(scheduled->result().has_value());
+  // Guarded by the completion state and result assertion above.
+  // NOLINTBEGIN(bugprone-unchecked-optional-access)
+  EXPECT_EQ(scheduled->result()->plan.mode, query::DistributedVectorPlanMode::kRows);
+  EXPECT_EQ(scheduled->result()->result.messages.size(), 2U);
+  // NOLINTEND(bugprone-unchecked-optional-access)
+  EXPECT_EQ(first_worker.calls, 1U);
+  EXPECT_EQ(second_worker.calls, 1U);
+  const auto metrics = scheduled->metrics();
+  EXPECT_EQ(metrics.attempts_started, 3U);
+  EXPECT_EQ(metrics.retries_started, 1U);
+  EXPECT_EQ(metrics.transport_completed_attempts, 2U);
+  EXPECT_EQ(metrics.transport_failed_attempts, 1U);
+  EXPECT_EQ(metrics.active_attempts, 0U);
+  EXPECT_TRUE(first_server->shutdown().is_ok());
+  EXPECT_TRUE(second_server->shutdown().is_ok());
+}
+
+TEST(DistributedVectorQueryTcpExecutionV2Test,
+     RejectsIncompleteRoutesAndOwnsDeadlineAndExplicitCancellation) {
+  TemporaryDirectory missing_directory;
+  auto missing_input = make_input(missing_directory);
+  ASSERT_TRUE(missing_input.has_value()) << missing_input.error().to_string();
+  auto missing_execution =
+      DistributedVectorQueryExecutionV2::create(1U, std::move(missing_input->vector_snapshot));
+  ASSERT_TRUE(missing_execution.has_value());
+  ExecutionNodeAuthorizer authorizer;
+  ExecutionAuthenticator authenticator{92U};
+  auto tls_context = network::TlsClientContext::create(execution_tls_client_config());
+  ASSERT_TRUE(tls_context.has_value()) << tls_context.error().to_string();
+  auto listener = network::TcpListener::bind();
+  ASSERT_TRUE(listener.has_value()) << listener.error().to_string();
+  const DistributedQueryNodeRoute first_route{.node_id = 11U,
+                                              .endpoints = {listener->bound_endpoint()},
+                                              .tls_context = std::addressof(*tls_context)};
+  EXPECT_EQ(DistributedVectorQueryTcpExecutionV2::create(std::move(*missing_execution),
+                                                         {.authenticator = &authenticator,
+                                                          .node_authorizer = &authorizer,
+                                                          .routes = {first_route}})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+
+  TemporaryDirectory expired_directory;
+  auto expired_input = make_input(expired_directory);
+  ASSERT_TRUE(expired_input.has_value()) << expired_input.error().to_string();
+  auto expired_execution =
+      DistributedVectorQueryExecutionV2::create(1U, std::move(expired_input->vector_snapshot));
+  ASSERT_TRUE(expired_execution.has_value());
+  auto expired = DistributedVectorQueryTcpExecutionV2::create(
+      std::move(*expired_execution),
+      {.authenticator = &authenticator,
+       .node_authorizer = &authorizer,
+       .routes = {first_route,
+                  {.node_id = 12U,
+                   .endpoints = {listener->bound_endpoint()},
+                   .tls_context = std::addressof(*tls_context)}},
+       .execution_deadline = std::chrono::steady_clock::now() - std::chrono::milliseconds{1}});
+  ASSERT_TRUE(expired.has_value()) << expired.error().to_string();
+  EXPECT_EQ(expired->poll_once(std::chrono::milliseconds{0}).code(),
+            common::StatusCode::kCancelled);
+  EXPECT_EQ(expired->state(), DistributedVectorQueryTcpExecutionStateV2::kCancelled);
+  EXPECT_EQ(expired->metrics().attempts_started, 0U);
+  EXPECT_EQ(expired->metrics().active_attempts, 0U);
+
+  TemporaryDirectory cancelled_directory;
+  auto cancelled_input = make_input(cancelled_directory);
+  ASSERT_TRUE(cancelled_input.has_value()) << cancelled_input.error().to_string();
+  auto cancelled_execution =
+      DistributedVectorQueryExecutionV2::create(1U, std::move(cancelled_input->vector_snapshot));
+  ASSERT_TRUE(cancelled_execution.has_value());
+  auto cancelled = DistributedVectorQueryTcpExecutionV2::create(
+      std::move(*cancelled_execution), {.authenticator = &authenticator,
+                                        .node_authorizer = &authorizer,
+                                        .routes = {first_route,
+                                                   {.node_id = 12U,
+                                                    .endpoints = {listener->bound_endpoint()},
+                                                    .tls_context = std::addressof(*tls_context)}}});
+  ASSERT_TRUE(cancelled.has_value()) << cancelled.error().to_string();
+  ASSERT_TRUE(cancelled->poll_once(std::chrono::milliseconds{0}).is_ok());
+  EXPECT_EQ(cancelled->state(), DistributedVectorQueryTcpExecutionStateV2::kRunning);
+  EXPECT_GT(cancelled->metrics().active_attempts, 0U);
+  EXPECT_EQ(cancelled->cancel().code(), common::StatusCode::kCancelled);
+  EXPECT_EQ(cancelled->state(), DistributedVectorQueryTcpExecutionStateV2::kCancelled);
+  EXPECT_EQ(cancelled->metrics().active_attempts, 0U);
+  EXPECT_TRUE(listener->close().is_ok());
 }
 
 TEST(DistributedGroupedQueryExecutionTest, WithholdsResultsUntilEverySenderCloses) {

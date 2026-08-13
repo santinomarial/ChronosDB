@@ -52,8 +52,9 @@ response values. Work is linear in request and response bytes plus constant conn
 Invalid attempts and inconsistent routes open no socket. One event-loop thread serializes calls,
 so no synchronization or memory-ordering argument is required.
 
-Inbound listener/admission ownership, retry arbitration, production vector worker execution,
-schema-bound coordination, and process integration remain incomplete.
+ADRs 0373–0378 subsequently supply finite retry, schema-bound coordination, production row
+execution, inbound ownership, compatible-snapshot execution, and pinned multi-tablet scheduling.
+Global row/aggregate semantics and process integration remain incomplete.
 
 ## Affected invariants
 

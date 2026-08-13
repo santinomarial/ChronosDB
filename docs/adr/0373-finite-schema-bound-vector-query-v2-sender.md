@@ -59,9 +59,9 @@ most one canonically encoded response while total retained publication stays und
 ceiling. Work is linear in complete response bytes. One owner thread serializes calls, so no
 synchronization or memory-ordering argument is required.
 
-ADRs 0375–0377 subsequently supply production row execution, inbound ownership, and pinned
-coordinator delivery. Multi-tablet TCP scheduling, whole-query cancellation/deadlines, global
-semantics, aggregate state, and process integration remain incomplete.
+ADRs 0375–0378 subsequently supply production row execution, inbound ownership, pinned coordinator
+delivery, and multi-tablet TCP scheduling with whole-query cancellation/deadlines. Global semantics,
+aggregate state, authority rebinding, and process integration remain incomplete.
 
 ## Affected invariants
 

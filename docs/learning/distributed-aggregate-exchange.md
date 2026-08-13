@@ -350,6 +350,11 @@ that Manifest epoch, constructs one immutable sender per plan-ordered dispatch, 
 complete terminal stream to the bounded coordinator once. Completion transfers the global plan,
 admitted result schema, and plan-ordered messages together; retry backoff exposes nothing, and
 terminal sender or coordinator failure poisons the whole result.
+The pinned vector-v2 TCP scheduler validates complete immutable routes before acquisition, then
+owns one client slot per tablet and one preallocated readiness table. Sender attempt numbers rotate
+only the target node's finite address list; hints never change authority. Caller waits are capped by
+the earliest retry and whole-query deadline, while terminal failure or explicit cancellation closes
+every active client before returning and never exposes a result prefix.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated

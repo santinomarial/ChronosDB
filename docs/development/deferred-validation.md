@@ -309,8 +309,11 @@
   final ordering/limit untouched. A heap-stable production owner now composes it with the
   authenticated receiver and bounded TCP/mTLS server. A portable execution owner pins the
   compatible snapshot, drives one finite sender per tablet, and transfers the plan with the
-  schema-bound result only after all streams close. Aggregate merge-state transport and
-  multi-tablet TCP delivery remain.
+  schema-bound result only after all streams close. A pinned TCP scheduler now prevalidates all
+  routes before I/O, rotates only finite authority-preserving address candidates, drives due
+  retries, owns a whole-query deadline and cancellation, and releases every live client before
+  terminal failure. Aggregate merge-state transport, global result finalization, authority
+  rebinding, and process integration remain.
   A distinct terminal-only frame closes an empty tablet stream without inventing a SQL NULL group.
   Its separate fixed reader and move-only cursor own every terminal fragmentation boundary,
   coalesced successor bytes, sticky damage, and checked short writes without introducing an

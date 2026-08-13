@@ -1071,8 +1071,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   worker with the authenticated receiver and bounded TCP/mTLS server under reverse-safe lifetime
   order. A portable execution owner now pins the compatible schema-bearing snapshot, drives one
   finite sender per tablet, and transfers plan plus schema-bound results only after all streams
-  close. Aggregate merge-state transport, multi-tablet TCP scheduling, and global finalization
-  remain deferred. A distinct
+  close. A pinned multi-tablet TCP scheduler now prevalidates complete routes, drives attempts and
+  sender-authorized retries, rotates finite address candidates without rebinding authority, owns a
+  whole-query deadline and cancellation, and publishes only the all-tablet result. Aggregate
+  merge-state transport, global finalization, authority rebinding, and process integration remain
+  deferred. A distinct
   group-scoped grouped dispatch now
   preserves exact Raft authority without reinterpreting ungrouped dispatch bytes. Its worker reuses
   every local authority gate, resolves real temporal CSEG winners, and emits canonical grouped
