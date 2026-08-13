@@ -1040,8 +1040,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   result until every tablet closes. A pinned multi-tablet TCP scheduler prevalidates every immutable
   route, drives plan-ordered attempts and deadline-due retries over the grouped mTLS client, rotates
   bounded address candidates under the sender budget, releases all clients on failure/deadline/
-  cancellation, and publishes only the complete grouped result. Packaged grouped construction and
-  explicit whole-query rebinding remain.
+  cancellation, and publishes only the complete grouped result. A packaged leader-linearizable
+  grouped constructor now acquires correlated barriers, binds committed metadata and one compatible
+  Manifest epoch, proves the projected FLOAT64 key while specializing that exact aggregate owner,
+  resolves its immutable authenticated routes, and returns the grouped TCP lifecycle. Bounded-stale
+  grouped construction and explicit whole-query rebinding remain.
   Multi-key/non-FLOAT64 state/transport, ordering, top-N, and LIMIT remain deferred. A distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
   catalog, Manifest, route, and execution gates;

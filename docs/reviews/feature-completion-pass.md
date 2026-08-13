@@ -252,8 +252,10 @@ owns one finite sender per tablet, delivers complete terminal streams once, and 
 coordinator's all-tablet result boundary. A pinned multi-tablet TCP scheduler prevalidates complete
 routes, drives plan-ordered attempts and due retries, rotates bounded address candidates, releases
 all clients on terminal failure/deadline/cancellation, and publishes only the complete grouped
-result. Packaged grouped construction, explicit rebinding, and multi-key/non-FLOAT64 state remain
-incomplete. A distinct
+result. A packaged leader-linearizable grouped constructor now carries correlated barriers and one
+committed catalog/Manifest authority through exact FLOAT64 specialization, route resolution,
+execution, and TCP ownership. Bounded-stale grouped construction, explicit rebinding, and
+multi-key/non-FLOAT64 state remain incomplete. A distinct
 canonical observation protocol, authenticated receiver, mTLS clients/servers, finite multi-address
 acquisition, correlated
 leader/follower pairs, canonical all-group batches, placement-backed construction, and packaged
@@ -569,6 +571,13 @@ Focused executions passed:
   no-I/O deadline expiry, and active-client cancellation. Header self-containment and the installed
   consumer cover the public scheduler. Packaged grouped construction and explicit whole-query
   rebinding are not claimed.
+- Packaged leader-linearizable grouped-construction continuation: the focused durable-Raft service
+  case passed for exact metadata-barrier coverage, group/schema/placement/Manifest binding,
+  transfer of the same compatible aggregate owner into a grouped snapshot, committed route
+  resolution, and creation of the running grouped TCP lifecycle. The exact group, generation, and
+  FLOAT64 key are retained; a TIMESTAMP key rejects before I/O. Header self-containment and the
+  installed consumer cover the public constructor. Bounded-stale grouped construction is not
+  claimed.
 
 The C++ files changed by the grouped-exchange continuations pass the repository-pinned clang-format
 18 check. A full-tree check was also run and still reports pre-existing violations in the

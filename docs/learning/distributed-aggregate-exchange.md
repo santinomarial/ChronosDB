@@ -176,6 +176,11 @@ tablet. It validates complete immutable routes before I/O, starts ready and due 
 order, rotates finite addresses by attempt number, and reports each terminal transport outcome
 once. Failure, deadline, and cancellation synchronously release every client; only all-tablet
 success publishes the grouped vector.
+The packaged replicated grouped constructor first executes the existing leader-linearizable
+metadata/Manifest aggregate bind. A specialization overload consumes that exact compatible owner,
+matches every nested fragment to the committed active schema, proves the projected FLOAT64 key,
+and transfers its Manifest pin into grouped execution. Routes are resolved from the same catalog
+before the grouped scheduler is returned.
 `DistributedQueryTcpServer` owns the dedicated listener, long-lived TLS context, fixed-capacity poll
 storage, bounded stable connection records, deadline driving, metrics, and carrier-before-descriptor
 shutdown order for real multi-connection serving.
@@ -207,7 +212,7 @@ A fixed ungrouped-aggregate frame gives partial-I/O carriers an unambiguous payl
 prematurely defining a general physical-fragment language. The cost is a specialized first exchange
 type. A separate first grouped frame now carries one nullable FLOAT64 key with bounded
 coordination and authenticated multi-response TLS ownership, but multi-key and non-FLOAT64
-grouping, general physical plans, packaged metadata construction/rebinding, ordering/top-N,
+grouping, general physical plans, bounded-stale packaged construction/rebinding, ordering/top-N,
 cancellation
 delivery, and durable recovery require their own bounded contracts. A leader hint never mutates an existing
 proof-bound dispatch: following it requires explicit coordinator rebinding.

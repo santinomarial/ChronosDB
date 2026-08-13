@@ -153,6 +153,9 @@ private:
       const DistributedAggregatePlan&, manifest::TemporalDatabaseStorageSnapshot,
       std::span<const DistributedAggregateSnapshotFragmentBinding>, std::uint32_t,
       DistributedAggregateSnapshotBindingLimits);
+  friend common::Result<CompatibleDistributedGroupedFloat64Snapshot>
+  bind_compatible_distributed_grouped_float64_snapshot(CompatibleDistributedAggregateSnapshot,
+                                                       const schema::TableSchema&, std::uint32_t);
 };
 
 // Delegates every plan/order/placement/proof/projection/Manifest check to the aggregate batch
@@ -162,6 +165,14 @@ bind_compatible_distributed_grouped_float64_snapshot(
     const DistributedAggregatePlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
     std::span<const DistributedAggregateSnapshotFragmentBinding> bindings,
     std::uint32_t group_key_input_index, DistributedAggregateSnapshotBindingLimits limits = {});
+
+// Specializes an already-compatible aggregate snapshot without reopening its authority join. The
+// supplied exact destination schema must match every bound dispatch; the projected key is proved
+// FLOAT64 before the same Manifest pin transfers into the grouped owner.
+[[nodiscard]] common::Result<CompatibleDistributedGroupedFloat64Snapshot>
+bind_compatible_distributed_grouped_float64_snapshot(
+    CompatibleDistributedAggregateSnapshot aggregate_snapshot,
+    const schema::TableSchema& destination_schema, std::uint32_t group_key_input_index);
 
 // One plan-ordered runtime proof. Placement, group, and schema authority are deliberately absent:
 // the metadata-backed binder resolves those fields from one committed catalog snapshot. A

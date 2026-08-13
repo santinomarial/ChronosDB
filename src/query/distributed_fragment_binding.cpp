@@ -403,6 +403,52 @@ bind_compatible_distributed_grouped_float64_snapshot(
   }
 }
 
+common::Result<CompatibleDistributedGroupedFloat64Snapshot>
+bind_compatible_distributed_grouped_float64_snapshot(
+    CompatibleDistributedAggregateSnapshot aggregate_snapshot,
+    const schema::TableSchema& destination_schema, const std::uint32_t group_key_input_index) {
+  try {
+    std::vector<DistributedGroupedFloat64FragmentDispatch> dispatches;
+    dispatches.reserve(aggregate_snapshot.dispatches().size());
+    for (const DistributedAggregateFragmentDispatch& nested : aggregate_snapshot.dispatches()) {
+      if (nested.fragment.table_id != destination_schema.table_id() ||
+          nested.fragment.destination_schema_id != destination_schema.schema_id()) {
+        return common::make_unexpected(
+            invalid("compatible grouped specialization schema differs from bound dispatch"));
+      }
+      if (group_key_input_index >= nested.fragment.destination_column_ordinals.size()) {
+        return common::make_unexpected(
+            invalid("compatible grouped specialization key input is out of bounds"));
+      }
+      const std::uint32_t key_ordinal =
+          nested.fragment.destination_column_ordinals[group_key_input_index];
+      if (key_ordinal >= destination_schema.columns().size()) {
+        return common::make_unexpected(
+            invalid("compatible grouped specialization key ordinal is out of bounds"));
+      }
+      if (destination_schema.columns()[key_ordinal].type().kind() !=
+          schema::LogicalTypeKind::kFloat64) {
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kNotSupported,
+                           "compatible grouped specialization key input is not Float64"});
+      }
+      dispatches.push_back({.raft_group_id = nested.raft_group_id,
+                            .fragment = {.aggregate = nested.fragment,
+                                         .group_key_input_index = group_key_input_index}});
+    }
+    return CompatibleDistributedGroupedFloat64Snapshot{std::move(aggregate_snapshot),
+                                                       std::move(dispatches)};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "compatible grouped specialization allocation failed"});
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "compatible grouped specialization exceeds container limits"});
+  }
+}
+
 common::Result<CompatibleDistributedAggregateSnapshot>
 bind_metadata_backed_distributed_aggregate_snapshot(
     const DistributedAggregatePlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,

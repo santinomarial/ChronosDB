@@ -321,6 +321,43 @@ TEST(ReplicatedDistributedQueryTest, ConstructsOneAuthorityBoundTcpLifecycleOwne
   EXPECT_EQ(execution->snapshot().dispatches().front().raft_group_id, tablet_group);
   EXPECT_EQ(execution->snapshot().snapshot().generation(), 1U);
 
+  const ReplicatedDistributedGroupedFloat64QueryConfig grouped_config{
+      .source_node_id = 1U,
+      .read_barrier = std::addressof(*barrier),
+      .metadata_group_id = metadata_group,
+      .catalog = std::cref(catalog),
+      .table_id = schema_value.table_id(),
+      .destination_column_ordinals = projection,
+      .aggregate_input_index = 1U,
+      .group_key_input_index = 1U,
+      .tls_contexts = tls_contexts,
+      .authenticator = std::addressof(authenticator),
+      .node_authorizer = std::addressof(authorizer),
+      .binding_limits = {.maximum_fragments = 1U,
+                         .maximum_total_projection_ordinals = projection.size()}};
+  auto grouped_snapshot = publisher->snapshot();
+  ASSERT_TRUE(grouped_snapshot.has_value()) << grouped_snapshot.error().to_string();
+  auto grouped_execution = create_replicated_distributed_grouped_float64_query(
+      make_plan(tablet_id, applied_position), std::move(*grouped_snapshot), grouped_config);
+  ASSERT_TRUE(grouped_execution.has_value()) << grouped_execution.error().to_string();
+  EXPECT_EQ(grouped_execution->state(),
+            cluster::DistributedGroupedQueryTcpExecutionState::kRunning);
+  ASSERT_EQ(grouped_execution->snapshot().dispatches().size(), 1U);
+  EXPECT_EQ(grouped_execution->snapshot().dispatches().front().raft_group_id, tablet_group);
+  EXPECT_EQ(grouped_execution->snapshot().dispatches().front().fragment.group_key_input_index, 1U);
+  EXPECT_EQ(grouped_execution->snapshot().snapshot().generation(), 1U);
+
+  auto unsupported_grouped_snapshot = publisher->snapshot();
+  ASSERT_TRUE(unsupported_grouped_snapshot.has_value());
+  ReplicatedDistributedGroupedFloat64QueryConfig unsupported_grouped_config = grouped_config;
+  unsupported_grouped_config.group_key_input_index = 0U;
+  EXPECT_EQ(create_replicated_distributed_grouped_float64_query(
+                make_plan(tablet_id, applied_position), std::move(*unsupported_grouped_snapshot),
+                unsupported_grouped_config)
+                .error()
+                .code(),
+            common::StatusCode::kNotSupported);
+
   auto stale_snapshot = publisher->snapshot();
   ASSERT_TRUE(stale_snapshot.has_value()) << stale_snapshot.error().to_string();
   raft::MetadataCatalogSnapshot stale_catalog = catalog;

@@ -13,8 +13,7 @@
 namespace chronos::service {
 namespace {
 
-[[nodiscard]] common::Status
-validate_config(const ReplicatedDistributedAggregateQueryConfig& config) {
+template <typename Config> [[nodiscard]] common::Status validate_config(const Config& config) {
   if (config.source_node_id == 0U || config.read_barrier == nullptr ||
       config.metadata_group_id.is_nil() || config.authenticator == nullptr ||
       config.node_authorizer == nullptr) {
@@ -24,8 +23,9 @@ validate_config(const ReplicatedDistributedAggregateQueryConfig& config) {
   return common::Status::ok();
 }
 
+template <typename Config>
 [[nodiscard]] common::Result<std::vector<ReplicatedReadAuthority>>
-acquire_catalog_authority(const ReplicatedDistributedAggregateQueryConfig& config) {
+acquire_catalog_authority(const Config& config) {
   auto authority = config.read_barrier->await_authority();
   if (!authority.has_value())
     return common::make_unexpected(authority.error());
@@ -50,6 +50,28 @@ acquire_catalog_authority(const ReplicatedDistributedAggregateQueryConfig& confi
                        "replicated distributed query metadata group aliases a tablet group"});
   }
   return authority;
+}
+
+[[nodiscard]] common::Result<std::reference_wrapper<const schema::TableSchema>>
+resolve_active_schema(const raft::MetadataCatalogSnapshot& catalog,
+                      const schema::TableId& table_id) {
+  const auto active = std::ranges::lower_bound(catalog.active_schemas, table_id, {},
+                                               &raft::ActiveSchemaMetadata::table_id);
+  if (active == catalog.active_schemas.end() || active->table_id != table_id) {
+    return common::make_unexpected(common::Status{common::StatusCode::kUnavailable,
+                                                  "replicated grouped query has no active schema"});
+  }
+  const auto definition =
+      std::ranges::lower_bound(catalog.schema_definitions, active->schema_id, {},
+                               [](const auto& value) { return value.schema->schema_id(); });
+  if (definition == catalog.schema_definitions.end() ||
+      definition->schema->schema_id() != active->schema_id ||
+      definition->schema->table_id() != table_id) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kCorruption,
+                       "replicated grouped query active schema definition is inconsistent"});
+  }
+  return std::cref(*definition->schema);
 }
 
 [[nodiscard]] common::Result<cluster::DistributedQueryTcpExecution>
@@ -104,6 +126,58 @@ common::Result<cluster::DistributedQueryTcpExecution> create_replicated_distribu
   if (!compatible.has_value())
     return common::make_unexpected(compatible.error());
   return create_tcp_execution(std::move(plan), std::move(*compatible), config);
+}
+
+common::Result<cluster::DistributedGroupedQueryTcpExecution>
+create_replicated_distributed_grouped_float64_query(
+    query::DistributedAggregatePlan plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
+    const ReplicatedDistributedGroupedFloat64QueryConfig& config) {
+  const common::Status config_status = validate_config(config);
+  if (!config_status.is_ok())
+    return common::make_unexpected(config_status);
+  if (plan.read_policy.consistency != query::DistributedReadConsistency::kLeaderLinearizable ||
+      plan.read_policy.maximum_staleness_positions.has_value()) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInvalidArgument,
+                       "replicated grouped query requires leader-linearizable policy"});
+  }
+
+  auto authority = acquire_catalog_authority(config);
+  if (!authority.has_value())
+    return common::make_unexpected(authority.error());
+  auto compatible = query::bind_group_backed_distributed_aggregate_snapshot(
+      plan, std::move(snapshot),
+      {.catalog = config.catalog,
+       .table_id = config.table_id,
+       .group_authorities = *authority,
+       .destination_column_ordinals = config.destination_column_ordinals,
+       .aggregate_input_index = config.aggregate_input_index,
+       .event_time_predicate = config.event_time_predicate},
+      config.binding_limits);
+  if (!compatible.has_value())
+    return common::make_unexpected(compatible.error());
+  auto routes = cluster::resolve_distributed_query_node_routes(
+      config.catalog.get(), compatible->dispatches(), config.tls_contexts, config.route_limits);
+  if (!routes.has_value())
+    return common::make_unexpected(routes.error());
+  auto destination_schema = resolve_active_schema(config.catalog.get(), config.table_id);
+  if (!destination_schema.has_value())
+    return common::make_unexpected(destination_schema.error());
+  auto grouped = query::bind_compatible_distributed_grouped_float64_snapshot(
+      std::move(*compatible), destination_schema->get(), config.group_key_input_index);
+  if (!grouped.has_value())
+    return common::make_unexpected(grouped.error());
+  auto execution = cluster::DistributedGroupedQueryExecution::create(
+      config.source_node_id, std::move(*grouped), config.execution_limits);
+  if (!execution.has_value())
+    return common::make_unexpected(execution.error());
+  return cluster::DistributedGroupedQueryTcpExecution::create(
+      std::move(*execution), {.authenticator = config.authenticator,
+                              .node_authorizer = config.node_authorizer,
+                              .routes = std::move(*routes),
+                              .carrier_limits = config.carrier_limits,
+                              .connect_timeout = config.connect_timeout,
+                              .execution_deadline = config.execution_deadline});
 }
 
 common::Result<cluster::DistributedQueryTcpExecution>

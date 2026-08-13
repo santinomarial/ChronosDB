@@ -206,6 +206,8 @@ int main() {
       &chronos::cluster::DistributedQueryExecution::create_from_bound_snapshot;
   const auto create_replicated_distributed_aggregate_query =
       &chronos::service::create_replicated_distributed_aggregate_query;
+  const auto create_replicated_distributed_grouped_query =
+      &chronos::service::create_replicated_distributed_grouped_float64_query;
   const auto create_replicated_follower_distributed_aggregate_query =
       &chronos::service::create_replicated_follower_distributed_aggregate_query;
   const auto create_replicated_follower_query_owner =
@@ -262,7 +264,13 @@ int main() {
       &chronos::cluster::DistributedQueryTcpExecution::rebind;
   const auto bind_compatible_distributed_snapshot =
       &chronos::query::bind_compatible_distributed_aggregate_snapshot;
-  const auto bind_compatible_distributed_grouped_snapshot =
+  using BindCompatibleDistributedGroupedSnapshot = chronos::common::Result<
+      chronos::query::CompatibleDistributedGroupedFloat64Snapshot> (*)(
+      const chronos::query::DistributedAggregatePlan&,
+      chronos::manifest::TemporalDatabaseStorageSnapshot,
+      std::span<const chronos::query::DistributedAggregateSnapshotFragmentBinding>, std::uint32_t,
+      chronos::query::DistributedAggregateSnapshotBindingLimits);
+  const BindCompatibleDistributedGroupedSnapshot bind_compatible_distributed_grouped_snapshot =
       &chronos::query::bind_compatible_distributed_grouped_float64_snapshot;
   const auto bind_follower_group_backed_distributed_snapshot =
       &chronos::query::bind_follower_group_backed_distributed_aggregate_snapshot;
@@ -317,6 +325,7 @@ int main() {
   (void)create_distributed_query_execution;
   (void)create_distributed_query_execution_from_bound_snapshot;
   (void)create_replicated_distributed_aggregate_query;
+  (void)create_replicated_distributed_grouped_query;
   (void)create_replicated_follower_distributed_aggregate_query;
   (void)create_replicated_follower_query_owner;
   (void)create_replicated_query_worker;
