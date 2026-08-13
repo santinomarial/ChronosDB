@@ -411,3 +411,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0374](0374-bounded-schema-bound-vector-result-coordinator-v2.md) | Bounded schema-bound vector result coordinator v2 | accepted |
 | [0375](0375-proof-revalidated-schema-bound-vector-row-worker-v2.md) | Proof-revalidated schema-bound vector row worker v2 | accepted |
 | [0376](0376-owned-schema-bound-vector-query-v2-tcp-service.md) | Owned schema-bound vector query v2 TCP service | accepted |
+| [0377](0377-pinned-schema-bound-vector-query-v2-execution-owner.md) | Pinned schema-bound vector query v2 execution owner | accepted |

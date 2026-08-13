@@ -59,6 +59,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/cluster/distributed_grouped_query_transport.hpp>
 #include <chronos/cluster/distributed_vector_query_transport.hpp>
 #include <chronos/cluster/distributed_vector_query_transport_v2.hpp>
+#include <chronos/cluster/distributed_vector_query_execution_v2.hpp>
 #include <chronos/cluster/distributed_vector_query_tls_v2.hpp>
 #include <chronos/cluster/distributed_vector_query_tcp_client_v2.hpp>
 #include <chronos/cluster/distributed_vector_query_tcp_server_v2.hpp>
@@ -332,6 +333,8 @@ int main() {
       &chronos::cluster::DistributedVectorQueryFrameV2WriteCursor::create_response;
   const auto create_vector_query_receiver_v2 =
       &chronos::cluster::DistributedVectorQueryReceiverV2::create;
+  const auto create_vector_query_execution_v2 =
+      &chronos::cluster::DistributedVectorQueryExecutionV2::create;
   const auto create_vector_query_tls_client_v2 =
       &chronos::cluster::DistributedVectorQueryTlsClientV2::create;
   const auto create_vector_query_tls_server_v2 =
@@ -505,6 +508,7 @@ int main() {
   (void)create_vector_query_request_v2_write_cursor;
   (void)create_vector_query_response_v2_write_cursor;
   (void)create_vector_query_receiver_v2;
+  (void)create_vector_query_execution_v2;
   (void)create_vector_query_tls_client_v2;
   (void)create_vector_query_tls_server_v2;
   (void)create_replicated_query_worker;

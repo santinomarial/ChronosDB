@@ -1069,7 +1069,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   authority, resolves real temporal CSEG winners, materializes bounded schema-bound native batches,
   and leaves global ordering/limit unapplied. A heap-stable production owner now composes that
   worker with the authenticated receiver and bounded TCP/mTLS server under reverse-safe lifetime
-  order. Aggregate merge-state transport, multi-tablet sender delivery, and general execution
+  order. A portable execution owner now pins the compatible schema-bearing snapshot, drives one
+  finite sender per tablet, and transfers plan plus schema-bound results only after all streams
+  close. Aggregate merge-state transport, multi-tablet TCP scheduling, and global finalization
   remain deferred. A distinct
   group-scoped grouped dispatch now
   preserves exact Raft authority without reinterpreting ungrouped dispatch bytes. Its worker reuses

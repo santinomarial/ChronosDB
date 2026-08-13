@@ -307,8 +307,10 @@
   closure, and plan-ordered schema-plus-result transfer. A request-local v2 row worker now reproves
   local authority, resolves real CSEG winners, emits bounded schema-bound native batches, and leaves
   final ordering/limit untouched. A heap-stable production owner now composes it with the
-  authenticated receiver and bounded TCP/mTLS server. Aggregate merge-state transport and
-  multi-tablet sender delivery remain.
+  authenticated receiver and bounded TCP/mTLS server. A portable execution owner pins the
+  compatible snapshot, drives one finite sender per tablet, and transfers the plan with the
+  schema-bound result only after all streams close. Aggregate merge-state transport and
+  multi-tablet TCP delivery remain.
   A distinct terminal-only frame closes an empty tablet stream without inventing a SQL NULL group.
   Its separate fixed reader and move-only cursor own every terminal fragmentation boundary,
   coalesced successor bytes, sticky damage, and checked short writes without introducing an

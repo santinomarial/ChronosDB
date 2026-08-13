@@ -4,6 +4,7 @@
 #include "chronos/cluster/distributed_query_execution.hpp"
 #include "chronos/cluster/distributed_query_tcp_execution.hpp"
 #include "chronos/cluster/distributed_query_tcp_server.hpp"
+#include "chronos/cluster/distributed_vector_query_execution_v2.hpp"
 #include "chronos/common/crc32c.hpp"
 #include "chronos/manifest/naming.hpp"
 #include "chronos/manifest/storage.hpp"
@@ -100,6 +101,7 @@ struct ExecutionInput {
   std::vector<query::DistributedReadAdmission> admissions;
   query::CompatibleDistributedAggregateSnapshot snapshot;
   query::CompatibleDistributedGroupedFloat64Snapshot grouped_snapshot;
+  query::CompatibleDistributedVectorSnapshotV2 vector_snapshot;
 };
 
 [[nodiscard]] common::Result<ExecutionInput>
@@ -200,19 +202,64 @@ make_input(const TemporaryDirectory& directory, const std::uint8_t query_seed = 
       {.maximum_fragments = 2U, .maximum_total_projection_ordinals = 4U});
   if (!grouped.has_value())
     return common::make_unexpected(grouped.error());
+  const query::DistributedVectorQueryPlan vector_plan{
+      .query_id = plan.query_id,
+      .read_policy = plan.read_policy,
+      .fragments = plan.fragments,
+      .intent = {.mode = query::DistributedVectorPlanMode::kRows,
+                 .row_output_indices = {1U},
+                 .order_keys = {{.output_index = 0U,
+                                 .direction = query::PhysicalSortDirection::kDescending,
+                                 .null_placement = query::ScalarNullPlacement::kLast}},
+                 .limit = 1U}};
+  const std::array vector_bindings{query::DistributedVectorSnapshotFragmentBinding{
+                                       std::cref(admissions[0]), std::cref(schema), groups[0],
+                                       std::cref(placements[0]), projection, std::nullopt},
+                                   query::DistributedVectorSnapshotFragmentBinding{
+                                       std::cref(admissions[1]), std::cref(schema), groups[1],
+                                       std::cref(placements[1]), projection, std::nullopt}};
+  auto vector = query::bind_compatible_distributed_vector_snapshot_v2(
+      vector_plan, *snapshot, vector_bindings,
+      query::DistributedVectorResultSchema{
+          .columns = {{"value", schema.columns()[1].type(), true}}},
+      {.maximum_fragments = 2U, .maximum_total_projection_ordinals = 4U});
+  if (!vector.has_value())
+    return common::make_unexpected(vector.error());
   auto compatible = query::bind_compatible_distributed_aggregate_snapshot(
       plan, std::move(*snapshot), bindings,
       {.maximum_fragments = 2U, .maximum_total_projection_ordinals = 4U});
   if (!compatible.has_value())
     return common::make_unexpected(compatible.error());
   return ExecutionInput{std::move(plan), std::move(admissions), std::move(*compatible),
-                        std::move(*grouped)};
+                        std::move(*grouped), std::move(*vector)};
 }
 
 [[nodiscard]] query::ExchangeMessage message(const schema::TabletId& tablet, const double value) {
   query::MergeableAggregateState partial;
   EXPECT_TRUE(partial.add(value).is_ok());
   return {uuid(7U), tablet, 1U, partial, true};
+}
+
+[[nodiscard]] DistributedVectorQueryResponseV2
+vector_response(const query::CompatibleDistributedVectorSnapshotV2& snapshot,
+                const std::size_t index) {
+  const query::DistributedVectorFragmentDispatch& dispatch = snapshot.dispatches()[index];
+  std::vector<network::QueryResultColumn> columns;
+  columns.reserve(snapshot.result_schema().columns.size());
+  for (const query::DistributedVectorResultColumn& column : snapshot.result_schema().columns)
+    columns.push_back({column.name, column.type, column.nullable});
+  const auto batch = network::encode_query_result_batch(0U, columns, {});
+  EXPECT_TRUE(batch.has_value());
+  return {.source_node_id = dispatch.serving_node,
+          .target_node_id = 1U,
+          .query_id = dispatch.query_id,
+          .tablet_id = dispatch.tablet_id,
+          .status_code = common::StatusCode::kOk,
+          .payload = DistributedVectorResultExchangeMessage{.query_id = dispatch.query_id,
+                                                            .tablet_id = dispatch.tablet_id,
+                                                            .sequence = 1U,
+                                                            .terminal = true,
+                                                            .encoded_result_batch = *batch}};
 }
 
 [[nodiscard]] std::filesystem::path tls_fixture(const char* name) {
@@ -417,6 +464,103 @@ TEST(DistributedQueryExecutionTest, RetryBackoffDoesNotFailUntilSenderBecomesTer
                   .is_ok());
   EXPECT_EQ(*execution->sender_state(tablet), DistributedQuerySenderState::kFailed);
   EXPECT_EQ(execution->finish().error().code(), common::StatusCode::kIoError);
+}
+
+TEST(DistributedVectorQueryExecutionV2Test,
+     RetainsPinnedPlanAndPublishesOnlyCompleteSchemaBoundStreams) {
+  TemporaryDirectory directory;
+  auto input = make_input(directory);
+  ASSERT_TRUE(input.has_value()) << input.error().to_string();
+  const auto dispatches = input->vector_snapshot.dispatches();
+  ASSERT_EQ(dispatches.size(), 2U);
+  const std::array tablets{dispatches[0].tablet_id, dispatches[1].tablet_id};
+  const query::DistributedVectorPlanIntent expected_plan = dispatches.front().plan;
+  const auto first_response = vector_response(input->vector_snapshot, 0U);
+  const auto second_response = vector_response(input->vector_snapshot, 1U);
+
+  auto execution = DistributedVectorQueryExecutionV2::create(
+      1U, std::move(input->vector_snapshot),
+      {.coordinator = {
+           .messages = {.maximum_messages_per_fragment = 2U, .maximum_total_messages = 4U}}});
+  ASSERT_TRUE(execution.has_value()) << execution.error().to_string();
+  EXPECT_EQ(execution->snapshot().snapshot().generation(), 1U);
+  EXPECT_EQ(execution->finish().error().code(), common::StatusCode::kUnavailable);
+  const auto now = DistributedVectorQueryExecutionV2::TimePoint{};
+  ASSERT_TRUE(execution->begin_attempt(tablets[0], now).has_value());
+  ASSERT_TRUE(execution->begin_attempt(tablets[1], now).has_value());
+  EXPECT_EQ(execution->begin_attempt(id<schema::TabletId>(99U), now).error().code(),
+            common::StatusCode::kInvalidArgument);
+
+  ASSERT_TRUE(execution->accept_responses(tablets[0], std::span{&first_response, 1U}, now).is_ok());
+  EXPECT_EQ(execution->finish().error().code(), common::StatusCode::kUnavailable);
+  ASSERT_TRUE(
+      execution->accept_responses(tablets[1], std::span{&second_response, 1U}, now).is_ok());
+  auto result = execution->finish();
+  ASSERT_TRUE(result.has_value()) << result.error().to_string();
+  EXPECT_EQ(result->plan, expected_plan);
+  ASSERT_EQ(result->result.result_schema.columns.size(), 1U);
+  EXPECT_EQ(result->result.result_schema.columns.front().name, "value");
+  ASSERT_EQ(result->result.messages.size(), 2U);
+  EXPECT_EQ(result->result.messages[0].tablet_id, tablets[0]);
+  EXPECT_EQ(result->result.messages[1].tablet_id, tablets[1]);
+  EXPECT_TRUE(result->result.messages[0].terminal);
+  EXPECT_TRUE(result->result.messages[1].terminal);
+  EXPECT_EQ(execution->finish().error().code(), common::StatusCode::kInvalidArgument);
+}
+
+TEST(DistributedVectorQueryExecutionV2Test, RetryBackoffPoisonsOnlyAtTerminalFailure) {
+  TemporaryDirectory directory;
+  auto input = make_input(directory);
+  ASSERT_TRUE(input.has_value()) << input.error().to_string();
+  const schema::TabletId tablet = input->vector_snapshot.dispatches().front().tablet_id;
+  auto execution = DistributedVectorQueryExecutionV2::create(
+      1U, std::move(input->vector_snapshot),
+      {.sender = {.retry = {.maximum_attempts = 2U,
+                            .initial_backoff = std::chrono::milliseconds{10},
+                            .maximum_backoff = std::chrono::milliseconds{10}}}});
+  ASSERT_TRUE(execution.has_value()) << execution.error().to_string();
+  const auto now = DistributedVectorQueryExecutionV2::TimePoint{};
+  ASSERT_TRUE(execution->begin_attempt(tablet, now).has_value());
+  ASSERT_TRUE(
+      execution->record_transport_failure(tablet, common::StatusCode::kIoError, now).is_ok());
+  EXPECT_EQ(*execution->sender_state(tablet), DistributedQuerySenderState::kBackoff);
+  EXPECT_EQ(*execution->next_attempt_not_before(tablet), now + std::chrono::milliseconds{10});
+  EXPECT_EQ(execution->finish().error().code(), common::StatusCode::kUnavailable);
+  ASSERT_TRUE(execution->begin_attempt(tablet, now + std::chrono::milliseconds{10}).has_value());
+  ASSERT_TRUE(execution
+                  ->record_transport_failure(tablet, common::StatusCode::kIoError,
+                                             now + std::chrono::milliseconds{10})
+                  .is_ok());
+  EXPECT_EQ(*execution->sender_state(tablet), DistributedQuerySenderState::kFailed);
+  EXPECT_EQ(execution->finish().error().code(), common::StatusCode::kIoError);
+}
+
+TEST(DistributedVectorQueryExecutionV2Test, CoordinatorAdmissionFailurePoisonsCompletion) {
+  TemporaryDirectory directory;
+  auto input = make_input(directory);
+  ASSERT_TRUE(input.has_value()) << input.error().to_string();
+  const schema::TabletId tablet = input->vector_snapshot.dispatches().front().tablet_id;
+  auto first = vector_response(input->vector_snapshot, 0U);
+  ASSERT_TRUE(first.payload.has_value());
+  auto second = first;
+  ASSERT_TRUE(second.payload.has_value());
+  // Guarded by the payload assertions above.
+  // NOLINTBEGIN(bugprone-unchecked-optional-access)
+  first.payload->terminal = false;
+  second.payload->sequence = 2U;
+  // NOLINTEND(bugprone-unchecked-optional-access)
+  const std::array responses{first, second};
+  auto execution = DistributedVectorQueryExecutionV2::create(
+      1U, std::move(input->vector_snapshot),
+      {.sender = {.maximum_response_frames = 2U},
+       .coordinator = {
+           .messages = {.maximum_messages_per_fragment = 1U, .maximum_total_messages = 2U}}});
+  ASSERT_TRUE(execution.has_value()) << execution.error().to_string();
+  const auto now = DistributedVectorQueryExecutionV2::TimePoint{};
+  ASSERT_TRUE(execution->begin_attempt(tablet, now).has_value());
+  EXPECT_EQ(execution->accept_responses(tablet, responses, now).code(),
+            common::StatusCode::kResourceExhausted);
+  EXPECT_EQ(execution->finish().error().code(), common::StatusCode::kResourceExhausted);
 }
 
 TEST(DistributedGroupedQueryExecutionTest, WithholdsResultsUntilEverySenderCloses) {

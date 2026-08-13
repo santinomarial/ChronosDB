@@ -345,6 +345,11 @@ bounded TCP/mTLS server behind one heap-stable move-only handle. Dependency-orde
 destruction reverse-safe, while moving the public handle cannot invalidate the internal borrowed
 addresses. Receiver response bounds are derived from the carrier bounds, so retained publication
 cannot cross an inconsistent layer limit.
+The portable vector-v2 execution owner accepts only the compatible schema-bearing snapshot. It pins
+that Manifest epoch, constructs one immutable sender per plan-ordered dispatch, and delivers each
+complete terminal stream to the bounded coordinator once. Completion transfers the global plan,
+admitted result schema, and plan-ordered messages together; retry backoff exposes nothing, and
+terminal sender or coordinator failure poisons the whole result.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated

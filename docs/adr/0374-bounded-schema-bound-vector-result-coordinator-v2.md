@@ -58,8 +58,8 @@ validation. Work is linear in accepted and retried message bytes; final ordering
 retained message count. One owner thread serializes calls, so no synchronization or memory-ordering
 argument is required.
 
-Sender delivery, TCP scheduling, whole-query deadlines/cancellation, production vector worker
-execution, global row/aggregate semantics, and process integration remain incomplete.
+ADR 0377 subsequently supplies pinned exactly-once sender delivery. TCP scheduling, whole-query
+deadlines/cancellation, global row/aggregate semantics, and process integration remain incomplete.
 
 ## Affected invariants
 
