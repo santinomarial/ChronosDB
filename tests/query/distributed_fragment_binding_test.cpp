@@ -333,6 +333,201 @@ TEST(DistributedFragmentBindingTest, PinsOneCompatibleEpochAcrossEveryPlannedTab
   }
 }
 
+TEST(DistributedFragmentBindingTest, ResolvesCommittedMetadataAndCurrentReplicaProofs) {
+  TemporaryDirectory directory;
+  const schema::TableSchema schema_value = make_schema(schema::LogicalTypeKind::kFloat64);
+  const schema::SchemaLineage lineage = schema::SchemaLineage::create(schema_value).value();
+  const std::array specs{SnapshotTabletSpec{id<schema::TabletId>(3U), uuid(8U), 10U},
+                         SnapshotTabletSpec{id<schema::TabletId>(9U), uuid(10U), 20U}};
+  auto snapshot = make_snapshot(directory, lineage, specs);
+  ASSERT_TRUE(snapshot.has_value()) << snapshot.error().to_string();
+  const DistributedAggregatePlan plan{
+      .query_id = uuid(7U),
+      .read_policy = {.consistency = DistributedReadConsistency::kLeaderLinearizable},
+      .fragments = {{.tablet_id = specs[0].tablet_id,
+                     .minimum_event_time = 0,
+                     .maximum_event_time = 100,
+                     .leader_node = 11U,
+                     .local_applied_position = 10U,
+                     .known_leader_commit_position = 10U},
+                    {.tablet_id = specs[1].tablet_id,
+                     .minimum_event_time = 101,
+                     .maximum_event_time = 200,
+                     .leader_node = 12U,
+                     .local_applied_position = 20U,
+                     .known_leader_commit_position = 20U}}};
+  const std::array placements{
+      raft::TabletPlacementMetadata{
+          schema_value.table_id(), specs[0].tablet_id, 12U, {11U, 13U}, 11U},
+      raft::TabletPlacementMetadata{
+          schema_value.table_id(), specs[1].tablet_id, 13U, {12U, 14U}, 12U}};
+  const raft::MetadataCatalogSnapshot catalog{
+      .applied_index = 30U,
+      .schema_definitions = {{"metrics", false,
+                              std::make_shared<const schema::TableSchema>(schema_value)}},
+      .active_schemas = {{schema_value.table_id(), schema_value.schema_id()}},
+      .tablet_placements = {placements.begin(), placements.end()},
+      .tablet_group_bindings = {{specs[0].tablet_id, specs[0].group_id},
+                                {specs[1].tablet_id, specs[1].group_id}}};
+  const std::array observations{raft::RaftGroupObservation{.group_id = specs[0].group_id,
+                                                           .node_id = 11U,
+                                                           .role = raft::Role::kLeader,
+                                                           .current_term = 2U,
+                                                           .leader_id = 11U,
+                                                           .last_log_index = 10U,
+                                                           .commit_index = 10U,
+                                                           .applied_index = 10U,
+                                                           .voters = {11U, 13U},
+                                                           .committed_voters = {11U, 13U}},
+                                raft::RaftGroupObservation{.group_id = specs[1].group_id,
+                                                           .node_id = 12U,
+                                                           .role = raft::Role::kLeader,
+                                                           .current_term = 4U,
+                                                           .leader_id = 12U,
+                                                           .last_log_index = 20U,
+                                                           .commit_index = 20U,
+                                                           .applied_index = 20U,
+                                                           .voters = {12U, 14U},
+                                                           .committed_voters = {12U, 14U}}};
+  const std::array proofs{
+      DistributedAggregateReplicaProof{.observation = std::cref(observations[0]),
+                                       .linearizable_barrier = raft::ReadBarrier{2U, 3U, 10U}},
+      DistributedAggregateReplicaProof{.observation = std::cref(observations[1]),
+                                       .linearizable_barrier = raft::ReadBarrier{4U, 5U, 20U}}};
+  const std::array<std::uint32_t, 2U> projection{0U, 1U};
+
+  auto compatible = bind_metadata_backed_distributed_aggregate_snapshot(
+      plan, std::move(*snapshot),
+      {.catalog = std::cref(catalog),
+       .table_id = schema_value.table_id(),
+       .replica_proofs = proofs,
+       .destination_column_ordinals = projection,
+       .aggregate_input_index = 1U});
+  ASSERT_TRUE(compatible.has_value()) << compatible.error().to_string();
+  ASSERT_EQ(compatible->dispatches().size(), 2U);
+  for (std::size_t index = 0U; index < compatible->dispatches().size(); ++index) {
+    EXPECT_EQ(compatible->dispatches()[index].raft_group_id, specs[index].group_id);
+    EXPECT_EQ(compatible->dispatches()[index].fragment.destination_schema_id,
+              schema_value.schema_id());
+    EXPECT_EQ(compatible->dispatches()[index].fragment.placement_epoch,
+              placements[index].placement_epoch);
+    EXPECT_EQ(compatible->dispatches()[index].fragment.linearizable_barrier,
+              proofs[index].linearizable_barrier);
+  }
+}
+
+TEST(DistributedFragmentBindingTest, RejectsStaleOrReconfiguringMetadataBackedProofs) {
+  TemporaryDirectory directory;
+  const schema::TableSchema schema_value = make_schema(schema::LogicalTypeKind::kFloat64);
+  const schema::SchemaLineage lineage = schema::SchemaLineage::create(schema_value).value();
+  const common::Uuid group_id = uuid(8U);
+  auto snapshot = make_snapshot(directory, lineage, group_id, 10U);
+  ASSERT_TRUE(snapshot.has_value()) << snapshot.error().to_string();
+  const Authority value = authority();
+  raft::MetadataCatalogSnapshot catalog{
+      .applied_index = 20U,
+      .schema_definitions = {{"metrics", false,
+                              std::make_shared<const schema::TableSchema>(schema_value)}},
+      .active_schemas = {{schema_value.table_id(), schema_value.schema_id()}},
+      .tablet_placements = {value.placement},
+      .tablet_group_bindings = {{value.admission.tablet_id, group_id}}};
+  raft::RaftGroupObservation observation{.group_id = group_id,
+                                         .node_id = 11U,
+                                         .role = raft::Role::kLeader,
+                                         .current_term = 2U,
+                                         .leader_id = 11U,
+                                         .last_log_index = 10U,
+                                         .commit_index = 10U,
+                                         .applied_index = 10U,
+                                         .voters = {11U, 12U},
+                                         .committed_voters = {11U, 12U}};
+  std::array proofs{
+      DistributedAggregateReplicaProof{.observation = std::cref(observation),
+                                       .linearizable_barrier = raft::ReadBarrier{1U, 3U, 10U}}};
+  const std::array<std::uint32_t, 2U> projection{0U, 1U};
+  const auto bind = [&] {
+    return bind_metadata_backed_distributed_aggregate_snapshot(
+        value.plan, *snapshot,
+        {.catalog = std::cref(catalog),
+         .table_id = schema_value.table_id(),
+         .replica_proofs = proofs,
+         .destination_column_ordinals = projection,
+         .aggregate_input_index = 1U});
+  };
+
+  EXPECT_EQ(bind().error().code(), common::StatusCode::kUnavailable);
+  proofs[0].linearizable_barrier = raft::ReadBarrier{2U, 3U, 10U};
+  observation.joint_membership_active = true;
+  observation.joint_old_voters = observation.voters;
+  EXPECT_EQ(bind().error().code(), common::StatusCode::kUnavailable);
+  observation.joint_membership_active = false;
+  observation.joint_old_voters.clear();
+  observation.role = static_cast<raft::Role>(0U);
+  EXPECT_EQ(bind().error().code(), common::StatusCode::kCorruption);
+  observation.role = raft::Role::kLeader;
+  catalog.tablet_group_bindings.clear();
+  EXPECT_EQ(bind().error().code(), common::StatusCode::kUnavailable);
+}
+
+TEST(DistributedFragmentBindingTest, DerivesBoundedStaleAndLocalEventualAdmissions) {
+  TemporaryDirectory directory;
+  const schema::TableSchema schema_value = make_schema(schema::LogicalTypeKind::kFloat64);
+  const schema::SchemaLineage lineage = schema::SchemaLineage::create(schema_value).value();
+  const common::Uuid group_id = uuid(8U);
+  auto snapshot = make_snapshot(directory, lineage, group_id, 10U);
+  ASSERT_TRUE(snapshot.has_value()) << snapshot.error().to_string();
+  Authority value = authority();
+  const raft::MetadataCatalogSnapshot catalog{
+      .applied_index = 20U,
+      .schema_definitions = {{"metrics", false,
+                              std::make_shared<const schema::TableSchema>(schema_value)}},
+      .active_schemas = {{schema_value.table_id(), schema_value.schema_id()}},
+      .tablet_placements = {value.placement},
+      .tablet_group_bindings = {{value.admission.tablet_id, group_id}}};
+  raft::RaftGroupObservation observation{.group_id = group_id,
+                                         .node_id = 12U,
+                                         .role = raft::Role::kFollower,
+                                         .current_term = 2U,
+                                         .leader_id = 11U,
+                                         .last_log_index = 11U,
+                                         .commit_index = 10U,
+                                         .applied_index = 10U,
+                                         .voters = {11U, 12U},
+                                         .committed_voters = {11U, 12U}};
+  std::array proofs{DistributedAggregateReplicaProof{.observation = std::cref(observation),
+                                                     .observed_leader_commit_position = 11U}};
+  const std::array<std::uint32_t, 2U> projection{0U, 1U};
+  value.plan.read_policy = {.consistency = DistributedReadConsistency::kFollowerBoundedStale,
+                            .maximum_staleness_positions = 2U};
+
+  auto bounded = bind_metadata_backed_distributed_aggregate_snapshot(
+      value.plan, *snapshot,
+      {.catalog = std::cref(catalog),
+       .table_id = schema_value.table_id(),
+       .replica_proofs = proofs,
+       .destination_column_ordinals = projection,
+       .aggregate_input_index = 1U});
+  ASSERT_TRUE(bounded.has_value()) << bounded.error().to_string();
+  EXPECT_EQ(bounded->dispatches().front().fragment.serving_node, 12U);
+  EXPECT_EQ(bounded->dispatches().front().fragment.observed_leader_commit_position, 11U);
+
+  value.plan.read_policy = {.consistency = DistributedReadConsistency::kLocalEventual};
+  observation.role = raft::Role::kCandidate;
+  observation.leader_id.reset();
+  proofs[0].observed_leader_commit_position.reset();
+  auto eventual = bind_metadata_backed_distributed_aggregate_snapshot(
+      value.plan, *snapshot,
+      {.catalog = std::cref(catalog),
+       .table_id = schema_value.table_id(),
+       .replica_proofs = proofs,
+       .destination_column_ordinals = projection,
+       .aggregate_input_index = 1U});
+  ASSERT_TRUE(eventual.has_value()) << eventual.error().to_string();
+  EXPECT_EQ(eventual->dispatches().front().fragment.serving_node, 12U);
+  EXPECT_EQ(eventual->dispatches().front().fragment.observed_leader_commit_position, 0U);
+  EXPECT_FALSE(eventual->dispatches().front().fragment.linearizable_barrier.has_value());
+}
+
 TEST(DistributedFragmentBindingTest, RejectsMixedSnapshotPlacementSchemaAndProjectionAuthority) {
   TemporaryDirectory directory;
   const schema::TableSchema schema_value = make_schema(schema::LogicalTypeKind::kFloat64);

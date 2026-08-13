@@ -19,6 +19,10 @@ creation exact-validates the whole set, so a missing or weaker fragment fails be
 Raft commit and apply indexes are per group. A production caller must preserve the tablet-to-group
 mapping when constructing an admission; the value API does not make a proof transferable between
 tablets.
+The metadata-backed aggregate binder now performs that production mapping from one committed
+catalog snapshot, requires stable membership equal to placement, and derives each admission from
+the matching plan-ordered group observation. Callers still acquire read barriers and fresh leader
+commit observations because those are asynchronous runtime proofs rather than catalog data.
 
 ## Ownership, failure, and complexity
 

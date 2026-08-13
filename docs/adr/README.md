@@ -331,3 +331,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0294](0294-applied-replicated-read-barrier-vector.md) | Applied replicated read-barrier vector | accepted |
 | [0295](0295-negotiated-native-leader-redirect.md) | Negotiated native leader redirect | accepted |
 | [0296](0296-authoritative-replicated-ingest-leader-redirect.md) | Authoritative replicated-ingest leader redirect | accepted |
+| [0297](0297-metadata-backed-distributed-query-authority.md) | Metadata-backed distributed query authority | accepted |

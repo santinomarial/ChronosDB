@@ -5,6 +5,7 @@
 #include "chronos/cseg/pruning.hpp"
 #include "chronos/manifest/temporal_publication.hpp"
 #include "chronos/query/distributed_fragment_dispatch.hpp"
+#include "chronos/raft/durable_runtime.hpp"
 #include "chronos/raft/metadata.hpp"
 #include "chronos/raft/types.hpp"
 #include "chronos/schema/table_schema.hpp"
@@ -94,6 +95,34 @@ private:
 bind_compatible_distributed_aggregate_snapshot(
     const DistributedAggregatePlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
     std::span<const DistributedAggregateSnapshotFragmentBinding> bindings,
+    DistributedAggregateSnapshotBindingLimits limits = {});
+
+// One plan-ordered runtime proof. Placement, group, and schema authority are deliberately absent:
+// the metadata-backed binder resolves those fields from one committed catalog snapshot. A
+// follower-bounded read must carry a fresh leader-commit observation; a leader-linearizable read
+// must instead carry the completed barrier from the observed leader term.
+struct DistributedAggregateReplicaProof {
+  std::reference_wrapper<const raft::RaftGroupObservation> observation;
+  std::optional<raft::LogIndex> observed_leader_commit_position;
+  std::optional<raft::ReadBarrier> linearizable_barrier;
+};
+
+struct MetadataBackedDistributedAggregateSnapshotBinding {
+  std::reference_wrapper<const raft::MetadataCatalogSnapshot> catalog;
+  schema::TableId table_id;
+  std::span<const DistributedAggregateReplicaProof> replica_proofs;
+  std::span<const std::uint32_t> destination_column_ordinals;
+  std::uint32_t aggregate_input_index{};
+  std::optional<cseg::EventTimePredicate> event_time_predicate;
+};
+
+// Resolves every planned tablet's active schema, committed placement, and immutable Raft group
+// from one canonical metadata snapshot. Stable membership and policy-specific runtime proofs are
+// exact-validated before the existing compatible Manifest snapshot binder constructs requests.
+[[nodiscard]] common::Result<CompatibleDistributedAggregateSnapshot>
+bind_metadata_backed_distributed_aggregate_snapshot(
+    const DistributedAggregatePlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
+    const MetadataBackedDistributedAggregateSnapshotBinding& binding,
     DistributedAggregateSnapshotBindingLimits limits = {});
 
 } // namespace chronos::query

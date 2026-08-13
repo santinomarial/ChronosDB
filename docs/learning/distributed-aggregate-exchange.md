@@ -20,6 +20,10 @@ workers never execute the bare inner fragment.
 committed placement, schema, group, and proof admission exact-match.
 `bind_compatible_distributed_aggregate_snapshot` applies that boundary to every planned tablet in
 plan order and returns a move-only owner that pins the one Manifest v2 epoch behind all dispatches.
+`bind_metadata_backed_distributed_aggregate_snapshot` first resolves every active schema,
+placement, and immutable tablet-to-group identity from one committed metadata publication. It
+derives admissions from stable plan-ordered Raft observations and policy-specific proofs, then
+enters the same compatible Manifest binder.
 `execute_distributed_aggregate_fragment` repeats local authority checks, resolves temporal winners
 from validated generation-pinned parts, filters event time, and emits one terminal partial state.
 Distributed Query Transport v1 wraps the dispatch and terminal exchange in correlated cluster
@@ -112,8 +116,8 @@ prematurely defining a general physical-fragment language. The cost is a special
 type. Grouping state, physical plans, ordering/top-N, cancellation delivery, and general duplicate
 sequencing require their own bounded contracts. A leader hint never
 mutates an existing proof-bound dispatch: following it requires explicit coordinator rebinding.
-Address resolution, automatic metadata acquisition, remote worker-interrupt delivery, pooled
-multiplexing, asynchronous worker completion, and broader multi-node fault handling remain
+Address resolution, asynchronous runtime-proof acquisition, remote worker-interrupt delivery,
+pooled multiplexing, asynchronous worker completion, and broader multi-node fault handling remain
 embedding work.
 
 ## Verification and review questions

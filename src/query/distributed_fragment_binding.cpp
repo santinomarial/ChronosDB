@@ -24,6 +24,58 @@ namespace {
   return {common::StatusCode::kUnavailable, message};
 }
 
+[[nodiscard]] common::Status corruption(const char* message) {
+  return {common::StatusCode::kCorruption, message};
+}
+
+template <typename Range, typename Projection>
+[[nodiscard]] bool canonical_unique_range(const Range& values, Projection projection) {
+  return std::ranges::is_sorted(values, {}, projection) &&
+         std::ranges::adjacent_find(values, {}, projection) == values.end();
+}
+
+[[nodiscard]] common::Status
+validate_metadata_catalog_order(const raft::MetadataCatalogSnapshot& catalog) {
+  if (catalog.applied_index == 0U ||
+      !canonical_unique_range(catalog.active_schemas, &raft::ActiveSchemaMetadata::table_id) ||
+      !canonical_unique_range(catalog.tablet_placements,
+                              &raft::TabletPlacementMetadata::tablet_id) ||
+      !canonical_unique_range(catalog.tablet_group_bindings,
+                              &raft::TabletGroupBindingMetadata::tablet_id)) {
+    return corruption("distributed metadata catalog is not a canonical committed snapshot");
+  }
+  for (const auto& definition : catalog.schema_definitions) {
+    if (definition.schema == nullptr)
+      return corruption("distributed metadata catalog contains a null schema definition");
+  }
+  if (!canonical_unique_range(catalog.schema_definitions, [](const auto& definition) {
+        return definition.schema->schema_id();
+      })) {
+    return corruption("distributed metadata catalog schema order is not canonical");
+  }
+  return common::Status::ok();
+}
+
+[[nodiscard]] common::Status
+validate_stable_observation(const raft::RaftGroupObservation& observation,
+                            const raft::TabletPlacementMetadata& placement,
+                            const raft::GroupId& group_id) {
+  if (observation.group_id != group_id || observation.node_id == 0U ||
+      observation.current_term == 0U || observation.last_log_index < observation.commit_index ||
+      observation.commit_index < observation.applied_index ||
+      (observation.role != raft::Role::kFollower && observation.role != raft::Role::kCandidate &&
+       observation.role != raft::Role::kLeader)) {
+    return corruption("distributed replica observation identity or indexes are invalid");
+  }
+  if (observation.joint_membership_active || observation.joint_membership_can_finalize ||
+      observation.final_membership_pending || !observation.joint_old_voters.empty() ||
+      !observation.joint_new_voters.empty() || observation.voters != placement.replicas ||
+      observation.committed_voters != placement.replicas) {
+    return unavailable("distributed replica membership differs from committed placement");
+  }
+  return common::Status::ok();
+}
+
 [[nodiscard]] common::Status validate_placement(const raft::TabletPlacementMetadata& placement,
                                                 const schema::TableId& table_id,
                                                 const schema::TabletId& tablet_id,
@@ -246,6 +298,130 @@ bind_compatible_distributed_aggregate_snapshot(
     return common::make_unexpected(
         common::Status{common::StatusCode::kResourceExhausted,
                        "compatible distributed snapshot binding exceeds container limits"});
+  }
+}
+
+common::Result<CompatibleDistributedAggregateSnapshot>
+bind_metadata_backed_distributed_aggregate_snapshot(
+    const DistributedAggregatePlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
+    const MetadataBackedDistributedAggregateSnapshotBinding& binding,
+    const DistributedAggregateSnapshotBindingLimits limits) {
+  const raft::MetadataCatalogSnapshot& catalog = binding.catalog.get();
+  const common::Status catalog_status = validate_metadata_catalog_order(catalog);
+  if (!catalog_status.is_ok())
+    return common::make_unexpected(catalog_status);
+  if (binding.table_id.uuid().is_nil() || plan.fragments.size() != binding.replica_proofs.size()) {
+    return common::make_unexpected(
+        invalid("metadata-backed distributed binding identity or proof count is invalid"));
+  }
+
+  const auto active = std::ranges::lower_bound(catalog.active_schemas, binding.table_id, {},
+                                               &raft::ActiveSchemaMetadata::table_id);
+  if (active == catalog.active_schemas.end() || active->table_id != binding.table_id)
+    return common::make_unexpected(unavailable("distributed table has no active schema"));
+  const auto definition =
+      std::ranges::lower_bound(catalog.schema_definitions, active->schema_id, {},
+                               [](const auto& value) { return value.schema->schema_id(); });
+  if (definition == catalog.schema_definitions.end() ||
+      definition->schema->schema_id() != active->schema_id ||
+      definition->schema->table_id() != binding.table_id) {
+    return common::make_unexpected(
+        corruption("distributed active schema definition is absent or belongs to another table"));
+  }
+
+  try {
+    std::vector<DistributedReadAdmission> admissions;
+    std::vector<DistributedAggregateSnapshotFragmentBinding> resolved;
+    admissions.reserve(plan.fragments.size());
+    resolved.reserve(plan.fragments.size());
+    for (std::size_t index = 0U; index < plan.fragments.size(); ++index) {
+      const DistributedTablet& fragment = plan.fragments[index];
+      const DistributedAggregateReplicaProof& proof = binding.replica_proofs[index];
+      const raft::RaftGroupObservation& observation = proof.observation.get();
+      const auto placement =
+          std::ranges::lower_bound(catalog.tablet_placements, fragment.tablet_id, {},
+                                   &raft::TabletPlacementMetadata::tablet_id);
+      const auto group = std::ranges::lower_bound(catalog.tablet_group_bindings, fragment.tablet_id,
+                                                  {}, &raft::TabletGroupBindingMetadata::tablet_id);
+      if (placement == catalog.tablet_placements.end() ||
+          placement->tablet_id != fragment.tablet_id ||
+          group == catalog.tablet_group_bindings.end() || group->tablet_id != fragment.tablet_id) {
+        return common::make_unexpected(
+            unavailable("distributed tablet metadata authority is incomplete"));
+      }
+      if (placement->table_id != binding.table_id || group->group_id.is_nil()) {
+        return common::make_unexpected(
+            corruption("distributed tablet metadata identity is inconsistent"));
+      }
+      const common::Status observation_status =
+          validate_stable_observation(observation, *placement, group->group_id);
+      if (!observation_status.is_ok())
+        return common::make_unexpected(observation_status);
+
+      std::uint64_t observed_leader_commit_position = 0U;
+      switch (plan.read_policy.consistency) {
+      case DistributedReadConsistency::kLeaderLinearizable:
+        if (proof.observed_leader_commit_position.has_value() ||
+            !proof.linearizable_barrier.has_value() || observation.role != raft::Role::kLeader ||
+            observation.leader_id != observation.node_id ||
+            fragment.leader_node != observation.node_id ||
+            proof.linearizable_barrier->term != observation.current_term ||
+            proof.linearizable_barrier->read_index > observation.applied_index) {
+          return common::make_unexpected(
+              unavailable("distributed leader-linearizable proof is not current and applied"));
+        }
+        observed_leader_commit_position = observation.commit_index;
+        break;
+      case DistributedReadConsistency::kFollowerBoundedStale:
+        if (proof.linearizable_barrier.has_value() ||
+            !proof.observed_leader_commit_position.has_value() ||
+            *proof.observed_leader_commit_position < observation.commit_index ||
+            observation.role == raft::Role::kCandidate || !observation.leader_id.has_value() ||
+            !std::ranges::binary_search(placement->replicas, *observation.leader_id) ||
+            (observation.role == raft::Role::kLeader &&
+             *observation.leader_id != observation.node_id) ||
+            (observation.role == raft::Role::kFollower &&
+             *observation.leader_id == observation.node_id)) {
+          return common::make_unexpected(
+              unavailable("distributed bounded-stale proof has no current leader observation"));
+        }
+        observed_leader_commit_position = *proof.observed_leader_commit_position;
+        break;
+      case DistributedReadConsistency::kLocalEventual:
+        if (proof.linearizable_barrier.has_value() ||
+            proof.observed_leader_commit_position.has_value()) {
+          return common::make_unexpected(
+              invalid("distributed local-eventual proof carries stronger authority"));
+        }
+        break;
+      default:
+        return common::make_unexpected(
+            invalid("metadata-backed distributed read consistency is invalid"));
+      }
+
+      admissions.push_back({.tablet_id = fragment.tablet_id,
+                            .serving_node = observation.node_id,
+                            .applied_position = observation.applied_index,
+                            .observed_leader_commit_position = observed_leader_commit_position,
+                            .linearizable_barrier = proof.linearizable_barrier});
+      resolved.push_back({.admission = std::cref(admissions.back()),
+                          .destination_schema = std::cref(*definition->schema),
+                          .raft_group_id = group->group_id,
+                          .placement = std::cref(*placement),
+                          .destination_column_ordinals = binding.destination_column_ordinals,
+                          .aggregate_input_index = binding.aggregate_input_index,
+                          .event_time_predicate = binding.event_time_predicate});
+    }
+    return bind_compatible_distributed_aggregate_snapshot(plan, std::move(snapshot), resolved,
+                                                          limits);
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "metadata-backed distributed snapshot binding allocation failed"});
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "metadata-backed distributed snapshot binding exceeds container limits"});
   }
 }
 

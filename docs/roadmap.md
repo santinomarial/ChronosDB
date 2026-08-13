@@ -986,8 +986,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   authority for the same logical query and a nonregressing compatible generation; old partials are
   never carried across. Authenticated unavailable-worker responses now obtain an advisory
   leader/placement pair from a committed metadata-provider boundary and carry it through mTLS to the
-  failed scheduler without treating it as authority. Automatic metadata acquisition, general
-  vector-plan fragments/exchanges, and broader multi-node failure validation remain deferred. A
+  failed scheduler without treating it as authority. Coordinator aggregate binding now resolves
+  active schema, placement, and immutable group identity from one committed metadata snapshot and
+  derives policy admissions only from matching stable Raft observations. General vector-plan
+  fragments/exchanges, asynchronous proof/endpoint acquisition, and broader multi-node failure
+  validation remain deferred. A
   focused real-mTLS gate now queries two tablets, drives one through checksummed learner-first
   movement and externally committed promotion/removal milestones, rebinds it to the target, and
   proves the complete aggregate state is identical before and after. The full phase exit gate is
