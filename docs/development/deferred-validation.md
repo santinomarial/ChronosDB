@@ -295,9 +295,11 @@
   follower or the lowest nonleader replica, resolves unique targets once, and assigns overflow-safe
   correlations before I/O. A service lifecycle now retains the plan and pinned Manifest snapshot,
   acquires the complete remote authority batch, binds it through the metadata barrier, and transfers
-  directly into the TCP query owner with cross-phase cancellation and metrics. Add
-  alternate-follower policy, broader cancellation/allocation faults, complete real query responses,
-  and real multi-process validation.
+  directly into the TCP query owner with cross-phase cancellation and metrics. A production inbound
+  owner now composes the authenticated receiver, request-local authority provider,
+  proof-revalidating worker, and bounded mTLS server; a real loopback request returns the exact
+  installed-CSEG aggregate. Add alternate-follower policy, broader cancellation/allocation faults,
+  moved/multi-tablet remote CSEG gates, and real multi-process validation.
 - Shard-key pruning and statistics in addition to event-time pruning; multi-node scalar/distributed
   differential SQL and partial-aggregation equivalence.
 - Carry the implemented authenticated remote-action receiver bytes and atomic current-leader-term

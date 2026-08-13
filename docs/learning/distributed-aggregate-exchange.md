@@ -31,7 +31,8 @@ request/response frames. `DistributedQueryReceiver` authenticates and authorizes
 an embedding-owned worker service can execute the dispatch. `ReplicatedDistributedQueryWorker`
 provides the production service bridge: its provider acquires one request-local owning Manifest,
 schema-lineage, placement, group, and local-barrier context before the existing worker opens any
-part.
+part. `ReplicatedDistributedQueryTcpServer` owns that worker, the authenticated receiver, and the
+bounded mTLS server in reverse-safe destruction order.
 
 ## Data, ownership, and invariants
 
@@ -155,8 +156,9 @@ complete group-sorted authority vector. Automatic placement-backed pair selectio
 pair selection now prefers an eligible coordinator follower and otherwise the lowest nonleader
 replica, resolves every unique target once, and assigns bounded correlations before I/O. Packaged
 service ownership now pins the plan/Manifest through acquisition, binds the complete authority
-through the metadata barrier, and transfers directly into TCP query execution. Complete real query
-responses over the production real-CSEG service, remote worker-interrupt delivery, pooled
+through the metadata barrier, and transfers directly into TCP query execution. A focused
+one-process loopback now returns a real installed-CSEG response through the production inbound
+service. Moved or multi-process real-CSEG responses, remote worker-interrupt delivery, pooled
 multiplexing, asynchronous worker completion, live DNS churn qualification, and broader multi-node
 fault handling remain work.
 

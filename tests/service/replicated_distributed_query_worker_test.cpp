@@ -1,13 +1,16 @@
+#include "chronos/cluster/distributed_query_tcp_client.hpp"
 #include "chronos/manifest/naming.hpp"
 #include "chronos/manifest/temporal_codec.hpp"
 #include "chronos/manifest/temporal_part_validation.hpp"
 #include "chronos/manifest/temporal_validation.hpp"
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/logical_type.hpp"
+#include "chronos/service/replicated_distributed_query_tcp_server.hpp"
 #include "chronos/service/replicated_distributed_query_worker.hpp"
 #include "cseg/cseg_test_fixture.hpp"
 
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -16,6 +19,7 @@
 #include <gtest/gtest.h>
 #include <memory>
 #include <optional>
+#include <poll.h>
 #include <string>
 #include <system_error>
 #include <unistd.h>
@@ -66,6 +70,47 @@ void write_file(const std::filesystem::path& path, const common::ByteView bytes)
   output.close();
   ASSERT_TRUE(output.good());
 }
+
+[[nodiscard]] std::filesystem::path tls_fixture(const char* name) {
+  return std::filesystem::path{CHRONOS_NETWORK_FIXTURE_DIR} / "tls" / name;
+}
+
+[[nodiscard]] network::TlsServerConfig tls_server_config() {
+  return {.certificate_chain_file = tls_fixture("server.pem").string(),
+          .private_key_file = tls_fixture("server-key.pem").string(),
+          .trust_store_file = tls_fixture("ca.pem").string()};
+}
+
+[[nodiscard]] network::TlsClientConfig tls_client_config() {
+  return {.certificate_chain_file = tls_fixture("client.pem").string(),
+          .private_key_file = tls_fixture("client-key.pem").string(),
+          .trust_store_file = tls_fixture("ca.pem").string(),
+          .expected_server_identity = "127.0.0.1"};
+}
+
+class Authenticator final : public network::ConnectionAuthenticator {
+public:
+  explicit Authenticator(const std::uint64_t principal_id) : principal_id_(principal_id) {}
+
+  common::Result<network::PeerAuthenticationResult>
+  authenticate(const network::PeerAuthenticationRequest& request) override {
+    saw_fingerprint = request.peer_certificate_sha256.has_value();
+    return network::PeerAuthenticationResult{.authorized = true, .principal_id = principal_id_};
+  }
+
+  bool saw_fingerprint{};
+
+private:
+  std::uint64_t principal_id_{};
+};
+
+class NodeAuthorizer final : public cluster::ClusterNodePrincipalAuthorizer {
+public:
+  common::Result<bool> authorize_node(const std::uint64_t principal_id,
+                                      const raft::NodeId node_id) const override {
+    return (principal_id == 91U && node_id == 1U) || (principal_id == 92U && node_id == 11U);
+  }
+};
 
 [[nodiscard]] std::shared_ptr<const schema::SchemaLineage> make_lineage() {
   const schema::ColumnId event_id = id<schema::ColumnId>(5U);
@@ -250,18 +295,90 @@ TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesReal
   EXPECT_TRUE(result->terminal);
   EXPECT_EQ(provider.calls, 1U);
 
+  EXPECT_EQ(ReplicatedDistributedQueryTcpServer::start({}).error().code(),
+            common::StatusCode::kInvalidArgument);
+  Authenticator client_authenticator{91U};
+  Authenticator server_authenticator{92U};
+  NodeAuthorizer node_authorizer;
+  auto server = ReplicatedDistributedQueryTcpServer::start(
+      {.worker = {.local_node_id = 11U, .storage = &*storage, .context_provider = &provider},
+       .listener = {},
+       .tls = tls_server_config(),
+       .authenticator = &client_authenticator,
+       .node_authorizer = &node_authorizer,
+       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                          .exchange_timeout = std::chrono::milliseconds{1000}},
+       .maximum_connections = 4U,
+       .maximum_accepts_per_poll = 4U});
+  ASSERT_TRUE(server.has_value()) << server.error().to_string();
+  auto tls_context = network::TlsClientContext::create(tls_client_config());
+  ASSERT_TRUE(tls_context.has_value()) << tls_context.error().to_string();
+  auto sender = cluster::DistributedQuerySender::create(1U, dispatch);
+  ASSERT_TRUE(sender.has_value()) << sender.error().to_string();
+  const auto start = cluster::DistributedQuerySender::TimePoint::clock::now();
+  auto attempt = sender->begin_attempt(start);
+  ASSERT_TRUE(attempt.has_value()) << attempt.error().to_string();
+  auto client = cluster::DistributedQueryTcpClient::begin(
+      std::move(*attempt),
+      {.remote_endpoint = server->bound_endpoint(),
+       .tls_context = std::addressof(*tls_context),
+       .carrier = {.authenticator = &server_authenticator,
+                   .node_authorizer = &node_authorizer,
+                   .peer_ipv4_address = {127U, 0U, 0U, 1U},
+                   .limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                              .exchange_timeout = std::chrono::milliseconds{1000}}},
+       .connect_timeout = std::chrono::milliseconds{1000}},
+      start);
+  ASSERT_TRUE(client.has_value()) << client.error().to_string();
+  for (std::size_t iteration = 0U;
+       iteration < 1024U && client->state() != cluster::DistributedQueryTcpClientState::kComplete;
+       ++iteration) {
+    const auto interest = client->interest();
+    pollfd descriptor{.fd = client->descriptor(),
+                      .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
+                                                   (interest.want_write ? POLLOUT : 0))};
+    ASSERT_GE(::poll(&descriptor, 1U, 1), 0);
+    ASSERT_TRUE(client
+                    ->on_ready((descriptor.revents & POLLIN) != 0,
+                               (descriptor.revents & POLLOUT) != 0,
+                               cluster::DistributedQuerySender::TimePoint::clock::now())
+                    .is_ok())
+        << client->failure().to_string();
+    ASSERT_TRUE(server->poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  ASSERT_EQ(client->state(), cluster::DistributedQueryTcpClientState::kComplete)
+      << client->failure().to_string();
+  auto response = client->response_bytes();
+  ASSERT_TRUE(response.has_value()) << response.error().to_string();
+  ASSERT_TRUE(
+      sender->accept_response(*response, cluster::DistributedQuerySender::TimePoint::clock::now())
+          .is_ok());
+  auto remote_result = sender->result();
+  ASSERT_TRUE(remote_result.has_value());
+  EXPECT_EQ(remote_result->partial.count, result->partial.count);
+  EXPECT_EQ(remote_result->partial.sum, result->partial.sum);
+  EXPECT_EQ(remote_result->partial.minimum, result->partial.minimum);
+  EXPECT_EQ(remote_result->partial.maximum, result->partial.maximum);
+  EXPECT_EQ(remote_result->partial.mean, result->partial.mean);
+  EXPECT_EQ(remote_result->partial.m2, result->partial.m2);
+  EXPECT_EQ(provider.calls, 2U);
+  EXPECT_TRUE(client_authenticator.saw_fingerprint);
+  EXPECT_TRUE(server_authenticator.saw_fingerprint);
+  EXPECT_EQ(server->metrics().completed_connections, 1U);
+  EXPECT_TRUE(server->shutdown().is_ok());
+
   provider.set_raft_group_id(uuid(9U));
   EXPECT_EQ(worker->execute(dispatch).error().code(), common::StatusCode::kUnavailable);
-  EXPECT_EQ(provider.calls, 2U);
+  EXPECT_EQ(provider.calls, 3U);
 
   provider.set_raft_group_id(group_id);
   provider.set_placement_epoch(13U);
   EXPECT_EQ(worker->execute(dispatch).error().code(), common::StatusCode::kUnavailable);
-  EXPECT_EQ(provider.calls, 3U);
+  EXPECT_EQ(provider.calls, 4U);
 
   provider.clear_lineage();
   EXPECT_EQ(worker->execute(dispatch).error().code(), common::StatusCode::kInvalidArgument);
-  EXPECT_EQ(provider.calls, 4U);
+  EXPECT_EQ(provider.calls, 5U);
 }
 
 } // namespace

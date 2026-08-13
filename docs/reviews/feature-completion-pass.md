@@ -311,10 +311,11 @@ and routes bounded ingest/cancellation/completion work. A Linux-only process gat
 loopback applied write and matching retry after daemon restart. The requested real
 three-process/data-plane workflow does not exist. A later focused
 gate uses real mutual-TLS query sockets around the complete movement state machine, but simulates the
-externally committed promotion/removal milestones and deterministic worker aggregates. It does not
-start three server processes, execute SQL through the native protocol, kill a process, apply a Raft
-command to mutable/CSEG storage, or query a real remote CSEG. Those remain high-priority integration
-and hardening tasks, not passed checks.
+externally committed promotion/removal milestones and deterministic worker aggregates. A separate
+one-process service gate now queries an installed CSEG through the production mTLS worker stack. No
+gate starts three server processes, executes SQL through the native protocol, kills a process,
+applies a Raft command to mutable/CSEG storage, or queries a moved CSEG on another process. Those
+remain high-priority integration and hardening tasks, not passed checks.
 
 ## Public APIs and formats
 
@@ -441,6 +442,9 @@ Focused executions passed:
 - Request-local query-worker continuation: 1 focused service case passed for a real Raft-sourced
   temporal CSEG, owning Manifest/schema/placement/group/barrier acquisition, exact filtered terminal
   aggregate state, and fresh group/placement rejection. Remote socket execution is not claimed.
+- Owned real-CSEG query-service continuation: 1 focused approved-host case passed for a canonical
+  dispatch over real loopback mutual TLS, exact certificate-principal/node authorization,
+  request-local proof revalidation, the installed-CSEG terminal aggregate, and ordered shutdown.
 
 The final C++ tree passed the repository-pinned clang-format 18 check. Full-suite, sanitizer, fuzz,
 broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were deliberately not run.

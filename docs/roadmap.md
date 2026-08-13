@@ -1025,8 +1025,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   authority vector through the metadata barrier, and transfers directly into TCP query execution
   with cross-phase cancellation. A production receiver service now acquires one coherent owning
   Manifest/schema/placement/group/barrier context per dispatch and invokes the proof-revalidating
-  real-CSEG worker. Complete real query responses over that service and broader multi-node failure
-  validation remain deferred. Live DNS churn, resolver-latency policy, caching, and IPv6 remain
+  real-CSEG worker. A production inbound owner composes that worker with the authenticated receiver
+  and bounded mTLS server; one focused loopback request returns the exact installed-CSEG aggregate.
+  Moved/multi-process real-CSEG queries and broader multi-node failure validation remain deferred.
+  Live DNS churn, resolver-latency policy, caching, and IPv6 remain
   qualification gaps. A focused real-mTLS gate now queries two tablets, drives one through
   checksummed learner-first movement and externally committed promotion/removal milestones, rebinds
   it to the target, and proves the complete aggregate state is identical before and after. The full
