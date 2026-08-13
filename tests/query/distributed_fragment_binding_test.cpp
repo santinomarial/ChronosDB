@@ -245,6 +245,55 @@ TEST(DistributedFragmentBindingTest, BindsOneExactCommittedAuthoritySet) {
   EXPECT_TRUE(encode_distributed_aggregate_fragment_dispatch(*dispatch).has_value());
 }
 
+TEST(DistributedFragmentBindingTest, BindsVectorPlanOnlyThroughExactCommittedAuthorityAndTypes) {
+  TemporaryDirectory directory;
+  const schema::TableSchema schema_value = make_schema(schema::LogicalTypeKind::kFloat64);
+  const schema::SchemaLineage lineage = schema::SchemaLineage::create(schema_value).value();
+  const common::Uuid group_id = uuid(8U);
+  auto snapshot = make_snapshot(directory, lineage, group_id, 10U);
+  ASSERT_TRUE(snapshot.has_value()) << snapshot.error().to_string();
+  const Authority value = authority();
+  const std::array<std::uint32_t, 2U> projection{0U, 1U};
+  DistributedVectorQueryPlan plan{
+      .query_id = value.plan.query_id,
+      .read_policy = value.plan.read_policy,
+      .fragments = value.plan.fragments,
+      .intent = {
+          .mode = DistributedVectorPlanMode::kGroupedAggregate,
+          .group_key_input_indices = {0U},
+          .aggregates = {{.operation = VectorAggregateOperation::kSum, .input_index = 1U}},
+          .order_keys = {{.output_index = 1U, .direction = PhysicalSortDirection::kDescending}},
+          .limit = 4U}};
+  const auto vector_binding = [&]() {
+    return DistributedVectorFragmentBinding{
+        .plan = std::cref(plan),
+        .admission = std::cref(value.admission),
+        .snapshot = std::cref(*snapshot),
+        .destination_schema = std::cref(schema_value),
+        .raft_group_id = group_id,
+        .placement = std::cref(value.placement),
+        .destination_column_ordinals = projection,
+        .event_time_predicate = cseg::EventTimePredicate{.lower = cseg::EventTimeBound{4, true},
+                                                         .upper = cseg::EventTimeBound{9, false}}};
+  };
+
+  const auto dispatch = bind_distributed_vector_fragment(vector_binding());
+  ASSERT_TRUE(dispatch.has_value()) << dispatch.error().to_string();
+  EXPECT_EQ(dispatch->query_id, value.plan.query_id);
+  EXPECT_EQ(dispatch->database_id, snapshot->database_id());
+  EXPECT_EQ(dispatch->raft_group_id, group_id);
+  EXPECT_EQ(dispatch->destination_column_ordinals, (std::vector<std::uint32_t>{0U, 1U}));
+  EXPECT_EQ(dispatch->plan, plan.intent);
+  EXPECT_TRUE(encode_distributed_vector_fragment_dispatch(*dispatch).has_value());
+
+  plan.intent.aggregates.front().input_index = 0U;
+  EXPECT_EQ(bind_distributed_vector_fragment(vector_binding()).error().code(),
+            common::StatusCode::kInvalidArgument);
+  plan.intent.aggregates.front().input_index = 2U;
+  EXPECT_EQ(bind_distributed_vector_fragment(vector_binding()).error().code(),
+            common::StatusCode::kInvalidArgument);
+}
+
 TEST(DistributedFragmentBindingTest, BindsGroupedFloat64IntentThroughTheSameAuthoritySet) {
   TemporaryDirectory directory;
   const schema::TableSchema schema_value = make_schema(schema::LogicalTypeKind::kFloat64);

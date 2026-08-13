@@ -5,6 +5,7 @@
 #include "chronos/cseg/pruning.hpp"
 #include "chronos/manifest/temporal_publication.hpp"
 #include "chronos/query/distributed_fragment_dispatch.hpp"
+#include "chronos/query/distributed_vector_fragment.hpp"
 #include "chronos/raft/durable_runtime.hpp"
 #include "chronos/raft/metadata.hpp"
 #include "chronos/raft/types.hpp"
@@ -38,6 +39,22 @@ struct DistributedAggregateFragmentBinding {
 // group-scoped executable request. It performs no I/O and publishes no state.
 [[nodiscard]] common::Result<DistributedAggregateFragmentDispatch>
 bind_distributed_aggregate_fragment(const DistributedAggregateFragmentBinding& binding);
+
+struct DistributedVectorFragmentBinding {
+  std::reference_wrapper<const DistributedVectorQueryPlan> plan;
+  std::reference_wrapper<const DistributedReadAdmission> admission;
+  std::reference_wrapper<const manifest::TemporalDatabaseStorageSnapshot> snapshot;
+  std::reference_wrapper<const schema::TableSchema> destination_schema;
+  common::Uuid raft_group_id;
+  std::reference_wrapper<const raft::TabletPlacementMetadata> placement;
+  std::span<const std::uint32_t> destination_column_ordinals;
+  std::optional<cseg::EventTimePredicate> event_time_predicate;
+};
+
+// Derives one owning vector dispatch only after exact read admission, committed placement,
+// Manifest-v2 source/position/schema, projection, and plan input types agree.
+[[nodiscard]] common::Result<DistributedVectorFragmentDispatch>
+bind_distributed_vector_fragment(const DistributedVectorFragmentBinding& binding);
 
 struct DistributedGroupedFloat64FragmentBinding {
   DistributedAggregateFragmentBinding aggregate;

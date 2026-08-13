@@ -642,6 +642,12 @@ Focused executions passed:
   projection limits, out-of-projection plan indices, lag contradiction, and nil group identity.
   Header self-containment and installed consumption cover the public codec. Committed-authority
   construction, worker execution, coordination, transport, and process integration are not claimed.
+- Authority-bound vector-fragment continuation: the focused Manifest-backed binding case carried an
+  exact leader barrier, committed placement/group, durable Raft position, recovery schema, unique
+  projection, grouped SUM, output ordering, and LIMIT into an encodable owned dispatch. SUM over
+  the projected TIMESTAMP and an out-of-projection input rejected before dispatch creation. All
+  existing aggregate/grouped/metadata binding cases passed. Installed consumption covers the public
+  binder. Multi-tablet vector ownership, execution, coordination, and transport are not claimed.
 
 The C++ files changed by the grouped- and vector-exchange continuations pass the repository-pinned
 clang-format 18 check. A full-tree check was also run and still reports pre-existing violations in

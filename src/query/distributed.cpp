@@ -364,14 +364,16 @@ common::Result<DistributedAggregatePlan> plan_distributed_aggregation(
   return plan;
 }
 
-common::Status validate_distributed_read_admission(const DistributedAggregatePlan& plan,
-                                                   const DistributedReadAdmission& admission) {
+common::Status
+validate_distributed_read_admission(const DistributedReadPolicy policy,
+                                    const std::span<const DistributedTablet> fragments,
+                                    const DistributedReadAdmission& admission) {
   const auto fragment =
-      std::ranges::find(plan.fragments, admission.tablet_id, &DistributedTablet::tablet_id);
-  if (fragment == plan.fragments.end() || admission.serving_node == 0U)
+      std::ranges::find(fragments, admission.tablet_id, &DistributedTablet::tablet_id);
+  if (fragment == fragments.end() || admission.serving_node == 0U)
     return invalid("distributed read admission does not match a planned tablet");
 
-  switch (plan.read_policy.consistency) {
+  switch (policy.consistency) {
   case DistributedReadConsistency::kLeaderLinearizable:
     if (admission.serving_node != fragment->leader_node ||
         !admission.linearizable_barrier.has_value() || admission.linearizable_barrier->term == 0U ||
@@ -383,7 +385,7 @@ common::Status validate_distributed_read_admission(const DistributedAggregatePla
     }
     return common::Status::ok();
   case DistributedReadConsistency::kFollowerBoundedStale: {
-    if (!plan.read_policy.maximum_staleness_positions.has_value() ||
+    if (!policy.maximum_staleness_positions.has_value() ||
         admission.linearizable_barrier.has_value() ||
         admission.observed_leader_commit_position < fragment->known_leader_commit_position) {
       return common::Status{common::StatusCode::kUnavailable,
@@ -393,7 +395,7 @@ common::Status validate_distributed_read_admission(const DistributedAggregatePla
         admission.observed_leader_commit_position > admission.applied_position
             ? admission.observed_leader_commit_position - admission.applied_position
             : 0U;
-    return lag <= *plan.read_policy.maximum_staleness_positions
+    return lag <= *policy.maximum_staleness_positions
                ? common::Status::ok()
                : common::Status{common::StatusCode::kUnavailable,
                                 "bounded-stale tablet exceeds its position lag"};
@@ -404,6 +406,11 @@ common::Status validate_distributed_read_admission(const DistributedAggregatePla
                : common::Status::ok();
   }
   return invalid("distributed read consistency mode is invalid");
+}
+
+common::Status validate_distributed_read_admission(const DistributedAggregatePlan& plan,
+                                                   const DistributedReadAdmission& admission) {
+  return validate_distributed_read_admission(plan.read_policy, plan.fragments, admission);
 }
 
 common::Status MergeableAggregateState::add(const double value) {

@@ -266,9 +266,11 @@
   plan intent now canonically describes row projection, ungrouped or multi-key grouped aggregates,
   final output ordering, and LIMIT under bounded checked indices. A distinct group-scoped vector
   fragment now binds that intent to complete snapshot/route/read-proof-shaped request bytes and
-  exact projection indices without reusing aggregate formats. Committed-authority construction,
-  schema/type binding, compatible multi-tablet ownership, global coordination, authenticated
-  transport, and execution remain.
+  exact projection indices without reusing aggregate formats. A committed-authority binder now
+  derives one such dispatch only after exact admission, placement, Manifest-v2 source/position,
+  recovery schema, projection, and aggregate operation/type agreement. Compatible multi-tablet
+  ownership, metadata-backed batch construction, global coordination, authenticated transport, and
+  execution remain.
   A distinct terminal-only frame closes an empty tablet stream without inventing a SQL NULL group.
   Its separate fixed reader and move-only cursor own every terminal fragmentation boundary,
   coalesced successor bytes, sticky damage, and checked short writes without introducing an

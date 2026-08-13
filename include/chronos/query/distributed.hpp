@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <vector>
 
 namespace chronos::query {
@@ -79,6 +80,11 @@ plan_distributed_aggregation(common::Uuid query_id, const std::vector<Distribute
 
 [[nodiscard]] common::Status
 validate_distributed_read_admission(const DistributedAggregatePlan& plan,
+                                    const DistributedReadAdmission& admission);
+
+[[nodiscard]] common::Status
+validate_distributed_read_admission(DistributedReadPolicy policy,
+                                    std::span<const DistributedTablet> fragments,
                                     const DistributedReadAdmission& admission);
 
 struct MergeableAggregateState {

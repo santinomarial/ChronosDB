@@ -209,6 +209,126 @@ bind_distributed_aggregate_fragment(const DistributedAggregateFragmentBinding& b
   }
 }
 
+common::Result<DistributedVectorFragmentDispatch>
+bind_distributed_vector_fragment(const DistributedVectorFragmentBinding& binding) {
+  const DistributedVectorQueryPlan& plan = binding.plan.get();
+  const DistributedReadAdmission& admission = binding.admission.get();
+  const manifest::TemporalDatabaseStorageSnapshot& snapshot = binding.snapshot.get();
+  const schema::TableSchema& destination_schema = binding.destination_schema.get();
+  const raft::TabletPlacementMetadata& placement = binding.placement.get();
+
+  if (plan.query_id.is_nil() || plan.fragments.empty() || binding.raft_group_id.is_nil() ||
+      ((plan.read_policy.consistency == DistributedReadConsistency::kLeaderLinearizable ||
+        plan.read_policy.consistency == DistributedReadConsistency::kLocalEventual) &&
+       plan.read_policy.maximum_staleness_positions.has_value())) {
+    return common::make_unexpected(invalid("distributed vector plan authority is invalid"));
+  }
+  const common::Status admission_status =
+      validate_distributed_read_admission(plan.read_policy, plan.fragments, admission);
+  if (!admission_status.is_ok())
+    return common::make_unexpected(admission_status);
+  const auto planned =
+      std::ranges::find(plan.fragments, admission.tablet_id, &DistributedTablet::tablet_id);
+  if (planned == plan.fragments.end())
+    return common::make_unexpected(
+        invalid("distributed vector fragment tablet is absent from its plan"));
+  const common::Status placement_status =
+      validate_placement(placement, destination_schema.table_id(), admission.tablet_id, admission,
+                         plan.read_policy.consistency);
+  if (!placement_status.is_ok())
+    return common::make_unexpected(placement_status);
+
+  const auto tablet = std::ranges::find(snapshot.tablets(), admission.tablet_id,
+                                        &manifest::TemporalTabletDescriptor::tablet_id);
+  if (tablet == snapshot.tablets().end())
+    return common::make_unexpected(
+        unavailable("distributed vector fragment tablet is absent from snapshot"));
+  if (snapshot.database_id().uuid().is_nil() || snapshot.generation() == 0U ||
+      tablet->table_id != destination_schema.table_id() || placement.table_id != tablet->table_id ||
+      placement.tablet_id != tablet->tablet_id) {
+    return common::make_unexpected(
+        invalid("distributed vector fragment snapshot identity differs"));
+  }
+  if (tablet->commit_source != manifest::ManifestCommitSource::kRaft ||
+      tablet->source_id != binding.raft_group_id ||
+      tablet->durable_position != admission.applied_position) {
+    return common::make_unexpected(unavailable(
+        "distributed vector fragment snapshot is not durable at the admitted Raft boundary"));
+  }
+  if (tablet->recovery_schema_id != destination_schema.schema_id() ||
+      tablet->recovery_schema_version != destination_schema.version()) {
+    return common::make_unexpected(unavailable(
+        "distributed vector fragment destination schema differs from snapshot recovery schema"));
+  }
+  if (binding.destination_column_ordinals.empty() ||
+      binding.destination_column_ordinals.size() > schema::kMaximumSchemaColumnCount) {
+    return common::make_unexpected(
+        invalid("distributed vector fragment projection is empty or out of bounds"));
+  }
+  std::bitset<schema::kMaximumSchemaColumnCount> seen;
+  for (const std::uint32_t ordinal : binding.destination_column_ordinals) {
+    if (ordinal >= destination_schema.columns().size() || seen[ordinal]) {
+      return common::make_unexpected(invalid(
+          "distributed vector fragment projection contains an invalid or duplicate ordinal"));
+    }
+    seen.set(ordinal);
+  }
+  const common::Status plan_status = validate_distributed_vector_plan_intent(
+      plan.intent, static_cast<std::uint32_t>(binding.destination_column_ordinals.size()));
+  if (!plan_status.is_ok())
+    return common::make_unexpected(plan_status);
+  for (const DistributedVectorAggregateIntent& aggregate : plan.intent.aggregates) {
+    std::optional<VectorAggregateInput> input;
+    if (aggregate.input_index.has_value()) {
+      const std::uint32_t schema_ordinal =
+          binding.destination_column_ordinals[*aggregate.input_index];
+      const schema::ColumnDefinition& column = destination_schema.columns()[schema_ordinal];
+      input = VectorAggregateInput{.column_ordinal = *aggregate.input_index,
+                                   .type = column.type(),
+                                   .nullable = column.nullable()};
+    }
+    const auto output = vector_aggregate_output_shape(
+        {.operation = aggregate.operation, .input = std::move(input)});
+    if (!output.has_value())
+      return common::make_unexpected(output.error());
+  }
+  if (binding.event_time_predicate.has_value() &&
+      !binding.event_time_predicate->lower.has_value() &&
+      !binding.event_time_predicate->upper.has_value()) {
+    return common::make_unexpected(
+        invalid("distributed vector fragment event-time predicate is empty"));
+  }
+
+  try {
+    return DistributedVectorFragmentDispatch{
+        .query_id = plan.query_id,
+        .database_id = snapshot.database_id(),
+        .table_id = tablet->table_id,
+        .tablet_id = tablet->tablet_id,
+        .destination_schema_id = destination_schema.schema_id(),
+        .raft_group_id = binding.raft_group_id,
+        .snapshot_generation = snapshot.generation(),
+        .serving_node = admission.serving_node,
+        .applied_position = admission.applied_position,
+        .observed_leader_commit_position = admission.observed_leader_commit_position,
+        .placement_epoch = placement.placement_epoch,
+        .read_policy = plan.read_policy,
+        .linearizable_barrier = admission.linearizable_barrier,
+        .destination_column_ordinals = {binding.destination_column_ordinals.begin(),
+                                        binding.destination_column_ordinals.end()},
+        .event_time_predicate = binding.event_time_predicate,
+        .plan = plan.intent};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "distributed vector fragment binding allocation failed"});
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "distributed vector fragment binding exceeds container limits"});
+  }
+}
+
 common::Result<BoundDistributedGroupedFloat64Fragment>
 bind_distributed_grouped_float64_fragment(const DistributedGroupedFloat64FragmentBinding& binding) {
   auto aggregate = bind_distributed_aggregate_fragment(binding.aggregate);

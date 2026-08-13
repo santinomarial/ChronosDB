@@ -53,6 +53,13 @@ struct DistributedVectorFragmentDispatch {
                          const DistributedVectorFragmentDispatch&) = default;
 };
 
+struct DistributedVectorQueryPlan {
+  common::Uuid query_id;
+  DistributedReadPolicy read_policy;
+  std::vector<DistributedTablet> fragments;
+  DistributedVectorPlanIntent intent;
+};
+
 struct DistributedVectorFragmentDecodeLimits {
   std::uint32_t maximum_projection_columns{
       distributed_vector_fragment_format::kMaximumProjectionColumns};

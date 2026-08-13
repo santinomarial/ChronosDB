@@ -244,6 +244,11 @@ read proof, unique destination projection, and optional event bounds around that
 header CRC protects all allocation-driving fields; the outer and nested complete CRCs remain
 independent. Decoding alone is not runtime authority: construction and worker revalidation still
 have to join the frame to committed metadata, Manifest, and local Raft state.
+The first vector binder now performs the coordinator half of that join for one tablet. It shares
+the aggregate path's read-admission rules, exact-matches committed placement and Manifest-v2
+Raft/source/schema authority, maps plan indices through the unique projection, and invokes the
+local aggregate type oracle before returning owned bytes. A later worker must still independently
+reprove its local side.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated
