@@ -435,6 +435,9 @@ Focused executions passed:
 - Raft-observation batch-construction continuation: 1 focused case passed for canonical planned
   group derivation, local/fallback follower selection, unique committed routes, exact correlations,
   and overflow rejection. Packaged acquisition/query composition is not claimed.
+- Packaged remote bounded-stale continuation: 1 focused approved-host service case passed for two
+  real mTLS observations, exact authority-to-metadata/Manifest binding, transition into a TCP query
+  owner, cross-phase metrics, and execution cancellation. A real query response is not claimed.
 
 The final C++ tree passed the repository-pinned clang-format 18 check. Full-suite, sanitizer, fuzz,
 broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were deliberately not run.

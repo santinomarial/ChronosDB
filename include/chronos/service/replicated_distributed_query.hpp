@@ -3,6 +3,7 @@
 
 #include "chronos/cluster/distributed_query_execution.hpp"
 #include "chronos/cluster/distributed_query_tcp_execution.hpp"
+#include "chronos/cluster/raft_observation_tcp_batch_acquisition.hpp"
 #include "chronos/common/result.hpp"
 #include "chronos/manifest/temporal_publication.hpp"
 #include "chronos/query/distributed.hpp"
@@ -13,6 +14,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <span>
 
@@ -54,6 +56,54 @@ create_replicated_follower_distributed_aggregate_query(
     query::DistributedAggregatePlan plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
     std::span<const query::DistributedAggregateFollowerReadAuthority> follower_authorities,
     const ReplicatedDistributedAggregateQueryConfig& config);
+
+enum class ReplicatedFollowerDistributedAggregateQueryState : std::uint8_t {
+  kAcquiringAuthority = 1,
+  kExecuting = 2,
+  kComplete = 3,
+  kFailed = 4,
+  kCancelled = 5,
+};
+
+struct ReplicatedFollowerDistributedAggregateQueryMetrics {
+  cluster::RaftObservationTcpBatchAcquisitionMetrics authority;
+  std::optional<cluster::DistributedQueryTcpExecutionMetrics> execution;
+};
+
+// Owns the complete bounded-stale remote lifecycle: placement-backed observation acquisition,
+// metadata/Manifest binding, and distributed-query TCP execution. Borrowed catalog, barrier,
+// authentication, projection, and TLS objects in both configs must outlive this owner.
+class ReplicatedFollowerDistributedAggregateQuery {
+public:
+  ReplicatedFollowerDistributedAggregateQuery() noexcept;
+  ~ReplicatedFollowerDistributedAggregateQuery();
+  ReplicatedFollowerDistributedAggregateQuery(const ReplicatedFollowerDistributedAggregateQuery&) =
+      delete;
+  ReplicatedFollowerDistributedAggregateQuery&
+  operator=(const ReplicatedFollowerDistributedAggregateQuery&) = delete;
+  ReplicatedFollowerDistributedAggregateQuery(
+      ReplicatedFollowerDistributedAggregateQuery&&) noexcept;
+  ReplicatedFollowerDistributedAggregateQuery&
+  operator=(ReplicatedFollowerDistributedAggregateQuery&&) noexcept;
+
+  [[nodiscard]] static common::Result<ReplicatedFollowerDistributedAggregateQuery>
+  create(query::DistributedAggregatePlan plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
+         cluster::RaftObservationTcpBatchConstructionConfig authority_config,
+         ReplicatedDistributedAggregateQueryConfig query_config);
+  [[nodiscard]] common::Status poll_once(std::chrono::milliseconds maximum_wait);
+  [[nodiscard]] common::Status cancel();
+
+  [[nodiscard]] ReplicatedFollowerDistributedAggregateQueryState state() const noexcept;
+  [[nodiscard]] ReplicatedFollowerDistributedAggregateQueryMetrics metrics() const noexcept;
+  [[nodiscard]] common::Result<query::MergeableAggregateState> result() const;
+  [[nodiscard]] const common::Status& failure() const noexcept;
+
+private:
+  class Impl;
+  explicit ReplicatedFollowerDistributedAggregateQuery(
+      std::unique_ptr<Impl> implementation) noexcept;
+  std::unique_ptr<Impl> implementation_;
+};
 
 } // namespace chronos::service
 

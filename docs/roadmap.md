@@ -1021,9 +1021,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   deadline, cancels every survivor on failure, and publishes only one complete group-sorted vector.
   A placement-backed constructor derives all planned groups, selects an eligible coordinator or
   lowest nonleader follower, resolves targets once, and assigns overflow-safe correlations.
-  Packaged acquisition/query composition and broader multi-node failure validation remain deferred.
-  Live DNS churn, resolver-latency policy, caching, and IPv6 remain qualification gaps. A
-  focused real-mTLS gate now queries two tablets, drives one through
+  A packaged service owner pins the plan/Manifest through remote acquisition, binds the complete
+  authority vector through the metadata barrier, and transfers directly into TCP query execution
+  with cross-phase cancellation. Complete real query responses and broader multi-node failure
+  validation remain deferred. Live DNS churn, resolver-latency policy, caching, and IPv6 remain
+  qualification gaps. A focused real-mTLS gate now queries two tablets, drives one through
   checksummed learner-first movement and externally committed promotion/removal milestones, rebinds
   it to the target, and proves the complete aggregate state is identical before and after. The full
   phase exit gate is not claimed.

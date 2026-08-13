@@ -151,8 +151,10 @@ pair before blocking, polls all descriptors under the earliest deadline, and pub
 complete group-sorted authority vector. Automatic placement-backed pair selection, remote
 pair selection now prefers an eligible coordinator follower and otherwise the lowest nonleader
 replica, resolves every unique target once, and assigns bounded correlations before I/O. Packaged
-acquisition/query composition, remote worker-interrupt delivery, pooled multiplexing, asynchronous
-worker completion, live DNS churn qualification, and broader multi-node fault handling remain work.
+service ownership now pins the plan/Manifest through acquisition, binds the complete authority
+through the metadata barrier, and transfers directly into TCP query execution. Complete real query
+responses, remote worker-interrupt delivery, pooled multiplexing, asynchronous worker completion,
+live DNS churn qualification, and broader multi-node fault handling remain work.
 
 ## Verification and review questions
 

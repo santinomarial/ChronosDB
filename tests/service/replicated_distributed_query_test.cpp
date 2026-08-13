@@ -1,3 +1,4 @@
+#include "chronos/cluster/raft_observation_tcp_server.hpp"
 #include "chronos/manifest/naming.hpp"
 #include "chronos/manifest/storage.hpp"
 #include "chronos/manifest/temporal_codec.hpp"
@@ -158,9 +159,48 @@ class QueryNodeAuthorizer final : public cluster::ClusterNodePrincipalAuthorizer
 public:
   common::Result<bool> authorize_node(const std::uint64_t principal_id,
                                       const raft::NodeId node_id) const override {
-    return principal_id == 91U && (node_id == 11U || node_id == 12U);
+    return principal_id == 91U && (node_id == 1U || node_id == 11U || node_id == 12U);
   }
 };
+
+class ObservationService final : public cluster::RaftObservationService {
+public:
+  ObservationService(const raft::NodeId node, const raft::Role role, const raft::LogIndex position)
+      : node_(node), role_(role), position_(position) {}
+
+  common::Result<raft::RaftGroupObservation> observe(const raft::GroupId& group_id) override {
+    ++calls;
+    return raft::RaftGroupObservation{.group_id = group_id,
+                                      .node_id = node_,
+                                      .role = role_,
+                                      .current_term = 1U,
+                                      .leader_id = 11U,
+                                      .last_log_index = position_,
+                                      .commit_index = position_,
+                                      .applied_index = position_,
+                                      .voters = {11U, 12U},
+                                      .committed_voters = {11U, 12U}};
+  }
+
+  std::size_t calls{};
+
+private:
+  raft::NodeId node_{};
+  raft::Role role_{raft::Role::kFollower};
+  raft::LogIndex position_{};
+};
+
+[[nodiscard]] network::TlsServerConfig observation_server_tls_config() {
+  return {.certificate_chain_file = tls_fixture("server.pem").string(),
+          .private_key_file = tls_fixture("server-key.pem").string(),
+          .trust_store_file = tls_fixture("ca.pem").string()};
+}
+
+[[nodiscard]] std::string endpoint_text(const network::Ipv4Endpoint& endpoint) {
+  return std::to_string(endpoint.address[0]) + "." + std::to_string(endpoint.address[1]) + "." +
+         std::to_string(endpoint.address[2]) + "." + std::to_string(endpoint.address[3]) + ":" +
+         std::to_string(endpoint.port);
+}
 
 [[nodiscard]] query::DistributedAggregatePlan make_plan(const schema::TabletId& tablet_id,
                                                         const raft::LogIndex applied_position) {
@@ -339,6 +379,79 @@ TEST(ReplicatedDistributedQueryTest, ConstructsOneAuthorityBoundTcpLifecycleOwne
   ASSERT_TRUE(follower_execution.has_value()) << follower_execution.error().to_string();
   EXPECT_EQ(follower_execution->state(), cluster::DistributedQueryTcpExecutionState::kRunning);
   EXPECT_EQ(follower_execution->snapshot().dispatches().front().fragment.serving_node, 12U);
+
+  ObservationService leader_service{11U, raft::Role::kLeader, applied_position};
+  ObservationService follower_service{12U, raft::Role::kFollower, applied_position};
+  auto leader_receiver = cluster::RaftObservationReceiver::create(
+      {.local_node_id = 11U, .authorizer = &authorizer, .service = &leader_service});
+  auto follower_receiver = cluster::RaftObservationReceiver::create(
+      {.local_node_id = 12U, .authorizer = &authorizer, .service = &follower_service});
+  ASSERT_TRUE(leader_receiver.has_value());
+  ASSERT_TRUE(follower_receiver.has_value());
+  auto server_config = [&](cluster::RaftObservationReceiver& receiver) {
+    return cluster::RaftObservationTcpServerConfig{
+        .listener = {},
+        .tls = observation_server_tls_config(),
+        .authenticator = &authenticator,
+        .receiver = &receiver,
+        .session_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                           .exchange_timeout = std::chrono::milliseconds{1000}},
+        .maximum_connections = 4U,
+        .maximum_accepts_per_poll = 4U};
+  };
+  auto leader_server = cluster::RaftObservationTcpServer::start(server_config(*leader_receiver));
+  auto follower_server =
+      cluster::RaftObservationTcpServer::start(server_config(*follower_receiver));
+  ASSERT_TRUE(leader_server.has_value()) << leader_server.error().to_string();
+  ASSERT_TRUE(follower_server.has_value()) << follower_server.error().to_string();
+
+  raft::MetadataCatalogSnapshot lifecycle_catalog = follower_catalog;
+  lifecycle_catalog.cluster_nodes = {{11U, endpoint_text(leader_server->bound_endpoint())},
+                                     {12U, endpoint_text(follower_server->bound_endpoint())}};
+  ReplicatedDistributedAggregateQueryConfig lifecycle_query_config = follower_config;
+  lifecycle_query_config.catalog = std::cref(lifecycle_catalog);
+  const std::array observation_tls_contexts{
+      cluster::RaftObservationNodeTlsContext{11U, std::addressof(*tls_context)},
+      cluster::RaftObservationNodeTlsContext{12U, std::addressof(*tls_context)}};
+  auto lifecycle_snapshot = publisher->snapshot();
+  ASSERT_TRUE(lifecycle_snapshot.has_value());
+  auto lifecycle = ReplicatedFollowerDistributedAggregateQuery::create(
+      make_follower_plan(tablet_id, applied_position), std::move(*lifecycle_snapshot),
+      {.source_node_id = 1U,
+       .first_correlation_id = 71U,
+       .tls_contexts = observation_tls_contexts,
+       .authenticator = &authenticator,
+       .node_authorizer = &authorizer,
+       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                          .exchange_timeout = std::chrono::milliseconds{1000}},
+       .connect_timeout = std::chrono::milliseconds{1000},
+       .retry = {.maximum_attempts = 1U,
+                 .initial_backoff = std::chrono::milliseconds{1},
+                 .maximum_backoff = std::chrono::milliseconds{1}},
+       .maximum_pairs = 1U},
+      lifecycle_query_config);
+  ASSERT_TRUE(lifecycle.has_value()) << lifecycle.error().to_string();
+  EXPECT_EQ(lifecycle->state(),
+            ReplicatedFollowerDistributedAggregateQueryState::kAcquiringAuthority);
+  EXPECT_EQ(lifecycle->result().error().code(), common::StatusCode::kInvalidArgument);
+  for (std::size_t iteration = 0U;
+       iteration < 4096U &&
+       lifecycle->state() == ReplicatedFollowerDistributedAggregateQueryState::kAcquiringAuthority;
+       ++iteration) {
+    ASSERT_TRUE(lifecycle->poll_once(std::chrono::milliseconds{1}).is_ok());
+    ASSERT_TRUE(leader_server->poll_once(std::chrono::milliseconds{1}).is_ok());
+    ASSERT_TRUE(follower_server->poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  ASSERT_EQ(lifecycle->state(), ReplicatedFollowerDistributedAggregateQueryState::kExecuting)
+      << lifecycle->failure().to_string();
+  EXPECT_EQ(leader_service.calls, 1U);
+  EXPECT_EQ(follower_service.calls, 1U);
+  EXPECT_EQ(lifecycle->metrics().authority.completed_pairs, 1U);
+  EXPECT_TRUE(lifecycle->metrics().execution.has_value());
+  const common::Status lifecycle_cancelled = lifecycle->cancel();
+  EXPECT_EQ(lifecycle_cancelled.code(), common::StatusCode::kCancelled);
+  EXPECT_EQ(lifecycle->state(), ReplicatedFollowerDistributedAggregateQueryState::kCancelled);
+  EXPECT_EQ(lifecycle->result().error(), lifecycle_cancelled);
 
   EXPECT_TRUE(barrier->shutdown().is_ok());
   EXPECT_TRUE(missing_tablet_barrier->shutdown().is_ok());
