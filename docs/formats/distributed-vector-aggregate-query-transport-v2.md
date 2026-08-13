@@ -153,3 +153,13 @@ session before the receiver and worker. Receiver publication limits are copied f
 limits. Polling, metrics, endpoint access, and idempotent shutdown delegate without changing wire or
 execution semantics; storage, coherent authority, authentication, authorization, and optional
 leader-hint providers remain borrowed.
+
+## Portable multi-tablet execution
+
+`DistributedVectorAggregateQueryExecutionV2` accepts only a compatible Fragment-v2 snapshot with
+nonempty cross-tablet-proved definitions and an ungrouped plan. It retains the Manifest pin, one
+query-wide resource context, one finite sender per plan-ordered tablet, and one definition-bound
+aggregate coordinator. Complete sender vectors enter the coordinator exactly once; terminal sender
+failure enters exactly once, and no partial global result is exposed. Successful finish returns the
+original global plan attached to the merged definitions, schema, and finalized scalar values. The
+owner has no socket, thread, callback, or clock.

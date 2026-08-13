@@ -410,7 +410,10 @@ success. The inbound TCP owner bounds listener admission, keeps descriptor/carri
 and drives each authenticated aggregate session under finite per-poll work. The production service
 pins the real-CSEG aggregate worker, receiver, and TCP server in dependency order so every request
 binds and then independently revalidates fresh local authority without dangling borrowed addresses.
-Broader process integration remains.
+The portable aggregate execution owner retains one compatible Manifest pin and shared query-memory
+authority, creates one immutable sender per tablet, delivers only complete terminal state vectors
+once, and attaches the original plan to the coordinator's plan-ordered merge result. TCP scheduling
+and broader process integration remain.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated
