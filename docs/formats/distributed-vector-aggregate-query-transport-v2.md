@@ -3,9 +3,10 @@
 > **Status:** accepted and implemented exact response codec/partial-I/O contract. Requests reuse
 > the exact Fragment-v2 `CHDVREQ2` carrier. An authenticated receiver owns definition binding,
 > worker handoff, and complete bounded response publication. A finite sender owns definition-bound
-> retry and result memory. Connected mutual-TLS carriers own definition-bound one-attempt I/O. TCP
-> acquisition, listener admission, and process ownership remain separate. A production request-local
-> service supplies fresh definition authority and proof-revalidated real-CSEG execution.
+> retry and result memory. Connected mutual-TLS carriers own definition-bound one-attempt I/O, and a
+> deadline-bound client owns outbound TCP acquisition. Listener admission and process ownership
+> remain separate. A production request-local service supplies fresh definition authority and
+> proof-revalidated real-CSEG execution.
 
 All integers are unsigned little-endian. Reserved bytes are zero. CRC32C detects accidental damage
 and is not authentication. The nested payload retains its own independent checksums.
@@ -121,3 +122,13 @@ write cursors. Fixed 16-KiB TLS scratch, exact header-first frame ownership, fra
 bytes, nested frame, aggregate-count, state-frame, and variable-extremum limits remain independent.
 Handshake and exchange deadlines are positive and sticky. TLS carriers own no connector, listener,
 retry, coordinator, or process lifecycle.
+
+## Outbound TCP attempt
+
+`DistributedVectorAggregateQueryTcpClientV2` validates the exact request target, ordered
+definitions, nested limits, endpoint/authentication address equality, and positive connect deadline
+before opening a socket. It owns the nonblocking descriptor, attempt, definitions, and query
+resources until `SO_ERROR` confirms connection success; only then does it create TLS and transfer
+the complete authority bundle to the mutual-TLS client. Connect or carrier failure is sticky and
+closes the descriptor after destroying TLS state. Retry, endpoint rotation, and coordination remain
+outside this one-attempt owner.

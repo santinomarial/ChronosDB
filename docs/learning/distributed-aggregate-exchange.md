@@ -404,7 +404,9 @@ all-or-nothing publication, releases every temporary reservation on rejection, a
 whole immutable attempts under capped backoff. The aggregate mutual-TLS client transfers those
 definitions and query resources into its response reader before authenticating and writing; the
 server receives the worker-bound definitions beside the complete response bytes and revalidates
-both before any cursor write. TCP acquisition, listener admission, and process integration remain.
+both before any cursor write. The outbound TCP owner retains the same definition/resource bundle
+through a separately deadline-bound nonblocking connect and transfers it only after `SO_ERROR`
+success. Listener admission and process integration remain.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated
