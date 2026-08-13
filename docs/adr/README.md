@@ -360,3 +360,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0323](0323-bounded-grouped-terminal-partial-io.md) | Bounded grouped-terminal partial I/O | accepted |
 | [0324](0324-bounded-grouped-float64-coordinator.md) | Bounded grouped FLOAT64 coordinator | accepted |
 | [0325](0325-distinct-grouped-float64-fragment-intent.md) | Distinct grouped FLOAT64 fragment intent | accepted |
+| [0326](0326-authority-bound-grouped-float64-fragment.md) | Authority-bound grouped FLOAT64 fragment | accepted |

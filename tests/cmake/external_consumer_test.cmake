@@ -889,6 +889,8 @@ int main() {
       &chronos::query::decode_distributed_aggregate_fragment_dispatch_exact;
   const auto bind_distributed_fragment =
       &chronos::query::bind_distributed_aggregate_fragment;
+  const auto bind_distributed_grouped_fragment =
+      &chronos::query::bind_distributed_grouped_float64_fragment;
   using ExecuteDistributedFragment = chronos::common::Result<chronos::query::ExchangeMessage> (*)(
       const chronos::query::DistributedAggregateWorkerRequest&);
   const ExecuteDistributedFragment execute_distributed_fragment =
@@ -1163,6 +1165,7 @@ int main() {
                  encode_distributed_fragment_dispatch != nullptr &&
                  decode_distributed_fragment_dispatch != nullptr &&
                  bind_distributed_fragment != nullptr &&
+                 bind_distributed_grouped_fragment != nullptr &&
                  execute_distributed_fragment != nullptr &&
                  bind_select != nullptr && bind_create != nullptr && bind_insert != nullptr &&
                  materialize_insert != nullptr &&

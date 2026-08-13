@@ -1008,7 +1008,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   enforces contiguous exact-retry tablet streams, terminal-only empty tablets, all-tablet closure,
   and canonical cross-tablet grouping. A distinct checksummed grouped-fragment intent now binds one
   projected key index around the existing snapshot/route/proof-bound aggregate fragment without
-  changing its bytes. General vector-plan fragments, grouped authority binding/execution,
+  changing its bytes. Its authority binder reuses the complete pinned Manifest/placement/group/
+  proof constructor and additionally proves the projected key FLOAT64 type. General vector-plan
+  fragments, grouped dispatch/execution,
   multi-key/non-FLOAT64 state/transport, ordering, top-N, and LIMIT remain deferred. A distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
   catalog, Manifest, route, and execution gates;

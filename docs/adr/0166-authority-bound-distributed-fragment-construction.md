@@ -44,6 +44,10 @@ The committed-placement argument is still a borrowed value. The caller must obta
 acquire-consistent committed metadata view; the worker independently reproves its local current
 placement before touching storage.
 
+The first single-key grouped constructor reuses this complete boundary and adds FLOAT64 key-type
+proof in [ADR 0326](0326-authority-bound-grouped-float64-fragment.md); it does not weaken or replace
+the ungrouped executable dispatch.
+
 Invariants 4–6, 10, 11, 14, and 18 apply.
 
 ## Migration and rollback

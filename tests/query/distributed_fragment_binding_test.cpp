@@ -245,6 +245,39 @@ TEST(DistributedFragmentBindingTest, BindsOneExactCommittedAuthoritySet) {
   EXPECT_TRUE(encode_distributed_aggregate_fragment_dispatch(*dispatch).has_value());
 }
 
+TEST(DistributedFragmentBindingTest, BindsGroupedFloat64IntentThroughTheSameAuthoritySet) {
+  TemporaryDirectory directory;
+  const schema::TableSchema schema_value = make_schema(schema::LogicalTypeKind::kFloat64);
+  const schema::SchemaLineage lineage = schema::SchemaLineage::create(schema_value).value();
+  const common::Uuid group_id = uuid(8U);
+  auto snapshot = make_snapshot(directory, lineage, group_id, 10U);
+  ASSERT_TRUE(snapshot.has_value()) << snapshot.error().to_string();
+  const Authority value = authority();
+  const std::array<std::uint32_t, 2U> projection{0U, 1U};
+
+  const DistributedGroupedFloat64FragmentBinding grouped{
+      .aggregate = binding(value, *snapshot, schema_value, group_id, projection),
+      .group_key_input_index = 1U};
+  const auto bound = bind_distributed_grouped_float64_fragment(grouped);
+  ASSERT_TRUE(bound.has_value()) << bound.error().to_string();
+  EXPECT_EQ(bound->raft_group_id, group_id);
+  EXPECT_EQ(bound->fragment.aggregate.query_id, value.plan.query_id);
+  EXPECT_EQ(bound->fragment.aggregate.database_id, snapshot->database_id());
+  EXPECT_EQ(bound->fragment.aggregate.destination_column_ordinals,
+            std::vector<std::uint32_t>(projection.begin(), projection.end()));
+  EXPECT_EQ(bound->fragment.group_key_input_index, 1U);
+  EXPECT_TRUE(encode_distributed_grouped_float64_fragment(bound->fragment).has_value());
+
+  DistributedGroupedFloat64FragmentBinding unsupported = grouped;
+  unsupported.group_key_input_index = 0U;
+  EXPECT_EQ(bind_distributed_grouped_float64_fragment(unsupported).error().code(),
+            common::StatusCode::kNotSupported);
+  DistributedGroupedFloat64FragmentBinding out_of_bounds = grouped;
+  out_of_bounds.group_key_input_index = 2U;
+  EXPECT_EQ(bind_distributed_grouped_float64_fragment(out_of_bounds).error().code(),
+            common::StatusCode::kInvalidArgument);
+}
+
 TEST(DistributedFragmentBindingTest, PinsOneCompatibleEpochAcrossEveryPlannedTablet) {
   TemporaryDirectory directory;
   const schema::TableSchema schema_value = make_schema(schema::LogicalTypeKind::kFloat64);

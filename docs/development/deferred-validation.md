@@ -267,7 +267,8 @@
   and cross-tablet nullable-FLOAT64 group merging. A unified grouped carrier and proof-bound grouped
   fragment production remain incomplete. A distinct exact grouped-intent envelope now binds one
   projected key index around the existing snapshot/route/proof-bound Fragment v1 bytes; schema/type
-  authority binding, group-scoped executable dispatch, and worker production remain incomplete.
+  authority binding now reuses the complete aggregate binder and proves the grouped key against the
+  same pinned schema. Group-scoped executable dispatch and worker production remain incomplete.
 - Proof-bound leader-linearizable/bounded-stale/local-eventual admissions now remain attached through
   compatible pinned multi-tablet snapshots and protocol/carrier scheduling. Whole-query replacement
   now validates fresh caller-proved authority, identical logical shape, nonregressing generation,

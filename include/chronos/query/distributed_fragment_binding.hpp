@@ -39,6 +39,24 @@ struct DistributedAggregateFragmentBinding {
 [[nodiscard]] common::Result<DistributedAggregateFragmentDispatch>
 bind_distributed_aggregate_fragment(const DistributedAggregateFragmentBinding& binding);
 
+struct DistributedGroupedFloat64FragmentBinding {
+  DistributedAggregateFragmentBinding aggregate;
+  std::uint32_t group_key_input_index{};
+};
+
+// Owns the exact Raft group and grouped intent after the existing aggregate binder has revalidated
+// all snapshot/placement/proof authority and this binder has proved the projected key is FLOAT64.
+struct BoundDistributedGroupedFloat64Fragment {
+  common::Uuid raft_group_id;
+  DistributedGroupedFloat64Fragment fragment;
+
+  friend bool operator==(const BoundDistributedGroupedFloat64Fragment&,
+                         const BoundDistributedGroupedFloat64Fragment&) = default;
+};
+
+[[nodiscard]] common::Result<BoundDistributedGroupedFloat64Fragment>
+bind_distributed_grouped_float64_fragment(const DistributedGroupedFloat64FragmentBinding& binding);
+
 struct DistributedAggregateSnapshotFragmentBinding {
   std::reference_wrapper<const DistributedReadAdmission> admission;
   std::reference_wrapper<const schema::TableSchema> destination_schema;

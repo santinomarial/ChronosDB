@@ -209,6 +209,30 @@ bind_distributed_aggregate_fragment(const DistributedAggregateFragmentBinding& b
   }
 }
 
+common::Result<BoundDistributedGroupedFloat64Fragment>
+bind_distributed_grouped_float64_fragment(const DistributedGroupedFloat64FragmentBinding& binding) {
+  auto aggregate = bind_distributed_aggregate_fragment(binding.aggregate);
+  if (!aggregate.has_value())
+    return common::make_unexpected(aggregate.error());
+  if (binding.group_key_input_index >= aggregate->fragment.destination_column_ordinals.size()) {
+    return common::make_unexpected(
+        invalid("distributed grouped fragment key input is out of bounds"));
+  }
+  const schema::TableSchema& destination_schema = binding.aggregate.destination_schema.get();
+  const std::uint32_t key_ordinal =
+      aggregate->fragment.destination_column_ordinals[binding.group_key_input_index];
+  if (destination_schema.columns()[key_ordinal].type().kind() !=
+      schema::LogicalTypeKind::kFloat64) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kNotSupported,
+                       "distributed grouped fragment key input is not Float64"});
+  }
+  return BoundDistributedGroupedFloat64Fragment{
+      .raft_group_id = aggregate->raft_group_id,
+      .fragment = {.aggregate = std::move(aggregate->fragment),
+                   .group_key_input_index = binding.group_key_input_index}};
+}
+
 CompatibleDistributedAggregateSnapshot::CompatibleDistributedAggregateSnapshot(
     manifest::TemporalDatabaseStorageSnapshot snapshot,
     std::vector<DistributedAggregateFragmentDispatch> dispatches) noexcept

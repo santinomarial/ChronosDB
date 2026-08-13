@@ -34,5 +34,9 @@ Checksum-valid unknown outer versions are unsupported. Damage and contradictory 
 corruption; caller-limit excess remains resource exhaustion from the nested decoder.
 
 Both encoded layers own their bytes. CRC32C provides accidental-corruption coverage, not
-authentication. A group-scoped executable dispatch, authority/type binder, local worker
-revalidation, and authenticated carrier remain required before storage access.
+authentication. A group-scoped executable dispatch, local worker revalidation, and authenticated
+carrier remain required before storage access.
+
+The implemented authority binder proves both selected inputs against the same pinned destination
+schema and returns this grouped intent with the exact Raft group as owned values. That in-memory
+result still requires a canonical grouped dispatch and worker-local revalidation before execution.

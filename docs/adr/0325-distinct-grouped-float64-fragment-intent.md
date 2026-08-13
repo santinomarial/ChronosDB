@@ -42,9 +42,10 @@ fields, and reject truncation, trailing bytes, outer-header damage, independentl
 bytes, checksum-valid future versions/reserved fields/lengths/key bounds, caller projection-limit
 excess, and invalid encoder input. The installed-consumer gate covers both public codec symbols.
 
-Schema/type binding, group-scoped executable dispatch, real-CSEG grouped execution, authenticated
-transport, multi-key/non-FLOAT64 state, ordering/top-N/LIMIT, and broad failure evidence remain
-incomplete. No Phase 16 exit gate is claimed.
+Group-scoped executable dispatch, real-CSEG grouped execution, authenticated transport,
+multi-key/non-FLOAT64 state, ordering/top-N/LIMIT, and broad failure evidence remain incomplete.
+The first authority/type binder is the accepted follow-up in
+[ADR 0326](0326-authority-bound-grouped-float64-fragment.md). No Phase 16 exit gate is claimed.
 
 Invariants 4–6, 10, 11, 14, 15, and 18 apply.
 

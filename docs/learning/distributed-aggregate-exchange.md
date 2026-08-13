@@ -29,8 +29,10 @@ retries but is not a SQL ordering guarantee.
 `encode_distributed_grouped_float64_fragment` adds request-side grouping intent as a distinct
 checksummed envelope around one exact aggregate fragment. It names only the projected key input;
 the nested frame remains the sole owner of snapshot, route, proof, projection, and event-filter
-bytes. The envelope is not executable until a later binder proves schema/type and a dispatch binds
-the Raft group.
+bytes. `bind_distributed_grouped_float64_fragment` first delegates every authority check to the
+existing aggregate binder, then proves the key ordinal is FLOAT64 under that same schema and returns
+owned group-plus-intent values. The result remains nonexecutable until a canonical grouped dispatch
+binds those values for worker-side revalidation.
 The dispatch envelope adds the distinct Raft group identity that scopes every admission index;
 workers never execute the bare inner fragment.
 `bind_distributed_aggregate_fragment` constructs that envelope only after one Manifest v2 snapshot,
@@ -148,10 +150,9 @@ A fixed ungrouped-aggregate frame gives partial-I/O carriers an unambiguous payl
 prematurely defining a general physical-fragment language. The cost is a specialized first exchange
 type. A separate first grouped frame now carries one nullable FLOAT64 key with bounded
 coordination, but multi-key and non-FLOAT64 grouping, physical plans, authenticated transport,
-authority/type binding, executable grouped dispatch, ordering/top-N, cancellation delivery, and
-durable recovery require their own bounded contracts. A
-leader hint never mutates an existing proof-bound dispatch: following it requires explicit
-coordinator rebinding.
+executable grouped dispatch, ordering/top-N, cancellation delivery, and
+durable recovery require their own bounded contracts. A leader hint never mutates an existing
+proof-bound dispatch: following it requires explicit coordinator rebinding.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated

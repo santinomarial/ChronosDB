@@ -242,7 +242,7 @@ lifecycle. A distinct bounded-stale constructor applies the same catalog, Manife
 execution gates to stable same-term leader/follower observation pairs. General vector-plan
 grouping/order/top-N/LIMIT remains incomplete. A distinct canonical frame now carries one nullable
 FLOAT64 group key and mergeable partial with SQL-equivalent signed-zero/NaN canonicalization, but
-grouped authority binding/execution, multi-key/non-FLOAT64 state, and authenticated transport remain
+grouped dispatch/execution, multi-key/non-FLOAT64 state, and authenticated transport remain
 incomplete. A distinct
 canonical observation protocol, authenticated receiver, mTLS clients/servers, finite multi-address
 acquisition, correlated
@@ -471,6 +471,10 @@ Focused executions passed:
   nested Fragment v1 preservation, exact authority/key-index round trip, corruption/version/
   reserved/length/key-bound rejection, and inherited projection limits. Authority/type binding,
   executable grouped dispatch, and worker execution are not claimed.
+- Grouped-fragment-binding continuation: 1 new focused case and all 7 binding cases passed against a
+  real pinned Manifest v2 snapshot for exact group/query/database/projection ownership, same-column
+  FLOAT64 key/aggregate support, and timestamp/out-of-bounds key rejection. Executable grouped
+  dispatch and worker execution are not claimed.
 
 The C++ files changed by the grouped-exchange continuations pass the repository-pinned clang-format
 18 check. A full-tree check was also run and still reports pre-existing violations in the
