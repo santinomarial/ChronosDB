@@ -233,9 +233,17 @@ Subsequent work added proof-bound dispatch/response protocols, authenticated TCP
 servers, compatible pinned multi-tablet scheduling, whole-query cancellation/deadlines, finite
 explicit rebinding, authenticated leader hints, durable physical movement ownership, joint Raft
 membership coordination, and reader-pinned source retirement/reclamation. A focused real-mTLS gate
-now returns the identical aggregate before and after a learner-first movement. General vector-plan
-grouping/order/top-N/LIMIT, automatic metadata acquisition, a packaged process runtime, remote CSEG
-execution in that gate, and broad failure/measurement evidence remain incomplete.
+now returns the identical aggregate before and after a learner-first movement. Committed metadata
+now supplies the active schema, placement, immutable tablet-to-group authority, and exact IPv4/TLS
+routes used by distributed execution. Leader-linearizable construction obtains ordered
+group-correlated quorum read-barrier observations, requires metadata and tablet publications to
+cover those barriers, binds one compatible Manifest epoch, and creates the complete TCP execution
+lifecycle. A distinct bounded-stale constructor applies the same catalog, Manifest, route, and
+execution gates to stable same-term leader/follower observation pairs. General vector-plan
+grouping/order/top-N/LIMIT, transport acquisition of remote follower observations, DNS and
+multi-address routing, a packaged multi-process runtime, remote CSEG execution in the movement
+gate, and broad failure/measurement evidence remain incomplete; the Phase 16 exit gate is not
+claimed.
 
 ### Phase 17 — object storage and interoperability
 
@@ -373,6 +381,10 @@ Focused executions passed:
 - Packaged replicated-ingest continuation: all 39 service tests passed, `chronosd` built, and the
   Linux-only real-socket process test source passed a standalone syntax check on macOS. The new
   process case itself remains a Linux execution gate.
+- Replicated distributed-query continuation: all 339 query tests and 54 service tests passed after
+  committed metadata binding, exact route resolution, group-correlated read authority, compatible
+  Manifest binding, and packaged leader-linearizable and bounded-stale TCP lifecycle construction.
+  The full incremental build and installed external-consumer check also passed.
 
 The final C++ tree passed the repository-pinned clang-format 18 check. Full-suite, sanitizer, fuzz,
 broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were deliberately not run.
@@ -381,12 +393,15 @@ broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were d
 
 ### Correctness
 
-- The feature graph is not service-integrated; several APIs accept already-committed/validated data
-  and rely on an absent adapter to preserve that precondition.
+- The feature graph is not completely process-integrated. Replicated distributed aggregate
+  construction now preserves committed catalog and correlated Raft proof preconditions through the
+  TCP lifecycle, but remote observation acquisition and the native client/process entry point are
+  still absent.
 - Temporal corrections have durable WAL/CSEG v2/Manifest v2 composition; direct vector winner
   lowering and mixed WAL/Raft-source composition remain incomplete.
-- The distributed implementation covers numeric global aggregate state, not arbitrary plans,
-  grouping, order, top-N, limits, or exchange retries.
+- The distributed implementation covers numeric global aggregate state with finite whole-query
+  retry/rebinding, not arbitrary plans, grouping, order, top-N, limits, or fragment-level durable
+  retries.
 - Movement now composes deterministic actions with joint Raft membership and durable checkpoints;
   automatic placement-driven orchestration remains external.
 - Cold upload independently performs exact schema/source-bound CSEG validation before remote
