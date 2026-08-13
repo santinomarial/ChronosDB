@@ -868,6 +868,11 @@ Focused executions passed:
   and canonical damage, enumerate every split, and inject allocation failure; a dedicated
   deterministic fuzz target covers arbitrary and mutated frames. Worker execution, stream
   coordination, global merge/finalization, grouped exchange, and process integration remain.
+- Cross-tablet aggregate-definition ownership continuation: the compatible Fragment-v2 snapshot
+  derives ungrouped definitions independently under every tablet's projected destination schema,
+  rejects any exact mismatch, and retains the shared vector once with the Manifest pin and result
+  schema. This prevents COUNT/AVG/variance output descriptors from erasing input-type authority.
+  Row and grouped plans expose no ungrouped definitions; worker execution and coordination remain.
 
 The C++ files changed by the grouped-, vector-exchange-, Fragment-v2-, and vector-transport-v2
 continuations pass the repository-pinned clang-format 18 check. A full-tree check was also run and

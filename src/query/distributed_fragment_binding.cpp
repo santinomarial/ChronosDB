@@ -1,6 +1,7 @@
 #include "chronos/query/distributed_fragment_binding.hpp"
 
 #include "chronos/manifest/temporal_codec.hpp"
+#include "chronos/query/distributed_vector_aggregate_exchange.hpp"
 
 #include <algorithm>
 #include <bitset>
@@ -815,9 +816,10 @@ common::Result<CompatibleDistributedVectorSnapshot> bind_compatible_distributed_
 }
 
 CompatibleDistributedVectorSnapshotV2::CompatibleDistributedVectorSnapshotV2(
-    CompatibleDistributedVectorSnapshot snapshot,
-    DistributedVectorResultSchema&& result_schema) noexcept
-    : snapshot_(std::move(snapshot)), result_schema_(std::move(result_schema)) {}
+    CompatibleDistributedVectorSnapshot snapshot, DistributedVectorResultSchema&& result_schema,
+    std::vector<VectorAggregateDefinition>&& aggregate_definitions) noexcept
+    : snapshot_(std::move(snapshot)), result_schema_(std::move(result_schema)),
+      aggregate_definitions_(std::move(aggregate_definitions)) {}
 
 const manifest::TemporalDatabaseStorageSnapshot&
 CompatibleDistributedVectorSnapshotV2::snapshot() const noexcept {
@@ -832,6 +834,11 @@ CompatibleDistributedVectorSnapshotV2::dispatches() const noexcept {
 const DistributedVectorResultSchema&
 CompatibleDistributedVectorSnapshotV2::result_schema() const noexcept {
   return result_schema_;
+}
+
+std::span<const VectorAggregateDefinition>
+CompatibleDistributedVectorSnapshotV2::aggregate_definitions() const noexcept {
+  return aggregate_definitions_;
 }
 
 common::Result<CompatibleDistributedVectorSnapshotV2>
@@ -850,6 +857,7 @@ bind_compatible_distributed_vector_snapshot_v2(
     return common::make_unexpected(compatible.error());
   try {
     std::vector<PhysicalColumnShape> projected;
+    std::vector<VectorAggregateDefinition> aggregate_definitions;
     for (std::size_t index = 0U; index < compatible->dispatches().size(); ++index) {
       const DistributedVectorFragmentDispatch& dispatch = compatible->dispatches()[index];
       const schema::TableSchema& destination = bindings[index].destination_schema.get();
@@ -867,8 +875,20 @@ bind_compatible_distributed_vector_snapshot_v2(
           validate_distributed_vector_result_schema(dispatch.plan, projected, result_schema);
       if (!schema_status.is_ok())
         return common::make_unexpected(schema_status);
+      if (dispatch.plan.mode == DistributedVectorPlanMode::kUngroupedAggregate) {
+        auto definitions = bind_distributed_vector_ungrouped_aggregate_definitions(
+            dispatch.plan, projected, result_schema);
+        if (!definitions.has_value())
+          return common::make_unexpected(definitions.error());
+        if (aggregate_definitions.empty())
+          aggregate_definitions = std::move(*definitions);
+        else if (aggregate_definitions != *definitions)
+          return common::make_unexpected(
+              invalid("compatible distributed vector aggregate definitions differ by tablet"));
+      }
     }
-    return CompatibleDistributedVectorSnapshotV2{std::move(*compatible), std::move(result_schema)};
+    return CompatibleDistributedVectorSnapshotV2{std::move(*compatible), std::move(result_schema),
+                                                 std::move(aggregate_definitions)};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(
         common::Status{common::StatusCode::kResourceExhausted,

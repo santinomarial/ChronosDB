@@ -304,6 +304,8 @@ int main() {
       &chronos::query::bind_compatible_distributed_vector_snapshot;
   const auto bind_compatible_vector_snapshot_v2 =
       &chronos::query::bind_compatible_distributed_vector_snapshot_v2;
+  const auto compatible_vector_aggregate_definitions =
+      &chronos::query::CompatibleDistributedVectorSnapshotV2::aggregate_definitions;
   const auto bind_metadata_vector_snapshot =
       &chronos::query::bind_metadata_backed_distributed_vector_snapshot;
   const auto bind_group_vector_snapshot =
@@ -516,6 +518,7 @@ int main() {
   (void)bind_vector_fragment_v2;
   (void)bind_compatible_vector_snapshot;
   (void)bind_compatible_vector_snapshot_v2;
+  (void)compatible_vector_aggregate_definitions;
   (void)bind_metadata_vector_snapshot;
   (void)bind_group_vector_snapshot;
   (void)bind_follower_group_vector_snapshot;

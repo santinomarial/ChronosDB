@@ -504,11 +504,49 @@ TEST(DistributedFragmentBindingTest, PinsOneCompatibleEpochAcrossEveryPlannedTab
   ASSERT_EQ(compatible_vector_v2->dispatches().size(), 2U);
   ASSERT_EQ(compatible_vector_v2->result_schema().columns.size(), 2U);
   EXPECT_EQ(compatible_vector_v2->result_schema().columns[1].name, "total");
+  EXPECT_TRUE(compatible_vector_v2->aggregate_definitions().empty());
   for (const DistributedVectorFragmentDispatch& nested : compatible_vector_v2->dispatches()) {
     const DistributedVectorFragmentDispatchV2 fragment_v2{
         .dispatch = nested, .result_schema = compatible_vector_v2->result_schema()};
     EXPECT_TRUE(encode_distributed_vector_fragment_dispatch_v2(fragment_v2).has_value());
   }
+
+  DistributedVectorQueryPlan ungrouped_vector_plan = vector_plan;
+  ungrouped_vector_plan.intent = {
+      .mode = DistributedVectorPlanMode::kUngroupedAggregate,
+      .aggregates = {{.operation = VectorAggregateOperation::kAverage, .input_index = 1U}}};
+  DistributedVectorResultSchema aggregate_result_schema{
+      .columns = {{"average",
+                   schema::LogicalType::create(schema::LogicalTypeKind::kFloat64).value(), true}}};
+  auto compatible_aggregate_v2 = bind_compatible_distributed_vector_snapshot_v2(
+      ungrouped_vector_plan, *snapshot, vector_bindings, std::move(aggregate_result_schema),
+      {.maximum_fragments = 2U, .maximum_total_projection_ordinals = 4U});
+  ASSERT_TRUE(compatible_aggregate_v2.has_value()) << compatible_aggregate_v2.error().to_string();
+  ASSERT_EQ(compatible_aggregate_v2->aggregate_definitions().size(), 1U);
+  const VectorAggregateDefinition& aggregate_definition =
+      compatible_aggregate_v2->aggregate_definitions()[0];
+  EXPECT_EQ(aggregate_definition.operation, VectorAggregateOperation::kAverage);
+  ASSERT_TRUE(aggregate_definition.input.has_value());
+  // NOLINTBEGIN(bugprone-unchecked-optional-access)
+  const VectorAggregateInput* aggregate_input = std::addressof(aggregate_definition.input.value());
+  // NOLINTEND(bugprone-unchecked-optional-access)
+  EXPECT_EQ(aggregate_input->column_ordinal, 1U);
+  EXPECT_EQ(aggregate_input->type, schema_value.columns()[1].type());
+  EXPECT_TRUE(aggregate_input->nullable);
+
+  const schema::TableSchema differing_input_schema = make_schema(schema::LogicalTypeKind::kInt64);
+  auto mixed_vector_bindings = vector_bindings;
+  mixed_vector_bindings[1].destination_schema = std::cref(differing_input_schema);
+  DistributedVectorResultSchema mixed_aggregate_result_schema{
+      .columns = {{"average",
+                   schema::LogicalType::create(schema::LogicalTypeKind::kFloat64).value(), true}}};
+  EXPECT_EQ(bind_compatible_distributed_vector_snapshot_v2(
+                ungrouped_vector_plan, *snapshot, mixed_vector_bindings,
+                std::move(mixed_aggregate_result_schema),
+                {.maximum_fragments = 2U, .maximum_total_projection_ordinals = 4U})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
 
   DistributedVectorResultSchema mismatched_result_schema{
       .columns = {{"event_time", schema_value.columns()[0].type(), false},

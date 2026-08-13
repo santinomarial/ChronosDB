@@ -1083,8 +1083,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   ungrouped envelope now binds one nested state to exact query/tablet and canonical aggregate
   ordinal/count/sequence/terminal position. It exact-matches the Fragment-v2-derived definition
   vector, validates integrity and bounds before variable decode, and owns fragmented reads/short
-  writes. Group-key exchange, cross-tablet aggregate coordination, and aggregate execution remain
-  deferred. A bounded
+  writes. The compatible Fragment-v2 owner now retains that exact definition vector once after
+  requiring every tablet's projected destination shapes to derive the same value, preventing final
+  COUNT/AVG/variance descriptors from hiding input-type divergence. Group-key exchange,
+  cross-tablet aggregate coordination, and aggregate execution remain deferred. A bounded
   global row finalizer now validates complete streams and native schemas, applies stable all-type
   ordering followed by LIMIT, and emits exact payload-bounded native result batches. A distinct
   group-scoped grouped dispatch now

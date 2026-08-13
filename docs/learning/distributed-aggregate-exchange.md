@@ -372,6 +372,10 @@ Fragment-v2-derived definition vector. It validates outer and nested integrity b
 decode and owns fragmented reads/short writes. Cross-frame retry arbitration, worker execution,
 global merge/finalization, and a separate multi-key grouped exchange still remain, so production
 vector aggregate fragments continue to fail closed.
+The compatible Fragment-v2 snapshot now retains that definition vector once after deriving it under
+each tablet's exact destination schema and rejecting any cross-tablet difference. This matters when
+COUNT, AVG, or variance result descriptors hide the input type; later owners no longer need to
+reconstruct state authority from final output columns.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated

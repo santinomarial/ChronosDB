@@ -194,10 +194,12 @@ bind_compatible_distributed_vector_snapshot(
     DistributedVectorSnapshotBindingLimits limits = {});
 
 // Pins one compatible v1 authority set and owns one result schema that has been proved against
-// every plan-ordered dispatch. The schema is retained once rather than once per tablet; pairing any
-// exposed dispatch with result_schema() forms its authorized Fragment-v2 value. Returned views
-// remain valid until the move-only owner is moved or destroyed; the owner provides no internal
-// synchronization, so callers serialize movement and lifetime changes.
+// every plan-ordered dispatch. The schema is retained once rather than once per tablet. Ungrouped
+// plans additionally retain one exact cross-tablet-equal aggregate-definition vector; row and
+// grouped plans expose an empty vector. Pairing any exposed dispatch with result_schema() forms its
+// authorized Fragment-v2 value. Returned views remain valid until the move-only owner is moved or
+// destroyed; the owner provides no internal synchronization, so callers serialize movement and
+// lifetime changes.
 class CompatibleDistributedVectorSnapshotV2 {
 public:
   CompatibleDistributedVectorSnapshotV2() = delete;
@@ -211,13 +213,16 @@ public:
   [[nodiscard]] const manifest::TemporalDatabaseStorageSnapshot& snapshot() const noexcept;
   [[nodiscard]] std::span<const DistributedVectorFragmentDispatch> dispatches() const noexcept;
   [[nodiscard]] const DistributedVectorResultSchema& result_schema() const noexcept;
+  [[nodiscard]] std::span<const VectorAggregateDefinition> aggregate_definitions() const noexcept;
 
 private:
-  CompatibleDistributedVectorSnapshotV2(CompatibleDistributedVectorSnapshot snapshot,
-                                        DistributedVectorResultSchema&& result_schema) noexcept;
+  CompatibleDistributedVectorSnapshotV2(
+      CompatibleDistributedVectorSnapshot snapshot, DistributedVectorResultSchema&& result_schema,
+      std::vector<VectorAggregateDefinition>&& aggregate_definitions) noexcept;
 
   CompatibleDistributedVectorSnapshot snapshot_;
   DistributedVectorResultSchema result_schema_;
+  std::vector<VectorAggregateDefinition> aggregate_definitions_;
 
   friend common::Result<CompatibleDistributedVectorSnapshotV2>
   bind_compatible_distributed_vector_snapshot_v2(
