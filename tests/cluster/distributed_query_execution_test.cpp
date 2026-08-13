@@ -298,8 +298,8 @@ TEST(DistributedQueryExecutionTest, DeliversEveryTerminalResultExactlyOnceAndFin
   ASSERT_TRUE(input.has_value()) << input.error().to_string();
   const auto tablets =
       std::array{input->plan.fragments[0].tablet_id, input->plan.fragments[1].tablet_id};
-  auto execution = DistributedQueryExecution::create(
-      1U, std::move(input->plan), std::move(input->admissions), std::move(input->snapshot));
+  auto execution = DistributedQueryExecution::create_from_bound_snapshot(
+      1U, std::move(input->plan), std::move(input->snapshot));
   ASSERT_TRUE(execution.has_value()) << execution.error().to_string();
   EXPECT_EQ(execution->snapshot().snapshot().generation(), 1U);
   EXPECT_EQ(execution->finish().error().code(), common::StatusCode::kUnavailable);

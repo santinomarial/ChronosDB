@@ -38,6 +38,13 @@ public:
          std::vector<query::DistributedReadAdmission> admissions,
          query::CompatibleDistributedAggregateSnapshot snapshot,
          DistributedQueryExecutionLimits limits = {});
+  // Reconstructs the exact plan-ordered admissions already owned by the compatible dispatches.
+  // This is the preferred boundary after metadata-backed snapshot binding because it cannot pair
+  // the bound snapshot with a separately assembled admission vector.
+  [[nodiscard]] static common::Result<DistributedQueryExecution>
+  create_from_bound_snapshot(raft::NodeId source_node_id, query::DistributedAggregatePlan plan,
+                             query::CompatibleDistributedAggregateSnapshot snapshot,
+                             DistributedQueryExecutionLimits limits = {});
 
   [[nodiscard]] common::Result<DistributedQueryAttempt>
   begin_attempt(const schema::TabletId& tablet_id, TimePoint now);

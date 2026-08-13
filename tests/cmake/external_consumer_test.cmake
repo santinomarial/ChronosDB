@@ -182,6 +182,8 @@ int main() {
       &chronos::cluster::DistributedQuerySender::create;
   const auto create_distributed_query_execution =
       &chronos::cluster::DistributedQueryExecution::create;
+  const auto create_distributed_query_execution_from_bound_snapshot =
+      &chronos::cluster::DistributedQueryExecution::create_from_bound_snapshot;
   const auto create_distributed_query_tls_client =
       &chronos::cluster::DistributedQueryTlsClient::create;
   const auto create_distributed_query_tls_server =

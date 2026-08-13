@@ -82,7 +82,9 @@ exponential backoff.
 `DistributedQueryExecution` retains the compatible snapshot and one sender per tablet. It delivers
 each successful terminal exchange to the coordinator once, ignores nonterminal backoff for merge
 purposes, and reports only terminal sender failure. Coordinator `finish` therefore remains the sole
-complete-result boundary.
+complete-result boundary. Its preferred constructor derives the coordinator's owned admissions
+directly from the already-validated dispatches instead of accepting a second caller-assembled
+authority vector.
 `DistributedQueryTlsClient` owns one sender attempt's maintained TLS readiness, authenticates the
 server certificate principal for the immutable target before writing, applies exact handshake and
 exchange deadlines, and retains one fixed-bound canonical response for sender correlation.

@@ -83,6 +83,35 @@ DistributedQueryExecution::create(const raft::NodeId source_node_id,
   }
 }
 
+common::Result<DistributedQueryExecution> DistributedQueryExecution::create_from_bound_snapshot(
+    const raft::NodeId source_node_id, query::DistributedAggregatePlan plan,
+    query::CompatibleDistributedAggregateSnapshot snapshot,
+    const DistributedQueryExecutionLimits limits) {
+  try {
+    std::vector<query::DistributedReadAdmission> admissions;
+    admissions.reserve(snapshot.dispatches().size());
+    for (const query::DistributedAggregateFragmentDispatch& dispatch : snapshot.dispatches()) {
+      const query::DistributedAggregateFragment& fragment = dispatch.fragment;
+      admissions.push_back(
+          {.tablet_id = fragment.tablet_id,
+           .serving_node = fragment.serving_node,
+           .applied_position = fragment.applied_position,
+           .observed_leader_commit_position = fragment.observed_leader_commit_position,
+           .linearizable_barrier = fragment.linearizable_barrier});
+    }
+    return create(source_node_id, std::move(plan), std::move(admissions), std::move(snapshot),
+                  limits);
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "distributed query admission reconstruction allocation failed"});
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "distributed query admission reconstruction exceeds container limits"});
+  }
+}
+
 common::Result<std::size_t>
 DistributedQueryExecution::sender_index(const schema::TabletId& tablet_id) const {
   const auto found = sender_indexes_.find(tablet_id);
