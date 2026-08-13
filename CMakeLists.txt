@@ -1801,6 +1801,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/cseg_scan_allocation_failure_test.cpp
     tests/query/column_output_allocation_failure_test.cpp
     tests/query/database_cseg_scan_allocation_failure_test.cpp
+    tests/query/distributed_fragment_worker_allocation_failure_test.cpp
     tests/query/distributed_vector_aggregate_exchange_allocation_failure_test.cpp
     tests/query/distributed_vector_aggregate_state_allocation_failure_test.cpp
     tests/query/distributed_vector_fragment_v2_allocation_failure_test.cpp

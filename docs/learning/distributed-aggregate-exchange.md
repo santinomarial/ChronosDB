@@ -376,6 +376,12 @@ The compatible Fragment-v2 snapshot now retains that definition vector once afte
 each tablet's exact destination schema and rejecting any cross-tablet difference. This matters when
 COUNT, AVG, or variance result descriptors hide the input type; later owners no longer need to
 reconstruct state authority from final output columns.
+The proof-revalidated vector-v2 worker now consumes ungrouped plans through that authority shape.
+After repeating the complete local route, barrier, placement, Manifest, schema, and Raft-source
+gates, it resolves real temporal CSEG winners, applies the event-time predicate, materializes the
+exact projected input order, and accumulates one sufficient all-type state per definition. Empty
+tablets return the complete empty-state vector; local workers never apply final ordering, limit, or
+aggregate finalization. The authenticated service and cross-tablet coordinator still remain.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated

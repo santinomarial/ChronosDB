@@ -418,3 +418,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0381](0381-canonical-mergeable-vector-aggregate-state-bytes.md) | Canonical mergeable vector aggregate state bytes | accepted |
 | [0382](0382-schema-bound-ungrouped-vector-aggregate-exchange.md) | Schema-bound ungrouped vector aggregate exchange | accepted |
 | [0383](0383-owned-cross-tablet-vector-aggregate-definitions.md) | Owned cross-tablet vector aggregate definitions | accepted |
+| [0384](0384-proof-revalidated-vector-aggregate-worker-v2.md) | Proof-revalidated vector aggregate worker v2 | accepted |

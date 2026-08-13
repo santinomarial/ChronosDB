@@ -1085,8 +1085,12 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   vector, validates integrity and bounds before variable decode, and owns fragmented reads/short
   writes. The compatible Fragment-v2 owner now retains that exact definition vector once after
   requiring every tablet's projected destination shapes to derive the same value, preventing final
-  COUNT/AVG/variance descriptors from hiding input-type divergence. Group-key exchange,
-  cross-tablet aggregate coordination, and aggregate execution remain deferred. A bounded
+  COUNT/AVG/variance descriptors from hiding input-type divergence. A distinct proof-revalidated
+  vector-v2 aggregate worker now repeats every local authority gate, resolves real temporal CSEG
+  winners, applies the event predicate, materializes the exact projection, and returns one canonical
+  sufficient-state message per ungrouped definition without local final ordering, limit, or
+  finalization. Group-key exchange, authenticated transport, cross-tablet coordination, and global
+  finalization remain deferred. A bounded
   global row finalizer now validates complete streams and native schemas, applies stable all-type
   ordering followed by LIMIT, and emits exact payload-bounded native result batches. A distinct
   group-scoped grouped dispatch now

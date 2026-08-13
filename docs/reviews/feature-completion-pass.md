@@ -873,12 +873,19 @@ Focused executions passed:
   rejects any exact mismatch, and retains the shared vector once with the Manifest pin and result
   schema. This prevents COUNT/AVG/variance output descriptors from erasing input-type authority.
   Row and grouped plans expose no ungrouped definitions; worker execution and coordination remain.
+- Proof-revalidated vector aggregate worker continuation: the row worker's exact local authority and
+  real-CSEG winner gates now feed a distinct ungrouped all-type state path. It materializes the
+  fragment projection, applies event-time filtering, returns one canonical correlated sufficient
+  state per definition, and leaves final ORDER BY/LIMIT/finalization untouched. Real-CSEG focused
+  coverage proves COUNT/SUM/AVG/MAX and fail-closed loader/placement/width behavior; an empty-tablet
+  allocation matrix proves complete publication or resource exhaustion. Service/transport,
+  coordination, grouped exchange, and global finalization remain.
 
 The C++ files changed by the grouped-, vector-exchange-, Fragment-v2-, and vector-transport-v2
 continuations pass the repository-pinned clang-format 18 check. A full-tree check was also run and
 still reports pre-existing violations in the subscription protocol, subscription, multi-tablet
 checkpoint implementation, and focused subscription test files; these slices do not rewrite those
-unrelated files or claim a full-tree formatting pass. The full serialized 1,611-test developer
+unrelated files or claim a full-tree formatting pass. The full serialized 1,612-test developer
 suite, focused ASan/UBSan cases, and deterministic 10,000-run transport-v2, aggregate-state, and
 aggregate-exchange fuzz campaigns pass.
 Apple's sanitizer runtime does not support LeakSanitizer, so those sanitizer runs explicitly

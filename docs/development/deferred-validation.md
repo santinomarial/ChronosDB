@@ -239,7 +239,8 @@
 
 - The all-type vector aggregate nested state now has a schema-bound ungrouped query/tablet envelope.
   Its compatible Fragment-v2 owner retains one exact cross-tablet-equal aggregate definition vector.
-  Cross-frame retry arbitration, real-CSEG worker execution, cross-tablet merge/finalization,
+  A proof-revalidated worker now executes those states over real temporal CSEG winners. Authenticated
+  service/transport publication, cross-frame retry arbitration, cross-tablet merge/finalization,
   grouped-key transport, and process integration remain deferred.
 - The canonical fixed-width ungrouped aggregate exchange frame, exact codec, aligned in-memory
   state admission, and constant-storage fragmented/coalesced read plus short-write ownership are

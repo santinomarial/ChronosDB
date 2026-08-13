@@ -8,6 +8,7 @@
 #include "chronos/query/distributed.hpp"
 #include "chronos/query/distributed_fragment_dispatch.hpp"
 #include "chronos/query/distributed_grouped_exchange.hpp"
+#include "chronos/query/distributed_vector_aggregate_exchange.hpp"
 #include "chronos/query/distributed_vector_fragment_v2.hpp"
 #include "chronos/query/scalar_snapshot_scan.hpp"
 #include "chronos/query/temporal_cseg_snapshot.hpp"
@@ -152,8 +153,8 @@ public:
 
 // Reuses the complete worker authority and real-CSEG winner-resolution gates, then emits every
 // fragment-local row in source order under the Fragment-v2 result schema. Final ORDER BY and LIMIT
-// remain coordinator semantics and are deliberately not applied here. Aggregate modes fail closed
-// until their mergeable all-type state protocol exists.
+// remain coordinator semantics and are deliberately not applied here. Aggregate modes use the
+// distinct sufficient-state worker below and fail closed at this row-only API.
 [[nodiscard]] common::Result<DistributedVectorRowsWorkerResultV2>
 execute_distributed_vector_rows_fragment_v2(const DistributedVectorRowsWorkerRequestV2& request,
                                             DistributedVectorRowsChunkConsumerV2& consumer);
@@ -162,6 +163,50 @@ execute_distributed_vector_rows_fragment_v2(const DistributedVectorRowsWorkerReq
 execute_distributed_vector_rows_fragment_v2(const DistributedVectorRowsWorkerRequestV2& request,
                                             const DistributedTemporalPartBatchLoader& loader,
                                             DistributedVectorRowsChunkConsumerV2& consumer);
+
+struct DistributedVectorAggregateWorkerLimitsV2 {
+  DistributedAggregateWorkerLimits storage;
+  std::size_t maximum_query_memory_bytes{kDefaultDistributedVectorRowsWorkerMemoryBytesV2};
+  ScalarSnapshotScanLimits scan;
+  VectorChunkLimits projection;
+  std::size_t maximum_aggregates{kMaximumUngroupedAggregateWidth};
+  std::size_t maximum_variable_extremum_bytes{kDefaultAggregateExtremumByteLimit};
+  std::size_t maximum_retained_configuration_bytes{
+      kDefaultUngroupedAggregateConfigurationByteLimit};
+};
+
+struct DistributedVectorAggregateWorkerRequestV2 {
+  std::reference_wrapper<const DistributedVectorFragmentDispatchV2> dispatch;
+  std::reference_wrapper<const manifest::ManifestStorage> storage;
+  std::reference_wrapper<const manifest::TemporalDatabaseStorageSnapshot> snapshot;
+  std::reference_wrapper<const schema::SchemaLineage> lineage;
+  std::reference_wrapper<const raft::TabletPlacementMetadata> placement;
+  common::Uuid raft_group_id;
+  std::uint64_t local_node{};
+  std::optional<raft::ReadBarrier> local_linearizable_barrier;
+  DistributedVectorAggregateWorkerLimitsV2 limits;
+};
+
+struct DistributedVectorAggregateWorkerResultV2 {
+  // The exact local fragment-derived definitions authorize every corresponding message and remain
+  // available for encoding or comparison with the coordinator's pinned cross-tablet authority.
+  std::vector<VectorAggregateDefinition> definitions;
+  std::vector<DistributedVectorAggregateExchangeMessage> messages;
+  std::uint64_t input_rows{};
+};
+
+// Reuses the complete row-worker authority and real-CSEG winner-resolution gates, but accepts only
+// ungrouped aggregate plans. The exact projected shape is materialized before every supported
+// operation accumulates into sufficient mergeable state. One canonical correlated message is
+// returned per definition; tablet-local ORDER BY/LIMIT and finalization are never applied.
+[[nodiscard]] common::Result<DistributedVectorAggregateWorkerResultV2>
+execute_distributed_vector_aggregate_fragment_v2(
+    const DistributedVectorAggregateWorkerRequestV2& request);
+
+[[nodiscard]] common::Result<DistributedVectorAggregateWorkerResultV2>
+execute_distributed_vector_aggregate_fragment_v2(
+    const DistributedVectorAggregateWorkerRequestV2& request,
+    const DistributedTemporalPartBatchLoader& loader);
 
 } // namespace chronos::query
 

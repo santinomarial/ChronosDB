@@ -21,6 +21,7 @@
 #include <system_error>
 #include <unistd.h>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace chronos::query {
@@ -365,6 +366,87 @@ TEST(DistributedFragmentWorkerTest, ExecutesPinnedTemporalPartsAndReprovesLocalP
                 .code(),
             common::StatusCode::kNotSupported);
   EXPECT_EQ(aggregate_omitting_loader.calls(), 0U);
+
+  DistributedVectorFragmentDispatchV2 aggregate_dispatch = vector_dispatch;
+  aggregate_dispatch.dispatch.event_time_predicate =
+      cseg::EventTimePredicate{.lower = cseg::EventTimeBound{15, true}, .upper = std::nullopt};
+  aggregate_dispatch.dispatch.plan = {
+      .mode = DistributedVectorPlanMode::kUngroupedAggregate,
+      .aggregates = {{.operation = VectorAggregateOperation::kCountStar,
+                      .input_index = std::nullopt},
+                     {.operation = VectorAggregateOperation::kSum, .input_index = 1U},
+                     {.operation = VectorAggregateOperation::kAverage, .input_index = 1U},
+                     {.operation = VectorAggregateOperation::kMaximum, .input_index = 1U}},
+      .order_keys = {{.output_index = 2U,
+                      .direction = PhysicalSortDirection::kDescending,
+                      .null_placement = ScalarNullPlacement::kLast}},
+      .limit = 1U};
+  aggregate_dispatch.result_schema = {
+      .columns = {
+          {"count", schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value(), false},
+          {"sum", schema_value->columns()[1].type(), true},
+          {"average", schema::LogicalType::create(schema::LogicalTypeKind::kFloat64).value(), true},
+          {"maximum", schema_value->columns()[1].type(), true}}};
+  const auto aggregate_request = [&](const std::uint64_t local_node) {
+    return DistributedVectorAggregateWorkerRequestV2{.dispatch = std::cref(aggregate_dispatch),
+                                                     .storage = std::cref(*storage),
+                                                     .snapshot = std::cref(*snapshot),
+                                                     .lineage = std::cref(lineage),
+                                                     .placement = std::cref(placement),
+                                                     .raft_group_id = group_id,
+                                                     .local_node = local_node,
+                                                     .local_linearizable_barrier =
+                                                         raft::ReadBarrier{2U, 3U, 10U},
+                                                     .limits = {}};
+  };
+  auto aggregate_result = execute_distributed_vector_aggregate_fragment_v2(aggregate_request(11U));
+  ASSERT_TRUE(aggregate_result.has_value()) << aggregate_result.error().to_string();
+  EXPECT_EQ(aggregate_result->input_rows, 1U);
+  ASSERT_EQ(aggregate_result->definitions.size(), 4U);
+  ASSERT_EQ(aggregate_result->messages.size(), aggregate_result->definitions.size());
+  for (std::size_t ordinal = 0U; ordinal < aggregate_result->messages.size(); ++ordinal) {
+    const DistributedVectorAggregateExchangeMessage& message = aggregate_result->messages[ordinal];
+    EXPECT_EQ(message.query_id, aggregate_dispatch.dispatch.query_id);
+    EXPECT_EQ(message.tablet_id, aggregate_dispatch.dispatch.tablet_id);
+    EXPECT_EQ(message.sequence, ordinal + 1U);
+    EXPECT_EQ(message.aggregate_ordinal, ordinal);
+    EXPECT_EQ(message.terminal, ordinal + 1U == aggregate_result->messages.size());
+    EXPECT_TRUE(
+        encode_distributed_vector_aggregate_exchange_message(message, aggregate_result->definitions)
+            .has_value());
+  }
+  auto count = std::move(aggregate_result->messages[0].state).take_result();
+  auto sum = std::move(aggregate_result->messages[1].state).take_result();
+  auto average = std::move(aggregate_result->messages[2].state).take_result();
+  auto maximum = std::move(aggregate_result->messages[3].state).take_result();
+  ASSERT_TRUE(count.has_value());
+  ASSERT_TRUE(sum.has_value());
+  ASSERT_TRUE(average.has_value());
+  ASSERT_TRUE(maximum.has_value());
+  EXPECT_EQ(std::get<std::int64_t>(count->storage()), 1);
+  EXPECT_EQ(std::get<double>(sum->storage()), 2.5);
+  EXPECT_EQ(std::get<double>(average->storage()), 2.5);
+  EXPECT_EQ(std::get<double>(maximum->storage()), 2.5);
+
+  OmittingPartLoader incomplete_aggregate_loader;
+  EXPECT_EQ(execute_distributed_vector_aggregate_fragment_v2(aggregate_request(11U),
+                                                             incomplete_aggregate_loader)
+                .error()
+                .code(),
+            common::StatusCode::kCorruption);
+  EXPECT_EQ(incomplete_aggregate_loader.calls(), 1U);
+  OmittingPartLoader unavailable_aggregate_loader;
+  EXPECT_EQ(execute_distributed_vector_aggregate_fragment_v2(aggregate_request(12U),
+                                                             unavailable_aggregate_loader)
+                .error()
+                .code(),
+            common::StatusCode::kUnavailable);
+  EXPECT_EQ(unavailable_aggregate_loader.calls(), 0U);
+  auto narrow_aggregate_request = aggregate_request(11U);
+  narrow_aggregate_request.limits.maximum_aggregates = 3U;
+  EXPECT_EQ(
+      execute_distributed_vector_aggregate_fragment_v2(narrow_aggregate_request).error().code(),
+      common::StatusCode::kResourceExhausted);
 
   OmittingPartLoader incomplete_vector_loader;
   Float64RowsConsumer incomplete_rows;

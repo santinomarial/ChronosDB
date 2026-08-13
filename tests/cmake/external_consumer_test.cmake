@@ -1201,6 +1201,12 @@ int main() {
           chronos::query::DistributedVectorRowsChunkConsumerV2&);
   const ExecuteDistributedVectorRowsFragmentV2 execute_distributed_vector_rows_fragment_v2 =
       &chronos::query::execute_distributed_vector_rows_fragment_v2;
+  using ExecuteDistributedVectorAggregateFragmentV2 =
+      chronos::common::Result<chronos::query::DistributedVectorAggregateWorkerResultV2> (*)(
+          const chronos::query::DistributedVectorAggregateWorkerRequestV2&);
+  const ExecuteDistributedVectorAggregateFragmentV2
+      execute_distributed_vector_aggregate_fragment_v2 =
+          &chronos::query::execute_distributed_vector_aggregate_fragment_v2;
   using ExplainFunction = chronos::query::SqlResult<std::string> (*)(
       const chronos::query::BoundSqlSelect&);
   const ExplainFunction explain_select = &chronos::query::explain_sql_v1_select;
@@ -1498,6 +1504,7 @@ int main() {
                  execute_distributed_fragment != nullptr &&
                  execute_distributed_grouped_fragment != nullptr &&
                  execute_distributed_vector_rows_fragment_v2 != nullptr &&
+                 execute_distributed_vector_aggregate_fragment_v2 != nullptr &&
                  bind_select != nullptr && bind_create != nullptr && bind_insert != nullptr &&
                  materialize_insert != nullptr &&
                  evaluate_expression != nullptr &&
