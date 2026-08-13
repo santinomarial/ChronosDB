@@ -67,10 +67,11 @@ validate_limits(const DistributedVectorAggregateExchangeDecodeLimits& limits) {
   return common::Status::ok();
 }
 
-[[nodiscard]] common::Status
-validate_definitions(const std::span<const VectorAggregateDefinition> definitions,
-                     const std::uint32_t maximum_aggregates =
-                         distributed_vector_aggregate_exchange_format::kMaximumAggregates) {
+} // namespace
+
+common::Status validate_distributed_vector_aggregate_definitions(
+    const std::span<const VectorAggregateDefinition> definitions,
+    const std::uint32_t maximum_aggregates) {
   if (definitions.empty())
     return invalid("distributed vector aggregate definition list is empty");
   if (definitions.size() > distributed_vector_aggregate_exchange_format::kMaximumAggregates ||
@@ -90,10 +91,13 @@ validate_definitions(const std::span<const VectorAggregateDefinition> definition
   return common::Status::ok();
 }
 
+namespace {
+
 [[nodiscard]] common::Status
 validate_message(const DistributedVectorAggregateExchangeMessage& message,
                  const std::span<const VectorAggregateDefinition> expected_definitions) {
-  common::Status definitions_status = validate_definitions(expected_definitions);
+  common::Status definitions_status =
+      validate_distributed_vector_aggregate_definitions(expected_definitions);
   if (!definitions_status.is_ok())
     return definitions_status;
   if (message.query_id.is_nil() || message.tablet_id.uuid().is_nil())
@@ -242,7 +246,8 @@ bind_distributed_vector_ungrouped_aggregate_definitions(
       }
       definitions.push_back({.operation = aggregate.operation, .input = input});
     }
-    const common::Status definitions_status = validate_definitions(definitions);
+    const common::Status definitions_status =
+        validate_distributed_vector_aggregate_definitions(definitions);
     if (!definitions_status.is_ok())
       return common::make_unexpected(definitions_status);
     return definitions;
@@ -344,8 +349,8 @@ decode_distributed_vector_aggregate_exchange_message_exact(
   const common::Status limit_status = validate_limits(limits);
   if (!limit_status.is_ok())
     return common::make_unexpected(limit_status);
-  const common::Status definitions_status =
-      validate_definitions(expected_definitions, limits.maximum_aggregates);
+  const common::Status definitions_status = validate_distributed_vector_aggregate_definitions(
+      expected_definitions, limits.maximum_aggregates);
   if (!definitions_status.is_ok())
     return common::make_unexpected(definitions_status);
   if (bytes.size() < distributed_vector_aggregate_exchange_format::kMinimumFrameLength ||
@@ -398,8 +403,8 @@ DistributedVectorAggregateExchangeReader::consume(const common::ByteView bytes) 
     failure_ = limit_status;
     return common::make_unexpected(*failure_);
   }
-  const common::Status definitions_status =
-      validate_definitions(expected_definitions_, limits_.maximum_aggregates);
+  const common::Status definitions_status = validate_distributed_vector_aggregate_definitions(
+      expected_definitions_, limits_.maximum_aggregates);
   if (!definitions_status.is_ok()) {
     failure_ = definitions_status;
     return common::make_unexpected(*failure_);

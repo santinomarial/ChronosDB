@@ -32,6 +32,13 @@ inline constexpr std::size_t kMaximumFrameLength =
     kHeaderLength + distributed_vector_aggregate_state_format::kMaximumFrameLength + kTrailerLength;
 } // namespace distributed_vector_aggregate_exchange_format
 
+// Validates the complete fragment-bound definition authority even when no exchange payload is
+// present (for example, while decoding a correlated failure response).
+[[nodiscard]] common::Status validate_distributed_vector_aggregate_definitions(
+    std::span<const VectorAggregateDefinition> definitions,
+    std::uint32_t maximum_aggregates =
+        distributed_vector_aggregate_exchange_format::kMaximumAggregates);
+
 // Derives the exact state definitions authorized by one Fragment-v2 ungrouped aggregate shape.
 // The result schema is checked at the same boundary even though SQL names are not repeated in each
 // state frame.

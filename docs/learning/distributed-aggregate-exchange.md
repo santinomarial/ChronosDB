@@ -388,7 +388,11 @@ each scalar once. Failed retention or final publication leaves the prior owner r
 definition vector remains attached to the finalized scalars; the global result owner revalidates
 the ungrouped plan, every scalar shape, and output limits, then encodes every logical type into one
 canonical Native Protocol result payload. LIMIT zero produces a zero-row schema-bearing batch.
-Authenticated service/transport still remains.
+The first aggregate transport boundary reuses the canonical Fragment-v2 request but gives aggregate
+states a distinct `CHDVARP2` response. Its API requires the complete definition vector on every
+path and query resource authority for decode, while the header-first reader enforces nested and
+outer bounds before allocation. Authenticated receiver/service, retry, TLS/TCP, and process
+integration still remain.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated

@@ -60,6 +60,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/cluster/distributed_vector_query_transport.hpp>
 #include <chronos/cluster/distributed_vector_query_transport_v2.hpp>
 #include <chronos/cluster/distributed_vector_aggregate_finalization_v2.hpp>
+#include <chronos/cluster/distributed_vector_aggregate_query_transport_v2.hpp>
 #include <chronos/cluster/distributed_vector_row_finalization_v2.hpp>
 #include <chronos/cluster/distributed_vector_query_execution_v2.hpp>
 #include <chronos/cluster/distributed_vector_query_tcp_execution_v2.hpp>
