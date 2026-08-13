@@ -4,6 +4,7 @@
 #include "chronos/cluster/distributed_grouped_query_tcp_execution.hpp"
 #include "chronos/cluster/distributed_query_execution.hpp"
 #include "chronos/cluster/distributed_query_tcp_execution.hpp"
+#include "chronos/cluster/distributed_vector_aggregate_query_tcp_execution_v2.hpp"
 #include "chronos/cluster/raft_observation_tcp_batch_acquisition.hpp"
 #include "chronos/common/result.hpp"
 #include "chronos/manifest/temporal_publication.hpp"
@@ -58,6 +59,36 @@ create_replicated_follower_distributed_aggregate_query(
     query::DistributedAggregatePlan plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
     std::span<const query::DistributedAggregateFollowerReadAuthority> follower_authorities,
     const ReplicatedDistributedAggregateQueryConfig& config);
+
+struct ReplicatedDistributedVectorAggregateQueryConfigV2 {
+  raft::NodeId source_node_id{};
+  ReplicatedReadBarrier* read_barrier{};
+  raft::GroupId metadata_group_id;
+  std::reference_wrapper<const raft::MetadataCatalogSnapshot> catalog;
+  schema::TableId table_id;
+  std::span<const std::uint32_t> destination_column_ordinals;
+  std::optional<cseg::EventTimePredicate> event_time_predicate;
+  std::span<const cluster::DistributedQueryNodeTlsContext> tls_contexts;
+  network::ConnectionAuthenticator* authenticator{};
+  const cluster::ClusterNodePrincipalAuthorizer* node_authorizer{};
+  query::DistributedVectorSnapshotBindingLimits binding_limits;
+  cluster::DistributedQueryRouteResolutionLimits route_limits;
+  cluster::DistributedVectorAggregateQueryExecutionLimitsV2 execution_limits;
+  cluster::DistributedVectorAggregateQueryTlsLimitsV2 carrier_limits;
+  cluster::DistributedVectorAggregateFinalizationLimitsV2 finalization_limits;
+  std::chrono::milliseconds connect_timeout{5000};
+  std::optional<std::chrono::steady_clock::time_point> execution_deadline;
+};
+
+// Acquires exact leader-linearizable authority and transfers one caller-owned result schema through
+// compatible v2 binding, committed route resolution, aggregate execution, and TCP finalization.
+// Borrowed authentication/TLS policy must outlive the returned single-threaded owner.
+[[nodiscard]] common::Result<cluster::DistributedVectorAggregateQueryTcpExecutionV2>
+create_replicated_distributed_vector_aggregate_query_v2(
+    const query::DistributedVectorQueryPlan& plan,
+    manifest::TemporalDatabaseStorageSnapshot snapshot,
+    query::DistributedVectorResultSchema&& result_schema,
+    const ReplicatedDistributedVectorAggregateQueryConfigV2& config);
 
 struct ReplicatedDistributedGroupedFloat64QueryConfig {
   raft::NodeId source_node_id{};

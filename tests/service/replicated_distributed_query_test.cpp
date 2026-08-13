@@ -227,6 +227,18 @@ make_follower_plan(const schema::TabletId& tablet_id, const raft::LogIndex appli
                          .known_leader_commit_position = applied_position}}};
 }
 
+[[nodiscard]] query::DistributedVectorQueryPlan
+make_vector_aggregate_plan(const schema::TabletId& tablet_id,
+                           const raft::LogIndex applied_position) {
+  const query::DistributedAggregatePlan aggregate = make_plan(tablet_id, applied_position);
+  return {.query_id = aggregate.query_id,
+          .read_policy = aggregate.read_policy,
+          .fragments = aggregate.fragments,
+          .intent = {.mode = query::DistributedVectorPlanMode::kUngroupedAggregate,
+                     .aggregates = {{.operation = query::VectorAggregateOperation::kAverage,
+                                     .input_index = 1U}}}};
+}
+
 TEST(ReplicatedDistributedQueryTest, ConstructsOneAuthorityBoundTcpLifecycleOwner) {
   TemporaryDirectory directory;
   ASSERT_TRUE(std::filesystem::create_directory(directory.path() / "raft"));
@@ -320,6 +332,54 @@ TEST(ReplicatedDistributedQueryTest, ConstructsOneAuthorityBoundTcpLifecycleOwne
   ASSERT_EQ(execution->snapshot().dispatches().size(), 1U);
   EXPECT_EQ(execution->snapshot().dispatches().front().raft_group_id, tablet_group);
   EXPECT_EQ(execution->snapshot().snapshot().generation(), 1U);
+
+  const ReplicatedDistributedVectorAggregateQueryConfigV2 vector_config{
+      .source_node_id = 1U,
+      .read_barrier = std::addressof(*barrier),
+      .metadata_group_id = metadata_group,
+      .catalog = std::cref(catalog),
+      .table_id = schema_value.table_id(),
+      .destination_column_ordinals = projection,
+      .tls_contexts = tls_contexts,
+      .authenticator = std::addressof(authenticator),
+      .node_authorizer = std::addressof(authorizer),
+      .binding_limits = {.maximum_fragments = 1U,
+                         .maximum_total_projection_ordinals = projection.size()}};
+  auto vector_snapshot = publisher->snapshot();
+  ASSERT_TRUE(vector_snapshot.has_value()) << vector_snapshot.error().to_string();
+  auto vector_execution = create_replicated_distributed_vector_aggregate_query_v2(
+      make_vector_aggregate_plan(tablet_id, applied_position), std::move(*vector_snapshot),
+      query::DistributedVectorResultSchema{
+          .columns = {{"average", schema_value.columns()[1].type(), true}}},
+      vector_config);
+  ASSERT_TRUE(vector_execution.has_value()) << vector_execution.error().to_string();
+  EXPECT_EQ(vector_execution->state(),
+            cluster::DistributedVectorAggregateQueryTcpExecutionStateV2::kRunning);
+  ASSERT_EQ(vector_execution->snapshot().dispatches().size(), 1U);
+  EXPECT_EQ(vector_execution->snapshot().dispatches().front().raft_group_id, tablet_group);
+  EXPECT_EQ(vector_execution->snapshot().snapshot().generation(), 1U);
+  EXPECT_EQ(vector_execution->snapshot().result_schema().columns.front().name, "average");
+  ASSERT_EQ(vector_execution->snapshot().aggregate_definitions().size(), 1U);
+  EXPECT_EQ(vector_execution->snapshot().aggregate_definitions().front().operation,
+            query::VectorAggregateOperation::kAverage);
+  ASSERT_TRUE(vector_execution->snapshot().aggregate_definitions().front().input.has_value());
+  // Guarded by the assertion above.
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+  EXPECT_EQ(vector_execution->snapshot().aggregate_definitions().front().input->type,
+            schema_value.columns()[1].type());
+
+  auto row_snapshot = publisher->snapshot();
+  ASSERT_TRUE(row_snapshot.has_value());
+  auto row_plan = make_vector_aggregate_plan(tablet_id, applied_position);
+  row_plan.intent = {.mode = query::DistributedVectorPlanMode::kRows, .row_output_indices = {1U}};
+  EXPECT_EQ(create_replicated_distributed_vector_aggregate_query_v2(
+                row_plan, std::move(*row_snapshot),
+                query::DistributedVectorResultSchema{
+                    .columns = {{"value", schema_value.columns()[1].type(), true}}},
+                vector_config)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
 
   const ReplicatedDistributedGroupedFloat64QueryConfig grouped_config{
       .source_node_id = 1U,

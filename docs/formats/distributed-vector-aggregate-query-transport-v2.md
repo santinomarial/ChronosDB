@@ -7,7 +7,8 @@
 > deadline-bound client owns outbound TCP acquisition. A bounded TCP server owns listener admission
 > and per-connection TLS lifetimes. A production inbound service owns worker, receiver, and server
 > lifetimes while supplying fresh definition authority and proof-revalidated real-CSEG execution.
-> Broader process ownership remains separate.
+> Leader-linearizable outbound process construction is packaged; remote follower authority and
+> broader daemon ownership remain separate.
 
 All integers are unsigned little-endian. Reserved bytes are zero. CRC32C detects accidental damage
 and is not authentication. The nested payload retains its own independent checksums.
@@ -174,3 +175,14 @@ attempt receives the exact pinned definitions and shared query resource authorit
 cancellation destroys all live attempts and publishes nothing. After every sender closes
 successfully, the global scalar result is finalized exactly once into one retained canonical Native
 Protocol v1 `QUERY_RESULT` payload.
+
+## Production outbound composition
+
+`create_replicated_distributed_vector_aggregate_query_v2` is the synchronous
+leader-linearizable construction boundary. It acquires one correlated group authority vector,
+requires the same committed catalog to cover the metadata-group barrier, binds the exact Manifest
+snapshot and caller-owned result schema into one compatible v2 owner, resolves only that owner's
+immutable targets, and transfers the result through portable aggregate execution into the TCP
+scheduler. The call opens no socket; connection attempts begin only when the returned poll owner is
+driven. Catalog, read-barrier, and projection views are borrowed only during construction.
+Authentication, authorization, and node TLS policy are borrowed for the returned owner's lifetime.

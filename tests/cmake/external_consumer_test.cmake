@@ -425,6 +425,8 @@ int main() {
       &chronos::cluster::DistributedQueryTcpClient::begin;
   const auto create_distributed_query_tcp_execution =
       &chronos::cluster::DistributedQueryTcpExecution::create;
+  const auto create_replicated_vector_aggregate_query_v2 =
+      &chronos::service::create_replicated_distributed_vector_aggregate_query_v2;
   using AggregateQueryRouteResolver = chronos::common::Result<
       std::vector<chronos::cluster::DistributedQueryNodeRoute>> (*)(
       const chronos::raft::MetadataCatalogSnapshot&,
@@ -623,6 +625,7 @@ int main() {
   (void)start_distributed_query_tcp_server;
   (void)begin_distributed_query_tcp_client;
   (void)create_distributed_query_tcp_execution;
+  (void)create_replicated_vector_aggregate_query_v2;
   (void)resolve_aggregate_query_routes;
   (void)resolve_vector_query_routes;
   (void)encode_raft_observation_request;

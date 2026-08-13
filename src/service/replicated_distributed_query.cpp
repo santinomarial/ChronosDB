@@ -96,6 +96,28 @@ create_tcp_execution(query::DistributedAggregatePlan plan,
                               .maximum_rebindings = config.maximum_rebindings});
 }
 
+[[nodiscard]] common::Result<cluster::DistributedVectorAggregateQueryTcpExecutionV2>
+create_vector_aggregate_tcp_execution(
+    query::CompatibleDistributedVectorSnapshotV2 compatible,
+    const ReplicatedDistributedVectorAggregateQueryConfigV2& config) {
+  auto routes = cluster::resolve_distributed_query_node_routes(
+      config.catalog.get(), compatible.dispatches(), config.tls_contexts, config.route_limits);
+  if (!routes.has_value())
+    return common::make_unexpected(routes.error());
+  auto execution = cluster::DistributedVectorAggregateQueryExecutionV2::create(
+      config.source_node_id, std::move(compatible), config.execution_limits);
+  if (!execution.has_value())
+    return common::make_unexpected(execution.error());
+  return cluster::DistributedVectorAggregateQueryTcpExecutionV2::create(
+      std::move(*execution), {.authenticator = config.authenticator,
+                              .node_authorizer = config.node_authorizer,
+                              .routes = std::move(*routes),
+                              .carrier_limits = config.carrier_limits,
+                              .finalization_limits = config.finalization_limits,
+                              .connect_timeout = config.connect_timeout,
+                              .execution_deadline = config.execution_deadline});
+}
+
 [[nodiscard]] common::Result<cluster::DistributedGroupedQueryTcpExecution>
 create_grouped_tcp_execution(query::CompatibleDistributedAggregateSnapshot compatible,
                              const ReplicatedDistributedGroupedFloat64QueryConfig& config) {
@@ -154,6 +176,40 @@ common::Result<cluster::DistributedQueryTcpExecution> create_replicated_distribu
   if (!compatible.has_value())
     return common::make_unexpected(compatible.error());
   return create_tcp_execution(std::move(plan), std::move(*compatible), config);
+}
+
+common::Result<cluster::DistributedVectorAggregateQueryTcpExecutionV2>
+create_replicated_distributed_vector_aggregate_query_v2(
+    const query::DistributedVectorQueryPlan& plan,
+    manifest::TemporalDatabaseStorageSnapshot snapshot,
+    query::DistributedVectorResultSchema&& result_schema,
+    const ReplicatedDistributedVectorAggregateQueryConfigV2& config) {
+  const common::Status config_status = validate_config(config);
+  if (!config_status.is_ok())
+    return common::make_unexpected(config_status);
+  if (plan.read_policy.consistency != query::DistributedReadConsistency::kLeaderLinearizable ||
+      plan.read_policy.maximum_staleness_positions.has_value() ||
+      plan.intent.mode != query::DistributedVectorPlanMode::kUngroupedAggregate) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInvalidArgument,
+                       "replicated vector aggregate query v2 requires leader-linearizable "
+                       "ungrouped aggregate policy"});
+  }
+
+  auto authority = acquire_catalog_authority(config);
+  if (!authority.has_value())
+    return common::make_unexpected(authority.error());
+  auto compatible = query::bind_group_backed_distributed_vector_snapshot_v2(
+      plan, std::move(snapshot),
+      {.catalog = config.catalog,
+       .table_id = config.table_id,
+       .group_authorities = *authority,
+       .destination_column_ordinals = config.destination_column_ordinals,
+       .event_time_predicate = config.event_time_predicate},
+      std::move(result_schema), config.binding_limits);
+  if (!compatible.has_value())
+    return common::make_unexpected(compatible.error());
+  return create_vector_aggregate_tcp_execution(std::move(*compatible), config);
 }
 
 common::Result<cluster::DistributedGroupedQueryTcpExecution>

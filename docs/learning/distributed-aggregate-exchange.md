@@ -421,7 +421,10 @@ bounds every wait by query and retry deadlines, tears down all survivors on fail
 and publishes one globally finalized Native Protocol result only after every sender succeeds.
 Metadata-backed v2 binding now carries canonical leader or correlated follower authority through
 the same committed schema/placement/group join into one owned result schema and exact cross-tablet
-aggregate definitions. Broader process integration remains.
+aggregate definitions. The packaged leader-linearizable service boundary now transfers that owner
+through committed route resolution, portable aggregate execution, TCP scheduling, and final Native
+result publication without exposing an intermediate correlation vector. Remote follower lifecycle
+composition remains.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated
