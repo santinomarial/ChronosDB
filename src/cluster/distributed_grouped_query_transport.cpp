@@ -55,6 +55,10 @@ inline constexpr std::size_t kMinimumDispatchSize =
   return {common::StatusCode::kResourceExhausted, message};
 }
 
+[[nodiscard]] common::Status unauthenticated(const char* message) {
+  return {common::StatusCode::kUnauthenticated, message};
+}
+
 [[nodiscard]] bool zero(const common::ByteView bytes) {
   return std::ranges::all_of(bytes, [](const std::byte value) { return value == std::byte{0U}; });
 }
@@ -223,6 +227,19 @@ inline constexpr std::size_t kMinimumDispatchSize =
     return common::make_unexpected(corruption("grouped query response header is invalid"));
   }
   return static_cast<std::size_t>(*total_length);
+}
+
+[[nodiscard]] common::Result<query::DistributedGroupedFloat64WorkerResult>
+execute_worker(DistributedGroupedQueryWorkerService& worker,
+               const query::DistributedGroupedFloat64FragmentDispatch& dispatch) noexcept {
+  try {
+    return worker.execute(dispatch);
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("grouped query worker allocation failed"));
+  } catch (...) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInternal, "grouped query worker threw"});
+  }
 }
 
 } // namespace
@@ -708,6 +725,136 @@ std::size_t DistributedGroupedQueryFrameWriteCursor::written_bytes() const noexc
 
 bool DistributedGroupedQueryFrameWriteCursor::complete() const noexcept {
   return written_bytes_ == encoded_frame_.size();
+}
+
+DistributedGroupedQueryReceiver::DistributedGroupedQueryReceiver(
+    DistributedGroupedQueryReceiverConfig config) noexcept
+    : config_(config) {}
+
+common::Result<DistributedGroupedQueryReceiver>
+DistributedGroupedQueryReceiver::create(const DistributedGroupedQueryReceiverConfig config) {
+  if (config.local_node_id == 0U || config.authorizer == nullptr || config.worker == nullptr ||
+      config.maximum_response_frames == 0U ||
+      config.maximum_response_frames > query::kMaximumDistributedCoordinatorMessages) {
+    return common::make_unexpected(invalid("grouped query receiver configuration is invalid"));
+  }
+  return DistributedGroupedQueryReceiver{config};
+}
+
+common::Result<std::vector<std::vector<std::byte>>> DistributedGroupedQueryReceiver::receive(
+    const common::ByteView request_bytes,
+    const network::PeerAuthenticationResult& authenticated_peer) {
+  if (!authenticated_peer.authorized || authenticated_peer.principal_id == 0U)
+    return common::make_unexpected(
+        unauthenticated("grouped query requires an authenticated principal"));
+  auto request = decode_distributed_grouped_query_request_v1(request_bytes);
+  if (!request.has_value())
+    return common::make_unexpected(request.error());
+  auto authorized =
+      config_.authorizer->authorize_node(authenticated_peer.principal_id, request->source_node_id);
+  if (!authorized.has_value())
+    return common::make_unexpected(authorized.error());
+  if (!*authorized)
+    return common::make_unexpected(
+        unauthenticated("authenticated principal cannot claim grouped query source node"));
+  if (request->target_node_id != config_.local_node_id) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kUnavailable, "grouped query targets a different node"});
+  }
+
+  const auto& fragment = request->dispatch.fragment.aggregate;
+  const common::Uuid query_id = fragment.query_id;
+  const schema::TabletId tablet_id = fragment.tablet_id;
+  auto result = execute_worker(*config_.worker, request->dispatch);
+  if (!result.has_value()) {
+    std::optional<DistributedQueryLeaderHint> leader_hint;
+    if (result.error().code() == common::StatusCode::kUnavailable &&
+        config_.leader_hint_provider != nullptr) {
+      auto resolved = config_.leader_hint_provider->current_leader_hint(
+          tablet_id, request->dispatch.raft_group_id);
+      if (!resolved.has_value())
+        return common::make_unexpected(resolved.error());
+      leader_hint = std::move(*resolved);
+    }
+    auto encoded =
+        encode_distributed_grouped_query_response_v1({.source_node_id = config_.local_node_id,
+                                                      .target_node_id = request->source_node_id,
+                                                      .query_id = query_id,
+                                                      .tablet_id = tablet_id,
+                                                      .status_code = result.error().code(),
+                                                      .leader_hint = std::move(leader_hint)});
+    if (!encoded.has_value())
+      return common::make_unexpected(encoded.error());
+    try {
+      std::vector<std::vector<std::byte>> frames;
+      frames.push_back(std::move(*encoded));
+      return frames;
+    } catch (const std::bad_alloc&) {
+      return common::make_unexpected(exhausted("grouped query response allocation failed"));
+    }
+  }
+
+  try {
+    std::vector<std::vector<std::byte>> frames;
+    if (const auto* messages =
+            std::get_if<std::vector<query::GroupedFloat64ExchangeMessage>>(&*result)) {
+      if (messages->empty())
+        return common::make_unexpected(invalid("grouped query worker returned an empty stream"));
+      if (messages->size() > config_.maximum_response_frames) {
+        auto encoded = encode_distributed_grouped_query_response_v1(
+            {.source_node_id = config_.local_node_id,
+             .target_node_id = request->source_node_id,
+             .query_id = query_id,
+             .tablet_id = tablet_id,
+             .status_code = common::StatusCode::kResourceExhausted});
+        if (!encoded.has_value())
+          return common::make_unexpected(encoded.error());
+        frames.push_back(std::move(*encoded));
+        return frames;
+      }
+      frames.reserve(messages->size());
+      for (std::size_t index = 0U; index < messages->size(); ++index) {
+        const auto& message = (*messages)[index];
+        const bool last = index + 1U == messages->size();
+        if (message.query_id != query_id || message.tablet_id != tablet_id ||
+            message.sequence != index + 1U || message.terminal != last) {
+          return common::make_unexpected(
+              invalid("grouped query worker stream is not correlated and contiguous"));
+        }
+        auto encoded = encode_distributed_grouped_query_response_v1(
+            {.source_node_id = config_.local_node_id,
+             .target_node_id = request->source_node_id,
+             .query_id = query_id,
+             .tablet_id = tablet_id,
+             .status_code = common::StatusCode::kOk,
+             .payload = DistributedGroupedQueryResponsePayload{message}});
+        if (!encoded.has_value())
+          return common::make_unexpected(encoded.error());
+        frames.push_back(std::move(*encoded));
+      }
+    } else {
+      const auto& terminal = std::get<query::GroupedExchangeTerminalMessage>(*result);
+      if (terminal.query_id != query_id || terminal.tablet_id != tablet_id ||
+          terminal.sequence != 1U) {
+        return common::make_unexpected(invalid("grouped query worker terminal is not correlated"));
+      }
+      auto encoded = encode_distributed_grouped_query_response_v1(
+          {.source_node_id = config_.local_node_id,
+           .target_node_id = request->source_node_id,
+           .query_id = query_id,
+           .tablet_id = tablet_id,
+           .status_code = common::StatusCode::kOk,
+           .payload = DistributedGroupedQueryResponsePayload{terminal}});
+      if (!encoded.has_value())
+        return common::make_unexpected(encoded.error());
+      frames.push_back(std::move(*encoded));
+    }
+    return frames;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("grouped query response allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("grouped query response exceeds limits"));
+  }
 }
 
 } // namespace chronos::cluster

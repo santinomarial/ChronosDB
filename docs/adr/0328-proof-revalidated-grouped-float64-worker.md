@@ -49,7 +49,9 @@ multi-key/non-FLOAT64 state, ordering/top-N/LIMIT, cancellation interruption, an
 measurement evidence remain incomplete. No Phase 16 exit gate is claimed.
 
 ADR 0330 subsequently supplies distinct canonical grouped request/response codecs. Authenticated
-receiver dispatch, stream ownership, and packaged execution remain incomplete.
+receiver dispatch and bounded stream ownership subsequently follow in ADRs 0331 and 0332.
+Production service adaptation, network lifecycle ownership, and packaged execution remain
+incomplete.
 
 Invariants 4–6, 10, 11, 14, 15, and 18 apply.
 

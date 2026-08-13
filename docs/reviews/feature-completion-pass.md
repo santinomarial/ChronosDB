@@ -498,6 +498,11 @@ Focused executions passed:
   sticky damage, checksum-valid oversized header rejection, and move-only checked short writes. The
   installed-consumer gate covers both readers and the cursor. Authenticated receiver, sender, and
   packaged multi-tablet grouped execution are not claimed.
+- Authenticated grouped-receiver continuation: 1 new case and all 6 grouped transport cases passed
+  for auth/source/target ordering, complete two-part and terminal-only publication, exact committed
+  leader-hint lookup, contiguous-sequence rejection, exception containment, and response-frame
+  exhaustion. The installed-consumer gate covers receiver construction. Production real-CSEG
+  service adaptation and multi-response TLS/TCP/sender ownership are not claimed.
 
 The C++ files changed by the grouped-exchange continuations pass the repository-pinned clang-format
 18 check. A full-tree check was also run and still reports pre-existing violations in the

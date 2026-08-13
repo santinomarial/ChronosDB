@@ -10,6 +10,7 @@ static_assert(
     !std::is_move_constructible_v<chronos::cluster::DistributedGroupedQueryResponseReader>);
 static_assert(
     std::is_move_constructible_v<chronos::cluster::DistributedGroupedQueryFrameWriteCursor>);
+static_assert(std::is_abstract_v<chronos::cluster::DistributedGroupedQueryWorkerService>);
 
 namespace {
 [[maybe_unused]] const auto kEncodeRequest =

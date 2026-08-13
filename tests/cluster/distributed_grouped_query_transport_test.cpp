@@ -9,6 +9,7 @@
 #include <gtest/gtest.h>
 #include <optional>
 #include <ranges>
+#include <stdexcept>
 #include <variant>
 #include <vector>
 
@@ -59,6 +60,58 @@ template <typename Id> [[nodiscard]] Id id(const std::uint8_t seed) {
           .partial = aggregate,
           .terminal = true};
 }
+
+class Authorizer final : public ClusterNodePrincipalAuthorizer {
+public:
+  common::Result<bool> authorize_node(const std::uint64_t principal_id,
+                                      const raft::NodeId claimed_node_id) const override {
+    return principal_id == 91U && claimed_node_id == 1U;
+  }
+};
+
+class GroupedWorker final : public DistributedGroupedQueryWorkerService {
+public:
+  common::Result<query::DistributedGroupedFloat64WorkerResult>
+  execute(const query::DistributedGroupedFloat64FragmentDispatch&) override {
+    ++calls;
+    if (throw_failure)
+      throw std::runtime_error{"grouped worker failure"};
+    if (failure.has_value())
+      return common::make_unexpected(*failure);
+    if (terminal_only) {
+      return query::DistributedGroupedFloat64WorkerResult{query::GroupedExchangeTerminalMessage{
+          .query_id = uuid(1U), .tablet_id = id<schema::TabletId>(4U), .sequence = 1U}};
+    }
+    auto first = partial();
+    first.sequence = wrong_sequence ? 3U : 1U;
+    first.terminal = false;
+    auto second = partial();
+    return query::DistributedGroupedFloat64WorkerResult{
+        std::vector<query::GroupedFloat64ExchangeMessage>{first, second}};
+  }
+
+  std::size_t calls{};
+  std::optional<common::Status> failure;
+  bool terminal_only{};
+  bool wrong_sequence{};
+  bool throw_failure{};
+};
+
+class LeaderHintProvider final : public DistributedQueryLeaderHintProvider {
+public:
+  common::Result<std::optional<DistributedQueryLeaderHint>>
+  current_leader_hint(const schema::TabletId& tablet_id,
+                      const raft::GroupId& group_id) const override {
+    ++calls;
+    last_tablet = tablet_id;
+    last_group = group_id;
+    return DistributedQueryLeaderHint{3U, 9U};
+  }
+
+  mutable std::size_t calls{};
+  mutable std::optional<schema::TabletId> last_tablet;
+  mutable std::optional<raft::GroupId> last_group;
+};
 
 void store_u16(std::vector<std::byte>& bytes, const std::size_t offset, const std::uint16_t value) {
   for (std::size_t index = 0U; index < sizeof(value); ++index)
@@ -405,6 +458,84 @@ TEST(DistributedGroupedQueryStreamTest, FailureIsStickyAndWriteCursorOwnsOneFram
   auto response_cursor = DistributedGroupedQueryFrameWriteCursor::create(response);
   ASSERT_TRUE(response_cursor.has_value());
   EXPECT_TRUE(std::ranges::equal(response_cursor->pending_write(), response));
+}
+
+TEST(DistributedGroupedQueryReceiverTest, AuthenticatesAndPublishesOnlyCompleteWorkerStreams) {
+  Authorizer authorizer;
+  GroupedWorker worker;
+  LeaderHintProvider hint_provider;
+  auto receiver = DistributedGroupedQueryReceiver::create({.local_node_id = 2U,
+                                                           .authorizer = &authorizer,
+                                                           .worker = &worker,
+                                                           .leader_hint_provider = &hint_provider});
+  ASSERT_TRUE(receiver.has_value()) << receiver.error().to_string();
+  const auto request = encode_distributed_grouped_query_request_v1({1U, 2U, dispatch()}).value();
+
+  EXPECT_EQ(receiver->receive(request, {.authorized = false, .principal_id = 91U}).error().code(),
+            common::StatusCode::kUnauthenticated);
+  EXPECT_EQ(receiver->receive(request, {.authorized = true, .principal_id = 92U}).error().code(),
+            common::StatusCode::kUnauthenticated);
+  const auto misrouted = encode_distributed_grouped_query_request_v1({1U, 3U, dispatch()}).value();
+  EXPECT_EQ(receiver->receive(misrouted, {.authorized = true, .principal_id = 91U}).error().code(),
+            common::StatusCode::kUnavailable);
+  EXPECT_EQ(worker.calls, 0U);
+
+  const auto success = receiver->receive(request, {.authorized = true, .principal_id = 91U});
+  ASSERT_TRUE(success.has_value()) << success.error().to_string();
+  ASSERT_EQ(success->size(), 2U);
+  for (std::size_t index = 0U; index < success->size(); ++index) {
+    const auto decoded = decode_distributed_grouped_query_response_v1((*success)[index]);
+    ASSERT_TRUE(decoded.has_value()) << index;
+    const auto* message = std::get_if<query::GroupedFloat64ExchangeMessage>(&*decoded->payload);
+    ASSERT_NE(message, nullptr);
+    EXPECT_EQ(message->sequence, index + 1U);
+    EXPECT_EQ(message->terminal, index + 1U == success->size());
+  }
+
+  worker.terminal_only = true;
+  const auto terminal = receiver->receive(request, {.authorized = true, .principal_id = 91U});
+  ASSERT_TRUE(terminal.has_value());
+  ASSERT_EQ(terminal->size(), 1U);
+  const auto decoded_terminal = decode_distributed_grouped_query_response_v1(terminal->front());
+  ASSERT_TRUE(decoded_terminal.has_value());
+  EXPECT_TRUE(
+      std::holds_alternative<query::GroupedExchangeTerminalMessage>(*decoded_terminal->payload));
+
+  worker.terminal_only = false;
+  worker.failure = common::Status{common::StatusCode::kUnavailable, "placement changed"};
+  const auto failed = receiver->receive(request, {.authorized = true, .principal_id = 91U});
+  ASSERT_TRUE(failed.has_value());
+  ASSERT_EQ(failed->size(), 1U);
+  const auto decoded_failure = decode_distributed_grouped_query_response_v1(failed->front());
+  ASSERT_TRUE(decoded_failure.has_value());
+  EXPECT_EQ(decoded_failure->status_code, common::StatusCode::kUnavailable);
+  EXPECT_EQ(decoded_failure->leader_hint, DistributedQueryLeaderHint(3U, 9U));
+  EXPECT_EQ(hint_provider.calls, 1U);
+  EXPECT_EQ(hint_provider.last_tablet, id<schema::TabletId>(4U));
+  EXPECT_EQ(hint_provider.last_group, uuid(9U));
+
+  worker.failure.reset();
+  worker.wrong_sequence = true;
+  EXPECT_EQ(receiver->receive(request, {.authorized = true, .principal_id = 91U}).error().code(),
+            common::StatusCode::kInvalidArgument);
+  worker.wrong_sequence = false;
+  worker.throw_failure = true;
+  const auto threw = receiver->receive(request, {.authorized = true, .principal_id = 91U});
+  ASSERT_TRUE(threw.has_value());
+  EXPECT_EQ(decode_distributed_grouped_query_response_v1(threw->front())->status_code,
+            common::StatusCode::kInternal);
+
+  worker.throw_failure = false;
+  auto bounded = DistributedGroupedQueryReceiver::create({.local_node_id = 2U,
+                                                          .authorizer = &authorizer,
+                                                          .worker = &worker,
+                                                          .maximum_response_frames = 1U});
+  ASSERT_TRUE(bounded.has_value());
+  const auto exhausted = bounded->receive(request, {.authorized = true, .principal_id = 91U});
+  ASSERT_TRUE(exhausted.has_value());
+  ASSERT_EQ(exhausted->size(), 1U);
+  EXPECT_EQ(decode_distributed_grouped_query_response_v1(exhausted->front())->status_code,
+            common::StatusCode::kResourceExhausted);
 }
 
 } // namespace

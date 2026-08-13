@@ -366,3 +366,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0329](0329-packaged-authority-bound-grouped-dispatch.md) | Packaged authority-bound grouped dispatch | accepted |
 | [0330](0330-distinct-grouped-float64-query-transport.md) | Distinct grouped FLOAT64 query transport | accepted |
 | [0331](0331-bounded-grouped-query-partial-io.md) | Bounded grouped query partial I/O | accepted |
+| [0332](0332-authenticated-grouped-query-receiver.md) | Authenticated grouped query receiver | accepted |

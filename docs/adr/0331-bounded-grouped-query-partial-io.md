@@ -42,9 +42,10 @@ move-from-complete, damaged-frame, request, and response cursor behavior. Togeth
 codec cases, all five grouped transport cases pass. The installed-consumer gate references both
 readers and the cursor.
 
-Authenticated receiver/service dispatch, multi-response closure, retry/correlation state, TLS/TCP
-ownership, packaged multi-tablet grouped execution, and broad fault/measurement evidence remain
-incomplete. No Phase 16 exit gate is claimed.
+ADR 0332 subsequently supplies authenticated receiver/service dispatch. Production service
+adaptation, multi-response closure, retry/correlation state, TLS/TCP ownership, packaged
+multi-tablet grouped execution, and broad fault/measurement evidence remain incomplete. No Phase 16
+exit gate is claimed.
 
 Invariants 6, 10, 11, 14, 15, and 18 apply.
 

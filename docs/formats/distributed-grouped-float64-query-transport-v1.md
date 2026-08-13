@@ -1,7 +1,7 @@
 # Distributed Grouped FLOAT64 Query Transport v1
 
 > **Status:** accepted with implemented exact request/response codecs and bounded partial-I/O
-> ownership. Authentication and worker dispatch remain separate follow-up boundaries.
+> ownership and authenticated receiver dispatch. TLS and socket lifecycle remain separate.
 
 This cluster protocol carries one group-scoped grouped FLOAT64 fragment dispatch to a remote worker
 and correlates each returned grouped partial, empty-stream terminal, or failure. It is distinct from
@@ -83,7 +83,12 @@ consume at most one frame, leave coalesced successors caller-owned, and fail sti
 write cursor accepts only an exact grouped request or response and exposes its checked unwritten
 suffix; moving leaves the source complete.
 
-These primitives do not define multiple-response connection closure, retry arbitration,
-authentication, authorization, receiver service ownership, TLS, or TCP. A future authenticated
-receiver must authorize the claimed source, exact-match the target, invoke the proof-revalidating
-grouped worker, and preserve response sequence order without publishing partial query success.
+The implemented receiver requires carrier-supplied peer authentication, authorizes the claimed
+source, exact-matches the local target, invokes an embedding-owned grouped worker once, and returns
+only a completely validated and encoded response-frame vector. It enforces correlated contiguous
+sequence and terminal placement under a configured frame bound. Unavailable worker failures may
+acquire an advisory leader hint from the committed metadata provider only after those trust gates.
+
+These primitives do not define multiple-response connection closure, retry arbitration, TLS, TCP,
+or a production real-CSEG service adapter. The network owner must preserve response order and must
+not publish partial query success if the connection fails mid-stream.

@@ -31,8 +31,9 @@ dispatch/exchange/terminal integrity and semantic checks remain authoritative. C
 authentication.
 
 This decision initially implemented exact value-owned codecs only. ADR 0331 subsequently supplies
-fixed-storage stream readers and move-only write ownership. Authenticated receiver dispatch,
-multi-response connection closure, retries, TLS, and TCP lifecycle ownership remain separate.
+fixed-storage stream readers and move-only write ownership, and ADR 0332 supplies the authenticated
+in-process receiver dispatch boundary. Multi-response connection closure, retries, TLS, and TCP
+lifecycle ownership remain separate.
 
 ## Consequences and validation
 
@@ -47,7 +48,7 @@ confusion, checksum-valid future versions, nested request/response damage, misma
 and checksum-valid payload-kind substitution. The public header is self-contained and the
 installed-consumer gate references both directions.
 
-Authenticated receiver/service ownership, sender/coordinator integration, packaged multi-tablet
+Production real-CSEG service adaptation, sender/coordinator integration, packaged multi-tablet
 grouped execution, and broad fault/measurement evidence remain incomplete. No Phase 16 exit gate is
 claimed.
 

@@ -5,6 +5,7 @@
 #include "chronos/common/bytes.hpp"
 #include "chronos/common/result.hpp"
 #include "chronos/query/distributed_fragment_dispatch.hpp"
+#include "chronos/query/distributed_fragment_worker.hpp"
 #include "chronos/query/distributed_grouped_exchange.hpp"
 #include "chronos/raft/types.hpp"
 
@@ -137,6 +138,40 @@ private:
   explicit DistributedGroupedQueryFrameWriteCursor(std::vector<std::byte> encoded_frame) noexcept;
   std::vector<std::byte> encoded_frame_;
   std::size_t written_bytes_{};
+};
+
+// Embedding-owned synchronous grouped execution boundary. Implementations acquire current local
+// authority and invoke the proof-revalidating grouped worker. They must outlive the receiver.
+class DistributedGroupedQueryWorkerService {
+public:
+  virtual ~DistributedGroupedQueryWorkerService() = default;
+  [[nodiscard]] virtual common::Result<query::DistributedGroupedFloat64WorkerResult>
+  execute(const query::DistributedGroupedFloat64FragmentDispatch& dispatch) = 0;
+};
+
+struct DistributedGroupedQueryReceiverConfig {
+  raft::NodeId local_node_id{};
+  const ClusterNodePrincipalAuthorizer* authorizer{};
+  DistributedGroupedQueryWorkerService* worker{};
+  const DistributedQueryLeaderHintProvider* leader_hint_provider{};
+  std::size_t maximum_response_frames{1024U};
+};
+
+// Authenticates and authorizes before worker invocation, validates the complete grouped worker
+// stream, then publishes all encoded response frames together. No partial response vector escapes.
+class DistributedGroupedQueryReceiver {
+public:
+  DistributedGroupedQueryReceiver() = delete;
+
+  [[nodiscard]] static common::Result<DistributedGroupedQueryReceiver>
+  create(DistributedGroupedQueryReceiverConfig config);
+  [[nodiscard]] common::Result<std::vector<std::vector<std::byte>>>
+  receive(common::ByteView request_bytes,
+          const network::PeerAuthenticationResult& authenticated_peer);
+
+private:
+  explicit DistributedGroupedQueryReceiver(DistributedGroupedQueryReceiverConfig config) noexcept;
+  DistributedGroupedQueryReceiverConfig config_;
 };
 
 } // namespace chronos::cluster

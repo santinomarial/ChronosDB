@@ -908,6 +908,8 @@ int main() {
       &chronos::cluster::DistributedGroupedQueryResponseReader::consume;
   const auto create_distributed_grouped_query_cursor =
       &chronos::cluster::DistributedGroupedQueryFrameWriteCursor::create;
+  const auto create_distributed_grouped_query_receiver =
+      &chronos::cluster::DistributedGroupedQueryReceiver::create;
   using ExecuteDistributedFragment = chronos::common::Result<chronos::query::ExchangeMessage> (*)(
       const chronos::query::DistributedAggregateWorkerRequest&);
   const ExecuteDistributedFragment execute_distributed_fragment =
@@ -1196,6 +1198,7 @@ int main() {
                  consume_distributed_grouped_query_request != nullptr &&
                  consume_distributed_grouped_query_response != nullptr &&
                  create_distributed_grouped_query_cursor != nullptr &&
+                 create_distributed_grouped_query_receiver != nullptr &&
                  execute_distributed_fragment != nullptr &&
                  execute_distributed_grouped_fragment != nullptr &&
                  bind_select != nullptr && bind_create != nullptr && bind_insert != nullptr &&
