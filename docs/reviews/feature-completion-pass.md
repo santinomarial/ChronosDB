@@ -503,6 +503,10 @@ Focused executions passed:
   leader-hint lookup, contiguous-sequence rejection, exception containment, and response-frame
   exhaustion. The installed-consumer gate covers receiver construction. Production real-CSEG
   service adaptation and multi-response TLS/TCP/sender ownership are not claimed.
+- Grouped real-CSEG service continuation: the focused production worker case passed with a fresh
+  grouped request-local authority acquisition and exact terminal key/sum `2.5` from the installed
+  Manifest-v2/CSEG data. The installed-consumer gate covers grouped service construction. Grouped
+  TLS/TCP, sender/coordinator, and packaged multi-tablet execution are not claimed.
 
 The C++ files changed by the grouped-exchange continuations pass the repository-pinned clang-format
 18 check. A full-tree check was also run and still reports pre-existing violations in the

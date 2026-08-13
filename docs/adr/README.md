@@ -367,3 +367,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0330](0330-distinct-grouped-float64-query-transport.md) | Distinct grouped FLOAT64 query transport | accepted |
 | [0331](0331-bounded-grouped-query-partial-io.md) | Bounded grouped query partial I/O | accepted |
 | [0332](0332-authenticated-grouped-query-receiver.md) | Authenticated grouped query receiver | accepted |
+| [0333](0333-request-local-real-cseg-grouped-worker-service.md) | Request-local real-CSEG grouped worker service | accepted |

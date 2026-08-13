@@ -1020,8 +1020,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   without changing ungrouped transport bytes. Fixed-storage readers and a move-only validated write
   cursor own fragmented/coalesced reads and short writes. An authenticated receiver gates worker
   invocation, validates the complete bounded contiguous result, and returns only an all-encoded
-  response vector. Production real-CSEG service adaptation, multi-response TLS/TCP/sender ownership,
-  and packaged multi-tablet grouped execution remain.
+  response vector. A request-local production adapter now acquires coherent owning authority and
+  invokes the real-CSEG grouped worker. Multi-response TLS/TCP/sender ownership and packaged
+  multi-tablet grouped execution remain.
   Multi-key/non-FLOAT64 state/transport, ordering, top-N, and LIMIT remain deferred. A distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
   catalog, Manifest, route, and execution gates;

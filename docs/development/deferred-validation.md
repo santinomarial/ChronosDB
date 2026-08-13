@@ -279,8 +279,9 @@
   move-only validated write cursor now own fragmented/coalesced reads and short writes at those
   bounds. An authenticated receiver now authorizes the source, validates the complete bounded
   contiguous worker stream, contains worker failures, and publishes only an all-encoded response
-  vector. Production real-CSEG service adaptation, multi-response TLS/TCP and sender/coordinator,
-  and packaged grouped execution remain incomplete.
+  vector. A production request-local service adapter now acquires coherent owning Manifest/schema/
+  placement/group/barrier authority and invokes the real-CSEG grouped worker. Multi-response TLS/TCP
+  and sender/coordinator plus packaged grouped execution remain incomplete.
 - Proof-bound leader-linearizable/bounded-stale/local-eventual admissions now remain attached through
   compatible pinned multi-tablet snapshots and protocol/carrier scheduling. Whole-query replacement
   now validates fresh caller-proved authority, identical logical shape, nonregressing generation,

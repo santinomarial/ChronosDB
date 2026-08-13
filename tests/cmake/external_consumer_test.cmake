@@ -205,6 +205,8 @@ int main() {
       &chronos::service::ReplicatedFollowerDistributedAggregateQuery::create;
   const auto create_replicated_query_worker =
       &chronos::service::ReplicatedDistributedQueryWorker::create;
+  const auto create_replicated_grouped_query_worker =
+      &chronos::service::ReplicatedDistributedGroupedQueryWorker::create;
   const auto start_replicated_query_server =
       &chronos::service::ReplicatedDistributedQueryTcpServer::start;
   const auto create_distributed_query_tls_client =
@@ -305,6 +307,7 @@ int main() {
   (void)create_replicated_follower_distributed_aggregate_query;
   (void)create_replicated_follower_query_owner;
   (void)create_replicated_query_worker;
+  (void)create_replicated_grouped_query_worker;
   (void)start_replicated_query_server;
   (void)create_distributed_query_tls_client;
   (void)create_distributed_query_tls_server;

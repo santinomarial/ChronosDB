@@ -48,7 +48,9 @@ failure. Its exact codecs own bounded values. Fixed-storage readers retain only 
 leave coalesced successors caller-owned, and fail sticky; the move-only cursor owns checked short
 writes. The authenticated receiver authorizes before invoking its borrowed worker, validates the
 entire bounded contiguous result, and returns response frames only after all encode successfully.
-Production worker adaptation and sender/network ownership remain separate.
+The production grouped service acquires one owning request-local Manifest/schema/placement/group/
+barrier context and invokes the same real-CSEG worker without rewriting authority. Sender/network
+ownership remains separate.
 The dispatch envelope adds the distinct Raft group identity that scopes every admission index;
 workers never execute the bare inner fragment.
 `bind_distributed_aggregate_fragment` constructs that envelope only after one Manifest v2 snapshot,

@@ -50,8 +50,8 @@ measurement evidence remain incomplete. No Phase 16 exit gate is claimed.
 
 ADR 0330 subsequently supplies distinct canonical grouped request/response codecs. Authenticated
 receiver dispatch and bounded stream ownership subsequently follow in ADRs 0331 and 0332.
-Production service adaptation, network lifecycle ownership, and packaged execution remain
-incomplete.
+ADR 0333 subsequently supplies the production request-local real-CSEG service adapter. Network
+lifecycle ownership and packaged execution remain incomplete.
 
 Invariants 4–6, 10, 11, 14, 15, and 18 apply.
 

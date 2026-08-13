@@ -51,6 +51,9 @@ before part I/O. Header and installed-consumer checks cover the public API.
 This does not yet prove the adapter behind a real remote query socket, a three-process SQL workflow,
 process loss, movement-time remote CSEG reads, or the Phase 16 testing and measurement exit gates.
 
+ADR 0333 subsequently adds a distinct grouped service/provider pair that reuses the same owning
+request-local context without changing this ungrouped provider ABI.
+
 Invariants 4–6, 10, 11, 14, and 18 apply.
 
 ## References

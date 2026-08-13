@@ -49,9 +49,10 @@ without a response vector, exception containment, and configured frame exhaustio
 codec and stream coverage, all six grouped transport cases pass. The installed-consumer gate
 references receiver construction and the public worker boundary is abstract.
 
-Production real-CSEG service adaptation, multi-response TLS/TCP closure and write ownership,
-sender/coordinator integration, packaged multi-tablet grouped execution, and broad fault/
-measurement evidence remain incomplete. No Phase 16 exit gate is claimed.
+ADR 0333 subsequently supplies the production request-local real-CSEG service adapter.
+Multi-response TLS/TCP closure and write ownership, sender/coordinator integration, packaged
+multi-tablet grouped execution, and broad fault/measurement evidence remain incomplete. No Phase 16
+exit gate is claimed.
 
 Invariants 4–6, 10, 11, 14, 15, and 18 apply.
 

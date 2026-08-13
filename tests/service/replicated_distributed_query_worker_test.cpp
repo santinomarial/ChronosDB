@@ -24,6 +24,7 @@
 #include <system_error>
 #include <unistd.h>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace chronos::service {
@@ -138,7 +139,8 @@ public:
       schema::SchemaLineage::create(std::move(*schema_value)).value());
 }
 
-class ContextProvider final : public ReplicatedDistributedQueryWorkerContextProvider {
+class ContextProvider final : public ReplicatedDistributedQueryWorkerContextProvider,
+                              public ReplicatedDistributedGroupedQueryWorkerContextProvider {
 public:
   ContextProvider(manifest::TemporalDatabaseStorageSnapshot snapshot,
                   std::shared_ptr<const schema::SchemaLineage> lineage,
@@ -150,6 +152,16 @@ public:
   common::Result<ReplicatedDistributedQueryWorkerContext>
   acquire(const query::DistributedAggregateFragmentDispatch&) override {
     ++calls;
+    return ReplicatedDistributedQueryWorkerContext{.snapshot = snapshot_,
+                                                   .lineage = lineage_,
+                                                   .placement = placement_,
+                                                   .raft_group_id = raft_group_id_,
+                                                   .local_linearizable_barrier = barrier_};
+  }
+
+  common::Result<ReplicatedDistributedQueryWorkerContext>
+  acquire(const query::DistributedGroupedFloat64FragmentDispatch&) override {
+    ++grouped_calls;
     return ReplicatedDistributedQueryWorkerContext{.snapshot = snapshot_,
                                                    .lineage = lineage_,
                                                    .placement = placement_,
@@ -170,6 +182,7 @@ public:
   }
 
   std::size_t calls{};
+  std::size_t grouped_calls{};
 
 private:
   manifest::TemporalDatabaseStorageSnapshot snapshot_;
@@ -294,6 +307,25 @@ TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesReal
   EXPECT_EQ(result->partial.sum, 2.5);
   EXPECT_TRUE(result->terminal);
   EXPECT_EQ(provider.calls, 1U);
+
+  EXPECT_EQ(ReplicatedDistributedGroupedQueryWorker::create({}).error().code(),
+            common::StatusCode::kInvalidArgument);
+  const query::DistributedGroupedFloat64FragmentDispatch grouped_dispatch{
+      .raft_group_id = dispatch.raft_group_id,
+      .fragment = {.aggregate = dispatch.fragment, .group_key_input_index = 1U}};
+  auto grouped_worker = ReplicatedDistributedGroupedQueryWorker::create(
+      {.local_node_id = 11U, .storage = &*storage, .context_provider = &provider});
+  ASSERT_TRUE(grouped_worker.has_value()) << grouped_worker.error().to_string();
+  const auto grouped_result = grouped_worker->execute(grouped_dispatch);
+  ASSERT_TRUE(grouped_result.has_value()) << grouped_result.error().to_string();
+  const auto* grouped_messages =
+      std::get_if<std::vector<query::GroupedFloat64ExchangeMessage>>(&*grouped_result);
+  ASSERT_NE(grouped_messages, nullptr);
+  ASSERT_EQ(grouped_messages->size(), 1U);
+  EXPECT_EQ(grouped_messages->front().group_key, 2.5);
+  EXPECT_EQ(grouped_messages->front().partial.sum, 2.5);
+  EXPECT_TRUE(grouped_messages->front().terminal);
+  EXPECT_EQ(provider.grouped_calls, 1U);
 
   EXPECT_EQ(ReplicatedDistributedQueryTcpServer::start({}).error().code(),
             common::StatusCode::kInvalidArgument);

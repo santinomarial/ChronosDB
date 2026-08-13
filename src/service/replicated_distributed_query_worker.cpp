@@ -42,4 +42,43 @@ common::Result<query::ExchangeMessage> ReplicatedDistributedQueryWorker::execute
        .limits = config_.limits});
 }
 
+ReplicatedDistributedGroupedQueryWorker::ReplicatedDistributedGroupedQueryWorker(
+    ReplicatedDistributedGroupedQueryWorkerConfig config) noexcept
+    : config_(config) {}
+
+common::Result<ReplicatedDistributedGroupedQueryWorker>
+ReplicatedDistributedGroupedQueryWorker::create(
+    ReplicatedDistributedGroupedQueryWorkerConfig config) {
+  if (config.local_node_id == 0U || config.storage == nullptr ||
+      config.context_provider == nullptr) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInvalidArgument,
+                       "replicated grouped query worker configuration is invalid"});
+  }
+  return ReplicatedDistributedGroupedQueryWorker{config};
+}
+
+common::Result<query::DistributedGroupedFloat64WorkerResult>
+ReplicatedDistributedGroupedQueryWorker::execute(
+    const query::DistributedGroupedFloat64FragmentDispatch& dispatch) {
+  auto context = config_.context_provider->acquire(dispatch);
+  if (!context.has_value())
+    return common::make_unexpected(context.error());
+  if (!context->lineage) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInvalidArgument,
+                       "replicated grouped query worker context has no schema lineage"});
+  }
+  return query::execute_distributed_grouped_float64_fragment(
+      {.dispatch = std::cref(dispatch),
+       .storage = std::cref(*config_.storage),
+       .snapshot = std::cref(context->snapshot),
+       .lineage = std::cref(*context->lineage),
+       .placement = std::cref(context->placement),
+       .raft_group_id = context->raft_group_id,
+       .local_node = config_.local_node_id,
+       .local_linearizable_barrier = context->local_linearizable_barrier,
+       .limits = config_.limits});
+}
+
 } // namespace chronos::service

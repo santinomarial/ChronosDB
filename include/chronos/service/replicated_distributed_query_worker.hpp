@@ -1,6 +1,7 @@
 #ifndef CHRONOS_SERVICE_REPLICATED_DISTRIBUTED_QUERY_WORKER_HPP_
 #define CHRONOS_SERVICE_REPLICATED_DISTRIBUTED_QUERY_WORKER_HPP_
 
+#include "chronos/cluster/distributed_grouped_query_transport.hpp"
 #include "chronos/cluster/distributed_query_transport.hpp"
 #include "chronos/common/result.hpp"
 #include "chronos/manifest/storage.hpp"
@@ -69,6 +70,52 @@ private:
   explicit ReplicatedDistributedQueryWorker(ReplicatedDistributedQueryWorkerConfig config) noexcept;
 
   ReplicatedDistributedQueryWorkerConfig config_;
+};
+
+class ReplicatedDistributedGroupedQueryWorkerContextProvider {
+public:
+  ReplicatedDistributedGroupedQueryWorkerContextProvider() = default;
+  ReplicatedDistributedGroupedQueryWorkerContextProvider(
+      const ReplicatedDistributedGroupedQueryWorkerContextProvider&) = delete;
+  ReplicatedDistributedGroupedQueryWorkerContextProvider&
+  operator=(const ReplicatedDistributedGroupedQueryWorkerContextProvider&) = delete;
+  virtual ~ReplicatedDistributedGroupedQueryWorkerContextProvider() = default;
+
+  [[nodiscard]] virtual common::Result<ReplicatedDistributedQueryWorkerContext>
+  acquire(const query::DistributedGroupedFloat64FragmentDispatch& dispatch) = 0;
+};
+
+struct ReplicatedDistributedGroupedQueryWorkerConfig {
+  raft::NodeId local_node_id{};
+  const manifest::ManifestStorage* storage{};
+  ReplicatedDistributedGroupedQueryWorkerContextProvider* context_provider{};
+  query::DistributedAggregateWorkerLimits limits;
+};
+
+// Grouped counterpart of the request-local production worker adapter. It acquires one coherent
+// owning authority context and invokes the proof-revalidating real-CSEG grouped worker unchanged.
+class ReplicatedDistributedGroupedQueryWorker final
+    : public cluster::DistributedGroupedQueryWorkerService {
+public:
+  ReplicatedDistributedGroupedQueryWorker() = delete;
+  ReplicatedDistributedGroupedQueryWorker(const ReplicatedDistributedGroupedQueryWorker&) = delete;
+  ReplicatedDistributedGroupedQueryWorker&
+  operator=(const ReplicatedDistributedGroupedQueryWorker&) = delete;
+  ReplicatedDistributedGroupedQueryWorker(ReplicatedDistributedGroupedQueryWorker&&) noexcept =
+      default;
+  ReplicatedDistributedGroupedQueryWorker&
+  operator=(ReplicatedDistributedGroupedQueryWorker&&) noexcept = default;
+  ~ReplicatedDistributedGroupedQueryWorker() override = default;
+
+  [[nodiscard]] static common::Result<ReplicatedDistributedGroupedQueryWorker>
+  create(ReplicatedDistributedGroupedQueryWorkerConfig config);
+  [[nodiscard]] common::Result<query::DistributedGroupedFloat64WorkerResult>
+  execute(const query::DistributedGroupedFloat64FragmentDispatch& dispatch) override;
+
+private:
+  explicit ReplicatedDistributedGroupedQueryWorker(
+      ReplicatedDistributedGroupedQueryWorkerConfig config) noexcept;
+  ReplicatedDistributedGroupedQueryWorkerConfig config_;
 };
 
 } // namespace chronos::service
