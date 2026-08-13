@@ -252,9 +252,11 @@
   socket integration, whole-query deadlines, and local cancellation for this aggregate path. A
   production receiver service now acquires one request-local owning Manifest/schema/placement/
   group/barrier context and invokes the proof-revalidating real-CSEG worker. General physical
-  pipeline stage/expression serialization, connection pooling/multiplexing, grouping-state codecs,
-  ordering, top-N, LIMIT, remote worker interruption, durable retries, and broader
-  coordinator/worker failure cleanup remain.
+  pipeline stage/expression serialization, connection pooling/multiplexing, multi-key/non-FLOAT64
+  grouping-state codecs and coordination, ordering, top-N, LIMIT, remote worker interruption,
+  durable retries, and broader coordinator/worker failure cleanup remain. A distinct fixed frame
+  now canonically carries one nullable FLOAT64 group key plus one mergeable aggregate partial,
+  including exact signed-zero/NaN group equivalence.
 - Proof-bound leader-linearizable/bounded-stale/local-eventual admissions now remain attached through
   compatible pinned multi-tablet snapshots and protocol/carrier scheduling. Whole-query replacement
   now validates fresh caller-proved authority, identical logical shape, nonregressing generation,

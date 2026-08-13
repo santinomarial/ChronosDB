@@ -14,6 +14,9 @@ encoded frame and exposes the remaining suffix after each checked short-write ac
 sequence order, and merges only accepted messages into terminal tablet state.
 `encode_distributed_aggregate_fragment` and exact decoding provide the corresponding request-side
 bytes for one snapshot-bound projected aggregate scan.
+`encode_grouped_float64_exchange_message` and exact decoding add a distinct fixed frame for one
+nullable FLOAT64 group key. Signed zeros and every NaN payload use the same canonical tokens as the
+local grouped operator; ungrouped v1 bytes remain unchanged.
 The dispatch envelope adds the distinct Raft group identity that scopes every admission index;
 workers never execute the bare inner fragment.
 `bind_distributed_aggregate_fragment` constructs that envelope only after one Manifest v2 snapshot,
@@ -124,8 +127,9 @@ fresh authority lookup.
 
 A fixed ungrouped-aggregate frame gives partial-I/O carriers an unambiguous payload without
 prematurely defining a general physical-fragment language. The cost is a specialized first exchange
-type. Grouping state, physical plans, ordering/top-N, cancellation delivery, and general duplicate
-sequencing require their own bounded contracts. A leader hint never
+type. A separate first grouped frame now carries one nullable FLOAT64 key, but multi-key and
+non-FLOAT64 grouping, grouped coordination, physical plans, ordering/top-N, cancellation delivery,
+and general duplicate sequencing require their own bounded contracts. A leader hint never
 mutates an existing proof-bound dispatch: following it requires explicit coordinator rebinding.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority

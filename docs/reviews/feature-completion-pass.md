@@ -240,8 +240,11 @@ group-correlated quorum read-barrier observations, requires metadata and tablet 
 cover those barriers, binds one compatible Manifest epoch, and creates the complete TCP execution
 lifecycle. A distinct bounded-stale constructor applies the same catalog, Manifest, route, and
 execution gates to stable same-term leader/follower observation pairs. General vector-plan
-grouping/order/top-N/LIMIT remains incomplete. A distinct canonical observation protocol,
-authenticated receiver, mTLS clients/servers, finite multi-address acquisition, correlated
+grouping/order/top-N/LIMIT remains incomplete. A distinct canonical frame now carries one nullable
+FLOAT64 group key and mergeable partial with SQL-equivalent signed-zero/NaN canonicalization, but
+grouped fragments, multi-key/non-FLOAT64 state, and coordination remain incomplete. A distinct
+canonical observation protocol, authenticated receiver, mTLS clients/servers, finite multi-address
+acquisition, correlated
 leader/follower pairs, canonical all-group batches, placement-backed construction, and packaged
 query lifecycle now provide remote follower authority acquisition. Committed numeric or
 lowercase-DNS routes acquire a fresh
@@ -445,6 +448,9 @@ Focused executions passed:
 - Owned real-CSEG query-service continuation: 1 focused approved-host case passed for a canonical
   dispatch over real loopback mutual TLS, exact certificate-principal/node authorization,
   request-local proof revalidation, the installed-CSEG terminal aggregate, and ordered shutdown.
+- Grouped-exchange continuation: 2 focused cases passed for the frozen nullable-FLOAT64 key/partial
+  layout, signed-zero/NaN/NULL canonicalization, exact decoding, integrity/version rejection, and
+  hostile checksum-valid noncanonical representations. Grouped planning is not claimed.
 
 The final C++ tree passed the repository-pinned clang-format 18 check. Full-suite, sanitizer, fuzz,
 broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were deliberately not run.

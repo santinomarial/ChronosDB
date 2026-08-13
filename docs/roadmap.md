@@ -999,9 +999,12 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   immutable group bindings. A packaged constructor requires the catalog to cover the exact
   metadata-group barrier,
   then carries that authority through compatible Manifest binding, committed route resolution,
-  execution creation, and the move-only TCP lifecycle owner. General vector-plan
-  fragments/exchanges remain deferred. A distinct bounded-stale constructor carries correlated
-  leader/follower observations through the same catalog, Manifest, route, and execution gates;
+  execution creation, and the move-only TCP lifecycle owner. A distinct canonical grouped exchange
+  now carries one nullable FLOAT64 key and mergeable partial with signed-zero/NaN equivalence while
+  preserving ungrouped v1 bytes. General vector-plan fragments, multi-key/non-FLOAT64 grouped
+  coordination, ordering, top-N, and LIMIT remain deferred. A distinct bounded-stale constructor
+  carries correlated leader/follower observations through the same catalog, Manifest, route, and
+  execution gates;
   a separate canonical checksummed cluster protocol now requests one group-correlated ordered
   observation from an authenticated exact node, with receiver-side principal/source authorization
   and a durable-owner service boundary. Bounded request/response readers now validate fixed headers

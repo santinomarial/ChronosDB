@@ -85,6 +85,9 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Distributed Aggregate Exchange v1](formats/distributed-aggregate-exchange-v1.md): fixed-width,
   versioned, CRC-protected worker/coordinator ungrouped aggregate state with exact identity,
   sequence, extrema-presence, IEEE-754 preservation, and bounded partial-I/O ownership.
+- [Distributed Grouped FLOAT64 Aggregate Exchange
+  v1](formats/distributed-grouped-float64-exchange-v1.md): fixed-width, CRC-protected nullable
+  one-key grouped partial state.
 - [Distributed Aggregate Fragment v1](formats/distributed-aggregate-fragment-v1.md): bounded,
   integrity-first worker request bytes binding an exact snapshot route, consistency evidence,
   projection, aggregate input, and event-time predicate.

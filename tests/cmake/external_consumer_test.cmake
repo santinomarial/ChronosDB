@@ -121,6 +121,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/query/column_output.hpp>
 #include <chronos/query/cseg_scan.hpp>
 #include <chronos/query/database_cseg_scan.hpp>
+#include <chronos/query/distributed_grouped_exchange.hpp>
 #include <chronos/query/distributed.hpp>
 #include <chronos/query/distributed_fragment.hpp>
 #include <chronos/query/distributed_fragment_binding.hpp>
@@ -846,6 +847,10 @@ int main() {
   const AggregateQueryFunction aggregate_query = &chronos::query::BoundSqlSelect::aggregate_query;
   const auto encode_exchange_message = &chronos::query::encode_exchange_message;
   const auto decode_exchange_message = &chronos::query::decode_exchange_message_exact;
+  const auto encode_grouped_exchange =
+      &chronos::query::encode_grouped_float64_exchange_message;
+  const auto decode_grouped_exchange =
+      &chronos::query::decode_grouped_float64_exchange_message_exact;
   const auto consume_exchange_frame = &chronos::query::ExchangeFrameReader::consume;
   const auto create_exchange_write_cursor = &chronos::query::ExchangeFrameWriteCursor::create;
   const auto create_distributed_coordinator =
@@ -1115,6 +1120,7 @@ int main() {
                  !backed_vector_chunk.has_value() &&
                  chronos::query::kMaximumSqlV1Sources == 64U && aggregate_query != nullptr &&
                  encode_exchange_message != nullptr && decode_exchange_message != nullptr &&
+                 encode_grouped_exchange != nullptr && decode_grouped_exchange != nullptr &&
                  consume_exchange_frame != nullptr && create_exchange_write_cursor != nullptr &&
                  create_distributed_coordinator != nullptr &&
                  encode_distributed_fragment != nullptr &&
