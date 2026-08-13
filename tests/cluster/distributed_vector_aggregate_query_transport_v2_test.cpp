@@ -80,6 +80,30 @@ namespace {
           .leader_hint = DistributedQueryLeaderHint{3U, 9U}};
 }
 
+[[nodiscard]] std::vector<DistributedVectorAggregateQueryResponseV2> sender_responses() {
+  const auto expected = receiver_definitions();
+  std::vector<DistributedVectorAggregateQueryResponseV2> responses;
+  responses.reserve(expected.size());
+  for (std::size_t ordinal = 0U; ordinal < expected.size(); ++ordinal) {
+    auto state = query::MergeableVectorAggregateState::create(expected[ordinal]).value();
+    for (std::size_t count = 0U; count <= ordinal; ++count)
+      EXPECT_TRUE(state.accumulate_count_star().has_value());
+    responses.push_back({.source_node_id = 2U,
+                         .target_node_id = 1U,
+                         .query_id = uuid(11U),
+                         .tablet_id = tablet(14U),
+                         .status_code = common::StatusCode::kOk,
+                         .payload = query::DistributedVectorAggregateExchangeMessage{
+                             {.query_id = uuid(11U),
+                              .tablet_id = tablet(14U),
+                              .sequence = ordinal + 1U,
+                              .aggregate_ordinal = static_cast<std::uint32_t>(ordinal),
+                              .terminal = ordinal + 1U == expected.size()},
+                             std::move(state)}});
+  }
+  return responses;
+}
+
 class Authorizer final : public ClusterNodePrincipalAuthorizer {
 public:
   common::Result<bool> authorize_node(const std::uint64_t principal_id,
@@ -550,6 +574,130 @@ TEST(DistributedVectorAggregateQueryReceiverV2Test,
   ASSERT_TRUE(decoded.has_value());
   EXPECT_EQ(decoded->status_code, common::StatusCode::kInternal);
 }
+
+// Optional values below are asserted present before access.
+// NOLINTBEGIN(bugprone-unchecked-optional-access)
+TEST(DistributedVectorAggregateQuerySenderV2Test,
+     ReconstructsAndPublishesOnlyTheCompleteDefinitionBoundVector) {
+  auto expected = receiver_definitions();
+  auto resources = query::QueryResourceContext::create(1U << 20U).value();
+  auto sender = DistributedVectorAggregateQuerySenderV2::create(1U, receiver_dispatch(),
+                                                                std::move(expected), resources);
+  ASSERT_TRUE(sender.has_value()) << sender.error().to_string();
+  const auto now = DistributedVectorAggregateQuerySenderV2::TimePoint{};
+  auto attempt = sender->begin_attempt(now);
+  ASSERT_TRUE(attempt.has_value()) << attempt.error().to_string();
+  EXPECT_EQ(attempt->attempt_number, 1U);
+  EXPECT_EQ(attempt->target_node_id, 2U);
+  auto request = decode_distributed_vector_query_request_v2_exact(attempt->request_bytes);
+  ASSERT_TRUE(request.has_value());
+  EXPECT_EQ(request->dispatch, receiver_dispatch());
+
+  auto wrong_sequence = sender_responses();
+  wrong_sequence.back().payload->sequence = 7U;
+  EXPECT_EQ(sender->accept_responses(wrong_sequence, now).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(sender->state(), DistributedQuerySenderState::kWaitingForResponse);
+  EXPECT_FALSE(sender->result().has_value());
+
+  auto incomplete = sender_responses();
+  incomplete.pop_back();
+  EXPECT_EQ(sender->accept_responses(incomplete, now).code(), common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(sender->state(), DistributedQuerySenderState::kWaitingForResponse);
+
+  auto responses = sender_responses();
+  std::size_t encoded_bytes{};
+  for (const auto& response_value : responses) {
+    auto encoded = encode_distributed_vector_aggregate_query_response_v2(response_value,
+                                                                         sender->definitions());
+    ASSERT_TRUE(encoded.has_value());
+    encoded_bytes += encoded->size();
+  }
+  auto bounded_definitions = receiver_definitions();
+  auto bounded = DistributedVectorAggregateQuerySenderV2::create(
+      1U, receiver_dispatch(), std::move(bounded_definitions), resources,
+      {.maximum_response_frames = 2U, .maximum_response_bytes = encoded_bytes - 1U});
+  ASSERT_TRUE(bounded.has_value()) << bounded.error().to_string();
+  ASSERT_TRUE(bounded->begin_attempt(now).has_value());
+  EXPECT_EQ(bounded->accept_responses(responses, now).code(),
+            common::StatusCode::kResourceExhausted);
+  EXPECT_EQ(bounded->state(), DistributedQuerySenderState::kWaitingForResponse);
+  EXPECT_FALSE(bounded->result().has_value());
+
+  EXPECT_TRUE(sender->accept_responses(responses, now).is_ok());
+  EXPECT_EQ(sender->state(), DistributedQuerySenderState::kSucceeded);
+  ASSERT_TRUE(sender->result().has_value());
+  ASSERT_EQ(sender->result()->size(), 2U);
+  EXPECT_EQ(sender->result()->front().aggregate_ordinal, 0U);
+  EXPECT_TRUE(sender->result()->back().terminal);
+  EXPECT_EQ(sender->result()->back().state.definition(), sender->definitions().back());
+  EXPECT_FALSE(sender->begin_attempt(now).has_value());
+
+  auto too_narrow_definitions = receiver_definitions();
+  EXPECT_FALSE(DistributedVectorAggregateQuerySenderV2::create(
+                   1U, receiver_dispatch(), std::move(too_narrow_definitions), resources,
+                   {.maximum_response_frames = 1U})
+                   .has_value());
+}
+
+TEST(DistributedVectorAggregateQuerySenderV2Test,
+     RetriesWholeImmutableAttemptsAndKeepsHintsAdvisory) {
+  auto expected = receiver_definitions();
+  auto resources = query::QueryResourceContext::create(1U << 20U).value();
+  auto sender = DistributedVectorAggregateQuerySenderV2::create(
+      1U, receiver_dispatch(), std::move(expected), resources,
+      {.retry = {.maximum_attempts = 3U,
+                 .initial_backoff = std::chrono::milliseconds{10},
+                 .maximum_backoff = std::chrono::milliseconds{20}},
+       .maximum_response_frames = 2U,
+       .maximum_response_bytes = 4096U});
+  ASSERT_TRUE(sender.has_value()) << sender.error().to_string();
+  const auto start = DistributedVectorAggregateQuerySenderV2::TimePoint{};
+  auto first = sender->begin_attempt(start);
+  ASSERT_TRUE(first.has_value());
+  const DistributedVectorAggregateQueryResponseV2 unavailable_response{
+      .source_node_id = 2U,
+      .target_node_id = 1U,
+      .query_id = uuid(11U),
+      .tablet_id = tablet(14U),
+      .status_code = common::StatusCode::kUnavailable,
+      .leader_hint = DistributedQueryLeaderHint{3U, 9U}};
+  auto mismatched =
+      DistributedVectorAggregateQueryResponseV2{.source_node_id = 3U,
+                                                .target_node_id = 1U,
+                                                .query_id = uuid(11U),
+                                                .tablet_id = tablet(14U),
+                                                .status_code = common::StatusCode::kUnavailable};
+  EXPECT_EQ(sender->accept_responses(std::span{&mismatched, 1U}, start).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(sender->state(), DistributedQuerySenderState::kWaitingForResponse);
+  EXPECT_TRUE(sender->accept_responses(std::span{&unavailable_response, 1U}, start).is_ok());
+  EXPECT_EQ(sender->state(), DistributedQuerySenderState::kBackoff);
+  ASSERT_TRUE(sender->suggested_leader().has_value());
+  EXPECT_EQ(sender->suggested_leader()->node_id, 3U);
+  EXPECT_EQ(*sender->next_attempt_not_before(), start + std::chrono::milliseconds{10});
+  EXPECT_FALSE(sender->begin_attempt(start + std::chrono::milliseconds{9}).has_value());
+  auto second = sender->begin_attempt(start + std::chrono::milliseconds{10});
+  ASSERT_TRUE(second.has_value());
+  EXPECT_EQ(second->target_node_id, 2U);
+  EXPECT_EQ(second->request_bytes, first->request_bytes);
+  EXPECT_TRUE(sender
+                  ->record_transport_failure(common::StatusCode::kIoError,
+                                             start + std::chrono::milliseconds{10})
+                  .is_ok());
+  EXPECT_EQ(*sender->next_attempt_not_before(), start + std::chrono::milliseconds{30});
+  auto third = sender->begin_attempt(start + std::chrono::milliseconds{30});
+  ASSERT_TRUE(third.has_value());
+  EXPECT_EQ(third->request_bytes, first->request_bytes);
+  EXPECT_TRUE(sender
+                  ->record_transport_failure(common::StatusCode::kInvalidArgument,
+                                             start + std::chrono::milliseconds{30})
+                  .is_ok());
+  EXPECT_EQ(sender->state(), DistributedQuerySenderState::kFailed);
+  EXPECT_EQ(sender->attempts_started(), 3U);
+  EXPECT_FALSE(sender->result().has_value());
+}
+// NOLINTEND(bugprone-unchecked-optional-access)
 
 } // namespace
 } // namespace chronos::cluster

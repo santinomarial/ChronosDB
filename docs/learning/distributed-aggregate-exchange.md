@@ -398,7 +398,10 @@ count- and byte-bounded response vector. The production aggregate service now ac
 owning Manifest/schema/placement/group context for definition binding and a second fresh context for
 execution. Both enter the same core authority primitive; binding performs no part I/O, while
 execution loads real CSEGs once and returns its independently derived definitions beside states.
-Retry, TLS/TCP, and process integration still remain.
+The finite aggregate sender retains the exact request bytes, definition vector, and query memory
+authority together. It canonically reconstructs every complete fixed-width state vector before
+all-or-nothing publication, releases every temporary reservation on rejection, and retries only
+whole immutable attempts under capped backoff. TLS/TCP and process integration still remain.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated

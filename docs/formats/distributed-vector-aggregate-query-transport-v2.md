@@ -2,9 +2,9 @@
 
 > **Status:** accepted and implemented exact response codec/partial-I/O contract. Requests reuse
 > the exact Fragment-v2 `CHDVREQ2` carrier. An authenticated receiver owns definition binding,
-> worker handoff, and complete bounded response publication. Sender retry, TLS/TCP lifecycle,
-> and process ownership remain separate. A production request-local service supplies both fresh
-> definition authority and proof-revalidated real-CSEG execution.
+> worker handoff, and complete bounded response publication. A finite sender owns definition-bound
+> retry and result memory. TLS/TCP lifecycle and process ownership remain separate. A production
+> request-local service supplies fresh definition authority and proof-revalidated real-CSEG execution.
 
 All integers are unsigned little-endian. Reserved bytes are zero. CRC32C detects accidental damage
 and is not authentication. The nested payload retains its own independent checksums.
@@ -79,3 +79,24 @@ an authenticated metadata-derived leader hint. Frame-count and total exact encod
 turn an otherwise valid oversized result into one `RESOURCE_EXHAUSTED` response. Any contract,
 encoding, or allocation failure exposes no success prefix. TLS and socket ownership remain outside
 this synchronous borrowed-service boundary.
+
+## Finite sender
+
+One `DistributedVectorAggregateQuerySenderV2` owns the immutable canonical request bytes, complete
+ordered definition vector, query resource context, finite attempt/backoff policy, and optional
+complete result. Creation requires an ungrouped Fragment-v2 dispatch whose aggregate intents and
+result columns exactly match the definitions. The configured frame count must admit the complete
+definition width, while nested decode limits, outer encoded bytes, and attempts remain independently
+bounded.
+
+An accepted success has exactly one response per definition in ordinal order. Reverse route,
+query/tablet identity, sequence, terminal position, payload definition, and absence of a success
+hint are exact. The sender canonically re-encodes and decodes every response under its own query
+resources before publishing any state, so directly constructed values cannot bypass the carrier
+and variable extrema remain query-accounted. Failed validation or allocation destroys the
+temporary reconstructed prefix and leaves the attempt pending.
+
+Only one correlated failure frame is valid. `UNAVAILABLE`, `RESOURCE_EXHAUSTED`, and `IO_ERROR`
+schedule a whole new attempt under positive capped exponential backoff until the finite attempt
+budget ends. A leader hint is advisory and never changes the request target. The sender owns no
+socket, TLS state, clock, multi-tablet coordinator, or durable authority.

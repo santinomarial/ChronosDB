@@ -273,6 +273,8 @@ int main() {
       &chronos::query::DistributedVectorAggregateExchangeReader::consume;
   const auto create_vector_aggregate_exchange_write_cursor =
       &chronos::query::DistributedVectorAggregateExchangeWriteCursor::create;
+  const auto create_vector_aggregate_query_sender =
+      &chronos::cluster::DistributedVectorAggregateQuerySenderV2::create;
   const auto encode_vector_result_schema =
       &chronos::query::encode_distributed_vector_result_schema;
   const auto decode_vector_result_schema =
@@ -532,6 +534,7 @@ int main() {
   (void)decode_vector_aggregate_exchange;
   (void)consume_vector_aggregate_exchange;
   (void)create_vector_aggregate_exchange_write_cursor;
+  (void)create_vector_aggregate_query_sender;
   (void)encode_vector_query_request;
   (void)decode_vector_query_request;
   (void)encode_vector_query_response;

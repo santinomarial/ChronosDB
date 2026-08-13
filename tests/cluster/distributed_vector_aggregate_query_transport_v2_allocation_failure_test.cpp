@@ -2,9 +2,13 @@
 #include "support/failing_allocator.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <gtest/gtest.h>
 #include <optional>
+#include <span>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 namespace chronos::cluster {
 namespace {
@@ -56,6 +60,62 @@ template <typename Operation>
           .columns = {{.name = "count",
                        .type = schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value(),
                        .nullable = false}}}};
+}
+
+void append_u32(std::vector<std::byte>& output, const std::uint32_t value) {
+  for (std::size_t index = 0U; index < sizeof(value); ++index)
+    output.push_back(static_cast<std::byte>((value >> (index * 8U)) & 0xffU));
+}
+
+[[nodiscard]] std::vector<query::VectorAggregateDefinition> variable_definitions() {
+  return {{.operation = query::VectorAggregateOperation::kMaximum,
+           .input = query::VectorAggregateInput{
+               .column_ordinal = 0U,
+               .type = schema::LogicalType::create(schema::LogicalTypeKind::kString).value(),
+               .nullable = false}}};
+}
+
+[[nodiscard]] query::DistributedVectorFragmentDispatchV2 variable_dispatch_v2() {
+  auto dispatch = dispatch_v2();
+  dispatch.dispatch.plan.aggregates = {
+      {.operation = query::VectorAggregateOperation::kMaximum, .input_index = 0U}};
+  dispatch.result_schema.columns = {
+      {.name = "maximum",
+       .type = schema::LogicalType::create(schema::LogicalTypeKind::kString).value(),
+       .nullable = true}};
+  return dispatch;
+}
+
+[[nodiscard]] DistributedVectorAggregateQueryResponseV2
+variable_response(const query::QueryResourceContext& source_resources) {
+  columnar::ColumnVectorBuffers buffers;
+  append_u32(buffers.offsets, 0U);
+  constexpr std::string_view kValue = "a variable sender extremum larger than SSO";
+  for (const char byte : kValue)
+    buffers.values.push_back(static_cast<std::byte>(byte));
+  append_u32(buffers.offsets, static_cast<std::uint32_t>(buffers.values.size()));
+  auto column = columnar::OwnedPhysicalColumn::create(
+                    {.type = schema::LogicalType::create(schema::LogicalTypeKind::kString).value(),
+                     .nullable = false,
+                     .row_count = 1U,
+                     .null_count = 0U},
+                    std::move(buffers))
+                    .value();
+  auto expected = variable_definitions();
+  auto state = query::MergeableVectorAggregateState::create(expected.front()).value();
+  EXPECT_TRUE(state.accumulate_cell(column.cell(0U).value(), source_resources).has_value());
+  return {.source_node_id = 2U,
+          .target_node_id = 1U,
+          .query_id = uuid(1U),
+          .tablet_id = schema::TabletId::from_uuid(uuid(2U)).value(),
+          .status_code = common::StatusCode::kOk,
+          .payload = query::DistributedVectorAggregateExchangeMessage{
+              {.query_id = uuid(1U),
+               .tablet_id = schema::TabletId::from_uuid(uuid(2U)).value(),
+               .sequence = 1U,
+               .aggregate_ordinal = 0U,
+               .terminal = true},
+              std::move(state)}};
 }
 
 [[nodiscard]] DistributedVectorAggregateQueryResponseV2 response() {
@@ -185,6 +245,39 @@ TEST(DistributedVectorAggregateQueryReceiverV2AllocationFailureTest,
       break;
     }
     EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted);
+  }
+  EXPECT_TRUE(success);
+}
+
+TEST(DistributedVectorAggregateQuerySenderV2AllocationFailureTest,
+     ClassifiesEveryCanonicalReconstructionAllocationAndReleasesQueryCredit) {
+  auto source_resources = query::QueryResourceContext::create(4U << 20U).value();
+  const auto response_value = variable_response(source_resources);
+  bool success = false;
+  for (std::size_t fail_after = 0U; fail_after < 256U; ++fail_after) {
+    auto sender_resources = query::QueryResourceContext::create(4U << 20U).value();
+    {
+      auto expected = variable_definitions();
+      auto sender = DistributedVectorAggregateQuerySenderV2::create(
+          1U, variable_dispatch_v2(), std::move(expected), sender_resources);
+      ASSERT_TRUE(sender.has_value()) << sender.error().to_string();
+      ASSERT_TRUE(sender->begin_attempt({}).has_value());
+      const common::Status status = run_failure(
+          fail_after, [&] { return sender->accept_responses(std::span{&response_value, 1U}, {}); });
+      if (status.is_ok()) {
+        ASSERT_TRUE(sender->result().has_value());
+        EXPECT_GT(sender_resources.reserved_memory_bytes(), 0U);
+        success = true;
+      } else {
+        EXPECT_EQ(status.code(), common::StatusCode::kResourceExhausted);
+        EXPECT_EQ(sender->state(), DistributedQuerySenderState::kWaitingForResponse);
+        EXPECT_FALSE(sender->result().has_value());
+        EXPECT_EQ(sender_resources.reserved_memory_bytes(), 0U);
+      }
+    }
+    EXPECT_EQ(sender_resources.reserved_memory_bytes(), 0U);
+    if (success)
+      break;
   }
   EXPECT_TRUE(success);
 }

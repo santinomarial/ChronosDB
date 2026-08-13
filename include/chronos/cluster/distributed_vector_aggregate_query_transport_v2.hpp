@@ -8,6 +8,7 @@
 #include "chronos/query/distributed_vector_aggregate_exchange.hpp"
 
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <optional>
 #include <span>
@@ -155,6 +156,79 @@ private:
   explicit DistributedVectorAggregateQueryReceiverV2(
       DistributedVectorAggregateQueryReceiverV2Config config) noexcept;
   DistributedVectorAggregateQueryReceiverV2Config config_;
+};
+
+struct DistributedVectorAggregateQueryAttemptV2 {
+  std::size_t attempt_number{};
+  raft::NodeId target_node_id{};
+  std::vector<std::byte> request_bytes;
+};
+
+struct DistributedVectorAggregateQuerySenderLimitsV2 {
+  DistributedQueryRetryLimits retry;
+  std::size_t maximum_response_frames{query::kMaximumUngroupedAggregateWidth};
+  std::size_t maximum_response_bytes{kDefaultDistributedVectorAggregateQueryV2ResponseBytes};
+  query::DistributedVectorAggregateExchangeDecodeLimits payload;
+};
+
+// Single-threaded policy owner for one immutable definition-bound aggregate dispatch. Accepted
+// states are reconstructed under the owned query resource authority before all-or-nothing publish.
+class DistributedVectorAggregateQuerySenderV2 {
+public:
+  using TimePoint = std::chrono::steady_clock::time_point;
+
+  DistributedVectorAggregateQuerySenderV2() = delete;
+  DistributedVectorAggregateQuerySenderV2(const DistributedVectorAggregateQuerySenderV2&) = delete;
+  DistributedVectorAggregateQuerySenderV2&
+  operator=(const DistributedVectorAggregateQuerySenderV2&) = delete;
+  DistributedVectorAggregateQuerySenderV2(DistributedVectorAggregateQuerySenderV2&&) noexcept =
+      default;
+  DistributedVectorAggregateQuerySenderV2&
+  operator=(DistributedVectorAggregateQuerySenderV2&&) noexcept = default;
+
+  [[nodiscard]] static common::Result<DistributedVectorAggregateQuerySenderV2>
+  create(raft::NodeId source_node_id, query::DistributedVectorFragmentDispatchV2 dispatch,
+         std::vector<query::VectorAggregateDefinition>&& definitions,
+         query::QueryResourceContext resources,
+         DistributedVectorAggregateQuerySenderLimitsV2 limits = {});
+  [[nodiscard]] common::Result<DistributedVectorAggregateQueryAttemptV2>
+  begin_attempt(TimePoint now);
+  [[nodiscard]] common::Status
+  accept_responses(std::span<const DistributedVectorAggregateQueryResponseV2> responses,
+                   TimePoint now);
+  [[nodiscard]] common::Status record_transport_failure(common::StatusCode code, TimePoint now);
+
+  [[nodiscard]] DistributedQuerySenderState state() const noexcept;
+  [[nodiscard]] std::size_t attempts_started() const noexcept;
+  [[nodiscard]] std::optional<TimePoint> next_attempt_not_before() const noexcept;
+  [[nodiscard]] std::optional<common::StatusCode> last_status_code() const noexcept;
+  [[nodiscard]] std::optional<DistributedQueryLeaderHint> suggested_leader() const noexcept;
+  [[nodiscard]] const std::vector<query::VectorAggregateDefinition>& definitions() const noexcept;
+  [[nodiscard]]
+  const std::optional<std::vector<query::DistributedVectorAggregateExchangeMessage>>&
+  result() const noexcept;
+
+private:
+  DistributedVectorAggregateQuerySenderV2(
+      raft::NodeId source_node_id, query::DistributedVectorFragmentDispatchV2 dispatch,
+      std::vector<query::VectorAggregateDefinition>&& definitions,
+      query::QueryResourceContext resources, std::vector<std::byte>&& request_bytes,
+      DistributedVectorAggregateQuerySenderLimitsV2 limits) noexcept;
+  [[nodiscard]] common::Status schedule(common::StatusCode code, TimePoint now);
+
+  raft::NodeId source_node_id_{};
+  query::DistributedVectorFragmentDispatchV2 dispatch_;
+  std::vector<query::VectorAggregateDefinition> definitions_;
+  query::QueryResourceContext resources_;
+  std::vector<std::byte> request_bytes_;
+  DistributedVectorAggregateQuerySenderLimitsV2 limits_;
+  DistributedQuerySenderState state_{DistributedQuerySenderState::kReady};
+  std::size_t attempts_started_{};
+  std::chrono::milliseconds next_backoff_{};
+  std::optional<TimePoint> next_attempt_not_before_;
+  std::optional<common::StatusCode> last_status_code_;
+  std::optional<DistributedQueryLeaderHint> suggested_leader_;
+  std::optional<std::vector<query::DistributedVectorAggregateExchangeMessage>> result_;
 };
 
 } // namespace chronos::cluster

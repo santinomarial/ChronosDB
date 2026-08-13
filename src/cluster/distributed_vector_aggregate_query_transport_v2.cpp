@@ -46,6 +46,26 @@ inline constexpr std::uint8_t kAggregateExchangePayload = 1U;
   return {common::StatusCode::kUnauthenticated, message};
 }
 
+[[nodiscard]] common::Status unavailable(const char* message) {
+  return {common::StatusCode::kUnavailable, message};
+}
+
+[[nodiscard]] bool retryable_status(const common::StatusCode code) noexcept {
+  return code == common::StatusCode::kUnavailable ||
+         code == common::StatusCode::kResourceExhausted || code == common::StatusCode::kIoError;
+}
+
+[[nodiscard]] DistributedVectorAggregateQuerySenderV2::TimePoint
+saturating_add(const DistributedVectorAggregateQuerySenderV2::TimePoint now,
+               const std::chrono::milliseconds delay) noexcept {
+  const auto converted =
+      std::chrono::duration_cast<DistributedVectorAggregateQuerySenderV2::TimePoint::duration>(
+          delay);
+  if (now > DistributedVectorAggregateQuerySenderV2::TimePoint::max() - converted)
+    return DistributedVectorAggregateQuerySenderV2::TimePoint::max();
+  return now + converted;
+}
+
 [[nodiscard]] common::Status
 validate_payload_limits(const query::DistributedVectorAggregateExchangeDecodeLimits& limits) {
   if (limits.maximum_frame_length <
@@ -238,7 +258,7 @@ validate_bound_definitions(const query::DistributedVectorFragmentDispatchV2& dis
       dispatch.result_schema.columns.size() != definitions.size()) {
     return invalid("vector aggregate query v2 requires an exact ungrouped definition vector");
   }
-  const common::Status definitions_status =
+  common::Status definitions_status =
       query::validate_distributed_vector_aggregate_definitions(definitions);
   if (!definitions_status.is_ok())
     return definitions_status;
@@ -788,6 +808,233 @@ DistributedVectorAggregateQueryReceiverV2::receive(
     return common::make_unexpected(
         exhausted("vector aggregate query v2 response publication exceeds container limits"));
   }
+}
+
+DistributedVectorAggregateQuerySenderV2::DistributedVectorAggregateQuerySenderV2(
+    const raft::NodeId source_node_id, query::DistributedVectorFragmentDispatchV2 dispatch,
+    std::vector<query::VectorAggregateDefinition>&& definitions,
+    query::QueryResourceContext resources, std::vector<std::byte>&& request_bytes,
+    const DistributedVectorAggregateQuerySenderLimitsV2 limits) noexcept
+    : source_node_id_(source_node_id), dispatch_(std::move(dispatch)),
+      definitions_(std::move(definitions)), resources_(std::move(resources)),
+      request_bytes_(std::move(request_bytes)), limits_(limits),
+      next_backoff_(limits.retry.initial_backoff) {}
+
+common::Result<DistributedVectorAggregateQuerySenderV2>
+DistributedVectorAggregateQuerySenderV2::create(
+    const raft::NodeId source_node_id, query::DistributedVectorFragmentDispatchV2 dispatch,
+    std::vector<query::VectorAggregateDefinition>&& definitions,
+    query::QueryResourceContext resources,
+    const DistributedVectorAggregateQuerySenderLimitsV2 limits) {
+  const auto maximum_supported_backoff =
+      std::chrono::duration_cast<std::chrono::milliseconds>(TimePoint::duration::max());
+  constexpr std::size_t kMinimumResponseBytes =
+      kDistributedVectorAggregateQueryResponseV2HeaderSize +
+      kDistributedVectorAggregateQueryResponseV2TrailerSize;
+  const common::Status payload_limits_status = validate_payload_limits(limits.payload);
+  if (!payload_limits_status.is_ok())
+    return common::make_unexpected(payload_limits_status);
+  if (source_node_id == 0U || limits.retry.maximum_attempts == 0U ||
+      limits.retry.maximum_attempts > 1024U || limits.retry.initial_backoff.count() <= 0 ||
+      limits.retry.maximum_backoff < limits.retry.initial_backoff ||
+      limits.retry.maximum_backoff > maximum_supported_backoff ||
+      limits.maximum_response_frames == 0U ||
+      limits.maximum_response_frames > query::kMaximumUngroupedAggregateWidth ||
+      definitions.size() > limits.maximum_response_frames ||
+      definitions.size() > limits.payload.maximum_aggregates ||
+      limits.maximum_response_bytes < kMinimumResponseBytes ||
+      limits.maximum_response_bytes > kMaximumDistributedVectorAggregateQueryV2ResponseBytes ||
+      dispatch.dispatch.serving_node == source_node_id) {
+    return common::make_unexpected(
+        invalid("vector aggregate query v2 sender configuration is invalid"));
+  }
+  const common::Status definitions_status = validate_bound_definitions(dispatch, definitions);
+  if (!definitions_status.is_ok())
+    return common::make_unexpected(definitions_status);
+  auto request_bytes = encode_distributed_vector_query_request_v2(
+      {source_node_id, dispatch.dispatch.serving_node, dispatch});
+  if (!request_bytes.has_value())
+    return common::make_unexpected(request_bytes.error());
+  return DistributedVectorAggregateQuerySenderV2{
+      source_node_id,       std::move(dispatch),       std::move(definitions),
+      std::move(resources), std::move(*request_bytes), limits};
+}
+
+common::Result<DistributedVectorAggregateQueryAttemptV2>
+DistributedVectorAggregateQuerySenderV2::begin_attempt(const TimePoint now) {
+  if (state_ == DistributedQuerySenderState::kSucceeded ||
+      state_ == DistributedQuerySenderState::kFailed) {
+    return common::make_unexpected(invalid("vector aggregate query v2 sender is terminal"));
+  }
+  if (state_ == DistributedQuerySenderState::kWaitingForResponse) {
+    return common::make_unexpected(unavailable("vector aggregate query v2 response is pending"));
+  }
+  if (state_ == DistributedQuerySenderState::kBackoff && now < *next_attempt_not_before_) {
+    return common::make_unexpected(
+        unavailable("vector aggregate query v2 retry backoff is active"));
+  }
+  if (attempts_started_ >= limits_.retry.maximum_attempts) {
+    return common::make_unexpected(invalid("vector aggregate query v2 retry budget is exhausted"));
+  }
+  try {
+    std::vector<std::byte> request_bytes = request_bytes_;
+    ++attempts_started_;
+    state_ = DistributedQuerySenderState::kWaitingForResponse;
+    suggested_leader_.reset();
+    next_attempt_not_before_.reset();
+    return DistributedVectorAggregateQueryAttemptV2{
+        attempts_started_, dispatch_.dispatch.serving_node, std::move(request_bytes)};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        exhausted("vector aggregate query v2 attempt allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("vector aggregate query v2 attempt exceeds container limits"));
+  }
+}
+
+common::Status DistributedVectorAggregateQuerySenderV2::accept_responses(
+    const std::span<const DistributedVectorAggregateQueryResponseV2> responses,
+    const TimePoint now) {
+  if (state_ != DistributedQuerySenderState::kWaitingForResponse)
+    return invalid("vector aggregate query v2 sender has no pending response");
+  if (responses.empty())
+    return invalid("vector aggregate query v2 response vector is empty");
+  if (responses.size() > limits_.maximum_response_frames)
+    return exhausted("vector aggregate query v2 response vector exceeds sender frame limit");
+
+  const auto& identity = dispatch_.dispatch;
+  const auto validate_correlation = [&](const DistributedVectorAggregateQueryResponseV2& response) {
+    return response.source_node_id == identity.serving_node &&
+           response.target_node_id == source_node_id_ && response.query_id == identity.query_id &&
+           response.tablet_id == identity.tablet_id;
+  };
+  if (responses.front().status_code != common::StatusCode::kOk) {
+    if (responses.size() != 1U || responses.front().payload.has_value() ||
+        !validate_correlation(responses.front())) {
+      return invalid("vector aggregate query v2 failure response is invalid");
+    }
+    auto encoded =
+        encode_distributed_vector_aggregate_query_response_v2(responses.front(), definitions_);
+    if (!encoded.has_value())
+      return encoded.error();
+    if (encoded->size() > limits_.maximum_response_bytes)
+      return exhausted("vector aggregate query v2 response exceeds sender byte limit");
+    suggested_leader_ = responses.front().leader_hint;
+    return schedule(responses.front().status_code, now);
+  }
+  if (responses.size() != definitions_.size())
+    return invalid("vector aggregate query v2 response vector width differs");
+
+  std::size_t total_response_bytes{};
+  try {
+    std::vector<query::DistributedVectorAggregateExchangeMessage> accepted;
+    accepted.reserve(responses.size());
+    for (std::size_t ordinal = 0U; ordinal < responses.size(); ++ordinal) {
+      const auto& response = responses[ordinal];
+      if (!validate_correlation(response) || response.status_code != common::StatusCode::kOk ||
+          !response.payload.has_value() || response.leader_hint.has_value()) {
+        return invalid("vector aggregate query v2 success response is invalid");
+      }
+      const auto& message = *response.payload;
+      const bool terminal = ordinal + 1U == responses.size();
+      if (message.query_id != identity.query_id || message.tablet_id != identity.tablet_id ||
+          message.sequence != ordinal + 1U || message.aggregate_ordinal != ordinal ||
+          message.terminal != terminal) {
+        return invalid("vector aggregate query v2 success response sequence is invalid");
+      }
+      auto encoded = encode_distributed_vector_aggregate_query_response_v2(response, definitions_);
+      if (!encoded.has_value())
+        return encoded.error();
+      if (encoded->size() > limits_.maximum_response_bytes - total_response_bytes)
+        return exhausted("vector aggregate query v2 response vector exceeds sender byte limit");
+      total_response_bytes += encoded->size();
+      auto decoded = decode_distributed_vector_aggregate_query_response_v2_exact(
+          *encoded, definitions_, resources_, limits_.payload);
+      if (!decoded.has_value())
+        return decoded.error();
+      if (!decoded->payload.has_value())
+        return corruption("vector aggregate query v2 canonical success payload is absent");
+      // The immediately preceding guard owns the only path to this move.
+      // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+      accepted.push_back(std::move(decoded->payload).value());
+    }
+    result_ = std::move(accepted);
+  } catch (const std::bad_alloc&) {
+    return exhausted("vector aggregate query v2 sender result allocation failed");
+  } catch (const std::length_error&) {
+    return exhausted("vector aggregate query v2 sender result exceeds container limits");
+  }
+  last_status_code_ = common::StatusCode::kOk;
+  suggested_leader_.reset();
+  state_ = DistributedQuerySenderState::kSucceeded;
+  next_attempt_not_before_.reset();
+  return common::Status::ok();
+}
+
+common::Status
+DistributedVectorAggregateQuerySenderV2::record_transport_failure(const common::StatusCode code,
+                                                                  const TimePoint now) {
+  if (state_ != DistributedQuerySenderState::kWaitingForResponse) {
+    return invalid("vector aggregate query v2 sender has no active transport attempt");
+  }
+  if (code == common::StatusCode::kOk)
+    return invalid("vector aggregate query v2 transport failure cannot be OK");
+  suggested_leader_.reset();
+  return schedule(code, now);
+}
+
+common::Status DistributedVectorAggregateQuerySenderV2::schedule(const common::StatusCode code,
+                                                                 const TimePoint now) {
+  last_status_code_ = code;
+  if (!retryable_status(code) || attempts_started_ >= limits_.retry.maximum_attempts) {
+    state_ = DistributedQuerySenderState::kFailed;
+    next_attempt_not_before_.reset();
+    return common::Status::ok();
+  }
+  state_ = DistributedQuerySenderState::kBackoff;
+  next_attempt_not_before_ = saturating_add(now, next_backoff_);
+  if (next_backoff_ < limits_.retry.maximum_backoff) {
+    const auto current = next_backoff_.count();
+    const auto maximum = limits_.retry.maximum_backoff.count();
+    next_backoff_ = current > maximum / 2
+                        ? limits_.retry.maximum_backoff
+                        : std::min(next_backoff_ * 2, limits_.retry.maximum_backoff);
+  }
+  return common::Status::ok();
+}
+
+DistributedQuerySenderState DistributedVectorAggregateQuerySenderV2::state() const noexcept {
+  return state_;
+}
+
+std::size_t DistributedVectorAggregateQuerySenderV2::attempts_started() const noexcept {
+  return attempts_started_;
+}
+
+std::optional<DistributedVectorAggregateQuerySenderV2::TimePoint>
+DistributedVectorAggregateQuerySenderV2::next_attempt_not_before() const noexcept {
+  return next_attempt_not_before_;
+}
+
+std::optional<common::StatusCode>
+DistributedVectorAggregateQuerySenderV2::last_status_code() const noexcept {
+  return last_status_code_;
+}
+
+std::optional<DistributedQueryLeaderHint>
+DistributedVectorAggregateQuerySenderV2::suggested_leader() const noexcept {
+  return suggested_leader_;
+}
+
+const std::vector<query::VectorAggregateDefinition>&
+DistributedVectorAggregateQuerySenderV2::definitions() const noexcept {
+  return definitions_;
+}
+
+const std::optional<std::vector<query::DistributedVectorAggregateExchangeMessage>>&
+DistributedVectorAggregateQuerySenderV2::result() const noexcept {
+  return result_;
 }
 
 } // namespace chronos::cluster
