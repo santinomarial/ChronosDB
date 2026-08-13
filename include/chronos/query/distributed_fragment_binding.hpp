@@ -290,6 +290,8 @@ struct DistributedAggregateGroupReadAuthority {
   raft::RaftGroupObservation observation;
 };
 
+using DistributedVectorGroupReadAuthority = DistributedAggregateGroupReadAuthority;
+
 struct GroupBackedDistributedAggregateSnapshotBinding {
   std::reference_wrapper<const raft::MetadataCatalogSnapshot> catalog;
   schema::TableId table_id;
@@ -309,6 +311,22 @@ bind_group_backed_distributed_aggregate_snapshot(
     const DistributedAggregatePlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
     const GroupBackedDistributedAggregateSnapshotBinding& binding,
     DistributedAggregateSnapshotBindingLimits limits = {});
+
+struct GroupBackedDistributedVectorSnapshotBinding {
+  std::reference_wrapper<const raft::MetadataCatalogSnapshot> catalog;
+  schema::TableId table_id;
+  // Canonical unique group order. Unrelated groups are ignored; every planned tablet group must
+  // have one exact barrier/observation pair.
+  std::span<const DistributedVectorGroupReadAuthority> group_authorities;
+  std::span<const std::uint32_t> destination_column_ordinals;
+  std::optional<cseg::EventTimePredicate> event_time_predicate;
+};
+
+[[nodiscard]] common::Result<CompatibleDistributedVectorSnapshot>
+bind_group_backed_distributed_vector_snapshot(
+    const DistributedVectorQueryPlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
+    const GroupBackedDistributedVectorSnapshotBinding& binding,
+    DistributedVectorSnapshotBindingLimits limits = {});
 
 struct DistributedAggregateFollowerReadAuthority {
   raft::RaftGroupObservation leader_observation;

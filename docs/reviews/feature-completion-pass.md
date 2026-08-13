@@ -669,6 +669,13 @@ Focused executions passed:
   Header self-containment and installed consumption cover the public constructor. Group-keyed proof
   acquisition, execution, coordination, authenticated transport, and process integration are not
   claimed.
+- Group-keyed vector-proof continuation: the focused two-tablet authority case now also mapped a
+  canonical group-sorted vector containing an unrelated metadata group through committed
+  tablet-to-group bindings into plan-ordered vector dispatches. A span missing one selected group
+  rejected before binding; the shared aggregate reversed-order and metadata/proof-policy cases
+  remained green. Header self-containment and installed consumption cover the public constructor.
+  Correlated follower group binding, remote acquisition, execution, coordination, authenticated
+  transport, and process integration are not claimed.
 
 The C++ files changed by the grouped- and vector-exchange continuations pass the repository-pinned
 clang-format 18 check. A full-tree check was also run and still reports pre-existing violations in

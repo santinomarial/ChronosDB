@@ -262,6 +262,10 @@ The metadata-backed vector entry point shares the aggregate path's canonical cat
 observation resolver. It derives plan-ordered admissions plus active schema, committed placement,
 and immutable group authority, then creates temporary borrowed binding views and publishes only the
 compatible vector owner. Metadata and observation lifetimes therefore end at the call boundary.
+For leader-linearizable reads, the group-backed vector entry point shares the aggregate path's
+canonical group-authority resolver. It uses committed tablet-to-group bindings to select exact
+barrier/observation pairs, ignores unrelated groups, and removes the caller-side plan-order join
+before entering the metadata-backed vector boundary.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated

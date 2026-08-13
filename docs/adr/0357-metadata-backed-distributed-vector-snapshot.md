@@ -35,9 +35,9 @@ metadata-backed aggregate proof, stale/reconfiguration, bounded-stale, and event
 green, covering the shared resolver. Header self-containment and installed consumption cover the
 new public entry point.
 
-Group-keyed proof acquisition, remote follower observation acquisition, vector worker execution,
-global coordination, authenticated transport, and process integration remain incomplete. No Phase
-16 exit gate is claimed.
+Leader-linearizable group-keyed proof binding is implemented separately. Correlated follower group
+authority, remote proof acquisition, vector worker execution, global coordination, authenticated
+transport, and process integration remain incomplete. No Phase 16 exit gate is claimed.
 
 Invariants 4–6, 11, 14, 15, and 18 apply.
 

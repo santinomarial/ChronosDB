@@ -618,6 +618,25 @@ TEST(DistributedFragmentBindingTest, ResolvesCommittedMetadataAndCurrentReplicaP
           .aggregates = {{.operation = VectorAggregateOperation::kSum, .input_index = 1U}},
           .order_keys = {{.output_index = 1U, .direction = PhysicalSortDirection::kDescending}},
           .limit = 3U}};
+  auto group_vector =
+      bind_group_backed_distributed_vector_snapshot(vector_plan, *snapshot,
+                                                    {.catalog = std::cref(catalog),
+                                                     .table_id = schema_value.table_id(),
+                                                     .group_authorities = group_authorities,
+                                                     .destination_column_ordinals = projection});
+  ASSERT_TRUE(group_vector.has_value()) << group_vector.error().to_string();
+  ASSERT_EQ(group_vector->dispatches().size(), 2U);
+  EXPECT_EQ(group_vector->dispatches()[0].raft_group_id, specs[0].group_id);
+  EXPECT_EQ(group_vector->dispatches()[1].raft_group_id, specs[1].group_id);
+  EXPECT_EQ(bind_group_backed_distributed_vector_snapshot(
+                vector_plan, *snapshot,
+                {.catalog = std::cref(catalog),
+                 .table_id = schema_value.table_id(),
+                 .group_authorities = std::span{group_authorities}.first(2U),
+                 .destination_column_ordinals = projection})
+                .error()
+                .code(),
+            common::StatusCode::kUnavailable);
   auto vector =
       bind_metadata_backed_distributed_vector_snapshot(vector_plan, *snapshot,
                                                        {.catalog = std::cref(catalog),

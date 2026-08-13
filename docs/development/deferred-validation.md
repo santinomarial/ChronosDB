@@ -276,8 +276,10 @@
   owner now pins one Manifest generation behind every plan-ordered vector dispatch under bounded
   total projection ownership. A metadata-backed constructor now resolves one committed catalog's
   active schema, placement, immutable group, and policy-specific observation proof for every
-  plan-ordered vector fragment before compatible binding. Group-keyed proof acquisition, global
-  coordination, authenticated transport, and execution remain.
+  plan-ordered vector fragment before compatible binding. Leader-linearizable vector proofs now
+  join from canonical group order through committed tablet-to-group metadata into plan order.
+  Correlated follower group binding, remote acquisition, global coordination, authenticated
+  transport, and execution remain.
   A distinct terminal-only frame closes an empty tablet stream without inventing a SQL NULL group.
   Its separate fixed reader and move-only cursor own every terminal fragmentation boundary,
   coalesced successor bytes, sticky damage, and checked short writes without introducing an
