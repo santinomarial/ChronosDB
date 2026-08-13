@@ -46,7 +46,7 @@ Invalid values supplied to the encoder are invalid arguments.
 CRC32C is accidental-corruption coverage, not authentication. The existing authenticated cluster
 transport remains a separate trust boundary. This first grouping-state format does not define
 multi-key tuples, non-FLOAT64 keys, grouped fragment plans, coordinator merge/order semantics,
-partial-I/O ownership, top-N, or LIMIT.
+top-N, or LIMIT.
 
 ## Stream ownership
 
@@ -80,3 +80,9 @@ The frame has no key or partial; successful exact decoding is the terminal event
 uses sequence 1. Distinct magic prevents reinterpretation as a NULL group. Nonempty streams may
 still mark their last grouped partial terminal. Contiguous sequencing and duplicate arbitration
 belong to the future grouped coordinator.
+
+Its fixed reader retains one 64-byte frame, reports the exact consumed prefix, leaves coalesced
+successor bytes with the caller, and fails sticky after exact-decode damage. Its move-only write
+cursor owns the canonical frame, exposes only the unwritten suffix, rejects over-advance without
+progress, and leaves the moved-from cursor complete. These classes own bytes only; a future
+grouped-stream carrier must still choose the frame type before dispatching to either fixed reader.

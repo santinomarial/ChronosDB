@@ -859,6 +859,10 @@ int main() {
       &chronos::query::encode_grouped_exchange_terminal_message;
   const auto decode_grouped_terminal =
       &chronos::query::decode_grouped_exchange_terminal_message_exact;
+  const auto consume_grouped_terminal =
+      &chronos::query::GroupedExchangeTerminalFrameReader::consume;
+  const auto create_grouped_terminal_cursor =
+      &chronos::query::GroupedExchangeTerminalFrameWriteCursor::create;
   const auto consume_exchange_frame = &chronos::query::ExchangeFrameReader::consume;
   const auto create_exchange_write_cursor = &chronos::query::ExchangeFrameWriteCursor::create;
   const auto create_distributed_coordinator =
@@ -1132,6 +1136,8 @@ int main() {
                  consume_grouped_exchange != nullptr &&
                  create_grouped_exchange_cursor != nullptr &&
                  encode_grouped_terminal != nullptr && decode_grouped_terminal != nullptr &&
+                 consume_grouped_terminal != nullptr &&
+                 create_grouped_terminal_cursor != nullptr &&
                  consume_exchange_frame != nullptr && create_exchange_write_cursor != nullptr &&
                  create_distributed_coordinator != nullptr &&
                  encode_distributed_fragment != nullptr &&

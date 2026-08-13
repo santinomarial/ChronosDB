@@ -325,5 +325,77 @@ TEST(DistributedGroupedExchangeTest, EncodesDistinctEmptyStreamTerminalWithoutIn
             common::StatusCode::kInvalidArgument);
 }
 
+TEST(DistributedGroupedExchangeTest, OwnsEveryTerminalReadSplitAndShortWriteSuffix) {
+  const GroupedExchangeTerminalMessage first_message{
+      .query_id = uuid(0x31U), .tablet_id = tablet(0x32U), .sequence = 7U};
+  GroupedExchangeTerminalMessage second_message = first_message;
+  second_message.sequence = 8U;
+  const auto first_encoded = encode_grouped_exchange_terminal_message(first_message);
+  const auto second_encoded = encode_grouped_exchange_terminal_message(second_message);
+  ASSERT_TRUE(first_encoded.has_value());
+  ASSERT_TRUE(second_encoded.has_value());
+
+  for (std::size_t split = 0U; split <= first_encoded->bytes().size(); ++split) {
+    GroupedExchangeTerminalFrameReader reader;
+    const auto prefix = reader.consume(first_encoded->bytes().first(split));
+    ASSERT_TRUE(prefix.has_value()) << "split=" << split;
+    EXPECT_EQ(prefix->consumed_bytes, split) << "split=" << split;
+    EXPECT_EQ(prefix->message.has_value(), split == first_encoded->bytes().size())
+        << "split=" << split;
+    const auto suffix = reader.consume(first_encoded->bytes().subspan(split));
+    ASSERT_TRUE(suffix.has_value()) << "split=" << split;
+    EXPECT_EQ(suffix->consumed_bytes, first_encoded->bytes().size() - split) << "split=" << split;
+    const GroupedExchangeTerminalMessage* decoded =
+        prefix->message.has_value() ? &*prefix->message : &*suffix->message;
+    EXPECT_EQ(decoded->sequence, first_message.sequence) << "split=" << split;
+    EXPECT_EQ(reader.buffered_bytes(), 0U);
+  }
+
+  std::vector<std::byte> coalesced(first_encoded->bytes().begin(), first_encoded->bytes().end());
+  coalesced.insert(coalesced.end(), second_encoded->bytes().begin(), second_encoded->bytes().end());
+  GroupedExchangeTerminalFrameReader reader;
+  const auto first = reader.consume(coalesced);
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(first->message.has_value());
+  EXPECT_EQ(first->consumed_bytes, grouped_exchange_terminal_format::kFrameLength);
+  const auto second = reader.consume(common::ByteView{coalesced}.subspan(first->consumed_bytes));
+  ASSERT_TRUE(second.has_value());
+  ASSERT_TRUE(second->message.has_value());
+  EXPECT_EQ(second->message->sequence, second_message.sequence);
+
+  TerminalFrame corrupt{};
+  std::ranges::copy(first_encoded->bytes(), corrupt.begin());
+  corrupt[40U] ^= std::byte{1U};
+  GroupedExchangeTerminalFrameReader failed_reader;
+  const auto rejected = failed_reader.consume(corrupt);
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_TRUE(failed_reader.failed());
+  const auto repeated = failed_reader.consume(first_encoded->bytes());
+  ASSERT_FALSE(repeated.has_value());
+  EXPECT_EQ(repeated.error(), rejected.error());
+
+  auto cursor = GroupedExchangeTerminalFrameWriteCursor::create(first_message);
+  ASSERT_TRUE(cursor.has_value());
+  EXPECT_TRUE(std::ranges::equal(cursor->pending_write(), first_encoded->bytes()));
+  ASSERT_TRUE(cursor->consume_written(13U).is_ok());
+  ASSERT_TRUE(cursor->consume_written(17U).is_ok());
+  EXPECT_EQ(cursor->written_bytes(), 30U);
+  EXPECT_TRUE(std::ranges::equal(cursor->pending_write(), first_encoded->bytes().subspan(30U)));
+  EXPECT_EQ(cursor->consume_written(cursor->pending_write().size() + 1U).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(cursor->written_bytes(), 30U);
+  GroupedExchangeTerminalFrameWriteCursor moved = std::move(*cursor);
+  EXPECT_TRUE(cursor->complete());
+  EXPECT_TRUE(cursor->pending_write().empty());
+  ASSERT_TRUE(moved.consume_written(moved.pending_write().size()).is_ok());
+  EXPECT_TRUE(moved.complete());
+  EXPECT_TRUE(moved.consume_written(0U).is_ok());
+
+  GroupedExchangeTerminalMessage invalid = first_message;
+  invalid.sequence = 0U;
+  EXPECT_EQ(GroupedExchangeTerminalFrameWriteCursor::create(invalid).error().code(),
+            common::StatusCode::kInvalidArgument);
+}
+
 } // namespace
 } // namespace chronos::query

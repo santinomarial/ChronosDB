@@ -19,6 +19,9 @@ nullable FLOAT64 group key. Signed zeros and every NaN payload use the same cano
 local grouped operator; ungrouped v1 bytes remain unchanged. Its fixed reader and move-only cursor
 apply the same bounded fragmented-read/coalesced-suffix/short-write ownership as ungrouped v1. A
 distinct 64-byte terminal frame closes an empty grouped tablet without fabricating a NULL-key group.
+Its separate fixed reader and move-only cursor provide the same bounded fragmented-read,
+coalesced-successor, sticky-failure, and checked short-write ownership without assuming how a
+carrier discriminates grouped partial and terminal magic.
 The dispatch envelope adds the distinct Raft group identity that scopes every admission index;
 workers never execute the bare inner fragment.
 `bind_distributed_aggregate_fragment` constructs that envelope only after one Manifest v2 snapshot,
@@ -67,10 +70,10 @@ Length, magic, and CRC are rejected before payload interpretation. Unknown check
 return `NOT_SUPPORTED`; damaged or contradictory bytes return `CORRUPTION`; invalid encoder input
 returns `INVALID_ARGUMENT`. Transport authentication is separate from CRC integrity.
 
-Encoding and decoding are `O(1)` because the frame is fixed at 128 bytes, use constant storage, and
-perform no successful-path heap allocation. Across arbitrary fragments, the reader is `O(total
-bytes)` and retains exactly one frame; cursor advancement is `O(1)`. The bounded exchange still
-charges its in-memory `ExchangeMessage` representation, not the wire length.
+Encoding and decoding are `O(1)` because each frame is fixed, use constant storage, and perform no
+successful-path heap allocation. Across arbitrary fragments, each fixed reader is `O(total bytes)`
+and retains exactly one frame of its declared type; cursor advancement is `O(1)`. The bounded
+exchange still charges its in-memory `ExchangeMessage` representation, not the wire length.
 Coordinator sequence lookup is `O(1)` within one tablet, retained memory is `O(accepted messages)`
 under a 65,536-message hard ceiling, and final merge is `O(planned tablets)`.
 Fragment encoding/decoding is `O(projected columns)` with a 4,096-column and 16,604-byte hard cap.

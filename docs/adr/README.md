@@ -357,3 +357,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0320](0320-canonical-nullable-float64-grouped-exchange.md) | Canonical nullable-FLOAT64 grouped exchange | accepted |
 | [0321](0321-bounded-grouped-exchange-partial-io.md) | Bounded grouped-exchange partial I/O | accepted |
 | [0322](0322-distinct-empty-grouped-stream-terminal.md) | Distinct empty grouped-stream terminal | accepted |
+| [0323](0323-bounded-grouped-terminal-partial-io.md) | Bounded grouped-terminal partial I/O | accepted |

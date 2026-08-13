@@ -38,8 +38,9 @@ A focused test freezes every terminal field, verifies exact round trip and CRC c
 truncation, trailing bytes, raw damage, unknown versions, checksum-valid reserved bytes, and invalid
 input identity. The installed-consumer gate covers both terminal codec symbols.
 
-Terminal partial-I/O ownership, grouped stream multiplexing, coordinator state, fragment planning,
-ordering/top-N/LIMIT, and broader transport/fault evidence remain incomplete. No Phase 16 exit gate
+Grouped stream multiplexing, coordinator state, fragment planning, ordering/top-N/LIMIT, and
+broader transport/fault evidence remain incomplete. Bounded terminal partial-I/O ownership is the
+accepted follow-up in [ADR 0323](0323-bounded-grouped-terminal-partial-io.md). No Phase 16 exit gate
 is claimed.
 
 Invariants 6, 10, 11, 14, and 18 apply.

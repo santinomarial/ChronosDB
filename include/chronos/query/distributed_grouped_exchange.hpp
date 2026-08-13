@@ -55,6 +55,55 @@ private:
   encode_grouped_exchange_terminal_message(const GroupedExchangeTerminalMessage&);
 };
 
+struct GroupedExchangeTerminalFrameReadStep {
+  std::size_t consumed_bytes{};
+  std::optional<GroupedExchangeTerminalMessage> message;
+};
+
+class GroupedExchangeTerminalFrameReader {
+public:
+  GroupedExchangeTerminalFrameReader() = default;
+  GroupedExchangeTerminalFrameReader(const GroupedExchangeTerminalFrameReader&) = delete;
+  GroupedExchangeTerminalFrameReader& operator=(const GroupedExchangeTerminalFrameReader&) = delete;
+  GroupedExchangeTerminalFrameReader(GroupedExchangeTerminalFrameReader&&) = delete;
+  GroupedExchangeTerminalFrameReader& operator=(GroupedExchangeTerminalFrameReader&&) = delete;
+
+  [[nodiscard]] common::Result<GroupedExchangeTerminalFrameReadStep>
+  consume(common::ByteView bytes);
+  [[nodiscard]] std::size_t buffered_bytes() const noexcept;
+  [[nodiscard]] bool failed() const noexcept;
+
+private:
+  std::array<std::byte, grouped_exchange_terminal_format::kFrameLength> bytes_{};
+  std::size_t buffered_bytes_{};
+  std::optional<common::Status> failure_;
+};
+
+class GroupedExchangeTerminalFrameWriteCursor {
+public:
+  GroupedExchangeTerminalFrameWriteCursor() = delete;
+  GroupedExchangeTerminalFrameWriteCursor(const GroupedExchangeTerminalFrameWriteCursor&) = delete;
+  GroupedExchangeTerminalFrameWriteCursor&
+  operator=(const GroupedExchangeTerminalFrameWriteCursor&) = delete;
+  GroupedExchangeTerminalFrameWriteCursor(GroupedExchangeTerminalFrameWriteCursor&& other) noexcept;
+  GroupedExchangeTerminalFrameWriteCursor&
+  operator=(GroupedExchangeTerminalFrameWriteCursor&& other) noexcept;
+
+  [[nodiscard]] static common::Result<GroupedExchangeTerminalFrameWriteCursor>
+  create(const GroupedExchangeTerminalMessage& message);
+  [[nodiscard]] common::ByteView pending_write() const noexcept;
+  [[nodiscard]] common::Status consume_written(std::size_t bytes) noexcept;
+  [[nodiscard]] std::size_t written_bytes() const noexcept;
+  [[nodiscard]] bool complete() const noexcept;
+
+private:
+  explicit GroupedExchangeTerminalFrameWriteCursor(
+      EncodedGroupedExchangeTerminalMessage encoded) noexcept;
+
+  EncodedGroupedExchangeTerminalMessage encoded_;
+  std::size_t written_bytes_{};
+};
+
 class EncodedGroupedFloat64ExchangeMessage {
 public:
   [[nodiscard]] common::ByteView bytes() const noexcept;

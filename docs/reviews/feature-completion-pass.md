@@ -457,9 +457,17 @@ Focused executions passed:
 - Empty grouped-terminal continuation: 1 focused case passed for the distinct terminal-only layout,
   exact identity/sequence/CRC round trip, and truncation/version/reserved/input rejection. It does
   not fabricate a NULL group; grouped coordination is not claimed.
+- Grouped-terminal partial-I/O continuation: 1 focused case passed for all 65 split positions,
+  coalesced successor ownership, sticky corruption, multiple exact short-write advances, overrun
+  rollback, and move-only cursor transfer. Stream discrimination, transport, and grouped
+  coordination are not claimed.
 
-The final C++ tree passed the repository-pinned clang-format 18 check. Full-suite, sanitizer, fuzz,
-broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were deliberately not run.
+The C++ files changed by the grouped-exchange continuations pass the repository-pinned clang-format
+18 check. A full-tree check was also run and still reports pre-existing violations in the
+subscription protocol, subscription, multi-tablet checkpoint implementation, and focused
+subscription test files; this grouped slice does not rewrite those unrelated files or claim a
+full-tree formatting pass. Full-suite, sanitizer, fuzz, broader cross-compiler/Linux parity,
+benchmark, profile, and chaos checks were deliberately not run.
 
 ## Known risks and limitations
 

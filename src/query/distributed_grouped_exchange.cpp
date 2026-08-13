@@ -307,6 +307,83 @@ decode_grouped_exchange_terminal_message_exact(const common::ByteView bytes) {
       .query_id = common::Uuid{query_id_bytes}, .tablet_id = *tablet_id, .sequence = *sequence};
 }
 
+common::Result<GroupedExchangeTerminalFrameReadStep>
+GroupedExchangeTerminalFrameReader::consume(const common::ByteView bytes) {
+  if (failure_.has_value())
+    return common::make_unexpected(*failure_);
+  const std::size_t consumed =
+      std::min(bytes.size(), grouped_exchange_terminal_format::kFrameLength - buffered_bytes_);
+  std::ranges::copy(bytes.first(consumed),
+                    bytes_.begin() + static_cast<std::ptrdiff_t>(buffered_bytes_));
+  buffered_bytes_ += consumed;
+  if (buffered_bytes_ != grouped_exchange_terminal_format::kFrameLength)
+    return GroupedExchangeTerminalFrameReadStep{.consumed_bytes = consumed};
+  auto decoded = decode_grouped_exchange_terminal_message_exact(bytes_);
+  if (!decoded.has_value()) {
+    failure_ = decoded.error();
+    return common::make_unexpected(*failure_);
+  }
+  buffered_bytes_ = 0U;
+  return GroupedExchangeTerminalFrameReadStep{.consumed_bytes = consumed,
+                                              .message = std::move(*decoded)};
+}
+
+std::size_t GroupedExchangeTerminalFrameReader::buffered_bytes() const noexcept {
+  return buffered_bytes_;
+}
+
+bool GroupedExchangeTerminalFrameReader::failed() const noexcept {
+  return failure_.has_value();
+}
+
+GroupedExchangeTerminalFrameWriteCursor::GroupedExchangeTerminalFrameWriteCursor(
+    EncodedGroupedExchangeTerminalMessage encoded) noexcept
+    : encoded_(std::move(encoded)) {}
+
+GroupedExchangeTerminalFrameWriteCursor::GroupedExchangeTerminalFrameWriteCursor(
+    GroupedExchangeTerminalFrameWriteCursor&& other) noexcept
+    : encoded_(std::move(other.encoded_)),
+      written_bytes_(
+          std::exchange(other.written_bytes_, grouped_exchange_terminal_format::kFrameLength)) {}
+
+GroupedExchangeTerminalFrameWriteCursor& GroupedExchangeTerminalFrameWriteCursor::operator=(
+    GroupedExchangeTerminalFrameWriteCursor&& other) noexcept {
+  if (this != &other) {
+    encoded_ = std::move(other.encoded_);
+    written_bytes_ =
+        std::exchange(other.written_bytes_, grouped_exchange_terminal_format::kFrameLength);
+  }
+  return *this;
+}
+
+common::Result<GroupedExchangeTerminalFrameWriteCursor>
+GroupedExchangeTerminalFrameWriteCursor::create(const GroupedExchangeTerminalMessage& message) {
+  auto encoded = encode_grouped_exchange_terminal_message(message);
+  if (!encoded.has_value())
+    return common::make_unexpected(encoded.error());
+  return GroupedExchangeTerminalFrameWriteCursor{std::move(*encoded)};
+}
+
+common::ByteView GroupedExchangeTerminalFrameWriteCursor::pending_write() const noexcept {
+  return encoded_.bytes().subspan(written_bytes_);
+}
+
+common::Status
+GroupedExchangeTerminalFrameWriteCursor::consume_written(const std::size_t bytes) noexcept {
+  if (bytes > grouped_exchange_terminal_format::kFrameLength - written_bytes_)
+    return invalid("written byte count exceeds the grouped terminal frame");
+  written_bytes_ += bytes;
+  return common::Status::ok();
+}
+
+std::size_t GroupedExchangeTerminalFrameWriteCursor::written_bytes() const noexcept {
+  return written_bytes_;
+}
+
+bool GroupedExchangeTerminalFrameWriteCursor::complete() const noexcept {
+  return written_bytes_ == grouped_exchange_terminal_format::kFrameLength;
+}
+
 common::Result<GroupedFloat64ExchangeFrameReadStep>
 GroupedFloat64ExchangeFrameReader::consume(const common::ByteView bytes) {
   if (failure_.has_value())
