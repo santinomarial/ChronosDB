@@ -163,3 +163,14 @@ aggregate coordinator. Complete sender vectors enter the coordinator exactly onc
 failure enters exactly once, and no partial global result is exposed. Successful finish returns the
 original global plan attached to the merged definitions, schema, and finalized scalar values. The
 owner has no socket, thread, callback, or clock.
+
+## Multi-tablet TCP scheduling and Native result publication
+
+`DistributedVectorAggregateQueryTcpExecutionV2` validates all node routes, nested carrier bounds,
+definition-width coverage, three transport deadlines, and final Native Protocol output bounds
+before opening a socket. It owns the portable execution and at most one definition-bound client per
+tablet. Finite retries rotate only the immutable target's prevalidated IPv4 addresses. Every due
+attempt receives the exact pinned definitions and shared query resource authority. Failure or
+cancellation destroys all live attempts and publishes nothing. After every sender closes
+successfully, the global scalar result is finalized exactly once into one retained canonical Native
+Protocol v1 `QUERY_RESULT` payload.

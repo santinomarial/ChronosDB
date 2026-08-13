@@ -62,6 +62,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/cluster/distributed_vector_aggregate_finalization_v2.hpp>
 #include <chronos/cluster/distributed_vector_aggregate_query_execution_v2.hpp>
 #include <chronos/cluster/distributed_vector_aggregate_query_tcp_client_v2.hpp>
+#include <chronos/cluster/distributed_vector_aggregate_query_tcp_execution_v2.hpp>
 #include <chronos/cluster/distributed_vector_aggregate_query_tcp_server_v2.hpp>
 #include <chronos/cluster/distributed_vector_aggregate_query_transport_v2.hpp>
 #include <chronos/cluster/distributed_vector_aggregate_query_tls_v2.hpp>
@@ -284,6 +285,8 @@ int main() {
       &chronos::cluster::DistributedVectorAggregateQueryExecutionV2::create;
   const auto create_vector_aggregate_query_tcp_client =
       &chronos::cluster::DistributedVectorAggregateQueryTcpClientV2::begin;
+  const auto create_vector_aggregate_query_tcp_execution =
+      &chronos::cluster::DistributedVectorAggregateQueryTcpExecutionV2::create;
   const auto create_vector_aggregate_query_tcp_server =
       &chronos::cluster::DistributedVectorAggregateQueryTcpServerV2::start;
   const auto create_vector_aggregate_query_tls_client =
@@ -556,6 +559,7 @@ int main() {
   (void)create_vector_aggregate_query_sender;
   (void)create_vector_aggregate_query_execution;
   (void)create_vector_aggregate_query_tcp_client;
+  (void)create_vector_aggregate_query_tcp_execution;
   (void)create_vector_aggregate_query_tcp_server;
   (void)create_vector_aggregate_query_tls_client;
   (void)create_vector_aggregate_query_tls_server;

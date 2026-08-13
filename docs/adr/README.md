@@ -430,3 +430,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0393](0393-bounded-definition-bound-vector-aggregate-query-v2-tcp-server.md) | Bounded definition-bound vector aggregate query v2 TCP server | accepted |
 | [0394](0394-owned-definition-bound-vector-aggregate-query-v2-tcp-service.md) | Owned definition-bound vector aggregate query v2 TCP service | accepted |
 | [0395](0395-pinned-definition-bound-vector-aggregate-query-v2-execution-owner.md) | Pinned definition-bound vector aggregate query v2 execution owner | accepted |
+| [0396](0396-pinned-vector-aggregate-query-v2-tcp-scheduling-and-finalization.md) | Pinned vector aggregate query v2 TCP scheduling and finalization | accepted |
