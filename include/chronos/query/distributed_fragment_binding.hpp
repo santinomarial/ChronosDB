@@ -267,6 +267,24 @@ bind_metadata_backed_distributed_aggregate_snapshot(
     const MetadataBackedDistributedAggregateSnapshotBinding& binding,
     DistributedAggregateSnapshotBindingLimits limits = {});
 
+using DistributedVectorReplicaProof = DistributedAggregateReplicaProof;
+
+struct MetadataBackedDistributedVectorSnapshotBinding {
+  std::reference_wrapper<const raft::MetadataCatalogSnapshot> catalog;
+  schema::TableId table_id;
+  std::span<const DistributedVectorReplicaProof> replica_proofs;
+  std::span<const std::uint32_t> destination_column_ordinals;
+  std::optional<cseg::EventTimePredicate> event_time_predicate;
+};
+
+// Resolves every vector fragment's schema, placement, group, and policy-specific read admission
+// from one committed catalog before entering the compatible vector snapshot binder.
+[[nodiscard]] common::Result<CompatibleDistributedVectorSnapshot>
+bind_metadata_backed_distributed_vector_snapshot(
+    const DistributedVectorQueryPlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
+    const MetadataBackedDistributedVectorSnapshotBinding& binding,
+    DistributedVectorSnapshotBindingLimits limits = {});
+
 struct DistributedAggregateGroupReadAuthority {
   raft::GroupReadBarrier barrier;
   raft::RaftGroupObservation observation;

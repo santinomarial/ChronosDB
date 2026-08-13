@@ -36,9 +36,9 @@ Reversed bindings and a total projection budget one ordinal below demand fail be
 All existing aggregate/grouped/metadata binding cases pass unchanged. Header self-containment and
 installed consumption cover the public owner.
 
-Metadata-backed vector batch construction, worker execution, result coordination, request partial
-I/O, authenticated transport, and process integration remain incomplete. No Phase 16 exit gate is
-claimed.
+Metadata-backed vector batch construction and request partial I/O are implemented separately.
+Group-keyed proof acquisition, worker execution, result coordination, authenticated transport, and
+process integration remain incomplete. No Phase 16 exit gate is claimed.
 
 Invariants 4–6, 11, 14, 15, and 18 apply.
 

@@ -274,8 +274,10 @@
   derives one such dispatch only after exact admission, placement, Manifest-v2 source/position,
   recovery schema, projection, and aggregate operation/type agreement. A compatible multi-tablet
   owner now pins one Manifest generation behind every plan-ordered vector dispatch under bounded
-  total projection ownership. Metadata-backed batch construction, global coordination,
-  authenticated transport, and execution remain.
+  total projection ownership. A metadata-backed constructor now resolves one committed catalog's
+  active schema, placement, immutable group, and policy-specific observation proof for every
+  plan-ordered vector fragment before compatible binding. Group-keyed proof acquisition, global
+  coordination, authenticated transport, and execution remain.
   A distinct terminal-only frame closes an empty tablet stream without inventing a SQL NULL group.
   Its separate fixed reader and move-only cursor own every terminal fragmentation boundary,
   coalesced successor bytes, sticky damage, and checked short writes without introducing an

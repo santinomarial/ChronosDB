@@ -391,3 +391,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0354](0354-authority-bound-distributed-vector-fragment.md) | Authority-bound distributed vector fragment | accepted |
 | [0355](0355-compatible-multi-tablet-vector-snapshot.md) | Compatible multi-tablet vector snapshot | accepted |
 | [0356](0356-bounded-distributed-vector-fragment-partial-io.md) | Bounded distributed vector fragment partial I/O | accepted |
+| [0357](0357-metadata-backed-distributed-vector-snapshot.md) | Metadata-backed distributed vector snapshot | accepted |

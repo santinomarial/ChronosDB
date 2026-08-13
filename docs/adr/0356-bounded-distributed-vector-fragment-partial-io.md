@@ -35,8 +35,9 @@ checks sticky header corruption and lower caller limits, and exercises short wri
 over-acknowledgement, and move transfer. Header self-containment and the installed external consumer
 cover the public types.
 
-Metadata-backed vector batch construction, worker execution, result coordination, authenticated
-transport, and process integration remain incomplete. No Phase 16 exit gate is claimed.
+Metadata-backed vector batch construction is implemented separately. Group-keyed proof acquisition,
+worker execution, result coordination, authenticated transport, and process integration remain
+incomplete. No Phase 16 exit gate is claimed.
 
 Invariants 4, 5, 6, 11, 14, and 18 apply.
 

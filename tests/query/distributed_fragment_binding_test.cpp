@@ -608,6 +608,42 @@ TEST(DistributedFragmentBindingTest, ResolvesCommittedMetadataAndCurrentReplicaP
                 .code(),
             common::StatusCode::kUnavailable);
 
+  DistributedVectorQueryPlan vector_plan{
+      .query_id = plan.query_id,
+      .read_policy = plan.read_policy,
+      .fragments = plan.fragments,
+      .intent = {
+          .mode = DistributedVectorPlanMode::kGroupedAggregate,
+          .group_key_input_indices = {0U},
+          .aggregates = {{.operation = VectorAggregateOperation::kSum, .input_index = 1U}},
+          .order_keys = {{.output_index = 1U, .direction = PhysicalSortDirection::kDescending}},
+          .limit = 3U}};
+  auto vector =
+      bind_metadata_backed_distributed_vector_snapshot(vector_plan, *snapshot,
+                                                       {.catalog = std::cref(catalog),
+                                                        .table_id = schema_value.table_id(),
+                                                        .replica_proofs = proofs,
+                                                        .destination_column_ordinals = projection});
+  ASSERT_TRUE(vector.has_value()) << vector.error().to_string();
+  ASSERT_EQ(vector->dispatches().size(), 2U);
+  for (std::size_t index = 0U; index < vector->dispatches().size(); ++index) {
+    EXPECT_EQ(vector->dispatches()[index].raft_group_id, specs[index].group_id);
+    EXPECT_EQ(vector->dispatches()[index].destination_schema_id, schema_value.schema_id());
+    EXPECT_EQ(vector->dispatches()[index].placement_epoch, placements[index].placement_epoch);
+    EXPECT_EQ(vector->dispatches()[index].linearizable_barrier, proofs[index].linearizable_barrier);
+    EXPECT_EQ(vector->dispatches()[index].plan, vector_plan.intent);
+  }
+  vector_plan.intent.aggregates.front().input_index = 0U;
+  EXPECT_EQ(
+      bind_metadata_backed_distributed_vector_snapshot(vector_plan, *snapshot,
+                                                       {.catalog = std::cref(catalog),
+                                                        .table_id = schema_value.table_id(),
+                                                        .replica_proofs = proofs,
+                                                        .destination_column_ordinals = projection})
+          .error()
+          .code(),
+      common::StatusCode::kInvalidArgument);
+
   auto compatible = bind_metadata_backed_distributed_aggregate_snapshot(
       plan, std::move(*snapshot),
       {.catalog = std::cref(catalog),

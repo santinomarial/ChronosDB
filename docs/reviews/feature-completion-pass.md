@@ -652,15 +652,23 @@ Focused executions passed:
   pinned one Manifest generation behind two plan-ordered group-scoped vector dispatches carrying
   the same grouped SUM/order/LIMIT intent. Reversed authority bindings and a three-ordinal total
   projection budget rejected before ownership publication. Existing aggregate/grouped/metadata
-  cases remained green. Metadata-backed vector batch construction, execution, coordination, and
-  transport are not claimed.
+  cases remained green. At that slice, metadata-backed vector batch construction, execution,
+  coordination, and transport were not claimed.
 - Distributed vector-fragment partial-I/O continuation: one focused case enumerated every split of
   a variable group-scoped dispatch, consumed two coalesced frames only through each reported
   prefix, retained sticky header corruption, rejected lower reader and exact-decoder frame limits
   as resource exhaustion, and proved short-write suffix, overrun rollback, and moved-from cursor
   ownership. Header self-containment and installed consumption cover the public state machines.
-  Metadata-backed vector batch construction, execution, coordination, authenticated transport,
-  and process integration are not claimed.
+  At that slice, metadata-backed vector batch construction was not claimed; execution,
+  coordination, authenticated transport, and process integration remain unclaimed.
+- Metadata-backed vector-snapshot continuation: the focused two-tablet catalog case now also
+  derived plan-ordered vector admissions, active schema, committed placements, immutable groups,
+  and exact leader barriers through the shared aggregate/vector authority resolver before binding
+  grouped SUM/order/LIMIT dispatches under one Manifest generation. A catalog-derived TIMESTAMP SUM
+  rejected before publication; the three existing metadata proof-policy cases remained green.
+  Header self-containment and installed consumption cover the public constructor. Group-keyed proof
+  acquisition, execution, coordination, authenticated transport, and process integration are not
+  claimed.
 
 The C++ files changed by the grouped- and vector-exchange continuations pass the repository-pinned
 clang-format 18 check. A full-tree check was also run and still reports pre-existing violations in

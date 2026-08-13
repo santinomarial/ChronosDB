@@ -258,6 +258,10 @@ The compatible vector snapshot repeats that binder in exact plan order under one
 Manifest-v2 database generation. It owns both the pin and dispatch vector, rejects duplicate or
 reordered tablets, and bounds aggregate projection ordinals without claiming one comparable Raft
 position across groups.
+The metadata-backed vector entry point shares the aggregate path's canonical catalog and stable
+observation resolver. It derives plan-ordered admissions plus active schema, committed placement,
+and immutable group authority, then creates temporary borrowed binding views and publishes only the
+compatible vector owner. Metadata and observation lifetimes therefore end at the call boundary.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated

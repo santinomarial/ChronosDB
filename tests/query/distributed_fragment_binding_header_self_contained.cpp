@@ -4,6 +4,7 @@
 
 static_assert(std::is_aggregate_v<chronos::query::DistributedAggregateFragmentBinding>);
 static_assert(std::is_aggregate_v<chronos::query::DistributedGroupedFloat64FragmentBinding>);
+static_assert(std::is_aggregate_v<chronos::query::MetadataBackedDistributedVectorSnapshotBinding>);
 static_assert(std::is_move_constructible_v<chronos::query::CompatibleDistributedVectorSnapshot>);
 
 namespace {
@@ -15,4 +16,6 @@ namespace {
 [[maybe_unused]] const auto kBindVector = &chronos::query::bind_distributed_vector_fragment;
 [[maybe_unused]] const auto kBindCompatibleVector =
     &chronos::query::bind_compatible_distributed_vector_snapshot;
+[[maybe_unused]] const auto kBindMetadataVector =
+    &chronos::query::bind_metadata_backed_distributed_vector_snapshot;
 } // namespace
