@@ -1030,8 +1030,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   TLS-before-descriptor teardown. A bounded TCP server now owns the listener/TLS lifetime, finite
   admission, stable connection records, metrics, and deterministic shutdown. A production owner
   composes that server with the authenticated receiver and request-local real-CSEG worker; one real
-  loopback request returns the exact installed-CSEG group. Sender ownership and packaged
-  multi-tablet grouped execution remain.
+  loopback request returns the exact installed-CSEG group. A finite sender now constructs immutable
+  attempts, exact-correlates only complete terminal response vectors, exposes advisory hints without
+  rebinding authority, and retries whole attempts under capped backoff. Coordinator integration and
+  packaged multi-tablet grouped execution remain.
   Multi-key/non-FLOAT64 state/transport, ordering, top-N, and LIMIT remain deferred. A distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
   catalog, Manifest, route, and execution gates;

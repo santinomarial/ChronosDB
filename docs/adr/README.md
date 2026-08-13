@@ -373,3 +373,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0336](0336-deadline-bound-grouped-query-tcp-client.md) | Deadline-bound grouped-query TCP client | accepted |
 | [0337](0337-bounded-grouped-query-tcp-server.md) | Bounded grouped-query TCP server | accepted |
 | [0338](0338-owned-real-cseg-grouped-query-tcp-service.md) | Owned real-CSEG grouped-query TCP service | accepted |
+| [0339](0339-finite-grouped-query-sender.md) | Finite grouped-query sender | accepted |

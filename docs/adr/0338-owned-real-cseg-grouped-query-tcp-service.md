@@ -43,9 +43,10 @@ the installed-CSEG group key and sum `2.5`. It proves a fresh grouped authority 
 certificate fingerprints, one completed connection, invalid packaged configuration rejection, and
 deterministic shutdown. Header and installed-consumer checks cover the public API.
 
-This is one process and one tablet. Sender/coordinator integration, packaged multi-tablet
-execution, moved remote-CSEG reads, process loss/failover, and broad fault/measurement evidence
-remain incomplete. No Phase 16 exit gate is claimed.
+This is one process and one tablet. ADR 0339 subsequently supplies finite one-tablet sender policy.
+Coordinator integration, packaged multi-tablet execution, moved remote-CSEG reads, process
+loss/failover, and broad fault/measurement evidence remain incomplete. No Phase 16 exit gate is
+claimed.
 
 Invariants 5, 6, 10, 11, 14, 15, and 18 apply.
 

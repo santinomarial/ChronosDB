@@ -16,12 +16,6 @@
 
 namespace chronos::cluster {
 
-struct DistributedGroupedQueryAttempt {
-  std::size_t attempt_number{};
-  raft::NodeId target_node_id{};
-  std::vector<std::byte> request_bytes;
-};
-
 struct DistributedGroupedQueryTlsLimits {
   std::chrono::milliseconds handshake_timeout{5000};
   std::chrono::milliseconds exchange_timeout{30000};

@@ -10,8 +10,10 @@
 #include "chronos/raft/types.hpp"
 
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <optional>
+#include <span>
 #include <variant>
 #include <vector>
 
@@ -172,6 +174,58 @@ public:
 private:
   explicit DistributedGroupedQueryReceiver(DistributedGroupedQueryReceiverConfig config) noexcept;
   DistributedGroupedQueryReceiverConfig config_;
+};
+
+struct DistributedGroupedQueryAttempt {
+  std::size_t attempt_number{};
+  raft::NodeId target_node_id{};
+  std::vector<std::byte> request_bytes;
+};
+
+// Deterministic finite retry owner for one immutable proof-bound grouped dispatch. Each accepted
+// attempt outcome is a complete terminally closed response vector; no partial stream is published.
+class DistributedGroupedQuerySender {
+public:
+  using TimePoint = std::chrono::steady_clock::time_point;
+
+  DistributedGroupedQuerySender() = delete;
+  DistributedGroupedQuerySender(const DistributedGroupedQuerySender&) = delete;
+  DistributedGroupedQuerySender& operator=(const DistributedGroupedQuerySender&) = delete;
+  DistributedGroupedQuerySender(DistributedGroupedQuerySender&&) noexcept = default;
+  DistributedGroupedQuerySender& operator=(DistributedGroupedQuerySender&&) noexcept = default;
+
+  [[nodiscard]] static common::Result<DistributedGroupedQuerySender>
+  create(raft::NodeId source_node_id, query::DistributedGroupedFloat64FragmentDispatch dispatch,
+         DistributedQueryRetryLimits limits = {});
+  [[nodiscard]] common::Result<DistributedGroupedQueryAttempt> begin_attempt(TimePoint now);
+  [[nodiscard]] common::Status
+  accept_responses(std::span<const DistributedGroupedQueryResponse> responses, TimePoint now);
+  [[nodiscard]] common::Status record_transport_failure(common::StatusCode code, TimePoint now);
+
+  [[nodiscard]] DistributedQuerySenderState state() const noexcept;
+  [[nodiscard]] std::size_t attempts_started() const noexcept;
+  [[nodiscard]] std::optional<TimePoint> next_attempt_not_before() const noexcept;
+  [[nodiscard]] std::optional<common::StatusCode> last_status_code() const noexcept;
+  [[nodiscard]] std::optional<DistributedQueryLeaderHint> suggested_leader() const noexcept;
+  [[nodiscard]] const std::optional<std::vector<DistributedGroupedQueryResponsePayload>>&
+  result() const noexcept;
+
+private:
+  DistributedGroupedQuerySender(raft::NodeId source_node_id,
+                                query::DistributedGroupedFloat64FragmentDispatch dispatch,
+                                DistributedQueryRetryLimits limits) noexcept;
+  [[nodiscard]] common::Status schedule(common::StatusCode code, TimePoint now);
+
+  raft::NodeId source_node_id_{};
+  query::DistributedGroupedFloat64FragmentDispatch dispatch_;
+  DistributedQueryRetryLimits limits_;
+  DistributedQuerySenderState state_{DistributedQuerySenderState::kReady};
+  std::size_t attempts_started_{};
+  std::chrono::milliseconds next_backoff_{};
+  std::optional<TimePoint> next_attempt_not_before_;
+  std::optional<common::StatusCode> last_status_code_;
+  std::optional<DistributedQueryLeaderHint> suggested_leader_;
+  std::optional<std::vector<DistributedGroupedQueryResponsePayload>> result_;
 };
 
 } // namespace chronos::cluster

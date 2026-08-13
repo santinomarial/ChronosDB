@@ -288,7 +288,9 @@
   finite admission, stable carrier/descriptor records, deadlines, metrics, and ordered shutdown.
   A production owner keeps the real-CSEG worker, authenticated receiver, and TCP server at stable
   reverse-safe addresses; a real loopback request returns the exact installed-CSEG group.
-  Sender/coordinator plus packaged grouped execution remain incomplete.
+  A finite one-tablet sender now owns complete-stream correlation, immutable attempts, advisory
+  hints, and capped whole-attempt retry/backoff. Coordinator integration plus packaged grouped
+  execution remain incomplete.
 - Proof-bound leader-linearizable/bounded-stale/local-eventual admissions now remain attached through
   compatible pinned multi-tablet snapshots and protocol/carrier scheduling. Whole-query replacement
   now validates fresh caller-proved authority, identical logical shape, nonregressing generation,

@@ -96,6 +96,8 @@ deadlines, and publish a client response span only after a terminal or failure f
 failure clears the retained prefix. A deadline-bound outbound composite owns nonblocking TCP
 establishment and carrier-before-descriptor teardown. A dedicated bounded server supplies inbound
 listener ownership, finite admission, stable connection records, metrics, and deterministic
-shutdown. These components do not define retry arbitration, sender/coordinator integration, or
-packaged multi-tablet execution. A production inbound owner composes the bounded server with the
-authenticated receiver and request-local real-CSEG worker under stable reverse-safe lifetimes.
+shutdown. A finite sender owns immutable request attempts, complete
+response-vector correlation, capped retry/backoff, and advisory hints without changing authority.
+A production inbound owner composes the bounded server with the authenticated receiver and
+request-local real-CSEG worker under stable reverse-safe lifetimes. Coordinator integration and
+packaged multi-tablet execution remain separate.

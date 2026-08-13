@@ -245,7 +245,8 @@ FLOAT64 group key and mergeable partial with SQL-equivalent signed-zero/NaN cano
 authenticated mutual-TLS carrier owns its bounded ordered response stream, and a deadline-bound
 outbound TCP composite owns one validated connection attempt. A bounded inbound TCP server owns
 finite admission and stable carrier/descriptor lifetime, and a production owner composes it with
-the real-CSEG grouped worker. Sender/coordinator integration, packaged grouped execution, and
+the real-CSEG grouped worker. A finite sender owns complete response-vector correlation and
+whole-attempt retry/backoff. Coordinator integration, packaged grouped execution, and
 multi-key/non-FLOAT64 state remain incomplete. A distinct
 canonical observation protocol, authenticated receiver, mTLS clients/servers, finite multi-address
 acquisition, correlated
@@ -539,6 +540,12 @@ Focused executions passed:
   certificate fingerprints, invalid packaged configuration rejection, one completed connection,
   ordered shutdown, and installed-consumer construction. Sender/coordinator integration, packaged
   multi-tablet execution, and remote moved-CSEG reads are not claimed.
+- Grouped-sender continuation: 2 focused cases passed for exact immutable attempt bytes, complete
+  two-part and terminal-only success, payload-level correlation rejection without state mutation,
+  advisory leader capture, exact capped exponential backoff, transport failure, terminal status,
+  attempt exhaustion, and no result publication across retries. The installed-consumer gate covers
+  sender construction. Coordinator delivery, multi-tablet TCP scheduling, and packaged grouped
+  execution are not claimed.
 
 The C++ files changed by the grouped-exchange continuations pass the repository-pinned clang-format
 18 check. A full-tree check was also run and still reports pre-existing violations in the

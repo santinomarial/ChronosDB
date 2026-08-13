@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <new>
@@ -57,6 +58,38 @@ inline constexpr std::size_t kMinimumDispatchSize =
 
 [[nodiscard]] common::Status unauthenticated(const char* message) {
   return {common::StatusCode::kUnauthenticated, message};
+}
+
+[[nodiscard]] common::Status unavailable(const char* message) {
+  return {common::StatusCode::kUnavailable, message};
+}
+
+[[nodiscard]] bool retryable_status(const common::StatusCode code) noexcept {
+  return code == common::StatusCode::kUnavailable ||
+         code == common::StatusCode::kResourceExhausted || code == common::StatusCode::kIoError;
+}
+
+[[nodiscard]] DistributedGroupedQuerySender::TimePoint
+saturating_add(const DistributedGroupedQuerySender::TimePoint now,
+               const std::chrono::milliseconds delay) noexcept {
+  const auto converted =
+      std::chrono::duration_cast<DistributedGroupedQuerySender::TimePoint::duration>(delay);
+  if (now > DistributedGroupedQuerySender::TimePoint::max() - converted)
+    return DistributedGroupedQuerySender::TimePoint::max();
+  return now + converted;
+}
+
+[[nodiscard]] common::Result<std::vector<std::byte>>
+encode_sender_request(const raft::NodeId source_node_id,
+                      const query::DistributedGroupedFloat64FragmentDispatch& dispatch) noexcept {
+  try {
+    return encode_distributed_grouped_query_request_v1(
+        {source_node_id, dispatch.fragment.aggregate.serving_node, dispatch});
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("grouped query sender allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("grouped query sender request exceeds limits"));
+  }
 }
 
 [[nodiscard]] bool zero(const common::ByteView bytes) {
@@ -855,6 +888,176 @@ common::Result<std::vector<std::vector<std::byte>>> DistributedGroupedQueryRecei
   } catch (const std::length_error&) {
     return common::make_unexpected(exhausted("grouped query response exceeds limits"));
   }
+}
+
+DistributedGroupedQuerySender::DistributedGroupedQuerySender(
+    const raft::NodeId source_node_id, query::DistributedGroupedFloat64FragmentDispatch dispatch,
+    const DistributedQueryRetryLimits limits) noexcept
+    : source_node_id_(source_node_id), dispatch_(std::move(dispatch)), limits_(limits),
+      next_backoff_(limits.initial_backoff) {}
+
+common::Result<DistributedGroupedQuerySender>
+DistributedGroupedQuerySender::create(const raft::NodeId source_node_id,
+                                      query::DistributedGroupedFloat64FragmentDispatch dispatch,
+                                      const DistributedQueryRetryLimits limits) {
+  const auto maximum_supported_backoff =
+      std::chrono::duration_cast<std::chrono::milliseconds>(TimePoint::duration::max());
+  if (source_node_id == 0U || limits.maximum_attempts == 0U || limits.maximum_attempts > 1024U ||
+      limits.initial_backoff.count() <= 0 || limits.maximum_backoff < limits.initial_backoff ||
+      limits.maximum_backoff > maximum_supported_backoff ||
+      dispatch.fragment.aggregate.serving_node == source_node_id) {
+    return common::make_unexpected(invalid("grouped query retry configuration is invalid"));
+  }
+  auto encoded = encode_sender_request(source_node_id, dispatch);
+  if (!encoded.has_value())
+    return common::make_unexpected(encoded.error());
+  return DistributedGroupedQuerySender{source_node_id, std::move(dispatch), limits};
+}
+
+common::Result<DistributedGroupedQueryAttempt>
+DistributedGroupedQuerySender::begin_attempt(const TimePoint now) {
+  if (state_ == DistributedQuerySenderState::kSucceeded ||
+      state_ == DistributedQuerySenderState::kFailed) {
+    return common::make_unexpected(invalid("grouped query sender is terminal"));
+  }
+  if (state_ == DistributedQuerySenderState::kWaitingForResponse)
+    return common::make_unexpected(unavailable("grouped query response is pending"));
+  if (state_ == DistributedQuerySenderState::kBackoff && now < *next_attempt_not_before_)
+    return common::make_unexpected(unavailable("grouped query retry backoff is active"));
+  if (attempts_started_ >= limits_.maximum_attempts)
+    return common::make_unexpected(invalid("grouped query retry budget is exhausted"));
+  auto bytes = encode_sender_request(source_node_id_, dispatch_);
+  if (!bytes.has_value())
+    return common::make_unexpected(bytes.error());
+  ++attempts_started_;
+  state_ = DistributedQuerySenderState::kWaitingForResponse;
+  suggested_leader_.reset();
+  next_attempt_not_before_.reset();
+  return DistributedGroupedQueryAttempt{
+      attempts_started_, dispatch_.fragment.aggregate.serving_node, std::move(*bytes)};
+}
+
+common::Status DistributedGroupedQuerySender::accept_responses(
+    const std::span<const DistributedGroupedQueryResponse> responses, const TimePoint now) {
+  if (state_ != DistributedQuerySenderState::kWaitingForResponse)
+    return invalid("grouped query sender has no pending response");
+  if (responses.empty())
+    return invalid("grouped query response stream is empty");
+  if (responses.size() > query::kMaximumDistributedCoordinatorMessages)
+    return exhausted("grouped query response stream exceeds the hard message limit");
+  const auto& identity = dispatch_.fragment.aggregate;
+  for (const auto& response : responses) {
+    if (response.source_node_id != identity.serving_node ||
+        response.target_node_id != source_node_id_ || response.query_id != identity.query_id ||
+        response.tablet_id != identity.tablet_id) {
+      return invalid("grouped query response correlation mismatch");
+    }
+  }
+  if (responses.front().status_code != common::StatusCode::kOk) {
+    if (responses.size() != 1U || responses.front().payload.has_value())
+      return invalid("grouped query failure response stream is invalid");
+    if (responses.front().leader_hint.has_value() &&
+        (responses.front().leader_hint->node_id == 0U ||
+         responses.front().leader_hint->placement_epoch == 0U)) {
+      return invalid("grouped query response leader hint is invalid");
+    }
+    suggested_leader_ = responses.front().leader_hint;
+    return schedule(responses.front().status_code, now);
+  }
+
+  try {
+    std::vector<DistributedGroupedQueryResponsePayload> accepted;
+    accepted.reserve(responses.size());
+    for (std::size_t index = 0U; index < responses.size(); ++index) {
+      const auto& response = responses[index];
+      if (response.status_code != common::StatusCode::kOk || !response.payload.has_value() ||
+          response.leader_hint.has_value()) {
+        return invalid("grouped query success response stream is invalid");
+      }
+      const bool last = index + 1U == responses.size();
+      if (const auto* message =
+              std::get_if<query::GroupedFloat64ExchangeMessage>(&*response.payload)) {
+        if (message->query_id != identity.query_id || message->tablet_id != identity.tablet_id ||
+            message->sequence != index + 1U || message->terminal != last) {
+          return invalid("grouped query success response sequence is invalid");
+        }
+      } else {
+        const auto& terminal = std::get<query::GroupedExchangeTerminalMessage>(*response.payload);
+        if (terminal.query_id != identity.query_id || terminal.tablet_id != identity.tablet_id ||
+            responses.size() != 1U || terminal.sequence != 1U) {
+          return invalid("grouped query terminal-only response is misplaced");
+        }
+      }
+      accepted.push_back(*response.payload);
+    }
+    result_ = std::move(accepted);
+  } catch (const std::bad_alloc&) {
+    return exhausted("grouped query sender result allocation failed");
+  } catch (const std::length_error&) {
+    return exhausted("grouped query sender result exceeds limits");
+  }
+  last_status_code_ = common::StatusCode::kOk;
+  suggested_leader_.reset();
+  state_ = DistributedQuerySenderState::kSucceeded;
+  next_attempt_not_before_.reset();
+  return common::Status::ok();
+}
+
+common::Status
+DistributedGroupedQuerySender::record_transport_failure(const common::StatusCode code,
+                                                        const TimePoint now) {
+  if (state_ != DistributedQuerySenderState::kWaitingForResponse)
+    return invalid("grouped query sender has no active transport attempt");
+  if (code == common::StatusCode::kOk)
+    return invalid("grouped query transport failure cannot be OK");
+  suggested_leader_.reset();
+  return schedule(code, now);
+}
+
+common::Status DistributedGroupedQuerySender::schedule(const common::StatusCode code,
+                                                       const TimePoint now) {
+  last_status_code_ = code;
+  if (!retryable_status(code) || attempts_started_ >= limits_.maximum_attempts) {
+    state_ = DistributedQuerySenderState::kFailed;
+    next_attempt_not_before_.reset();
+    return common::Status::ok();
+  }
+  state_ = DistributedQuerySenderState::kBackoff;
+  next_attempt_not_before_ = saturating_add(now, next_backoff_);
+  if (next_backoff_ < limits_.maximum_backoff) {
+    const auto current = next_backoff_.count();
+    const auto maximum = limits_.maximum_backoff.count();
+    next_backoff_ = current > maximum / 2 ? limits_.maximum_backoff
+                                          : std::min(next_backoff_ * 2, limits_.maximum_backoff);
+  }
+  return common::Status::ok();
+}
+
+DistributedQuerySenderState DistributedGroupedQuerySender::state() const noexcept {
+  return state_;
+}
+
+std::size_t DistributedGroupedQuerySender::attempts_started() const noexcept {
+  return attempts_started_;
+}
+
+std::optional<DistributedGroupedQuerySender::TimePoint>
+DistributedGroupedQuerySender::next_attempt_not_before() const noexcept {
+  return next_attempt_not_before_;
+}
+
+std::optional<common::StatusCode> DistributedGroupedQuerySender::last_status_code() const noexcept {
+  return last_status_code_;
+}
+
+std::optional<DistributedQueryLeaderHint>
+DistributedGroupedQuerySender::suggested_leader() const noexcept {
+  return suggested_leader_;
+}
+
+const std::optional<std::vector<DistributedGroupedQueryResponsePayload>>&
+DistributedGroupedQuerySender::result() const noexcept {
+  return result_;
 }
 
 } // namespace chronos::cluster

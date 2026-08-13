@@ -538,5 +538,109 @@ TEST(DistributedGroupedQueryReceiverTest, AuthenticatesAndPublishesOnlyCompleteW
             common::StatusCode::kResourceExhausted);
 }
 
+TEST(DistributedGroupedQuerySenderTest, RetainsOnlyCompleteCorrelatedTerminalStreams) {
+  auto sender = DistributedGroupedQuerySender::create(1U, dispatch());
+  ASSERT_TRUE(sender.has_value()) << sender.error().to_string();
+  const auto now = DistributedGroupedQuerySender::TimePoint{};
+  auto attempt = sender->begin_attempt(now);
+  ASSERT_TRUE(attempt.has_value()) << attempt.error().to_string();
+  EXPECT_EQ(attempt->attempt_number, 1U);
+  EXPECT_EQ(attempt->target_node_id, 2U);
+  auto decoded = decode_distributed_grouped_query_request_v1(attempt->request_bytes);
+  ASSERT_TRUE(decoded.has_value());
+  EXPECT_EQ(decoded->dispatch.raft_group_id, uuid(9U));
+
+  auto first = partial();
+  first.sequence = 1U;
+  first.terminal = false;
+  const auto second = partial();
+  const std::array responses{
+      DistributedGroupedQueryResponse{.source_node_id = 2U,
+                                      .target_node_id = 1U,
+                                      .query_id = uuid(1U),
+                                      .tablet_id = id<schema::TabletId>(4U),
+                                      .status_code = common::StatusCode::kOk,
+                                      .payload = DistributedGroupedQueryResponsePayload{first}},
+      DistributedGroupedQueryResponse{.source_node_id = 2U,
+                                      .target_node_id = 1U,
+                                      .query_id = uuid(1U),
+                                      .tablet_id = id<schema::TabletId>(4U),
+                                      .status_code = common::StatusCode::kOk,
+                                      .payload = DistributedGroupedQueryResponsePayload{second}}};
+  auto wrong_payload = responses;
+  std::get<query::GroupedFloat64ExchangeMessage>(*wrong_payload[1].payload).query_id = uuid(8U);
+  EXPECT_EQ(sender->accept_responses(wrong_payload, now).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(sender->state(), DistributedQuerySenderState::kWaitingForResponse);
+  EXPECT_FALSE(sender->result().has_value());
+  EXPECT_TRUE(sender->accept_responses(responses, now).is_ok());
+  EXPECT_EQ(sender->state(), DistributedQuerySenderState::kSucceeded);
+  ASSERT_TRUE(sender->result().has_value());
+  ASSERT_EQ(sender->result()->size(), 2U);
+  EXPECT_EQ(std::get<query::GroupedFloat64ExchangeMessage>(sender->result()->front()).sequence, 1U);
+  EXPECT_TRUE(std::get<query::GroupedFloat64ExchangeMessage>(sender->result()->back()).terminal);
+  EXPECT_FALSE(sender->begin_attempt(now).has_value());
+
+  auto empty_sender = DistributedGroupedQuerySender::create(1U, dispatch());
+  ASSERT_TRUE(empty_sender.has_value());
+  ASSERT_TRUE(empty_sender->begin_attempt(now).has_value());
+  const std::array empty_response{DistributedGroupedQueryResponse{
+      .source_node_id = 2U,
+      .target_node_id = 1U,
+      .query_id = uuid(1U),
+      .tablet_id = id<schema::TabletId>(4U),
+      .status_code = common::StatusCode::kOk,
+      .payload = DistributedGroupedQueryResponsePayload{query::GroupedExchangeTerminalMessage{
+          .query_id = uuid(1U), .tablet_id = id<schema::TabletId>(4U), .sequence = 1U}}}};
+  EXPECT_TRUE(empty_sender->accept_responses(empty_response, now).is_ok());
+  ASSERT_TRUE(empty_sender->result().has_value());
+  EXPECT_TRUE(std::holds_alternative<query::GroupedExchangeTerminalMessage>(
+      empty_sender->result()->front()));
+}
+
+TEST(DistributedGroupedQuerySenderTest, RetriesWholeAttemptsWithoutPartialPublication) {
+  auto sender =
+      DistributedGroupedQuerySender::create(1U, dispatch(),
+                                            {.maximum_attempts = 3U,
+                                             .initial_backoff = std::chrono::milliseconds{10},
+                                             .maximum_backoff = std::chrono::milliseconds{20}});
+  ASSERT_TRUE(sender.has_value());
+  const auto start = DistributedGroupedQuerySender::TimePoint{};
+  ASSERT_TRUE(sender->begin_attempt(start).has_value());
+  const DistributedGroupedQueryResponse unavailable_response{
+      .source_node_id = 2U,
+      .target_node_id = 1U,
+      .query_id = uuid(1U),
+      .tablet_id = id<schema::TabletId>(4U),
+      .status_code = common::StatusCode::kUnavailable,
+      .leader_hint = DistributedQueryLeaderHint{3U, 9U}};
+  auto mismatched = unavailable_response;
+  mismatched.source_node_id = 3U;
+  EXPECT_EQ(sender->accept_responses(std::span{&mismatched, 1U}, start).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(sender->state(), DistributedQuerySenderState::kWaitingForResponse);
+  EXPECT_TRUE(sender->accept_responses(std::span{&unavailable_response, 1U}, start).is_ok());
+  EXPECT_EQ(sender->state(), DistributedQuerySenderState::kBackoff);
+  ASSERT_TRUE(sender->suggested_leader().has_value());
+  EXPECT_EQ(sender->suggested_leader()->node_id, 3U);
+  EXPECT_EQ(*sender->next_attempt_not_before(), start + std::chrono::milliseconds{10});
+  EXPECT_FALSE(sender->result().has_value());
+  EXPECT_FALSE(sender->begin_attempt(start + std::chrono::milliseconds{9}).has_value());
+  ASSERT_TRUE(sender->begin_attempt(start + std::chrono::milliseconds{10}).has_value());
+  EXPECT_TRUE(sender
+                  ->record_transport_failure(common::StatusCode::kIoError,
+                                             start + std::chrono::milliseconds{10})
+                  .is_ok());
+  EXPECT_EQ(*sender->next_attempt_not_before(), start + std::chrono::milliseconds{30});
+  ASSERT_TRUE(sender->begin_attempt(start + std::chrono::milliseconds{30}).has_value());
+  EXPECT_TRUE(sender
+                  ->record_transport_failure(common::StatusCode::kInvalidArgument,
+                                             start + std::chrono::milliseconds{30})
+                  .is_ok());
+  EXPECT_EQ(sender->state(), DistributedQuerySenderState::kFailed);
+  EXPECT_EQ(sender->attempts_started(), 3U);
+  EXPECT_FALSE(sender->result().has_value());
+}
+
 } // namespace
 } // namespace chronos::cluster

@@ -924,6 +924,8 @@ int main() {
       &chronos::cluster::DistributedGroupedQueryFrameWriteCursor::create;
   const auto create_distributed_grouped_query_receiver =
       &chronos::cluster::DistributedGroupedQueryReceiver::create;
+  const auto create_distributed_grouped_query_sender =
+      &chronos::cluster::DistributedGroupedQuerySender::create;
   const auto begin_distributed_grouped_query_tcp_client =
       &chronos::cluster::DistributedGroupedQueryTcpClient::begin;
   const auto start_distributed_grouped_query_tcp_server =
@@ -1221,6 +1223,7 @@ int main() {
                  consume_distributed_grouped_query_response != nullptr &&
                  create_distributed_grouped_query_cursor != nullptr &&
                  create_distributed_grouped_query_receiver != nullptr &&
+                 create_distributed_grouped_query_sender != nullptr &&
                  begin_distributed_grouped_query_tcp_client != nullptr &&
                  start_distributed_grouped_query_tcp_server != nullptr &&
                  create_distributed_grouped_query_tls_client != nullptr &&
