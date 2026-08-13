@@ -1010,10 +1010,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   before writing and enforces exact response correlation and deadlines. Its nonblocking TCP owner
   binds the authentication address to the route, proves connect completion, and closes the
   descriptor after TLS on failure. An accepted-socket mTLS session authenticates before request
-  reads, dispatches the receiver once, and owns the response under exact deadlines. Bounded
-  listener admission, complete leader/follower pair acquisition, and broader multi-node failure
-  validation remain deferred. Live DNS churn, resolver-latency policy, caching, and IPv6 remain
-  qualification gaps. A focused real-mTLS gate now queries two tablets, drives one through
+  reads, dispatches the receiver once, and owns the response under exact deadlines. A dedicated
+  bounded TCP server owns listener admission, stable session/descriptor lifetimes, metrics, and
+  shutdown. Complete leader/follower pair acquisition and broader multi-node failure validation
+  remain deferred. Live DNS churn, resolver-latency policy, caching, and IPv6 remain qualification
+  gaps. A focused real-mTLS gate now queries two tablets, drives one through
   checksummed learner-first movement and externally committed promotion/removal milestones, rebinds
   it to the target, and proves the complete aggregate state is identical before and after. The full
   phase exit gate is not claimed.

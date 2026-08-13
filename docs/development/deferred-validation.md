@@ -282,9 +282,10 @@
   the authentication address to the route, proves connect completion, applies its own deadline, and
   closes in TLS-before-descriptor order. An accepted-socket mTLS session authenticates the client
   before reading, invokes the receiver once, and owns the complete response under exact deadlines.
-  Add bounded listener/admission ownership, multi-address finite retries, leader/follower fan-out,
-  pair selection, packaged-constructor acquisition, cancellation/allocation faults, and real
-  multi-process validation.
+  A dedicated bounded TCP server now owns listener/TLS lifetime, finite per-poll admission, stable
+  TLS-before-descriptor connection records, metrics, and deterministic shutdown. Add remote
+  multi-address finite retries, leader/follower fan-out, pair selection, packaged-constructor
+  acquisition, cancellation/allocation faults, and real multi-process validation.
 - Shard-key pruning and statistics in addition to event-time pruning; multi-node scalar/distributed
   differential SQL and partial-aggregation equivalence.
 - Carry the implemented authenticated remote-action receiver bytes and atomic current-leader-term
