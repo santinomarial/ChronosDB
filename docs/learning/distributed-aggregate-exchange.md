@@ -297,6 +297,12 @@ Batch bytes remain unchanged and table-shaped.
 Fragment v2 now carries that schema beside the unchanged exact v1 authority dispatch. Its binder
 derives projected input shapes from the same committed schema used by v1 and rejects descriptor
 shape mismatch before publishing the owning wrapper.
+Distributed Vector Query Transport v2 carries that complete Fragment-v2 value on a distinct
+node-routed request and returns one Result-Exchange-v2 value or an explicit correlated failure. The
+response API always requires the admitted result schema, so a transport caller cannot silently
+skip descriptor validation. Header-first readers allocate only after fixed integrity and length
+checks; the carrier deliberately does not claim peer authentication, socket/TLS lifecycle, retry,
+coordination, or execution ownership.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated

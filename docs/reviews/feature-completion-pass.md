@@ -743,16 +743,28 @@ Focused executions passed:
   compatible owner retained one Manifest pin and one shared result schema, proved it against every
   exact projection, encoded each authorized pairing, and rejected nullability mismatch without
   retaining per-tablet schema copies. Header self-containment and installed consumption cover the
-  API. V2 cluster carriage, schema-bound coordination, worker execution, authenticated lifecycle,
-  and process integration remain incomplete.
+  API. At that boundary, v2 cluster carriage, schema-bound coordination, worker execution,
+  authenticated lifecycle, and process integration remained incomplete.
+- Schema-bound vector-query-transport-v2 continuation: distinct request and response magics now
+  carry exact Fragment-v2 and Result-Exchange-v2 values without changing v1. Focused cluster cases
+  round-tripped schema-light success and correlated failure responses; rejected truncation, nested
+  damage, schema mismatch, outer correlation mismatch, lower caller bounds, checksum-valid future
+  versions, and v1/v2 confusion; enumerated every request/response split and coalesced boundary;
+  proved sticky failure, typed short-write, moved-from cursor, and allocation-failure behavior; and
+  added deterministic ASan/UBSan fuzzing for exact and fragmented decoding. Header
+  self-containment and installed consumption cover the API. Peer-authenticated receiver/TLS
+  ownership, retry, schema-bound coordination, worker execution, and process integration remain
+  incomplete.
 
-The C++ files changed by the grouped-, vector-exchange, and Fragment-v2 continuations pass the
-repository-pinned clang-format 18 check. A full-tree check was also run and still reports
-pre-existing violations in
-the subscription protocol, subscription, multi-tablet checkpoint implementation, and focused
-subscription test files; these slices do not rewrite those unrelated files or claim a full-tree
-formatting pass. Full-suite, sanitizer, fuzz, broader cross-compiler/Linux parity, benchmark,
-profile, and chaos checks were deliberately not run.
+The C++ files changed by the grouped-, vector-exchange-, Fragment-v2-, and vector-transport-v2
+continuations pass the repository-pinned clang-format 18 check. A full-tree check was also run and
+still reports pre-existing violations in the subscription protocol, subscription, multi-tablet
+checkpoint implementation, and focused subscription test files; these slices do not rewrite those
+unrelated files or claim a full-tree formatting pass. The full serialized 1,572-test developer
+suite, focused ASan/UBSan cases, and a deterministic 10,000-run transport-v2 fuzz campaign pass.
+Apple's sanitizer runtime does not support LeakSanitizer, so those sanitizer runs explicitly
+disabled leak detection. Broader cross-compiler/Linux parity, benchmark, profile, and chaos checks
+were deliberately not run.
 
 ## Known risks and limitations
 

@@ -289,13 +289,11 @@
   schema-light result cells, requires the fragment-bound schema on encode/decode, rejects descriptor
   mismatch, and owns bounded partial reads and short writes. Fragment v2 now also owns header-first
   partial reads and short writes, and one compatible multi-tablet owner retains the Manifest pin
-  plus a shared schema proved against every dispatch without per-tablet descriptor duplication. Add
-  schema-bound coordination and v2 cluster carriage before general worker execution. Distinct exact node-routed
-  request and reverse-route
-  response frames now carry the complete vector dispatch and one exactly correlated vector exchange
-  or failure. Header-first readers and one move-only cursor now own bounded fragmentation,
-  coalesced-suffix, and short-write progress. Add authenticated receiver, retry, TLS, and TCP
-  ownership only after the result-schema contract is fixed.
+  plus a shared schema proved against every dispatch without per-tablet descriptor duplication. A
+  distinct v2 node-routed carrier now transports exact Fragment-v2 requests and schema-bound
+  Result-Exchange-v2 responses, rejects v1/v2 confusion, and owns header-first fragmented reads,
+  coalesced suffixes, and checked short writes. Add the peer-authenticated receiver, retry, TLS/TCP
+  session ownership, schema-bound coordination, and general worker execution next.
   A distinct terminal-only frame closes an empty tablet stream without inventing a SQL NULL group.
   Its separate fixed reader and move-only cursor own every terminal fragmentation boundary,
   coalesced successor bytes, sticky damage, and checked short writes without introducing an

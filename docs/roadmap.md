@@ -1048,8 +1048,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   authority bytes plus the exact descriptor vector; its binder proves that shape from the same
   committed projection before publication. Its header-first reader and move-only cursor now own
   bounded partial I/O, while one compatible multi-tablet v2 owner pins the Manifest epoch and owns
-  the shared schema once after proving it against every plan-ordered projection. V2 cluster request
-  carriage, coordination, and execution remain deferred. A distinct
+  the shared schema once after proving it against every plan-ordered projection. A distinct v2
+  cluster carrier now wraps that Fragment-v2 request and Result-Exchange-v2 response under separate
+  versioned node routes, mandatory admitted-schema validation, exact correlation, and bounded
+  partial-I/O ownership without changing v1. Peer-authenticated receiver/TLS lifecycle,
+  schema-bound coordination, and execution remain deferred. A distinct
   group-scoped grouped dispatch now
   preserves exact Raft authority without reinterpreting ungrouped dispatch bytes. Its worker reuses
   every local authority gate, resolves real temporal CSEG winners, and emits canonical grouped

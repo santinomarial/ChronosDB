@@ -95,6 +95,10 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   v2](formats/distributed-vector-result-exchange-v2.md): schema-bound correlated result envelope
   around one exact schema-light Native Protocol v1 result batch or terminal-only empty stream, with
   bounded partial-I/O ownership.
+- [Distributed Vector Query Transport
+  v2](formats/distributed-vector-query-transport-v2.md): distinct node-routed Fragment-v2 request
+  and schema-bound Result-Exchange-v2 response frames with exact correlation and partial-I/O
+  ownership.
 - [Distributed Aggregate Fragment v1](formats/distributed-aggregate-fragment-v1.md): bounded,
   integrity-first worker request bytes binding an exact snapshot route, consistency evidence,
   projection, aggregate input, and event-time predicate.

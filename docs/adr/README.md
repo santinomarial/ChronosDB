@@ -402,3 +402,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0365](0365-schema-bound-distributed-vector-fragment.md) | Schema-bound distributed vector fragment | accepted |
 | [0366](0366-schema-bound-distributed-vector-result-exchange.md) | Schema-bound distributed vector result exchange | accepted |
 | [0367](0367-bounded-distributed-vector-fragment-v2-ownership.md) | Bounded distributed vector Fragment v2 ownership | accepted |
+| [0368](0368-schema-bound-distributed-vector-query-transport-v2.md) | Schema-bound distributed vector query transport v2 | accepted |

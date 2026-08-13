@@ -58,6 +58,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/cluster/distributed_grouped_query_tcp_server.hpp>
 #include <chronos/cluster/distributed_grouped_query_transport.hpp>
 #include <chronos/cluster/distributed_vector_query_transport.hpp>
+#include <chronos/cluster/distributed_vector_query_transport_v2.hpp>
 #include <chronos/cluster/distributed_vector_result_exchange.hpp>
 #include <chronos/cluster/distributed_grouped_query_tls.hpp>
 #include <chronos/cluster/distributed_query_transport.hpp>
@@ -303,6 +304,28 @@ int main() {
       &chronos::cluster::DistributedVectorQueryResponseReader::consume;
   const auto create_vector_query_write_cursor =
       &chronos::cluster::DistributedVectorQueryFrameWriteCursor::create;
+  const auto encode_vector_query_request_v2 =
+      &chronos::cluster::encode_distributed_vector_query_request_v2;
+  const auto decode_vector_query_request_v2 =
+      &chronos::cluster::decode_distributed_vector_query_request_v2_exact;
+  const auto encode_vector_query_response_v2 =
+      &chronos::cluster::encode_distributed_vector_query_response_v2;
+  const auto decode_vector_query_response_v2 =
+      &chronos::cluster::decode_distributed_vector_query_response_v2_exact;
+  using ConsumeVectorQueryRequestV2 = chronos::common::Result<
+      chronos::cluster::DistributedVectorQueryRequestV2ReadStep> (
+      chronos::cluster::DistributedVectorQueryRequestV2Reader::*)(chronos::common::ByteView);
+  const ConsumeVectorQueryRequestV2 consume_vector_query_request_v2 =
+      &chronos::cluster::DistributedVectorQueryRequestV2Reader::consume;
+  using ConsumeVectorQueryResponseV2 = chronos::common::Result<
+      chronos::cluster::DistributedVectorQueryResponseV2ReadStep> (
+      chronos::cluster::DistributedVectorQueryResponseV2Reader::*)(chronos::common::ByteView);
+  const ConsumeVectorQueryResponseV2 consume_vector_query_response_v2 =
+      &chronos::cluster::DistributedVectorQueryResponseV2Reader::consume;
+  const auto create_vector_query_request_v2_write_cursor =
+      &chronos::cluster::DistributedVectorQueryFrameV2WriteCursor::create_request;
+  const auto create_vector_query_response_v2_write_cursor =
+      &chronos::cluster::DistributedVectorQueryFrameV2WriteCursor::create_response;
   const auto create_replicated_query_worker =
       &chronos::service::ReplicatedDistributedQueryWorker::create;
   const auto create_replicated_grouped_query_worker =
@@ -459,6 +482,14 @@ int main() {
   (void)consume_vector_query_request;
   (void)consume_vector_query_response;
   (void)create_vector_query_write_cursor;
+  (void)encode_vector_query_request_v2;
+  (void)decode_vector_query_request_v2;
+  (void)encode_vector_query_response_v2;
+  (void)decode_vector_query_response_v2;
+  (void)consume_vector_query_request_v2;
+  (void)consume_vector_query_response_v2;
+  (void)create_vector_query_request_v2_write_cursor;
+  (void)create_vector_query_response_v2_write_cursor;
   (void)create_replicated_query_worker;
   (void)create_replicated_grouped_query_worker;
   (void)create_replicated_grouped_query_receiver;
