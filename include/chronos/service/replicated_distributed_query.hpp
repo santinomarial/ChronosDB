@@ -78,6 +78,7 @@ struct ReplicatedDistributedGroupedFloat64QueryConfig {
   cluster::DistributedGroupedQueryTlsLimits carrier_limits;
   std::chrono::milliseconds connect_timeout{5000};
   std::optional<std::chrono::steady_clock::time_point> execution_deadline;
+  std::size_t maximum_rebindings{3U};
 };
 
 // Acquires exact leader-linearizable authority and creates the grouped TCP lifecycle without

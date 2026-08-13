@@ -120,7 +120,8 @@ create_grouped_tcp_execution(query::CompatibleDistributedAggregateSnapshot compa
                               .routes = std::move(*routes),
                               .carrier_limits = config.carrier_limits,
                               .connect_timeout = config.connect_timeout,
-                              .execution_deadline = config.execution_deadline});
+                              .execution_deadline = config.execution_deadline,
+                              .maximum_rebindings = config.maximum_rebindings});
 }
 
 } // namespace

@@ -24,6 +24,7 @@ struct DistributedGroupedQueryTcpExecutionConfig {
   DistributedGroupedQueryTlsLimits carrier_limits;
   std::chrono::milliseconds connect_timeout{5000};
   std::optional<std::chrono::steady_clock::time_point> execution_deadline;
+  std::size_t maximum_rebindings{3U};
 };
 
 struct DistributedGroupedQueryTcpExecutionMetrics {
@@ -31,6 +32,7 @@ struct DistributedGroupedQueryTcpExecutionMetrics {
   std::uint64_t retries_started{};
   std::uint64_t transport_completed_attempts{};
   std::uint64_t transport_failed_attempts{};
+  std::uint64_t rebindings_started{};
   std::size_t active_attempts{};
 };
 
@@ -59,6 +61,8 @@ public:
          DistributedGroupedQueryTcpExecutionConfig config);
   [[nodiscard]] common::Status poll_once(std::chrono::milliseconds maximum_wait);
   [[nodiscard]] common::Status cancel();
+  [[nodiscard]] common::Status rebind(DistributedGroupedQueryExecution execution,
+                                      DistributedGroupedQueryTcpExecutionConfig config);
 
   [[nodiscard]] DistributedGroupedQueryTcpExecutionState state() const noexcept;
   [[nodiscard]] DistributedGroupedQueryTcpExecutionMetrics metrics() const noexcept;

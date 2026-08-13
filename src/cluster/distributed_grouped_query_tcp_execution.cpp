@@ -45,6 +45,45 @@ namespace {
   return timeout.count() > 0 && timeout <= maximum;
 }
 
+[[nodiscard]] bool retryable(const common::StatusCode code) noexcept {
+  return code == common::StatusCode::kUnavailable ||
+         code == common::StatusCode::kResourceExhausted || code == common::StatusCode::kIoError;
+}
+
+[[nodiscard]] bool same_logical_fragment(
+    const query::DistributedGroupedFloat64FragmentDispatch& previous,
+    const query::DistributedGroupedFloat64FragmentDispatch& replacement) noexcept {
+  const auto& left = previous.fragment.aggregate;
+  const auto& right = replacement.fragment.aggregate;
+  return previous.raft_group_id == replacement.raft_group_id &&
+         previous.fragment.group_key_input_index == replacement.fragment.group_key_input_index &&
+         left.query_id == right.query_id && left.database_id == right.database_id &&
+         left.table_id == right.table_id && left.tablet_id == right.tablet_id &&
+         left.destination_schema_id == right.destination_schema_id &&
+         left.read_policy == right.read_policy &&
+         left.destination_column_ordinals == right.destination_column_ordinals &&
+         left.aggregate_input_index == right.aggregate_input_index &&
+         left.event_time_predicate == right.event_time_predicate;
+}
+
+[[nodiscard]] bool compatible_rebinding(
+    const query::CompatibleDistributedGroupedFloat64Snapshot& previous,
+    const query::CompatibleDistributedGroupedFloat64Snapshot& replacement) noexcept {
+  if (previous.snapshot().database_id() != replacement.snapshot().database_id() ||
+      replacement.snapshot().generation() < previous.snapshot().generation()) {
+    return false;
+  }
+  const auto old_dispatches = previous.dispatches();
+  const auto new_dispatches = replacement.dispatches();
+  if (old_dispatches.size() != new_dispatches.size())
+    return false;
+  for (std::size_t index = 0U; index < old_dispatches.size(); ++index) {
+    if (!same_logical_fragment(old_dispatches[index], new_dispatches[index]))
+      return false;
+  }
+  return true;
+}
+
 } // namespace
 
 class DistributedGroupedQueryTcpExecution::Impl {
@@ -222,7 +261,7 @@ DistributedGroupedQueryTcpExecution::create(DistributedGroupedQueryExecution exe
                                             DistributedGroupedQueryTcpExecutionConfig config) {
   if (config.authenticator == nullptr || config.node_authorizer == nullptr ||
       config.routes.empty() || config.routes.size() > 65'536U ||
-      !valid_timeout(config.connect_timeout) ||
+      config.maximum_rebindings > 1024U || !valid_timeout(config.connect_timeout) ||
       !valid_timeout(config.carrier_limits.handshake_timeout) ||
       !valid_timeout(config.carrier_limits.exchange_timeout) ||
       config.carrier_limits.maximum_response_frames == 0U ||
@@ -372,6 +411,43 @@ common::Status DistributedGroupedQueryTcpExecution::cancel() {
     return invalid("grouped query TCP execution is empty");
   return implementation_->cancel(
       {common::StatusCode::kCancelled, "grouped query TCP execution was cancelled"});
+}
+
+common::Status
+DistributedGroupedQueryTcpExecution::rebind(DistributedGroupedQueryExecution execution,
+                                            DistributedGroupedQueryTcpExecutionConfig config) {
+  if (!implementation_)
+    return invalid("grouped query TCP execution is empty");
+  Impl& previous = *implementation_;
+  if (previous.execution_state != DistributedGroupedQueryTcpExecutionState::kFailed ||
+      !retryable(previous.execution_failure.code())) {
+    return invalid("grouped query TCP execution is not eligible for rebinding");
+  }
+  if (previous.execution_metrics.rebindings_started >= previous.config.maximum_rebindings)
+    return exhausted("grouped query TCP execution rebinding budget is exhausted");
+  if (config.execution_deadline != previous.config.execution_deadline ||
+      config.maximum_rebindings != previous.config.maximum_rebindings) {
+    return invalid("grouped query TCP execution rebinding limits changed");
+  }
+  if (!compatible_rebinding(previous.execution.snapshot(), execution.snapshot()))
+    return invalid("grouped query TCP execution replacement changes logical query authority");
+
+  auto replacement =
+      DistributedGroupedQueryTcpExecution::create(std::move(execution), std::move(config));
+  if (!replacement.has_value())
+    return replacement.error();
+  const DistributedGroupedQueryTcpExecutionMetrics prior_metrics = previous.execution_metrics;
+  replacement->implementation_->execution_metrics.attempts_started +=
+      prior_metrics.attempts_started;
+  replacement->implementation_->execution_metrics.retries_started += prior_metrics.retries_started;
+  replacement->implementation_->execution_metrics.transport_completed_attempts +=
+      prior_metrics.transport_completed_attempts;
+  replacement->implementation_->execution_metrics.transport_failed_attempts +=
+      prior_metrics.transport_failed_attempts;
+  replacement->implementation_->execution_metrics.rebindings_started =
+      prior_metrics.rebindings_started + 1U;
+  implementation_ = std::move(replacement->implementation_);
+  return common::Status::ok();
 }
 
 DistributedGroupedQueryTcpExecutionState

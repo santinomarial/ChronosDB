@@ -258,8 +258,10 @@ execution, and TCP ownership. A distinct bounded-stale grouped constructor carri
 leader/follower authority through the follower binder and same lifecycle while preserving the
 proved follower target. A packaged lifecycle now retains plan/Manifest ownership through
 placement-backed authenticated remote observation acquisition and transfers only its complete
-canonical authority vector into grouped execution. Explicit rebinding and multi-key/non-FLOAT64
-state remain incomplete. A distinct
+canonical authority vector into grouped execution. Retryable grouped failure now permits only a
+finite explicit whole-query replacement with identical logical shape and group-key, a nonregressing
+Manifest generation, unchanged deadline/budget, discarded old partials, and cumulative metrics.
+Multi-key/non-FLOAT64 state remains incomplete. A distinct
 canonical observation protocol, authenticated receiver, mTLS clients/servers, finite multi-address
 acquisition, correlated
 leader/follower pairs, canonical all-group batches, placement-backed construction, and packaged
@@ -594,6 +596,12 @@ Focused executions passed:
   execution metrics, and made execution-phase cancellation sticky. Header self-containment and the
   installed consumer cover the public lifecycle. A real remote CSEG response and process failover
   are not claimed.
+- Explicit grouped whole-query rebinding continuation: the focused real-mTLS cluster case accepted
+  one old partial with value 100, failed its peer retryably, rejected a different query identity,
+  then replaced the complete execution and returned count two/sum six rather than 106. Four
+  cumulative complete transports and one rebind prove that old partials were discarded. Header
+  self-containment and installed consumption cover the public boundary; automatic metadata refresh
+  and process failover are not claimed.
 
 The C++ files changed by the grouped-exchange continuations pass the repository-pinned clang-format
 18 check. A full-tree check was also run and still reports pre-existing violations in the

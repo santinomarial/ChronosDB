@@ -1048,8 +1048,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   preserves the proved follower route, and reuses the same specialization and lifecycle gates.
   A move-only lifecycle now retains the plan and Manifest pin through placement-backed authenticated
   remote observation acquisition, transfers only the complete canonical pair vector into grouped
-  construction, and unifies metrics/cancellation across acquisition and execution. Explicit
-  whole-query rebinding remains.
+  construction, and unifies metrics/cancellation across acquisition and execution. Retryable
+  grouped failures now admit only a finite explicit whole-query replacement with identical logical
+  shape, nonregressing Manifest generation, unchanged deadline/budget, discarded old partials, and
+  cumulative metrics.
   Multi-key/non-FLOAT64 state/transport, ordering, top-N, and LIMIT remain deferred. A distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
   catalog, Manifest, route, and execution gates;
