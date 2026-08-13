@@ -1015,9 +1015,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   shutdown. A single-node acquisition owner rotates a bounded ordered address snapshot across one
   finite retry/backoff budget without changing node or request authority. A two-target owner fans
   out a selected leader/follower pair, cancels the survivor on failure, and publishes only complete
-  same-term stable-membership authority. Automatic catalog-wide multi-pair acquisition and broader
-  multi-node failure validation remain deferred. Live DNS churn, resolver-latency policy, caching,
-  and IPv6 remain qualification gaps. A focused real-mTLS gate now queries two tablets, drives one through
+  same-term stable-membership authority. A blocking pre-poll resolver joins selected nodes to
+  canonical committed numeric/DNS endpoints and exact TLS contexts under hard answer bounds.
+  Automatic catalog-wide multi-pair acquisition and broader multi-node failure validation remain
+  deferred. Live DNS churn, resolver-latency policy, caching, and IPv6 remain qualification gaps. A
+  focused real-mTLS gate now queries two tablets, drives one through
   checksummed learner-first movement and externally committed promotion/removal milestones, rebinds
   it to the target, and proves the complete aggregate state is identical before and after. The full
   phase exit gate is not claimed.

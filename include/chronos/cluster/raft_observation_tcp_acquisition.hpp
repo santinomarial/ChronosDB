@@ -2,12 +2,14 @@
 #define CHRONOS_CLUSTER_RAFT_OBSERVATION_TCP_ACQUISITION_HPP_
 
 #include "chronos/cluster/raft_observation_tcp_client.hpp"
+#include "chronos/raft/metadata.hpp"
 
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <vector>
 
 namespace chronos::cluster {
@@ -17,6 +19,26 @@ struct RaftObservationTcpRoute {
   std::vector<network::Ipv4Endpoint> endpoints;
   const network::TlsClientContext* tls_context{};
 };
+
+struct RaftObservationNodeTlsContext {
+  raft::NodeId node_id{};
+  const network::TlsClientContext* tls_context{};
+};
+
+struct RaftObservationRouteResolutionLimits {
+  std::size_t maximum_routes{65'536U};
+  std::size_t maximum_endpoint_bytes{raft::MetadataLimits{}.maximum_endpoint_bytes};
+  std::size_t maximum_addresses_per_route{16U};
+};
+
+// Resolves a canonical unique node-ID selection against one committed catalog and canonical TLS
+// context set. DNS is a blocking pre-acquisition operation and produces a fresh bounded ordered
+// IPv4 candidate snapshot without changing target-node authority.
+[[nodiscard]] common::Result<std::vector<RaftObservationTcpRoute>>
+resolve_raft_observation_tcp_routes(const raft::MetadataCatalogSnapshot& catalog,
+                                    std::span<const raft::NodeId> target_nodes,
+                                    std::span<const RaftObservationNodeTlsContext> tls_contexts,
+                                    RaftObservationRouteResolutionLimits limits = {});
 
 struct RaftObservationTcpRetryLimits {
   std::size_t maximum_attempts{5U};

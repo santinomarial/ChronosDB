@@ -426,6 +426,9 @@ Focused executions passed:
   leader/follower mTLS acquisition with no partial result and for rejection of two individually
   valid but different-term observations, plus survivor cancellation after a leader failure.
   Catalog-wide multi-pair acquisition is not claimed.
+- Raft-observation route continuation: 1 focused case passed for committed numeric and DNS endpoint
+  resolution with exact port/TLS binding, duplicate-target and missing-TLS rejection, and the hard
+  selected-route limit. DNS caching, TTL, IPv6, and catalog-wide follower selection are not claimed.
 
 The final C++ tree passed the repository-pinned clang-format 18 check. Full-suite, sanitizer, fuzz,
 broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were deliberately not run.

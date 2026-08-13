@@ -58,6 +58,86 @@ bounded_wait(const std::chrono::milliseconds maximum_wait,
 
 } // namespace
 
+common::Result<std::vector<RaftObservationTcpRoute>> resolve_raft_observation_tcp_routes(
+    const raft::MetadataCatalogSnapshot& catalog, const std::span<const raft::NodeId> target_nodes,
+    const std::span<const RaftObservationNodeTlsContext> tls_contexts,
+    const RaftObservationRouteResolutionLimits limits) {
+  if (limits.maximum_routes == 0U || limits.maximum_routes > 65'536U ||
+      limits.maximum_endpoint_bytes == 0U ||
+      limits.maximum_endpoint_bytes > raft::MetadataLimits{}.maximum_endpoint_bytes ||
+      limits.maximum_addresses_per_route == 0U || limits.maximum_addresses_per_route > 1024U) {
+    return common::make_unexpected(
+        status(common::StatusCode::kInvalidArgument, "Raft observation route limits are invalid"));
+  }
+  if (catalog.applied_index == 0U ||
+      catalog.cluster_nodes.size() > raft::MetadataLimits{}.maximum_nodes ||
+      !std::ranges::is_sorted(catalog.cluster_nodes, {}, &raft::ClusterNodeMetadata::node_id) ||
+      std::ranges::adjacent_find(catalog.cluster_nodes, {}, &raft::ClusterNodeMetadata::node_id) !=
+          catalog.cluster_nodes.end() ||
+      std::ranges::any_of(catalog.cluster_nodes,
+                          [](const auto& node) { return node.node_id == 0U; })) {
+    return common::make_unexpected(
+        status(common::StatusCode::kCorruption,
+               "Raft observation node metadata is not a canonical committed snapshot"));
+  }
+  if (target_nodes.empty() || !std::ranges::is_sorted(target_nodes) ||
+      std::ranges::adjacent_find(target_nodes) != target_nodes.end() ||
+      target_nodes.front() == 0U || tls_contexts.empty() ||
+      !std::ranges::is_sorted(tls_contexts, {}, &RaftObservationNodeTlsContext::node_id) ||
+      std::ranges::adjacent_find(tls_contexts, {}, &RaftObservationNodeTlsContext::node_id) !=
+          tls_contexts.end() ||
+      std::ranges::any_of(tls_contexts, [](const auto& value) {
+        return value.node_id == 0U || value.tls_context == nullptr;
+      })) {
+    return common::make_unexpected(status(common::StatusCode::kInvalidArgument,
+                                          "Raft observation route selection is not canonical"));
+  }
+  if (target_nodes.size() > limits.maximum_routes) {
+    return common::make_unexpected(status(common::StatusCode::kResourceExhausted,
+                                          "Raft observation route limit is exhausted"));
+  }
+  try {
+    std::vector<RaftObservationTcpRoute> routes;
+    routes.reserve(target_nodes.size());
+    for (const raft::NodeId target : target_nodes) {
+      const auto node = std::ranges::lower_bound(catalog.cluster_nodes, target, {},
+                                                 &raft::ClusterNodeMetadata::node_id);
+      const auto tls = std::ranges::lower_bound(tls_contexts, target, {},
+                                                &RaftObservationNodeTlsContext::node_id);
+      if (node == catalog.cluster_nodes.end() || node->node_id != target ||
+          node->endpoint.empty() || node->endpoint.size() > limits.maximum_endpoint_bytes) {
+        return common::make_unexpected(
+            status(common::StatusCode::kUnavailable,
+                   "Raft observation target has no bounded committed endpoint"));
+      }
+      if (tls == tls_contexts.end() || tls->node_id != target || tls->tls_context == nullptr) {
+        return common::make_unexpected(
+            status(common::StatusCode::kUnavailable, "Raft observation target has no TLS context"));
+      }
+      auto endpoints = network::resolve_ipv4_endpoints(
+          node->endpoint,
+          {.maximum_addresses = limits.maximum_addresses_per_route,
+           .maximum_hostname_bytes = std::min<std::size_t>(limits.maximum_endpoint_bytes, 253U)});
+      if (!endpoints.has_value() &&
+          endpoints.error().code() == common::StatusCode::kInvalidArgument) {
+        return common::make_unexpected(
+            status(common::StatusCode::kUnavailable,
+                   "Raft observation target endpoint is not a supported IPv4 or DNS route"));
+      }
+      if (!endpoints.has_value())
+        return common::make_unexpected(endpoints.error());
+      routes.push_back({target, std::move(*endpoints), tls->tls_context});
+    }
+    return routes;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        status(common::StatusCode::kResourceExhausted, "Raft observation route allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(status(common::StatusCode::kResourceExhausted,
+                                          "Raft observation routes exceed container limits"));
+  }
+}
+
 class RaftObservationTcpAcquisition::Impl {
 public:
   using TimePoint = RaftObservationTcpClient::TimePoint;

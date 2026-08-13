@@ -144,10 +144,11 @@ dispatches exactly one observation request. A dedicated server adds bounded list
 stable connection ownership, metrics, and ordered shutdown. A single-node acquisition owner rotates
 an ordered address snapshot under one finite retry/backoff budget while preserving request and node
 authority. A two-target owner fans out the selected leader and follower, cancels a survivor on
-failure, and publishes only a complete same-term stable-membership authority pair. Automatic
-catalog-wide multi-pair acquisition, remote worker-interrupt delivery, pooled multiplexing,
-asynchronous worker completion, live DNS churn qualification, and broader multi-node fault handling
-remain embedding work.
+failure, and publishes only a complete same-term stable-membership authority pair. A blocking
+pre-poll resolver joins canonical selected nodes to committed numeric/DNS endpoint metadata and
+exact TLS contexts under hard answer bounds. Automatic catalog-wide multi-pair acquisition, remote
+worker-interrupt delivery, pooled multiplexing, asynchronous worker completion, live DNS churn
+qualification, and broader multi-node fault handling remain embedding work.
 
 ## Verification and review questions
 

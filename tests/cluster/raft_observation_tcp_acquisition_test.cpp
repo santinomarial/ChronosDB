@@ -1,11 +1,14 @@
 #include "chronos/cluster/raft_observation_tcp_acquisition.hpp"
 #include "chronos/cluster/raft_observation_tcp_server.hpp"
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <gtest/gtest.h>
+#include <ranges>
 
 namespace chronos::cluster {
 namespace {
@@ -173,6 +176,43 @@ TEST(RaftObservationTcpAcquisitionTest, RejectsAmbiguousRoutesAndCancelsActiveAt
   EXPECT_EQ(acquisition->metrics().active_attempts, 0U);
   EXPECT_EQ(acquisition->result().error(), cancelled);
   EXPECT_EQ(acquisition->poll_once(std::chrono::milliseconds{0}), cancelled);
+}
+
+TEST(RaftObservationTcpAcquisitionTest, ResolvesCommittedNumericAndDnsRoutesCanonically) {
+  auto tls_context = network::TlsClientContext::create(client_tls_config());
+  ASSERT_TRUE(tls_context.has_value());
+  const raft::MetadataCatalogSnapshot catalog{
+      .applied_index = 4U, .cluster_nodes = {{1U, "127.0.0.1:10001"}, {2U, "localhost:10002"}}};
+  const std::array<raft::NodeId, 2U> targets{1U, 2U};
+  const std::array contexts{RaftObservationNodeTlsContext{1U, &*tls_context},
+                            RaftObservationNodeTlsContext{2U, &*tls_context}};
+  auto routes = resolve_raft_observation_tcp_routes(catalog, targets, contexts);
+  ASSERT_TRUE(routes.has_value()) << routes.error().to_string();
+  ASSERT_EQ(routes->size(), 2U);
+  EXPECT_EQ((*routes)[0].node_id, 1U);
+  ASSERT_EQ((*routes)[0].endpoints.size(), 1U);
+  EXPECT_EQ((*routes)[0].endpoints.front(), (network::Ipv4Endpoint{{127U, 0U, 0U, 1U}, 10001U}));
+  EXPECT_EQ((*routes)[1].node_id, 2U);
+  ASSERT_FALSE((*routes)[1].endpoints.empty());
+  EXPECT_TRUE(
+      std::ranges::all_of((*routes)[1].endpoints, [](const network::Ipv4Endpoint& endpoint) {
+        return endpoint.port == 10002U &&
+               endpoint.address == std::array<std::uint8_t, 4U>{127U, 0U, 0U, 1U};
+      }));
+  EXPECT_EQ((*routes)[0].tls_context, &*tls_context);
+  EXPECT_EQ((*routes)[1].tls_context, &*tls_context);
+
+  const std::array<raft::NodeId, 2U> duplicate_targets{1U, 1U};
+  EXPECT_EQ(
+      resolve_raft_observation_tcp_routes(catalog, duplicate_targets, contexts).error().code(),
+      common::StatusCode::kInvalidArgument);
+  const std::array missing_context{RaftObservationNodeTlsContext{1U, &*tls_context}};
+  EXPECT_EQ(resolve_raft_observation_tcp_routes(catalog, targets, missing_context).error().code(),
+            common::StatusCode::kUnavailable);
+  EXPECT_EQ(resolve_raft_observation_tcp_routes(catalog, targets, contexts, {.maximum_routes = 1U})
+                .error()
+                .code(),
+            common::StatusCode::kResourceExhausted);
 }
 
 } // namespace
