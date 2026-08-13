@@ -1054,7 +1054,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   partial-I/O ownership without changing v1. Its authenticated receiver now authorizes the claimed
   source and local target before one worker call, validates the complete schema-bound terminal
   stream, and applies independent response-frame and retained-byte bounds before publication.
-  Mutual-TLS/TCP lifecycle, schema-bound coordination, and execution remain deferred. A distinct
+  Single-attempt mutual-TLS client/server owners now authenticate certificate principals before
+  protocol I/O, retain no fixed maximum-frame scratch, and expose results only after exact terminal
+  closure under sticky deadlines. TCP acquisition/listener ownership, schema-bound coordination,
+  and execution remain deferred. A distinct
   group-scoped grouped dispatch now
   preserves exact Raft authority without reinterpreting ungrouped dispatch bytes. Its worker reuses
   every local authority gate, resolves real temporal CSEG winners, and emits canonical grouped

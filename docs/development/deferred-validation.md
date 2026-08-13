@@ -294,8 +294,11 @@
   Result-Exchange-v2 responses, rejects v1/v2 confusion, and owns header-first fragmented reads,
   coalesced suffixes, and checked short writes. Its authenticated receiver now authorizes source and
   target before one worker call, validates complete schema-bound terminal streams, and bounds both
-  response count and exact encoded bytes before all-or-nothing publication. Add retry, mutual-TLS/
-  TCP session ownership, schema-bound coordination, and general worker execution next.
+  response count and exact encoded bytes before all-or-nothing publication. Single-attempt
+  mutual-TLS carriers now authenticate both certificate principals before application I/O, own
+  partial progress with 16-KiB scratch rather than maximum-frame arrays, and apply sticky deadlines.
+  Add retry, TCP acquisition/listener ownership, schema-bound coordination, and general worker
+  execution next.
   A distinct terminal-only frame closes an empty tablet stream without inventing a SQL NULL group.
   Its separate fixed reader and move-only cursor own every terminal fragmentation boundary,
   coalesced successor bytes, sticky damage, and checked short writes without introducing an

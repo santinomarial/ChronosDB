@@ -307,8 +307,14 @@ The v2 receiver now consumes a transport-authenticated peer result before decode
 claimed source and local target, and then calls one borrowed worker service. It validates and
 schema-binds the complete terminal response stream before returning any encoded frame. Separate
 frame-count and exact encoded-byte ceilings prevent large native batches from turning a nominally
-bounded stream into multi-gigabyte retained output. TLS/TCP progress and the production worker
-implementation remain separate owners.
+bounded stream into multi-gigabyte retained output. At that receiver boundary, TLS/TCP progress and
+the production worker implementation remained separate owners.
+The v2 mutual-TLS carriers now take the authenticated handoff through one complete nonblocking
+exchange. The client transfers the admitted schema from its exact request into the response reader
+before any response arrives, and it withholds decoded prefixes until terminal closure. The server
+authenticates before reading, invokes the receiver once, and schema-validates the complete returned
+vector before writing typed cursors. Fixed 16-KiB scratch plus header-first exact-frame ownership
+avoids a maximum-size request and response array in every connection.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated

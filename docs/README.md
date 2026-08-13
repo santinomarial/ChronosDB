@@ -99,7 +99,7 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
   v2](formats/distributed-vector-query-transport-v2.md): distinct node-routed Fragment-v2 request
   and schema-bound Result-Exchange-v2 response frames with exact correlation and partial-I/O
   ownership, plus authenticated all-or-nothing worker-stream publication under count and byte
-  bounds.
+  bounds and single-attempt mutual-TLS carriers.
 - [Distributed Aggregate Fragment v1](formats/distributed-aggregate-fragment-v1.md): bounded,
   integrity-first worker request bytes binding an exact snapshot route, consistency evidence,
   projection, aggregate input, and event-time predicate.

@@ -52,6 +52,12 @@ struct DistributedVectorQueryResponseV2 {
   std::optional<DistributedQueryLeaderHint> leader_hint;
 };
 
+struct DistributedVectorQueryAttemptV2 {
+  std::size_t attempt_number{};
+  raft::NodeId target_node_id{};
+  std::vector<std::byte> request_bytes;
+};
+
 [[nodiscard]] common::Result<std::vector<std::byte>> encode_distributed_vector_query_response_v2(
     const DistributedVectorQueryResponseV2& response,
     const query::DistributedVectorResultSchema& expected_schema);
