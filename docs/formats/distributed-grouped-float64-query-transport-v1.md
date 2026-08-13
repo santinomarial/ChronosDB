@@ -1,8 +1,8 @@
 # Distributed Grouped FLOAT64 Query Transport v1
 
 > **Status:** accepted with implemented exact request/response codecs, bounded partial-I/O,
-> authenticated receiver dispatch, and bounded multi-response mutual-TLS ownership. TCP socket
-> acquisition and listener lifecycle remain separate.
+> authenticated receiver dispatch, bounded multi-response mutual-TLS ownership, and outbound
+> nonblocking TCP connection ownership. Inbound listener/server lifecycle remains separate.
 
 This cluster protocol carries one group-scoped grouped FLOAT64 fragment dispatch to a remote worker
 and correlates each returned grouped partial, empty-stream terminal, or failure. It is distinct from
@@ -93,5 +93,7 @@ acquire an advisory leader hint from the committed metadata provider only after 
 The mutual-TLS client and server own one already-connected nonblocking TLS socket, authenticate and
 authorize before protocol bytes, preserve response order, apply finite handshake/exchange
 deadlines, and publish a client response span only after a terminal or failure frame. Any transport
-failure clears the retained prefix. They do not define TCP connection/listener acquisition, retry
-arbitration, sender/coordinator integration, or packaged multi-tablet execution.
+failure clears the retained prefix. A deadline-bound outbound composite owns nonblocking TCP
+establishment and carrier-before-descriptor teardown. These components do not define inbound
+listener/server ownership, retry arbitration, sender/coordinator integration, or packaged
+multi-tablet execution.

@@ -370,3 +370,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0333](0333-request-local-real-cseg-grouped-worker-service.md) | Request-local real-CSEG grouped worker service | accepted |
 | [0334](0334-owned-real-cseg-grouped-query-receiver.md) | Owned real-CSEG grouped query receiver | accepted |
 | [0335](0335-bounded-grouped-query-mutual-tls.md) | Bounded grouped-query mutual TLS | accepted |
+| [0336](0336-deadline-bound-grouped-query-tcp-client.md) | Deadline-bound grouped-query TCP client | accepted |
