@@ -246,8 +246,9 @@ authenticated mutual-TLS carrier owns its bounded ordered response stream, and a
 outbound TCP composite owns one validated connection attempt. A bounded inbound TCP server owns
 finite admission and stable carrier/descriptor lifetime, and a production owner composes it with
 the real-CSEG grouped worker. A finite sender owns complete response-vector correlation and
-whole-attempt retry/backoff. Coordinator integration, packaged grouped execution, and
-multi-key/non-FLOAT64 state remain incomplete. A distinct
+whole-attempt retry/backoff. A compatible grouped binder retains one pinned Manifest epoch across
+every plan-ordered, schema-proved dispatch. Coordinator integration, packaged grouped execution,
+and multi-key/non-FLOAT64 state remain incomplete. A distinct
 canonical observation protocol, authenticated receiver, mTLS clients/servers, finite multi-address
 acquisition, correlated
 leader/follower pairs, canonical all-group batches, placement-backed construction, and packaged
@@ -546,6 +547,11 @@ Focused executions passed:
   attempt exhaustion, and no result publication across retries. The installed-consumer gate covers
   sender construction. Coordinator delivery, multi-tablet TCP scheduling, and packaged grouped
   execution are not claimed.
+- Compatible grouped-snapshot continuation: the focused two-tablet binding case passed for one
+  retained Manifest generation, exact plan/group/tablet order, shared FLOAT64 key proof, and direct
+  grouped dispatch construction, plus out-of-bounds and TIMESTAMP key rejection. The
+  installed-consumer gate covers the public binder. Coordinator execution, TCP scheduling, and
+  packaged grouped construction are not claimed.
 
 The C++ files changed by the grouped-exchange continuations pass the repository-pinned clang-format
 18 check. A full-tree check was also run and still reports pre-existing violations in the

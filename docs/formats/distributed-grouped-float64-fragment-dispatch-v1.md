@@ -34,3 +34,7 @@ Distinct magic makes every grouped dispatch invalid to the ungrouped decoder and
 detects damage, not malicious group substitution. An authenticated receiver must exact-match the
 decoded group to local tablet authority and invoke a worker that independently reproves every
 nested route, placement, schema, snapshot, and consistency field before storage access.
+
+A compatible grouped snapshot owner now derives every plan-ordered dispatch from one pinned
+Manifest epoch and the exact schema binding that proves its shared key input is FLOAT64. It changes
+no dispatch bytes.

@@ -356,6 +356,30 @@ TEST(DistributedFragmentBindingTest, PinsOneCompatibleEpochAcrossEveryPlannedTab
                 .code(),
             common::StatusCode::kResourceExhausted);
 
+  EXPECT_EQ(bind_compatible_distributed_grouped_float64_snapshot(plan, *snapshot, bindings, 2U)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(bind_compatible_distributed_grouped_float64_snapshot(plan, *snapshot, bindings, 0U)
+                .error()
+                .code(),
+            common::StatusCode::kNotSupported);
+  auto grouped = bind_compatible_distributed_grouped_float64_snapshot(
+      plan, *snapshot, bindings, 1U,
+      {.maximum_fragments = 2U, .maximum_total_projection_ordinals = 4U});
+  ASSERT_TRUE(grouped.has_value()) << grouped.error().to_string();
+  EXPECT_FALSE(pinned.expired());
+  EXPECT_EQ(grouped->snapshot().generation(), 1U);
+  ASSERT_EQ(grouped->dispatches().size(), 2U);
+  for (std::size_t index = 0U; index < grouped->dispatches().size(); ++index) {
+    EXPECT_EQ(grouped->dispatches()[index].raft_group_id, bindings[index].raft_group_id);
+    EXPECT_EQ(grouped->dispatches()[index].fragment.group_key_input_index, 1U);
+    EXPECT_EQ(grouped->dispatches()[index].fragment.aggregate.tablet_id,
+              plan.fragments[index].tablet_id);
+    EXPECT_EQ(grouped->dispatches()[index].fragment.aggregate.snapshot_generation,
+              grouped->snapshot().generation());
+  }
+
   auto compatible = bind_compatible_distributed_aggregate_snapshot(
       plan, std::move(*snapshot), bindings,
       {.maximum_fragments = 2U, .maximum_total_projection_ordinals = 4U});

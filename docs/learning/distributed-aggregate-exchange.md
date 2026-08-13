@@ -164,6 +164,9 @@ addresses and reverse dependency destruction for the complete production inbound
 `DistributedGroupedQuerySender` independently constructs immutable attempts, validates the complete
 terminal response vector before publication, and retries only whole attempts under a finite capped
 backoff. Advisory hints never mutate its proof-bound target.
+`CompatibleDistributedGroupedFloat64Snapshot` delegates complete multi-tablet authority to the
+aggregate batch binder, proves the shared key input under every exact schema, derives every grouped
+dispatch in plan order, and retains the one pinned Manifest epoch.
 `DistributedQueryTcpServer` owns the dedicated listener, long-lived TLS context, fixed-capacity poll
 storage, bounded stable connection records, deadline driving, metrics, and carrier-before-descriptor
 shutdown order for real multi-connection serving.

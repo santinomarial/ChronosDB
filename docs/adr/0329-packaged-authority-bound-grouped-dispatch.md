@@ -42,6 +42,9 @@ Authenticated grouped transport, packaged multi-tablet grouped execution, genera
 fragments, and broad failure/measurement evidence remain incomplete. No Phase 16 exit gate is
 claimed.
 
+ADR 0340 subsequently packages a complete plan-ordered grouped dispatch vector under one compatible
+pinned Manifest epoch without exposing a caller-side authority join.
+
 Invariants 4–6, 10, 11, 14, 15, and 18 apply.
 
 ## References

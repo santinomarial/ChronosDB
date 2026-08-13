@@ -49,6 +49,9 @@ Canonical group-scoped dispatch bytes are the accepted follow-up in
 the validated values directly into that dispatch is accepted in
 [ADR 0329](0329-packaged-authority-bound-grouped-dispatch.md). No Phase 16 exit gate is claimed.
 
+ADR 0340 subsequently applies the same key/type proof to every plan-ordered tablet under one
+compatible pinned Manifest epoch.
+
 Invariants 4–6, 10, 11, 14, and 18 apply.
 
 ## References

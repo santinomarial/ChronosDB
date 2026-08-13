@@ -289,8 +289,9 @@
   A production owner keeps the real-CSEG worker, authenticated receiver, and TCP server at stable
   reverse-safe addresses; a real loopback request returns the exact installed-CSEG group.
   A finite one-tablet sender now owns complete-stream correlation, immutable attempts, advisory
-  hints, and capped whole-attempt retry/backoff. Coordinator integration plus packaged grouped
-  execution remain incomplete.
+  hints, and capped whole-attempt retry/backoff. A compatible batch binder now retains one pinned
+  Manifest epoch while deriving every plan-ordered grouped dispatch under its exact FLOAT64 schema
+  proof. Coordinator integration plus packaged grouped execution remain incomplete.
 - Proof-bound leader-linearizable/bounded-stale/local-eventual admissions now remain attached through
   compatible pinned multi-tablet snapshots and protocol/carrier scheduling. Whole-query replacement
   now validates fresh caller-proved authority, identical logical shape, nonregressing generation,

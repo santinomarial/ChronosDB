@@ -335,6 +335,74 @@ bind_compatible_distributed_aggregate_snapshot(
   }
 }
 
+CompatibleDistributedGroupedFloat64Snapshot::CompatibleDistributedGroupedFloat64Snapshot(
+    CompatibleDistributedAggregateSnapshot aggregate_snapshot,
+    std::vector<DistributedGroupedFloat64FragmentDispatch> dispatches) noexcept
+    : aggregate_snapshot_(std::move(aggregate_snapshot)), dispatches_(std::move(dispatches)) {}
+
+const manifest::TemporalDatabaseStorageSnapshot&
+CompatibleDistributedGroupedFloat64Snapshot::snapshot() const noexcept {
+  return aggregate_snapshot_.snapshot();
+}
+
+std::span<const DistributedGroupedFloat64FragmentDispatch>
+CompatibleDistributedGroupedFloat64Snapshot::dispatches() const noexcept {
+  return dispatches_;
+}
+
+common::Result<CompatibleDistributedGroupedFloat64Snapshot>
+bind_compatible_distributed_grouped_float64_snapshot(
+    const DistributedAggregatePlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
+    const std::span<const DistributedAggregateSnapshotFragmentBinding> bindings,
+    const std::uint32_t group_key_input_index,
+    const DistributedAggregateSnapshotBindingLimits limits) {
+  auto aggregate =
+      bind_compatible_distributed_aggregate_snapshot(plan, std::move(snapshot), bindings, limits);
+  if (!aggregate.has_value())
+    return common::make_unexpected(aggregate.error());
+  if (aggregate->dispatches().size() != bindings.size()) {
+    return common::make_unexpected(
+        invalid("compatible grouped snapshot aggregate binding count is inconsistent"));
+  }
+  try {
+    std::vector<DistributedGroupedFloat64FragmentDispatch> dispatches;
+    dispatches.reserve(bindings.size());
+    for (std::size_t index = 0U; index < bindings.size(); ++index) {
+      const DistributedAggregateFragmentDispatch& nested = aggregate->dispatches()[index];
+      if (group_key_input_index >= nested.fragment.destination_column_ordinals.size()) {
+        return common::make_unexpected(
+            invalid("compatible grouped snapshot key input is out of bounds"));
+      }
+      const std::uint32_t key_ordinal =
+          nested.fragment.destination_column_ordinals[group_key_input_index];
+      const schema::TableSchema& destination_schema = bindings[index].destination_schema.get();
+      if (key_ordinal >= destination_schema.columns().size()) {
+        return common::make_unexpected(
+            invalid("compatible grouped snapshot key ordinal is out of bounds"));
+      }
+      if (destination_schema.columns()[key_ordinal].type().kind() !=
+          schema::LogicalTypeKind::kFloat64) {
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kNotSupported,
+                           "compatible grouped snapshot key input is not Float64"});
+      }
+      dispatches.push_back({.raft_group_id = nested.raft_group_id,
+                            .fragment = {.aggregate = nested.fragment,
+                                         .group_key_input_index = group_key_input_index}});
+    }
+    return CompatibleDistributedGroupedFloat64Snapshot{std::move(*aggregate),
+                                                       std::move(dispatches)};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "compatible grouped snapshot binding allocation failed"});
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "compatible grouped snapshot binding exceeds container limits"});
+  }
+}
+
 common::Result<CompatibleDistributedAggregateSnapshot>
 bind_metadata_backed_distributed_aggregate_snapshot(
     const DistributedAggregatePlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,

@@ -121,6 +121,48 @@ bind_compatible_distributed_aggregate_snapshot(
     std::span<const DistributedAggregateSnapshotFragmentBinding> bindings,
     DistributedAggregateSnapshotBindingLimits limits = {});
 
+// Owns the same one acquire-pinned Manifest epoch as the compatible aggregate snapshot plus one
+// plan-ordered grouped dispatch per aggregate dispatch. Group-key type proof is performed under the
+// exact destination schema binding used for each nested aggregate fragment.
+class CompatibleDistributedGroupedFloat64Snapshot {
+public:
+  CompatibleDistributedGroupedFloat64Snapshot() = delete;
+  CompatibleDistributedGroupedFloat64Snapshot(const CompatibleDistributedGroupedFloat64Snapshot&) =
+      delete;
+  CompatibleDistributedGroupedFloat64Snapshot&
+  operator=(const CompatibleDistributedGroupedFloat64Snapshot&) = delete;
+  CompatibleDistributedGroupedFloat64Snapshot(
+      CompatibleDistributedGroupedFloat64Snapshot&&) noexcept = default;
+  CompatibleDistributedGroupedFloat64Snapshot&
+  operator=(CompatibleDistributedGroupedFloat64Snapshot&&) noexcept = default;
+
+  [[nodiscard]] const manifest::TemporalDatabaseStorageSnapshot& snapshot() const noexcept;
+  [[nodiscard]] std::span<const DistributedGroupedFloat64FragmentDispatch>
+  dispatches() const noexcept;
+
+private:
+  CompatibleDistributedGroupedFloat64Snapshot(
+      CompatibleDistributedAggregateSnapshot aggregate_snapshot,
+      std::vector<DistributedGroupedFloat64FragmentDispatch> dispatches) noexcept;
+
+  CompatibleDistributedAggregateSnapshot aggregate_snapshot_;
+  std::vector<DistributedGroupedFloat64FragmentDispatch> dispatches_;
+
+  friend common::Result<CompatibleDistributedGroupedFloat64Snapshot>
+  bind_compatible_distributed_grouped_float64_snapshot(
+      const DistributedAggregatePlan&, manifest::TemporalDatabaseStorageSnapshot,
+      std::span<const DistributedAggregateSnapshotFragmentBinding>, std::uint32_t,
+      DistributedAggregateSnapshotBindingLimits);
+};
+
+// Delegates every plan/order/placement/proof/projection/Manifest check to the aggregate batch
+// binder, then proves the shared projected group-key input is FLOAT64 under every exact schema.
+[[nodiscard]] common::Result<CompatibleDistributedGroupedFloat64Snapshot>
+bind_compatible_distributed_grouped_float64_snapshot(
+    const DistributedAggregatePlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
+    std::span<const DistributedAggregateSnapshotFragmentBinding> bindings,
+    std::uint32_t group_key_input_index, DistributedAggregateSnapshotBindingLimits limits = {});
+
 // One plan-ordered runtime proof. Placement, group, and schema authority are deliberately absent:
 // the metadata-backed binder resolves those fields from one committed catalog snapshot. A
 // follower-bounded read must carry a fresh leader-commit observation; a leader-linearizable read
