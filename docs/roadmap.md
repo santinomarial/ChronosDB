@@ -1015,7 +1015,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   every local authority gate, resolves real temporal CSEG winners, and emits canonical grouped
   partials or the terminal-only empty result. The grouped authority binder now directly packages
   its exact validated group and intent into that canonical dispatch, eliminating a second
-  caller-side authority join. Packaged multi-tablet grouped execution remains.
+  caller-side authority join. Distinct bounded grouped request/response codecs now carry that
+  dispatch and explicitly discriminate correlated partial, empty-terminal, and failure payloads
+  without changing ungrouped transport bytes. Authenticated grouped receiver/stream ownership and
+  packaged multi-tablet grouped execution remain.
   Multi-key/non-FLOAT64 state/transport, ordering, top-N, and LIMIT remain deferred. A distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
   catalog, Manifest, route, and execution gates;

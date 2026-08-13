@@ -48,6 +48,9 @@ Authenticated grouped request/response transport, packaged multi-tablet grouped 
 multi-key/non-FLOAT64 state, ordering/top-N/LIMIT, cancellation interruption, and broad fault/
 measurement evidence remain incomplete. No Phase 16 exit gate is claimed.
 
+ADR 0330 subsequently supplies distinct canonical grouped request/response codecs. Authenticated
+receiver dispatch, stream ownership, and packaged execution remain incomplete.
+
 Invariants 4–6, 10, 11, 14, 15, and 18 apply.
 
 ## References

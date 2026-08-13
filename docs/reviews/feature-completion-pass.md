@@ -488,6 +488,11 @@ Focused executions passed:
   authority input, exact group preservation, encodability, and unchanged unsupported-key status.
   The installed-consumer gate references the new public constructor. Authenticated grouped
   transport and packaged multi-tablet execution are not claimed.
+- Grouped-query-transport codec continuation: 2 focused cases passed for exact grouped request,
+  partial, terminal-only, failure, all-status, correlation, advisory-hint, nested-damage,
+  future-version, type-confusion, and payload-kind substitution behavior. The installed-consumer
+  gate covers both public codec directions. Authenticated receiver/partial-I/O and packaged
+  multi-tablet grouped execution are not claimed.
 
 The C++ files changed by the grouped-exchange continuations pass the repository-pinned clang-format
 18 check. A full-tree check was also run and still reports pre-existing violations in the

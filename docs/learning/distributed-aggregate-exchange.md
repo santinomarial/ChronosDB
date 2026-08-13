@@ -42,6 +42,10 @@ into that dispatch, avoiding a second caller-assembled authority join.
 authority validator, resolves generation-pinned temporal winners, then groups only selected visible
 rows. It emits terminal partial messages in canonical key-token order or the distinct empty terminal
 value; that reproducibility order is not SQL ordering.
+Distributed Grouped FLOAT64 Query Transport v1 uses distinct request/response magics to carry the
+canonical grouped dispatch and explicitly identify one correlated partial, terminal-only value, or
+failure. Its exact codecs own bounded values; authenticated receiver, stream, and sender ownership
+remain separate.
 The dispatch envelope adds the distinct Raft group identity that scopes every admission index;
 workers never execute the bare inner fragment.
 `bind_distributed_aggregate_fragment` constructs that envelope only after one Manifest v2 snapshot,

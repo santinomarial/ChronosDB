@@ -273,7 +273,10 @@
   exact validated owned values directly into that dispatch without a second caller-side join. The
   grouped worker now reuses every local
   authority gate, resolves real temporal CSEG winners, emits canonical terminal partials, and uses
-  the terminal-only value for empty selected input. Grouped transport/packaging remain incomplete.
+  the terminal-only value for empty selected input. Distinct exact grouped request/response codecs
+  now carry the canonical dispatch and discriminate one correlated partial, empty terminal, or
+  failure without changing ungrouped transport bytes. Authenticated receiver, partial-I/O,
+  multi-response sender/coordinator, and packaged grouped execution remain incomplete.
 - Proof-bound leader-linearizable/bounded-stale/local-eventual admissions now remain attached through
   compatible pinned multi-tablet snapshots and protocol/carrier scheduling. Whole-query replacement
   now validates fresh caller-proved authority, identical logical shape, nonregressing generation,

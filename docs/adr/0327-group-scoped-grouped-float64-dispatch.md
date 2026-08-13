@@ -47,6 +47,10 @@ execution is the accepted follow-up in
 move its exact group and intent directly into this value through the packaged constructor accepted
 in [ADR 0329](0329-packaged-authority-bound-grouped-dispatch.md). No Phase 16 exit gate is claimed.
 
+Distinct grouped request/response carrier bytes are accepted in
+[ADR 0330](0330-distinct-grouped-float64-query-transport.md); authenticated receiver and stream
+ownership remain follow-up work.
+
 Invariants 4–6, 10, 11, 14, 15, and 18 apply.
 
 ## References
