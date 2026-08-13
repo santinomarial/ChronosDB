@@ -713,6 +713,13 @@ Focused executions passed:
   cases, header self-containment, and installed consumption cover the public coordinator. It treats
   canonical nested batches as opaque; result-schema authorization, execution, authenticated
   lifecycle, and process integration are not claimed.
+- Distributed vector result-schema continuation: two focused cases round-tripped owned duplicate
+  names and mixed logical descriptors, rejected damage, a checksum-valid future version, invalid
+  UTF-8, and lower caller limits, then proved repeated row-output and grouped COUNT/SUM physical
+  shapes while rejecting width/nullability mismatch. Header self-containment and installed
+  consumption cover the API. The accepted v1 exchange bytes remain unchanged; schema carriage,
+  schema-light result batches, execution, authenticated lifecycle, and process integration are not
+  claimed.
 
 The C++ files changed by the grouped- and vector-exchange continuations pass the repository-pinned
 clang-format 18 check. A full-tree check was also run and still reports pre-existing violations in

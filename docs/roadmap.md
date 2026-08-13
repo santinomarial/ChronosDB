@@ -1040,6 +1040,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   enforces exact per-tablet retries, contiguous sequences, terminal closure, first-failure
   ownership, count/byte-bounded retention, and plan-order release only after every tablet closes;
   it does not invent result-schema identity from nested table-schema-shaped batch bytes. A distinct
+  checksummed schema-light descriptor vector now preserves SQL-owned names and exact plan-validated
+  type/nullability for repeated rows and aggregate outputs. Because accepted exchange v1 remains
+  table-shaped, a new schema-light result-batch/exchange version is still required. A distinct
   group-scoped grouped dispatch now
   preserves exact Raft authority without reinterpreting ungrouped dispatch bytes. Its worker reuses
   every local authority gate, resolves real temporal CSEG winners, and emits canonical grouped

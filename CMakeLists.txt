@@ -422,6 +422,7 @@ add_library(
   src/query/distributed_vector_exchange.cpp
   src/query/distributed_vector_fragment.cpp
   src/query/distributed_vector_plan.cpp
+  src/query/distributed_vector_result_schema.cpp
   src/query/distributed_fragment.cpp
   src/query/distributed_fragment_binding.cpp
   src/query/distributed_fragment_dispatch.cpp
@@ -1641,6 +1642,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/distributed_vector_fragment_test.cpp
     tests/query/distributed_vector_plan_header_self_contained.cpp
     tests/query/distributed_vector_plan_test.cpp
+    tests/query/distributed_vector_result_schema_header_self_contained.cpp
+    tests/query/distributed_vector_result_schema_test.cpp
     tests/query/distributed_fragment_header_self_contained.cpp
     tests/query/distributed_fragment_test.cpp
     tests/query/distributed_fragment_binding_header_self_contained.cpp

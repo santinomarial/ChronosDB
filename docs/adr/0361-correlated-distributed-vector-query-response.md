@@ -31,10 +31,10 @@ header/payload correlation mismatch, and nested damage under recomputed outer ch
 request/response cases, header self-containment, and installed consumption cover both exact codec
 directions.
 
-General vector worker execution remains blocked on an explicit output-schema identity contract.
-Partial-I/O and bounded exact-retry coordination are implemented separately. Authenticated
-receiver/sender ownership and process integration remain incomplete. No Phase 16 exit gate is
-claimed.
+An explicit schema-light output identity contract is implemented separately, but v1 cannot carry
+it without changing accepted bytes. Partial-I/O and bounded exact-retry coordination are also
+implemented separately. A versioned schema-light result exchange, authenticated receiver/sender
+ownership, execution, and process integration remain incomplete. No Phase 16 exit gate is claimed.
 
 Invariants 5, 6, 10, 11, 14, 15, and 18 apply.
 

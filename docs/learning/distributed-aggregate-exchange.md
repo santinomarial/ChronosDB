@@ -284,6 +284,10 @@ The vector coordinator retains canonical messages under per-tablet/global count 
 ceilings, arbitrates exact retries by every encoded byte, and releases complete streams in plan
 tablet order only after terminal closure. It deliberately does not infer result column identity from
 the nested table-schema-shaped batches.
+General vector output now has a separate owned result-schema value modeled on native query result
+descriptors. It preserves names verbatim and proves type/nullability against the vector intent and
+projected physical inputs. A future exchange version must pair it with schema-light result cells;
+v1 Columnar Batch bytes remain unchanged and table-shaped.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated

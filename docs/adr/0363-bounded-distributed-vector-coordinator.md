@@ -41,8 +41,9 @@ invalid identity/tablet sets, first-failure stability, completed-worker loss, an
 All five vector-exchange cases, header self-containment, and installed consumption cover the public
 coordinator and existing frame owners.
 
-Authenticated request lifecycle, vector worker execution, cross-batch result-schema authorization,
-and process integration remain incomplete. No Phase 16 exit gate is claimed.
+The schema-light result identity contract is implemented separately. Its carriage, authenticated
+request lifecycle, vector worker execution, and process integration remain incomplete. No Phase 16
+exit gate is claimed.
 
 Invariants 4–6, 8–11, 14, 15, and 18 apply.
 

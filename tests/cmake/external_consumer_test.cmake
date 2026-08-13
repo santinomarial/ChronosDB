@@ -134,6 +134,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/query/distributed_vector_exchange.hpp>
 #include <chronos/query/distributed_vector_fragment.hpp>
 #include <chronos/query/distributed_vector_plan.hpp>
+#include <chronos/query/distributed_vector_result_schema.hpp>
 #include <chronos/query/distributed.hpp>
 #include <chronos/query/distributed_fragment.hpp>
 #include <chronos/query/distributed_fragment_binding.hpp>
@@ -234,6 +235,12 @@ int main() {
   const auto finish_vector_exchange = &chronos::query::DistributedVectorCoordinator::finish;
   const auto decode_vector_plan = &chronos::query::decode_distributed_vector_plan_intent_exact;
   const auto validate_vector_plan = &chronos::query::validate_distributed_vector_plan_intent;
+  const auto encode_vector_result_schema =
+      &chronos::query::encode_distributed_vector_result_schema;
+  const auto decode_vector_result_schema =
+      &chronos::query::decode_distributed_vector_result_schema_exact;
+  const auto validate_vector_result_schema =
+      &chronos::query::validate_distributed_vector_result_schema;
   const auto decode_vector_fragment =
       &chronos::query::decode_distributed_vector_fragment_dispatch_exact;
   using ConsumeVectorFragment = chronos::common::Result<
@@ -400,6 +407,9 @@ int main() {
   (void)finish_vector_exchange;
   (void)decode_vector_plan;
   (void)validate_vector_plan;
+  (void)encode_vector_result_schema;
+  (void)decode_vector_result_schema;
+  (void)validate_vector_result_schema;
   (void)decode_vector_fragment;
   (void)consume_vector_fragment;
   (void)create_vector_fragment_write_cursor;
