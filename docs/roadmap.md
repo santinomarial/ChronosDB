@@ -1028,8 +1028,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   until terminal closure. A move-only outbound TCP composite now validates before connect, proves
   nonblocking completion, binds route identity, enforces a separate connect deadline, and preserves
   TLS-before-descriptor teardown. A bounded TCP server now owns the listener/TLS lifetime, finite
-  admission, stable connection records, metrics, and deterministic shutdown. Sender ownership and
-  packaged multi-tablet grouped execution remain.
+  admission, stable connection records, metrics, and deterministic shutdown. A production owner
+  composes that server with the authenticated receiver and request-local real-CSEG worker; one real
+  loopback request returns the exact installed-CSEG group. Sender ownership and packaged
+  multi-tablet grouped execution remain.
   Multi-key/non-FLOAT64 state/transport, ordering, top-N, and LIMIT remain deferred. A distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
   catalog, Manifest, route, and execution gates;

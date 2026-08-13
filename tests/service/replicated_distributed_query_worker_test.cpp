@@ -1,3 +1,4 @@
+#include "chronos/cluster/distributed_grouped_query_tcp_client.hpp"
 #include "chronos/cluster/distributed_query_tcp_client.hpp"
 #include "chronos/manifest/naming.hpp"
 #include "chronos/manifest/temporal_codec.hpp"
@@ -6,6 +7,7 @@
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/logical_type.hpp"
 #include "chronos/service/replicated_distributed_grouped_query_receiver.hpp"
+#include "chronos/service/replicated_distributed_grouped_query_tcp_server.hpp"
 #include "chronos/service/replicated_distributed_query_tcp_server.hpp"
 #include "chronos/service/replicated_distributed_query_worker.hpp"
 #include "cseg/cseg_test_fixture.hpp"
@@ -351,6 +353,71 @@ TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesReal
   EXPECT_EQ(remote_grouped->group_key, 2.5);
   EXPECT_EQ(remote_grouped->partial.sum, 2.5);
   EXPECT_EQ(provider.grouped_calls, 2U);
+
+  EXPECT_EQ(ReplicatedDistributedGroupedQueryTcpServer::start({}).error().code(),
+            common::StatusCode::kInvalidArgument);
+  Authenticator grouped_tcp_client_authenticator{91U};
+  Authenticator grouped_tcp_server_authenticator{92U};
+  auto grouped_server = ReplicatedDistributedGroupedQueryTcpServer::start(
+      {.worker = {.local_node_id = 11U, .storage = &*storage, .context_provider = &provider},
+       .listener = {},
+       .tls = tls_server_config(),
+       .authenticator = &grouped_tcp_client_authenticator,
+       .node_authorizer = &grouped_authorizer,
+       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                          .exchange_timeout = std::chrono::milliseconds{1000},
+                          .maximum_response_frames = 4U},
+       .maximum_connections = 4U,
+       .maximum_accepts_per_poll = 4U});
+  ASSERT_TRUE(grouped_server.has_value()) << grouped_server.error().to_string();
+  auto grouped_tls_context = network::TlsClientContext::create(tls_client_config());
+  ASSERT_TRUE(grouped_tls_context.has_value()) << grouped_tls_context.error().to_string();
+  auto grouped_client = cluster::DistributedGroupedQueryTcpClient::begin(
+      {1U, 11U, *grouped_request},
+      {.remote_endpoint = grouped_server->bound_endpoint(),
+       .tls_context = std::addressof(*grouped_tls_context),
+       .carrier = {.authenticator = &grouped_tcp_server_authenticator,
+                   .node_authorizer = &grouped_authorizer,
+                   .peer_ipv4_address = {127U, 0U, 0U, 1U},
+                   .limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                              .exchange_timeout = std::chrono::milliseconds{1000},
+                              .maximum_response_frames = 4U}},
+       .connect_timeout = std::chrono::milliseconds{1000}},
+      cluster::DistributedGroupedQueryTcpClient::TimePoint::clock::now());
+  ASSERT_TRUE(grouped_client.has_value()) << grouped_client.error().to_string();
+  for (std::size_t iteration = 0U;
+       iteration < 1024U &&
+       grouped_client->state() != cluster::DistributedGroupedQueryTcpClientState::kComplete;
+       ++iteration) {
+    const auto interest = grouped_client->interest();
+    pollfd descriptor{.fd = grouped_client->descriptor(),
+                      .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
+                                                   (interest.want_write ? POLLOUT : 0))};
+    ASSERT_GE(::poll(&descriptor, 1U, 1), 0);
+    ASSERT_TRUE(grouped_client
+                    ->on_ready((descriptor.revents & POLLIN) != 0,
+                               (descriptor.revents & POLLOUT) != 0,
+                               cluster::DistributedGroupedQueryTcpClient::TimePoint::clock::now())
+                    .is_ok())
+        << grouped_client->failure().to_string();
+    ASSERT_TRUE(grouped_server->poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  ASSERT_EQ(grouped_client->state(), cluster::DistributedGroupedQueryTcpClientState::kComplete)
+      << grouped_client->failure().to_string();
+  auto grouped_tcp_responses = grouped_client->responses();
+  ASSERT_TRUE(grouped_tcp_responses.has_value()) << grouped_tcp_responses.error().to_string();
+  ASSERT_EQ(grouped_tcp_responses->size(), 1U);
+  const auto* grouped_tcp_result =
+      std::get_if<query::GroupedFloat64ExchangeMessage>(&*grouped_tcp_responses->front().payload);
+  ASSERT_NE(grouped_tcp_result, nullptr);
+  EXPECT_EQ(grouped_tcp_result->group_key, 2.5);
+  EXPECT_EQ(grouped_tcp_result->partial.sum, 2.5);
+  EXPECT_TRUE(grouped_tcp_result->terminal);
+  EXPECT_EQ(provider.grouped_calls, 3U);
+  EXPECT_TRUE(grouped_tcp_client_authenticator.saw_fingerprint);
+  EXPECT_TRUE(grouped_tcp_server_authenticator.saw_fingerprint);
+  EXPECT_EQ(grouped_server->metrics().completed_connections, 1U);
+  EXPECT_TRUE(grouped_server->shutdown().is_ok());
 
   EXPECT_EQ(ReplicatedDistributedQueryTcpServer::start({}).error().code(),
             common::StatusCode::kInvalidArgument);

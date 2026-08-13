@@ -286,9 +286,9 @@
   deadline-bound outbound TCP composite now owns validation-before-connect, exact route identity,
   nonblocking completion, and TLS-before-descriptor teardown. A bounded inbound TCP server now owns
   finite admission, stable carrier/descriptor records, deadlines, metrics, and ordered shutdown.
-  Sender/coordinator plus packaged grouped execution remain incomplete. A move-only service owner
-  keeps the worker and authenticated receiver at stable addresses and proves the complete
-  in-process canonical request-to-real-CSEG response path.
+  A production owner keeps the real-CSEG worker, authenticated receiver, and TCP server at stable
+  reverse-safe addresses; a real loopback request returns the exact installed-CSEG group.
+  Sender/coordinator plus packaged grouped execution remain incomplete.
 - Proof-bound leader-linearizable/bounded-stale/local-eventual admissions now remain attached through
   compatible pinned multi-tablet snapshots and protocol/carrier scheduling. Whole-query replacement
   now validates fresh caller-proved authority, identical logical shape, nonregressing generation,

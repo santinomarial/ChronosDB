@@ -49,9 +49,9 @@ connection with no retained session. A second case configures one slot, opens tw
 proves one admission, one explicit rejection, bounded active state, invalid-config rejection, and
 deterministic shutdown. The installed external-consumer gate references `start`.
 
-Production real-CSEG service composition, sender/coordinator integration, packaged multi-tablet
-execution, multi-process failover, and broad fault/measurement evidence remain incomplete. No Phase
-16 exit gate is claimed.
+ADR 0338 subsequently supplies production real-CSEG service composition. Sender/coordinator
+integration, packaged multi-tablet execution, multi-process failover, and broad fault/measurement
+evidence remain incomplete. No Phase 16 exit gate is claimed.
 
 Invariants 5, 6, 10, 11, 14, 15, and 18 apply.
 

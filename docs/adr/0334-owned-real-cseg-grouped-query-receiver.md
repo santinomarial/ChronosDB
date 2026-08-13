@@ -42,7 +42,8 @@ move-only public ownership, and installed-consumer construction. The complete fo
 when its existing loopback fixture is permitted.
 
 ADR 0335 subsequently supplies grouped multi-response TLS ownership. TCP acquisition/listener
-ownership, sender/coordinator integration, packaged multi-tablet execution, multi-process failover,
+ownership follows in ADRs 0336 and 0337; ADR 0338 packages the complete production inbound stack.
+Sender/coordinator integration, packaged multi-tablet execution, multi-process failover,
 movement-time remote CSEG reads, and broad fault/measurement evidence remain incomplete. No Phase
 16 exit gate is claimed.
 

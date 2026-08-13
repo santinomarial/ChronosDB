@@ -244,8 +244,9 @@ grouping/order/top-N/LIMIT remains incomplete. A distinct canonical frame now ca
 FLOAT64 group key and mergeable partial with SQL-equivalent signed-zero/NaN canonicalization. An
 authenticated mutual-TLS carrier owns its bounded ordered response stream, and a deadline-bound
 outbound TCP composite owns one validated connection attempt. A bounded inbound TCP server owns
-finite admission and stable carrier/descriptor lifetime. Sender/coordinator integration, packaged
-grouped execution, and multi-key/non-FLOAT64 state remain incomplete. A distinct
+finite admission and stable carrier/descriptor lifetime, and a production owner composes it with
+the real-CSEG grouped worker. Sender/coordinator integration, packaged grouped execution, and
+multi-key/non-FLOAT64 state remain incomplete. A distinct
 canonical observation protocol, authenticated receiver, mTLS clients/servers, finite multi-address
 acquisition, correlated
 leader/follower pairs, canonical all-group batches, placement-backed construction, and packaged
@@ -532,6 +533,12 @@ Focused executions passed:
   invalid configuration rejection, and deterministic shutdown. The installed-consumer gate covers
   the public server constructor. Production real-CSEG service composition, sender/coordinator
   integration, and packaged multi-tablet execution are not claimed.
+- Owned grouped real-CSEG TCP-service continuation: the focused real-Manifest-v2/CSEG service case
+  passed a canonical grouped dispatch through the production loopback TCP/mTLS stack and returned
+  exact terminal key/sum `2.5` after a fresh owning authority acquisition. It also proved both
+  certificate fingerprints, invalid packaged configuration rejection, one completed connection,
+  ordered shutdown, and installed-consumer construction. Sender/coordinator integration, packaged
+  multi-tablet execution, and remote moved-CSEG reads are not claimed.
 
 The C++ files changed by the grouped-exchange continuations pass the repository-pinned clang-format
 18 check. A full-tree check was also run and still reports pre-existing violations in the

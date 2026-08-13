@@ -57,7 +57,9 @@ peers before protocol bytes, preserves the encoded response order, and exposes c
 values only after terminal closure. Its outbound TCP composite owns nonblocking connection
 completion, exact route binding, a separate connect deadline, and carrier-before-descriptor
 teardown. A dedicated bounded grouped TCP server owns listener/TLS lifetime, finite admission,
-stable connection records, metrics, and deterministic shutdown; scheduling remains separate.
+stable connection records, metrics, and deterministic shutdown. A production owner keeps that
+server, the authenticated receiver, and request-local real-CSEG worker in reverse-safe dependency
+order; scheduling remains separate.
 The dispatch envelope adds the distinct Raft group identity that scopes every admission index;
 workers never execute the bare inner fragment.
 `bind_distributed_aggregate_fragment` constructs that envelope only after one Manifest v2 snapshot,
@@ -157,6 +159,8 @@ boundary without adding retry policy.
 `DistributedGroupedQueryTcpServer` reserves its connection and poll tables at startup, admits only a
 finite number per poll, keeps each carrier/descriptor pair at a stable allocation, and destroys the
 carrier before its borrowed descriptor on completion, failure, and shutdown.
+`ReplicatedDistributedGroupedQueryTcpServer` then establishes stable worker/receiver/server
+addresses and reverse dependency destruction for the complete production inbound real-CSEG stack.
 `DistributedQueryTcpServer` owns the dedicated listener, long-lived TLS context, fixed-capacity poll
 storage, bounded stable connection records, deadline driving, metrics, and carrier-before-descriptor
 shutdown order for real multi-connection serving.
