@@ -82,6 +82,13 @@ enum class ScalarNullPlacement : std::uint8_t { kFirst, kLast };
                                                          const columnar::ColumnCellView& left,
                                                          const columnar::ColumnCellView& right,
                                                          ScalarNullPlacement null_placement);
+// Allocation-free total comparison for two independently validated canonical scalar byte values.
+// NULL values must carry an empty byte view. Variable-width values are compared directly without
+// constructing per-row owned ScalarValue objects.
+[[nodiscard]] common::Result<int>
+compare_canonical_scalar_bytes(schema::LogicalType type, bool left_is_null, common::ByteView left,
+                               bool right_is_null, common::ByteView right,
+                               ScalarNullPlacement null_placement);
 
 } // namespace chronos::query
 

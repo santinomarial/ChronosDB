@@ -92,6 +92,40 @@ TEST(ScalarValueTest, ImplementsSqlNullNaNAndTotalOrderingRules) {
   EXPECT_LT(compare_scalar_values(null, one, ScalarNullPlacement::kFirst).value(), 0);
 }
 
+TEST(ScalarValueTest, ComparesValidatedCanonicalBytesWithoutOwnedRowValues) {
+  const std::array<std::byte, 8U> negative_two{std::byte{0xfe}, std::byte{0xff}, std::byte{0xff},
+                                               std::byte{0xff}, std::byte{0xff}, std::byte{0xff},
+                                               std::byte{0xff}, std::byte{0xff}};
+  const std::array<std::byte, 8U> positive_one{std::byte{0x01}};
+  EXPECT_LT(compare_canonical_scalar_bytes(type(schema::LogicalTypeKind::kInt64), false,
+                                           negative_two, false, positive_one,
+                                           ScalarNullPlacement::kLast)
+                .value(),
+            0);
+  const std::array<std::byte, 2U> text_a{std::byte{'a'}, std::byte{'a'}};
+  const std::array<std::byte, 2U> text_b{std::byte{'a'}, std::byte{'b'}};
+  EXPECT_LT(compare_canonical_scalar_bytes(type(schema::LogicalTypeKind::kString), false, text_a,
+                                           false, text_b, ScalarNullPlacement::kLast)
+                .value(),
+            0);
+  EXPECT_LT(compare_canonical_scalar_bytes(type(schema::LogicalTypeKind::kString), true, {}, false,
+                                           text_b, ScalarNullPlacement::kFirst)
+                .value(),
+            0);
+  const std::array<std::byte, 1U> invalid_boolean{std::byte{2U}};
+  EXPECT_EQ(compare_canonical_scalar_bytes(type(schema::LogicalTypeKind::kBool), false,
+                                           invalid_boolean, false, invalid_boolean,
+                                           ScalarNullPlacement::kLast)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(compare_canonical_scalar_bytes(type(schema::LogicalTypeKind::kInt64), true,
+                                           positive_one, true, {}, ScalarNullPlacement::kLast)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+}
+
 TEST(ScalarValuePropertyTest, SignedPhysicalRoundTripsAcrossDeterministicValues) {
   for (std::int64_t value = -10'000; value <= 10'000; value += 97) {
     const std::uint64_t bits = std::bit_cast<std::uint64_t>(value);

@@ -6,8 +6,9 @@
 > request-local row worker and heap-stable inbound service owner now supply proof-revalidated
 > real-CSEG execution through the bounded authenticated TCP/mTLS stack. A pinned portable owner now
 > joins finite senders to the result coordinator, and a multi-tablet TCP scheduler prevalidates
-> routes, drives due attempts, and owns deadline/cancellation teardown. Aggregate execution, global
-> finalization, authority rebinding, and process integration remain separate.
+> routes, drives due attempts, and owns deadline/cancellation teardown. A bounded final pass now
+> applies row-mode global ordering and LIMIT before native-result rebatching. Aggregate execution,
+> authority rebinding, and process integration remain separate.
 
 All integers are unsigned little-endian. Reserved bytes are zero. CRC32C detects accidental damage
 and is not authentication. Request and response payloads retain their own independent checksums.

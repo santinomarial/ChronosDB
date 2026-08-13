@@ -632,6 +632,7 @@ add_library(
   src/cluster/distributed_grouped_query_tcp_server.cpp
   src/cluster/distributed_grouped_query_tls.cpp
   src/cluster/distributed_grouped_query_transport.cpp
+  src/cluster/distributed_vector_row_finalization_v2.cpp
   src/cluster/distributed_vector_result_exchange.cpp
   src/cluster/distributed_vector_query_execution_v2.cpp
   src/cluster/distributed_vector_query_tcp_execution_v2.cpp
@@ -1124,6 +1125,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/cluster/distributed_grouped_query_transport_test.cpp
     tests/cluster/distributed_vector_result_exchange_header_self_contained.cpp
     tests/cluster/distributed_vector_result_exchange_test.cpp
+    tests/cluster/distributed_vector_row_finalization_v2_header_self_contained.cpp
+    tests/cluster/distributed_vector_row_finalization_v2_test.cpp
     tests/cluster/distributed_vector_query_execution_v2_header_self_contained.cpp
     tests/cluster/distributed_vector_query_tcp_execution_v2_header_self_contained.cpp
     tests/cluster/distributed_vector_query_transport_header_self_contained.cpp
@@ -1211,6 +1214,7 @@ if(CHRONOS_BUILD_TESTS)
 
   add_executable(
     chronos_cluster_allocation_failure_tests
+    tests/cluster/distributed_vector_row_finalization_v2_allocation_failure_test.cpp
     tests/cluster/distributed_vector_query_transport_v2_allocation_failure_test.cpp
     tests/cluster/distributed_vector_result_exchange_allocation_failure_test.cpp
     tests/support/failing_allocator.cpp

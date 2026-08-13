@@ -55,9 +55,9 @@ partial completion, retry backoff followed by exact terminal failure, foreign-ta
 and coordinator-retention poisoning without accidental `UNAVAILABLE`. Header self-containment and
 installed-consumer coverage protect the public API.
 
-ADR 0378 subsequently supplies pinned TCP scheduling and cross-tablet deadline cancellation. Global
-row ordering/limit, all-type aggregate merge state, authority rebinding, and process integration
-remain separate tasks. No Phase 16 exit gate is claimed.
+ADRs 0378 and 0379 subsequently supply pinned TCP scheduling, cross-tablet deadline cancellation,
+and bounded global row ordering/limit. All-type aggregate merge state, authority rebinding, and
+process integration remain separate tasks. No Phase 16 exit gate is claimed.
 
 Invariants 5, 6, 10, 11, 14, 15, and 18 apply.
 

@@ -181,6 +181,87 @@ template <typename Float> [[nodiscard]] int compare_float(const Float left, cons
            right.kind() == schema::LogicalTypeKind::kFloat64));
 }
 
+[[nodiscard]] common::Result<ScalarValue>
+scalar_from_nonnull_canonical_bytes(const schema::LogicalType type, const common::ByteView bytes) {
+  using schema::LogicalTypeKind;
+  switch (type.kind()) {
+  case LogicalTypeKind::kInt8: {
+    const auto value = load_signed<std::int8_t, std::uint8_t>(bytes);
+    return value.has_value() ? ScalarValue::signed_value(type, *value)
+                             : common::make_unexpected(value.error());
+  }
+  case LogicalTypeKind::kInt16: {
+    const auto value = load_signed<std::int16_t, std::uint16_t>(bytes);
+    return value.has_value() ? ScalarValue::signed_value(type, *value)
+                             : common::make_unexpected(value.error());
+  }
+  case LogicalTypeKind::kInt32:
+  case LogicalTypeKind::kDate: {
+    const auto value = load_signed<std::int32_t, std::uint32_t>(bytes);
+    return value.has_value() ? ScalarValue::signed_value(type, *value)
+                             : common::make_unexpected(value.error());
+  }
+  case LogicalTypeKind::kInt64:
+  case LogicalTypeKind::kTimestampNs: {
+    const auto value = load_signed<std::int64_t, std::uint64_t>(bytes);
+    return value.has_value() ? ScalarValue::signed_value(type, *value)
+                             : common::make_unexpected(value.error());
+  }
+  case LogicalTypeKind::kUInt8:
+  case LogicalTypeKind::kUInt16:
+  case LogicalTypeKind::kUInt32:
+  case LogicalTypeKind::kUInt64: {
+    common::Result<std::uint64_t> value = common::make_unexpected(invalid("invalid integer kind"));
+    if (type.kind() == LogicalTypeKind::kUInt8)
+      value = load_little_endian<std::uint8_t>(bytes);
+    else if (type.kind() == LogicalTypeKind::kUInt16)
+      value = load_little_endian<std::uint16_t>(bytes);
+    else if (type.kind() == LogicalTypeKind::kUInt32)
+      value = load_little_endian<std::uint32_t>(bytes);
+    else
+      value = load_little_endian<std::uint64_t>(bytes);
+    return value.has_value() ? ScalarValue::unsigned_value(type, *value)
+                             : common::make_unexpected(value.error());
+  }
+  case LogicalTypeKind::kFloat32: {
+    const auto bits = load_little_endian<std::uint32_t>(bytes);
+    return bits.has_value() ? ScalarValue::float32(std::bit_cast<float>(*bits))
+                            : common::make_unexpected(bits.error());
+  }
+  case LogicalTypeKind::kFloat64: {
+    const auto bits = load_little_endian<std::uint64_t>(bytes);
+    return bits.has_value() ? ScalarValue::float64(std::bit_cast<double>(*bits))
+                            : common::make_unexpected(bits.error());
+  }
+  case LogicalTypeKind::kDecimal: {
+    if (bytes.size() != 16U)
+      return common::make_unexpected(invalid("decimal scalar has an invalid fixed width"));
+    Decimal128Value value;
+    std::ranges::copy(bytes, value.coefficient.begin());
+    return ScalarValue::decimal(type, value);
+  }
+  case LogicalTypeKind::kSymbol:
+  case LogicalTypeKind::kString: {
+    std::string value(bytes.size(), '\0');
+    if (!bytes.empty())
+      std::memcpy(value.data(), bytes.data(), bytes.size());
+    return ScalarValue::text(type, std::move(value));
+  }
+  case LogicalTypeKind::kBinary:
+    return ScalarValue::binary(std::vector<std::byte>{bytes.begin(), bytes.end()});
+  case LogicalTypeKind::kUuid: {
+    if (bytes.size() != common::Uuid::kSize)
+      return common::make_unexpected(invalid("UUID scalar has an invalid fixed width"));
+    common::Uuid::Bytes value{};
+    std::ranges::copy(bytes, value.begin());
+    return ScalarValue::uuid(common::Uuid{value});
+  }
+  case LogicalTypeKind::kBool:
+    break;
+  }
+  return common::make_unexpected(invalid("scalar logical type is invalid"));
+}
+
 } // namespace
 
 ScalarValue::ScalarValue(std::optional<schema::LogicalType> type, ScalarStorage storage) noexcept
@@ -258,79 +339,7 @@ common::Result<ScalarValue> ScalarValue::from_column_cell(const schema::LogicalT
   const common::Result<common::ByteView> bytes_result = cell.bytes();
   if (!bytes_result.has_value())
     return common::make_unexpected(bytes_result.error());
-  const common::ByteView bytes = *bytes_result;
-  switch (type.kind()) {
-  case LogicalTypeKind::kInt8: {
-    const auto value = load_signed<std::int8_t, std::uint8_t>(bytes);
-    return value.has_value() ? signed_value(type, *value) : common::make_unexpected(value.error());
-  }
-  case LogicalTypeKind::kInt16: {
-    const auto value = load_signed<std::int16_t, std::uint16_t>(bytes);
-    return value.has_value() ? signed_value(type, *value) : common::make_unexpected(value.error());
-  }
-  case LogicalTypeKind::kInt32:
-  case LogicalTypeKind::kDate: {
-    const auto value = load_signed<std::int32_t, std::uint32_t>(bytes);
-    return value.has_value() ? signed_value(type, *value) : common::make_unexpected(value.error());
-  }
-  case LogicalTypeKind::kInt64:
-  case LogicalTypeKind::kTimestampNs: {
-    const auto value = load_signed<std::int64_t, std::uint64_t>(bytes);
-    return value.has_value() ? signed_value(type, *value) : common::make_unexpected(value.error());
-  }
-  case LogicalTypeKind::kUInt8:
-  case LogicalTypeKind::kUInt16:
-  case LogicalTypeKind::kUInt32:
-  case LogicalTypeKind::kUInt64: {
-    common::Result<std::uint64_t> value = common::make_unexpected(invalid("invalid integer kind"));
-    if (type.kind() == LogicalTypeKind::kUInt8)
-      value = load_little_endian<std::uint8_t>(bytes);
-    else if (type.kind() == LogicalTypeKind::kUInt16)
-      value = load_little_endian<std::uint16_t>(bytes);
-    else if (type.kind() == LogicalTypeKind::kUInt32)
-      value = load_little_endian<std::uint32_t>(bytes);
-    else
-      value = load_little_endian<std::uint64_t>(bytes);
-    return value.has_value() ? unsigned_value(type, *value)
-                             : common::make_unexpected(value.error());
-  }
-  case LogicalTypeKind::kFloat32: {
-    const auto bits = load_little_endian<std::uint32_t>(bytes);
-    return bits.has_value() ? float32(std::bit_cast<float>(*bits))
-                            : common::make_unexpected(bits.error());
-  }
-  case LogicalTypeKind::kFloat64: {
-    const auto bits = load_little_endian<std::uint64_t>(bytes);
-    return bits.has_value() ? float64(std::bit_cast<double>(*bits))
-                            : common::make_unexpected(bits.error());
-  }
-  case LogicalTypeKind::kDecimal: {
-    if (bytes.size() != 16U)
-      return common::make_unexpected(invalid("decimal scalar has an invalid fixed width"));
-    Decimal128Value value;
-    std::ranges::copy(bytes, value.coefficient.begin());
-    return decimal(type, value);
-  }
-  case LogicalTypeKind::kSymbol:
-  case LogicalTypeKind::kString: {
-    std::string value(bytes.size(), '\0');
-    if (!bytes.empty())
-      std::memcpy(value.data(), bytes.data(), bytes.size());
-    return text(type, std::move(value));
-  }
-  case LogicalTypeKind::kBinary:
-    return binary(std::vector<std::byte>{bytes.begin(), bytes.end()});
-  case LogicalTypeKind::kUuid: {
-    if (bytes.size() != common::Uuid::kSize)
-      return common::make_unexpected(invalid("UUID scalar has an invalid fixed width"));
-    common::Uuid::Bytes value{};
-    std::ranges::copy(bytes, value.begin());
-    return uuid(common::Uuid{value});
-  }
-  case LogicalTypeKind::kBool:
-    break;
-  }
-  return common::make_unexpected(invalid("scalar logical type is invalid"));
+  return scalar_from_nonnull_canonical_bytes(type, *bytes_result);
 }
 
 bool ScalarValue::is_null() const noexcept {
@@ -437,6 +446,41 @@ common::Result<int> compare_physical_cells(const schema::LogicalType type,
   if (!left_value.has_value())
     return common::make_unexpected(left_value.error());
   const common::Result<ScalarValue> right_value = ScalarValue::from_column_cell(type, right);
+  if (!right_value.has_value())
+    return common::make_unexpected(right_value.error());
+  return compare_scalar_values(*left_value, *right_value, null_placement);
+}
+
+common::Result<int> compare_canonical_scalar_bytes(const schema::LogicalType type,
+                                                   const bool left_is_null,
+                                                   const common::ByteView left,
+                                                   const bool right_is_null,
+                                                   const common::ByteView right,
+                                                   const ScalarNullPlacement null_placement) {
+  if ((left_is_null && !left.empty()) || (right_is_null && !right.empty()))
+    return common::make_unexpected(invalid("NULL scalar bytes are not empty"));
+  if (left_is_null || right_is_null) {
+    if (left_is_null && right_is_null)
+      return 0;
+    const int null_comparison = null_placement == ScalarNullPlacement::kFirst ? -1 : 1;
+    return left_is_null ? null_comparison : -null_comparison;
+  }
+  if (type.is_variable_width())
+    return compare_bytes(left, right);
+  if (type.kind() == schema::LogicalTypeKind::kBool) {
+    if (left.size() != 1U || right.size() != 1U ||
+        std::to_integer<std::uint8_t>(left.front()) > 1U ||
+        std::to_integer<std::uint8_t>(right.front()) > 1U) {
+      return common::make_unexpected(invalid("Boolean scalar bytes are not canonical"));
+    }
+    const bool left_value = left.front() != std::byte{};
+    const bool right_value = right.front() != std::byte{};
+    return left_value == right_value ? 0 : (left_value ? 1 : -1);
+  }
+  auto left_value = scalar_from_nonnull_canonical_bytes(type, left);
+  if (!left_value.has_value())
+    return common::make_unexpected(left_value.error());
+  auto right_value = scalar_from_nonnull_canonical_bytes(type, right);
   if (!right_value.has_value())
     return common::make_unexpected(right_value.error());
   return compare_scalar_values(*left_value, *right_value, null_placement);

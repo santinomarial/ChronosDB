@@ -805,8 +805,9 @@ Focused executions passed:
   cases cover schema mismatch, exact retry/conflict, gaps, empty terminals, ordering, count/byte
   exhaustion, completed-worker loss, and one-shot finish; allocation injection covers construction,
   admission rollback, and retryable final publication. Header self-containment and installed
-  consumption cover the API. Sender delivery, TCP scheduling, production worker execution, global
-  vector result semantics, and process integration remain incomplete.
+  consumption cover the API. Later continuations now supply sender delivery, TCP scheduling,
+  production row execution, and global row result semantics. Aggregate semantics and process
+  integration remain incomplete.
 - Proof-revalidated vector-row-worker-v2 continuation: a query-layer worker now canonically
   revalidates Fragment v2, repeats current route/placement/barrier/Manifest/schema/part authority,
   resolves real temporal CSEG winners, applies event-time filtering, and emits bounded row chunks
@@ -815,34 +816,41 @@ Focused executions passed:
   publishes only a complete terminal stream. Focused real-CSEG coverage proves two source-order
   rows survive a descending limit-one global intent, rejects schema mismatch, aggregate mode,
   stale authority, and invalid loader/configuration contracts, and exact-decodes the service output.
-  Aggregate merge state, global semantics, and process integration remain incomplete.
+  Aggregate merge state and process integration remain incomplete.
 - Owned vector-v2 inbound service continuation: a move-only heap-stable owner now constructs the
   proof-revalidating row worker, authenticated schema-bound receiver, and bounded TCP/mTLS server in
   dependency order and destroys them in reverse order. The focused real-CSEG gate moves the public
   owner before use, authenticates both peers, executes one canonical Fragment-v2 request, and
   exact-decodes the two-row terminal native batch with one completed connection and clean shutdown.
-  Aggregate merge state, global semantics, and process integration remain incomplete.
+  Aggregate merge state and process integration remain incomplete.
 - Pinned vector-v2 execution continuation: a move-only portable owner now accepts only the
   compatible schema-bearing snapshot, retains its Manifest pin, drives one finite sender per
   plan-ordered tablet, delivers each complete stream once, and transfers the global plan with the
   schema-bound result only after all tablets terminate. Focused cases prove exact two-tablet
   ordering, withheld partial completion, retry-to-terminal failure, foreign-tablet rejection, and
-  coordinator-failure poisoning. Aggregate state, global finalization, and process integration
-  remain.
+  coordinator-failure poisoning. Aggregate state and process integration remain.
 - Pinned vector-v2 TCP scheduling continuation: one move-only scheduler prevalidates complete
   immutable node routes before acquisition, drives plan-ordered attempts and sender-authorized due
   retries through a fixed poll table, rotates only finite address candidates for the same target,
   and tears down every client on terminal failure, whole-query deadline, or explicit cancellation.
   A two-tablet real-loopback/mTLS case proves one refused first address rotates to the serving
   endpoint and publishes only the all-tablet result; focused cases prove incomplete-route rejection
-  before I/O, expired-deadline suppression, and cancellation of active clients. Global row and
-  aggregate semantics, authority rebinding, and process integration remain.
+  before I/O, expired-deadline suppression, and cancellation of active clients. Aggregate
+  semantics, authority rebinding, and process integration remain.
+- Bounded global vector-row finalization continuation: one consuming final pass independently
+  validates row-mode plan/schema shape, tablet-stream closure, native descriptors, and exact
+  row/message/input/working/output bounds before decoded-state allocation. It stably orders every
+  current scalar type with explicit NULL placement, applies LIMIT only after the global order, and
+  emits bounded native batches plus one schema-bearing zero-row batch. Focused cases prove
+  cross-tablet ordering, deterministic ties, output rebatching, malformed-stream and bound
+  rejection, and allocation-failure classification. Aggregate semantics, authority rebinding, and
+  process integration remain.
 
 The C++ files changed by the grouped-, vector-exchange-, Fragment-v2-, and vector-transport-v2
 continuations pass the repository-pinned clang-format 18 check. A full-tree check was also run and
 still reports pre-existing violations in the subscription protocol, subscription, multi-tablet
 checkpoint implementation, and focused subscription test files; these slices do not rewrite those
-unrelated files or claim a full-tree formatting pass. The full serialized 1,587-test developer
+unrelated files or claim a full-tree formatting pass. The full serialized 1,597-test developer
 suite, focused ASan/UBSan cases, and a deterministic 10,000-run transport-v2 fuzz campaign pass.
 Apple's sanitizer runtime does not support LeakSanitizer, so those sanitizer runs explicitly
 disabled leak detection. Broader cross-compiler/Linux parity, benchmark, profile, and chaos checks

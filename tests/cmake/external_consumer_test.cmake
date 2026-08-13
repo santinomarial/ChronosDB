@@ -59,6 +59,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/cluster/distributed_grouped_query_transport.hpp>
 #include <chronos/cluster/distributed_vector_query_transport.hpp>
 #include <chronos/cluster/distributed_vector_query_transport_v2.hpp>
+#include <chronos/cluster/distributed_vector_row_finalization_v2.hpp>
 #include <chronos/cluster/distributed_vector_query_execution_v2.hpp>
 #include <chronos/cluster/distributed_vector_query_tcp_execution_v2.hpp>
 #include <chronos/cluster/distributed_vector_query_tls_v2.hpp>
@@ -336,6 +337,10 @@ int main() {
       &chronos::cluster::DistributedVectorQueryReceiverV2::create;
   const auto create_vector_query_execution_v2 =
       &chronos::cluster::DistributedVectorQueryExecutionV2::create;
+  const auto finalize_vector_rows_v2 =
+      &chronos::cluster::finalize_distributed_vector_rows_v2;
+  const auto compare_canonical_scalar_bytes =
+      &chronos::query::compare_canonical_scalar_bytes;
   const auto create_vector_query_tcp_execution_v2 =
       &chronos::cluster::DistributedVectorQueryTcpExecutionV2::create;
   const auto create_vector_query_tls_client_v2 =
@@ -512,6 +517,8 @@ int main() {
   (void)create_vector_query_response_v2_write_cursor;
   (void)create_vector_query_receiver_v2;
   (void)create_vector_query_execution_v2;
+  (void)finalize_vector_rows_v2;
+  (void)compare_canonical_scalar_bytes;
   (void)create_vector_query_tcp_execution_v2;
   (void)create_vector_query_tls_client_v2;
   (void)create_vector_query_tls_server_v2;

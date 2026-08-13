@@ -55,8 +55,9 @@ before I/O, an expired deadline starts no attempts, and explicit cancellation re
 clients. Header self-containment, installed-consumer coverage, sanitizers, formatting, and focused
 static analysis protect the public boundary.
 
-Global row ordering/limit, all-type aggregate merge state, whole-query authority rebinding, and
-process integration remain separate tasks. No Phase 16 exit gate is claimed.
+ADR 0379 subsequently supplies bounded global row ordering/limit. All-type aggregate merge state,
+whole-query authority rebinding, and process integration remain separate tasks. No Phase 16 exit
+gate is claimed.
 
 Invariants 5, 6, 10, 11, 14, 15, and 18 apply.
 

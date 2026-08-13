@@ -52,9 +52,10 @@ It proves fresh vector authority acquisition, both certificate fingerprints, one
 connection, invalid packaged configuration rejection, and deterministic shutdown. Header
 self-containment and installed-consumer coverage protect the public boundary.
 
-ADR 0377 subsequently supplies the pinned portable sender/coordinator owner. This task does not
-provide outbound multi-tablet TCP scheduling, global ordering/limit, all-type aggregate merge state,
-cancellation across tablet attempts, or process integration. No Phase 16 exit gate is claimed.
+ADRs 0377–0379 subsequently supply the pinned portable sender/coordinator owner, outbound
+multi-tablet TCP scheduling with cancellation, and bounded global row ordering/limit. All-type
+aggregate merge state, authority rebinding, and process integration remain separate. No Phase 16
+exit gate is claimed.
 
 Invariants 5, 6, 10, 11, 14, 15, and 18 apply.
 

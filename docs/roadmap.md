@@ -1074,8 +1074,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   close. A pinned multi-tablet TCP scheduler now prevalidates complete routes, drives attempts and
   sender-authorized retries, rotates finite address candidates without rebinding authority, owns a
   whole-query deadline and cancellation, and publishes only the all-tablet result. Aggregate
-  merge-state transport, global finalization, authority rebinding, and process integration remain
-  deferred. A distinct
+  merge-state transport, authority rebinding, and process integration remain deferred. A bounded
+  global row finalizer now validates complete streams and native schemas, applies stable all-type
+  ordering followed by LIMIT, and emits exact payload-bounded native result batches. A distinct
   group-scoped grouped dispatch now
   preserves exact Raft authority without reinterpreting ungrouped dispatch bytes. Its worker reuses
   every local authority gate, resolves real temporal CSEG winners, and emits canonical grouped

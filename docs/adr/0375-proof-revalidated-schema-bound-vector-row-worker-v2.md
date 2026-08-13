@@ -66,9 +66,10 @@ bounded by temporal-resolution limits, one query-resource budget, per-chunk limi
 limits, message count, and exact retained exchange-frame bytes. Work is linear in validated part
 bytes plus selected rows and output cells.
 
-ADR 0376 subsequently supplies the production owned receiver/server composition. The portable
-sender-to-coordinator execution owner, multi-tablet TCP scheduler, global row ordering/limit, and
-all-type aggregate merge state remain separate tasks. This ADR does not claim Phase 16 completion.
+ADRs 0376–0379 subsequently supply the production owned receiver/server composition, portable
+sender-to-coordinator execution, multi-tablet TCP scheduling, and bounded global row ordering/
+limit. All-type aggregate merge state, authority rebinding, and process integration remain separate
+tasks. This ADR does not claim Phase 16 completion.
 
 ## Affected invariants
 
