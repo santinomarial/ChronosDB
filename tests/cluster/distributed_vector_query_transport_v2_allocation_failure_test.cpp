@@ -57,6 +57,31 @@ template <typename Operation>
           .result_schema = result_schema()};
 }
 
+class Authorizer final : public ClusterNodePrincipalAuthorizer {
+public:
+  common::Result<bool> authorize_node(const std::uint64_t principal_id,
+                                      const raft::NodeId claimed_node_id) const override {
+    return principal_id == 91U && claimed_node_id == 1U;
+  }
+};
+
+class AllocationWorker final : public DistributedVectorQueryWorkerServiceV2 {
+public:
+  AllocationWorker()
+      : messages_{{.query_id = uuid(1U),
+                   .tablet_id = schema::TabletId::from_uuid(uuid(4U)).value(),
+                   .sequence = 1U,
+                   .terminal = true}} {}
+
+  common::Result<std::vector<DistributedVectorResultExchangeMessage>>
+  execute(const query::DistributedVectorFragmentDispatchV2&) override {
+    return std::move(messages_);
+  }
+
+private:
+  std::vector<DistributedVectorResultExchangeMessage> messages_;
+};
+
 template <typename Operation>
 void expect_eventual_success(const char* label, Operation&& operation) {
   SCOPED_TRACE(label);
@@ -120,6 +145,34 @@ TEST(DistributedVectorQueryTransportV2AllocationFailureTest, ClassifiesOwnedFram
     EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted);
   }
   EXPECT_TRUE(reader_success);
+}
+
+TEST(DistributedVectorQueryReceiverV2AllocationFailureTest,
+     ClassifiesEveryOwnedResponsePublicationAllocation) {
+  Authorizer authorizer;
+  const auto encoded_request = encode_distributed_vector_query_request_v2({1U, 2U, dispatch_v2()});
+  ASSERT_TRUE(encoded_request.has_value());
+  bool success = false;
+  for (std::size_t fail_after = 0U; fail_after < 256U; ++fail_after) {
+    AllocationWorker worker;
+    auto receiver = DistributedVectorQueryReceiverV2::create(
+        {.local_node_id = 2U, .authorizer = &authorizer, .worker = &worker});
+    ASSERT_TRUE(receiver.has_value());
+    auto result = run_failure(fail_after, [&] {
+      return receiver->receive(*encoded_request, {.authorized = true, .principal_id = 91U});
+    });
+    if (result.has_value()) {
+      ASSERT_EQ(result->size(), 1U);
+      const auto decoded =
+          decode_distributed_vector_query_response_v2_exact(result->front(), result_schema());
+      ASSERT_TRUE(decoded.has_value());
+      EXPECT_EQ(decoded->status_code, common::StatusCode::kOk);
+      success = true;
+      break;
+    }
+    EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted);
+  }
+  EXPECT_TRUE(success);
 }
 
 } // namespace

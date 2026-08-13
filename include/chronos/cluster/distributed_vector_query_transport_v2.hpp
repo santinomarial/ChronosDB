@@ -152,6 +152,47 @@ private:
   std::size_t written_bytes_{};
 };
 
+inline constexpr std::size_t kDefaultDistributedVectorQueryV2ResponseBytes =
+    std::size_t{64U} * 1024U * 1024U;
+inline constexpr std::size_t kMaximumDistributedVectorQueryV2ResponseBytes =
+    std::size_t{1024U} * 1024U * 1024U;
+
+// Embedding-owned synchronous execution boundary. Implementations acquire current local authority
+// and produce one complete terminally closed stream. They must outlive the receiver.
+class DistributedVectorQueryWorkerServiceV2 {
+public:
+  virtual ~DistributedVectorQueryWorkerServiceV2() = default;
+  [[nodiscard]] virtual common::Result<std::vector<DistributedVectorResultExchangeMessage>>
+  execute(const query::DistributedVectorFragmentDispatchV2& dispatch) = 0;
+};
+
+struct DistributedVectorQueryReceiverV2Config {
+  raft::NodeId local_node_id{};
+  const ClusterNodePrincipalAuthorizer* authorizer{};
+  DistributedVectorQueryWorkerServiceV2* worker{};
+  const DistributedQueryLeaderHintProvider* leader_hint_provider{};
+  std::size_t maximum_response_frames{1024U};
+  std::size_t maximum_response_bytes{kDefaultDistributedVectorQueryV2ResponseBytes};
+};
+
+// Authentication, source authorization, and local-target validation precede one worker call. The
+// complete result stream is correlated, schema-validated, terminally closed, and bounded before
+// any encoded response vector is returned.
+class DistributedVectorQueryReceiverV2 {
+public:
+  DistributedVectorQueryReceiverV2() = delete;
+
+  [[nodiscard]] static common::Result<DistributedVectorQueryReceiverV2>
+  create(DistributedVectorQueryReceiverV2Config config);
+  [[nodiscard]] common::Result<std::vector<std::vector<std::byte>>>
+  receive(common::ByteView request_bytes,
+          const network::PeerAuthenticationResult& authenticated_peer);
+
+private:
+  explicit DistributedVectorQueryReceiverV2(DistributedVectorQueryReceiverV2Config config) noexcept;
+  DistributedVectorQueryReceiverV2Config config_;
+};
+
 } // namespace chronos::cluster
 
 #endif // CHRONOS_CLUSTER_DISTRIBUTED_VECTOR_QUERY_TRANSPORT_V2_HPP_

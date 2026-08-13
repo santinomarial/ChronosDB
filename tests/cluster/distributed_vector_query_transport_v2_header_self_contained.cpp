@@ -14,6 +14,7 @@ static_assert(!std::is_constructible_v<chronos::cluster::DistributedVectorQueryR
                                        const chronos::query::DistributedVectorResultSchema&>);
 static_assert(
     std::is_move_constructible_v<chronos::cluster::DistributedVectorQueryFrameV2WriteCursor>);
+static_assert(std::is_abstract_v<chronos::cluster::DistributedVectorQueryWorkerServiceV2>);
 
 namespace {
 [[maybe_unused]] const auto kEncodeRequest =
@@ -28,4 +29,6 @@ namespace {
     &chronos::cluster::DistributedVectorQueryFrameV2WriteCursor::create_request;
 [[maybe_unused]] const auto kCreateResponseCursor =
     &chronos::cluster::DistributedVectorQueryFrameV2WriteCursor::create_response;
+[[maybe_unused]] const auto kCreateReceiver =
+    &chronos::cluster::DistributedVectorQueryReceiverV2::create;
 } // namespace

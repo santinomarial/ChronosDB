@@ -326,6 +326,8 @@ int main() {
       &chronos::cluster::DistributedVectorQueryFrameV2WriteCursor::create_request;
   const auto create_vector_query_response_v2_write_cursor =
       &chronos::cluster::DistributedVectorQueryFrameV2WriteCursor::create_response;
+  const auto create_vector_query_receiver_v2 =
+      &chronos::cluster::DistributedVectorQueryReceiverV2::create;
   const auto create_replicated_query_worker =
       &chronos::service::ReplicatedDistributedQueryWorker::create;
   const auto create_replicated_grouped_query_worker =
@@ -490,6 +492,7 @@ int main() {
   (void)consume_vector_query_response_v2;
   (void)create_vector_query_request_v2_write_cursor;
   (void)create_vector_query_response_v2_write_cursor;
+  (void)create_vector_query_receiver_v2;
   (void)create_replicated_query_worker;
   (void)create_replicated_grouped_query_worker;
   (void)create_replicated_grouped_query_receiver;

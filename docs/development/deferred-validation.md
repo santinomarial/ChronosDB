@@ -292,8 +292,10 @@
   plus a shared schema proved against every dispatch without per-tablet descriptor duplication. A
   distinct v2 node-routed carrier now transports exact Fragment-v2 requests and schema-bound
   Result-Exchange-v2 responses, rejects v1/v2 confusion, and owns header-first fragmented reads,
-  coalesced suffixes, and checked short writes. Add the peer-authenticated receiver, retry, TLS/TCP
-  session ownership, schema-bound coordination, and general worker execution next.
+  coalesced suffixes, and checked short writes. Its authenticated receiver now authorizes source and
+  target before one worker call, validates complete schema-bound terminal streams, and bounds both
+  response count and exact encoded bytes before all-or-nothing publication. Add retry, mutual-TLS/
+  TCP session ownership, schema-bound coordination, and general worker execution next.
   A distinct terminal-only frame closes an empty tablet stream without inventing a SQL NULL group.
   Its separate fixed reader and move-only cursor own every terminal fragmentation boundary,
   coalesced successor bytes, sticky damage, and checked short writes without introducing an

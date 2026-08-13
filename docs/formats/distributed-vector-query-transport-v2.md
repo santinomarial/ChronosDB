@@ -1,7 +1,8 @@
 # Distributed Vector Query Transport v2
 
-> **Status:** accepted and implemented exact codec/partial-I/O contract. Peer authentication,
-> authorization, retry, socket/TLS ownership, execution, and coordination are separate.
+> **Status:** accepted and implemented exact codec/partial-I/O contract. An authenticated,
+> schema-bound receiver owns the worker handoff and complete bounded response publication. Retry,
+> socket/TLS ownership, execution implementation, and coordination are separate.
 
 All integers are unsigned little-endian. Reserved bytes are zero. CRC32C detects accidental damage
 and is not authentication. Request and response payloads retain their own independent checksums.

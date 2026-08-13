@@ -61,6 +61,10 @@ inline constexpr std::size_t kMinimumResultExchangeSize =
   return {common::StatusCode::kResourceExhausted, message};
 }
 
+[[nodiscard]] common::Status unauthenticated(const char* message) {
+  return {common::StatusCode::kUnauthenticated, message};
+}
+
 [[nodiscard]] bool zero(const common::ByteView bytes) {
   return std::ranges::all_of(bytes, [](const std::byte value) { return value == std::byte{}; });
 }
@@ -256,6 +260,19 @@ inline constexpr std::size_t kMinimumResultExchangeSize =
         corruption("vector query v2 response streaming header is invalid"));
   }
   return static_cast<std::size_t>(*total_length);
+}
+
+[[nodiscard]] common::Result<std::vector<DistributedVectorResultExchangeMessage>>
+execute_worker(DistributedVectorQueryWorkerServiceV2& worker,
+               const query::DistributedVectorFragmentDispatchV2& dispatch) noexcept {
+  try {
+    return worker.execute(dispatch);
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("vector query v2 worker allocation failed"));
+  } catch (...) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInternal, "vector query v2 worker threw"});
+  }
 }
 
 } // namespace
@@ -786,6 +803,151 @@ std::size_t DistributedVectorQueryFrameV2WriteCursor::written_bytes() const noex
 
 bool DistributedVectorQueryFrameV2WriteCursor::complete() const noexcept {
   return written_bytes_ == encoded_frame_.size();
+}
+
+DistributedVectorQueryReceiverV2::DistributedVectorQueryReceiverV2(
+    DistributedVectorQueryReceiverV2Config config) noexcept
+    : config_(config) {}
+
+common::Result<DistributedVectorQueryReceiverV2>
+DistributedVectorQueryReceiverV2::create(const DistributedVectorQueryReceiverV2Config config) {
+  constexpr std::size_t kMinimumResponseBytes =
+      kDistributedVectorQueryResponseV2HeaderSize + kDistributedVectorQueryResponseV2TrailerSize;
+  if (config.local_node_id == 0U || config.authorizer == nullptr || config.worker == nullptr ||
+      config.maximum_response_frames == 0U ||
+      config.maximum_response_frames > query::kMaximumDistributedCoordinatorMessages ||
+      config.maximum_response_bytes < kMinimumResponseBytes ||
+      config.maximum_response_bytes > kMaximumDistributedVectorQueryV2ResponseBytes) {
+    return common::make_unexpected(invalid("vector query v2 receiver configuration is invalid"));
+  }
+  return DistributedVectorQueryReceiverV2{config};
+}
+
+common::Result<std::vector<std::vector<std::byte>>> DistributedVectorQueryReceiverV2::receive(
+    const common::ByteView request_bytes,
+    const network::PeerAuthenticationResult& authenticated_peer) {
+  if (!authenticated_peer.authorized || authenticated_peer.principal_id == 0U) {
+    return common::make_unexpected(
+        unauthenticated("vector query v2 requires an authenticated principal"));
+  }
+  auto request = decode_distributed_vector_query_request_v2_exact(request_bytes);
+  if (!request.has_value())
+    return common::make_unexpected(request.error());
+  auto authorized =
+      config_.authorizer->authorize_node(authenticated_peer.principal_id, request->source_node_id);
+  if (!authorized.has_value())
+    return common::make_unexpected(authorized.error());
+  if (!*authorized) {
+    return common::make_unexpected(
+        unauthenticated("authenticated principal cannot claim vector query v2 source node"));
+  }
+  if (request->target_node_id != config_.local_node_id) {
+    return common::make_unexpected(common::Status{common::StatusCode::kUnavailable,
+                                                  "vector query v2 targets a different node"});
+  }
+
+  const auto& identity = request->dispatch.dispatch;
+  auto result = execute_worker(*config_.worker, request->dispatch);
+  if (!result.has_value()) {
+    std::optional<DistributedQueryLeaderHint> leader_hint;
+    if (result.error().code() == common::StatusCode::kUnavailable &&
+        config_.leader_hint_provider != nullptr) {
+      auto resolved = config_.leader_hint_provider->current_leader_hint(identity.tablet_id,
+                                                                        identity.raft_group_id);
+      if (!resolved.has_value())
+        return common::make_unexpected(resolved.error());
+      leader_hint = *resolved;
+    }
+    auto encoded =
+        encode_distributed_vector_query_response_v2({.source_node_id = config_.local_node_id,
+                                                     .target_node_id = request->source_node_id,
+                                                     .query_id = identity.query_id,
+                                                     .tablet_id = identity.tablet_id,
+                                                     .status_code = result.error().code(),
+                                                     .leader_hint = leader_hint},
+                                                    request->dispatch.result_schema);
+    if (!encoded.has_value())
+      return common::make_unexpected(encoded.error());
+    try {
+      std::vector<std::vector<std::byte>> frames;
+      frames.push_back(std::move(*encoded));
+      return frames;
+    } catch (const std::bad_alloc&) {
+      return common::make_unexpected(exhausted("vector query v2 response allocation failed"));
+    } catch (const std::length_error&) {
+      return common::make_unexpected(exhausted("vector query v2 response exceeds limits"));
+    }
+  }
+
+  constexpr std::size_t kEncodedSuccessOverhead =
+      kDistributedVectorQueryResponseV2HeaderSize +
+      distributed_vector_result_exchange_v2_format::kHeaderLength +
+      distributed_vector_result_exchange_v2_format::kTrailerLength +
+      kDistributedVectorQueryResponseV2TrailerSize;
+  if (result->empty())
+    return common::make_unexpected(invalid("vector query v2 worker returned an empty stream"));
+  bool over_limit = result->size() > config_.maximum_response_frames ||
+                    config_.maximum_response_bytes < kEncodedSuccessOverhead;
+  std::size_t total_response_bytes{};
+  for (std::size_t index = 0U; !over_limit && index < result->size(); ++index) {
+    const auto& message = (*result)[index];
+    const bool last = index + 1U == result->size();
+    if (message.query_id != identity.query_id || message.tablet_id != identity.tablet_id ||
+        message.sequence != index + 1U || message.terminal != last) {
+      return common::make_unexpected(
+          invalid("vector query v2 worker stream is not correlated and terminally closed"));
+    }
+    if (total_response_bytes > config_.maximum_response_bytes - kEncodedSuccessOverhead ||
+        message.encoded_result_batch.size() >
+            config_.maximum_response_bytes - kEncodedSuccessOverhead - total_response_bytes) {
+      over_limit = true;
+      continue;
+    }
+    total_response_bytes += kEncodedSuccessOverhead + message.encoded_result_batch.size();
+  }
+  if (over_limit) {
+    auto encoded = encode_distributed_vector_query_response_v2(
+        {.source_node_id = config_.local_node_id,
+         .target_node_id = request->source_node_id,
+         .query_id = identity.query_id,
+         .tablet_id = identity.tablet_id,
+         .status_code = common::StatusCode::kResourceExhausted},
+        request->dispatch.result_schema);
+    if (!encoded.has_value())
+      return common::make_unexpected(encoded.error());
+    try {
+      std::vector<std::vector<std::byte>> frames;
+      frames.push_back(std::move(*encoded));
+      return frames;
+    } catch (const std::bad_alloc&) {
+      return common::make_unexpected(exhausted("vector query v2 response allocation failed"));
+    } catch (const std::length_error&) {
+      return common::make_unexpected(exhausted("vector query v2 response exceeds limits"));
+    }
+  }
+
+  try {
+    std::vector<std::vector<std::byte>> frames;
+    frames.reserve(result->size());
+    for (auto& message : *result) {
+      auto encoded =
+          encode_distributed_vector_query_response_v2({.source_node_id = config_.local_node_id,
+                                                       .target_node_id = request->source_node_id,
+                                                       .query_id = identity.query_id,
+                                                       .tablet_id = identity.tablet_id,
+                                                       .status_code = common::StatusCode::kOk,
+                                                       .payload = std::move(message)},
+                                                      request->dispatch.result_schema);
+      if (!encoded.has_value())
+        return common::make_unexpected(encoded.error());
+      frames.push_back(std::move(*encoded));
+    }
+    return frames;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("vector query v2 response allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("vector query v2 response exceeds limits"));
+  }
 }
 
 } // namespace chronos::cluster
