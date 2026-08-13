@@ -7,8 +7,8 @@
 > deadline-bound client owns outbound TCP acquisition. A bounded TCP server owns listener admission
 > and per-connection TLS lifetimes. A production inbound service owns worker, receiver, and server
 > lifetimes while supplying fresh definition authority and proof-revalidated real-CSEG execution.
-> Leader-linearizable outbound process construction is packaged; remote follower authority and
-> broader daemon ownership remain separate.
+> Leader-linearizable and already-proved bounded-stale outbound construction are packaged; remote
+> follower observation acquisition and broader daemon ownership remain separate.
 
 All integers are unsigned little-endian. Reserved bytes are zero. CRC32C detects accidental damage
 and is not authentication. The nested payload retains its own independent checksums.
@@ -186,3 +186,8 @@ immutable targets, and transfers the result through portable aggregate execution
 scheduler. The call opens no socket; connection attempts begin only when the returned poll owner is
 driven. Catalog, read-barrier, and projection views are borrowed only during construction.
 Authentication, authorization, and node TLS policy are borrowed for the returned owner's lifetime.
+`create_replicated_follower_distributed_vector_aggregate_query_v2` applies the same post-binding
+route, execution, scheduling, and finalization path to a canonical same-term leader/follower
+authority vector. It separately verifies metadata-group barrier coverage and never routes follower
+policy through the leader barrier binder. Remote acquisition of that authority remains a distinct
+bounded authenticated lifecycle.

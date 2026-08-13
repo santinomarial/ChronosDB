@@ -90,6 +90,16 @@ create_replicated_distributed_vector_aggregate_query_v2(
     query::DistributedVectorResultSchema&& result_schema,
     const ReplicatedDistributedVectorAggregateQueryConfigV2& config);
 
+// Applies the same schema/route/execution lifecycle to one canonical already-correlated follower
+// authority vector. Remote observation acquisition remains caller-owned.
+[[nodiscard]] common::Result<cluster::DistributedVectorAggregateQueryTcpExecutionV2>
+create_replicated_follower_distributed_vector_aggregate_query_v2(
+    const query::DistributedVectorQueryPlan& plan,
+    manifest::TemporalDatabaseStorageSnapshot snapshot,
+    query::DistributedVectorResultSchema&& result_schema,
+    std::span<const query::DistributedAggregateFollowerReadAuthority> follower_authorities,
+    const ReplicatedDistributedVectorAggregateQueryConfigV2& config);
+
 struct ReplicatedDistributedGroupedFloat64QueryConfig {
   raft::NodeId source_node_id{};
   ReplicatedReadBarrier* read_barrier{};

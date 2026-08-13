@@ -212,6 +212,41 @@ create_replicated_distributed_vector_aggregate_query_v2(
   return create_vector_aggregate_tcp_execution(std::move(*compatible), config);
 }
 
+common::Result<cluster::DistributedVectorAggregateQueryTcpExecutionV2>
+create_replicated_follower_distributed_vector_aggregate_query_v2(
+    const query::DistributedVectorQueryPlan& plan,
+    manifest::TemporalDatabaseStorageSnapshot snapshot,
+    query::DistributedVectorResultSchema&& result_schema,
+    const std::span<const query::DistributedAggregateFollowerReadAuthority> follower_authorities,
+    const ReplicatedDistributedVectorAggregateQueryConfigV2& config) {
+  const common::Status config_status = validate_config(config);
+  if (!config_status.is_ok())
+    return common::make_unexpected(config_status);
+  if (plan.read_policy.consistency != query::DistributedReadConsistency::kFollowerBoundedStale ||
+      !plan.read_policy.maximum_staleness_positions.has_value() ||
+      plan.intent.mode != query::DistributedVectorPlanMode::kUngroupedAggregate) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInvalidArgument,
+                       "replicated follower vector aggregate query v2 requires bounded-stale "
+                       "ungrouped aggregate policy"});
+  }
+
+  auto metadata_authority = acquire_catalog_authority(config);
+  if (!metadata_authority.has_value())
+    return common::make_unexpected(metadata_authority.error());
+  auto compatible = query::bind_follower_group_backed_distributed_vector_snapshot_v2(
+      plan, std::move(snapshot),
+      {.catalog = config.catalog,
+       .table_id = config.table_id,
+       .group_authorities = follower_authorities,
+       .destination_column_ordinals = config.destination_column_ordinals,
+       .event_time_predicate = config.event_time_predicate},
+      std::move(result_schema), config.binding_limits);
+  if (!compatible.has_value())
+    return common::make_unexpected(compatible.error());
+  return create_vector_aggregate_tcp_execution(std::move(*compatible), config);
+}
+
 common::Result<cluster::DistributedGroupedQueryTcpExecution>
 create_replicated_distributed_grouped_float64_query(
     query::DistributedAggregatePlan plan, manifest::TemporalDatabaseStorageSnapshot snapshot,

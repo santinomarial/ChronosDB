@@ -239,6 +239,15 @@ make_vector_aggregate_plan(const schema::TabletId& tablet_id,
                                      .input_index = 1U}}}};
 }
 
+[[nodiscard]] query::DistributedVectorQueryPlan
+make_follower_vector_aggregate_plan(const schema::TabletId& tablet_id,
+                                    const raft::LogIndex applied_position) {
+  query::DistributedVectorQueryPlan plan = make_vector_aggregate_plan(tablet_id, applied_position);
+  plan.query_id = uuid(17U);
+  plan.read_policy = make_follower_plan(tablet_id, applied_position).read_policy;
+  return plan;
+}
+
 TEST(ReplicatedDistributedQueryTest, ConstructsOneAuthorityBoundTcpLifecycleOwner) {
   TemporaryDirectory directory;
   ASSERT_TRUE(std::filesystem::create_directory(directory.path() / "raft"));
@@ -476,6 +485,29 @@ TEST(ReplicatedDistributedQueryTest, ConstructsOneAuthorityBoundTcpLifecycleOwne
   ASSERT_TRUE(follower_execution.has_value()) << follower_execution.error().to_string();
   EXPECT_EQ(follower_execution->state(), cluster::DistributedQueryTcpExecutionState::kRunning);
   EXPECT_EQ(follower_execution->snapshot().dispatches().front().fragment.serving_node, 12U);
+
+  ReplicatedDistributedVectorAggregateQueryConfigV2 follower_vector_config = vector_config;
+  follower_vector_config.read_barrier = std::addressof(*missing_tablet_barrier);
+  follower_vector_config.catalog = std::cref(follower_catalog);
+  follower_vector_config.tls_contexts = follower_tls_contexts;
+  auto follower_vector_snapshot = publisher->snapshot();
+  ASSERT_TRUE(follower_vector_snapshot.has_value());
+  const auto follower_vector_plan =
+      make_follower_vector_aggregate_plan(tablet_id, applied_position);
+  auto follower_vector_execution = create_replicated_follower_distributed_vector_aggregate_query_v2(
+      follower_vector_plan, std::move(*follower_vector_snapshot),
+      query::DistributedVectorResultSchema{
+          .columns = {{"average", schema_value.columns()[1].type(), true}}},
+      follower_authorities, follower_vector_config);
+  ASSERT_TRUE(follower_vector_execution.has_value())
+      << follower_vector_execution.error().to_string();
+  EXPECT_EQ(follower_vector_execution->state(),
+            cluster::DistributedVectorAggregateQueryTcpExecutionStateV2::kRunning);
+  EXPECT_EQ(follower_vector_execution->snapshot().dispatches().front().serving_node, 12U);
+  EXPECT_EQ(follower_vector_execution->snapshot().dispatches().front().raft_group_id, tablet_group);
+  ASSERT_EQ(follower_vector_execution->snapshot().aggregate_definitions().size(), 1U);
+  EXPECT_EQ(follower_vector_execution->snapshot().aggregate_definitions().front().operation,
+            query::VectorAggregateOperation::kAverage);
 
   ReplicatedDistributedGroupedFloat64QueryConfig follower_grouped_config = grouped_config;
   follower_grouped_config.read_barrier = std::addressof(*missing_tablet_barrier);

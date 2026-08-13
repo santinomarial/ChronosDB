@@ -423,7 +423,9 @@ Metadata-backed v2 binding now carries canonical leader or correlated follower a
 the same committed schema/placement/group join into one owned result schema and exact cross-tablet
 aggregate definitions. The packaged leader-linearizable service boundary now transfers that owner
 through committed route resolution, portable aggregate execution, TCP scheduling, and final Native
-result publication without exposing an intermediate correlation vector. Remote follower lifecycle
+result publication without exposing an intermediate correlation vector. A distinct bounded-stale
+constructor carries an already-correlated leader/follower authority vector through the same
+post-binding lifecycle while preserving the follower target. Remote follower authority acquisition
 composition remains.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
