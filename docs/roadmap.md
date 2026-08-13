@@ -1080,7 +1080,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   Manifest/schema/placement/group/barrier context per dispatch and invokes the proof-revalidating
   real-CSEG worker. A production inbound owner composes that worker with the authenticated receiver
   and bounded mTLS server; one focused loopback request returns the exact installed-CSEG aggregate.
-  Moved/multi-process real-CSEG queries and broader multi-node failure validation remain deferred.
+  A focused in-process movement gate now transfers a checksummed real CSEG, installs it under a
+  distinct target root, reopens its Manifest, and returns the identical grouped state from the
+  promoted target through the production mTLS worker stack. Multi-process real-CSEG queries and
+  broader multi-node failure validation remain deferred.
   Live DNS churn, resolver-latency policy, caching, and IPv6 remain
   qualification gaps. A focused real-mTLS gate now queries two tablets, drives one through
   checksummed learner-first movement and externally committed promotion/removal milestones, rebinds

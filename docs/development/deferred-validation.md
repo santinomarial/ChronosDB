@@ -349,8 +349,11 @@
   directly into the TCP query owner with cross-phase cancellation and metrics. A production inbound
   owner now composes the authenticated receiver, request-local authority provider,
   proof-revalidating worker, and bounded mTLS server; a real loopback request returns the exact
-  installed-CSEG aggregate. Add alternate-follower policy, broader cancellation/allocation faults,
-  moved/multi-tablet remote CSEG gates, and real multi-process validation.
+  installed-CSEG aggregate. A focused learner-first movement gate now carries the exact checksummed
+  CSEG bytes, reopens them under a distinct target database root, and reads the identical grouped
+  state from the promoted target through the production mTLS service. Add alternate-follower
+  policy, broader cancellation/allocation faults, multi-tablet remote CSEG gates, and real
+  multi-process validation.
 - Shard-key pruning and statistics in addition to event-time pruning; multi-node scalar/distributed
   differential SQL and partial-aggregation equivalence.
 - Carry the implemented authenticated remote-action receiver bytes and atomic current-leader-term
@@ -370,9 +373,10 @@
   switching, bandwidth limits, and stale routing.
 - Partitions, duplicate/lost exchanges, skew, chaos, movement at every state, foreground interference,
   scale-out/exchange/coordination/failover benchmarks, and sanitizer/fuzz/property coverage.
-  The focused real-mTLS two-tablet query/movement/query gate passes, but uses deterministic worker
-  aggregates and externally committed milestone simulation rather than a packaged multi-process
-  cluster or remote installed-CSEG scan.
+  The focused real-mTLS two-tablet query/movement/query gate still uses deterministic aggregates.
+  A separate focused gate now moves, installs, reopens, and remotely queries one real CSEG from a
+  distinct target root, but still simulates externally committed milestones in one process rather
+  than using a packaged multi-process cluster.
 
 ## Phase 17 — object storage and interoperability
 

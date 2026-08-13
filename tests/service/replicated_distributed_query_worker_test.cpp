@@ -1,9 +1,11 @@
 #include "chronos/cluster/distributed_grouped_query_tcp_client.hpp"
 #include "chronos/cluster/distributed_query_tcp_client.hpp"
+#include "chronos/common/crc32c.hpp"
 #include "chronos/manifest/naming.hpp"
 #include "chronos/manifest/temporal_codec.hpp"
 #include "chronos/manifest/temporal_part_validation.hpp"
 #include "chronos/manifest/temporal_validation.hpp"
+#include "chronos/raft/rebalancing.hpp"
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/logical_type.hpp"
 #include "chronos/service/replicated_distributed_grouped_query_receiver.hpp"
@@ -112,7 +114,8 @@ class NodeAuthorizer final : public cluster::ClusterNodePrincipalAuthorizer {
 public:
   common::Result<bool> authorize_node(const std::uint64_t principal_id,
                                       const raft::NodeId node_id) const override {
-    return (principal_id == 91U && node_id == 1U) || (principal_id == 92U && node_id == 11U);
+    return (principal_id == 91U && node_id == 1U) ||
+           (principal_id == 92U && (node_id == 11U || node_id == 13U));
   }
 };
 
@@ -418,6 +421,137 @@ TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesReal
   EXPECT_TRUE(grouped_tcp_server_authenticator.saw_fingerprint);
   EXPECT_EQ(grouped_server->metrics().completed_connections, 1U);
   EXPECT_TRUE(grouped_server->shutdown().is_ok());
+
+  auto movement = raft::TabletMovement::begin(tablet_id, 12U, 11U, 13U, {11U, 12U});
+  ASSERT_TRUE(movement.has_value()) << movement.error().to_string();
+  ASSERT_TRUE(movement
+                  ->begin_snapshot({.manifest_generation = 1U,
+                                    .applied_index = 10U,
+                                    .applied_term = 3U,
+                                    .total_bytes = encoded_part.bytes().size(),
+                                    .content_crc32c = common::crc32c(encoded_part.bytes())})
+                  .is_ok());
+  ASSERT_TRUE(
+      movement
+          ->accept_snapshot_chunk(0U, encoded_part.bytes(), common::crc32c(encoded_part.bytes()))
+          .is_ok());
+  ASSERT_TRUE(movement->finish_snapshot().is_ok());
+  ASSERT_TRUE(movement->mark_caught_up(10U).is_ok());
+  ASSERT_TRUE(movement->promote_target(12U, 13U).is_ok());
+  ASSERT_TRUE(movement->remove_source(13U, 14U).is_ok());
+  ASSERT_EQ(movement->record().phase, raft::TabletMovementPhase::kComplete);
+
+  TemporaryDirectory target_directory;
+  ASSERT_FALSE(target_directory.path().empty());
+  ASSERT_TRUE(
+      std::filesystem::create_directory(target_directory.path() / manifest::kPartsDirectoryName));
+  ASSERT_TRUE(std::filesystem::create_directory(target_directory.path() /
+                                                manifest::kManifestDirectoryName));
+  write_file(target_directory.path() / manifest::kManifestDirectoryName /
+                 manifest::kManifestLockFileName,
+             {});
+  write_file(target_directory.path() / manifest::kPartsDirectoryName /
+                 manifest::part_file_name(part->part_id),
+             movement->received_snapshot());
+  write_file(target_directory.path() / manifest::kManifestDirectoryName /
+                 *manifest::manifest_file_name(1U),
+             encoded_manifest->bytes());
+  auto target_storage =
+      manifest::ManifestStorage::open_existing({.database_root = target_directory.path().string()});
+  ASSERT_TRUE(target_storage.has_value()) << target_storage.error().to_string();
+  auto target_loaded =
+      target_storage->load_selected_temporal_manifest({.expected_database_id = database_id,
+                                                       .schema_bindings = schema_bindings,
+                                                       .source_bindings = source_bindings,
+                                                       .decode_limits = {},
+                                                       .part_validation_limits = {}});
+  ASSERT_TRUE(target_loaded.has_value()) << target_loaded.error().to_string();
+  auto target_selected =
+      std::make_shared<const manifest::LoadedTemporalManifestGeneration>(std::move(*target_loaded));
+  auto target_publisher =
+      manifest::TemporalDatabaseStoragePublisher::create(target_selected, schema_bindings);
+  ASSERT_TRUE(target_publisher.has_value()) << target_publisher.error().to_string();
+  auto target_snapshot = target_publisher->snapshot();
+  ASSERT_TRUE(target_snapshot.has_value()) << target_snapshot.error().to_string();
+  ContextProvider target_provider{std::move(*target_snapshot),
+                                  lineage,
+                                  {.table_id = schema_value->table_id(),
+                                   .tablet_id = tablet_id,
+                                   .placement_epoch = 14U,
+                                   .replicas = {12U, 13U},
+                                   .leader_hint = 13U},
+                                  group_id,
+                                  raft::ReadBarrier{2U, 3U, 10U}};
+  Authenticator target_client_authenticator{91U};
+  auto target_server = ReplicatedDistributedGroupedQueryTcpServer::start(
+      {.worker = {.local_node_id = 13U,
+                  .storage = &*target_storage,
+                  .context_provider = &target_provider},
+       .listener = {},
+       .tls = tls_server_config(),
+       .authenticator = &target_client_authenticator,
+       .node_authorizer = &grouped_authorizer,
+       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                          .exchange_timeout = std::chrono::milliseconds{1000},
+                          .maximum_response_frames = 4U},
+       .maximum_connections = 4U,
+       .maximum_accepts_per_poll = 4U});
+  ASSERT_TRUE(target_server.has_value()) << target_server.error().to_string();
+  auto moved_dispatch = grouped_dispatch;
+  moved_dispatch.fragment.aggregate.serving_node = 13U;
+  moved_dispatch.fragment.aggregate.placement_epoch = 14U;
+  const auto moved_request = cluster::encode_distributed_grouped_query_request_v1(
+      {.source_node_id = 1U, .target_node_id = 13U, .dispatch = moved_dispatch});
+  ASSERT_TRUE(moved_request.has_value()) << moved_request.error().to_string();
+  auto moved_client = cluster::DistributedGroupedQueryTcpClient::begin(
+      {1U, 13U, *moved_request},
+      {.remote_endpoint = target_server->bound_endpoint(),
+       .tls_context = std::addressof(*grouped_tls_context),
+       .carrier = {.authenticator = &grouped_tcp_server_authenticator,
+                   .node_authorizer = &grouped_authorizer,
+                   .peer_ipv4_address = {127U, 0U, 0U, 1U},
+                   .limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                              .exchange_timeout = std::chrono::milliseconds{1000},
+                              .maximum_response_frames = 4U}},
+       .connect_timeout = std::chrono::milliseconds{1000}},
+      cluster::DistributedGroupedQueryTcpClient::TimePoint::clock::now());
+  ASSERT_TRUE(moved_client.has_value()) << moved_client.error().to_string();
+  for (std::size_t iteration = 0U;
+       iteration < 1024U &&
+       moved_client->state() != cluster::DistributedGroupedQueryTcpClientState::kComplete;
+       ++iteration) {
+    const auto interest = moved_client->interest();
+    pollfd descriptor{.fd = moved_client->descriptor(),
+                      .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
+                                                   (interest.want_write ? POLLOUT : 0))};
+    ASSERT_GE(::poll(&descriptor, 1U, 1), 0);
+    ASSERT_TRUE(moved_client
+                    ->on_ready((descriptor.revents & POLLIN) != 0,
+                               (descriptor.revents & POLLOUT) != 0,
+                               cluster::DistributedGroupedQueryTcpClient::TimePoint::clock::now())
+                    .is_ok())
+        << moved_client->failure().to_string();
+    ASSERT_TRUE(target_server->poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  ASSERT_EQ(moved_client->state(), cluster::DistributedGroupedQueryTcpClientState::kComplete)
+      << moved_client->failure().to_string();
+  auto moved_responses = moved_client->responses();
+  ASSERT_TRUE(moved_responses.has_value()) << moved_responses.error().to_string();
+  ASSERT_EQ(moved_responses->size(), 1U);
+  const auto* moved_result =
+      std::get_if<query::GroupedFloat64ExchangeMessage>(&*moved_responses->front().payload);
+  ASSERT_NE(moved_result, nullptr);
+  EXPECT_EQ(moved_result->group_key, grouped_tcp_result->group_key);
+  EXPECT_EQ(moved_result->partial.count, grouped_tcp_result->partial.count);
+  EXPECT_EQ(moved_result->partial.sum, grouped_tcp_result->partial.sum);
+  EXPECT_EQ(moved_result->partial.minimum, grouped_tcp_result->partial.minimum);
+  EXPECT_EQ(moved_result->partial.maximum, grouped_tcp_result->partial.maximum);
+  EXPECT_EQ(moved_result->partial.mean, grouped_tcp_result->partial.mean);
+  EXPECT_EQ(moved_result->partial.m2, grouped_tcp_result->partial.m2);
+  EXPECT_EQ(target_provider.grouped_calls, 1U);
+  EXPECT_TRUE(target_client_authenticator.saw_fingerprint);
+  EXPECT_EQ(target_server->metrics().completed_connections, 1U);
+  EXPECT_TRUE(target_server->shutdown().is_ok());
 
   EXPECT_EQ(ReplicatedDistributedQueryTcpServer::start({}).error().code(),
             common::StatusCode::kInvalidArgument);

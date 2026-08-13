@@ -269,8 +269,9 @@ query lifecycle now provide remote follower authority acquisition. Committed num
 lowercase-DNS routes acquire a fresh
 bounded ordered unique IPv4 candidate set before polling, and finite sender retries rotate
 candidates without changing node/proof/TLS authority. Live DNS churn/latency/cache policy, IPv6, a
-packaged multi-process runtime, remote CSEG execution in the movement gate, and broad
-failure/measurement evidence remain incomplete; the Phase 16 exit gate is not claimed.
+packaged multi-process runtime and broad failure/measurement evidence remain incomplete; the Phase
+16 exit gate is not claimed. A focused in-process gate now transfers a checksummed real CSEG,
+reopens it from a distinct target root, and queries the promoted target through production mTLS.
 
 ### Phase 17 — object storage and interoperability
 
@@ -334,7 +335,9 @@ loopback applied write and matching retry after daemon restart. The requested re
 three-process/data-plane workflow does not exist. A later focused
 gate uses real mutual-TLS query sockets around the complete movement state machine, but simulates the
 externally committed promotion/removal milestones and deterministic worker aggregates. A separate
-one-process service gate now queries an installed CSEG through the production mTLS worker stack. No
+one-process service gate now carries a checksummed real CSEG through movement, installs and reopens
+it from a distinct target root, and queries the promoted target through the production mTLS worker
+stack. No
 gate starts three server processes, executes SQL through the native protocol, kills a process,
 applies a Raft command to mutable/CSEG storage, or queries a moved CSEG on another process. Those
 remain high-priority integration and hardening tasks, not passed checks.
@@ -552,8 +555,10 @@ Focused executions passed:
   passed a canonical grouped dispatch through the production loopback TCP/mTLS stack and returned
   exact terminal key/sum `2.5` after a fresh owning authority acquisition. It also proved both
   certificate fingerprints, invalid packaged configuration rejection, one completed connection,
-  ordered shutdown, and installed-consumer construction. Sender/coordinator integration, packaged
-  multi-tablet execution, and remote moved-CSEG reads are not claimed.
+  ordered shutdown, and installed-consumer construction. The same focused service case now transfers
+  the exact CSEG through learner-first movement, reopens a distinct target root, and obtains the
+  identical result from promoted node 13 over a second production mTLS owner. Multi-process and
+  multi-tablet moved-CSEG reads are not claimed.
 - Grouped-sender continuation: 2 focused cases passed for exact immutable attempt bytes, complete
   two-part and terminal-only success, payload-level correlation rejection without state mutation,
   advisory leader capture, exact capped exponential backoff, transport failure, terminal status,
