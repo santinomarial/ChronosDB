@@ -32,8 +32,9 @@ requests only through reported prefixes, retains sticky header damage, rejects l
 and proves short-write suffix, overrun rollback, and moved-from ownership. All five vector transport
 cases, header self-containment, and installed consumption cover the public state machines.
 
-Authenticated receiver/sender ownership, vector coordination, worker result-schema identity,
-execution, and process integration remain incomplete. No Phase 16 exit gate is claimed.
+Vector coordination is implemented separately. Authenticated receiver/sender ownership, worker
+result-schema identity, execution, and process integration remain incomplete. No Phase 16 exit gate
+is claimed.
 
 Invariants 5, 6, 10, 11, 14, 15, and 18 apply.
 

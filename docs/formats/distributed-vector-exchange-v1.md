@@ -42,5 +42,8 @@ complete-frame limit, and nested-batch byte limit pass. It then owns exactly one
 consumes no coalesced successor bytes, exact-decodes on completion, and makes wire failures sticky.
 The move-only write cursor owns one encoded frame and exposes only its checked unwritten suffix.
 
-This frame supplies result correlation and safe all-type batch movement. Stream coordination,
-physical-plan requests, schema authorization, transport, and execution are separate protocols.
+A single-owner coordinator separately enforces per-tablet contiguous sequences, exact byte retries,
+terminal closure, count/byte-bounded retention, first-failure ownership, and plan-order release only
+after every tablet closes. It does not infer a result schema from the nested table-schema-shaped
+batches. Physical-plan requests, schema authorization, transport, and execution are separate
+protocols.

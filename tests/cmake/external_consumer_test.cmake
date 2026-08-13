@@ -229,6 +229,9 @@ int main() {
   const auto create_vector_exchange_write_cursor =
       &chronos::query::DistributedVectorExchangeWriteCursor::create;
   chronos::query::DistributedVectorExchangeReader vector_exchange_reader;
+  const auto create_vector_coordinator = &chronos::query::DistributedVectorCoordinator::create;
+  const auto accept_vector_exchange = &chronos::query::DistributedVectorCoordinator::accept;
+  const auto finish_vector_exchange = &chronos::query::DistributedVectorCoordinator::finish;
   const auto decode_vector_plan = &chronos::query::decode_distributed_vector_plan_intent_exact;
   const auto validate_vector_plan = &chronos::query::validate_distributed_vector_plan_intent;
   const auto decode_vector_fragment =
@@ -392,6 +395,9 @@ int main() {
   (void)decode_vector_exchange;
   (void)create_vector_exchange_write_cursor;
   (void)vector_exchange_reader;
+  (void)create_vector_coordinator;
+  (void)accept_vector_exchange;
+  (void)finish_vector_exchange;
   (void)decode_vector_plan;
   (void)validate_vector_plan;
   (void)decode_vector_fragment;

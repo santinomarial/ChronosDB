@@ -397,3 +397,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0360](0360-distinct-distributed-vector-query-request.md) | Distinct distributed vector query request | accepted |
 | [0361](0361-correlated-distributed-vector-query-response.md) | Correlated distributed vector query response | accepted |
 | [0362](0362-bounded-distributed-vector-query-partial-io.md) | Bounded distributed vector query partial I/O | accepted |
+| [0363](0363-bounded-distributed-vector-coordinator.md) | Bounded distributed vector coordinator | accepted |

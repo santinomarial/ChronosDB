@@ -1036,7 +1036,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   reverse-route response exact-correlates one vector exchange or explicit failure and optional
   advisory leader hint. Header-first readers and a move-only checked cursor now own bounded
   fragmented/coalesced reads and short writes without fixed 16-MiB connection storage. Authenticated
-  carrier ownership and execution remain deferred. A distinct
+  carrier ownership and execution remain deferred. A bounded single-owner vector coordinator now
+  enforces exact per-tablet retries, contiguous sequences, terminal closure, first-failure
+  ownership, count/byte-bounded retention, and plan-order release only after every tablet closes;
+  it does not invent result-schema identity from nested table-schema-shaped batch bytes. A distinct
   group-scoped grouped dispatch now
   preserves exact Raft authority without reinterpreting ungrouped dispatch bytes. Its worker reuses
   every local authority gate, resolves real temporal CSEG winners, and emits canonical grouped
@@ -1083,10 +1086,7 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   global cross-tablet merge, providing correct bounded top-N for the supported FLOAT64 grouping
   surface. COUNT/SUM/MIN/MAX/mean/population-variance ordering now uses those globally merged states
   with a deterministic group-key tie-breaker before LIMIT. Multi-key/non-FLOAT64 state/transport,
-  arbitrary expression ordering, and general row ordering/LIMIT remain deferred. A distinct
-  checksummed vector-exchange frame now correlates one exact all-logical-type Columnar Batch v1 or
-  terminal-only empty stream without changing aggregate/grouped bytes. General vector request
-  fragments, coordination, and transport remain deferred. The distinct
+  arbitrary expression ordering, and general row ordering/LIMIT remain deferred. The distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
   catalog, Manifest, route, and execution gates;
   a separate canonical checksummed cluster protocol now requests one group-correlated ordered

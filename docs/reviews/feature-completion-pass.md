@@ -623,31 +623,35 @@ Focused executions passed:
 - Distributed vector-result codec continuation: two focused query cases wrapped a canonical
   mixed-type Columnar Batch v1 and a terminal-only empty stream in exact correlated/checksummed
   frames, then rejected truncation, nested corruption, limit excess, and empty nonterminal input.
-  General vector request fragments, coordination, transport, and execution are not claimed.
+  At that checkpoint, general vector request fragments, coordination, transport, and execution were
+  not claimed.
 - Distributed vector partial-I/O continuation: one focused query case enumerated every split of a
   mixed-type variable frame, consumed a coalesced empty terminal through exact reported prefixes,
   retained sticky header corruption and unsupported-version failure, rejected a nested byte limit
   before payload buffering, and proved short-write suffix, overrun rollback, and moved-from cursor
-  ownership. Header self-containment and the installed consumer cover the public API. General
-  vector request fragments, coordination, authenticated transport, and execution are not claimed.
+  ownership. Header self-containment and the installed consumer cover the public API. At that
+  checkpoint, general vector request fragments, coordination, authenticated transport, and
+  execution were not claimed.
 - Distributed vector-plan intent continuation: two focused query cases round-tripped row,
   ungrouped-aggregate, and multi-key grouped-aggregate shapes with final ordering and a present zero
   LIMIT, then rejected truncation, an unknown version, noncanonical absent input, lower caller
   bounds, duplicate groups, invalid COUNT(*), and invalid output order. Header self-containment and
-  installed consumption cover the public codec. Authority-bound vector fragments, schema/type
-  binding, global coordination, transport, and execution are not claimed.
+  installed consumption cover the public codec. At that checkpoint, authority-bound vector
+  fragments, schema/type binding, global coordination, transport, and execution were not claimed.
 - Group-scoped vector-fragment continuation: two focused query cases round-tripped bounded-stale
   snapshot/route/group proof, unique projection, event bounds, and the nested multi-key ordered
   plan, then rejected truncation, unknown outer version, independently damaged nested plan, lower
   projection limits, out-of-projection plan indices, lag contradiction, and nil group identity.
-  Header self-containment and installed consumption cover the public codec. Committed-authority
-  construction, worker execution, coordination, transport, and process integration are not claimed.
+  Header self-containment and installed consumption cover the public codec. At that checkpoint,
+  committed-authority construction, worker execution, coordination, transport, and process
+  integration were not claimed.
 - Authority-bound vector-fragment continuation: the focused Manifest-backed binding case carried an
   exact leader barrier, committed placement/group, durable Raft position, recovery schema, unique
   projection, grouped SUM, output ordering, and LIMIT into an encodable owned dispatch. SUM over
   the projected TIMESTAMP and an out-of-projection input rejected before dispatch creation. All
   existing aggregate/grouped/metadata binding cases passed. Installed consumption covers the public
-  binder. Multi-tablet vector ownership, execution, coordination, and transport are not claimed.
+  binder. At that checkpoint, multi-tablet vector ownership, execution, coordination, and transport
+  were not claimed.
 - Compatible vector-snapshot continuation: the existing focused two-tablet binding case now also
   pinned one Manifest generation behind two plan-ordered group-scoped vector dispatches carrying
   the same grouped SUM/order/LIMIT intent. Reversed authority bindings and a three-ordinal total
@@ -700,8 +704,15 @@ Focused executions passed:
   response split, consumed two coalesced requests only through reported prefixes, retained sticky
   header damage, rejected lower caller frame bounds, and proved short-write suffix, overrun rollback,
   and moved-from cursor ownership. All five vector transport cases, header self-containment, and
-  installed consumption cover the public state machines. Authentication, execution, coordination,
-  and process integration are not claimed.
+  installed consumption cover the public state machines. At that checkpoint, authentication,
+  execution, coordination, and process integration were not claimed.
+- Distributed vector-coordinator continuation: two focused cases enforced contiguous tablet
+  sequences, exact retry/conflict arbitration, post-terminal rejection, incomplete-result
+  withholding, terminal-only empty closure, deterministic plan order, message and byte exhaustion,
+  first-failure stability, completed-worker loss, and one-shot finish. All five vector-exchange
+  cases, header self-containment, and installed consumption cover the public coordinator. It treats
+  canonical nested batches as opaque; result-schema authorization, execution, authenticated
+  lifecycle, and process integration are not claimed.
 
 The C++ files changed by the grouped- and vector-exchange continuations pass the repository-pinned
 clang-format 18 check. A full-tree check was also run and still reports pre-existing violations in

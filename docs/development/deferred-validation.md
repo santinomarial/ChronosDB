@@ -279,8 +279,10 @@
   plan-ordered vector fragment before compatible binding. Leader-linearizable vector proofs now
   join from canonical group order through committed tablet-to-group metadata into plan order.
   Bounded-stale vector proofs now derive the leader frontier only from a canonical same-group,
-  same-term stable leader/follower pair. Remote acquisition, global coordination, authenticated
-  transport, and execution remain. Distinct exact node-routed request and reverse-route
+  same-term stable leader/follower pair. A bounded single-owner coordinator now retains exact
+  per-tablet byte histories, rejects gaps/conflicts/post-terminal output, and releases plan-ordered
+  streams only after every tablet closes. Remote acquisition, authenticated transport, and
+  execution remain. Distinct exact node-routed request and reverse-route
   response frames now carry the complete vector dispatch and one exactly correlated vector exchange
   or failure. Header-first readers and one move-only cursor now own bounded fragmentation,
   coalesced-suffix, and short-write progress. Add authenticated receiver, retry, TLS, and TCP

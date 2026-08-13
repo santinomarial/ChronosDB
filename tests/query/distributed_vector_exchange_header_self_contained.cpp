@@ -6,3 +6,9 @@ static_assert(
     !std::is_copy_constructible_v<chronos::query::EncodedDistributedVectorExchangeMessage>);
 static_assert(!std::is_move_constructible_v<chronos::query::DistributedVectorExchangeReader>);
 static_assert(std::is_move_constructible_v<chronos::query::DistributedVectorExchangeWriteCursor>);
+static_assert(std::is_move_constructible_v<chronos::query::DistributedVectorCoordinator>);
+
+namespace {
+[[maybe_unused]] const auto kCreateCoordinator =
+    &chronos::query::DistributedVectorCoordinator::create;
+} // namespace

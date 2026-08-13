@@ -20,8 +20,8 @@ CRCs remain independent of the nested exchange's own integrity. Nested query/tab
 exact-match the response header. The bounded maximum is 16,777,192 bytes.
 
 The exact codec returns value-owned exchange bytes and changes no existing format. It defines no
-stream sequencing beyond retaining the nested positive sequence/terminal values; coordination,
-partial I/O, authentication, and socket ownership remain separate.
+stream sequencing beyond retaining the nested positive sequence/terminal values; partial I/O,
+coordination, authentication, and socket ownership are separate owners.
 
 ## Consequences and validation
 
@@ -32,8 +32,9 @@ request/response cases, header self-containment, and installed consumption cover
 directions.
 
 General vector worker execution remains blocked on an explicit output-schema identity contract.
-Partial-I/O is implemented separately. Authenticated receiver/sender ownership, coordination, and
-process integration remain incomplete. No Phase 16 exit gate is claimed.
+Partial-I/O and bounded exact-retry coordination are implemented separately. Authenticated
+receiver/sender ownership and process integration remain incomplete. No Phase 16 exit gate is
+claimed.
 
 Invariants 5, 6, 10, 11, 14, 15, and 18 apply.
 

@@ -6,9 +6,13 @@
 
 #include <algorithm>
 #include <array>
+#include <iterator>
 #include <limits>
+#include <map>
+#include <memory>
 #include <new>
 #include <ranges>
+#include <set>
 #include <stdexcept>
 #include <utility>
 
@@ -37,6 +41,13 @@ inline constexpr std::uint32_t kTerminalFlag = 1U;
   }
   const auto batch = columnar::decode_columnar_batch_v1_exact(message.encoded_batch);
   return batch.has_value() ? common::Status::ok() : batch.error().status();
+}
+
+[[nodiscard]] bool same_message(const DistributedVectorExchangeMessage& lhs,
+                                const DistributedVectorExchangeMessage& rhs) {
+  return lhs.query_id == rhs.query_id && lhs.tablet_id == rhs.tablet_id &&
+         lhs.sequence == rhs.sequence && lhs.terminal == rhs.terminal &&
+         std::ranges::equal(lhs.encoded_batch, rhs.encoded_batch);
 }
 
 } // namespace
@@ -341,6 +352,169 @@ std::size_t DistributedVectorExchangeWriteCursor::written_bytes() const noexcept
 
 bool DistributedVectorExchangeWriteCursor::complete() const noexcept {
   return written_bytes_ == encoded_.bytes().size();
+}
+
+class DistributedVectorCoordinator::Impl {
+public:
+  struct FragmentProgress {
+    std::vector<DistributedVectorExchangeMessage> messages;
+    bool terminal{};
+  };
+
+  Impl(common::Uuid id, std::vector<schema::TabletId> tablets,
+       const DistributedVectorCoordinatorLimits configured)
+      : query_id(id), tablet_order(std::move(tablets)), limits(configured) {
+    for (const schema::TabletId& tablet_id : tablet_order)
+      fragments.emplace(tablet_id, FragmentProgress{});
+  }
+
+  common::Uuid query_id;
+  std::vector<schema::TabletId> tablet_order;
+  DistributedVectorCoordinatorLimits limits;
+  std::map<schema::TabletId, FragmentProgress> fragments;
+  std::size_t retained_messages{};
+  std::size_t retained_batch_bytes{};
+  std::optional<common::Status> failure;
+  bool finished{};
+};
+
+DistributedVectorCoordinator::DistributedVectorCoordinator(std::unique_ptr<Impl> impl) noexcept
+    : impl_(std::move(impl)) {}
+
+DistributedVectorCoordinator::~DistributedVectorCoordinator() = default;
+
+DistributedVectorCoordinator::DistributedVectorCoordinator(
+    DistributedVectorCoordinator&&) noexcept = default;
+
+DistributedVectorCoordinator&
+DistributedVectorCoordinator::operator=(DistributedVectorCoordinator&&) noexcept = default;
+
+common::Result<DistributedVectorCoordinator>
+DistributedVectorCoordinator::create(common::Uuid query_id, std::vector<schema::TabletId> tablets,
+                                     const DistributedVectorCoordinatorLimits limits) {
+  if (query_id.is_nil() || tablets.empty())
+    return common::make_unexpected(invalid("distributed vector coordinator identity is invalid"));
+  if (limits.messages.maximum_messages_per_fragment == 0U ||
+      limits.messages.maximum_messages_per_fragment > limits.messages.maximum_total_messages ||
+      limits.messages.maximum_total_messages > kMaximumDistributedCoordinatorMessages ||
+      limits.messages.maximum_total_messages < tablets.size() ||
+      limits.maximum_total_batch_bytes == 0U ||
+      limits.maximum_total_batch_bytes > kMaximumDistributedVectorCoordinatorBytes) {
+    return common::make_unexpected(invalid("distributed vector coordinator limits are invalid"));
+  }
+  try {
+    std::set<schema::TabletId> unique_tablets;
+    for (const schema::TabletId& tablet_id : tablets) {
+      if (tablet_id.uuid().is_nil() || !unique_tablets.insert(tablet_id).second) {
+        return common::make_unexpected(
+            invalid("distributed vector coordinator tablet set is invalid"));
+      }
+    }
+    return DistributedVectorCoordinator{
+        std::make_unique<Impl>(query_id, std::move(tablets), limits)};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "distributed vector coordinator allocation failed"});
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "distributed vector coordinator exceeds container limits"});
+  }
+}
+
+common::Status
+DistributedVectorCoordinator::accept(const DistributedVectorExchangeMessage& message) {
+  if (impl_->finished)
+    return invalid("distributed vector coordinator is already finished");
+  if (impl_->failure.has_value())
+    return *impl_->failure;
+  const common::Status validation = validate_message(message);
+  if (!validation.is_ok())
+    return validation;
+  auto fragment = impl_->fragments.find(message.tablet_id);
+  if (message.query_id != impl_->query_id || fragment == impl_->fragments.end())
+    return invalid("distributed vector result does not belong to the coordinator");
+
+  Impl::FragmentProgress& progress = fragment->second;
+  if (message.sequence <= progress.messages.size()) {
+    return same_message(message, progress.messages[message.sequence - 1U])
+               ? common::Status::ok()
+               : common::Status{common::StatusCode::kAlreadyExists,
+                                "distributed vector sequence conflicts with retained state"};
+  }
+  if (progress.terminal)
+    return invalid("distributed vector fragment emitted after its terminal message");
+  if (message.sequence != progress.messages.size() + 1U) {
+    return common::Status{common::StatusCode::kUnavailable,
+                          "distributed vector fragment sequence has a gap"};
+  }
+  if (progress.messages.size() == impl_->limits.messages.maximum_messages_per_fragment ||
+      impl_->retained_messages == impl_->limits.messages.maximum_total_messages ||
+      message.encoded_batch.size() >
+          impl_->limits.maximum_total_batch_bytes - impl_->retained_batch_bytes) {
+    return common::Status{common::StatusCode::kResourceExhausted,
+                          "distributed vector coordinator retention is exhausted"};
+  }
+  try {
+    progress.messages.push_back(message);
+  } catch (const std::bad_alloc&) {
+    return common::Status{common::StatusCode::kResourceExhausted,
+                          "distributed vector coordinator retention allocation failed"};
+  } catch (const std::length_error&) {
+    return common::Status{common::StatusCode::kResourceExhausted,
+                          "distributed vector coordinator retention exceeds container limits"};
+  }
+  progress.terminal = message.terminal;
+  ++impl_->retained_messages;
+  impl_->retained_batch_bytes += message.encoded_batch.size();
+  return common::Status::ok();
+}
+
+common::Status DistributedVectorCoordinator::worker_failed(const schema::TabletId& tablet_id,
+                                                           common::Status failure) {
+  if (impl_->finished)
+    return invalid("distributed vector coordinator is already finished");
+  const auto fragment = impl_->fragments.find(tablet_id);
+  if (fragment == impl_->fragments.end() || failure.is_ok())
+    return invalid("distributed vector worker failure is invalid or unplanned");
+  if (fragment->second.terminal)
+    return common::Status::ok();
+  if (impl_->failure.has_value())
+    return *impl_->failure;
+  impl_->failure = std::move(failure);
+  return common::Status::ok();
+}
+
+common::Result<std::vector<DistributedVectorExchangeMessage>>
+DistributedVectorCoordinator::finish() && {
+  if (impl_->finished)
+    return common::make_unexpected(invalid("distributed vector coordinator is already finished"));
+  if (impl_->failure.has_value())
+    return common::make_unexpected(*impl_->failure);
+  for (const schema::TabletId& tablet_id : impl_->tablet_order) {
+    if (!impl_->fragments.at(tablet_id).terminal) {
+      return common::make_unexpected(common::Status{
+          common::StatusCode::kUnavailable, "distributed vector query has incomplete fragments"});
+    }
+  }
+  std::vector<DistributedVectorExchangeMessage> result;
+  try {
+    result.reserve(impl_->retained_messages);
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                  "distributed vector result allocation failed"});
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "distributed vector result exceeds container limits"});
+  }
+  for (const schema::TabletId& tablet_id : impl_->tablet_order) {
+    auto& messages = impl_->fragments.at(tablet_id).messages;
+    std::ranges::move(messages, std::back_inserter(result));
+  }
+  impl_->finished = true;
+  return result;
 }
 
 } // namespace chronos::query
