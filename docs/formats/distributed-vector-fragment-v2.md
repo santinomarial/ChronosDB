@@ -31,3 +31,10 @@ authority dispatches, and owns the shared result schema once. Before publication
 proved against every tablet's exact committed projection. Pairing any exposed dispatch with the
 shared schema forms its authorized v2 value without multiplying retained descriptor memory by the
 tablet count. See [ADR 0367](../adr/0367-bounded-distributed-vector-fragment-v2-ownership.md).
+
+Metadata-backed v2 construction resolves every active schema, committed placement, immutable group,
+and policy-specific read proof from one canonical catalog before entering that compatible owner.
+Leader-linearizable group authorities and same-term bounded-stale leader/follower pairs first join
+through committed tablet-to-group bindings, then prove the shared result schema and any ungrouped
+aggregate definitions against those exact plan-ordered projections. Temporary catalog/proof views
+do not escape the call.

@@ -331,10 +331,16 @@ int main() {
       &chronos::query::CompatibleDistributedVectorSnapshotV2::aggregate_definitions;
   const auto bind_metadata_vector_snapshot =
       &chronos::query::bind_metadata_backed_distributed_vector_snapshot;
+  const auto bind_metadata_vector_snapshot_v2 =
+      &chronos::query::bind_metadata_backed_distributed_vector_snapshot_v2;
   const auto bind_group_vector_snapshot =
       &chronos::query::bind_group_backed_distributed_vector_snapshot;
+  const auto bind_group_vector_snapshot_v2 =
+      &chronos::query::bind_group_backed_distributed_vector_snapshot_v2;
   const auto bind_follower_group_vector_snapshot =
       &chronos::query::bind_follower_group_backed_distributed_vector_snapshot;
+  const auto bind_follower_group_vector_snapshot_v2 =
+      &chronos::query::bind_follower_group_backed_distributed_vector_snapshot_v2;
   const auto encode_vector_query_request =
       &chronos::cluster::encode_distributed_vector_query_request_v1;
   const auto decode_vector_query_request =
@@ -547,8 +553,11 @@ int main() {
   (void)bind_compatible_vector_snapshot_v2;
   (void)compatible_vector_aggregate_definitions;
   (void)bind_metadata_vector_snapshot;
+  (void)bind_metadata_vector_snapshot_v2;
   (void)bind_group_vector_snapshot;
+  (void)bind_group_vector_snapshot_v2;
   (void)bind_follower_group_vector_snapshot;
+  (void)bind_follower_group_vector_snapshot_v2;
   (void)encode_vector_aggregate_state;
   (void)decode_vector_aggregate_state;
   (void)bind_vector_aggregate_exchange;

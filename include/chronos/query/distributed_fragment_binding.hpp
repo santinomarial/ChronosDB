@@ -339,6 +339,15 @@ bind_metadata_backed_distributed_vector_snapshot(
     const MetadataBackedDistributedVectorSnapshotBinding& binding,
     DistributedVectorSnapshotBindingLimits limits = {});
 
+// Performs the same one-catalog authority join and additionally proves one owned result schema
+// plus any ungrouped aggregate definitions against every resolved tablet projection.
+[[nodiscard]] common::Result<CompatibleDistributedVectorSnapshotV2>
+bind_metadata_backed_distributed_vector_snapshot_v2(
+    const DistributedVectorQueryPlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
+    const MetadataBackedDistributedVectorSnapshotBinding& binding,
+    DistributedVectorResultSchema&& result_schema,
+    DistributedVectorSnapshotBindingLimits limits = {});
+
 struct DistributedAggregateGroupReadAuthority {
   raft::GroupReadBarrier barrier;
   raft::RaftGroupObservation observation;
@@ -380,6 +389,13 @@ struct GroupBackedDistributedVectorSnapshotBinding {
 bind_group_backed_distributed_vector_snapshot(
     const DistributedVectorQueryPlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
     const GroupBackedDistributedVectorSnapshotBinding& binding,
+    DistributedVectorSnapshotBindingLimits limits = {});
+
+[[nodiscard]] common::Result<CompatibleDistributedVectorSnapshotV2>
+bind_group_backed_distributed_vector_snapshot_v2(
+    const DistributedVectorQueryPlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
+    const GroupBackedDistributedVectorSnapshotBinding& binding,
+    DistributedVectorResultSchema&& result_schema,
     DistributedVectorSnapshotBindingLimits limits = {});
 
 struct DistributedAggregateFollowerReadAuthority {
@@ -427,6 +443,13 @@ struct FollowerGroupBackedDistributedVectorSnapshotBinding {
 bind_follower_group_backed_distributed_vector_snapshot(
     const DistributedVectorQueryPlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
     const FollowerGroupBackedDistributedVectorSnapshotBinding& binding,
+    DistributedVectorSnapshotBindingLimits limits = {});
+
+[[nodiscard]] common::Result<CompatibleDistributedVectorSnapshotV2>
+bind_follower_group_backed_distributed_vector_snapshot_v2(
+    const DistributedVectorQueryPlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
+    const FollowerGroupBackedDistributedVectorSnapshotBinding& binding,
+    DistributedVectorResultSchema&& result_schema,
     DistributedVectorSnapshotBindingLimits limits = {});
 
 } // namespace chronos::query

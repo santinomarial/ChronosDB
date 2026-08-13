@@ -416,7 +416,9 @@ once, and attaches the original plan to the coordinator's plan-ordered merge res
 owns one definition-bound mutual-TLS client per tablet, rotates only finite prevalidated addresses,
 bounds every wait by query and retry deadlines, tears down all survivors on failure or cancellation,
 and publishes one globally finalized Native Protocol result only after every sender succeeds.
-Broader process integration remains.
+Metadata-backed v2 binding now carries canonical leader or correlated follower authority through
+the same committed schema/placement/group join into one owned result schema and exact cross-tablet
+aggregate definitions. Broader process integration remains.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated

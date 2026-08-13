@@ -1082,6 +1082,41 @@ bind_metadata_backed_distributed_vector_snapshot(
   }
 }
 
+common::Result<CompatibleDistributedVectorSnapshotV2>
+bind_metadata_backed_distributed_vector_snapshot_v2(
+    const DistributedVectorQueryPlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
+    const MetadataBackedDistributedVectorSnapshotBinding& binding,
+    DistributedVectorResultSchema&& result_schema,
+    const DistributedVectorSnapshotBindingLimits limits) {
+  auto authority =
+      resolve_metadata_backed_authority(plan.fragments, plan.read_policy, binding.catalog.get(),
+                                        binding.table_id, binding.replica_proofs);
+  if (!authority.has_value())
+    return common::make_unexpected(authority.error());
+  try {
+    std::vector<DistributedVectorSnapshotFragmentBinding> resolved;
+    resolved.reserve(plan.fragments.size());
+    for (std::size_t index = 0U; index < plan.fragments.size(); ++index) {
+      resolved.push_back({.admission = std::cref(authority->admissions[index]),
+                          .destination_schema = std::cref(*authority->destination_schema),
+                          .raft_group_id = authority->group_ids[index],
+                          .placement = std::cref(*authority->placements[index]),
+                          .destination_column_ordinals = binding.destination_column_ordinals,
+                          .event_time_predicate = binding.event_time_predicate});
+    }
+    return bind_compatible_distributed_vector_snapshot_v2(plan, std::move(snapshot), resolved,
+                                                          std::move(result_schema), limits);
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "metadata-backed distributed vector v2 snapshot allocation failed"});
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "metadata-backed distributed vector v2 snapshot exceeds container limits"});
+  }
+}
+
 common::Result<CompatibleDistributedAggregateSnapshot>
 bind_group_backed_distributed_aggregate_snapshot(
     const DistributedAggregatePlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
@@ -1118,6 +1153,26 @@ common::Result<CompatibleDistributedVectorSnapshot> bind_group_backed_distribute
        .destination_column_ordinals = binding.destination_column_ordinals,
        .event_time_predicate = binding.event_time_predicate},
       limits);
+}
+
+common::Result<CompatibleDistributedVectorSnapshotV2>
+bind_group_backed_distributed_vector_snapshot_v2(
+    const DistributedVectorQueryPlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
+    const GroupBackedDistributedVectorSnapshotBinding& binding,
+    DistributedVectorResultSchema&& result_schema,
+    const DistributedVectorSnapshotBindingLimits limits) {
+  auto ordered =
+      resolve_group_backed_proofs(plan.fragments, binding.catalog.get(), binding.group_authorities);
+  if (!ordered.has_value())
+    return common::make_unexpected(ordered.error());
+  return bind_metadata_backed_distributed_vector_snapshot_v2(
+      plan, std::move(snapshot),
+      {.catalog = binding.catalog,
+       .table_id = binding.table_id,
+       .replica_proofs = *ordered,
+       .destination_column_ordinals = binding.destination_column_ordinals,
+       .event_time_predicate = binding.event_time_predicate},
+      std::move(result_schema), limits);
 }
 
 bool is_valid_distributed_aggregate_follower_read_authority(
@@ -1179,6 +1234,26 @@ bind_follower_group_backed_distributed_vector_snapshot(
        .destination_column_ordinals = binding.destination_column_ordinals,
        .event_time_predicate = binding.event_time_predicate},
       limits);
+}
+
+common::Result<CompatibleDistributedVectorSnapshotV2>
+bind_follower_group_backed_distributed_vector_snapshot_v2(
+    const DistributedVectorQueryPlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
+    const FollowerGroupBackedDistributedVectorSnapshotBinding& binding,
+    DistributedVectorResultSchema&& result_schema,
+    const DistributedVectorSnapshotBindingLimits limits) {
+  auto ordered = resolve_follower_group_backed_proofs(
+      plan.fragments, plan.read_policy, binding.catalog.get(), binding.group_authorities);
+  if (!ordered.has_value())
+    return common::make_unexpected(ordered.error());
+  return bind_metadata_backed_distributed_vector_snapshot_v2(
+      plan, std::move(snapshot),
+      {.catalog = binding.catalog,
+       .table_id = binding.table_id,
+       .replica_proofs = *ordered,
+       .destination_column_ordinals = binding.destination_column_ordinals,
+       .event_time_predicate = binding.event_time_predicate},
+      std::move(result_schema), limits);
 }
 
 } // namespace chronos::query

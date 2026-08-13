@@ -709,6 +709,29 @@ TEST(DistributedFragmentBindingTest, ResolvesCommittedMetadataAndCurrentReplicaP
   ASSERT_EQ(group_vector->dispatches().size(), 2U);
   EXPECT_EQ(group_vector->dispatches()[0].raft_group_id, specs[0].group_id);
   EXPECT_EQ(group_vector->dispatches()[1].raft_group_id, specs[1].group_id);
+  DistributedVectorQueryPlan aggregate_v2_plan = vector_plan;
+  aggregate_v2_plan.intent = {
+      .mode = DistributedVectorPlanMode::kUngroupedAggregate,
+      .aggregates = {{.operation = VectorAggregateOperation::kAverage, .input_index = 1U}}};
+  auto group_vector_v2 = bind_group_backed_distributed_vector_snapshot_v2(
+      aggregate_v2_plan, *snapshot,
+      {.catalog = std::cref(catalog),
+       .table_id = schema_value.table_id(),
+       .group_authorities = group_authorities,
+       .destination_column_ordinals = projection},
+      DistributedVectorResultSchema{
+          .columns = {{"average", schema_value.columns()[1].type(), true}}});
+  ASSERT_TRUE(group_vector_v2.has_value()) << group_vector_v2.error().to_string();
+  ASSERT_EQ(group_vector_v2->dispatches().size(), 2U);
+  ASSERT_EQ(group_vector_v2->aggregate_definitions().size(), 1U);
+  EXPECT_EQ(group_vector_v2->result_schema().columns[0].name, "average");
+  EXPECT_EQ(group_vector_v2->aggregate_definitions()[0].operation,
+            VectorAggregateOperation::kAverage);
+  ASSERT_TRUE(group_vector_v2->aggregate_definitions()[0].input.has_value());
+  // Guarded by the assertion above.
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+  EXPECT_EQ(group_vector_v2->aggregate_definitions()[0].input->type,
+            schema_value.columns()[1].type());
   EXPECT_EQ(bind_group_backed_distributed_vector_snapshot(
                 vector_plan, *snapshot,
                 {.catalog = std::cref(catalog),
@@ -886,6 +909,19 @@ TEST(DistributedFragmentBindingTest, DerivesBoundedStaleAndLocalEventualAdmissio
   EXPECT_EQ(correlated_vector->dispatches().front().serving_node, 12U);
   EXPECT_EQ(correlated_vector->dispatches().front().observed_leader_commit_position, 11U);
   EXPECT_EQ(correlated_vector->dispatches().front().plan, follower_vector_plan.intent);
+  auto correlated_vector_v2 = bind_follower_group_backed_distributed_vector_snapshot_v2(
+      follower_vector_plan, *snapshot,
+      {.catalog = std::cref(catalog),
+       .table_id = schema_value.table_id(),
+       .group_authorities = follower_authorities,
+       .destination_column_ordinals = projection},
+      DistributedVectorResultSchema{
+          .columns = {{"event_time", schema_value.columns()[0].type(), false},
+                      {"value", schema_value.columns()[1].type(), true}}});
+  ASSERT_TRUE(correlated_vector_v2.has_value()) << correlated_vector_v2.error().to_string();
+  EXPECT_EQ(correlated_vector_v2->dispatches().front().serving_node, 12U);
+  EXPECT_EQ(correlated_vector_v2->result_schema().columns[1].name, "value");
+  EXPECT_TRUE(correlated_vector_v2->aggregate_definitions().empty());
   follower_authorities[0].leader_observation.current_term = 3U;
   EXPECT_EQ(bind_follower_group_backed_distributed_aggregate_snapshot(
                 value.plan, *snapshot,

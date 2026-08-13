@@ -25,8 +25,14 @@ namespace {
     &chronos::query::bind_compatible_distributed_vector_snapshot_v2;
 [[maybe_unused]] const auto kBindMetadataVector =
     &chronos::query::bind_metadata_backed_distributed_vector_snapshot;
+[[maybe_unused]] const auto kBindMetadataVectorV2 =
+    &chronos::query::bind_metadata_backed_distributed_vector_snapshot_v2;
 [[maybe_unused]] const auto kBindGroupVector =
     &chronos::query::bind_group_backed_distributed_vector_snapshot;
+[[maybe_unused]] const auto kBindGroupVectorV2 =
+    &chronos::query::bind_group_backed_distributed_vector_snapshot_v2;
 [[maybe_unused]] const auto kBindFollowerGroupVector =
     &chronos::query::bind_follower_group_backed_distributed_vector_snapshot;
+[[maybe_unused]] const auto kBindFollowerGroupVectorV2 =
+    &chronos::query::bind_follower_group_backed_distributed_vector_snapshot_v2;
 } // namespace
