@@ -409,6 +409,10 @@ Focused executions passed:
 - Raft-observation outbound-mTLS continuation: 3 focused real/portable cases passed for exact
   authenticated acquisition, principal denial before request writing, and sticky exact deadlines.
   TCP connection ownership, inbound serving, fan-out, and pair acquisition are not claimed.
+- Raft-observation outbound-TCP continuation: 2 focused cases passed for a real nonblocking
+  TCP/mTLS/correlated exchange and route-mismatch plus exact connect-deadline failure. The exact
+  cases required approved host execution because workspace sandbox policy forbids loopback bind.
+  Inbound serving, multi-address retry, fan-out, and pair acquisition are not claimed.
 
 The final C++ tree passed the repository-pinned clang-format 18 check. Full-suite, sanitizer, fuzz,
 broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were deliberately not run.

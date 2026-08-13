@@ -61,6 +61,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/cluster/distributed_query_tcp_execution.hpp>
 #include <chronos/cluster/raft_observation_transport.hpp>
 #include <chronos/cluster/raft_observation_tls_client.hpp>
+#include <chronos/cluster/raft_observation_tcp_client.hpp>
 #include <chronos/service/replicated_distributed_query.hpp>
 #include <chronos/cseg/compression.hpp>
 #include <chronos/cseg/format.hpp>
@@ -211,6 +212,8 @@ int main() {
       &chronos::cluster::RaftObservationFrameWriteCursor::create;
   const auto create_raft_observation_tls_client =
       &chronos::cluster::RaftObservationTlsClient::create;
+  const auto begin_raft_observation_tcp_client =
+      &chronos::cluster::RaftObservationTcpClient::begin;
   const auto cancel_distributed_query_tcp_execution =
       &chronos::cluster::DistributedQueryTcpExecution::cancel;
   const auto rebind_distributed_query_tcp_execution =
@@ -281,6 +284,7 @@ int main() {
   (void)create_raft_observation_response_reader;
   (void)create_raft_observation_write_cursor;
   (void)create_raft_observation_tls_client;
+  (void)begin_raft_observation_tcp_client;
   (void)cancel_distributed_query_tcp_execution;
   (void)rebind_distributed_query_tcp_execution;
   (void)bind_compatible_distributed_snapshot;

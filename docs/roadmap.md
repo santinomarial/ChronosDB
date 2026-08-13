@@ -1007,10 +1007,12 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   and a durable-owner service boundary. Bounded request/response readers now validate fixed headers
   before retaining one exact frame, and a move-only cursor owns short writes. Those frames now feed
   a maintained outbound mTLS attempt that authenticates and authorizes one target
-  before writing and enforces exact response correlation and deadlines. TCP connection ownership,
-  inbound serving, complete leader/follower pair acquisition, and broader multi-node failure
-  validation remain deferred. Live DNS churn, resolver-latency policy, caching, and IPv6 remain
-  qualification gaps. A focused real-mTLS gate now queries two tablets, drives one through
+  before writing and enforces exact response correlation and deadlines. Its nonblocking TCP owner
+  binds the authentication address to the route, proves connect completion, and closes the
+  descriptor after TLS on failure. Inbound serving, complete leader/follower pair acquisition, and
+  broader multi-node failure validation remain deferred. Live DNS churn, resolver-latency policy,
+  caching, and IPv6 remain qualification gaps. A focused real-mTLS gate now queries two tablets,
+  drives one through
   checksummed learner-first movement and externally committed promotion/removal milestones, rebinds
   it to the target, and proves the complete aggregate state is identical before and after. The full
   phase exit gate is not claimed.

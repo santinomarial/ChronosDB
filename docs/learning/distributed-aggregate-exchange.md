@@ -138,10 +138,10 @@ failure, and its receiver rejects trust and route failures before invoking the e
 observation service. Its bounded readers now validate fixed headers before retaining exact frames,
 and its move-only cursor preserves short-write ownership. An outbound maintained mTLS attempt now
 authenticates and authorizes one exact target before writing and exposes only a correlated response.
-TCP connection ownership, inbound serving,
-leader/follower fan-out and pair acquisition, remote worker-interrupt delivery, pooled
-multiplexing, asynchronous worker completion, live DNS churn qualification, and broader multi-node
-fault handling remain embedding work.
+A nonblocking TCP composite owns connection establishment and closes the TLS session before its
+borrowed descriptor on failure. Inbound serving, leader/follower fan-out and pair acquisition,
+remote worker-interrupt delivery, pooled multiplexing, asynchronous worker completion, live DNS
+churn qualification, and broader multi-node fault handling remain embedding work.
 
 ## Verification and review questions
 
