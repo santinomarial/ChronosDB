@@ -141,9 +141,11 @@ authenticates and authorizes one exact target before writing and exposes only a 
 A nonblocking TCP composite owns connection establishment and closes the TLS session before its
 borrowed descriptor on failure. An accepted-socket mTLS session authenticates before reading and
 dispatches exactly one observation request. A dedicated server adds bounded listener admission,
-stable connection ownership, metrics, and ordered shutdown. Leader/follower fan-out and pair
-acquisition, remote worker-interrupt delivery, pooled multiplexing, asynchronous worker completion,
-live DNS churn qualification, and broader multi-node fault handling remain embedding work.
+stable connection ownership, metrics, and ordered shutdown. A single-node acquisition owner rotates
+an ordered address snapshot under one finite retry/backoff budget while preserving request and node
+authority. Leader/follower fan-out and pair acquisition, remote worker-interrupt delivery, pooled
+multiplexing, asynchronous worker completion, live DNS churn qualification, and broader multi-node
+fault handling remain embedding work.
 
 ## Verification and review questions
 

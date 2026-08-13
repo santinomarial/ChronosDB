@@ -58,6 +58,7 @@ public:
   [[nodiscard]] common::Status on_ready(bool readable, bool writable, TimePoint now);
   [[nodiscard]] RaftObservationTlsClientState state() const noexcept;
   [[nodiscard]] RaftObservationTlsInterest interest() const noexcept;
+  [[nodiscard]] TimePoint deadline() const noexcept;
   [[nodiscard]] common::Result<raft::RaftGroupObservation> result() const;
   [[nodiscard]] const common::Status& failure() const noexcept;
 

@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 namespace chronos::cluster {
 
@@ -46,6 +47,7 @@ public:
   [[nodiscard]] RaftObservationTcpClientState state() const noexcept;
   [[nodiscard]] RaftObservationTlsInterest interest() const noexcept;
   [[nodiscard]] int descriptor() const noexcept;
+  [[nodiscard]] std::optional<TimePoint> deadline() const noexcept;
   [[nodiscard]] common::Result<raft::RaftGroupObservation> result() const;
   [[nodiscard]] const common::Status& failure() const noexcept;
 

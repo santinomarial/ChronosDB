@@ -419,6 +419,9 @@ Focused executions passed:
 - Raft-observation TCP-server continuation: 2 focused approved-host cases passed for a real
   TCP/mTLS observation with exact metrics and a one-connection admission cap plus deterministic
   shutdown. Remote multi-address retry, fan-out, and pair acquisition are not claimed.
+- Raft-observation retry continuation: 2 focused approved-host cases passed for refused-first,
+  live-second finite address rotation with exact attempt/service metrics and for duplicate/node
+  route rejection plus active-attempt cancellation. Fan-out and pair acquisition are not claimed.
 
 The final C++ tree passed the repository-pinned clang-format 18 check. Full-suite, sanitizer, fuzz,
 broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were deliberately not run.

@@ -180,11 +180,14 @@ TEST(RaftObservationTcpClientTest, RejectsRouteMismatchAndExpiresConnectExactly)
   const auto start = RaftObservationTcpClient::TimePoint{};
   auto client = RaftObservationTcpClient::begin(value, start);
   ASSERT_TRUE(client.has_value()) << client.error().to_string();
+  ASSERT_TRUE(client->deadline().has_value());
+  EXPECT_EQ(*client->deadline(), start + std::chrono::milliseconds{5});
   EXPECT_TRUE(client->on_ready(false, false, start + std::chrono::milliseconds{4}).is_ok());
   const auto failure = client->on_ready(false, false, start + std::chrono::milliseconds{5});
   EXPECT_EQ(failure.code(), common::StatusCode::kUnavailable);
   EXPECT_EQ(client->state(), RaftObservationTcpClientState::kFailed);
   EXPECT_EQ(client->descriptor(), -1);
+  EXPECT_FALSE(client->deadline().has_value());
   EXPECT_EQ(client->on_ready(true, true, start + std::chrono::milliseconds{6}), failure);
 }
 

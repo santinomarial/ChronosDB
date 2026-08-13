@@ -253,6 +253,10 @@ RaftObservationTlsInterest RaftObservationTlsClient::interest() const noexcept {
   return implementation_ ? implementation_->interest_ : RaftObservationTlsInterest{};
 }
 
+RaftObservationTlsClient::TimePoint RaftObservationTlsClient::deadline() const noexcept {
+  return implementation_ ? implementation_->deadline_ : TimePoint{};
+}
+
 common::Result<raft::RaftGroupObservation> RaftObservationTlsClient::result() const {
   if (!implementation_ || implementation_->state_ != RaftObservationTlsClientState::kComplete ||
       !implementation_->response_.has_value()) {

@@ -146,6 +146,17 @@ int RaftObservationTcpClient::descriptor() const noexcept {
   return implementation_ ? implementation_->socket.descriptor() : -1;
 }
 
+std::optional<RaftObservationTcpClient::TimePoint>
+RaftObservationTcpClient::deadline() const noexcept {
+  if (!implementation_ || implementation_->client_state == RaftObservationTcpClientState::kFailed ||
+      implementation_->client_state == RaftObservationTcpClientState::kComplete) {
+    return std::nullopt;
+  }
+  if (implementation_->client_state == RaftObservationTcpClientState::kConnecting)
+    return implementation_->connect_deadline;
+  return implementation_->carrier->deadline();
+}
+
 common::Result<raft::RaftGroupObservation> RaftObservationTcpClient::result() const {
   if (!implementation_ || implementation_->client_state != RaftObservationTcpClientState::kComplete)
     return common::make_unexpected(
