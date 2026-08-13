@@ -3,15 +3,19 @@
 
 #include "chronos/cluster/distributed_grouped_query_transport.hpp"
 #include "chronos/cluster/distributed_query_transport.hpp"
+#include "chronos/cluster/distributed_vector_query_transport_v2.hpp"
 #include "chronos/common/result.hpp"
 #include "chronos/manifest/storage.hpp"
 #include "chronos/manifest/temporal_publication.hpp"
+#include "chronos/network/messages.hpp"
 #include "chronos/query/distributed_fragment_worker.hpp"
 #include "chronos/raft/metadata.hpp"
 #include "chronos/schema/schema_lineage.hpp"
 
+#include <cstddef>
 #include <memory>
 #include <optional>
+#include <vector>
 
 namespace chronos::service {
 
@@ -116,6 +120,61 @@ private:
   explicit ReplicatedDistributedGroupedQueryWorker(
       ReplicatedDistributedGroupedQueryWorkerConfig config) noexcept;
   ReplicatedDistributedGroupedQueryWorkerConfig config_;
+};
+
+class ReplicatedDistributedVectorQueryWorkerContextProviderV2 {
+public:
+  ReplicatedDistributedVectorQueryWorkerContextProviderV2() = default;
+  ReplicatedDistributedVectorQueryWorkerContextProviderV2(
+      const ReplicatedDistributedVectorQueryWorkerContextProviderV2&) = delete;
+  ReplicatedDistributedVectorQueryWorkerContextProviderV2&
+  operator=(const ReplicatedDistributedVectorQueryWorkerContextProviderV2&) = delete;
+  virtual ~ReplicatedDistributedVectorQueryWorkerContextProviderV2() = default;
+
+  [[nodiscard]] virtual common::Result<ReplicatedDistributedQueryWorkerContext>
+  acquire(const query::DistributedVectorFragmentDispatchV2& dispatch) = 0;
+};
+
+struct ReplicatedDistributedVectorQueryWorkerLimitsV2 {
+  query::DistributedVectorRowsWorkerLimitsV2 rows;
+  network::QueryResultLimits result;
+  std::size_t maximum_messages{1024U};
+  std::size_t maximum_total_encoded_bytes{cluster::kDefaultDistributedVectorQueryV2ResponseBytes};
+};
+
+struct ReplicatedDistributedVectorQueryWorkerConfigV2 {
+  raft::NodeId local_node_id{};
+  const manifest::ManifestStorage* storage{};
+  ReplicatedDistributedVectorQueryWorkerContextProviderV2* context_provider{};
+  ReplicatedDistributedVectorQueryWorkerLimitsV2 limits;
+};
+
+// Request-local production adapter for schema-bound row fragments. It retains one coherent
+// Manifest/schema/placement/group context through real-CSEG execution and returns one complete,
+// value-owned terminal stream. Aggregate modes fail closed until their all-type merge state exists.
+class ReplicatedDistributedVectorQueryWorkerV2 final
+    : public cluster::DistributedVectorQueryWorkerServiceV2 {
+public:
+  ReplicatedDistributedVectorQueryWorkerV2() = delete;
+  ReplicatedDistributedVectorQueryWorkerV2(const ReplicatedDistributedVectorQueryWorkerV2&) =
+      delete;
+  ReplicatedDistributedVectorQueryWorkerV2&
+  operator=(const ReplicatedDistributedVectorQueryWorkerV2&) = delete;
+  ReplicatedDistributedVectorQueryWorkerV2(ReplicatedDistributedVectorQueryWorkerV2&&) noexcept =
+      default;
+  ReplicatedDistributedVectorQueryWorkerV2&
+  operator=(ReplicatedDistributedVectorQueryWorkerV2&&) noexcept = default;
+  ~ReplicatedDistributedVectorQueryWorkerV2() override = default;
+
+  [[nodiscard]] static common::Result<ReplicatedDistributedVectorQueryWorkerV2>
+  create(ReplicatedDistributedVectorQueryWorkerConfigV2 config);
+  [[nodiscard]] common::Result<std::vector<cluster::DistributedVectorResultExchangeMessage>>
+  execute(const query::DistributedVectorFragmentDispatchV2& dispatch) override;
+
+private:
+  explicit ReplicatedDistributedVectorQueryWorkerV2(
+      ReplicatedDistributedVectorQueryWorkerConfigV2 config) noexcept;
+  ReplicatedDistributedVectorQueryWorkerConfigV2 config_;
 };
 
 } // namespace chronos::service

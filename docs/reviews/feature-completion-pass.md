@@ -807,6 +807,16 @@ Focused executions passed:
   admission rollback, and retryable final publication. Header self-containment and installed
   consumption cover the API. Sender delivery, TCP scheduling, production worker execution, global
   vector result semantics, and process integration remain incomplete.
+- Proof-revalidated vector-row-worker-v2 continuation: a query-layer worker now canonically
+  revalidates Fragment v2, repeats current route/placement/barrier/Manifest/schema/part authority,
+  resolves real temporal CSEG winners, applies event-time filtering, and emits bounded row chunks
+  without consuming global ORDER/LIMIT. A request-local service adapter owns coherent authority,
+  encodes exact native result batches, bounds message count and complete exchange-frame bytes, and
+  publishes only a complete terminal stream. Focused real-CSEG coverage proves two source-order
+  rows survive a descending limit-one global intent, rejects schema mismatch, aggregate mode,
+  stale authority, and invalid loader/configuration contracts, and exact-decodes the service output.
+  Aggregate merge state, owned receiver/server composition, portable execution, multi-tablet TCP
+  scheduling, global semantics, and process integration remain incomplete.
 
 The C++ files changed by the grouped-, vector-exchange-, Fragment-v2-, and vector-transport-v2
 continuations pass the repository-pinned clang-format 18 check. A full-tree check was also run and

@@ -8,10 +8,13 @@
 #include "chronos/query/distributed.hpp"
 #include "chronos/query/distributed_fragment_dispatch.hpp"
 #include "chronos/query/distributed_grouped_exchange.hpp"
+#include "chronos/query/distributed_vector_fragment_v2.hpp"
+#include "chronos/query/scalar_snapshot_scan.hpp"
 #include "chronos/query/temporal_cseg_snapshot.hpp"
 #include "chronos/raft/metadata.hpp"
 #include "chronos/schema/schema_lineage.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -103,6 +106,62 @@ execute_distributed_grouped_float64_fragment(const DistributedGroupedFloat64Work
 [[nodiscard]] common::Result<DistributedGroupedFloat64WorkerResult>
 execute_distributed_grouped_float64_fragment(const DistributedGroupedFloat64WorkerRequest& request,
                                              const DistributedTemporalPartBatchLoader& loader);
+
+inline constexpr std::size_t kDefaultDistributedVectorRowsWorkerMemoryBytesV2 =
+    std::size_t{64U} * 1024U * 1024U;
+inline constexpr std::size_t kMaximumDistributedVectorRowsWorkerMemoryBytesV2 =
+    std::size_t{1024U} * 1024U * 1024U;
+
+struct DistributedVectorRowsWorkerLimitsV2 {
+  DistributedAggregateWorkerLimits storage;
+  std::size_t maximum_query_memory_bytes{kDefaultDistributedVectorRowsWorkerMemoryBytesV2};
+  ScalarSnapshotScanLimits scan;
+  VectorChunkLimits output;
+};
+
+struct DistributedVectorRowsWorkerRequestV2 {
+  std::reference_wrapper<const DistributedVectorFragmentDispatchV2> dispatch;
+  std::reference_wrapper<const manifest::ManifestStorage> storage;
+  std::reference_wrapper<const manifest::TemporalDatabaseStorageSnapshot> snapshot;
+  std::reference_wrapper<const schema::SchemaLineage> lineage;
+  std::reference_wrapper<const raft::TabletPlacementMetadata> placement;
+  common::Uuid raft_group_id;
+  std::uint64_t local_node{};
+  std::optional<raft::ReadBarrier> local_linearizable_barrier;
+  DistributedVectorRowsWorkerLimitsV2 limits;
+};
+
+struct DistributedVectorRowsWorkerResultV2 {
+  std::uint64_t output_rows{};
+  std::size_t output_chunks{};
+};
+
+// Synchronous, borrowed-chunk publication seam. A successful call may invoke consume repeatedly;
+// each chunk remains valid only for that invocation. The caller must discard prior consumed output
+// if this method or the enclosing worker later fails.
+class DistributedVectorRowsChunkConsumerV2 {
+public:
+  DistributedVectorRowsChunkConsumerV2() = default;
+  DistributedVectorRowsChunkConsumerV2(const DistributedVectorRowsChunkConsumerV2&) = delete;
+  DistributedVectorRowsChunkConsumerV2&
+  operator=(const DistributedVectorRowsChunkConsumerV2&) = delete;
+  virtual ~DistributedVectorRowsChunkConsumerV2() = default;
+
+  [[nodiscard]] virtual common::Status consume(const VectorChunk& chunk) = 0;
+};
+
+// Reuses the complete worker authority and real-CSEG winner-resolution gates, then emits every
+// fragment-local row in source order under the Fragment-v2 result schema. Final ORDER BY and LIMIT
+// remain coordinator semantics and are deliberately not applied here. Aggregate modes fail closed
+// until their mergeable all-type state protocol exists.
+[[nodiscard]] common::Result<DistributedVectorRowsWorkerResultV2>
+execute_distributed_vector_rows_fragment_v2(const DistributedVectorRowsWorkerRequestV2& request,
+                                            DistributedVectorRowsChunkConsumerV2& consumer);
+
+[[nodiscard]] common::Result<DistributedVectorRowsWorkerResultV2>
+execute_distributed_vector_rows_fragment_v2(const DistributedVectorRowsWorkerRequestV2& request,
+                                            const DistributedTemporalPartBatchLoader& loader,
+                                            DistributedVectorRowsChunkConsumerV2& consumer);
 
 } // namespace chronos::query
 

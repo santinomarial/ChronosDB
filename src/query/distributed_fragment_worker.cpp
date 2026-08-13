@@ -1,5 +1,9 @@
 #include "chronos/query/distributed_fragment_worker.hpp"
 
+#include "chronos/query/column_output.hpp"
+#include "chronos/query/physical_operator.hpp"
+#include "chronos/query/resource_context.hpp"
+
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -29,9 +33,17 @@ namespace {
   return {common::StatusCode::kUnavailable, message};
 }
 
+[[nodiscard]] common::Status corruption(const char* message) {
+  return {common::StatusCode::kCorruption, message};
+}
+
+[[nodiscard]] common::Status exhausted(const char* message) {
+  return {common::StatusCode::kResourceExhausted, message};
+}
+
+template <typename Fragment>
 [[nodiscard]] common::Status
-validate_local_placement(const raft::TabletPlacementMetadata& placement,
-                         const DistributedAggregateFragment& fragment,
+validate_local_placement(const raft::TabletPlacementMetadata& placement, const Fragment& fragment,
                          const std::uint64_t local_node) {
   if (placement.table_id != fragment.table_id || placement.tablet_id != fragment.tablet_id ||
       placement.placement_epoch != fragment.placement_epoch || placement.replicas.empty() ||
@@ -56,11 +68,11 @@ struct ValidatedWorkerAuthority {
   const manifest::TemporalTabletDescriptor* tablet{};
   std::shared_ptr<const schema::TableSchema> schema_value;
   std::size_t event_ordinal{};
-  std::uint32_t aggregate_ordinal{};
 };
 
+template <typename Fragment>
 [[nodiscard]] common::Result<ValidatedWorkerAuthority> validate_worker_authority(
-    const DistributedAggregateFragment& fragment, const common::Uuid& dispatch_group,
+    const Fragment& fragment, const common::Uuid& dispatch_group,
     const manifest::TemporalDatabaseStorageSnapshot& snapshot, const schema::SchemaLineage& lineage,
     const raft::TabletPlacementMetadata& placement, const common::Uuid& local_group,
     const std::uint64_t local_node, const std::optional<raft::ReadBarrier>& local_barrier) {
@@ -100,28 +112,35 @@ struct ValidatedWorkerAuthority {
     return common::make_unexpected(
         unavailable("distributed worker Raft snapshot boundary differs"));
   }
-  if (fragment.aggregate_input_index >= fragment.destination_column_ordinals.size())
-    return common::make_unexpected(invalid("distributed worker aggregate input is invalid"));
-  const std::uint32_t aggregate_ordinal =
-      fragment.destination_column_ordinals[fragment.aggregate_input_index];
   const std::optional<std::size_t> event_ordinal =
       schema_value->column_ordinal(schema_value->event_time_column());
-  if (aggregate_ordinal >= schema_value->columns().size() || !event_ordinal.has_value() ||
-      schema_value->columns()[aggregate_ordinal].type().kind() !=
-          schema::LogicalTypeKind::kFloat64) {
-    return common::make_unexpected(
-        common::Status{common::StatusCode::kNotSupported,
-                       "distributed worker requires event time and Float64 aggregate input"});
+  if (!event_ordinal.has_value()) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kNotSupported, "distributed worker requires an event-time column"});
   }
   if (tablet->first_part_index > snapshot.parts().size() ||
       tablet->part_count > snapshot.parts().size() - tablet->first_part_index) {
     return common::make_unexpected(common::Status{
         common::StatusCode::kCorruption, "distributed worker tablet part range is invalid"});
   }
-  return ValidatedWorkerAuthority{.tablet = &*tablet,
-                                  .schema_value = schema_value,
-                                  .event_ordinal = *event_ordinal,
-                                  .aggregate_ordinal = aggregate_ordinal};
+  return ValidatedWorkerAuthority{
+      .tablet = &*tablet, .schema_value = schema_value, .event_ordinal = *event_ordinal};
+}
+
+[[nodiscard]] common::Result<std::uint32_t>
+aggregate_ordinal(const DistributedAggregateFragment& fragment,
+                  const schema::TableSchema& schema_value) {
+  if (fragment.aggregate_input_index >= fragment.destination_column_ordinals.size())
+    return common::make_unexpected(invalid("distributed worker aggregate input is invalid"));
+  const std::uint32_t ordinal =
+      fragment.destination_column_ordinals[fragment.aggregate_input_index];
+  if (ordinal >= schema_value.columns().size() ||
+      schema_value.columns()[ordinal].type().kind() != schema::LogicalTypeKind::kFloat64) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kNotSupported,
+                       "distributed worker requires a Float64 aggregate input"});
+  }
+  return ordinal;
 }
 
 class LocalTemporalPartBatchLoader final : public DistributedTemporalPartBatchLoader {
@@ -159,6 +178,7 @@ private:
 
 class AggregatePartBatchConsumer final : public DistributedTemporalPartBatchConsumer {
 public:
+  // NOLINTBEGIN(bugprone-easily-swappable-parameters)
   AggregatePartBatchConsumer(std::shared_ptr<const schema::TableSchema> schema_value,
                              const schema::SchemaLineage& lineage,
                              const manifest::TemporalTabletDescriptor& tablet,
@@ -170,6 +190,7 @@ public:
       : schema_value_(std::move(schema_value)), lineage_(lineage), tablet_(tablet),
         source_id_(source_id), predicate_(predicate), event_ordinal_(event_ordinal),
         aggregate_ordinal_(aggregate_ordinal), limits_(limits), partial_(partial) {}
+  // NOLINTEND(bugprone-easily-swappable-parameters)
 
   common::Status consume(const std::span<const TemporalManifestCsegPartView> parts) override {
     if (called_) {
@@ -231,7 +252,7 @@ struct CanonicalGroupedKey {
   std::uint64_t bits{};
 
   [[nodiscard]] bool operator<(const CanonicalGroupedKey& other) const noexcept {
-    return present != other.present ? present < other.present : bits < other.bits;
+    return present != other.present ? !present : bits < other.bits;
   }
 };
 
@@ -245,6 +266,7 @@ struct CanonicalGroupedKey {
 
 class GroupedPartBatchConsumer final : public DistributedTemporalPartBatchConsumer {
 public:
+  // NOLINTBEGIN(bugprone-easily-swappable-parameters)
   GroupedPartBatchConsumer(std::shared_ptr<const schema::TableSchema> schema_value,
                            const schema::SchemaLineage& lineage,
                            const manifest::TemporalTabletDescriptor& tablet,
@@ -256,6 +278,7 @@ public:
       : schema_value_(std::move(schema_value)), lineage_(lineage), tablet_(tablet),
         source_id_(source_id), predicate_(predicate), event_ordinal_(event_ordinal),
         key_ordinal_(key_ordinal), aggregate_ordinal_(aggregate_ordinal), limits_(limits) {}
+  // NOLINTEND(bugprone-easily-swappable-parameters)
 
   common::Status consume(const std::span<const TemporalManifestCsegPartView> parts) override {
     if (called_) {
@@ -334,6 +357,139 @@ private:
   bool repeated_{false};
 };
 
+[[nodiscard]] TimestampRangePredicate
+timestamp_predicate(const cseg::EventTimePredicate& predicate) noexcept {
+  return {.lower = predicate.lower.has_value()
+                       ? std::optional<TimestampRangeBound>{TimestampRangeBound{
+                             predicate.lower->value, predicate.lower->inclusive}}
+                       : std::nullopt,
+          .upper = predicate.upper.has_value()
+                       ? std::optional<TimestampRangeBound>{TimestampRangeBound{
+                             predicate.upper->value, predicate.upper->inclusive}}
+                       : std::nullopt};
+}
+
+[[nodiscard]] common::Result<DistributedVectorRowsWorkerResultV2>
+execute_vector_rows_snapshot(const DistributedVectorRowsWorkerRequestV2& request,
+                             const ValidatedWorkerAuthority& authority,
+                             std::shared_ptr<const ScalarTableSnapshot> scalar_snapshot,
+                             DistributedVectorRowsChunkConsumerV2& consumer) {
+  const DistributedVectorFragmentDispatchV2& dispatch = request.dispatch.get();
+  auto resources = QueryResourceContext::create(request.limits.maximum_query_memory_bytes);
+  if (!resources.has_value())
+    return common::make_unexpected(resources.error());
+  auto pipeline =
+      ScalarSnapshotScanOperator::create(std::move(scalar_snapshot), request.limits.scan);
+  if (!pipeline.has_value())
+    return common::make_unexpected(pipeline.error());
+  if (dispatch.dispatch.event_time_predicate.has_value()) {
+    pipeline = TimestampRangeFilterOperator::create(
+        std::move(*pipeline), authority.event_ordinal,
+        timestamp_predicate(*dispatch.dispatch.event_time_predicate));
+    if (!pipeline.has_value())
+      return common::make_unexpected(pipeline.error());
+  }
+
+  try {
+    std::vector<std::size_t> output_ordinals;
+    output_ordinals.reserve(dispatch.dispatch.plan.row_output_indices.size());
+    for (const std::uint32_t projected_index : dispatch.dispatch.plan.row_output_indices)
+      output_ordinals.push_back(dispatch.dispatch.destination_column_ordinals[projected_index]);
+    pipeline = SourceColumnOutputOperator::create(std::move(*pipeline), std::move(output_ordinals),
+                                                  request.limits.output);
+    if (!pipeline.has_value())
+      return common::make_unexpected(pipeline.error());
+
+    DistributedVectorRowsWorkerResultV2 result;
+    for (;;) {
+      auto step = (*pipeline)->next(*resources);
+      if (!step.has_value())
+        return common::make_unexpected(step.error());
+      if (step->kind() == PhysicalOperatorStepKind::kEnd)
+        return result;
+      const AccountedVectorChunk* accounted = step->chunk();
+      if (accounted == nullptr)
+        return common::make_unexpected(corruption("distributed vector worker chunk is missing"));
+      const VectorChunk& chunk = accounted->chunk();
+      if (chunk.column_count() != dispatch.result_schema.columns.size()) {
+        return common::make_unexpected(
+            corruption("distributed vector worker output width differs from its schema"));
+      }
+      for (std::size_t column = 0U; column < chunk.column_count(); ++column) {
+        const columnar::PhysicalColumnView* physical = chunk.column(column);
+        const DistributedVectorResultColumn& expected = dispatch.result_schema.columns[column];
+        if (physical == nullptr || physical->type() != expected.type ||
+            physical->nullable() != expected.nullable) {
+          return common::make_unexpected(
+              corruption("distributed vector worker output shape differs from its schema"));
+        }
+      }
+      const std::size_t rows = chunk.selected_row_count();
+      if (rows == 0U)
+        continue;
+      if (rows > std::numeric_limits<std::uint64_t>::max() - result.output_rows ||
+          result.output_chunks == std::numeric_limits<std::size_t>::max()) {
+        return common::make_unexpected(exhausted("distributed vector worker output overflows"));
+      }
+      const common::Status consumed = consumer.consume(chunk);
+      if (!consumed.is_ok())
+        return common::make_unexpected(consumed);
+      result.output_rows += static_cast<std::uint64_t>(rows);
+      ++result.output_chunks;
+    }
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("distributed vector worker allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("distributed vector worker exceeds container limits"));
+  }
+}
+
+class VectorRowsPartBatchConsumer final : public DistributedTemporalPartBatchConsumer {
+public:
+  VectorRowsPartBatchConsumer(const DistributedVectorRowsWorkerRequestV2& request,
+                              const ValidatedWorkerAuthority& authority,
+                              DistributedVectorRowsChunkConsumerV2& consumer) noexcept
+      : request_(request), authority_(authority), consumer_(consumer) {}
+
+  common::Status consume(const std::span<const TemporalManifestCsegPartView> parts) override {
+    if (called_) {
+      repeated_ = true;
+      return corruption("distributed vector part consumer was invoked more than once");
+    }
+    called_ = true;
+    auto visible = resolve_manifest_v2_temporal_tablet_snapshot(
+        authority_.get().schema_value, request_.get().lineage.get(), *authority_.get().tablet,
+        parts,
+        {.source = cseg::temporal_format::CommitSource::kRaft,
+         .source_id = request_.get().raft_group_id},
+        std::nullopt, request_.get().limits.storage.resolution);
+    if (!visible.has_value())
+      return visible.error();
+    auto executed = execute_vector_rows_snapshot(request_.get(), authority_.get(),
+                                                 std::move(*visible), consumer_.get());
+    if (!executed.has_value())
+      return executed.error();
+    result_ = *executed;
+    return common::Status::ok();
+  }
+
+  [[nodiscard]] bool has_exactly_one_call() const noexcept {
+    return called_ && !repeated_;
+  }
+
+  [[nodiscard]] const std::optional<DistributedVectorRowsWorkerResultV2>& result() const noexcept {
+    return result_;
+  }
+
+private:
+  std::reference_wrapper<const DistributedVectorRowsWorkerRequestV2> request_;
+  std::reference_wrapper<const ValidatedWorkerAuthority> authority_;
+  std::reference_wrapper<DistributedVectorRowsChunkConsumerV2> consumer_;
+  std::optional<DistributedVectorRowsWorkerResultV2> result_;
+  bool called_{};
+  bool repeated_{};
+};
+
 } // namespace
 
 common::Result<ExchangeMessage>
@@ -360,6 +516,9 @@ execute_distributed_aggregate_fragment(const DistributedAggregateWorkerRequest& 
                                              request.local_linearizable_barrier);
   if (!authority.has_value())
     return common::make_unexpected(authority.error());
+  const auto aggregate_column = aggregate_ordinal(fragment, *authority->schema_value);
+  if (!aggregate_column.has_value())
+    return common::make_unexpected(aggregate_column.error());
   const manifest::TemporalTabletDescriptor& tablet = *authority->tablet;
 
   try {
@@ -380,7 +539,7 @@ execute_distributed_aggregate_fragment(const DistributedAggregateWorkerRequest& 
                                           request.raft_group_id,
                                           fragment.event_time_predicate,
                                           authority->event_ordinal,
-                                          authority->aggregate_ordinal,
+                                          *aggregate_column,
                                           request.limits.resolution,
                                           partial};
       const common::Status loaded =
@@ -434,6 +593,9 @@ execute_distributed_grouped_float64_fragment(const DistributedGroupedFloat64Work
                                              request.local_linearizable_barrier);
   if (!authority.has_value())
     return common::make_unexpected(authority.error());
+  const auto aggregate_column = aggregate_ordinal(fragment, *authority->schema_value);
+  if (!aggregate_column.has_value())
+    return common::make_unexpected(aggregate_column.error());
   if (grouped.group_key_input_index >= fragment.destination_column_ordinals.size()) {
     return common::make_unexpected(
         invalid("distributed grouped worker key input is out of bounds"));
@@ -468,7 +630,7 @@ execute_distributed_grouped_float64_fragment(const DistributedGroupedFloat64Work
                                         fragment.event_time_predicate,
                                         authority->event_ordinal,
                                         key_ordinal,
-                                        authority->aggregate_ordinal,
+                                        *aggregate_column,
                                         request.limits.resolution};
       const common::Status loaded =
           loader.load(snapshot, part_ids, bindings, request.limits.part_validation, consumer);
@@ -511,6 +673,111 @@ execute_distributed_grouped_float64_fragment(const DistributedGroupedFloat64Work
   } catch (const std::length_error&) {
     return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
                                                   "distributed grouped worker exceeded limits"});
+  }
+}
+
+common::Result<DistributedVectorRowsWorkerResultV2>
+execute_distributed_vector_rows_fragment_v2(const DistributedVectorRowsWorkerRequestV2& request,
+                                            DistributedVectorRowsChunkConsumerV2& consumer) {
+  const LocalTemporalPartBatchLoader loader{request.storage.get()};
+  return execute_distributed_vector_rows_fragment_v2(request, loader, consumer);
+}
+
+common::Result<DistributedVectorRowsWorkerResultV2>
+execute_distributed_vector_rows_fragment_v2(const DistributedVectorRowsWorkerRequestV2& request,
+                                            const DistributedTemporalPartBatchLoader& loader,
+                                            DistributedVectorRowsChunkConsumerV2& consumer) {
+  const DistributedVectorFragmentDispatchV2& dispatch = request.dispatch.get();
+  const DistributedVectorFragmentDispatch& fragment = dispatch.dispatch;
+  const manifest::TemporalDatabaseStorageSnapshot& snapshot = request.snapshot.get();
+  const schema::SchemaLineage& lineage = request.lineage.get();
+  const raft::TabletPlacementMetadata& placement = request.placement.get();
+
+  const auto structurally_valid = encode_distributed_vector_fragment_dispatch_v2(dispatch);
+  if (!structurally_valid.has_value())
+    return common::make_unexpected(structurally_valid.error());
+  if (request.limits.maximum_query_memory_bytes == 0U ||
+      request.limits.maximum_query_memory_bytes >
+          kMaximumDistributedVectorRowsWorkerMemoryBytesV2 ||
+      request.limits.scan.maximum_rows_per_chunk == 0U ||
+      request.limits.scan.chunk.maximum_rows == 0U ||
+      request.limits.scan.chunk.maximum_columns == 0U ||
+      request.limits.scan.chunk.maximum_buffer_bytes == 0U ||
+      request.limits.scan.chunk.maximum_retained_buffer_bytes == 0U ||
+      request.limits.output.maximum_rows == 0U || request.limits.output.maximum_columns == 0U ||
+      request.limits.output.maximum_buffer_bytes == 0U ||
+      request.limits.output.maximum_retained_buffer_bytes == 0U ||
+      request.limits.output.maximum_rows < std::min(request.limits.scan.maximum_rows_per_chunk,
+                                                    request.limits.scan.chunk.maximum_rows)) {
+    return common::make_unexpected(invalid("distributed vector worker limits are invalid"));
+  }
+  if (fragment.plan.mode != DistributedVectorPlanMode::kRows) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kNotSupported,
+                       "distributed vector worker requires mergeable aggregate-state transport"});
+  }
+  auto authority = validate_worker_authority(fragment, fragment.raft_group_id, snapshot, lineage,
+                                             placement, request.raft_group_id, request.local_node,
+                                             request.local_linearizable_barrier);
+  if (!authority.has_value())
+    return common::make_unexpected(authority.error());
+
+  try {
+    std::vector<PhysicalColumnShape> projected_inputs;
+    projected_inputs.reserve(fragment.destination_column_ordinals.size());
+    for (const std::uint32_t ordinal : fragment.destination_column_ordinals) {
+      if (ordinal >= authority->schema_value->columns().size()) {
+        return common::make_unexpected(
+            invalid("distributed vector worker projection is out of bounds"));
+      }
+      const schema::ColumnDefinition& column = authority->schema_value->columns()[ordinal];
+      projected_inputs.push_back({column.type(), column.nullable()});
+    }
+    const common::Status result_schema_status = validate_distributed_vector_result_schema(
+        fragment.plan, projected_inputs, dispatch.result_schema);
+    if (!result_schema_status.is_ok())
+      return common::make_unexpected(result_schema_status);
+
+    const manifest::TemporalTabletDescriptor& tablet = *authority->tablet;
+    if (tablet.part_count == 0U) {
+      if (tablet.durable_version_count != 0U) {
+        return common::make_unexpected(
+            corruption("distributed vector worker empty part set has durable rows"));
+      }
+      auto empty =
+          ScalarTableSnapshot::create(authority->schema_value, tablet.durable_position, {});
+      if (!empty.has_value())
+        return common::make_unexpected(empty.error());
+      return execute_vector_rows_snapshot(
+          request, *authority, std::make_shared<const ScalarTableSnapshot>(std::move(*empty)),
+          consumer);
+    }
+
+    const std::span<const manifest::TemporalPartDescriptor> descriptors =
+        snapshot.parts().subspan(static_cast<std::size_t>(tablet.first_part_index),
+                                 static_cast<std::size_t>(tablet.part_count));
+    std::vector<cseg::PartId> part_ids;
+    part_ids.reserve(descriptors.size());
+    for (const manifest::TemporalPartDescriptor& descriptor : descriptors)
+      part_ids.push_back(descriptor.part_id);
+    const std::array bindings{manifest::TabletSchemaBinding{.tablet_id = fragment.tablet_id,
+                                                            .lineage = std::cref(lineage)}};
+    VectorRowsPartBatchConsumer part_consumer{request, *authority, consumer};
+    const common::Status loaded = loader.load(
+        snapshot, part_ids, bindings, request.limits.storage.part_validation, part_consumer);
+    if (!loaded.is_ok())
+      return common::make_unexpected(loaded);
+    if (!part_consumer.has_exactly_one_call() || !part_consumer.result().has_value()) {
+      return common::make_unexpected(
+          corruption("distributed vector part loader did not invoke its consumer exactly once"));
+    }
+    // Guarded by the complete exactly-once result check above.
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+    return *part_consumer.result();
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(exhausted("distributed vector worker allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(exhausted("distributed vector worker exceeds container limits"));
   }
 }
 

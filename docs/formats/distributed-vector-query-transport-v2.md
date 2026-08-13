@@ -2,8 +2,9 @@
 
 > **Status:** accepted and implemented exact codec/partial-I/O contract. An authenticated,
 > schema-bound receiver owns the worker handoff and complete bounded response publication.
-> Single-attempt mutual-TLS carriers own authenticated partial I/O and deadlines. Retry, TCP
-> acquisition/listener ownership, execution implementation, and coordination are separate.
+> Single-attempt mutual-TLS carriers own authenticated partial I/O and deadlines. A production
+> request-local row worker now supplies proof-revalidated real-CSEG execution; aggregate execution,
+> owned service composition, retry scheduling, and coordination remain separate.
 
 All integers are unsigned little-endian. Reserved bytes are zero. CRC32C detects accidental damage
 and is not authentication. Request and response payloads retain their own independent checksums.

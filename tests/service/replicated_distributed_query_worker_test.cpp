@@ -15,6 +15,7 @@
 #include "cseg/cseg_test_fixture.hpp"
 
 #include <array>
+#include <bit>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -112,10 +113,11 @@ private:
 
 class NodeAuthorizer final : public cluster::ClusterNodePrincipalAuthorizer {
 public:
+  // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
   common::Result<bool> authorize_node(const std::uint64_t principal_id,
                                       const raft::NodeId node_id) const override {
-    return (principal_id == 91U && node_id == 1U) ||
-           (principal_id == 92U && (node_id == 11U || node_id == 13U));
+    return common::Result<bool>{(principal_id == 91U && node_id == 1U) ||
+                                (principal_id == 92U && (node_id == 11U || node_id == 13U))};
   }
 };
 
@@ -146,7 +148,8 @@ public:
 }
 
 class ContextProvider final : public ReplicatedDistributedQueryWorkerContextProvider,
-                              public ReplicatedDistributedGroupedQueryWorkerContextProvider {
+                              public ReplicatedDistributedGroupedQueryWorkerContextProvider,
+                              public ReplicatedDistributedVectorQueryWorkerContextProviderV2 {
 public:
   ContextProvider(manifest::TemporalDatabaseStorageSnapshot snapshot,
                   std::shared_ptr<const schema::SchemaLineage> lineage,
@@ -175,6 +178,16 @@ public:
                                                    .local_linearizable_barrier = barrier_};
   }
 
+  common::Result<ReplicatedDistributedQueryWorkerContext>
+  acquire(const query::DistributedVectorFragmentDispatchV2&) override {
+    ++vector_calls;
+    return ReplicatedDistributedQueryWorkerContext{.snapshot = snapshot_,
+                                                   .lineage = lineage_,
+                                                   .placement = placement_,
+                                                   .raft_group_id = raft_group_id_,
+                                                   .local_linearizable_barrier = barrier_};
+  }
+
   void set_placement_epoch(const std::uint64_t epoch) noexcept {
     placement_.placement_epoch = epoch;
   }
@@ -189,6 +202,7 @@ public:
 
   std::size_t calls{};
   std::size_t grouped_calls{};
+  std::size_t vector_calls{};
 
 private:
   manifest::TemporalDatabaseStorageSnapshot snapshot_;
@@ -333,6 +347,99 @@ TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesReal
   EXPECT_TRUE(grouped_messages->front().terminal);
   EXPECT_EQ(provider.grouped_calls, 1U);
 
+  EXPECT_EQ(ReplicatedDistributedVectorQueryWorkerV2::create({}).error().code(),
+            common::StatusCode::kInvalidArgument);
+  const query::DistributedVectorFragmentDispatchV2 vector_dispatch{
+      .dispatch = {.query_id = dispatch.fragment.query_id,
+                   .database_id = dispatch.fragment.database_id,
+                   .table_id = dispatch.fragment.table_id,
+                   .tablet_id = dispatch.fragment.tablet_id,
+                   .destination_schema_id = dispatch.fragment.destination_schema_id,
+                   .raft_group_id = dispatch.raft_group_id,
+                   .snapshot_generation = dispatch.fragment.snapshot_generation,
+                   .serving_node = dispatch.fragment.serving_node,
+                   .applied_position = dispatch.fragment.applied_position,
+                   .observed_leader_commit_position =
+                       dispatch.fragment.observed_leader_commit_position,
+                   .placement_epoch = dispatch.fragment.placement_epoch,
+                   .read_policy = dispatch.fragment.read_policy,
+                   .linearizable_barrier = dispatch.fragment.linearizable_barrier,
+                   .destination_column_ordinals = {0U, 1U},
+                   .plan = {.mode = query::DistributedVectorPlanMode::kRows,
+                            .row_output_indices = {1U},
+                            .order_keys = {{.output_index = 0U,
+                                            .direction = query::PhysicalSortDirection::kDescending,
+                                            .null_placement = query::ScalarNullPlacement::kLast}},
+                            .limit = 1U}},
+      .result_schema = {.columns = {{"value", schema_value->columns()[1].type(), false}}}};
+  auto vector_worker = ReplicatedDistributedVectorQueryWorkerV2::create(
+      {.local_node_id = 11U, .storage = &*storage, .context_provider = &provider});
+  ASSERT_TRUE(vector_worker.has_value()) << vector_worker.error().to_string();
+  const auto vector_result = vector_worker->execute(vector_dispatch);
+  ASSERT_TRUE(vector_result.has_value()) << vector_result.error().to_string();
+  ASSERT_EQ(vector_result->size(), 1U);
+  EXPECT_EQ(vector_result->front().query_id, vector_dispatch.dispatch.query_id);
+  EXPECT_EQ(vector_result->front().tablet_id, tablet_id);
+  EXPECT_EQ(vector_result->front().sequence, 1U);
+  EXPECT_TRUE(vector_result->front().terminal);
+  auto vector_batch =
+      network::decode_query_result_batch(vector_result->front().encoded_result_batch);
+  ASSERT_TRUE(vector_batch.has_value()) << vector_batch.error().to_string();
+  EXPECT_EQ(vector_batch->row_count(), 2U);
+  ASSERT_EQ(vector_batch->columns().size(), 1U);
+  EXPECT_EQ(vector_batch->columns()[0].name, "value");
+  const std::array expected_values{1.5, 2.5};
+  for (std::uint32_t row = 0U; row < expected_values.size(); ++row) {
+    const network::QueryResultCell* cell = vector_batch->cell(row, 0U);
+    ASSERT_NE(cell, nullptr);
+    ASSERT_FALSE(cell->is_null);
+    ASSERT_EQ(cell->value.size(), sizeof(std::uint64_t));
+    std::uint64_t bits{};
+    for (std::size_t index = 0U; index < cell->value.size(); ++index) {
+      bits |= static_cast<std::uint64_t>(std::to_integer<std::uint8_t>(cell->value[index]))
+              << (index * 8U);
+    }
+    EXPECT_EQ(std::bit_cast<double>(bits), expected_values[row]);
+  }
+  EXPECT_EQ(provider.vector_calls, 1U);
+
+  auto aggregate_vector = vector_dispatch;
+  aggregate_vector.dispatch.plan = {
+      .mode = query::DistributedVectorPlanMode::kUngroupedAggregate,
+      .aggregates = {{.operation = query::VectorAggregateOperation::kCountStar}}};
+  EXPECT_EQ(vector_worker->execute(aggregate_vector).error().code(),
+            common::StatusCode::kNotSupported);
+  EXPECT_EQ(provider.vector_calls, 2U);
+
+  auto empty_vector = vector_dispatch;
+  empty_vector.dispatch.event_time_predicate =
+      cseg::EventTimePredicate{.lower = cseg::EventTimeBound{30, true}, .upper = std::nullopt};
+  const auto empty_vector_result = vector_worker->execute(empty_vector);
+  ASSERT_TRUE(empty_vector_result.has_value()) << empty_vector_result.error().to_string();
+  ASSERT_EQ(empty_vector_result->size(), 1U);
+  EXPECT_TRUE(empty_vector_result->front().terminal);
+  EXPECT_TRUE(empty_vector_result->front().encoded_result_batch.empty());
+
+  auto byte_bounded_vector_worker = ReplicatedDistributedVectorQueryWorkerV2::create(
+      {.local_node_id = 11U,
+       .storage = &*storage,
+       .context_provider = &provider,
+       .limits = {.maximum_total_encoded_bytes = 84U}});
+  ASSERT_TRUE(byte_bounded_vector_worker.has_value());
+  EXPECT_EQ(byte_bounded_vector_worker->execute(vector_dispatch).error().code(),
+            common::StatusCode::kResourceExhausted);
+
+  auto message_bounded_vector_worker = ReplicatedDistributedVectorQueryWorkerV2::create(
+      {.local_node_id = 11U,
+       .storage = &*storage,
+       .context_provider = &provider,
+       .limits = {.rows = {.scan = {.maximum_rows_per_chunk = 1U, .chunk = {.maximum_rows = 1U}},
+                           .output = {.maximum_rows = 1U}},
+                  .maximum_messages = 1U}});
+  ASSERT_TRUE(message_bounded_vector_worker.has_value());
+  EXPECT_EQ(message_bounded_vector_worker->execute(vector_dispatch).error().code(),
+            common::StatusCode::kResourceExhausted);
+
   NodeAuthorizer grouped_authorizer;
   EXPECT_EQ(ReplicatedDistributedGroupedQueryReceiver::create({}).error().code(),
             common::StatusCode::kInvalidArgument);
@@ -350,8 +457,12 @@ TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesReal
   const auto grouped_response =
       cluster::decode_distributed_grouped_query_response_v1(grouped_frames->front());
   ASSERT_TRUE(grouped_response.has_value()) << grouped_response.error().to_string();
+  ASSERT_TRUE(grouped_response->payload.has_value());
+  // Guarded by the payload assertion above.
+  // NOLINTBEGIN(bugprone-unchecked-optional-access)
   const auto* remote_grouped =
       std::get_if<query::GroupedFloat64ExchangeMessage>(&*grouped_response->payload);
+  // NOLINTEND(bugprone-unchecked-optional-access)
   ASSERT_NE(remote_grouped, nullptr);
   EXPECT_EQ(remote_grouped->group_key, 2.5);
   EXPECT_EQ(remote_grouped->partial.sum, 2.5);
@@ -410,8 +521,12 @@ TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesReal
   auto grouped_tcp_responses = grouped_client->responses();
   ASSERT_TRUE(grouped_tcp_responses.has_value()) << grouped_tcp_responses.error().to_string();
   ASSERT_EQ(grouped_tcp_responses->size(), 1U);
+  ASSERT_TRUE(grouped_tcp_responses->front().payload.has_value());
+  // Guarded by the payload assertion above.
+  // NOLINTBEGIN(bugprone-unchecked-optional-access)
   const auto* grouped_tcp_result =
       std::get_if<query::GroupedFloat64ExchangeMessage>(&*grouped_tcp_responses->front().payload);
+  // NOLINTEND(bugprone-unchecked-optional-access)
   ASSERT_NE(grouped_tcp_result, nullptr);
   EXPECT_EQ(grouped_tcp_result->group_key, 2.5);
   EXPECT_EQ(grouped_tcp_result->partial.sum, 2.5);
@@ -538,8 +653,12 @@ TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesReal
   auto moved_responses = moved_client->responses();
   ASSERT_TRUE(moved_responses.has_value()) << moved_responses.error().to_string();
   ASSERT_EQ(moved_responses->size(), 1U);
+  ASSERT_TRUE(moved_responses->front().payload.has_value());
+  // Guarded by the payload assertion above.
+  // NOLINTBEGIN(bugprone-unchecked-optional-access)
   const auto* moved_result =
       std::get_if<query::GroupedFloat64ExchangeMessage>(&*moved_responses->front().payload);
+  // NOLINTEND(bugprone-unchecked-optional-access)
   ASSERT_NE(moved_result, nullptr);
   EXPECT_EQ(moved_result->group_key, grouped_tcp_result->group_key);
   EXPECT_EQ(moved_result->partial.count, grouped_tcp_result->partial.count);
@@ -613,12 +732,15 @@ TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesReal
           .is_ok());
   auto remote_result = sender->result();
   ASSERT_TRUE(remote_result.has_value());
+  // Guarded by the local and remote result assertions above.
+  // NOLINTBEGIN(bugprone-unchecked-optional-access)
   EXPECT_EQ(remote_result->partial.count, result->partial.count);
   EXPECT_EQ(remote_result->partial.sum, result->partial.sum);
   EXPECT_EQ(remote_result->partial.minimum, result->partial.minimum);
   EXPECT_EQ(remote_result->partial.maximum, result->partial.maximum);
   EXPECT_EQ(remote_result->partial.mean, result->partial.mean);
   EXPECT_EQ(remote_result->partial.m2, result->partial.m2);
+  // NOLINTEND(bugprone-unchecked-optional-access)
   EXPECT_EQ(provider.calls, 2U);
   EXPECT_TRUE(client_authenticator.saw_fingerprint);
   EXPECT_TRUE(server_authenticator.saw_fingerprint);

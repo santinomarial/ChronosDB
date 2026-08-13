@@ -8,6 +8,7 @@
 #include "cseg/cseg_test_fixture.hpp"
 
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -82,6 +83,33 @@ public:
 
 private:
   mutable std::size_t calls_{};
+};
+
+class Float64RowsConsumer final : public DistributedVectorRowsChunkConsumerV2 {
+public:
+  common::Status consume(const VectorChunk& chunk) override {
+    ++calls;
+    if (chunk.column_count() != 1U)
+      return {common::StatusCode::kCorruption, "unexpected vector worker test width"};
+    for (std::size_t row = 0U; row < chunk.selected_row_count(); ++row) {
+      auto cell = chunk.cell({.column_ordinal = 0U, .selected_row = row});
+      if (!cell.has_value())
+        return cell.error();
+      auto bytes = cell->bytes();
+      if (!bytes.has_value() || bytes->size() != sizeof(std::uint64_t))
+        return {common::StatusCode::kCorruption, "unexpected vector worker test cell"};
+      std::uint64_t bits{};
+      for (std::size_t index = 0U; index < bytes->size(); ++index) {
+        bits |= static_cast<std::uint64_t>(std::to_integer<std::uint8_t>((*bytes)[index]))
+                << (index * 8U);
+      }
+      values.push_back(std::bit_cast<double>(bits));
+    }
+    return common::Status::ok();
+  }
+
+  std::size_t calls{};
+  std::vector<double> values;
 };
 
 [[nodiscard]] std::shared_ptr<const schema::TableSchema> make_schema() {
@@ -268,6 +296,95 @@ TEST(DistributedFragmentWorkerTest, ExecutesPinnedTemporalPartsAndReprovesLocalP
   EXPECT_EQ(terminal->query_id, grouped_dispatch.fragment.aggregate.query_id);
   EXPECT_EQ(terminal->tablet_id, tablet_id);
   EXPECT_EQ(terminal->sequence, 1U);
+
+  const DistributedVectorFragmentDispatchV2 vector_dispatch{
+      .dispatch = {.query_id = dispatch.fragment.query_id,
+                   .database_id = dispatch.fragment.database_id,
+                   .table_id = dispatch.fragment.table_id,
+                   .tablet_id = dispatch.fragment.tablet_id,
+                   .destination_schema_id = dispatch.fragment.destination_schema_id,
+                   .raft_group_id = dispatch.raft_group_id,
+                   .snapshot_generation = dispatch.fragment.snapshot_generation,
+                   .serving_node = dispatch.fragment.serving_node,
+                   .applied_position = dispatch.fragment.applied_position,
+                   .observed_leader_commit_position =
+                       dispatch.fragment.observed_leader_commit_position,
+                   .placement_epoch = dispatch.fragment.placement_epoch,
+                   .read_policy = dispatch.fragment.read_policy,
+                   .linearizable_barrier = dispatch.fragment.linearizable_barrier,
+                   .destination_column_ordinals = {0U, 1U},
+                   .event_time_predicate = std::nullopt,
+                   .plan = {.mode = DistributedVectorPlanMode::kRows,
+                            .row_output_indices = {1U},
+                            .order_keys = {{.output_index = 0U,
+                                            .direction = PhysicalSortDirection::kDescending,
+                                            .null_placement = ScalarNullPlacement::kLast}},
+                            .limit = 1U}},
+      .result_schema = {.columns = {{"value", schema_value->columns()[1].type(), false}}}};
+  const auto vector_request = [&](const DistributedVectorFragmentDispatchV2& selected_dispatch,
+                                  const std::uint64_t local_node) {
+    return DistributedVectorRowsWorkerRequestV2{.dispatch = std::cref(selected_dispatch),
+                                                .storage = std::cref(*storage),
+                                                .snapshot = std::cref(*snapshot),
+                                                .lineage = std::cref(lineage),
+                                                .placement = std::cref(placement),
+                                                .raft_group_id = group_id,
+                                                .local_node = local_node,
+                                                .local_linearizable_barrier =
+                                                    raft::ReadBarrier{2U, 3U, 10U},
+                                                .limits = {}};
+  };
+  Float64RowsConsumer vector_rows;
+  const auto vector_result = execute_distributed_vector_rows_fragment_v2(
+      vector_request(vector_dispatch, 11U), vector_rows);
+  ASSERT_TRUE(vector_result.has_value()) << vector_result.error().to_string();
+  EXPECT_EQ(vector_result->output_rows, 2U);
+  EXPECT_EQ(vector_result->output_chunks, 1U);
+  EXPECT_EQ(vector_rows.calls, 1U);
+  EXPECT_EQ(vector_rows.values, (std::vector<double>{1.5, 2.5}));
+
+  DistributedVectorFragmentDispatchV2 mismatched_schema = vector_dispatch;
+  mismatched_schema.result_schema.columns[0].nullable = true;
+  Float64RowsConsumer rejected_rows;
+  EXPECT_EQ(execute_distributed_vector_rows_fragment_v2(vector_request(mismatched_schema, 11U),
+                                                        rejected_rows)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(rejected_rows.calls, 0U);
+
+  DistributedVectorFragmentDispatchV2 aggregate_vector = vector_dispatch;
+  aggregate_vector.dispatch.plan = {
+      .mode = DistributedVectorPlanMode::kUngroupedAggregate,
+      .aggregates = {{.operation = VectorAggregateOperation::kCountStar}}};
+  Float64RowsConsumer aggregate_rows;
+  OmittingPartLoader aggregate_omitting_loader;
+  EXPECT_EQ(execute_distributed_vector_rows_fragment_v2(vector_request(aggregate_vector, 11U),
+                                                        aggregate_omitting_loader, aggregate_rows)
+                .error()
+                .code(),
+            common::StatusCode::kNotSupported);
+  EXPECT_EQ(aggregate_omitting_loader.calls(), 0U);
+
+  OmittingPartLoader incomplete_vector_loader;
+  Float64RowsConsumer incomplete_rows;
+  EXPECT_EQ(execute_distributed_vector_rows_fragment_v2(vector_request(vector_dispatch, 11U),
+                                                        incomplete_vector_loader, incomplete_rows)
+                .error()
+                .code(),
+            common::StatusCode::kCorruption);
+  EXPECT_EQ(incomplete_vector_loader.calls(), 1U);
+  EXPECT_EQ(incomplete_rows.calls, 0U);
+
+  OmittingPartLoader vector_omitting_loader;
+  Float64RowsConsumer unavailable_rows;
+  EXPECT_EQ(execute_distributed_vector_rows_fragment_v2(vector_request(vector_dispatch, 12U),
+                                                        vector_omitting_loader, unavailable_rows)
+                .error()
+                .code(),
+            common::StatusCode::kUnavailable);
+  EXPECT_EQ(vector_omitting_loader.calls(), 0U);
+  EXPECT_EQ(unavailable_rows.calls, 0U);
 
   OmittingPartLoader grouped_omitting_loader;
   EXPECT_EQ(

@@ -339,6 +339,8 @@ int main() {
       &chronos::service::ReplicatedDistributedQueryWorker::create;
   const auto create_replicated_grouped_query_worker =
       &chronos::service::ReplicatedDistributedGroupedQueryWorker::create;
+  const auto create_replicated_vector_query_worker_v2 =
+      &chronos::service::ReplicatedDistributedVectorQueryWorkerV2::create;
   const auto create_replicated_grouped_query_receiver =
       &chronos::service::ReplicatedDistributedGroupedQueryReceiver::create;
   const auto start_replicated_grouped_query_server =
@@ -1143,6 +1145,12 @@ int main() {
           const chronos::query::DistributedGroupedFloat64WorkerRequest&);
   const ExecuteDistributedGroupedFragment execute_distributed_grouped_fragment =
       &chronos::query::execute_distributed_grouped_float64_fragment;
+  using ExecuteDistributedVectorRowsFragmentV2 =
+      chronos::common::Result<chronos::query::DistributedVectorRowsWorkerResultV2> (*)(
+          const chronos::query::DistributedVectorRowsWorkerRequestV2&,
+          chronos::query::DistributedVectorRowsChunkConsumerV2&);
+  const ExecuteDistributedVectorRowsFragmentV2 execute_distributed_vector_rows_fragment_v2 =
+      &chronos::query::execute_distributed_vector_rows_fragment_v2;
   using ExplainFunction = chronos::query::SqlResult<std::string> (*)(
       const chronos::query::BoundSqlSelect&);
   const ExplainFunction explain_select = &chronos::query::explain_sql_v1_select;
@@ -1434,8 +1442,10 @@ int main() {
                  start_distributed_vector_query_tcp_server_v2 != nullptr &&
                  create_distributed_vector_query_sender_v2 != nullptr &&
                  create_distributed_vector_result_coordinator_v2 != nullptr &&
+                 create_replicated_vector_query_worker_v2 != nullptr &&
                  execute_distributed_fragment != nullptr &&
                  execute_distributed_grouped_fragment != nullptr &&
+                 execute_distributed_vector_rows_fragment_v2 != nullptr &&
                  bind_select != nullptr && bind_create != nullptr && bind_insert != nullptr &&
                  materialize_insert != nullptr &&
                  evaluate_expression != nullptr &&

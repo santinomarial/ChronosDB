@@ -304,8 +304,10 @@
   Finite one-tablet retry now owns immutable attempts, exact response count/byte bounds, schema
   revalidation, capped backoff, and advisory hints without authority rebinding. A v2 coordinator
   now owns the shared schema through exact retry arbitration, count/frame-byte bounds, all-tablet
-  closure, and plan-ordered schema-plus-result transfer. Add sender delivery and general worker
-  execution next.
+  closure, and plan-ordered schema-plus-result transfer. A request-local v2 row worker now reproves
+  local authority, resolves real CSEG winners, emits bounded schema-bound native batches, and leaves
+  final ordering/limit untouched; aggregate merge-state transport, owned receiver composition, and
+  sender delivery remain.
   A distinct terminal-only frame closes an empty tablet stream without inventing a SQL NULL group.
   Its separate fixed reader and move-only cursor own every terminal fragmentation boundary,
   coalesced successor bytes, sticky damage, and checked short writes without introducing an

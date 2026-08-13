@@ -1065,7 +1065,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   advisory hints, and capped retry/backoff without authority rebinding. A schema-owning v2
   coordinator now independently validates canonical messages, arbitrates exact retries, bounds
   complete retained frame bytes, and releases plan-ordered schema-plus-results only after every
-  tablet terminates. Sender delivery and execution remain deferred. A distinct
+  tablet terminates. A request-local production row worker now independently reproves current local
+  authority, resolves real temporal CSEG winners, materializes bounded schema-bound native batches,
+  and leaves global ordering/limit unapplied. Aggregate merge-state transport, owned receiver
+  composition, sender delivery, and general execution remain deferred. A distinct
   group-scoped grouped dispatch now
   preserves exact Raft authority without reinterpreting ungrouped dispatch bytes. Its worker reuses
   every local authority gate, resolves real temporal CSEG winners, and emits canonical grouped

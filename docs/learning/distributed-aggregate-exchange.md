@@ -334,6 +334,12 @@ owned schema, then sequences and deduplicates it per planned tablet. Count and e
 bytes bound retention. Finish first proves every tablet terminal, then transfers the schema and
 plan-ordered message vector together so downstream consumers cannot detach values from descriptor
 authority.
+The first production vector-v2 execution path handles row fragments only. It freshly acquires and
+retains local Manifest/schema/placement/group/barrier authority, repeats the proof gates at the
+worker, resolves logical winners from real temporal CSEGs, then materializes the admitted row shape
+through bounded vector chunks. Its service adapter converts those chunks to native result payloads
+and publishes only one complete bounded terminal stream. Tablet-local workers do not apply final
+ordering or limit, and aggregate modes fail closed until an all-type merge-state protocol exists.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated
