@@ -1,4 +1,5 @@
 #include "chronos/cluster/distributed_grouped_query_tcp_client.hpp"
+#include "chronos/cluster/distributed_grouped_query_tcp_server.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -117,6 +118,19 @@ public:
 
   std::size_t calls{};
 };
+
+[[nodiscard]] DistributedGroupedQueryTcpServerConfig
+server_config(Authenticator& authenticator, DistributedGroupedQueryReceiver& receiver) {
+  return {.listener = {},
+          .tls = server_tls(),
+          .authenticator = &authenticator,
+          .receiver = &receiver,
+          .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                             .exchange_timeout = std::chrono::milliseconds{1000},
+                             .maximum_response_frames = 4U},
+          .maximum_connections = 8U,
+          .maximum_accepts_per_poll = 8U};
+}
 
 TEST(DistributedGroupedQueryTcpClientTest, OwnsConnectAndCompleteMutualTlsStream) {
   Authorizer authorizer;
@@ -261,6 +275,112 @@ TEST(DistributedGroupedQueryTcpClientTest, ValidatesBeforeConnectAndExpiresExact
                 .error()
                 .code(),
             common::StatusCode::kInvalidArgument);
+}
+
+TEST(DistributedGroupedQueryTcpServerTest, ServesRealTcpMutualTlsStream) {
+  Authorizer authorizer;
+  Worker worker;
+  auto receiver = DistributedGroupedQueryReceiver::create(
+      {.local_node_id = 2U, .authorizer = &authorizer, .worker = &worker});
+  ASSERT_TRUE(receiver.has_value());
+  Authenticator client_authenticator{91U};
+  auto server =
+      DistributedGroupedQueryTcpServer::start(server_config(client_authenticator, *receiver));
+  ASSERT_TRUE(server.has_value()) << server.error().to_string();
+
+  auto client_context = network::TlsClientContext::create(client_tls());
+  auto request = encode_distributed_grouped_query_request_v1({1U, 2U, dispatch()});
+  ASSERT_TRUE(client_context.has_value());
+  ASSERT_TRUE(request.has_value());
+  Authenticator server_authenticator{92U};
+  const auto start = DistributedGroupedQueryTcpClient::TimePoint::clock::now();
+  auto client = DistributedGroupedQueryTcpClient::begin(
+      {1U, 2U, std::move(*request)},
+      {.remote_endpoint = server->bound_endpoint(),
+       .tls_context = &*client_context,
+       .carrier = {.authenticator = &server_authenticator,
+                   .node_authorizer = &authorizer,
+                   .peer_ipv4_address = {127U, 0U, 0U, 1U},
+                   .limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                              .exchange_timeout = std::chrono::milliseconds{1000},
+                              .maximum_response_frames = 4U}},
+       .connect_timeout = std::chrono::milliseconds{1000}},
+      start);
+  ASSERT_TRUE(client.has_value());
+
+  for (std::size_t iteration = 0U; iteration < 2048U; ++iteration) {
+    const auto interest = client->interest();
+    pollfd descriptor{.fd = client->descriptor(),
+                      .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
+                                                   (interest.want_write ? POLLOUT : 0))};
+    ASSERT_GE(::poll(&descriptor, 1U, 1), 0);
+    ASSERT_TRUE(client
+                    ->on_ready((descriptor.revents & POLLIN) != 0,
+                               (descriptor.revents & POLLOUT) != 0,
+                               DistributedGroupedQueryTcpClient::TimePoint::clock::now())
+                    .is_ok())
+        << client->failure().to_string();
+    ASSERT_TRUE(server->poll_once(std::chrono::milliseconds{1}).is_ok());
+    if (client->state() == DistributedGroupedQueryTcpClientState::kComplete)
+      break;
+  }
+
+  ASSERT_EQ(client->state(), DistributedGroupedQueryTcpClientState::kComplete);
+  auto responses = client->responses();
+  ASSERT_TRUE(responses.has_value());
+  ASSERT_EQ(responses->size(), 2U);
+  EXPECT_EQ(std::get<query::GroupedFloat64ExchangeMessage>(*(*responses)[0].payload).partial.sum,
+            2.5);
+  EXPECT_EQ(std::get<query::GroupedFloat64ExchangeMessage>(*(*responses)[1].payload).partial.sum,
+            7.5);
+  EXPECT_EQ(worker.calls, 1U);
+  EXPECT_TRUE(client_authenticator.saw_fingerprint);
+  EXPECT_TRUE(server_authenticator.saw_fingerprint);
+  const auto metrics = server->metrics();
+  EXPECT_EQ(metrics.accepted_connections, 1U);
+  EXPECT_EQ(metrics.completed_connections, 1U);
+  EXPECT_EQ(metrics.active_connections, 0U);
+  EXPECT_TRUE(server->shutdown().is_ok());
+  EXPECT_FALSE(server->is_running());
+}
+
+TEST(DistributedGroupedQueryTcpServerTest, BoundsAdmissionAndValidatesConfiguration) {
+  Authorizer authorizer;
+  Worker worker;
+  auto receiver = DistributedGroupedQueryReceiver::create(
+      {.local_node_id = 2U, .authorizer = &authorizer, .worker = &worker});
+  ASSERT_TRUE(receiver.has_value());
+  Authenticator authenticator{91U};
+  auto invalid = server_config(authenticator, *receiver);
+  invalid.maximum_connections = 0U;
+  EXPECT_EQ(DistributedGroupedQueryTcpServer::start(std::move(invalid)).error().code(),
+            common::StatusCode::kInvalidArgument);
+
+  auto config = server_config(authenticator, *receiver);
+  config.maximum_connections = 1U;
+  auto server = DistributedGroupedQueryTcpServer::start(std::move(config));
+  ASSERT_TRUE(server.has_value());
+  auto first = network::TcpSocket::begin_connect(server->bound_endpoint());
+  auto second = network::TcpSocket::begin_connect(server->bound_endpoint());
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(second.has_value());
+  for (std::size_t iteration = 0U; iteration < 64U && server->metrics().rejected_connections == 0U;
+       ++iteration) {
+    ASSERT_TRUE(server->poll_once(std::chrono::milliseconds{1}).is_ok());
+    for (network::TcpSocket* socket : {&*first, &*second}) {
+      if (socket->valid() && socket->connect_state() == network::TcpConnectState::kInProgress) {
+        pollfd descriptor{.fd = socket->descriptor(), .events = POLLOUT};
+        if (::poll(&descriptor, 1U, 0) > 0)
+          (void)socket->finish_connect();
+      }
+    }
+  }
+  const auto metrics = server->metrics();
+  EXPECT_EQ(metrics.accepted_connections, 1U);
+  EXPECT_EQ(metrics.rejected_connections, 1U);
+  EXPECT_EQ(metrics.active_connections, 1U);
+  EXPECT_TRUE(server->shutdown().is_ok());
+  EXPECT_EQ(server->metrics().active_connections, 0U);
 }
 
 } // namespace

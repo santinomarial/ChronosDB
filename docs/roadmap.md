@@ -1027,8 +1027,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   multi-response stream over one already-connected nonblocking socket, and withholds client results
   until terminal closure. A move-only outbound TCP composite now validates before connect, proves
   nonblocking completion, binds route identity, enforces a separate connect deadline, and preserves
-  TLS-before-descriptor teardown. Inbound listener/server ownership, sender ownership, and packaged
-  multi-tablet grouped execution remain.
+  TLS-before-descriptor teardown. A bounded TCP server now owns the listener/TLS lifetime, finite
+  admission, stable connection records, metrics, and deterministic shutdown. Sender ownership and
+  packaged multi-tablet grouped execution remain.
   Multi-key/non-FLOAT64 state/transport, ordering, top-N, and LIMIT remain deferred. A distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
   catalog, Manifest, route, and execution gates;

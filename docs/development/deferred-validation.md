@@ -284,10 +284,11 @@
   mutual-TLS client/server pair now owns authentication-before-bytes, ordered multi-response short
   I/O, finite deadlines, and terminal-only client publication on an already-connected socket. A
   deadline-bound outbound TCP composite now owns validation-before-connect, exact route identity,
-  nonblocking completion, and TLS-before-descriptor teardown. Inbound listener/server ownership and
-  sender/coordinator plus packaged grouped execution remain incomplete. A move-only service owner
-  keeps the worker and authenticated receiver at stable addresses and proves the complete in-process
-  canonical request-to-real-CSEG response path.
+  nonblocking completion, and TLS-before-descriptor teardown. A bounded inbound TCP server now owns
+  finite admission, stable carrier/descriptor records, deadlines, metrics, and ordered shutdown.
+  Sender/coordinator plus packaged grouped execution remain incomplete. A move-only service owner
+  keeps the worker and authenticated receiver at stable addresses and proves the complete
+  in-process canonical request-to-real-CSEG response path.
 - Proof-bound leader-linearizable/bounded-stale/local-eventual admissions now remain attached through
   compatible pinned multi-tablet snapshots and protocol/carrier scheduling. Whole-query replacement
   now validates fresh caller-proved authority, identical logical shape, nonregressing generation,

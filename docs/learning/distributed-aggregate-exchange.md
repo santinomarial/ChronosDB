@@ -56,7 +56,8 @@ mutual-TLS client/server pair then owns one already-connected nonblocking socket
 peers before protocol bytes, preserves the encoded response order, and exposes client response
 values only after terminal closure. Its outbound TCP composite owns nonblocking connection
 completion, exact route binding, a separate connect deadline, and carrier-before-descriptor
-teardown; inbound listener ownership and scheduling remain separate.
+teardown. A dedicated bounded grouped TCP server owns listener/TLS lifetime, finite admission,
+stable connection records, metrics, and deterministic shutdown; scheduling remains separate.
 The dispatch envelope adds the distinct Raft group identity that scopes every admission index;
 workers never execute the bare inner fragment.
 `bind_distributed_aggregate_fragment` constructs that envelope only after one Manifest v2 snapshot,
@@ -153,6 +154,9 @@ one TLS operation per readiness call and apply sticky handshake/exchange deadlin
 `DistributedGroupedQueryTcpClient` validates the attempt and route before opening a socket, creates
 TLS only after authoritative connect completion, and delegates the terminal response publication
 boundary without adding retry policy.
+`DistributedGroupedQueryTcpServer` reserves its connection and poll tables at startup, admits only a
+finite number per poll, keeps each carrier/descriptor pair at a stable allocation, and destroys the
+carrier before its borrowed descriptor on completion, failure, and shutdown.
 `DistributedQueryTcpServer` owns the dedicated listener, long-lived TLS context, fixed-capacity poll
 storage, bounded stable connection records, deadline driving, metrics, and carrier-before-descriptor
 shutdown order for real multi-connection serving.
@@ -184,7 +188,7 @@ A fixed ungrouped-aggregate frame gives partial-I/O carriers an unambiguous payl
 prematurely defining a general physical-fragment language. The cost is a specialized first exchange
 type. A separate first grouped frame now carries one nullable FLOAT64 key with bounded
 coordination and authenticated multi-response TLS ownership, but multi-key and non-FLOAT64
-grouping, general physical plans, inbound TCP/sender packaging, ordering/top-N, cancellation
+grouping, general physical plans, sender packaging, ordering/top-N, cancellation
 delivery, and durable recovery require their own bounded contracts. A leader hint never mutates an existing
 proof-bound dispatch: following it requires explicit coordinator rebinding.
 The replicated read-barrier owner now returns exact correlated leader observations for

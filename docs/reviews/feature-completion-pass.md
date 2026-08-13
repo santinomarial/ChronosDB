@@ -243,9 +243,9 @@ execution gates to stable same-term leader/follower observation pairs. General v
 grouping/order/top-N/LIMIT remains incomplete. A distinct canonical frame now carries one nullable
 FLOAT64 group key and mergeable partial with SQL-equivalent signed-zero/NaN canonicalization. An
 authenticated mutual-TLS carrier owns its bounded ordered response stream, and a deadline-bound
-outbound TCP composite owns one validated connection attempt. Inbound TCP server ownership,
-sender/coordinator integration, packaged grouped execution, and multi-key/non-FLOAT64 state remain
-incomplete. A distinct
+outbound TCP composite owns one validated connection attempt. A bounded inbound TCP server owns
+finite admission and stable carrier/descriptor lifetime. Sender/coordinator integration, packaged
+grouped execution, and multi-key/non-FLOAT64 state remain incomplete. A distinct
 canonical observation protocol, authenticated receiver, mTLS clients/servers, finite multi-address
 acquisition, correlated
 leader/follower pairs, canonical all-group batches, placement-backed construction, and packaged
@@ -526,6 +526,12 @@ Focused executions passed:
   connect-deadline closure with descriptor release. The installed-consumer gate covers the public
   client constructor. Inbound listener/server ownership, sender/coordinator integration, and
   packaged multi-tablet execution are not claimed.
+- Grouped inbound-TCP continuation: 2 focused cases passed for a real grouped-client loopback query
+  returning the complete two-frame stream with exact authentication and completion metrics, plus a
+  one-slot/two-connection admission gate proving one explicit rejection, bounded active state,
+  invalid configuration rejection, and deterministic shutdown. The installed-consumer gate covers
+  the public server constructor. Production real-CSEG service composition, sender/coordinator
+  integration, and packaged multi-tablet execution are not claimed.
 
 The C++ files changed by the grouped-exchange continuations pass the repository-pinned clang-format
 18 check. A full-tree check was also run and still reports pre-existing violations in the

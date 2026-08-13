@@ -61,9 +61,9 @@ A second case proves invalid response bounds are rejected and the exact handshak
 a sticky `UNAVAILABLE` failure. The installed external-consumer gate constructs both public owners.
 
 ADR 0336 subsequently supplies outbound nonblocking TCP connection ownership. Inbound TCP
-listener/server ownership, mid-stream peer-close fault injection, sender/coordinator integration,
-packaged multi-tablet grouped execution, multi-process failover, and broad fault/measurement
-evidence remain incomplete. No Phase 16 exit gate is claimed.
+listener/server ownership follows in ADR 0337. Mid-stream peer-close fault injection,
+sender/coordinator integration, packaged multi-tablet grouped execution, multi-process failover, and
+broad fault/measurement evidence remain incomplete. No Phase 16 exit gate is claimed.
 
 Invariants 4–6, 10, 11, 14, 15, and 18 apply.
 

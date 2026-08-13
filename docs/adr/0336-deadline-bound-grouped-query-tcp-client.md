@@ -48,9 +48,9 @@ and returns two ordered partials only after terminal closure. A second test prov
 limit is rejected and the exact connect deadline creates a sticky `UNAVAILABLE` failure after the
 descriptor is closed. The installed external-consumer gate references the public constructor.
 
-Inbound TCP listener/server ownership, sender/coordinator integration, packaged multi-tablet
-execution, multi-process failover, and broad fault/measurement evidence remain incomplete. No Phase
-16 exit gate is claimed.
+ADR 0337 subsequently supplies bounded inbound TCP listener/server ownership. Sender/coordinator
+integration, packaged multi-tablet execution, multi-process failover, and broad fault/measurement
+evidence remain incomplete. No Phase 16 exit gate is claimed.
 
 Invariants 5, 6, 10, 11, 14, 15, and 18 apply.
 

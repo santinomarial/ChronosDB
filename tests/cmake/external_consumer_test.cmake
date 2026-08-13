@@ -53,6 +53,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #endif
 #include <chronos/cluster/tablet_physical_receipt_reclamation.hpp>
 #include <chronos/cluster/distributed_grouped_query_tcp_client.hpp>
+#include <chronos/cluster/distributed_grouped_query_tcp_server.hpp>
 #include <chronos/cluster/distributed_grouped_query_transport.hpp>
 #include <chronos/cluster/distributed_grouped_query_tls.hpp>
 #include <chronos/cluster/distributed_query_transport.hpp>
@@ -921,6 +922,8 @@ int main() {
       &chronos::cluster::DistributedGroupedQueryReceiver::create;
   const auto begin_distributed_grouped_query_tcp_client =
       &chronos::cluster::DistributedGroupedQueryTcpClient::begin;
+  const auto start_distributed_grouped_query_tcp_server =
+      &chronos::cluster::DistributedGroupedQueryTcpServer::start;
   const auto create_distributed_grouped_query_tls_client =
       &chronos::cluster::DistributedGroupedQueryTlsClient::create;
   const auto create_distributed_grouped_query_tls_server =
@@ -1215,6 +1218,7 @@ int main() {
                  create_distributed_grouped_query_cursor != nullptr &&
                  create_distributed_grouped_query_receiver != nullptr &&
                  begin_distributed_grouped_query_tcp_client != nullptr &&
+                 start_distributed_grouped_query_tcp_server != nullptr &&
                  create_distributed_grouped_query_tls_client != nullptr &&
                  create_distributed_grouped_query_tls_server != nullptr &&
                  execute_distributed_fragment != nullptr &&
