@@ -320,6 +320,10 @@ nonblocking connect, proves `SO_ERROR` completion, and creates TLS only afterwar
 authenticated peer address to match the endpoint and declares ownership so TLS is destroyed before
 its borrowed descriptor. Retry, address rotation, and listener admission remain above or beside
 this one-attempt boundary.
+The matching v2 inbound TCP owner reserves a finite connection table and poll set at startup,
+admits only bounded work per poll, and holds each socket/carrier pair behind a stable handle. It
+drives TLS deadlines even without readiness, rejects excess accepted descriptors immediately,
+exposes saturating lifecycle metrics, and clears every carrier before the listener on shutdown.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated

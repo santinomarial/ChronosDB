@@ -781,12 +781,20 @@ Focused executions passed:
   rejection. Header self-containment and installed consumption cover the API. Inbound listener
   ownership, retry, production worker execution, coordination, and process integration remain
   incomplete.
+- Bounded vector-query-v2 TCP-server continuation: one move-only listener owner validates TLS and
+  exact frame/byte/deadline limits before bind, reserves finite connection/poll storage, bounds
+  accepts per poll, keeps every carrier/socket pair at a stable reverse-safe address, and exposes
+  saturating admission/completion/failure metrics. Real loopback coverage completes the v2 TCP
+  client through mutual TLS; a one-slot case proves explicit excess rejection, invalid
+  configuration/poll rejection, and ordered idempotent shutdown. Header self-containment and
+  installed consumption cover the API. Retry, production worker construction, schema-bound
+  coordination, multi-tablet execution, and process integration remain incomplete.
 
 The C++ files changed by the grouped-, vector-exchange-, Fragment-v2-, and vector-transport-v2
 continuations pass the repository-pinned clang-format 18 check. A full-tree check was also run and
 still reports pre-existing violations in the subscription protocol, subscription, multi-tablet
 checkpoint implementation, and focused subscription test files; these slices do not rewrite those
-unrelated files or claim a full-tree formatting pass. The full serialized 1,579-test developer
+unrelated files or claim a full-tree formatting pass. The full serialized 1,581-test developer
 suite, focused ASan/UBSan cases, and a deterministic 10,000-run transport-v2 fuzz campaign pass.
 Apple's sanitizer runtime does not support LeakSanitizer, so those sanitizer runs explicitly
 disabled leak detection. Broader cross-compiler/Linux parity, benchmark, profile, and chaos checks

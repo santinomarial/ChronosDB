@@ -1,4 +1,5 @@
 #include "chronos/cluster/distributed_vector_query_tcp_client_v2.hpp"
+#include "chronos/cluster/distributed_vector_query_tcp_server_v2.hpp"
 
 #include <array>
 #include <chrono>
@@ -131,6 +132,17 @@ public:
           .exchange_timeout = std::chrono::milliseconds{1000},
           .maximum_response_frames = 4U,
           .maximum_response_bytes = std::size_t{1024U} * 1024U};
+}
+
+[[nodiscard]] DistributedVectorQueryTcpServerConfigV2
+server_config(Authenticator& authenticator, DistributedVectorQueryReceiverV2& receiver) {
+  return {.listener = {},
+          .tls = server_tls(),
+          .authenticator = &authenticator,
+          .receiver = &receiver,
+          .carrier_limits = limits(),
+          .maximum_connections = 8U,
+          .maximum_accepts_per_poll = 8U};
 }
 
 TEST(DistributedVectorQueryTcpClientV2Test, OwnsConnectAndCompleteMutualTlsStream) {
@@ -279,6 +291,119 @@ TEST(DistributedVectorQueryTcpClientV2Test, ValidatesBeforeConnectAndExpiresExac
   EXPECT_EQ(DistributedVectorQueryTcpClientV2::begin({1U, 2U, std::move(*second)}, config, start)
                 .error()
                 .code(),
+            common::StatusCode::kInvalidArgument);
+}
+
+TEST(DistributedVectorQueryTcpServerV2Test, ServesRealTcpMutualTlsStream) {
+  Authorizer authorizer;
+  Worker worker;
+  auto receiver = DistributedVectorQueryReceiverV2::create(
+      {.local_node_id = 2U, .authorizer = &authorizer, .worker = &worker});
+  ASSERT_TRUE(receiver.has_value());
+  Authenticator client_authenticator{91U};
+  auto server =
+      DistributedVectorQueryTcpServerV2::start(server_config(client_authenticator, *receiver));
+  ASSERT_TRUE(server.has_value()) << server.error().to_string();
+
+  auto client_context = network::TlsClientContext::create(client_tls());
+  auto request = encode_distributed_vector_query_request_v2({1U, 2U, dispatch_v2()});
+  ASSERT_TRUE(client_context.has_value());
+  ASSERT_TRUE(request.has_value());
+  Authenticator server_authenticator{92U};
+  const auto start = DistributedVectorQueryTcpClientV2::TimePoint::clock::now();
+  auto client =
+      DistributedVectorQueryTcpClientV2::begin({1U, 2U, std::move(*request)},
+                                               {.remote_endpoint = server->bound_endpoint(),
+                                                .tls_context = &*client_context,
+                                                .carrier = {.authenticator = &server_authenticator,
+                                                            .node_authorizer = &authorizer,
+                                                            .peer_ipv4_address = {127U, 0U, 0U, 1U},
+                                                            .limits = limits()},
+                                                .connect_timeout = std::chrono::milliseconds{1000}},
+                                               start);
+  ASSERT_TRUE(client.has_value());
+
+  for (std::size_t iteration = 0U; iteration < 4096U; ++iteration) {
+    const auto interest = client->interest();
+    pollfd descriptor{.fd = client->descriptor(),
+                      .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
+                                                   (interest.want_write ? POLLOUT : 0))};
+    ASSERT_GE(::poll(&descriptor, 1U, 1), 0);
+    ASSERT_TRUE(client
+                    ->on_ready((descriptor.revents & POLLIN) != 0,
+                               (descriptor.revents & POLLOUT) != 0,
+                               DistributedVectorQueryTcpClientV2::TimePoint::clock::now())
+                    .is_ok())
+        << client->failure().to_string();
+    ASSERT_TRUE(server->poll_once(std::chrono::milliseconds{1}).is_ok());
+    if (client->state() == DistributedVectorQueryTcpClientStateV2::kComplete)
+      break;
+  }
+
+  ASSERT_EQ(client->state(), DistributedVectorQueryTcpClientStateV2::kComplete);
+  const auto responses = client->responses();
+  ASSERT_TRUE(responses.has_value());
+  ASSERT_EQ(responses->size(), 2U);
+  ASSERT_TRUE((*responses)[1].payload.has_value());
+  // Guarded by the payload assertion above.
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+  EXPECT_TRUE((*responses)[1].payload.value().terminal);
+  EXPECT_EQ(worker.calls, 1U);
+  EXPECT_TRUE(client_authenticator.saw_fingerprint);
+  EXPECT_TRUE(server_authenticator.saw_fingerprint);
+  const auto server_metrics = server->metrics();
+  EXPECT_EQ(server_metrics.accepted_connections, 1U);
+  EXPECT_EQ(server_metrics.completed_connections, 1U);
+  EXPECT_EQ(server_metrics.failed_connections, 0U);
+  EXPECT_EQ(server_metrics.active_connections, 0U);
+  EXPECT_TRUE(server->shutdown().is_ok());
+  EXPECT_TRUE(server->shutdown().is_ok());
+  EXPECT_FALSE(server->is_running());
+}
+
+TEST(DistributedVectorQueryTcpServerV2Test, BoundsAdmissionAndValidatesConfiguration) {
+  Authorizer authorizer;
+  Worker worker;
+  auto receiver = DistributedVectorQueryReceiverV2::create(
+      {.local_node_id = 2U, .authorizer = &authorizer, .worker = &worker});
+  ASSERT_TRUE(receiver.has_value());
+  Authenticator authenticator{91U};
+  auto invalid_config = server_config(authenticator, *receiver);
+  invalid_config.carrier_limits.maximum_response_bytes = 115U;
+  EXPECT_EQ(DistributedVectorQueryTcpServerV2::start(std::move(invalid_config)).error().code(),
+            common::StatusCode::kInvalidArgument);
+
+  auto config = server_config(authenticator, *receiver);
+  config.maximum_connections = 1U;
+  auto server = DistributedVectorQueryTcpServerV2::start(std::move(config));
+  ASSERT_TRUE(server.has_value());
+  EXPECT_EQ(server->poll_once(std::chrono::milliseconds{-1}).code(),
+            common::StatusCode::kInvalidArgument);
+  auto first = network::TcpSocket::begin_connect(server->bound_endpoint());
+  auto second = network::TcpSocket::begin_connect(server->bound_endpoint());
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(second.has_value());
+  for (std::size_t iteration = 0U; iteration < 64U && server->metrics().rejected_connections == 0U;
+       ++iteration) {
+    ASSERT_TRUE(server->poll_once(std::chrono::milliseconds{1}).is_ok());
+    for (network::TcpSocket* socket : {&*first, &*second}) {
+      if (socket->valid() && socket->connect_state() == network::TcpConnectState::kInProgress) {
+        pollfd descriptor{.fd = socket->descriptor(), .events = POLLOUT};
+        if (::poll(&descriptor, 1U, 0) > 0) {
+          const auto connected = socket->finish_connect();
+          ASSERT_TRUE(connected.has_value());
+        }
+      }
+    }
+  }
+  const auto server_metrics = server->metrics();
+  EXPECT_EQ(server_metrics.accepted_connections, 1U);
+  EXPECT_EQ(server_metrics.rejected_connections, 1U);
+  EXPECT_EQ(server_metrics.active_connections, 1U);
+  EXPECT_TRUE(server->shutdown().is_ok());
+  EXPECT_EQ(server->metrics().active_connections, 0U);
+  EXPECT_FALSE(server->is_running());
+  EXPECT_EQ(server->poll_once(std::chrono::milliseconds{0}).code(),
             common::StatusCode::kInvalidArgument);
 }
 

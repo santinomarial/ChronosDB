@@ -1058,8 +1058,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   protocol I/O, retain no fixed maximum-frame scratch, and expose results only after exact terminal
   closure under sticky deadlines. A move-only outbound TCP composite now validates the exact
   attempt before acquisition, proves nonblocking completion, binds authenticated route identity,
-  enforces a separate connect deadline, and preserves TLS-before-descriptor teardown. Inbound
-  listener ownership, schema-bound coordination, and execution remain deferred. A distinct
+  enforces a separate connect deadline, and preserves TLS-before-descriptor teardown. A bounded
+  inbound TCP owner now adds finite listener admission, stable connection records, metrics,
+  per-carrier deadlines, and deterministic shutdown. Schema-bound coordination and execution
+  remain deferred. A distinct
   group-scoped grouped dispatch now
   preserves exact Raft authority without reinterpreting ungrouped dispatch bytes. Its worker reuses
   every local authority gate, resolves real temporal CSEG winners, and emits canonical grouped
