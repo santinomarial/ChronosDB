@@ -20,6 +20,9 @@ namespace {
 inline constexpr std::array<std::byte, 8U> kMagic{std::byte{'C'}, std::byte{'H'}, std::byte{'D'},
                                                   std::byte{'X'}, std::byte{'G'}, std::byte{'R'},
                                                   std::byte{'P'}, std::byte{'1'}};
+inline constexpr std::array<std::byte, 8U> kTerminalMagic{
+    std::byte{'C'}, std::byte{'H'}, std::byte{'D'}, std::byte{'X'},
+    std::byte{'G'}, std::byte{'R'}, std::byte{'T'}, std::byte{'1'}};
 inline constexpr std::uint32_t kTerminalFlag = 1U << 0U;
 inline constexpr std::uint32_t kKeyPresentFlag = 1U << 1U;
 inline constexpr std::uint32_t kMinimumFlag = 1U << 2U;
@@ -71,6 +74,14 @@ EncodedGroupedFloat64ExchangeMessage::EncodedGroupedFloat64ExchangeMessage(
     : bytes_(std::move(bytes)) {}
 
 common::ByteView EncodedGroupedFloat64ExchangeMessage::bytes() const noexcept {
+  return bytes_;
+}
+
+EncodedGroupedExchangeTerminalMessage::EncodedGroupedExchangeTerminalMessage(
+    std::array<std::byte, grouped_exchange_terminal_format::kFrameLength> bytes) noexcept
+    : bytes_(std::move(bytes)) {}
+
+common::ByteView EncodedGroupedExchangeTerminalMessage::bytes() const noexcept {
   return bytes_;
 }
 
@@ -215,6 +226,85 @@ decode_grouped_float64_exchange_message_exact(const common::ByteView bytes) {
   if (!validate_message(message).is_ok())
     return common::make_unexpected(corruption("grouped exchange aggregate state is invalid"));
   return message;
+}
+
+common::Result<EncodedGroupedExchangeTerminalMessage>
+encode_grouped_exchange_terminal_message(const GroupedExchangeTerminalMessage& message) {
+  if (message.query_id.is_nil() || message.tablet_id.uuid().is_nil() || message.sequence == 0U)
+    return common::make_unexpected(invalid("grouped terminal identity or sequence is invalid"));
+  std::array<std::byte, grouped_exchange_terminal_format::kFrameLength> bytes{};
+  common::ByteWriter writer{bytes};
+  common::Status status = writer.write_exact(kTerminalMagic);
+  if (status.is_ok())
+    status = writer.write_u16_le(grouped_exchange_terminal_format::kMajor);
+  if (status.is_ok())
+    status = writer.write_u16_le(grouped_exchange_terminal_format::kMinor);
+  if (status.is_ok())
+    status = writer.write_u32_le(grouped_exchange_terminal_format::kFrameLength);
+  if (status.is_ok())
+    status = writer.write_exact(message.query_id.bytes());
+  if (status.is_ok())
+    status = writer.write_exact(message.tablet_id.bytes());
+  if (status.is_ok())
+    status = writer.write_u64_le(message.sequence);
+  if (status.is_ok())
+    status = writer.zero_fill(4U);
+  if (!status.is_ok() || writer.offset() != bytes.size() - 4U) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kInternal, "grouped terminal layout differs from its length"});
+  }
+  status = writer.write_u32_le(common::crc32c(common::ByteView{bytes}.first(bytes.size() - 4U)));
+  if (!status.is_ok() || !writer.full()) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kInternal, "grouped terminal checksum does not fit its layout"});
+  }
+  return EncodedGroupedExchangeTerminalMessage{std::move(bytes)};
+}
+
+common::Result<GroupedExchangeTerminalMessage>
+decode_grouped_exchange_terminal_message_exact(const common::ByteView bytes) {
+  if (bytes.size() != grouped_exchange_terminal_format::kFrameLength)
+    return common::make_unexpected(corruption("grouped terminal frame length is not exact"));
+  if (!std::ranges::equal(bytes.first(kTerminalMagic.size()), kTerminalMagic))
+    return common::make_unexpected(corruption("grouped terminal frame magic is invalid"));
+  common::ByteReader checksum_reader{bytes.last(4U)};
+  const auto stored_crc = checksum_reader.read_u32_le();
+  if (!stored_crc.has_value() || *stored_crc != common::crc32c(bytes.first(bytes.size() - 4U)))
+    return common::make_unexpected(corruption("grouped terminal frame checksum is invalid"));
+  common::ByteReader reader{bytes};
+  if (!reader.skip(kTerminalMagic.size()).is_ok())
+    return common::make_unexpected(corruption("grouped terminal header is truncated"));
+  const auto major = reader.read_u16_le();
+  const auto minor = reader.read_u16_le();
+  const auto length = reader.read_u32_le();
+  if (!major.has_value() || !minor.has_value() || !length.has_value())
+    return common::make_unexpected(corruption("grouped terminal header is truncated"));
+  if (*major != grouped_exchange_terminal_format::kMajor ||
+      *minor != grouped_exchange_terminal_format::kMinor) {
+    return common::make_unexpected(common::Status{common::StatusCode::kNotSupported,
+                                                  "grouped terminal version is unsupported"});
+  }
+  if (*length != grouped_exchange_terminal_format::kFrameLength)
+    return common::make_unexpected(corruption("grouped terminal encoded length is invalid"));
+  const auto query_bytes = reader.read_exact(common::Uuid::kSize);
+  const auto tablet_bytes = reader.read_exact(common::Uuid::kSize);
+  const auto sequence = reader.read_u64_le();
+  const auto reserved = reader.read_exact(4U);
+  if (!query_bytes.has_value() || !tablet_bytes.has_value() || !sequence.has_value() ||
+      !reserved.has_value() || reader.remaining() != 4U) {
+    return common::make_unexpected(corruption("grouped terminal payload is truncated"));
+  }
+  if (std::ranges::any_of(*reserved, [](const std::byte value) { return value != std::byte{0U}; }))
+    return common::make_unexpected(corruption("grouped terminal reserved bytes differ"));
+  common::Uuid::Bytes query_id_bytes{};
+  common::Uuid::Bytes tablet_id_bytes{};
+  std::ranges::copy(*query_bytes, query_id_bytes.begin());
+  std::ranges::copy(*tablet_bytes, tablet_id_bytes.begin());
+  auto tablet_id = schema::TabletId::from_bytes(tablet_id_bytes);
+  if (!tablet_id.has_value() || common::Uuid{query_id_bytes}.is_nil() || *sequence == 0U)
+    return common::make_unexpected(corruption("grouped terminal identity or sequence is invalid"));
+  return GroupedExchangeTerminalMessage{
+      .query_id = common::Uuid{query_id_bytes}, .tablet_id = *tablet_id, .sequence = *sequence};
 }
 
 common::Result<GroupedFloat64ExchangeFrameReadStep>

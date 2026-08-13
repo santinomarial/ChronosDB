@@ -58,3 +58,25 @@ The move-only grouped write cursor owns one canonical frame and exposes only its
 An over-advance fails before changing progress. Moving forces the source complete so it cannot
 retransmit the same bytes. These primitives define byte ownership only, not a socket or retry
 protocol.
+
+## Empty-stream terminal
+
+A tablet with no groups cannot emit an empty partial under a NULL key because NULL is a real group.
+It instead emits the distinct 64-byte Grouped Exchange Terminal v1 frame:
+
+| Offset | Size | Field |
+| ---: | ---: | --- |
+| 0 | 8 | Magic `CHDXGRT1` |
+| 8 | 2 | Major version `1` |
+| 10 | 2 | Minor version `0` |
+| 12 | 4 | Exact frame length `64` |
+| 16 | 16 | Query UUID |
+| 32 | 16 | Tablet UUID |
+| 48 | 8 | Per-tablet message sequence, nonzero |
+| 56 | 4 | Zero reserved bytes |
+| 60 | 4 | CRC32C of bytes `[0, 60)` |
+
+The frame has no key or partial; successful exact decoding is the terminal event. An empty stream
+uses sequence 1. Distinct magic prevents reinterpretation as a NULL group. Nonempty streams may
+still mark their last grouped partial terminal. Contiguous sequencing and duplicate arbitration
+belong to the future grouped coordinator.

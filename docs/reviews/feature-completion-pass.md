@@ -454,6 +454,9 @@ Focused executions passed:
 - Grouped partial-I/O continuation: 1 focused case passed for all 137 split positions, coalesced
   successor ownership, sticky corruption, exact short-write suffixes, overrun rollback, and
   move-only cursor transfer. Grouped transport and coordination are not claimed.
+- Empty grouped-terminal continuation: 1 focused case passed for the distinct terminal-only layout,
+  exact identity/sequence/CRC round trip, and truncation/version/reserved/input rejection. It does
+  not fabricate a NULL group; grouped coordination is not claimed.
 
 The final C++ tree passed the repository-pinned clang-format 18 check. Full-suite, sanitizer, fuzz,
 broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were deliberately not run.

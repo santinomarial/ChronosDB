@@ -17,6 +17,7 @@ namespace chronos::query {
 namespace {
 
 using Frame = std::array<std::byte, grouped_float64_exchange_format::kFrameLength>;
+using TerminalFrame = std::array<std::byte, grouped_exchange_terminal_format::kFrameLength>;
 
 [[nodiscard]] common::Uuid uuid(const std::uint8_t seed) {
   common::Uuid::Bytes bytes{};
@@ -28,22 +29,28 @@ using Frame = std::array<std::byte, grouped_float64_exchange_format::kFrameLengt
   return schema::TabletId::from_uuid(uuid(seed)).value();
 }
 
-void store_u16_le(Frame& bytes, const std::size_t offset, const std::uint16_t value) {
+template <std::size_t Size>
+void store_u16_le(std::array<std::byte, Size>& bytes, const std::size_t offset,
+                  const std::uint16_t value) {
   bytes[offset] = static_cast<std::byte>(value & 0xffU);
   bytes[offset + 1U] = static_cast<std::byte>((value >> 8U) & 0xffU);
 }
 
-void store_u32_le(Frame& bytes, const std::size_t offset, const std::uint32_t value) {
+template <std::size_t Size>
+void store_u32_le(std::array<std::byte, Size>& bytes, const std::size_t offset,
+                  const std::uint32_t value) {
   for (std::size_t index = 0U; index < 4U; ++index)
     bytes[offset + index] = static_cast<std::byte>((value >> (index * 8U)) & 0xffU);
 }
 
-void store_u64_le(Frame& bytes, const std::size_t offset, const std::uint64_t value) {
+template <std::size_t Size>
+void store_u64_le(std::array<std::byte, Size>& bytes, const std::size_t offset,
+                  const std::uint64_t value) {
   for (std::size_t index = 0U; index < 8U; ++index)
     bytes[offset + index] = static_cast<std::byte>((value >> (index * 8U)) & 0xffU);
 }
 
-void rewrite_crc(Frame& bytes) {
+template <std::size_t Size> void rewrite_crc(std::array<std::byte, Size>& bytes) {
   store_u32_le(bytes, bytes.size() - 4U,
                common::crc32c(common::ByteView{bytes}.first(bytes.size() - 4U)));
 }
@@ -249,6 +256,72 @@ TEST(DistributedGroupedExchangeTest, OwnsEveryReadSplitAndShortWriteSuffix) {
   GroupedFloat64ExchangeMessage invalid = first_message;
   invalid.sequence = 0U;
   EXPECT_EQ(GroupedFloat64ExchangeFrameWriteCursor::create(invalid).error().code(),
+            common::StatusCode::kInvalidArgument);
+}
+
+TEST(DistributedGroupedExchangeTest, EncodesDistinctEmptyStreamTerminalWithoutInventingNullGroup) {
+  const GroupedExchangeTerminalMessage terminal{
+      .query_id = uuid(0x31U), .tablet_id = tablet(0x32U), .sequence = 7U};
+  const auto encoded = encode_grouped_exchange_terminal_message(terminal);
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  common::ByteReader reader{encoded->bytes()};
+  const std::array<std::byte, 8U> magic{std::byte{'C'}, std::byte{'H'}, std::byte{'D'},
+                                        std::byte{'X'}, std::byte{'G'}, std::byte{'R'},
+                                        std::byte{'T'}, std::byte{'1'}};
+  EXPECT_TRUE(std::ranges::equal(reader.read_exact(8U).value(), magic));
+  EXPECT_EQ(reader.read_u16_le().value(), grouped_exchange_terminal_format::kMajor);
+  EXPECT_EQ(reader.read_u16_le().value(), grouped_exchange_terminal_format::kMinor);
+  EXPECT_EQ(reader.read_u32_le().value(), grouped_exchange_terminal_format::kFrameLength);
+  EXPECT_EQ(reader.read_exact(16U).value().front(), std::byte{0x31U});
+  EXPECT_EQ(reader.read_exact(16U).value().front(), std::byte{0x32U});
+  EXPECT_EQ(reader.read_u64_le().value(), 7U);
+  const auto reserved = reader.read_exact(4U);
+  ASSERT_TRUE(reserved.has_value());
+  EXPECT_TRUE(
+      std::ranges::all_of(*reserved, [](const std::byte value) { return value == std::byte{0U}; }));
+  EXPECT_EQ(reader.read_u32_le().value(),
+            common::crc32c(encoded->bytes().first(encoded->bytes().size() - 4U)));
+  EXPECT_TRUE(reader.empty());
+
+  const auto decoded = decode_grouped_exchange_terminal_message_exact(encoded->bytes());
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  EXPECT_EQ(decoded->query_id, terminal.query_id);
+  EXPECT_EQ(decoded->tablet_id, terminal.tablet_id);
+  EXPECT_EQ(decoded->sequence, terminal.sequence);
+
+  TerminalFrame bytes{};
+  std::ranges::copy(encoded->bytes(), bytes.begin());
+  EXPECT_EQ(decode_grouped_exchange_terminal_message_exact(
+                common::ByteView{bytes}.first(bytes.size() - 1U))
+                .error()
+                .code(),
+            common::StatusCode::kCorruption);
+  std::vector<std::byte> trailing(bytes.begin(), bytes.end());
+  trailing.push_back(std::byte{0U});
+  EXPECT_EQ(decode_grouped_exchange_terminal_message_exact(trailing).error().code(),
+            common::StatusCode::kCorruption);
+  TerminalFrame corrupt = bytes;
+  corrupt[40U] ^= std::byte{1U};
+  EXPECT_EQ(decode_grouped_exchange_terminal_message_exact(corrupt).error().code(),
+            common::StatusCode::kCorruption);
+  TerminalFrame future = bytes;
+  store_u16_le(future, 8U, grouped_exchange_terminal_format::kMajor + 1U);
+  rewrite_crc(future);
+  EXPECT_EQ(decode_grouped_exchange_terminal_message_exact(future).error().code(),
+            common::StatusCode::kNotSupported);
+  TerminalFrame damaged = bytes;
+  damaged[56U] = std::byte{1U};
+  rewrite_crc(damaged);
+  EXPECT_EQ(decode_grouped_exchange_terminal_message_exact(damaged).error().code(),
+            common::StatusCode::kCorruption);
+
+  GroupedExchangeTerminalMessage invalid = terminal;
+  invalid.sequence = 0U;
+  EXPECT_EQ(encode_grouped_exchange_terminal_message(invalid).error().code(),
+            common::StatusCode::kInvalidArgument);
+  invalid = terminal;
+  invalid.query_id = {};
+  EXPECT_EQ(encode_grouped_exchange_terminal_message(invalid).error().code(),
             common::StatusCode::kInvalidArgument);
 }
 

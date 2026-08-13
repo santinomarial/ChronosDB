@@ -29,6 +29,32 @@ inline constexpr std::size_t kFrameLength = 136U;
 inline constexpr std::uint64_t kCanonicalQuietNanBits = 0x7ff8'0000'0000'0000ULL;
 } // namespace grouped_float64_exchange_format
 
+struct GroupedExchangeTerminalMessage {
+  common::Uuid query_id;
+  schema::TabletId tablet_id;
+  std::uint64_t sequence{};
+};
+
+namespace grouped_exchange_terminal_format {
+inline constexpr std::uint16_t kMajor = 1U;
+inline constexpr std::uint16_t kMinor = 0U;
+inline constexpr std::size_t kFrameLength = 64U;
+} // namespace grouped_exchange_terminal_format
+
+class EncodedGroupedExchangeTerminalMessage {
+public:
+  [[nodiscard]] common::ByteView bytes() const noexcept;
+
+private:
+  explicit EncodedGroupedExchangeTerminalMessage(
+      std::array<std::byte, grouped_exchange_terminal_format::kFrameLength> bytes) noexcept;
+
+  std::array<std::byte, grouped_exchange_terminal_format::kFrameLength> bytes_{};
+
+  friend common::Result<EncodedGroupedExchangeTerminalMessage>
+  encode_grouped_exchange_terminal_message(const GroupedExchangeTerminalMessage&);
+};
+
 class EncodedGroupedFloat64ExchangeMessage {
 public:
   [[nodiscard]] common::ByteView bytes() const noexcept;
@@ -98,6 +124,14 @@ encode_grouped_float64_exchange_message(const GroupedFloat64ExchangeMessage& mes
 
 [[nodiscard]] common::Result<GroupedFloat64ExchangeMessage>
 decode_grouped_float64_exchange_message_exact(common::ByteView bytes);
+
+// Distinct terminal-only frame for an empty grouped tablet stream. It cannot be represented by a
+// NULL group key because NULL is a real SQL group identity.
+[[nodiscard]] common::Result<EncodedGroupedExchangeTerminalMessage>
+encode_grouped_exchange_terminal_message(const GroupedExchangeTerminalMessage& message);
+
+[[nodiscard]] common::Result<GroupedExchangeTerminalMessage>
+decode_grouped_exchange_terminal_message_exact(common::ByteView bytes);
 
 } // namespace chronos::query
 

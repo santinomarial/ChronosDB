@@ -1002,7 +1002,8 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   execution creation, and the move-only TCP lifecycle owner. A distinct canonical grouped exchange
   now carries one nullable FLOAT64 key and mergeable partial with signed-zero/NaN equivalence while
   preserving ungrouped v1 bytes; constant-storage fragmented reads and move-only short writes own
-  its partial-I/O boundary. General vector-plan fragments, multi-key/non-FLOAT64 grouped
+  its partial-I/O boundary. A distinct terminal-only frame closes an empty tablet without inventing
+  a SQL NULL group. General vector-plan fragments, multi-key/non-FLOAT64 grouped
   coordination/transport, ordering, top-N, and LIMIT remain deferred. A distinct bounded-stale
   constructor carries correlated leader/follower observations through the same catalog, Manifest,
   route, and execution gates;

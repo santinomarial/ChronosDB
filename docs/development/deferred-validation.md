@@ -258,6 +258,7 @@
   now canonically carries one nullable FLOAT64 group key plus one mergeable aggregate partial,
   including exact signed-zero/NaN group equivalence. Its fixed reader and move-only write cursor now
   cover every fragmentation boundary, coalesced suffix ownership, sticky damage, and short writes.
+  A distinct terminal-only frame closes an empty tablet stream without inventing a SQL NULL group.
 - Proof-bound leader-linearizable/bounded-stale/local-eventual admissions now remain attached through
   compatible pinned multi-tablet snapshots and protocol/carrier scheduling. Whole-query replacement
   now validates fresh caller-proved authority, identical logical shape, nonregressing generation,

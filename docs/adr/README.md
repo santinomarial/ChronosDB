@@ -356,3 +356,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0319](0319-owned-real-cseg-distributed-query-tcp-service.md) | Owned real-CSEG distributed-query TCP service | accepted |
 | [0320](0320-canonical-nullable-float64-grouped-exchange.md) | Canonical nullable-FLOAT64 grouped exchange | accepted |
 | [0321](0321-bounded-grouped-exchange-partial-io.md) | Bounded grouped-exchange partial I/O | accepted |
+| [0322](0322-distinct-empty-grouped-stream-terminal.md) | Distinct empty grouped-stream terminal | accepted |
