@@ -235,6 +235,10 @@ it does not reinterpret or duplicate the nested physical column format. Its nonm
 reader retains only the fixed header until integrity-covered outer and nested byte limits pass,
 then owns exactly one frame and leaves coalesced successors caller-owned. Its move-only cursor owns
 the exact short-write suffix and leaves a moved-from owner inert.
+A separate vector-plan intent describes row output, ungrouped or multi-key grouped aggregation,
+final order keys, and LIMIT using only bounded projected-input/final-output indices. The later
+authority binder must supply exact types and resource policy. ORDER plus LIMIT remains global
+intent and cannot be applied independently per tablet without a merge-preservation proof.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated

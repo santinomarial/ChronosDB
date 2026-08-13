@@ -262,8 +262,10 @@
   A distinct vector result envelope now carries one exact checksummed all-logical-type Columnar Batch
   v1 or terminal-only empty stream under query/tablet/sequence correlation. Its header-first reader
   enforces outer and nested byte limits before exact frame allocation, leaves coalesced successors
-  caller-owned, and pairs with move-only checked short-write ownership. General vector fragment
-  requests, coordination, authenticated transport, and execution remain.
+  caller-owned, and pairs with move-only checked short-write ownership. A distinct schema-neutral
+  plan intent now canonically describes row projection, ungrouped or multi-key grouped aggregates,
+  final output ordering, and LIMIT under bounded checked indices. Authority-bound vector fragments,
+  schema/type binding, global coordination, authenticated transport, and execution remain.
   A distinct terminal-only frame closes an empty tablet stream without inventing a SQL NULL group.
   Its separate fixed reader and move-only cursor own every terminal fragmentation boundary,
   coalesced successor bytes, sticky damage, and checked short writes without introducing an

@@ -1009,8 +1009,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   and canonical cross-tablet grouping. A distinct checksummed grouped-fragment intent now binds one
   projected key index around the existing snapshot/route/proof-bound aggregate fragment without
   changing its bytes. Its authority binder reuses the complete pinned Manifest/placement/group/
-  proof constructor and additionally proves the projected key FLOAT64 type. General vector-plan
-  fragments remain deferred; a distinct all-type vector-result envelope now has a header-first
+  proof constructor and additionally proves the projected key FLOAT64 type. A distinct canonical
+  schema-neutral vector-plan intent now covers row projection, all current aggregate operations,
+  multi-key grouping, final output ordering, and LIMIT without freezing schema types or native
+  physical-plan objects. Authority-bound vector fragments and execution remain deferred; a distinct
+  all-type vector-result envelope now has a header-first
   bounded reader and move-only short-write cursor that preserve coalesced suffix ownership without
   allocating from unchecked lengths. A distinct group-scoped grouped dispatch now
   preserves exact Raft authority without reinterpreting ungrouped dispatch bytes. Its worker reuses

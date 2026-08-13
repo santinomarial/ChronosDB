@@ -630,6 +630,12 @@ Focused executions passed:
   before payload buffering, and proved short-write suffix, overrun rollback, and moved-from cursor
   ownership. Header self-containment and the installed consumer cover the public API. General
   vector request fragments, coordination, authenticated transport, and execution are not claimed.
+- Distributed vector-plan intent continuation: two focused query cases round-tripped row,
+  ungrouped-aggregate, and multi-key grouped-aggregate shapes with final ordering and a present zero
+  LIMIT, then rejected truncation, an unknown version, noncanonical absent input, lower caller
+  bounds, duplicate groups, invalid COUNT(*), and invalid output order. Header self-containment and
+  installed consumption cover the public codec. Authority-bound vector fragments, schema/type
+  binding, global coordination, transport, and execution are not claimed.
 
 The C++ files changed by the grouped- and vector-exchange continuations pass the repository-pinned
 clang-format 18 check. A full-tree check was also run and still reports pre-existing violations in
