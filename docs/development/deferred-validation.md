@@ -314,8 +314,10 @@
   retries, owns a whole-query deadline and cancellation, and releases every live client before
   terminal failure. A bounded global row finalizer independently validates every closed stream and
   native batch, applies stable all-type ORDER BY then LIMIT, and emits exact bounded Protocol-v1
-  result batches including one schema-bearing zero-row result. Aggregate merge-state transport,
-  authority rebinding, and process integration remain.
+  result batches including one schema-bearing zero-row result. One shared in-memory all-type
+  aggregate kernel now merges exact sums, AVG/variance sufficient state, and bounded extrema for
+  local operators and future workers. Versioned aggregate-state transport, authority rebinding,
+  and process integration remain.
   A distinct terminal-only frame closes an empty tablet stream without inventing a SQL NULL group.
   Its separate fixed reader and move-only cursor own every terminal fragmentation boundary,
   coalesced successor bytes, sticky damage, and checked short writes without introducing an

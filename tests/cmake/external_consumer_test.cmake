@@ -985,6 +985,8 @@ int main() {
       .input = std::nullopt};
   const auto installed_count_shape =
       chronos::query::vector_aggregate_output_shape(installed_count);
+  const auto installed_mergeable_aggregate =
+      chronos::query::MergeableVectorAggregateState::create(installed_count);
   const auto installed_aggregate_plan = chronos::query::PhysicalPipelinePlan::create(
       {}, {chronos::query::UngroupedAggregateStage{.definitions = {installed_count}}});
   const chronos::query::VectorGroupKeyDefinition installed_group_key{
@@ -1385,6 +1387,8 @@ int main() {
                  installed_text_predicate->result_shape().type.kind() ==
                      chronos::schema::LogicalTypeKind::kBool &&
                  installed_count_shape.has_value() && !installed_count_shape->nullable &&
+                 installed_mergeable_aggregate.has_value() &&
+                 installed_mergeable_aggregate->definition() == installed_count &&
                  installed_aggregate_plan.has_value() &&
                  installed_aggregate_plan->output_columns().size() == 1U &&
                  installed_grouped_plan.has_value() &&

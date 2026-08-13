@@ -362,6 +362,10 @@ common::Result<void> ExactNumericAccumulator::add_decimal(const Decimal128Value&
   return add_to_accumulator(*this, decode(value));
 }
 
+common::Result<void> ExactNumericAccumulator::merge(const ExactNumericAccumulator& other) {
+  return add_to_accumulator(*this, accumulator_value(other));
+}
+
 common::Result<std::int64_t> ExactNumericAccumulator::signed_result() const {
   const SignedMagnitude value = accumulator_value(*this);
   for (std::size_t index = 2U; index < value.magnitude.limbs.size(); ++index) {

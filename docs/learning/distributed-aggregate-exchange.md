@@ -360,6 +360,11 @@ native schemas before allocating bounded decoded state, stably compares canonica
 current scalar type, applies final ORDER BY followed by LIMIT, and repacks rows under native payload
 and total-output ceilings. Equal keys retain plan-tablet/message/row order, and an empty result still
 carries one schema-bearing native batch.
+The shared move-only vector aggregate state now provides the in-memory foundation for general
+partials. Local ungrouped and grouped operators use the same checked state that future workers will
+merge: wide exact sums, AVG sum/count, parallel variance count/mean/M2, and all-type extrema with
+query-accounted variable payloads. No general aggregate state bytes exist yet, so vector aggregate
+fragments still fail closed.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated

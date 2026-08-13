@@ -259,6 +259,161 @@ public:
       .value();
 }
 
+void accumulate_column(MergeableVectorAggregateState& state,
+                       const columnar::OwnedPhysicalColumn& column,
+                       const QueryResourceContext& resources) {
+  for (std::uint32_t row = 0U; row < column.row_count(); ++row)
+    ASSERT_TRUE(state.accumulate_cell(column.cell(row).value(), resources).has_value());
+}
+
+TEST(MergeableVectorAggregateStateTest, MergesEveryNumericOperationWithoutFinalizingPartials) {
+  const std::array<std::optional<std::int64_t>, 3U> left_values{1, std::nullopt, 2};
+  const std::array<std::optional<std::int64_t>, 2U> right_values{3, 4};
+  const auto left_column = signed_column(schema::LogicalTypeKind::kInt64, left_values);
+  const auto right_column = signed_column(schema::LogicalTypeKind::kInt64, right_values);
+  QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+
+  const std::array operations{
+      VectorAggregateOperation::kCount,         VectorAggregateOperation::kSum,
+      VectorAggregateOperation::kAverage,       VectorAggregateOperation::kMinimum,
+      VectorAggregateOperation::kMaximum,       VectorAggregateOperation::kVariancePopulation,
+      VectorAggregateOperation::kVarianceSample};
+  for (const VectorAggregateOperation operation : operations) {
+    const VectorAggregateDefinition definition =
+        aggregate(operation, schema::LogicalTypeKind::kInt64);
+    auto left = MergeableVectorAggregateState::create(definition).value();
+    auto right = MergeableVectorAggregateState::create(definition).value();
+    accumulate_column(left, left_column, resources);
+    accumulate_column(right, right_column, resources);
+    ASSERT_TRUE(left.merge(right, resources).has_value());
+    auto result = std::move(left).take_result().value();
+    if (operation == VectorAggregateOperation::kCount) {
+      EXPECT_EQ(std::get<std::int64_t>(result.storage()), 4);
+    } else if (operation == VectorAggregateOperation::kSum) {
+      EXPECT_EQ(std::get<std::int64_t>(result.storage()), 10);
+    } else if (operation == VectorAggregateOperation::kAverage) {
+      EXPECT_DOUBLE_EQ(std::get<double>(result.storage()), 2.5);
+    } else if (operation == VectorAggregateOperation::kMinimum) {
+      EXPECT_EQ(std::get<std::int64_t>(result.storage()), 1);
+    } else if (operation == VectorAggregateOperation::kMaximum) {
+      EXPECT_EQ(std::get<std::int64_t>(result.storage()), 4);
+    } else if (operation == VectorAggregateOperation::kVariancePopulation) {
+      EXPECT_DOUBLE_EQ(std::get<double>(result.storage()), 1.25);
+    } else {
+      EXPECT_DOUBLE_EQ(std::get<double>(result.storage()), 5.0 / 3.0);
+    }
+  }
+
+  auto left_count = MergeableVectorAggregateState::create(
+                        {.operation = VectorAggregateOperation::kCountStar, .input = std::nullopt})
+                        .value();
+  auto right_count = MergeableVectorAggregateState::create(
+                         {.operation = VectorAggregateOperation::kCountStar, .input = std::nullopt})
+                         .value();
+  EXPECT_TRUE(left_count.accumulate_count_star().has_value());
+  EXPECT_TRUE(right_count.accumulate_count_star().has_value());
+  EXPECT_TRUE(right_count.accumulate_count_star().has_value());
+  EXPECT_TRUE(left_count.merge(right_count, resources).has_value());
+  EXPECT_EQ(std::get<std::int64_t>(std::move(left_count).take_result()->storage()), 3);
+  // The rvalue-qualified call finalizes without move-constructing the object; exercising the
+  // documented terminal-state contract therefore intentionally reuses the same storage.
+  // NOLINTNEXTLINE(bugprone-use-after-move)
+  EXPECT_EQ(std::move(left_count).take_result().error().code(),
+            common::StatusCode::kInvalidArgument);
+  // NOLINTNEXTLINE(bugprone-use-after-move)
+  EXPECT_EQ(left_count.accumulate_count_star().error().code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(right_count.merge(left_count, resources).error().code(),
+            common::StatusCode::kInvalidArgument);
+
+  auto move_source = MergeableVectorAggregateState::create(
+                         {.operation = VectorAggregateOperation::kCountStar, .input = std::nullopt})
+                         .value();
+  ASSERT_TRUE(move_source.accumulate_count_star().has_value());
+  auto move_destination = std::move(move_source);
+  // Reuse is intentional: this type strengthens the usual moved-from guarantee to a defined
+  // terminal state so misuse fails deterministically.
+  // NOLINTNEXTLINE(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
+  EXPECT_EQ(move_source.accumulate_count_star().error().code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(std::get<std::int64_t>(std::move(move_destination).take_result()->storage()), 1);
+}
+
+TEST(MergeableVectorAggregateStateTest, MergesExactAndVariableWidthStateUnderBounds) {
+  QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+  const std::array<std::optional<std::uint64_t>, 2U> left_unsigned{
+      std::numeric_limits<std::uint64_t>::max(), std::nullopt};
+  const std::array<std::optional<std::uint64_t>, 1U> right_unsigned{1U};
+  auto left_sum = MergeableVectorAggregateState::create(
+                      aggregate(VectorAggregateOperation::kSum, schema::LogicalTypeKind::kUInt64))
+                      .value();
+  auto right_sum = MergeableVectorAggregateState::create(
+                       aggregate(VectorAggregateOperation::kSum, schema::LogicalTypeKind::kUInt64))
+                       .value();
+  const auto left_unsigned_column = uint64_column(left_unsigned);
+  const auto right_unsigned_column = uint64_column(right_unsigned);
+  accumulate_column(left_sum, left_unsigned_column, resources);
+  accumulate_column(right_sum, right_unsigned_column, resources);
+  EXPECT_TRUE(left_sum.merge(right_sum, resources).has_value());
+  EXPECT_EQ(std::move(left_sum).take_result().error().code(), common::StatusCode::kOutOfRange);
+
+  const schema::LogicalType decimal = schema::LogicalType::decimal(10U, 2U).value();
+  const VectorAggregateDefinition decimal_sum{
+      .operation = VectorAggregateOperation::kSum,
+      .input = VectorAggregateInput{.column_ordinal = 0U, .type = decimal, .nullable = true}};
+  const std::array<std::optional<Decimal128Value>, 1U> left_decimals{decimal_value(100)};
+  const std::array<std::optional<Decimal128Value>, 1U> right_decimals{decimal_value(-25)};
+  auto left_decimal = MergeableVectorAggregateState::create(decimal_sum).value();
+  auto right_decimal = MergeableVectorAggregateState::create(decimal_sum).value();
+  const auto left_decimal_column = decimal_column(decimal, left_decimals);
+  const auto right_decimal_column = decimal_column(decimal, right_decimals);
+  accumulate_column(left_decimal, left_decimal_column, resources);
+  accumulate_column(right_decimal, right_decimal_column, resources);
+  ASSERT_TRUE(left_decimal.merge(right_decimal, resources).has_value());
+  EXPECT_EQ(std::get<Decimal128Value>(std::move(left_decimal).take_result()->storage()),
+            decimal_value(75));
+
+  const std::array<std::optional<std::string_view>, 1U> high{"zeta"};
+  const std::array<std::optional<std::string_view>, 1U> low{"alpha"};
+  auto minimum =
+      MergeableVectorAggregateState::create(
+          aggregate(VectorAggregateOperation::kMinimum, schema::LogicalTypeKind::kString), 5U)
+          .value();
+  auto candidate =
+      MergeableVectorAggregateState::create(
+          aggregate(VectorAggregateOperation::kMinimum, schema::LogicalTypeKind::kString), 5U)
+          .value();
+  const auto high_column = string_column(high);
+  const auto low_column = string_column(low);
+  accumulate_column(minimum, high_column, resources);
+  accumulate_column(candidate, low_column, resources);
+  ASSERT_TRUE(minimum.merge(candidate, resources).has_value());
+  EXPECT_EQ(std::get<std::string>(std::move(minimum).take_result()->storage()), "alpha");
+
+  auto too_small =
+      MergeableVectorAggregateState::create(
+          aggregate(VectorAggregateOperation::kMinimum, schema::LogicalTypeKind::kString), 4U)
+          .value();
+  EXPECT_EQ(too_small.merge(candidate, resources).error().code(),
+            common::StatusCode::kResourceExhausted);
+  auto mismatched =
+      MergeableVectorAggregateState::create(
+          aggregate(VectorAggregateOperation::kMaximum, schema::LogicalTypeKind::kString), 5U)
+          .value();
+  EXPECT_EQ(mismatched.merge(candidate, resources).error().code(),
+            common::StatusCode::kInvalidArgument);
+
+  QueryResourceContext foreign = QueryResourceContext::create(1U << 20U).value();
+  auto owned =
+      MergeableVectorAggregateState::create(
+          aggregate(VectorAggregateOperation::kMinimum, schema::LogicalTypeKind::kString), 5U)
+          .value();
+  accumulate_column(owned, high_column, resources);
+  EXPECT_EQ(owned.accumulate_cell(low_column.cell(0U).value(), foreign).error().code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(std::get<std::string>(std::move(owned).take_result()->storage()), "zeta");
+}
+
 TEST(UngroupedAggregateOperatorTest, AccumulatesEveryOperationAcrossChunksAndSelections) {
   QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
   const std::array<std::optional<std::int64_t>, 3> first{1, std::nullopt, 3};

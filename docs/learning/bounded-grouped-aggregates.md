@@ -6,8 +6,8 @@ The twenty-fifth Phase 9 increment adds the first data-dependent vector operator
 finite input stream by exact physical key cells, updates the shared aggregate kernels, and emits
 canonical query-accounted rows. The twenty-sixth increment connects bound single-source GROUP BY
 through that substrate. Later increments added ORDER BY, query-accounted variable-width extrema,
-and canonical query-accounted hash lookup. Partial merge, scheduling, and spill remain separate
-work.
+and canonical query-accounted hash lookup. Group states now use the shared in-memory partial merge
+kernel; versioned transport, scheduling, and spill remain separate work.
 
 ## Public interface
 
@@ -48,6 +48,9 @@ COUNT, exact/floating SUM, AVG, all-type MIN/MAX, and both variances reuse the g
 The same NULL skipping, widened final overflow, NaN, and sample-cardinality rules therefore apply.
 Each variable-width MIN/MAX state reserves its winning payload independently before copying it.
 Replacement holds old and new credit until the new value is complete, then releases the old owner.
+The same state can merge an identically defined partition: exact accumulators remain wide, AVG
+retains count, variance combines count/mean/M2, and a variable-width winning partial is copied only
+after new query credit is reserved. No grouped wire format is implied by that in-memory capability.
 
 ## Memory, pull lifecycle, and failure
 
@@ -99,8 +102,8 @@ static-analysis gates protect the exported boundary.
 
 The operator intentionally retains one-row output materialization even though lookup is hashed.
 Batched output should reduce per-group allocation only after it preserves credit transfer and
-failure atomicity. Parallel partial-state merge and partitioned spill need separate ownership and
-merge decisions.
+failure atomicity. Versioned partial-state transport, parallel scheduling, and partitioned spill
+need separate ownership decisions.
 
 ## Likely review questions
 

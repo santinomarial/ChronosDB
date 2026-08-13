@@ -1074,7 +1074,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   close. A pinned multi-tablet TCP scheduler now prevalidates complete routes, drives attempts and
   sender-authorized retries, rotates finite address candidates without rebinding authority, owns a
   whole-query deadline and cancellation, and publishes only the all-tablet result. Aggregate
-  merge-state transport, authority rebinding, and process integration remain deferred. A bounded
+  merge-state transport, authority rebinding, and process integration remain deferred. The local
+  aggregate operators now share one move-only all-type mergeable state kernel, preserving wide
+  exact sums, AVG counts, variance count/mean/M2, and query-accounted extrema as the foundation for
+  that future transport. A bounded
   global row finalizer now validates complete streams and native schemas, applies stable all-type
   ordering followed by LIMIT, and emits exact payload-bounded native result batches. A distinct
   group-scoped grouped dispatch now

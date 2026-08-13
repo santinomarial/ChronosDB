@@ -7,8 +7,9 @@ group. It consumes `AccountedVectorChunk` inputs, updates fixed state, releases 
 and emits one query-accounted canonical row.
 
 Bound single-source SQL now lowers global aggregate expressions through this substrate. Later
-increments added GROUP BY, ORDER BY, snapshot-backed execution, and query-accounted variable-width
-MIN/MAX. Joins, partial-state merge, spill, and parallel scheduling remain separate work.
+increments added GROUP BY, ORDER BY, snapshot-backed execution, query-accounted variable-width
+MIN/MAX, and a shared mergeable partial-state kernel. Joins, state serialization, spill, and
+parallel scheduling remain separate work.
 
 ## Public interface
 
@@ -17,6 +18,8 @@ MIN/MAX. Joins, partial-state merge, spill, and parallel scheduling remain separ
 - `VectorAggregateOperation`, covering all eight SQL v1 aggregate operations;
 - `VectorAggregateInput`, an exact physical ordinal/type/nullability assertion;
 - `VectorAggregateDefinition` and `vector_aggregate_output_shape()`;
+- move-only `MergeableVectorAggregateState`, which accumulates, merges, and finalizes one exact
+  definition without exposing a rounded intermediate result;
 - `UngroupedAggregateLimits`, bounding width, variable extrema, retained configuration, and output
   chunks; and
 - `UngroupedAggregateOperator::create()`, returning the ordinary uniquely owned physical-operator
@@ -32,7 +35,7 @@ owns all result bytes independently.
 
 ## State and semantics
 
-Every definition has one `AggregateState`:
+Every definition has one `MergeableVectorAggregateState`:
 
 | Operation | Retained state | Result |
 | --- | --- | --- |
@@ -42,6 +45,12 @@ Every definition has one `AggregateState`:
 | `AVG` | FLOAT64 sum and contributing count | nullable FLOAT64 |
 | `MIN`, `MAX` | optional scalar plus dynamic-payload reservation when needed | nullable input type |
 | variance | count, mean, and Welford `M2` | nullable FLOAT64 |
+
+Two identically defined states merge without first producing result cells. Exact sums combine their
+wide signed-magnitude accumulators; AVG combines sum and count; variance uses the parallel
+Welford/Chan count/mean/M2 formula; and extrema select through the same scalar total order. Merge
+order remains explicit because normal floating arithmetic is not associative. This is an in-memory
+kernel only: versioned partial-state bytes are a separate distributed-query contract.
 
 `COUNT(*)` counts selected rows. `COUNT(expr)` reads only the cell's NULL bit, so STRING, SYMBOL,
 and BINARY do not create owned payloads. All other operations skip NULL cells. Empty global input
@@ -123,7 +132,7 @@ cancellation latency.
 
 Grouped state now has finite query-accounted canonical hash lookup described in the
 [grouped aggregate guide](bounded-grouped-aggregates.md). The remaining dynamic decisions are batch
-output, partial-state merge, and spill behavior.
+output, versioned partial-state transport, and spill behavior.
 Bound SQL uses this stage for ungrouped queries with exact source-span aggregate identity, optional
 expression-input materialization, and final one-row vector expressions.
 

@@ -3,8 +3,10 @@
 
 #include "chronos/common/result.hpp"
 #include "chronos/query/physical_operator.hpp"
+#include "chronos/query/value.hpp"
 #include "chronos/schema/logical_type.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -39,11 +41,16 @@ struct VectorAggregateInput {
   std::size_t column_ordinal;
   schema::LogicalType type;
   bool nullable;
+
+  friend bool operator==(const VectorAggregateInput&, const VectorAggregateInput&) = default;
 };
 
 struct VectorAggregateDefinition {
   VectorAggregateOperation operation;
   std::optional<VectorAggregateInput> input;
+
+  friend bool operator==(const VectorAggregateDefinition&,
+                         const VectorAggregateDefinition&) = default;
 };
 
 struct VectorAggregateOutputShape {
@@ -82,6 +89,59 @@ struct GroupedAggregateLimits {
 // version admits COUNT over every physical type, numeric SUM/AVG/variance, and all-type MIN/MAX.
 [[nodiscard]] common::Result<VectorAggregateOutputShape>
 vector_aggregate_output_shape(const VectorAggregateDefinition& definition);
+
+// One thread-affine, move-only all-type partial state. The same kernel backs local ungrouped and
+// grouped execution and can merge independently accumulated partitions without first rounding AVG,
+// variance, or exact numeric SUM to final output cells. Variable-width extrema remain independently
+// bounded and query-accounted in both accumulation and merge paths. Finalized and moved-from states
+// are terminal and reject further accumulation, merge, or finalization attempts.
+class MergeableVectorAggregateState {
+public:
+  MergeableVectorAggregateState() = delete;
+  MergeableVectorAggregateState(const MergeableVectorAggregateState&) = delete;
+  MergeableVectorAggregateState& operator=(const MergeableVectorAggregateState&) = delete;
+  MergeableVectorAggregateState(MergeableVectorAggregateState&& other) noexcept;
+  MergeableVectorAggregateState& operator=(MergeableVectorAggregateState&& other) noexcept;
+  ~MergeableVectorAggregateState() = default;
+
+  [[nodiscard]] static common::Result<MergeableVectorAggregateState>
+  create(VectorAggregateDefinition definition,
+         std::size_t maximum_variable_extremum_bytes = kDefaultAggregateExtremumByteLimit);
+
+  [[nodiscard]] const VectorAggregateDefinition& definition() const noexcept;
+  [[nodiscard]] common::Result<void> accumulate_count_star();
+  [[nodiscard]] common::Result<void> accumulate_cell(const columnar::ColumnCellView& cell,
+                                                     const QueryResourceContext& resources);
+  [[nodiscard]] common::Result<void> merge(const MergeableVectorAggregateState& other,
+                                           const QueryResourceContext& resources);
+  [[nodiscard]] common::Result<ScalarValue> take_result() &&;
+
+private:
+  MergeableVectorAggregateState(VectorAggregateDefinition definition,
+                                std::size_t maximum_variable_extremum_bytes) noexcept;
+
+  [[nodiscard]] common::Result<void> accumulate_value(const ScalarValue& value);
+  [[nodiscard]] common::Result<void>
+  accumulate_variable_extremum(const columnar::ColumnCellView& cell,
+                               const QueryResourceContext& resources);
+  [[nodiscard]] common::Result<void> copy_variable_extremum(const ScalarValue& value,
+                                                            const QueryResourceContext& resources);
+
+  VectorAggregateDefinition definition_;
+  std::uint64_t count_{};
+  std::uint64_t moment_count_{};
+  std::array<std::uint32_t, 8U> exact_sum_magnitude_{};
+  bool exact_sum_negative_{};
+  float float_sum_{};
+  double double_sum_{};
+  double mean_{};
+  double squared_distance_{};
+  std::optional<ScalarValue> extremum_;
+  QueryMemoryReservation extremum_reservation_;
+  std::size_t maximum_variable_extremum_bytes_{};
+  bool has_value_{};
+  bool finalized_{};
+};
 
 // Consumes its complete input stream without retaining chunks, accumulates one global group, and
 // emits exactly one canonical one-row chunk. Empty input therefore produces COUNT zero and NULL for

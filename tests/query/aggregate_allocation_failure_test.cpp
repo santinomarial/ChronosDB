@@ -255,6 +255,46 @@ TEST(UngroupedAggregateAllocationFailureTest,
   EXPECT_TRUE(reached_success);
 }
 
+TEST(MergeableVectorAggregateStateAllocationFailureTest,
+     MergeClassifiesEveryVariableExtremumAllocationFailureAndPreservesCredit) {
+  const schema::LogicalType string =
+      schema::LogicalType::create(schema::LogicalTypeKind::kString).value();
+  const VectorAggregateDefinition minimum{
+      .operation = VectorAggregateOperation::kMinimum,
+      .input = VectorAggregateInput{.column_ordinal = 0U, .type = string, .nullable = false}};
+  columnar::ColumnVectorBuffers buffers;
+  append_u32(buffers.offsets, 0U);
+  constexpr std::string_view kValue = "a-variable-width-extremum-that-allocates";
+  for (const char byte : kValue)
+    buffers.values.push_back(static_cast<std::byte>(byte));
+  append_u32(buffers.offsets, static_cast<std::uint32_t>(buffers.values.size()));
+  const auto column = columnar::OwnedPhysicalColumn::create(
+                          {.type = string, .nullable = false, .row_count = 1U, .null_count = 0U},
+                          std::move(buffers))
+                          .value();
+
+  bool reached_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 16U; ++fail_after) {
+    SCOPED_TRACE(fail_after);
+    QueryResourceContext resources = QueryResourceContext::create(1U << 20U).value();
+    auto target = MergeableVectorAggregateState::create(minimum).value();
+    auto source = MergeableVectorAggregateState::create(minimum).value();
+    ASSERT_TRUE(source.accumulate_cell(column.cell(0U).value(), resources).has_value());
+    const std::size_t before_merge = resources.reserved_memory_bytes();
+    std::size_t observed = 0U;
+    auto merged = run_with_allocation_failure(fail_after, observed,
+                                              [&] { return target.merge(source, resources); });
+    EXPECT_GT(observed, 0U);
+    if (merged.has_value()) {
+      reached_success = true;
+      break;
+    }
+    EXPECT_EQ(merged.error().code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(resources.reserved_memory_bytes(), before_merge);
+  }
+  EXPECT_TRUE(reached_success);
+}
+
 TEST(GroupedAggregateAllocationFailureTest, CreationClassifiesEveryOwnedAllocationFailure) {
   const std::vector<VectorGroupKeyDefinition> keys{
       {.column_ordinal = 0U,

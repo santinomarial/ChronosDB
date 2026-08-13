@@ -845,12 +845,19 @@ Focused executions passed:
   cross-tablet ordering, deterministic ties, output rebatching, malformed-stream and bound
   rejection, and allocation-failure classification. Aggregate semantics, authority rebinding, and
   process integration remain.
+- Mergeable all-type vector aggregate-state continuation: local ungrouped and grouped operators now
+  share one move-only state for checked COUNT, wide exact and floating SUM, AVG sum/count,
+  parallel-Welford variance, and all-type extrema. Identically defined partitions merge without
+  finalizing intermediate cells; variable winners reserve before copy and preserve the prior state
+  on failure. Focused cases prove numeric partition results, exact final overflow, bounded STRING
+  extrema, definition rejection, and injected allocation-failure atomicity. Versioned state bytes,
+  distributed worker/coordinator execution, authority rebinding, and process integration remain.
 
 The C++ files changed by the grouped-, vector-exchange-, Fragment-v2-, and vector-transport-v2
 continuations pass the repository-pinned clang-format 18 check. A full-tree check was also run and
 still reports pre-existing violations in the subscription protocol, subscription, multi-tablet
 checkpoint implementation, and focused subscription test files; these slices do not rewrite those
-unrelated files or claim a full-tree formatting pass. The full serialized 1,597-test developer
+unrelated files or claim a full-tree formatting pass. The full serialized 1,600-test developer
 suite, focused ASan/UBSan cases, and a deterministic 10,000-run transport-v2 fuzz campaign pass.
 Apple's sanitizer runtime does not support LeakSanitizer, so those sanitizer runs explicitly
 disabled leak detection. Broader cross-compiler/Linux parity, benchmark, profile, and chaos checks

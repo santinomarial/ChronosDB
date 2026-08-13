@@ -25,6 +25,7 @@ struct ExactNumericAccumulator {
   [[nodiscard]] common::Result<void> add_signed(std::int64_t value);
   [[nodiscard]] common::Result<void> add_unsigned(std::uint64_t value);
   [[nodiscard]] common::Result<void> add_decimal(const Decimal128Value& value);
+  [[nodiscard]] common::Result<void> merge(const ExactNumericAccumulator& other);
   [[nodiscard]] common::Result<std::int64_t> signed_result() const;
   [[nodiscard]] common::Result<std::uint64_t> unsigned_result() const;
   [[nodiscard]] common::Result<Decimal128Value>
