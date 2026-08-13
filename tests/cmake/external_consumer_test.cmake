@@ -60,6 +60,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/cluster/distributed_vector_query_transport.hpp>
 #include <chronos/cluster/distributed_vector_query_transport_v2.hpp>
 #include <chronos/cluster/distributed_vector_query_tls_v2.hpp>
+#include <chronos/cluster/distributed_vector_query_tcp_client_v2.hpp>
 #include <chronos/cluster/distributed_vector_result_exchange.hpp>
 #include <chronos/cluster/distributed_grouped_query_tls.hpp>
 #include <chronos/cluster/distributed_query_transport.hpp>
@@ -1124,6 +1125,8 @@ int main() {
       &chronos::cluster::DistributedGroupedQueryTlsClient::create;
   const auto create_distributed_grouped_query_tls_server =
       &chronos::cluster::DistributedGroupedQueryTlsServer::create;
+  const auto begin_distributed_vector_query_tcp_client_v2 =
+      &chronos::cluster::DistributedVectorQueryTcpClientV2::begin;
   using ExecuteDistributedFragment = chronos::common::Result<chronos::query::ExchangeMessage> (*)(
       const chronos::query::DistributedAggregateWorkerRequest&);
   const ExecuteDistributedFragment execute_distributed_fragment =
@@ -1420,6 +1423,7 @@ int main() {
                  start_distributed_grouped_query_tcp_server != nullptr &&
                  create_distributed_grouped_query_tls_client != nullptr &&
                  create_distributed_grouped_query_tls_server != nullptr &&
+                 begin_distributed_vector_query_tcp_client_v2 != nullptr &&
                  execute_distributed_fragment != nullptr &&
                  execute_distributed_grouped_fragment != nullptr &&
                  bind_select != nullptr && bind_create != nullptr && bind_insert != nullptr &&

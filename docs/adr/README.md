@@ -405,3 +405,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0368](0368-schema-bound-distributed-vector-query-transport-v2.md) | Schema-bound distributed vector query transport v2 | accepted |
 | [0369](0369-authenticated-schema-bound-vector-query-receiver-v2.md) | Authenticated schema-bound vector query receiver v2 | accepted |
 | [0370](0370-bounded-schema-bound-vector-query-v2-mutual-tls.md) | Bounded schema-bound vector query v2 mutual TLS | accepted |
+| [0371](0371-deadline-bound-schema-bound-vector-query-v2-tcp-client.md) | Deadline-bound schema-bound vector query v2 TCP client | accepted |

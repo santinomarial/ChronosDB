@@ -315,6 +315,11 @@ before any response arrives, and it withholds decoded prefixes until terminal cl
 authenticates before reading, invokes the receiver once, and schema-validates the complete returned
 vector before writing typed cursors. Fixed 16-KiB scratch plus header-first exact-frame ownership
 avoids a maximum-size request and response array in every connection.
+The v2 outbound TCP composite retains one exact attempt through a separately deadline-bound
+nonblocking connect, proves `SO_ERROR` completion, and creates TLS only afterward. It requires the
+authenticated peer address to match the endpoint and declares ownership so TLS is destroyed before
+its borrowed descriptor. Retry, address rotation, and listener admission remain above or beside
+this one-attempt boundary.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated
