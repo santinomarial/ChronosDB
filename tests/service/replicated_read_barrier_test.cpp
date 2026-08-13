@@ -61,6 +61,16 @@ TEST(ReplicatedReadBarrierTest, ConfirmsSortedSingleVoterGroupsAfterCurrentTermN
     EXPECT_EQ(group_barrier.barrier.read_index, 1U);
     EXPECT_NE(group_barrier.barrier.context, 0U);
   }
+  auto authority = barrier->await_authority();
+  ASSERT_TRUE(authority.has_value()) << authority.error().to_string();
+  ASSERT_EQ(authority->size(), 2U);
+  for (const ReplicatedReadAuthority& proof : *authority) {
+    EXPECT_EQ(proof.observation.group_id, proof.barrier.group_id);
+    EXPECT_EQ(proof.observation.role, raft::Role::kLeader);
+    EXPECT_EQ(proof.observation.leader_id, proof.observation.node_id);
+    EXPECT_EQ(proof.observation.current_term, proof.barrier.barrier.term);
+    EXPECT_GE(proof.observation.commit_index, proof.barrier.barrier.read_index);
+  }
   EXPECT_TRUE(barrier->shutdown().is_ok());
   EXPECT_FALSE(barrier->await().has_value());
   EXPECT_TRUE(runtime->shutdown().is_ok());

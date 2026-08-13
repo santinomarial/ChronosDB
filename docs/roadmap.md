@@ -952,8 +952,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   aggregate part-set checksum. Canonical physical-part chunks now bind bounded payloads to the exact
   movement and CSEG identity while preserving 64-bit object lengths. Their locked durable owner
   admits an immutable contiguous prefix, reconstructs it across restart, and streams final SHA-256
-  verification without assembling the CSEG; destination installation and publication remain
-  incomplete. Group-scoped aggregate dispatches and terminal exchanges now also have canonical
+  verification without assembling the CSEG. Verified final installation, restartable destination
+  Manifest publication, physical-ownership-gated readiness, and durable receipt reclamation are
+  implemented. Group-scoped aggregate dispatches and terminal exchanges now also have canonical
   bounded checksummed cluster request/response frames, exact route/result correlation, and an
   authenticated principal-to-source receiver that invokes the proof-revalidating worker through an
   embedding-owned service boundary. Fixed-storage fragmented/coalesced readers, move-only
@@ -990,9 +991,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   active schema, placement, and immutable group identity from one committed metadata snapshot and
   derives policy admissions only from matching stable Raft observations. Selected serving-node TCP
   routes now resolve from the same committed node metadata through a strict IPv4 endpoint grammar
-  while retaining explicit node-specific TLS contexts. General vector-plan fragments/exchanges,
-  asynchronous proof acquisition, DNS/multi-address routing, and broader multi-node failure
-  validation remain deferred. A
+  while retaining explicit node-specific TLS contexts. The replicated barrier owner can now return
+  each leader-linearizable barrier with the exact ordered leader observation that validated it.
+  General vector-plan fragments/exchanges, follower proof acquisition, packaged coordinator
+  composition, DNS/multi-address routing, and broader multi-node failure validation remain
+  deferred. A
   focused real-mTLS gate now queries two tablets, drives one through checksummed learner-first
   movement and externally committed promotion/removal milestones, rebinds it to the target, and
   proves the complete aggregate state is identical before and after. The full phase exit gate is

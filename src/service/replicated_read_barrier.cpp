@@ -44,7 +44,16 @@ validate_ready(const raft::GroupReadBarrier& ready, const raft::GroupId& expecte
     return status(common::StatusCode::kCorruption,
                   "replicated read-barrier completion identity is invalid");
   if (observation.has_value() &&
-      (observation->group_id != expected_group || observation->role != raft::Role::kLeader ||
+      (observation->group_id != expected_group || observation->node_id == 0U ||
+       (observation->role != raft::Role::kFollower && observation->role != raft::Role::kCandidate &&
+        observation->role != raft::Role::kLeader) ||
+       observation->last_log_index < observation->commit_index ||
+       observation->commit_index < observation->applied_index)) {
+    return status(common::StatusCode::kCorruption,
+                  "replicated read-barrier leader observation is invalid");
+  }
+  if (observation.has_value() &&
+      (observation->role != raft::Role::kLeader || observation->leader_id != observation->node_id ||
        observation->current_term != ready.barrier.term ||
        observation->commit_index < ready.barrier.read_index))
     return status(common::StatusCode::kUnavailable,
@@ -72,11 +81,13 @@ public:
     raft::Term barrier_term{};
     std::uint64_t barrier_context{};
     std::optional<raft::GroupReadBarrier> ready;
+    std::optional<raft::RaftGroupObservation> observation;
   };
   struct Request {
     std::chrono::steady_clock::time_point deadline;
     std::vector<GroupState> groups;
     common::Status result;
+    bool capture_observations{};
     bool completed{};
   };
 
@@ -86,7 +97,8 @@ public:
       : mode(configured_mode), runtime(configured_runtime), group_ids(std::move(configured_groups)),
         limits(configured_limits) {}
 
-  [[nodiscard]] common::Result<std::vector<raft::GroupReadBarrier>> await_local() {
+  [[nodiscard]] common::Result<std::vector<raft::GroupReadBarrier>>
+  await_local(std::vector<raft::RaftGroupObservation>* const observations) {
     std::scoped_lock lock(mutex);
     if (!accepting)
       return common::make_unexpected(
@@ -104,6 +116,10 @@ public:
     std::vector<raft::GroupReadBarrier> barriers;
     try {
       barriers.reserve(group_ids.size());
+      if (observations != nullptr) {
+        observations->clear();
+        observations->reserve(group_ids.size());
+      }
     } catch (const std::bad_alloc&) {
       return common::make_unexpected(status(common::StatusCode::kResourceExhausted,
                                             "replicated read-barrier allocation failed"));
@@ -111,9 +127,11 @@ public:
     for (const raft::GroupId& group_id : group_ids) {
       std::vector<raft::DurableRaftRequest> requests;
       try {
-        requests.reserve(2U);
+        requests.reserve(observations == nullptr ? 2U : 3U);
         requests.emplace_back(group_id, raft::CommitCurrentTermOperation{});
         requests.emplace_back(group_id, raft::BeginReadBarrierOperation{});
+        if (observations != nullptr)
+          requests.emplace_back(group_id, raft::ObserveGroupOperation{});
       } catch (const std::bad_alloc&) {
         return common::make_unexpected(status(common::StatusCode::kResourceExhausted,
                                               "replicated read-barrier allocation failed"));
@@ -124,7 +142,8 @@ public:
       auto results = completion->wait();
       if (!results.has_value())
         return common::make_unexpected(results.error());
-      if (results->size() != 2U)
+      const std::size_t expected_results = observations == nullptr ? 2U : 3U;
+      if (results->size() != expected_results)
         return common::make_unexpected(
             status(common::StatusCode::kCorruption, "local read-barrier result count is invalid"));
       if (!(*results)[0].status.is_ok())
@@ -137,15 +156,27 @@ public:
             status(common::StatusCode::kUnavailable,
                    "local read barrier requires an immediately confirmed group quorum"));
       const raft::GroupReadBarrier& ready = *(*results)[1].transition->read_barrier_ready;
-      const common::Status valid = validate_ready(ready, group_id);
+      if (observations != nullptr &&
+          (!(*results)[2].status.is_ok() || (*results)[2].transition.has_value() ||
+           !(*results)[2].observation.has_value())) {
+        return common::make_unexpected(
+            status(common::StatusCode::kCorruption,
+                   "local read-barrier batch lacks its ordered leader observation"));
+      }
+      const common::Status valid = observations == nullptr
+                                       ? validate_ready(ready, group_id)
+                                       : validate_ready(ready, group_id, (*results)[2].observation);
       if (!valid.is_ok())
         return common::make_unexpected(valid);
       barriers.push_back(ready);
+      if (observations != nullptr)
+        observations->push_back(std::move(*(*results)[2].observation));
     }
     return barriers;
   }
 
-  [[nodiscard]] common::Result<std::vector<raft::GroupReadBarrier>> await_transported() {
+  [[nodiscard]] common::Result<std::vector<raft::GroupReadBarrier>>
+  await_transported(std::vector<raft::RaftGroupObservation>* const observations) {
     std::unique_lock lock(mutex);
     if (!accepting)
       return common::make_unexpected(
@@ -162,7 +193,8 @@ public:
       }
     } guard{*this};
     try {
-      Request next{.deadline = std::chrono::steady_clock::now() + limits.request_timeout};
+      Request next{.deadline = std::chrono::steady_clock::now() + limits.request_timeout,
+                   .capture_observations = observations != nullptr};
       next.groups.reserve(group_ids.size());
       for (const raft::GroupId& group_id : group_ids)
         next.groups.push_back({.group_id = group_id});
@@ -192,13 +224,20 @@ public:
     std::vector<raft::GroupReadBarrier> barriers;
     try {
       barriers.reserve(request->groups.size());
-      for (const GroupState& group : request->groups) {
-        if (!group.ready.has_value()) {
+      if (observations != nullptr) {
+        observations->clear();
+        observations->reserve(request->groups.size());
+      }
+      for (GroupState& group : request->groups) {
+        if (!group.ready.has_value() ||
+            (observations != nullptr && !group.observation.has_value())) {
           request.reset();
           return common::make_unexpected(status(common::StatusCode::kCorruption,
                                                 "replicated read-barrier vector is incomplete"));
         }
         barriers.push_back(*group.ready);
+        if (observations != nullptr)
+          observations->push_back(std::move(*group.observation));
       }
     } catch (const std::bad_alloc&) {
       request.reset();
@@ -222,6 +261,28 @@ public:
         std::ranges::all_of(request->groups,
                             [](const GroupState& group) { return group.ready.has_value(); }))
       finish(common::Status::ok());
+  }
+
+  void accept_ready(GroupState& group, const raft::GroupReadBarrier& ready,
+                    const raft::RaftGroupObservation& observation) {
+    if (!request.has_value() || request->completed)
+      return;
+    if (request->capture_observations) {
+      try {
+        group.observation.emplace(observation);
+      } catch (const std::bad_alloc&) {
+        finish(status(common::StatusCode::kResourceExhausted,
+                      "replicated read-barrier observation allocation failed"));
+        return;
+      } catch (const std::length_error&) {
+        finish(status(common::StatusCode::kResourceExhausted,
+                      "replicated read-barrier observation exceeds limits"));
+        return;
+      }
+    }
+    group.ready = ready;
+    group.stage = Stage::kComplete;
+    finish_if_complete();
   }
 
   Mode mode;
@@ -281,7 +342,39 @@ common::Result<std::vector<raft::GroupReadBarrier>> ReplicatedReadBarrier::await
   if (impl_ == nullptr)
     return common::make_unexpected(
         status(common::StatusCode::kUnavailable, "replicated read-barrier owner was moved from"));
-  return impl_->mode == Impl::Mode::kLocal ? impl_->await_local() : impl_->await_transported();
+  return impl_->mode == Impl::Mode::kLocal ? impl_->await_local(nullptr)
+                                           : impl_->await_transported(nullptr);
+}
+
+common::Result<std::vector<ReplicatedReadAuthority>> ReplicatedReadBarrier::await_authority() {
+  if (impl_ == nullptr)
+    return common::make_unexpected(
+        status(common::StatusCode::kUnavailable, "replicated read-barrier owner was moved from"));
+  std::vector<raft::RaftGroupObservation> observations;
+  auto barriers = impl_->mode == Impl::Mode::kLocal ? impl_->await_local(&observations)
+                                                    : impl_->await_transported(&observations);
+  if (!barriers.has_value())
+    return common::make_unexpected(barriers.error());
+  if (barriers->size() != observations.size())
+    return common::make_unexpected(
+        status(common::StatusCode::kCorruption, "replicated read authority vector is incomplete"));
+  try {
+    std::vector<ReplicatedReadAuthority> authority;
+    authority.reserve(barriers->size());
+    for (std::size_t index = 0U; index < barriers->size(); ++index) {
+      if ((*barriers)[index].group_id != observations[index].group_id)
+        return common::make_unexpected(status(common::StatusCode::kCorruption,
+                                              "replicated read authority group order differs"));
+      authority.push_back({std::move((*barriers)[index]), std::move(observations[index])});
+    }
+    return authority;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(status(common::StatusCode::kResourceExhausted,
+                                          "replicated read authority allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        status(common::StatusCode::kResourceExhausted, "replicated read authority exceeds limits"));
+  }
 }
 
 common::Status ReplicatedReadBarrier::poll_owner_drive(ReplicatedRaftTransportRuntime& transport) {
@@ -367,9 +460,7 @@ ReplicatedReadBarrier::poll_owner_observe(const cluster::RaftTransportRuntimeRes
         impl_->finish(valid);
         return common::Status::ok();
       }
-      found->ready = *transition.read_barrier_ready;
-      found->stage = Impl::Stage::kComplete;
-      impl_->finish_if_complete();
+      impl_->accept_ready(*found, *transition.read_barrier_ready, *result.observation);
       return common::Status::ok();
     }
     std::optional<raft::ReadBarrierRequest> identity;
@@ -415,9 +506,7 @@ ReplicatedReadBarrier::poll_owner_observe(const cluster::RaftTransportRuntimeRes
     impl_->finish(valid);
     return common::Status::ok();
   }
-  found->ready = ready;
-  found->stage = Impl::Stage::kComplete;
-  impl_->finish_if_complete();
+  impl_->accept_ready(*found, ready, *result.observation);
   return common::Status::ok();
 }
 

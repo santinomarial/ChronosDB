@@ -112,7 +112,7 @@ TEST(ReplicatedRaftTransportRuntimeTest, DrivesTransportedSingleVoterReadBarrier
   auto barrier = ReplicatedReadBarrier::create_transported(
       {group()}, {.maximum_groups = 1U, .request_timeout = std::chrono::seconds{2}});
   ASSERT_TRUE(barrier.has_value()) << barrier.error().to_string();
-  auto waiting = std::async(std::launch::async, [&] { return barrier->await(); });
+  auto waiting = std::async(std::launch::async, [&] { return barrier->await_authority(); });
   for (std::size_t iteration = 0U;
        iteration < 1024U &&
        waiting.wait_for(std::chrono::milliseconds{0}) != std::future_status::ready;
@@ -131,8 +131,12 @@ TEST(ReplicatedRaftTransportRuntimeTest, DrivesTransportedSingleVoterReadBarrier
   auto ready = waiting.get();
   ASSERT_TRUE(ready.has_value()) << ready.error().to_string();
   ASSERT_EQ(ready->size(), 1U);
-  EXPECT_EQ(ready->front().group_id, group());
-  EXPECT_EQ(ready->front().barrier.read_index, 1U);
+  EXPECT_EQ(ready->front().barrier.group_id, group());
+  EXPECT_EQ(ready->front().barrier.barrier.read_index, 1U);
+  EXPECT_EQ(ready->front().observation.group_id, group());
+  EXPECT_EQ(ready->front().observation.role, raft::Role::kLeader);
+  EXPECT_EQ(ready->front().observation.current_term, ready->front().barrier.barrier.term);
+  EXPECT_GE(ready->front().observation.commit_index, ready->front().barrier.barrier.read_index);
   EXPECT_TRUE(barrier->shutdown().is_ok());
   EXPECT_TRUE(transport->shutdown().is_ok());
   EXPECT_TRUE(durable->shutdown().is_ok());

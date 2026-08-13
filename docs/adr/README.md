@@ -333,3 +333,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0296](0296-authoritative-replicated-ingest-leader-redirect.md) | Authoritative replicated-ingest leader redirect | accepted |
 | [0297](0297-metadata-backed-distributed-query-authority.md) | Metadata-backed distributed query authority | accepted |
 | [0298](0298-committed-distributed-query-route-resolution.md) | Committed distributed query route resolution | accepted |
+| [0299](0299-correlated-replicated-read-authority.md) | Correlated replicated read authority | accepted |

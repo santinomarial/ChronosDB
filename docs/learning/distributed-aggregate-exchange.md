@@ -119,9 +119,11 @@ prematurely defining a general physical-fragment language. The cost is a special
 type. Grouping state, physical plans, ordering/top-N, cancellation delivery, and general duplicate
 sequencing require their own bounded contracts. A leader hint never
 mutates an existing proof-bound dispatch: following it requires explicit coordinator rebinding.
-DNS and multi-address resolution, asynchronous runtime-proof acquisition, remote worker-interrupt
-delivery, pooled multiplexing, asynchronous worker completion, and broader multi-node fault
-handling remain embedding work.
+The replicated read-barrier owner now returns exact correlated leader observations for
+leader-linearizable proof construction. Follower leader-commit acquisition, packaged coordinator
+composition, DNS and multi-address resolution, remote worker-interrupt delivery, pooled
+multiplexing, asynchronous worker completion, and broader multi-node fault handling remain
+embedding work.
 
 ## Verification and review questions
 

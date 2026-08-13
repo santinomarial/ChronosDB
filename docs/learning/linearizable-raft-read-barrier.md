@@ -15,6 +15,9 @@ the ordered application lane. It records the submission sequence for the initial
 the exact group, term, and context for later peer responses. A query-thread waiter has one finite
 deadline; a timed-out request releases its bounded slot, and a stale completion cannot match a new
 context. Local one-voter mode executes the same no-op/barrier pair directly.
+`await_authority` additionally owns the exact current-leader observation that validated each
+completed barrier. Transported mode captures it from the correlated completion; local mode appends
+one ordered observation to the same durable batch. The barrier-only `await` path does neither.
 
 ## Data structures and invariants
 
@@ -33,6 +36,9 @@ the metadata catalog's applied index and each tablet publication's matching Raft
 against the returned group vector before pinning query state. Because worker-extension application
 finishes before asynchronous completion publication, the check observes either a covering immutable
 publication or a fail-closed error.
+For distributed fragment construction, the authority vector removes a reobservation race: the
+metadata-backed binder receives the exact serving-node/term observation paired with the barrier,
+then independently checks stable membership, committed placement, and Manifest durability.
 
 ## Ownership, lifetime, and synchronization
 

@@ -20,6 +20,11 @@ struct ReplicatedReadBarrierLimits {
   std::chrono::milliseconds request_timeout{5000};
 };
 
+struct ReplicatedReadAuthority {
+  raft::GroupReadBarrier barrier;
+  raft::RaftGroupObservation observation;
+};
+
 // Bounded synchronous query gate for one stable vector of per-group leader read indexes. Local
 // mode submits directly to an asynchronous durable runtime and is valid only for groups that can
 // complete a barrier in that submission (normally one-voter groups). Transported mode has one
@@ -45,6 +50,9 @@ public:
   // Query-thread-only. At most one call may be active. The returned group vector is sorted and
   // contains exactly the configured groups.
   [[nodiscard]] common::Result<std::vector<raft::GroupReadBarrier>> await();
+  // Captures the ordered current-leader observation that exact-validated each completed barrier.
+  // Existing barrier-only callers do not allocate or retain these observation copies.
+  [[nodiscard]] common::Result<std::vector<ReplicatedReadAuthority>> await_authority();
 
   // Transport-poll-owner-only. drive() is nonblocking and admits at most one operation per group
   // per call. observe() must receive every completed transport result in FIFO order.
