@@ -880,9 +880,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   QUORUM_SYNC only in that mode, routes reactor tasks through the bounded service, and drains in
   ownership order. Authenticated multi-node peer transport/elections and applied-vector native
   SELECT are now composed. Protocol 2 now has a negotiated, terminal, placement/term-bound leader
-  redirect response that rejects emission after partial query output; live service selection and
-  endpoint-aware client retry remain. Provisioning, remote query fragments, snapshot
-  installation handling, and real three-process failover remain external.
+  redirect response that rejects emission after partial query output. Replicated ingest now selects
+  it only from exact committed placement/stable membership plus an ordered follower observation;
+  endpoint-aware client retry and multi-group query routing remain. Provisioning, remote query
+  fragments, snapshot installation handling, and real three-process failover remain external.
 
 - **Scope:** map tablets to Raft groups; multiplex logical records over physical logs, threads, timers, and connections; lifecycle, placement, snapshot transfer, fairness, and safe per-group reclamation.
 - **Explicit non-scope:** globally ordered logs, cross-tablet atomic transactions, distributed query execution, automatic rebalancing beyond scoped placement mechanics, and conflating physical offsets with logical indexes.

@@ -206,8 +206,9 @@ public:
     }
   }
 
-  [[nodiscard]] common::Status validate_route(const Routing& route,
-                                              const raft::RaftGroupObservation& observed) const {
+  [[nodiscard]] common::Status
+  validate_route(const Routing& route, const raft::RaftGroupObservation& observed,
+                 std::optional<network::LeaderRedirect>& redirect) const {
     if (observed.group_id != route.group_id || observed.node_id == 0U ||
         observed.current_term == 0U || observed.last_log_index < observed.commit_index ||
         observed.commit_index < observed.applied_index)
@@ -230,17 +231,28 @@ public:
     if (binding == (*catalog)->tablet_group_bindings.end() ||
         binding->tablet_id != route.tablet_id || binding->group_id != route.group_id)
       return corruption("replicated ingest tablet Raft group binding changed");
-    if (observed.role != raft::Role::kLeader || observed.leader_id != observed.node_id)
-      return unavailable("replicated ingest tablet is not led by this node");
-    if (!std::ranges::binary_search(placement->replicas, observed.node_id))
-      return unavailable("replicated ingest leader is outside committed placement");
     if (observed.joint_membership_active || observed.joint_membership_can_finalize ||
         observed.final_membership_pending || observed.voters != placement->replicas ||
         observed.committed_voters != placement->replicas || !observed.joint_old_voters.empty() ||
         !observed.joint_new_voters.empty())
       return unavailable(
           "replicated ingest tablet membership is reconfiguring or differs from placement");
-    return common::Status::ok();
+    if (observed.role == raft::Role::kLeader) {
+      if (observed.leader_id != observed.node_id ||
+          !std::ranges::binary_search(placement->replicas, observed.node_id))
+        return unavailable("replicated ingest leader is outside committed placement");
+      return common::Status::ok();
+    }
+    if (observed.role == raft::Role::kFollower && observed.leader_id.has_value() &&
+        *observed.leader_id != observed.node_id &&
+        std::ranges::binary_search(placement->replicas, *observed.leader_id)) {
+      redirect = network::LeaderRedirect{.group_id = route.group_id,
+                                         .leader_node_id = *observed.leader_id,
+                                         .leader_term = observed.current_term,
+                                         .placement_epoch = placement->placement_epoch};
+      return common::Status::ok();
+    }
+    return unavailable("replicated ingest tablet has no authoritative remote leader");
   }
 
   [[nodiscard]] common::Result<std::optional<network::NetworkTask>>
@@ -252,6 +264,7 @@ public:
       Pending& item = pending[cursor];
       common::Status failure;
       std::optional<ReplicatedIngestResult> completed;
+      std::optional<network::LeaderRedirect> redirect;
       if (now >= item.deadline) {
         failure = {common::StatusCode::kCancelled, "replicated ingest request timed out"};
         increment(stats.timed_out_requests);
@@ -276,9 +289,14 @@ public:
             else if (!observed.observation.has_value())
               failure = corruption("replicated ingest route observation is missing");
             else
-              failure = validate_route(*route, *observed.observation);
+              failure = validate_route(*route, *observed.observation, redirect);
           }
-          if (failure.is_ok()) {
+          if (failure.is_ok() && redirect.has_value() &&
+              (item.protocol.feature_bits & network::kProtocolV2LeaderRedirectFeature) == 0U) {
+            redirect.reset();
+            failure = unavailable("replicated ingest remote leader requires negotiated redirect");
+          }
+          if (failure.is_ok() && !redirect.has_value()) {
             auto operation = ReplicatedIngestOperation::submit(
                 route->group_id, result->front().observation->current_term,
                 std::move(route->command), *runtime, *application, limits.columnar_append);
@@ -304,9 +322,11 @@ public:
       }
       common::Result<std::vector<std::byte>> payload =
           completed.has_value() ? encode_replicated_ingest_acknowledgement(*completed)
-                                : network::encode_error_message(
-                                      protocol_error(failure.code()), failure.message(),
-                                      {.maximum_payload_size = item.protocol.maximum_payload_size});
+          : redirect.has_value()
+              ? network::encode_leader_redirect(*redirect)
+              : network::encode_error_message(
+                    protocol_error(failure.code()), failure.message(),
+                    {.maximum_payload_size = item.protocol.maximum_payload_size});
       if (!payload.has_value()) {
         pending.erase(pending.begin() + static_cast<std::ptrdiff_t>(cursor));
         if (cursor == pending.size())
@@ -314,9 +334,10 @@ public:
         stats.pending_requests = pending.size();
         return common::make_unexpected(payload.error());
       }
-      const network::MessageType type = completed.has_value()
-                                            ? network::MessageType::kQuorumSyncIngestAcknowledgement
-                                            : network::MessageType::kError;
+      const network::MessageType type =
+          completed.has_value()  ? network::MessageType::kQuorumSyncIngestAcknowledgement
+          : redirect.has_value() ? network::MessageType::kLeaderRedirect
+                                 : network::MessageType::kError;
       network::NetworkTask response{
           .connection_id = item.connection_id,
           .principal_id = item.principal_id,
@@ -332,6 +353,8 @@ public:
         cursor = 0U;
       stats.pending_requests = pending.size();
       increment(stats.completed_requests);
+      if (redirect.has_value())
+        increment(stats.redirected_requests);
       return std::optional<network::NetworkTask>{std::move(response)};
     }
     return std::optional<network::NetworkTask>{};

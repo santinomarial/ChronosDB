@@ -4,6 +4,12 @@ The coordinator turns many reactor-routed QUORUM_SYNC requests into one finite s
 It validates negotiated task authority and payload shape, owns each move-only replicated operation,
 polls round-robin without blocking, and releases at most one exact response per call.
 
+The ordered routing observation may terminally redirect a negotiated client when this node is a
+stable follower, the named remote leader is inside the exact committed placement, the tablet/group
+binding is unchanged, and membership is not transitioning. The response carries the current
+placement epoch and observed term. Missing leaders, candidates, divergent membership, or
+unnegotiated clients receive an error; metadata leader hints never authorize a redirect.
+
 The connection/request pair is the cancellation and correlation key. A cancel drops response
 ownership but does not pretend to roll back Raft. Deadlines create a correlated CANCELLED error;
 the same command remains safely retryable through its canonical client identity.

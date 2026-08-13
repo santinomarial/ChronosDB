@@ -3,7 +3,8 @@
 - **Status:** accepted
 - **Date:** 2026-08-12
 - **Owners:** ChronosDB service, metadata, Raft, and ingest maintainers
-- **Extended by:** [ADR 0281](0281-committed-schema-replicated-ingest-admission.md)
+- **Extended by:** [ADR 0281](0281-committed-schema-replicated-ingest-admission.md),
+  [ADR 0296](0296-authoritative-replicated-ingest-leader-redirect.md)
 
 ## Context
 
@@ -46,10 +47,12 @@ metadata is the only route that reaches proposal. Placement/group absence, nonlo
 membership movement, or authority divergence yields a correlated error without appending the
 command.
 
-No durable or network bytes change. Focused tests cover a successful metadata-derived route,
-bounded cancellation and timeout across the two-phase owner, missing-binding rejection, and
-placement/voter divergence. Multi-node leader redirection, packaged reactor wakeups, concurrent
-metadata movement races, crash cuts, TSan, and load measurement remain hardening work.
+ADR 0296 permits an explicitly negotiated redirect from an exact stable follower observation; all
+other nonlocal or changing authority still fails closed. Focused tests cover a successful
+metadata-derived route, bounded cancellation and timeout across the two-phase owner,
+missing-binding rejection, and placement/voter divergence. Multi-process redirect retry, packaged
+reactor wakeups, concurrent metadata movement races, crash cuts, TSan, and load measurement remain
+hardening work.
 
 ## Affected invariants
 

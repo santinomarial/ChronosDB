@@ -1150,7 +1150,8 @@ int main(const int argc, const char* const argv[]) {
   config.port = options->port;
   if (replicated_service.has_value()) {
     config.state.maximum_protocol_major = chronos::network::kProtocolV2Major;
-    config.state.supported_feature_bits = chronos::network::kProtocolV2QuorumSyncFeature;
+    config.state.supported_feature_bits = chronos::network::kProtocolV2QuorumSyncFeature |
+                                          chronos::network::kProtocolV2LeaderRedirectFeature;
   }
   auto reactor =
       Reactor::start(options->backend, config, {.requests = &*requests, .responses = &*responses});

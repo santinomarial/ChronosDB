@@ -452,5 +452,61 @@ TEST(ReplicatedIngestCoordinatorTest, FailsClosedWithoutLocalStablePlacementLead
   EXPECT_TRUE(runtime->shutdown().is_ok());
 }
 
+TEST(ReplicatedIngestCoordinatorTest, RedirectsToOrderedStableRemoteLeaderWhenNegotiated) {
+  TemporaryDirectory directory;
+  auto applications = routed_applications();
+  ASSERT_TRUE(applications.has_value());
+  auto runtime = raft::AsyncDurableMultiRaftRuntime::create_new(
+      1U, {.directory_path = directory.path().string()},
+      {{metadata_group_id(), {1U}}, {group_id(), {1U, 2U}}}, {}, applications->extensions);
+  ASSERT_TRUE(runtime.has_value()) << runtime.error().to_string();
+  publish_route(*runtime, {1U, 2U});
+  auto heartbeat = runtime->try_submit(
+      {{group_id(), raft::ReceiveOperation{2U, raft::AppendEntriesRequest{.term = 1U,
+                                                                          .leader_id = 2U,
+                                                                          .previous_log_index = 0U,
+                                                                          .previous_log_term = 0U,
+                                                                          .entries = {},
+                                                                          .leader_commit = 0U}}}});
+  ASSERT_TRUE(heartbeat.has_value()) << heartbeat.error().to_string();
+  ASSERT_TRUE(heartbeat->wait().has_value());
+  auto coordinator = ReplicatedIngestCoordinator::create(*runtime, *applications->tablets,
+                                                         *applications->metadata);
+  ASSERT_TRUE(coordinator.has_value());
+  auto redirected_request = quorum_request(10U, 1U, 1U);
+  redirected_request.protocol.feature_bits |= network::kProtocolV2LeaderRedirectFeature;
+  EXPECT_TRUE(coordinator->admit(std::move(redirected_request)).is_ok());
+
+  std::optional<network::NetworkTask> response;
+  for (std::size_t attempt = 0U; attempt < 10'000U && !response.has_value(); ++attempt) {
+    auto polled = coordinator->poll();
+    ASSERT_TRUE(polled.has_value()) << polled.error().to_string();
+    response = std::move(*polled);
+    std::this_thread::yield();
+  }
+  ASSERT_TRUE(response.has_value());
+  ASSERT_EQ(response->frame.header.message_type, network::MessageType::kLeaderRedirect);
+  const auto redirect = network::decode_leader_redirect(response->frame.payload);
+  ASSERT_TRUE(redirect.has_value()) << redirect.error().to_string();
+  EXPECT_EQ(redirect->group_id, group_id());
+  EXPECT_EQ(redirect->leader_node_id, 2U);
+  EXPECT_EQ(redirect->leader_term, 1U);
+  EXPECT_EQ(redirect->placement_epoch, 1U);
+  EXPECT_EQ(coordinator->metrics().redirected_requests, 1U);
+
+  EXPECT_TRUE(coordinator->admit(quorum_request(11U, 2U, 2U)).is_ok());
+  response.reset();
+  for (std::size_t attempt = 0U; attempt < 10'000U && !response.has_value(); ++attempt) {
+    auto polled = coordinator->poll();
+    ASSERT_TRUE(polled.has_value()) << polled.error().to_string();
+    response = std::move(*polled);
+    std::this_thread::yield();
+  }
+  ASSERT_TRUE(response.has_value());
+  EXPECT_EQ(response->frame.header.message_type, network::MessageType::kError);
+  EXPECT_EQ(coordinator->metrics().redirected_requests, 1U);
+  EXPECT_TRUE(runtime->shutdown().is_ok());
+}
+
 } // namespace
 } // namespace chronos::service

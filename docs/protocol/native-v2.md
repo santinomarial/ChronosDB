@@ -1,8 +1,8 @@
 # ChronosDB Native Protocol v2
 
 > **Status: Protocol 2.0 framing, negotiation, QUORUM_SYNC request/receipt, and negotiated leader
-> redirect are implemented. Packaged replicated QUORUM_SYNC and applied-barrier SELECT execute;
-> leader redirect service emission remains to be composed.**
+> redirect are implemented. Packaged replicated QUORUM_SYNC, exact ingest leader redirect, and
+> applied-barrier SELECT execute.**
 
 Protocol 2.0 inherits the complete [Native Protocol v1](native-v1.md) framing, limits, type
 assignments, payloads, request lifecycle, security boundary, and subscription semantics except for
@@ -19,7 +19,8 @@ Protocol 2.0 supports feature bit 0 (subscriptions) and assigns feature bit 1 (`
 owner MUST omit it even if its frame parser understands Protocol 2.
 
 Feature bit 2 (`0x4`) enables `LEADER_REDIRECT`. A server MUST omit it until its request service can
-derive exact redirect observations from authoritative placement and ordered Raft state.
+derive exact redirect observations from authoritative placement and ordered Raft state. The
+packaged replicated-ingest service satisfies that condition for its one derived tablet group.
 
 ## Ingest request durability
 

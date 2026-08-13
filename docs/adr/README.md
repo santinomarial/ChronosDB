@@ -330,3 +330,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0293](0293-ordered-application-raft-transport-submissions.md) | Ordered application Raft transport submissions | accepted |
 | [0294](0294-applied-replicated-read-barrier-vector.md) | Applied replicated read-barrier vector | accepted |
 | [0295](0295-negotiated-native-leader-redirect.md) | Negotiated native leader redirect | accepted |
+| [0296](0296-authoritative-replicated-ingest-leader-redirect.md) | Authoritative replicated-ingest leader redirect | accepted |

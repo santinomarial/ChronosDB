@@ -243,10 +243,12 @@ void handshake_subscriptions(const int client) {
 }
 
 void handshake_quorum_sync(const int client) {
+  constexpr std::uint64_t features =
+      network::kProtocolV2QuorumSyncFeature | network::kProtocolV2LeaderRedirectFeature;
   const auto hello_payload =
       network::encode_client_hello({.maximum_major = network::kProtocolV2Major,
                                     .maximum_minor = network::kProtocolV2LatestMinor,
-                                    .feature_bits = network::kProtocolV2QuorumSyncFeature})
+                                    .feature_bits = features})
           .value();
   ASSERT_TRUE(
       send_all(client, network::encode_frame({.message_type = network::MessageType::kClientHello},
@@ -259,7 +261,7 @@ void handshake_quorum_sync(const int client) {
   ASSERT_TRUE(hello.has_value());
   EXPECT_EQ(hello->selected_major, network::kProtocolV2Major);
   EXPECT_EQ(hello->selected_minor, network::kProtocolV2LatestMinor);
-  EXPECT_EQ(hello->feature_bits, network::kProtocolV2QuorumSyncFeature);
+  EXPECT_EQ(hello->feature_bits, features);
 }
 
 [[nodiscard]] common::Uuid repeated_id(const std::uint8_t seed) {

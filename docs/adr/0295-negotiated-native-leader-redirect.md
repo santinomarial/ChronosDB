@@ -32,12 +32,13 @@ the negotiated capability and terminal lifecycle before releasing request owners
 ## Consequences and validation
 
 Protocol 1 bytes remain unchanged and reject type 13 and feature bit 2. A server may understand the
-codec without advertising it; packaged service wiring controls advertisement. Focused codec tests
+codec without advertising it; the packaged replicated-ingest service now advertises and emits the
+response only from ADR 0296's authoritative route. Focused codec tests
 cover round trip, reserved bytes, and semantic identities. Client/server lifecycle tests cover
 negotiation, terminal completion, and rejection after partial query output.
 
-This decision supplies the transport response but does not select a redirect from live Raft state,
-configure native endpoints, or retry a request. Those are separate service/client composition tasks.
+This decision supplies the transport response but does not configure native endpoints or retry a
+request. Whole-query selection remains separate because required groups may have different leaders.
 
 ## References
 

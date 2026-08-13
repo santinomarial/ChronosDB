@@ -29,6 +29,7 @@ struct ReplicatedIngestCoordinatorMetrics {
   std::uint64_t cancelled_requests{};
   std::uint64_t timed_out_requests{};
   std::uint64_t rejected_requests{};
+  std::uint64_t redirected_requests{};
 };
 
 // Thread-affine bounded owner for multiple reactor-routed QUORUM_SYNC requests. poll() performs no
