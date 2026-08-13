@@ -57,6 +57,12 @@ struct BoundDistributedGroupedFloat64Fragment {
 [[nodiscard]] common::Result<BoundDistributedGroupedFloat64Fragment>
 bind_distributed_grouped_float64_fragment(const DistributedGroupedFloat64FragmentBinding& binding);
 
+// Packages the authority-bound owned values directly into the sole canonical grouped worker
+// dispatch value, so callers never separately join the validated group and intent.
+[[nodiscard]] common::Result<DistributedGroupedFloat64FragmentDispatch>
+bind_distributed_grouped_float64_fragment_dispatch(
+    const DistributedGroupedFloat64FragmentBinding& binding);
+
 struct DistributedAggregateSnapshotFragmentBinding {
   std::reference_wrapper<const DistributedReadAdmission> admission;
   std::reference_wrapper<const schema::TableSchema> destination_schema;

@@ -233,6 +233,16 @@ bind_distributed_grouped_float64_fragment(const DistributedGroupedFloat64Fragmen
                    .group_key_input_index = binding.group_key_input_index}};
 }
 
+common::Result<DistributedGroupedFloat64FragmentDispatch>
+bind_distributed_grouped_float64_fragment_dispatch(
+    const DistributedGroupedFloat64FragmentBinding& binding) {
+  auto bound = bind_distributed_grouped_float64_fragment(binding);
+  if (!bound.has_value())
+    return common::make_unexpected(bound.error());
+  return DistributedGroupedFloat64FragmentDispatch{.raft_group_id = bound->raft_group_id,
+                                                   .fragment = std::move(bound->fragment)};
+}
+
 CompatibleDistributedAggregateSnapshot::CompatibleDistributedAggregateSnapshot(
     manifest::TemporalDatabaseStorageSnapshot snapshot,
     std::vector<DistributedAggregateFragmentDispatch> dispatches) noexcept

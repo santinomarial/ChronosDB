@@ -45,7 +45,9 @@ pass, and the installed-consumer gate references the new public binder.
 Worker-side local revalidation and real-CSEG grouping, authenticated grouped transport,
 multi-key/non-FLOAT64 state, ordering/top-N/LIMIT, and broad failure evidence remain incomplete.
 Canonical group-scoped dispatch bytes are the accepted follow-up in
-[ADR 0327](0327-group-scoped-grouped-float64-dispatch.md). No Phase 16 exit gate is claimed.
+[ADR 0327](0327-group-scoped-grouped-float64-dispatch.md), and the packaged constructor that moves
+the validated values directly into that dispatch is accepted in
+[ADR 0329](0329-packaged-authority-bound-grouped-dispatch.md). No Phase 16 exit gate is claimed.
 
 Invariants 4–6, 10, 11, 14, and 18 apply.
 

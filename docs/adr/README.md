@@ -363,3 +363,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0326](0326-authority-bound-grouped-float64-fragment.md) | Authority-bound grouped FLOAT64 fragment | accepted |
 | [0327](0327-group-scoped-grouped-float64-dispatch.md) | Group-scoped grouped FLOAT64 dispatch | accepted |
 | [0328](0328-proof-revalidated-grouped-float64-worker.md) | Proof-revalidated grouped FLOAT64 worker | accepted |
+| [0329](0329-packaged-authority-bound-grouped-dispatch.md) | Packaged authority-bound grouped dispatch | accepted |

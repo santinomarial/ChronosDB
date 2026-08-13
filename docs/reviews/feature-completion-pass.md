@@ -483,6 +483,11 @@ Focused executions passed:
   local group/placement/barrier/schema/snapshot gates, two canonical grouped partials, contiguous
   terminal sequencing, event-filtered terminal-only empty output, and route rejection before loader
   I/O. Authenticated grouped transport and packaged multi-tablet execution are not claimed.
+- Packaged grouped-dispatch continuation: the focused real-Manifest-v2 binding case and all 7
+  binding cases passed for direct construction of the canonical grouped dispatch from one complete
+  authority input, exact group preservation, encodability, and unchanged unsupported-key status.
+  The installed-consumer gate references the new public constructor. Authenticated grouped
+  transport and packaged multi-tablet execution are not claimed.
 
 The C++ files changed by the grouped-exchange continuations pass the repository-pinned clang-format
 18 check. A full-tree check was also run and still reports pre-existing violations in the

@@ -1013,7 +1013,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   fragments remain deferred; a distinct group-scoped grouped dispatch now
   preserves exact Raft authority without reinterpreting ungrouped dispatch bytes. Its worker reuses
   every local authority gate, resolves real temporal CSEG winners, and emits canonical grouped
-  partials or the terminal-only empty result. Packaged multi-tablet grouped execution remains.
+  partials or the terminal-only empty result. The grouped authority binder now directly packages
+  its exact validated group and intent into that canonical dispatch, eliminating a second
+  caller-side authority join. Packaged multi-tablet grouped execution remains.
   Multi-key/non-FLOAT64 state/transport, ordering, top-N, and LIMIT remain deferred. A distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
   catalog, Manifest, route, and execution gates;

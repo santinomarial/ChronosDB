@@ -35,7 +35,9 @@ owned group-plus-intent values. The result remains nonexecutable until a canonic
 binds those values for worker-side revalidation.
 `encode_distributed_grouped_float64_fragment_dispatch` now supplies that distinct group-scoped
 outer format. Its magic cannot be decoded as ungrouped Dispatch v1, and its integrity checks finish
-before nested grouped-intent decoding.
+before nested grouped-intent decoding. `bind_distributed_grouped_float64_fragment_dispatch`
+delegates the complete grouped authority check and moves its exact owned group plus intent directly
+into that dispatch, avoiding a second caller-assembled authority join.
 `execute_distributed_grouped_float64_fragment` reuses the ungrouped worker's extracted local
 authority validator, resolves generation-pinned temporal winners, then groups only selected visible
 rows. It emits terminal partial messages in canonical key-token order or the distinct empty terminal

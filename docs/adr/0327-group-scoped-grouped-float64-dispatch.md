@@ -43,7 +43,9 @@ four dispatch cases pass, and the installed-consumer gate covers both grouped co
 Grouped request/response transport, stream discrimination, multi-key/non-FLOAT64 state,
 ordering/top-N/LIMIT, and broader failure evidence remain incomplete. Worker-side real-CSEG grouped
 execution is the accepted follow-up in
-[ADR 0328](0328-proof-revalidated-grouped-float64-worker.md). No Phase 16 exit gate is claimed.
+[ADR 0328](0328-proof-revalidated-grouped-float64-worker.md). Authority-bound construction can now
+move its exact group and intent directly into this value through the packaged constructor accepted
+in [ADR 0329](0329-packaged-authority-bound-grouped-dispatch.md). No Phase 16 exit gate is claimed.
 
 Invariants 4–6, 10, 11, 14, 15, and 18 apply.
 

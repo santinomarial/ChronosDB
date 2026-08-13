@@ -267,10 +267,16 @@ TEST(DistributedFragmentBindingTest, BindsGroupedFloat64IntentThroughTheSameAuth
             std::vector<std::uint32_t>(projection.begin(), projection.end()));
   EXPECT_EQ(bound->fragment.group_key_input_index, 1U);
   EXPECT_TRUE(encode_distributed_grouped_float64_fragment(bound->fragment).has_value());
+  const auto packaged = bind_distributed_grouped_float64_fragment_dispatch(grouped);
+  ASSERT_TRUE(packaged.has_value()) << packaged.error().to_string();
+  EXPECT_EQ(packaged->raft_group_id, group_id);
+  EXPECT_TRUE(encode_distributed_grouped_float64_fragment_dispatch(*packaged).has_value());
 
   DistributedGroupedFloat64FragmentBinding unsupported = grouped;
   unsupported.group_key_input_index = 0U;
   EXPECT_EQ(bind_distributed_grouped_float64_fragment(unsupported).error().code(),
+            common::StatusCode::kNotSupported);
+  EXPECT_EQ(bind_distributed_grouped_float64_fragment_dispatch(unsupported).error().code(),
             common::StatusCode::kNotSupported);
   DistributedGroupedFloat64FragmentBinding out_of_bounds = grouped;
   out_of_bounds.group_key_input_index = 2U;
