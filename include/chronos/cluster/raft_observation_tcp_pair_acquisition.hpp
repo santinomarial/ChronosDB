@@ -4,9 +4,12 @@
 #include "chronos/cluster/raft_observation_tcp_acquisition.hpp"
 #include "chronos/query/distributed_fragment_binding.hpp"
 
+#include <array>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 namespace chronos::cluster {
 
@@ -18,6 +21,16 @@ struct RaftObservationTcpPairAcquisitionConfig {
 struct RaftObservationTcpPairAcquisitionMetrics {
   RaftObservationTcpAcquisitionMetrics leader;
   RaftObservationTcpAcquisitionMetrics follower;
+};
+
+struct RaftObservationTcpPollTarget {
+  int descriptor{-1};
+  RaftObservationTlsInterest interest;
+};
+
+struct RaftObservationTcpPairPollTargets {
+  std::array<RaftObservationTcpPollTarget, 2U> targets;
+  std::size_t size{};
 };
 
 enum class RaftObservationTcpPairAcquisitionState : std::uint8_t {
@@ -46,6 +59,8 @@ public:
 
   [[nodiscard]] RaftObservationTcpPairAcquisitionState state() const noexcept;
   [[nodiscard]] RaftObservationTcpPairAcquisitionMetrics metrics() const noexcept;
+  [[nodiscard]] RaftObservationTcpPairPollTargets poll_targets() const noexcept;
+  [[nodiscard]] std::optional<RaftObservationTcpClient::TimePoint> wake_deadline() const noexcept;
   [[nodiscard]] common::Result<query::DistributedAggregateFollowerReadAuthority> result() const;
   [[nodiscard]] const common::Status& failure() const noexcept;
 

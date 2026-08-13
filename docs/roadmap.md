@@ -1017,7 +1017,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   out a selected leader/follower pair, cancels the survivor on failure, and publishes only complete
   same-term stable-membership authority. A blocking pre-poll resolver joins selected nodes to
   canonical committed numeric/DNS endpoints and exact TLS contexts under hard answer bounds.
-  Automatic catalog-wide multi-pair acquisition and broader multi-node failure validation remain
+  A canonical batch owner starts all selected group pairs before blocking, polls the global earliest
+  deadline, cancels every survivor on failure, and publishes only one complete group-sorted vector.
+  Automatic placement-backed pair selection and broader multi-node failure validation remain
   deferred. Live DNS churn, resolver-latency policy, caching, and IPv6 remain qualification gaps. A
   focused real-mTLS gate now queries two tablets, drives one through
   checksummed learner-first movement and externally committed promotion/removal milestones, rebinds

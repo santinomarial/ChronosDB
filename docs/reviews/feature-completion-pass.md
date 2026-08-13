@@ -429,6 +429,9 @@ Focused executions passed:
 - Raft-observation route continuation: 1 focused case passed for committed numeric and DNS endpoint
   resolution with exact port/TLS binding, duplicate-target and missing-TLS rejection, and the hard
   selected-route limit. DNS caching, TTL, IPv6, and catalog-wide follower selection are not claimed.
+- Raft-observation batch continuation: 1 focused approved-host case passed for two canonical groups
+  over four concurrent mTLS exchanges, exact service/result/terminal metrics, all-pair cancellation,
+  and duplicate-group rejection. Automatic placement-backed pair selection is not claimed.
 
 The final C++ tree passed the repository-pinned clang-format 18 check. Full-suite, sanitizer, fuzz,
 broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were deliberately not run.

@@ -288,9 +288,11 @@
   budget without changing request authority. A selected leader/follower owner now fans out both
   authenticated acquisitions, cancels the survivor on failure, and publishes only a complete
   same-term stable-membership pair. Selected nodes now resolve through canonical committed metadata
-  into bounded numeric/DNS address snapshots with exact TLS contexts before polling. Add automatic
-  catalog-wide pair selection and multi-pair acquisition, packaged-constructor acquisition, broader
-  cancellation/allocation faults, and real multi-process validation.
+  into bounded numeric/DNS address snapshots with exact TLS contexts before polling. A canonical
+  batch owner now starts every selected group pair before blocking, waits on the global earliest
+  deadline, cancels all survivors on failure, and publishes only a complete group-sorted vector. Add
+  automatic catalog-wide pair selection/config construction, packaged-constructor acquisition,
+  broader cancellation/allocation faults, and real multi-process validation.
 - Shard-key pruning and statistics in addition to event-time pruning; multi-node scalar/distributed
   differential SQL and partial-aggregation equivalence.
 - Carry the implemented authenticated remote-action receiver bytes and atomic current-leader-term

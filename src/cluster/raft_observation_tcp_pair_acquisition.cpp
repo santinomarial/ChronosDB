@@ -211,6 +211,36 @@ RaftObservationTcpPairAcquisition::metrics() const noexcept {
              : RaftObservationTcpPairAcquisitionMetrics{};
 }
 
+RaftObservationTcpPairPollTargets RaftObservationTcpPairAcquisition::poll_targets() const noexcept {
+  RaftObservationTcpPairPollTargets result;
+  if (!implementation_ ||
+      implementation_->pair_state != RaftObservationTcpPairAcquisitionState::kRunning) {
+    return result;
+  }
+  for (const RaftObservationTcpAcquisition* acquisition :
+       {&implementation_->leader, &implementation_->follower}) {
+    if (!is_running(*acquisition) || acquisition->descriptor() < 0)
+      continue;
+    result.targets[result.size++] = {acquisition->descriptor(), acquisition->interest()};
+  }
+  return result;
+}
+
+std::optional<RaftObservationTcpClient::TimePoint>
+RaftObservationTcpPairAcquisition::wake_deadline() const noexcept {
+  if (!implementation_ ||
+      implementation_->pair_state != RaftObservationTcpPairAcquisitionState::kRunning) {
+    return std::nullopt;
+  }
+  const auto leader = implementation_->leader.wake_deadline();
+  const auto follower = implementation_->follower.wake_deadline();
+  if (!leader.has_value())
+    return follower;
+  if (!follower.has_value())
+    return leader;
+  return std::min(*leader, *follower);
+}
+
 common::Result<query::DistributedAggregateFollowerReadAuthority>
 RaftObservationTcpPairAcquisition::result() const {
   if (!implementation_)

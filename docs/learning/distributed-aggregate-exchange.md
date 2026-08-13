@@ -146,7 +146,9 @@ an ordered address snapshot under one finite retry/backoff budget while preservi
 authority. A two-target owner fans out the selected leader and follower, cancels a survivor on
 failure, and publishes only a complete same-term stable-membership authority pair. A blocking
 pre-poll resolver joins canonical selected nodes to committed numeric/DNS endpoint metadata and
-exact TLS contexts under hard answer bounds. Automatic catalog-wide multi-pair acquisition, remote
+exact TLS contexts under hard answer bounds. A canonical batch owner starts every selected group
+pair before blocking, polls all descriptors under the earliest deadline, and publishes only one
+complete group-sorted authority vector. Automatic placement-backed pair selection, remote
 worker-interrupt delivery, pooled multiplexing, asynchronous worker completion, live DNS churn
 qualification, and broader multi-node fault handling remain embedding work.
 
