@@ -496,6 +496,53 @@ TEST(DistributedGroupedQueryExecutionTest, PublishesOnlyTerminalSenderFailure) {
   EXPECT_EQ(execution->finish().error().code(), common::StatusCode::kIoError);
 }
 
+TEST(DistributedGroupedQueryExecutionTest, CarriesGlobalGroupedOrderAndLimit) {
+  TemporaryDirectory directory;
+  auto input = make_input(directory);
+  ASSERT_TRUE(input.has_value()) << input.error().to_string();
+  const auto dispatches = input->grouped_snapshot.dispatches();
+  const std::array tablets{dispatches[0].fragment.aggregate.tablet_id,
+                           dispatches[1].fragment.aggregate.tablet_id};
+  auto execution = DistributedGroupedQueryExecution::create(
+      1U, std::move(input->grouped_snapshot),
+      {.coordinator = {},
+       .retry = {},
+       .result = {.direction = query::DistributedGroupedFloat64ResultDirection::kDescending,
+                  .null_placement = query::DistributedGroupedFloat64NullPlacement::kLast,
+                  .limit = 1U}});
+  ASSERT_TRUE(execution.has_value()) << execution.error().to_string();
+  const auto now = DistributedGroupedQueryExecution::TimePoint{};
+  ASSERT_TRUE(execution->begin_attempt(tablets[0], now).has_value());
+  ASSERT_TRUE(execution->begin_attempt(tablets[1], now).has_value());
+  query::MergeableAggregateState first_partial;
+  query::MergeableAggregateState second_partial;
+  ASSERT_TRUE(first_partial.add(2.5).is_ok());
+  ASSERT_TRUE(second_partial.add(3.5).is_ok());
+  const std::array first{DistributedGroupedQueryResponse{
+      .source_node_id = 11U,
+      .target_node_id = 1U,
+      .query_id = uuid(7U),
+      .tablet_id = tablets[0],
+      .status_code = common::StatusCode::kOk,
+      .payload = DistributedGroupedQueryResponsePayload{query::GroupedFloat64ExchangeMessage{
+          uuid(7U), tablets[0], 1U, 5.0, first_partial, true}}}};
+  const std::array second{DistributedGroupedQueryResponse{
+      .source_node_id = 12U,
+      .target_node_id = 1U,
+      .query_id = uuid(7U),
+      .tablet_id = tablets[1],
+      .status_code = common::StatusCode::kOk,
+      .payload = DistributedGroupedQueryResponsePayload{query::GroupedFloat64ExchangeMessage{
+          uuid(7U), tablets[1], 1U, 7.0, second_partial, true}}}};
+  ASSERT_TRUE(execution->accept_responses(tablets[0], first, now).is_ok());
+  ASSERT_TRUE(execution->accept_responses(tablets[1], second, now).is_ok());
+  const auto result = execution->finish();
+  ASSERT_TRUE(result.has_value()) << result.error().to_string();
+  ASSERT_EQ(result->size(), 1U);
+  EXPECT_EQ(result->front().group_key, 7.0);
+  EXPECT_EQ(result->front().aggregate.sum, 3.5);
+}
+
 TEST(DistributedGroupedQueryTcpExecutionTest, SchedulesAllTabletsAndRotatesAddressesOnRetry) {
   TemporaryDirectory directory;
   auto input = make_input(directory);

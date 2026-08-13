@@ -239,8 +239,10 @@ routes used by distributed execution. Leader-linearizable construction obtains o
 group-correlated quorum read-barrier observations, requires metadata and tablet publications to
 cover those barriers, binds one compatible Manifest epoch, and creates the complete TCP execution
 lifecycle. A distinct bounded-stale constructor applies the same catalog, Manifest, route, and
-execution gates to stable same-term leader/follower observation pairs. General vector-plan
-grouping/order/top-N/LIMIT remains incomplete. A distinct canonical frame now carries one nullable
+execution gates to stable same-term leader/follower observation pairs. General vector-plan row
+fragments/exchanges and multi-key grouping remain incomplete. The supported FLOAT64
+grouped surface now applies key ORDER BY, explicit null placement, and LIMIT only after global merge,
+providing correct top-N for that key. A distinct canonical frame now carries one nullable
 FLOAT64 group key and mergeable partial with SQL-equivalent signed-zero/NaN canonicalization. An
 authenticated mutual-TLS carrier owns its bounded ordered response stream, and a deadline-bound
 outbound TCP composite owns one validated connection attempt. A bounded inbound TCP server owns
@@ -607,6 +609,12 @@ Focused executions passed:
   cumulative complete transports and one rebind prove that old partials were discarded. Header
   self-containment and installed consumption cover the public boundary; automatic metadata refresh
   and process failover are not claimed.
+- Global grouped order/LIMIT continuation: the focused query case merged one key across two tablets,
+  ordered negative/NaN/NULL keys with descending NULLS LAST, and applied LIMIT 2 only after global
+  merge; LIMIT zero and invalid option rejection also passed. A cluster-owner case carried the same
+  options through execution and selected global key 7 over key 5. Header self-containment and the
+  installed consumer cover the public API; aggregate-expression and arbitrary-row ordering are not
+  claimed.
 
 The C++ files changed by the grouped-exchange continuations pass the repository-pinned clang-format
 18 check. A full-tree check was also run and still reports pre-existing violations in the

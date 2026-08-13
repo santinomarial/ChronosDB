@@ -51,7 +51,7 @@ common::Result<DistributedGroupedQueryExecution> DistributedGroupedQueryExecutio
       senders.push_back({fragment.tablet_id, std::move(*sender), false, false});
     }
     auto coordinator = query::DistributedGroupedFloat64Coordinator::create(
-        query_id, std::move(tablets), limits.coordinator);
+        query_id, std::move(tablets), limits.coordinator, limits.result);
     if (!coordinator.has_value())
       return common::make_unexpected(coordinator.error());
     return DistributedGroupedQueryExecution{std::move(snapshot), std::move(*coordinator),

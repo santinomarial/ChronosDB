@@ -137,6 +137,38 @@ canonicalize_message(GroupedFloat64ExchangeMessage message) noexcept {
          left_terminal.sequence == right_terminal.sequence;
 }
 
+[[nodiscard]] bool
+valid_result_options(const DistributedGroupedFloat64ResultOptions& options) noexcept {
+  return (options.direction == DistributedGroupedFloat64ResultDirection::kAscending ||
+          options.direction == DistributedGroupedFloat64ResultDirection::kDescending) &&
+         (options.null_placement == DistributedGroupedFloat64NullPlacement::kFirst ||
+          options.null_placement == DistributedGroupedFloat64NullPlacement::kLast);
+}
+
+[[nodiscard]] int compare_nonnull_group_keys(const double left, const double right) noexcept {
+  const bool left_nan = std::isnan(left);
+  const bool right_nan = std::isnan(right);
+  if (left_nan || right_nan)
+    return left_nan == right_nan ? 0 : (left_nan ? 1 : -1);
+  return left == right ? 0 : (left < right ? -1 : 1);
+}
+
+[[nodiscard]] bool result_precedes(const GroupedFloat64AggregateResult& left,
+                                   const GroupedFloat64AggregateResult& right,
+                                   const DistributedGroupedFloat64ResultOptions& options) noexcept {
+  if (left.group_key.has_value() != right.group_key.has_value()) {
+    const bool null_first =
+        options.null_placement == DistributedGroupedFloat64NullPlacement::kFirst;
+    return left.group_key.has_value() != null_first;
+  }
+  if (!left.group_key.has_value())
+    return false;
+  int comparison = compare_nonnull_group_keys(*left.group_key, *right.group_key);
+  if (options.direction == DistributedGroupedFloat64ResultDirection::kDescending)
+    comparison = -comparison;
+  return comparison < 0;
+}
+
 [[nodiscard]] common::Status
 validate_terminal_message(const GroupedExchangeTerminalMessage& message) {
   if (message.query_id.is_nil() || message.tablet_id.uuid().is_nil() || message.sequence == 0U)
@@ -547,14 +579,16 @@ public:
   };
 
   Impl(common::Uuid id, const std::vector<schema::TabletId>& tablets,
-       const DistributedCoordinatorLimits configured)
-      : query_id(id), limits(configured) {
+       const DistributedCoordinatorLimits configured,
+       const DistributedGroupedFloat64ResultOptions configured_result)
+      : query_id(id), limits(configured), result_options(configured_result) {
     for (const schema::TabletId& tablet_id : tablets)
       fragments.emplace(tablet_id, FragmentProgress{});
   }
 
   common::Uuid query_id;
   DistributedCoordinatorLimits limits;
+  DistributedGroupedFloat64ResultOptions result_options;
   std::map<schema::TabletId, FragmentProgress> fragments;
   std::size_t retained_messages{};
   std::optional<common::Status> failure;
@@ -572,16 +606,16 @@ DistributedGroupedFloat64Coordinator::DistributedGroupedFloat64Coordinator(
 DistributedGroupedFloat64Coordinator& DistributedGroupedFloat64Coordinator::operator=(
     DistributedGroupedFloat64Coordinator&&) noexcept = default;
 
-common::Result<DistributedGroupedFloat64Coordinator>
-DistributedGroupedFloat64Coordinator::create(common::Uuid query_id,
-                                             std::vector<schema::TabletId> tablets,
-                                             const DistributedCoordinatorLimits limits) {
+common::Result<DistributedGroupedFloat64Coordinator> DistributedGroupedFloat64Coordinator::create(
+    common::Uuid query_id, std::vector<schema::TabletId> tablets,
+    const DistributedCoordinatorLimits limits,
+    const DistributedGroupedFloat64ResultOptions result_options) {
   if (query_id.is_nil())
     return common::make_unexpected(invalid("grouped coordinator query identity is invalid"));
   if (limits.maximum_messages_per_fragment == 0U ||
       limits.maximum_messages_per_fragment > limits.maximum_total_messages ||
       limits.maximum_total_messages > kMaximumDistributedCoordinatorMessages ||
-      limits.maximum_total_messages < tablets.size()) {
+      limits.maximum_total_messages < tablets.size() || !valid_result_options(result_options)) {
     return common::make_unexpected(invalid("grouped coordinator limits are invalid"));
   }
   try {
@@ -590,7 +624,8 @@ DistributedGroupedFloat64Coordinator::create(common::Uuid query_id,
       if (tablet_id.uuid().is_nil() || !unique_tablets.insert(tablet_id).second)
         return common::make_unexpected(invalid("grouped coordinator tablet set is invalid"));
     }
-    return DistributedGroupedFloat64Coordinator{std::make_unique<Impl>(query_id, tablets, limits)};
+    return DistributedGroupedFloat64Coordinator{
+        std::make_unique<Impl>(query_id, tablets, limits, result_options)};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
                                                   "grouped coordinator allocation failed"});
@@ -746,6 +781,13 @@ DistributedGroupedFloat64Coordinator::finish() const {
                                          ? std::optional<double>{std::bit_cast<double>(key.bits)}
                                          : std::nullopt,
                         .aggregate = aggregate});
+    }
+    std::ranges::sort(result, [&](const GroupedFloat64AggregateResult& left,
+                                  const GroupedFloat64AggregateResult& right) {
+      return result_precedes(left, right, impl_->result_options);
+    });
+    if (impl_->result_options.limit.has_value() && *impl_->result_options.limit < result.size()) {
+      result.resize(static_cast<std::size_t>(*impl_->result_options.limit));
     }
     return result;
   } catch (const std::bad_alloc&) {

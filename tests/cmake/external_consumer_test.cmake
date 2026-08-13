@@ -216,6 +216,8 @@ int main() {
       &chronos::service::ReplicatedFollowerDistributedAggregateQuery::create;
   const auto create_replicated_follower_grouped_query_owner =
       &chronos::service::ReplicatedFollowerDistributedGroupedFloat64Query::create;
+  const auto grouped_result_direction =
+      chronos::query::DistributedGroupedFloat64ResultDirection::kDescending;
   const auto create_replicated_query_worker =
       &chronos::service::ReplicatedDistributedQueryWorker::create;
   const auto create_replicated_grouped_query_worker =
@@ -334,6 +336,7 @@ int main() {
   (void)create_replicated_follower_distributed_aggregate_query;
   (void)create_replicated_follower_query_owner;
   (void)create_replicated_follower_grouped_query_owner;
+  (void)grouped_result_direction;
   (void)create_replicated_query_worker;
   (void)create_replicated_grouped_query_worker;
   (void)create_replicated_grouped_query_receiver;

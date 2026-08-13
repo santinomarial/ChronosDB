@@ -1052,7 +1052,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   grouped failures now admit only a finite explicit whole-query replacement with identical logical
   shape, nonregressing Manifest generation, unchanged deadline/budget, discarded old partials, and
   cumulative metrics.
-  Multi-key/non-FLOAT64 state/transport, ordering, top-N, and LIMIT remain deferred. A distinct
+  Coordinator-side group-key ORDER BY with explicit null placement and LIMIT now runs only after
+  global cross-tablet merge, providing correct bounded top-N for the supported FLOAT64 grouping
+  surface. Multi-key/non-FLOAT64 state/transport, aggregate-expression ordering, and general row
+  ordering/LIMIT remain deferred. A distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
   catalog, Manifest, route, and execution gates;
   a separate canonical checksummed cluster protocol now requests one group-correlated ordered

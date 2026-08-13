@@ -173,6 +173,24 @@ struct GroupedFloat64AggregateResult {
   MergeableAggregateState aggregate;
 };
 
+enum class DistributedGroupedFloat64ResultDirection : std::uint8_t {
+  kAscending = 1,
+  kDescending = 2,
+};
+
+enum class DistributedGroupedFloat64NullPlacement : std::uint8_t {
+  kFirst = 1,
+  kLast = 2,
+};
+
+struct DistributedGroupedFloat64ResultOptions {
+  DistributedGroupedFloat64ResultDirection direction{
+      DistributedGroupedFloat64ResultDirection::kAscending};
+  DistributedGroupedFloat64NullPlacement null_placement{
+      DistributedGroupedFloat64NullPlacement::kFirst};
+  std::optional<std::uint64_t> limit;
+};
+
 // Single-owner grouped coordinator. The owner serializes admissions, failures, and finish. It
 // retains a bounded canonical retry history and exposes no partial result before every tablet has
 // accepted exactly one terminal form.
@@ -188,7 +206,8 @@ public:
 
   [[nodiscard]] static common::Result<DistributedGroupedFloat64Coordinator>
   create(common::Uuid query_id, std::vector<schema::TabletId> tablets,
-         DistributedCoordinatorLimits limits = {});
+         DistributedCoordinatorLimits limits = {},
+         DistributedGroupedFloat64ResultOptions result_options = {});
   [[nodiscard]] common::Status accept(const GroupedFloat64ExchangeMessage& message);
   [[nodiscard]] common::Status accept_terminal(const GroupedExchangeTerminalMessage& message);
   [[nodiscard]] common::Status worker_failed(const schema::TabletId& tablet_id,

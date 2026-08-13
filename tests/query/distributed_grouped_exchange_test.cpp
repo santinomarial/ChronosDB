@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
@@ -516,6 +517,88 @@ TEST(DistributedGroupedExchangeTest, DistinguishesEmptyTerminalFromEveryRealGrou
   GroupedFloat64ExchangeMessage same_sequence = null_group;
   same_sequence.terminal = true;
   EXPECT_EQ(conflicting->accept(same_sequence).code(), common::StatusCode::kAlreadyExists);
+}
+
+TEST(DistributedGroupedExchangeTest, OrdersAndLimitsOnlyAfterGlobalGroupMerge) {
+  const common::Uuid query_id = uuid(0x81U);
+  auto coordinator = DistributedGroupedFloat64Coordinator::create(
+      query_id, {tablet(0x82U), tablet(0x83U)}, {},
+      {.direction = DistributedGroupedFloat64ResultDirection::kDescending,
+       .null_placement = DistributedGroupedFloat64NullPlacement::kLast,
+       .limit = 2U});
+  ASSERT_TRUE(coordinator.has_value()) << coordinator.error().to_string();
+  EXPECT_TRUE(coordinator
+                  ->accept({.query_id = query_id,
+                            .tablet_id = tablet(0x82U),
+                            .sequence = 1U,
+                            .group_key = 1.0,
+                            .partial = one_value(1.0),
+                            .terminal = false})
+                  .is_ok());
+  EXPECT_TRUE(coordinator
+                  ->accept({.query_id = query_id,
+                            .tablet_id = tablet(0x82U),
+                            .sequence = 2U,
+                            .group_key = -2.0,
+                            .partial = one_value(2.0),
+                            .terminal = true})
+                  .is_ok());
+  EXPECT_TRUE(coordinator
+                  ->accept({.query_id = query_id,
+                            .tablet_id = tablet(0x83U),
+                            .sequence = 1U,
+                            .group_key = 1.0,
+                            .partial = one_value(3.0),
+                            .terminal = false})
+                  .is_ok());
+  EXPECT_TRUE(coordinator
+                  ->accept({.query_id = query_id,
+                            .tablet_id = tablet(0x83U),
+                            .sequence = 2U,
+                            .group_key = std::numeric_limits<double>::quiet_NaN(),
+                            .partial = one_value(4.0),
+                            .terminal = false})
+                  .is_ok());
+  EXPECT_TRUE(coordinator
+                  ->accept({.query_id = query_id,
+                            .tablet_id = tablet(0x83U),
+                            .sequence = 3U,
+                            .group_key = std::nullopt,
+                            .partial = one_value(5.0),
+                            .terminal = true})
+                  .is_ok());
+
+  const auto result = coordinator->finish();
+  ASSERT_TRUE(result.has_value()) << result.error().to_string();
+  ASSERT_EQ(result->size(), 2U);
+  ASSERT_TRUE((*result)[0].group_key.has_value());
+  EXPECT_TRUE(std::isnan(*(*result)[0].group_key));
+  EXPECT_DOUBLE_EQ((*result)[0].aggregate.sum, 4.0);
+  ASSERT_TRUE((*result)[1].group_key.has_value());
+  EXPECT_DOUBLE_EQ(*(*result)[1].group_key, 1.0);
+  EXPECT_EQ((*result)[1].aggregate.count, 2U);
+  EXPECT_DOUBLE_EQ((*result)[1].aggregate.sum, 4.0);
+
+  auto empty =
+      DistributedGroupedFloat64Coordinator::create(query_id, {tablet(0x82U)}, {}, {.limit = 0U});
+  ASSERT_TRUE(empty.has_value());
+  EXPECT_TRUE(empty
+                  ->accept({.query_id = query_id,
+                            .tablet_id = tablet(0x82U),
+                            .sequence = 1U,
+                            .group_key = 1.0,
+                            .partial = one_value(1.0),
+                            .terminal = true})
+                  .is_ok());
+  ASSERT_TRUE(empty->finish().has_value());
+  EXPECT_TRUE(empty->finish()->empty());
+
+  EXPECT_EQ(DistributedGroupedFloat64Coordinator::create(
+                query_id, {tablet(0x82U)}, {},
+                {.direction = static_cast<DistributedGroupedFloat64ResultDirection>(0U)})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
 }
 
 TEST(DistributedGroupedExchangeTest, BoundsHistoryAndRetainsFirstIncompleteWorkerFailure) {
