@@ -416,3 +416,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0379](0379-bounded-global-vector-row-finalization-v2.md) | Bounded global vector row finalization v2 | accepted |
 | [0380](0380-mergeable-all-type-vector-aggregate-state.md) | Mergeable all-type vector aggregate state | accepted |
 | [0381](0381-canonical-mergeable-vector-aggregate-state-bytes.md) | Canonical mergeable vector aggregate state bytes | accepted |
+| [0382](0382-schema-bound-ungrouped-vector-aggregate-exchange.md) | Schema-bound ungrouped vector aggregate exchange | accepted |

@@ -140,6 +140,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/query/cseg_scan.hpp>
 #include <chronos/query/database_cseg_scan.hpp>
 #include <chronos/query/distributed_grouped_exchange.hpp>
+#include <chronos/query/distributed_vector_aggregate_exchange.hpp>
 #include <chronos/query/distributed_vector_aggregate_state.hpp>
 #include <chronos/query/distributed_vector_exchange.hpp>
 #include <chronos/query/distributed_vector_fragment.hpp>
@@ -256,6 +257,19 @@ int main() {
       &chronos::query::encode_mergeable_vector_aggregate_state;
   const auto decode_vector_aggregate_state =
       &chronos::query::decode_mergeable_vector_aggregate_state_exact;
+  const auto bind_vector_aggregate_exchange =
+      &chronos::query::bind_distributed_vector_ungrouped_aggregate_definitions;
+  const auto encode_vector_aggregate_exchange =
+      &chronos::query::encode_distributed_vector_aggregate_exchange_message;
+  const auto decode_vector_aggregate_exchange =
+      &chronos::query::decode_distributed_vector_aggregate_exchange_message_exact;
+  using ConsumeVectorAggregateExchange = chronos::common::Result<
+      chronos::query::DistributedVectorAggregateExchangeReadStep> (
+      chronos::query::DistributedVectorAggregateExchangeReader::*)(chronos::common::ByteView);
+  const ConsumeVectorAggregateExchange consume_vector_aggregate_exchange =
+      &chronos::query::DistributedVectorAggregateExchangeReader::consume;
+  const auto create_vector_aggregate_exchange_write_cursor =
+      &chronos::query::DistributedVectorAggregateExchangeWriteCursor::create;
   const auto encode_vector_result_schema =
       &chronos::query::encode_distributed_vector_result_schema;
   const auto decode_vector_result_schema =
@@ -507,6 +521,11 @@ int main() {
   (void)bind_follower_group_vector_snapshot;
   (void)encode_vector_aggregate_state;
   (void)decode_vector_aggregate_state;
+  (void)bind_vector_aggregate_exchange;
+  (void)encode_vector_aggregate_exchange;
+  (void)decode_vector_aggregate_exchange;
+  (void)consume_vector_aggregate_exchange;
+  (void)create_vector_aggregate_exchange_write_cursor;
   (void)encode_vector_query_request;
   (void)decode_vector_query_request;
   (void)encode_vector_query_response;

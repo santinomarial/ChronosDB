@@ -366,9 +366,12 @@ merge: wide exact sums, AVG sum/count, parallel variance count/mean/M2, and all-
 query-accounted variable payloads. Its distinct nested v1 codec now preserves the exact definition
 and operation-specific sufficient state under header/complete integrity and hard byte limits. The
 header-first reader and move-only cursor own partial I/O, while variable decode reserves query
-credit before copying. The nested state deliberately has no query/tablet/group/sequence authority;
-the enclosing schema-bound exchange still remains, so vector aggregate fragments continue to fail
-closed.
+credit before copying. A distinct ungrouped envelope now binds one nested state to nonzero query and
+tablet identities, canonical aggregate ordinal/count/sequence/terminal position, and the exact
+Fragment-v2-derived definition vector. It validates outer and nested integrity before variable
+decode and owns fragmented reads/short writes. Cross-frame retry arbitration, worker execution,
+global merge/finalization, and a separate multi-key grouped exchange still remain, so production
+vector aggregate fragments continue to fail closed.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated

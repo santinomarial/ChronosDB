@@ -235,9 +235,11 @@
   minority-loss crash reconciliation before deployment exposure.
 - Thousands-of-groups simulation, one-node loss, group lifecycle, persisted reopen, noisy-neighbor,
   TSan/chaos, physical amplification, group density, memory, and tail benchmarks.
-
 ## Phase 16 — distributed query and rebalancing
 
+- The all-type vector aggregate nested state now has a schema-bound ungrouped query/tablet envelope.
+  Cross-frame retry arbitration, real-CSEG worker execution, cross-tablet merge/finalization,
+  grouped-key transport, and process integration remain deferred.
 - The canonical fixed-width ungrouped aggregate exchange frame, exact codec, aligned in-memory
   state admission, and constant-storage fragmented/coalesced read plus short-write ownership are
   implemented. Contiguous per-tablet sequence admission, bounded bit-exact retry history, terminal

@@ -91,6 +91,10 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Mergeable Vector Aggregate State
   v1](formats/mergeable-vector-aggregate-state-v1.md): bounded nested all-type partial state with
   exact sufficient statistics, query-accounted variable extrema, and partial-I/O ownership.
+- [Distributed Vector Aggregate Exchange
+  v1](formats/distributed-vector-aggregate-exchange-v1.md): schema- and fragment-bound ungrouped
+  envelope for one correlated mergeable all-type partial state, with canonical aggregate position,
+  independent integrity, bounded partial-I/O ownership, and query-accounted variable decode.
 - [Distributed Vector Exchange v1](formats/distributed-vector-exchange-v1.md): bounded correlated
   general-row envelope around one exact all-logical-type Columnar Batch v1 or terminal-only empty
   stream.

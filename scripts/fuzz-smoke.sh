@@ -33,6 +33,7 @@ targets=(
   chronos_distributed_vector_result_exchange_fuzz
   chronos_distributed_vector_fragment_v2_fuzz
   chronos_distributed_vector_aggregate_state_fuzz
+  chronos_distributed_vector_aggregate_exchange_fuzz
   chronos_distributed_vector_query_transport_v2_fuzz
   chronos_columnar_append_fuzz
   chronos_cseg_metadata_codec_fuzz

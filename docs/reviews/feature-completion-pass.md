@@ -860,14 +860,22 @@ Focused executions passed:
   every split, coalesced suffixes, canonical damage, lower bounds, and injected allocation failure;
   a dedicated deterministic fuzz target covers exact and fragmented parsing. The correlated
   schema-bound exchange and aggregate execution remain.
+- Schema-bound ungrouped aggregate-exchange continuation: a distinct outer v1 frame correlates one
+  nested mergeable state to exact query/tablet identity and canonical aggregate ordinal/count/
+  sequence/terminal position. Every codec and partial-I/O owner requires the Fragment-v2-derived
+  definition vector, and exact decode independently checks outer, nested, and complete integrity
+  before query-accounted variable state allocation. Focused tests freeze the layout, reject schema
+  and canonical damage, enumerate every split, and inject allocation failure; a dedicated
+  deterministic fuzz target covers arbitrary and mutated frames. Worker execution, stream
+  coordination, global merge/finalization, grouped exchange, and process integration remain.
 
 The C++ files changed by the grouped-, vector-exchange-, Fragment-v2-, and vector-transport-v2
 continuations pass the repository-pinned clang-format 18 check. A full-tree check was also run and
 still reports pre-existing violations in the subscription protocol, subscription, multi-tablet
 checkpoint implementation, and focused subscription test files; these slices do not rewrite those
-unrelated files or claim a full-tree formatting pass. The full serialized 1,607-test developer
-suite, focused ASan/UBSan cases, and deterministic 10,000-run transport-v2 and aggregate-state fuzz
-campaigns pass.
+unrelated files or claim a full-tree formatting pass. The full serialized 1,611-test developer
+suite, focused ASan/UBSan cases, and deterministic 10,000-run transport-v2, aggregate-state, and
+aggregate-exchange fuzz campaigns pass.
 Apple's sanitizer runtime does not support LeakSanitizer, so those sanitizer runs explicitly
 disabled leak detection. Broader cross-compiler/Linux parity, benchmark, profile, and chaos checks
 were deliberately not run.

@@ -1079,8 +1079,12 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   exact sums, AVG counts, variance count/mean/M2, and query-accounted extrema as the foundation for
   that future transport. A distinct nested state v1 now canonically encodes the exact definition and
   sufficient state, validates integrity and bounds before variable allocation, reserves query
-  credit for decoded extrema, and owns fragmented reads/short writes. Correlated query/tablet/group
-  exchange remains deferred. A bounded
+  credit for decoded extrema, and owns fragmented reads/short writes. A distinct schema-bound
+  ungrouped envelope now binds one nested state to exact query/tablet and canonical aggregate
+  ordinal/count/sequence/terminal position. It exact-matches the Fragment-v2-derived definition
+  vector, validates integrity and bounds before variable decode, and owns fragmented reads/short
+  writes. Group-key exchange, cross-tablet aggregate coordination, and aggregate execution remain
+  deferred. A bounded
   global row finalizer now validates complete streams and native schemas, applies stable all-type
   ordering followed by LIMIT, and emits exact payload-bounded native result batches. A distinct
   group-scoped grouped dispatch now
