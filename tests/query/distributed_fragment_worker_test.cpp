@@ -228,6 +228,55 @@ TEST(DistributedFragmentWorkerTest, ExecutesPinnedTemporalPartsAndReprovesLocalP
   EXPECT_EQ(result->partial.maximum, 2.5);
   EXPECT_TRUE(result->terminal);
 
+  DistributedGroupedFloat64FragmentDispatch grouped_dispatch{
+      .raft_group_id = group_id,
+      .fragment = {.aggregate = dispatch.fragment, .group_key_input_index = 1U}};
+  grouped_dispatch.fragment.aggregate.event_time_predicate = std::nullopt;
+  const auto grouped_request = [&](const std::uint64_t local_node) {
+    return DistributedGroupedFloat64WorkerRequest{.dispatch = std::cref(grouped_dispatch),
+                                                  .storage = std::cref(*storage),
+                                                  .snapshot = std::cref(*snapshot),
+                                                  .lineage = std::cref(lineage),
+                                                  .placement = std::cref(placement),
+                                                  .raft_group_id = group_id,
+                                                  .local_node = local_node,
+                                                  .local_linearizable_barrier =
+                                                      raft::ReadBarrier{2U, 3U, 10U},
+                                                  .limits = {}};
+  };
+  const auto grouped_result = execute_distributed_grouped_float64_fragment(grouped_request(11U));
+  ASSERT_TRUE(grouped_result.has_value()) << grouped_result.error().to_string();
+  const auto* messages = std::get_if<std::vector<GroupedFloat64ExchangeMessage>>(&*grouped_result);
+  ASSERT_NE(messages, nullptr);
+  ASSERT_EQ(messages->size(), 2U);
+  EXPECT_EQ((*messages)[0].sequence, 1U);
+  EXPECT_EQ((*messages)[0].group_key, 1.5);
+  EXPECT_EQ((*messages)[0].partial.count, 1U);
+  EXPECT_EQ((*messages)[0].partial.sum, 1.5);
+  EXPECT_FALSE((*messages)[0].terminal);
+  EXPECT_EQ((*messages)[1].sequence, 2U);
+  EXPECT_EQ((*messages)[1].group_key, 2.5);
+  EXPECT_EQ((*messages)[1].partial.sum, 2.5);
+  EXPECT_TRUE((*messages)[1].terminal);
+
+  grouped_dispatch.fragment.aggregate.event_time_predicate =
+      cseg::EventTimePredicate{.lower = cseg::EventTimeBound{30, true}, .upper = std::nullopt};
+  const auto empty = execute_distributed_grouped_float64_fragment(grouped_request(11U));
+  ASSERT_TRUE(empty.has_value()) << empty.error().to_string();
+  const auto* terminal = std::get_if<GroupedExchangeTerminalMessage>(&*empty);
+  ASSERT_NE(terminal, nullptr);
+  EXPECT_EQ(terminal->query_id, grouped_dispatch.fragment.aggregate.query_id);
+  EXPECT_EQ(terminal->tablet_id, tablet_id);
+  EXPECT_EQ(terminal->sequence, 1U);
+
+  OmittingPartLoader grouped_omitting_loader;
+  EXPECT_EQ(
+      execute_distributed_grouped_float64_fragment(grouped_request(12U), grouped_omitting_loader)
+          .error()
+          .code(),
+      common::StatusCode::kUnavailable);
+  EXPECT_EQ(grouped_omitting_loader.calls(), 0U);
+
   OmittingPartLoader omitting_loader;
   EXPECT_EQ(execute_distributed_aggregate_fragment(request(11U), omitting_loader).error().code(),
             common::StatusCode::kCorruption);

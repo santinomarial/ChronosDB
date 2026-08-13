@@ -36,6 +36,10 @@ binds those values for worker-side revalidation.
 `encode_distributed_grouped_float64_fragment_dispatch` now supplies that distinct group-scoped
 outer format. Its magic cannot be decoded as ungrouped Dispatch v1, and its integrity checks finish
 before nested grouped-intent decoding.
+`execute_distributed_grouped_float64_fragment` reuses the ungrouped worker's extracted local
+authority validator, resolves generation-pinned temporal winners, then groups only selected visible
+rows. It emits terminal partial messages in canonical key-token order or the distinct empty terminal
+value; that reproducibility order is not SQL ordering.
 The dispatch envelope adds the distinct Raft group identity that scopes every admission index;
 workers never execute the bare inner fragment.
 `bind_distributed_aggregate_fragment` constructs that envelope only after one Manifest v2 snapshot,
@@ -155,8 +159,8 @@ A fixed ungrouped-aggregate frame gives partial-I/O carriers an unambiguous payl
 prematurely defining a general physical-fragment language. The cost is a specialized first exchange
 type. A separate first grouped frame now carries one nullable FLOAT64 key with bounded
 coordination, but multi-key and non-FLOAT64 grouping, physical plans, authenticated transport,
-grouped worker execution, ordering/top-N, cancellation delivery, and
-durable recovery require their own bounded contracts. A leader hint never mutates an existing
+packaged grouped transport/execution, ordering/top-N, cancellation delivery, and durable recovery
+require their own bounded contracts. A leader hint never mutates an existing
 proof-bound dispatch: following it requires explicit coordinator rebinding.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority

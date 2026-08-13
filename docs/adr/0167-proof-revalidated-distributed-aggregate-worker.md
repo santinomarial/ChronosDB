@@ -44,6 +44,10 @@ The barrier argument is proof acquired from the local Raft runtime; the value ty
 create leadership. Carrier authentication, cancellation/deadlines, retry response bytes, and
 coordinator transport integration remain separate boundaries.
 
+The first grouped executor reuses these complete local gates and temporal winner resolution under
+[ADR 0328](0328-proof-revalidated-grouped-float64-worker.md); it does not bypass or replace the
+ungrouped worker.
+
 Invariants 4–6, 10, 11, 14, and 18 apply.
 
 ## Migration and rollback

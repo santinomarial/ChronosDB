@@ -899,6 +899,11 @@ int main() {
       const chronos::query::DistributedAggregateWorkerRequest&);
   const ExecuteDistributedFragment execute_distributed_fragment =
       &chronos::query::execute_distributed_aggregate_fragment;
+  using ExecuteDistributedGroupedFragment =
+      chronos::common::Result<chronos::query::DistributedGroupedFloat64WorkerResult> (*)(
+          const chronos::query::DistributedGroupedFloat64WorkerRequest&);
+  const ExecuteDistributedGroupedFragment execute_distributed_grouped_fragment =
+      &chronos::query::execute_distributed_grouped_float64_fragment;
   using ExplainFunction = chronos::query::SqlResult<std::string> (*)(
       const chronos::query::BoundSqlSelect&);
   const ExplainFunction explain_select = &chronos::query::explain_sql_v1_select;
@@ -1173,6 +1178,7 @@ int main() {
                  bind_distributed_fragment != nullptr &&
                  bind_distributed_grouped_fragment != nullptr &&
                  execute_distributed_fragment != nullptr &&
+                 execute_distributed_grouped_fragment != nullptr &&
                  bind_select != nullptr && bind_create != nullptr && bind_insert != nullptr &&
                  materialize_insert != nullptr &&
                  evaluate_expression != nullptr &&

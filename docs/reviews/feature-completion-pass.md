@@ -242,7 +242,7 @@ lifecycle. A distinct bounded-stale constructor applies the same catalog, Manife
 execution gates to stable same-term leader/follower observation pairs. General vector-plan
 grouping/order/top-N/LIMIT remains incomplete. A distinct canonical frame now carries one nullable
 FLOAT64 group key and mergeable partial with SQL-equivalent signed-zero/NaN canonicalization, but
-grouped execution, multi-key/non-FLOAT64 state, and authenticated transport remain
+packaged authenticated grouped execution/transport and multi-key/non-FLOAT64 state remain
 incomplete. A distinct
 canonical observation protocol, authenticated receiver, mTLS clients/servers, finite multi-address
 acquisition, correlated
@@ -479,6 +479,10 @@ Focused executions passed:
   distinct magic, exact group/nested-intent round trip, full integrity, bidirectional ungrouped
   confusion rejection, and damage/version/nil-group rejection. Worker execution and authenticated
   grouped transport are not claimed.
+- Grouped-worker continuation: the focused real-Manifest-v2/real-CSEG worker case passed for reused
+  local group/placement/barrier/schema/snapshot gates, two canonical grouped partials, contiguous
+  terminal sequencing, event-filtered terminal-only empty output, and route rejection before loader
+  I/O. Authenticated grouped transport and packaged multi-tablet execution are not claimed.
 
 The C++ files changed by the grouped-exchange continuations pass the repository-pinned clang-format
 18 check. A full-tree check was also run and still reports pre-existing violations in the

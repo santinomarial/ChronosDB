@@ -1010,8 +1010,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   projected key index around the existing snapshot/route/proof-bound aggregate fragment without
   changing its bytes. Its authority binder reuses the complete pinned Manifest/placement/group/
   proof constructor and additionally proves the projected key FLOAT64 type. General vector-plan
-  fragments and grouped execution remain deferred; a distinct group-scoped grouped dispatch now
-  preserves exact Raft authority without reinterpreting ungrouped dispatch bytes.
+  fragments remain deferred; a distinct group-scoped grouped dispatch now
+  preserves exact Raft authority without reinterpreting ungrouped dispatch bytes. Its worker reuses
+  every local authority gate, resolves real temporal CSEG winners, and emits canonical grouped
+  partials or the terminal-only empty result. Packaged multi-tablet grouped execution remains.
   Multi-key/non-FLOAT64 state/transport, ordering, top-N, and LIMIT remain deferred. A distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
   catalog, Manifest, route, and execution gates;

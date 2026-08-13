@@ -40,9 +40,10 @@ intent, prove grouped and ungrouped dispatches reject each other, and reject tru
 bytes, outer/header or nested damage, checksum-valid future versions, and nil encoder groups. All
 four dispatch cases pass, and the installed-consumer gate covers both grouped codec symbols.
 
-Worker-side grouped execution, grouped request/response transport, stream discrimination,
-multi-key/non-FLOAT64 state, ordering/top-N/LIMIT, and broader failure evidence remain incomplete.
-No Phase 16 exit gate is claimed.
+Grouped request/response transport, stream discrimination, multi-key/non-FLOAT64 state,
+ordering/top-N/LIMIT, and broader failure evidence remain incomplete. Worker-side real-CSEG grouped
+execution is the accepted follow-up in
+[ADR 0328](0328-proof-revalidated-grouped-float64-worker.md). No Phase 16 exit gate is claimed.
 
 Invariants 4–6, 10, 11, 14, 15, and 18 apply.
 

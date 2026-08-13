@@ -7,6 +7,7 @@
 #include "chronos/manifest/temporal_publication.hpp"
 #include "chronos/query/distributed.hpp"
 #include "chronos/query/distributed_fragment_dispatch.hpp"
+#include "chronos/query/distributed_grouped_exchange.hpp"
 #include "chronos/query/temporal_cseg_snapshot.hpp"
 #include "chronos/raft/metadata.hpp"
 #include "chronos/schema/schema_lineage.hpp"
@@ -15,6 +16,8 @@
 #include <functional>
 #include <optional>
 #include <span>
+#include <variant>
+#include <vector>
 
 namespace chronos::query {
 
@@ -76,6 +79,30 @@ execute_distributed_aggregate_fragment(const DistributedAggregateWorkerRequest& 
 [[nodiscard]] common::Result<ExchangeMessage>
 execute_distributed_aggregate_fragment(const DistributedAggregateWorkerRequest& request,
                                        const DistributedTemporalPartBatchLoader& loader);
+
+struct DistributedGroupedFloat64WorkerRequest {
+  std::reference_wrapper<const DistributedGroupedFloat64FragmentDispatch> dispatch;
+  std::reference_wrapper<const manifest::ManifestStorage> storage;
+  std::reference_wrapper<const manifest::TemporalDatabaseStorageSnapshot> snapshot;
+  std::reference_wrapper<const schema::SchemaLineage> lineage;
+  std::reference_wrapper<const raft::TabletPlacementMetadata> placement;
+  common::Uuid raft_group_id;
+  std::uint64_t local_node{};
+  std::optional<raft::ReadBarrier> local_linearizable_barrier;
+  DistributedAggregateWorkerLimits limits;
+};
+
+using DistributedGroupedFloat64WorkerResult =
+    std::variant<std::vector<GroupedFloat64ExchangeMessage>, GroupedExchangeTerminalMessage>;
+
+// Reuses the aggregate worker's complete local authority gates, then groups visible temporal
+// winners by the projected FLOAT64 key. Empty input returns the distinct terminal-only value.
+[[nodiscard]] common::Result<DistributedGroupedFloat64WorkerResult>
+execute_distributed_grouped_float64_fragment(const DistributedGroupedFloat64WorkerRequest& request);
+
+[[nodiscard]] common::Result<DistributedGroupedFloat64WorkerResult>
+execute_distributed_grouped_float64_fragment(const DistributedGroupedFloat64WorkerRequest& request,
+                                             const DistributedTemporalPartBatchLoader& loader);
 
 } // namespace chronos::query
 

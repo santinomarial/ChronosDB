@@ -269,7 +269,9 @@
   projected key index around the existing snapshot/route/proof-bound Fragment v1 bytes; schema/type
   authority binding now reuses the complete aggregate binder and proves the grouped key against the
   same pinned schema. A distinct group-scoped executable dispatch now binds that intent to its
-  nonnil Raft group without changing ungrouped bytes. Worker production remains incomplete.
+  nonnil Raft group without changing ungrouped bytes. The grouped worker now reuses every local
+  authority gate, resolves real temporal CSEG winners, emits canonical terminal partials, and uses
+  the terminal-only value for empty selected input. Grouped transport/packaging remain incomplete.
 - Proof-bound leader-linearizable/bounded-stale/local-eventual admissions now remain attached through
   compatible pinned multi-tablet snapshots and protocol/carrier scheduling. Whole-query replacement
   now validates fresh caller-proved authority, identical logical shape, nonregressing generation,
