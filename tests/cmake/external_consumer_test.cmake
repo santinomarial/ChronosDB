@@ -253,6 +253,10 @@ int main() {
       &chronos::cluster::encode_distributed_vector_query_request_v1;
   const auto decode_vector_query_request =
       &chronos::cluster::decode_distributed_vector_query_request_v1;
+  const auto encode_vector_query_response =
+      &chronos::cluster::encode_distributed_vector_query_response_v1;
+  const auto decode_vector_query_response =
+      &chronos::cluster::decode_distributed_vector_query_response_v1;
   const auto create_replicated_query_worker =
       &chronos::service::ReplicatedDistributedQueryWorker::create;
   const auto create_replicated_grouped_query_worker =
@@ -388,6 +392,8 @@ int main() {
   (void)bind_follower_group_vector_snapshot;
   (void)encode_vector_query_request;
   (void)decode_vector_query_request;
+  (void)encode_vector_query_response;
+  (void)decode_vector_query_response;
   (void)create_replicated_query_worker;
   (void)create_replicated_grouped_query_worker;
   (void)create_replicated_grouped_query_receiver;

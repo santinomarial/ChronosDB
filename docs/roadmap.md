@@ -1032,9 +1032,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   vector-result envelope now has a header-first
   bounded reader and move-only short-write cursor that preserve coalesced suffix ownership without
   allocating from unchecked lengths. A distinct node-routed vector query request now wraps one
-  exact dispatch under independent header, payload, and complete integrity bounds. Response
-  framing, carrier ownership, and execution remain deferred. A distinct group-scoped grouped
-  dispatch now
+  exact dispatch under independent header, payload, and complete integrity bounds. Its distinct
+  reverse-route response exact-correlates one vector exchange or explicit failure and optional
+  advisory leader hint. Stream/carrier ownership and execution remain deferred. A distinct
+  group-scoped grouped dispatch now
   preserves exact Raft authority without reinterpreting ungrouped dispatch bytes. Its worker reuses
   every local authority gate, resolves real temporal CSEG winners, and emits canonical grouped
   partials or the terminal-only empty result. The grouped authority binder now directly packages

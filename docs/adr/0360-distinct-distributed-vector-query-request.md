@@ -19,8 +19,9 @@ Header CRC validation precedes all declared-length use; the complete frame and n
 independent integrity checks. The bounded maximum request is 84,348 bytes.
 
 The exact codec owns the decoded dispatch and changes neither Vector Fragment Dispatch v1 nor any
-existing transport. CRC is not authentication. Response framing, partial-I/O ownership, receiver
-authorization, retries, TLS, TCP, coordination, and execution require later contracts.
+existing transport. CRC is not authentication. Response framing is implemented separately;
+partial-I/O ownership, receiver authorization, retries, TLS, TCP, coordination, and execution
+require later contracts.
 
 ## Consequences and validation
 

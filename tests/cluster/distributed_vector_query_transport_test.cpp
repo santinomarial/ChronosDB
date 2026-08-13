@@ -2,6 +2,7 @@
 #include "chronos/cluster/distributed_vector_query_transport.hpp"
 #include "chronos/common/crc32c.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
@@ -66,6 +67,17 @@ void rewrite_checksums(std::vector<std::byte>& bytes) {
             common::crc32c(common::ByteView{bytes}.first(bytes.size() - 4U)));
 }
 
+void rewrite_response_checksums(std::vector<std::byte>& bytes) {
+  const common::ByteView payload =
+      common::ByteView{bytes}.subspan(kDistributedVectorQueryResponseHeaderSize,
+                                      bytes.size() - kDistributedVectorQueryResponseHeaderSize -
+                                          kDistributedVectorQueryResponseTrailerSize);
+  store_u32(bytes, 80U, payload.empty() ? 0U : common::crc32c(payload));
+  store_u32(bytes, 108U, common::crc32c(common::ByteView{bytes}.first(108U)));
+  store_u32(bytes, bytes.size() - 4U,
+            common::crc32c(common::ByteView{bytes}.first(bytes.size() - 4U)));
+}
+
 TEST(DistributedVectorQueryTransportTest, RoundTripsDistinctProofBoundRequest) {
   const DistributedVectorQueryRequest request{1U, 2U, dispatch()};
   const auto encoded = encode_distributed_vector_query_request_v1(request);
@@ -108,6 +120,104 @@ TEST(DistributedVectorQueryTransportTest, RejectsOuterAndNestedDamageAndFutureVe
   reserved[52U] = std::byte{1U};
   rewrite_checksums(reserved);
   EXPECT_EQ(decode_distributed_vector_query_request_v1(reserved).error().code(),
+            common::StatusCode::kCorruption);
+}
+
+TEST(DistributedVectorQueryTransportTest, RoundTripsCorrelatedTerminalAndFailureResponses) {
+  const query::DistributedVectorExchangeMessage terminal{.query_id = uuid(1U),
+                                                         .tablet_id = id<schema::TabletId>(4U),
+                                                         .sequence = 1U,
+                                                         .terminal = true};
+  const DistributedVectorQueryResponse success{.source_node_id = 2U,
+                                               .target_node_id = 1U,
+                                               .query_id = uuid(1U),
+                                               .tablet_id = id<schema::TabletId>(4U),
+                                               .status_code = common::StatusCode::kOk,
+                                               .payload = terminal};
+  const auto encoded_success = encode_distributed_vector_query_response_v1(success);
+  ASSERT_TRUE(encoded_success.has_value()) << encoded_success.error().to_string();
+  const auto decoded_success = decode_distributed_vector_query_response_v1(*encoded_success);
+  ASSERT_TRUE(decoded_success.has_value()) << decoded_success.error().to_string();
+  EXPECT_EQ(decode_distributed_grouped_query_response_v1(*encoded_success).error().code(),
+            common::StatusCode::kCorruption);
+  ASSERT_TRUE(decoded_success->payload.has_value());
+  EXPECT_EQ(decoded_success->source_node_id, 2U);
+  EXPECT_EQ(decoded_success->target_node_id, 1U);
+  EXPECT_EQ(decoded_success->payload->query_id, terminal.query_id);
+  EXPECT_EQ(decoded_success->payload->tablet_id, terminal.tablet_id);
+  EXPECT_EQ(decoded_success->payload->sequence, 1U);
+  EXPECT_TRUE(decoded_success->payload->terminal);
+  EXPECT_TRUE(decoded_success->payload->encoded_batch.empty());
+
+  const DistributedVectorQueryResponse failure{.source_node_id = 2U,
+                                               .target_node_id = 1U,
+                                               .query_id = uuid(1U),
+                                               .tablet_id = id<schema::TabletId>(4U),
+                                               .status_code = common::StatusCode::kUnavailable,
+                                               .leader_hint = DistributedQueryLeaderHint{3U, 9U}};
+  const auto encoded_failure = encode_distributed_vector_query_response_v1(failure);
+  ASSERT_TRUE(encoded_failure.has_value()) << encoded_failure.error().to_string();
+  EXPECT_EQ(encoded_failure->size(), kDistributedVectorQueryResponseHeaderSize + 4U);
+  const auto decoded_failure = decode_distributed_vector_query_response_v1(*encoded_failure);
+  ASSERT_TRUE(decoded_failure.has_value());
+  EXPECT_EQ(decoded_failure->status_code, common::StatusCode::kUnavailable);
+  EXPECT_FALSE(decoded_failure->payload.has_value());
+  EXPECT_EQ(decoded_failure->leader_hint, failure.leader_hint);
+
+  constexpr std::array failure_codes{
+      common::StatusCode::kCancelled,       common::StatusCode::kInvalidArgument,
+      common::StatusCode::kOutOfRange,      common::StatusCode::kNotFound,
+      common::StatusCode::kAlreadyExists,   common::StatusCode::kCorruption,
+      common::StatusCode::kIoError,         common::StatusCode::kResourceExhausted,
+      common::StatusCode::kUnavailable,     common::StatusCode::kNotSupported,
+      common::StatusCode::kUnauthenticated, common::StatusCode::kInternal};
+  for (const common::StatusCode code : failure_codes) {
+    auto candidate = failure;
+    candidate.status_code = code;
+    candidate.leader_hint.reset();
+    const auto encoded_candidate = encode_distributed_vector_query_response_v1(candidate);
+    ASSERT_TRUE(encoded_candidate.has_value());
+    const auto decoded_candidate = decode_distributed_vector_query_response_v1(*encoded_candidate);
+    ASSERT_TRUE(decoded_candidate.has_value());
+    EXPECT_EQ(decoded_candidate->status_code, code);
+  }
+
+  auto mismatched = success;
+  mismatched.query_id = uuid(8U);
+  EXPECT_EQ(encode_distributed_vector_query_response_v1(mismatched).error().code(),
+            common::StatusCode::kInvalidArgument);
+}
+
+TEST(DistributedVectorQueryTransportTest, RejectsResponseKindCorrelationAndNestedDamage) {
+  const DistributedVectorQueryResponse success{
+      .source_node_id = 2U,
+      .target_node_id = 1U,
+      .query_id = uuid(1U),
+      .tablet_id = id<schema::TabletId>(4U),
+      .status_code = common::StatusCode::kOk,
+      .payload = query::DistributedVectorExchangeMessage{.query_id = uuid(1U),
+                                                         .tablet_id = id<schema::TabletId>(4U),
+                                                         .sequence = 1U,
+                                                         .terminal = true}};
+  const auto encoded = encode_distributed_vector_query_response_v1(success);
+  ASSERT_TRUE(encoded.has_value());
+
+  std::vector<std::byte> kind = *encoded;
+  kind[73U] = std::byte{2U};
+  rewrite_response_checksums(kind);
+  EXPECT_EQ(decode_distributed_vector_query_response_v1(kind).error().code(),
+            common::StatusCode::kCorruption);
+
+  std::vector<std::byte> correlation = *encoded;
+  correlation[40U] ^= std::byte{1U};
+  rewrite_response_checksums(correlation);
+  EXPECT_EQ(decode_distributed_vector_query_response_v1(correlation).error().code(),
+            common::StatusCode::kCorruption);
+
+  std::vector<std::byte> nested = *encoded;
+  nested[kDistributedVectorQueryResponseHeaderSize] ^= std::byte{1U};
+  rewrite_response_checksums(nested);
+  EXPECT_EQ(decode_distributed_vector_query_response_v1(nested).error().code(),
             common::StatusCode::kCorruption);
 }
 

@@ -274,6 +274,9 @@ The first vector transport slice adds a distinct node-routed request envelope ar
 dispatch. Header integrity protects its allocation-driving length, while payload and complete CRCs
 retain independent corruption boundaries. It deliberately defines no response or security semantics
 and does not resolve how arbitrary plan outputs acquire Columnar Batch schema identities.
+The matching response exact-correlates reverse route, query, tablet, one vector exchange or failure,
+and an optional advisory leader hint. It validates header and payload lengths before nested decode
+but deliberately leaves multi-frame terminal sequencing to a later coordinator contract.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated

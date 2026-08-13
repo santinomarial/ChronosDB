@@ -1,6 +1,6 @@
 # Distributed Vector Query Transport v1
 
-> **Status:** accepted with implemented exact request codec. Response framing, stream ownership,
+> **Status:** accepted with implemented exact request and response codecs. Stream ownership,
 > authentication, scheduling, and execution remain separate.
 
 This distinct cluster request carries one group-scoped vector dispatch to an exact remote node. All
@@ -30,9 +30,44 @@ reserved fields, length relationships, complete integrity, payload integrity, an
 dispatch. Unknown checksum-valid versions are unsupported; damage and contradictions are
 corruption. Encoding rejects invalid routes or nested dispatches before publication.
 
+## Response
+
+| Offset | Size | Field |
+| ---: | ---: | --- |
+| 0 | 8 | Magic `CHDVRSP1` |
+| 8 | 2 | Major version `1` |
+| 10 | 2 | Minor version `0` |
+| 12 | 4 | Header length `112` |
+| 16 | 8 | Exact complete response length |
+| 24 | 8 | Nonzero source node |
+| 32 | 8 | Nonzero, distinct target node |
+| 40 | 16 | Nonzero query UUID |
+| 56 | 16 | Nonzero tablet UUID |
+| 72 | 1 | Status code |
+| 73 | 1 | Payload kind: `0` absent, `1` vector exchange |
+| 74 | 1 | Flags; bit 0 means leader hint present |
+| 75 | 1 | Zero reserved byte |
+| 76 | 4 | Exact payload length |
+| 80 | 4 | CRC32C of payload, or zero when absent |
+| 84 | 4 | Zero reserved bytes |
+| 88 | 8 | Leader node, or zero |
+| 96 | 8 | Leader placement epoch, or zero |
+| 104 | 4 | Zero reserved bytes |
+| 108 | 4 | CRC32C of bytes `[0,108)` |
+| 112 | variable | One exact [Distributed Vector Exchange v1](distributed-vector-exchange-v1.md) |
+| final - 4 | 4 | CRC32C of every preceding response byte |
+
+Status codes use the fixed numeric order `OK`, `CANCELLED`, `INVALID_ARGUMENT`, `OUT_OF_RANGE`,
+`NOT_FOUND`, `ALREADY_EXISTS`, `CORRUPTION`, `IO_ERROR`, `RESOURCE_EXHAUSTED`, `UNAVAILABLE`,
+`NOT_SUPPORTED`, `UNAUTHENTICATED`, and `INTERNAL`, numbered 0 through 12. `OK` requires kind 1;
+failure requires kind 0, zero payload length, and zero payload CRC. A payload exact-matches the
+response query/tablet; sequence and terminal state remain the later coordinator's authority. A
+leader hint requires both nonzero fields and is advisory only. The complete response is
+`116..16,777,192` bytes.
+
 ## Compatibility and ownership
 
 The magic is distinct from aggregate and grouped query transports; no decoder accepts another
-protocol's request. Minor-version compatibility is exact in v1. The exact decoder borrows input
-only for the call and returns a value-owned dispatch. This request codec does not yet define partial
-I/O, response/failure bytes, authentication, retry, or socket ownership.
+protocol's request or response. Minor-version compatibility is exact in v1. Exact decoders borrow
+input only for the call and return value-owned dispatch/exchange bytes. The codecs do not yet define
+partial I/O, authentication, retry, or socket ownership.

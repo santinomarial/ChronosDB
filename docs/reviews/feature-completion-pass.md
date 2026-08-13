@@ -689,6 +689,12 @@ Focused executions passed:
   confusion. Header self-containment and installed consumption cover the public codec. Response
   framing, partial-I/O, authentication, execution, coordination, and process integration are not
   claimed; general worker execution still requires an explicit result-schema identity contract.
+- Distributed vector-query response continuation: two additional focused cluster cases round-tripped
+  a correlated terminal-only vector exchange, every failure status, and an advisory leader hint,
+  then rejected encoder correlation mismatch, unknown payload kind, checksum-valid header/payload
+  mismatch, and nested damage under recomputed outer checksums. All four request/response cases,
+  header self-containment, and installed consumption cover both exact codec directions. Partial-I/O,
+  authentication, execution, coordination, and process integration are not claimed.
 
 The C++ files changed by the grouped- and vector-exchange continuations pass the repository-pinned
 clang-format 18 check. A full-tree check was also run and still reports pre-existing violations in
