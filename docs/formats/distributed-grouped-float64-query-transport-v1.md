@@ -1,7 +1,8 @@
 # Distributed Grouped FLOAT64 Query Transport v1
 
-> **Status:** accepted with implemented exact request/response codecs and bounded partial-I/O
-> ownership and authenticated receiver dispatch. TLS and socket lifecycle remain separate.
+> **Status:** accepted with implemented exact request/response codecs, bounded partial-I/O,
+> authenticated receiver dispatch, and bounded multi-response mutual-TLS ownership. TCP socket
+> acquisition and listener lifecycle remain separate.
 
 This cluster protocol carries one group-scoped grouped FLOAT64 fragment dispatch to a remote worker
 and correlates each returned grouped partial, empty-stream terminal, or failure. It is distinct from
@@ -89,6 +90,8 @@ only a completely validated and encoded response-frame vector. It enforces corre
 sequence and terminal placement under a configured frame bound. Unavailable worker failures may
 acquire an advisory leader hint from the committed metadata provider only after those trust gates.
 
-These primitives do not define multiple-response connection closure, retry arbitration, TLS, TCP,
-or a production real-CSEG service adapter. The network owner must preserve response order and must
-not publish partial query success if the connection fails mid-stream.
+The mutual-TLS client and server own one already-connected nonblocking TLS socket, authenticate and
+authorize before protocol bytes, preserve response order, apply finite handshake/exchange
+deadlines, and publish a client response span only after a terminal or failure frame. Any transport
+failure clears the retained prefix. They do not define TCP connection/listener acquisition, retry
+arbitration, sender/coordinator integration, or packaged multi-tablet execution.

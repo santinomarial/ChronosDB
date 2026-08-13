@@ -41,9 +41,10 @@ It proves a second fresh grouped context acquisition, invalid packaged configura
 move-only public ownership, and installed-consumer construction. The complete focused case passes
 when its existing loopback fixture is permitted.
 
-Grouped multi-response TLS/TCP ownership, sender/coordinator integration, packaged multi-tablet
-execution, multi-process failover, movement-time remote CSEG reads, and broad fault/measurement
-evidence remain incomplete. No Phase 16 exit gate is claimed.
+ADR 0335 subsequently supplies grouped multi-response TLS ownership. TCP acquisition/listener
+ownership, sender/coordinator integration, packaged multi-tablet execution, multi-process failover,
+movement-time remote CSEG reads, and broad fault/measurement evidence remain incomplete. No Phase
+16 exit gate is claimed.
 
 Invariants 4–6, 10, 11, 14, 15, and 18 apply.
 

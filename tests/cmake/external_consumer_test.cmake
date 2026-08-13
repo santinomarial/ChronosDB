@@ -53,6 +53,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #endif
 #include <chronos/cluster/tablet_physical_receipt_reclamation.hpp>
 #include <chronos/cluster/distributed_grouped_query_transport.hpp>
+#include <chronos/cluster/distributed_grouped_query_tls.hpp>
 #include <chronos/cluster/distributed_query_transport.hpp>
 #include <chronos/cluster/distributed_query_execution.hpp>
 #include <chronos/cluster/distributed_query_tls_client.hpp>
@@ -917,6 +918,10 @@ int main() {
       &chronos::cluster::DistributedGroupedQueryFrameWriteCursor::create;
   const auto create_distributed_grouped_query_receiver =
       &chronos::cluster::DistributedGroupedQueryReceiver::create;
+  const auto create_distributed_grouped_query_tls_client =
+      &chronos::cluster::DistributedGroupedQueryTlsClient::create;
+  const auto create_distributed_grouped_query_tls_server =
+      &chronos::cluster::DistributedGroupedQueryTlsServer::create;
   using ExecuteDistributedFragment = chronos::common::Result<chronos::query::ExchangeMessage> (*)(
       const chronos::query::DistributedAggregateWorkerRequest&);
   const ExecuteDistributedFragment execute_distributed_fragment =
@@ -1206,6 +1211,8 @@ int main() {
                  consume_distributed_grouped_query_response != nullptr &&
                  create_distributed_grouped_query_cursor != nullptr &&
                  create_distributed_grouped_query_receiver != nullptr &&
+                 create_distributed_grouped_query_tls_client != nullptr &&
+                 create_distributed_grouped_query_tls_server != nullptr &&
                  execute_distributed_fragment != nullptr &&
                  execute_distributed_grouped_fragment != nullptr &&
                  bind_select != nullptr && bind_create != nullptr && bind_insert != nullptr &&

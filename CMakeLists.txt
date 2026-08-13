@@ -621,6 +621,7 @@ chronos_enable_static_analysis(chronos_raft)
 
 add_library(
   chronos_cluster
+  src/cluster/distributed_grouped_query_tls.cpp
   src/cluster/distributed_grouped_query_transport.cpp
   src/cluster/distributed_query_execution.cpp
   src/cluster/distributed_query_tcp_client.cpp
@@ -1095,6 +1096,8 @@ if(CHRONOS_BUILD_TESTS)
     chronos_cluster_tests
     tests/cluster/distributed_grouped_query_transport_header_self_contained.cpp
     tests/cluster/distributed_grouped_query_transport_test.cpp
+    tests/cluster/distributed_grouped_query_tls_header_self_contained.cpp
+    tests/cluster/distributed_grouped_query_tls_test.cpp
     tests/cluster/distributed_query_execution_header_self_contained.cpp
     tests/cluster/distributed_query_execution_test.cpp
     tests/cluster/distributed_query_tcp_client_header_self_contained.cpp

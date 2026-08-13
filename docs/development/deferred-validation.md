@@ -264,8 +264,8 @@
   implicit stream discriminator.
   A bounded single-owner coordinator now enforces contiguous per-tablet grouped sequences, exact
   canonical retry history, empty-tablet terminals, first-failure arbitration, all-tablet closure,
-  and cross-tablet nullable-FLOAT64 group merging. A unified grouped carrier and proof-bound grouped
-  fragment production remain incomplete. A distinct exact grouped-intent envelope now binds one
+  and cross-tablet nullable-FLOAT64 group merging. Sender/coordinator integration remains
+  incomplete. A distinct exact grouped-intent envelope now binds one
   projected key index around the existing snapshot/route/proof-bound Fragment v1 bytes; schema/type
   authority binding now reuses the complete aggregate binder and proves the grouped key against the
   same pinned schema. A distinct group-scoped executable dispatch now binds that intent to its
@@ -280,10 +280,12 @@
   bounds. An authenticated receiver now authorizes the source, validates the complete bounded
   contiguous worker stream, contains worker failures, and publishes only an all-encoded response
   vector. A production request-local service adapter now acquires coherent owning Manifest/schema/
-  placement/group/barrier authority and invokes the real-CSEG grouped worker. Multi-response TLS/TCP
-  and sender/coordinator plus packaged grouped execution remain incomplete. A move-only service
-  owner now keeps that worker and authenticated receiver at stable addresses and proves the complete
-  in-process canonical request-to-real-CSEG response path.
+  placement/group/barrier authority and invokes the real-CSEG grouped worker. A bounded
+  mutual-TLS client/server pair now owns authentication-before-bytes, ordered multi-response short
+  I/O, finite deadlines, and terminal-only client publication on an already-connected socket. TCP
+  acquisition/listener ownership and sender/coordinator plus packaged grouped execution remain
+  incomplete. A move-only service owner keeps the worker and authenticated receiver at stable
+  addresses and proves the complete in-process canonical request-to-real-CSEG response path.
 - Proof-bound leader-linearizable/bounded-stale/local-eventual admissions now remain attached through
   compatible pinned multi-tablet snapshots and protocol/carrier scheduling. Whole-query replacement
   now validates fresh caller-proved authority, identical logical shape, nonregressing generation,

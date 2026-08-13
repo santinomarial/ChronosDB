@@ -50,9 +50,10 @@ codec and stream coverage, all six grouped transport cases pass. The installed-c
 references receiver construction and the public worker boundary is abstract.
 
 ADR 0333 subsequently supplies the production request-local real-CSEG service adapter.
-Multi-response TLS/TCP closure and write ownership, sender/coordinator integration, packaged
-multi-tablet grouped execution, and broad fault/measurement evidence remain incomplete. No Phase 16
-exit gate is claimed.
+ADR 0335 subsequently supplies ordered multi-response TLS closure and write ownership.
+TCP acquisition/listener ownership, sender/coordinator integration, packaged multi-tablet grouped
+execution, and broad fault/measurement evidence remain incomplete. No Phase 16 exit gate is
+claimed.
 
 ADR 0334 subsequently packages that service with this receiver under stable move-only ownership.
 

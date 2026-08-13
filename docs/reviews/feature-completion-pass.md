@@ -241,8 +241,9 @@ cover those barriers, binds one compatible Manifest epoch, and creates the compl
 lifecycle. A distinct bounded-stale constructor applies the same catalog, Manifest, route, and
 execution gates to stable same-term leader/follower observation pairs. General vector-plan
 grouping/order/top-N/LIMIT remains incomplete. A distinct canonical frame now carries one nullable
-FLOAT64 group key and mergeable partial with SQL-equivalent signed-zero/NaN canonicalization, but
-packaged authenticated grouped execution/transport and multi-key/non-FLOAT64 state remain
+FLOAT64 group key and mergeable partial with SQL-equivalent signed-zero/NaN canonicalization. An
+authenticated mutual-TLS carrier owns its bounded ordered response stream, but TCP acquisition,
+sender/coordinator integration, packaged grouped execution, and multi-key/non-FLOAT64 state remain
 incomplete. A distinct
 canonical observation protocol, authenticated receiver, mTLS clients/servers, finite multi-address
 acquisition, correlated
@@ -510,8 +511,14 @@ Focused executions passed:
 - Owned grouped real-CSEG receiver continuation: the same focused case passed a canonical
   authenticated grouped request through the move-only packaged worker/receiver owner and
   exact-decoded terminal key/sum `2.5`, with a second fresh authority acquisition. The
-  installed-consumer gate covers owner construction. Grouped TLS/TCP and sender/coordinator
-  execution are not claimed.
+  installed-consumer gate covers owner construction. Grouped TCP and sender/coordinator execution
+  are not claimed.
+- Grouped mutual-TLS continuation: 2 focused cases passed for a real nonblocking mutual-TLS
+  socket pair carrying two ordered correlated response frames, exact certificate-fingerprint and
+  principal/node authorization, one receiver invocation, terminal-only response publication,
+  invalid frame-limit rejection, and a sticky exact handshake deadline. The installed-consumer
+  gate covers both public carrier constructors. TCP connection/listener ownership,
+  sender/coordinator integration, and packaged multi-tablet execution are not claimed.
 
 The C++ files changed by the grouped-exchange continuations pass the repository-pinned clang-format
 18 check. A full-tree check was also run and still reports pre-existing violations in the
