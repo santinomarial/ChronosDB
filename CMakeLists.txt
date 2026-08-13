@@ -732,6 +732,7 @@ add_library(
   src/service/replicated_distributed_query.cpp
   src/service/replicated_distributed_query_tcp_server.cpp
   src/service/replicated_distributed_query_worker.cpp
+  src/service/replicated_distributed_vector_query_tcp_server_v2.cpp
   src/service/replicated_ingest_coordinator.cpp
   src/service/replicated_ingest_database.cpp
   src/service/replicated_ingest_operation.cpp
@@ -924,6 +925,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/service/replicated_distributed_query_tcp_server_header_self_contained.cpp
     tests/service/replicated_distributed_query_worker_header_self_contained.cpp
     tests/service/replicated_distributed_query_worker_test.cpp
+    tests/service/replicated_distributed_vector_query_tcp_server_v2_header_self_contained.cpp
     tests/service/replicated_ingest_coordinator_header_self_contained.cpp
     tests/service/replicated_ingest_database_header_self_contained.cpp
     tests/service/replicated_ingest_database_test.cpp

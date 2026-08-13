@@ -60,8 +60,10 @@ Unauthenticated, unauthorized, corrupt, and misrouted requests cannot invoke the
 published response storage is bounded by both frame count and exact encoded bytes. Work is linear in
 the complete request and result stream. No network or durable bytes change.
 
-Mutual-TLS progress, TCP acquisition/listener ownership, retry arbitration, schema-bound
-coordination, a production worker adapter, and process integration remain incomplete.
+ADRs 0370–0372 subsequently supply mutual-TLS progress and TCP acquisition/listener ownership;
+ADRs 0375–0376 supply the production row worker and stable inbound service composition. Retry
+arbitration and schema-bound coordination are implemented separately. Aggregate state, outbound
+multi-tablet scheduling, global result semantics, and process integration remain incomplete.
 
 ## Affected invariants
 

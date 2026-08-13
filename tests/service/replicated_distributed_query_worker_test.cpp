@@ -1,5 +1,6 @@
 #include "chronos/cluster/distributed_grouped_query_tcp_client.hpp"
 #include "chronos/cluster/distributed_query_tcp_client.hpp"
+#include "chronos/cluster/distributed_vector_query_tcp_client_v2.hpp"
 #include "chronos/common/crc32c.hpp"
 #include "chronos/manifest/naming.hpp"
 #include "chronos/manifest/temporal_codec.hpp"
@@ -12,6 +13,7 @@
 #include "chronos/service/replicated_distributed_grouped_query_tcp_server.hpp"
 #include "chronos/service/replicated_distributed_query_tcp_server.hpp"
 #include "chronos/service/replicated_distributed_query_worker.hpp"
+#include "chronos/service/replicated_distributed_vector_query_tcp_server_v2.hpp"
 #include "cseg/cseg_test_fixture.hpp"
 
 #include <array>
@@ -439,6 +441,84 @@ TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesReal
   ASSERT_TRUE(message_bounded_vector_worker.has_value());
   EXPECT_EQ(message_bounded_vector_worker->execute(vector_dispatch).error().code(),
             common::StatusCode::kResourceExhausted);
+
+  NodeAuthorizer vector_authorizer;
+  EXPECT_EQ(ReplicatedDistributedVectorQueryTcpServerV2::start({}).error().code(),
+            common::StatusCode::kInvalidArgument);
+  Authenticator vector_tcp_client_authenticator{91U};
+  Authenticator vector_tcp_server_authenticator{92U};
+  const std::size_t vector_calls_before_tcp = provider.vector_calls;
+  auto vector_server = ReplicatedDistributedVectorQueryTcpServerV2::start(
+      {.worker = {.local_node_id = 11U, .storage = &*storage, .context_provider = &provider},
+       .listener = {},
+       .tls = tls_server_config(),
+       .authenticator = &vector_tcp_client_authenticator,
+       .node_authorizer = &vector_authorizer,
+       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                          .exchange_timeout = std::chrono::milliseconds{1000},
+                          .maximum_response_frames = 4U,
+                          .maximum_response_bytes = std::size_t{1024U} * 1024U},
+       .maximum_connections = 4U,
+       .maximum_accepts_per_poll = 4U});
+  ASSERT_TRUE(vector_server.has_value()) << vector_server.error().to_string();
+  auto moved_vector_server = std::move(*vector_server);
+  auto vector_tls_context = network::TlsClientContext::create(tls_client_config());
+  auto vector_request = cluster::encode_distributed_vector_query_request_v2(
+      {.source_node_id = 1U, .target_node_id = 11U, .dispatch = vector_dispatch});
+  ASSERT_TRUE(vector_tls_context.has_value()) << vector_tls_context.error().to_string();
+  ASSERT_TRUE(vector_request.has_value()) << vector_request.error().to_string();
+  const auto vector_start = cluster::DistributedVectorQueryTcpClientV2::TimePoint::clock::now();
+  auto vector_client = cluster::DistributedVectorQueryTcpClientV2::begin(
+      {1U, 11U, std::move(*vector_request)},
+      {.remote_endpoint = moved_vector_server.bound_endpoint(),
+       .tls_context = std::addressof(*vector_tls_context),
+       .carrier = {.authenticator = &vector_tcp_server_authenticator,
+                   .node_authorizer = &vector_authorizer,
+                   .peer_ipv4_address = {127U, 0U, 0U, 1U},
+                   .limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                              .exchange_timeout = std::chrono::milliseconds{1000},
+                              .maximum_response_frames = 4U,
+                              .maximum_response_bytes = std::size_t{1024U} * 1024U}},
+       .connect_timeout = std::chrono::milliseconds{1000}},
+      vector_start);
+  ASSERT_TRUE(vector_client.has_value()) << vector_client.error().to_string();
+  for (std::size_t iteration = 0U;
+       iteration < 4096U &&
+       vector_client->state() != cluster::DistributedVectorQueryTcpClientStateV2::kComplete;
+       ++iteration) {
+    const auto interest = vector_client->interest();
+    pollfd descriptor{.fd = vector_client->descriptor(),
+                      .events = static_cast<short>((interest.want_read ? POLLIN : 0) |
+                                                   (interest.want_write ? POLLOUT : 0))};
+    ASSERT_GE(::poll(&descriptor, 1U, 1), 0);
+    ASSERT_TRUE(vector_client
+                    ->on_ready((descriptor.revents & POLLIN) != 0,
+                               (descriptor.revents & POLLOUT) != 0,
+                               cluster::DistributedVectorQueryTcpClientV2::TimePoint::clock::now())
+                    .is_ok())
+        << vector_client->failure().to_string();
+    ASSERT_TRUE(moved_vector_server.poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  ASSERT_EQ(vector_client->state(), cluster::DistributedVectorQueryTcpClientStateV2::kComplete)
+      << vector_client->failure().to_string();
+  const auto vector_tcp_responses = vector_client->responses();
+  ASSERT_TRUE(vector_tcp_responses.has_value()) << vector_tcp_responses.error().to_string();
+  ASSERT_EQ(vector_tcp_responses->size(), 1U);
+  EXPECT_EQ(vector_tcp_responses->front().status_code, common::StatusCode::kOk);
+  ASSERT_TRUE(vector_tcp_responses->front().payload.has_value());
+  // Guarded by the payload assertion above.
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+  const auto& vector_tcp_message = *vector_tcp_responses->front().payload;
+  EXPECT_TRUE(vector_tcp_message.terminal);
+  const auto vector_tcp_batch =
+      network::decode_query_result_batch(vector_tcp_message.encoded_result_batch);
+  ASSERT_TRUE(vector_tcp_batch.has_value()) << vector_tcp_batch.error().to_string();
+  EXPECT_EQ(vector_tcp_batch->row_count(), 2U);
+  EXPECT_EQ(provider.vector_calls, vector_calls_before_tcp + 1U);
+  EXPECT_TRUE(vector_tcp_client_authenticator.saw_fingerprint);
+  EXPECT_TRUE(vector_tcp_server_authenticator.saw_fingerprint);
+  EXPECT_EQ(moved_vector_server.metrics().completed_connections, 1U);
+  EXPECT_TRUE(moved_vector_server.shutdown().is_ok());
 
   NodeAuthorizer grouped_authorizer;
   EXPECT_EQ(ReplicatedDistributedGroupedQueryReceiver::create({}).error().code(),

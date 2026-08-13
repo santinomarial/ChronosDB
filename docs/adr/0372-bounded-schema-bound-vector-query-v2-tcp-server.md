@@ -54,8 +54,9 @@ Retained memory is `O(maximum_connections)` plus the bounded state of admitted c
 work is `O(active_connections + maximum_accepts_per_poll)`. One owner thread serializes calls, so no
 synchronization or memory-ordering argument is required.
 
-Production vector worker construction, finite retry, schema-bound coordination, multi-tablet
-execution, and process integration remain incomplete.
+ADRs 0373–0376 subsequently supply finite retry, schema-bound coordination, the production row
+worker, and stable inbound service composition. Outbound multi-tablet execution, global result
+semantics, aggregate state, and process integration remain incomplete.
 
 ## Affected invariants
 

@@ -340,6 +340,11 @@ worker, resolves logical winners from real temporal CSEGs, then materializes the
 through bounded vector chunks. Its service adapter converts those chunks to native result payloads
 and publishes only one complete bounded terminal stream. Tablet-local workers do not apply final
 ordering or limit, and aggregate modes fail closed until an all-type merge-state protocol exists.
+The production vector-v2 inbound owner places that worker, the authenticated receiver, and the
+bounded TCP/mTLS server behind one heap-stable move-only handle. Dependency-order declaration makes
+destruction reverse-safe, while moving the public handle cannot invalidate the internal borrowed
+addresses. Receiver response bounds are derived from the carrier bounds, so retained publication
+cannot cross an inconsistent layer limit.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated

@@ -1067,8 +1067,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   complete retained frame bytes, and releases plan-ordered schema-plus-results only after every
   tablet terminates. A request-local production row worker now independently reproves current local
   authority, resolves real temporal CSEG winners, materializes bounded schema-bound native batches,
-  and leaves global ordering/limit unapplied. Aggregate merge-state transport, owned receiver
-  composition, sender delivery, and general execution remain deferred. A distinct
+  and leaves global ordering/limit unapplied. A heap-stable production owner now composes that
+  worker with the authenticated receiver and bounded TCP/mTLS server under reverse-safe lifetime
+  order. Aggregate merge-state transport, multi-tablet sender delivery, and general execution
+  remain deferred. A distinct
   group-scoped grouped dispatch now
   preserves exact Raft authority without reinterpreting ungrouped dispatch bytes. Its worker reuses
   every local authority gate, resolves real temporal CSEG winners, and emits canonical grouped

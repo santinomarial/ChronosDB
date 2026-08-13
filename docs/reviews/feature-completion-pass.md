@@ -815,8 +815,15 @@ Focused executions passed:
   publishes only a complete terminal stream. Focused real-CSEG coverage proves two source-order
   rows survive a descending limit-one global intent, rejects schema mismatch, aggregate mode,
   stale authority, and invalid loader/configuration contracts, and exact-decodes the service output.
-  Aggregate merge state, owned receiver/server composition, portable execution, multi-tablet TCP
-  scheduling, global semantics, and process integration remain incomplete.
+  Aggregate merge state, portable execution, multi-tablet TCP scheduling, global semantics, and
+  process integration remain incomplete.
+- Owned vector-v2 inbound service continuation: a move-only heap-stable owner now constructs the
+  proof-revalidating row worker, authenticated schema-bound receiver, and bounded TCP/mTLS server in
+  dependency order and destroys them in reverse order. The focused real-CSEG gate moves the public
+  owner before use, authenticates both peers, executes one canonical Fragment-v2 request, and
+  exact-decodes the two-row terminal native batch with one completed connection and clean shutdown.
+  Aggregate merge state, portable outbound execution, multi-tablet scheduling/cancellation, global
+  semantics, and process integration remain incomplete.
 
 The C++ files changed by the grouped-, vector-exchange-, Fragment-v2-, and vector-transport-v2
 continuations pass the repository-pinned clang-format 18 check. A full-tree check was also run and
