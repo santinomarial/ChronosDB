@@ -5,6 +5,7 @@
 #include "chronos/manifest/temporal_validation.hpp"
 #include "chronos/schema/column_definition.hpp"
 #include "chronos/schema/logical_type.hpp"
+#include "chronos/service/replicated_distributed_grouped_query_receiver.hpp"
 #include "chronos/service/replicated_distributed_query_tcp_server.hpp"
 #include "chronos/service/replicated_distributed_query_worker.hpp"
 #include "cseg/cseg_test_fixture.hpp"
@@ -326,6 +327,30 @@ TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesReal
   EXPECT_EQ(grouped_messages->front().partial.sum, 2.5);
   EXPECT_TRUE(grouped_messages->front().terminal);
   EXPECT_EQ(provider.grouped_calls, 1U);
+
+  NodeAuthorizer grouped_authorizer;
+  EXPECT_EQ(ReplicatedDistributedGroupedQueryReceiver::create({}).error().code(),
+            common::StatusCode::kInvalidArgument);
+  auto grouped_receiver = ReplicatedDistributedGroupedQueryReceiver::create(
+      {.worker = {.local_node_id = 11U, .storage = &*storage, .context_provider = &provider},
+       .node_authorizer = &grouped_authorizer});
+  ASSERT_TRUE(grouped_receiver.has_value()) << grouped_receiver.error().to_string();
+  const auto grouped_request = cluster::encode_distributed_grouped_query_request_v1(
+      {.source_node_id = 1U, .target_node_id = 11U, .dispatch = grouped_dispatch});
+  ASSERT_TRUE(grouped_request.has_value()) << grouped_request.error().to_string();
+  const auto grouped_frames =
+      grouped_receiver->receive(*grouped_request, {.authorized = true, .principal_id = 91U});
+  ASSERT_TRUE(grouped_frames.has_value()) << grouped_frames.error().to_string();
+  ASSERT_EQ(grouped_frames->size(), 1U);
+  const auto grouped_response =
+      cluster::decode_distributed_grouped_query_response_v1(grouped_frames->front());
+  ASSERT_TRUE(grouped_response.has_value()) << grouped_response.error().to_string();
+  const auto* remote_grouped =
+      std::get_if<query::GroupedFloat64ExchangeMessage>(&*grouped_response->payload);
+  ASSERT_NE(remote_grouped, nullptr);
+  EXPECT_EQ(remote_grouped->group_key, 2.5);
+  EXPECT_EQ(remote_grouped->partial.sum, 2.5);
+  EXPECT_EQ(provider.grouped_calls, 2U);
 
   EXPECT_EQ(ReplicatedDistributedQueryTcpServer::start({}).error().code(),
             common::StatusCode::kInvalidArgument);

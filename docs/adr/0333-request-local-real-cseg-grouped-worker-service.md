@@ -47,6 +47,9 @@ The adapter is not yet packaged into a grouped TLS/TCP server, and sender/coordi
 multi-process execution, movement-time remote CSEG reads, and broad fault/measurement evidence
 remain incomplete. No Phase 16 exit gate is claimed.
 
+ADR 0334 subsequently packages the adapter with the authenticated receiver under stable ownership;
+grouped TLS/TCP remains incomplete.
+
 Invariants 4–6, 10, 11, 14, and 18 apply.
 
 ## References

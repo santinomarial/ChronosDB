@@ -281,7 +281,9 @@
   contiguous worker stream, contains worker failures, and publishes only an all-encoded response
   vector. A production request-local service adapter now acquires coherent owning Manifest/schema/
   placement/group/barrier authority and invokes the real-CSEG grouped worker. Multi-response TLS/TCP
-  and sender/coordinator plus packaged grouped execution remain incomplete.
+  and sender/coordinator plus packaged grouped execution remain incomplete. A move-only service
+  owner now keeps that worker and authenticated receiver at stable addresses and proves the complete
+  in-process canonical request-to-real-CSEG response path.
 - Proof-bound leader-linearizable/bounded-stale/local-eventual admissions now remain attached through
   compatible pinned multi-tablet snapshots and protocol/carrier scheduling. Whole-query replacement
   now validates fresh caller-proved authority, identical logical shape, nonregressing generation,

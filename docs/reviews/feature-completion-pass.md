@@ -507,6 +507,11 @@ Focused executions passed:
   grouped request-local authority acquisition and exact terminal key/sum `2.5` from the installed
   Manifest-v2/CSEG data. The installed-consumer gate covers grouped service construction. Grouped
   TLS/TCP, sender/coordinator, and packaged multi-tablet execution are not claimed.
+- Owned grouped real-CSEG receiver continuation: the same focused case passed a canonical
+  authenticated grouped request through the move-only packaged worker/receiver owner and
+  exact-decoded terminal key/sum `2.5`, with a second fresh authority acquisition. The
+  installed-consumer gate covers owner construction. Grouped TLS/TCP and sender/coordinator
+  execution are not claimed.
 
 The C++ files changed by the grouped-exchange continuations pass the repository-pinned clang-format
 18 check. A full-tree check was also run and still reports pre-existing violations in the

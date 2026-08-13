@@ -54,6 +54,8 @@ Multi-response TLS/TCP closure and write ownership, sender/coordinator integrati
 multi-tablet grouped execution, and broad fault/measurement evidence remain incomplete. No Phase 16
 exit gate is claimed.
 
+ADR 0334 subsequently packages that service with this receiver under stable move-only ownership.
+
 Invariants 4–6, 10, 11, 14, 15, and 18 apply.
 
 ## References

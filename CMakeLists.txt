@@ -710,6 +710,7 @@ chronos_enable_static_analysis(chronos_tiering)
 
 add_library(
   chronos_service
+  src/service/replicated_distributed_grouped_query_receiver.cpp
   src/service/native_protocol_service.cpp
   src/service/replicated_distributed_query.cpp
   src/service/replicated_distributed_query_tcp_server.cpp

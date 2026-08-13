@@ -50,7 +50,8 @@ writes. The authenticated receiver authorizes before invoking its borrowed worke
 entire bounded contiguous result, and returns response frames only after all encode successfully.
 The production grouped service acquires one owning request-local Manifest/schema/placement/group/
 barrier context and invokes the same real-CSEG worker without rewriting authority. Sender/network
-ownership remains separate.
+ownership remains separate. A move-only packaged receiver keeps the service and authenticated
+receiver at stable addresses and exposes only the complete response-frame vector.
 The dispatch envelope adds the distinct Raft group identity that scopes every admission index;
 workers never execute the bare inner fragment.
 `bind_distributed_aggregate_fragment` constructs that envelope only after one Manifest v2 snapshot,
