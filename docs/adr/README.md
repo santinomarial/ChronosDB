@@ -389,3 +389,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0352](0352-canonical-distributed-vector-plan-intent.md) | Canonical distributed vector plan intent | accepted |
 | [0353](0353-group-scoped-distributed-vector-fragment.md) | Group-scoped distributed vector fragment | accepted |
 | [0354](0354-authority-bound-distributed-vector-fragment.md) | Authority-bound distributed vector fragment | accepted |
+| [0355](0355-compatible-multi-tablet-vector-snapshot.md) | Compatible multi-tablet vector snapshot | accepted |

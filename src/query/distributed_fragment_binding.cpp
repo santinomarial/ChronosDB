@@ -455,6 +455,93 @@ bind_compatible_distributed_aggregate_snapshot(
   }
 }
 
+CompatibleDistributedVectorSnapshot::CompatibleDistributedVectorSnapshot(
+    manifest::TemporalDatabaseStorageSnapshot snapshot,
+    std::vector<DistributedVectorFragmentDispatch> dispatches) noexcept
+    : snapshot_(std::move(snapshot)), dispatches_(std::move(dispatches)) {}
+
+const manifest::TemporalDatabaseStorageSnapshot&
+CompatibleDistributedVectorSnapshot::snapshot() const noexcept {
+  return snapshot_;
+}
+
+std::span<const DistributedVectorFragmentDispatch>
+CompatibleDistributedVectorSnapshot::dispatches() const noexcept {
+  return dispatches_;
+}
+
+common::Result<CompatibleDistributedVectorSnapshot> bind_compatible_distributed_vector_snapshot(
+    const DistributedVectorQueryPlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
+    const std::span<const DistributedVectorSnapshotFragmentBinding> bindings,
+    const DistributedVectorSnapshotBindingLimits limits) {
+  if (limits.maximum_fragments == 0U ||
+      limits.maximum_fragments > DistributedPlanLimits{}.maximum_fragments ||
+      limits.maximum_total_projection_ordinals == 0U ||
+      limits.maximum_total_projection_ordinals > kMaximumDistributedSnapshotProjectionOrdinals) {
+    return common::make_unexpected(
+        invalid("compatible distributed vector snapshot limits are invalid"));
+  }
+  if (plan.query_id.is_nil() || plan.fragments.empty() || snapshot.database_id().uuid().is_nil() ||
+      snapshot.generation() == 0U || plan.fragments.size() != bindings.size()) {
+    return common::make_unexpected(
+        invalid("compatible distributed vector snapshot authority is invalid"));
+  }
+  if (bindings.size() > limits.maximum_fragments) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "compatible distributed vector snapshot fragment limit is exhausted"});
+  }
+  try {
+    std::vector<DistributedVectorFragmentDispatch> dispatches;
+    dispatches.reserve(bindings.size());
+    std::set<schema::TabletId> tablet_ids;
+    std::size_t total_projection_ordinals{};
+    for (std::size_t index = 0U; index < bindings.size(); ++index) {
+      const DistributedVectorSnapshotFragmentBinding& binding = bindings[index];
+      const DistributedReadAdmission& admission = binding.admission.get();
+      if (plan.fragments[index].tablet_id.uuid().is_nil() ||
+          !tablet_ids.insert(plan.fragments[index].tablet_id).second ||
+          admission.tablet_id != plan.fragments[index].tablet_id) {
+        return common::make_unexpected(
+            invalid("compatible distributed vector snapshot tablet identity or order is invalid"));
+      }
+      if (binding.destination_column_ordinals.size() >
+          limits.maximum_total_projection_ordinals - total_projection_ordinals) {
+        return common::make_unexpected(
+            common::Status{common::StatusCode::kResourceExhausted,
+                           "compatible distributed vector snapshot projection limit is exhausted"});
+      }
+      total_projection_ordinals += binding.destination_column_ordinals.size();
+      auto dispatch = bind_distributed_vector_fragment(
+          {.plan = std::cref(plan),
+           .admission = binding.admission,
+           .snapshot = std::cref(snapshot),
+           .destination_schema = binding.destination_schema,
+           .raft_group_id = binding.raft_group_id,
+           .placement = binding.placement,
+           .destination_column_ordinals = binding.destination_column_ordinals,
+           .event_time_predicate = binding.event_time_predicate});
+      if (!dispatch.has_value())
+        return common::make_unexpected(dispatch.error());
+      if (dispatch->database_id != snapshot.database_id() ||
+          dispatch->snapshot_generation != snapshot.generation()) {
+        return common::make_unexpected(
+            invalid("compatible distributed vector dispatch escaped its owning epoch"));
+      }
+      dispatches.push_back(std::move(*dispatch));
+    }
+    return CompatibleDistributedVectorSnapshot{std::move(snapshot), std::move(dispatches)};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "compatible distributed vector snapshot binding allocation failed"});
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "compatible distributed vector snapshot binding exceeds container limits"});
+  }
+}
+
 CompatibleDistributedGroupedFloat64Snapshot::CompatibleDistributedGroupedFloat64Snapshot(
     CompatibleDistributedAggregateSnapshot aggregate_snapshot,
     std::vector<DistributedGroupedFloat64FragmentDispatch> dispatches) noexcept

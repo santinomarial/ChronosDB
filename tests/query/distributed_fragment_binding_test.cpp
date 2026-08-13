@@ -429,6 +429,54 @@ TEST(DistributedFragmentBindingTest, PinsOneCompatibleEpochAcrossEveryPlannedTab
               grouped->snapshot().generation());
   }
 
+  const DistributedVectorQueryPlan vector_plan{
+      .query_id = plan.query_id,
+      .read_policy = plan.read_policy,
+      .fragments = plan.fragments,
+      .intent = {
+          .mode = DistributedVectorPlanMode::kGroupedAggregate,
+          .group_key_input_indices = {0U},
+          .aggregates = {{.operation = VectorAggregateOperation::kSum, .input_index = 1U}},
+          .order_keys = {{.output_index = 1U, .direction = PhysicalSortDirection::kDescending}},
+          .limit = 3U}};
+  const std::array vector_bindings{
+      DistributedVectorSnapshotFragmentBinding{.admission = std::cref(admissions[0]),
+                                               .destination_schema = std::cref(schema_value),
+                                               .raft_group_id = specs[0].group_id,
+                                               .placement = std::cref(placements[0]),
+                                               .destination_column_ordinals = projection},
+      DistributedVectorSnapshotFragmentBinding{.admission = std::cref(admissions[1]),
+                                               .destination_schema = std::cref(schema_value),
+                                               .raft_group_id = specs[1].group_id,
+                                               .placement = std::cref(placements[1]),
+                                               .destination_column_ordinals = projection}};
+  const std::array reversed_vector{vector_bindings[1], vector_bindings[0]};
+  EXPECT_EQ(bind_compatible_distributed_vector_snapshot(vector_plan, *snapshot, reversed_vector)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(bind_compatible_distributed_vector_snapshot(
+                vector_plan, *snapshot, vector_bindings,
+                {.maximum_fragments = 2U, .maximum_total_projection_ordinals = 3U})
+                .error()
+                .code(),
+            common::StatusCode::kResourceExhausted);
+  auto compatible_vector = bind_compatible_distributed_vector_snapshot(
+      vector_plan, *snapshot, vector_bindings,
+      {.maximum_fragments = 2U, .maximum_total_projection_ordinals = 4U});
+  ASSERT_TRUE(compatible_vector.has_value()) << compatible_vector.error().to_string();
+  EXPECT_FALSE(pinned.expired());
+  EXPECT_EQ(compatible_vector->snapshot().generation(), 1U);
+  ASSERT_EQ(compatible_vector->dispatches().size(), 2U);
+  for (std::size_t index = 0U; index < compatible_vector->dispatches().size(); ++index) {
+    EXPECT_EQ(compatible_vector->dispatches()[index].tablet_id, plan.fragments[index].tablet_id);
+    EXPECT_EQ(compatible_vector->dispatches()[index].raft_group_id,
+              vector_bindings[index].raft_group_id);
+    EXPECT_EQ(compatible_vector->dispatches()[index].snapshot_generation,
+              compatible_vector->snapshot().generation());
+    EXPECT_EQ(compatible_vector->dispatches()[index].plan, vector_plan.intent);
+  }
+
   auto compatible = bind_compatible_distributed_aggregate_snapshot(
       plan, std::move(*snapshot), bindings,
       {.maximum_fragments = 2U, .maximum_total_projection_ordinals = 4U});

@@ -138,6 +138,54 @@ bind_compatible_distributed_aggregate_snapshot(
     std::span<const DistributedAggregateSnapshotFragmentBinding> bindings,
     DistributedAggregateSnapshotBindingLimits limits = {});
 
+struct DistributedVectorSnapshotFragmentBinding {
+  std::reference_wrapper<const DistributedReadAdmission> admission;
+  std::reference_wrapper<const schema::TableSchema> destination_schema;
+  common::Uuid raft_group_id;
+  std::reference_wrapper<const raft::TabletPlacementMetadata> placement;
+  std::span<const std::uint32_t> destination_column_ordinals;
+  std::optional<cseg::EventTimePredicate> event_time_predicate;
+};
+
+struct DistributedVectorSnapshotBindingLimits {
+  std::size_t maximum_fragments{DistributedPlanLimits{}.maximum_fragments};
+  std::size_t maximum_total_projection_ordinals{65'536U};
+};
+
+class CompatibleDistributedVectorSnapshot {
+public:
+  CompatibleDistributedVectorSnapshot() = delete;
+  CompatibleDistributedVectorSnapshot(const CompatibleDistributedVectorSnapshot&) = delete;
+  CompatibleDistributedVectorSnapshot&
+  operator=(const CompatibleDistributedVectorSnapshot&) = delete;
+  CompatibleDistributedVectorSnapshot(CompatibleDistributedVectorSnapshot&&) noexcept = default;
+  CompatibleDistributedVectorSnapshot&
+  operator=(CompatibleDistributedVectorSnapshot&&) noexcept = default;
+
+  [[nodiscard]] const manifest::TemporalDatabaseStorageSnapshot& snapshot() const noexcept;
+  [[nodiscard]] std::span<const DistributedVectorFragmentDispatch> dispatches() const noexcept;
+
+private:
+  CompatibleDistributedVectorSnapshot(
+      manifest::TemporalDatabaseStorageSnapshot snapshot,
+      std::vector<DistributedVectorFragmentDispatch> dispatches) noexcept;
+
+  manifest::TemporalDatabaseStorageSnapshot snapshot_;
+  std::vector<DistributedVectorFragmentDispatch> dispatches_;
+
+  friend common::Result<CompatibleDistributedVectorSnapshot>
+  bind_compatible_distributed_vector_snapshot(
+      const DistributedVectorQueryPlan&, manifest::TemporalDatabaseStorageSnapshot,
+      std::span<const DistributedVectorSnapshotFragmentBinding>,
+      DistributedVectorSnapshotBindingLimits);
+};
+
+[[nodiscard]] common::Result<CompatibleDistributedVectorSnapshot>
+bind_compatible_distributed_vector_snapshot(
+    const DistributedVectorQueryPlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
+    std::span<const DistributedVectorSnapshotFragmentBinding> bindings,
+    DistributedVectorSnapshotBindingLimits limits = {});
+
 // Owns the same one acquire-pinned Manifest epoch as the compatible aggregate snapshot plus one
 // plan-ordered grouped dispatch per aggregate dispatch. Group-key type proof is performed under the
 // exact destination schema binding used for each nested aggregate fragment.

@@ -249,6 +249,10 @@ the aggregate path's read-admission rules, exact-matches committed placement and
 Raft/source/schema authority, maps plan indices through the unique projection, and invokes the
 local aggregate type oracle before returning owned bytes. A later worker must still independently
 reprove its local side.
+The compatible vector snapshot repeats that binder in exact plan order under one acquire-pinned
+Manifest-v2 database generation. It owns both the pin and dispatch vector, rejects duplicate or
+reordered tablets, and bounds aggregate projection ordinals without claiming one comparable Raft
+position across groups.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated

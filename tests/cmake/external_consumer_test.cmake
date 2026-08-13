@@ -233,6 +233,8 @@ int main() {
   const auto decode_vector_fragment =
       &chronos::query::decode_distributed_vector_fragment_dispatch_exact;
   const auto bind_vector_fragment = &chronos::query::bind_distributed_vector_fragment;
+  const auto bind_compatible_vector_snapshot =
+      &chronos::query::bind_compatible_distributed_vector_snapshot;
   const auto create_replicated_query_worker =
       &chronos::service::ReplicatedDistributedQueryWorker::create;
   const auto create_replicated_grouped_query_worker =
@@ -360,6 +362,7 @@ int main() {
   (void)validate_vector_plan;
   (void)decode_vector_fragment;
   (void)bind_vector_fragment;
+  (void)bind_compatible_vector_snapshot;
   (void)create_replicated_query_worker;
   (void)create_replicated_grouped_query_worker;
   (void)create_replicated_grouped_query_receiver;

@@ -648,6 +648,12 @@ Focused executions passed:
   the projected TIMESTAMP and an out-of-projection input rejected before dispatch creation. All
   existing aggregate/grouped/metadata binding cases passed. Installed consumption covers the public
   binder. Multi-tablet vector ownership, execution, coordination, and transport are not claimed.
+- Compatible vector-snapshot continuation: the existing focused two-tablet binding case now also
+  pinned one Manifest generation behind two plan-ordered group-scoped vector dispatches carrying
+  the same grouped SUM/order/LIMIT intent. Reversed authority bindings and a three-ordinal total
+  projection budget rejected before ownership publication. Existing aggregate/grouped/metadata
+  cases remained green. Metadata-backed vector batch construction, execution, coordination, and
+  transport are not claimed.
 
 The C++ files changed by the grouped- and vector-exchange continuations pass the repository-pinned
 clang-format 18 check. A full-tree check was also run and still reports pre-existing violations in

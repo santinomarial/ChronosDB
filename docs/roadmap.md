@@ -1016,8 +1016,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   snapshot/route/read-proof-shaped bytes, exact projection, and nested integrity without abusing
   aggregate v1. Its committed-authority binder now exact-matches read admission, placement,
   Manifest-v2 source/position, recovery schema, projection, and local aggregate operation/type
-  rules before constructing an owned dispatch. Compatible multi-tablet construction and execution
-  remain deferred; a distinct all-type vector-result envelope now has a header-first
+  rules before constructing an owned dispatch. A move-only compatible owner now pins one Manifest
+  generation behind every plan-ordered vector dispatch under bounded aggregate projection
+  ownership. Metadata-backed batch construction and execution remain deferred; a distinct all-type
+  vector-result envelope now has a header-first
   bounded reader and move-only short-write cursor that preserve coalesced suffix ownership without
   allocating from unchecked lengths. A distinct group-scoped grouped dispatch now
   preserves exact Raft authority without reinterpreting ungrouped dispatch bytes. Its worker reuses
