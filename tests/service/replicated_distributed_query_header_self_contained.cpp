@@ -7,4 +7,6 @@ static_assert(std::is_aggregate_v<chronos::service::ReplicatedDistributedAggrega
 namespace {
 [[maybe_unused]] const auto kCreateReplicatedDistributedAggregateQuery =
     &chronos::service::create_replicated_distributed_aggregate_query;
+[[maybe_unused]] const auto kCreateReplicatedFollowerDistributedAggregateQuery =
+    &chronos::service::create_replicated_follower_distributed_aggregate_query;
 } // namespace

@@ -158,7 +158,7 @@ class QueryNodeAuthorizer final : public cluster::ClusterNodePrincipalAuthorizer
 public:
   common::Result<bool> authorize_node(const std::uint64_t principal_id,
                                       const raft::NodeId node_id) const override {
-    return principal_id == 91U && node_id == 11U;
+    return principal_id == 91U && (node_id == 11U || node_id == 12U);
   }
 };
 
@@ -166,6 +166,19 @@ public:
                                                         const raft::LogIndex applied_position) {
   return {.query_id = uuid(7U),
           .read_policy = {.consistency = query::DistributedReadConsistency::kLeaderLinearizable},
+          .fragments = {{.tablet_id = tablet_id,
+                         .minimum_event_time = 0,
+                         .maximum_event_time = 100,
+                         .leader_node = 11U,
+                         .local_applied_position = applied_position,
+                         .known_leader_commit_position = applied_position}}};
+}
+
+[[nodiscard]] query::DistributedAggregatePlan
+make_follower_plan(const schema::TabletId& tablet_id, const raft::LogIndex applied_position) {
+  return {.query_id = uuid(17U),
+          .read_policy = {.consistency = query::DistributedReadConsistency::kFollowerBoundedStale,
+                          .maximum_staleness_positions = 1U},
           .fragments = {{.tablet_id = tablet_id,
                          .minimum_event_time = 0,
                          .maximum_event_time = 100,
@@ -287,6 +300,45 @@ TEST(ReplicatedDistributedQueryTest, ConstructsOneAuthorityBoundTcpLifecycleOwne
       make_plan(tablet_id, applied_position), std::move(*missing_snapshot), missing_config);
   ASSERT_FALSE(missing.has_value());
   EXPECT_EQ(missing.error().code(), common::StatusCode::kUnavailable);
+
+  auto follower_snapshot = publisher->snapshot();
+  ASSERT_TRUE(follower_snapshot.has_value()) << follower_snapshot.error().to_string();
+  raft::MetadataCatalogSnapshot follower_catalog = catalog;
+  follower_catalog.cluster_nodes.push_back({12U, "127.0.0.1:2"});
+  follower_catalog.tablet_placements.front().replicas = {11U, 12U};
+  const std::array follower_tls_contexts{
+      cluster::DistributedQueryNodeTlsContext{12U, std::addressof(*tls_context)}};
+  const std::array follower_authorities{query::DistributedAggregateFollowerReadAuthority{
+      .leader_observation = {.group_id = tablet_group,
+                             .node_id = 11U,
+                             .role = raft::Role::kLeader,
+                             .current_term = 1U,
+                             .leader_id = 11U,
+                             .last_log_index = applied_position,
+                             .commit_index = applied_position,
+                             .applied_index = applied_position,
+                             .voters = {11U, 12U},
+                             .committed_voters = {11U, 12U}},
+      .follower_observation = {.group_id = tablet_group,
+                               .node_id = 12U,
+                               .role = raft::Role::kFollower,
+                               .current_term = 1U,
+                               .leader_id = 11U,
+                               .last_log_index = applied_position,
+                               .commit_index = applied_position,
+                               .applied_index = applied_position,
+                               .voters = {11U, 12U},
+                               .committed_voters = {11U, 12U}}}};
+  ReplicatedDistributedAggregateQueryConfig follower_config = config;
+  follower_config.read_barrier = std::addressof(*missing_tablet_barrier);
+  follower_config.catalog = std::cref(follower_catalog);
+  follower_config.tls_contexts = follower_tls_contexts;
+  auto follower_execution = create_replicated_follower_distributed_aggregate_query(
+      make_follower_plan(tablet_id, applied_position), std::move(*follower_snapshot),
+      follower_authorities, follower_config);
+  ASSERT_TRUE(follower_execution.has_value()) << follower_execution.error().to_string();
+  EXPECT_EQ(follower_execution->state(), cluster::DistributedQueryTcpExecutionState::kRunning);
+  EXPECT_EQ(follower_execution->snapshot().dispatches().front().fragment.serving_node, 12U);
 
   EXPECT_TRUE(barrier->shutdown().is_ok());
   EXPECT_TRUE(missing_tablet_barrier->shutdown().is_ok());

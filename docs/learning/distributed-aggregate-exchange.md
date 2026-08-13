@@ -128,10 +128,11 @@ groups. The packaged replicated-query constructor first requires the committed c
 exact metadata-group barrier, then carries the authority through binding, committed route
 resolution, execution creation, and the TCP lifecycle owner without exposing intermediate
 correlation vectors. Bounded-stale binding now derives the commit frontier from a same-group,
-same-term leader/follower observation pair rather than a caller scalar. Transport acquisition of
-those observations, DNS and multi-address resolution, remote worker-interrupt delivery, pooled
-multiplexing, asynchronous worker completion, and broader multi-node fault handling remain
-embedding work.
+same-term leader/follower observation pair rather than a caller scalar, and a distinct packaged
+constructor carries that pair through the metadata barrier, Manifest binding, follower route, and
+TCP owner. Transport acquisition of those observations, DNS and multi-address resolution, remote
+worker-interrupt delivery, pooled multiplexing, asynchronous worker completion, and broader
+multi-node fault handling remain embedding work.
 
 ## Verification and review questions
 

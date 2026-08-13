@@ -47,6 +47,14 @@ create_replicated_distributed_aggregate_query(
     query::DistributedAggregatePlan plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
     const ReplicatedDistributedAggregateQueryConfig& config);
 
+// Uses the same metadata-barrier, route, execution, and lifecycle composition for a bounded-stale
+// plan. The caller owns transport acquisition of the already-correlated follower authorities.
+[[nodiscard]] common::Result<cluster::DistributedQueryTcpExecution>
+create_replicated_follower_distributed_aggregate_query(
+    query::DistributedAggregatePlan plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
+    std::span<const query::DistributedAggregateFollowerReadAuthority> follower_authorities,
+    const ReplicatedDistributedAggregateQueryConfig& config);
+
 } // namespace chronos::service
 
 #endif // CHRONOS_SERVICE_REPLICATED_DISTRIBUTED_QUERY_HPP_

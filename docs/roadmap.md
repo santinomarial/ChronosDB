@@ -997,8 +997,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   bindings. A packaged constructor requires the catalog to cover the exact metadata-group barrier,
   then carries that authority through compatible Manifest binding, committed route resolution,
   execution creation, and the move-only TCP lifecycle owner. General vector-plan
-  fragments/exchanges, transport acquisition of correlated follower observations,
-  DNS/multi-address routing, and broader multi-node failure validation remain deferred. A
+  fragments/exchanges remain deferred. A distinct bounded-stale constructor carries correlated
+  leader/follower observations through the same catalog, Manifest, route, and execution gates;
+  transport acquisition of those observations, DNS/multi-address routing, and broader multi-node
+  failure validation remain deferred. A
   focused real-mTLS gate now queries two tablets, drives one through checksummed learner-first
   movement and externally committed promotion/removal milestones, rebinds it to the target, and
   proves the complete aggregate state is identical before and after. The full phase exit gate is
