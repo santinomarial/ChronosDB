@@ -1004,13 +1004,14 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   leader/follower observations through the same catalog, Manifest, route, and execution gates;
   a separate canonical checksummed cluster protocol now requests one group-correlated ordered
   observation from an authenticated exact node, with receiver-side principal/source authorization
-  and a durable-owner service boundary. Header-first stream ownership, mTLS client/server carriers,
-  complete leader/follower pair acquisition, and broader multi-node failure validation remain
-  deferred. Live DNS churn, resolver-latency policy, caching, and IPv6 remain qualification gaps. A
-  focused real-mTLS gate now queries two tablets, drives one through checksummed learner-first
-  movement and externally committed promotion/removal milestones, rebinds it to the target, and
-  proves the complete aggregate state is identical before and after. The full phase exit gate is
-  not claimed.
+  and a durable-owner service boundary. Bounded request/response readers now validate fixed headers
+  before retaining one exact frame, and a move-only cursor owns short writes. mTLS client/server
+  carriers, complete leader/follower pair acquisition, and broader multi-node failure validation
+  remain deferred. Live DNS churn, resolver-latency policy, caching, and IPv6 remain qualification
+  gaps. A focused real-mTLS gate now queries two tablets, drives one through checksummed
+  learner-first movement and externally committed promotion/removal milestones, rebinds it to the
+  target, and proves the complete aggregate state is identical before and after. The full phase
+  exit gate is not claimed.
 
 - **Scope:** distributed planning/fragments/exchanges; compatible multi-tablet snapshot acquisition; explicit linearizable and bounded-stale reads; tablet movement, routing epochs, and failure retry.
 - **Explicit non-scope:** general cross-tablet write transactions, silent consistency downgrade, unlimited shuffle, and topology changes that invalidate tokens without an explicit error/mapping protocol.

@@ -204,6 +204,10 @@ int main() {
       &chronos::cluster::encode_raft_observation_request_v1;
   const auto decode_raft_observation_response =
       &chronos::cluster::decode_raft_observation_response_v1;
+  const auto create_raft_observation_response_reader =
+      &chronos::cluster::RaftObservationResponseReader::create;
+  const auto create_raft_observation_write_cursor =
+      &chronos::cluster::RaftObservationFrameWriteCursor::create;
   const auto cancel_distributed_query_tcp_execution =
       &chronos::cluster::DistributedQueryTcpExecution::cancel;
   const auto rebind_distributed_query_tcp_execution =
@@ -271,6 +275,8 @@ int main() {
   (void)create_distributed_query_tcp_execution;
   (void)encode_raft_observation_request;
   (void)decode_raft_observation_response;
+  (void)create_raft_observation_response_reader;
+  (void)create_raft_observation_write_cursor;
   (void)cancel_distributed_query_tcp_execution;
   (void)rebind_distributed_query_tcp_execution;
   (void)bind_compatible_distributed_snapshot;

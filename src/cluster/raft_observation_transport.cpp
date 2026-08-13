@@ -29,7 +29,6 @@ constexpr std::uint16_t kMajor = 1U;
 constexpr std::uint16_t kMinor = 0U;
 constexpr std::size_t kRequestHeaderCrcOffset = 76U;
 constexpr std::size_t kResponseHeaderCrcOffset = 92U;
-constexpr std::size_t kMaximumVotersPerSet = 4096U;
 
 [[nodiscard]] common::Status invalid(const char* message) {
   return {common::StatusCode::kInvalidArgument, message};
@@ -53,7 +52,7 @@ constexpr std::size_t kMaximumVotersPerSet = 4096U;
 
 [[nodiscard]] bool valid_limits(const RaftObservationTransportLimits& limits) noexcept {
   return limits.maximum_voters_per_set != 0U &&
-         limits.maximum_voters_per_set <= kMaximumVotersPerSet;
+         limits.maximum_voters_per_set <= kMaximumRaftObservationVotersPerSet;
 }
 
 [[nodiscard]] bool zero(const common::ByteView bytes) noexcept {
@@ -393,6 +392,109 @@ observe_service(RaftObservationService& service, const raft::GroupId& group_id) 
 
 } // namespace
 
+common::Result<std::size_t>
+raft_observation_request_frame_length_v1(const common::ByteView header) {
+  if (header.size() != kRaftObservationRequestHeaderSize)
+    return common::make_unexpected(corruption("Raft observation request header length is invalid"));
+  if (!std::ranges::equal(header.first(kRequestMagic.size()), kRequestMagic))
+    return common::make_unexpected(corruption("Raft observation request magic is invalid"));
+  common::ByteReader crc_reader{header.subspan(kRequestHeaderCrcOffset, 4U)};
+  auto header_crc = crc_reader.read_u32_le();
+  if (!header_crc.has_value() ||
+      *header_crc != common::crc32c(header.first(kRequestHeaderCrcOffset))) {
+    return common::make_unexpected(corruption("Raft observation request header checksum differs"));
+  }
+  common::ByteReader reader{header};
+  if (!reader.skip(kRequestMagic.size()).is_ok())
+    return common::make_unexpected(corruption("Raft observation request header is truncated"));
+  auto major = reader.read_u16_le();
+  auto minor = reader.read_u16_le();
+  auto header_size = reader.read_u32_le();
+  auto total_size = reader.read_u64_le();
+  auto source = reader.read_u64_le();
+  auto target = reader.read_u64_le();
+  auto group = read_group(reader);
+  auto correlation = reader.read_u64_le();
+  auto reserved = reader.read_exact(12U);
+  if (!major.has_value() || !minor.has_value() || !header_size.has_value() ||
+      !total_size.has_value() || !source.has_value() || !target.has_value() || !group.has_value() ||
+      !correlation.has_value() || !reserved.has_value()) {
+    return common::make_unexpected(corruption("Raft observation request header is truncated"));
+  }
+  if (*major != kMajor || *minor != kMinor)
+    return common::make_unexpected(unsupported("Raft observation request version is unsupported"));
+  if (*header_size != kRaftObservationRequestHeaderSize ||
+      *total_size != kRaftObservationRequestSize || *source == 0U || *target == 0U ||
+      *source == *target || group->is_nil() || *correlation == 0U || !zero(*reserved)) {
+    return common::make_unexpected(
+        corruption("Raft observation request header semantics are invalid"));
+  }
+  return kRaftObservationRequestSize;
+}
+
+common::Result<std::size_t>
+raft_observation_response_frame_length_v1(const common::ByteView header,
+                                          const RaftObservationTransportLimits limits) {
+  if (!valid_limits(limits))
+    return common::make_unexpected(invalid("Raft observation response limits are invalid"));
+  if (header.size() != kRaftObservationResponseHeaderSize)
+    return common::make_unexpected(
+        corruption("Raft observation response header length is invalid"));
+  if (!std::ranges::equal(header.first(kResponseMagic.size()), kResponseMagic))
+    return common::make_unexpected(corruption("Raft observation response magic is invalid"));
+  common::ByteReader crc_reader{header.subspan(kResponseHeaderCrcOffset, 4U)};
+  auto header_crc = crc_reader.read_u32_le();
+  if (!header_crc.has_value() ||
+      *header_crc != common::crc32c(header.first(kResponseHeaderCrcOffset))) {
+    return common::make_unexpected(corruption("Raft observation response header checksum differs"));
+  }
+  common::ByteReader reader{header};
+  if (!reader.skip(kResponseMagic.size()).is_ok())
+    return common::make_unexpected(corruption("Raft observation response header is truncated"));
+  auto major = reader.read_u16_le();
+  auto minor = reader.read_u16_le();
+  auto header_size = reader.read_u32_le();
+  auto total_size = reader.read_u64_le();
+  auto source = reader.read_u64_le();
+  auto target = reader.read_u64_le();
+  auto group = read_group(reader);
+  auto correlation = reader.read_u64_le();
+  auto raw_status = reader.read_u8();
+  auto observation_present = reader.read_u8();
+  auto reserved = reader.read_exact(10U);
+  auto payload_size = reader.read_u64_le();
+  auto payload_crc = reader.read_u32_le();
+  auto reserved_tail = reader.read_exact(4U);
+  if (!major.has_value() || !minor.has_value() || !header_size.has_value() ||
+      !total_size.has_value() || !source.has_value() || !target.has_value() || !group.has_value() ||
+      !correlation.has_value() || !raw_status.has_value() || !observation_present.has_value() ||
+      !reserved.has_value() || !payload_size.has_value() || !payload_crc.has_value() ||
+      !reserved_tail.has_value()) {
+    return common::make_unexpected(corruption("Raft observation response header is truncated"));
+  }
+  if (*major != kMajor || *minor != kMinor)
+    return common::make_unexpected(unsupported("Raft observation response version is unsupported"));
+  auto status = decode_status(*raw_status);
+  if (!status.has_value())
+    return common::make_unexpected(status.error());
+  constexpr std::size_t kFixedResponseBytes =
+      kRaftObservationResponseHeaderSize + kRaftObservationFrameTrailerSize;
+  const std::size_t maximum_payload =
+      kRaftObservationPayloadHeaderSize + 4U * limits.maximum_voters_per_set * sizeof(raft::NodeId);
+  const std::size_t maximum_frame = kFixedResponseBytes + maximum_payload;
+  if (*header_size != kRaftObservationResponseHeaderSize || *total_size < kFixedResponseBytes ||
+      *total_size > maximum_frame || *source == 0U || *target == 0U || *source == *target ||
+      group->is_nil() || *correlation == 0U || *observation_present > 1U || !zero(*reserved) ||
+      !zero(*reserved_tail) || *payload_size != *total_size - kFixedResponseBytes ||
+      ((*status == common::StatusCode::kOk) != (*observation_present == 1U)) ||
+      ((*observation_present == 0U) != (*payload_size == 0U)) ||
+      (*observation_present == 1U && *payload_size < kRaftObservationPayloadHeaderSize)) {
+    return common::make_unexpected(
+        corruption("Raft observation response header semantics are invalid"));
+  }
+  return static_cast<std::size_t>(*total_size);
+}
+
 common::Result<std::vector<std::byte>>
 encode_raft_observation_request_v1(const RaftObservationRequest& request) {
   if (request.source_node_id == 0U || request.target_node_id == 0U ||
@@ -628,6 +730,225 @@ decode_raft_observation_response_v1(const common::ByteView bytes,
   }
   return RaftObservationResponse{*source,      *target, *group,
                                  *correlation, *status, std::move(observation)};
+}
+
+common::Result<RaftObservationRequestReadStep>
+RaftObservationRequestReader::consume(const common::ByteView bytes) {
+  if (failure_.has_value())
+    return common::make_unexpected(*failure_);
+  std::size_t consumed = 0U;
+  if (!expected_frame_bytes_.has_value()) {
+    const std::size_t copied =
+        std::min(bytes.size(), kRaftObservationRequestHeaderSize - buffered_bytes_);
+    std::ranges::copy(bytes.first(copied),
+                      frame_.begin() + static_cast<std::ptrdiff_t>(buffered_bytes_));
+    buffered_bytes_ += copied;
+    consumed += copied;
+    if (buffered_bytes_ != kRaftObservationRequestHeaderSize)
+      return RaftObservationRequestReadStep{.consumed_bytes = consumed};
+    auto expected = raft_observation_request_frame_length_v1(
+        common::ByteView{frame_}.first(kRaftObservationRequestHeaderSize));
+    if (!expected.has_value()) {
+      failure_.emplace(expected.error());
+      return common::make_unexpected(*failure_);
+    }
+    expected_frame_bytes_ = *expected;
+  }
+  const std::size_t copied =
+      std::min(bytes.size() - consumed, *expected_frame_bytes_ - buffered_bytes_);
+  std::ranges::copy(bytes.subspan(consumed, copied),
+                    frame_.begin() + static_cast<std::ptrdiff_t>(buffered_bytes_));
+  buffered_bytes_ += copied;
+  consumed += copied;
+  if (buffered_bytes_ != *expected_frame_bytes_)
+    return RaftObservationRequestReadStep{.consumed_bytes = consumed};
+  auto decoded = decode_raft_observation_request_v1(frame_);
+  if (!decoded.has_value()) {
+    failure_.emplace(decoded.error());
+    return common::make_unexpected(*failure_);
+  }
+  buffered_bytes_ = 0U;
+  expected_frame_bytes_.reset();
+  return RaftObservationRequestReadStep{.consumed_bytes = consumed, .request = std::move(*decoded)};
+}
+
+std::size_t RaftObservationRequestReader::buffered_bytes() const noexcept {
+  return buffered_bytes_;
+}
+
+std::optional<std::size_t> RaftObservationRequestReader::expected_frame_bytes() const noexcept {
+  return expected_frame_bytes_;
+}
+
+bool RaftObservationRequestReader::failed() const noexcept {
+  return failure_.has_value();
+}
+
+RaftObservationResponseReader::RaftObservationResponseReader(
+    const RaftObservationTransportLimits limits) noexcept
+    : limits_(limits) {}
+
+RaftObservationResponseReader::RaftObservationResponseReader(
+    RaftObservationResponseReader&& other) noexcept
+    : limits_(other.limits_), header_(other.header_), header_bytes_(other.header_bytes_),
+      frame_(std::move(other.frame_)), frame_bytes_(other.frame_bytes_),
+      expected_frame_bytes_(other.expected_frame_bytes_), failure_(std::move(other.failure_)) {
+  other.reset_frame();
+  other.failure_.reset();
+}
+
+RaftObservationResponseReader&
+RaftObservationResponseReader::operator=(RaftObservationResponseReader&& other) noexcept {
+  if (this != &other) {
+    limits_ = other.limits_;
+    header_ = other.header_;
+    header_bytes_ = other.header_bytes_;
+    frame_ = std::move(other.frame_);
+    frame_bytes_ = other.frame_bytes_;
+    expected_frame_bytes_ = other.expected_frame_bytes_;
+    failure_ = std::move(other.failure_);
+    other.reset_frame();
+    other.failure_.reset();
+  }
+  return *this;
+}
+
+common::Result<RaftObservationResponseReader>
+RaftObservationResponseReader::create(const RaftObservationTransportLimits limits) {
+  if (!valid_limits(limits))
+    return common::make_unexpected(invalid("Raft observation response reader limits are invalid"));
+  return RaftObservationResponseReader{limits};
+}
+
+common::Result<RaftObservationResponseReadStep>
+RaftObservationResponseReader::fail(common::Status status) {
+  failure_.emplace(std::move(status));
+  return common::make_unexpected(*failure_);
+}
+
+void RaftObservationResponseReader::reset_frame() noexcept {
+  header_bytes_ = 0U;
+  frame_.clear();
+  frame_bytes_ = 0U;
+  expected_frame_bytes_.reset();
+}
+
+common::Result<RaftObservationResponseReadStep>
+RaftObservationResponseReader::consume(const common::ByteView bytes) {
+  if (failure_.has_value())
+    return common::make_unexpected(*failure_);
+  std::size_t consumed = 0U;
+  if (!expected_frame_bytes_.has_value()) {
+    const std::size_t copied =
+        std::min(bytes.size(), kRaftObservationResponseHeaderSize - header_bytes_);
+    std::ranges::copy(bytes.first(copied),
+                      header_.begin() + static_cast<std::ptrdiff_t>(header_bytes_));
+    header_bytes_ += copied;
+    consumed += copied;
+    if (header_bytes_ != kRaftObservationResponseHeaderSize)
+      return RaftObservationResponseReadStep{.consumed_bytes = consumed};
+    auto expected = raft_observation_response_frame_length_v1(header_, limits_);
+    if (!expected.has_value())
+      return fail(expected.error());
+    try {
+      frame_.resize(*expected);
+    } catch (const std::bad_alloc&) {
+      return fail(exhausted("Raft observation response reader allocation failed"));
+    } catch (const std::length_error&) {
+      return fail(exhausted("Raft observation response reader frame exceeds containers"));
+    }
+    std::ranges::copy(header_, frame_.begin());
+    frame_bytes_ = kRaftObservationResponseHeaderSize;
+    expected_frame_bytes_ = *expected;
+  }
+  const common::ByteView remainder = bytes.subspan(consumed);
+  const std::size_t copied = std::min(remainder.size(), *expected_frame_bytes_ - frame_bytes_);
+  std::ranges::copy(remainder.first(copied),
+                    frame_.begin() + static_cast<std::ptrdiff_t>(frame_bytes_));
+  frame_bytes_ += copied;
+  consumed += copied;
+  if (frame_bytes_ != *expected_frame_bytes_)
+    return RaftObservationResponseReadStep{.consumed_bytes = consumed};
+  auto decoded = decode_raft_observation_response_v1(frame_, limits_);
+  if (!decoded.has_value())
+    return fail(decoded.error());
+  RaftObservationResponse response = std::move(*decoded);
+  reset_frame();
+  return RaftObservationResponseReadStep{.consumed_bytes = consumed,
+                                         .response = std::move(response)};
+}
+
+std::size_t RaftObservationResponseReader::buffered_bytes() const noexcept {
+  return expected_frame_bytes_.has_value() ? frame_bytes_ : header_bytes_;
+}
+
+std::optional<std::size_t> RaftObservationResponseReader::expected_frame_bytes() const noexcept {
+  return expected_frame_bytes_;
+}
+
+bool RaftObservationResponseReader::failed() const noexcept {
+  return failure_.has_value();
+}
+
+RaftObservationFrameWriteCursor::RaftObservationFrameWriteCursor(
+    std::vector<std::byte> encoded_frame) noexcept
+    : encoded_frame_(std::move(encoded_frame)) {}
+
+RaftObservationFrameWriteCursor::RaftObservationFrameWriteCursor(
+    RaftObservationFrameWriteCursor&& other) noexcept
+    : encoded_frame_(std::move(other.encoded_frame_)), written_bytes_(other.written_bytes_) {
+  other.written_bytes_ = other.encoded_frame_.size();
+}
+
+RaftObservationFrameWriteCursor&
+RaftObservationFrameWriteCursor::operator=(RaftObservationFrameWriteCursor&& other) noexcept {
+  if (this != &other) {
+    encoded_frame_ = std::move(other.encoded_frame_);
+    written_bytes_ = other.written_bytes_;
+    other.written_bytes_ = other.encoded_frame_.size();
+  }
+  return *this;
+}
+
+common::Result<RaftObservationFrameWriteCursor>
+RaftObservationFrameWriteCursor::create(std::vector<std::byte> encoded_frame,
+                                        const RaftObservationTransportLimits limits) {
+  if (!valid_limits(limits))
+    return common::make_unexpected(invalid("Raft observation write limits are invalid"));
+  if (encoded_frame.size() < kRequestMagic.size())
+    return common::make_unexpected(corruption("Raft observation frame is truncated"));
+  const common::ByteView bytes{encoded_frame};
+  if (std::ranges::equal(bytes.first(kRequestMagic.size()), kRequestMagic)) {
+    auto decoded = decode_raft_observation_request_v1(bytes);
+    if (!decoded.has_value())
+      return common::make_unexpected(decoded.error());
+  } else if (std::ranges::equal(bytes.first(kResponseMagic.size()), kResponseMagic)) {
+    auto decoded = decode_raft_observation_response_v1(bytes, limits);
+    if (!decoded.has_value())
+      return common::make_unexpected(decoded.error());
+  } else {
+    return common::make_unexpected(corruption("Raft observation frame magic is invalid"));
+  }
+  return RaftObservationFrameWriteCursor{std::move(encoded_frame)};
+}
+
+common::ByteView RaftObservationFrameWriteCursor::pending_write() const noexcept {
+  return common::ByteView{encoded_frame_}.subspan(written_bytes_);
+}
+
+common::Status RaftObservationFrameWriteCursor::consume_written(const std::size_t bytes) noexcept {
+  if (bytes > encoded_frame_.size() - written_bytes_)
+    return invalid("Raft observation write completion exceeds pending bytes");
+  written_bytes_ += bytes;
+  return common::Status::ok();
+}
+
+std::size_t RaftObservationFrameWriteCursor::written_bytes() const noexcept {
+  return written_bytes_;
+}
+
+bool RaftObservationFrameWriteCursor::complete() const noexcept {
+  return written_bytes_ == encoded_frame_.size();
 }
 
 RaftObservationReceiver::RaftObservationReceiver(RaftObservationReceiverConfig config) noexcept

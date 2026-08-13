@@ -1,6 +1,7 @@
 #include "chronos/cluster/raft_observation_transport.hpp"
 #include "chronos/common/crc32c.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
@@ -37,6 +38,11 @@ void store_u16(std::vector<std::byte>& bytes, const std::size_t offset, const st
 }
 
 void store_u32(std::vector<std::byte>& bytes, const std::size_t offset, const std::uint32_t value) {
+  for (std::size_t index = 0U; index < sizeof(value); ++index)
+    bytes[offset + index] = static_cast<std::byte>(value >> (index * 8U));
+}
+
+void store_u64(std::vector<std::byte>& bytes, const std::size_t offset, const std::uint64_t value) {
   for (std::size_t index = 0U; index < sizeof(value); ++index)
     bytes[offset + index] = static_cast<std::byte>(value >> (index * 8U));
 }
@@ -168,6 +174,137 @@ TEST(RaftObservationTransportCodecTest, RejectsDamageVersionsBoundsAndNoncanonic
   success.observation.reset();
   EXPECT_EQ(encode_raft_observation_response_v1(success).error().code(),
             common::StatusCode::kInvalidArgument);
+}
+
+TEST(RaftObservationStreamTest, ReadersHandleEverySplitAndCoalescedFrames) {
+  const auto request = encode_raft_observation_request_v1({1U, 2U, group(), 19U}).value();
+  for (std::size_t split = 0U; split <= request.size(); ++split) {
+    RaftObservationRequestReader reader;
+    auto first = reader.consume(common::ByteView{request}.first(split));
+    ASSERT_TRUE(first.has_value()) << "request split " << split;
+    EXPECT_EQ(first->consumed_bytes, split);
+    if (split == request.size()) {
+      EXPECT_TRUE(first->request.has_value());
+      continue;
+    }
+    EXPECT_FALSE(first->request.has_value());
+    auto second = reader.consume(common::ByteView{request}.subspan(split));
+    ASSERT_TRUE(second.has_value()) << "request split " << split;
+    ASSERT_TRUE(second->request.has_value());
+    EXPECT_EQ(second->request->correlation_id, 19U);
+  }
+
+  const RaftObservationResponse success{.source_node_id = 2U,
+                                        .target_node_id = 1U,
+                                        .group_id = group(),
+                                        .correlation_id = 19U,
+                                        .status_code = common::StatusCode::kOk,
+                                        .observation = follower_observation()};
+  const RaftObservationResponse failure{.source_node_id = 2U,
+                                        .target_node_id = 1U,
+                                        .group_id = group(),
+                                        .correlation_id = 20U,
+                                        .status_code = common::StatusCode::kUnavailable};
+  const std::vector<std::vector<std::byte>> responses{
+      encode_raft_observation_response_v1(success).value(),
+      encode_raft_observation_response_v1(failure).value()};
+  for (const auto& response : responses) {
+    for (std::size_t split = 0U; split <= response.size(); ++split) {
+      auto reader = RaftObservationResponseReader::create().value();
+      auto first = reader.consume(common::ByteView{response}.first(split));
+      ASSERT_TRUE(first.has_value()) << "response size " << response.size() << " split " << split;
+      if (split == response.size()) {
+        EXPECT_TRUE(first->response.has_value());
+        continue;
+      }
+      EXPECT_FALSE(first->response.has_value());
+      auto second = reader.consume(common::ByteView{response}.subspan(split));
+      ASSERT_TRUE(second.has_value()) << "response size " << response.size() << " split " << split;
+      ASSERT_TRUE(second->response.has_value());
+      EXPECT_EQ(second->response->source_node_id, 2U);
+    }
+  }
+
+  std::vector<std::byte> coalesced = responses.front();
+  coalesced.insert(coalesced.end(), responses.back().begin(), responses.back().end());
+  auto reader = RaftObservationResponseReader::create().value();
+  auto first = reader.consume(coalesced);
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(first->response.has_value());
+  EXPECT_EQ(first->consumed_bytes, responses.front().size());
+  auto second = reader.consume(common::ByteView{coalesced}.subspan(first->consumed_bytes));
+  ASSERT_TRUE(second.has_value());
+  ASSERT_TRUE(second->response.has_value());
+  EXPECT_EQ(second->response->status_code, common::StatusCode::kUnavailable);
+}
+
+TEST(RaftObservationStreamTest, RejectsHeadersBeforeAllocationAndOwnsShortWrites) {
+  auto damaged = encode_raft_observation_request_v1({1U, 2U, group(), 19U}).value();
+  damaged[40U] ^= std::byte{1U};
+  RaftObservationRequestReader request_reader;
+  auto rejected = request_reader.consume(damaged);
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_EQ(rejected.error().code(), common::StatusCode::kCorruption);
+  EXPECT_TRUE(request_reader.failed());
+  auto retry =
+      request_reader.consume(encode_raft_observation_request_v1({1U, 2U, group(), 20U}).value());
+  ASSERT_FALSE(retry.has_value());
+  EXPECT_EQ(retry.error(), rejected.error());
+
+  RaftObservationResponse response{.source_node_id = 2U,
+                                   .target_node_id = 1U,
+                                   .group_id = group(),
+                                   .correlation_id = 19U,
+                                   .status_code = common::StatusCode::kOk,
+                                   .observation = follower_observation()};
+  auto oversized = encode_raft_observation_response_v1(response).value();
+  constexpr std::uint64_t kOversizedDefaultResponse =
+      kRaftObservationResponseHeaderSize + kRaftObservationFrameTrailerSize +
+      kRaftObservationPayloadHeaderSize + 4U * 31U * sizeof(raft::NodeId) + 1U;
+  store_u64(oversized, 16U, kOversizedDefaultResponse);
+  store_u64(oversized, 76U,
+            kOversizedDefaultResponse - kRaftObservationResponseHeaderSize -
+                kRaftObservationFrameTrailerSize);
+  store_u32(oversized, 92U, common::crc32c(common::ByteView{oversized}.first(92U)));
+  auto response_reader = RaftObservationResponseReader::create().value();
+  auto response_rejected = response_reader.consume(
+      common::ByteView{oversized}.first(kRaftObservationResponseHeaderSize));
+  ASSERT_FALSE(response_rejected.has_value());
+  EXPECT_EQ(response_rejected.error().code(), common::StatusCode::kCorruption);
+  EXPECT_EQ(response_reader.buffered_bytes(), kRaftObservationResponseHeaderSize);
+  EXPECT_FALSE(response_reader.expected_frame_bytes().has_value());
+
+  const auto encoded_response = encode_raft_observation_response_v1(response).value();
+  auto partial_reader = RaftObservationResponseReader::create().value();
+  auto partial = partial_reader.consume(common::ByteView{encoded_response}.first(103U));
+  ASSERT_TRUE(partial.has_value());
+  EXPECT_FALSE(partial->response.has_value());
+  RaftObservationResponseReader moved_reader = std::move(partial_reader);
+  EXPECT_EQ(partial_reader.buffered_bytes(), 0U);
+  auto completed = moved_reader.consume(common::ByteView{encoded_response}.subspan(103U));
+  ASSERT_TRUE(completed.has_value()) << completed.error().to_string();
+  EXPECT_TRUE(completed->response.has_value());
+
+  const auto expected = encode_raft_observation_request_v1({1U, 2U, group(), 19U}).value();
+  auto cursor = RaftObservationFrameWriteCursor::create(expected);
+  ASSERT_TRUE(cursor.has_value()) << cursor.error().to_string();
+  EXPECT_TRUE(std::ranges::equal(cursor->pending_write(), expected));
+  ASSERT_TRUE(cursor->consume_written(17U).is_ok());
+  EXPECT_EQ(cursor->written_bytes(), 17U);
+  EXPECT_EQ(cursor->consume_written(cursor->pending_write().size() + 1U).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(cursor->written_bytes(), 17U);
+  RaftObservationFrameWriteCursor moved = std::move(*cursor);
+  EXPECT_TRUE(cursor->complete());
+  ASSERT_TRUE(moved.consume_written(moved.pending_write().size()).is_ok());
+  EXPECT_TRUE(moved.complete());
+
+  auto response_cursor = RaftObservationFrameWriteCursor::create(encoded_response);
+  ASSERT_TRUE(response_cursor.has_value()) << response_cursor.error().to_string();
+  auto corrupt = expected;
+  corrupt.back() ^= std::byte{1U};
+  EXPECT_EQ(RaftObservationFrameWriteCursor::create(std::move(corrupt)).error().code(),
+            common::StatusCode::kCorruption);
 }
 
 TEST(RaftObservationReceiverTest, AuthenticatesAuthorizesCorrelatesAndEncodesOneObservation) {

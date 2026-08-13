@@ -97,5 +97,8 @@ encoded.
 Header integrity is checked before declared response lengths or payload counts are trusted. Unknown
 checksum-valid versions return `NOT_SUPPORTED`; damage and noncanonical decoded bytes return
 `CORRUPTION`; configured voter bounds return `RESOURCE_EXHAUSTED`. Minor-version compatibility is
-exact. Request/response stream framing, TLS socket ownership, retry, fan-out, and timeouts are not
-defined by v1's codec/receiver boundary and require a separate maintained carrier contract.
+exact. Implemented request and response stream readers validate the fixed header before retaining
+the remaining exact bounded frame, consume at most one frame per call, and leave coalesced suffixes
+to their caller. The move-only write cursor owns one fully validated request or response and exposes
+only its unwritten suffix. TLS socket ownership, retry, fan-out, and timeouts still require a
+separate maintained carrier contract.

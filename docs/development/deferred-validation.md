@@ -274,10 +274,12 @@
   one complete bounded ordered observation or failure response. The authenticated receiver checks
   trust, principal/source authority, and local target before invoking an embedding-owned durable
   observation service. Request/success/failure codec, corruption/version/bound rejection, trust
-  ordering, service failure, and exception containment have focused coverage. Add fixed-storage
-  header-first partial I/O, move-only short writes, maintained mTLS client/server deadlines, finite
-  retries, leader/follower fan-out, pair correlation/freshness selection, packaged-constructor
-  acquisition, cancellation/allocation faults, and real multi-process validation.
+  ordering, service failure, and exception containment have focused coverage. Header-first bounded
+  readers now reject declared lengths before response allocation, preserve coalesced suffixes, and
+  pair with move-only validated short-write ownership. Add maintained mTLS client/server deadlines,
+  finite retries, leader/follower fan-out, pair correlation/freshness selection,
+  packaged-constructor acquisition, cancellation/allocation faults, and real multi-process
+  validation.
 - Shard-key pruning and statistics in addition to event-time pruning; multi-node scalar/distributed
   differential SQL and partial-aggregation equivalence.
 - Carry the implemented authenticated remote-action receiver bytes and atomic current-leader-term

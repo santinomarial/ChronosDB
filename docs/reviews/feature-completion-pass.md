@@ -242,8 +242,9 @@ lifecycle. A distinct bounded-stale constructor applies the same catalog, Manife
 execution gates to stable same-term leader/follower observation pairs. General vector-plan
 grouping/order/top-N/LIMIT and transport acquisition of remote follower observations remain
 incomplete. A distinct canonical observation protocol and authenticated receiver now provide the
-remote ordered-evidence serving boundary, but stream/mTLS carriers and complete leader/follower
-pair acquisition are not yet composed. Committed numeric or lowercase-DNS routes acquire a fresh
+remote ordered-evidence serving boundary. Header-first readers and single-owner short writes now
+cover bounded stream fragmentation, but mTLS carriers and complete leader/follower pair acquisition
+are not yet composed. Committed numeric or lowercase-DNS routes acquire a fresh
 bounded ordered unique IPv4 candidate set before polling, and finite sender retries rotate
 candidates without changing node/proof/TLS authority. Live DNS churn/latency/cache policy, IPv6, a
 packaged multi-process runtime, remote CSEG execution in the movement gate, and broad
@@ -400,6 +401,11 @@ Focused executions passed:
   authentication/authorization ordering, service failure, and exception containment. The full
   `dev` build and installed external-consumer check passed. Stream/TLS carrier and multi-node pair
   acquisition were not claimed.
+- Raft-observation partial-I/O continuation: all 6 focused observation cases passed, including
+  every request/success/failure split, coalesced response boundaries, header-gated length rejection,
+  sticky failure, partial-reader state transfer, and validated move-only short writes. The stream
+  owners and installed external-consumer check passed; TLS carrier or remote pair acquisition
+  completion is not claimed.
 
 The final C++ tree passed the repository-pinned clang-format 18 check. Full-suite, sanitizer, fuzz,
 broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were deliberately not run.

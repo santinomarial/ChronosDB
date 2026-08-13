@@ -135,10 +135,11 @@ constructor carries that pair through the metadata barrier, Manifest binding, fo
 TCP owner. Raft Observation Transport v1 now canonically binds one authenticated source/target,
 group, and correlation identity to either a complete ordered local Raft observation or an exact
 failure, and its receiver rejects trust and route failures before invoking the embedding's durable
-observation service. Header-first stream ownership, mTLS client/server carriers, leader/follower
-fan-out and pair acquisition, remote worker-interrupt delivery, pooled multiplexing, asynchronous
-worker completion, live DNS churn qualification, and broader multi-node fault handling remain
-embedding work.
+observation service. Its bounded readers now validate fixed headers before retaining exact frames,
+and its move-only cursor preserves short-write ownership. mTLS client/server carriers,
+leader/follower fan-out and pair acquisition, remote worker-interrupt delivery, pooled
+multiplexing, asynchronous worker completion, live DNS churn qualification, and broader multi-node
+fault handling remain embedding work.
 
 ## Verification and review questions
 
