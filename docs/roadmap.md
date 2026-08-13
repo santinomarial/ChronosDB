@@ -1077,7 +1077,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   merge-state transport, authority rebinding, and process integration remain deferred. The local
   aggregate operators now share one move-only all-type mergeable state kernel, preserving wide
   exact sums, AVG counts, variance count/mean/M2, and query-accounted extrema as the foundation for
-  that future transport. A bounded
+  that future transport. A distinct nested state v1 now canonically encodes the exact definition and
+  sufficient state, validates integrity and bounds before variable allocation, reserves query
+  credit for decoded extrema, and owns fragmented reads/short writes. Correlated query/tablet/group
+  exchange remains deferred. A bounded
   global row finalizer now validates complete streams and native schemas, applies stable all-type
   ordering followed by LIMIT, and emits exact payload-bounded native result batches. A distinct
   group-scoped grouped dispatch now

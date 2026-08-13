@@ -50,7 +50,8 @@ Each variable-width MIN/MAX state reserves its winning payload independently bef
 Replacement holds old and new credit until the new value is complete, then releases the old owner.
 The same state can merge an identically defined partition: exact accumulators remain wide, AVG
 retains count, variance combines count/mean/M2, and a variable-width winning partial is copied only
-after new query credit is reserved. No grouped wire format is implied by that in-memory capability.
+after new query credit is reserved. The nested state now has canonical bounded bytes, but group-key
+and stream correlation still require a separate grouped exchange envelope.
 
 ## Memory, pull lifecycle, and failure
 
@@ -102,8 +103,8 @@ static-analysis gates protect the exported boundary.
 
 The operator intentionally retains one-row output materialization even though lookup is hashed.
 Batched output should reduce per-group allocation only after it preserves credit transfer and
-failure atomicity. Versioned partial-state transport, parallel scheduling, and partitioned spill
-need separate ownership decisions.
+failure atomicity. Correlated group/state exchange, parallel scheduling, and partitioned spill need
+separate ownership decisions.
 
 ## Likely review questions
 

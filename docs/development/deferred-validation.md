@@ -316,8 +316,9 @@
   native batch, applies stable all-type ORDER BY then LIMIT, and emits exact bounded Protocol-v1
   result batches including one schema-bearing zero-row result. One shared in-memory all-type
   aggregate kernel now merges exact sums, AVG/variance sufficient state, and bounded extrema for
-  local operators and future workers. Versioned aggregate-state transport, authority rebinding,
-  and process integration remain.
+  local operators and future workers. Its canonical nested v1 bytes now add integrity-first bounded
+  decode, query-accounted variable extrema, and partial-I/O ownership. The correlated aggregate
+  exchange, authority rebinding, and process integration remain.
   A distinct terminal-only frame closes an empty tablet stream without inventing a SQL NULL group.
   Its separate fixed reader and move-only cursor own every terminal fragmentation boundary,
   coalesced successor bytes, sticky damage, and checked short writes without introducing an

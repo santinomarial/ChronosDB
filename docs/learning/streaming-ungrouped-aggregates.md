@@ -49,8 +49,9 @@ Every definition has one `MergeableVectorAggregateState`:
 Two identically defined states merge without first producing result cells. Exact sums combine their
 wide signed-magnitude accumulators; AVG combines sum and count; variance uses the parallel
 Welford/Chan count/mean/M2 formula; and extrema select through the same scalar total order. Merge
-order remains explicit because normal floating arithmetic is not associative. This is an in-memory
-kernel only: versioned partial-state bytes are a separate distributed-query contract.
+order remains explicit because normal floating arithmetic is not associative. A distinct nested
+v1 codec now preserves this state without finalization, including query-accounted variable extrema;
+query/tablet/sequence correlation remains a separate distributed exchange contract.
 
 `COUNT(*)` counts selected rows. `COUNT(expr)` reads only the cell's NULL bit, so STRING, SYMBOL,
 and BINARY do not create owned payloads. All other operations skip NULL cells. Empty global input
@@ -132,7 +133,7 @@ cancellation latency.
 
 Grouped state now has finite query-accounted canonical hash lookup described in the
 [grouped aggregate guide](bounded-grouped-aggregates.md). The remaining dynamic decisions are batch
-output, versioned partial-state transport, and spill behavior.
+output, an enclosing correlated partial-state exchange, and spill behavior.
 Bound SQL uses this stage for ungrouped queries with exact source-span aggregate identity, optional
 expression-input materialization, and final one-row vector expressions.
 

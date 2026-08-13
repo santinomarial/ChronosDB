@@ -140,6 +140,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/query/cseg_scan.hpp>
 #include <chronos/query/database_cseg_scan.hpp>
 #include <chronos/query/distributed_grouped_exchange.hpp>
+#include <chronos/query/distributed_vector_aggregate_state.hpp>
 #include <chronos/query/distributed_vector_exchange.hpp>
 #include <chronos/query/distributed_vector_fragment.hpp>
 #include <chronos/query/distributed_vector_fragment_v2.hpp>
@@ -251,6 +252,10 @@ int main() {
   const auto finish_vector_exchange = &chronos::query::DistributedVectorCoordinator::finish;
   const auto decode_vector_plan = &chronos::query::decode_distributed_vector_plan_intent_exact;
   const auto validate_vector_plan = &chronos::query::validate_distributed_vector_plan_intent;
+  const auto encode_vector_aggregate_state =
+      &chronos::query::encode_mergeable_vector_aggregate_state;
+  const auto decode_vector_aggregate_state =
+      &chronos::query::decode_mergeable_vector_aggregate_state_exact;
   const auto encode_vector_result_schema =
       &chronos::query::encode_distributed_vector_result_schema;
   const auto decode_vector_result_schema =
@@ -500,6 +505,8 @@ int main() {
   (void)bind_metadata_vector_snapshot;
   (void)bind_group_vector_snapshot;
   (void)bind_follower_group_vector_snapshot;
+  (void)encode_vector_aggregate_state;
+  (void)decode_vector_aggregate_state;
   (void)encode_vector_query_request;
   (void)decode_vector_query_request;
   (void)encode_vector_query_response;

@@ -419,6 +419,7 @@ add_library(
   src/query/diagnostic.cpp
   src/query/distributed.cpp
   src/query/distributed_grouped_exchange.cpp
+  src/query/distributed_vector_aggregate_state.cpp
   src/query/distributed_vector_exchange.cpp
   src/query/distributed_vector_fragment.cpp
   src/query/distributed_vector_fragment_v2.cpp
@@ -1682,6 +1683,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/distributed_test.cpp
     tests/query/distributed_grouped_exchange_header_self_contained.cpp
     tests/query/distributed_grouped_exchange_test.cpp
+    tests/query/distributed_vector_aggregate_state_header_self_contained.cpp
+    tests/query/distributed_vector_aggregate_state_test.cpp
     tests/query/distributed_vector_exchange_header_self_contained.cpp
     tests/query/distributed_vector_exchange_test.cpp
     tests/query/distributed_vector_fragment_header_self_contained.cpp
@@ -1795,6 +1798,7 @@ if(CHRONOS_BUILD_TESTS)
     tests/query/cseg_scan_allocation_failure_test.cpp
     tests/query/column_output_allocation_failure_test.cpp
     tests/query/database_cseg_scan_allocation_failure_test.cpp
+    tests/query/distributed_vector_aggregate_state_allocation_failure_test.cpp
     tests/query/distributed_vector_fragment_v2_allocation_failure_test.cpp
     tests/query/head_scan_allocation_failure_test.cpp
     tests/query/latest_allocation_failure_test.cpp
@@ -2153,6 +2157,25 @@ if(CHRONOS_BUILD_FUZZERS)
   chronos_set_project_warnings(chronos_distributed_vector_fragment_v2_fuzz)
   chronos_enable_sanitizers(chronos_distributed_vector_fragment_v2_fuzz)
   chronos_enable_static_analysis(chronos_distributed_vector_fragment_v2_fuzz)
+
+  add_executable(
+    chronos_distributed_vector_aggregate_state_fuzz
+    tests/fuzz/distributed_vector_aggregate_state_fuzz.cpp
+  )
+  set_target_properties(
+    chronos_distributed_vector_aggregate_state_fuzz PROPERTIES CXX_EXTENSIONS OFF
+  )
+  target_compile_features(chronos_distributed_vector_aggregate_state_fuzz PRIVATE cxx_std_23)
+  target_link_libraries(chronos_distributed_vector_aggregate_state_fuzz PRIVATE chronos::query)
+  target_compile_options(
+    chronos_distributed_vector_aggregate_state_fuzz PRIVATE -fsanitize=fuzzer
+  )
+  target_link_options(
+    chronos_distributed_vector_aggregate_state_fuzz PRIVATE -fsanitize=fuzzer
+  )
+  chronos_set_project_warnings(chronos_distributed_vector_aggregate_state_fuzz)
+  chronos_enable_sanitizers(chronos_distributed_vector_aggregate_state_fuzz)
+  chronos_enable_static_analysis(chronos_distributed_vector_aggregate_state_fuzz)
 
   add_executable(
     chronos_distributed_vector_query_transport_v2_fuzz

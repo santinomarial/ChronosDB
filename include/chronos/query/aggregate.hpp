@@ -15,6 +15,10 @@
 
 namespace chronos::query {
 
+namespace detail {
+class MergeableVectorAggregateStateCodecAccess;
+} // namespace detail
+
 inline constexpr std::size_t kMaximumUngroupedAggregateWidth = kDefaultVectorChunkColumnLimit;
 inline constexpr std::size_t kDefaultUngroupedAggregateConfigurationByteLimit =
     std::size_t{2U} * 1024U * 1024U;
@@ -141,6 +145,8 @@ private:
   std::size_t maximum_variable_extremum_bytes_{};
   bool has_value_{};
   bool finalized_{};
+
+  friend class detail::MergeableVectorAggregateStateCodecAccess;
 };
 
 // Consumes its complete input stream without retaining chunks, accumulates one global group, and

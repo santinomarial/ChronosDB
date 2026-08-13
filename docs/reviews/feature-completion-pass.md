@@ -852,13 +852,22 @@ Focused executions passed:
   on failure. Focused cases prove numeric partition results, exact final overflow, bounded STRING
   extrema, definition rejection, and injected allocation-failure atomicity. Versioned state bytes,
   distributed worker/coordinator execution, authority rebinding, and process integration remain.
+- Canonical aggregate-state bytes continuation: a distinct nested v1 frame preserves the exact
+  aggregate definition and sufficient COUNT/SUM/AVG/extremum/variance state without finalization.
+  Header-first reads prove integrity and caller limits before allocation, complete integrity gates
+  variable decode, query credit owns decoded text/binary extrema, and move-only cursors own checked
+  short writes. Focused tests cover every logical-type extremum, all sufficient numeric states,
+  every split, coalesced suffixes, canonical damage, lower bounds, and injected allocation failure;
+  a dedicated deterministic fuzz target covers exact and fragmented parsing. The correlated
+  schema-bound exchange and aggregate execution remain.
 
 The C++ files changed by the grouped-, vector-exchange-, Fragment-v2-, and vector-transport-v2
 continuations pass the repository-pinned clang-format 18 check. A full-tree check was also run and
 still reports pre-existing violations in the subscription protocol, subscription, multi-tablet
 checkpoint implementation, and focused subscription test files; these slices do not rewrite those
-unrelated files or claim a full-tree formatting pass. The full serialized 1,600-test developer
-suite, focused ASan/UBSan cases, and a deterministic 10,000-run transport-v2 fuzz campaign pass.
+unrelated files or claim a full-tree formatting pass. The full serialized 1,607-test developer
+suite, focused ASan/UBSan cases, and deterministic 10,000-run transport-v2 and aggregate-state fuzz
+campaigns pass.
 Apple's sanitizer runtime does not support LeakSanitizer, so those sanitizer runs explicitly
 disabled leak detection. Broader cross-compiler/Linux parity, benchmark, profile, and chaos checks
 were deliberately not run.

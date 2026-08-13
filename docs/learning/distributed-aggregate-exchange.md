@@ -363,8 +363,12 @@ carries one schema-bearing native batch.
 The shared move-only vector aggregate state now provides the in-memory foundation for general
 partials. Local ungrouped and grouped operators use the same checked state that future workers will
 merge: wide exact sums, AVG sum/count, parallel variance count/mean/M2, and all-type extrema with
-query-accounted variable payloads. No general aggregate state bytes exist yet, so vector aggregate
-fragments still fail closed.
+query-accounted variable payloads. Its distinct nested v1 codec now preserves the exact definition
+and operation-specific sufficient state under header/complete integrity and hard byte limits. The
+header-first reader and move-only cursor own partial I/O, while variable decode reserves query
+credit before copying. The nested state deliberately has no query/tablet/group/sequence authority;
+the enclosing schema-bound exchange still remains, so vector aggregate fragments continue to fail
+closed.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated
