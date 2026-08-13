@@ -631,6 +631,7 @@ add_library(
   src/cluster/raft_observation_tls_client.cpp
   src/cluster/raft_observation_tcp_client.cpp
   src/cluster/raft_observation_tcp_acquisition.cpp
+  src/cluster/raft_observation_tcp_pair_acquisition.cpp
   src/cluster/raft_observation_tls_server.cpp
   src/cluster/raft_observation_tcp_server.cpp
   src/cluster/raft_transport_receiver.cpp
@@ -1103,6 +1104,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/cluster/raft_observation_tcp_client_test.cpp
     tests/cluster/raft_observation_tcp_acquisition_header_self_contained.cpp
     tests/cluster/raft_observation_tcp_acquisition_test.cpp
+    tests/cluster/raft_observation_tcp_pair_acquisition_header_self_contained.cpp
+    tests/cluster/raft_observation_tcp_pair_acquisition_test.cpp
     tests/cluster/raft_observation_tls_server_header_self_contained.cpp
     tests/cluster/raft_observation_tls_server_test.cpp
     tests/cluster/raft_observation_tcp_server_header_self_contained.cpp

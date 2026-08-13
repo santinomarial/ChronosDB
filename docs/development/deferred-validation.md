@@ -285,9 +285,11 @@
   A dedicated bounded TCP server now owns listener/TLS lifetime, finite per-poll admission, stable
   TLS-before-descriptor connection records, metrics, and deterministic shutdown. A single-node
   acquisition owner now rotates a bounded ordered address snapshot across one finite retry/backoff
-  budget without changing request authority. Add leader/follower fan-out, pair selection,
-  packaged-constructor acquisition, broader cancellation/allocation faults, and real multi-process
-  validation.
+  budget without changing request authority. A selected leader/follower owner now fans out both
+  authenticated acquisitions, cancels the survivor on failure, and publishes only a complete
+  same-term stable-membership pair. Add automatic catalog-wide pair selection and multi-pair
+  acquisition, packaged-constructor acquisition, broader cancellation/allocation faults, and real
+  multi-process validation.
 - Shard-key pruning and statistics in addition to event-time pruning; multi-node scalar/distributed
   differential SQL and partial-aggregation equivalence.
 - Carry the implemented authenticated remote-action receiver bytes and atomic current-leader-term

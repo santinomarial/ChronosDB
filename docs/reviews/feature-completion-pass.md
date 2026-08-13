@@ -422,6 +422,10 @@ Focused executions passed:
 - Raft-observation retry continuation: 2 focused approved-host cases passed for refused-first,
   live-second finite address rotation with exact attempt/service metrics and for duplicate/node
   route rejection plus active-attempt cancellation. Fan-out and pair acquisition are not claimed.
+- Raft-observation pair continuation: 3 focused approved-host cases passed for concurrent
+  leader/follower mTLS acquisition with no partial result and for rejection of two individually
+  valid but different-term observations, plus survivor cancellation after a leader failure.
+  Catalog-wide multi-pair acquisition is not claimed.
 
 The final C++ tree passed the repository-pinned clang-format 18 check. Full-suite, sanitizer, fuzz,
 broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were deliberately not run.

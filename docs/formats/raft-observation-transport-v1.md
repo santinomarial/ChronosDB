@@ -101,5 +101,6 @@ exact. Implemented request and response stream readers validate the fixed header
 the remaining exact bounded frame, consume at most one frame per call, and leave coalesced suffixes
 to their caller. The move-only write cursor owns one fully validated request or response and exposes
 only its unwritten suffix. Maintained mTLS/TCP carriers now own exact deadlines, descriptor
-lifetime, bounded listener admission, and finite multi-address retry. Leader/follower fan-out and
-complete pair acquisition still require a separate coordinator contract.
+lifetime, bounded listener admission, and finite multi-address retry. A two-target owner fans out a
+selected leader/follower pair and exposes it only after complete same-term stable-membership
+correlation. Automatic catalog-wide selection and multi-pair acquisition remain embedding work.

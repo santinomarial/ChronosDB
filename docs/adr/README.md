@@ -347,3 +347,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0310](0310-bounded-inbound-raft-observation-mtls-session.md) | Bounded inbound Raft observation mTLS session | accepted |
 | [0311](0311-bounded-raft-observation-tcp-server.md) | Bounded Raft observation TCP server | accepted |
 | [0312](0312-finite-multi-address-raft-observation-acquisition.md) | Finite multi-address Raft observation acquisition | accepted |
+| [0313](0313-correlated-raft-observation-pair-fan-out.md) | Correlated Raft observation pair fan-out | accepted |

@@ -293,6 +293,29 @@ RaftObservationTcpAcquisitionMetrics RaftObservationTcpAcquisition::metrics() co
                          : RaftObservationTcpAcquisitionMetrics{};
 }
 
+int RaftObservationTcpAcquisition::descriptor() const noexcept {
+  return implementation_ && implementation_->client.has_value()
+             ? implementation_->client->descriptor()
+             : -1;
+}
+
+RaftObservationTlsInterest RaftObservationTcpAcquisition::interest() const noexcept {
+  return implementation_ && implementation_->client.has_value()
+             ? implementation_->client->interest()
+             : RaftObservationTlsInterest{};
+}
+
+std::optional<RaftObservationTcpClient::TimePoint>
+RaftObservationTcpAcquisition::wake_deadline() const noexcept {
+  if (!implementation_ ||
+      implementation_->acquisition_state != RaftObservationTcpAcquisitionState::kRunning) {
+    return std::nullopt;
+  }
+  if (implementation_->client.has_value())
+    return implementation_->client->deadline();
+  return implementation_->next_attempt_not_before;
+}
+
 common::Result<raft::RaftGroupObservation> RaftObservationTcpAcquisition::result() const {
   if (!implementation_)
     return common::make_unexpected(

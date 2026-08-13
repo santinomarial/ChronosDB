@@ -155,6 +155,11 @@ struct DistributedAggregateFollowerReadAuthority {
   raft::RaftGroupObservation follower_observation;
 };
 
+// Validates the complete same-group, same-term, stable-membership leader/follower correlation
+// required before a remote acquisition may be used as bounded-stale read authority.
+[[nodiscard]] bool is_valid_distributed_aggregate_follower_read_authority(
+    const DistributedAggregateFollowerReadAuthority& authority);
+
 struct FollowerGroupBackedDistributedAggregateSnapshotBinding {
   std::reference_wrapper<const raft::MetadataCatalogSnapshot> catalog;
   schema::TableId table_id;

@@ -143,9 +143,11 @@ borrowed descriptor on failure. An accepted-socket mTLS session authenticates be
 dispatches exactly one observation request. A dedicated server adds bounded listener admission,
 stable connection ownership, metrics, and ordered shutdown. A single-node acquisition owner rotates
 an ordered address snapshot under one finite retry/backoff budget while preserving request and node
-authority. Leader/follower fan-out and pair acquisition, remote worker-interrupt delivery, pooled
-multiplexing, asynchronous worker completion, live DNS churn qualification, and broader multi-node
-fault handling remain embedding work.
+authority. A two-target owner fans out the selected leader and follower, cancels a survivor on
+failure, and publishes only a complete same-term stable-membership authority pair. Automatic
+catalog-wide multi-pair acquisition, remote worker-interrupt delivery, pooled multiplexing,
+asynchronous worker completion, live DNS churn qualification, and broader multi-node fault handling
+remain embedding work.
 
 ## Verification and review questions
 
