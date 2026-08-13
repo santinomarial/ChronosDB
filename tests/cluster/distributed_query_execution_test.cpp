@@ -1,4 +1,6 @@
 #include "chronos/cluster/distributed_grouped_query_execution.hpp"
+#include "chronos/cluster/distributed_grouped_query_tcp_execution.hpp"
+#include "chronos/cluster/distributed_grouped_query_tcp_server.hpp"
 #include "chronos/cluster/distributed_query_execution.hpp"
 #include "chronos/cluster/distributed_query_tcp_execution.hpp"
 #include "chronos/cluster/distributed_query_tcp_server.hpp"
@@ -290,6 +292,34 @@ private:
   bool fail_first_{};
 };
 
+class GroupedExecutionWorker final : public DistributedGroupedQueryWorkerService {
+public:
+  explicit GroupedExecutionWorker(const double value) noexcept : value_(value) {}
+
+  common::Result<query::DistributedGroupedFloat64WorkerResult>
+  execute(const query::DistributedGroupedFloat64FragmentDispatch& dispatch) override {
+    ++calls;
+    query::MergeableAggregateState partial;
+    const common::Status added = partial.add(value_);
+    if (!added.is_ok())
+      return common::make_unexpected(added);
+    return query::DistributedGroupedFloat64WorkerResult{
+        std::vector<query::GroupedFloat64ExchangeMessage>{{
+            .query_id = dispatch.fragment.aggregate.query_id,
+            .tablet_id = dispatch.fragment.aggregate.tablet_id,
+            .sequence = 1U,
+            .group_key = 5.0,
+            .partial = partial,
+            .terminal = true,
+        }}};
+  }
+
+  std::size_t calls{};
+
+private:
+  double value_{};
+};
+
 [[nodiscard]] DistributedQueryTcpServerConfig
 execution_server_config(ExecutionAuthenticator& authenticator, DistributedQueryReceiver& receiver) {
   return {.listener = {},
@@ -298,6 +328,20 @@ execution_server_config(ExecutionAuthenticator& authenticator, DistributedQueryR
           .receiver = &receiver,
           .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
                              .exchange_timeout = std::chrono::milliseconds{1000}},
+          .maximum_connections = 8U,
+          .maximum_accepts_per_poll = 8U};
+}
+
+[[nodiscard]] DistributedGroupedQueryTcpServerConfig
+grouped_execution_server_config(ExecutionAuthenticator& authenticator,
+                                DistributedGroupedQueryReceiver& receiver) {
+  return {.listener = {},
+          .tls = execution_tls_server_config(),
+          .authenticator = &authenticator,
+          .receiver = &receiver,
+          .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                             .exchange_timeout = std::chrono::milliseconds{1000},
+                             .maximum_response_frames = 4U},
           .maximum_connections = 8U,
           .maximum_accepts_per_poll = 8U};
 }
@@ -444,6 +488,151 @@ TEST(DistributedGroupedQueryExecutionTest, PublishesOnlyTerminalSenderFailure) {
                   .is_ok());
   EXPECT_EQ(*execution->sender_state(tablet), DistributedQuerySenderState::kFailed);
   EXPECT_EQ(execution->finish().error().code(), common::StatusCode::kIoError);
+}
+
+TEST(DistributedGroupedQueryTcpExecutionTest, SchedulesAllTabletsAndRotatesAddressesOnRetry) {
+  TemporaryDirectory directory;
+  auto input = make_input(directory);
+  ASSERT_TRUE(input.has_value()) << input.error().to_string();
+  auto execution = DistributedGroupedQueryExecution::create(
+      1U, std::move(input->grouped_snapshot),
+      {.coordinator = {},
+       .retry = {.maximum_attempts = 2U,
+                 .initial_backoff = std::chrono::milliseconds{1},
+                 .maximum_backoff = std::chrono::milliseconds{1}}});
+  ASSERT_TRUE(execution.has_value()) << execution.error().to_string();
+
+  auto refused_listener = network::TcpListener::bind();
+  ASSERT_TRUE(refused_listener.has_value()) << refused_listener.error().to_string();
+  const network::Ipv4Endpoint refused_endpoint = refused_listener->bound_endpoint();
+  ASSERT_TRUE(refused_listener->close().is_ok());
+
+  ExecutionNodeAuthorizer authorizer;
+  GroupedExecutionWorker first_worker{2.5};
+  GroupedExecutionWorker second_worker{3.5};
+  auto first_receiver = DistributedGroupedQueryReceiver::create(
+      {.local_node_id = 11U, .authorizer = &authorizer, .worker = &first_worker});
+  auto second_receiver = DistributedGroupedQueryReceiver::create(
+      {.local_node_id = 12U, .authorizer = &authorizer, .worker = &second_worker});
+  ASSERT_TRUE(first_receiver.has_value());
+  ASSERT_TRUE(second_receiver.has_value());
+  ExecutionAuthenticator client_authenticator{91U};
+  auto first_server = DistributedGroupedQueryTcpServer::start(
+      grouped_execution_server_config(client_authenticator, *first_receiver));
+  auto second_server = DistributedGroupedQueryTcpServer::start(
+      grouped_execution_server_config(client_authenticator, *second_receiver));
+  ASSERT_TRUE(first_server.has_value()) << first_server.error().to_string();
+  ASSERT_TRUE(second_server.has_value()) << second_server.error().to_string();
+
+  auto tls_context = network::TlsClientContext::create(execution_tls_client_config());
+  ASSERT_TRUE(tls_context.has_value()) << tls_context.error().to_string();
+  ExecutionAuthenticator server_authenticator{92U};
+  auto scheduled = DistributedGroupedQueryTcpExecution::create(
+      std::move(*execution),
+      {.authenticator = &server_authenticator,
+       .node_authorizer = &authorizer,
+       .routes = {{11U, {refused_endpoint, first_server->bound_endpoint()}, &*tls_context},
+                  {12U, {second_server->bound_endpoint()}, &*tls_context}},
+       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                          .exchange_timeout = std::chrono::milliseconds{1000},
+                          .maximum_response_frames = 4U},
+       .connect_timeout = std::chrono::milliseconds{1000}});
+  ASSERT_TRUE(scheduled.has_value()) << scheduled.error().to_string();
+
+  for (std::size_t iteration = 0U;
+       iteration < 4096U &&
+       scheduled->state() == DistributedGroupedQueryTcpExecutionState::kRunning;
+       ++iteration) {
+    const common::Status status = scheduled->poll_once(std::chrono::milliseconds{1});
+    ASSERT_TRUE(status.is_ok()) << status.to_string();
+    ASSERT_TRUE(first_server->poll_once(std::chrono::milliseconds{1}).is_ok());
+    ASSERT_TRUE(second_server->poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  ASSERT_EQ(scheduled->state(), DistributedGroupedQueryTcpExecutionState::kComplete)
+      << scheduled->failure().to_string();
+  auto result = scheduled->result();
+  ASSERT_TRUE(result.has_value()) << result.error().to_string();
+  ASSERT_EQ(result->size(), 1U);
+  EXPECT_EQ(result->front().group_key, 5.0);
+  EXPECT_EQ(result->front().aggregate.count, 2U);
+  EXPECT_EQ(result->front().aggregate.sum, 6.0);
+  EXPECT_EQ(first_worker.calls, 1U);
+  EXPECT_EQ(second_worker.calls, 1U);
+  const auto metrics = scheduled->metrics();
+  EXPECT_EQ(metrics.attempts_started, 3U);
+  EXPECT_EQ(metrics.retries_started, 1U);
+  EXPECT_EQ(metrics.transport_completed_attempts, 2U);
+  EXPECT_EQ(metrics.transport_failed_attempts, 1U);
+  EXPECT_EQ(metrics.active_attempts, 0U);
+}
+
+TEST(DistributedGroupedQueryTcpExecutionTest, RejectsIncompleteRoutesAndOwnsDeadlineCancellation) {
+  ExecutionNodeAuthorizer authorizer;
+  ExecutionAuthenticator authenticator{92U};
+  auto tls_context = network::TlsClientContext::create(execution_tls_client_config());
+  ASSERT_TRUE(tls_context.has_value());
+
+  TemporaryDirectory incomplete_directory;
+  auto incomplete_input = make_input(incomplete_directory);
+  ASSERT_TRUE(incomplete_input.has_value());
+  auto incomplete_execution =
+      DistributedGroupedQueryExecution::create(1U, std::move(incomplete_input->grouped_snapshot));
+  ASSERT_TRUE(incomplete_execution.has_value());
+  EXPECT_EQ(DistributedGroupedQueryTcpExecution::create(
+                std::move(*incomplete_execution),
+                {.authenticator = &authenticator,
+                 .node_authorizer = &authorizer,
+                 .routes = {{11U, {{{127U, 0U, 0U, 1U}, 1U}}, &*tls_context}}})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+
+  TemporaryDirectory expired_directory;
+  auto expired_input = make_input(expired_directory);
+  ASSERT_TRUE(expired_input.has_value());
+  auto expired_execution =
+      DistributedGroupedQueryExecution::create(1U, std::move(expired_input->grouped_snapshot));
+  ASSERT_TRUE(expired_execution.has_value());
+  auto expired = DistributedGroupedQueryTcpExecution::create(
+      std::move(*expired_execution),
+      {.authenticator = &authenticator,
+       .node_authorizer = &authorizer,
+       .routes = {{11U, {{{127U, 0U, 0U, 1U}, 1U}}, &*tls_context},
+                  {12U, {{{127U, 0U, 0U, 1U}, 2U}}, &*tls_context}},
+       .execution_deadline = DistributedGroupedQueryExecution::TimePoint{}});
+  ASSERT_TRUE(expired.has_value());
+  const common::Status deadline = expired->poll_once(std::chrono::milliseconds{100});
+  EXPECT_EQ(deadline.code(), common::StatusCode::kCancelled);
+  EXPECT_EQ(expired->state(), DistributedGroupedQueryTcpExecutionState::kCancelled);
+  EXPECT_EQ(expired->metrics().attempts_started, 0U);
+  EXPECT_EQ(expired->metrics().active_attempts, 0U);
+  EXPECT_EQ(expired->result().error(), deadline);
+  EXPECT_EQ(expired->cancel(), deadline);
+
+  TemporaryDirectory cancelled_directory;
+  auto cancelled_input = make_input(cancelled_directory);
+  ASSERT_TRUE(cancelled_input.has_value());
+  auto cancelled_execution =
+      DistributedGroupedQueryExecution::create(1U, std::move(cancelled_input->grouped_snapshot));
+  ASSERT_TRUE(cancelled_execution.has_value());
+  auto listener = network::TcpListener::bind();
+  ASSERT_TRUE(listener.has_value()) << listener.error().to_string();
+  auto cancelled = DistributedGroupedQueryTcpExecution::create(
+      std::move(*cancelled_execution),
+      {.authenticator = &authenticator,
+       .node_authorizer = &authorizer,
+       .routes = {{11U, {listener->bound_endpoint()}, &*tls_context},
+                  {12U, {listener->bound_endpoint()}, &*tls_context}}});
+  ASSERT_TRUE(cancelled.has_value());
+  ASSERT_TRUE(cancelled->poll_once(std::chrono::milliseconds{0}).is_ok());
+  EXPECT_EQ(cancelled->metrics().attempts_started, 2U);
+  EXPECT_EQ(cancelled->metrics().active_attempts, 2U);
+  const common::Status cancellation = cancelled->cancel();
+  EXPECT_EQ(cancellation.code(), common::StatusCode::kCancelled);
+  EXPECT_EQ(cancelled->state(), DistributedGroupedQueryTcpExecutionState::kCancelled);
+  EXPECT_EQ(cancelled->metrics().active_attempts, 0U);
+  EXPECT_EQ(cancelled->poll_once(std::chrono::milliseconds{0}), cancellation);
+  EXPECT_EQ(cancelled->result().error(), cancellation);
 }
 
 TEST(DistributedQueryTcpExecutionTest, ResolvesSelectedRoutesFromCommittedNodeMetadata) {

@@ -171,6 +171,11 @@ dispatch in plan order, and retains the one pinned Manifest epoch.
 sender per bound tablet, and delivers a sender's already-validated terminal payload vector to the
 grouped coordinator once. Backoff never mutates coordinator state; terminal failure does. Its
 `finish` method therefore cannot publish before every tablet closes successfully.
+`DistributedGroupedQueryTcpExecution` retains that owner and one optional grouped TCP client per
+tablet. It validates complete immutable routes before I/O, starts ready and due attempts in bound
+order, rotates finite addresses by attempt number, and reports each terminal transport outcome
+once. Failure, deadline, and cancellation synchronously release every client; only all-tablet
+success publishes the grouped vector.
 `DistributedQueryTcpServer` owns the dedicated listener, long-lived TLS context, fixed-capacity poll
 storage, bounded stable connection records, deadline driving, metrics, and carrier-before-descriptor
 shutdown order for real multi-connection serving.
@@ -202,7 +207,8 @@ A fixed ungrouped-aggregate frame gives partial-I/O carriers an unambiguous payl
 prematurely defining a general physical-fragment language. The cost is a specialized first exchange
 type. A separate first grouped frame now carries one nullable FLOAT64 key with bounded
 coordination and authenticated multi-response TLS ownership, but multi-key and non-FLOAT64
-grouping, general physical plans, TCP scheduler packaging, ordering/top-N, cancellation
+grouping, general physical plans, packaged metadata construction/rebinding, ordering/top-N,
+cancellation
 delivery, and durable recovery require their own bounded contracts. A leader hint never mutates an existing
 proof-bound dispatch: following it requires explicit coordinator rebinding.
 The replicated read-barrier owner now returns exact correlated leader observations for

@@ -1037,8 +1037,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   epoch and exact per-tablet FLOAT64 schema proof. A portable execution owner now constructs one
   finite sender per bound tablet, delivers each complete terminal stream to the grouped coordinator
   exactly once, reports only terminal sender failure, retains the Manifest pin, and withholds the
-  result until every tablet closes. Multi-tablet TCP scheduling and packaged grouped construction
-  remain.
+  result until every tablet closes. A pinned multi-tablet TCP scheduler prevalidates every immutable
+  route, drives plan-ordered attempts and deadline-due retries over the grouped mTLS client, rotates
+  bounded address candidates under the sender budget, releases all clients on failure/deadline/
+  cancellation, and publishes only the complete grouped result. Packaged grouped construction and
+  explicit whole-query rebinding remain.
   Multi-key/non-FLOAT64 state/transport, ordering, top-N, and LIMIT remain deferred. A distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
   catalog, Manifest, route, and execution gates;

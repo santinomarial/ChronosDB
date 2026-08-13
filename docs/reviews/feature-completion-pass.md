@@ -249,8 +249,11 @@ the real-CSEG grouped worker. A finite sender owns complete response-vector corr
 whole-attempt retry/backoff. A compatible grouped binder retains one pinned Manifest epoch across
 every plan-ordered, schema-proved dispatch. A portable execution owner now retains that snapshot,
 owns one finite sender per tablet, delivers complete terminal streams once, and preserves the
-coordinator's all-tablet result boundary. TCP scheduling, packaged grouped construction, and
-multi-key/non-FLOAT64 state remain incomplete. A distinct
+coordinator's all-tablet result boundary. A pinned multi-tablet TCP scheduler prevalidates complete
+routes, drives plan-ordered attempts and due retries, rotates bounded address candidates, releases
+all clients on terminal failure/deadline/cancellation, and publishes only the complete grouped
+result. Packaged grouped construction, explicit rebinding, and multi-key/non-FLOAT64 state remain
+incomplete. A distinct
 canonical observation protocol, authenticated receiver, mTLS clients/servers, finite multi-address
 acquisition, correlated
 leader/follower pairs, canonical all-group batches, placement-backed construction, and packaged
@@ -560,6 +563,12 @@ Focused executions passed:
   and exact terminal failure propagation. Header self-containment and the installed-consumer gate
   cover the public owner. Multi-tablet TCP scheduling and packaged grouped construction are not
   claimed.
+- Grouped TCP-scheduler continuation: 2 focused cases passed for two plan-ordered real-mTLS tablet
+  servers, a refused first address and finite candidate rotation, same-key cross-tablet merge,
+  exact attempt/retry/transport metrics, zero residual clients, complete route prevalidation,
+  no-I/O deadline expiry, and active-client cancellation. Header self-containment and the installed
+  consumer cover the public scheduler. Packaged grouped construction and explicit whole-query
+  rebinding are not claimed.
 
 The C++ files changed by the grouped-exchange continuations pass the repository-pinned clang-format
 18 check. A full-tree check was also run and still reports pre-existing violations in the

@@ -376,3 +376,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0339](0339-finite-grouped-query-sender.md) | Finite grouped-query sender | accepted |
 | [0340](0340-compatible-grouped-float64-snapshot-binding.md) | Compatible grouped FLOAT64 snapshot binding | accepted |
 | [0341](0341-fail-closed-grouped-query-execution-owner.md) | Fail-closed grouped query execution owner | accepted |
+| [0342](0342-pinned-grouped-query-tcp-scheduling.md) | Pinned grouped-query TCP scheduling | accepted |

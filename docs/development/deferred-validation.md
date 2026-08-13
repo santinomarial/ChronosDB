@@ -292,8 +292,11 @@
   Manifest epoch while deriving every plan-ordered grouped dispatch under its exact FLOAT64 schema
   proof. A portable single-owner execution now retains that pin, correlates exactly one finite sender
   per bound tablet, delivers a complete terminal stream once, reports only terminal sender failure,
-  and delegates all-tablet publication to the grouped coordinator. Multi-tablet TCP scheduling and
-  packaged grouped construction remain incomplete.
+  and delegates all-tablet publication to the grouped coordinator. A pinned TCP scheduler now
+  prevalidates complete routes, starts plan-ordered attempts and deadline-due retries, rotates
+  bounded addresses under the existing retry budget, reports each transport outcome once, and
+  releases every active client on terminal failure, deadline, or cancellation. Packaged grouped
+  construction and explicit whole-query rebinding remain incomplete.
 - Proof-bound leader-linearizable/bounded-stale/local-eventual admissions now remain attached through
   compatible pinned multi-tablet snapshots and protocol/carrier scheduling. Whole-query replacement
   now validates fresh caller-proved authority, identical logical shape, nonregressing generation,
