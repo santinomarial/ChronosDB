@@ -120,10 +120,11 @@ type. Grouping state, physical plans, ordering/top-N, cancellation delivery, and
 sequencing require their own bounded contracts. A leader hint never
 mutates an existing proof-bound dispatch: following it requires explicit coordinator rebinding.
 The replicated read-barrier owner now returns exact correlated leader observations for
-leader-linearizable proof construction. Follower leader-commit acquisition, packaged coordinator
-composition, DNS and multi-address resolution, remote worker-interrupt delivery, pooled
-multiplexing, asynchronous worker completion, and broader multi-node fault handling remain
-embedding work.
+leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
+to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated
+groups. Follower leader-commit acquisition, packaged coordinator lifecycle, DNS and multi-address
+resolution, remote worker-interrupt delivery, pooled multiplexing, asynchronous worker completion,
+and broader multi-node fault handling remain embedding work.
 
 ## Verification and review questions
 

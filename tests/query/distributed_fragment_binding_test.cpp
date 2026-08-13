@@ -394,7 +394,59 @@ TEST(DistributedFragmentBindingTest, ResolvesCommittedMetadataAndCurrentReplicaP
                                        .linearizable_barrier = raft::ReadBarrier{2U, 3U, 10U}},
       DistributedAggregateReplicaProof{.observation = std::cref(observations[1]),
                                        .linearizable_barrier = raft::ReadBarrier{4U, 5U, 20U}}};
+  const std::array group_authorities{
+      DistributedAggregateGroupReadAuthority{.barrier = {uuid(1U), raft::ReadBarrier{1U, 1U, 1U}},
+                                             .observation = {.group_id = uuid(1U),
+                                                             .node_id = 15U,
+                                                             .role = raft::Role::kLeader,
+                                                             .current_term = 1U,
+                                                             .leader_id = 15U,
+                                                             .last_log_index = 1U,
+                                                             .commit_index = 1U,
+                                                             .applied_index = 1U,
+                                                             .voters = {15U},
+                                                             .committed_voters = {15U}}},
+      DistributedAggregateGroupReadAuthority{
+          .barrier = {specs[0].group_id, *proofs[0].linearizable_barrier},
+          .observation = observations[0]},
+      DistributedAggregateGroupReadAuthority{
+          .barrier = {specs[1].group_id, *proofs[1].linearizable_barrier},
+          .observation = observations[1]}};
   const std::array<std::uint32_t, 2U> projection{0U, 1U};
+
+  auto group_bound =
+      bind_group_backed_distributed_aggregate_snapshot(plan, *snapshot,
+                                                       {.catalog = std::cref(catalog),
+                                                        .table_id = schema_value.table_id(),
+                                                        .group_authorities = group_authorities,
+                                                        .destination_column_ordinals = projection,
+                                                        .aggregate_input_index = 1U});
+  ASSERT_TRUE(group_bound.has_value()) << group_bound.error().to_string();
+  ASSERT_EQ(group_bound->dispatches().size(), 2U);
+  EXPECT_EQ(group_bound->dispatches()[0].raft_group_id, specs[0].group_id);
+  EXPECT_EQ(group_bound->dispatches()[1].raft_group_id, specs[1].group_id);
+  const std::array reversed_authorities{group_authorities[2], group_authorities[1],
+                                        group_authorities[0]};
+  EXPECT_EQ(
+      bind_group_backed_distributed_aggregate_snapshot(plan, *snapshot,
+                                                       {.catalog = std::cref(catalog),
+                                                        .table_id = schema_value.table_id(),
+                                                        .group_authorities = reversed_authorities,
+                                                        .destination_column_ordinals = projection,
+                                                        .aggregate_input_index = 1U})
+          .error()
+          .code(),
+      common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(bind_group_backed_distributed_aggregate_snapshot(
+                plan, *snapshot,
+                {.catalog = std::cref(catalog),
+                 .table_id = schema_value.table_id(),
+                 .group_authorities = std::span{group_authorities}.first(2U),
+                 .destination_column_ordinals = projection,
+                 .aggregate_input_index = 1U})
+                .error()
+                .code(),
+            common::StatusCode::kUnavailable);
 
   auto compatible = bind_metadata_backed_distributed_aggregate_snapshot(
       plan, std::move(*snapshot),

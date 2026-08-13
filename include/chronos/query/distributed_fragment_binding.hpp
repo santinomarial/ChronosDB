@@ -125,6 +125,31 @@ bind_metadata_backed_distributed_aggregate_snapshot(
     const MetadataBackedDistributedAggregateSnapshotBinding& binding,
     DistributedAggregateSnapshotBindingLimits limits = {});
 
+struct DistributedAggregateGroupReadAuthority {
+  raft::GroupReadBarrier barrier;
+  raft::RaftGroupObservation observation;
+};
+
+struct GroupBackedDistributedAggregateSnapshotBinding {
+  std::reference_wrapper<const raft::MetadataCatalogSnapshot> catalog;
+  schema::TableId table_id;
+  // Canonical unique order by observation.group_id. Extra groups (for example metadata) are
+  // ignored; each selected tablet's immutable group must be present.
+  std::span<const DistributedAggregateGroupReadAuthority> group_authorities;
+  std::span<const std::uint32_t> destination_column_ordinals;
+  std::uint32_t aggregate_input_index{};
+  std::optional<cseg::EventTimePredicate> event_time_predicate;
+};
+
+// Resolves every planned tablet through committed tablet-to-group metadata before selecting its
+// exact correlated leader barrier/observation. This removes the caller's plan-order join while
+// retaining the same metadata/Manifest binder.
+[[nodiscard]] common::Result<CompatibleDistributedAggregateSnapshot>
+bind_group_backed_distributed_aggregate_snapshot(
+    const DistributedAggregatePlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
+    const GroupBackedDistributedAggregateSnapshotBinding& binding,
+    DistributedAggregateSnapshotBindingLimits limits = {});
+
 } // namespace chronos::query
 
 #endif // CHRONOS_QUERY_DISTRIBUTED_FRAGMENT_BINDING_HPP_

@@ -334,3 +334,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0297](0297-metadata-backed-distributed-query-authority.md) | Metadata-backed distributed query authority | accepted |
 | [0298](0298-committed-distributed-query-route-resolution.md) | Committed distributed query route resolution | accepted |
 | [0299](0299-correlated-replicated-read-authority.md) | Correlated replicated read authority | accepted |
+| [0300](0300-group-keyed-distributed-query-proof-binding.md) | Group-keyed distributed query proof binding | accepted |

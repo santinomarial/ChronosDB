@@ -992,10 +992,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   derives policy admissions only from matching stable Raft observations. Selected serving-node TCP
   routes now resolve from the same committed node metadata through a strict IPv4 endpoint grammar
   while retaining explicit node-specific TLS contexts. The replicated barrier owner can now return
-  each leader-linearizable barrier with the exact ordered leader observation that validated it.
-  General vector-plan fragments/exchanges, follower proof acquisition, packaged coordinator
-  composition, DNS/multi-address routing, and broader multi-node failure validation remain
-  deferred. A
+  each leader-linearizable barrier with the exact ordered leader observation that validated it; a
+  group-keyed binder joins those proofs to plan-ordered tablets through committed immutable group
+  bindings. General vector-plan fragments/exchanges, follower proof acquisition, packaged
+  coordinator lifecycle, DNS/multi-address routing, and broader multi-node failure validation
+  remain deferred. A
   focused real-mTLS gate now queries two tablets, drives one through checksummed learner-first
   movement and externally committed promotion/removal milestones, rebinds it to the target, and
   proves the complete aggregate state is identical before and after. The full phase exit gate is

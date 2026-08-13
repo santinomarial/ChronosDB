@@ -20,8 +20,10 @@ between operations, and pairing a barrier with an unrelated observation creates 
 ## Decision
 
 `ReplicatedReadBarrier::await_authority` returns one group-sorted `ReplicatedReadAuthority` per
-configured group. Each value owns the completed `GroupReadBarrier` and the exact ordered
-`RaftGroupObservation` used to validate it. Validation requires matching group and term, nonzero
+configured group. This is an alias of query-layer `DistributedAggregateGroupReadAuthority`, so the
+result enters group-backed fragment binding without conversion. Each value owns the completed
+`GroupReadBarrier` and the exact ordered `RaftGroupObservation` used to validate it. Validation
+requires matching group and term, nonzero
 local node, current leader role with self leader identity, ordered log/commit/apply indexes, and
 commit coverage of the read index.
 

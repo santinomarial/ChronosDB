@@ -3,6 +3,7 @@
 
 #include "chronos/cluster/raft_transport_runtime.hpp"
 #include "chronos/common/result.hpp"
+#include "chronos/query/distributed_fragment_binding.hpp"
 #include "chronos/raft/async_durable_runtime.hpp"
 
 #include <chrono>
@@ -20,10 +21,7 @@ struct ReplicatedReadBarrierLimits {
   std::chrono::milliseconds request_timeout{5000};
 };
 
-struct ReplicatedReadAuthority {
-  raft::GroupReadBarrier barrier;
-  raft::RaftGroupObservation observation;
-};
+using ReplicatedReadAuthority = query::DistributedAggregateGroupReadAuthority;
 
 // Bounded synchronous query gate for one stable vector of per-group leader read indexes. Local
 // mode submits directly to an asynchronous durable runtime and is valid only for groups that can
