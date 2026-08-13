@@ -22,6 +22,27 @@ namespace {
   return {common::StatusCode::kResourceExhausted, message};
 }
 
+[[nodiscard]] bool valid_vector_aggregate_worker_limits(
+    const query::DistributedVectorAggregateWorkerLimitsV2& limits) noexcept {
+  return limits.maximum_query_memory_bytes > 0U &&
+         limits.maximum_query_memory_bytes <=
+             query::kMaximumDistributedVectorRowsWorkerMemoryBytesV2 &&
+         limits.scan.maximum_rows_per_chunk > 0U && limits.scan.chunk.maximum_rows > 0U &&
+         limits.scan.chunk.maximum_columns > 0U && limits.scan.chunk.maximum_buffer_bytes > 0U &&
+         limits.scan.chunk.maximum_retained_buffer_bytes > 0U &&
+         limits.projection.maximum_rows > 0U && limits.projection.maximum_columns > 0U &&
+         limits.projection.maximum_buffer_bytes > 0U &&
+         limits.projection.maximum_retained_buffer_bytes > 0U &&
+         limits.projection.maximum_rows >=
+             std::min(limits.scan.maximum_rows_per_chunk, limits.scan.chunk.maximum_rows) &&
+         limits.maximum_aggregates > 0U &&
+         limits.maximum_aggregates <= query::kMaximumUngroupedAggregateWidth &&
+         limits.maximum_variable_extremum_bytes > 0U &&
+         limits.maximum_variable_extremum_bytes <=
+             query::distributed_vector_aggregate_state_format::kMaximumExtremumBytes &&
+         limits.maximum_retained_configuration_bytes > 0U;
+}
+
 class VectorResultCollector final : public query::DistributedVectorRowsChunkConsumerV2 {
 public:
   VectorResultCollector(const query::DistributedVectorFragmentDispatchV2& dispatch,
@@ -290,6 +311,82 @@ ReplicatedDistributedVectorQueryWorkerV2::execute(
     return common::make_unexpected(exhausted("replicated vector worker allocation failed"));
   } catch (const std::length_error&) {
     return common::make_unexpected(exhausted("replicated vector worker exceeds container limits"));
+  }
+}
+
+ReplicatedDistributedVectorAggregateQueryWorkerV2::
+    ReplicatedDistributedVectorAggregateQueryWorkerV2(
+        ReplicatedDistributedVectorAggregateQueryWorkerConfigV2 config) noexcept
+    : config_(config) {}
+
+common::Result<ReplicatedDistributedVectorAggregateQueryWorkerV2>
+ReplicatedDistributedVectorAggregateQueryWorkerV2::create(
+    ReplicatedDistributedVectorAggregateQueryWorkerConfigV2 config) {
+  if (config.local_node_id == 0U || config.storage == nullptr ||
+      config.context_provider == nullptr || !valid_vector_aggregate_worker_limits(config.limits)) {
+    return common::make_unexpected(
+        invalid("replicated distributed vector aggregate worker configuration is invalid"));
+  }
+  return ReplicatedDistributedVectorAggregateQueryWorkerV2{config};
+}
+
+common::Result<std::vector<query::VectorAggregateDefinition>>
+ReplicatedDistributedVectorAggregateQueryWorkerV2::bind_definitions(
+    const query::DistributedVectorFragmentDispatchV2& dispatch) {
+  try {
+    auto context = config_.context_provider->acquire(dispatch);
+    if (!context.has_value())
+      return common::make_unexpected(context.error());
+    if (!context->lineage) {
+      return common::make_unexpected(
+          invalid("replicated vector aggregate worker context has no schema lineage"));
+    }
+    return query::bind_distributed_vector_aggregate_worker_definitions_v2(
+        {.dispatch = std::cref(dispatch),
+         .storage = std::cref(*config_.storage),
+         .snapshot = std::cref(context->snapshot),
+         .lineage = std::cref(*context->lineage),
+         .placement = std::cref(context->placement),
+         .raft_group_id = context->raft_group_id,
+         .local_node = config_.local_node_id,
+         .local_linearizable_barrier = context->local_linearizable_barrier,
+         .limits = config_.limits});
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        exhausted("replicated vector aggregate definition binding allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("replicated vector aggregate definition binding exceeds container limits"));
+  }
+}
+
+common::Result<query::DistributedVectorAggregateWorkerResultV2>
+ReplicatedDistributedVectorAggregateQueryWorkerV2::execute(
+    const query::DistributedVectorFragmentDispatchV2& dispatch) {
+  try {
+    auto context = config_.context_provider->acquire(dispatch);
+    if (!context.has_value())
+      return common::make_unexpected(context.error());
+    if (!context->lineage) {
+      return common::make_unexpected(
+          invalid("replicated vector aggregate worker context has no schema lineage"));
+    }
+    return query::execute_distributed_vector_aggregate_fragment_v2(
+        {.dispatch = std::cref(dispatch),
+         .storage = std::cref(*config_.storage),
+         .snapshot = std::cref(context->snapshot),
+         .lineage = std::cref(*context->lineage),
+         .placement = std::cref(context->placement),
+         .raft_group_id = context->raft_group_id,
+         .local_node = config_.local_node_id,
+         .local_linearizable_barrier = context->local_linearizable_barrier,
+         .limits = config_.limits});
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        exhausted("replicated vector aggregate worker allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("replicated vector aggregate worker exceeds container limits"));
   }
 }
 

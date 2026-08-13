@@ -399,9 +399,19 @@ TEST(DistributedFragmentWorkerTest, ExecutesPinnedTemporalPartsAndReprovesLocalP
                                                          raft::ReadBarrier{2U, 3U, 10U},
                                                      .limits = {}};
   };
+  const auto bound_aggregate_definitions =
+      bind_distributed_vector_aggregate_worker_definitions_v2(aggregate_request(11U));
+  ASSERT_TRUE(bound_aggregate_definitions.has_value())
+      << bound_aggregate_definitions.error().to_string();
+  ASSERT_EQ(bound_aggregate_definitions->size(), 4U);
+  EXPECT_EQ(bind_distributed_vector_aggregate_worker_definitions_v2(aggregate_request(12U))
+                .error()
+                .code(),
+            common::StatusCode::kUnavailable);
   auto aggregate_result = execute_distributed_vector_aggregate_fragment_v2(aggregate_request(11U));
   ASSERT_TRUE(aggregate_result.has_value()) << aggregate_result.error().to_string();
   EXPECT_EQ(aggregate_result->input_rows, 1U);
+  EXPECT_EQ(aggregate_result->definitions, *bound_aggregate_definitions);
   ASSERT_EQ(aggregate_result->definitions.size(), 4U);
   ASSERT_EQ(aggregate_result->messages.size(), aggregate_result->definitions.size());
   for (std::size_t ordinal = 0U; ordinal < aggregate_result->messages.size(); ++ordinal) {

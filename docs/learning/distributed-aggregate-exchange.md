@@ -394,8 +394,11 @@ path and query resource authority for decode, while the header-first reader enfo
 outer bounds before allocation. The receiver now authenticates and authorizes the node route,
 rejects non-aggregate plans, binds definitions from local authority before execution, and requires
 the independently proof-derived worker definitions to exact-match before retaining a complete
-count- and byte-bounded response vector. Production worker service, retry, TLS/TCP, and process
-integration still remain.
+count- and byte-bounded response vector. The production aggregate service now acquires one coherent
+owning Manifest/schema/placement/group context for definition binding and a second fresh context for
+execution. Both enter the same core authority primitive; binding performs no part I/O, while
+execution loads real CSEGs once and returns its independently derived definitions beside states.
+Retry, TLS/TCP, and process integration still remain.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated

@@ -511,6 +511,66 @@ valid_vector_aggregate_limits(const DistributedVectorAggregateWorkerLimitsV2& li
          limits.maximum_retained_configuration_bytes > 0U;
 }
 
+struct ValidatedVectorAggregateWorkerBinding {
+  ValidatedWorkerAuthority authority;
+  std::vector<PhysicalColumnShape> projected_inputs;
+  std::vector<VectorAggregateDefinition> definitions;
+};
+
+[[nodiscard]] common::Result<ValidatedVectorAggregateWorkerBinding>
+validate_vector_aggregate_worker_binding(const DistributedVectorAggregateWorkerRequestV2& request) {
+  const DistributedVectorFragmentDispatchV2& dispatch = request.dispatch.get();
+  const DistributedVectorFragmentDispatch& fragment = dispatch.dispatch;
+  const auto structurally_valid = encode_distributed_vector_fragment_dispatch_v2(dispatch);
+  if (!structurally_valid.has_value())
+    return common::make_unexpected(structurally_valid.error());
+  if (!valid_vector_aggregate_limits(request.limits)) {
+    return common::make_unexpected(
+        invalid("distributed vector aggregate worker limits are invalid"));
+  }
+  if (fragment.plan.mode != DistributedVectorPlanMode::kUngroupedAggregate) {
+    return common::make_unexpected(
+        invalid("distributed vector aggregate worker requires an ungrouped aggregate plan"));
+  }
+  auto authority = validate_worker_authority(
+      fragment, fragment.raft_group_id, request.snapshot.get(), request.lineage.get(),
+      request.placement.get(), request.raft_group_id, request.local_node,
+      request.local_linearizable_barrier);
+  if (!authority.has_value())
+    return common::make_unexpected(authority.error());
+
+  try {
+    std::vector<PhysicalColumnShape> projected_inputs;
+    projected_inputs.reserve(fragment.destination_column_ordinals.size());
+    for (const std::uint32_t ordinal : fragment.destination_column_ordinals) {
+      if (ordinal >= authority->schema_value->columns().size()) {
+        return common::make_unexpected(
+            invalid("distributed vector aggregate projection is out of bounds"));
+      }
+      const schema::ColumnDefinition& column = authority->schema_value->columns()[ordinal];
+      projected_inputs.push_back({column.type(), column.nullable()});
+    }
+    auto definitions = bind_distributed_vector_ungrouped_aggregate_definitions(
+        fragment.plan, projected_inputs, dispatch.result_schema);
+    if (!definitions.has_value())
+      return common::make_unexpected(definitions.error());
+    if (definitions->size() > request.limits.maximum_aggregates ||
+        projected_inputs.size() > request.limits.projection.maximum_columns) {
+      return common::make_unexpected(
+          exhausted("distributed vector aggregate worker width exceeds its limit"));
+    }
+    return ValidatedVectorAggregateWorkerBinding{.authority = std::move(*authority),
+                                                 .projected_inputs = std::move(projected_inputs),
+                                                 .definitions = std::move(*definitions)};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        exhausted("distributed vector aggregate worker binding allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("distributed vector aggregate worker binding exceeds container limits"));
+  }
+}
+
 [[nodiscard]] common::Result<DistributedVectorAggregateWorkerResultV2>
 execute_vector_aggregate_snapshot(const DistributedVectorAggregateWorkerRequestV2& request,
                                   const ValidatedWorkerAuthority& authority,
@@ -998,53 +1058,31 @@ execute_distributed_vector_aggregate_fragment_v2(
   return execute_distributed_vector_aggregate_fragment_v2(request, loader);
 }
 
+common::Result<std::vector<VectorAggregateDefinition>>
+bind_distributed_vector_aggregate_worker_definitions_v2(
+    const DistributedVectorAggregateWorkerRequestV2& request) {
+  auto binding = validate_vector_aggregate_worker_binding(request);
+  if (!binding.has_value())
+    return common::make_unexpected(binding.error());
+  return std::move(binding->definitions);
+}
+
 common::Result<DistributedVectorAggregateWorkerResultV2>
 execute_distributed_vector_aggregate_fragment_v2(
     const DistributedVectorAggregateWorkerRequestV2& request,
     const DistributedTemporalPartBatchLoader& loader) {
+  auto binding = validate_vector_aggregate_worker_binding(request);
+  if (!binding.has_value())
+    return common::make_unexpected(binding.error());
   const DistributedVectorFragmentDispatchV2& dispatch = request.dispatch.get();
   const DistributedVectorFragmentDispatch& fragment = dispatch.dispatch;
   const manifest::TemporalDatabaseStorageSnapshot& snapshot = request.snapshot.get();
   const schema::SchemaLineage& lineage = request.lineage.get();
-  const raft::TabletPlacementMetadata& placement = request.placement.get();
-
-  const auto structurally_valid = encode_distributed_vector_fragment_dispatch_v2(dispatch);
-  if (!structurally_valid.has_value())
-    return common::make_unexpected(structurally_valid.error());
-  if (!valid_vector_aggregate_limits(request.limits)) {
-    return common::make_unexpected(
-        invalid("distributed vector aggregate worker limits are invalid"));
-  }
-  if (fragment.plan.mode != DistributedVectorPlanMode::kUngroupedAggregate) {
-    return common::make_unexpected(
-        invalid("distributed vector aggregate worker requires an ungrouped aggregate plan"));
-  }
-  auto authority = validate_worker_authority(fragment, fragment.raft_group_id, snapshot, lineage,
-                                             placement, request.raft_group_id, request.local_node,
-                                             request.local_linearizable_barrier);
-  if (!authority.has_value())
-    return common::make_unexpected(authority.error());
+  ValidatedWorkerAuthority* const authority = &binding->authority;
 
   try {
-    std::vector<PhysicalColumnShape> projected_inputs;
-    projected_inputs.reserve(fragment.destination_column_ordinals.size());
-    for (const std::uint32_t ordinal : fragment.destination_column_ordinals) {
-      if (ordinal >= authority->schema_value->columns().size()) {
-        return common::make_unexpected(
-            invalid("distributed vector aggregate projection is out of bounds"));
-      }
-      const schema::ColumnDefinition& column = authority->schema_value->columns()[ordinal];
-      projected_inputs.push_back({column.type(), column.nullable()});
-    }
-    auto definitions = bind_distributed_vector_ungrouped_aggregate_definitions(
-        fragment.plan, projected_inputs, dispatch.result_schema);
-    if (!definitions.has_value())
-      return common::make_unexpected(definitions.error());
-    if (definitions->size() > request.limits.maximum_aggregates ||
-        projected_inputs.size() > request.limits.projection.maximum_columns) {
-      return common::make_unexpected(
-          exhausted("distributed vector aggregate worker width exceeds its limit"));
-    }
+    std::vector<PhysicalColumnShape> projected_inputs = std::move(binding->projected_inputs);
+    std::vector<VectorAggregateDefinition> definitions = std::move(binding->definitions);
 
     const manifest::TemporalTabletDescriptor& tablet = *authority->tablet;
     if (tablet.part_count == 0U) {
@@ -1058,7 +1096,7 @@ execute_distributed_vector_aggregate_fragment_v2(
         return common::make_unexpected(empty.error());
       return execute_vector_aggregate_snapshot(
           request, *authority, std::make_shared<const ScalarTableSnapshot>(std::move(*empty)),
-          projected_inputs, std::move(*definitions));
+          projected_inputs, std::move(definitions));
     }
 
     const std::span<const manifest::TemporalPartDescriptor> descriptors =
@@ -1071,7 +1109,7 @@ execute_distributed_vector_aggregate_fragment_v2(
     const std::array bindings{manifest::TabletSchemaBinding{.tablet_id = fragment.tablet_id,
                                                             .lineage = std::cref(lineage)}};
     VectorAggregatePartBatchConsumer consumer{request, *authority, std::move(projected_inputs),
-                                              std::move(*definitions)};
+                                              std::move(definitions)};
     const common::Status loaded =
         loader.load(snapshot, part_ids, bindings, request.limits.storage.part_validation, consumer);
     if (!loaded.is_ok())

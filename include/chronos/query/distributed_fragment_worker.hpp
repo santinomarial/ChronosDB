@@ -199,6 +199,12 @@ struct DistributedVectorAggregateWorkerResultV2 {
 // ungrouped aggregate plans. The exact projected shape is materialized before every supported
 // operation accumulates into sufficient mergeable state. One canonical correlated message is
 // returned per definition; tablet-local ORDER BY/LIMIT and finalization are never applied.
+// The binding-only entry point runs the same structural, limit, placement, snapshot, schema, group,
+// and read-barrier gates without loading parts, and returns only the exact definition authority.
+[[nodiscard]] common::Result<std::vector<VectorAggregateDefinition>>
+bind_distributed_vector_aggregate_worker_definitions_v2(
+    const DistributedVectorAggregateWorkerRequestV2& request);
+
 [[nodiscard]] common::Result<DistributedVectorAggregateWorkerResultV2>
 execute_distributed_vector_aggregate_fragment_v2(
     const DistributedVectorAggregateWorkerRequestV2& request);

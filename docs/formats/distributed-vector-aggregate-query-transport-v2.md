@@ -3,7 +3,8 @@
 > **Status:** accepted and implemented exact response codec/partial-I/O contract. Requests reuse
 > the exact Fragment-v2 `CHDVREQ2` carrier. An authenticated receiver owns definition binding,
 > worker handoff, and complete bounded response publication. Sender retry, TLS/TCP lifecycle,
-> production worker service integration, and process ownership remain separate.
+> and process ownership remain separate. A production request-local service supplies both fresh
+> definition authority and proof-revalidated real-CSEG execution.
 
 All integers are unsigned little-endian. Reserved bytes are zero. CRC32C detects accidental damage
 and is not authentication. The nested payload retains its own independent checksums.

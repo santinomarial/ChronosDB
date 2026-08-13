@@ -413,6 +413,52 @@ TEST(ReplicatedDistributedQueryWorkerTest, AcquiresFreshAuthorityAndExecutesReal
             common::StatusCode::kNotSupported);
   EXPECT_EQ(provider.vector_calls, 2U);
 
+  EXPECT_EQ(ReplicatedDistributedVectorAggregateQueryWorkerV2::create({}).error().code(),
+            common::StatusCode::kInvalidArgument);
+  aggregate_vector.dispatch.plan = {
+      .mode = query::DistributedVectorPlanMode::kUngroupedAggregate,
+      .aggregates = {{.operation = query::VectorAggregateOperation::kCountStar},
+                     {.operation = query::VectorAggregateOperation::kSum, .input_index = 1U}}};
+  aggregate_vector.result_schema = {
+      .columns = {{.name = "count",
+                   .type = schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value(),
+                   .nullable = false},
+                  {.name = "sum", .type = schema_value->columns()[1].type(), .nullable = true}}};
+  auto aggregate_vector_worker = ReplicatedDistributedVectorAggregateQueryWorkerV2::create(
+      {.local_node_id = 11U, .storage = &*storage, .context_provider = &provider});
+  ASSERT_TRUE(aggregate_vector_worker.has_value()) << aggregate_vector_worker.error().to_string();
+  auto aggregate_definitions = aggregate_vector_worker->bind_definitions(aggregate_vector);
+  ASSERT_TRUE(aggregate_definitions.has_value()) << aggregate_definitions.error().to_string();
+  ASSERT_EQ(aggregate_definitions->size(), 2U);
+  EXPECT_EQ((*aggregate_definitions)[0].operation, query::VectorAggregateOperation::kCountStar);
+  EXPECT_FALSE((*aggregate_definitions)[0].input.has_value());
+  EXPECT_EQ((*aggregate_definitions)[1].operation, query::VectorAggregateOperation::kSum);
+  ASSERT_TRUE((*aggregate_definitions)[1].input.has_value());
+  EXPECT_EQ((*aggregate_definitions)[1].input->type, schema_value->columns()[1].type());
+  EXPECT_EQ(provider.vector_calls, 3U);
+
+  provider.set_placement_epoch(13U);
+  EXPECT_EQ(aggregate_vector_worker->execute(aggregate_vector).error().code(),
+            common::StatusCode::kUnavailable);
+  EXPECT_EQ(provider.vector_calls, 4U);
+  provider.set_placement_epoch(12U);
+  auto aggregate_vector_result = aggregate_vector_worker->execute(aggregate_vector);
+  ASSERT_TRUE(aggregate_vector_result.has_value()) << aggregate_vector_result.error().to_string();
+  EXPECT_EQ(provider.vector_calls, 5U);
+  EXPECT_EQ(aggregate_vector_result->definitions, *aggregate_definitions);
+  ASSERT_EQ(aggregate_vector_result->messages.size(), 2U);
+  EXPECT_EQ(aggregate_vector_result->input_rows, 2U);
+  EXPECT_EQ(aggregate_vector_result->messages[0].sequence, 1U);
+  EXPECT_FALSE(aggregate_vector_result->messages[0].terminal);
+  EXPECT_EQ(aggregate_vector_result->messages[1].sequence, 2U);
+  EXPECT_TRUE(aggregate_vector_result->messages[1].terminal);
+  auto aggregate_count = std::move(aggregate_vector_result->messages[0].state).take_result();
+  ASSERT_TRUE(aggregate_count.has_value());
+  EXPECT_EQ(std::get<std::int64_t>(aggregate_count->storage()), 2);
+  auto aggregate_sum = std::move(aggregate_vector_result->messages[1].state).take_result();
+  ASSERT_TRUE(aggregate_sum.has_value());
+  EXPECT_EQ(std::get<double>(aggregate_sum->storage()), 4.0);
+
   auto empty_vector = vector_dispatch;
   empty_vector.dispatch.event_time_predicate =
       cseg::EventTimePredicate{.lower = cseg::EventTimeBound{30, true}, .upper = std::nullopt};

@@ -3,6 +3,7 @@
 
 #include "chronos/cluster/distributed_grouped_query_transport.hpp"
 #include "chronos/cluster/distributed_query_transport.hpp"
+#include "chronos/cluster/distributed_vector_aggregate_query_transport_v2.hpp"
 #include "chronos/cluster/distributed_vector_query_transport_v2.hpp"
 #include "chronos/common/result.hpp"
 #include "chronos/manifest/storage.hpp"
@@ -151,7 +152,7 @@ struct ReplicatedDistributedVectorQueryWorkerConfigV2 {
 
 // Request-local production adapter for schema-bound row fragments. It retains one coherent
 // Manifest/schema/placement/group context through real-CSEG execution and returns one complete,
-// value-owned terminal stream. Aggregate modes fail closed until their all-type merge state exists.
+// value-owned terminal stream. Aggregate modes belong to the distinct aggregate service below.
 class ReplicatedDistributedVectorQueryWorkerV2 final
     : public cluster::DistributedVectorQueryWorkerServiceV2 {
 public:
@@ -175,6 +176,42 @@ private:
   explicit ReplicatedDistributedVectorQueryWorkerV2(
       ReplicatedDistributedVectorQueryWorkerConfigV2 config) noexcept;
   ReplicatedDistributedVectorQueryWorkerConfigV2 config_;
+};
+
+struct ReplicatedDistributedVectorAggregateQueryWorkerConfigV2 {
+  raft::NodeId local_node_id{};
+  const manifest::ManifestStorage* storage{};
+  ReplicatedDistributedVectorQueryWorkerContextProviderV2* context_provider{};
+  query::DistributedVectorAggregateWorkerLimitsV2 limits;
+};
+
+// Production aggregate counterpart. Definition binding and execution each acquire a fresh coherent
+// context and enter the same proof-revalidating query boundary; binding never loads CSEG parts.
+class ReplicatedDistributedVectorAggregateQueryWorkerV2 final
+    : public cluster::DistributedVectorAggregateQueryWorkerServiceV2 {
+public:
+  ReplicatedDistributedVectorAggregateQueryWorkerV2() = delete;
+  ReplicatedDistributedVectorAggregateQueryWorkerV2(
+      const ReplicatedDistributedVectorAggregateQueryWorkerV2&) = delete;
+  ReplicatedDistributedVectorAggregateQueryWorkerV2&
+  operator=(const ReplicatedDistributedVectorAggregateQueryWorkerV2&) = delete;
+  ReplicatedDistributedVectorAggregateQueryWorkerV2(
+      ReplicatedDistributedVectorAggregateQueryWorkerV2&&) noexcept = default;
+  ReplicatedDistributedVectorAggregateQueryWorkerV2&
+  operator=(ReplicatedDistributedVectorAggregateQueryWorkerV2&&) noexcept = default;
+  ~ReplicatedDistributedVectorAggregateQueryWorkerV2() override = default;
+
+  [[nodiscard]] static common::Result<ReplicatedDistributedVectorAggregateQueryWorkerV2>
+  create(ReplicatedDistributedVectorAggregateQueryWorkerConfigV2 config);
+  [[nodiscard]] common::Result<std::vector<query::VectorAggregateDefinition>>
+  bind_definitions(const query::DistributedVectorFragmentDispatchV2& dispatch) override;
+  [[nodiscard]] common::Result<query::DistributedVectorAggregateWorkerResultV2>
+  execute(const query::DistributedVectorFragmentDispatchV2& dispatch) override;
+
+private:
+  explicit ReplicatedDistributedVectorAggregateQueryWorkerV2(
+      ReplicatedDistributedVectorAggregateQueryWorkerConfigV2 config) noexcept;
+  ReplicatedDistributedVectorAggregateQueryWorkerConfigV2 config_;
 };
 
 } // namespace chronos::service
