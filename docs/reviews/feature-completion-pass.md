@@ -879,13 +879,20 @@ Focused executions passed:
   state per definition, and leaves final ORDER BY/LIMIT/finalization untouched. Real-CSEG focused
   coverage proves COUNT/SUM/AVG/MAX and fail-closed loader/placement/width behavior; an empty-tablet
   allocation matrix proves complete publication or resource exhaustion. Service/transport,
-  coordination, grouped exchange, and global finalization remain.
+  grouped exchange, and global result materialization remain.
+- Bounded vector aggregate coordinator continuation: one single-threaded owner now validates the
+  definition/result-schema authority, canonicalizes direct in-memory admissions, retains exact
+  bounded frames for retry identity, requires a complete state vector from every planned tablet,
+  and merges in deterministic tablet order before globally finalizing each scalar once. Focused
+  coverage proves AVG sufficient-state semantics, gaps/retries/conflicts, first-failure ownership,
+  post-terminal loss, limits, and retryable allocation failure. Native result materialization and
+  authenticated transport/process ownership remain.
 
 The C++ files changed by the grouped-, vector-exchange-, Fragment-v2-, and vector-transport-v2
 continuations pass the repository-pinned clang-format 18 check. A full-tree check was also run and
 still reports pre-existing violations in the subscription protocol, subscription, multi-tablet
 checkpoint implementation, and focused subscription test files; these slices do not rewrite those
-unrelated files or claim a full-tree formatting pass. The full serialized 1,612-test developer
+unrelated files or claim a full-tree formatting pass. The full serialized 1,615-test developer
 suite, focused ASan/UBSan cases, and deterministic 10,000-run transport-v2, aggregate-state, and
 aggregate-exchange fuzz campaigns pass.
 Apple's sanitizer runtime does not support LeakSanitizer, so those sanitizer runs explicitly

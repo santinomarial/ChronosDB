@@ -381,7 +381,11 @@ After repeating the complete local route, barrier, placement, Manifest, schema, 
 gates, it resolves real temporal CSEG winners, applies the event-time predicate, materializes the
 exact projected input order, and accumulates one sufficient all-type state per definition. Empty
 tablets return the complete empty-state vector; local workers never apply final ordering, limit, or
-aggregate finalization. The authenticated service and cross-tablet coordinator still remain.
+aggregate finalization. The vector-v2 coordinator canonically re-encodes every direct admission,
+retains exact frames for bounded retry arbitration, waits for the complete definition-width vector
+from every planned tablet, then decodes and merges states in plan-tablet order before finalizing
+each scalar once. Failed retention or final publication leaves the prior owner retryable. The
+authenticated service/transport and Native Protocol result materialization still remain.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated

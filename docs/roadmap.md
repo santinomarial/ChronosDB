@@ -1089,8 +1089,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   vector-v2 aggregate worker now repeats every local authority gate, resolves real temporal CSEG
   winners, applies the event predicate, materializes the exact projection, and returns one canonical
   sufficient-state message per ungrouped definition without local final ordering, limit, or
-  finalization. Group-key exchange, authenticated transport, cross-tablet coordination, and global
-  finalization remain deferred. A bounded
+  finalization. A bounded all-type coordinator now canonicalizes exact retry history, requires one
+  complete vector from every planned tablet, merges in deterministic tablet order, and globally
+  finalizes AVG/variance/exact sums only once. Group-key exchange, authenticated aggregate
+  transport, Native Protocol aggregate result materialization, and process integration remain
+  deferred. A bounded
   global row finalizer now validates complete streams and native schemas, applies stable all-type
   ordering followed by LIMIT, and emits exact payload-bounded native result batches. A distinct
   group-scoped grouped dispatch now

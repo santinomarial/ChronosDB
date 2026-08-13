@@ -184,7 +184,7 @@ private:
 
 struct ExchangeLimits {
   std::size_t maximum_messages{1024U};
-  std::size_t maximum_bytes{4U * 1024U * 1024U};
+  std::size_t maximum_bytes{std::size_t{4U} * 1024U * 1024U};
 };
 
 // Mutex-protected bounded MPMC handoff for coordinator/worker fragments. Saturation is explicit;
