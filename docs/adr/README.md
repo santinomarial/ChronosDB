@@ -352,3 +352,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0315](0315-canonical-multi-pair-raft-observation-acquisition.md) | Canonical multi-pair Raft observation acquisition | accepted |
 | [0316](0316-placement-backed-raft-observation-batch-construction.md) | Placement-backed Raft observation batch construction | accepted |
 | [0317](0317-packaged-remote-bounded-stale-query-lifecycle.md) | Packaged remote bounded-stale query lifecycle | accepted |
+| [0318](0318-request-local-real-cseg-query-worker-service.md) | Request-local real-CSEG query worker service | accepted |

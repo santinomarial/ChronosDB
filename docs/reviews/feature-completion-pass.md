@@ -240,11 +240,11 @@ group-correlated quorum read-barrier observations, requires metadata and tablet 
 cover those barriers, binds one compatible Manifest epoch, and creates the complete TCP execution
 lifecycle. A distinct bounded-stale constructor applies the same catalog, Manifest, route, and
 execution gates to stable same-term leader/follower observation pairs. General vector-plan
-grouping/order/top-N/LIMIT and transport acquisition of remote follower observations remain
-incomplete. A distinct canonical observation protocol and authenticated receiver now provide the
-remote ordered-evidence serving boundary. Header-first readers and single-owner short writes now
-cover bounded stream fragmentation, but mTLS carriers and complete leader/follower pair acquisition
-are not yet composed. Committed numeric or lowercase-DNS routes acquire a fresh
+grouping/order/top-N/LIMIT remains incomplete. A distinct canonical observation protocol,
+authenticated receiver, mTLS clients/servers, finite multi-address acquisition, correlated
+leader/follower pairs, canonical all-group batches, placement-backed construction, and packaged
+query lifecycle now provide remote follower authority acquisition. Committed numeric or
+lowercase-DNS routes acquire a fresh
 bounded ordered unique IPv4 candidate set before polling, and finite sender retries rotate
 candidates without changing node/proof/TLS authority. Live DNS churn/latency/cache policy, IPv6, a
 packaged multi-process runtime, remote CSEG execution in the movement gate, and broad
@@ -438,6 +438,9 @@ Focused executions passed:
 - Packaged remote bounded-stale continuation: 1 focused approved-host service case passed for two
   real mTLS observations, exact authority-to-metadata/Manifest binding, transition into a TCP query
   owner, cross-phase metrics, and execution cancellation. A real query response is not claimed.
+- Request-local query-worker continuation: 1 focused service case passed for a real Raft-sourced
+  temporal CSEG, owning Manifest/schema/placement/group/barrier acquisition, exact filtered terminal
+  aggregate state, and fresh group/placement rejection. Remote socket execution is not claimed.
 
 The final C++ tree passed the repository-pinned clang-format 18 check. Full-suite, sanitizer, fuzz,
 broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were deliberately not run.

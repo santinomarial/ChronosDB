@@ -68,6 +68,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/cluster/raft_observation_tls_server.hpp>
 #include <chronos/cluster/raft_observation_tcp_server.hpp>
 #include <chronos/service/replicated_distributed_query.hpp>
+#include <chronos/service/replicated_distributed_query_worker.hpp>
 #include <chronos/cseg/compression.hpp>
 #include <chronos/cseg/format.hpp>
 #include <chronos/cseg/inspection.hpp>
@@ -199,6 +200,8 @@ int main() {
       &chronos::service::create_replicated_follower_distributed_aggregate_query;
   const auto create_replicated_follower_query_owner =
       &chronos::service::ReplicatedFollowerDistributedAggregateQuery::create;
+  const auto create_replicated_query_worker =
+      &chronos::service::ReplicatedDistributedQueryWorker::create;
   const auto create_distributed_query_tls_client =
       &chronos::cluster::DistributedQueryTlsClient::create;
   const auto create_distributed_query_tls_server =
@@ -296,6 +299,7 @@ int main() {
   (void)create_replicated_distributed_aggregate_query;
   (void)create_replicated_follower_distributed_aggregate_query;
   (void)create_replicated_follower_query_owner;
+  (void)create_replicated_query_worker;
   (void)create_distributed_query_tls_client;
   (void)create_distributed_query_tls_server;
   (void)start_distributed_query_tcp_server;

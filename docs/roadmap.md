@@ -1023,7 +1023,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   lowest nonleader follower, resolves targets once, and assigns overflow-safe correlations.
   A packaged service owner pins the plan/Manifest through remote acquisition, binds the complete
   authority vector through the metadata barrier, and transfers directly into TCP query execution
-  with cross-phase cancellation. Complete real query responses and broader multi-node failure
+  with cross-phase cancellation. A production receiver service now acquires one coherent owning
+  Manifest/schema/placement/group/barrier context per dispatch and invokes the proof-revalidating
+  real-CSEG worker. Complete real query responses over that service and broader multi-node failure
   validation remain deferred. Live DNS churn, resolver-latency policy, caching, and IPv6 remain
   qualification gaps. A focused real-mTLS gate now queries two tablets, drives one through
   checksummed learner-first movement and externally committed promotion/removal milestones, rebinds

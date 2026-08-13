@@ -249,11 +249,12 @@
   placement, barrier, schema, group, and durable snapshot authority, resolves logical winners from
   validated generation-pinned temporal parts, and emits a filtered terminal Float64 partial.
   The authenticated TCP server/client and pinned multi-tablet retry scheduler now provide bounded
-  socket integration, whole-query deadlines, and local cancellation for this aggregate path.
-  General physical pipeline stage/expression
-  serialization, connection pooling/multiplexing, grouping-state codecs, ordering, top-N, LIMIT,
-  remote worker interruption, durable retries, and broader coordinator/worker failure cleanup
-  remain.
+  socket integration, whole-query deadlines, and local cancellation for this aggregate path. A
+  production receiver service now acquires one request-local owning Manifest/schema/placement/
+  group/barrier context and invokes the proof-revalidating real-CSEG worker. General physical
+  pipeline stage/expression serialization, connection pooling/multiplexing, grouping-state codecs,
+  ordering, top-N, LIMIT, remote worker interruption, durable retries, and broader
+  coordinator/worker failure cleanup remain.
 - Proof-bound leader-linearizable/bounded-stale/local-eventual admissions now remain attached through
   compatible pinned multi-tablet snapshots and protocol/carrier scheduling. Whole-query replacement
   now validates fresh caller-proved authority, identical logical shape, nonregressing generation,
@@ -265,11 +266,10 @@
   committed owners before creating the TCP lifecycle. Packaged bounded-stale construction applies
   the same gates to stable same-term leader/follower observations. Fresh bounded DNS acquisition,
   ordered unique IPv4 candidates, and finite candidate rotation under the existing sender retry
-  budget have focused parser, route, and real-mTLS refused-address coverage. Remote transport
-  acquisition of follower observations, native protocol/process integration, stale metadata
-  refresh, live DNS churn/failure, resolver-latency and cache policy, IPv6, allocation/cancellation
-  fault injection at every construction boundary, and broad multi-node failure matrices remain
-  deferred.
+  budget have focused parser, route, and real-mTLS refused-address coverage. Native protocol/process
+  integration, stale metadata refresh, live DNS churn/failure, resolver-latency and cache policy,
+  IPv6, allocation/cancellation fault injection at every construction boundary, and broad
+  multi-node failure matrices remain deferred.
 - Raft Observation Transport v1 now carries one exact source/target/group/correlation request and
   one complete bounded ordered observation or failure response. The authenticated receiver checks
   trust, principal/source authority, and local target before invoking an embedding-owned durable

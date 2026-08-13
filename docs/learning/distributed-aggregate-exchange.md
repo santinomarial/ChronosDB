@@ -28,7 +28,10 @@ enters the same compatible Manifest binder.
 from validated generation-pinned parts, filters event time, and emits one terminal partial state.
 Distributed Query Transport v1 wraps the dispatch and terminal exchange in correlated cluster
 request/response frames. `DistributedQueryReceiver` authenticates and authorizes the source before
-an embedding-owned worker service can execute the dispatch.
+an embedding-owned worker service can execute the dispatch. `ReplicatedDistributedQueryWorker`
+provides the production service bridge: its provider acquires one request-local owning Manifest,
+schema-lineage, placement, group, and local-barrier context before the existing worker opens any
+part.
 
 ## Data, ownership, and invariants
 
@@ -153,8 +156,9 @@ pair selection now prefers an eligible coordinator follower and otherwise the lo
 replica, resolves every unique target once, and assigns bounded correlations before I/O. Packaged
 service ownership now pins the plan/Manifest through acquisition, binds the complete authority
 through the metadata barrier, and transfers directly into TCP query execution. Complete real query
-responses, remote worker-interrupt delivery, pooled multiplexing, asynchronous worker completion,
-live DNS churn qualification, and broader multi-node fault handling remain work.
+responses over the production real-CSEG service, remote worker-interrupt delivery, pooled
+multiplexing, asynchronous worker completion, live DNS churn qualification, and broader multi-node
+fault handling remain work.
 
 ## Verification and review questions
 
