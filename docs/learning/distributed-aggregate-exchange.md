@@ -181,6 +181,10 @@ metadata/Manifest aggregate bind. A specialization overload consumes that exact 
 matches every nested fragment to the committed active schema, proves the projected FLOAT64 key,
 and transfers its Manifest pin into grouped execution. Routes are resolved from the same catalog
 before the grouped scheduler is returned.
+The bounded-stale grouped entry point instead enters through the correlated follower aggregate
+binder. It keeps the leader-derived commit frontier and selected follower application proof intact,
+then uses the same compatible-owner specialization and scheduler construction; it never routes a
+follower plan through leader-barrier semantics.
 `DistributedQueryTcpServer` owns the dedicated listener, long-lived TLS context, fixed-capacity poll
 storage, bounded stable connection records, deadline driving, metrics, and carrier-before-descriptor
 shutdown order for real multi-connection serving.
@@ -212,7 +216,7 @@ A fixed ungrouped-aggregate frame gives partial-I/O carriers an unambiguous payl
 prematurely defining a general physical-fragment language. The cost is a specialized first exchange
 type. A separate first grouped frame now carries one nullable FLOAT64 key with bounded
 coordination and authenticated multi-response TLS ownership, but multi-key and non-FLOAT64
-grouping, general physical plans, bounded-stale packaged construction/rebinding, ordering/top-N,
+grouping, general physical plans, remote grouped observation composition/rebinding, ordering/top-N,
 cancellation
 delivery, and durable recovery require their own bounded contracts. A leader hint never mutates an existing
 proof-bound dispatch: following it requires explicit coordinator rebinding.

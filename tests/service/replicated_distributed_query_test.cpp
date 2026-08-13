@@ -417,6 +417,26 @@ TEST(ReplicatedDistributedQueryTest, ConstructsOneAuthorityBoundTcpLifecycleOwne
   EXPECT_EQ(follower_execution->state(), cluster::DistributedQueryTcpExecutionState::kRunning);
   EXPECT_EQ(follower_execution->snapshot().dispatches().front().fragment.serving_node, 12U);
 
+  ReplicatedDistributedGroupedFloat64QueryConfig follower_grouped_config = grouped_config;
+  follower_grouped_config.read_barrier = std::addressof(*missing_tablet_barrier);
+  follower_grouped_config.catalog = std::cref(follower_catalog);
+  follower_grouped_config.tls_contexts = follower_tls_contexts;
+  auto follower_grouped_snapshot = publisher->snapshot();
+  ASSERT_TRUE(follower_grouped_snapshot.has_value());
+  auto follower_grouped_execution = create_replicated_follower_distributed_grouped_float64_query(
+      make_follower_plan(tablet_id, applied_position), std::move(*follower_grouped_snapshot),
+      follower_authorities, follower_grouped_config);
+  ASSERT_TRUE(follower_grouped_execution.has_value())
+      << follower_grouped_execution.error().to_string();
+  EXPECT_EQ(follower_grouped_execution->state(),
+            cluster::DistributedGroupedQueryTcpExecutionState::kRunning);
+  EXPECT_EQ(
+      follower_grouped_execution->snapshot().dispatches().front().fragment.aggregate.serving_node,
+      12U);
+  EXPECT_EQ(
+      follower_grouped_execution->snapshot().dispatches().front().fragment.group_key_input_index,
+      1U);
+
   ObservationService leader_service{11U, raft::Role::kLeader, applied_position};
   ObservationService follower_service{12U, raft::Role::kFollower, applied_position};
   auto leader_receiver = cluster::RaftObservationReceiver::create(

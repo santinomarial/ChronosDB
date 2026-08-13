@@ -208,6 +208,8 @@ int main() {
       &chronos::service::create_replicated_distributed_aggregate_query;
   const auto create_replicated_distributed_grouped_query =
       &chronos::service::create_replicated_distributed_grouped_float64_query;
+  const auto create_replicated_follower_distributed_grouped_query =
+      &chronos::service::create_replicated_follower_distributed_grouped_float64_query;
   const auto create_replicated_follower_distributed_aggregate_query =
       &chronos::service::create_replicated_follower_distributed_aggregate_query;
   const auto create_replicated_follower_query_owner =
@@ -326,6 +328,7 @@ int main() {
   (void)create_distributed_query_execution_from_bound_snapshot;
   (void)create_replicated_distributed_aggregate_query;
   (void)create_replicated_distributed_grouped_query;
+  (void)create_replicated_follower_distributed_grouped_query;
   (void)create_replicated_follower_distributed_aggregate_query;
   (void)create_replicated_follower_query_owner;
   (void)create_replicated_query_worker;

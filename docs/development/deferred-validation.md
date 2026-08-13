@@ -298,8 +298,10 @@
   releases every active client on terminal failure, deadline, or cancellation. Packaged grouped
   leader-linearizable construction now carries one correlated barrier/catalog/Manifest authority
   through exact active-schema/FLOAT64 specialization, committed route resolution, execution, and
-  TCP ownership without exposing intermediate joins. Bounded-stale grouped construction and
-  explicit whole-query rebinding remain incomplete.
+  TCP ownership without exposing intermediate joins. A distinct bounded-stale grouped constructor
+  carries canonical same-term leader/follower authority through the follower binder and the same
+  specialization/lifecycle gates while retaining the proved follower target. Remote observation
+  acquisition composition and explicit whole-query rebinding remain incomplete.
 - Proof-bound leader-linearizable/bounded-stale/local-eventual admissions now remain attached through
   compatible pinned multi-tablet snapshots and protocol/carrier scheduling. Whole-query replacement
   now validates fresh caller-proved authority, identical logical shape, nonregressing generation,

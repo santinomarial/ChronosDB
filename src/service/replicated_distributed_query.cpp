@@ -96,6 +96,33 @@ create_tcp_execution(query::DistributedAggregatePlan plan,
                               .maximum_rebindings = config.maximum_rebindings});
 }
 
+[[nodiscard]] common::Result<cluster::DistributedGroupedQueryTcpExecution>
+create_grouped_tcp_execution(query::CompatibleDistributedAggregateSnapshot compatible,
+                             const ReplicatedDistributedGroupedFloat64QueryConfig& config) {
+  auto routes = cluster::resolve_distributed_query_node_routes(
+      config.catalog.get(), compatible.dispatches(), config.tls_contexts, config.route_limits);
+  if (!routes.has_value())
+    return common::make_unexpected(routes.error());
+  auto destination_schema = resolve_active_schema(config.catalog.get(), config.table_id);
+  if (!destination_schema.has_value())
+    return common::make_unexpected(destination_schema.error());
+  auto grouped = query::bind_compatible_distributed_grouped_float64_snapshot(
+      std::move(compatible), destination_schema->get(), config.group_key_input_index);
+  if (!grouped.has_value())
+    return common::make_unexpected(grouped.error());
+  auto execution = cluster::DistributedGroupedQueryExecution::create(
+      config.source_node_id, std::move(*grouped), config.execution_limits);
+  if (!execution.has_value())
+    return common::make_unexpected(execution.error());
+  return cluster::DistributedGroupedQueryTcpExecution::create(
+      std::move(*execution), {.authenticator = config.authenticator,
+                              .node_authorizer = config.node_authorizer,
+                              .routes = std::move(*routes),
+                              .carrier_limits = config.carrier_limits,
+                              .connect_timeout = config.connect_timeout,
+                              .execution_deadline = config.execution_deadline});
+}
+
 } // namespace
 
 common::Result<cluster::DistributedQueryTcpExecution> create_replicated_distributed_aggregate_query(
@@ -156,28 +183,39 @@ create_replicated_distributed_grouped_float64_query(
       config.binding_limits);
   if (!compatible.has_value())
     return common::make_unexpected(compatible.error());
-  auto routes = cluster::resolve_distributed_query_node_routes(
-      config.catalog.get(), compatible->dispatches(), config.tls_contexts, config.route_limits);
-  if (!routes.has_value())
-    return common::make_unexpected(routes.error());
-  auto destination_schema = resolve_active_schema(config.catalog.get(), config.table_id);
-  if (!destination_schema.has_value())
-    return common::make_unexpected(destination_schema.error());
-  auto grouped = query::bind_compatible_distributed_grouped_float64_snapshot(
-      std::move(*compatible), destination_schema->get(), config.group_key_input_index);
-  if (!grouped.has_value())
-    return common::make_unexpected(grouped.error());
-  auto execution = cluster::DistributedGroupedQueryExecution::create(
-      config.source_node_id, std::move(*grouped), config.execution_limits);
-  if (!execution.has_value())
-    return common::make_unexpected(execution.error());
-  return cluster::DistributedGroupedQueryTcpExecution::create(
-      std::move(*execution), {.authenticator = config.authenticator,
-                              .node_authorizer = config.node_authorizer,
-                              .routes = std::move(*routes),
-                              .carrier_limits = config.carrier_limits,
-                              .connect_timeout = config.connect_timeout,
-                              .execution_deadline = config.execution_deadline});
+  return create_grouped_tcp_execution(std::move(*compatible), config);
+}
+
+common::Result<cluster::DistributedGroupedQueryTcpExecution>
+create_replicated_follower_distributed_grouped_float64_query(
+    query::DistributedAggregatePlan plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
+    const std::span<const query::DistributedAggregateFollowerReadAuthority> follower_authorities,
+    const ReplicatedDistributedGroupedFloat64QueryConfig& config) {
+  const common::Status config_status = validate_config(config);
+  if (!config_status.is_ok())
+    return common::make_unexpected(config_status);
+  if (plan.read_policy.consistency != query::DistributedReadConsistency::kFollowerBoundedStale ||
+      !plan.read_policy.maximum_staleness_positions.has_value()) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInvalidArgument,
+                       "replicated follower grouped query requires bounded-stale policy"});
+  }
+
+  auto metadata_authority = acquire_catalog_authority(config);
+  if (!metadata_authority.has_value())
+    return common::make_unexpected(metadata_authority.error());
+  auto compatible = query::bind_follower_group_backed_distributed_aggregate_snapshot(
+      plan, std::move(snapshot),
+      {.catalog = config.catalog,
+       .table_id = config.table_id,
+       .group_authorities = follower_authorities,
+       .destination_column_ordinals = config.destination_column_ordinals,
+       .aggregate_input_index = config.aggregate_input_index,
+       .event_time_predicate = config.event_time_predicate},
+      config.binding_limits);
+  if (!compatible.has_value())
+    return common::make_unexpected(compatible.error());
+  return create_grouped_tcp_execution(std::move(*compatible), config);
 }
 
 common::Result<cluster::DistributedQueryTcpExecution>

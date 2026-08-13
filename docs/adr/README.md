@@ -378,3 +378,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0341](0341-fail-closed-grouped-query-execution-owner.md) | Fail-closed grouped query execution owner | accepted |
 | [0342](0342-pinned-grouped-query-tcp-scheduling.md) | Pinned grouped-query TCP scheduling | accepted |
 | [0343](0343-packaged-leader-linearizable-grouped-query-construction.md) | Packaged leader-linearizable grouped-query construction | accepted |
+| [0344](0344-packaged-bounded-stale-grouped-query-construction.md) | Packaged bounded-stale grouped-query construction | accepted |

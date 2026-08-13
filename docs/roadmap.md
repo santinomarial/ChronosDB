@@ -1043,8 +1043,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   cancellation, and publishes only the complete grouped result. A packaged leader-linearizable
   grouped constructor now acquires correlated barriers, binds committed metadata and one compatible
   Manifest epoch, proves the projected FLOAT64 key while specializing that exact aggregate owner,
-  resolves its immutable authenticated routes, and returns the grouped TCP lifecycle. Bounded-stale
-  grouped construction and explicit whole-query rebinding remain.
+  resolves its immutable authenticated routes, and returns the grouped TCP lifecycle. A distinct
+  bounded-stale grouped constructor enters through canonical correlated leader/follower authority,
+  preserves the proved follower route, and reuses the same specialization and lifecycle gates.
+  Remote observation acquisition composition and explicit whole-query rebinding remain.
   Multi-key/non-FLOAT64 state/transport, ordering, top-N, and LIMIT remain deferred. A distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
   catalog, Manifest, route, and execution gates;
