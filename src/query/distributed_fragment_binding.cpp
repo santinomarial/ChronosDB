@@ -134,7 +134,10 @@ struct ResolvedMetadataBackedAuthority {
   }
 
   try {
-    ResolvedMetadataBackedAuthority resolved{.destination_schema = definition->schema.get()};
+    ResolvedMetadataBackedAuthority resolved{.destination_schema = definition->schema.get(),
+                                             .admissions = {},
+                                             .placements = {},
+                                             .group_ids = {}};
     resolved.admissions.reserve(fragments.size());
     resolved.placements.reserve(fragments.size());
     resolved.group_ids.reserve(fragments.size());
@@ -266,6 +269,7 @@ resolve_group_backed_proofs(
             unavailable("distributed tablet group has no correlated read proof"));
       }
       ordered.push_back({.observation = std::cref(authority->observation),
+                         .observed_leader_commit_position = std::nullopt,
                          .linearizable_barrier = authority->barrier.barrier});
     }
     return ordered;
@@ -323,7 +327,8 @@ resolve_follower_group_backed_proofs(
       }
       ordered.push_back(
           {.observation = std::cref(authority->follower_observation),
-           .observed_leader_commit_position = authority->leader_observation.commit_index});
+           .observed_leader_commit_position = authority->leader_observation.commit_index,
+           .linearizable_barrier = std::nullopt});
     }
     return ordered;
   } catch (const std::bad_alloc&) {
@@ -524,8 +529,8 @@ bind_distributed_vector_fragment(const DistributedVectorFragmentBinding& binding
                                    .type = column.type(),
                                    .nullable = column.nullable()};
     }
-    const auto output = vector_aggregate_output_shape(
-        {.operation = aggregate.operation, .input = std::move(input)});
+    const auto output =
+        vector_aggregate_output_shape({.operation = aggregate.operation, .input = input});
     if (!output.has_value())
       return common::make_unexpected(output.error());
   }
@@ -806,6 +811,72 @@ common::Result<CompatibleDistributedVectorSnapshot> bind_compatible_distributed_
     return common::make_unexpected(
         common::Status{common::StatusCode::kResourceExhausted,
                        "compatible distributed vector snapshot binding exceeds container limits"});
+  }
+}
+
+CompatibleDistributedVectorSnapshotV2::CompatibleDistributedVectorSnapshotV2(
+    CompatibleDistributedVectorSnapshot snapshot,
+    DistributedVectorResultSchema&& result_schema) noexcept
+    : snapshot_(std::move(snapshot)), result_schema_(std::move(result_schema)) {}
+
+const manifest::TemporalDatabaseStorageSnapshot&
+CompatibleDistributedVectorSnapshotV2::snapshot() const noexcept {
+  return snapshot_.snapshot();
+}
+
+std::span<const DistributedVectorFragmentDispatch>
+CompatibleDistributedVectorSnapshotV2::dispatches() const noexcept {
+  return snapshot_.dispatches();
+}
+
+const DistributedVectorResultSchema&
+CompatibleDistributedVectorSnapshotV2::result_schema() const noexcept {
+  return result_schema_;
+}
+
+common::Result<CompatibleDistributedVectorSnapshotV2>
+bind_compatible_distributed_vector_snapshot_v2(
+    const DistributedVectorQueryPlan& plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
+    const std::span<const DistributedVectorSnapshotFragmentBinding> bindings,
+    DistributedVectorResultSchema&& result_schema,
+    const DistributedVectorSnapshotBindingLimits limits) {
+  const common::Status standalone_schema =
+      validate_distributed_vector_result_schema_value(result_schema);
+  if (!standalone_schema.is_ok())
+    return common::make_unexpected(standalone_schema);
+  auto compatible =
+      bind_compatible_distributed_vector_snapshot(plan, std::move(snapshot), bindings, limits);
+  if (!compatible.has_value())
+    return common::make_unexpected(compatible.error());
+  try {
+    std::vector<PhysicalColumnShape> projected;
+    for (std::size_t index = 0U; index < compatible->dispatches().size(); ++index) {
+      const DistributedVectorFragmentDispatch& dispatch = compatible->dispatches()[index];
+      const schema::TableSchema& destination = bindings[index].destination_schema.get();
+      if (dispatch.destination_schema_id != destination.schema_id()) {
+        return common::make_unexpected(
+            invalid("compatible distributed vector v2 schema authority is inconsistent"));
+      }
+      projected.clear();
+      projected.reserve(dispatch.destination_column_ordinals.size());
+      for (const std::uint32_t ordinal : dispatch.destination_column_ordinals) {
+        const schema::ColumnDefinition& column = destination.columns()[ordinal];
+        projected.push_back({column.type(), column.nullable()});
+      }
+      const common::Status schema_status =
+          validate_distributed_vector_result_schema(dispatch.plan, projected, result_schema);
+      if (!schema_status.is_ok())
+        return common::make_unexpected(schema_status);
+    }
+    return CompatibleDistributedVectorSnapshotV2{std::move(*compatible), std::move(result_schema)};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "compatible distributed vector v2 binding allocation failed"});
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "compatible distributed vector v2 binding exceeds container limits"});
   }
 }
 

@@ -31,6 +31,12 @@ void rewrite_checksums(std::vector<std::byte>& bytes) {
                common::crc32c(common::ByteView{bytes}.first(bytes.size() - 4U)));
 }
 
+void rewrite_v2_checksums(std::vector<std::byte>& bytes) {
+  store_u32_le(bytes, 48U, common::crc32c(common::ByteView{bytes}.first(48U)));
+  store_u32_le(bytes, bytes.size() - 4U,
+               common::crc32c(common::ByteView{bytes}.first(bytes.size() - 4U)));
+}
+
 [[nodiscard]] DistributedVectorFragmentDispatch dispatch() {
   return {
       .query_id = uuid(1U),
@@ -60,6 +66,20 @@ void rewrite_checksums(std::vector<std::byte>& bytes) {
                .limit = 5U}};
 }
 
+[[nodiscard]] DistributedVectorFragmentDispatchV2 dispatch_v2() {
+  return {
+      .dispatch = dispatch(),
+      .result_schema = {
+          .columns = {
+              {"key_a", schema::LogicalType::create(schema::LogicalTypeKind::kTimestampNs).value(),
+               false},
+              {"key_b", schema::LogicalType::create(schema::LogicalTypeKind::kString).value(),
+               true},
+              {"rows", schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value(), false},
+              {"total", schema::LogicalType::create(schema::LogicalTypeKind::kFloat64).value(),
+               true}}}};
+}
+
 TEST(DistributedVectorFragmentTest, RoundTripsGroupScopedSnapshotProofProjectionAndPlan) {
   const DistributedVectorFragmentDispatch expected = dispatch();
   const auto encoded = encode_distributed_vector_fragment_dispatch(expected);
@@ -70,17 +90,7 @@ TEST(DistributedVectorFragmentTest, RoundTripsGroupScopedSnapshotProofProjection
   EXPECT_EQ(decoded->plan.group_key_input_indices, (std::vector<std::uint32_t>{0U, 2U}));
   EXPECT_EQ(decoded->raft_group_id, uuid(6U));
 
-  const DistributedVectorFragmentDispatchV2 expected_v2{
-      .dispatch = expected,
-      .result_schema = {
-          .columns = {
-              {"key_a", schema::LogicalType::create(schema::LogicalTypeKind::kTimestampNs).value(),
-               false},
-              {"key_b", schema::LogicalType::create(schema::LogicalTypeKind::kString).value(),
-               true},
-              {"rows", schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value(), false},
-              {"total", schema::LogicalType::create(schema::LogicalTypeKind::kFloat64).value(),
-               true}}}};
+  const DistributedVectorFragmentDispatchV2 expected_v2 = dispatch_v2();
   const auto encoded_v2 = encode_distributed_vector_fragment_dispatch_v2(expected_v2);
   ASSERT_TRUE(encoded_v2.has_value()) << encoded_v2.error().to_string();
   const auto decoded_v2 = decode_distributed_vector_fragment_dispatch_v2_exact(encoded_v2->bytes());
@@ -241,6 +251,95 @@ TEST(DistributedVectorFragmentTest, OwnsBoundedPartialReadsAndShortWriteProgress
             common::StatusCode::kInvalidArgument);
   EXPECT_EQ(cursor->written_bytes(), 23U);
   DistributedVectorFragmentWriteCursor moved = std::move(*cursor);
+  EXPECT_TRUE(cursor->complete());
+  EXPECT_TRUE(cursor->pending_write().empty());
+  ASSERT_TRUE(moved.consume_written(moved.pending_write().size()).is_ok());
+  EXPECT_TRUE(moved.complete());
+}
+
+TEST(DistributedVectorFragmentTest, V2OwnsBoundedPartialReadsAndShortWriteProgress) {
+  const DistributedVectorFragmentDispatchV2 expected = dispatch_v2();
+  const auto encoded = encode_distributed_vector_fragment_dispatch_v2(expected);
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+
+  for (std::size_t split = 0U; split <= encoded->bytes().size(); ++split) {
+    DistributedVectorFragmentV2Reader reader;
+    const auto prefix = reader.consume(encoded->bytes().first(split));
+    ASSERT_TRUE(prefix.has_value()) << "split=" << split;
+    EXPECT_EQ(prefix->consumed_bytes, split) << "split=" << split;
+    EXPECT_EQ(prefix->dispatch.has_value(), split == encoded->bytes().size()) << "split=" << split;
+    const auto suffix = reader.consume(encoded->bytes().subspan(split));
+    ASSERT_TRUE(suffix.has_value()) << "split=" << split;
+    EXPECT_EQ(suffix->consumed_bytes, encoded->bytes().size() - split) << "split=" << split;
+    ASSERT_TRUE(prefix->dispatch.has_value() || suffix->dispatch.has_value()) << "split=" << split;
+    const DistributedVectorFragmentDispatchV2* decoded =
+        prefix->dispatch.has_value() ? &*prefix->dispatch : &*suffix->dispatch;
+    EXPECT_EQ(*decoded, expected) << "split=" << split;
+    EXPECT_EQ(reader.buffered_bytes(), 0U) << "split=" << split;
+  }
+
+  std::vector<std::byte> coalesced(encoded->bytes().begin(), encoded->bytes().end());
+  coalesced.insert(coalesced.end(), encoded->bytes().begin(), encoded->bytes().end());
+  DistributedVectorFragmentV2Reader coalesced_reader;
+  const auto first = coalesced_reader.consume(coalesced);
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(first->dispatch.has_value());
+  EXPECT_EQ(first->consumed_bytes, encoded->bytes().size());
+  const auto second =
+      coalesced_reader.consume(common::ByteView{coalesced}.subspan(first->consumed_bytes));
+  ASSERT_TRUE(second.has_value());
+  ASSERT_TRUE(second->dispatch.has_value());
+  EXPECT_EQ(second->consumed_bytes, encoded->bytes().size());
+
+  std::vector<std::byte> corrupt(encoded->bytes().begin(), encoded->bytes().end());
+  corrupt.front() ^= std::byte{1U};
+  DistributedVectorFragmentV2Reader failed_reader;
+  const auto rejected = failed_reader.consume(corrupt);
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_TRUE(failed_reader.failed());
+  EXPECT_EQ(failed_reader.buffered_bytes(), distributed_vector_fragment_v2_format::kHeaderLength);
+  EXPECT_EQ(failed_reader.consume(encoded->bytes()).error(), rejected.error());
+
+  const auto nested_dispatch = encode_distributed_vector_fragment_dispatch(expected.dispatch);
+  const auto nested_schema = encode_distributed_vector_result_schema(expected.result_schema);
+  ASSERT_TRUE(nested_dispatch.has_value());
+  ASSERT_TRUE(nested_schema.has_value());
+  DistributedVectorFragmentV2DecodeLimits limits;
+  limits.dispatch.maximum_frame_length = nested_dispatch->bytes().size() - 1U;
+  DistributedVectorFragmentV2Reader limited_reader{limits};
+  EXPECT_EQ(limited_reader.consume(encoded->bytes()).error().code(),
+            common::StatusCode::kResourceExhausted);
+  EXPECT_TRUE(limited_reader.failed());
+  EXPECT_EQ(
+      decode_distributed_vector_fragment_dispatch_v2_exact(encoded->bytes(), limits).error().code(),
+      common::StatusCode::kResourceExhausted);
+
+  limits = {};
+  limits.result_schema.maximum_frame_length = nested_schema->bytes().size() - 1U;
+  EXPECT_EQ(
+      decode_distributed_vector_fragment_dispatch_v2_exact(encoded->bytes(), limits).error().code(),
+      common::StatusCode::kResourceExhausted);
+
+  std::vector<std::byte> future(encoded->bytes().begin(), encoded->bytes().end());
+  future[8U] = std::byte{3U};
+  rewrite_v2_checksums(future);
+  DistributedVectorFragmentV2Reader future_reader;
+  EXPECT_EQ(future_reader.consume(future).error().code(), common::StatusCode::kNotSupported);
+  const auto v1 = encode_distributed_vector_fragment_dispatch(expected.dispatch);
+  ASSERT_TRUE(v1.has_value());
+  EXPECT_EQ(decode_distributed_vector_fragment_dispatch_v2_exact(v1->bytes()).error().code(),
+            common::StatusCode::kCorruption);
+
+  auto cursor = DistributedVectorFragmentV2WriteCursor::create(expected);
+  ASSERT_TRUE(cursor.has_value());
+  EXPECT_TRUE(std::ranges::equal(cursor->pending_write(), encoded->bytes()));
+  ASSERT_TRUE(cursor->consume_written(31U).is_ok());
+  EXPECT_EQ(cursor->written_bytes(), 31U);
+  EXPECT_TRUE(std::ranges::equal(cursor->pending_write(), encoded->bytes().subspan(31U)));
+  EXPECT_EQ(cursor->consume_written(cursor->pending_write().size() + 1U).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(cursor->written_bytes(), 31U);
+  DistributedVectorFragmentV2WriteCursor moved = std::move(*cursor);
   EXPECT_TRUE(cursor->complete());
   EXPECT_TRUE(cursor->pending_write().empty());
   ASSERT_TRUE(moved.consume_written(moved.pending_write().size()).is_ok());

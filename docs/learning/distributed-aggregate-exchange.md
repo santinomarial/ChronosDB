@@ -258,6 +258,11 @@ The compatible vector snapshot repeats that binder in exact plan order under one
 Manifest-v2 database generation. It owns both the pin and dispatch vector, rejects duplicate or
 reordered tablets, and bounds aggregate projection ordinals without claiming one comparable Raft
 position across groups.
+The schema-bound v2 specialization owns one result schema beside that compatible v1 authority set.
+It proves the descriptor shape against every tablet's exact committed projection before
+publication, then retains the schema once instead of once per tablet. The Fragment-v2 reader waits
+for a checksummed fixed header before exact frame allocation; its cursor owns all short-write
+progress.
 The metadata-backed vector entry point shares the aggregate path's canonical catalog and stable
 observation resolver. It derives plan-ordered admissions plus active schema, committed placement,
 and immutable group authority, then creates temporary borrowed binding views and publishes only the

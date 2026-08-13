@@ -31,6 +31,7 @@ targets=(
   chronos_wal_codec_fuzz
   chronos_columnar_batch_codec_fuzz
   chronos_distributed_vector_result_exchange_fuzz
+  chronos_distributed_vector_fragment_v2_fuzz
   chronos_columnar_append_fuzz
   chronos_cseg_metadata_codec_fuzz
   chronos_cseg_plain_page_fuzz

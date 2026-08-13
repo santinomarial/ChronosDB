@@ -257,6 +257,13 @@ int main() {
       &chronos::query::encode_distributed_vector_fragment_dispatch_v2;
   const auto decode_vector_fragment_v2 =
       &chronos::query::decode_distributed_vector_fragment_dispatch_v2_exact;
+  using ConsumeVectorFragmentV2 = chronos::common::Result<
+      chronos::query::DistributedVectorFragmentV2ReadStep> (
+      chronos::query::DistributedVectorFragmentV2Reader::*)(chronos::common::ByteView);
+  const ConsumeVectorFragmentV2 consume_vector_fragment_v2 =
+      &chronos::query::DistributedVectorFragmentV2Reader::consume;
+  const auto create_vector_fragment_v2_write_cursor =
+      &chronos::query::DistributedVectorFragmentV2WriteCursor::create;
   using ConsumeVectorFragment = chronos::common::Result<
       chronos::query::DistributedVectorFragmentReadStep> (
       chronos::query::DistributedVectorFragmentReader::*)(chronos::common::ByteView);
@@ -268,6 +275,8 @@ int main() {
   const auto bind_vector_fragment_v2 = &chronos::query::bind_distributed_vector_fragment_v2;
   const auto bind_compatible_vector_snapshot =
       &chronos::query::bind_compatible_distributed_vector_snapshot;
+  const auto bind_compatible_vector_snapshot_v2 =
+      &chronos::query::bind_compatible_distributed_vector_snapshot_v2;
   const auto bind_metadata_vector_snapshot =
       &chronos::query::bind_metadata_backed_distributed_vector_snapshot;
   const auto bind_group_vector_snapshot =
@@ -432,11 +441,14 @@ int main() {
   (void)decode_vector_fragment;
   (void)encode_vector_fragment_v2;
   (void)decode_vector_fragment_v2;
+  (void)consume_vector_fragment_v2;
+  (void)create_vector_fragment_v2_write_cursor;
   (void)consume_vector_fragment;
   (void)create_vector_fragment_write_cursor;
   (void)bind_vector_fragment;
   (void)bind_vector_fragment_v2;
   (void)bind_compatible_vector_snapshot;
+  (void)bind_compatible_vector_snapshot_v2;
   (void)bind_metadata_vector_snapshot;
   (void)bind_group_vector_snapshot;
   (void)bind_follower_group_vector_snapshot;

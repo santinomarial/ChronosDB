@@ -736,9 +736,19 @@ Focused executions passed:
   ASan/UBSan libFuzzer smoke target for exact and fragmented decoding. Header self-containment and
   installed consumption cover the API. Fragment-v2 carrier ownership, schema-bound
   coordination, execution, authenticated lifecycle, and process integration remain incomplete.
+- Bounded Fragment-v2 ownership continuation: focused query cases enumerated every wrapper split,
+  coalesced successor boundary, sticky damage path, lower nested bound, future-version rejection,
+  and short-write state; allocation injection classified encode, exact-decode, and streaming-reader
+  ownership; deterministic ASan/UBSan fuzzing exercised exact and fragmented decode. A two-tablet
+  compatible owner retained one Manifest pin and one shared result schema, proved it against every
+  exact projection, encoded each authorized pairing, and rejected nullability mismatch without
+  retaining per-tablet schema copies. Header self-containment and installed consumption cover the
+  API. V2 cluster carriage, schema-bound coordination, worker execution, authenticated lifecycle,
+  and process integration remain incomplete.
 
-The C++ files changed by the grouped- and vector-exchange continuations pass the repository-pinned
-clang-format 18 check. A full-tree check was also run and still reports pre-existing violations in
+The C++ files changed by the grouped-, vector-exchange, and Fragment-v2 continuations pass the
+repository-pinned clang-format 18 check. A full-tree check was also run and still reports
+pre-existing violations in
 the subscription protocol, subscription, multi-tablet checkpoint implementation, and focused
 subscription test files; these slices do not rewrite those unrelated files or claim a full-tree
 formatting pass. Full-suite, sanitizer, fuzz, broader cross-compiler/Linux parity, benchmark,

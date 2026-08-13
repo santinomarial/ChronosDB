@@ -492,6 +492,34 @@ TEST(DistributedFragmentBindingTest, PinsOneCompatibleEpochAcrossEveryPlannedTab
     EXPECT_EQ(compatible_vector->dispatches()[index].plan, vector_plan.intent);
   }
 
+  DistributedVectorResultSchema shared_result_schema{
+      .columns = {{"event_time", schema_value.columns()[0].type(), false},
+                  {"total", schema_value.columns()[1].type(), true}}};
+  auto compatible_vector_v2 = bind_compatible_distributed_vector_snapshot_v2(
+      vector_plan, *snapshot, vector_bindings, std::move(shared_result_schema),
+      {.maximum_fragments = 2U, .maximum_total_projection_ordinals = 4U});
+  ASSERT_TRUE(compatible_vector_v2.has_value()) << compatible_vector_v2.error().to_string();
+  EXPECT_FALSE(pinned.expired());
+  EXPECT_EQ(compatible_vector_v2->snapshot().generation(), 1U);
+  ASSERT_EQ(compatible_vector_v2->dispatches().size(), 2U);
+  ASSERT_EQ(compatible_vector_v2->result_schema().columns.size(), 2U);
+  EXPECT_EQ(compatible_vector_v2->result_schema().columns[1].name, "total");
+  for (const DistributedVectorFragmentDispatch& nested : compatible_vector_v2->dispatches()) {
+    const DistributedVectorFragmentDispatchV2 fragment_v2{
+        .dispatch = nested, .result_schema = compatible_vector_v2->result_schema()};
+    EXPECT_TRUE(encode_distributed_vector_fragment_dispatch_v2(fragment_v2).has_value());
+  }
+
+  DistributedVectorResultSchema mismatched_result_schema{
+      .columns = {{"event_time", schema_value.columns()[0].type(), false},
+                  {"total", schema_value.columns()[1].type(), false}}};
+  EXPECT_EQ(bind_compatible_distributed_vector_snapshot_v2(
+                vector_plan, *snapshot, vector_bindings, std::move(mismatched_result_schema),
+                {.maximum_fragments = 2U, .maximum_total_projection_ordinals = 4U})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+
   auto compatible = bind_compatible_distributed_aggregate_snapshot(
       plan, std::move(*snapshot), bindings,
       {.maximum_fragments = 2U, .maximum_total_projection_ordinals = 4U});

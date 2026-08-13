@@ -98,6 +98,9 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Distributed Aggregate Fragment v1](formats/distributed-aggregate-fragment-v1.md): bounded,
   integrity-first worker request bytes binding an exact snapshot route, consistency evidence,
   projection, aggregate input, and event-time predicate.
+- [Distributed Vector Fragment v2](formats/distributed-vector-fragment-v2.md): schema-bound wrapper
+  around exact Vector Fragment v1 authority and one exact result schema, with bounded partial I/O
+  and compatible multi-tablet ownership that retains the shared schema once.
 - [Distributed Aggregate Fragment Dispatch v1](formats/distributed-aggregate-fragment-dispatch-v1.md):
   group-scoped executable envelope around one exact aggregate fragment request.
   Runtime construction binds admission, committed placement, schema, and one exact Raft-backed

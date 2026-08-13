@@ -11,10 +11,18 @@ static_assert(std::is_move_constructible_v<chronos::query::DistributedVectorFrag
 static_assert(std::is_aggregate_v<chronos::query::DistributedVectorFragmentDispatchV2>);
 static_assert(
     !std::is_copy_constructible_v<chronos::query::EncodedDistributedVectorFragmentDispatchV2>);
+static_assert(!std::is_copy_constructible_v<chronos::query::DistributedVectorFragmentV2Reader>);
+static_assert(!std::is_move_constructible_v<chronos::query::DistributedVectorFragmentV2Reader>);
+static_assert(std::is_nothrow_constructible_v<chronos::query::DistributedVectorFragmentV2Reader>);
+static_assert(
+    !std::is_copy_constructible_v<chronos::query::DistributedVectorFragmentV2WriteCursor>);
+static_assert(std::is_move_constructible_v<chronos::query::DistributedVectorFragmentV2WriteCursor>);
 
 namespace {
 [[maybe_unused]] const auto kEncodeV2 =
     &chronos::query::encode_distributed_vector_fragment_dispatch_v2;
 [[maybe_unused]] const auto kDecodeV2 =
     &chronos::query::decode_distributed_vector_fragment_dispatch_v2_exact;
+[[maybe_unused]] const auto kCreateV2Cursor =
+    &chronos::query::DistributedVectorFragmentV2WriteCursor::create;
 } // namespace

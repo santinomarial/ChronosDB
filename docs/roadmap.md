@@ -1046,8 +1046,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   Native Protocol v1 result payload, exact-matches every ordered descriptor against the fragment
   schema, and owns bounded partial reads and short writes. A distinct v2 fragment wraps unchanged v1
   authority bytes plus the exact descriptor vector; its binder proves that shape from the same
-  committed projection before publication. Fragment-v2 partial-I/O, compatible snapshot ownership,
-  v2 cluster request carriage, coordination, and execution remain deferred. A distinct
+  committed projection before publication. Its header-first reader and move-only cursor now own
+  bounded partial I/O, while one compatible multi-tablet v2 owner pins the Manifest epoch and owns
+  the shared schema once after proving it against every plan-ordered projection. V2 cluster request
+  carriage, coordination, and execution remain deferred. A distinct
   group-scoped grouped dispatch now
   preserves exact Raft authority without reinterpreting ungrouped dispatch bytes. Its worker reuses
   every local authority gate, resolves real temporal CSEG winners, and emits canonical grouped

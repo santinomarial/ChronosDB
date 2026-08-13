@@ -287,9 +287,10 @@
   fragment now wraps unchanged v1 authority bytes plus that exact schema, and its binder proves the
   shape from the same committed projection. A distinct result exchange v2 now wraps exact native
   schema-light result cells, requires the fragment-bound schema on encode/decode, rejects descriptor
-  mismatch, and owns bounded partial reads and short writes. Add fragment-v2 partial-I/O, compatible
-  multi-tablet v2 ownership, schema-bound coordination, and v2 cluster carriage before general
-  worker execution. Distinct exact node-routed
+  mismatch, and owns bounded partial reads and short writes. Fragment v2 now also owns header-first
+  partial reads and short writes, and one compatible multi-tablet owner retains the Manifest pin
+  plus a shared schema proved against every dispatch without per-tablet descriptor duplication. Add
+  schema-bound coordination and v2 cluster carriage before general worker execution. Distinct exact node-routed
   request and reverse-route
   response frames now carry the complete vector dispatch and one exactly correlated vector exchange
   or failure. Header-first readers and one move-only cursor now own bounded fragmentation,
