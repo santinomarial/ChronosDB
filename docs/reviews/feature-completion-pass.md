@@ -682,6 +682,13 @@ Focused executions passed:
   mismatch rejected both vector and aggregate binding before publication. Header self-containment
   and installed consumption cover the public constructor. Remote acquisition, execution,
   coordination, authenticated transport, and process integration are not claimed.
+- Distributed vector-query request continuation: two focused cluster cases wrapped one proof-bound
+  grouped SUM/order/LIMIT vector dispatch in a distinct node-routed request with independent header,
+  payload, and complete CRCs. They rejected route aliasing, truncation, reserved bytes, a
+  checksum-valid future version, nested damage under recomputed outer checksums, and grouped-request
+  confusion. Header self-containment and installed consumption cover the public codec. Response
+  framing, partial-I/O, authentication, execution, coordination, and process integration are not
+  claimed; general worker execution still requires an explicit result-schema identity contract.
 
 The C++ files changed by the grouped- and vector-exchange continuations pass the repository-pinned
 clang-format 18 check. A full-tree check was also run and still reports pre-existing violations in

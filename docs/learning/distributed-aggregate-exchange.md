@@ -270,6 +270,10 @@ The follower group-backed vector entry point similarly shares the aggregate pair
 group resolver. It derives the lag frontier only from the correlated leader observation, retains
 the follower's exact applied position and serving identity, and then delegates every remaining
 bounded-stale authority check to metadata-backed vector binding.
+The first vector transport slice adds a distinct node-routed request envelope around one exact
+dispatch. Header integrity protects its allocation-driving length, while payload and complete CRCs
+retain independent corruption boundaries. It deliberately defines no response or security semantics
+and does not resolve how arbitrary plan outputs acquire Columnar Batch schema identities.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated

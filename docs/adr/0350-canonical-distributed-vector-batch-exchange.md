@@ -35,9 +35,9 @@ tests round-trip a canonical mixed-type batch and terminal-only frame, then reje
 checksum-valid nested corruption, frame-limit excess, and an empty nonterminal frame. Public header
 self-containment and installed consumption cover the API.
 
-General vector fragment requests, exact-retry coordination, transport, packaged execution,
-multi-process integration, and broad fault/measurement evidence remain incomplete. No Phase 16 exit
-gate is claimed.
+Vector fragment and exact node-routed request bytes are implemented separately. Response transport,
+exact-retry coordination, packaged execution, multi-process integration, and broad fault/
+measurement evidence remain incomplete. No Phase 16 exit gate is claimed.
 
 Invariants 5, 6, 10, 14, 15, and 18 apply.
 

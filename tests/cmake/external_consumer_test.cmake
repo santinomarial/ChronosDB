@@ -57,6 +57,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/cluster/distributed_grouped_query_tcp_execution.hpp>
 #include <chronos/cluster/distributed_grouped_query_tcp_server.hpp>
 #include <chronos/cluster/distributed_grouped_query_transport.hpp>
+#include <chronos/cluster/distributed_vector_query_transport.hpp>
 #include <chronos/cluster/distributed_grouped_query_tls.hpp>
 #include <chronos/cluster/distributed_query_transport.hpp>
 #include <chronos/cluster/distributed_query_execution.hpp>
@@ -248,6 +249,10 @@ int main() {
       &chronos::query::bind_group_backed_distributed_vector_snapshot;
   const auto bind_follower_group_vector_snapshot =
       &chronos::query::bind_follower_group_backed_distributed_vector_snapshot;
+  const auto encode_vector_query_request =
+      &chronos::cluster::encode_distributed_vector_query_request_v1;
+  const auto decode_vector_query_request =
+      &chronos::cluster::decode_distributed_vector_query_request_v1;
   const auto create_replicated_query_worker =
       &chronos::service::ReplicatedDistributedQueryWorker::create;
   const auto create_replicated_grouped_query_worker =
@@ -381,6 +386,8 @@ int main() {
   (void)bind_metadata_vector_snapshot;
   (void)bind_group_vector_snapshot;
   (void)bind_follower_group_vector_snapshot;
+  (void)encode_vector_query_request;
+  (void)decode_vector_query_request;
   (void)create_replicated_query_worker;
   (void)create_replicated_grouped_query_worker;
   (void)create_replicated_grouped_query_receiver;

@@ -280,7 +280,9 @@
   join from canonical group order through committed tablet-to-group metadata into plan order.
   Bounded-stale vector proofs now derive the leader frontier only from a canonical same-group,
   same-term stable leader/follower pair. Remote acquisition, global coordination, authenticated
-  transport, and execution remain.
+  response transport, and execution remain. One distinct exact node-routed request frame now wraps
+  the complete vector dispatch; add its partial-I/O, authenticated receiver, retry, TLS, and TCP
+  ownership only after response and result-schema contracts are fixed.
   A distinct terminal-only frame closes an empty tablet stream without inventing a SQL NULL group.
   Its separate fixed reader and move-only cursor own every terminal fragmentation boundary,
   coalesced successor bytes, sticky damage, and checked short writes without introducing an

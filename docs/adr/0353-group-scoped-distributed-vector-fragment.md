@@ -39,9 +39,10 @@ plan damage despite a repaired outer CRC, lower projection limits, out-of-projec
 lag contradiction, and nil group identity. Public header and installed-consumer checks cover the
 surface.
 
-Committed-authority construction, compatible multi-tablet binding, worker execution, response
-coordination, partial I/O for this variable request, authenticated transport, and process
-integration remain incomplete. No Phase 16 exit gate is claimed.
+Committed-authority construction, compatible metadata/group-backed binding, fragment partial I/O,
+and exact node-routed request framing are implemented separately. Worker execution, response
+coordination, authenticated transport, and process integration remain incomplete. No Phase 16 exit
+gate is claimed.
 
 Invariants 4–6, 10, 11, 14, 15, and 18 apply.
 
