@@ -262,6 +262,10 @@
   Its separate fixed reader and move-only cursor own every terminal fragmentation boundary,
   coalesced successor bytes, sticky damage, and checked short writes without introducing an
   implicit stream discriminator.
+  A bounded single-owner coordinator now enforces contiguous per-tablet grouped sequences, exact
+  canonical retry history, empty-tablet terminals, first-failure arbitration, all-tablet closure,
+  and cross-tablet nullable-FLOAT64 group merging. A unified grouped carrier and proof-bound grouped
+  fragment production remain incomplete.
 - Proof-bound leader-linearizable/bounded-stale/local-eventual admissions now remain attached through
   compatible pinned multi-tablet snapshots and protocol/carrier scheduling. Whole-query replacement
   now validates fresh caller-proved authority, identical logical shape, nonregressing generation,

@@ -22,6 +22,10 @@ distinct 64-byte terminal frame closes an empty grouped tablet without fabricati
 Its separate fixed reader and move-only cursor provide the same bounded fragmented-read,
 coalesced-successor, sticky-failure, and checked short-write ownership without assuming how a
 carrier discriminates grouped partial and terminal magic.
+`DistributedGroupedFloat64Coordinator` then owns one bounded exact retry history per planned
+tablet, accepts a terminal-only frame only for an empty sequence-one stream, and merges canonical
+keys only after every tablet closes. Its canonical-token iteration is deterministic for tests and
+retries but is not a SQL ordering guarantee.
 The dispatch envelope adds the distinct Raft group identity that scopes every admission index;
 workers never execute the bare inner fragment.
 `bind_distributed_aggregate_fragment` constructs that envelope only after one Manifest v2 snapshot,
@@ -76,6 +80,9 @@ and retains exactly one frame of its declared type; cursor advancement is `O(1)`
 exchange still charges its in-memory `ExchangeMessage` representation, not the wire length.
 Coordinator sequence lookup is `O(1)` within one tablet, retained memory is `O(accepted messages)`
 under a 65,536-message hard ceiling, and final merge is `O(planned tablets)`.
+The grouped coordinator uses ordered tablet and key maps: admission and group merge are
+`O(log groups)`, retained history is bounded by the same message ceilings, and `finish` owns a fresh
+`O(groups)` merged result or fails without publishing a partial vector.
 Fragment encoding/decoding is `O(projected columns)` with a 4,096-column and 16,604-byte hard cap.
 Binding is `O(replicas + tablets + projected columns)` and allocates only the owned projection.
 Compatible batch binding adds `O(fragments log fragments + total projected columns)` validation and
@@ -132,10 +139,11 @@ fresh authority lookup.
 
 A fixed ungrouped-aggregate frame gives partial-I/O carriers an unambiguous payload without
 prematurely defining a general physical-fragment language. The cost is a specialized first exchange
-type. A separate first grouped frame now carries one nullable FLOAT64 key, but multi-key and
-non-FLOAT64 grouping, grouped coordination, physical plans, ordering/top-N, cancellation delivery,
-and general duplicate sequencing require their own bounded contracts. A leader hint never
-mutates an existing proof-bound dispatch: following it requires explicit coordinator rebinding.
+type. A separate first grouped frame now carries one nullable FLOAT64 key with bounded
+coordination, but multi-key and non-FLOAT64 grouping, physical plans, authenticated transport,
+ordering/top-N, cancellation delivery, and durable recovery require their own bounded contracts. A
+leader hint never mutates an existing proof-bound dispatch: following it requires explicit
+coordinator rebinding.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated

@@ -8,7 +8,9 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
+#include <vector>
 
 namespace chronos::query {
 
@@ -164,6 +166,39 @@ private:
 
   EncodedGroupedFloat64ExchangeMessage encoded_;
   std::size_t written_bytes_{};
+};
+
+struct GroupedFloat64AggregateResult {
+  std::optional<double> group_key;
+  MergeableAggregateState aggregate;
+};
+
+// Single-owner grouped coordinator. The owner serializes admissions, failures, and finish. It
+// retains a bounded canonical retry history and exposes no partial result before every tablet has
+// accepted exactly one terminal form.
+class DistributedGroupedFloat64Coordinator {
+public:
+  DistributedGroupedFloat64Coordinator() = delete;
+  ~DistributedGroupedFloat64Coordinator();
+  DistributedGroupedFloat64Coordinator(const DistributedGroupedFloat64Coordinator&) = delete;
+  DistributedGroupedFloat64Coordinator&
+  operator=(const DistributedGroupedFloat64Coordinator&) = delete;
+  DistributedGroupedFloat64Coordinator(DistributedGroupedFloat64Coordinator&&) noexcept;
+  DistributedGroupedFloat64Coordinator& operator=(DistributedGroupedFloat64Coordinator&&) noexcept;
+
+  [[nodiscard]] static common::Result<DistributedGroupedFloat64Coordinator>
+  create(common::Uuid query_id, std::vector<schema::TabletId> tablets,
+         DistributedCoordinatorLimits limits = {});
+  [[nodiscard]] common::Status accept(const GroupedFloat64ExchangeMessage& message);
+  [[nodiscard]] common::Status accept_terminal(const GroupedExchangeTerminalMessage& message);
+  [[nodiscard]] common::Status worker_failed(const schema::TabletId& tablet_id,
+                                             common::Status failure);
+  [[nodiscard]] common::Result<std::vector<GroupedFloat64AggregateResult>> finish() const;
+
+private:
+  class Impl;
+  explicit DistributedGroupedFloat64Coordinator(std::unique_ptr<Impl> impl) noexcept;
+  std::unique_ptr<Impl> impl_;
 };
 
 // Canonical one-key grouping-state frame. It is a distinct protocol from the frozen ungrouped v1

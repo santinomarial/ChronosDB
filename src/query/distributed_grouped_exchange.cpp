@@ -10,9 +10,15 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <map>
+#include <memory>
+#include <new>
 #include <optional>
 #include <ranges>
+#include <set>
 #include <utility>
+#include <variant>
+#include <vector>
 
 namespace chronos::query {
 namespace {
@@ -65,6 +71,77 @@ inline constexpr std::uint32_t kKnownFlags =
   if (std::isnan(value))
     return grouped_float64_exchange_format::kCanonicalQuietNanBits;
   return std::bit_cast<std::uint64_t>(value);
+}
+
+struct CanonicalGroupedFloat64Key {
+  bool present{};
+  std::uint64_t bits{};
+
+  [[nodiscard]] bool operator<(const CanonicalGroupedFloat64Key& other) const noexcept {
+    return present != other.present ? present < other.present : bits < other.bits;
+  }
+};
+
+using GroupedStreamMessage =
+    std::variant<GroupedFloat64ExchangeMessage, GroupedExchangeTerminalMessage>;
+
+[[nodiscard]] CanonicalGroupedFloat64Key
+canonical_group_key(const std::optional<double>& key) noexcept {
+  return {.present = key.has_value(),
+          .bits = key.has_value() ? canonical_group_key_bits(*key) : 0U};
+}
+
+[[nodiscard]] GroupedFloat64ExchangeMessage
+canonicalize_message(GroupedFloat64ExchangeMessage message) noexcept {
+  if (message.group_key.has_value())
+    message.group_key = std::bit_cast<double>(canonical_group_key_bits(*message.group_key));
+  return message;
+}
+
+[[nodiscard]] bool same_float_bits(const double left, const double right) noexcept {
+  return std::bit_cast<std::uint64_t>(left) == std::bit_cast<std::uint64_t>(right);
+}
+
+[[nodiscard]] bool same_optional_float_bits(const std::optional<double>& left,
+                                            const std::optional<double>& right) noexcept {
+  return left.has_value() == right.has_value() &&
+         (!left.has_value() || same_float_bits(*left, *right));
+}
+
+[[nodiscard]] bool same_partial(const MergeableAggregateState& left,
+                                const MergeableAggregateState& right) noexcept {
+  return left.count == right.count && same_float_bits(left.sum, right.sum) &&
+         same_optional_float_bits(left.minimum, right.minimum) &&
+         same_optional_float_bits(left.maximum, right.maximum) &&
+         same_float_bits(left.mean, right.mean) && same_float_bits(left.m2, right.m2);
+}
+
+[[nodiscard]] bool same_grouped_message(const GroupedFloat64ExchangeMessage& left,
+                                        const GroupedFloat64ExchangeMessage& right) noexcept {
+  return left.query_id == right.query_id && left.tablet_id == right.tablet_id &&
+         left.sequence == right.sequence && left.terminal == right.terminal &&
+         same_optional_float_bits(left.group_key, right.group_key) &&
+         same_partial(left.partial, right.partial);
+}
+
+[[nodiscard]] bool same_stream_message(const GroupedStreamMessage& left,
+                                       const GroupedStreamMessage& right) noexcept {
+  if (left.index() != right.index())
+    return false;
+  if (const auto* grouped = std::get_if<GroupedFloat64ExchangeMessage>(&left))
+    return same_grouped_message(*grouped, std::get<GroupedFloat64ExchangeMessage>(right));
+  const auto& left_terminal = std::get<GroupedExchangeTerminalMessage>(left);
+  const auto& right_terminal = std::get<GroupedExchangeTerminalMessage>(right);
+  return left_terminal.query_id == right_terminal.query_id &&
+         left_terminal.tablet_id == right_terminal.tablet_id &&
+         left_terminal.sequence == right_terminal.sequence;
+}
+
+[[nodiscard]] common::Status
+validate_terminal_message(const GroupedExchangeTerminalMessage& message) {
+  if (message.query_id.is_nil() || message.tablet_id.uuid().is_nil() || message.sequence == 0U)
+    return invalid("grouped terminal identity or sequence is invalid");
+  return common::Status::ok();
 }
 
 } // namespace
@@ -459,6 +536,222 @@ std::size_t GroupedFloat64ExchangeFrameWriteCursor::written_bytes() const noexce
 
 bool GroupedFloat64ExchangeFrameWriteCursor::complete() const noexcept {
   return written_bytes_ == grouped_float64_exchange_format::kFrameLength;
+}
+
+class DistributedGroupedFloat64Coordinator::Impl {
+public:
+  struct FragmentProgress {
+    std::vector<GroupedStreamMessage> messages;
+    std::map<CanonicalGroupedFloat64Key, MergeableAggregateState> groups;
+    bool terminal{};
+  };
+
+  Impl(common::Uuid id, const std::vector<schema::TabletId>& tablets,
+       const DistributedCoordinatorLimits configured)
+      : query_id(id), limits(configured) {
+    for (const schema::TabletId& tablet_id : tablets)
+      fragments.emplace(tablet_id, FragmentProgress{});
+  }
+
+  common::Uuid query_id;
+  DistributedCoordinatorLimits limits;
+  std::map<schema::TabletId, FragmentProgress> fragments;
+  std::size_t retained_messages{};
+  std::optional<common::Status> failure;
+};
+
+DistributedGroupedFloat64Coordinator::DistributedGroupedFloat64Coordinator(
+    std::unique_ptr<Impl> impl) noexcept
+    : impl_(std::move(impl)) {}
+
+DistributedGroupedFloat64Coordinator::~DistributedGroupedFloat64Coordinator() = default;
+
+DistributedGroupedFloat64Coordinator::DistributedGroupedFloat64Coordinator(
+    DistributedGroupedFloat64Coordinator&&) noexcept = default;
+
+DistributedGroupedFloat64Coordinator& DistributedGroupedFloat64Coordinator::operator=(
+    DistributedGroupedFloat64Coordinator&&) noexcept = default;
+
+common::Result<DistributedGroupedFloat64Coordinator>
+DistributedGroupedFloat64Coordinator::create(common::Uuid query_id,
+                                             std::vector<schema::TabletId> tablets,
+                                             const DistributedCoordinatorLimits limits) {
+  if (query_id.is_nil())
+    return common::make_unexpected(invalid("grouped coordinator query identity is invalid"));
+  if (limits.maximum_messages_per_fragment == 0U ||
+      limits.maximum_messages_per_fragment > limits.maximum_total_messages ||
+      limits.maximum_total_messages > kMaximumDistributedCoordinatorMessages ||
+      limits.maximum_total_messages < tablets.size()) {
+    return common::make_unexpected(invalid("grouped coordinator limits are invalid"));
+  }
+  try {
+    std::set<schema::TabletId> unique_tablets;
+    for (const schema::TabletId& tablet_id : tablets) {
+      if (tablet_id.uuid().is_nil() || !unique_tablets.insert(tablet_id).second)
+        return common::make_unexpected(invalid("grouped coordinator tablet set is invalid"));
+    }
+    return DistributedGroupedFloat64Coordinator{std::make_unique<Impl>(query_id, tablets, limits)};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                  "grouped coordinator allocation failed"});
+  }
+}
+
+common::Status
+DistributedGroupedFloat64Coordinator::accept(const GroupedFloat64ExchangeMessage& message) {
+  if (impl_->failure.has_value())
+    return *impl_->failure;
+  const common::Status validation = validate_message(message);
+  if (!validation.is_ok())
+    return validation;
+  GroupedFloat64ExchangeMessage canonical = canonicalize_message(message);
+  auto fragment = impl_->fragments.find(canonical.tablet_id);
+  if (canonical.query_id != impl_->query_id || fragment == impl_->fragments.end())
+    return invalid("grouped fragment result does not belong to the coordinator");
+
+  Impl::FragmentProgress& progress = fragment->second;
+  const GroupedStreamMessage candidate{canonical};
+  if (canonical.sequence <= progress.messages.size()) {
+    return same_stream_message(candidate, progress.messages[canonical.sequence - 1U])
+               ? common::Status::ok()
+               : common::Status{common::StatusCode::kAlreadyExists,
+                                "grouped fragment sequence conflicts with retained state"};
+  }
+  if (progress.terminal)
+    return invalid("grouped fragment emitted after its terminal message");
+  if (canonical.sequence != progress.messages.size() + 1U) {
+    return common::Status{common::StatusCode::kUnavailable, "grouped fragment sequence has a gap"};
+  }
+  if (progress.messages.size() == impl_->limits.maximum_messages_per_fragment ||
+      impl_->retained_messages == impl_->limits.maximum_total_messages) {
+    return common::Status{common::StatusCode::kResourceExhausted,
+                          "grouped coordinator message history is exhausted"};
+  }
+
+  const CanonicalGroupedFloat64Key key = canonical_group_key(canonical.group_key);
+  auto existing = progress.groups.find(key);
+  MergeableAggregateState merged = canonical.partial;
+  if (existing != progress.groups.end()) {
+    merged = existing->second;
+    const common::Status merge_status = merged.merge(canonical.partial);
+    if (!merge_status.is_ok())
+      return merge_status;
+  }
+  try {
+    progress.messages.emplace_back(canonical);
+    if (existing == progress.groups.end()) {
+      const auto [inserted, did_insert] = progress.groups.emplace(key, merged);
+      static_cast<void>(inserted);
+      if (!did_insert) {
+        progress.messages.pop_back();
+        return common::Status{common::StatusCode::kInternal,
+                              "grouped coordinator key insertion raced serialized ownership"};
+      }
+    } else {
+      existing->second = std::move(merged);
+    }
+  } catch (const std::bad_alloc&) {
+    if (progress.messages.size() == canonical.sequence)
+      progress.messages.pop_back();
+    return common::Status{common::StatusCode::kResourceExhausted,
+                          "grouped coordinator retention allocation failed"};
+  }
+  progress.terminal = canonical.terminal;
+  ++impl_->retained_messages;
+  return common::Status::ok();
+}
+
+common::Status DistributedGroupedFloat64Coordinator::accept_terminal(
+    const GroupedExchangeTerminalMessage& message) {
+  if (impl_->failure.has_value())
+    return *impl_->failure;
+  const common::Status validation = validate_terminal_message(message);
+  if (!validation.is_ok())
+    return validation;
+  auto fragment = impl_->fragments.find(message.tablet_id);
+  if (message.query_id != impl_->query_id || fragment == impl_->fragments.end())
+    return invalid("grouped terminal does not belong to the coordinator");
+
+  Impl::FragmentProgress& progress = fragment->second;
+  const GroupedStreamMessage candidate{message};
+  if (message.sequence <= progress.messages.size()) {
+    return same_stream_message(candidate, progress.messages[message.sequence - 1U])
+               ? common::Status::ok()
+               : common::Status{common::StatusCode::kAlreadyExists,
+                                "grouped terminal sequence conflicts with retained state"};
+  }
+  if (progress.terminal)
+    return invalid("grouped terminal followed a terminal message");
+  if (message.sequence != 1U || !progress.messages.empty())
+    return invalid("grouped terminal-only frame may close only an empty sequence-one stream");
+  if (progress.messages.size() == impl_->limits.maximum_messages_per_fragment ||
+      impl_->retained_messages == impl_->limits.maximum_total_messages) {
+    return common::Status{common::StatusCode::kResourceExhausted,
+                          "grouped coordinator message history is exhausted"};
+  }
+  try {
+    progress.messages.emplace_back(message);
+  } catch (const std::bad_alloc&) {
+    return common::Status{common::StatusCode::kResourceExhausted,
+                          "grouped coordinator retention allocation failed"};
+  }
+  progress.terminal = true;
+  ++impl_->retained_messages;
+  return common::Status::ok();
+}
+
+common::Status
+DistributedGroupedFloat64Coordinator::worker_failed(const schema::TabletId& tablet_id,
+                                                    common::Status failure) {
+  const auto fragment = impl_->fragments.find(tablet_id);
+  if (fragment == impl_->fragments.end() || failure.is_ok())
+    return invalid("grouped worker failure is invalid or belongs to another coordinator");
+  if (fragment->second.terminal)
+    return common::Status::ok();
+  if (impl_->failure.has_value())
+    return *impl_->failure;
+  impl_->failure = std::move(failure);
+  return common::Status::ok();
+}
+
+common::Result<std::vector<GroupedFloat64AggregateResult>>
+DistributedGroupedFloat64Coordinator::finish() const {
+  if (impl_->failure.has_value())
+    return common::make_unexpected(*impl_->failure);
+  std::map<CanonicalGroupedFloat64Key, MergeableAggregateState> groups;
+  try {
+    for (const auto& [tablet_id, progress] : impl_->fragments) {
+      static_cast<void>(tablet_id);
+      if (!progress.terminal) {
+        return common::make_unexpected(common::Status{common::StatusCode::kUnavailable,
+                                                      "grouped query has incomplete fragments"});
+      }
+      for (const auto& [key, partial] : progress.groups) {
+        auto existing = groups.find(key);
+        if (existing == groups.end()) {
+          groups.emplace(key, partial);
+          continue;
+        }
+        MergeableAggregateState merged = existing->second;
+        const common::Status merge_status = merged.merge(partial);
+        if (!merge_status.is_ok())
+          return common::make_unexpected(merge_status);
+        existing->second = std::move(merged);
+      }
+    }
+    std::vector<GroupedFloat64AggregateResult> result;
+    result.reserve(groups.size());
+    for (const auto& [key, aggregate] : groups) {
+      result.push_back({.group_key = key.present
+                                         ? std::optional<double>{std::bit_cast<double>(key.bits)}
+                                         : std::nullopt,
+                        .aggregate = aggregate});
+    }
+    return result;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                  "grouped coordinator result allocation failed"});
+  }
 }
 
 } // namespace chronos::query

@@ -42,9 +42,10 @@ distinct NaN bits, round-trip NULL, and reject truncation, trailing bytes, damag
 noncanonical key payloads, reserved bytes, and invalid aggregate state. The installed-consumer gate
 covers both codec symbols.
 
-General grouped planning/execution, multi-key and variable-width formats, grouped coordination,
-ordering/top-N/LIMIT, and broader differential/fault evidence remain incomplete. No Phase 16 exit
-gate is claimed.
+General grouped planning/execution, multi-key and variable-width formats, authenticated grouped
+transport, ordering/top-N/LIMIT, and broader differential/fault evidence remain incomplete. The
+first bounded single-key coordinator is the accepted follow-up in
+[ADR 0324](0324-bounded-grouped-float64-coordinator.md). No Phase 16 exit gate is claimed.
 
 Invariants 6, 10, 11, 14, and 18 apply.
 

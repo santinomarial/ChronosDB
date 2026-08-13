@@ -79,10 +79,19 @@ It instead emits the distinct 64-byte Grouped Exchange Terminal v1 frame:
 The frame has no key or partial; successful exact decoding is the terminal event. An empty stream
 uses sequence 1. Distinct magic prevents reinterpretation as a NULL group. Nonempty streams may
 still mark their last grouped partial terminal. Contiguous sequencing and duplicate arbitration
-belong to the future grouped coordinator.
+are enforced by the bounded single-key grouped coordinator.
 
 Its fixed reader retains one 64-byte frame, reports the exact consumed prefix, leaves coalesced
 successor bytes with the caller, and fails sticky after exact-decode damage. Its move-only write
 cursor owns the canonical frame, exposes only the unwritten suffix, rejects over-advance without
 progress, and leaves the moved-from cursor complete. These classes own bytes only; a future
 grouped-stream carrier must still choose the frame type before dispatching to either fixed reader.
+
+## Coordinator semantics
+
+Each planned tablet starts at sequence 1. Exact retries compare the canonical key and every
+aggregate bit; conflicts and gaps do not mutate retained state. A terminal-only frame is legal only
+at sequence 1 of an empty stream. A nonempty stream closes through the terminal flag on its last
+grouped partial. Results remain unavailable until every tablet closes, then equal canonical keys
+merge across tablets. The coordinator's NULL-first canonical-token iteration is deterministic but
+does not define SQL result ordering.

@@ -242,7 +242,7 @@ lifecycle. A distinct bounded-stale constructor applies the same catalog, Manife
 execution gates to stable same-term leader/follower observation pairs. General vector-plan
 grouping/order/top-N/LIMIT remains incomplete. A distinct canonical frame now carries one nullable
 FLOAT64 group key and mergeable partial with SQL-equivalent signed-zero/NaN canonicalization, but
-grouped fragments, multi-key/non-FLOAT64 state, and coordination remain incomplete. A distinct
+grouped fragments, multi-key/non-FLOAT64 state, and authenticated transport remain incomplete. A distinct
 canonical observation protocol, authenticated receiver, mTLS clients/servers, finite multi-address
 acquisition, correlated
 leader/follower pairs, canonical all-group batches, placement-backed construction, and packaged
@@ -453,14 +453,18 @@ Focused executions passed:
   hostile checksum-valid noncanonical representations. Grouped planning is not claimed.
 - Grouped partial-I/O continuation: 1 focused case passed for all 137 split positions, coalesced
   successor ownership, sticky corruption, exact short-write suffixes, overrun rollback, and
-  move-only cursor transfer. Grouped transport and coordination are not claimed.
+  move-only cursor transfer. That carrier slice did not claim grouped transport or coordination.
 - Empty grouped-terminal continuation: 1 focused case passed for the distinct terminal-only layout,
   exact identity/sequence/CRC round trip, and truncation/version/reserved/input rejection. It does
-  not fabricate a NULL group; grouped coordination is not claimed.
+  not fabricate a NULL group; that terminal-codec slice did not claim grouped coordination.
 - Grouped-terminal partial-I/O continuation: 1 focused case passed for all 65 split positions,
   coalesced successor ownership, sticky corruption, multiple exact short-write advances, overrun
-  rollback, and move-only cursor transfer. Stream discrimination, transport, and grouped
-  coordination are not claimed.
+  rollback, and move-only cursor transfer. That byte-ownership slice did not claim stream
+  discrimination, transport, or grouped coordination.
+- Grouped-coordinator continuation: 4 focused cases passed for canonical signed-zero/NaN/NULL
+  grouping, exact retries and cross-form conflicts, gaps/post-terminal rejection, terminal-only
+  empty tablets, bounded history, first-failure stability, completed-worker loss, all-tablet
+  closure, and final merge overflow. Grouped fragments and authenticated transport are not claimed.
 
 The C++ files changed by the grouped-exchange continuations pass the repository-pinned clang-format
 18 check. A full-tree check was also run and still reports pre-existing violations in the

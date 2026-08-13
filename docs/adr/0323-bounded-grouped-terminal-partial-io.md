@@ -39,8 +39,9 @@ reported consumption, prove corruption remains sticky, verify multiple short-wri
 overrun rollback, and prove moved-from cursors are inert. The installed-consumer gate covers both
 public carrier interfaces.
 
-Grouped stream multiplexing, coordinator sequencing/merge state, fragment planning,
-ordering/top-N/LIMIT, and broader socket/fault evidence remain incomplete. No Phase 16 exit gate is
+Grouped stream multiplexing, fragment planning, ordering/top-N/LIMIT, and broader socket/fault
+evidence remain incomplete. Bounded single-key sequencing and merge state are the accepted
+follow-up in [ADR 0324](0324-bounded-grouped-float64-coordinator.md). No Phase 16 exit gate is
 claimed.
 
 Invariants 6, 10, 11, 14, 15, and 18 apply.

@@ -71,6 +71,10 @@ template <std::size_t Size> void rewrite_crc(std::array<std::byte, Size>& bytes)
       .terminal = true};
 }
 
+[[nodiscard]] MergeableAggregateState one_value(const double value) {
+  return {.count = 1U, .sum = value, .minimum = value, .maximum = value, .mean = value, .m2 = 0.0};
+}
+
 TEST(DistributedGroupedExchangeTest, FreezesLayoutAndCanonicalizesFloatGroupingKeys) {
   const auto encoded = encode_grouped_float64_exchange_message(message(-0.0));
   ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
@@ -395,6 +399,197 @@ TEST(DistributedGroupedExchangeTest, OwnsEveryTerminalReadSplitAndShortWriteSuff
   invalid.sequence = 0U;
   EXPECT_EQ(GroupedExchangeTerminalFrameWriteCursor::create(invalid).error().code(),
             common::StatusCode::kInvalidArgument);
+}
+
+TEST(DistributedGroupedExchangeTest, CoordinatesCanonicalGroupsOnlyAfterEveryTabletTerminates) {
+  const common::Uuid query_id = uuid(0x41U);
+  auto coordinator =
+      DistributedGroupedFloat64Coordinator::create(query_id, {tablet(0x42U), tablet(0x43U)});
+  ASSERT_TRUE(coordinator.has_value()) << coordinator.error().to_string();
+
+  const GroupedFloat64ExchangeMessage negative_zero{.query_id = query_id,
+                                                    .tablet_id = tablet(0x42U),
+                                                    .sequence = 1U,
+                                                    .group_key = -0.0,
+                                                    .partial = one_value(1.0),
+                                                    .terminal = false};
+  EXPECT_TRUE(coordinator->accept(negative_zero).is_ok());
+  GroupedFloat64ExchangeMessage positive_zero_retry = negative_zero;
+  positive_zero_retry.group_key = 0.0;
+  EXPECT_TRUE(coordinator->accept(positive_zero_retry).is_ok());
+  GroupedFloat64ExchangeMessage conflicting_retry = positive_zero_retry;
+  conflicting_retry.partial = one_value(9.0);
+  EXPECT_EQ(coordinator->accept(conflicting_retry).code(), common::StatusCode::kAlreadyExists);
+
+  EXPECT_EQ(coordinator
+                ->accept({.query_id = query_id,
+                          .tablet_id = tablet(0x42U),
+                          .sequence = 3U,
+                          .group_key = std::nullopt,
+                          .partial = one_value(2.0),
+                          .terminal = true})
+                .code(),
+            common::StatusCode::kUnavailable);
+  EXPECT_TRUE(coordinator
+                  ->accept({.query_id = query_id,
+                            .tablet_id = tablet(0x42U),
+                            .sequence = 2U,
+                            .group_key = std::nullopt,
+                            .partial = one_value(2.0),
+                            .terminal = true})
+                  .is_ok());
+  EXPECT_EQ(coordinator->finish().error().code(), common::StatusCode::kUnavailable);
+
+  EXPECT_TRUE(coordinator
+                  ->accept({.query_id = query_id,
+                            .tablet_id = tablet(0x43U),
+                            .sequence = 1U,
+                            .group_key = 0.0,
+                            .partial = one_value(3.0),
+                            .terminal = false})
+                  .is_ok());
+  const double payload_nan = std::bit_cast<double>(0xfff0'0000'0000'0001ULL);
+  EXPECT_TRUE(coordinator
+                  ->accept({.query_id = query_id,
+                            .tablet_id = tablet(0x43U),
+                            .sequence = 2U,
+                            .group_key = payload_nan,
+                            .partial = one_value(4.0),
+                            .terminal = true})
+                  .is_ok());
+
+  const auto result = coordinator->finish();
+  ASSERT_TRUE(result.has_value()) << result.error().to_string();
+  ASSERT_EQ(result->size(), 3U);
+  EXPECT_FALSE((*result)[0].group_key.has_value());
+  EXPECT_DOUBLE_EQ((*result)[0].aggregate.sum, 2.0);
+  ASSERT_TRUE((*result)[1].group_key.has_value());
+  EXPECT_EQ(std::bit_cast<std::uint64_t>(*(*result)[1].group_key), 0U);
+  EXPECT_EQ((*result)[1].aggregate.count, 2U);
+  EXPECT_DOUBLE_EQ((*result)[1].aggregate.sum, 4.0);
+  ASSERT_TRUE((*result)[2].group_key.has_value());
+  EXPECT_EQ(std::bit_cast<std::uint64_t>(*(*result)[2].group_key),
+            grouped_float64_exchange_format::kCanonicalQuietNanBits);
+  EXPECT_DOUBLE_EQ((*result)[2].aggregate.sum, 4.0);
+
+  GroupedFloat64ExchangeMessage after_terminal = positive_zero_retry;
+  after_terminal.sequence = 3U;
+  EXPECT_EQ(coordinator->accept(after_terminal).code(), common::StatusCode::kInvalidArgument);
+  EXPECT_TRUE(
+      coordinator
+          ->worker_failed(tablet(0x42U), {common::StatusCode::kUnavailable, "late disconnect"})
+          .is_ok());
+}
+
+TEST(DistributedGroupedExchangeTest, DistinguishesEmptyTerminalFromEveryRealGroup) {
+  const common::Uuid query_id = uuid(0x51U);
+  auto empty =
+      DistributedGroupedFloat64Coordinator::create(query_id, {tablet(0x52U), tablet(0x53U)});
+  ASSERT_TRUE(empty.has_value());
+  const GroupedExchangeTerminalMessage first{
+      .query_id = query_id, .tablet_id = tablet(0x52U), .sequence = 1U};
+  const GroupedExchangeTerminalMessage second{
+      .query_id = query_id, .tablet_id = tablet(0x53U), .sequence = 1U};
+  EXPECT_TRUE(empty->accept_terminal(first).is_ok());
+  EXPECT_TRUE(empty->accept_terminal(first).is_ok());
+  EXPECT_TRUE(empty->accept_terminal(second).is_ok());
+  const auto result = empty->finish();
+  ASSERT_TRUE(result.has_value());
+  EXPECT_TRUE(result->empty());
+
+  auto mixed = DistributedGroupedFloat64Coordinator::create(query_id, {tablet(0x52U)});
+  ASSERT_TRUE(mixed.has_value());
+  const GroupedFloat64ExchangeMessage null_group{.query_id = query_id,
+                                                 .tablet_id = tablet(0x52U),
+                                                 .sequence = 1U,
+                                                 .group_key = std::nullopt,
+                                                 .partial = one_value(1.0),
+                                                 .terminal = false};
+  EXPECT_TRUE(mixed->accept(null_group).is_ok());
+  GroupedExchangeTerminalMessage late_terminal = first;
+  late_terminal.sequence = 2U;
+  EXPECT_EQ(mixed->accept_terminal(late_terminal).code(), common::StatusCode::kInvalidArgument);
+
+  auto conflicting = DistributedGroupedFloat64Coordinator::create(query_id, {tablet(0x52U)});
+  ASSERT_TRUE(conflicting.has_value());
+  EXPECT_TRUE(conflicting->accept_terminal(first).is_ok());
+  GroupedFloat64ExchangeMessage same_sequence = null_group;
+  same_sequence.terminal = true;
+  EXPECT_EQ(conflicting->accept(same_sequence).code(), common::StatusCode::kAlreadyExists);
+}
+
+TEST(DistributedGroupedExchangeTest, BoundsHistoryAndRetainsFirstIncompleteWorkerFailure) {
+  const common::Uuid query_id = uuid(0x61U);
+  EXPECT_EQ(DistributedGroupedFloat64Coordinator::create(query_id, {tablet(0x62U), tablet(0x62U)})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(DistributedGroupedFloat64Coordinator::create(query_id, {tablet(0x62U), tablet(0x63U)},
+                                                         DistributedCoordinatorLimits{1U, 1U})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+
+  auto bounded = DistributedGroupedFloat64Coordinator::create(query_id, {tablet(0x62U)},
+                                                              DistributedCoordinatorLimits{1U, 1U});
+  ASSERT_TRUE(bounded.has_value());
+  EXPECT_TRUE(bounded
+                  ->accept({.query_id = query_id,
+                            .tablet_id = tablet(0x62U),
+                            .sequence = 1U,
+                            .group_key = 1.0,
+                            .partial = one_value(1.0),
+                            .terminal = false})
+                  .is_ok());
+  EXPECT_EQ(bounded
+                ->accept({.query_id = query_id,
+                          .tablet_id = tablet(0x62U),
+                          .sequence = 2U,
+                          .group_key = 2.0,
+                          .partial = one_value(2.0),
+                          .terminal = true})
+                .code(),
+            common::StatusCode::kResourceExhausted);
+
+  auto failed = DistributedGroupedFloat64Coordinator::create(query_id, {tablet(0x62U)});
+  ASSERT_TRUE(failed.has_value());
+  EXPECT_TRUE(
+      failed->worker_failed(tablet(0x62U), {common::StatusCode::kUnavailable, "worker lost"})
+          .is_ok());
+  EXPECT_EQ(
+      failed->worker_failed(tablet(0x62U), {common::StatusCode::kInternal, "later failure"}).code(),
+      common::StatusCode::kUnavailable);
+  EXPECT_EQ(failed->finish().error().code(), common::StatusCode::kUnavailable);
+}
+
+TEST(DistributedGroupedExchangeTest, FailsClosedWhenCrossTabletGroupCountOverflows) {
+  const common::Uuid query_id = uuid(0x71U);
+  auto coordinator =
+      DistributedGroupedFloat64Coordinator::create(query_id, {tablet(0x72U), tablet(0x73U)});
+  ASSERT_TRUE(coordinator.has_value());
+  const MergeableAggregateState maximum{.count = std::numeric_limits<std::uint64_t>::max(),
+                                        .sum = 1.0,
+                                        .minimum = 1.0,
+                                        .maximum = 1.0,
+                                        .mean = 1.0,
+                                        .m2 = 0.0};
+  EXPECT_TRUE(coordinator
+                  ->accept({.query_id = query_id,
+                            .tablet_id = tablet(0x72U),
+                            .sequence = 1U,
+                            .group_key = 1.0,
+                            .partial = maximum,
+                            .terminal = true})
+                  .is_ok());
+  EXPECT_TRUE(coordinator
+                  ->accept({.query_id = query_id,
+                            .tablet_id = tablet(0x73U),
+                            .sequence = 1U,
+                            .group_key = 1.0,
+                            .partial = one_value(1.0),
+                            .terminal = true})
+                  .is_ok());
+  EXPECT_EQ(coordinator->finish().error().code(), common::StatusCode::kOutOfRange);
 }
 
 } // namespace
