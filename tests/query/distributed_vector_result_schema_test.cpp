@@ -30,6 +30,7 @@ TEST(DistributedVectorResultSchemaTest, RoundTripsOwnedDescriptorsAndRejectsDama
                   {"label", type(schema::LogicalTypeKind::kString), true}}};
   const auto encoded = encode_distributed_vector_result_schema(schema_value);
   ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  EXPECT_TRUE(validate_distributed_vector_result_schema_value(schema_value).is_ok());
   const auto decoded = decode_distributed_vector_result_schema_exact(encoded->bytes());
   ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
   EXPECT_EQ(*decoded, schema_value);
@@ -63,6 +64,8 @@ TEST(DistributedVectorResultSchemaTest, RoundTripsOwnedDescriptorsAndRejectsDama
 
   DistributedVectorResultSchema invalid = schema_value;
   invalid.columns.front().name = std::string(1U, static_cast<char>(0xff));
+  EXPECT_EQ(validate_distributed_vector_result_schema_value(invalid).code(),
+            common::StatusCode::kInvalidArgument);
   EXPECT_EQ(encode_distributed_vector_result_schema(invalid).error().code(),
             common::StatusCode::kInvalidArgument);
 }

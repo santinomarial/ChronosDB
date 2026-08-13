@@ -72,11 +72,15 @@ private:
 };
 
 [[nodiscard]] common::Result<EncodedDistributedVectorResultSchema>
-encode_distributed_vector_result_schema(const DistributedVectorResultSchema& schema);
+encode_distributed_vector_result_schema(const DistributedVectorResultSchema& value);
 
 [[nodiscard]] common::Result<DistributedVectorResultSchema>
 decode_distributed_vector_result_schema_exact(
     common::ByteView bytes, DistributedVectorResultSchemaDecodeLimits limits = {});
+
+// Validates the standalone descriptor value without requiring a plan or projected inputs.
+[[nodiscard]] common::Status
+validate_distributed_vector_result_schema_value(const DistributedVectorResultSchema& result_schema);
 
 // Proves that ordered result descriptors have the exact physical shape produced by the intent over
 // the projected inputs. Names remain caller-bound SQL identities and are validated but not derived.

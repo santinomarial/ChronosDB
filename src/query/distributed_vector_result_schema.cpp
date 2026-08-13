@@ -33,15 +33,20 @@ inline constexpr std::size_t kHeaderCrcOffset = 32U;
   return {common::StatusCode::kResourceExhausted, message};
 }
 
+struct ColumnValidationLimits {
+  std::uint32_t maximum_columns;
+  std::uint32_t maximum_name_length;
+};
+
 [[nodiscard]] common::Status
 validate_columns(const std::span<const DistributedVectorResultColumn> columns,
-                 const std::uint32_t maximum_columns, const std::uint32_t maximum_name_length) {
-  if (columns.empty() || columns.size() > maximum_columns)
+                 const ColumnValidationLimits limits) {
+  if (columns.empty() || columns.size() > limits.maximum_columns)
     return invalid("distributed vector result schema width is invalid");
   for (const DistributedVectorResultColumn& column : columns) {
     const common::ByteView name =
         std::as_bytes(std::span<const char>{column.name.data(), column.name.size()});
-    if (name.empty() || name.size() > maximum_name_length || !schema::is_valid_utf8(name))
+    if (name.empty() || name.size() > limits.maximum_name_length || !schema::is_valid_utf8(name))
       return invalid("distributed vector result column name is invalid");
     const auto type = schema::LogicalType::create(column.type.kind(), column.type.parameter_0(),
                                                   column.type.parameter_1());
@@ -105,9 +110,10 @@ common::ByteView EncodedDistributedVectorResultSchema::bytes() const noexcept {
 
 common::Result<EncodedDistributedVectorResultSchema>
 encode_distributed_vector_result_schema(const DistributedVectorResultSchema& value) {
-  const common::Status validation =
-      validate_columns(value.columns, distributed_vector_result_schema_format::kMaximumColumns,
-                       distributed_vector_result_schema_format::kMaximumNameLength);
+  const common::Status validation = validate_columns(
+      value.columns,
+      {.maximum_columns = distributed_vector_result_schema_format::kMaximumColumns,
+       .maximum_name_length = distributed_vector_result_schema_format::kMaximumNameLength});
   if (!validation.is_ok())
     return common::make_unexpected(validation);
   std::size_t descriptor_bytes{};
@@ -292,13 +298,22 @@ common::Result<DistributedVectorResultSchema> decode_distributed_vector_result_s
   }
 }
 
+common::Status validate_distributed_vector_result_schema_value(
+    const DistributedVectorResultSchema& result_schema) {
+  return validate_columns(
+      result_schema.columns,
+      {.maximum_columns = distributed_vector_result_schema_format::kMaximumColumns,
+       .maximum_name_length = distributed_vector_result_schema_format::kMaximumNameLength});
+}
+
 common::Status validate_distributed_vector_result_schema(
     const DistributedVectorPlanIntent& intent,
     const std::span<const PhysicalColumnShape> projected_inputs,
     const DistributedVectorResultSchema& result_schema) {
-  const common::Status columns = validate_columns(
-      result_schema.columns, distributed_vector_result_schema_format::kMaximumColumns,
-      distributed_vector_result_schema_format::kMaximumNameLength);
+  common::Status columns = validate_columns(
+      result_schema.columns,
+      {.maximum_columns = distributed_vector_result_schema_format::kMaximumColumns,
+       .maximum_name_length = distributed_vector_result_schema_format::kMaximumNameLength});
   if (!columns.is_ok())
     return columns;
   const auto expected = output_shapes(intent, projected_inputs);

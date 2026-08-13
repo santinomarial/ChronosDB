@@ -632,6 +632,7 @@ add_library(
   src/cluster/distributed_grouped_query_tcp_server.cpp
   src/cluster/distributed_grouped_query_tls.cpp
   src/cluster/distributed_grouped_query_transport.cpp
+  src/cluster/distributed_vector_result_exchange.cpp
   src/cluster/distributed_vector_query_transport.cpp
   src/cluster/distributed_query_execution.cpp
   src/cluster/distributed_query_tcp_client.cpp
@@ -1113,6 +1114,8 @@ if(CHRONOS_BUILD_TESTS)
     tests/cluster/distributed_grouped_query_tcp_server_header_self_contained.cpp
     tests/cluster/distributed_grouped_query_transport_header_self_contained.cpp
     tests/cluster/distributed_grouped_query_transport_test.cpp
+    tests/cluster/distributed_vector_result_exchange_header_self_contained.cpp
+    tests/cluster/distributed_vector_result_exchange_test.cpp
     tests/cluster/distributed_vector_query_transport_header_self_contained.cpp
     tests/cluster/distributed_vector_query_transport_test.cpp
     tests/cluster/distributed_grouped_query_tls_header_self_contained.cpp
@@ -1188,6 +1191,26 @@ if(CHRONOS_BUILD_TESTS)
   chronos_enable_sanitizers(chronos_cluster_tests)
   chronos_enable_static_analysis(chronos_cluster_tests)
   gtest_discover_tests(chronos_cluster_tests DISCOVERY_TIMEOUT 30)
+
+  add_executable(
+    chronos_cluster_allocation_failure_tests
+    tests/cluster/distributed_vector_result_exchange_allocation_failure_test.cpp
+    tests/support/failing_allocator.cpp
+  )
+  set_target_properties(
+    chronos_cluster_allocation_failure_tests PROPERTIES CXX_EXTENSIONS OFF
+  )
+  target_compile_features(chronos_cluster_allocation_failure_tests PRIVATE cxx_std_23)
+  target_include_directories(
+    chronos_cluster_allocation_failure_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+  )
+  target_link_libraries(
+    chronos_cluster_allocation_failure_tests PRIVATE chronos::cluster GTest::gtest_main
+  )
+  chronos_set_project_warnings(chronos_cluster_allocation_failure_tests)
+  chronos_enable_sanitizers(chronos_cluster_allocation_failure_tests)
+  chronos_enable_static_analysis(chronos_cluster_allocation_failure_tests)
+  gtest_discover_tests(chronos_cluster_allocation_failure_tests DISCOVERY_TIMEOUT 30)
 
   add_executable(
     chronos_tiering_tests
@@ -2071,6 +2094,25 @@ if(CHRONOS_BUILD_FUZZERS)
   chronos_set_project_warnings(chronos_network_protocol_fuzz)
   chronos_enable_sanitizers(chronos_network_protocol_fuzz)
   chronos_enable_static_analysis(chronos_network_protocol_fuzz)
+
+  add_executable(
+    chronos_distributed_vector_result_exchange_fuzz
+    tests/fuzz/distributed_vector_result_exchange_fuzz.cpp
+  )
+  set_target_properties(
+    chronos_distributed_vector_result_exchange_fuzz PROPERTIES CXX_EXTENSIONS OFF
+  )
+  target_compile_features(chronos_distributed_vector_result_exchange_fuzz PRIVATE cxx_std_23)
+  target_link_libraries(chronos_distributed_vector_result_exchange_fuzz PRIVATE chronos::cluster)
+  target_compile_options(
+    chronos_distributed_vector_result_exchange_fuzz PRIVATE -fsanitize=fuzzer
+  )
+  target_link_options(
+    chronos_distributed_vector_result_exchange_fuzz PRIVATE -fsanitize=fuzzer
+  )
+  chronos_set_project_warnings(chronos_distributed_vector_result_exchange_fuzz)
+  chronos_enable_sanitizers(chronos_distributed_vector_result_exchange_fuzz)
+  chronos_enable_static_analysis(chronos_distributed_vector_result_exchange_fuzz)
 
   add_executable(chronos_columnar_batch_codec_fuzz tests/fuzz/columnar_batch_codec_fuzz.cpp)
   set_target_properties(chronos_columnar_batch_codec_fuzz PROPERTIES CXX_EXTENSIONS OFF)

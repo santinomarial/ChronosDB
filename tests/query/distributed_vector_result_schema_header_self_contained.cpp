@@ -9,5 +9,7 @@ namespace {
 [[maybe_unused]] const auto kEncode = &chronos::query::encode_distributed_vector_result_schema;
 [[maybe_unused]] const auto kDecode =
     &chronos::query::decode_distributed_vector_result_schema_exact;
+[[maybe_unused]] const auto kValidateValue =
+    &chronos::query::validate_distributed_vector_result_schema_value;
 [[maybe_unused]] const auto kValidate = &chronos::query::validate_distributed_vector_result_schema;
 } // namespace

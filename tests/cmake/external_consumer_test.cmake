@@ -58,6 +58,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/cluster/distributed_grouped_query_tcp_server.hpp>
 #include <chronos/cluster/distributed_grouped_query_transport.hpp>
 #include <chronos/cluster/distributed_vector_query_transport.hpp>
+#include <chronos/cluster/distributed_vector_result_exchange.hpp>
 #include <chronos/cluster/distributed_grouped_query_tls.hpp>
 #include <chronos/cluster/distributed_query_transport.hpp>
 #include <chronos/cluster/distributed_query_execution.hpp>
@@ -228,6 +229,12 @@ int main() {
       chronos::query::DistributedGroupedFloat64ResultOrderKey::kSum;
   const auto decode_vector_exchange =
       &chronos::query::decode_distributed_vector_exchange_message_exact;
+  const auto encode_vector_result_exchange =
+      &chronos::cluster::encode_distributed_vector_result_exchange_message_v2;
+  const auto decode_vector_result_exchange =
+      &chronos::cluster::decode_distributed_vector_result_exchange_message_v2_exact;
+  const auto create_vector_result_exchange_write_cursor =
+      &chronos::cluster::DistributedVectorResultExchangeWriteCursor::create;
   const auto create_vector_exchange_write_cursor =
       &chronos::query::DistributedVectorExchangeWriteCursor::create;
   chronos::query::DistributedVectorExchangeReader vector_exchange_reader;
@@ -242,6 +249,8 @@ int main() {
       &chronos::query::decode_distributed_vector_result_schema_exact;
   const auto validate_vector_result_schema =
       &chronos::query::validate_distributed_vector_result_schema;
+  const auto validate_vector_result_schema_value =
+      &chronos::query::validate_distributed_vector_result_schema_value;
   const auto decode_vector_fragment =
       &chronos::query::decode_distributed_vector_fragment_dispatch_exact;
   const auto encode_vector_fragment_v2 =
@@ -406,6 +415,9 @@ int main() {
   (void)grouped_result_direction;
   (void)grouped_result_order_key;
   (void)decode_vector_exchange;
+  (void)encode_vector_result_exchange;
+  (void)decode_vector_result_exchange;
+  (void)create_vector_result_exchange_write_cursor;
   (void)create_vector_exchange_write_cursor;
   (void)vector_exchange_reader;
   (void)create_vector_coordinator;
@@ -416,6 +428,7 @@ int main() {
   (void)encode_vector_result_schema;
   (void)decode_vector_result_schema;
   (void)validate_vector_result_schema;
+  (void)validate_vector_result_schema_value;
   (void)decode_vector_fragment;
   (void)encode_vector_fragment_v2;
   (void)decode_vector_fragment_v2;

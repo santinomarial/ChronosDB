@@ -727,6 +727,15 @@ Focused executions passed:
   mismatch. Header self-containment and installed consumption cover the API. V2 partial-I/O,
   compatible snapshot ownership, cluster transport, result cells, execution, and process
   integration are not claimed.
+- Schema-bound vector-result-exchange continuation: focused cluster cases round-tripped the exact
+  native schema-light descriptor/cell contract under mandatory Fragment-v2 result-schema binding,
+  including duplicate names, fixed/text/NULL cells, and terminal-only closure. They rejected schema
+  mismatch, nested damage, truncation, lower bounds, a checksum-valid future version, and v1/v2
+  confusion; enumerated every partial-read split and coalesced-frame boundary; proved short-write
+  and moved-from cursor behavior; classified owned allocation failures; and added a deterministic
+  ASan/UBSan libFuzzer smoke target for exact and fragmented decoding. Header self-containment and
+  installed consumption cover the API. Fragment-v2 carrier ownership, schema-bound
+  coordination, execution, authenticated lifecycle, and process integration remain incomplete.
 
 The C++ files changed by the grouped- and vector-exchange continuations pass the repository-pinned
 clang-format 18 check. A full-tree check was also run and still reports pre-existing violations in

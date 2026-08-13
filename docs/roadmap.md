@@ -1041,11 +1041,13 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   ownership, count/byte-bounded retention, and plan-order release only after every tablet closes;
   it does not invent result-schema identity from nested table-schema-shaped batch bytes. A distinct
   checksummed schema-light descriptor vector now preserves SQL-owned names and exact plan-validated
-  type/nullability for repeated rows and aggregate outputs. Because accepted exchange v1 remains
-  table-shaped, a new schema-light result-batch/exchange version is still required. A distinct v2
-  fragment now wraps unchanged v1 authority bytes plus the exact descriptor vector; its binder
-  proves that shape from the same committed projection before publication. V2 partial-I/O,
-  compatible snapshot ownership, and cluster request carriage remain deferred. A distinct
+  type/nullability for repeated rows and aggregate outputs. Accepted exchange v1 remains
+  table-shaped and unchanged. A distinct schema-bound result exchange v2 now wraps the unchanged
+  Native Protocol v1 result payload, exact-matches every ordered descriptor against the fragment
+  schema, and owns bounded partial reads and short writes. A distinct v2 fragment wraps unchanged v1
+  authority bytes plus the exact descriptor vector; its binder proves that shape from the same
+  committed projection before publication. Fragment-v2 partial-I/O, compatible snapshot ownership,
+  v2 cluster request carriage, coordination, and execution remain deferred. A distinct
   group-scoped grouped dispatch now
   preserves exact Raft authority without reinterpreting ungrouped dispatch bytes. Its worker reuses
   every local authority gate, resolves real temporal CSEG winners, and emits canonical grouped

@@ -400,3 +400,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0363](0363-bounded-distributed-vector-coordinator.md) | Bounded distributed vector coordinator | accepted |
 | [0364](0364-schema-light-distributed-vector-results.md) | Schema-light distributed vector results | accepted |
 | [0365](0365-schema-bound-distributed-vector-fragment.md) | Schema-bound distributed vector fragment | accepted |
+| [0366](0366-schema-bound-distributed-vector-result-exchange.md) | Schema-bound distributed vector result exchange | accepted |

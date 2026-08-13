@@ -91,6 +91,10 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Distributed Vector Exchange v1](formats/distributed-vector-exchange-v1.md): bounded correlated
   general-row envelope around one exact all-logical-type Columnar Batch v1 or terminal-only empty
   stream.
+- [Distributed Vector Result Exchange
+  v2](formats/distributed-vector-result-exchange-v2.md): schema-bound correlated result envelope
+  around one exact schema-light Native Protocol v1 result batch or terminal-only empty stream, with
+  bounded partial-I/O ownership.
 - [Distributed Aggregate Fragment v1](formats/distributed-aggregate-fragment-v1.md): bounded,
   integrity-first worker request bytes binding an exact snapshot route, consistency evidence,
   projection, aggregate input, and event-time predicate.

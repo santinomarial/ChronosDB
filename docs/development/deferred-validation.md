@@ -285,8 +285,11 @@
   execution remain. A distinct checksummed schema-light descriptor vector now preserves SQL-owned
   names plus exact plan-validated type/nullability without inventing table identity. A distinct v2
   fragment now wraps unchanged v1 authority bytes plus that exact schema, and its binder proves the
-  shape from the same committed projection. Add partial-I/O, compatible multi-tablet v2 ownership,
-  and a new result-batch/exchange version before general worker execution. Distinct exact node-routed
+  shape from the same committed projection. A distinct result exchange v2 now wraps exact native
+  schema-light result cells, requires the fragment-bound schema on encode/decode, rejects descriptor
+  mismatch, and owns bounded partial reads and short writes. Add fragment-v2 partial-I/O, compatible
+  multi-tablet v2 ownership, schema-bound coordination, and v2 cluster carriage before general
+  worker execution. Distinct exact node-routed
   request and reverse-route
   response frames now carry the complete vector dispatch and one exactly correlated vector exchange
   or failure. Header-first readers and one move-only cursor now own bounded fragmentation,

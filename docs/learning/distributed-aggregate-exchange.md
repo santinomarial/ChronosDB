@@ -286,8 +286,9 @@ tablet order only after terminal closure. It deliberately does not infer result 
 the nested table-schema-shaped batches.
 General vector output now has a separate owned result-schema value modeled on native query result
 descriptors. It preserves names verbatim and proves type/nullability against the vector intent and
-projected physical inputs. A future exchange version must pair it with schema-light result cells;
-v1 Columnar Batch bytes remain unchanged and table-shaped.
+projected physical inputs. Result Exchange v2 pairs that fragment-bound schema with the unchanged
+native schema-light result-cell payload and exact-matches every repeated descriptor. V1 Columnar
+Batch bytes remain unchanged and table-shaped.
 Fragment v2 now carries that schema beside the unchanged exact v1 authority dispatch. Its binder
 derives projected input shapes from the same committed schema used by v1 and rejects descriptor
 shape mismatch before publishing the owning wrapper.
