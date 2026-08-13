@@ -38,5 +38,6 @@ authentication. A group-scoped executable dispatch, local worker revalidation, a
 carrier remain required before storage access.
 
 The implemented authority binder proves both selected inputs against the same pinned destination
-schema and returns this grouped intent with the exact Raft group as owned values. That in-memory
-result still requires a canonical grouped dispatch and worker-local revalidation before execution.
+schema and returns this grouped intent with the exact Raft group as owned values. The implemented
+distinct grouped dispatch supplies their group-scoped canonical outer bytes. Worker-local
+revalidation remains required before execution.

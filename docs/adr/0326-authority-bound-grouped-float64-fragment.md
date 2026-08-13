@@ -42,9 +42,10 @@ encodable grouped intent, permits one FLOAT64 column to serve as both key and ag
 rejects a projected timestamp key plus an out-of-bounds key index. All seven focused binding cases
 pass, and the installed-consumer gate references the new public binder.
 
-Canonical group-scoped dispatch bytes, worker-side local revalidation and real-CSEG grouping,
-authenticated grouped transport, multi-key/non-FLOAT64 state, ordering/top-N/LIMIT, and broad
-failure evidence remain incomplete. No Phase 16 exit gate is claimed.
+Worker-side local revalidation and real-CSEG grouping, authenticated grouped transport,
+multi-key/non-FLOAT64 state, ordering/top-N/LIMIT, and broad failure evidence remain incomplete.
+Canonical group-scoped dispatch bytes are the accepted follow-up in
+[ADR 0327](0327-group-scoped-grouped-float64-dispatch.md). No Phase 16 exit gate is claimed.
 
 Invariants 4–6, 10, 11, 14, and 18 apply.
 

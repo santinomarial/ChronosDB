@@ -42,6 +42,10 @@ truncation, group/header and inner corruption, checksum-valid unknown versions, 
 groups. Full query, focused sanitizer, and installed-consumer checks cover integration. Worker
 group matching and execution follow separately.
 
+The first grouped path preserves these rules in a distinct, non-confusable dispatch around its
+grouped intent under [ADR 0327](0327-group-scoped-grouped-float64-dispatch.md); ungrouped Dispatch v1
+bytes and decoding remain unchanged.
+
 Invariants 4–6, 10, 11, 14, and 18 apply.
 
 ## Migration and rollback

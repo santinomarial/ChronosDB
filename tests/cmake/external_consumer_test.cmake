@@ -887,6 +887,10 @@ int main() {
       &chronos::query::encode_distributed_aggregate_fragment_dispatch;
   const auto decode_distributed_fragment_dispatch =
       &chronos::query::decode_distributed_aggregate_fragment_dispatch_exact;
+  const auto encode_distributed_grouped_fragment_dispatch =
+      &chronos::query::encode_distributed_grouped_float64_fragment_dispatch;
+  const auto decode_distributed_grouped_fragment_dispatch =
+      &chronos::query::decode_distributed_grouped_float64_fragment_dispatch_exact;
   const auto bind_distributed_fragment =
       &chronos::query::bind_distributed_aggregate_fragment;
   const auto bind_distributed_grouped_fragment =
@@ -1164,6 +1168,8 @@ int main() {
                  decode_distributed_grouped_fragment != nullptr &&
                  encode_distributed_fragment_dispatch != nullptr &&
                  decode_distributed_fragment_dispatch != nullptr &&
+                 encode_distributed_grouped_fragment_dispatch != nullptr &&
+                 decode_distributed_grouped_fragment_dispatch != nullptr &&
                  bind_distributed_fragment != nullptr &&
                  bind_distributed_grouped_fragment != nullptr &&
                  execute_distributed_fragment != nullptr &&

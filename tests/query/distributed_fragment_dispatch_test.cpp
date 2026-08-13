@@ -2,6 +2,8 @@
 #include "chronos/common/crc32c.hpp"
 #include "chronos/query/distributed_fragment_dispatch.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
@@ -37,6 +39,12 @@ namespace {
                    .event_time_predicate = std::nullopt}};
 }
 
+[[nodiscard]] DistributedGroupedFloat64FragmentDispatch grouped_dispatch() {
+  DistributedAggregateFragmentDispatch aggregate = dispatch();
+  return {.raft_group_id = aggregate.raft_group_id,
+          .fragment = {.aggregate = std::move(aggregate.fragment), .group_key_input_index = 0U}};
+}
+
 void store_u16_le(std::vector<std::byte>& bytes, const std::size_t offset,
                   const std::uint16_t value) {
   bytes[offset] = static_cast<std::byte>(value & 0xffU);
@@ -53,6 +61,14 @@ void rewrite_checksums(std::vector<std::byte>& bytes) {
   store_u32_le(bytes, distributed_fragment_dispatch_format::kHeaderLength - 4U,
                common::crc32c(common::ByteView{bytes}.first(
                    distributed_fragment_dispatch_format::kHeaderLength - 4U)));
+  store_u32_le(bytes, bytes.size() - 4U,
+               common::crc32c(common::ByteView{bytes}.first(bytes.size() - 4U)));
+}
+
+void rewrite_grouped_checksums(std::vector<std::byte>& bytes) {
+  store_u32_le(bytes, distributed_grouped_float64_fragment_dispatch_format::kHeaderLength - 4U,
+               common::crc32c(common::ByteView{bytes}.first(
+                   distributed_grouped_float64_fragment_dispatch_format::kHeaderLength - 4U)));
   store_u32_le(bytes, bytes.size() - 4U,
                common::crc32c(common::ByteView{bytes}.first(bytes.size() - 4U)));
 }
@@ -106,6 +122,73 @@ TEST(DistributedFragmentDispatchTest, RejectsDamageUnknownVersionAndNilGroup) {
   DistributedAggregateFragmentDispatch nil_group = dispatch();
   nil_group.raft_group_id = common::Uuid{};
   EXPECT_EQ(encode_distributed_aggregate_fragment_dispatch(nil_group).error().code(),
+            common::StatusCode::kInvalidArgument);
+}
+
+TEST(DistributedFragmentDispatchTest, RoundTripsDistinctGroupedIntentAndExactGroup) {
+  const DistributedGroupedFloat64FragmentDispatch expected = grouped_dispatch();
+  const auto encoded = encode_distributed_grouped_float64_fragment_dispatch(expected);
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  EXPECT_EQ(encoded->bytes().size(), 352U);
+  const std::array<std::byte, 8U> magic{std::byte{'C'}, std::byte{'H'}, std::byte{'D'},
+                                        std::byte{'G'}, std::byte{'D'}, std::byte{'S'},
+                                        std::byte{'P'}, std::byte{'1'}};
+  EXPECT_TRUE(std::ranges::equal(encoded->bytes().first(magic.size()), magic));
+  EXPECT_EQ(encoded->bytes()[24U], std::byte{9U});
+  common::ByteReader lengths{encoded->bytes().subspan(12U)};
+  EXPECT_EQ(lengths.read_u32_le().value(),
+            distributed_grouped_float64_fragment_dispatch_format::kHeaderLength);
+  EXPECT_EQ(lengths.read_u64_le().value(), encoded->bytes().size());
+  common::ByteReader inner_length{encoded->bytes().subspan(40U)};
+  EXPECT_EQ(inner_length.read_u64_le().value(), 268U);
+  common::ByteReader header_crc{encoded->bytes().subspan(76U, 4U)};
+  EXPECT_EQ(header_crc.read_u32_le().value(), common::crc32c(encoded->bytes().first(76U)));
+  common::ByteReader frame_crc{encoded->bytes().last(4U)};
+  EXPECT_EQ(frame_crc.read_u32_le().value(),
+            common::crc32c(encoded->bytes().first(encoded->bytes().size() - 4U)));
+
+  const auto decoded = decode_distributed_grouped_float64_fragment_dispatch_exact(encoded->bytes());
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  EXPECT_EQ(*decoded, expected);
+  EXPECT_EQ(decode_distributed_aggregate_fragment_dispatch_exact(encoded->bytes()).error().code(),
+            common::StatusCode::kCorruption);
+  const auto ungrouped = encode_distributed_aggregate_fragment_dispatch(dispatch());
+  ASSERT_TRUE(ungrouped.has_value());
+  EXPECT_EQ(
+      decode_distributed_grouped_float64_fragment_dispatch_exact(ungrouped->bytes()).error().code(),
+      common::StatusCode::kCorruption);
+}
+
+TEST(DistributedFragmentDispatchTest, RejectsGroupedDamageVersionsBoundsAndNilGroup) {
+  const auto encoded = encode_distributed_grouped_float64_fragment_dispatch(grouped_dispatch());
+  ASSERT_TRUE(encoded.has_value());
+  const std::vector<std::byte> canonical(encoded->bytes().begin(), encoded->bytes().end());
+  EXPECT_EQ(decode_distributed_grouped_float64_fragment_dispatch_exact(
+                common::ByteView{canonical}.first(canonical.size() - 1U))
+                .error()
+                .code(),
+            common::StatusCode::kCorruption);
+  std::vector<std::byte> trailing = canonical;
+  trailing.push_back(std::byte{0U});
+  EXPECT_EQ(decode_distributed_grouped_float64_fragment_dispatch_exact(trailing).error().code(),
+            common::StatusCode::kCorruption);
+  std::vector<std::byte> corrupt = canonical;
+  corrupt[24U] ^= std::byte{1U};
+  EXPECT_EQ(decode_distributed_grouped_float64_fragment_dispatch_exact(corrupt).error().code(),
+            common::StatusCode::kCorruption);
+  corrupt = canonical;
+  corrupt[80U] ^= std::byte{1U};
+  EXPECT_EQ(decode_distributed_grouped_float64_fragment_dispatch_exact(corrupt).error().code(),
+            common::StatusCode::kCorruption);
+  std::vector<std::byte> future = canonical;
+  store_u16_le(future, 8U, distributed_grouped_float64_fragment_dispatch_format::kMajor + 1U);
+  rewrite_grouped_checksums(future);
+  EXPECT_EQ(decode_distributed_grouped_float64_fragment_dispatch_exact(future).error().code(),
+            common::StatusCode::kNotSupported);
+
+  DistributedGroupedFloat64FragmentDispatch nil_group = grouped_dispatch();
+  nil_group.raft_group_id = {};
+  EXPECT_EQ(encode_distributed_grouped_float64_fragment_dispatch(nil_group).error().code(),
             common::StatusCode::kInvalidArgument);
 }
 

@@ -33,6 +33,9 @@ bytes. `bind_distributed_grouped_float64_fragment` first delegates every authori
 existing aggregate binder, then proves the key ordinal is FLOAT64 under that same schema and returns
 owned group-plus-intent values. The result remains nonexecutable until a canonical grouped dispatch
 binds those values for worker-side revalidation.
+`encode_distributed_grouped_float64_fragment_dispatch` now supplies that distinct group-scoped
+outer format. Its magic cannot be decoded as ungrouped Dispatch v1, and its integrity checks finish
+before nested grouped-intent decoding.
 The dispatch envelope adds the distinct Raft group identity that scopes every admission index;
 workers never execute the bare inner fragment.
 `bind_distributed_aggregate_fragment` constructs that envelope only after one Manifest v2 snapshot,
@@ -93,6 +96,8 @@ The grouped coordinator uses ordered tablet and key maps: admission and group me
 Fragment encoding/decoding is `O(projected columns)` with a 4,096-column and 16,604-byte hard cap.
 The grouped-intent envelope adds constant header/trailer work and one linear CRC over the nested
 frame, retaining the nested 4,096-column bound and raising the outer hard cap to 16,648 bytes.
+The group-scoped grouped dispatch adds another constant header/trailer and linear CRC pass, with a
+16,732-byte hard cap.
 Binding is `O(replicas + tablets + projected columns)` and allocates only the owned projection.
 Compatible batch binding adds `O(fragments log fragments + total projected columns)` validation and
 retains one shared Manifest generation plus the bounded plan-ordered dispatch vector. Execution
@@ -150,7 +155,7 @@ A fixed ungrouped-aggregate frame gives partial-I/O carriers an unambiguous payl
 prematurely defining a general physical-fragment language. The cost is a specialized first exchange
 type. A separate first grouped frame now carries one nullable FLOAT64 key with bounded
 coordination, but multi-key and non-FLOAT64 grouping, physical plans, authenticated transport,
-executable grouped dispatch, ordering/top-N, cancellation delivery, and
+grouped worker execution, ordering/top-N, cancellation delivery, and
 durable recovery require their own bounded contracts. A leader hint never mutates an existing
 proof-bound dispatch: following it requires explicit coordinator rebinding.
 The replicated read-barrier owner now returns exact correlated leader observations for

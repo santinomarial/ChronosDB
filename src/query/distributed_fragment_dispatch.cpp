@@ -19,8 +19,13 @@ namespace {
 inline constexpr std::array<std::byte, 8U> kMagic{std::byte{'C'}, std::byte{'H'}, std::byte{'D'},
                                                   std::byte{'F'}, std::byte{'D'}, std::byte{'S'},
                                                   std::byte{'P'}, std::byte{'1'}};
+inline constexpr std::array<std::byte, 8U> kGroupedMagic{
+    std::byte{'C'}, std::byte{'H'}, std::byte{'D'}, std::byte{'G'},
+    std::byte{'D'}, std::byte{'S'}, std::byte{'P'}, std::byte{'1'}};
 inline constexpr std::size_t kHeaderCrcOffset =
     distributed_fragment_dispatch_format::kHeaderLength - sizeof(std::uint32_t);
+inline constexpr std::size_t kGroupedHeaderCrcOffset =
+    distributed_grouped_float64_fragment_dispatch_format::kHeaderLength - sizeof(std::uint32_t);
 
 [[nodiscard]] common::Status invalid(const char* message) {
   return {common::StatusCode::kInvalidArgument, message};
@@ -171,6 +176,154 @@ decode_distributed_aggregate_fragment_dispatch_exact(const common::ByteView byte
     return common::make_unexpected(fragment.error());
   return DistributedAggregateFragmentDispatch{.raft_group_id = group_id,
                                               .fragment = std::move(*fragment)};
+}
+
+EncodedDistributedGroupedFloat64FragmentDispatch::EncodedDistributedGroupedFloat64FragmentDispatch(
+    std::vector<std::byte> bytes) noexcept
+    : bytes_(std::move(bytes)) {}
+
+common::ByteView EncodedDistributedGroupedFloat64FragmentDispatch::bytes() const noexcept {
+  return bytes_;
+}
+
+common::Result<EncodedDistributedGroupedFloat64FragmentDispatch>
+encode_distributed_grouped_float64_fragment_dispatch(
+    const DistributedGroupedFloat64FragmentDispatch& dispatch) {
+  if (dispatch.raft_group_id.is_nil())
+    return common::make_unexpected(invalid("distributed grouped dispatch group is invalid"));
+  auto inner = encode_distributed_grouped_float64_fragment(dispatch.fragment);
+  if (!inner.has_value())
+    return common::make_unexpected(inner.error());
+
+  try {
+    const std::size_t length = distributed_grouped_float64_fragment_dispatch_format::kHeaderLength +
+                               inner->bytes().size() +
+                               distributed_grouped_float64_fragment_dispatch_format::kTrailerLength;
+    std::vector<std::byte> bytes(length);
+    common::ByteWriter writer{bytes};
+    common::Status status = writer.write_exact(kGroupedMagic);
+    if (status.is_ok())
+      status = writer.write_u16_le(distributed_grouped_float64_fragment_dispatch_format::kMajor);
+    if (status.is_ok())
+      status = writer.write_u16_le(distributed_grouped_float64_fragment_dispatch_format::kMinor);
+    if (status.is_ok())
+      status =
+          writer.write_u32_le(distributed_grouped_float64_fragment_dispatch_format::kHeaderLength);
+    if (status.is_ok())
+      status = writer.write_u64_le(length);
+    if (status.is_ok())
+      status = writer.write_exact(dispatch.raft_group_id.bytes());
+    if (status.is_ok())
+      status = writer.write_u64_le(inner->bytes().size());
+    if (status.is_ok())
+      status = writer.zero_fill(28U);
+    if (!status.is_ok() || writer.offset() != kGroupedHeaderCrcOffset) {
+      return common::make_unexpected(common::Status{
+          common::StatusCode::kInternal, "distributed grouped dispatch header is inconsistent"});
+    }
+    status =
+        writer.write_u32_le(common::crc32c(common::ByteView{bytes}.first(kGroupedHeaderCrcOffset)));
+    if (status.is_ok())
+      status = writer.write_exact(inner->bytes());
+    if (status.is_ok())
+      status =
+          writer.write_u32_le(common::crc32c(common::ByteView{bytes}.first(bytes.size() - 4U)));
+    if (!status.is_ok() || !writer.full()) {
+      return common::make_unexpected(common::Status{
+          common::StatusCode::kInternal, "distributed grouped dispatch frame is inconsistent"});
+    }
+    return EncodedDistributedGroupedFloat64FragmentDispatch{std::move(bytes)};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kResourceExhausted, "distributed grouped dispatch allocation failed"});
+  } catch (const std::length_error&) {
+    return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
+                                                  "distributed grouped dispatch exceeds limits"});
+  }
+}
+
+common::Result<DistributedGroupedFloat64FragmentDispatch>
+decode_distributed_grouped_float64_fragment_dispatch_exact(
+    const common::ByteView bytes, const DistributedFragmentDecodeLimits limits) {
+  constexpr std::size_t kMinimumGroupedIntentLength =
+      distributed_grouped_float64_fragment_format::kHeaderLength +
+      distributed_fragment_format::kHeaderLength + sizeof(std::uint32_t) +
+      distributed_fragment_format::kTrailerLength +
+      distributed_grouped_float64_fragment_format::kTrailerLength;
+  constexpr std::size_t kMinimumDispatchLength =
+      distributed_grouped_float64_fragment_dispatch_format::kHeaderLength +
+      kMinimumGroupedIntentLength +
+      distributed_grouped_float64_fragment_dispatch_format::kTrailerLength;
+  if (bytes.size() < kMinimumDispatchLength ||
+      bytes.size() > distributed_grouped_float64_fragment_dispatch_format::kMaximumFrameLength) {
+    return common::make_unexpected(corruption("distributed grouped dispatch length is invalid"));
+  }
+  if (!std::ranges::equal(bytes.first(kGroupedMagic.size()), kGroupedMagic))
+    return common::make_unexpected(corruption("distributed grouped dispatch magic is invalid"));
+  common::ByteReader header_crc_reader{
+      bytes.subspan(kGroupedHeaderCrcOffset, sizeof(std::uint32_t))};
+  const auto stored_header_crc = header_crc_reader.read_u32_le();
+  if (!stored_header_crc.has_value() ||
+      *stored_header_crc != common::crc32c(bytes.first(kGroupedHeaderCrcOffset))) {
+    return common::make_unexpected(
+        corruption("distributed grouped dispatch header checksum is invalid"));
+  }
+
+  common::ByteReader reader{bytes};
+  if (!reader.skip(kGroupedMagic.size()).is_ok())
+    return common::make_unexpected(corruption("distributed grouped dispatch header is truncated"));
+  const auto major = reader.read_u16_le();
+  const auto minor = reader.read_u16_le();
+  const auto header_length = reader.read_u32_le();
+  const auto frame_length = reader.read_u64_le();
+  const auto group_bytes = reader.read_exact(common::Uuid::kSize);
+  const auto inner_length = reader.read_u64_le();
+  const auto reserved = reader.read_exact(28U);
+  const auto header_crc = reader.read_u32_le();
+  if (!major.has_value() || !minor.has_value() || !header_length.has_value() ||
+      !frame_length.has_value() || !group_bytes.has_value() || !inner_length.has_value() ||
+      !reserved.has_value() || !header_crc.has_value()) {
+    return common::make_unexpected(corruption("distributed grouped dispatch header is truncated"));
+  }
+  if (*major != distributed_grouped_float64_fragment_dispatch_format::kMajor ||
+      *minor != distributed_grouped_float64_fragment_dispatch_format::kMinor) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kNotSupported, "distributed grouped dispatch version is unsupported"});
+  }
+  if (*header_length != distributed_grouped_float64_fragment_dispatch_format::kHeaderLength ||
+      std::ranges::any_of(*reserved,
+                          [](const std::byte value) { return value != std::byte{0U}; })) {
+    return common::make_unexpected(corruption("distributed grouped dispatch header is invalid"));
+  }
+  if (*inner_length < kMinimumGroupedIntentLength ||
+      *inner_length > distributed_grouped_float64_fragment_format::kMaximumFrameLength ||
+      *frame_length != distributed_grouped_float64_fragment_dispatch_format::kHeaderLength +
+                           *inner_length +
+                           distributed_grouped_float64_fragment_dispatch_format::kTrailerLength ||
+      *frame_length != bytes.size()) {
+    return common::make_unexpected(
+        corruption("distributed grouped dispatch inner length is invalid"));
+  }
+  common::ByteReader trailer_reader{bytes.last(sizeof(std::uint32_t))};
+  const auto stored_frame_crc = trailer_reader.read_u32_le();
+  if (!stored_frame_crc.has_value() ||
+      *stored_frame_crc != common::crc32c(bytes.first(bytes.size() - sizeof(std::uint32_t)))) {
+    return common::make_unexpected(
+        corruption("distributed grouped dispatch frame checksum is invalid"));
+  }
+  common::Uuid::Bytes group_id_bytes{};
+  std::ranges::copy(*group_bytes, group_id_bytes.begin());
+  common::Uuid group_id{group_id_bytes};
+  if (group_id.is_nil())
+    return common::make_unexpected(corruption("distributed grouped dispatch group is invalid"));
+  auto fragment = decode_distributed_grouped_float64_fragment_exact(
+      bytes.subspan(distributed_grouped_float64_fragment_dispatch_format::kHeaderLength,
+                    *inner_length),
+      limits);
+  if (!fragment.has_value())
+    return common::make_unexpected(fragment.error());
+  return DistributedGroupedFloat64FragmentDispatch{.raft_group_id = group_id,
+                                                   .fragment = std::move(*fragment)};
 }
 
 } // namespace chronos::query

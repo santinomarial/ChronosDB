@@ -49,6 +49,45 @@ encode_distributed_aggregate_fragment_dispatch(
 decode_distributed_aggregate_fragment_dispatch_exact(common::ByteView bytes,
                                                      DistributedFragmentDecodeLimits limits = {});
 
+namespace distributed_grouped_float64_fragment_dispatch_format {
+inline constexpr std::uint16_t kMajor = 1U;
+inline constexpr std::uint16_t kMinor = 0U;
+inline constexpr std::size_t kHeaderLength = 80U;
+inline constexpr std::size_t kTrailerLength = 4U;
+inline constexpr std::size_t kMaximumFrameLength =
+    kHeaderLength + distributed_grouped_float64_fragment_format::kMaximumFrameLength +
+    kTrailerLength;
+} // namespace distributed_grouped_float64_fragment_dispatch_format
+
+struct DistributedGroupedFloat64FragmentDispatch {
+  common::Uuid raft_group_id;
+  DistributedGroupedFloat64Fragment fragment;
+
+  friend bool operator==(const DistributedGroupedFloat64FragmentDispatch&,
+                         const DistributedGroupedFloat64FragmentDispatch&) = default;
+};
+
+class EncodedDistributedGroupedFloat64FragmentDispatch {
+public:
+  [[nodiscard]] common::ByteView bytes() const noexcept;
+
+private:
+  explicit EncodedDistributedGroupedFloat64FragmentDispatch(std::vector<std::byte> bytes) noexcept;
+  std::vector<std::byte> bytes_;
+
+  friend common::Result<EncodedDistributedGroupedFloat64FragmentDispatch>
+  encode_distributed_grouped_float64_fragment_dispatch(
+      const DistributedGroupedFloat64FragmentDispatch&);
+};
+
+[[nodiscard]] common::Result<EncodedDistributedGroupedFloat64FragmentDispatch>
+encode_distributed_grouped_float64_fragment_dispatch(
+    const DistributedGroupedFloat64FragmentDispatch& dispatch);
+
+[[nodiscard]] common::Result<DistributedGroupedFloat64FragmentDispatch>
+decode_distributed_grouped_float64_fragment_dispatch_exact(
+    common::ByteView bytes, DistributedFragmentDecodeLimits limits = {});
+
 } // namespace chronos::query
 
 #endif // CHRONOS_QUERY_DISTRIBUTED_FRAGMENT_DISPATCH_HPP_
