@@ -620,6 +620,10 @@ Focused executions passed:
   tablets to SUM 6, ordered descending by SUM with LIMIT 2, and used canonical group-key order to
   break its tie with another SUM-6 key. Invalid order-key rejection passed. General expression and
   arbitrary-row ordering are not claimed.
+- Distributed vector-result codec continuation: two focused query cases wrapped a canonical
+  mixed-type Columnar Batch v1 and a terminal-only empty stream in exact correlated/checksummed
+  frames, then rejected truncation, nested corruption, limit excess, and empty nonterminal input.
+  General vector request fragments, coordination, transport, and execution are not claimed.
 
 The C++ files changed by the grouped-exchange continuations pass the repository-pinned clang-format
 18 check. A full-tree check was also run and still reports pre-existing violations in the

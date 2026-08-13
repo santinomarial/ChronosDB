@@ -1057,6 +1057,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   surface. COUNT/SUM/MIN/MAX/mean/population-variance ordering now uses those globally merged states
   with a deterministic group-key tie-breaker before LIMIT. Multi-key/non-FLOAT64 state/transport,
   arbitrary expression ordering, and general row ordering/LIMIT remain deferred. A distinct
+  checksummed vector-exchange frame now correlates one exact all-logical-type Columnar Batch v1 or
+  terminal-only empty stream without changing aggregate/grouped bytes. General vector request
+  fragments, coordination, and transport remain deferred. The distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
   catalog, Manifest, route, and execution gates;
   a separate canonical checksummed cluster protocol now requests one group-correlated ordered

@@ -259,6 +259,9 @@
   now canonically carries one nullable FLOAT64 group key plus one mergeable aggregate partial,
   including exact signed-zero/NaN group equivalence. Its fixed reader and move-only write cursor now
   cover every fragmentation boundary, coalesced suffix ownership, sticky damage, and short writes.
+  A distinct vector result envelope now carries one exact checksummed all-logical-type Columnar Batch
+  v1 or terminal-only empty stream under query/tablet/sequence correlation. General vector fragment
+  requests, coordination, and transport remain.
   A distinct terminal-only frame closes an empty tablet stream without inventing a SQL NULL group.
   Its separate fixed reader and move-only cursor own every terminal fragmentation boundary,
   coalesced successor bytes, sticky damage, and checked short writes without introducing an

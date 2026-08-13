@@ -88,6 +88,9 @@ ChronosDB is pre-alpha and in its architecture phase. These documents define int
 - [Distributed Grouped FLOAT64 Aggregate Exchange
   v1](formats/distributed-grouped-float64-exchange-v1.md): fixed-width, CRC-protected nullable
   one-key grouped partial state.
+- [Distributed Vector Exchange v1](formats/distributed-vector-exchange-v1.md): bounded correlated
+  general-row envelope around one exact all-logical-type Columnar Batch v1 or terminal-only empty
+  stream.
 - [Distributed Aggregate Fragment v1](formats/distributed-aggregate-fragment-v1.md): bounded,
   integrity-first worker request bytes binding an exact snapshot route, consistency evidence,
   projection, aggregate input, and event-time predicate.

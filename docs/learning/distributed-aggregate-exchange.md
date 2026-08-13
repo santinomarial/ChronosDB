@@ -229,6 +229,9 @@ placement, and LIMIT only after every tablet terminates and equal keys merge glo
 plus LIMIT therefore provides top-N without unsafe per-tablet truncation.
 The same final pass can order on globally merged COUNT, SUM, extrema, mean, or population variance.
 Equal aggregate values use ascending canonical group-key order as the deterministic tie-breaker.
+A distinct vector envelope reuses canonical Columnar Batch v1 for general all-type row results. The
+outer header contributes query/tablet/sequence/terminal correlation and a second integrity boundary;
+it does not reinterpret or duplicate the nested physical column format.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated

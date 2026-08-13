@@ -130,6 +130,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/query/cseg_scan.hpp>
 #include <chronos/query/database_cseg_scan.hpp>
 #include <chronos/query/distributed_grouped_exchange.hpp>
+#include <chronos/query/distributed_vector_exchange.hpp>
 #include <chronos/query/distributed.hpp>
 #include <chronos/query/distributed_fragment.hpp>
 #include <chronos/query/distributed_fragment_binding.hpp>
@@ -220,6 +221,8 @@ int main() {
       chronos::query::DistributedGroupedFloat64ResultDirection::kDescending;
   const auto grouped_result_order_key =
       chronos::query::DistributedGroupedFloat64ResultOrderKey::kSum;
+  const auto decode_vector_exchange =
+      &chronos::query::decode_distributed_vector_exchange_message_exact;
   const auto create_replicated_query_worker =
       &chronos::service::ReplicatedDistributedQueryWorker::create;
   const auto create_replicated_grouped_query_worker =
@@ -340,6 +343,7 @@ int main() {
   (void)create_replicated_follower_grouped_query_owner;
   (void)grouped_result_direction;
   (void)grouped_result_order_key;
+  (void)decode_vector_exchange;
   (void)create_replicated_query_worker;
   (void)create_replicated_grouped_query_worker;
   (void)create_replicated_grouped_query_receiver;
