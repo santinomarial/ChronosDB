@@ -1060,8 +1060,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   attempt before acquisition, proves nonblocking completion, binds authenticated route identity,
   enforces a separate connect deadline, and preserves TLS-before-descriptor teardown. A bounded
   inbound TCP owner now adds finite listener admission, stable connection records, metrics,
-  per-carrier deadlines, and deterministic shutdown. Schema-bound coordination and execution
-  remain deferred. A distinct
+  per-carrier deadlines, and deterministic shutdown. A finite one-tablet sender now owns immutable
+  whole attempts, exact schema/correlation revalidation, independent response count/byte bounds,
+  advisory hints, and capped retry/backoff without authority rebinding. Schema-bound coordination
+  and execution remain deferred. A distinct
   group-scoped grouped dispatch now
   preserves exact Raft authority without reinterpreting ungrouped dispatch bytes. Its worker reuses
   every local authority gate, resolves real temporal CSEG winners, and emits canonical grouped

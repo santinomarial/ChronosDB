@@ -9,8 +9,10 @@
 #include "chronos/raft/types.hpp"
 
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <optional>
+#include <span>
 #include <vector>
 
 namespace chronos::cluster {
@@ -197,6 +199,58 @@ public:
 private:
   explicit DistributedVectorQueryReceiverV2(DistributedVectorQueryReceiverV2Config config) noexcept;
   DistributedVectorQueryReceiverV2Config config_;
+};
+
+struct DistributedVectorQuerySenderLimitsV2 {
+  DistributedQueryRetryLimits retry;
+  std::size_t maximum_response_frames{1024U};
+  std::size_t maximum_response_bytes{kDefaultDistributedVectorQueryV2ResponseBytes};
+};
+
+// Deterministic finite retry owner for one immutable schema-bound vector dispatch. Each accepted
+// outcome is a complete terminally closed response vector; no partial stream is published.
+class DistributedVectorQuerySenderV2 {
+public:
+  using TimePoint = std::chrono::steady_clock::time_point;
+
+  DistributedVectorQuerySenderV2() = delete;
+  DistributedVectorQuerySenderV2(const DistributedVectorQuerySenderV2&) = delete;
+  DistributedVectorQuerySenderV2& operator=(const DistributedVectorQuerySenderV2&) = delete;
+  DistributedVectorQuerySenderV2(DistributedVectorQuerySenderV2&&) noexcept = default;
+  DistributedVectorQuerySenderV2& operator=(DistributedVectorQuerySenderV2&&) noexcept = default;
+
+  [[nodiscard]] static common::Result<DistributedVectorQuerySenderV2>
+  create(raft::NodeId source_node_id, query::DistributedVectorFragmentDispatchV2 dispatch,
+         DistributedVectorQuerySenderLimitsV2 limits = {});
+  [[nodiscard]] common::Result<DistributedVectorQueryAttemptV2> begin_attempt(TimePoint now);
+  [[nodiscard]] common::Status
+  accept_responses(std::span<const DistributedVectorQueryResponseV2> responses, TimePoint now);
+  [[nodiscard]] common::Status record_transport_failure(common::StatusCode code, TimePoint now);
+
+  [[nodiscard]] DistributedQuerySenderState state() const noexcept;
+  [[nodiscard]] std::size_t attempts_started() const noexcept;
+  [[nodiscard]] std::optional<TimePoint> next_attempt_not_before() const noexcept;
+  [[nodiscard]] std::optional<common::StatusCode> last_status_code() const noexcept;
+  [[nodiscard]] std::optional<DistributedQueryLeaderHint> suggested_leader() const noexcept;
+  [[nodiscard]] const std::optional<std::vector<DistributedVectorResultExchangeMessage>>&
+  result() const noexcept;
+
+private:
+  DistributedVectorQuerySenderV2(raft::NodeId source_node_id,
+                                 query::DistributedVectorFragmentDispatchV2 dispatch,
+                                 DistributedVectorQuerySenderLimitsV2 limits) noexcept;
+  [[nodiscard]] common::Status schedule(common::StatusCode code, TimePoint now);
+
+  raft::NodeId source_node_id_{};
+  query::DistributedVectorFragmentDispatchV2 dispatch_;
+  DistributedVectorQuerySenderLimitsV2 limits_;
+  DistributedQuerySenderState state_{DistributedQuerySenderState::kReady};
+  std::size_t attempts_started_{};
+  std::chrono::milliseconds next_backoff_{};
+  std::optional<TimePoint> next_attempt_not_before_;
+  std::optional<common::StatusCode> last_status_code_;
+  std::optional<DistributedQueryLeaderHint> suggested_leader_;
+  std::optional<std::vector<DistributedVectorResultExchangeMessage>> result_;
 };
 
 } // namespace chronos::cluster

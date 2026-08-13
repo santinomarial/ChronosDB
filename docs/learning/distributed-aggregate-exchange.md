@@ -324,6 +324,11 @@ The matching v2 inbound TCP owner reserves a finite connection table and poll se
 admits only bounded work per poll, and holds each socket/carrier pair behind a stable handle. It
 drives TLS deadlines even without readiness, rejects excess accepted descriptors immediately,
 exposes saturating lifecycle metrics, and clears every carrier before the listener on shutdown.
+The v2 sender is the policy boundary above one-attempt TCP. It canonically reproduces the immutable
+Fragment-v2 request, revalidates every complete response against the owned result schema, and
+publishes no payload until exact sequence/terminal/count/byte checks all pass. Retryable outcomes
+schedule only finite whole attempts under capped backoff; authenticated leader hints remain
+advisory and cannot rewrite the target.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated

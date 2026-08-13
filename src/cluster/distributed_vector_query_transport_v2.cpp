@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <new>
@@ -63,6 +64,32 @@ inline constexpr std::size_t kMinimumResultExchangeSize =
 
 [[nodiscard]] common::Status unauthenticated(const char* message) {
   return {common::StatusCode::kUnauthenticated, message};
+}
+
+[[nodiscard]] common::Status unavailable(const char* message) {
+  return {common::StatusCode::kUnavailable, message};
+}
+
+[[nodiscard]] bool retryable_status(const common::StatusCode code) noexcept {
+  return code == common::StatusCode::kUnavailable ||
+         code == common::StatusCode::kResourceExhausted || code == common::StatusCode::kIoError;
+}
+
+[[nodiscard]] DistributedVectorQuerySenderV2::TimePoint
+saturating_add(const DistributedVectorQuerySenderV2::TimePoint now,
+               const std::chrono::milliseconds delay) noexcept {
+  const auto converted =
+      std::chrono::duration_cast<DistributedVectorQuerySenderV2::TimePoint::duration>(delay);
+  if (now > DistributedVectorQuerySenderV2::TimePoint::max() - converted)
+    return DistributedVectorQuerySenderV2::TimePoint::max();
+  return now + converted;
+}
+
+[[nodiscard]] common::Result<std::vector<std::byte>>
+encode_sender_request_v2(const raft::NodeId source_node_id,
+                         const query::DistributedVectorFragmentDispatchV2& dispatch) {
+  return encode_distributed_vector_query_request_v2(
+      {source_node_id, dispatch.dispatch.serving_node, dispatch});
 }
 
 [[nodiscard]] bool zero(const common::ByteView bytes) {
@@ -948,6 +975,182 @@ common::Result<std::vector<std::vector<std::byte>>> DistributedVectorQueryReceiv
   } catch (const std::length_error&) {
     return common::make_unexpected(exhausted("vector query v2 response exceeds limits"));
   }
+}
+
+DistributedVectorQuerySenderV2::DistributedVectorQuerySenderV2(
+    const raft::NodeId source_node_id, query::DistributedVectorFragmentDispatchV2 dispatch,
+    const DistributedVectorQuerySenderLimitsV2 limits) noexcept
+    : source_node_id_(source_node_id), dispatch_(std::move(dispatch)), limits_(limits),
+      next_backoff_(limits.retry.initial_backoff) {}
+
+common::Result<DistributedVectorQuerySenderV2>
+DistributedVectorQuerySenderV2::create(const raft::NodeId source_node_id,
+                                       query::DistributedVectorFragmentDispatchV2 dispatch,
+                                       const DistributedVectorQuerySenderLimitsV2 limits) {
+  const auto maximum_supported_backoff =
+      std::chrono::duration_cast<std::chrono::milliseconds>(TimePoint::duration::max());
+  constexpr std::size_t kMinimumResponseBytes =
+      kDistributedVectorQueryResponseV2HeaderSize + kDistributedVectorQueryResponseV2TrailerSize;
+  if (source_node_id == 0U || limits.retry.maximum_attempts == 0U ||
+      limits.retry.maximum_attempts > 1024U || limits.retry.initial_backoff.count() <= 0 ||
+      limits.retry.maximum_backoff < limits.retry.initial_backoff ||
+      limits.retry.maximum_backoff > maximum_supported_backoff ||
+      limits.maximum_response_frames == 0U ||
+      limits.maximum_response_frames > query::kMaximumDistributedCoordinatorMessages ||
+      limits.maximum_response_bytes < kMinimumResponseBytes ||
+      limits.maximum_response_bytes > kMaximumDistributedVectorQueryV2ResponseBytes ||
+      dispatch.dispatch.serving_node == source_node_id) {
+    return common::make_unexpected(invalid("vector query v2 sender configuration is invalid"));
+  }
+  auto encoded = encode_sender_request_v2(source_node_id, dispatch);
+  if (!encoded.has_value())
+    return common::make_unexpected(encoded.error());
+  return DistributedVectorQuerySenderV2{source_node_id, std::move(dispatch), limits};
+}
+
+common::Result<DistributedVectorQueryAttemptV2>
+DistributedVectorQuerySenderV2::begin_attempt(const TimePoint now) {
+  if (state_ == DistributedQuerySenderState::kSucceeded ||
+      state_ == DistributedQuerySenderState::kFailed) {
+    return common::make_unexpected(invalid("vector query v2 sender is terminal"));
+  }
+  if (state_ == DistributedQuerySenderState::kWaitingForResponse)
+    return common::make_unexpected(unavailable("vector query v2 response is pending"));
+  if (state_ == DistributedQuerySenderState::kBackoff && now < *next_attempt_not_before_)
+    return common::make_unexpected(unavailable("vector query v2 retry backoff is active"));
+  if (attempts_started_ >= limits_.retry.maximum_attempts)
+    return common::make_unexpected(invalid("vector query v2 retry budget is exhausted"));
+  auto bytes = encode_sender_request_v2(source_node_id_, dispatch_);
+  if (!bytes.has_value())
+    return common::make_unexpected(bytes.error());
+  ++attempts_started_;
+  state_ = DistributedQuerySenderState::kWaitingForResponse;
+  suggested_leader_.reset();
+  next_attempt_not_before_.reset();
+  return DistributedVectorQueryAttemptV2{attempts_started_, dispatch_.dispatch.serving_node,
+                                         std::move(*bytes)};
+}
+
+common::Status DistributedVectorQuerySenderV2::accept_responses(
+    const std::span<const DistributedVectorQueryResponseV2> responses, const TimePoint now) {
+  if (state_ != DistributedQuerySenderState::kWaitingForResponse)
+    return invalid("vector query v2 sender has no pending response");
+  if (responses.empty())
+    return invalid("vector query v2 response stream is empty");
+  if (responses.size() > limits_.maximum_response_frames)
+    return exhausted("vector query v2 response stream exceeds sender frame limit");
+
+  const auto& identity = dispatch_.dispatch;
+  std::size_t total_response_bytes{};
+  for (const auto& response : responses) {
+    if (response.source_node_id != identity.serving_node ||
+        response.target_node_id != source_node_id_ || response.query_id != identity.query_id ||
+        response.tablet_id != identity.tablet_id) {
+      return invalid("vector query v2 sender response correlation mismatch");
+    }
+    auto encoded = encode_distributed_vector_query_response_v2(response, dispatch_.result_schema);
+    if (!encoded.has_value())
+      return encoded.error();
+    if (encoded->size() > limits_.maximum_response_bytes - total_response_bytes)
+      return exhausted("vector query v2 response stream exceeds sender byte limit");
+    total_response_bytes += encoded->size();
+  }
+
+  if (responses.front().status_code != common::StatusCode::kOk) {
+    if (responses.size() != 1U || responses.front().payload.has_value())
+      return invalid("vector query v2 failure response stream is invalid");
+    suggested_leader_ = responses.front().leader_hint;
+    return schedule(responses.front().status_code, now);
+  }
+
+  try {
+    std::vector<DistributedVectorResultExchangeMessage> accepted;
+    accepted.reserve(responses.size());
+    for (std::size_t index = 0U; index < responses.size(); ++index) {
+      const auto& response = responses[index];
+      if (response.status_code != common::StatusCode::kOk || !response.payload.has_value() ||
+          response.leader_hint.has_value()) {
+        return invalid("vector query v2 success response stream is invalid");
+      }
+      const auto& message = *response.payload;
+      const bool last = index + 1U == responses.size();
+      if (message.query_id != identity.query_id || message.tablet_id != identity.tablet_id ||
+          message.sequence != index + 1U || message.terminal != last ||
+          (message.encoded_result_batch.empty() && (!last || responses.size() != 1U))) {
+        return invalid("vector query v2 success response sequence is invalid");
+      }
+      accepted.push_back(message);
+    }
+    result_ = std::move(accepted);
+  } catch (const std::bad_alloc&) {
+    return exhausted("vector query v2 sender result allocation failed");
+  } catch (const std::length_error&) {
+    return exhausted("vector query v2 sender result exceeds limits");
+  }
+  last_status_code_ = common::StatusCode::kOk;
+  suggested_leader_.reset();
+  state_ = DistributedQuerySenderState::kSucceeded;
+  next_attempt_not_before_.reset();
+  return common::Status::ok();
+}
+
+common::Status
+DistributedVectorQuerySenderV2::record_transport_failure(const common::StatusCode code,
+                                                         const TimePoint now) {
+  if (state_ != DistributedQuerySenderState::kWaitingForResponse)
+    return invalid("vector query v2 sender has no active transport attempt");
+  if (code == common::StatusCode::kOk)
+    return invalid("vector query v2 transport failure cannot be OK");
+  suggested_leader_.reset();
+  return schedule(code, now);
+}
+
+common::Status DistributedVectorQuerySenderV2::schedule(const common::StatusCode code,
+                                                        const TimePoint now) {
+  last_status_code_ = code;
+  if (!retryable_status(code) || attempts_started_ >= limits_.retry.maximum_attempts) {
+    state_ = DistributedQuerySenderState::kFailed;
+    next_attempt_not_before_.reset();
+    return common::Status::ok();
+  }
+  state_ = DistributedQuerySenderState::kBackoff;
+  next_attempt_not_before_ = saturating_add(now, next_backoff_);
+  if (next_backoff_ < limits_.retry.maximum_backoff) {
+    const auto current = next_backoff_.count();
+    const auto maximum = limits_.retry.maximum_backoff.count();
+    next_backoff_ = current > maximum / 2
+                        ? limits_.retry.maximum_backoff
+                        : std::min(next_backoff_ * 2, limits_.retry.maximum_backoff);
+  }
+  return common::Status::ok();
+}
+
+DistributedQuerySenderState DistributedVectorQuerySenderV2::state() const noexcept {
+  return state_;
+}
+
+std::size_t DistributedVectorQuerySenderV2::attempts_started() const noexcept {
+  return attempts_started_;
+}
+
+std::optional<DistributedVectorQuerySenderV2::TimePoint>
+DistributedVectorQuerySenderV2::next_attempt_not_before() const noexcept {
+  return next_attempt_not_before_;
+}
+
+std::optional<common::StatusCode>
+DistributedVectorQuerySenderV2::last_status_code() const noexcept {
+  return last_status_code_;
+}
+
+std::optional<DistributedQueryLeaderHint>
+DistributedVectorQuerySenderV2::suggested_leader() const noexcept {
+  return suggested_leader_;
+}
+
+const std::optional<std::vector<DistributedVectorResultExchangeMessage>>&
+DistributedVectorQuerySenderV2::result() const noexcept {
+  return result_;
 }
 
 } // namespace chronos::cluster

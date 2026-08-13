@@ -175,5 +175,37 @@ TEST(DistributedVectorQueryReceiverV2AllocationFailureTest,
   EXPECT_TRUE(success);
 }
 
+TEST(DistributedVectorQuerySenderV2AllocationFailureTest,
+     ClassifiesEverySchemaValidationAndResultCopyAllocation) {
+  const DistributedVectorQueryResponseV2 response{
+      .source_node_id = 7U,
+      .target_node_id = 1U,
+      .query_id = uuid(1U),
+      .tablet_id = schema::TabletId::from_uuid(uuid(4U)).value(),
+      .status_code = common::StatusCode::kOk,
+      .payload = DistributedVectorResultExchangeMessage{
+          .query_id = uuid(1U),
+          .tablet_id = schema::TabletId::from_uuid(uuid(4U)).value(),
+          .sequence = 1U,
+          .terminal = true}};
+  bool success = false;
+  for (std::size_t fail_after = 0U; fail_after < 256U; ++fail_after) {
+    auto sender = DistributedVectorQuerySenderV2::create(1U, dispatch_v2());
+    ASSERT_TRUE(sender.has_value());
+    ASSERT_TRUE(sender->begin_attempt({}).has_value());
+    const common::Status status = run_failure(
+        fail_after, [&] { return sender->accept_responses(std::span{&response, 1U}, {}); });
+    if (status.is_ok()) {
+      ASSERT_TRUE(sender->result().has_value());
+      success = true;
+      break;
+    }
+    EXPECT_EQ(status.code(), common::StatusCode::kResourceExhausted);
+    EXPECT_EQ(sender->state(), DistributedQuerySenderState::kWaitingForResponse);
+    EXPECT_FALSE(sender->result().has_value());
+  }
+  EXPECT_TRUE(success);
+}
+
 } // namespace
 } // namespace chronos::cluster

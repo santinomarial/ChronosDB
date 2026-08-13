@@ -4,11 +4,13 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
 #include <optional>
 #include <ranges>
+#include <span>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -208,9 +210,12 @@ TEST(DistributedVectorQueryTransportV2Test, RoundTripsSchemaBoundRequestResponse
       decode_distributed_vector_query_response_v2_exact(*encoded_response, schema_value);
   ASSERT_TRUE(decoded_response.has_value()) << decoded_response.error().to_string();
   ASSERT_TRUE(decoded_response->payload.has_value());
+  // Guarded by the payload assertion above.
+  // NOLINTBEGIN(bugprone-unchecked-optional-access)
   EXPECT_EQ(decoded_response->payload->encoded_result_batch,
             response.payload->encoded_result_batch);
   EXPECT_TRUE(decoded_response->payload->terminal);
+  // NOLINTEND(bugprone-unchecked-optional-access)
   EXPECT_EQ(decode_distributed_vector_query_response_v1(*encoded_response).error().code(),
             common::StatusCode::kCorruption);
   const auto encoded_v1_response = encode_distributed_vector_query_response_v1(
@@ -433,8 +438,11 @@ TEST(DistributedVectorQueryReceiverV2Test,
         decode_distributed_vector_query_response_v2_exact((*success)[index], result_schema());
     ASSERT_TRUE(decoded.has_value()) << index << ": " << decoded.error().to_string();
     ASSERT_TRUE(decoded->payload.has_value());
+    // Guarded by the payload assertion above.
+    // NOLINTBEGIN(bugprone-unchecked-optional-access)
     EXPECT_EQ(decoded->payload->sequence, index + 1U);
     EXPECT_EQ(decoded->payload->terminal, index + 1U == success->size());
+    // NOLINTEND(bugprone-unchecked-optional-access)
   }
 
   worker.terminal_only = true;
@@ -445,8 +453,11 @@ TEST(DistributedVectorQueryReceiverV2Test,
       decode_distributed_vector_query_response_v2_exact(terminal->front(), result_schema());
   ASSERT_TRUE(decoded_terminal.has_value());
   ASSERT_TRUE(decoded_terminal->payload.has_value());
+  // Guarded by the payload assertion above.
+  // NOLINTBEGIN(bugprone-unchecked-optional-access)
   EXPECT_TRUE(decoded_terminal->payload->terminal);
   EXPECT_TRUE(decoded_terminal->payload->encoded_result_batch.empty());
+  // NOLINTEND(bugprone-unchecked-optional-access)
 
   worker.terminal_only = false;
   worker.failure = common::Status{common::StatusCode::kUnavailable, "placement changed"};
@@ -529,6 +540,164 @@ TEST(DistributedVectorQueryReceiverV2Test,
                                                          .maximum_response_bytes = 115U})
                    .has_value());
 }
+
+// Optional values in these sender cases are asserted or constructed present before access.
+// NOLINTBEGIN(bugprone-unchecked-optional-access)
+TEST(DistributedVectorQuerySenderV2Test, RetainsOnlyCompleteSchemaBoundTerminalStreams) {
+  auto sender = DistributedVectorQuerySenderV2::create(1U, dispatch_v2());
+  ASSERT_TRUE(sender.has_value()) << sender.error().to_string();
+  const auto now = DistributedVectorQuerySenderV2::TimePoint{};
+  auto attempt = sender->begin_attempt(now);
+  ASSERT_TRUE(attempt.has_value()) << attempt.error().to_string();
+  EXPECT_EQ(attempt->attempt_number, 1U);
+  EXPECT_EQ(attempt->target_node_id, 2U);
+  const auto decoded = decode_distributed_vector_query_request_v2_exact(attempt->request_bytes);
+  ASSERT_TRUE(decoded.has_value());
+  EXPECT_EQ(decoded->dispatch, dispatch_v2());
+
+  std::array responses{
+      DistributedVectorQueryResponseV2{
+          .source_node_id = 2U,
+          .target_node_id = 1U,
+          .query_id = uuid(1U),
+          .tablet_id = id<schema::TabletId>(4U),
+          .status_code = common::StatusCode::kOk,
+          .payload =
+              DistributedVectorResultExchangeMessage{.query_id = uuid(1U),
+                                                     .tablet_id = id<schema::TabletId>(4U),
+                                                     .sequence = 1U,
+                                                     .terminal = false,
+                                                     .encoded_result_batch = zero_row_batch()}},
+      DistributedVectorQueryResponseV2{.source_node_id = 2U,
+                                       .target_node_id = 1U,
+                                       .query_id = uuid(1U),
+                                       .tablet_id = id<schema::TabletId>(4U),
+                                       .status_code = common::StatusCode::kOk,
+                                       .payload = DistributedVectorResultExchangeMessage{
+                                           .query_id = uuid(1U),
+                                           .tablet_id = id<schema::TabletId>(4U),
+                                           .sequence = 2U,
+                                           .terminal = true,
+                                           .encoded_result_batch = zero_row_batch()}}};
+  auto wrong_schema = responses;
+  wrong_schema[1].payload->encoded_result_batch = wrong_schema_batch();
+  EXPECT_EQ(sender->accept_responses(wrong_schema, now).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(sender->state(), DistributedQuerySenderState::kWaitingForResponse);
+  EXPECT_FALSE(sender->result().has_value());
+  auto wrong_sequence = responses;
+  wrong_sequence[1].payload->sequence = 3U;
+  EXPECT_EQ(sender->accept_responses(wrong_sequence, now).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(sender->state(), DistributedQuerySenderState::kWaitingForResponse);
+
+  const auto first_encoded =
+      encode_distributed_vector_query_response_v2(responses[0], result_schema());
+  const auto second_encoded =
+      encode_distributed_vector_query_response_v2(responses[1], result_schema());
+  ASSERT_TRUE(first_encoded.has_value());
+  ASSERT_TRUE(second_encoded.has_value());
+  auto bounded = DistributedVectorQuerySenderV2::create(
+      1U, dispatch_v2(),
+      {.maximum_response_frames = 2U,
+       .maximum_response_bytes = first_encoded->size() + second_encoded->size() - 1U});
+  ASSERT_TRUE(bounded.has_value());
+  ASSERT_TRUE(bounded->begin_attempt(now).has_value());
+  EXPECT_EQ(bounded->accept_responses(responses, now).code(),
+            common::StatusCode::kResourceExhausted);
+  EXPECT_EQ(bounded->state(), DistributedQuerySenderState::kWaitingForResponse);
+  EXPECT_FALSE(bounded->result().has_value());
+  auto frame_bounded =
+      DistributedVectorQuerySenderV2::create(1U, dispatch_v2(), {.maximum_response_frames = 1U});
+  ASSERT_TRUE(frame_bounded.has_value());
+  ASSERT_TRUE(frame_bounded->begin_attempt(now).has_value());
+  EXPECT_EQ(frame_bounded->accept_responses(responses, now).code(),
+            common::StatusCode::kResourceExhausted);
+  EXPECT_EQ(frame_bounded->state(), DistributedQuerySenderState::kWaitingForResponse);
+
+  EXPECT_TRUE(sender->accept_responses(responses, now).is_ok());
+  EXPECT_EQ(sender->state(), DistributedQuerySenderState::kSucceeded);
+  ASSERT_TRUE(sender->result().has_value());
+  ASSERT_EQ(sender->result()->size(), 2U);
+  EXPECT_EQ(sender->result()->front().sequence, 1U);
+  EXPECT_TRUE(sender->result()->back().terminal);
+  responses[0].payload->encoded_result_batch.clear();
+  EXPECT_FALSE(sender->result()->front().encoded_result_batch.empty());
+  EXPECT_FALSE(sender->begin_attempt(now).has_value());
+
+  auto empty_sender = DistributedVectorQuerySenderV2::create(1U, dispatch_v2());
+  ASSERT_TRUE(empty_sender.has_value());
+  ASSERT_TRUE(empty_sender->begin_attempt(now).has_value());
+  const std::array empty_response{DistributedVectorQueryResponseV2{
+      .source_node_id = 2U,
+      .target_node_id = 1U,
+      .query_id = uuid(1U),
+      .tablet_id = id<schema::TabletId>(4U),
+      .status_code = common::StatusCode::kOk,
+      .payload = DistributedVectorResultExchangeMessage{.query_id = uuid(1U),
+                                                        .tablet_id = id<schema::TabletId>(4U),
+                                                        .sequence = 1U,
+                                                        .terminal = true}}};
+  EXPECT_TRUE(empty_sender->accept_responses(empty_response, now).is_ok());
+  ASSERT_TRUE(empty_sender->result().has_value());
+  EXPECT_TRUE(empty_sender->result()->front().encoded_result_batch.empty());
+}
+
+TEST(DistributedVectorQuerySenderV2Test, RetriesWholeAttemptsWithoutRebindingAuthority) {
+  auto sender = DistributedVectorQuerySenderV2::create(
+      1U, dispatch_v2(),
+      {.retry = {.maximum_attempts = 3U,
+                 .initial_backoff = std::chrono::milliseconds{10},
+                 .maximum_backoff = std::chrono::milliseconds{20}},
+       .maximum_response_frames = 4U,
+       .maximum_response_bytes = 1024U});
+  ASSERT_TRUE(sender.has_value());
+  const auto start = DistributedVectorQuerySenderV2::TimePoint{};
+  auto first_attempt = sender->begin_attempt(start);
+  ASSERT_TRUE(first_attempt.has_value());
+  const DistributedVectorQueryResponseV2 unavailable_response{
+      .source_node_id = 2U,
+      .target_node_id = 1U,
+      .query_id = uuid(1U),
+      .tablet_id = id<schema::TabletId>(4U),
+      .status_code = common::StatusCode::kUnavailable,
+      .leader_hint = DistributedQueryLeaderHint{3U, 9U}};
+  auto mismatched = unavailable_response;
+  mismatched.source_node_id = 3U;
+  EXPECT_EQ(sender->accept_responses(std::span{&mismatched, 1U}, start).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(sender->state(), DistributedQuerySenderState::kWaitingForResponse);
+  EXPECT_TRUE(sender->accept_responses(std::span{&unavailable_response, 1U}, start).is_ok());
+  EXPECT_EQ(sender->state(), DistributedQuerySenderState::kBackoff);
+  ASSERT_TRUE(sender->suggested_leader().has_value());
+  EXPECT_EQ(sender->suggested_leader()->node_id, 3U);
+  EXPECT_EQ(*sender->next_attempt_not_before(), start + std::chrono::milliseconds{10});
+  EXPECT_FALSE(sender->result().has_value());
+  EXPECT_FALSE(sender->begin_attempt(start + std::chrono::milliseconds{9}).has_value());
+  auto second_attempt = sender->begin_attempt(start + std::chrono::milliseconds{10});
+  ASSERT_TRUE(second_attempt.has_value());
+  EXPECT_EQ(second_attempt->target_node_id, 2U);
+  EXPECT_EQ(second_attempt->request_bytes, first_attempt->request_bytes);
+  EXPECT_TRUE(sender
+                  ->record_transport_failure(common::StatusCode::kIoError,
+                                             start + std::chrono::milliseconds{10})
+                  .is_ok());
+  EXPECT_EQ(*sender->next_attempt_not_before(), start + std::chrono::milliseconds{30});
+  auto third_attempt = sender->begin_attempt(start + std::chrono::milliseconds{30});
+  ASSERT_TRUE(third_attempt.has_value());
+  EXPECT_EQ(third_attempt->target_node_id, 2U);
+  EXPECT_TRUE(sender
+                  ->record_transport_failure(common::StatusCode::kInvalidArgument,
+                                             start + std::chrono::milliseconds{30})
+                  .is_ok());
+  EXPECT_EQ(sender->state(), DistributedQuerySenderState::kFailed);
+  EXPECT_EQ(sender->attempts_started(), 3U);
+  EXPECT_FALSE(sender->result().has_value());
+  EXPECT_FALSE(
+      DistributedVectorQuerySenderV2::create(1U, dispatch_v2(), {.maximum_response_bytes = 115U})
+          .has_value());
+}
+// NOLINTEND(bugprone-unchecked-optional-access)
 
 } // namespace
 } // namespace chronos::cluster
