@@ -101,6 +101,9 @@ client from one fixed poll table, reports each transport outcome once, closes pe
 failure, and publishes only the all-tablet coordinator result. The pinned Manifest epoch therefore
 outlives every attempt and retry. Its optional whole-query monotonic deadline and explicit
 cancellation both close every active client, retain no partial result, and remain sticky.
+`resolve_distributed_query_node_routes` constructs those immutable routes for only the selected
+serving nodes from one committed node-metadata snapshot. Node-specific TLS contexts remain explicit;
+the current carrier accepts only strict canonical nonzero IPv4 endpoints.
 After a retryable terminal failure, explicit finite rebinding accepts only an independently proved
 execution for the same plan-ordered logical query and a nonregressing Manifest generation. It
 discards every old partial and pin together before new attempts begin; leader hints remain advisory.
@@ -116,9 +119,9 @@ prematurely defining a general physical-fragment language. The cost is a special
 type. Grouping state, physical plans, ordering/top-N, cancellation delivery, and general duplicate
 sequencing require their own bounded contracts. A leader hint never
 mutates an existing proof-bound dispatch: following it requires explicit coordinator rebinding.
-Address resolution, asynchronous runtime-proof acquisition, remote worker-interrupt delivery,
-pooled multiplexing, asynchronous worker completion, and broader multi-node fault handling remain
-embedding work.
+DNS and multi-address resolution, asynchronous runtime-proof acquisition, remote worker-interrupt
+delivery, pooled multiplexing, asynchronous worker completion, and broader multi-node fault
+handling remain embedding work.
 
 ## Verification and review questions
 

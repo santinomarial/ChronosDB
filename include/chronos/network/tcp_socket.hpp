@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string_view>
 
 namespace chronos::network {
 
@@ -16,6 +17,10 @@ struct Ipv4Endpoint {
 
   friend bool operator==(const Ipv4Endpoint&, const Ipv4Endpoint&) = default;
 };
+
+// Parses canonical dotted-decimal IPv4 plus a nonzero decimal port. Leading zeroes, signs,
+// whitespace, names, extra separators, and zero addresses are rejected.
+[[nodiscard]] common::Result<Ipv4Endpoint> parse_ipv4_endpoint(std::string_view text);
 
 enum class TcpConnectState : std::uint8_t { kInProgress = 1, kConnected = 2 };
 

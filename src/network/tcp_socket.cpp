@@ -2,7 +2,9 @@
 
 #include <arpa/inet.h>
 #include <cerrno>
+#include <charconv>
 #include <fcntl.h>
+#include <limits>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <new>
@@ -17,6 +19,14 @@ namespace {
 
 [[nodiscard]] common::Status invalid(const char* message) {
   return {common::StatusCode::kInvalidArgument, message};
+}
+
+template <typename Integer>
+[[nodiscard]] bool parse_canonical_decimal(const std::string_view text, Integer& value) {
+  if (text.empty() || (text.size() > 1U && text.front() == '0'))
+    return false;
+  const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
+  return parsed.ec == std::errc{} && parsed.ptr == text.data() + text.size();
 }
 
 [[nodiscard]] common::Status exhausted(const char* message) {
@@ -86,6 +96,43 @@ namespace {
 }
 
 } // namespace
+
+common::Result<Ipv4Endpoint> parse_ipv4_endpoint(const std::string_view text) {
+  const std::size_t colon = text.find(':');
+  if (colon == std::string_view::npos || text.find(':', colon + 1U) != std::string_view::npos)
+    return common::make_unexpected(invalid("IPv4 endpoint is malformed"));
+
+  Ipv4Endpoint parsed;
+  std::size_t offset = 0U;
+  bool nonzero_address = false;
+  for (std::size_t index = 0U; index < parsed.address.size(); ++index) {
+    const std::size_t dot = text.find('.', offset);
+    const bool final_octet = index + 1U == parsed.address.size();
+    const std::size_t end = final_octet ? colon : dot;
+    if ((!final_octet && (dot == std::string_view::npos || dot >= colon)) ||
+        (final_octet && offset >= colon)) {
+      return common::make_unexpected(invalid("IPv4 endpoint address is malformed"));
+    }
+    unsigned int octet{};
+    if (!parse_canonical_decimal(text.substr(offset, end - offset), octet) || octet > 255U)
+      return common::make_unexpected(invalid("IPv4 endpoint address is not canonical"));
+    parsed.address[index] = static_cast<std::uint8_t>(octet);
+    nonzero_address = nonzero_address || octet != 0U;
+    offset = end + 1U;
+  }
+  if (offset != colon + 1U)
+    return common::make_unexpected(invalid("IPv4 endpoint address has extra octets"));
+
+  unsigned int port{};
+  if (!parse_canonical_decimal(text.substr(colon + 1U), port) || port == 0U ||
+      port > std::numeric_limits<std::uint16_t>::max()) {
+    return common::make_unexpected(invalid("IPv4 endpoint port is invalid"));
+  }
+  if (!nonzero_address)
+    return common::make_unexpected(invalid("IPv4 endpoint address is zero"));
+  parsed.port = static_cast<std::uint16_t>(port);
+  return parsed;
+}
 
 class TcpSocket::Impl {
 public:

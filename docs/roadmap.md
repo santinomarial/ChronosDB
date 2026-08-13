@@ -988,8 +988,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   leader/placement pair from a committed metadata-provider boundary and carry it through mTLS to the
   failed scheduler without treating it as authority. Coordinator aggregate binding now resolves
   active schema, placement, and immutable group identity from one committed metadata snapshot and
-  derives policy admissions only from matching stable Raft observations. General vector-plan
-  fragments/exchanges, asynchronous proof/endpoint acquisition, and broader multi-node failure
+  derives policy admissions only from matching stable Raft observations. Selected serving-node TCP
+  routes now resolve from the same committed node metadata through a strict IPv4 endpoint grammar
+  while retaining explicit node-specific TLS contexts. General vector-plan fragments/exchanges,
+  asynchronous proof acquisition, DNS/multi-address routing, and broader multi-node failure
   validation remain deferred. A
   focused real-mTLS gate now queries two tablets, drives one through checksummed learner-first
   movement and externally committed promotion/removal milestones, rebinds it to the target, and

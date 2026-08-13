@@ -11,6 +11,8 @@
 #include <new>
 #include <optional>
 #include <poll.h>
+#include <ranges>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -26,6 +28,14 @@ namespace {
 
 [[nodiscard]] common::Status exhausted(const char* message) {
   return {common::StatusCode::kResourceExhausted, message};
+}
+
+[[nodiscard]] common::Status unavailable(const char* message) {
+  return {common::StatusCode::kUnavailable, message};
+}
+
+[[nodiscard]] common::Status corruption(const char* message) {
+  return {common::StatusCode::kCorruption, message};
 }
 
 [[nodiscard]] common::Status poll_error(const int error = errno) {
@@ -83,6 +93,81 @@ compatible_rebinding(const query::CompatibleDistributedAggregateSnapshot& previo
 }
 
 } // namespace
+
+common::Result<std::vector<DistributedQueryNodeRoute>> resolve_distributed_query_node_routes(
+    const raft::MetadataCatalogSnapshot& catalog,
+    const std::span<const query::DistributedAggregateFragmentDispatch> dispatches,
+    const std::span<const DistributedQueryNodeTlsContext> tls_contexts,
+    const DistributedQueryRouteResolutionLimits limits) {
+  if (limits.maximum_routes == 0U || limits.maximum_routes > 65'536U ||
+      limits.maximum_endpoint_bytes == 0U ||
+      limits.maximum_endpoint_bytes > raft::MetadataLimits{}.maximum_endpoint_bytes) {
+    return common::make_unexpected(
+        invalid("distributed query route resolution limits are invalid"));
+  }
+  if (catalog.applied_index == 0U ||
+      catalog.cluster_nodes.size() > raft::MetadataLimits{}.maximum_nodes ||
+      !std::ranges::is_sorted(catalog.cluster_nodes, {}, &raft::ClusterNodeMetadata::node_id) ||
+      std::ranges::adjacent_find(catalog.cluster_nodes, {}, &raft::ClusterNodeMetadata::node_id) !=
+          catalog.cluster_nodes.end() ||
+      std::ranges::any_of(catalog.cluster_nodes,
+                          [](const auto& node) { return node.node_id == 0U; })) {
+    return common::make_unexpected(
+        corruption("distributed query node metadata is not a canonical committed snapshot"));
+  }
+  if (dispatches.empty() || dispatches.size() > query::DistributedPlanLimits{}.maximum_fragments ||
+      tls_contexts.empty() ||
+      !std::ranges::is_sorted(tls_contexts, {}, &DistributedQueryNodeTlsContext::node_id) ||
+      std::ranges::adjacent_find(tls_contexts, {}, &DistributedQueryNodeTlsContext::node_id) !=
+          tls_contexts.end() ||
+      std::ranges::any_of(tls_contexts, [](const auto& tls) {
+        return tls.node_id == 0U || tls.tls_context == nullptr;
+      })) {
+    return common::make_unexpected(
+        invalid("distributed query dispatch or TLS route authority is invalid"));
+  }
+  try {
+    std::set<raft::NodeId> targets;
+    for (const auto& dispatch : dispatches) {
+      if (dispatch.fragment.serving_node == 0U)
+        return common::make_unexpected(invalid("distributed query dispatch has no serving node"));
+      targets.insert(dispatch.fragment.serving_node);
+    }
+    if (targets.size() > limits.maximum_routes)
+      return common::make_unexpected(exhausted("distributed query route limit is exhausted"));
+
+    std::vector<DistributedQueryNodeRoute> routes;
+    routes.reserve(targets.size());
+    for (const raft::NodeId target : targets) {
+      const auto node = std::ranges::lower_bound(catalog.cluster_nodes, target, {},
+                                                 &raft::ClusterNodeMetadata::node_id);
+      const auto tls = std::ranges::lower_bound(tls_contexts, target, {},
+                                                &DistributedQueryNodeTlsContext::node_id);
+      if (node == catalog.cluster_nodes.end() || node->node_id != target ||
+          node->endpoint.empty() || node->endpoint.size() > limits.maximum_endpoint_bytes) {
+        return common::make_unexpected(
+            unavailable("distributed query serving node has no bounded committed endpoint"));
+      }
+      if (tls == tls_contexts.end() || tls->node_id != target || tls->tls_context == nullptr) {
+        return common::make_unexpected(
+            unavailable("distributed query serving node has no TLS route context"));
+      }
+      auto endpoint = network::parse_ipv4_endpoint(node->endpoint);
+      if (!endpoint.has_value()) {
+        return common::make_unexpected(unavailable(
+            "distributed query serving node endpoint is not supported by the IPv4 carrier"));
+      }
+      routes.push_back({target, *endpoint, tls->tls_context});
+    }
+    return routes;
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        exhausted("distributed query route resolution allocation failed"));
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        exhausted("distributed query route resolution exceeds container limits"));
+  }
+}
 
 class DistributedQueryTcpExecution::Impl {
 public:

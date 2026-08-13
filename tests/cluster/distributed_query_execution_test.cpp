@@ -359,6 +359,53 @@ TEST(DistributedQueryExecutionTest, RetryBackoffDoesNotFailUntilSenderBecomesTer
   EXPECT_EQ(execution->finish().error().code(), common::StatusCode::kIoError);
 }
 
+TEST(DistributedQueryTcpExecutionTest, ResolvesSelectedRoutesFromCommittedNodeMetadata) {
+  TemporaryDirectory directory;
+  auto input = make_input(directory);
+  ASSERT_TRUE(input.has_value()) << input.error().to_string();
+  network::TlsClientContext first_tls;
+  network::TlsClientContext second_tls;
+  raft::MetadataCatalogSnapshot catalog{.applied_index = 9U,
+                                        .cluster_nodes = {{10U, "node-10.example:7410"},
+                                                          {11U, "127.0.0.1:7411"},
+                                                          {12U, "127.0.0.2:7412"}}};
+  const std::array contexts{DistributedQueryNodeTlsContext{11U, &first_tls},
+                            DistributedQueryNodeTlsContext{12U, &second_tls}};
+
+  auto routes =
+      resolve_distributed_query_node_routes(catalog, input->snapshot.dispatches(), contexts);
+  ASSERT_TRUE(routes.has_value()) << routes.error().to_string();
+  ASSERT_EQ(routes->size(), 2U);
+  EXPECT_EQ((*routes)[0].node_id, 11U);
+  EXPECT_EQ((*routes)[0].endpoint, (network::Ipv4Endpoint{{127U, 0U, 0U, 1U}, 7411U}));
+  EXPECT_EQ((*routes)[0].tls_context, &first_tls);
+  EXPECT_EQ((*routes)[1].node_id, 12U);
+  EXPECT_EQ((*routes)[1].endpoint, (network::Ipv4Endpoint{{127U, 0U, 0U, 2U}, 7412U}));
+  EXPECT_EQ((*routes)[1].tls_context, &second_tls);
+
+  catalog.cluster_nodes[2].endpoint = "node-12.example:7412";
+  EXPECT_EQ(resolve_distributed_query_node_routes(catalog, input->snapshot.dispatches(), contexts)
+                .error()
+                .code(),
+            common::StatusCode::kUnavailable);
+  catalog.cluster_nodes[2].endpoint = "127.0.0.2:7412";
+  EXPECT_EQ(resolve_distributed_query_node_routes(catalog, input->snapshot.dispatches(),
+                                                  std::span{contexts}.first(1U))
+                .error()
+                .code(),
+            common::StatusCode::kUnavailable);
+  EXPECT_EQ(resolve_distributed_query_node_routes(catalog, input->snapshot.dispatches(), contexts,
+                                                  {.maximum_routes = 1U})
+                .error()
+                .code(),
+            common::StatusCode::kResourceExhausted);
+  std::swap(catalog.cluster_nodes[0], catalog.cluster_nodes[2]);
+  EXPECT_EQ(resolve_distributed_query_node_routes(catalog, input->snapshot.dispatches(), contexts)
+                .error()
+                .code(),
+            common::StatusCode::kCorruption);
+}
+
 TEST(DistributedQueryTcpExecutionTest, SchedulesPlanOrderedTabletsAndRetriesWithoutRebinding) {
   TemporaryDirectory directory;
   auto input = make_input(directory);

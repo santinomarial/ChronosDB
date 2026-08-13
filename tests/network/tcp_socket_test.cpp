@@ -9,12 +9,29 @@
 #include <netinet/tcp.h>
 #include <optional>
 #include <poll.h>
+#include <string_view>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <utility>
 
 namespace chronos::network {
 namespace {
+
+TEST(TcpSocketTest, ParsesOnlyCanonicalNonzeroIpv4Endpoints) {
+  const auto parsed = parse_ipv4_endpoint("127.0.0.1:7441");
+  ASSERT_TRUE(parsed.has_value()) << parsed.error().to_string();
+  EXPECT_EQ(*parsed, (Ipv4Endpoint{{127U, 0U, 0U, 1U}, 7441U}));
+  EXPECT_EQ(*parse_ipv4_endpoint("255.255.255.255:65535"),
+            (Ipv4Endpoint{{255U, 255U, 255U, 255U}, 65535U}));
+
+  for (const std::string_view invalid :
+       {"", "127.0.0.1", "127.0.0.1:", "127.0.0.1:0", "127.0.0.1:65536", "127.0.0.1:01",
+        "127.00.0.1:1", "0.0.0.0:1", "256.0.0.1:1", "1.2.3:1", "1.2.3.4.5:1", "node.example:1",
+        " 127.0.0.1:1", "127.0.0.1:1 "}) {
+    EXPECT_EQ(parse_ipv4_endpoint(invalid).error().code(), common::StatusCode::kInvalidArgument)
+        << invalid;
+  }
+}
 
 void wait_for_connection(TcpListener& listener, TcpSocket& client,
                          std::optional<TcpSocket>& accepted) {

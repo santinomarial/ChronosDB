@@ -8,6 +8,7 @@
 #include "chronos/network/tcp_socket.hpp"
 #include "chronos/network/tls_socket.hpp"
 #include "chronos/query/distributed.hpp"
+#include "chronos/raft/metadata.hpp"
 #include "chronos/raft/types.hpp"
 
 #include <chrono>
@@ -15,6 +16,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <vector>
 
 namespace chronos::cluster {
@@ -24,6 +26,26 @@ struct DistributedQueryNodeRoute {
   network::Ipv4Endpoint endpoint;
   const network::TlsClientContext* tls_context{};
 };
+
+struct DistributedQueryNodeTlsContext {
+  raft::NodeId node_id{};
+  const network::TlsClientContext* tls_context{};
+};
+
+struct DistributedQueryRouteResolutionLimits {
+  std::size_t maximum_routes{65'536U};
+  std::size_t maximum_endpoint_bytes{raft::MetadataLimits{}.maximum_endpoint_bytes};
+};
+
+// Resolves only serving nodes named by the immutable dispatches. The committed catalog and TLS
+// context spans must be canonical by node ID. Generic metadata endpoints remain valid metadata,
+// but this IPv4-only carrier returns unavailable unless each selected endpoint is canonical.
+[[nodiscard]] common::Result<std::vector<DistributedQueryNodeRoute>>
+resolve_distributed_query_node_routes(
+    const raft::MetadataCatalogSnapshot& catalog,
+    std::span<const query::DistributedAggregateFragmentDispatch> dispatches,
+    std::span<const DistributedQueryNodeTlsContext> tls_contexts,
+    DistributedQueryRouteResolutionLimits limits = {});
 
 struct DistributedQueryTcpExecutionConfig {
   network::ConnectionAuthenticator* authenticator{};
