@@ -286,6 +286,21 @@ TEST(DistributedFragmentBindingTest, BindsVectorPlanOnlyThroughExactCommittedAut
   EXPECT_EQ(dispatch->plan, plan.intent);
   EXPECT_TRUE(encode_distributed_vector_fragment_dispatch(*dispatch).has_value());
 
+  DistributedVectorResultSchema result_schema{
+      .columns = {{"event_time", schema_value.columns()[0].type(), false},
+                  {"total", schema_value.columns()[1].type(), true}}};
+  const auto dispatch_v2 =
+      bind_distributed_vector_fragment_v2(vector_binding(), std::move(result_schema));
+  ASSERT_TRUE(dispatch_v2.has_value()) << dispatch_v2.error().to_string();
+  EXPECT_TRUE(encode_distributed_vector_fragment_dispatch_v2(*dispatch_v2).has_value());
+
+  DistributedVectorResultSchema mismatched{
+      .columns = {{"event_time", schema_value.columns()[0].type(), false},
+                  {"total", schema_value.columns()[1].type(), false}}};
+  EXPECT_EQ(
+      bind_distributed_vector_fragment_v2(vector_binding(), std::move(mismatched)).error().code(),
+      common::StatusCode::kInvalidArgument);
+
   plan.intent.aggregates.front().input_index = 0U;
   EXPECT_EQ(bind_distributed_vector_fragment(vector_binding()).error().code(),
             common::StatusCode::kInvalidArgument);

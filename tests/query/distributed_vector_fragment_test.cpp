@@ -1,5 +1,6 @@
 #include "chronos/common/crc32c.hpp"
 #include "chronos/query/distributed_vector_fragment.hpp"
+#include "chronos/query/distributed_vector_fragment_v2.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -68,6 +69,24 @@ TEST(DistributedVectorFragmentTest, RoundTripsGroupScopedSnapshotProofProjection
   EXPECT_EQ(*decoded, expected);
   EXPECT_EQ(decoded->plan.group_key_input_indices, (std::vector<std::uint32_t>{0U, 2U}));
   EXPECT_EQ(decoded->raft_group_id, uuid(6U));
+
+  const DistributedVectorFragmentDispatchV2 expected_v2{
+      .dispatch = expected,
+      .result_schema = {
+          .columns = {
+              {"key_a", schema::LogicalType::create(schema::LogicalTypeKind::kTimestampNs).value(),
+               false},
+              {"key_b", schema::LogicalType::create(schema::LogicalTypeKind::kString).value(),
+               true},
+              {"rows", schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value(), false},
+              {"total", schema::LogicalType::create(schema::LogicalTypeKind::kFloat64).value(),
+               true}}}};
+  const auto encoded_v2 = encode_distributed_vector_fragment_dispatch_v2(expected_v2);
+  ASSERT_TRUE(encoded_v2.has_value()) << encoded_v2.error().to_string();
+  const auto decoded_v2 = decode_distributed_vector_fragment_dispatch_v2_exact(encoded_v2->bytes());
+  ASSERT_TRUE(decoded_v2.has_value()) << decoded_v2.error().to_string();
+  EXPECT_EQ(*decoded_v2, expected_v2);
+  EXPECT_FALSE(decode_distributed_vector_fragment_dispatch_exact(encoded_v2->bytes()).has_value());
 }
 
 TEST(DistributedVectorFragmentTest, RejectsDamageLimitsAndContradictoryAuthority) {
@@ -127,6 +146,36 @@ TEST(DistributedVectorFragmentTest, RejectsDamageLimitsAndContradictoryAuthority
   nil_group.raft_group_id = common::Uuid{};
   EXPECT_EQ(encode_distributed_vector_fragment_dispatch(nil_group).error().code(),
             common::StatusCode::kInvalidArgument);
+
+  const DistributedVectorFragmentDispatchV2 v2{
+      .dispatch = expected,
+      .result_schema = {
+          .columns = {{"result",
+                       schema::LogicalType::create(schema::LogicalTypeKind::kFloat64).value(),
+                       true}}}};
+  const auto encoded_v2 = encode_distributed_vector_fragment_dispatch_v2(v2);
+  ASSERT_TRUE(encoded_v2.has_value());
+  EXPECT_EQ(decode_distributed_vector_fragment_dispatch_v2_exact(
+                encoded_v2->bytes().first(encoded_v2->bytes().size() - 1U))
+                .error()
+                .code(),
+            common::StatusCode::kCorruption);
+  EXPECT_EQ(decode_distributed_vector_fragment_dispatch_v2_exact(
+                encoded_v2->bytes(), {.maximum_frame_length = encoded_v2->bytes().size() - 1U})
+                .error()
+                .code(),
+            common::StatusCode::kResourceExhausted);
+  std::vector<std::byte> nested_damage(encoded_v2->bytes().begin(), encoded_v2->bytes().end());
+  const std::size_t schema_offset = 64U + encoded->bytes().size();
+  nested_damage[schema_offset] ^= std::byte{1U};
+  const common::ByteView schema_bytes = common::ByteView{nested_damage}.subspan(
+      schema_offset, nested_damage.size() - schema_offset - 4U);
+  store_u32_le(nested_damage, 44U, common::crc32c(schema_bytes));
+  store_u32_le(nested_damage, 48U, common::crc32c(common::ByteView{nested_damage}.first(48U)));
+  store_u32_le(nested_damage, nested_damage.size() - 4U,
+               common::crc32c(common::ByteView{nested_damage}.first(nested_damage.size() - 4U)));
+  EXPECT_EQ(decode_distributed_vector_fragment_dispatch_v2_exact(nested_damage).error().code(),
+            common::StatusCode::kCorruption);
 }
 
 TEST(DistributedVectorFragmentTest, OwnsBoundedPartialReadsAndShortWriteProgress) {

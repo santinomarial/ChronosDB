@@ -720,6 +720,13 @@ Focused executions passed:
   consumption cover the API. The accepted v1 exchange bytes remain unchanged; schema carriage,
   schema-light result batches, execution, authenticated lifecycle, and process integration are not
   claimed.
+- Schema-bound vector-fragment continuation: the focused fragment case wrapped unchanged v1
+  authority bytes plus exact result-schema bytes, round-tripped v2, rejected v1/v2 confusion,
+  truncation, a lower caller frame, and nested damage under recomputed wrapper checksums. The
+  authority-binding case accepted exact grouped key/SUM descriptors and rejected nullability
+  mismatch. Header self-containment and installed consumption cover the API. V2 partial-I/O,
+  compatible snapshot ownership, cluster transport, result cells, execution, and process
+  integration are not claimed.
 
 The C++ files changed by the grouped- and vector-exchange continuations pass the repository-pinned
 clang-format 18 check. A full-tree check was also run and still reports pre-existing violations in

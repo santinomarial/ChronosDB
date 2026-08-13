@@ -399,3 +399,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0362](0362-bounded-distributed-vector-query-partial-io.md) | Bounded distributed vector query partial I/O | accepted |
 | [0363](0363-bounded-distributed-vector-coordinator.md) | Bounded distributed vector coordinator | accepted |
 | [0364](0364-schema-light-distributed-vector-results.md) | Schema-light distributed vector results | accepted |
+| [0365](0365-schema-bound-distributed-vector-fragment.md) | Schema-bound distributed vector fragment | accepted |

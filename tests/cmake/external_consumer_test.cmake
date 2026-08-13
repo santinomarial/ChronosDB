@@ -133,6 +133,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/query/distributed_grouped_exchange.hpp>
 #include <chronos/query/distributed_vector_exchange.hpp>
 #include <chronos/query/distributed_vector_fragment.hpp>
+#include <chronos/query/distributed_vector_fragment_v2.hpp>
 #include <chronos/query/distributed_vector_plan.hpp>
 #include <chronos/query/distributed_vector_result_schema.hpp>
 #include <chronos/query/distributed.hpp>
@@ -243,6 +244,10 @@ int main() {
       &chronos::query::validate_distributed_vector_result_schema;
   const auto decode_vector_fragment =
       &chronos::query::decode_distributed_vector_fragment_dispatch_exact;
+  const auto encode_vector_fragment_v2 =
+      &chronos::query::encode_distributed_vector_fragment_dispatch_v2;
+  const auto decode_vector_fragment_v2 =
+      &chronos::query::decode_distributed_vector_fragment_dispatch_v2_exact;
   using ConsumeVectorFragment = chronos::common::Result<
       chronos::query::DistributedVectorFragmentReadStep> (
       chronos::query::DistributedVectorFragmentReader::*)(chronos::common::ByteView);
@@ -251,6 +256,7 @@ int main() {
   const auto create_vector_fragment_write_cursor =
       &chronos::query::DistributedVectorFragmentWriteCursor::create;
   const auto bind_vector_fragment = &chronos::query::bind_distributed_vector_fragment;
+  const auto bind_vector_fragment_v2 = &chronos::query::bind_distributed_vector_fragment_v2;
   const auto bind_compatible_vector_snapshot =
       &chronos::query::bind_compatible_distributed_vector_snapshot;
   const auto bind_metadata_vector_snapshot =
@@ -411,9 +417,12 @@ int main() {
   (void)decode_vector_result_schema;
   (void)validate_vector_result_schema;
   (void)decode_vector_fragment;
+  (void)encode_vector_fragment_v2;
+  (void)decode_vector_fragment_v2;
   (void)consume_vector_fragment;
   (void)create_vector_fragment_write_cursor;
   (void)bind_vector_fragment;
+  (void)bind_vector_fragment_v2;
   (void)bind_compatible_vector_snapshot;
   (void)bind_metadata_vector_snapshot;
   (void)bind_group_vector_snapshot;

@@ -283,8 +283,10 @@
   per-tablet byte histories, rejects gaps/conflicts/post-terminal output, and releases plan-ordered
   streams only after every tablet closes. Remote acquisition, authenticated transport, and
   execution remain. A distinct checksummed schema-light descriptor vector now preserves SQL-owned
-  names plus exact plan-validated type/nullability without inventing table identity. Carry it in a
-  new result-batch/exchange version before general worker execution. Distinct exact node-routed
+  names plus exact plan-validated type/nullability without inventing table identity. A distinct v2
+  fragment now wraps unchanged v1 authority bytes plus that exact schema, and its binder proves the
+  shape from the same committed projection. Add partial-I/O, compatible multi-tablet v2 ownership,
+  and a new result-batch/exchange version before general worker execution. Distinct exact node-routed
   request and reverse-route
   response frames now carry the complete vector dispatch and one exactly correlated vector exchange
   or failure. Header-first readers and one move-only cursor now own bounded fragmentation,

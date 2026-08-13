@@ -421,6 +421,7 @@ add_library(
   src/query/distributed_grouped_exchange.cpp
   src/query/distributed_vector_exchange.cpp
   src/query/distributed_vector_fragment.cpp
+  src/query/distributed_vector_fragment_v2.cpp
   src/query/distributed_vector_plan.cpp
   src/query/distributed_vector_result_schema.cpp
   src/query/distributed_fragment.cpp

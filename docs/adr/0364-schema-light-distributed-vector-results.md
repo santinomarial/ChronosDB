@@ -34,8 +34,9 @@ Two focused cases round-trip owned duplicate-name mixed descriptors, reject dama
 invalid UTF-8/lower limits, validate repeated row projection plus grouped COUNT/SUM shapes, and
 reject width/nullability mismatch. Header self-containment and installed consumption cover the API.
 
-Schema carriage in fragment bytes, schema-light result batches, worker execution, authenticated
-lifecycle, and process integration remain incomplete. No Phase 16 exit gate is claimed.
+Schema carriage in a versioned fragment is implemented separately. Schema-light result batches,
+worker execution, authenticated lifecycle, and process integration remain incomplete. No Phase 16
+exit gate is claimed.
 
 Invariants 5, 6, 10, 14, and 18 apply.
 

@@ -566,6 +566,36 @@ bind_distributed_vector_fragment(const DistributedVectorFragmentBinding& binding
   }
 }
 
+common::Result<DistributedVectorFragmentDispatchV2>
+bind_distributed_vector_fragment_v2(const DistributedVectorFragmentBinding& binding,
+                                    const DistributedVectorResultSchema& result_schema) {
+  auto dispatch = bind_distributed_vector_fragment(binding);
+  if (!dispatch.has_value())
+    return common::make_unexpected(dispatch.error());
+  try {
+    std::vector<PhysicalColumnShape> projected;
+    projected.reserve(binding.destination_column_ordinals.size());
+    const schema::TableSchema& destination = binding.destination_schema.get();
+    for (const std::uint32_t ordinal : binding.destination_column_ordinals) {
+      const schema::ColumnDefinition& column = destination.columns()[ordinal];
+      projected.push_back({column.type(), column.nullable()});
+    }
+    const common::Status schema_status =
+        validate_distributed_vector_result_schema(dispatch->plan, projected, result_schema);
+    if (!schema_status.is_ok())
+      return common::make_unexpected(schema_status);
+    return DistributedVectorFragmentDispatchV2{std::move(*dispatch), result_schema};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "distributed vector fragment v2 binding allocation failed"});
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "distributed vector fragment v2 binding exceeds container limits"});
+  }
+}
+
 common::Result<BoundDistributedGroupedFloat64Fragment>
 bind_distributed_grouped_float64_fragment(const DistributedGroupedFloat64FragmentBinding& binding) {
   auto aggregate = bind_distributed_aggregate_fragment(binding.aggregate);

@@ -6,6 +6,7 @@
 #include "chronos/manifest/temporal_publication.hpp"
 #include "chronos/query/distributed_fragment_dispatch.hpp"
 #include "chronos/query/distributed_vector_fragment.hpp"
+#include "chronos/query/distributed_vector_fragment_v2.hpp"
 #include "chronos/raft/durable_runtime.hpp"
 #include "chronos/raft/metadata.hpp"
 #include "chronos/raft/types.hpp"
@@ -55,6 +56,12 @@ struct DistributedVectorFragmentBinding {
 // Manifest-v2 source/position/schema, projection, and plan input types agree.
 [[nodiscard]] common::Result<DistributedVectorFragmentDispatch>
 bind_distributed_vector_fragment(const DistributedVectorFragmentBinding& binding);
+
+// Reuses the v1 authority binder, then proves and owns the schema-light result identity against the
+// same committed projection before publishing the version-2 dispatch.
+[[nodiscard]] common::Result<DistributedVectorFragmentDispatchV2>
+bind_distributed_vector_fragment_v2(const DistributedVectorFragmentBinding& binding,
+                                    const DistributedVectorResultSchema& result_schema);
 
 struct DistributedGroupedFloat64FragmentBinding {
   DistributedAggregateFragmentBinding aggregate;
