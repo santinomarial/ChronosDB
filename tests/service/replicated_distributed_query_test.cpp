@@ -510,6 +510,52 @@ TEST(ReplicatedDistributedQueryTest, ConstructsOneAuthorityBoundTcpLifecycleOwne
   EXPECT_EQ(lifecycle->state(), ReplicatedFollowerDistributedAggregateQueryState::kCancelled);
   EXPECT_EQ(lifecycle->result().error(), lifecycle_cancelled);
 
+  ReplicatedDistributedGroupedFloat64QueryConfig grouped_lifecycle_query_config =
+      follower_grouped_config;
+  grouped_lifecycle_query_config.catalog = std::cref(lifecycle_catalog);
+  auto grouped_lifecycle_snapshot = publisher->snapshot();
+  ASSERT_TRUE(grouped_lifecycle_snapshot.has_value());
+  auto grouped_lifecycle = ReplicatedFollowerDistributedGroupedFloat64Query::create(
+      make_follower_plan(tablet_id, applied_position), std::move(*grouped_lifecycle_snapshot),
+      {.source_node_id = 1U,
+       .first_correlation_id = 81U,
+       .tls_contexts = observation_tls_contexts,
+       .authenticator = &authenticator,
+       .node_authorizer = &authorizer,
+       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                          .exchange_timeout = std::chrono::milliseconds{1000}},
+       .connect_timeout = std::chrono::milliseconds{1000},
+       .retry = {.maximum_attempts = 1U,
+                 .initial_backoff = std::chrono::milliseconds{1},
+                 .maximum_backoff = std::chrono::milliseconds{1}},
+       .maximum_pairs = 1U},
+      grouped_lifecycle_query_config);
+  ASSERT_TRUE(grouped_lifecycle.has_value()) << grouped_lifecycle.error().to_string();
+  EXPECT_EQ(grouped_lifecycle->state(),
+            ReplicatedFollowerDistributedGroupedFloat64QueryState::kAcquiringAuthority);
+  EXPECT_EQ(grouped_lifecycle->result().error().code(), common::StatusCode::kInvalidArgument);
+  for (std::size_t iteration = 0U;
+       iteration < 4096U &&
+       grouped_lifecycle->state() ==
+           ReplicatedFollowerDistributedGroupedFloat64QueryState::kAcquiringAuthority;
+       ++iteration) {
+    ASSERT_TRUE(grouped_lifecycle->poll_once(std::chrono::milliseconds{1}).is_ok());
+    ASSERT_TRUE(leader_server->poll_once(std::chrono::milliseconds{1}).is_ok());
+    ASSERT_TRUE(follower_server->poll_once(std::chrono::milliseconds{1}).is_ok());
+  }
+  ASSERT_EQ(grouped_lifecycle->state(),
+            ReplicatedFollowerDistributedGroupedFloat64QueryState::kExecuting)
+      << grouped_lifecycle->failure().to_string();
+  EXPECT_EQ(leader_service.calls, 2U);
+  EXPECT_EQ(follower_service.calls, 2U);
+  EXPECT_EQ(grouped_lifecycle->metrics().authority.completed_pairs, 1U);
+  EXPECT_TRUE(grouped_lifecycle->metrics().execution.has_value());
+  const common::Status grouped_lifecycle_cancelled = grouped_lifecycle->cancel();
+  EXPECT_EQ(grouped_lifecycle_cancelled.code(), common::StatusCode::kCancelled);
+  EXPECT_EQ(grouped_lifecycle->state(),
+            ReplicatedFollowerDistributedGroupedFloat64QueryState::kCancelled);
+  EXPECT_EQ(grouped_lifecycle->result().error(), grouped_lifecycle_cancelled);
+
   EXPECT_TRUE(barrier->shutdown().is_ok());
   EXPECT_TRUE(missing_tablet_barrier->shutdown().is_ok());
   EXPECT_TRUE(runtime->shutdown().is_ok());

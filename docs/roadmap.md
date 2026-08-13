@@ -1046,7 +1046,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   resolves its immutable authenticated routes, and returns the grouped TCP lifecycle. A distinct
   bounded-stale grouped constructor enters through canonical correlated leader/follower authority,
   preserves the proved follower route, and reuses the same specialization and lifecycle gates.
-  Remote observation acquisition composition and explicit whole-query rebinding remain.
+  A move-only lifecycle now retains the plan and Manifest pin through placement-backed authenticated
+  remote observation acquisition, transfers only the complete canonical pair vector into grouped
+  construction, and unifies metrics/cancellation across acquisition and execution. Explicit
+  whole-query rebinding remains.
   Multi-key/non-FLOAT64 state/transport, ordering, top-N, and LIMIT remain deferred. A distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
   catalog, Manifest, route, and execution gates;

@@ -18,6 +18,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <vector>
 
 namespace chronos::service {
 
@@ -138,6 +139,54 @@ public:
 private:
   class Impl;
   explicit ReplicatedFollowerDistributedAggregateQuery(
+      std::unique_ptr<Impl> implementation) noexcept;
+  std::unique_ptr<Impl> implementation_;
+};
+
+enum class ReplicatedFollowerDistributedGroupedFloat64QueryState : std::uint8_t {
+  kAcquiringAuthority = 1,
+  kExecuting = 2,
+  kComplete = 3,
+  kFailed = 4,
+  kCancelled = 5,
+};
+
+struct ReplicatedFollowerDistributedGroupedFloat64QueryMetrics {
+  cluster::RaftObservationTcpBatchAcquisitionMetrics authority;
+  std::optional<cluster::DistributedGroupedQueryTcpExecutionMetrics> execution;
+};
+
+// Owns remote placement-backed follower authority acquisition and transfers its complete canonical
+// vector directly into packaged grouped execution. All policy objects in both configs are borrowed
+// and must outlive this single-threaded owner.
+class ReplicatedFollowerDistributedGroupedFloat64Query {
+public:
+  ReplicatedFollowerDistributedGroupedFloat64Query() noexcept;
+  ~ReplicatedFollowerDistributedGroupedFloat64Query();
+  ReplicatedFollowerDistributedGroupedFloat64Query(
+      const ReplicatedFollowerDistributedGroupedFloat64Query&) = delete;
+  ReplicatedFollowerDistributedGroupedFloat64Query&
+  operator=(const ReplicatedFollowerDistributedGroupedFloat64Query&) = delete;
+  ReplicatedFollowerDistributedGroupedFloat64Query(
+      ReplicatedFollowerDistributedGroupedFloat64Query&&) noexcept;
+  ReplicatedFollowerDistributedGroupedFloat64Query&
+  operator=(ReplicatedFollowerDistributedGroupedFloat64Query&&) noexcept;
+
+  [[nodiscard]] static common::Result<ReplicatedFollowerDistributedGroupedFloat64Query>
+  create(query::DistributedAggregatePlan plan, manifest::TemporalDatabaseStorageSnapshot snapshot,
+         cluster::RaftObservationTcpBatchConstructionConfig authority_config,
+         ReplicatedDistributedGroupedFloat64QueryConfig query_config);
+  [[nodiscard]] common::Status poll_once(std::chrono::milliseconds maximum_wait);
+  [[nodiscard]] common::Status cancel();
+
+  [[nodiscard]] ReplicatedFollowerDistributedGroupedFloat64QueryState state() const noexcept;
+  [[nodiscard]] ReplicatedFollowerDistributedGroupedFloat64QueryMetrics metrics() const noexcept;
+  [[nodiscard]] common::Result<std::vector<query::GroupedFloat64AggregateResult>> result() const;
+  [[nodiscard]] const common::Status& failure() const noexcept;
+
+private:
+  class Impl;
+  explicit ReplicatedFollowerDistributedGroupedFloat64Query(
       std::unique_ptr<Impl> implementation) noexcept;
   std::unique_ptr<Impl> implementation_;
 };

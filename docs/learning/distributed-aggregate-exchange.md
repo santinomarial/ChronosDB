@@ -185,6 +185,10 @@ The bounded-stale grouped entry point instead enters through the correlated foll
 binder. It keeps the leader-derived commit frontier and selected follower application proof intact,
 then uses the same compatible-owner specialization and scheduler construction; it never routes a
 follower plan through leader-barrier semantics.
+`ReplicatedFollowerDistributedGroupedFloat64Query` owns the preceding remote phase as well. It
+retains the plan and Manifest pin while the placement-backed batch acquires every authenticated
+leader/follower pair, then transfers the complete canonical vector directly into bounded-stale
+grouped construction. Cancellation and metrics remain phase-aware without exposing observations.
 `DistributedQueryTcpServer` owns the dedicated listener, long-lived TLS context, fixed-capacity poll
 storage, bounded stable connection records, deadline driving, metrics, and carrier-before-descriptor
 shutdown order for real multi-connection serving.
@@ -216,8 +220,7 @@ A fixed ungrouped-aggregate frame gives partial-I/O carriers an unambiguous payl
 prematurely defining a general physical-fragment language. The cost is a specialized first exchange
 type. A separate first grouped frame now carries one nullable FLOAT64 key with bounded
 coordination and authenticated multi-response TLS ownership, but multi-key and non-FLOAT64
-grouping, general physical plans, remote grouped observation composition/rebinding, ordering/top-N,
-cancellation
+grouping, general physical plans, grouped authority rebinding, ordering/top-N, cancellation
 delivery, and durable recovery require their own bounded contracts. A leader hint never mutates an existing
 proof-bound dispatch: following it requires explicit coordinator rebinding.
 The replicated read-barrier owner now returns exact correlated leader observations for

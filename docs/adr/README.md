@@ -379,3 +379,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0342](0342-pinned-grouped-query-tcp-scheduling.md) | Pinned grouped-query TCP scheduling | accepted |
 | [0343](0343-packaged-leader-linearizable-grouped-query-construction.md) | Packaged leader-linearizable grouped-query construction | accepted |
 | [0344](0344-packaged-bounded-stale-grouped-query-construction.md) | Packaged bounded-stale grouped-query construction | accepted |
+| [0345](0345-packaged-remote-bounded-stale-grouped-query-lifecycle.md) | Packaged remote bounded-stale grouped-query lifecycle | accepted |

@@ -300,8 +300,10 @@
   through exact active-schema/FLOAT64 specialization, committed route resolution, execution, and
   TCP ownership without exposing intermediate joins. A distinct bounded-stale grouped constructor
   carries canonical same-term leader/follower authority through the follower binder and the same
-  specialization/lifecycle gates while retaining the proved follower target. Remote observation
-  acquisition composition and explicit whole-query rebinding remain incomplete.
+  specialization/lifecycle gates while retaining the proved follower target. A packaged remote
+  lifecycle now pins the plan/Manifest through placement-backed authenticated batch acquisition,
+  transfers only the complete group-sorted authority vector, and owns metrics/cancellation across
+  both phases. Explicit whole-query rebinding remains incomplete.
 - Proof-bound leader-linearizable/bounded-stale/local-eventual admissions now remain attached through
   compatible pinned multi-tablet snapshots and protocol/carrier scheduling. Whole-query replacement
   now validates fresh caller-proved authority, identical logical shape, nonregressing generation,

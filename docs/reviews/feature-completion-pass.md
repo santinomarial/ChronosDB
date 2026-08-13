@@ -256,8 +256,10 @@ result. A packaged leader-linearizable grouped constructor now carries correlate
 committed catalog/Manifest authority through exact FLOAT64 specialization, route resolution,
 execution, and TCP ownership. A distinct bounded-stale grouped constructor carries canonical
 leader/follower authority through the follower binder and same lifecycle while preserving the
-proved follower target. Remote acquisition composition, explicit rebinding, and multi-key/
-non-FLOAT64 state remain incomplete. A distinct
+proved follower target. A packaged lifecycle now retains plan/Manifest ownership through
+placement-backed authenticated remote observation acquisition and transfers only its complete
+canonical authority vector into grouped execution. Explicit rebinding and multi-key/non-FLOAT64
+state remain incomplete. A distinct
 canonical observation protocol, authenticated receiver, mTLS clients/servers, finite multi-address
 acquisition, correlated
 leader/follower pairs, canonical all-group batches, placement-backed construction, and packaged
@@ -586,6 +588,12 @@ Focused executions passed:
   grouped constructor. The running owner retains serving node 12 and FLOAT64 key input one. Header
   self-containment and the installed consumer cover the public boundary. Remote observation
   acquisition composition is not claimed.
+- Packaged remote bounded-stale grouped-lifecycle continuation: the focused real-mTLS service case
+  acquired one leader/follower pair from two authenticated observation servers, retained the
+  plan/Manifest pin, transitioned directly into the grouped TCP owner, exposed acquisition and
+  execution metrics, and made execution-phase cancellation sticky. Header self-containment and the
+  installed consumer cover the public lifecycle. A real remote CSEG response and process failover
+  are not claimed.
 
 The C++ files changed by the grouped-exchange continuations pass the repository-pinned clang-format
 18 check. A full-tree check was also run and still reports pre-existing violations in the
