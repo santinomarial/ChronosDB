@@ -249,38 +249,6 @@ response_frame_length(const common::ByteView header,
   return static_cast<std::size_t>(*total_length);
 }
 
-[[nodiscard]] common::Status
-validate_bound_definitions(const query::DistributedVectorFragmentDispatchV2& dispatch,
-                           const std::span<const query::VectorAggregateDefinition> definitions) {
-  const auto& plan = dispatch.dispatch.plan;
-  if (plan.mode != query::DistributedVectorPlanMode::kUngroupedAggregate ||
-      plan.aggregates.empty() || definitions.size() != plan.aggregates.size() ||
-      dispatch.result_schema.columns.size() != definitions.size()) {
-    return invalid("vector aggregate query v2 requires an exact ungrouped definition vector");
-  }
-  common::Status definitions_status =
-      query::validate_distributed_vector_aggregate_definitions(definitions);
-  if (!definitions_status.is_ok())
-    return definitions_status;
-  for (std::size_t ordinal = 0U; ordinal < definitions.size(); ++ordinal) {
-    const auto& intent = plan.aggregates[ordinal];
-    const auto& definition = definitions[ordinal];
-    if (definition.operation != intent.operation ||
-        definition.input.has_value() != intent.input_index.has_value() ||
-        (definition.input.has_value() && definition.input->column_ordinal != *intent.input_index)) {
-      return invalid("vector aggregate query v2 definitions differ from the admitted plan");
-    }
-    const auto shape = query::vector_aggregate_output_shape(definition);
-    if (!shape.has_value())
-      return shape.error();
-    const auto& column = dispatch.result_schema.columns[ordinal];
-    if (shape->type != column.type || shape->nullable != column.nullable) {
-      return invalid("vector aggregate query v2 definitions differ from the result schema");
-    }
-  }
-  return common::Status::ok();
-}
-
 [[nodiscard]] common::Result<std::vector<query::VectorAggregateDefinition>>
 bind_worker_definitions(DistributedVectorAggregateQueryWorkerServiceV2& worker,
                         const query::DistributedVectorFragmentDispatchV2& dispatch) noexcept {
@@ -324,6 +292,38 @@ one_response(std::vector<std::byte> encoded) {
 }
 
 } // namespace
+
+common::Status validate_distributed_vector_aggregate_query_definitions_v2(
+    const query::DistributedVectorFragmentDispatchV2& dispatch,
+    const std::span<const query::VectorAggregateDefinition> definitions) {
+  const auto& plan = dispatch.dispatch.plan;
+  if (plan.mode != query::DistributedVectorPlanMode::kUngroupedAggregate ||
+      plan.aggregates.empty() || definitions.size() != plan.aggregates.size() ||
+      dispatch.result_schema.columns.size() != definitions.size()) {
+    return invalid("vector aggregate query v2 requires an exact ungrouped definition vector");
+  }
+  common::Status definitions_status =
+      query::validate_distributed_vector_aggregate_definitions(definitions);
+  if (!definitions_status.is_ok())
+    return definitions_status;
+  for (std::size_t ordinal = 0U; ordinal < definitions.size(); ++ordinal) {
+    const auto& intent = plan.aggregates[ordinal];
+    const auto& definition = definitions[ordinal];
+    if (definition.operation != intent.operation ||
+        definition.input.has_value() != intent.input_index.has_value() ||
+        (definition.input.has_value() && definition.input->column_ordinal != *intent.input_index)) {
+      return invalid("vector aggregate query v2 definitions differ from the admitted plan");
+    }
+    const auto shape = query::vector_aggregate_output_shape(definition);
+    if (!shape.has_value())
+      return shape.error();
+    const auto& column = dispatch.result_schema.columns[ordinal];
+    if (shape->type != column.type || shape->nullable != column.nullable) {
+      return invalid("vector aggregate query v2 definitions differ from the result schema");
+    }
+  }
+  return common::Status::ok();
+}
 
 common::Result<std::vector<std::byte>> encode_distributed_vector_aggregate_query_response_v2(
     const DistributedVectorAggregateQueryResponseV2& response,
@@ -697,6 +697,16 @@ common::Result<std::vector<std::vector<std::byte>>>
 DistributedVectorAggregateQueryReceiverV2::receive(
     const common::ByteView request_bytes,
     const network::PeerAuthenticationResult& authenticated_peer) {
+  auto bound = receive_bound(request_bytes, authenticated_peer);
+  if (!bound.has_value())
+    return common::make_unexpected(bound.error());
+  return std::move(bound->encoded_responses);
+}
+
+common::Result<DistributedVectorAggregateQueryBoundResponsesV2>
+DistributedVectorAggregateQueryReceiverV2::receive_bound(
+    const common::ByteView request_bytes,
+    const network::PeerAuthenticationResult& authenticated_peer) {
   if (!authenticated_peer.authorized || authenticated_peer.principal_id == 0U) {
     return common::make_unexpected(
         unauthenticated("vector aggregate query v2 requires an authenticated principal"));
@@ -726,7 +736,7 @@ DistributedVectorAggregateQueryReceiverV2::receive(
   if (!definitions.has_value())
     return common::make_unexpected(definitions.error());
   const common::Status definitions_status =
-      validate_bound_definitions(request->dispatch, *definitions);
+      validate_distributed_vector_aggregate_query_definitions_v2(request->dispatch, *definitions);
   if (!definitions_status.is_ok())
     return common::make_unexpected(definitions_status);
 
@@ -734,7 +744,7 @@ DistributedVectorAggregateQueryReceiverV2::receive(
   const auto encode_failure =
       [&](const common::StatusCode code,
           const std::optional<DistributedQueryLeaderHint> leader_hint =
-              std::nullopt) -> common::Result<std::vector<std::vector<std::byte>>> {
+              std::nullopt) -> common::Result<DistributedVectorAggregateQueryBoundResponsesV2> {
     auto encoded = encode_distributed_vector_aggregate_query_response_v2(
         {.source_node_id = config_.local_node_id,
          .target_node_id = request->source_node_id,
@@ -745,7 +755,11 @@ DistributedVectorAggregateQueryReceiverV2::receive(
         *definitions);
     if (!encoded.has_value())
       return common::make_unexpected(encoded.error());
-    return one_response(std::move(*encoded));
+    auto frames = one_response(std::move(*encoded));
+    if (!frames.has_value())
+      return common::make_unexpected(frames.error());
+    return DistributedVectorAggregateQueryBoundResponsesV2{.definitions = std::move(*definitions),
+                                                           .encoded_responses = std::move(*frames)};
   };
 
   auto result = execute_aggregate_worker(*config_.worker, request->dispatch);
@@ -800,7 +814,8 @@ DistributedVectorAggregateQueryReceiverV2::receive(
       total_response_bytes += encoded->size();
       frames.push_back(std::move(*encoded));
     }
-    return frames;
+    return DistributedVectorAggregateQueryBoundResponsesV2{.definitions = std::move(*definitions),
+                                                           .encoded_responses = std::move(frames)};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(
         exhausted("vector aggregate query v2 response publication allocation failed"));
@@ -848,7 +863,8 @@ DistributedVectorAggregateQuerySenderV2::create(
     return common::make_unexpected(
         invalid("vector aggregate query v2 sender configuration is invalid"));
   }
-  const common::Status definitions_status = validate_bound_definitions(dispatch, definitions);
+  const common::Status definitions_status =
+      validate_distributed_vector_aggregate_query_definitions_v2(dispatch, definitions);
   if (!definitions_status.is_ok())
     return common::make_unexpected(definitions_status);
   auto request_bytes = encode_distributed_vector_query_request_v2(

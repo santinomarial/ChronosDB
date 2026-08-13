@@ -61,6 +61,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/cluster/distributed_vector_query_transport_v2.hpp>
 #include <chronos/cluster/distributed_vector_aggregate_finalization_v2.hpp>
 #include <chronos/cluster/distributed_vector_aggregate_query_transport_v2.hpp>
+#include <chronos/cluster/distributed_vector_aggregate_query_tls_v2.hpp>
 #include <chronos/cluster/distributed_vector_row_finalization_v2.hpp>
 #include <chronos/cluster/distributed_vector_query_execution_v2.hpp>
 #include <chronos/cluster/distributed_vector_query_tcp_execution_v2.hpp>
@@ -275,6 +276,10 @@ int main() {
       &chronos::query::DistributedVectorAggregateExchangeWriteCursor::create;
   const auto create_vector_aggregate_query_sender =
       &chronos::cluster::DistributedVectorAggregateQuerySenderV2::create;
+  const auto create_vector_aggregate_query_tls_client =
+      &chronos::cluster::DistributedVectorAggregateQueryTlsClientV2::create;
+  const auto create_vector_aggregate_query_tls_server =
+      &chronos::cluster::DistributedVectorAggregateQueryTlsServerV2::create;
   const auto encode_vector_result_schema =
       &chronos::query::encode_distributed_vector_result_schema;
   const auto decode_vector_result_schema =
@@ -535,6 +540,8 @@ int main() {
   (void)consume_vector_aggregate_exchange;
   (void)create_vector_aggregate_exchange_write_cursor;
   (void)create_vector_aggregate_query_sender;
+  (void)create_vector_aggregate_query_tls_client;
+  (void)create_vector_aggregate_query_tls_server;
   (void)encode_vector_query_request;
   (void)decode_vector_query_request;
   (void)encode_vector_query_response;

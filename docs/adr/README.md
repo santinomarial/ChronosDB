@@ -425,3 +425,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0388](0388-authenticated-vector-aggregate-query-receiver-v2.md) | Authenticated vector aggregate query receiver v2 | accepted |
 | [0389](0389-request-local-real-cseg-vector-aggregate-worker-service-v2.md) | Request-local real-CSEG vector aggregate worker service v2 | accepted |
 | [0390](0390-finite-definition-bound-vector-aggregate-query-sender-v2.md) | Finite definition-bound vector aggregate query sender v2 | accepted |
+| [0391](0391-bounded-definition-bound-vector-aggregate-query-v2-mutual-tls.md) | Bounded definition-bound vector aggregate query v2 mutual TLS | accepted |

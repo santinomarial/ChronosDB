@@ -35,6 +35,11 @@ struct DistributedVectorAggregateQueryResponseV2 {
   std::optional<DistributedQueryLeaderHint> leader_hint;
 };
 
+// Exact Fragment-v2 plan/result-shape validation shared by receiver, sender, and TLS ownership.
+[[nodiscard]] common::Status validate_distributed_vector_aggregate_query_definitions_v2(
+    const query::DistributedVectorFragmentDispatchV2& dispatch,
+    std::span<const query::VectorAggregateDefinition> definitions);
+
 [[nodiscard]] common::Result<std::vector<std::byte>>
 encode_distributed_vector_aggregate_query_response_v2(
     const DistributedVectorAggregateQueryResponseV2& response,
@@ -140,6 +145,11 @@ struct DistributedVectorAggregateQueryReceiverV2Config {
   std::size_t maximum_response_bytes{kDefaultDistributedVectorAggregateQueryV2ResponseBytes};
 };
 
+struct DistributedVectorAggregateQueryBoundResponsesV2 {
+  std::vector<query::VectorAggregateDefinition> definitions;
+  std::vector<std::vector<std::byte>> encoded_responses;
+};
+
 // Authentication, source authorization, local-target validation, and definition binding precede
 // execution. No encoded success prefix is returned before the complete exact state vector passes.
 class DistributedVectorAggregateQueryReceiverV2 {
@@ -151,6 +161,9 @@ public:
   [[nodiscard]] common::Result<std::vector<std::vector<std::byte>>>
   receive(common::ByteView request_bytes,
           const network::PeerAuthenticationResult& authenticated_peer);
+  [[nodiscard]] common::Result<DistributedVectorAggregateQueryBoundResponsesV2>
+  receive_bound(common::ByteView request_bytes,
+                const network::PeerAuthenticationResult& authenticated_peer);
 
 private:
   explicit DistributedVectorAggregateQueryReceiverV2(

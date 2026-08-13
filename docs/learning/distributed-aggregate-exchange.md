@@ -401,7 +401,10 @@ execution loads real CSEGs once and returns its independently derived definition
 The finite aggregate sender retains the exact request bytes, definition vector, and query memory
 authority together. It canonically reconstructs every complete fixed-width state vector before
 all-or-nothing publication, releases every temporary reservation on rejection, and retries only
-whole immutable attempts under capped backoff. TLS/TCP and process integration still remain.
+whole immutable attempts under capped backoff. The aggregate mutual-TLS client transfers those
+definitions and query resources into its response reader before authenticating and writing; the
+server receives the worker-bound definitions beside the complete response bytes and revalidates
+both before any cursor write. TCP acquisition, listener admission, and process integration remain.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated

@@ -3,8 +3,9 @@
 > **Status:** accepted and implemented exact response codec/partial-I/O contract. Requests reuse
 > the exact Fragment-v2 `CHDVREQ2` carrier. An authenticated receiver owns definition binding,
 > worker handoff, and complete bounded response publication. A finite sender owns definition-bound
-> retry and result memory. TLS/TCP lifecycle and process ownership remain separate. A production
-> request-local service supplies fresh definition authority and proof-revalidated real-CSEG execution.
+> retry and result memory. Connected mutual-TLS carriers own definition-bound one-attempt I/O. TCP
+> acquisition, listener admission, and process ownership remain separate. A production request-local
+> service supplies fresh definition authority and proof-revalidated real-CSEG execution.
 
 All integers are unsigned little-endian. Reserved bytes are zero. CRC32C detects accidental damage
 and is not authentication. The nested payload retains its own independent checksums.
@@ -80,6 +81,11 @@ turn an otherwise valid oversized result into one `RESOURCE_EXHAUSTED` response.
 encoding, or allocation failure exposes no success prefix. TLS and socket ownership remain outside
 this synchronous borrowed-service boundary.
 
+`receive_bound` returns the freshly authority-derived ordered definition vector beside the complete
+encoded response vector. The ordinary `receive` API delegates to it and discards only the returned
+definition copy. Bound publication lets a later owner independently decode response states without
+guessing input authority from final output descriptors.
+
 ## Finite sender
 
 One `DistributedVectorAggregateQuerySenderV2` owns the immutable canonical request bytes, complete
@@ -100,3 +106,18 @@ Only one correlated failure frame is valid. `UNAVAILABLE`, `RESOURCE_EXHAUSTED`,
 schedule a whole new attempt under positive capped exponential backoff until the finite attempt
 budget ends. A leader hint is advisory and never changes the request target. The sender owns no
 socket, TLS state, clock, multi-tablet coordinator, or durable authority.
+
+## Mutual-TLS attempt
+
+The client transfers one exact definition vector and query resource context into its aggregate
+response reader before handshake progress. Both peers authenticate certificate fingerprints before
+application I/O, and the client additionally authorizes the exact request target. A success stream
+has the fixed definition width; one correlated failure frame is terminal. Decoded prefixes remain
+private until complete, and any later failure clears them and their query reservations.
+
+The server requests the receiver's bound response form, revalidates those definitions against the
+decoded Fragment-v2 request, and exact-decodes the complete response vector before constructing any
+write cursors. Fixed 16-KiB TLS scratch, exact header-first frame ownership, frame count, total outer
+bytes, nested frame, aggregate-count, state-frame, and variable-extremum limits remain independent.
+Handshake and exchange deadlines are positive and sticky. TLS carriers own no connector, listener,
+retry, coordinator, or process lifecycle.
