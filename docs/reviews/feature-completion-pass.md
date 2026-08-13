@@ -654,6 +654,13 @@ Focused executions passed:
   projection budget rejected before ownership publication. Existing aggregate/grouped/metadata
   cases remained green. Metadata-backed vector batch construction, execution, coordination, and
   transport are not claimed.
+- Distributed vector-fragment partial-I/O continuation: one focused case enumerated every split of
+  a variable group-scoped dispatch, consumed two coalesced frames only through each reported
+  prefix, retained sticky header corruption, rejected lower reader and exact-decoder frame limits
+  as resource exhaustion, and proved short-write suffix, overrun rollback, and moved-from cursor
+  ownership. Header self-containment and installed consumption cover the public state machines.
+  Metadata-backed vector batch construction, execution, coordination, authenticated transport,
+  and process integration are not claimed.
 
 The C++ files changed by the grouped- and vector-exchange continuations pass the repository-pinned
 clang-format 18 check. A full-tree check was also run and still reports pre-existing violations in

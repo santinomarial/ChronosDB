@@ -232,6 +232,13 @@ int main() {
   const auto validate_vector_plan = &chronos::query::validate_distributed_vector_plan_intent;
   const auto decode_vector_fragment =
       &chronos::query::decode_distributed_vector_fragment_dispatch_exact;
+  using ConsumeVectorFragment = chronos::common::Result<
+      chronos::query::DistributedVectorFragmentReadStep> (
+      chronos::query::DistributedVectorFragmentReader::*)(chronos::common::ByteView);
+  const ConsumeVectorFragment consume_vector_fragment =
+      &chronos::query::DistributedVectorFragmentReader::consume;
+  const auto create_vector_fragment_write_cursor =
+      &chronos::query::DistributedVectorFragmentWriteCursor::create;
   const auto bind_vector_fragment = &chronos::query::bind_distributed_vector_fragment;
   const auto bind_compatible_vector_snapshot =
       &chronos::query::bind_compatible_distributed_vector_snapshot;
@@ -361,6 +368,8 @@ int main() {
   (void)decode_vector_plan;
   (void)validate_vector_plan;
   (void)decode_vector_fragment;
+  (void)consume_vector_fragment;
+  (void)create_vector_fragment_write_cursor;
   (void)bind_vector_fragment;
   (void)bind_compatible_vector_snapshot;
   (void)create_replicated_query_worker;

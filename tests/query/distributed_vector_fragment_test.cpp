@@ -1,9 +1,12 @@
 #include "chronos/common/crc32c.hpp"
 #include "chronos/query/distributed_vector_fragment.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
+#include <ranges>
+#include <utility>
 #include <vector>
 
 namespace chronos::query {
@@ -124,6 +127,75 @@ TEST(DistributedVectorFragmentTest, RejectsDamageLimitsAndContradictoryAuthority
   nil_group.raft_group_id = common::Uuid{};
   EXPECT_EQ(encode_distributed_vector_fragment_dispatch(nil_group).error().code(),
             common::StatusCode::kInvalidArgument);
+}
+
+TEST(DistributedVectorFragmentTest, OwnsBoundedPartialReadsAndShortWriteProgress) {
+  const DistributedVectorFragmentDispatch expected = dispatch();
+  const auto encoded = encode_distributed_vector_fragment_dispatch(expected);
+  ASSERT_TRUE(encoded.has_value());
+
+  for (std::size_t split = 0U; split <= encoded->bytes().size(); ++split) {
+    DistributedVectorFragmentReader reader;
+    const auto prefix = reader.consume(encoded->bytes().first(split));
+    ASSERT_TRUE(prefix.has_value()) << "split=" << split;
+    EXPECT_EQ(prefix->consumed_bytes, split) << "split=" << split;
+    EXPECT_EQ(prefix->dispatch.has_value(), split == encoded->bytes().size()) << "split=" << split;
+    const auto suffix = reader.consume(encoded->bytes().subspan(split));
+    ASSERT_TRUE(suffix.has_value()) << "split=" << split;
+    EXPECT_EQ(suffix->consumed_bytes, encoded->bytes().size() - split) << "split=" << split;
+    ASSERT_TRUE(prefix->dispatch.has_value() || suffix->dispatch.has_value()) << "split=" << split;
+    const DistributedVectorFragmentDispatch* decoded =
+        prefix->dispatch.has_value() ? &*prefix->dispatch : &*suffix->dispatch;
+    EXPECT_EQ(*decoded, expected) << "split=" << split;
+    EXPECT_EQ(reader.buffered_bytes(), 0U) << "split=" << split;
+  }
+
+  std::vector<std::byte> coalesced(encoded->bytes().begin(), encoded->bytes().end());
+  coalesced.insert(coalesced.end(), encoded->bytes().begin(), encoded->bytes().end());
+  DistributedVectorFragmentReader coalesced_reader;
+  const auto first = coalesced_reader.consume(coalesced);
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(first->dispatch.has_value());
+  EXPECT_EQ(first->consumed_bytes, encoded->bytes().size());
+  const auto second =
+      coalesced_reader.consume(common::ByteView{coalesced}.subspan(first->consumed_bytes));
+  ASSERT_TRUE(second.has_value());
+  ASSERT_TRUE(second->dispatch.has_value());
+  EXPECT_EQ(second->consumed_bytes, encoded->bytes().size());
+
+  std::vector<std::byte> corrupt(encoded->bytes().begin(), encoded->bytes().end());
+  corrupt.front() ^= std::byte{1U};
+  DistributedVectorFragmentReader failed_reader;
+  const auto rejected = failed_reader.consume(corrupt);
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_TRUE(failed_reader.failed());
+  EXPECT_EQ(failed_reader.buffered_bytes(), distributed_vector_fragment_format::kHeaderLength);
+  EXPECT_EQ(failed_reader.consume(encoded->bytes()).error(), rejected.error());
+
+  DistributedVectorFragmentReader limited_reader(
+      {.maximum_frame_length = encoded->bytes().size() - 1U});
+  EXPECT_EQ(limited_reader.consume(encoded->bytes()).error().code(),
+            common::StatusCode::kResourceExhausted);
+  EXPECT_EQ(decode_distributed_vector_fragment_dispatch_exact(
+                encoded->bytes(), {.maximum_frame_length = encoded->bytes().size() - 1U})
+                .error()
+                .code(),
+            common::StatusCode::kResourceExhausted);
+
+  auto cursor = DistributedVectorFragmentWriteCursor::create(expected);
+  ASSERT_TRUE(cursor.has_value());
+  EXPECT_TRUE(std::ranges::equal(cursor->pending_write(), encoded->bytes()));
+  ASSERT_TRUE(cursor->consume_written(23U).is_ok());
+  EXPECT_EQ(cursor->written_bytes(), 23U);
+  EXPECT_TRUE(std::ranges::equal(cursor->pending_write(), encoded->bytes().subspan(23U)));
+  EXPECT_EQ(cursor->consume_written(cursor->pending_write().size() + 1U).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(cursor->written_bytes(), 23U);
+  DistributedVectorFragmentWriteCursor moved = std::move(*cursor);
+  EXPECT_TRUE(cursor->complete());
+  EXPECT_TRUE(cursor->pending_write().empty());
+  ASSERT_TRUE(moved.consume_written(moved.pending_write().size()).is_ok());
+  EXPECT_TRUE(moved.complete());
 }
 
 } // namespace

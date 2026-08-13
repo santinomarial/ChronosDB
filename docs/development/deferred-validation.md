@@ -266,7 +266,11 @@
   plan intent now canonically describes row projection, ungrouped or multi-key grouped aggregates,
   final output ordering, and LIMIT under bounded checked indices. A distinct group-scoped vector
   fragment now binds that intent to complete snapshot/route/read-proof-shaped request bytes and
-  exact projection indices without reusing aggregate formats. A committed-authority binder now
+  exact projection indices without reusing aggregate formats. Its header-first nonmovable reader
+  validates the outer and nested byte shape plus caller frame/projection limits before exact
+  allocation, enforces caller plan-shape limits before publication, owns one fragmented frame,
+  preserves coalesced suffix ownership, and pairs with a move-only checked short-write cursor. A
+  committed-authority binder now
   derives one such dispatch only after exact admission, placement, Manifest-v2 source/position,
   recovery schema, projection, and aggregate operation/type agreement. A compatible multi-tablet
   owner now pins one Manifest generation behind every plan-ordered vector dispatch under bounded

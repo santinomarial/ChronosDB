@@ -56,6 +56,19 @@ epoch is nonzero. Header CRC validation precedes use of projection/plan lengths;
 CRC precedes projection allocation and nested decode. Unknown versions are unsupported, lower
 caller limits are resource exhaustion, and damaged or contradictory bytes are corruption.
 
+## Stream ownership
+
+`DistributedVectorFragmentReader` retains only the fixed 232-byte header until its CRC, the derived
+exact outer length, the hard nested-plan byte bound, and caller frame/projection limits pass. It then
+allocates the exact complete frame; caller plan-shape limits are enforced by exact nested decode
+before publication. It consumes at most one frame per call and reports the exact consumed prefix so
+a coalesced successor remains caller-owned. A frame error after bytes have been retained is sticky;
+invalid caller limit configuration consumes nothing and is not sticky.
+
+`DistributedVectorFragmentWriteCursor` owns one exact encoded frame and exposes only its pending
+suffix. Checked acknowledgements cannot advance beyond that suffix. Moving the cursor transfers the
+frame and makes the source complete. Neither state machine defines socket scheduling or security.
+
 Unlike the aggregate path's historical two-layer fragment/dispatch formats, this new format carries
 Raft group identity from version one. CRC is not authentication. A production binder must still
 derive every field from one committed metadata and Manifest snapshot plus the exact read admission;

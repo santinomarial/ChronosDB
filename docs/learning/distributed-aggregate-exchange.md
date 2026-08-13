@@ -244,6 +244,11 @@ read proof, unique destination projection, and optional event bounds around that
 header CRC protects all allocation-driving fields; the outer and nested complete CRCs remain
 independent. Decoding alone is not runtime authority: construction and worker revalidation still
 have to join the frame to committed metadata, Manifest, and local Raft state.
+Its nonmovable stream reader retains only that fixed header until the derived byte shape and caller
+frame/projection limits pass, then allocates exactly one frame and enforces caller plan-shape limits
+before publication. It reports the consumed prefix without retaining a coalesced successor. Failure
+after retained input is sticky. Its move-only cursor owns the encoded variable frame and makes the
+moved-from source complete.
 The first vector binder now performs the coordinator half of that join for one tablet. It shares
 the aggregate path's read-admission rules, exact-matches committed placement and Manifest-v2
 Raft/source/schema authority, maps plan indices through the unique projection, and invokes the

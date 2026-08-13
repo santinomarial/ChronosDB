@@ -11,6 +11,7 @@
 #include "chronos/raft/types.hpp"
 #include "chronos/schema/identity.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -61,6 +62,7 @@ struct DistributedVectorQueryPlan {
 };
 
 struct DistributedVectorFragmentDecodeLimits {
+  std::size_t maximum_frame_length{distributed_vector_fragment_format::kMaximumFrameLength};
   std::uint32_t maximum_projection_columns{
       distributed_vector_fragment_format::kMaximumProjectionColumns};
   DistributedVectorPlanDecodeLimits plan;
@@ -94,6 +96,56 @@ encode_distributed_vector_fragment_dispatch(const DistributedVectorFragmentDispa
 [[nodiscard]] common::Result<DistributedVectorFragmentDispatch>
 decode_distributed_vector_fragment_dispatch_exact(
     common::ByteView bytes, DistributedVectorFragmentDecodeLimits limits = {});
+
+struct DistributedVectorFragmentReadStep {
+  std::size_t consumed_bytes{};
+  std::optional<DistributedVectorFragmentDispatch> dispatch;
+};
+
+class DistributedVectorFragmentReader {
+public:
+  explicit DistributedVectorFragmentReader(DistributedVectorFragmentDecodeLimits limits = {});
+  DistributedVectorFragmentReader(const DistributedVectorFragmentReader&) = delete;
+  DistributedVectorFragmentReader& operator=(const DistributedVectorFragmentReader&) = delete;
+  DistributedVectorFragmentReader(DistributedVectorFragmentReader&&) = delete;
+  DistributedVectorFragmentReader& operator=(DistributedVectorFragmentReader&&) = delete;
+
+  [[nodiscard]] common::Result<DistributedVectorFragmentReadStep> consume(common::ByteView bytes);
+  [[nodiscard]] std::size_t buffered_bytes() const noexcept;
+  [[nodiscard]] bool failed() const noexcept;
+
+private:
+  DistributedVectorFragmentDecodeLimits limits_;
+  std::array<std::byte, distributed_vector_fragment_format::kHeaderLength> header_{};
+  std::size_t header_bytes_{};
+  std::vector<std::byte> frame_;
+  std::size_t frame_bytes_{};
+  std::optional<common::Status> failure_;
+};
+
+class DistributedVectorFragmentWriteCursor {
+public:
+  DistributedVectorFragmentWriteCursor() = delete;
+  DistributedVectorFragmentWriteCursor(const DistributedVectorFragmentWriteCursor&) = delete;
+  DistributedVectorFragmentWriteCursor&
+  operator=(const DistributedVectorFragmentWriteCursor&) = delete;
+  DistributedVectorFragmentWriteCursor(DistributedVectorFragmentWriteCursor&& other) noexcept;
+  DistributedVectorFragmentWriteCursor&
+  operator=(DistributedVectorFragmentWriteCursor&& other) noexcept;
+
+  [[nodiscard]] static common::Result<DistributedVectorFragmentWriteCursor>
+  create(const DistributedVectorFragmentDispatch& dispatch);
+  [[nodiscard]] common::ByteView pending_write() const noexcept;
+  [[nodiscard]] common::Status consume_written(std::size_t bytes) noexcept;
+  [[nodiscard]] std::size_t written_bytes() const noexcept;
+  [[nodiscard]] bool complete() const noexcept;
+
+private:
+  explicit DistributedVectorFragmentWriteCursor(
+      EncodedDistributedVectorFragmentDispatch encoded) noexcept;
+  EncodedDistributedVectorFragmentDispatch encoded_;
+  std::size_t written_bytes_{};
+};
 
 } // namespace chronos::query
 

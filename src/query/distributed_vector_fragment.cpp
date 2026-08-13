@@ -28,6 +28,10 @@ inline constexpr std::uint32_t kKnownFlags = kLowerPresent | kLowerInclusive | k
                                              kUpperInclusive | kMaximumStalenessPresent |
                                              kBarrierPresent;
 inline constexpr std::size_t kHeaderCrcOffset = 228U;
+inline constexpr std::size_t kMinimumFrameLength =
+    distributed_vector_fragment_format::kHeaderLength + sizeof(std::uint32_t) +
+    distributed_vector_plan_format::kHeaderLength + distributed_vector_plan_format::kTrailerLength +
+    distributed_vector_fragment_format::kTrailerLength;
 
 [[nodiscard]] common::Status invalid(const char* message) {
   return {common::StatusCode::kInvalidArgument, message};
@@ -35,6 +39,29 @@ inline constexpr std::size_t kHeaderCrcOffset = 228U;
 
 [[nodiscard]] common::Status corruption(const char* message) {
   return {common::StatusCode::kCorruption, message};
+}
+
+[[nodiscard]] common::Status
+validate_decode_limits(const DistributedVectorFragmentDecodeLimits& limits) {
+  if (limits.maximum_frame_length < kMinimumFrameLength ||
+      limits.maximum_frame_length > distributed_vector_fragment_format::kMaximumFrameLength ||
+      limits.maximum_projection_columns == 0U ||
+      limits.maximum_projection_columns >
+          distributed_vector_fragment_format::kMaximumProjectionColumns ||
+      limits.plan.maximum_input_columns == 0U ||
+      limits.plan.maximum_input_columns > distributed_vector_plan_format::kMaximumInputColumns ||
+      limits.plan.maximum_output_columns == 0U ||
+      limits.plan.maximum_output_columns > distributed_vector_plan_format::kMaximumOutputColumns ||
+      limits.plan.maximum_row_outputs == 0U ||
+      limits.plan.maximum_row_outputs > distributed_vector_plan_format::kMaximumRowOutputs ||
+      limits.plan.maximum_group_keys == 0U ||
+      limits.plan.maximum_group_keys > distributed_vector_plan_format::kMaximumGroupKeys ||
+      limits.plan.maximum_aggregates == 0U ||
+      limits.plan.maximum_aggregates > distributed_vector_plan_format::kMaximumAggregates ||
+      limits.plan.maximum_order_keys > distributed_vector_plan_format::kMaximumOrderKeys) {
+    return invalid("distributed vector fragment limits are invalid");
+  }
+  return common::Status::ok();
 }
 
 [[nodiscard]] common::Status validate_dispatch(const DistributedVectorFragmentDispatch& dispatch) {
@@ -229,28 +256,17 @@ encode_distributed_vector_fragment_dispatch(const DistributedVectorFragmentDispa
 
 common::Result<DistributedVectorFragmentDispatch> decode_distributed_vector_fragment_dispatch_exact(
     const common::ByteView bytes, const DistributedVectorFragmentDecodeLimits limits) {
-  if (limits.maximum_projection_columns == 0U ||
-      limits.maximum_projection_columns >
-          distributed_vector_fragment_format::kMaximumProjectionColumns ||
-      limits.plan.maximum_input_columns == 0U ||
-      limits.plan.maximum_input_columns > distributed_vector_plan_format::kMaximumInputColumns ||
-      limits.plan.maximum_output_columns == 0U ||
-      limits.plan.maximum_output_columns > distributed_vector_plan_format::kMaximumOutputColumns ||
-      limits.plan.maximum_row_outputs == 0U ||
-      limits.plan.maximum_row_outputs > distributed_vector_plan_format::kMaximumRowOutputs ||
-      limits.plan.maximum_group_keys == 0U ||
-      limits.plan.maximum_group_keys > distributed_vector_plan_format::kMaximumGroupKeys ||
-      limits.plan.maximum_aggregates == 0U ||
-      limits.plan.maximum_aggregates > distributed_vector_plan_format::kMaximumAggregates ||
-      limits.plan.maximum_order_keys > distributed_vector_plan_format::kMaximumOrderKeys) {
-    return common::make_unexpected(invalid("distributed vector fragment limits are invalid"));
-  }
-  if (bytes.size() < distributed_vector_fragment_format::kHeaderLength +
-                         distributed_vector_plan_format::kHeaderLength +
-                         distributed_vector_plan_format::kTrailerLength +
-                         distributed_vector_fragment_format::kTrailerLength ||
+  const common::Status limits_status = validate_decode_limits(limits);
+  if (!limits_status.is_ok())
+    return common::make_unexpected(limits_status);
+  if (bytes.size() < kMinimumFrameLength ||
       bytes.size() > distributed_vector_fragment_format::kMaximumFrameLength)
     return common::make_unexpected(corruption("distributed vector fragment length is invalid"));
+  if (bytes.size() > limits.maximum_frame_length) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "distributed vector fragment exceeds caller frame limit"});
+  }
   if (!std::ranges::equal(bytes.first(kMagic.size()), kMagic))
     return common::make_unexpected(corruption("distributed vector fragment magic is invalid"));
   common::ByteReader header_crc_reader{bytes.subspan(kHeaderCrcOffset, 4U)};
@@ -438,6 +454,174 @@ common::Result<DistributedVectorFragmentDispatch> decode_distributed_vector_frag
         common::Status{common::StatusCode::kResourceExhausted,
                        "distributed vector fragment decode exceeds container limits"});
   }
+}
+
+DistributedVectorFragmentReader::DistributedVectorFragmentReader(
+    const DistributedVectorFragmentDecodeLimits limits)
+    : limits_(limits) {}
+
+common::Result<DistributedVectorFragmentReadStep>
+DistributedVectorFragmentReader::consume(const common::ByteView bytes) {
+  if (failure_.has_value())
+    return common::make_unexpected(*failure_);
+  const common::Status limits_status = validate_decode_limits(limits_);
+  if (!limits_status.is_ok())
+    return common::make_unexpected(limits_status);
+  std::size_t consumed{};
+  if (frame_.empty()) {
+    const std::size_t copied =
+        std::min(bytes.size(), distributed_vector_fragment_format::kHeaderLength - header_bytes_);
+    std::ranges::copy(bytes.first(copied),
+                      header_.begin() + static_cast<std::ptrdiff_t>(header_bytes_));
+    header_bytes_ += copied;
+    consumed += copied;
+    if (header_bytes_ != distributed_vector_fragment_format::kHeaderLength)
+      return DistributedVectorFragmentReadStep{.consumed_bytes = consumed};
+
+    common::ByteReader crc_reader{common::ByteView{header_}.subspan(kHeaderCrcOffset, 4U)};
+    const auto header_crc = crc_reader.read_u32_le();
+    common::ByteReader reader{header_};
+    const auto magic = reader.read_exact(kMagic.size());
+    const auto major = reader.read_u16_le();
+    const auto minor = reader.read_u16_le();
+    const auto header_length = reader.read_u32_le();
+    const auto frame_length = reader.read_u64_le();
+    static_cast<void>(reader.skip(168U));
+    const auto projection_count = reader.read_u32_le();
+    const auto flags = reader.read_u32_le();
+    const auto consistency = reader.read_u8();
+    const auto small_reserved = reader.read_exact(3U);
+    static_cast<void>(reader.skip(16U));
+    const auto plan_length = reader.read_u32_le();
+    const auto reserved = reader.read_u32_le();
+    if (!magic.has_value() || !std::ranges::equal(*magic, kMagic) || !header_crc.has_value() ||
+        *header_crc != common::crc32c(common::ByteView{header_}.first(kHeaderCrcOffset)) ||
+        !major.has_value() || !minor.has_value() || !header_length.has_value() ||
+        *header_length != distributed_vector_fragment_format::kHeaderLength ||
+        !frame_length.has_value() || *frame_length < kMinimumFrameLength ||
+        *frame_length > distributed_vector_fragment_format::kMaximumFrameLength ||
+        !projection_count.has_value() || *projection_count == 0U ||
+        *projection_count > distributed_vector_fragment_format::kMaximumProjectionColumns ||
+        !flags.has_value() || (*flags & ~kKnownFlags) != 0U || !consistency.has_value() ||
+        (*consistency <
+             static_cast<std::uint8_t>(DistributedReadConsistency::kLeaderLinearizable) ||
+         *consistency > static_cast<std::uint8_t>(DistributedReadConsistency::kLocalEventual)) ||
+        !small_reserved.has_value() ||
+        !std::ranges::all_of(*small_reserved,
+                             [](const std::byte value) { return value == std::byte{}; }) ||
+        !plan_length.has_value() ||
+        *plan_length < distributed_vector_plan_format::kHeaderLength +
+                           distributed_vector_plan_format::kTrailerLength ||
+        *plan_length > distributed_vector_plan_format::kMaximumFrameLength ||
+        !reserved.has_value() || *reserved != 0U ||
+        *frame_length != distributed_vector_fragment_format::kHeaderLength +
+                             static_cast<std::uint64_t>(*projection_count) * 4U + *plan_length +
+                             distributed_vector_fragment_format::kTrailerLength) {
+      failure_ = corruption("distributed vector fragment streaming header is invalid");
+      return common::make_unexpected(*failure_);
+    }
+    if (*major != distributed_vector_fragment_format::kMajor ||
+        *minor != distributed_vector_fragment_format::kMinor) {
+      failure_ = common::Status{common::StatusCode::kNotSupported,
+                                "distributed vector fragment version is unsupported"};
+      return common::make_unexpected(*failure_);
+    }
+    if (*frame_length > limits_.maximum_frame_length ||
+        *projection_count > limits_.maximum_projection_columns) {
+      failure_ = common::Status{common::StatusCode::kResourceExhausted,
+                                "distributed vector fragment exceeds reader limits"};
+      return common::make_unexpected(*failure_);
+    }
+    try {
+      frame_.resize(static_cast<std::size_t>(*frame_length));
+    } catch (const std::bad_alloc&) {
+      failure_ = common::Status{common::StatusCode::kResourceExhausted,
+                                "distributed vector fragment reader allocation failed"};
+      return common::make_unexpected(*failure_);
+    } catch (const std::length_error&) {
+      failure_ = common::Status{common::StatusCode::kResourceExhausted,
+                                "distributed vector fragment reader exceeds container limits"};
+      return common::make_unexpected(*failure_);
+    }
+    std::ranges::copy(header_, frame_.begin());
+    frame_bytes_ = header_.size();
+  }
+
+  const common::ByteView remaining = bytes.subspan(consumed);
+  const std::size_t copied = std::min(remaining.size(), frame_.size() - frame_bytes_);
+  std::ranges::copy(remaining.first(copied),
+                    frame_.begin() + static_cast<std::ptrdiff_t>(frame_bytes_));
+  frame_bytes_ += copied;
+  consumed += copied;
+  if (frame_bytes_ != frame_.size())
+    return DistributedVectorFragmentReadStep{.consumed_bytes = consumed};
+  auto decoded = decode_distributed_vector_fragment_dispatch_exact(frame_, limits_);
+  if (!decoded.has_value()) {
+    failure_ = decoded.error();
+    return common::make_unexpected(*failure_);
+  }
+  DistributedVectorFragmentDispatch result = std::move(*decoded);
+  frame_.clear();
+  frame_bytes_ = 0U;
+  header_bytes_ = 0U;
+  return DistributedVectorFragmentReadStep{.consumed_bytes = consumed,
+                                           .dispatch = std::move(result)};
+}
+
+std::size_t DistributedVectorFragmentReader::buffered_bytes() const noexcept {
+  return frame_.empty() ? header_bytes_ : frame_bytes_;
+}
+
+bool DistributedVectorFragmentReader::failed() const noexcept {
+  return failure_.has_value();
+}
+
+DistributedVectorFragmentWriteCursor::DistributedVectorFragmentWriteCursor(
+    EncodedDistributedVectorFragmentDispatch encoded) noexcept
+    : encoded_(std::move(encoded)) {}
+
+DistributedVectorFragmentWriteCursor::DistributedVectorFragmentWriteCursor(
+    DistributedVectorFragmentWriteCursor&& other) noexcept
+    : encoded_(std::move(other.encoded_)), written_bytes_(other.written_bytes_) {
+  other.written_bytes_ = other.encoded_.bytes().size();
+}
+
+DistributedVectorFragmentWriteCursor& DistributedVectorFragmentWriteCursor::operator=(
+    DistributedVectorFragmentWriteCursor&& other) noexcept {
+  if (this != &other) {
+    encoded_ = std::move(other.encoded_);
+    written_bytes_ = other.written_bytes_;
+    other.written_bytes_ = other.encoded_.bytes().size();
+  }
+  return *this;
+}
+
+common::Result<DistributedVectorFragmentWriteCursor>
+DistributedVectorFragmentWriteCursor::create(const DistributedVectorFragmentDispatch& dispatch) {
+  auto encoded = encode_distributed_vector_fragment_dispatch(dispatch);
+  if (!encoded.has_value())
+    return common::make_unexpected(encoded.error());
+  return DistributedVectorFragmentWriteCursor{std::move(*encoded)};
+}
+
+common::ByteView DistributedVectorFragmentWriteCursor::pending_write() const noexcept {
+  return encoded_.bytes().subspan(written_bytes_);
+}
+
+common::Status
+DistributedVectorFragmentWriteCursor::consume_written(const std::size_t bytes) noexcept {
+  if (bytes > encoded_.bytes().size() - written_bytes_)
+    return invalid("written byte count exceeds distributed vector fragment frame");
+  written_bytes_ += bytes;
+  return common::Status::ok();
+}
+
+std::size_t DistributedVectorFragmentWriteCursor::written_bytes() const noexcept {
+  return written_bytes_;
+}
+
+bool DistributedVectorFragmentWriteCursor::complete() const noexcept {
+  return written_bytes_ == encoded_.bytes().size();
 }
 
 } // namespace chronos::query

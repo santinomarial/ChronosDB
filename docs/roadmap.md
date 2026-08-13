@@ -1014,7 +1014,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   multi-key grouping, final output ordering, and LIMIT without freezing schema types or native
   physical-plan objects. A distinct group-scoped vector fragment binds that intent to complete
   snapshot/route/read-proof-shaped bytes, exact projection, and nested integrity without abusing
-  aggregate v1. Its committed-authority binder now exact-matches read admission, placement,
+  aggregate v1. Its header-first reader validates every allocation-driving length before exact
+  frame ownership, preserves a coalesced suffix through explicit consumed-byte reporting, and
+  pairs with move-only checked short-write ownership. Its committed-authority binder now
+  exact-matches read admission, placement,
   Manifest-v2 source/position, recovery schema, projection, and local aggregate operation/type
   rules before constructing an owned dispatch. A move-only compatible owner now pins one Manifest
   generation behind every plan-ordered vector dispatch under bounded aggregate projection
