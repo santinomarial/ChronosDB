@@ -624,13 +624,19 @@ Focused executions passed:
   mixed-type Columnar Batch v1 and a terminal-only empty stream in exact correlated/checksummed
   frames, then rejected truncation, nested corruption, limit excess, and empty nonterminal input.
   General vector request fragments, coordination, transport, and execution are not claimed.
+- Distributed vector partial-I/O continuation: one focused query case enumerated every split of a
+  mixed-type variable frame, consumed a coalesced empty terminal through exact reported prefixes,
+  retained sticky header corruption and unsupported-version failure, rejected a nested byte limit
+  before payload buffering, and proved short-write suffix, overrun rollback, and moved-from cursor
+  ownership. Header self-containment and the installed consumer cover the public API. General
+  vector request fragments, coordination, authenticated transport, and execution are not claimed.
 
-The C++ files changed by the grouped-exchange continuations pass the repository-pinned clang-format
-18 check. A full-tree check was also run and still reports pre-existing violations in the
-subscription protocol, subscription, multi-tablet checkpoint implementation, and focused
-subscription test files; this grouped slice does not rewrite those unrelated files or claim a
-full-tree formatting pass. Full-suite, sanitizer, fuzz, broader cross-compiler/Linux parity,
-benchmark, profile, and chaos checks were deliberately not run.
+The C++ files changed by the grouped- and vector-exchange continuations pass the repository-pinned
+clang-format 18 check. A full-tree check was also run and still reports pre-existing violations in
+the subscription protocol, subscription, multi-tablet checkpoint implementation, and focused
+subscription test files; these slices do not rewrite those unrelated files or claim a full-tree
+formatting pass. Full-suite, sanitizer, fuzz, broader cross-compiler/Linux parity, benchmark,
+profile, and chaos checks were deliberately not run.
 
 ## Known risks and limitations
 

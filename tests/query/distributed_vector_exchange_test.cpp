@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <gtest/gtest.h>
 #include <ranges>
+#include <utility>
 #include <vector>
 
 namespace chronos::query {
@@ -97,6 +98,101 @@ TEST(DistributedVectorExchangeTest, RejectsDamageBoundsAndNoncanonicalFrames) {
                 .error()
                 .code(),
             common::StatusCode::kInvalidArgument);
+}
+
+TEST(DistributedVectorExchangeTest, OwnsBoundedPartialReadsAndShortWriteProgress) {
+  const auto batch = columnar::OwnedColumnarBatch::create(columnar::test::batch_schema(),
+                                                          columnar::test::batch_columns());
+  ASSERT_TRUE(batch.has_value());
+  const auto nested = columnar::encode_columnar_batch_v1(*batch);
+  ASSERT_TRUE(nested.has_value());
+  const DistributedVectorExchangeMessage first_message{
+      .query_id = uuid(0x11U),
+      .tablet_id = tablet(0x12U),
+      .sequence = 1U,
+      .encoded_batch = {nested->bytes().begin(), nested->bytes().end()}};
+  const DistributedVectorExchangeMessage second_message{
+      .query_id = uuid(0x11U), .tablet_id = tablet(0x12U), .sequence = 2U, .terminal = true};
+  const auto first_encoded = encode_distributed_vector_exchange_message(first_message);
+  const auto second_encoded = encode_distributed_vector_exchange_message(second_message);
+  ASSERT_TRUE(first_encoded.has_value());
+  ASSERT_TRUE(second_encoded.has_value());
+
+  for (std::size_t split = 0U; split <= first_encoded->bytes().size(); ++split) {
+    DistributedVectorExchangeReader reader;
+    const auto prefix = reader.consume(first_encoded->bytes().first(split));
+    ASSERT_TRUE(prefix.has_value()) << "split=" << split;
+    EXPECT_EQ(prefix->consumed_bytes, split) << "split=" << split;
+    EXPECT_EQ(prefix->message.has_value(), split == first_encoded->bytes().size())
+        << "split=" << split;
+    const auto suffix = reader.consume(first_encoded->bytes().subspan(split));
+    ASSERT_TRUE(suffix.has_value()) << "split=" << split;
+    EXPECT_EQ(suffix->consumed_bytes, first_encoded->bytes().size() - split) << "split=" << split;
+    const DistributedVectorExchangeMessage* decoded =
+        prefix->message.has_value() ? &*prefix->message : &*suffix->message;
+    EXPECT_EQ(decoded->sequence, 1U) << "split=" << split;
+    EXPECT_TRUE(std::ranges::equal(decoded->encoded_batch, nested->bytes())) << "split=" << split;
+    EXPECT_EQ(reader.buffered_bytes(), 0U) << "split=" << split;
+  }
+
+  std::vector<std::byte> coalesced(first_encoded->bytes().begin(), first_encoded->bytes().end());
+  coalesced.insert(coalesced.end(), second_encoded->bytes().begin(), second_encoded->bytes().end());
+  DistributedVectorExchangeReader coalesced_reader;
+  const auto first = coalesced_reader.consume(coalesced);
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(first->message.has_value());
+  EXPECT_EQ(first->consumed_bytes, first_encoded->bytes().size());
+  const auto second =
+      coalesced_reader.consume(common::ByteView{coalesced}.subspan(first->consumed_bytes));
+  ASSERT_TRUE(second.has_value());
+  ASSERT_TRUE(second->message.has_value());
+  EXPECT_EQ(second->consumed_bytes, second_encoded->bytes().size());
+  EXPECT_EQ(second->message->sequence, 2U);
+  EXPECT_TRUE(second->message->terminal);
+
+  std::vector<std::byte> corrupt(first_encoded->bytes().begin(), first_encoded->bytes().end());
+  corrupt.front() ^= std::byte{1U};
+  DistributedVectorExchangeReader failed_reader;
+  const auto rejected = failed_reader.consume(corrupt);
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_TRUE(failed_reader.failed());
+  EXPECT_EQ(failed_reader.buffered_bytes(), distributed_vector_exchange_format::kHeaderLength);
+  const auto repeated = failed_reader.consume(first_encoded->bytes());
+  ASSERT_FALSE(repeated.has_value());
+  EXPECT_EQ(repeated.error(), rejected.error());
+
+  std::vector<std::byte> unsupported(first_encoded->bytes().begin(), first_encoded->bytes().end());
+  unsupported[8U] = std::byte{2U};
+  store_u32_le(unsupported, 72U, common::crc32c(common::ByteView{unsupported}.first(72U)));
+  DistributedVectorExchangeReader unsupported_reader;
+  EXPECT_EQ(unsupported_reader.consume(unsupported).error().code(),
+            common::StatusCode::kNotSupported);
+
+  DistributedVectorExchangeReader batch_limited_reader(
+      {.batch = {.max_batch_length = nested->bytes().size() - 1U}});
+  EXPECT_EQ(batch_limited_reader.consume(first_encoded->bytes()).error().code(),
+            common::StatusCode::kResourceExhausted);
+  EXPECT_EQ(batch_limited_reader.buffered_bytes(),
+            distributed_vector_exchange_format::kHeaderLength);
+  DistributedVectorExchangeReader invalid_limits_reader({.maximum_frame_length = 1U});
+  EXPECT_EQ(invalid_limits_reader.consume({}).error().code(), common::StatusCode::kInvalidArgument);
+  EXPECT_FALSE(invalid_limits_reader.failed());
+
+  auto cursor = DistributedVectorExchangeWriteCursor::create(first_message);
+  ASSERT_TRUE(cursor.has_value());
+  EXPECT_TRUE(std::ranges::equal(cursor->pending_write(), first_encoded->bytes()));
+  ASSERT_TRUE(cursor->consume_written(17U).is_ok());
+  EXPECT_EQ(cursor->written_bytes(), 17U);
+  EXPECT_TRUE(std::ranges::equal(cursor->pending_write(), first_encoded->bytes().subspan(17U)));
+  EXPECT_EQ(cursor->consume_written(cursor->pending_write().size() + 1U).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(cursor->written_bytes(), 17U);
+  DistributedVectorExchangeWriteCursor moved = std::move(*cursor);
+  EXPECT_TRUE(cursor->complete());
+  EXPECT_TRUE(cursor->pending_write().empty());
+  ASSERT_TRUE(moved.consume_written(moved.pending_write().size()).is_ok());
+  EXPECT_TRUE(moved.complete());
+  EXPECT_TRUE(moved.consume_written(0U).is_ok());
 }
 
 } // namespace

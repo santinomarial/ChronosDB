@@ -37,5 +37,10 @@ trailing bytes, checksum failure, identity failure, and canonical contradictions
 Unknown versions are unsupported. The nested batch retains its own independent version, integrity,
 logical-type, UTF-8, decimal, shape, and padding rules.
 
+The implemented stream reader retains only the fixed header until its checksum, canonical fields,
+complete-frame limit, and nested-batch byte limit pass. It then owns exactly one declared frame,
+consumes no coalesced successor bytes, exact-decodes on completion, and makes wire failures sticky.
+The move-only write cursor owns one encoded frame and exposes only its checked unwritten suffix.
+
 This frame supplies result correlation and safe all-type batch movement. Stream coordination,
 physical-plan requests, schema authorization, transport, and execution are separate protocols.

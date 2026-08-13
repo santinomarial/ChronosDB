@@ -9,6 +9,7 @@
 #include <limits>
 #include <new>
 #include <ranges>
+#include <stdexcept>
 #include <utility>
 
 namespace chronos::query {
@@ -184,6 +185,162 @@ common::Result<DistributedVectorExchangeMessage> decode_distributed_vector_excha
         common::Status{common::StatusCode::kResourceExhausted,
                        "distributed vector exchange decode allocation failed"});
   }
+}
+
+DistributedVectorExchangeReader::DistributedVectorExchangeReader(
+    const DistributedVectorExchangeDecodeLimits limits)
+    : limits_(limits) {}
+
+common::Result<DistributedVectorExchangeReadStep>
+DistributedVectorExchangeReader::consume(const common::ByteView bytes) {
+  if (failure_.has_value())
+    return common::make_unexpected(*failure_);
+  if (limits_.maximum_frame_length < distributed_vector_exchange_format::kHeaderLength +
+                                         distributed_vector_exchange_format::kTrailerLength ||
+      limits_.maximum_frame_length > distributed_vector_exchange_format::kMaximumFrameLength ||
+      limits_.batch.max_batch_length == 0U) {
+    return common::make_unexpected(invalid("distributed vector exchange limits are invalid"));
+  }
+  std::size_t consumed{};
+  if (frame_.empty()) {
+    const std::size_t copied =
+        std::min(bytes.size(), distributed_vector_exchange_format::kHeaderLength - header_bytes_);
+    std::ranges::copy(bytes.first(copied),
+                      header_.begin() + static_cast<std::ptrdiff_t>(header_bytes_));
+    header_bytes_ += copied;
+    consumed += copied;
+    if (header_bytes_ != distributed_vector_exchange_format::kHeaderLength)
+      return DistributedVectorExchangeReadStep{.consumed_bytes = consumed};
+
+    common::ByteReader crc_reader{common::ByteView{header_}.subspan(72U, 4U)};
+    const auto header_crc = crc_reader.read_u32_le();
+    common::ByteReader reader{header_};
+    const auto magic = reader.read_exact(8U);
+    const auto major = reader.read_u16_le();
+    const auto minor = reader.read_u16_le();
+    const auto header_length = reader.read_u32_le();
+    const auto frame_length = reader.read_u64_le();
+    static_cast<void>(reader.skip(40U));
+    const auto flags = reader.read_u32_le();
+    const auto batch_length = reader.read_u32_le();
+    static_cast<void>(reader.skip(4U));
+    const auto reserved = reader.read_u32_le();
+    if (!magic.has_value() || !std::ranges::equal(*magic, kMagic) || !header_crc.has_value() ||
+        *header_crc != common::crc32c(common::ByteView{header_}.first(72U)) || !major.has_value() ||
+        !minor.has_value() || !header_length.has_value() ||
+        *header_length != distributed_vector_exchange_format::kHeaderLength ||
+        !frame_length.has_value() ||
+        *frame_length < distributed_vector_exchange_format::kHeaderLength +
+                            distributed_vector_exchange_format::kTrailerLength ||
+        *frame_length > limits_.maximum_frame_length || !flags.has_value() ||
+        (*flags & ~kTerminalFlag) != 0U || !batch_length.has_value() ||
+        *batch_length != *frame_length - distributed_vector_exchange_format::kHeaderLength -
+                             distributed_vector_exchange_format::kTrailerLength ||
+        !reserved.has_value() || *reserved != 0U) {
+      failure_ = corruption("distributed vector exchange streaming header is invalid");
+      return common::make_unexpected(*failure_);
+    }
+    if (*major != distributed_vector_exchange_format::kMajor ||
+        *minor != distributed_vector_exchange_format::kMinor) {
+      failure_ = common::Status{common::StatusCode::kNotSupported,
+                                "distributed vector exchange version is unsupported"};
+      return common::make_unexpected(*failure_);
+    }
+    if (*batch_length > limits_.batch.max_batch_length) {
+      failure_ = common::Status{common::StatusCode::kResourceExhausted,
+                                "distributed vector exchange batch exceeds configured limit"};
+      return common::make_unexpected(*failure_);
+    }
+    try {
+      frame_.resize(static_cast<std::size_t>(*frame_length));
+    } catch (const std::bad_alloc&) {
+      failure_ = common::Status{common::StatusCode::kResourceExhausted,
+                                "distributed vector exchange reader allocation failed"};
+      return common::make_unexpected(*failure_);
+    } catch (const std::length_error&) {
+      failure_ = common::Status{common::StatusCode::kResourceExhausted,
+                                "distributed vector exchange reader exceeds container limits"};
+      return common::make_unexpected(*failure_);
+    }
+    std::ranges::copy(header_, frame_.begin());
+    frame_bytes_ = header_.size();
+  }
+
+  const common::ByteView remaining = bytes.subspan(consumed);
+  const std::size_t copied = std::min(remaining.size(), frame_.size() - frame_bytes_);
+  std::ranges::copy(remaining.first(copied),
+                    frame_.begin() + static_cast<std::ptrdiff_t>(frame_bytes_));
+  frame_bytes_ += copied;
+  consumed += copied;
+  if (frame_bytes_ != frame_.size())
+    return DistributedVectorExchangeReadStep{.consumed_bytes = consumed};
+  auto decoded = decode_distributed_vector_exchange_message_exact(frame_, limits_);
+  if (!decoded.has_value()) {
+    failure_ = decoded.error();
+    return common::make_unexpected(*failure_);
+  }
+  DistributedVectorExchangeMessage result = std::move(*decoded);
+  frame_.clear();
+  frame_bytes_ = 0U;
+  header_bytes_ = 0U;
+  return DistributedVectorExchangeReadStep{.consumed_bytes = consumed,
+                                           .message = std::move(result)};
+}
+
+std::size_t DistributedVectorExchangeReader::buffered_bytes() const noexcept {
+  return frame_.empty() ? header_bytes_ : frame_bytes_;
+}
+
+bool DistributedVectorExchangeReader::failed() const noexcept {
+  return failure_.has_value();
+}
+
+DistributedVectorExchangeWriteCursor::DistributedVectorExchangeWriteCursor(
+    EncodedDistributedVectorExchangeMessage encoded) noexcept
+    : encoded_(std::move(encoded)) {}
+
+DistributedVectorExchangeWriteCursor::DistributedVectorExchangeWriteCursor(
+    DistributedVectorExchangeWriteCursor&& other) noexcept
+    : encoded_(std::move(other.encoded_)), written_bytes_(other.written_bytes_) {
+  other.written_bytes_ = other.encoded_.bytes().size();
+}
+
+DistributedVectorExchangeWriteCursor& DistributedVectorExchangeWriteCursor::operator=(
+    DistributedVectorExchangeWriteCursor&& other) noexcept {
+  if (this != &other) {
+    encoded_ = std::move(other.encoded_);
+    written_bytes_ = other.written_bytes_;
+    other.written_bytes_ = other.encoded_.bytes().size();
+  }
+  return *this;
+}
+
+common::Result<DistributedVectorExchangeWriteCursor>
+DistributedVectorExchangeWriteCursor::create(const DistributedVectorExchangeMessage& message) {
+  auto encoded = encode_distributed_vector_exchange_message(message);
+  if (!encoded.has_value())
+    return common::make_unexpected(encoded.error());
+  return DistributedVectorExchangeWriteCursor{std::move(*encoded)};
+}
+
+common::ByteView DistributedVectorExchangeWriteCursor::pending_write() const noexcept {
+  return encoded_.bytes().subspan(written_bytes_);
+}
+
+common::Status
+DistributedVectorExchangeWriteCursor::consume_written(const std::size_t bytes) noexcept {
+  if (bytes > encoded_.bytes().size() - written_bytes_)
+    return invalid("written byte count exceeds distributed vector exchange frame");
+  written_bytes_ += bytes;
+  return common::Status::ok();
+}
+
+std::size_t DistributedVectorExchangeWriteCursor::written_bytes() const noexcept {
+  return written_bytes_;
+}
+
+bool DistributedVectorExchangeWriteCursor::complete() const noexcept {
+  return written_bytes_ == encoded_.bytes().size();
 }
 
 } // namespace chronos::query

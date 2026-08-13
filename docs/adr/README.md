@@ -385,3 +385,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0348](0348-global-grouped-order-and-limit.md) | Global grouped order and limit | accepted |
 | [0349](0349-global-grouped-aggregate-ordering.md) | Global grouped aggregate ordering | accepted |
 | [0350](0350-canonical-distributed-vector-batch-exchange.md) | Canonical distributed vector-batch exchange | accepted |
+| [0351](0351-bounded-distributed-vector-partial-io.md) | Bounded distributed vector partial I/O | accepted |

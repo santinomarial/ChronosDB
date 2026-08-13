@@ -223,6 +223,9 @@ int main() {
       chronos::query::DistributedGroupedFloat64ResultOrderKey::kSum;
   const auto decode_vector_exchange =
       &chronos::query::decode_distributed_vector_exchange_message_exact;
+  const auto create_vector_exchange_write_cursor =
+      &chronos::query::DistributedVectorExchangeWriteCursor::create;
+  chronos::query::DistributedVectorExchangeReader vector_exchange_reader;
   const auto create_replicated_query_worker =
       &chronos::service::ReplicatedDistributedQueryWorker::create;
   const auto create_replicated_grouped_query_worker =
@@ -344,6 +347,8 @@ int main() {
   (void)grouped_result_direction;
   (void)grouped_result_order_key;
   (void)decode_vector_exchange;
+  (void)create_vector_exchange_write_cursor;
+  (void)vector_exchange_reader;
   (void)create_replicated_query_worker;
   (void)create_replicated_grouped_query_worker;
   (void)create_replicated_grouped_query_receiver;

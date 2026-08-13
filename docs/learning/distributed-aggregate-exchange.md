@@ -231,7 +231,10 @@ The same final pass can order on globally merged COUNT, SUM, extrema, mean, or p
 Equal aggregate values use ascending canonical group-key order as the deterministic tie-breaker.
 A distinct vector envelope reuses canonical Columnar Batch v1 for general all-type row results. The
 outer header contributes query/tablet/sequence/terminal correlation and a second integrity boundary;
-it does not reinterpret or duplicate the nested physical column format.
+it does not reinterpret or duplicate the nested physical column format. Its nonmovable stream
+reader retains only the fixed header until integrity-covered outer and nested byte limits pass,
+then owns exactly one frame and leaves coalesced successors caller-owned. Its move-only cursor owns
+the exact short-write suffix and leaves a moved-from owner inert.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated
