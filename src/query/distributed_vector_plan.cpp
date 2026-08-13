@@ -136,6 +136,12 @@ common::ByteView EncodedDistributedVectorPlanIntent::bytes() const noexcept {
   return bytes_;
 }
 
+common::Status validate_distributed_vector_plan_intent(const DistributedVectorPlanIntent& intent,
+                                                       const std::uint32_t input_columns,
+                                                       const std::uint32_t maximum_output_columns) {
+  return validate_intent(intent, input_columns, maximum_output_columns);
+}
+
 common::Result<EncodedDistributedVectorPlanIntent>
 encode_distributed_vector_plan_intent(const DistributedVectorPlanIntent& intent) {
   const common::Status validation =

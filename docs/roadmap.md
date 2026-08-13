@@ -1012,8 +1012,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   proof constructor and additionally proves the projected key FLOAT64 type. A distinct canonical
   schema-neutral vector-plan intent now covers row projection, all current aggregate operations,
   multi-key grouping, final output ordering, and LIMIT without freezing schema types or native
-  physical-plan objects. Authority-bound vector fragments and execution remain deferred; a distinct
-  all-type vector-result envelope now has a header-first
+  physical-plan objects. A distinct group-scoped vector fragment binds that intent to complete
+  snapshot/route/read-proof-shaped bytes, exact projection, and nested integrity without abusing
+  aggregate v1. Coherent committed-authority construction and execution remain deferred; a
+  distinct all-type vector-result envelope now has a header-first
   bounded reader and move-only short-write cursor that preserve coalesced suffix ownership without
   allocating from unchecked lengths. A distinct group-scoped grouped dispatch now
   preserves exact Raft authority without reinterpreting ungrouped dispatch bytes. Its worker reuses

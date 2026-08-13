@@ -636,6 +636,12 @@ Focused executions passed:
   bounds, duplicate groups, invalid COUNT(*), and invalid output order. Header self-containment and
   installed consumption cover the public codec. Authority-bound vector fragments, schema/type
   binding, global coordination, transport, and execution are not claimed.
+- Group-scoped vector-fragment continuation: two focused query cases round-tripped bounded-stale
+  snapshot/route/group proof, unique projection, event bounds, and the nested multi-key ordered
+  plan, then rejected truncation, unknown outer version, independently damaged nested plan, lower
+  projection limits, out-of-projection plan indices, lag contradiction, and nil group identity.
+  Header self-containment and installed consumption cover the public codec. Committed-authority
+  construction, worker execution, coordination, transport, and process integration are not claimed.
 
 The C++ files changed by the grouped- and vector-exchange continuations pass the repository-pinned
 clang-format 18 check. A full-tree check was also run and still reports pre-existing violations in

@@ -387,3 +387,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0350](0350-canonical-distributed-vector-batch-exchange.md) | Canonical distributed vector-batch exchange | accepted |
 | [0351](0351-bounded-distributed-vector-partial-io.md) | Bounded distributed vector partial I/O | accepted |
 | [0352](0352-canonical-distributed-vector-plan-intent.md) | Canonical distributed vector plan intent | accepted |
+| [0353](0353-group-scoped-distributed-vector-fragment.md) | Group-scoped distributed vector fragment | accepted |

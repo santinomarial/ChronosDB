@@ -239,6 +239,11 @@ A separate vector-plan intent describes row output, ungrouped or multi-key group
 final order keys, and LIMIT using only bounded projected-input/final-output indices. The later
 authority binder must supply exact types and resource policy. ORDER plus LIMIT remains global
 intent and cannot be applied independently per tablet without a merge-preservation proof.
+The vector fragment adds query/database/table/tablet/schema/group identity, one exact snapshot and
+read proof, unique destination projection, and optional event bounds around that plan. Its early
+header CRC protects all allocation-driving fields; the outer and nested complete CRCs remain
+independent. Decoding alone is not runtime authority: construction and worker revalidation still
+have to join the frame to committed metadata, Manifest, and local Raft state.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated

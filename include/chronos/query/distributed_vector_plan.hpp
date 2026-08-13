@@ -78,6 +78,11 @@ struct DistributedVectorPlanDecodeLimits {
   std::uint32_t maximum_order_keys{distributed_vector_plan_format::kMaximumOrderKeys};
 };
 
+// Validates one intent against the exact projected input width and a caller output-width bound.
+[[nodiscard]] common::Status validate_distributed_vector_plan_intent(
+    const DistributedVectorPlanIntent& intent, std::uint32_t input_columns,
+    std::uint32_t maximum_output_columns = distributed_vector_plan_format::kMaximumOutputColumns);
+
 class EncodedDistributedVectorPlanIntent {
 public:
   EncodedDistributedVectorPlanIntent() = delete;
