@@ -297,7 +297,8 @@ DistributedVectorAggregateCoordinatorV2::finish() && {
         return common::make_unexpected(value.error());
       values.push_back(std::move(*value));
     }
-    DistributedVectorAggregateQueryResultV2 result{.result_schema = std::move(impl.result_schema),
+    DistributedVectorAggregateQueryResultV2 result{.definitions = std::move(impl.definitions),
+                                                   .result_schema = std::move(impl.result_schema),
                                                    .values = std::move(values),
                                                    .retained_encoded_bytes =
                                                        impl.retained_encoded_bytes};

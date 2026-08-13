@@ -35,9 +35,10 @@ remains authoritative, while a failure after that tablet's complete terminal is 
 Rvalue `finish` first requires one complete definition-width vector from every tablet. It creates a
 fresh bounded query resource context, decodes the retained integrity-protected frames, and merges
 each ordinal in plan-tablet order into one shared all-type state. Only after all merges succeed does
-it call `take_result` once per state and transfer the schema and finalized values together. A failed
-decode, merge, allocation, or result publication leaves the retained authority and bytes available
-for retry. Fixed merged-state capacity and variable extrema have independent limits.
+it call `take_result` once per state and transfer the exact definitions, schema, and finalized
+values together. A failed decode, merge, allocation, or result publication leaves the retained
+authority and bytes available for retry. Fixed merged-state capacity and variable extrema have
+independent limits.
 
 The coordinator does not own sockets, worker scheduling, grouped keys, SQL row encoding, or process
 lifecycle. Ungrouped ORDER BY cannot change a one-row result; LIMIT and Native Protocol output are

@@ -385,7 +385,10 @@ aggregate finalization. The vector-v2 coordinator canonically re-encodes every d
 retains exact frames for bounded retry arbitration, waits for the complete definition-width vector
 from every planned tablet, then decodes and merges states in plan-tablet order before finalizing
 each scalar once. Failed retention or final publication leaves the prior owner retryable. The
-authenticated service/transport and Native Protocol result materialization still remain.
+definition vector remains attached to the finalized scalars; the global result owner revalidates
+the ungrouped plan, every scalar shape, and output limits, then encodes every logical type into one
+canonical Native Protocol result payload. LIMIT zero produces a zero-row schema-bearing batch.
+Authenticated service/transport still remains.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated

@@ -121,6 +121,7 @@ TEST(DistributedVectorAggregateCoordinatorV2Test,
   EXPECT_EQ(coordinator->accept(conflicting).code(), common::StatusCode::kAlreadyExists);
   auto result = std::move(*coordinator).finish();
   ASSERT_TRUE(result.has_value()) << result.error().to_string();
+  EXPECT_EQ(result->definitions, expected);
   ASSERT_EQ(result->values.size(), 2U);
   EXPECT_EQ(std::get<std::int64_t>(result->values[0].storage()), 3);
   EXPECT_DOUBLE_EQ(std::get<double>(result->values[1].storage()), 16.0 / 3.0);

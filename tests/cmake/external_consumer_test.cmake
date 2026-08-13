@@ -59,6 +59,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/cluster/distributed_grouped_query_transport.hpp>
 #include <chronos/cluster/distributed_vector_query_transport.hpp>
 #include <chronos/cluster/distributed_vector_query_transport_v2.hpp>
+#include <chronos/cluster/distributed_vector_aggregate_finalization_v2.hpp>
 #include <chronos/cluster/distributed_vector_row_finalization_v2.hpp>
 #include <chronos/cluster/distributed_vector_query_execution_v2.hpp>
 #include <chronos/cluster/distributed_vector_query_tcp_execution_v2.hpp>
@@ -1189,6 +1190,8 @@ int main() {
       &chronos::cluster::DistributedVectorResultCoordinatorV2::create;
   const auto create_distributed_vector_aggregate_coordinator_v2 =
       &chronos::query::DistributedVectorAggregateCoordinatorV2::create;
+  const auto finalize_distributed_vector_aggregate_v2 =
+      &chronos::cluster::finalize_distributed_vector_aggregate_v2;
   using ExecuteDistributedFragment = chronos::common::Result<chronos::query::ExchangeMessage> (*)(
       const chronos::query::DistributedAggregateWorkerRequest&);
   const ExecuteDistributedFragment execute_distributed_fragment =
@@ -1504,6 +1507,7 @@ int main() {
                  create_distributed_vector_query_sender_v2 != nullptr &&
                  create_distributed_vector_result_coordinator_v2 != nullptr &&
                  create_distributed_vector_aggregate_coordinator_v2 != nullptr &&
+                 finalize_distributed_vector_aggregate_v2 != nullptr &&
                  create_replicated_vector_query_worker_v2 != nullptr &&
                  execute_distributed_fragment != nullptr &&
                  execute_distributed_grouped_fragment != nullptr &&

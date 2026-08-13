@@ -885,14 +885,20 @@ Focused executions passed:
   bounded frames for retry identity, requires a complete state vector from every planned tablet,
   and merges in deterministic tablet order before globally finalizing each scalar once. Focused
   coverage proves AVG sufficient-state semantics, gaps/retries/conflicts, first-failure ownership,
-  post-terminal loss, limits, and retryable allocation failure. Native result materialization and
-  authenticated transport/process ownership remain.
+  post-terminal loss, limits, and retryable allocation failure. Authenticated transport/process
+  ownership remains.
+- Native vector aggregate finalization continuation: the exact definition authority now survives
+  coordinator finish and is revalidated with the ungrouped plan, result descriptors, scalar types,
+  nullability, and finite output limits. One canonical Native Protocol payload covers all 18
+  logical types; global LIMIT zero emits a schema-bearing zero-row payload. Focused all-type,
+  negative, decode, and heap-string allocation-failure cases pass. Authenticated aggregate
+  transport and process orchestration remain.
 
 The C++ files changed by the grouped-, vector-exchange-, Fragment-v2-, and vector-transport-v2
 continuations pass the repository-pinned clang-format 18 check. A full-tree check was also run and
 still reports pre-existing violations in the subscription protocol, subscription, multi-tablet
 checkpoint implementation, and focused subscription test files; these slices do not rewrite those
-unrelated files or claim a full-tree formatting pass. The full serialized 1,615-test developer
+unrelated files or claim a full-tree formatting pass. The full serialized 1,618-test developer
 suite, focused ASan/UBSan cases, and deterministic 10,000-run transport-v2, aggregate-state, and
 aggregate-exchange fuzz campaigns pass.
 Apple's sanitizer runtime does not support LeakSanitizer, so those sanitizer runs explicitly

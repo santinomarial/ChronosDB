@@ -241,8 +241,10 @@
   Its compatible Fragment-v2 owner retains one exact cross-tablet-equal aggregate definition vector.
   A proof-revalidated worker now executes those states over real temporal CSEG winners. A bounded
   all-type coordinator owns exact retry arbitration, all-tablet closure, deterministic merge, and
-  global scalar finalization. Authenticated service/transport publication, Native Protocol result
-  materialization, grouped-key transport, and process integration remain deferred.
+  global scalar finalization. A bounded all-type finalizer validates the retained definition
+  authority and emits one canonical Native Protocol result payload after applying global LIMIT.
+  Authenticated service/transport publication, grouped-key transport, and process integration
+  remain deferred.
 - The canonical fixed-width ungrouped aggregate exchange frame, exact codec, aligned in-memory
   state admission, and constant-storage fragmented/coalesced read plus short-write ownership are
   implemented. Contiguous per-tablet sequence admission, bounded bit-exact retry history, terminal

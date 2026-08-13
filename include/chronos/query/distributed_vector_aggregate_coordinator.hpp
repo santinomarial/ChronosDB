@@ -37,6 +37,9 @@ struct DistributedVectorAggregateCoordinatorLimitsV2 {
 };
 
 struct DistributedVectorAggregateQueryResultV2 {
+  // The exact definition vector remains attached through scalar finalization so later public
+  // boundaries do not reconstruct input-type authority from output descriptors.
+  std::vector<VectorAggregateDefinition> definitions;
   DistributedVectorResultSchema result_schema;
   std::vector<ScalarValue> values;
   std::size_t retained_encoded_bytes{};

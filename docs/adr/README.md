@@ -420,3 +420,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0383](0383-owned-cross-tablet-vector-aggregate-definitions.md) | Owned cross-tablet vector aggregate definitions | accepted |
 | [0384](0384-proof-revalidated-vector-aggregate-worker-v2.md) | Proof-revalidated vector aggregate worker v2 | accepted |
 | [0385](0385-bounded-vector-aggregate-coordinator-v2.md) | Bounded vector aggregate coordinator v2 | accepted |
+| [0386](0386-native-vector-aggregate-result-finalization-v2.md) | Native vector aggregate result finalization v2 | accepted |
