@@ -383,3 +383,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0346](0346-explicit-grouped-whole-query-rebinding.md) | Explicit grouped whole-query rebinding | accepted |
 | [0347](0347-real-cseg-tablet-movement-query-gate.md) | Real-CSEG tablet-movement query gate | accepted |
 | [0348](0348-global-grouped-order-and-limit.md) | Global grouped order and limit | accepted |
+| [0349](0349-global-grouped-aggregate-ordering.md) | Global grouped aggregate ordering | accepted |

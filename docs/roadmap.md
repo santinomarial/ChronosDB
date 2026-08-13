@@ -1054,8 +1054,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   cumulative metrics.
   Coordinator-side group-key ORDER BY with explicit null placement and LIMIT now runs only after
   global cross-tablet merge, providing correct bounded top-N for the supported FLOAT64 grouping
-  surface. Multi-key/non-FLOAT64 state/transport, aggregate-expression ordering, and general row
-  ordering/LIMIT remain deferred. A distinct
+  surface. COUNT/SUM/MIN/MAX/mean/population-variance ordering now uses those globally merged states
+  with a deterministic group-key tie-breaker before LIMIT. Multi-key/non-FLOAT64 state/transport,
+  arbitrary expression ordering, and general row ordering/LIMIT remain deferred. A distinct
   bounded-stale constructor carries correlated leader/follower observations through the same
   catalog, Manifest, route, and execution gates;
   a separate canonical checksummed cluster protocol now requests one group-correlated ordered

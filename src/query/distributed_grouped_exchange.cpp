@@ -139,11 +139,23 @@ canonicalize_message(GroupedFloat64ExchangeMessage message) noexcept {
 
 [[nodiscard]] bool
 valid_result_options(const DistributedGroupedFloat64ResultOptions& options) noexcept {
-  return (options.direction == DistributedGroupedFloat64ResultDirection::kAscending ||
+  return (options.order_key == DistributedGroupedFloat64ResultOrderKey::kGroupKey ||
+          options.order_key == DistributedGroupedFloat64ResultOrderKey::kCount ||
+          options.order_key == DistributedGroupedFloat64ResultOrderKey::kSum ||
+          options.order_key == DistributedGroupedFloat64ResultOrderKey::kMinimum ||
+          options.order_key == DistributedGroupedFloat64ResultOrderKey::kMaximum ||
+          options.order_key == DistributedGroupedFloat64ResultOrderKey::kMean ||
+          options.order_key == DistributedGroupedFloat64ResultOrderKey::kVariancePopulation) &&
+         (options.direction == DistributedGroupedFloat64ResultDirection::kAscending ||
           options.direction == DistributedGroupedFloat64ResultDirection::kDescending) &&
          (options.null_placement == DistributedGroupedFloat64NullPlacement::kFirst ||
           options.null_placement == DistributedGroupedFloat64NullPlacement::kLast);
 }
+
+struct ResultComparison {
+  int order{};
+  bool compared_null{};
+};
 
 [[nodiscard]] int compare_nonnull_group_keys(const double left, const double right) noexcept {
   const bool left_nan = std::isnan(left);
@@ -153,20 +165,59 @@ valid_result_options(const DistributedGroupedFloat64ResultOptions& options) noex
   return left == right ? 0 : (left < right ? -1 : 1);
 }
 
+[[nodiscard]] ResultComparison
+compare_optional_result(const std::optional<double>& left, const std::optional<double>& right,
+                        const DistributedGroupedFloat64NullPlacement null_placement) noexcept {
+  if (left.has_value() != right.has_value()) {
+    const bool null_first = null_placement == DistributedGroupedFloat64NullPlacement::kFirst;
+    return {.order = left.has_value() != null_first ? -1 : 1, .compared_null = true};
+  }
+  if (!left.has_value())
+    return {.order = 0, .compared_null = true};
+  return {.order = compare_nonnull_group_keys(*left, *right), .compared_null = false};
+}
+
+[[nodiscard]] ResultComparison
+compare_result_key(const GroupedFloat64AggregateResult& left,
+                   const GroupedFloat64AggregateResult& right,
+                   const DistributedGroupedFloat64ResultOptions& options) noexcept {
+  switch (options.order_key) {
+  case DistributedGroupedFloat64ResultOrderKey::kGroupKey:
+    return compare_optional_result(left.group_key, right.group_key, options.null_placement);
+  case DistributedGroupedFloat64ResultOrderKey::kCount:
+    return {.order = left.aggregate.count == right.aggregate.count
+                         ? 0
+                         : (left.aggregate.count < right.aggregate.count ? -1 : 1)};
+  case DistributedGroupedFloat64ResultOrderKey::kSum:
+    return {.order = compare_nonnull_group_keys(left.aggregate.sum, right.aggregate.sum)};
+  case DistributedGroupedFloat64ResultOrderKey::kMinimum:
+    return compare_optional_result(left.aggregate.minimum, right.aggregate.minimum,
+                                   options.null_placement);
+  case DistributedGroupedFloat64ResultOrderKey::kMaximum:
+    return compare_optional_result(left.aggregate.maximum, right.aggregate.maximum,
+                                   options.null_placement);
+  case DistributedGroupedFloat64ResultOrderKey::kMean:
+    return {.order = compare_nonnull_group_keys(left.aggregate.mean, right.aggregate.mean)};
+  case DistributedGroupedFloat64ResultOrderKey::kVariancePopulation:
+    return compare_optional_result(left.aggregate.variance_population(),
+                                   right.aggregate.variance_population(), options.null_placement);
+  }
+  return {};
+}
+
 [[nodiscard]] bool result_precedes(const GroupedFloat64AggregateResult& left,
                                    const GroupedFloat64AggregateResult& right,
                                    const DistributedGroupedFloat64ResultOptions& options) noexcept {
-  if (left.group_key.has_value() != right.group_key.has_value()) {
-    const bool null_first =
-        options.null_placement == DistributedGroupedFloat64NullPlacement::kFirst;
-    return left.group_key.has_value() != null_first;
+  ResultComparison comparison = compare_result_key(left, right, options);
+  if (!comparison.compared_null &&
+      options.direction == DistributedGroupedFloat64ResultDirection::kDescending) {
+    comparison.order = -comparison.order;
   }
-  if (!left.group_key.has_value())
-    return false;
-  int comparison = compare_nonnull_group_keys(*left.group_key, *right.group_key);
-  if (options.direction == DistributedGroupedFloat64ResultDirection::kDescending)
-    comparison = -comparison;
-  return comparison < 0;
+  if (comparison.order != 0)
+    return comparison.order < 0;
+  const ResultComparison tie = compare_optional_result(
+      left.group_key, right.group_key, DistributedGroupedFloat64NullPlacement::kFirst);
+  return tie.order < 0;
 }
 
 [[nodiscard]] common::Status

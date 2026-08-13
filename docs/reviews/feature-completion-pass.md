@@ -242,7 +242,8 @@ lifecycle. A distinct bounded-stale constructor applies the same catalog, Manife
 execution gates to stable same-term leader/follower observation pairs. General vector-plan row
 fragments/exchanges and multi-key grouping remain incomplete. The supported FLOAT64
 grouped surface now applies key ORDER BY, explicit null placement, and LIMIT only after global merge,
-providing correct top-N for that key. A distinct canonical frame now carries one nullable
+providing correct top-N for that key. It also orders globally merged COUNT/SUM/extrema/mean/
+population variance with deterministic group-key ties before LIMIT. A distinct canonical frame now carries one nullable
 FLOAT64 group key and mergeable partial with SQL-equivalent signed-zero/NaN canonicalization. An
 authenticated mutual-TLS carrier owns its bounded ordered response stream, and a deadline-bound
 outbound TCP composite owns one validated connection attempt. A bounded inbound TCP server owns
@@ -613,8 +614,12 @@ Focused executions passed:
   ordered negative/NaN/NULL keys with descending NULLS LAST, and applied LIMIT 2 only after global
   merge; LIMIT zero and invalid option rejection also passed. A cluster-owner case carried the same
   options through execution and selected global key 7 over key 5. Header self-containment and the
-  installed consumer cover the public API; aggregate-expression and arbitrary-row ordering are not
+  installed consumer cover the public API; arbitrary-expression and arbitrary-row ordering are not
   claimed.
+- Global grouped aggregate-order continuation: the focused query case merged key 1 across two
+  tablets to SUM 6, ordered descending by SUM with LIMIT 2, and used canonical group-key order to
+  break its tie with another SUM-6 key. Invalid order-key rejection passed. General expression and
+  arbitrary-row ordering are not claimed.
 
 The C++ files changed by the grouped-exchange continuations pass the repository-pinned clang-format
 18 check. A full-tree check was also run and still reports pre-existing violations in the

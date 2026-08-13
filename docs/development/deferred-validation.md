@@ -253,7 +253,7 @@
   production receiver service now acquires one request-local owning Manifest/schema/placement/
   group/barrier context and invokes the proof-revalidating real-CSEG worker. General physical
   pipeline stage/expression serialization, connection pooling/multiplexing, multi-key/non-FLOAT64
-  grouping-state codecs and coordination, aggregate-expression/general-row ordering and LIMIT,
+  grouping-state codecs and coordination, arbitrary-expression/general-row ordering and LIMIT,
   remote worker interruption,
   durable retries, and broader coordinator/worker failure cleanup remain. A distinct fixed frame
   now canonically carries one nullable FLOAT64 group key plus one mergeable aggregate partial,

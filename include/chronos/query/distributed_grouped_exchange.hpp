@@ -183,7 +183,19 @@ enum class DistributedGroupedFloat64NullPlacement : std::uint8_t {
   kLast = 2,
 };
 
+enum class DistributedGroupedFloat64ResultOrderKey : std::uint8_t {
+  kGroupKey = 1,
+  kCount = 2,
+  kSum = 3,
+  kMinimum = 4,
+  kMaximum = 5,
+  kMean = 6,
+  kVariancePopulation = 7,
+};
+
 struct DistributedGroupedFloat64ResultOptions {
+  DistributedGroupedFloat64ResultOrderKey order_key{
+      DistributedGroupedFloat64ResultOrderKey::kGroupKey};
   DistributedGroupedFloat64ResultDirection direction{
       DistributedGroupedFloat64ResultDirection::kAscending};
   DistributedGroupedFloat64NullPlacement null_placement{

@@ -601,6 +601,65 @@ TEST(DistributedGroupedExchangeTest, OrdersAndLimitsOnlyAfterGlobalGroupMerge) {
             common::StatusCode::kInvalidArgument);
 }
 
+TEST(DistributedGroupedExchangeTest, OrdersByMergedAggregateWithDeterministicGroupTieBreak) {
+  const common::Uuid query_id = uuid(0x91U);
+  auto coordinator = DistributedGroupedFloat64Coordinator::create(
+      query_id, {tablet(0x92U), tablet(0x93U)}, {},
+      {.order_key = DistributedGroupedFloat64ResultOrderKey::kSum,
+       .direction = DistributedGroupedFloat64ResultDirection::kDescending,
+       .null_placement = DistributedGroupedFloat64NullPlacement::kLast,
+       .limit = 2U});
+  ASSERT_TRUE(coordinator.has_value()) << coordinator.error().to_string();
+  EXPECT_TRUE(coordinator
+                  ->accept({.query_id = query_id,
+                            .tablet_id = tablet(0x92U),
+                            .sequence = 1U,
+                            .group_key = 1.0,
+                            .partial = one_value(2.0),
+                            .terminal = false})
+                  .is_ok());
+  EXPECT_TRUE(coordinator
+                  ->accept({.query_id = query_id,
+                            .tablet_id = tablet(0x92U),
+                            .sequence = 2U,
+                            .group_key = 3.0,
+                            .partial = one_value(5.0),
+                            .terminal = true})
+                  .is_ok());
+  EXPECT_TRUE(coordinator
+                  ->accept({.query_id = query_id,
+                            .tablet_id = tablet(0x93U),
+                            .sequence = 1U,
+                            .group_key = 1.0,
+                            .partial = one_value(4.0),
+                            .terminal = false})
+                  .is_ok());
+  EXPECT_TRUE(coordinator
+                  ->accept({.query_id = query_id,
+                            .tablet_id = tablet(0x93U),
+                            .sequence = 2U,
+                            .group_key = 2.0,
+                            .partial = one_value(6.0),
+                            .terminal = true})
+                  .is_ok());
+
+  const auto result = coordinator->finish();
+  ASSERT_TRUE(result.has_value()) << result.error().to_string();
+  ASSERT_EQ(result->size(), 2U);
+  EXPECT_EQ((*result)[0].group_key, 1.0);
+  EXPECT_EQ((*result)[0].aggregate.count, 2U);
+  EXPECT_EQ((*result)[0].aggregate.sum, 6.0);
+  EXPECT_EQ((*result)[1].group_key, 2.0);
+  EXPECT_EQ((*result)[1].aggregate.sum, 6.0);
+
+  EXPECT_EQ(DistributedGroupedFloat64Coordinator::create(
+                query_id, {tablet(0x92U)}, {},
+                {.order_key = static_cast<DistributedGroupedFloat64ResultOrderKey>(0U)})
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+}
+
 TEST(DistributedGroupedExchangeTest, BoundsHistoryAndRetainsFirstIncompleteWorkerFailure) {
   const common::Uuid query_id = uuid(0x61U);
   EXPECT_EQ(DistributedGroupedFloat64Coordinator::create(query_id, {tablet(0x62U), tablet(0x62U)})

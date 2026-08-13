@@ -218,6 +218,8 @@ int main() {
       &chronos::service::ReplicatedFollowerDistributedGroupedFloat64Query::create;
   const auto grouped_result_direction =
       chronos::query::DistributedGroupedFloat64ResultDirection::kDescending;
+  const auto grouped_result_order_key =
+      chronos::query::DistributedGroupedFloat64ResultOrderKey::kSum;
   const auto create_replicated_query_worker =
       &chronos::service::ReplicatedDistributedQueryWorker::create;
   const auto create_replicated_grouped_query_worker =
@@ -337,6 +339,7 @@ int main() {
   (void)create_replicated_follower_query_owner;
   (void)create_replicated_follower_grouped_query_owner;
   (void)grouped_result_direction;
+  (void)grouped_result_order_key;
   (void)create_replicated_query_worker;
   (void)create_replicated_grouped_query_worker;
   (void)create_replicated_grouped_query_receiver;
