@@ -4,9 +4,9 @@
 > the exact Fragment-v2 `CHDVREQ2` carrier. An authenticated receiver owns definition binding,
 > worker handoff, and complete bounded response publication. A finite sender owns definition-bound
 > retry and result memory. Connected mutual-TLS carriers own definition-bound one-attempt I/O, and a
-> deadline-bound client owns outbound TCP acquisition. Listener admission and process ownership
-> remain separate. A production request-local service supplies fresh definition authority and
-> proof-revalidated real-CSEG execution.
+> deadline-bound client owns outbound TCP acquisition. A bounded TCP server owns listener admission
+> and per-connection TLS lifetimes. Process ownership remains separate. A production request-local
+> service supplies fresh definition authority and proof-revalidated real-CSEG execution.
 
 All integers are unsigned little-endian. Reserved bytes are zero. CRC32C detects accidental damage
 and is not authentication. The nested payload retains its own independent checksums.
@@ -132,3 +132,13 @@ resources until `SO_ERROR` confirms connection success; only then does it create
 the complete authority bundle to the mutual-TLS client. Connect or carrier failure is sticky and
 closes the descriptor after destroying TLS state. Retry, endpoint rotation, and coordination remain
 outside this one-attempt owner.
+
+## Inbound TCP admission
+
+`DistributedVectorAggregateQueryTcpServerV2` owns one IPv4 listener, server TLS context, a
+capacity-reserved stable connection table, and fixed poll storage. Every poll drives at most one TLS
+operation per admitted connection and at most a configured finite number of accepts. Descriptors
+accepted while full are immediately rejected. Per-connection allocation preserves TLS-before-socket
+destruction; shutdown clears carriers before closing the listener. Saturating metrics expose
+accepted, rejected, accept-error, completed, failed, and active sessions. Authentication and the
+receiver remain borrowed; worker construction and process lifecycle remain outside the server.

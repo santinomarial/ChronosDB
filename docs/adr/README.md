@@ -427,3 +427,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0390](0390-finite-definition-bound-vector-aggregate-query-sender-v2.md) | Finite definition-bound vector aggregate query sender v2 | accepted |
 | [0391](0391-bounded-definition-bound-vector-aggregate-query-v2-mutual-tls.md) | Bounded definition-bound vector aggregate query v2 mutual TLS | accepted |
 | [0392](0392-deadline-bound-definition-bound-vector-aggregate-query-v2-tcp-client.md) | Deadline-bound definition-bound vector aggregate query v2 TCP client | accepted |
+| [0393](0393-bounded-definition-bound-vector-aggregate-query-v2-tcp-server.md) | Bounded definition-bound vector aggregate query v2 TCP server | accepted |
