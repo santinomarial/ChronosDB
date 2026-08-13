@@ -21,7 +21,7 @@ cmake_minimum_required(VERSION 3.25)
 project(ChronosIngestConsumer LANGUAGES CXX)
 find_package(ChronosDB 0.1 CONFIG REQUIRED)
 add_executable(consumer main.cpp)
-target_link_libraries(consumer PRIVATE chronos::cluster chronos::cseg chronos::head chronos::ingest chronos::manifest chronos::query chronos::network chronos::tiering)
+target_link_libraries(consumer PRIVATE chronos::cluster chronos::cseg chronos::head chronos::ingest chronos::manifest chronos::query chronos::network chronos::service chronos::tiering)
 if(TARGET chronos::interop)
   target_link_libraries(consumer PRIVATE chronos::interop)
   target_compile_definitions(consumer PRIVATE CHRONOS_TEST_HAS_INTEROP=1)
@@ -59,6 +59,7 @@ file(WRITE "${consumer_source}/main.cpp" [=[
 #include <chronos/cluster/distributed_query_tcp_server.hpp>
 #include <chronos/cluster/distributed_query_tcp_client.hpp>
 #include <chronos/cluster/distributed_query_tcp_execution.hpp>
+#include <chronos/service/replicated_distributed_query.hpp>
 #include <chronos/cseg/compression.hpp>
 #include <chronos/cseg/format.hpp>
 #include <chronos/cseg/inspection.hpp>
@@ -184,6 +185,8 @@ int main() {
       &chronos::cluster::DistributedQueryExecution::create;
   const auto create_distributed_query_execution_from_bound_snapshot =
       &chronos::cluster::DistributedQueryExecution::create_from_bound_snapshot;
+  const auto create_replicated_distributed_aggregate_query =
+      &chronos::service::create_replicated_distributed_aggregate_query;
   const auto create_distributed_query_tls_client =
       &chronos::cluster::DistributedQueryTlsClient::create;
   const auto create_distributed_query_tls_server =
@@ -248,6 +251,8 @@ int main() {
   (void)consume_distributed_query_request;
   (void)create_distributed_query_sender;
   (void)create_distributed_query_execution;
+  (void)create_distributed_query_execution_from_bound_snapshot;
+  (void)create_replicated_distributed_aggregate_query;
   (void)create_distributed_query_tls_client;
   (void)create_distributed_query_tls_server;
   (void)start_distributed_query_tcp_server;

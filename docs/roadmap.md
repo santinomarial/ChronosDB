@@ -994,9 +994,11 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   while retaining explicit node-specific TLS contexts. The replicated barrier owner can now return
   each leader-linearizable barrier with the exact ordered leader observation that validated it; a
   group-keyed binder joins those proofs to plan-ordered tablets through committed immutable group
-  bindings. General vector-plan fragments/exchanges, follower proof acquisition, packaged
-  coordinator lifecycle, DNS/multi-address routing, and broader multi-node failure validation
-  remain deferred. A
+  bindings. A packaged constructor requires the catalog to cover the exact metadata-group barrier,
+  then carries that authority through compatible Manifest binding, committed route resolution,
+  execution creation, and the move-only TCP lifecycle owner. General vector-plan
+  fragments/exchanges, follower proof acquisition, DNS/multi-address routing, and broader
+  multi-node failure validation remain deferred. A
   focused real-mTLS gate now queries two tablets, drives one through checksummed learner-first
   movement and externally committed promotion/removal milestones, rebinds it to the target, and
   proves the complete aggregate state is identical before and after. The full phase exit gate is
