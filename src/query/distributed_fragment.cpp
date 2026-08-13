@@ -21,6 +21,9 @@ namespace {
 inline constexpr std::array<std::byte, 8U> kMagic{std::byte{'C'}, std::byte{'H'}, std::byte{'D'},
                                                   std::byte{'F'}, std::byte{'R'}, std::byte{'A'},
                                                   std::byte{'G'}, std::byte{'1'}};
+inline constexpr std::array<std::byte, 8U> kGroupedMagic{
+    std::byte{'C'}, std::byte{'H'}, std::byte{'D'}, std::byte{'F'},
+    std::byte{'G'}, std::byte{'R'}, std::byte{'P'}, std::byte{'1'}};
 inline constexpr std::uint32_t kLowerPresent = 1U << 0U;
 inline constexpr std::uint32_t kLowerInclusive = 1U << 1U;
 inline constexpr std::uint32_t kUpperPresent = 1U << 2U;
@@ -32,6 +35,8 @@ inline constexpr std::uint32_t kKnownFlags = kLowerPresent | kLowerInclusive | k
                                              kBarrierPresent;
 inline constexpr std::size_t kHeaderCrcOffset =
     distributed_fragment_format::kHeaderLength - sizeof(std::uint32_t);
+inline constexpr std::size_t kGroupedHeaderCrcOffset =
+    distributed_grouped_float64_fragment_format::kHeaderLength - sizeof(std::uint32_t);
 
 [[nodiscard]] common::Status invalid(const char* message) {
   return {common::StatusCode::kInvalidArgument, message};
@@ -430,6 +435,156 @@ decode_distributed_aggregate_fragment_exact(const common::ByteView bytes,
     return common::make_unexpected(common::Status{common::StatusCode::kResourceExhausted,
                                                   "distributed fragment decode exceeds limits"});
   }
+}
+
+EncodedDistributedGroupedFloat64Fragment::EncodedDistributedGroupedFloat64Fragment(
+    std::vector<std::byte> bytes) noexcept
+    : bytes_(std::move(bytes)) {}
+
+common::ByteView EncodedDistributedGroupedFloat64Fragment::bytes() const noexcept {
+  return bytes_;
+}
+
+common::Result<EncodedDistributedGroupedFloat64Fragment>
+encode_distributed_grouped_float64_fragment(const DistributedGroupedFloat64Fragment& fragment) {
+  if (fragment.group_key_input_index >= fragment.aggregate.destination_column_ordinals.size()) {
+    return common::make_unexpected(
+        invalid("distributed grouped fragment key input index is invalid"));
+  }
+  auto inner = encode_distributed_aggregate_fragment(fragment.aggregate);
+  if (!inner.has_value())
+    return common::make_unexpected(inner.error());
+
+  try {
+    const std::size_t frame_length = distributed_grouped_float64_fragment_format::kHeaderLength +
+                                     inner->bytes().size() +
+                                     distributed_grouped_float64_fragment_format::kTrailerLength;
+    std::vector<std::byte> bytes(frame_length);
+    common::ByteWriter writer{bytes};
+    common::Status status = writer.write_exact(kGroupedMagic);
+    if (status.is_ok())
+      status = writer.write_u16_le(distributed_grouped_float64_fragment_format::kMajor);
+    if (status.is_ok())
+      status = writer.write_u16_le(distributed_grouped_float64_fragment_format::kMinor);
+    if (status.is_ok())
+      status = writer.write_u32_le(distributed_grouped_float64_fragment_format::kHeaderLength);
+    if (status.is_ok())
+      status = writer.write_u64_le(frame_length);
+    if (status.is_ok())
+      status = writer.write_u32_le(fragment.group_key_input_index);
+    if (status.is_ok())
+      status = writer.write_u32_le(static_cast<std::uint32_t>(inner->bytes().size()));
+    if (status.is_ok())
+      status = writer.zero_fill(4U);
+    if (!status.is_ok() || writer.offset() != kGroupedHeaderCrcOffset) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kInternal,
+                         "distributed grouped fragment header layout is inconsistent"});
+    }
+    status =
+        writer.write_u32_le(common::crc32c(common::ByteView{bytes}.first(kGroupedHeaderCrcOffset)));
+    if (status.is_ok())
+      status = writer.write_exact(inner->bytes());
+    if (status.is_ok())
+      status =
+          writer.write_u32_le(common::crc32c(common::ByteView{bytes}.first(bytes.size() - 4U)));
+    if (!status.is_ok() || !writer.full()) {
+      return common::make_unexpected(
+          common::Status{common::StatusCode::kInternal,
+                         "distributed grouped fragment frame layout is inconsistent"});
+    }
+    return EncodedDistributedGroupedFloat64Fragment{std::move(bytes)};
+  } catch (const std::bad_alloc&) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kResourceExhausted, "distributed grouped fragment allocation failed"});
+  } catch (const std::length_error&) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "distributed grouped fragment exceeds container limits"});
+  }
+}
+
+common::Result<DistributedGroupedFloat64Fragment>
+decode_distributed_grouped_float64_fragment_exact(const common::ByteView bytes,
+                                                  const DistributedFragmentDecodeLimits limits) {
+  constexpr std::size_t kMinimumInnerLength = distributed_fragment_format::kHeaderLength +
+                                              sizeof(std::uint32_t) +
+                                              distributed_fragment_format::kTrailerLength;
+  constexpr std::size_t kMinimumFrameLength =
+      distributed_grouped_float64_fragment_format::kHeaderLength + kMinimumInnerLength +
+      distributed_grouped_float64_fragment_format::kTrailerLength;
+  if (bytes.size() < kMinimumFrameLength ||
+      bytes.size() > distributed_grouped_float64_fragment_format::kMaximumFrameLength) {
+    return common::make_unexpected(
+        corruption("distributed grouped fragment frame length is invalid"));
+  }
+  if (!std::ranges::equal(bytes.first(kGroupedMagic.size()), kGroupedMagic)) {
+    return common::make_unexpected(corruption("distributed grouped fragment magic is invalid"));
+  }
+  common::ByteReader header_crc_reader{
+      bytes.subspan(kGroupedHeaderCrcOffset, sizeof(std::uint32_t))};
+  const auto stored_header_crc = header_crc_reader.read_u32_le();
+  if (!stored_header_crc.has_value() ||
+      *stored_header_crc != common::crc32c(bytes.first(kGroupedHeaderCrcOffset))) {
+    return common::make_unexpected(
+        corruption("distributed grouped fragment header checksum is invalid"));
+  }
+
+  common::ByteReader reader{bytes};
+  if (!reader.skip(kGroupedMagic.size()).is_ok()) {
+    return common::make_unexpected(corruption("distributed grouped fragment header is truncated"));
+  }
+  const auto major = reader.read_u16_le();
+  const auto minor = reader.read_u16_le();
+  const auto header_length = reader.read_u32_le();
+  const auto frame_length = reader.read_u64_le();
+  const auto group_key_input_index = reader.read_u32_le();
+  const auto inner_length = reader.read_u32_le();
+  const auto reserved = reader.read_exact(4U);
+  const auto header_crc = reader.read_u32_le();
+  if (!major.has_value() || !minor.has_value() || !header_length.has_value() ||
+      !frame_length.has_value() || !group_key_input_index.has_value() ||
+      !inner_length.has_value() || !reserved.has_value() || !header_crc.has_value()) {
+    return common::make_unexpected(corruption("distributed grouped fragment header is truncated"));
+  }
+  if (*major != distributed_grouped_float64_fragment_format::kMajor ||
+      *minor != distributed_grouped_float64_fragment_format::kMinor) {
+    return common::make_unexpected(common::Status{
+        common::StatusCode::kNotSupported, "distributed grouped fragment version is unsupported"});
+  }
+  if (*header_length != distributed_grouped_float64_fragment_format::kHeaderLength ||
+      std::ranges::any_of(*reserved,
+                          [](const std::byte value) { return value != std::byte{0U}; })) {
+    return common::make_unexpected(
+        corruption("distributed grouped fragment header fields are invalid"));
+  }
+  if (*inner_length < kMinimumInnerLength ||
+      *inner_length > distributed_fragment_format::kMaximumFrameLength ||
+      *frame_length != distributed_grouped_float64_fragment_format::kHeaderLength +
+                           static_cast<std::size_t>(*inner_length) +
+                           distributed_grouped_float64_fragment_format::kTrailerLength ||
+      bytes.size() != *frame_length) {
+    return common::make_unexpected(
+        corruption("distributed grouped fragment exact length is invalid"));
+  }
+  common::ByteReader trailer_reader{bytes.last(sizeof(std::uint32_t))};
+  const auto stored_frame_crc = trailer_reader.read_u32_le();
+  if (!stored_frame_crc.has_value() ||
+      *stored_frame_crc != common::crc32c(bytes.first(bytes.size() - sizeof(std::uint32_t)))) {
+    return common::make_unexpected(
+        corruption("distributed grouped fragment frame checksum is invalid"));
+  }
+  const common::ByteView inner_bytes =
+      bytes.subspan(distributed_grouped_float64_fragment_format::kHeaderLength, *inner_length);
+  auto aggregate = decode_distributed_aggregate_fragment_exact(inner_bytes, limits);
+  if (!aggregate.has_value())
+    return common::make_unexpected(aggregate.error());
+  if (*group_key_input_index >= aggregate->destination_column_ordinals.size()) {
+    return common::make_unexpected(
+        corruption("distributed grouped fragment key input index is invalid"));
+  }
+  return DistributedGroupedFloat64Fragment{.aggregate = std::move(*aggregate),
+                                           .group_key_input_index = *group_key_input_index};
 }
 
 } // namespace chronos::query

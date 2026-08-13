@@ -76,6 +76,44 @@ encode_distributed_aggregate_fragment(const DistributedAggregateFragment& fragme
 decode_distributed_aggregate_fragment_exact(common::ByteView bytes,
                                             DistributedFragmentDecodeLimits limits = {});
 
+namespace distributed_grouped_float64_fragment_format {
+inline constexpr std::uint16_t kMajor = 1U;
+inline constexpr std::uint16_t kMinor = 0U;
+inline constexpr std::size_t kHeaderLength = 40U;
+inline constexpr std::size_t kTrailerLength = 4U;
+inline constexpr std::size_t kMaximumFrameLength =
+    kHeaderLength + distributed_fragment_format::kMaximumFrameLength + kTrailerLength;
+} // namespace distributed_grouped_float64_fragment_format
+
+// Distinct grouping intent around one exact aggregate fragment. The key index selects a projected
+// column; a later authority binder must prove that destination column has supported FLOAT64 type.
+struct DistributedGroupedFloat64Fragment {
+  DistributedAggregateFragment aggregate;
+  std::uint32_t group_key_input_index{};
+
+  friend bool operator==(const DistributedGroupedFloat64Fragment&,
+                         const DistributedGroupedFloat64Fragment&) = default;
+};
+
+class EncodedDistributedGroupedFloat64Fragment {
+public:
+  [[nodiscard]] common::ByteView bytes() const noexcept;
+
+private:
+  explicit EncodedDistributedGroupedFloat64Fragment(std::vector<std::byte> bytes) noexcept;
+  std::vector<std::byte> bytes_;
+
+  friend common::Result<EncodedDistributedGroupedFloat64Fragment>
+  encode_distributed_grouped_float64_fragment(const DistributedGroupedFloat64Fragment&);
+};
+
+[[nodiscard]] common::Result<EncodedDistributedGroupedFloat64Fragment>
+encode_distributed_grouped_float64_fragment(const DistributedGroupedFloat64Fragment& fragment);
+
+[[nodiscard]] common::Result<DistributedGroupedFloat64Fragment>
+decode_distributed_grouped_float64_fragment_exact(common::ByteView bytes,
+                                                  DistributedFragmentDecodeLimits limits = {});
+
 } // namespace chronos::query
 
 #endif // CHRONOS_QUERY_DISTRIBUTED_FRAGMENT_HPP_

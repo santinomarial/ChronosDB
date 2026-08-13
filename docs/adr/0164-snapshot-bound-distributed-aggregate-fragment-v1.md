@@ -45,8 +45,10 @@ truncation/trailing data, header and body corruption, checksum-valid unknown ver
 ordinals, invalid aggregate indexes/routes/read proofs, and caller projection limits. Full query,
 focused sanitizer, and installed-consumer checks cover integration.
 
-General expression/stage bytes, grouping, ordering/top-N, worker execution, socket dispatch,
-cancellation, and durable query recovery remain separate work.
+General expression/stage bytes, multi-key/non-FLOAT64 grouping, ordering/top-N, worker execution,
+socket dispatch, cancellation, and durable query recovery remain separate work. The first distinct
+single-key grouped intent is the accepted follow-up in
+[ADR 0325](0325-distinct-grouped-float64-fragment-intent.md).
 
 Invariants 4–6, 10, 11, 14, 15, and 18 apply.
 

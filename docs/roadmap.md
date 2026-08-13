@@ -1006,10 +1006,12 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   a SQL NULL group, and its separate fixed reader/move-only cursor own fragmented reads and checked
   short writes without assuming a stream discriminator. A bounded single-owner coordinator now
   enforces contiguous exact-retry tablet streams, terminal-only empty tablets, all-tablet closure,
-  and canonical cross-tablet grouping. General vector-plan fragments, multi-key/non-FLOAT64 grouped
-  state/transport, ordering, top-N, and LIMIT remain deferred. A distinct bounded-stale
-  constructor carries correlated leader/follower observations through the same catalog, Manifest,
-  route, and execution gates;
+  and canonical cross-tablet grouping. A distinct checksummed grouped-fragment intent now binds one
+  projected key index around the existing snapshot/route/proof-bound aggregate fragment without
+  changing its bytes. General vector-plan fragments, grouped authority binding/execution,
+  multi-key/non-FLOAT64 state/transport, ordering, top-N, and LIMIT remain deferred. A distinct
+  bounded-stale constructor carries correlated leader/follower observations through the same
+  catalog, Manifest, route, and execution gates;
   a separate canonical checksummed cluster protocol now requests one group-correlated ordered
   observation from an authenticated exact node, with receiver-side principal/source authorization
   and a durable-owner service boundary. Bounded request/response readers now validate fixed headers

@@ -46,9 +46,11 @@ sequence gaps/conflicts/post-terminal output, terminal-only empty results, cross
 invalid limits, history exhaustion, first-failure stability, completed-worker loss, and final count
 overflow. The installed-consumer gate references construction, both admission forms, and finish.
 
-This does not define grouped fragments, a unified stream discriminator, authenticated grouped
-transport, multi-key/non-FLOAT64 state, SQL ordering, top-N, LIMIT, durable query recovery, or broad
-multi-node failure evidence. No Phase 16 exit gate is claimed.
+This does not define authority/type binding, group-scoped executable dispatch, a unified stream
+discriminator, authenticated grouped transport, multi-key/non-FLOAT64 state, SQL ordering, top-N,
+LIMIT, durable query recovery, or broad multi-node failure evidence. The first structural grouped
+fragment intent is the accepted follow-up in
+[ADR 0325](0325-distinct-grouped-float64-fragment-intent.md). No Phase 16 exit gate is claimed.
 
 Invariants 4–6, 8–11, 14, 15, and 18 apply.
 
