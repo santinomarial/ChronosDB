@@ -1,11 +1,13 @@
 #include "chronos/cluster/raft_observation_tcp_batch_acquisition.hpp"
 #include "chronos/cluster/raft_observation_tcp_server.hpp"
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <gtest/gtest.h>
+#include <limits>
 #include <map>
 
 namespace chronos::cluster {
@@ -32,6 +34,18 @@ namespace {
   common::Uuid::Bytes bytes{};
   bytes.front() = static_cast<std::byte>(value);
   return raft::GroupId{bytes};
+}
+
+[[nodiscard]] schema::TabletId tablet(const std::uint8_t value) {
+  common::Uuid::Bytes bytes{};
+  bytes.front() = static_cast<std::byte>(value);
+  return schema::TabletId::from_bytes(bytes).value();
+}
+
+[[nodiscard]] schema::TableId table(const std::uint8_t value) {
+  common::Uuid::Bytes bytes{};
+  bytes.front() = static_cast<std::byte>(value);
+  return schema::TableId::from_bytes(bytes).value();
 }
 
 [[nodiscard]] raft::RaftGroupObservation observation(const raft::GroupId& group_id,
@@ -193,6 +207,60 @@ TEST(RaftObservationTcpBatchAcquisitionTest, PublishesOnlyCompleteCanonicalGroup
   duplicated.pairs[1].follower.request.group_id = group(10U);
   EXPECT_EQ(RaftObservationTcpBatchAcquisition::create(std::move(duplicated)).error().code(),
             common::StatusCode::kInvalidArgument);
+}
+
+TEST(RaftObservationTcpBatchAcquisitionTest, ConstructsCanonicalPairsFromCommittedPlacement) {
+  Authorizer authorizer;
+  Authenticator authenticator{91U};
+  auto tls_context = network::TlsClientContext::create(client_tls_config());
+  ASSERT_TRUE(tls_context.has_value());
+  const raft::MetadataCatalogSnapshot catalog{
+      .applied_index = 9U,
+      .cluster_nodes = {{1U, "127.0.0.1:11001"}, {2U, "127.0.0.1:11002"}, {3U, "127.0.0.1:11003"}},
+      .tablet_placements = {{.table_id = table(1U),
+                             .tablet_id = tablet(1U),
+                             .placement_epoch = 1U,
+                             .replicas = {1U, 2U, 3U},
+                             .leader_hint = 1U},
+                            {.table_id = table(1U),
+                             .tablet_id = tablet(2U),
+                             .placement_epoch = 1U,
+                             .replicas = {1U, 2U},
+                             .leader_hint = 1U}},
+      .tablet_group_bindings = {{tablet(1U), group(11U)}, {tablet(2U), group(10U)}}};
+  common::Uuid::Bytes query_bytes{};
+  query_bytes.front() = std::byte{1U};
+  const query::DistributedAggregatePlan plan{
+      .query_id = common::Uuid{query_bytes},
+      .read_policy = {.consistency = query::DistributedReadConsistency::kFollowerBoundedStale,
+                      .maximum_staleness_positions = 3U},
+      .fragments = {{.tablet_id = tablet(1U), .leader_node = 1U},
+                    {.tablet_id = tablet(2U), .leader_node = 1U}}};
+  const std::array contexts{RaftObservationNodeTlsContext{1U, &*tls_context},
+                            RaftObservationNodeTlsContext{2U, &*tls_context},
+                            RaftObservationNodeTlsContext{3U, &*tls_context}};
+  const RaftObservationTcpBatchConstructionConfig config{.source_node_id = 3U,
+                                                         .first_correlation_id = 100U,
+                                                         .tls_contexts = contexts,
+                                                         .authenticator = &authenticator,
+                                                         .node_authorizer = &authorizer};
+  auto constructed = construct_raft_observation_tcp_batch(plan, catalog, config);
+  ASSERT_TRUE(constructed.has_value()) << constructed.error().to_string();
+  ASSERT_EQ(constructed->pairs.size(), 2U);
+  EXPECT_EQ(constructed->pairs[0].leader.request.group_id, group(10U));
+  EXPECT_EQ(constructed->pairs[0].leader.request.target_node_id, 1U);
+  EXPECT_EQ(constructed->pairs[0].follower.request.target_node_id, 2U);
+  EXPECT_EQ(constructed->pairs[0].leader.request.correlation_id, 100U);
+  EXPECT_EQ(constructed->pairs[0].follower.request.correlation_id, 101U);
+  EXPECT_EQ(constructed->pairs[1].leader.request.group_id, group(11U));
+  EXPECT_EQ(constructed->pairs[1].follower.request.target_node_id, 3U);
+  EXPECT_EQ(constructed->pairs[1].leader.request.correlation_id, 102U);
+  EXPECT_EQ(constructed->pairs[1].follower.request.correlation_id, 103U);
+
+  auto overflow = config;
+  overflow.first_correlation_id = std::numeric_limits<std::uint64_t>::max();
+  EXPECT_EQ(construct_raft_observation_tcp_batch(plan, catalog, overflow).error().code(),
+            common::StatusCode::kOutOfRange);
 }
 
 } // namespace

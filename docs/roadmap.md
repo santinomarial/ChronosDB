@@ -1019,8 +1019,10 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   canonical committed numeric/DNS endpoints and exact TLS contexts under hard answer bounds.
   A canonical batch owner starts all selected group pairs before blocking, polls the global earliest
   deadline, cancels every survivor on failure, and publishes only one complete group-sorted vector.
-  Automatic placement-backed pair selection and broader multi-node failure validation remain
-  deferred. Live DNS churn, resolver-latency policy, caching, and IPv6 remain qualification gaps. A
+  A placement-backed constructor derives all planned groups, selects an eligible coordinator or
+  lowest nonleader follower, resolves targets once, and assigns overflow-safe correlations.
+  Packaged acquisition/query composition and broader multi-node failure validation remain deferred.
+  Live DNS churn, resolver-latency policy, caching, and IPv6 remain qualification gaps. A
   focused real-mTLS gate now queries two tablets, drives one through
   checksummed learner-first movement and externally committed promotion/removal milestones, rebinds
   it to the target, and proves the complete aggregate state is identical before and after. The full

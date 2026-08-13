@@ -432,6 +432,9 @@ Focused executions passed:
 - Raft-observation batch continuation: 1 focused approved-host case passed for two canonical groups
   over four concurrent mTLS exchanges, exact service/result/terminal metrics, all-pair cancellation,
   and duplicate-group rejection. Automatic placement-backed pair selection is not claimed.
+- Raft-observation batch-construction continuation: 1 focused case passed for canonical planned
+  group derivation, local/fallback follower selection, unique committed routes, exact correlations,
+  and overflow rejection. Packaged acquisition/query composition is not claimed.
 
 The final C++ tree passed the repository-pinned clang-format 18 check. Full-suite, sanitizer, fuzz,
 broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were deliberately not run.

@@ -227,6 +227,8 @@ int main() {
       &chronos::cluster::RaftObservationTcpPairAcquisition::create;
   const auto create_raft_observation_tcp_batch_acquisition =
       &chronos::cluster::RaftObservationTcpBatchAcquisition::create;
+  const auto construct_raft_observation_tcp_batch =
+      &chronos::cluster::construct_raft_observation_tcp_batch;
   const auto create_raft_observation_tls_server =
       &chronos::cluster::RaftObservationTlsServer::create;
   const auto start_raft_observation_tcp_server =
@@ -306,6 +308,7 @@ int main() {
   (void)resolve_raft_observation_tcp_routes;
   (void)create_raft_observation_tcp_pair_acquisition;
   (void)create_raft_observation_tcp_batch_acquisition;
+  (void)construct_raft_observation_tcp_batch;
   (void)create_raft_observation_tls_server;
   (void)start_raft_observation_tcp_server;
   (void)cancel_distributed_query_tcp_execution;

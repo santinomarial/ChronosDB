@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <vector>
 
 namespace chronos::cluster {
@@ -16,6 +17,27 @@ struct RaftObservationTcpBatchAcquisitionConfig {
   std::vector<RaftObservationTcpPairAcquisitionConfig> pairs;
   std::size_t maximum_pairs{query::DistributedPlanLimits{}.maximum_fragments};
 };
+
+struct RaftObservationTcpBatchConstructionConfig {
+  raft::NodeId source_node_id{};
+  std::uint64_t first_correlation_id{1U};
+  std::span<const RaftObservationNodeTlsContext> tls_contexts;
+  network::ConnectionAuthenticator* authenticator{};
+  const ClusterNodePrincipalAuthorizer* node_authorizer{};
+  RaftObservationRouteResolutionLimits route_limits;
+  RaftObservationTlsClientLimits carrier_limits;
+  std::chrono::milliseconds connect_timeout{5000};
+  RaftObservationTcpRetryLimits retry;
+  std::size_t maximum_pairs{query::DistributedPlanLimits{}.maximum_fragments};
+};
+
+// Selects one follower per planned group from committed stable placement, resolves every unique
+// target once, and packages a canonical batch without opening sockets. The source node is preferred
+// when it is a nonleader replica; otherwise the lowest nonleader replica is selected.
+[[nodiscard]] common::Result<RaftObservationTcpBatchAcquisitionConfig>
+construct_raft_observation_tcp_batch(const query::DistributedAggregatePlan& plan,
+                                     const raft::MetadataCatalogSnapshot& catalog,
+                                     const RaftObservationTcpBatchConstructionConfig& config);
 
 struct RaftObservationTcpBatchAcquisitionMetrics {
   std::size_t total_pairs{};

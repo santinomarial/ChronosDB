@@ -350,3 +350,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0313](0313-correlated-raft-observation-pair-fan-out.md) | Correlated Raft observation pair fan-out | accepted |
 | [0314](0314-catalog-backed-raft-observation-route-resolution.md) | Catalog-backed Raft observation route resolution | accepted |
 | [0315](0315-canonical-multi-pair-raft-observation-acquisition.md) | Canonical multi-pair Raft observation acquisition | accepted |
+| [0316](0316-placement-backed-raft-observation-batch-construction.md) | Placement-backed Raft observation batch construction | accepted |

@@ -149,8 +149,10 @@ pre-poll resolver joins canonical selected nodes to committed numeric/DNS endpoi
 exact TLS contexts under hard answer bounds. A canonical batch owner starts every selected group
 pair before blocking, polls all descriptors under the earliest deadline, and publishes only one
 complete group-sorted authority vector. Automatic placement-backed pair selection, remote
-worker-interrupt delivery, pooled multiplexing, asynchronous worker completion, live DNS churn
-qualification, and broader multi-node fault handling remain embedding work.
+pair selection now prefers an eligible coordinator follower and otherwise the lowest nonleader
+replica, resolves every unique target once, and assigns bounded correlations before I/O. Packaged
+acquisition/query composition, remote worker-interrupt delivery, pooled multiplexing, asynchronous
+worker completion, live DNS churn qualification, and broader multi-node fault handling remain work.
 
 ## Verification and review questions
 
