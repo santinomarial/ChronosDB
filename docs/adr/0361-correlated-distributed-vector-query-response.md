@@ -32,8 +32,8 @@ request/response cases, header self-containment, and installed consumption cover
 directions.
 
 General vector worker execution remains blocked on an explicit output-schema identity contract.
-Partial-I/O, authenticated receiver/sender ownership, coordination, and process integration remain
-incomplete. No Phase 16 exit gate is claimed.
+Partial-I/O is implemented separately. Authenticated receiver/sender ownership, coordination, and
+process integration remain incomplete. No Phase 16 exit gate is claimed.
 
 Invariants 5, 6, 10, 11, 14, 15, and 18 apply.
 

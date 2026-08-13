@@ -693,8 +693,15 @@ Focused executions passed:
   a correlated terminal-only vector exchange, every failure status, and an advisory leader hint,
   then rejected encoder correlation mismatch, unknown payload kind, checksum-valid header/payload
   mismatch, and nested damage under recomputed outer checksums. All four request/response cases,
-  header self-containment, and installed consumption cover both exact codec directions. Partial-I/O,
-  authentication, execution, coordination, and process integration are not claimed.
+  header self-containment, and installed consumption cover both exact codec directions. At that
+  checkpoint, partial-I/O, authentication, execution, coordination, and process integration were
+  not claimed.
+- Distributed vector-query partial-I/O continuation: one focused case enumerated every request and
+  response split, consumed two coalesced requests only through reported prefixes, retained sticky
+  header damage, rejected lower caller frame bounds, and proved short-write suffix, overrun rollback,
+  and moved-from cursor ownership. All five vector transport cases, header self-containment, and
+  installed consumption cover the public state machines. Authentication, execution, coordination,
+  and process integration are not claimed.
 
 The C++ files changed by the grouped- and vector-exchange continuations pass the repository-pinned
 clang-format 18 check. A full-tree check was also run and still reports pre-existing violations in

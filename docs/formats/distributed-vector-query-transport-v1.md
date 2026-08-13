@@ -1,7 +1,7 @@
 # Distributed Vector Query Transport v1
 
-> **Status:** accepted with implemented exact request and response codecs. Stream ownership,
-> authentication, scheduling, and execution remain separate.
+> **Status:** accepted with implemented exact codecs and bounded partial-I/O ownership.
+> Authentication, scheduling, and execution remain separate.
 
 This distinct cluster request carries one group-scoped vector dispatch to an exact remote node. All
 integers are little-endian. CRC32C detects accidental damage; it is not authentication.
@@ -70,4 +70,12 @@ leader hint requires both nonzero fields and is advisory only. The complete resp
 The magic is distinct from aggregate and grouped query transports; no decoder accepts another
 protocol's request or response. Minor-version compatibility is exact in v1. Exact decoders borrow
 input only for the call and return value-owned dispatch/exchange bytes. The codecs do not yet define
-partial I/O, authentication, retry, or socket ownership.
+authentication, retry, or socket ownership.
+
+The noncopyable, nonmovable request and response readers retain only their fixed headers until
+header integrity, physical length relationships, hard maxima, and caller frame limits pass. They
+then allocate exactly one frame, consume at most that caller prefix, leave coalesced successors
+caller-owned, exact-decode before publication, and retain sticky frame failure. Invalid reader-limit
+configuration consumes nothing. The move-only frame cursor accepts only a complete exact vector
+request or response, exposes its unwritten suffix, rejects over-acknowledgement without advancing,
+and leaves a moved-from cursor complete.

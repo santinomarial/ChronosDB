@@ -1034,7 +1034,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   allocating from unchecked lengths. A distinct node-routed vector query request now wraps one
   exact dispatch under independent header, payload, and complete integrity bounds. Its distinct
   reverse-route response exact-correlates one vector exchange or explicit failure and optional
-  advisory leader hint. Stream/carrier ownership and execution remain deferred. A distinct
+  advisory leader hint. Header-first readers and a move-only checked cursor now own bounded
+  fragmented/coalesced reads and short writes without fixed 16-MiB connection storage. Authenticated
+  carrier ownership and execution remain deferred. A distinct
   group-scoped grouped dispatch now
   preserves exact Raft authority without reinterpreting ungrouped dispatch bytes. Its worker reuses
   every local authority gate, resolves real temporal CSEG winners, and emits canonical grouped

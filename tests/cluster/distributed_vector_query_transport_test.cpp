@@ -2,11 +2,14 @@
 #include "chronos/cluster/distributed_vector_query_transport.hpp"
 #include "chronos/common/crc32c.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <gtest/gtest.h>
 #include <optional>
+#include <ranges>
+#include <utility>
 #include <vector>
 
 namespace chronos::cluster {
@@ -218,6 +221,98 @@ TEST(DistributedVectorQueryTransportTest, RejectsResponseKindCorrelationAndNeste
   nested[kDistributedVectorQueryResponseHeaderSize] ^= std::byte{1U};
   rewrite_response_checksums(nested);
   EXPECT_EQ(decode_distributed_vector_query_response_v1(nested).error().code(),
+            common::StatusCode::kCorruption);
+}
+
+TEST(DistributedVectorQueryTransportTest, OwnsFragmentedFramesAndCheckedShortWrites) {
+  const auto encoded_request = encode_distributed_vector_query_request_v1({1U, 2U, dispatch()});
+  ASSERT_TRUE(encoded_request.has_value());
+  for (std::size_t split = 0U; split <= encoded_request->size(); ++split) {
+    DistributedVectorQueryRequestReader reader;
+    const auto prefix = reader.consume(common::ByteView{*encoded_request}.first(split));
+    ASSERT_TRUE(prefix.has_value()) << "split=" << split;
+    EXPECT_EQ(prefix->consumed_bytes, split) << "split=" << split;
+    const auto suffix = reader.consume(common::ByteView{*encoded_request}.subspan(split));
+    ASSERT_TRUE(suffix.has_value()) << "split=" << split;
+    ASSERT_TRUE(prefix->request.has_value() || suffix->request.has_value()) << "split=" << split;
+    EXPECT_EQ(suffix->consumed_bytes, encoded_request->size() - split) << "split=" << split;
+  }
+
+  const DistributedVectorQueryResponse success{
+      .source_node_id = 2U,
+      .target_node_id = 1U,
+      .query_id = uuid(1U),
+      .tablet_id = id<schema::TabletId>(4U),
+      .status_code = common::StatusCode::kOk,
+      .payload = query::DistributedVectorExchangeMessage{.query_id = uuid(1U),
+                                                         .tablet_id = id<schema::TabletId>(4U),
+                                                         .sequence = 1U,
+                                                         .terminal = true}};
+  const auto encoded_response = encode_distributed_vector_query_response_v1(success);
+  ASSERT_TRUE(encoded_response.has_value());
+  for (std::size_t split = 0U; split <= encoded_response->size(); ++split) {
+    DistributedVectorQueryResponseReader reader;
+    const auto prefix = reader.consume(common::ByteView{*encoded_response}.first(split));
+    ASSERT_TRUE(prefix.has_value()) << "split=" << split;
+    const auto suffix = reader.consume(common::ByteView{*encoded_response}.subspan(split));
+    ASSERT_TRUE(suffix.has_value()) << "split=" << split;
+    ASSERT_TRUE(prefix->response.has_value() || suffix->response.has_value()) << "split=" << split;
+    EXPECT_EQ(prefix->consumed_bytes + suffix->consumed_bytes, encoded_response->size())
+        << "split=" << split;
+  }
+
+  std::vector<std::byte> coalesced(encoded_request->begin(), encoded_request->end());
+  coalesced.insert(coalesced.end(), encoded_request->begin(), encoded_request->end());
+  DistributedVectorQueryRequestReader coalesced_reader;
+  const auto first = coalesced_reader.consume(coalesced);
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(first->request.has_value());
+  EXPECT_EQ(first->consumed_bytes, encoded_request->size());
+  const auto second =
+      coalesced_reader.consume(common::ByteView{coalesced}.subspan(first->consumed_bytes));
+  ASSERT_TRUE(second.has_value());
+  ASSERT_TRUE(second->request.has_value());
+
+  std::vector<std::byte> corrupt = *encoded_request;
+  corrupt.front() ^= std::byte{1U};
+  DistributedVectorQueryRequestReader failed_reader;
+  const auto rejected = failed_reader.consume(corrupt);
+  ASSERT_FALSE(rejected.has_value());
+  EXPECT_TRUE(failed_reader.failed());
+  EXPECT_EQ(failed_reader.consume(*encoded_request).error(), rejected.error());
+
+  DistributedVectorQueryRequestReader limited_request(encoded_request->size() - 1U);
+  EXPECT_EQ(limited_request.consume(*encoded_request).error().code(),
+            common::StatusCode::kResourceExhausted);
+  DistributedVectorQueryResponseReader limited_response(encoded_response->size() - 1U);
+  EXPECT_EQ(limited_response.consume(*encoded_response).error().code(),
+            common::StatusCode::kResourceExhausted);
+  DistributedVectorQueryRequestReader invalid_limit(0U);
+  EXPECT_EQ(invalid_limit.consume(*encoded_request).error().code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(invalid_limit.buffered_bytes(), 0U);
+  EXPECT_FALSE(invalid_limit.failed());
+
+  auto cursor = DistributedVectorQueryFrameWriteCursor::create(*encoded_request);
+  ASSERT_TRUE(cursor.has_value());
+  EXPECT_TRUE(std::ranges::equal(cursor->pending_write(), *encoded_request));
+  ASSERT_TRUE(cursor->consume_written(23U).is_ok());
+  EXPECT_EQ(cursor->written_bytes(), 23U);
+  EXPECT_EQ(cursor->consume_written(cursor->pending_write().size() + 1U).code(),
+            common::StatusCode::kInvalidArgument);
+  EXPECT_EQ(cursor->written_bytes(), 23U);
+  DistributedVectorQueryFrameWriteCursor moved = std::move(*cursor);
+  EXPECT_TRUE(cursor->complete());
+  EXPECT_TRUE(cursor->pending_write().empty());
+  ASSERT_TRUE(moved.consume_written(moved.pending_write().size()).is_ok());
+  EXPECT_TRUE(moved.complete());
+
+  auto response_cursor = DistributedVectorQueryFrameWriteCursor::create(*encoded_response);
+  ASSERT_TRUE(response_cursor.has_value());
+  EXPECT_EQ(response_cursor->pending_write().size(), encoded_response->size());
+  std::vector<std::byte> invalid_frame = *encoded_request;
+  invalid_frame.back() ^= std::byte{1U};
+  EXPECT_EQ(DistributedVectorQueryFrameWriteCursor::create(std::move(invalid_frame)).error().code(),
             common::StatusCode::kCorruption);
 }
 

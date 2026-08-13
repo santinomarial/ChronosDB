@@ -136,6 +136,114 @@ inline constexpr std::size_t kMinimumDispatchSize =
                            : common::make_unexpected(value.error());
 }
 
+[[nodiscard]] common::Result<std::size_t> request_frame_length(const common::ByteView header) {
+  if (header.size() != kDistributedVectorQueryRequestHeaderSize ||
+      !std::ranges::equal(header.first(kMagic.size()), kMagic)) {
+    return common::make_unexpected(corruption("vector query request streaming header is invalid"));
+  }
+  common::ByteReader crc_reader{header.last(4U)};
+  const auto stored_crc = crc_reader.read_u32_le();
+  if (!stored_crc.has_value() || *stored_crc != common::crc32c(header.first(kHeaderCrcOffset)))
+    return common::make_unexpected(
+        corruption("vector query request streaming header checksum differs"));
+  common::ByteReader reader{header.subspan(kMagic.size())};
+  const auto major = reader.read_u16_le();
+  const auto minor = reader.read_u16_le();
+  const auto header_length = reader.read_u32_le();
+  const auto total_length = reader.read_u64_le();
+  const auto source = reader.read_u64_le();
+  const auto target = reader.read_u64_le();
+  const auto payload_length = reader.read_u64_le();
+  static_cast<void>(reader.skip(4U));
+  const auto reserved = reader.read_exact(24U);
+  if (!major.has_value() || !minor.has_value() || !header_length.has_value() ||
+      !total_length.has_value() || !source.has_value() || !target.has_value() ||
+      !payload_length.has_value() || !reserved.has_value()) {
+    return common::make_unexpected(
+        corruption("vector query request streaming header is truncated"));
+  }
+  if (*major != kMajor || *minor != kMinor)
+    return common::make_unexpected(unsupported("vector query request version is unsupported"));
+  if (*header_length != kDistributedVectorQueryRequestHeaderSize || *source == 0U ||
+      *target == 0U || *source == *target || !zero(*reserved) ||
+      *payload_length < kMinimumDispatchSize ||
+      *payload_length > query::distributed_vector_fragment_format::kMaximumFrameLength ||
+      *total_length != kDistributedVectorQueryRequestHeaderSize + *payload_length +
+                           kDistributedVectorQueryRequestTrailerSize ||
+      *total_length > kMaximumDistributedVectorQueryRequestSize) {
+    return common::make_unexpected(corruption("vector query request streaming header is invalid"));
+  }
+  return static_cast<std::size_t>(*total_length);
+}
+
+[[nodiscard]] common::Result<std::size_t> response_frame_length(const common::ByteView header) {
+  if (header.size() != kDistributedVectorQueryResponseHeaderSize ||
+      !std::ranges::equal(header.first(kResponseMagic.size()), kResponseMagic)) {
+    return common::make_unexpected(corruption("vector query response streaming header is invalid"));
+  }
+  common::ByteReader crc_reader{header.last(4U)};
+  const auto stored_crc = crc_reader.read_u32_le();
+  if (!stored_crc.has_value() ||
+      *stored_crc != common::crc32c(header.first(kResponseHeaderCrcOffset))) {
+    return common::make_unexpected(
+        corruption("vector query response streaming header checksum differs"));
+  }
+  common::ByteReader reader{header.subspan(kResponseMagic.size())};
+  const auto major = reader.read_u16_le();
+  const auto minor = reader.read_u16_le();
+  const auto header_length = reader.read_u32_le();
+  const auto total_length = reader.read_u64_le();
+  const auto source = reader.read_u64_le();
+  const auto target = reader.read_u64_le();
+  const auto query_id = read_uuid(reader);
+  const auto tablet_id = read_tablet(reader);
+  const auto status_code = reader.read_u8();
+  const auto payload_kind = reader.read_u8();
+  const auto flags = reader.read_u8();
+  const auto small_reserved = reader.read_u8();
+  const auto payload_length = reader.read_u32_le();
+  const auto payload_crc = reader.read_u32_le();
+  const auto reserved = reader.read_u32_le();
+  const auto leader_node = reader.read_u64_le();
+  const auto leader_epoch = reader.read_u64_le();
+  const auto trailing_reserved = reader.read_u32_le();
+  if (!major.has_value() || !minor.has_value() || !header_length.has_value() ||
+      !total_length.has_value() || !source.has_value() || !target.has_value() ||
+      !query_id.has_value() || !tablet_id.has_value() || !status_code.has_value() ||
+      !payload_kind.has_value() || !flags.has_value() || !small_reserved.has_value() ||
+      !payload_length.has_value() || !payload_crc.has_value() || !reserved.has_value() ||
+      !leader_node.has_value() || !leader_epoch.has_value() || !trailing_reserved.has_value()) {
+    return common::make_unexpected(
+        corruption("vector query response streaming header is truncated"));
+  }
+  if (*major != kMajor || *minor != kMinor)
+    return common::make_unexpected(unsupported("vector query response version is unsupported"));
+  const auto status = decode_status(*status_code);
+  if (!status.has_value())
+    return common::make_unexpected(status.error());
+  const bool payload_present = *payload_kind == kVectorPayload;
+  const bool hint_present = (*flags & kLeaderHintFlag) != 0U;
+  if (*header_length != kDistributedVectorQueryResponseHeaderSize || *source == 0U ||
+      *target == 0U || *source == *target || query_id->is_nil() || tablet_id->uuid().is_nil() ||
+      (*flags & ~kLeaderHintFlag) != 0U || *small_reserved != 0U || *reserved != 0U ||
+      *trailing_reserved != 0U ||
+      (*payload_kind != kNoPayload && *payload_kind != kVectorPayload) ||
+      (*status == common::StatusCode::kOk) != payload_present ||
+      (payload_present &&
+       (*payload_length < query::distributed_vector_exchange_format::kHeaderLength +
+                              query::distributed_vector_exchange_format::kTrailerLength ||
+        *payload_length > query::distributed_vector_exchange_format::kMaximumFrameLength)) ||
+      (!payload_present && (*payload_length != 0U || *payload_crc != 0U)) ||
+      *total_length != kDistributedVectorQueryResponseHeaderSize + *payload_length +
+                           kDistributedVectorQueryResponseTrailerSize ||
+      *total_length > kMaximumDistributedVectorQueryResponseSize ||
+      (hint_present && (*leader_node == 0U || *leader_epoch == 0U)) ||
+      (!hint_present && (*leader_node != 0U || *leader_epoch != 0U))) {
+    return common::make_unexpected(corruption("vector query response streaming header is invalid"));
+  }
+  return static_cast<std::size_t>(*total_length);
+}
+
 } // namespace
 
 common::Result<std::vector<std::byte>>
@@ -438,6 +546,211 @@ decode_distributed_vector_query_response_v1(const common::ByteView bytes) {
                                         .status_code = *status,
                                         .payload = std::move(decoded_payload),
                                         .leader_hint = hint};
+}
+
+DistributedVectorQueryRequestReader::DistributedVectorQueryRequestReader(
+    const std::size_t maximum_frame_length)
+    : maximum_frame_length_(maximum_frame_length) {}
+
+common::Result<DistributedVectorQueryRequestReadStep>
+DistributedVectorQueryRequestReader::consume(const common::ByteView bytes) {
+  if (failure_.has_value())
+    return common::make_unexpected(*failure_);
+  constexpr std::size_t kMinimum = kDistributedVectorQueryRequestHeaderSize + kMinimumDispatchSize +
+                                   kDistributedVectorQueryRequestTrailerSize;
+  if (maximum_frame_length_ < kMinimum ||
+      maximum_frame_length_ > kMaximumDistributedVectorQueryRequestSize) {
+    return common::make_unexpected(invalid("vector query request reader limit is invalid"));
+  }
+  std::size_t consumed{};
+  if (frame_.empty()) {
+    const std::size_t copied = std::min(bytes.size(), header_.size() - header_bytes_);
+    std::ranges::copy(bytes.first(copied),
+                      header_.begin() + static_cast<std::ptrdiff_t>(header_bytes_));
+    header_bytes_ += copied;
+    consumed += copied;
+    if (header_bytes_ != header_.size())
+      return DistributedVectorQueryRequestReadStep{.consumed_bytes = consumed};
+    const auto frame_length = request_frame_length(header_);
+    if (!frame_length.has_value()) {
+      failure_ = frame_length.error();
+      return common::make_unexpected(*failure_);
+    }
+    if (*frame_length > maximum_frame_length_) {
+      failure_ = exhausted("vector query request exceeds reader frame limit");
+      return common::make_unexpected(*failure_);
+    }
+    try {
+      frame_.resize(*frame_length);
+    } catch (const std::bad_alloc&) {
+      failure_ = exhausted("vector query request reader allocation failed");
+      return common::make_unexpected(*failure_);
+    } catch (const std::length_error&) {
+      failure_ = exhausted("vector query request reader exceeds container limits");
+      return common::make_unexpected(*failure_);
+    }
+    std::ranges::copy(header_, frame_.begin());
+    frame_bytes_ = header_.size();
+  }
+  const common::ByteView remaining = bytes.subspan(consumed);
+  const std::size_t copied = std::min(remaining.size(), frame_.size() - frame_bytes_);
+  std::ranges::copy(remaining.first(copied),
+                    frame_.begin() + static_cast<std::ptrdiff_t>(frame_bytes_));
+  frame_bytes_ += copied;
+  consumed += copied;
+  if (frame_bytes_ != frame_.size())
+    return DistributedVectorQueryRequestReadStep{.consumed_bytes = consumed};
+  auto decoded = decode_distributed_vector_query_request_v1(frame_);
+  if (!decoded.has_value()) {
+    failure_ = decoded.error();
+    return common::make_unexpected(*failure_);
+  }
+  DistributedVectorQueryRequest result = std::move(*decoded);
+  frame_.clear();
+  frame_bytes_ = 0U;
+  header_bytes_ = 0U;
+  return DistributedVectorQueryRequestReadStep{.consumed_bytes = consumed,
+                                               .request = std::move(result)};
+}
+
+std::size_t DistributedVectorQueryRequestReader::buffered_bytes() const noexcept {
+  return frame_.empty() ? header_bytes_ : frame_bytes_;
+}
+
+bool DistributedVectorQueryRequestReader::failed() const noexcept {
+  return failure_.has_value();
+}
+
+DistributedVectorQueryResponseReader::DistributedVectorQueryResponseReader(
+    const std::size_t maximum_frame_length)
+    : maximum_frame_length_(maximum_frame_length) {}
+
+common::Result<DistributedVectorQueryResponseReadStep>
+DistributedVectorQueryResponseReader::consume(const common::ByteView bytes) {
+  if (failure_.has_value())
+    return common::make_unexpected(*failure_);
+  constexpr std::size_t kMinimum =
+      kDistributedVectorQueryResponseHeaderSize + kDistributedVectorQueryResponseTrailerSize;
+  if (maximum_frame_length_ < kMinimum ||
+      maximum_frame_length_ > kMaximumDistributedVectorQueryResponseSize) {
+    return common::make_unexpected(invalid("vector query response reader limit is invalid"));
+  }
+  std::size_t consumed{};
+  if (frame_.empty()) {
+    const std::size_t copied = std::min(bytes.size(), header_.size() - header_bytes_);
+    std::ranges::copy(bytes.first(copied),
+                      header_.begin() + static_cast<std::ptrdiff_t>(header_bytes_));
+    header_bytes_ += copied;
+    consumed += copied;
+    if (header_bytes_ != header_.size())
+      return DistributedVectorQueryResponseReadStep{.consumed_bytes = consumed};
+    const auto frame_length = response_frame_length(header_);
+    if (!frame_length.has_value()) {
+      failure_ = frame_length.error();
+      return common::make_unexpected(*failure_);
+    }
+    if (*frame_length > maximum_frame_length_) {
+      failure_ = exhausted("vector query response exceeds reader frame limit");
+      return common::make_unexpected(*failure_);
+    }
+    try {
+      frame_.resize(*frame_length);
+    } catch (const std::bad_alloc&) {
+      failure_ = exhausted("vector query response reader allocation failed");
+      return common::make_unexpected(*failure_);
+    } catch (const std::length_error&) {
+      failure_ = exhausted("vector query response reader exceeds container limits");
+      return common::make_unexpected(*failure_);
+    }
+    std::ranges::copy(header_, frame_.begin());
+    frame_bytes_ = header_.size();
+  }
+  const common::ByteView remaining = bytes.subspan(consumed);
+  const std::size_t copied = std::min(remaining.size(), frame_.size() - frame_bytes_);
+  std::ranges::copy(remaining.first(copied),
+                    frame_.begin() + static_cast<std::ptrdiff_t>(frame_bytes_));
+  frame_bytes_ += copied;
+  consumed += copied;
+  if (frame_bytes_ != frame_.size())
+    return DistributedVectorQueryResponseReadStep{.consumed_bytes = consumed};
+  auto decoded = decode_distributed_vector_query_response_v1(frame_);
+  if (!decoded.has_value()) {
+    failure_ = decoded.error();
+    return common::make_unexpected(*failure_);
+  }
+  DistributedVectorQueryResponse result = std::move(*decoded);
+  frame_.clear();
+  frame_bytes_ = 0U;
+  header_bytes_ = 0U;
+  return DistributedVectorQueryResponseReadStep{.consumed_bytes = consumed,
+                                                .response = std::move(result)};
+}
+
+std::size_t DistributedVectorQueryResponseReader::buffered_bytes() const noexcept {
+  return frame_.empty() ? header_bytes_ : frame_bytes_;
+}
+
+bool DistributedVectorQueryResponseReader::failed() const noexcept {
+  return failure_.has_value();
+}
+
+DistributedVectorQueryFrameWriteCursor::DistributedVectorQueryFrameWriteCursor(
+    std::vector<std::byte> encoded_frame) noexcept
+    : encoded_frame_(std::move(encoded_frame)) {}
+
+DistributedVectorQueryFrameWriteCursor::DistributedVectorQueryFrameWriteCursor(
+    DistributedVectorQueryFrameWriteCursor&& other) noexcept
+    : encoded_frame_(std::move(other.encoded_frame_)), written_bytes_(other.written_bytes_) {
+  other.written_bytes_ = other.encoded_frame_.size();
+}
+
+DistributedVectorQueryFrameWriteCursor& DistributedVectorQueryFrameWriteCursor::operator=(
+    DistributedVectorQueryFrameWriteCursor&& other) noexcept {
+  if (this != &other) {
+    encoded_frame_ = std::move(other.encoded_frame_);
+    written_bytes_ = other.written_bytes_;
+    other.written_bytes_ = other.encoded_frame_.size();
+  }
+  return *this;
+}
+
+common::Result<DistributedVectorQueryFrameWriteCursor>
+DistributedVectorQueryFrameWriteCursor::create(std::vector<std::byte> encoded_frame) {
+  if (encoded_frame.size() < kMagic.size())
+    return common::make_unexpected(invalid("vector query write frame is invalid"));
+  if (std::ranges::equal(common::ByteView{encoded_frame}.first(kMagic.size()), kMagic)) {
+    auto decoded = decode_distributed_vector_query_request_v1(encoded_frame);
+    if (!decoded.has_value())
+      return common::make_unexpected(decoded.error());
+  } else if (std::ranges::equal(common::ByteView{encoded_frame}.first(kResponseMagic.size()),
+                                kResponseMagic)) {
+    auto decoded = decode_distributed_vector_query_response_v1(encoded_frame);
+    if (!decoded.has_value())
+      return common::make_unexpected(decoded.error());
+  } else {
+    return common::make_unexpected(invalid("vector query write frame magic is invalid"));
+  }
+  return DistributedVectorQueryFrameWriteCursor{std::move(encoded_frame)};
+}
+
+common::ByteView DistributedVectorQueryFrameWriteCursor::pending_write() const noexcept {
+  return common::ByteView{encoded_frame_}.subspan(written_bytes_);
+}
+
+common::Status
+DistributedVectorQueryFrameWriteCursor::consume_written(const std::size_t bytes) noexcept {
+  if (bytes > encoded_frame_.size() - written_bytes_)
+    return invalid("written byte count exceeds vector query frame");
+  written_bytes_ += bytes;
+  return common::Status::ok();
+}
+
+std::size_t DistributedVectorQueryFrameWriteCursor::written_bytes() const noexcept {
+  return written_bytes_;
+}
+
+bool DistributedVectorQueryFrameWriteCursor::complete() const noexcept {
+  return written_bytes_ == encoded_frame_.size();
 }
 
 } // namespace chronos::cluster

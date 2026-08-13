@@ -8,6 +8,7 @@
 #include "chronos/query/distributed_vector_fragment.hpp"
 #include "chronos/raft/types.hpp"
 
+#include <array>
 #include <cstddef>
 #include <optional>
 #include <vector>
@@ -57,6 +58,87 @@ encode_distributed_vector_query_response_v1(const DistributedVectorQueryResponse
 
 [[nodiscard]] common::Result<DistributedVectorQueryResponse>
 decode_distributed_vector_query_response_v1(common::ByteView bytes);
+
+struct DistributedVectorQueryRequestReadStep {
+  std::size_t consumed_bytes{};
+  std::optional<DistributedVectorQueryRequest> request;
+};
+
+class DistributedVectorQueryRequestReader {
+public:
+  explicit DistributedVectorQueryRequestReader(
+      std::size_t maximum_frame_length = kMaximumDistributedVectorQueryRequestSize);
+  DistributedVectorQueryRequestReader(const DistributedVectorQueryRequestReader&) = delete;
+  DistributedVectorQueryRequestReader&
+  operator=(const DistributedVectorQueryRequestReader&) = delete;
+  DistributedVectorQueryRequestReader(DistributedVectorQueryRequestReader&&) = delete;
+  DistributedVectorQueryRequestReader& operator=(DistributedVectorQueryRequestReader&&) = delete;
+
+  [[nodiscard]] common::Result<DistributedVectorQueryRequestReadStep>
+  consume(common::ByteView bytes);
+  [[nodiscard]] std::size_t buffered_bytes() const noexcept;
+  [[nodiscard]] bool failed() const noexcept;
+
+private:
+  std::size_t maximum_frame_length_{};
+  std::array<std::byte, kDistributedVectorQueryRequestHeaderSize> header_{};
+  std::size_t header_bytes_{};
+  std::vector<std::byte> frame_;
+  std::size_t frame_bytes_{};
+  std::optional<common::Status> failure_;
+};
+
+struct DistributedVectorQueryResponseReadStep {
+  std::size_t consumed_bytes{};
+  std::optional<DistributedVectorQueryResponse> response;
+};
+
+class DistributedVectorQueryResponseReader {
+public:
+  explicit DistributedVectorQueryResponseReader(
+      std::size_t maximum_frame_length = kMaximumDistributedVectorQueryResponseSize);
+  DistributedVectorQueryResponseReader(const DistributedVectorQueryResponseReader&) = delete;
+  DistributedVectorQueryResponseReader&
+  operator=(const DistributedVectorQueryResponseReader&) = delete;
+  DistributedVectorQueryResponseReader(DistributedVectorQueryResponseReader&&) = delete;
+  DistributedVectorQueryResponseReader& operator=(DistributedVectorQueryResponseReader&&) = delete;
+
+  [[nodiscard]] common::Result<DistributedVectorQueryResponseReadStep>
+  consume(common::ByteView bytes);
+  [[nodiscard]] std::size_t buffered_bytes() const noexcept;
+  [[nodiscard]] bool failed() const noexcept;
+
+private:
+  std::size_t maximum_frame_length_{};
+  std::array<std::byte, kDistributedVectorQueryResponseHeaderSize> header_{};
+  std::size_t header_bytes_{};
+  std::vector<std::byte> frame_;
+  std::size_t frame_bytes_{};
+  std::optional<common::Status> failure_;
+};
+
+class DistributedVectorQueryFrameWriteCursor {
+public:
+  DistributedVectorQueryFrameWriteCursor() = delete;
+  DistributedVectorQueryFrameWriteCursor(const DistributedVectorQueryFrameWriteCursor&) = delete;
+  DistributedVectorQueryFrameWriteCursor&
+  operator=(const DistributedVectorQueryFrameWriteCursor&) = delete;
+  DistributedVectorQueryFrameWriteCursor(DistributedVectorQueryFrameWriteCursor&& other) noexcept;
+  DistributedVectorQueryFrameWriteCursor&
+  operator=(DistributedVectorQueryFrameWriteCursor&& other) noexcept;
+
+  [[nodiscard]] static common::Result<DistributedVectorQueryFrameWriteCursor>
+  create(std::vector<std::byte> encoded_frame);
+  [[nodiscard]] common::ByteView pending_write() const noexcept;
+  [[nodiscard]] common::Status consume_written(std::size_t bytes) noexcept;
+  [[nodiscard]] std::size_t written_bytes() const noexcept;
+  [[nodiscard]] bool complete() const noexcept;
+
+private:
+  explicit DistributedVectorQueryFrameWriteCursor(std::vector<std::byte> encoded_frame) noexcept;
+  std::vector<std::byte> encoded_frame_;
+  std::size_t written_bytes_{};
+};
 
 } // namespace chronos::cluster
 

@@ -277,6 +277,9 @@ and does not resolve how arbitrary plan outputs acquire Columnar Batch schema id
 The matching response exact-correlates reverse route, query, tablet, one vector exchange or failure,
 and an optional advisory leader hint. It validates header and payload lengths before nested decode
 but deliberately leaves multi-frame terminal sequencing to a later coordinator contract.
+Its header-first readers retain fixed request/response headers until integrity-protected hard and
+caller frame bounds pass, then own exactly one declared frame and preserve coalesced suffixes. The
+shared move-only cursor validates one complete frame before owning checked short-write progress.
 The replicated read-barrier owner now returns exact correlated leader observations for
 leader-linearizable proof construction. The group-backed binder joins that group-sorted authority
 to plan-ordered tablets through committed immutable tablet-to-group bindings and ignores unrelated
