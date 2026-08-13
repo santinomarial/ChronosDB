@@ -435,3 +435,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0398](0398-committed-vector-v2-query-route-resolution.md) | Committed vector v2 query route resolution | accepted |
 | [0399](0399-packaged-leader-linearizable-vector-aggregate-v2-query.md) | Packaged leader-linearizable vector aggregate v2 query | accepted |
 | [0400](0400-packaged-bounded-stale-vector-aggregate-v2-query.md) | Packaged bounded-stale vector aggregate v2 query | accepted |
+| [0401](0401-placement-backed-vector-raft-observation-batch-construction.md) | Placement-backed vector Raft observation batch construction | accepted |

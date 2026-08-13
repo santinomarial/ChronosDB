@@ -39,10 +39,13 @@ using TimePoint = RaftObservationTcpClient::TimePoint;
 
 } // namespace
 
+namespace {
+
+template <typename Plan>
 common::Result<RaftObservationTcpBatchAcquisitionConfig>
-construct_raft_observation_tcp_batch(const query::DistributedAggregatePlan& plan,
-                                     const raft::MetadataCatalogSnapshot& catalog,
-                                     const RaftObservationTcpBatchConstructionConfig& config) {
+construct_raft_observation_tcp_batch_impl(const Plan& plan,
+                                          const raft::MetadataCatalogSnapshot& catalog,
+                                          const RaftObservationTcpBatchConstructionConfig& config) {
   if (plan.read_policy.consistency != query::DistributedReadConsistency::kFollowerBoundedStale ||
       !plan.read_policy.maximum_staleness_positions.has_value() || plan.query_id.is_nil() ||
       plan.fragments.empty() ||
@@ -93,7 +96,7 @@ construct_raft_observation_tcp_batch(const query::DistributedAggregatePlan& plan
           placement->replicas.size() > raft::MetadataLimits{}.maximum_replicas_per_tablet ||
           placement->replicas.front() == 0U || !std::ranges::is_sorted(placement->replicas) ||
           std::ranges::adjacent_find(placement->replicas) != placement->replicas.end() ||
-          !placement->leader_hint.has_value() || *placement->leader_hint != fragment.leader_node ||
+          placement->leader_hint.value_or(0U) != fragment.leader_node ||
           !std::ranges::binary_search(placement->replicas, fragment.leader_node)) {
         return common::make_unexpected(
             status(common::StatusCode::kUnavailable,
@@ -185,6 +188,22 @@ construct_raft_observation_tcp_batch(const query::DistributedAggregatePlan& plan
     return common::make_unexpected(status(common::StatusCode::kResourceExhausted,
                                           "Raft observation batch construction is too large"));
   }
+}
+
+} // namespace
+
+common::Result<RaftObservationTcpBatchAcquisitionConfig>
+construct_raft_observation_tcp_batch(const query::DistributedAggregatePlan& plan,
+                                     const raft::MetadataCatalogSnapshot& catalog,
+                                     const RaftObservationTcpBatchConstructionConfig& config) {
+  return construct_raft_observation_tcp_batch_impl(plan, catalog, config);
+}
+
+common::Result<RaftObservationTcpBatchAcquisitionConfig>
+construct_raft_observation_tcp_batch(const query::DistributedVectorQueryPlan& plan,
+                                     const raft::MetadataCatalogSnapshot& catalog,
+                                     const RaftObservationTcpBatchConstructionConfig& config) {
+  return construct_raft_observation_tcp_batch_impl(plan, catalog, config);
 }
 
 class RaftObservationTcpBatchAcquisition::Impl {

@@ -257,6 +257,26 @@ TEST(RaftObservationTcpBatchAcquisitionTest, ConstructsCanonicalPairsFromCommitt
   EXPECT_EQ(constructed->pairs[1].leader.request.correlation_id, 102U);
   EXPECT_EQ(constructed->pairs[1].follower.request.correlation_id, 103U);
 
+  const query::DistributedVectorQueryPlan vector_plan{
+      .query_id = plan.query_id,
+      .read_policy = plan.read_policy,
+      .fragments = plan.fragments,
+      .intent = {.mode = query::DistributedVectorPlanMode::kUngroupedAggregate,
+                 .aggregates = {{.operation = query::VectorAggregateOperation::kCountStar}}}};
+  auto vector_constructed = construct_raft_observation_tcp_batch(vector_plan, catalog, config);
+  ASSERT_TRUE(vector_constructed.has_value()) << vector_constructed.error().to_string();
+  ASSERT_EQ(vector_constructed->pairs.size(), constructed->pairs.size());
+  for (std::size_t index = 0U; index < constructed->pairs.size(); ++index) {
+    EXPECT_EQ(vector_constructed->pairs[index].leader.request,
+              constructed->pairs[index].leader.request);
+    EXPECT_EQ(vector_constructed->pairs[index].follower.request,
+              constructed->pairs[index].follower.request);
+    EXPECT_EQ(vector_constructed->pairs[index].leader.route.node_id,
+              constructed->pairs[index].leader.route.node_id);
+    EXPECT_EQ(vector_constructed->pairs[index].follower.route.node_id,
+              constructed->pairs[index].follower.route.node_id);
+  }
+
   auto overflow = config;
   overflow.first_correlation_id = std::numeric_limits<std::uint64_t>::max();
   EXPECT_EQ(construct_raft_observation_tcp_batch(plan, catalog, overflow).error().code(),

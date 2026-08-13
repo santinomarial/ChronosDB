@@ -452,9 +452,11 @@ failure, and publishes only a complete same-term stable-membership authority pai
 pre-poll resolver joins canonical selected nodes to committed numeric/DNS endpoint metadata and
 exact TLS contexts under hard answer bounds. A canonical batch owner starts every selected group
 pair before blocking, polls all descriptors under the earliest deadline, and publishes only one
-complete group-sorted authority vector. Automatic placement-backed pair selection, remote
-pair selection now prefers an eligible coordinator follower and otherwise the lowest nonleader
-replica, resolves every unique target once, and assigns bounded correlations before I/O. Packaged
+complete group-sorted authority vector. Its placement-backed constructor accepts both legacy
+aggregate and schema-bound vector plans through one shared tablet/group/node selection contract.
+Placement-backed remote pair selection prefers an eligible coordinator follower and otherwise the
+lowest nonleader replica, resolves every unique target once, and assigns bounded correlations
+before I/O. Packaged
 service ownership now pins the plan/Manifest through acquisition, binds the complete authority
 through the metadata barrier, and transfers directly into TCP query execution. A focused
 one-process loopback now returns a real installed-CSEG response through the production inbound

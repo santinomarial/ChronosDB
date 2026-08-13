@@ -2,6 +2,7 @@
 #define CHRONOS_CLUSTER_RAFT_OBSERVATION_TCP_BATCH_ACQUISITION_HPP_
 
 #include "chronos/cluster/raft_observation_tcp_pair_acquisition.hpp"
+#include "chronos/query/distributed_vector_fragment.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -36,6 +37,11 @@ struct RaftObservationTcpBatchConstructionConfig {
 // when it is a nonleader replica; otherwise the lowest nonleader replica is selected.
 [[nodiscard]] common::Result<RaftObservationTcpBatchAcquisitionConfig>
 construct_raft_observation_tcp_batch(const query::DistributedAggregatePlan& plan,
+                                     const raft::MetadataCatalogSnapshot& catalog,
+                                     const RaftObservationTcpBatchConstructionConfig& config);
+
+[[nodiscard]] common::Result<RaftObservationTcpBatchAcquisitionConfig>
+construct_raft_observation_tcp_batch(const query::DistributedVectorQueryPlan& plan,
                                      const raft::MetadataCatalogSnapshot& catalog,
                                      const RaftObservationTcpBatchConstructionConfig& config);
 
