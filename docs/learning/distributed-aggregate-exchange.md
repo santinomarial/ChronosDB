@@ -136,7 +136,9 @@ TCP owner. Raft Observation Transport v1 now canonically binds one authenticated
 group, and correlation identity to either a complete ordered local Raft observation or an exact
 failure, and its receiver rejects trust and route failures before invoking the embedding's durable
 observation service. Its bounded readers now validate fixed headers before retaining exact frames,
-and its move-only cursor preserves short-write ownership. mTLS client/server carriers,
+and its move-only cursor preserves short-write ownership. An outbound maintained mTLS attempt now
+authenticates and authorizes one exact target before writing and exposes only a correlated response.
+TCP connection ownership, inbound serving,
 leader/follower fan-out and pair acquisition, remote worker-interrupt delivery, pooled
 multiplexing, asynchronous worker completion, live DNS churn qualification, and broader multi-node
 fault handling remain embedding work.

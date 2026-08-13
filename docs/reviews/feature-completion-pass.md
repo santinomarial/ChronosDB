@@ -406,6 +406,9 @@ Focused executions passed:
   sticky failure, partial-reader state transfer, and validated move-only short writes. The stream
   owners and installed external-consumer check passed; TLS carrier or remote pair acquisition
   completion is not claimed.
+- Raft-observation outbound-mTLS continuation: 3 focused real/portable cases passed for exact
+  authenticated acquisition, principal denial before request writing, and sticky exact deadlines.
+  TCP connection ownership, inbound serving, fan-out, and pair acquisition are not claimed.
 
 The final C++ tree passed the repository-pinned clang-format 18 check. Full-suite, sanitizer, fuzz,
 broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were deliberately not run.

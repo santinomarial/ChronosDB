@@ -342,3 +342,4 @@ An accepted ADR is not silently rewritten after implementation begins. Correct t
 | [0305](0305-bounded-dns-multi-address-query-routing.md) | Bounded DNS and multi-address distributed query routing | accepted |
 | [0306](0306-authenticated-raft-observation-transport.md) | Authenticated Raft observation transport | accepted |
 | [0307](0307-bounded-raft-observation-partial-io.md) | Bounded Raft observation partial-I/O ownership | accepted |
+| [0308](0308-outbound-raft-observation-mtls-acquisition.md) | Outbound Raft observation mTLS acquisition | accepted |

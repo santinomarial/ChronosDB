@@ -276,8 +276,10 @@
   observation service. Request/success/failure codec, corruption/version/bound rejection, trust
   ordering, service failure, and exception containment have focused coverage. Header-first bounded
   readers now reject declared lengths before response allocation, preserve coalesced suffixes, and
-  pair with move-only validated short-write ownership. Add maintained mTLS client/server deadlines,
-  finite retries, leader/follower fan-out, pair correlation/freshness selection,
+  pair with move-only validated short-write ownership. A maintained outbound mTLS attempt now
+  authenticates and authorizes the exact target before writing, applies handshake/exchange
+  deadlines, and exact-matches response route/group/correlation. Add TCP connection ownership,
+  maintained inbound mTLS serving, finite retries, leader/follower fan-out, pair selection,
   packaged-constructor acquisition, cancellation/allocation faults, and real multi-process
   validation.
 - Shard-key pruning and statistics in addition to event-time pruning; multi-node scalar/distributed
