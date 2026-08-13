@@ -425,6 +425,22 @@ int main() {
       &chronos::cluster::DistributedQueryTcpClient::begin;
   const auto create_distributed_query_tcp_execution =
       &chronos::cluster::DistributedQueryTcpExecution::create;
+  using AggregateQueryRouteResolver = chronos::common::Result<
+      std::vector<chronos::cluster::DistributedQueryNodeRoute>> (*)(
+      const chronos::raft::MetadataCatalogSnapshot&,
+      std::span<const chronos::query::DistributedAggregateFragmentDispatch>,
+      std::span<const chronos::cluster::DistributedQueryNodeTlsContext>,
+      chronos::cluster::DistributedQueryRouteResolutionLimits);
+  using VectorQueryRouteResolver = chronos::common::Result<
+      std::vector<chronos::cluster::DistributedQueryNodeRoute>> (*)(
+      const chronos::raft::MetadataCatalogSnapshot&,
+      std::span<const chronos::query::DistributedVectorFragmentDispatch>,
+      std::span<const chronos::cluster::DistributedQueryNodeTlsContext>,
+      chronos::cluster::DistributedQueryRouteResolutionLimits);
+  const AggregateQueryRouteResolver resolve_aggregate_query_routes =
+      &chronos::cluster::resolve_distributed_query_node_routes;
+  const VectorQueryRouteResolver resolve_vector_query_routes =
+      &chronos::cluster::resolve_distributed_query_node_routes;
   const auto encode_raft_observation_request =
       &chronos::cluster::encode_raft_observation_request_v1;
   const auto decode_raft_observation_response =
@@ -607,6 +623,8 @@ int main() {
   (void)start_distributed_query_tcp_server;
   (void)begin_distributed_query_tcp_client;
   (void)create_distributed_query_tcp_execution;
+  (void)resolve_aggregate_query_routes;
+  (void)resolve_vector_query_routes;
   (void)encode_raft_observation_request;
   (void)decode_raft_observation_response;
   (void)create_raft_observation_response_reader;

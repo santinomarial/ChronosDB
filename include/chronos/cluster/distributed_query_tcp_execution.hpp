@@ -8,6 +8,7 @@
 #include "chronos/network/tcp_socket.hpp"
 #include "chronos/network/tls_socket.hpp"
 #include "chronos/query/distributed.hpp"
+#include "chronos/query/distributed_vector_fragment.hpp"
 #include "chronos/raft/metadata.hpp"
 #include "chronos/raft/types.hpp"
 
@@ -46,6 +47,15 @@ struct DistributedQueryRouteResolutionLimits {
 resolve_distributed_query_node_routes(
     const raft::MetadataCatalogSnapshot& catalog,
     std::span<const query::DistributedAggregateFragmentDispatch> dispatches,
+    std::span<const DistributedQueryNodeTlsContext> tls_contexts,
+    DistributedQueryRouteResolutionLimits limits = {});
+
+// Applies the identical committed node/TLS join to the immutable dispatches retained by a
+// CompatibleDistributedVectorSnapshotV2 owner.
+[[nodiscard]] common::Result<std::vector<DistributedQueryNodeRoute>>
+resolve_distributed_query_node_routes(
+    const raft::MetadataCatalogSnapshot& catalog,
+    std::span<const query::DistributedVectorFragmentDispatch> dispatches,
     std::span<const DistributedQueryNodeTlsContext> tls_contexts,
     DistributedQueryRouteResolutionLimits limits = {});
 

@@ -206,6 +206,9 @@ serving nodes from one committed node-metadata snapshot. Node-specific TLS conte
 Strict numeric endpoints bypass resolution; lowercase DNS endpoints acquire one fresh bounded,
 ordered, unique IPv4 candidate set before the poll owner starts. Finite sender retries rotate those
 candidates without changing the target node, proof, retry budget, or TLS certificate identity.
+The same resolver accepts both aggregate fragment dispatches and the schema-bound vector dispatch
+views retained by a compatible v2 owner, so process integration does not reconstruct or downcast
+route authority.
 After a retryable terminal failure, explicit finite rebinding accepts only an independently proved
 execution for the same plan-ordered logical query and a nonregressing Manifest generation. It
 discards every old partial and pin together before new attempts begin; leader hints remain advisory.

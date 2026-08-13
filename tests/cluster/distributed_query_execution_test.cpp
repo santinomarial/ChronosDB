@@ -1621,6 +1621,24 @@ TEST(DistributedQueryTcpExecutionTest, ResolvesSelectedRoutesFromCommittedNodeMe
             (std::vector<network::Ipv4Endpoint>{{{127U, 0U, 0U, 2U}, 7412U}}));
   EXPECT_EQ((*routes)[1].tls_context, &second_tls);
 
+  auto vector_routes =
+      resolve_distributed_query_node_routes(catalog, input->vector_snapshot.dispatches(), contexts);
+  ASSERT_TRUE(vector_routes.has_value()) << vector_routes.error().to_string();
+  ASSERT_EQ(vector_routes->size(), routes->size());
+  for (std::size_t index = 0U; index < routes->size(); ++index) {
+    EXPECT_EQ((*vector_routes)[index].node_id, (*routes)[index].node_id);
+    EXPECT_EQ((*vector_routes)[index].endpoints, (*routes)[index].endpoints);
+    EXPECT_EQ((*vector_routes)[index].tls_context, (*routes)[index].tls_context);
+  }
+  ASSERT_EQ(input->vector_snapshot.dispatches().size(), 2U);
+  std::array invalid_vector_dispatches{input->vector_snapshot.dispatches()[0],
+                                       input->vector_snapshot.dispatches()[1]};
+  invalid_vector_dispatches[0].serving_node = 0U;
+  EXPECT_EQ(resolve_distributed_query_node_routes(catalog, invalid_vector_dispatches, contexts)
+                .error()
+                .code(),
+            common::StatusCode::kInvalidArgument);
+
   catalog.cluster_nodes[2].endpoint = "localhost:7412";
   routes = resolve_distributed_query_node_routes(catalog, input->snapshot.dispatches(), contexts);
   ASSERT_TRUE(routes.has_value()) << routes.error().to_string();

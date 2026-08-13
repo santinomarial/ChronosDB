@@ -94,9 +94,21 @@ compatible_rebinding(const query::CompatibleDistributedAggregateSnapshot& previo
 
 } // namespace
 
-common::Result<std::vector<DistributedQueryNodeRoute>> resolve_distributed_query_node_routes(
-    const raft::MetadataCatalogSnapshot& catalog,
-    const std::span<const query::DistributedAggregateFragmentDispatch> dispatches,
+namespace {
+
+[[nodiscard]] raft::NodeId
+selected_serving_node(const query::DistributedAggregateFragmentDispatch& dispatch) noexcept {
+  return dispatch.fragment.serving_node;
+}
+
+[[nodiscard]] raft::NodeId
+selected_serving_node(const query::DistributedVectorFragmentDispatch& dispatch) noexcept {
+  return dispatch.serving_node;
+}
+
+template <typename Dispatch>
+common::Result<std::vector<DistributedQueryNodeRoute>> resolve_distributed_query_node_routes_impl(
+    const raft::MetadataCatalogSnapshot& catalog, const std::span<const Dispatch> dispatches,
     const std::span<const DistributedQueryNodeTlsContext> tls_contexts,
     const DistributedQueryRouteResolutionLimits limits) {
   if (limits.maximum_routes == 0U || limits.maximum_routes > 65'536U ||
@@ -130,9 +142,10 @@ common::Result<std::vector<DistributedQueryNodeRoute>> resolve_distributed_query
   try {
     std::set<raft::NodeId> targets;
     for (const auto& dispatch : dispatches) {
-      if (dispatch.fragment.serving_node == 0U)
+      const raft::NodeId target = selected_serving_node(dispatch);
+      if (target == 0U)
         return common::make_unexpected(invalid("distributed query dispatch has no serving node"));
-      targets.insert(dispatch.fragment.serving_node);
+      targets.insert(target);
     }
     if (targets.size() > limits.maximum_routes)
       return common::make_unexpected(exhausted("distributed query route limit is exhausted"));
@@ -174,6 +187,26 @@ common::Result<std::vector<DistributedQueryNodeRoute>> resolve_distributed_query
     return common::make_unexpected(
         exhausted("distributed query route resolution exceeds container limits"));
   }
+}
+
+} // namespace
+
+common::Result<std::vector<DistributedQueryNodeRoute>> resolve_distributed_query_node_routes(
+    const raft::MetadataCatalogSnapshot& catalog,
+    const std::span<const query::DistributedAggregateFragmentDispatch> dispatches,
+    const std::span<const DistributedQueryNodeTlsContext> tls_contexts,
+    const DistributedQueryRouteResolutionLimits limits) {
+  return resolve_distributed_query_node_routes_impl<query::DistributedAggregateFragmentDispatch>(
+      catalog, dispatches, tls_contexts, limits);
+}
+
+common::Result<std::vector<DistributedQueryNodeRoute>> resolve_distributed_query_node_routes(
+    const raft::MetadataCatalogSnapshot& catalog,
+    const std::span<const query::DistributedVectorFragmentDispatch> dispatches,
+    const std::span<const DistributedQueryNodeTlsContext> tls_contexts,
+    const DistributedQueryRouteResolutionLimits limits) {
+  return resolve_distributed_query_node_routes_impl<query::DistributedVectorFragmentDispatch>(
+      catalog, dispatches, tls_contexts, limits);
 }
 
 class DistributedQueryTcpExecution::Impl {
