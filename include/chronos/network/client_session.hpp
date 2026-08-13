@@ -62,6 +62,7 @@ private:
     std::uint64_t id{};
     MessageType type{MessageType::kQueryRequest};
     DurabilityMode durability{DurabilityMode::kAsync};
+    bool query_result_started{};
     bool query_result_ended{};
     bool subscription_ready{};
     bool cancellation_requested{};

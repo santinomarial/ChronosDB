@@ -36,6 +36,7 @@ constexpr std::size_t kHeaderCrcOffset = 36U;
   case MessageType::kIngestRequest:
   case MessageType::kIngestAcknowledgement:
   case MessageType::kQuorumSyncIngestAcknowledgement:
+  case MessageType::kLeaderRedirect:
   case MessageType::kQueryRequest:
   case MessageType::kQueryResult:
   case MessageType::kQueryEnd:
@@ -55,7 +56,10 @@ constexpr std::size_t kHeaderCrcOffset = 36U;
 }
 
 [[nodiscard]] std::uint16_t minimum_major(const MessageType type) noexcept {
-  return type == MessageType::kQuorumSyncIngestAcknowledgement ? kProtocolV2Major : kProtocolMajor;
+  return type == MessageType::kQuorumSyncIngestAcknowledgement ||
+                 type == MessageType::kLeaderRedirect
+             ? kProtocolV2Major
+             : kProtocolMajor;
 }
 
 [[nodiscard]] bool supported_version(const std::uint16_t major,

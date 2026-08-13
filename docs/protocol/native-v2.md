@@ -1,7 +1,8 @@
 # ChronosDB Native Protocol v2
 
-> **Status: Protocol 2.0 framing, negotiation, QUORUM_SYNC request, and receipt codecs are
-> implemented. Replicated service advertisement and execution are not yet enabled.**
+> **Status: Protocol 2.0 framing, negotiation, QUORUM_SYNC request/receipt, and negotiated leader
+> redirect are implemented. Packaged replicated QUORUM_SYNC and applied-barrier SELECT execute;
+> leader redirect service emission remains to be composed.**
 
 Protocol 2.0 inherits the complete [Native Protocol v1](native-v1.md) framing, limits, type
 assignments, payloads, request lifecycle, security boundary, and subscription semantics except for
@@ -16,6 +17,9 @@ frames on that connection MUST carry exactly `2.0`. A v2-only client sets both m
 Protocol 2.0 supports feature bit 0 (subscriptions) and assigns feature bit 1 (`0x2`) to
 `QUORUM_SYNC`. Both peers must offer/enable bit 1. A server without a configured replicated ingest
 owner MUST omit it even if its frame parser understands Protocol 2.
+
+Feature bit 2 (`0x4`) enables `LEADER_REDIRECT`. A server MUST omit it until its request service can
+derive exact redirect observations from authoritative placement and ordered Raft state.
 
 ## Ingest request durability
 
@@ -47,9 +51,30 @@ from ADR 0074; they do not constitute a lease or authorize a later acknowledgeme
 acknowledgement cannot complete a `QUORUM_SYNC` request, and type 12 cannot complete an `ASYNC` or
 `LOCAL_SYNC` request.
 
+## Leader redirect
+
+Message type `13`, `LEADER_REDIRECT`, is server-to-client only, Protocol-2-only, and requires
+negotiated feature bit 2. Its payload is exactly 48 bytes:
+
+| Offset | Width | Field | Rule |
+| ---: | ---: | --- | --- |
+| 0 | 2 | payload format | `1` |
+| 2 | 6 | reserved | zero |
+| 8 | 16 | Raft group UUID | non-nil canonical bytes |
+| 24 | 8 | leader node ID | nonzero u64 |
+| 32 | 8 | observed leader term | nonzero u64 |
+| 40 | 8 | placement epoch | nonzero u64 |
+
+The response terminally completes an ingest or finite query only before any acknowledgement or
+query-result batch. It is invalid for subscriptions and invalid after partial query output. The
+stable node ID is resolved through deployment-owned authenticated native endpoints; a Raft peer
+endpoint is not a native client endpoint. The observation is not a lease, so a retry must still
+prove the requested consistency at the destination.
+
 ## Compatibility and rejection
 
-- Protocol 1 decoders reject message type 12 and durability value 3.
+- Protocol 1 decoders reject message types 12 and 13, durability value 3, and Protocol-2 feature
+  bits.
 - Protocol 2 without negotiated feature bit 1 rejects durability value 3.
 - Unknown majors, nonzero Protocol 2 minors, unknown features, malformed receipt identities, mixed
   post-handshake versions, and mismatched acknowledgement kinds fail closed.

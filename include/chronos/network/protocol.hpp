@@ -32,6 +32,7 @@ enum class MessageType : std::uint16_t {
   kIngestRequest = 10,
   kIngestAcknowledgement = 11,
   kQuorumSyncIngestAcknowledgement = 12,
+  kLeaderRedirect = 13,
   kQueryRequest = 20,
   kQueryResult = 21,
   kQueryEnd = 22,

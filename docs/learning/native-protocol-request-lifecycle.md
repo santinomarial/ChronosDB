@@ -15,6 +15,11 @@ Message decoders borrow canonical command/SQL/diagnostic bytes from an owned fra
 their bytes and classify allocation failure. Ingest acknowledgements always expose requested and
 effective durability; matching retry outcomes carry no fabricated WAL position.
 
+Protocol 2 may negotiate a structured leader redirect. The state owner accepts it only for ingest
+or finite query work before any query batch, then releases the request exactly once. The payload
+names a group, observed leader node/term, and placement epoch but deliberately omits an endpoint and
+does not grant a lease. Reactor-side validation repeats canonical decoding before enqueueing bytes.
+
 Protocol 1.0 remains the default. A client explicitly requests minor 1 and subscription feature bit
 0; the server intersects supported features, and both sides then require the exact selected minor
 on every post-handshake frame. Subscription state enforces finite snapshot `QUERY_RESULT` completion

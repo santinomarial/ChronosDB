@@ -340,6 +340,7 @@ public:
       const bool ingest = frame.header.message_type == MessageType::kIngestAcknowledgement;
       const bool quorum_sync =
           frame.header.message_type == MessageType::kQuorumSyncIngestAcknowledgement;
+      const bool leader_redirect = frame.header.message_type == MessageType::kLeaderRedirect;
       const bool terminal_error = frame.header.message_type == MessageType::kError;
       const SubscriptionMessageLimits subscription_limits{.protocol = config.buffers.protocol};
       const bool payload_is_valid =
@@ -357,6 +358,7 @@ public:
                                .feature_bits = found->second.state.negotiated_feature_bits()})
                .has_value()) ||
           (quorum_sync && decode_quorum_sync_ingest_acknowledgement(frame.payload).has_value()) ||
+          (leader_redirect && decode_leader_redirect(frame.payload).has_value()) ||
           (frame.header.message_type == MessageType::kSubscriptionReady &&
            decode_subscription_ready(frame.payload, subscription_limits).has_value()) ||
           (frame.header.message_type == MessageType::kSubscriptionChange &&

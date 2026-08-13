@@ -554,6 +554,7 @@ public:
           frame.header.message_type == MessageType::kIngestAcknowledgement;
       const bool is_quorum_sync_response =
           frame.header.message_type == MessageType::kQuorumSyncIngestAcknowledgement;
+      const bool is_leader_redirect = frame.header.message_type == MessageType::kLeaderRedirect;
       const bool is_terminal_error = frame.header.message_type == MessageType::kError;
       const SubscriptionMessageLimits subscription_limits{.protocol = config.buffers.protocol};
       const bool payload_is_valid =
@@ -572,6 +573,7 @@ public:
                .has_value()) ||
           (is_quorum_sync_response &&
            decode_quorum_sync_ingest_acknowledgement(frame.payload).has_value()) ||
+          (is_leader_redirect && decode_leader_redirect(frame.payload).has_value()) ||
           (frame.header.message_type == MessageType::kSubscriptionReady &&
            decode_subscription_ready(frame.payload, subscription_limits).has_value()) ||
           (frame.header.message_type == MessageType::kSubscriptionChange &&

@@ -76,6 +76,76 @@ TEST(NativeClientSessionTest, NegotiatesAndValidatesProtocolTwoQuorumSync) {
   EXPECT_EQ(client.in_flight_requests(), 0U);
 }
 
+TEST(NativeClientSessionTest, AcceptsOnlyNegotiatedRedirectBeforeQueryOutput) {
+  NativeClientSession client =
+      NativeClientSession::create({.minimum_protocol_major = kProtocolV2Major,
+                                   .maximum_protocol_major = kProtocolV2Major,
+                                   .maximum_protocol_minor = kProtocolV2LatestMinor,
+                                   .requested_feature_bits = kProtocolV2LeaderRedirectFeature})
+          .value();
+  ASSERT_TRUE(client.queue_handshake().is_ok());
+  static_cast<void>(take_pending(client));
+  ASSERT_TRUE(client
+                  .receive(server_frame(
+                      MessageType::kServerHello, 0U,
+                      *encode_server_hello({.selected_major = kProtocolV2Major,
+                                            .feature_bits = kProtocolV2LeaderRedirectFeature})))
+                  .has_value());
+  common::Uuid::Bytes group_bytes{};
+  group_bytes.fill(std::byte{3});
+  const auto redirect = encode_leader_redirect({.group_id = common::Uuid{group_bytes},
+                                                .leader_node_id = 5U,
+                                                .leader_term = 8U,
+                                                .placement_epoch = 13U});
+  ASSERT_TRUE(redirect.has_value());
+  const auto first = client.queue_query("SELECT 1");
+  ASSERT_TRUE(first.has_value());
+  static_cast<void>(take_pending(client));
+  const auto received = client.receive(
+      server_frame(MessageType::kLeaderRedirect, *first, *redirect, 0U, 0U, kProtocolV2Major));
+  ASSERT_TRUE(received.has_value()) << received.error().to_string();
+  ASSERT_EQ(received->size(), 1U);
+  EXPECT_EQ(*decode_leader_redirect(received->front().payload), *decode_leader_redirect(*redirect));
+  EXPECT_EQ(client.in_flight_requests(), 0U);
+
+  const auto second = client.queue_query("SELECT 2");
+  ASSERT_TRUE(second.has_value());
+  static_cast<void>(take_pending(client));
+  const schema::LogicalType type =
+      schema::LogicalType::create(schema::LogicalTypeKind::kInt64).value();
+  const std::array<QueryResultColumn, 1> columns{
+      QueryResultColumn{.name = "value", .type = type, .nullable = false}};
+  ASSERT_TRUE(client
+                  .receive(server_frame(MessageType::kQueryResult, *second,
+                                        *encode_query_result_batch(0U, columns, {}), 0U, 0U,
+                                        kProtocolV2Major))
+                  .has_value());
+  EXPECT_FALSE(client
+                   .receive(server_frame(MessageType::kLeaderRedirect, *second, *redirect, 0U, 0U,
+                                         kProtocolV2Major))
+                   .has_value());
+  EXPECT_EQ(client.phase(), ClientSessionPhase::kClosed);
+
+  NativeClientSession unnegotiated =
+      NativeClientSession::create({.minimum_protocol_major = kProtocolV2Major,
+                                   .maximum_protocol_major = kProtocolV2Major,
+                                   .maximum_protocol_minor = kProtocolV2LatestMinor})
+          .value();
+  ASSERT_TRUE(unnegotiated.queue_handshake().is_ok());
+  static_cast<void>(take_pending(unnegotiated));
+  ASSERT_TRUE(unnegotiated
+                  .receive(server_frame(MessageType::kServerHello, 0U,
+                                        *encode_server_hello({.selected_major = kProtocolV2Major})))
+                  .has_value());
+  const auto unnegotiated_request = unnegotiated.queue_query("SELECT 3");
+  ASSERT_TRUE(unnegotiated_request.has_value());
+  static_cast<void>(take_pending(unnegotiated));
+  EXPECT_FALSE(unnegotiated
+                   .receive(server_frame(MessageType::kLeaderRedirect, *unnegotiated_request,
+                                         *redirect, 0U, 0U, kProtocolV2Major))
+                   .has_value());
+}
+
 void complete_subscription_handshake(NativeClientSession& client) {
   ASSERT_TRUE(client.queue_handshake().is_ok());
   const auto hello_frame = decode_frame(take_pending(client));

@@ -40,6 +40,11 @@ TEST(ProtocolMessageTest, NegotiatesOnlyTheAcceptedVersionAndFiniteLimit) {
   EXPECT_TRUE(encode_server_hello({.selected_major = kProtocolV2Major,
                                    .feature_bits = kProtocolV2QuorumSyncFeature})
                   .has_value());
+  EXPECT_TRUE(encode_client_hello({.minimum_major = kProtocolV2Major,
+                                   .maximum_major = kProtocolV2Major,
+                                   .feature_bits = kProtocolV2LeaderRedirectFeature})
+                  .has_value());
+  EXPECT_FALSE(encode_client_hello({.feature_bits = kProtocolV2LeaderRedirectFeature}).has_value());
 }
 
 TEST(ProtocolMessageTest, QuorumSyncRequiresProtocolTwoNegotiation) {
@@ -83,6 +88,27 @@ TEST(ProtocolMessageTest, QuorumSyncAcknowledgementCarriesTheCompleteReceipt) {
   EXPECT_FALSE(decode_quorum_sync_ingest_acknowledgement(corrupt).has_value());
   input.local_durable_physical_sequence = 0U;
   EXPECT_FALSE(encode_quorum_sync_ingest_acknowledgement(input).has_value());
+}
+
+TEST(ProtocolMessageTest, LeaderRedirectCarriesExactRoutingObservation) {
+  common::Uuid::Bytes group_bytes{};
+  group_bytes.fill(std::byte{0x24});
+  LeaderRedirect input{.group_id = common::Uuid{group_bytes},
+                       .leader_node_id = 7U,
+                       .leader_term = 19U,
+                       .placement_epoch = 23U};
+  const auto encoded = encode_leader_redirect(input);
+  ASSERT_TRUE(encoded.has_value()) << encoded.error().to_string();
+  EXPECT_EQ(encoded->size(), kLeaderRedirectSize);
+  const auto decoded = decode_leader_redirect(*encoded);
+  ASSERT_TRUE(decoded.has_value()) << decoded.error().to_string();
+  EXPECT_EQ(*decoded, input);
+
+  std::vector<std::byte> corrupt = *encoded;
+  corrupt[2] = std::byte{1};
+  EXPECT_FALSE(decode_leader_redirect(corrupt).has_value());
+  input.placement_epoch = 0U;
+  EXPECT_FALSE(encode_leader_redirect(input).has_value());
 }
 
 TEST(ProtocolMessageTest, IngestEnvelopeNamesDurabilityAndBorrowsCanonicalCommand) {

@@ -32,7 +32,8 @@ common::Result<NativeClientSession> NativeClientSession::create(const NativeClie
       (config.requested_feature_bits & ~kProtocolV2SupportedFeatureBits) != 0U ||
       (config.maximum_protocol_major == kProtocolMajor &&
        ((config.maximum_protocol_minor == 0U && config.requested_feature_bits != 0U) ||
-        (config.requested_feature_bits & kProtocolV2QuorumSyncFeature) != 0U)))
+        (config.requested_feature_bits &
+         (kProtocolV2QuorumSyncFeature | kProtocolV2LeaderRedirectFeature)) != 0U)))
     return common::make_unexpected(invalid("client protocol extension configuration is invalid"));
   auto buffers = ConnectionBuffers::create(config.buffers);
   if (!buffers.has_value())
@@ -273,6 +274,7 @@ common::Status NativeClientSession::accept_server_frame(const Frame& frame) {
              .has_value())
       return invalid("QUERY_RESULT response is invalid");
     found->query_result_ended = (frame.header.flags & kFrameFlagEndStream) != 0U;
+    found->query_result_started = true;
     return common::Status::ok();
   case MessageType::kQueryEnd:
     if (found->type != MessageType::kQueryRequest || !found->query_result_ended ||
@@ -300,6 +302,13 @@ common::Status NativeClientSession::accept_server_frame(const Frame& frame) {
     erase_active(offset);
     return common::Status::ok();
   }
+  case MessageType::kLeaderRedirect:
+    if ((negotiated_feature_bits_ & kProtocolV2LeaderRedirectFeature) == 0U ||
+        (found->type != MessageType::kIngestRequest && found->type != MessageType::kQueryRequest) ||
+        found->query_result_started || !decode_leader_redirect(frame.payload).has_value())
+      return invalid("LEADER_REDIRECT response is invalid");
+    erase_active(offset);
+    return common::Status::ok();
   case MessageType::kSubscriptionReady:
     if (found->type != MessageType::kSubscribeRequest || !found->query_result_ended ||
         found->subscription_ready || found->cancellation_requested ||

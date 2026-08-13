@@ -5,6 +5,7 @@
 #include "chronos/common/checked_math.hpp"
 #include "chronos/schema/utf8.hpp"
 
+#include <algorithm>
 #include <array>
 #include <limits>
 #include <new>
@@ -186,8 +187,9 @@ fixed_query_cell_size(const schema::LogicalTypeKind kind) noexcept {
       hello.feature_bits != 0U)
     return invalid("CLIENT_HELLO Protocol 1.0 cannot request extension features");
   if (hello.maximum_major == kProtocolMajor &&
-      (hello.feature_bits & kProtocolV2QuorumSyncFeature) != 0U)
-    return invalid("CLIENT_HELLO Protocol v1 cannot request QUORUM_SYNC");
+      (hello.feature_bits & (kProtocolV2QuorumSyncFeature | kProtocolV2LeaderRedirectFeature)) !=
+          0U)
+    return invalid("CLIENT_HELLO Protocol v1 cannot request Protocol v2 features");
   return validate_protocol_limits({.maximum_payload_size = hello.maximum_payload_size});
 }
 
@@ -229,6 +231,13 @@ validate_quorum_sync_acknowledgement(const QuorumSyncIngestAcknowledgement& ackn
       acknowledgement.leader_term == 0U || acknowledgement.log_index == 0U ||
       acknowledgement.entry_term == 0U || acknowledgement.local_durable_physical_sequence == 0U)
     return invalid("QUORUM_SYNC acknowledgement fields are invalid");
+  return common::Status::ok();
+}
+
+[[nodiscard]] common::Status validate_leader_redirect(const LeaderRedirect& redirect) {
+  if (redirect.group_id.is_nil() || redirect.leader_node_id == 0U || redirect.leader_term == 0U ||
+      redirect.placement_epoch == 0U)
+    return invalid("LEADER_REDIRECT fields are invalid");
   return common::Status::ok();
 }
 
@@ -588,6 +597,55 @@ decode_quorum_sync_ingest_acknowledgement(const common::ByteView payload) {
   if (!validate_quorum_sync_acknowledgement(value).is_ok())
     return common::make_unexpected(corrupt("QUORUM_SYNC acknowledgement semantics are invalid"));
   return value;
+}
+
+common::Result<std::vector<std::byte>> encode_leader_redirect(const LeaderRedirect& redirect) {
+  if (const common::Status status = validate_leader_redirect(redirect); !status.is_ok())
+    return common::make_unexpected(status);
+  auto bytes = allocated(kLeaderRedirectSize);
+  if (!bytes.has_value())
+    return common::make_unexpected(bytes.error());
+  common::ByteWriter writer{*bytes};
+  if (const common::Status status = writer.write_u16_le(kMessagePayloadFormat); !status.is_ok())
+    return common::make_unexpected(status);
+  if (const common::Status status = writer.zero_fill(6U); !status.is_ok())
+    return common::make_unexpected(status);
+  if (const common::Status status = writer.write_exact(redirect.group_id.bytes()); !status.is_ok())
+    return common::make_unexpected(status);
+  if (const common::Status status = writer.write_u64_le(redirect.leader_node_id); !status.is_ok())
+    return common::make_unexpected(status);
+  if (const common::Status status = writer.write_u64_le(redirect.leader_term); !status.is_ok())
+    return common::make_unexpected(status);
+  if (const common::Status status = writer.write_u64_le(redirect.placement_epoch); !status.is_ok())
+    return common::make_unexpected(status);
+  return bytes;
+}
+
+common::Result<LeaderRedirect> decode_leader_redirect(const common::ByteView payload) {
+  if (payload.size() != kLeaderRedirectSize)
+    return common::make_unexpected(corrupt("LEADER_REDIRECT payload size is not canonical"));
+  common::ByteReader reader{payload};
+  const auto format = reader.read_u16_le();
+  const auto reserved = reader.read_exact(6U);
+  const auto group = reader.read_exact(common::Uuid::kSize);
+  const auto leader_node = reader.read_u64_le();
+  const auto leader_term = reader.read_u64_le();
+  const auto placement_epoch = reader.read_u64_le();
+  if (!format.has_value() || !reserved.has_value() || !group.has_value() ||
+      !leader_node.has_value() || !leader_term.has_value() || !placement_epoch.has_value())
+    return common::make_unexpected(corrupt("LEADER_REDIRECT payload is truncated"));
+  if (*format != kMessagePayloadFormat ||
+      !std::ranges::all_of(*reserved, [](const std::byte byte) { return byte == std::byte{0}; }))
+    return common::make_unexpected(corrupt("LEADER_REDIRECT payload is unsupported"));
+  common::Uuid::Bytes group_bytes{};
+  std::ranges::copy(*group, group_bytes.begin());
+  LeaderRedirect redirect{.group_id = common::Uuid{group_bytes},
+                          .leader_node_id = *leader_node,
+                          .leader_term = *leader_term,
+                          .placement_epoch = *placement_epoch};
+  if (!validate_leader_redirect(redirect).is_ok())
+    return common::make_unexpected(corrupt("LEADER_REDIRECT semantics are invalid"));
+  return redirect;
 }
 
 common::Result<std::vector<std::byte>> encode_query_request(const std::string_view sql,

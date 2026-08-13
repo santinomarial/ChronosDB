@@ -120,6 +120,12 @@ TEST(ProtocolFrameTest, ProtocolTwoIsExplicitAndDoesNotReinterpretProtocolOne) {
       encode_frame(
           {.protocol_major = kProtocolLatestMajor + 1U, .message_type = MessageType::kPing}, {})
           .has_value());
+  EXPECT_FALSE(encode_frame({.message_type = MessageType::kLeaderRedirect}, {}).has_value());
+  EXPECT_TRUE(encode_frame({.protocol_major = kProtocolV2Major,
+                            .message_type = MessageType::kLeaderRedirect,
+                            .request_id = 10U},
+                           {})
+                  .has_value());
 }
 
 TEST(ProtocolFrameTest, RejectsUnassignedU16TypeThatAliasesAnAssignedLowByte) {

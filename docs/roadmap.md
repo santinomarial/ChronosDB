@@ -879,7 +879,9 @@ native-network library.** A packaged production daemon, remote plaintext, TLS re
   recovers the replicated owner, auto-elects exact local single-voter groups, advertises Protocol 2
   QUORUM_SYNC only in that mode, routes reactor tasks through the bounded service, and drains in
   ownership order. Authenticated multi-node peer transport/elections and applied-vector native
-  SELECT are now composed. Provisioning, leader redirection, remote query fragments, snapshot
+  SELECT are now composed. Protocol 2 now has a negotiated, terminal, placement/term-bound leader
+  redirect response that rejects emission after partial query output; live service selection and
+  endpoint-aware client retry remain. Provisioning, remote query fragments, snapshot
   installation handling, and real three-process failover remain external.
 
 - **Scope:** map tablets to Raft groups; multiplex logical records over physical logs, threads, timers, and connections; lifecycle, placement, snapshot transfer, fairness, and safe per-group reclamation.

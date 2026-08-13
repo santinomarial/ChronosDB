@@ -71,6 +71,7 @@ private:
                                  std::vector<std::uint64_t> active_requests,
                                  std::vector<MessageType> active_request_types,
                                  std::vector<DurabilityMode> active_request_durabilities,
+                                 std::vector<bool> query_result_started,
                                  std::vector<bool> query_result_ended,
                                  std::vector<bool> subscription_ready,
                                  std::vector<bool> cancellation_requested,
@@ -83,6 +84,7 @@ private:
   std::vector<std::uint64_t> active_requests_;
   std::vector<MessageType> active_request_types_;
   std::vector<DurabilityMode> active_request_durabilities_;
+  std::vector<bool> query_result_started_;
   std::vector<bool> query_result_ended_;
   std::vector<bool> subscription_ready_;
   std::vector<bool> cancellation_requested_;

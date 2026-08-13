@@ -20,12 +20,15 @@ inline constexpr std::uint16_t kMessagePayloadFormat = 1U;
 // extension headers and validated against the complete supported mask in messages.cpp.
 inline constexpr std::uint64_t kProtocolV1FeatureBits = 0U;
 inline constexpr std::uint64_t kProtocolV2QuorumSyncFeature = std::uint64_t{1U} << 1U;
-inline constexpr std::uint64_t kProtocolV2SupportedFeatureBits =
-    kProtocolV1SubscriptionFeature | kProtocolV2QuorumSyncFeature;
+inline constexpr std::uint64_t kProtocolV2LeaderRedirectFeature = std::uint64_t{1U} << 2U;
+inline constexpr std::uint64_t kProtocolV2SupportedFeatureBits = kProtocolV1SubscriptionFeature |
+                                                                 kProtocolV2QuorumSyncFeature |
+                                                                 kProtocolV2LeaderRedirectFeature;
 inline constexpr std::size_t kHelloPayloadSize = 24U;
 inline constexpr std::size_t kIngestEnvelopeSize = 8U;
 inline constexpr std::size_t kIngestAcknowledgementSize = 32U;
 inline constexpr std::size_t kQuorumSyncIngestAcknowledgementSize = 64U;
+inline constexpr std::size_t kLeaderRedirectSize = 48U;
 inline constexpr std::size_t kQueryEnvelopeSize = 8U;
 inline constexpr std::size_t kErrorEnvelopeSize = 8U;
 inline constexpr std::size_t kQueryResultEnvelopeSize = 16U;
@@ -100,6 +103,15 @@ struct QuorumSyncIngestAcknowledgement {
                          const QuorumSyncIngestAcknowledgement&) = default;
 };
 
+struct LeaderRedirect {
+  common::Uuid group_id;
+  std::uint64_t leader_node_id{};
+  std::uint64_t leader_term{};
+  std::uint64_t placement_epoch{};
+
+  friend bool operator==(const LeaderRedirect&, const LeaderRedirect&) = default;
+};
+
 struct ErrorMessageView {
   ProtocolErrorCode code{ProtocolErrorCode::kInternal};
   common::ByteView message;
@@ -171,6 +183,9 @@ decode_ingest_acknowledgement(common::ByteView payload, const IngestProtocolCont
 encode_quorum_sync_ingest_acknowledgement(const QuorumSyncIngestAcknowledgement& acknowledgement);
 [[nodiscard]] common::Result<QuorumSyncIngestAcknowledgement>
 decode_quorum_sync_ingest_acknowledgement(common::ByteView payload);
+[[nodiscard]] common::Result<std::vector<std::byte>>
+encode_leader_redirect(const LeaderRedirect& redirect);
+[[nodiscard]] common::Result<LeaderRedirect> decode_leader_redirect(common::ByteView payload);
 [[nodiscard]] common::Result<std::vector<std::byte>>
 encode_query_request(std::string_view sql, const ProtocolLimits& limits = {});
 [[nodiscard]] common::Result<common::ByteView>

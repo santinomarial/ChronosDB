@@ -63,6 +63,67 @@ TEST(ServerConnectionStateTest, NegotiatesProtocolTwoQuorumSyncAndRequiresItsRec
   EXPECT_EQ(state.in_flight_requests(), 0U);
 }
 
+TEST(ServerConnectionStateTest, LeaderRedirectIsNegotiatedTerminalAndPrecedesQueryOutput) {
+  ServerConnectionState state =
+      ServerConnectionState::create({.maximum_protocol_major = kProtocolV2Major,
+                                     .supported_feature_bits = kProtocolV2LeaderRedirectFeature})
+          .value();
+  const auto hello = encode_client_hello({.minimum_major = kProtocolV2Major,
+                                          .maximum_major = kProtocolV2Major,
+                                          .maximum_minor = kProtocolV2LatestMinor,
+                                          .feature_bits = kProtocolV2LeaderRedirectFeature});
+  ASSERT_TRUE(hello.has_value());
+  ASSERT_TRUE(state.accept(frame(MessageType::kClientHello, 0U, *hello)).has_value());
+  ASSERT_TRUE(state
+                  .accept(frame(MessageType::kQueryRequest, 1U, *encode_query_request("SELECT 1"),
+                                0U, kProtocolV2Major))
+                  .has_value());
+  common::Uuid::Bytes group_bytes{};
+  group_bytes.fill(std::byte{7});
+  const auto redirect = encode_leader_redirect({.group_id = common::Uuid{group_bytes},
+                                                .leader_node_id = 2U,
+                                                .leader_term = 4U,
+                                                .placement_epoch = 6U});
+  ASSERT_TRUE(redirect.has_value());
+  EXPECT_TRUE(
+      state
+          .accept_response(frame(MessageType::kLeaderRedirect, 1U, *redirect, 0U, kProtocolV2Major))
+          .is_ok());
+  EXPECT_EQ(state.in_flight_requests(), 0U);
+
+  ASSERT_TRUE(state
+                  .accept(frame(MessageType::kQueryRequest, 2U, *encode_query_request("SELECT 2"),
+                                0U, kProtocolV2Major))
+                  .has_value());
+  EXPECT_TRUE(state
+                  .accept_response({.header = {.protocol_major = kProtocolV2Major,
+                                               .message_type = MessageType::kQueryResult,
+                                               .request_id = 2U},
+                                    .payload = {}})
+                  .is_ok());
+  EXPECT_FALSE(
+      state
+          .accept_response(frame(MessageType::kLeaderRedirect, 2U, *redirect, 0U, kProtocolV2Major))
+          .is_ok());
+
+  ServerConnectionState unnegotiated =
+      ServerConnectionState::create({.maximum_protocol_major = kProtocolV2Major}).value();
+  ASSERT_TRUE(unnegotiated
+                  .accept(frame(MessageType::kClientHello, 0U,
+                                *encode_client_hello({.minimum_major = kProtocolV2Major,
+                                                      .maximum_major = kProtocolV2Major})))
+                  .has_value());
+  ASSERT_TRUE(unnegotiated
+                  .accept(frame(MessageType::kIngestRequest, 1U,
+                                *encode_ingest_request(DurabilityMode::kLocalSync, {}), 0U,
+                                kProtocolV2Major))
+                  .has_value());
+  EXPECT_FALSE(
+      unnegotiated
+          .accept_response(frame(MessageType::kLeaderRedirect, 1U, *redirect, 0U, kProtocolV2Major))
+          .is_ok());
+}
+
 [[nodiscard]] common::Uuid uuid(const std::byte seed) {
   common::Uuid::Bytes bytes{};
   bytes.fill(seed);

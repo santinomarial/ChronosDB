@@ -19,10 +19,11 @@ namespace {
 [[nodiscard]] bool server_only_type(const MessageType type) noexcept {
   return type == MessageType::kServerHello || type == MessageType::kIngestAcknowledgement ||
          type == MessageType::kQuorumSyncIngestAcknowledgement ||
-         type == MessageType::kQueryResult || type == MessageType::kQueryEnd ||
-         type == MessageType::kSubscriptionReady || type == MessageType::kSubscriptionChange ||
-         type == MessageType::kSubscriptionCheckpoint || type == MessageType::kSubscriptionEnd ||
-         type == MessageType::kError || type == MessageType::kPong;
+         type == MessageType::kLeaderRedirect || type == MessageType::kQueryResult ||
+         type == MessageType::kQueryEnd || type == MessageType::kSubscriptionReady ||
+         type == MessageType::kSubscriptionChange || type == MessageType::kSubscriptionCheckpoint ||
+         type == MessageType::kSubscriptionEnd || type == MessageType::kError ||
+         type == MessageType::kPong;
 }
 
 } // namespace
@@ -30,14 +31,15 @@ namespace {
 ServerConnectionState::ServerConnectionState(
     ConnectionStateConfig config, std::vector<std::uint64_t> active_requests,
     std::vector<MessageType> active_request_types,
-    std::vector<DurabilityMode> active_request_durabilities, std::vector<bool> query_result_ended,
-    std::vector<bool> subscription_ready, std::vector<bool> cancellation_requested,
-    std::vector<std::uint64_t> subscription_last_delivery,
+    std::vector<DurabilityMode> active_request_durabilities, std::vector<bool> query_result_started,
+    std::vector<bool> query_result_ended, std::vector<bool> subscription_ready,
+    std::vector<bool> cancellation_requested, std::vector<std::uint64_t> subscription_last_delivery,
     std::vector<std::uint64_t> subscription_last_acknowledged,
     std::vector<std::uint64_t> subscription_last_checkpoint) noexcept
     : config_(config), active_requests_(std::move(active_requests)),
       active_request_types_(std::move(active_request_types)),
       active_request_durabilities_(std::move(active_request_durabilities)),
+      query_result_started_(std::move(query_result_started)),
       query_result_ended_(std::move(query_result_ended)),
       subscription_ready_(std::move(subscription_ready)),
       cancellation_requested_(std::move(cancellation_requested)),
@@ -61,6 +63,7 @@ ServerConnectionState::create(const ConnectionStateConfig& config) {
     std::vector<std::uint64_t> active;
     std::vector<MessageType> active_types;
     std::vector<DurabilityMode> active_durabilities;
+    std::vector<bool> result_started;
     std::vector<bool> result_ended;
     std::vector<bool> subscription_ready;
     std::vector<bool> cancellation_requested;
@@ -70,6 +73,7 @@ ServerConnectionState::create(const ConnectionStateConfig& config) {
     active.reserve(config.maximum_in_flight_requests);
     active_types.reserve(config.maximum_in_flight_requests);
     active_durabilities.reserve(config.maximum_in_flight_requests);
+    result_started.reserve(config.maximum_in_flight_requests);
     result_ended.reserve(config.maximum_in_flight_requests);
     subscription_ready.reserve(config.maximum_in_flight_requests);
     cancellation_requested.reserve(config.maximum_in_flight_requests);
@@ -80,6 +84,7 @@ ServerConnectionState::create(const ConnectionStateConfig& config) {
                                  std::move(active),
                                  std::move(active_types),
                                  std::move(active_durabilities),
+                                 std::move(result_started),
                                  std::move(result_ended),
                                  std::move(subscription_ready),
                                  std::move(cancellation_requested),
@@ -223,6 +228,7 @@ common::Result<InboundAction> ServerConnectionState::accept(const Frame& frame) 
   active_requests_.push_back(frame.header.request_id);
   active_request_types_.push_back(frame.header.message_type);
   active_request_durabilities_.push_back(request_durability);
+  query_result_started_.push_back(false);
   query_result_ended_.push_back(false);
   subscription_ready_.push_back(false);
   cancellation_requested_.push_back(false);
@@ -251,6 +257,7 @@ common::Status ServerConnectionState::accept_response(const Frame& frame) {
         cancellation_requested_[offset] || (frame.header.flags & ~kFrameFlagEndStream) != 0U)
       return invalid("QUERY_RESULT response state is invalid");
     query_result_ended_[offset] = (frame.header.flags & kFrameFlagEndStream) != 0U;
+    query_result_started_[offset] = true;
     return common::Status::ok();
   case MessageType::kQueryEnd:
     if (request_type != MessageType::kQueryRequest || !query_result_ended_[offset])
@@ -276,6 +283,14 @@ common::Status ServerConnectionState::accept_response(const Frame& frame) {
         (negotiated_feature_bits_ & kProtocolV2QuorumSyncFeature) == 0U ||
         !decode_quorum_sync_ingest_acknowledgement(frame.payload).has_value())
       return invalid("QUORUM_SYNC acknowledgement response state is invalid");
+    erase_active(offset);
+    return common::Status::ok();
+  case MessageType::kLeaderRedirect:
+    if ((negotiated_feature_bits_ & kProtocolV2LeaderRedirectFeature) == 0U ||
+        (request_type != MessageType::kIngestRequest &&
+         request_type != MessageType::kQueryRequest) ||
+        query_result_started_[offset] || !decode_leader_redirect(frame.payload).has_value())
+      return invalid("LEADER_REDIRECT response state is invalid");
     erase_active(offset);
     return common::Status::ok();
   case MessageType::kSubscriptionReady:
@@ -332,6 +347,7 @@ void ServerConnectionState::erase_active(const std::size_t offset) noexcept {
   active_request_types_.erase(active_request_types_.begin() + static_cast<std::ptrdiff_t>(offset));
   active_request_durabilities_.erase(active_request_durabilities_.begin() +
                                      static_cast<std::ptrdiff_t>(offset));
+  query_result_started_.erase(query_result_started_.begin() + static_cast<std::ptrdiff_t>(offset));
   query_result_ended_.erase(query_result_ended_.begin() + static_cast<std::ptrdiff_t>(offset));
   subscription_ready_.erase(subscription_ready_.begin() + static_cast<std::ptrdiff_t>(offset));
   cancellation_requested_.erase(cancellation_requested_.begin() +
@@ -357,6 +373,7 @@ void ServerConnectionState::close() noexcept {
   active_requests_.clear();
   active_request_types_.clear();
   active_request_durabilities_.clear();
+  query_result_started_.clear();
   query_result_ended_.clear();
   subscription_ready_.clear();
   cancellation_requested_.clear();
