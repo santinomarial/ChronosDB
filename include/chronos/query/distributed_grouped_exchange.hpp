@@ -43,6 +43,54 @@ private:
   encode_grouped_float64_exchange_message(const GroupedFloat64ExchangeMessage&);
 };
 
+struct GroupedFloat64ExchangeFrameReadStep {
+  std::size_t consumed_bytes{};
+  std::optional<GroupedFloat64ExchangeMessage> message;
+};
+
+class GroupedFloat64ExchangeFrameReader {
+public:
+  GroupedFloat64ExchangeFrameReader() = default;
+  GroupedFloat64ExchangeFrameReader(const GroupedFloat64ExchangeFrameReader&) = delete;
+  GroupedFloat64ExchangeFrameReader& operator=(const GroupedFloat64ExchangeFrameReader&) = delete;
+  GroupedFloat64ExchangeFrameReader(GroupedFloat64ExchangeFrameReader&&) = delete;
+  GroupedFloat64ExchangeFrameReader& operator=(GroupedFloat64ExchangeFrameReader&&) = delete;
+
+  [[nodiscard]] common::Result<GroupedFloat64ExchangeFrameReadStep> consume(common::ByteView bytes);
+  [[nodiscard]] std::size_t buffered_bytes() const noexcept;
+  [[nodiscard]] bool failed() const noexcept;
+
+private:
+  std::array<std::byte, grouped_float64_exchange_format::kFrameLength> bytes_{};
+  std::size_t buffered_bytes_{};
+  std::optional<common::Status> failure_;
+};
+
+class GroupedFloat64ExchangeFrameWriteCursor {
+public:
+  GroupedFloat64ExchangeFrameWriteCursor() = delete;
+  GroupedFloat64ExchangeFrameWriteCursor(const GroupedFloat64ExchangeFrameWriteCursor&) = delete;
+  GroupedFloat64ExchangeFrameWriteCursor&
+  operator=(const GroupedFloat64ExchangeFrameWriteCursor&) = delete;
+  GroupedFloat64ExchangeFrameWriteCursor(GroupedFloat64ExchangeFrameWriteCursor&& other) noexcept;
+  GroupedFloat64ExchangeFrameWriteCursor&
+  operator=(GroupedFloat64ExchangeFrameWriteCursor&& other) noexcept;
+
+  [[nodiscard]] static common::Result<GroupedFloat64ExchangeFrameWriteCursor>
+  create(const GroupedFloat64ExchangeMessage& message);
+  [[nodiscard]] common::ByteView pending_write() const noexcept;
+  [[nodiscard]] common::Status consume_written(std::size_t bytes) noexcept;
+  [[nodiscard]] std::size_t written_bytes() const noexcept;
+  [[nodiscard]] bool complete() const noexcept;
+
+private:
+  explicit GroupedFloat64ExchangeFrameWriteCursor(
+      EncodedGroupedFloat64ExchangeMessage encoded) noexcept;
+
+  EncodedGroupedFloat64ExchangeMessage encoded_;
+  std::size_t written_bytes_{};
+};
+
 // Canonical one-key grouping-state frame. It is a distinct protocol from the frozen ungrouped v1
 // exchange and does not imply grouped planning, multi-key tuples, or coordinator merge semantics.
 [[nodiscard]] common::Result<EncodedGroupedFloat64ExchangeMessage>

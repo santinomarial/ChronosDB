@@ -851,6 +851,10 @@ int main() {
       &chronos::query::encode_grouped_float64_exchange_message;
   const auto decode_grouped_exchange =
       &chronos::query::decode_grouped_float64_exchange_message_exact;
+  const auto consume_grouped_exchange =
+      &chronos::query::GroupedFloat64ExchangeFrameReader::consume;
+  const auto create_grouped_exchange_cursor =
+      &chronos::query::GroupedFloat64ExchangeFrameWriteCursor::create;
   const auto consume_exchange_frame = &chronos::query::ExchangeFrameReader::consume;
   const auto create_exchange_write_cursor = &chronos::query::ExchangeFrameWriteCursor::create;
   const auto create_distributed_coordinator =
@@ -1121,6 +1125,8 @@ int main() {
                  chronos::query::kMaximumSqlV1Sources == 64U && aggregate_query != nullptr &&
                  encode_exchange_message != nullptr && decode_exchange_message != nullptr &&
                  encode_grouped_exchange != nullptr && decode_grouped_exchange != nullptr &&
+                 consume_grouped_exchange != nullptr &&
+                 create_grouped_exchange_cursor != nullptr &&
                  consume_exchange_frame != nullptr && create_exchange_write_cursor != nullptr &&
                  create_distributed_coordinator != nullptr &&
                  encode_distributed_fragment != nullptr &&

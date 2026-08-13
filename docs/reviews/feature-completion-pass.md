@@ -451,6 +451,9 @@ Focused executions passed:
 - Grouped-exchange continuation: 2 focused cases passed for the frozen nullable-FLOAT64 key/partial
   layout, signed-zero/NaN/NULL canonicalization, exact decoding, integrity/version rejection, and
   hostile checksum-valid noncanonical representations. Grouped planning is not claimed.
+- Grouped partial-I/O continuation: 1 focused case passed for all 137 split positions, coalesced
+  successor ownership, sticky corruption, exact short-write suffixes, overrun rollback, and
+  move-only cursor transfer. Grouped transport and coordination are not claimed.
 
 The final C++ tree passed the repository-pinned clang-format 18 check. Full-suite, sanitizer, fuzz,
 broader cross-compiler/Linux parity, benchmark, profile, and chaos checks were deliberately not run.

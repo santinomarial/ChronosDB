@@ -217,4 +217,81 @@ decode_grouped_float64_exchange_message_exact(const common::ByteView bytes) {
   return message;
 }
 
+common::Result<GroupedFloat64ExchangeFrameReadStep>
+GroupedFloat64ExchangeFrameReader::consume(const common::ByteView bytes) {
+  if (failure_.has_value())
+    return common::make_unexpected(*failure_);
+  const std::size_t consumed =
+      std::min(bytes.size(), grouped_float64_exchange_format::kFrameLength - buffered_bytes_);
+  std::ranges::copy(bytes.first(consumed),
+                    bytes_.begin() + static_cast<std::ptrdiff_t>(buffered_bytes_));
+  buffered_bytes_ += consumed;
+  if (buffered_bytes_ != grouped_float64_exchange_format::kFrameLength)
+    return GroupedFloat64ExchangeFrameReadStep{.consumed_bytes = consumed};
+  auto decoded = decode_grouped_float64_exchange_message_exact(bytes_);
+  if (!decoded.has_value()) {
+    failure_ = decoded.error();
+    return common::make_unexpected(*failure_);
+  }
+  buffered_bytes_ = 0U;
+  return GroupedFloat64ExchangeFrameReadStep{.consumed_bytes = consumed,
+                                             .message = std::move(*decoded)};
+}
+
+std::size_t GroupedFloat64ExchangeFrameReader::buffered_bytes() const noexcept {
+  return buffered_bytes_;
+}
+
+bool GroupedFloat64ExchangeFrameReader::failed() const noexcept {
+  return failure_.has_value();
+}
+
+GroupedFloat64ExchangeFrameWriteCursor::GroupedFloat64ExchangeFrameWriteCursor(
+    EncodedGroupedFloat64ExchangeMessage encoded) noexcept
+    : encoded_(std::move(encoded)) {}
+
+GroupedFloat64ExchangeFrameWriteCursor::GroupedFloat64ExchangeFrameWriteCursor(
+    GroupedFloat64ExchangeFrameWriteCursor&& other) noexcept
+    : encoded_(std::move(other.encoded_)),
+      written_bytes_(
+          std::exchange(other.written_bytes_, grouped_float64_exchange_format::kFrameLength)) {}
+
+GroupedFloat64ExchangeFrameWriteCursor& GroupedFloat64ExchangeFrameWriteCursor::operator=(
+    GroupedFloat64ExchangeFrameWriteCursor&& other) noexcept {
+  if (this != &other) {
+    encoded_ = std::move(other.encoded_);
+    written_bytes_ =
+        std::exchange(other.written_bytes_, grouped_float64_exchange_format::kFrameLength);
+  }
+  return *this;
+}
+
+common::Result<GroupedFloat64ExchangeFrameWriteCursor>
+GroupedFloat64ExchangeFrameWriteCursor::create(const GroupedFloat64ExchangeMessage& message) {
+  auto encoded = encode_grouped_float64_exchange_message(message);
+  if (!encoded.has_value())
+    return common::make_unexpected(encoded.error());
+  return GroupedFloat64ExchangeFrameWriteCursor{std::move(*encoded)};
+}
+
+common::ByteView GroupedFloat64ExchangeFrameWriteCursor::pending_write() const noexcept {
+  return encoded_.bytes().subspan(written_bytes_);
+}
+
+common::Status
+GroupedFloat64ExchangeFrameWriteCursor::consume_written(const std::size_t bytes) noexcept {
+  if (bytes > grouped_float64_exchange_format::kFrameLength - written_bytes_)
+    return invalid("written byte count exceeds the grouped exchange frame");
+  written_bytes_ += bytes;
+  return common::Status::ok();
+}
+
+std::size_t GroupedFloat64ExchangeFrameWriteCursor::written_bytes() const noexcept {
+  return written_bytes_;
+}
+
+bool GroupedFloat64ExchangeFrameWriteCursor::complete() const noexcept {
+  return written_bytes_ == grouped_float64_exchange_format::kFrameLength;
+}
+
 } // namespace chronos::query

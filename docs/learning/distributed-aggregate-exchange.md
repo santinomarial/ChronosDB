@@ -16,7 +16,8 @@ sequence order, and merges only accepted messages into terminal tablet state.
 bytes for one snapshot-bound projected aggregate scan.
 `encode_grouped_float64_exchange_message` and exact decoding add a distinct fixed frame for one
 nullable FLOAT64 group key. Signed zeros and every NaN payload use the same canonical tokens as the
-local grouped operator; ungrouped v1 bytes remain unchanged.
+local grouped operator; ungrouped v1 bytes remain unchanged. Its fixed reader and move-only cursor
+apply the same bounded fragmented-read/coalesced-suffix/short-write ownership as ungrouped v1.
 The dispatch envelope adds the distinct Raft group identity that scopes every admission index;
 workers never execute the bare inner fragment.
 `bind_distributed_aggregate_fragment` constructs that envelope only after one Manifest v2 snapshot,

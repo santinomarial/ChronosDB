@@ -47,3 +47,14 @@ CRC32C is accidental-corruption coverage, not authentication. The existing authe
 transport remains a separate trust boundary. This first grouping-state format does not define
 multi-key tuples, non-FLOAT64 keys, grouped fragment plans, coordinator merge/order semantics,
 partial-I/O ownership, top-N, or LIMIT.
+
+## Stream ownership
+
+The grouped reader retains one 136-byte frame, reports the exact prefix consumed from each caller
+view, and leaves a coalesced successor with the caller. It emits only a complete exact-decoded frame
+and fails sticky after corruption. The reader is neither copyable nor movable.
+
+The move-only grouped write cursor owns one canonical frame and exposes only its unwritten suffix.
+An over-advance fails before changing progress. Moving forces the source complete so it cannot
+retransmit the same bytes. These primitives define byte ownership only, not a socket or retry
+protocol.
