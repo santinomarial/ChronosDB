@@ -51,11 +51,11 @@ class DistributedQueryTlsClient::Impl {
 public:
   Impl(network::TlsSocket socket, DistributedQueryFrameWriteCursor request,
        const raft::NodeId target_node_id, DistributedQueryTlsClientConfig config,
-       const TimePoint now) noexcept
+       const TimePoint now)
       : socket_(std::move(socket)), request_(std::move(request)), target_node_id_(target_node_id),
         config_(config), deadline_(deadline_after(now, config.limits.handshake_timeout)) {}
 
-  [[nodiscard]] common::Status fail(common::Status status) noexcept {
+  [[nodiscard]] common::Status fail(common::Status status) {
     if (state_ != DistributedQueryTlsClientState::kFailed) {
       failure_ = std::move(status);
       state_ = DistributedQueryTlsClientState::kFailed;

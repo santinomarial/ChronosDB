@@ -59,6 +59,13 @@ owner's allocating diagnostic state is no longer hidden behind `noexcept`. Sched
 only `UNAVAILABLE` and `IO_ERROR` into finite transport retry, while local resource or contract
 failure closes the whole query immediately. No protocol bytes change.
 
+The in-flight carrier follows the same rule: only `UNAVAILABLE` and `IO_ERROR` enter transport
+retry. Every other local failure, including resource exhaustion during TLS authentication, carrier
+construction, response decoding, or bounded response-vector retention, is whole-query terminal,
+clears every active client, and leaves retry and transport-failure metrics unchanged.
+Allocator-linked construction coverage includes the TLS owner's sticky diagnostic state instead of
+hiding that allocation behind `noexcept`. No wire or durable format changes.
+
 Packaged metadata-backed grouped construction, explicit whole-query authority rebinding,
 multi-key/non-FLOAT64 grouping, general vector fragments, and broad fault/measurement evidence
 remain incomplete. No Phase 16 exit gate is claimed.

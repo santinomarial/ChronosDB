@@ -44,7 +44,7 @@ namespace {
               std::error_code(error, std::generic_category()).message()};
 }
 
-[[nodiscard]] bool retryable_connect_failure(const common::StatusCode code) noexcept {
+[[nodiscard]] bool retryable_client_failure(const common::StatusCode code) noexcept {
   return code == common::StatusCode::kUnavailable || code == common::StatusCode::kIoError;
 }
 
@@ -301,7 +301,7 @@ public:
       if (retry)
         ++execution_metrics.retries_started;
       if (!client.has_value()) {
-        if (!retryable_connect_failure(client.error().code()))
+        if (!retryable_client_failure(client.error().code()))
           return client.error();
         ++execution_metrics.transport_failed_attempts;
         const common::Status recorded =
@@ -505,13 +505,17 @@ DistributedQueryTcpExecution::poll_once(const std::chrono::milliseconds maximum_
         return impl.fail(recorded);
       continue;
     }
-    const common::Status driven =
+    common::Status driven =
         slot.client->on_ready((events & POLLIN) != 0, (events & POLLOUT) != 0, now);
     const auto client_state = slot.client->state();
     if (!driven.is_ok() || client_state == DistributedQueryTcpClientState::kFailed) {
-      const common::StatusCode code =
-          driven.is_ok() ? slot.client->failure().code() : driven.code();
-      const common::Status recorded = impl.record_transport_failure(slot, code, now);
+      common::Status client_failure = std::move(driven);
+      if (client_failure.is_ok())
+        client_failure = slot.client->failure();
+      if (!retryable_client_failure(client_failure.code()))
+        return impl.fail(std::move(client_failure));
+      const common::Status recorded =
+          impl.record_transport_failure(slot, client_failure.code(), now);
       if (!recorded.is_ok())
         return impl.fail(recorded);
       continue;
@@ -525,12 +529,8 @@ DistributedQueryTcpExecution::poll_once(const std::chrono::milliseconds maximum_
     slot.client.reset();
     --impl.execution_metrics.active_attempts;
     ++impl.execution_metrics.transport_completed_attempts;
-    if (!accepted.is_ok()) {
-      const common::Status recorded =
-          impl.execution.record_transport_failure(slot.tablet_id, accepted.code(), now);
-      if (!recorded.is_ok())
-        return impl.fail(recorded);
-    }
+    if (!accepted.is_ok())
+      return impl.fail(accepted);
   }
   return impl.publish_if_terminal();
 }

@@ -63,12 +63,12 @@ class DistributedGroupedQueryTlsClient::Impl {
 public:
   Impl(network::TlsSocket socket, DistributedGroupedQueryFrameWriteCursor request,
        DistributedGroupedQueryRequest identity, const raft::NodeId target,
-       DistributedGroupedQueryTlsClientConfig config, const TimePoint now) noexcept
+       DistributedGroupedQueryTlsClientConfig config, const TimePoint now)
       : socket_(std::move(socket)), request_(std::move(request)), identity_(std::move(identity)),
         target_(target), config_(config),
         deadline_(deadline_after(now, config.limits.handshake_timeout)) {}
 
-  [[nodiscard]] common::Status fail(common::Status status) noexcept {
+  [[nodiscard]] common::Status fail(common::Status status) {
     if (state_ != DistributedGroupedQueryTlsState::kFailed) {
       failure_ = std::move(status);
       state_ = DistributedGroupedQueryTlsState::kFailed;

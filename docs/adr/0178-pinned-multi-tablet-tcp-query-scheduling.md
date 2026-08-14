@@ -69,6 +69,14 @@ failure is returned as `RESOURCE_EXHAUSTED` rather than terminating. Scheduler s
 fails the whole owner synchronously and is not counted as a transport failure. This changes no wire
 or durable format.
 
+The same boundary applies after connect: only client `UNAVAILABLE` and `IO_ERROR` outcomes enter
+transport retry. Every other client-local failure, including `RESOURCE_EXHAUSTED` from TLS
+authentication, carrier construction, decoding, or retained response ownership, fails the whole
+execution, releases all active clients, and does not consume sender retry or transport-failure
+accounting. Failure while installing a completed canonical response is likewise local terminal
+failure, never a fabricated transport outcome. Allocation sweeps cover the TLS carrier owner,
+including its allocating sticky diagnostic state. No protocol bytes change.
+
 Invariants 5, 6, 10, 11, 14, 15, and 18 apply.
 
 ## Alternatives considered

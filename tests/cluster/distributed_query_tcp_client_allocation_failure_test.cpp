@@ -6,17 +6,50 @@
 #include "chronos/schema/logical_type.hpp"
 #include "support/failing_allocator.hpp"
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <fcntl.h>
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <optional>
+#include <sys/socket.h>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
 namespace chronos::cluster {
 namespace {
+
+struct SocketPair {
+  std::array<int, 2U> sockets{-1, -1};
+
+  SocketPair() = default;
+  SocketPair(const SocketPair&) = delete;
+  SocketPair& operator=(const SocketPair&) = delete;
+  SocketPair(SocketPair&& other) noexcept
+      : sockets{std::exchange(other.sockets[0], -1), std::exchange(other.sockets[1], -1)} {}
+  SocketPair& operator=(SocketPair&&) = delete;
+
+  ~SocketPair() {
+    for (const int socket : sockets) {
+      if (socket >= 0)
+        ::close(socket);
+    }
+  }
+};
+
+[[nodiscard]] SocketPair socket_pair() {
+  SocketPair pair;
+  EXPECT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, pair.sockets.data()), 0);
+  for (const int socket : pair.sockets) {
+    const int flags = ::fcntl(socket, F_GETFL, 0);
+    EXPECT_GE(flags, 0);
+    EXPECT_EQ(::fcntl(socket, F_SETFL, flags | O_NONBLOCK), 0);
+  }
+  return pair;
+}
 
 [[nodiscard]] std::filesystem::path fixture(const char* name) {
   return std::filesystem::path{CHRONOS_NETWORK_FIXTURE_DIR} / "tls" / name;
@@ -142,6 +175,32 @@ void expect_sweep(Preparation&& preparation, Operation&& operation) {
   EXPECT_TRUE(saw_success);
 }
 
+template <typename Preparation, typename Operation>
+void expect_tls_sweep(network::TlsClientContext& tls_context, Preparation&& preparation,
+                      Operation&& operation) {
+  bool saw_failure = false;
+  bool saw_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 128U; ++fail_after) {
+    SCOPED_TRACE(testing::Message{} << "fail_after=" << fail_after);
+    SocketPair sockets = socket_pair();
+    auto socket = network::TlsSocket::connect(tls_context, sockets.sockets[1]);
+    ASSERT_TRUE(socket.has_value()) << socket.error().to_string();
+    auto prepared = preparation();
+    auto result =
+        run_failure(fail_after, [&] { return operation(std::move(*socket), std::move(prepared)); });
+    if (!result.has_value()) {
+      saw_failure = true;
+      EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted)
+          << result.error().to_string();
+      continue;
+    }
+    saw_success = true;
+    break;
+  }
+  EXPECT_TRUE(saw_failure);
+  EXPECT_TRUE(saw_success);
+}
+
 TEST(DistributedQueryTcpClientAllocationFailureTest,
      ClassifiesScalarAggregateClientOwnerAllocation) {
   auto listener = network::TcpListener::bind();
@@ -219,6 +278,83 @@ TEST(DistributedQueryTcpClientAllocationFailureTest, ClassifiesVectorRowClientOw
                                     .maximum_response_bytes = std::size_t{1024U} * 1024U}},
              .connect_timeout = std::chrono::milliseconds{1000}},
             DistributedVectorQueryTcpClientV2::TimePoint::clock::now());
+      });
+}
+
+TEST(DistributedQueryTlsClientAllocationFailureTest,
+     ClassifiesScalarAggregateCarrierConstructionAllocations) {
+  auto tls_context = network::TlsClientContext::create(client_tls());
+  ASSERT_TRUE(tls_context.has_value()) << tls_context.error().to_string();
+  Authenticator authenticator;
+  Authorizer authorizer;
+  expect_tls_sweep(
+      *tls_context,
+      [] {
+        return DistributedQueryAttempt{
+            1U, 2U, encode_distributed_query_request_v1({1U, 2U, aggregate_dispatch()}).value()};
+      },
+      [&](network::TlsSocket socket, DistributedQueryAttempt attempt) {
+        return DistributedQueryTlsClient::create(
+            std::move(socket), std::move(attempt),
+            {.authenticator = &authenticator,
+             .node_authorizer = &authorizer,
+             .peer_ipv4_address = {127U, 0U, 0U, 1U},
+             .limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                        .exchange_timeout = std::chrono::milliseconds{1000}}},
+            DistributedQueryTlsClient::TimePoint{});
+      });
+}
+
+TEST(DistributedQueryTlsClientAllocationFailureTest,
+     ClassifiesGroupedCarrierConstructionAllocations) {
+  auto tls_context = network::TlsClientContext::create(client_tls());
+  ASSERT_TRUE(tls_context.has_value()) << tls_context.error().to_string();
+  Authenticator authenticator;
+  Authorizer authorizer;
+  expect_tls_sweep(
+      *tls_context,
+      [] {
+        return DistributedGroupedQueryAttempt{
+            1U, 2U,
+            encode_distributed_grouped_query_request_v1({1U, 2U, grouped_dispatch()}).value()};
+      },
+      [&](network::TlsSocket socket, DistributedGroupedQueryAttempt attempt) {
+        return DistributedGroupedQueryTlsClient::create(
+            std::move(socket), std::move(attempt),
+            {.authenticator = &authenticator,
+             .node_authorizer = &authorizer,
+             .peer_ipv4_address = {127U, 0U, 0U, 1U},
+             .limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                        .exchange_timeout = std::chrono::milliseconds{1000},
+                        .maximum_response_frames = 1U}},
+            DistributedGroupedQueryTlsClient::TimePoint{});
+      });
+}
+
+TEST(DistributedQueryTlsClientAllocationFailureTest,
+     ClassifiesVectorRowCarrierConstructionAllocations) {
+  auto tls_context = network::TlsClientContext::create(client_tls());
+  ASSERT_TRUE(tls_context.has_value()) << tls_context.error().to_string();
+  Authenticator authenticator;
+  Authorizer authorizer;
+  expect_tls_sweep(
+      *tls_context,
+      [] {
+        return DistributedVectorQueryAttemptV2{
+            1U, 2U,
+            encode_distributed_vector_query_request_v2({1U, 2U, vector_dispatch()}).value()};
+      },
+      [&](network::TlsSocket socket, DistributedVectorQueryAttemptV2 attempt) {
+        return DistributedVectorQueryTlsClientV2::create(
+            std::move(socket), std::move(attempt),
+            {.authenticator = &authenticator,
+             .node_authorizer = &authorizer,
+             .peer_ipv4_address = {127U, 0U, 0U, 1U},
+             .limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                        .exchange_timeout = std::chrono::milliseconds{1000},
+                        .maximum_response_frames = 1U,
+                        .maximum_response_bytes = std::size_t{1024U} * 1024U}},
+            DistributedVectorQueryTlsClientV2::TimePoint{});
       });
 }
 

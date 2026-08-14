@@ -206,6 +206,11 @@ only unavailable/I/O connection outcomes enter sender backoff. Request, socket-o
 resource exhaustion is local orchestration failure, so it closes the whole query immediately and is
 not a transport metric. A dedicated allocator-linked sweep freezes that rule for all three outbound
 clients and removed incorrect `noexcept` constructors around their allocating diagnostic statuses.
+The rule continues through TLS authentication, carrier construction, response decoding, and
+terminal publication. Scalar response installation failure is local as well: a completed canonical
+carrier is not relabeled as a failed network attempt. Real mTLS scheduler tests require local
+`RESOURCE_EXHAUSTED` to release every active attempt with zero retry and transport-failure counts,
+while allocator-linked carrier construction tests cover scalar, grouped, and vector-row ownership.
 `resolve_distributed_query_node_routes` constructs those immutable routes for only the selected
 serving nodes from one committed node-metadata snapshot. Node-specific TLS contexts remain explicit.
 Strict numeric endpoints bypass resolution; lowercase DNS endpoints acquire one fresh bounded,

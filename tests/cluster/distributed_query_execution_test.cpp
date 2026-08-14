@@ -343,6 +343,17 @@ private:
   std::uint64_t principal_id_{};
 };
 
+class ResourceExhaustedExecutionAuthenticator final : public network::ConnectionAuthenticator {
+public:
+  common::Result<network::PeerAuthenticationResult>
+  // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
+  authenticate(const network::PeerAuthenticationRequest&) override {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kResourceExhausted,
+                       "injected local query authentication allocation failure"});
+  }
+};
+
 class ExecutionNodeAuthorizer final : public ClusterNodePrincipalAuthorizer {
 public:
   common::Result<bool> authorize_node(const std::uint64_t principal_id,
@@ -1032,6 +1043,76 @@ TEST(DistributedVectorAggregateQueryTcpExecutionV2Test,
   EXPECT_TRUE(listener->close().is_ok());
 }
 
+TEST(DistributedVectorQueryTcpExecutionV2Test, LocalCarrierResourceFailureIsWholeQueryTerminal) {
+  TemporaryDirectory directory;
+  auto input = make_input(directory);
+  ASSERT_TRUE(input.has_value()) << input.error().to_string();
+  auto execution = DistributedVectorQueryExecutionV2::create(
+      1U, std::move(input->vector_snapshot),
+      {.sender = {.retry = {.maximum_attempts = 3U,
+                            .initial_backoff = std::chrono::milliseconds{1},
+                            .maximum_backoff = std::chrono::milliseconds{1}},
+                  .maximum_response_frames = 4U,
+                  .maximum_response_bytes = std::size_t{1024U} * 1024U},
+       .coordinator = {
+           .messages = {.maximum_messages_per_fragment = 4U, .maximum_total_messages = 8U},
+           .maximum_total_encoded_bytes = std::size_t{2U} * 1024U * 1024U}});
+  ASSERT_TRUE(execution.has_value()) << execution.error().to_string();
+
+  ExecutionNodeAuthorizer authorizer;
+  VectorExecutionWorkerV2 worker;
+  auto receiver = DistributedVectorQueryReceiverV2::create(
+      {.local_node_id = 11U, .authorizer = &authorizer, .worker = &worker});
+  ASSERT_TRUE(receiver.has_value()) << receiver.error().to_string();
+  ExecutionAuthenticator client_authenticator{91U};
+  auto server = DistributedVectorQueryTcpServerV2::start(
+      vector_execution_server_config(client_authenticator, *receiver));
+  ASSERT_TRUE(server.has_value()) << server.error().to_string();
+  auto tls_context = network::TlsClientContext::create(execution_tls_client_config());
+  ASSERT_TRUE(tls_context.has_value()) << tls_context.error().to_string();
+  ResourceExhaustedExecutionAuthenticator server_authenticator;
+  auto scheduled = DistributedVectorQueryTcpExecutionV2::create(
+      std::move(*execution),
+      {.authenticator = &server_authenticator,
+       .node_authorizer = &authorizer,
+       .routes = {{.node_id = 11U,
+                   .endpoints = {server->bound_endpoint()},
+                   .tls_context = std::addressof(*tls_context)},
+                  {.node_id = 12U,
+                   .endpoints = {server->bound_endpoint()},
+                   .tls_context = std::addressof(*tls_context)}},
+       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                          .exchange_timeout = std::chrono::milliseconds{1000},
+                          .maximum_response_frames = 4U,
+                          .maximum_response_bytes = std::size_t{1024U} * 1024U},
+       .connect_timeout = std::chrono::milliseconds{1000},
+       .execution_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5}});
+  ASSERT_TRUE(scheduled.has_value()) << scheduled.error().to_string();
+
+  common::Status progress;
+  for (std::size_t iteration = 0U;
+       iteration < 2048U &&
+       scheduled->state() == DistributedVectorQueryTcpExecutionStateV2::kRunning;
+       ++iteration) {
+    progress = scheduled->poll_once(std::chrono::milliseconds{1});
+    if (!progress.is_ok())
+      break;
+    ASSERT_TRUE(server->poll_once(std::chrono::milliseconds{0}).is_ok());
+  }
+  EXPECT_EQ(progress.code(), common::StatusCode::kResourceExhausted) << progress.to_string();
+  EXPECT_EQ(scheduled->state(), DistributedVectorQueryTcpExecutionStateV2::kFailed);
+  EXPECT_EQ(scheduled->failure(), progress);
+  ASSERT_FALSE(scheduled->result().has_value());
+  EXPECT_EQ(worker.calls, 0U);
+  const auto metrics = scheduled->metrics();
+  EXPECT_EQ(metrics.attempts_started, 2U);
+  EXPECT_EQ(metrics.retries_started, 0U);
+  EXPECT_EQ(metrics.transport_completed_attempts, 0U);
+  EXPECT_EQ(metrics.transport_failed_attempts, 0U);
+  EXPECT_EQ(metrics.active_attempts, 0U);
+  EXPECT_TRUE(server->shutdown().is_ok());
+}
+
 TEST(DistributedVectorQueryTcpExecutionV2Test,
      SchedulesAllTabletsAndRotatesOnlyPrevalidatedAddresses) {
   TemporaryDirectory directory;
@@ -1311,6 +1392,66 @@ TEST(DistributedGroupedQueryExecutionTest, CarriesGlobalGroupedOrderAndLimit) {
   ASSERT_EQ(result->size(), 1U);
   EXPECT_EQ(result->front().group_key, 7.0);
   EXPECT_EQ(result->front().aggregate.sum, 3.5);
+}
+
+TEST(DistributedGroupedQueryTcpExecutionTest, LocalCarrierResourceFailureIsWholeQueryTerminal) {
+  TemporaryDirectory directory;
+  auto input = make_input(directory);
+  ASSERT_TRUE(input.has_value()) << input.error().to_string();
+  auto execution = DistributedGroupedQueryExecution::create(
+      1U, std::move(input->grouped_snapshot),
+      {.coordinator = {},
+       .retry = {.maximum_attempts = 3U,
+                 .initial_backoff = std::chrono::milliseconds{1},
+                 .maximum_backoff = std::chrono::milliseconds{1}}});
+  ASSERT_TRUE(execution.has_value()) << execution.error().to_string();
+
+  ExecutionNodeAuthorizer authorizer;
+  GroupedExecutionWorker worker{2.5};
+  auto receiver = DistributedGroupedQueryReceiver::create(
+      {.local_node_id = 11U, .authorizer = &authorizer, .worker = &worker});
+  ASSERT_TRUE(receiver.has_value()) << receiver.error().to_string();
+  ExecutionAuthenticator client_authenticator{91U};
+  auto server = DistributedGroupedQueryTcpServer::start(
+      grouped_execution_server_config(client_authenticator, *receiver));
+  ASSERT_TRUE(server.has_value()) << server.error().to_string();
+  auto tls_context = network::TlsClientContext::create(execution_tls_client_config());
+  ASSERT_TRUE(tls_context.has_value()) << tls_context.error().to_string();
+  ResourceExhaustedExecutionAuthenticator server_authenticator;
+  auto scheduled = DistributedGroupedQueryTcpExecution::create(
+      std::move(*execution),
+      {.authenticator = &server_authenticator,
+       .node_authorizer = &authorizer,
+       .routes = {{11U, {server->bound_endpoint()}, &*tls_context},
+                  {12U, {server->bound_endpoint()}, &*tls_context}},
+       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                          .exchange_timeout = std::chrono::milliseconds{1000},
+                          .maximum_response_frames = 4U},
+       .connect_timeout = std::chrono::milliseconds{1000}});
+  ASSERT_TRUE(scheduled.has_value()) << scheduled.error().to_string();
+
+  common::Status progress;
+  for (std::size_t iteration = 0U;
+       iteration < 2048U &&
+       scheduled->state() == DistributedGroupedQueryTcpExecutionState::kRunning;
+       ++iteration) {
+    progress = scheduled->poll_once(std::chrono::milliseconds{1});
+    if (!progress.is_ok())
+      break;
+    ASSERT_TRUE(server->poll_once(std::chrono::milliseconds{0}).is_ok());
+  }
+  EXPECT_EQ(progress.code(), common::StatusCode::kResourceExhausted) << progress.to_string();
+  EXPECT_EQ(scheduled->state(), DistributedGroupedQueryTcpExecutionState::kFailed);
+  EXPECT_EQ(scheduled->failure(), progress);
+  EXPECT_EQ(scheduled->result().error(), progress);
+  EXPECT_EQ(worker.calls, 0U);
+  const auto metrics = scheduled->metrics();
+  EXPECT_EQ(metrics.attempts_started, 2U);
+  EXPECT_EQ(metrics.retries_started, 0U);
+  EXPECT_EQ(metrics.transport_completed_attempts, 0U);
+  EXPECT_EQ(metrics.transport_failed_attempts, 0U);
+  EXPECT_EQ(metrics.active_attempts, 0U);
+  EXPECT_TRUE(server->shutdown().is_ok());
 }
 
 TEST(DistributedGroupedQueryTcpExecutionTest, SchedulesAllTabletsAndRotatesAddressesOnRetry) {
@@ -1669,6 +1810,64 @@ TEST(DistributedQueryTcpExecutionTest, ResolvesSelectedRoutesFromCommittedNodeMe
                 .error()
                 .code(),
             common::StatusCode::kCorruption);
+}
+
+TEST(DistributedQueryTcpExecutionTest, LocalCarrierResourceFailureIsWholeQueryTerminal) {
+  TemporaryDirectory directory;
+  auto input = make_input(directory);
+  ASSERT_TRUE(input.has_value()) << input.error().to_string();
+  auto execution = DistributedQueryExecution::create(
+      1U, std::move(input->plan), std::move(input->admissions), std::move(input->snapshot),
+      {.coordinator = {},
+       .retry = {.maximum_attempts = 3U,
+                 .initial_backoff = std::chrono::milliseconds{1},
+                 .maximum_backoff = std::chrono::milliseconds{1}}});
+  ASSERT_TRUE(execution.has_value()) << execution.error().to_string();
+
+  ExecutionNodeAuthorizer authorizer;
+  ExecutionWorker worker{2.5, false};
+  auto receiver = DistributedQueryReceiver::create(
+      {.local_node_id = 11U, .authorizer = &authorizer, .worker = &worker});
+  ASSERT_TRUE(receiver.has_value()) << receiver.error().to_string();
+  ExecutionAuthenticator client_authenticator{91U};
+  auto server =
+      DistributedQueryTcpServer::start(execution_server_config(client_authenticator, *receiver));
+  ASSERT_TRUE(server.has_value()) << server.error().to_string();
+  auto tls_context = network::TlsClientContext::create(execution_tls_client_config());
+  ASSERT_TRUE(tls_context.has_value()) << tls_context.error().to_string();
+  ResourceExhaustedExecutionAuthenticator server_authenticator;
+  auto scheduled = DistributedQueryTcpExecution::create(
+      std::move(*execution),
+      {.authenticator = &server_authenticator,
+       .node_authorizer = &authorizer,
+       .routes = {{11U, {server->bound_endpoint()}, &*tls_context},
+                  {12U, {server->bound_endpoint()}, &*tls_context}},
+       .carrier_limits = {.handshake_timeout = std::chrono::milliseconds{1000},
+                          .exchange_timeout = std::chrono::milliseconds{1000}},
+       .connect_timeout = std::chrono::milliseconds{1000}});
+  ASSERT_TRUE(scheduled.has_value()) << scheduled.error().to_string();
+
+  common::Status progress;
+  for (std::size_t iteration = 0U;
+       iteration < 2048U && scheduled->state() == DistributedQueryTcpExecutionState::kRunning;
+       ++iteration) {
+    progress = scheduled->poll_once(std::chrono::milliseconds{1});
+    if (!progress.is_ok())
+      break;
+    ASSERT_TRUE(server->poll_once(std::chrono::milliseconds{0}).is_ok());
+  }
+  EXPECT_EQ(progress.code(), common::StatusCode::kResourceExhausted) << progress.to_string();
+  EXPECT_EQ(scheduled->state(), DistributedQueryTcpExecutionState::kFailed);
+  EXPECT_EQ(scheduled->failure(), progress);
+  EXPECT_EQ(scheduled->result().error(), progress);
+  EXPECT_EQ(worker.calls, 0U);
+  const auto metrics = scheduled->metrics();
+  EXPECT_EQ(metrics.attempts_started, 2U);
+  EXPECT_EQ(metrics.retries_started, 0U);
+  EXPECT_EQ(metrics.transport_completed_attempts, 0U);
+  EXPECT_EQ(metrics.transport_failed_attempts, 0U);
+  EXPECT_EQ(metrics.active_attempts, 0U);
+  EXPECT_TRUE(server->shutdown().is_ok());
 }
 
 TEST(DistributedQueryTcpExecutionTest, SchedulesPlanOrderedTabletsAndRetriesWithoutRebinding) {

@@ -61,6 +61,13 @@ status may allocate and is therefore no longer constructed behind `noexcept`. Sc
 classifies only `UNAVAILABLE` and `IO_ERROR` as retryable connection outcomes; local resource or
 contract failure is whole-query terminal and is not reported as failed transport. No frame changes.
 
+That classification is preserved after the TLS carrier starts: only `UNAVAILABLE` and `IO_ERROR`
+enter transport retry. Every other client-local failure, including resource exhaustion during
+authentication, carrier construction, schema-bound response decoding, or response-stream retention,
+closes the whole execution and all active clients without entering sender backoff or incrementing
+transport-failure metrics. A TLS-owner allocation sweep and real scheduler/carrier failure test
+freeze the boundary. No frame or durable format changes.
+
 ADR 0379 subsequently supplies bounded global row ordering/limit. All-type aggregate merge state,
 whole-query authority rebinding, and process integration remain separate tasks. No Phase 16 exit
 gate is claimed.

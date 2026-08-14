@@ -74,7 +74,7 @@ public:
   Impl(network::TlsSocket socket, DistributedVectorQueryFrameV2WriteCursor request,
        ClientIdentity identity, query::DistributedVectorResultSchema expected_schema,
        const raft::NodeId target, DistributedVectorQueryTlsClientConfigV2 config,
-       const TimePoint now) noexcept
+       const TimePoint now)
       : socket_(std::move(socket)), request_(std::move(request)), identity_(identity),
         target_(target), config_(config),
         deadline_(deadline_after(now, config.limits.handshake_timeout)),
