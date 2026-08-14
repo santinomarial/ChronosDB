@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <gtest/gtest.h>
+#include <optional>
 #include <string>
 #include <system_error>
 #include <unistd.h>
@@ -102,13 +103,22 @@ request_snapshot(raft::DurableMultiRaftRuntime& runtime, raft::SnapshotMetadata 
                         source, raft::InstallSnapshotRequest{2U, source, std::move(metadata)}}}});
   if (!requested.has_value())
     return common::make_unexpected(requested.error());
-  if (requested->size() != 1U || !requested->front().status.is_ok() ||
-      !requested->front().transition.has_value() ||
-      !requested->front().transition->snapshot_install.has_value()) {
+  if (requested->size() != 1U || !requested->front().status.is_ok()) {
     return common::make_unexpected(common::Status{common::StatusCode::kInternal,
                                                   "test snapshot request did not become pending"});
   }
-  return *requested->front().transition->snapshot_install;
+  std::optional<raft::MultiRaftTransition> transition = std::move(requested->front().transition);
+  if (!transition.has_value()) {
+    return common::make_unexpected(
+        common::Status{common::StatusCode::kInternal, "test snapshot request did not transition"});
+  }
+  std::optional<raft::GroupSnapshotInstall> snapshot_install =
+      std::move(transition.value().snapshot_install);
+  if (!snapshot_install.has_value()) {
+    return common::make_unexpected(common::Status{common::StatusCode::kInternal,
+                                                  "test snapshot request did not become pending"});
+  }
+  return std::move(snapshot_install).value();
 }
 
 [[nodiscard]] raft::RaftPersistentLogConfig log_config(const TemporaryDirectory& directory) {
@@ -152,6 +162,7 @@ TEST(TabletMovementRaftSnapshotCompletionTest, PersistsMetadataBeforeReleasingEx
       std::get_if<raft::InstallSnapshotResponse>(&completed->acknowledgement.outbound.message);
   ASSERT_NE(response, nullptr);
   EXPECT_TRUE(response->success);
+  EXPECT_EQ(response->term, runtime->find_group(group_id())->persistent_state().current_term);
   EXPECT_EQ(response->last_included_index, 9U);
   EXPECT_EQ(runtime->find_group(group_id())->persistent_state().snapshot, expected.raft_snapshot);
   auto installed = snapshot_storage->load(9U);

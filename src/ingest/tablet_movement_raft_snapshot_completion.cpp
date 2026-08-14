@@ -1,6 +1,7 @@
 #include "chronos/ingest/tablet_movement_raft_snapshot_completion.hpp"
 
 #include <new>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -60,28 +61,31 @@ complete_recovered_tablet_movement_raft_snapshot(
       return common::make_unexpected(corruption("Raft snapshot completion result count changed"));
     if (!completed->front().status.is_ok())
       return common::make_unexpected(completed->front().status);
-    if (!completed->front().transition.has_value()) {
+    std::optional<raft::MultiRaftTransition> transition = std::move(completed->front().transition);
+    if (!transition.has_value()) {
       return common::make_unexpected(corruption("Raft snapshot completion returned no transition"));
     }
-    raft::MultiRaftTransition& transition = *completed->front().transition;
-    if (!transition.persistence.has_value() ||
-        transition.persistence->group_id != application->group_id ||
-        transition.persistence->state.snapshot != application->raft_snapshot ||
-        transition.advanced_commit_index != application->raft_snapshot.last_included_index ||
-        transition.outbound.size() != 1U) {
+    raft::MultiRaftTransition& completed_transition = transition.value();
+    if (!completed_transition.persistence.has_value() ||
+        completed_transition.persistence->group_id != application->group_id ||
+        completed_transition.persistence->state.snapshot != application->raft_snapshot ||
+        completed_transition.advanced_commit_index !=
+            application->raft_snapshot.last_included_index ||
+        completed_transition.outbound.size() != 1U) {
       return common::make_unexpected(
           corruption("Raft snapshot completion transition is inconsistent"));
     }
-    raft::GroupOutboundMessage acknowledgement = std::move(transition.outbound.front());
+    raft::GroupOutboundMessage acknowledgement = std::move(completed_transition.outbound.front());
     const auto* response =
         std::get_if<raft::InstallSnapshotResponse>(&acknowledgement.outbound.message);
     const std::uint64_t durable_sequence = runtime.durable_physical_sequence();
     if (acknowledgement.group_id != application->group_id ||
         acknowledgement.source != movement.target_node ||
         acknowledgement.outbound.destination != movement.source_node || response == nullptr ||
-        !response->success || response->term != transition.persistence->state.current_term ||
+        !response->success ||
+        response->term != completed_transition.persistence->state.current_term ||
         response->last_included_index != application->raft_snapshot.last_included_index ||
-        durable_sequence != transition.persistence->physical_sequence) {
+        durable_sequence != completed_transition.persistence->physical_sequence) {
       return common::make_unexpected(
           corruption("Raft snapshot completion acknowledgement is inconsistent"));
     }
