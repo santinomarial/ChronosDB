@@ -38,6 +38,16 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
   return std::move(*movement);
 }
 
+[[nodiscard]] TabletReconfigurationAction*
+pending_action(common::Result<std::optional<TabletReconfigurationAction>>& result) {
+  if (!result.has_value())
+    return nullptr;
+  std::optional<TabletReconfigurationAction>& action = result.value();
+  if (!action.has_value())
+    return nullptr;
+  return &action.value();
+}
+
 void execute_raft_action(RaftNode& node, TabletReconfigurationAction action) {
   if (const auto* begin = std::get_if<BeginMembershipChangeOperation>(&action.request.operation)) {
     auto transition = node.begin_membership_change(begin->new_voters);
@@ -88,13 +98,14 @@ TEST(TabletReconfigurationTest, CommitsJointMembershipBeforeEachPlacementEpoch) 
 
   auto begin_promotion = coordinator->reconcile(*node, *metadata);
   ASSERT_TRUE(begin_promotion.has_value());
-  ASSERT_TRUE(begin_promotion->has_value());
-  EXPECT_EQ((*begin_promotion)->kind, TabletReconfigurationActionKind::kBeginJointMembership);
-  EXPECT_EQ((*begin_promotion)->id,
+  TabletReconfigurationAction* begin_promotion_action = pending_action(begin_promotion);
+  ASSERT_NE(begin_promotion_action, nullptr);
+  EXPECT_EQ(begin_promotion_action->kind, TabletReconfigurationActionKind::kBeginJointMembership);
+  EXPECT_EQ(begin_promotion_action->id,
             (TabletReconfigurationActionId{
                 tablet, 7U, TabletReconfigurationActionKind::kBeginJointMembership}));
-  EXPECT_EQ((*begin_promotion)->request.group_id, tablet_group);
-  execute_raft_action(*node, std::move(**begin_promotion));
+  EXPECT_EQ(begin_promotion_action->request.group_id, tablet_group);
+  execute_raft_action(*node, std::move(*begin_promotion_action));
   auto waiting = coordinator->reconcile(*node, *metadata);
   ASSERT_TRUE(waiting.has_value());
   EXPECT_FALSE(waiting->has_value());
@@ -102,51 +113,57 @@ TEST(TabletReconfigurationTest, CommitsJointMembershipBeforeEachPlacementEpoch) 
 
   auto finalize_promotion = coordinator->reconcile(*node, *metadata);
   ASSERT_TRUE(finalize_promotion.has_value());
-  ASSERT_TRUE(finalize_promotion->has_value());
-  EXPECT_EQ((*finalize_promotion)->kind, TabletReconfigurationActionKind::kFinalizeJointMembership);
-  EXPECT_EQ((*finalize_promotion)->id,
+  TabletReconfigurationAction* finalize_promotion_action = pending_action(finalize_promotion);
+  ASSERT_NE(finalize_promotion_action, nullptr);
+  EXPECT_EQ(finalize_promotion_action->kind,
+            TabletReconfigurationActionKind::kFinalizeJointMembership);
+  EXPECT_EQ(finalize_promotion_action->id,
             (TabletReconfigurationActionId{
                 tablet, 7U, TabletReconfigurationActionKind::kFinalizeJointMembership}));
-  execute_raft_action(*node, std::move(**finalize_promotion));
+  execute_raft_action(*node, std::move(*finalize_promotion_action));
   commit_with(*node, 2U, 2U, 4U);
 
   auto publish_promotion = coordinator->reconcile(*node, *metadata);
   ASSERT_TRUE(publish_promotion.has_value());
-  ASSERT_TRUE(publish_promotion->has_value());
-  EXPECT_EQ((*publish_promotion)->request.group_id, metadata_group);
-  EXPECT_EQ((*publish_promotion)->id,
+  TabletReconfigurationAction* publish_promotion_action = pending_action(publish_promotion);
+  ASSERT_NE(publish_promotion_action, nullptr);
+  EXPECT_EQ(publish_promotion_action->request.group_id, metadata_group);
+  EXPECT_EQ(publish_promotion_action->id,
             (TabletReconfigurationActionId{tablet, 7U,
                                            TabletReconfigurationActionKind::kPublishPlacement}));
-  apply_placement_action(*metadata, 2U, **publish_promotion);
+  apply_placement_action(*metadata, 2U, *publish_promotion_action);
   EXPECT_EQ(metadata->find_tablet(tablet)->placement_epoch, 8U);
   EXPECT_EQ(metadata->find_tablet(tablet)->replicas, (std::vector<NodeId>{1U, 2U, 3U, 4U}));
 
   auto begin_removal = coordinator->reconcile(*node, *metadata);
   ASSERT_TRUE(begin_removal.has_value());
-  ASSERT_TRUE(begin_removal->has_value());
+  TabletReconfigurationAction* begin_removal_action = pending_action(begin_removal);
+  ASSERT_NE(begin_removal_action, nullptr);
   EXPECT_EQ(coordinator->record().phase, TabletMovementPhase::kTargetPromoted);
-  EXPECT_EQ((*begin_removal)->id,
+  EXPECT_EQ(begin_removal_action->id,
             (TabletReconfigurationActionId{
                 tablet, 8U, TabletReconfigurationActionKind::kBeginJointMembership}));
-  execute_raft_action(*node, std::move(**begin_removal));
+  execute_raft_action(*node, std::move(*begin_removal_action));
   commit_with(*node, 3U, 2U, 3U);
   auto finalize_removal = coordinator->reconcile(*node, *metadata);
   ASSERT_TRUE(finalize_removal.has_value());
-  ASSERT_TRUE(finalize_removal->has_value());
-  EXPECT_EQ((*finalize_removal)->id,
+  TabletReconfigurationAction* finalize_removal_action = pending_action(finalize_removal);
+  ASSERT_NE(finalize_removal_action, nullptr);
+  EXPECT_EQ(finalize_removal_action->id,
             (TabletReconfigurationActionId{
                 tablet, 8U, TabletReconfigurationActionKind::kFinalizeJointMembership}));
-  execute_raft_action(*node, std::move(**finalize_removal));
+  execute_raft_action(*node, std::move(*finalize_removal_action));
   commit_with(*node, 4U, 2U, 3U);
   EXPECT_EQ(node->role(), Role::kFollower);
 
   auto publish_removal = coordinator->reconcile(*node, *metadata);
   ASSERT_TRUE(publish_removal.has_value());
-  ASSERT_TRUE(publish_removal->has_value());
-  EXPECT_EQ((*publish_removal)->id,
+  TabletReconfigurationAction* publish_removal_action = pending_action(publish_removal);
+  ASSERT_NE(publish_removal_action, nullptr);
+  EXPECT_EQ(publish_removal_action->id,
             (TabletReconfigurationActionId{tablet, 8U,
                                            TabletReconfigurationActionKind::kPublishPlacement}));
-  apply_placement_action(*metadata, 3U, **publish_removal);
+  apply_placement_action(*metadata, 3U, *publish_removal_action);
   EXPECT_EQ(metadata->find_tablet(tablet)->placement_epoch, 9U);
   EXPECT_EQ(metadata->find_tablet(tablet)->replicas, (std::vector<NodeId>{2U, 3U, 4U}));
   EXPECT_FALSE(metadata->find_tablet(tablet)->leader_hint.has_value());
@@ -182,7 +199,9 @@ TEST(TabletReconfigurationTest, ReconstructsTheSamePendingActionIdentityAfterRes
   ASSERT_TRUE(first.has_value());
   auto first_action = first->reconcile(*node, *metadata);
   ASSERT_TRUE(first_action.has_value());
-  ASSERT_TRUE(first_action->has_value());
+  TabletReconfigurationAction* first_pending = pending_action(first_action);
+  ASSERT_NE(first_pending, nullptr);
+  EXPECT_EQ(first_pending->request.group_id, tablet_group);
 
   auto recovered = TabletMovement::recover(durable_record, durable_snapshot);
   ASSERT_TRUE(recovered.has_value()) << recovered.error().to_string();
@@ -191,11 +210,13 @@ TEST(TabletReconfigurationTest, ReconstructsTheSamePendingActionIdentityAfterRes
   ASSERT_TRUE(restarted.has_value());
   auto retried = restarted->reconcile(*node, *metadata);
   ASSERT_TRUE(retried.has_value());
-  ASSERT_TRUE(retried->has_value());
+  TabletReconfigurationAction* retried_pending = pending_action(retried);
+  ASSERT_NE(retried_pending, nullptr);
 
-  EXPECT_EQ((*retried)->id, (*first_action)->id);
-  EXPECT_EQ((*retried)->kind, (*first_action)->kind);
-  EXPECT_EQ((*retried)->request.group_id, (*first_action)->request.group_id);
+  EXPECT_EQ(retried_pending->id, first_pending->id);
+  EXPECT_EQ(retried_pending->kind, first_pending->kind);
+  EXPECT_EQ(retried_pending->request.group_id, first_pending->request.group_id);
+  EXPECT_EQ(retried_pending->request.group_id, tablet_group);
 }
 
 TEST(TabletReconfigurationTest, ResumesSourceRemovalAndCompleteStateAfterRestart) {
@@ -223,12 +244,14 @@ TEST(TabletReconfigurationTest, ResumesSourceRemovalAndCompleteStateAfterRestart
   ASSERT_TRUE(resumed.has_value()) << resumed.error().to_string();
   auto removal = resumed->reconcile(*promoted_node, *promoted_metadata);
   ASSERT_TRUE(removal.has_value()) << removal.error().to_string();
-  ASSERT_TRUE(removal->has_value());
-  EXPECT_EQ((*removal)->kind, TabletReconfigurationActionKind::kBeginJointMembership);
-  const auto* begin = std::get_if<BeginMembershipChangeOperation>(&(*removal)->request.operation);
+  TabletReconfigurationAction* removal_action = pending_action(removal);
+  ASSERT_NE(removal_action, nullptr);
+  EXPECT_EQ(removal_action->kind, TabletReconfigurationActionKind::kBeginJointMembership);
+  const auto* begin =
+      std::get_if<BeginMembershipChangeOperation>(&removal_action->request.operation);
   ASSERT_NE(begin, nullptr);
   EXPECT_EQ(begin->new_voters, (std::vector<NodeId>{2U, 3U, 4U}));
-  EXPECT_EQ((*removal)->id,
+  EXPECT_EQ(removal_action->id,
             (TabletReconfigurationActionId{
                 tablet, 8U, TabletReconfigurationActionKind::kBeginJointMembership}));
 

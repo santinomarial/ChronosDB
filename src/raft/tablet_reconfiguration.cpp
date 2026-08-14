@@ -120,10 +120,10 @@ struct TabletRaftView {
 
 class TabletReconfigurationCoordinator::Impl {
 public:
-  Impl(GroupId tablet_group, GroupId metadata_group, schema::TableId table, TabletMovement owner,
+  Impl(GroupId tablet_group, schema::TableId table, GroupId metadata_group, TabletMovement owner,
        const std::optional<NodeId> hint) noexcept
-      : tablet_group_id(std::move(tablet_group)), metadata_group_id(std::move(metadata_group)),
-        table_id(table), movement(std::move(owner)), leader_hint(hint) {}
+      : tablet_group_id(tablet_group), metadata_group_id(metadata_group), table_id(table),
+        movement(std::move(owner)), leader_hint(hint) {}
 
   [[nodiscard]] common::Result<std::optional<TabletReconfigurationAction>>
   raft_action(const TabletMovementRecord& record, const TabletRaftView node,
@@ -223,9 +223,8 @@ TabletReconfigurationCoordinator::create(GroupId tablet_group_id, GroupId metada
     return common::make_unexpected(
         invalid("tablet reconfiguration identities, phase, or leader hint are invalid"));
   }
-  return TabletReconfigurationCoordinator{
-      std::make_unique<Impl>(std::move(tablet_group_id), std::move(metadata_group_id), table_id,
-                             std::move(movement), leader_hint)};
+  return TabletReconfigurationCoordinator{std::make_unique<Impl>(
+      tablet_group_id, table_id, metadata_group_id, std::move(movement), leader_hint)};
 }
 
 common::Result<std::optional<TabletReconfigurationAction>>
