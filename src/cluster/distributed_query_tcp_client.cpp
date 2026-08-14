@@ -41,7 +41,7 @@ deadline_after(const DistributedQueryTcpClient::TimePoint now,
 class DistributedQueryTcpClient::Impl {
 public:
   Impl(network::TcpSocket owned_socket, DistributedQueryAttempt owned_attempt,
-       DistributedQueryTcpClientConfig configured, const TimePoint now) noexcept
+       DistributedQueryTcpClientConfig configured, const TimePoint now)
       : socket(std::move(owned_socket)), attempt(std::move(owned_attempt)), config(configured),
         connect_deadline(deadline_after(now, config.connect_timeout)) {}
 

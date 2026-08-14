@@ -55,6 +55,12 @@ before I/O, an expired deadline starts no attempts, and explicit cancellation re
 clients. Header self-containment, installed-consumer coverage, sanitizers, formatting, and focused
 static analysis protect the public boundary.
 
+A deterministic allocation sweep now covers schema-bound request/socket/client ownership and
+requires returned `RESOURCE_EXHAUSTED` at every selected failure. The outbound owner's diagnostic
+status may allocate and is therefore no longer constructed behind `noexcept`. Scheduler start
+classifies only `UNAVAILABLE` and `IO_ERROR` as retryable connection outcomes; local resource or
+contract failure is whole-query terminal and is not reported as failed transport. No frame changes.
+
 ADR 0379 subsequently supplies bounded global row ordering/limit. All-type aggregate merge state,
 whole-query authority rebinding, and process integration remain separate tasks. No Phase 16 exit
 gate is claimed.

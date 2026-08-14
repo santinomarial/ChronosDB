@@ -53,6 +53,12 @@ incomplete routes reject before I/O, an already-expired deadline starts no attem
 cancellation releases two active clients. Header self-containment and installed-consumer
 compilation cover the public API.
 
+The shared allocation-failure executable now sweeps grouped request/socket/client ownership until
+the first successful construction. Every injected failure returns `RESOURCE_EXHAUSTED`; the client
+owner's allocating diagnostic state is no longer hidden behind `noexcept`. Scheduler start sends
+only `UNAVAILABLE` and `IO_ERROR` into finite transport retry, while local resource or contract
+failure closes the whole query immediately. No protocol bytes change.
+
 Packaged metadata-backed grouped construction, explicit whole-query authority rebinding,
 multi-key/non-FLOAT64 grouping, general vector fragments, and broad fault/measurement evidence
 remain incomplete. No Phase 16 exit gate is claimed.

@@ -51,7 +51,7 @@ deadline_after(const DistributedVectorQueryTcpClientV2::TimePoint now,
 class DistributedVectorQueryTcpClientV2::Impl {
 public:
   Impl(network::TcpSocket owned_socket, DistributedVectorQueryAttemptV2 owned_attempt,
-       DistributedVectorQueryTcpClientConfigV2 configured, const TimePoint now) noexcept
+       DistributedVectorQueryTcpClientConfigV2 configured, const TimePoint now)
       : socket(std::move(owned_socket)), attempt(std::move(owned_attempt)), config(configured),
         connect_deadline(deadline_after(now, config.connect_timeout)) {}
 

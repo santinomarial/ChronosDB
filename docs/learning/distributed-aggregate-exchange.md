@@ -201,6 +201,11 @@ client from one fixed poll table, reports each transport outcome once, closes pe
 failure, and publishes only the all-tablet coordinator result. The pinned Manifest epoch therefore
 outlives every attempt and retry. Its optional whole-query monotonic deadline and explicit
 cancellation both close every active client, retain no partial result, and remain sticky.
+The scalar, grouped, and schema-bound vector TCP schedulers share one important error boundary:
+only unavailable/I/O connection outcomes enter sender backoff. Request, socket-owner, or client-owner
+resource exhaustion is local orchestration failure, so it closes the whole query immediately and is
+not a transport metric. A dedicated allocator-linked sweep freezes that rule for all three outbound
+clients and removed incorrect `noexcept` constructors around their allocating diagnostic statuses.
 `resolve_distributed_query_node_routes` constructs those immutable routes for only the selected
 serving nodes from one committed node-metadata snapshot. Node-specific TLS contexts remain explicit.
 Strict numeric endpoints bypass resolution; lowercase DNS endpoints acquire one fresh bounded,

@@ -1264,6 +1264,7 @@ if(CHRONOS_BUILD_TESTS)
     chronos_cluster_allocation_failure_tests
     tests/cluster/distributed_vector_aggregate_finalization_v2_allocation_failure_test.cpp
     tests/cluster/distributed_vector_aggregate_query_transport_v2_allocation_failure_test.cpp
+    tests/cluster/distributed_query_tcp_client_allocation_failure_test.cpp
     tests/cluster/distributed_vector_row_finalization_v2_allocation_failure_test.cpp
     tests/cluster/distributed_vector_query_transport_v2_allocation_failure_test.cpp
     tests/cluster/distributed_vector_result_exchange_allocation_failure_test.cpp
@@ -1275,6 +1276,10 @@ if(CHRONOS_BUILD_TESTS)
   target_compile_features(chronos_cluster_allocation_failure_tests PRIVATE cxx_std_23)
   target_include_directories(
     chronos_cluster_allocation_failure_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+  )
+  target_compile_definitions(
+    chronos_cluster_allocation_failure_tests
+    PRIVATE CHRONOS_NETWORK_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/network"
   )
   target_link_libraries(
     chronos_cluster_allocation_failure_tests PRIVATE chronos::cluster GTest::gtest_main

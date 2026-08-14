@@ -63,6 +63,12 @@ attempts leave zero active clients, and no transport failure is fabricated. A ne
 an incomplete route table rejects before attempts begin. Header self-containment, sanitizer, and
 installed-consumer checks cover the public boundary and ownership.
 
+A deterministic outbound-owner allocation sweep now proves every request/socket/client allocation
+failure is returned as `RESOURCE_EXHAUSTED` rather than terminating. Scheduler start classifies only
+`UNAVAILABLE` and `IO_ERROR` as retryable connect outcomes; a local resource/configuration failure
+fails the whole owner synchronously and is not counted as a transport failure. This changes no wire
+or durable format.
+
 Invariants 5, 6, 10, 11, 14, 15, and 18 apply.
 
 ## Alternatives considered
