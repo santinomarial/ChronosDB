@@ -24,7 +24,7 @@ enum class TabletMovementPhase : std::uint8_t {
 
 struct TabletMovementLimits {
   std::size_t maximum_snapshot_bytes{1U << 30U};
-  std::size_t maximum_chunk_bytes{4U * 1024U * 1024U};
+  std::size_t maximum_chunk_bytes{std::size_t{4U} * 1024U * 1024U};
   std::size_t maximum_replicas{9U};
 };
 

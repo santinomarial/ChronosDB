@@ -13,7 +13,7 @@
 namespace chronos::raft {
 
 inline constexpr std::size_t kRaftSegmentHeaderSize = 64U;
-inline constexpr std::uint64_t kDefaultRaftSegmentTargetSize = 64U * 1024U * 1024U;
+inline constexpr std::uint64_t kDefaultRaftSegmentTargetSize = std::uint64_t{64U} * 1024U * 1024U;
 inline constexpr std::uint64_t kMaximumRaftSegmentSize = 1024ULL * 1024ULL * 1024ULL;
 
 struct RaftPersistentLogConfig {

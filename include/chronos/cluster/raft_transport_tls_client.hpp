@@ -23,7 +23,7 @@ class RaftTransportTcpConnector;
 
 struct RaftTransportTlsClientLimits {
   std::size_t maximum_queued_frames{1024U};
-  std::size_t maximum_queued_bytes{64U * 1024U * 1024U};
+  std::size_t maximum_queued_bytes{std::size_t{64U} * 1024U * 1024U};
   std::chrono::milliseconds handshake_timeout{5000};
   std::chrono::milliseconds frame_write_timeout{30000};
   raft::RaftTransportCodecLimits codec;

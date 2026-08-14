@@ -26,6 +26,9 @@ inline constexpr std::uint64_t kProtocolV1SupportedFeatureBits = kProtocolV1Subs
 inline constexpr std::size_t kFrameHeaderSize = 40U;
 inline constexpr std::uint32_t kDefaultMaximumPayloadSize = 16U * 1024U * 1024U;
 
+// The 16-bit underlying type is part of the frozen Protocol v1 header, not an in-memory sizing
+// choice. Changing it would weaken compile-time agreement with the accepted wire specification.
+// NOLINTNEXTLINE(performance-enum-size)
 enum class MessageType : std::uint16_t {
   kClientHello = 1,
   kServerHello = 2,

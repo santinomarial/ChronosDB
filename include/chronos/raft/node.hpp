@@ -15,7 +15,7 @@ namespace chronos::raft {
 struct RaftLimits {
   std::size_t maximum_voters{31U};
   std::size_t maximum_log_entries{1U << 20U};
-  std::size_t maximum_entry_bytes{16U * 1024U * 1024U};
+  std::size_t maximum_entry_bytes{std::size_t{16U} * 1024U * 1024U};
   std::size_t maximum_append_entries{1024U};
 };
 

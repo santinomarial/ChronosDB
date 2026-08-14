@@ -510,9 +510,13 @@ RemoteTabletReconfigurationReceiver::try_receive(
         *prepared, request->required_leader_term, *config_.runtime);
     if (!completion.has_value())
       return common::make_unexpected(std::move(completion).error());
-    return RemoteTabletReconfigurationAdmission{
-        request->source_node_id, request->target_node_id, request->required_leader_term, action_id,
-        already_prepared,        std::move(*completion)};
+    return RemoteTabletReconfigurationAdmission{.source_node_id = request->source_node_id,
+                                                .target_node_id = request->target_node_id,
+                                                .required_leader_term =
+                                                    request->required_leader_term,
+                                                .action_id = action_id,
+                                                .already_prepared = already_prepared,
+                                                .completion = std::move(*completion)};
   } catch (const std::bad_alloc&) {
     return common::make_unexpected(exhausted("remote reconfiguration receive allocation failed"));
   } catch (const std::length_error&) {

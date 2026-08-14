@@ -14,12 +14,12 @@ namespace chronos::raft {
 
 inline constexpr std::size_t kRaftTransportHeaderSize = 96U;
 inline constexpr std::size_t kRaftTransportTrailerSize = 4U;
-inline constexpr std::size_t kMaximumRaftTransportFrameSize = 64U * 1024U * 1024U;
+inline constexpr std::size_t kMaximumRaftTransportFrameSize = std::size_t{64U} * 1024U * 1024U;
 
 struct RaftTransportCodecLimits {
   std::size_t maximum_frame_bytes{kMaximumRaftTransportFrameSize};
   std::size_t maximum_append_entries{1024U};
-  std::size_t maximum_entry_bytes{16U * 1024U * 1024U};
+  std::size_t maximum_entry_bytes{std::size_t{16U} * 1024U * 1024U};
   std::size_t maximum_snapshot_voters{31U};
 };
 

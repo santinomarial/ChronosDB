@@ -12,7 +12,7 @@ namespace chronos::raft {
 
 inline constexpr std::size_t kTabletReconfigurationActionHeaderSize = 96U;
 inline constexpr std::size_t kTabletReconfigurationActionTrailerSize = 4U;
-inline constexpr std::size_t kMaximumTabletReconfigurationActionSize = 128U * 1024U;
+inline constexpr std::size_t kMaximumTabletReconfigurationActionSize = std::size_t{128U} * 1024U;
 
 struct TabletReconfigurationActionCodecLimits {
   std::size_t maximum_action_bytes{kMaximumTabletReconfigurationActionSize};

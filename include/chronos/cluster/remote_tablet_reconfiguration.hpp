@@ -10,7 +10,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <utility>
 #include <vector>
 
 namespace chronos::cluster {
@@ -90,15 +89,6 @@ struct RemoteTabletReconfigurationReceiverConfig {
 };
 
 struct RemoteTabletReconfigurationAdmission {
-  RemoteTabletReconfigurationAdmission(
-      raft::NodeId request_source_node_id, raft::NodeId request_target_node_id,
-      raft::Term request_required_leader_term,
-      raft::TabletReconfigurationActionId admitted_action_id, bool action_already_prepared,
-      raft::AsyncDurableRaftCompletion admitted_completion) noexcept
-      : source_node_id(request_source_node_id), target_node_id(request_target_node_id),
-        required_leader_term(request_required_leader_term), action_id(admitted_action_id),
-        already_prepared(action_already_prepared), completion(std::move(admitted_completion)) {}
-
   raft::NodeId source_node_id{};
   raft::NodeId target_node_id{};
   raft::Term required_leader_term{};
