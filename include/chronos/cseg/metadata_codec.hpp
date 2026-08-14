@@ -233,14 +233,26 @@ public:
   [[nodiscard]] common::ByteView encoded_metadata() const noexcept;
 
 private:
-  DecodedCsegMetadataView(
-      std::uint16_t format_major, std::uint16_t format_minor, PartId part_id,
-      schema::TableId table_id, schema::TabletId tablet_id, schema::SchemaId schema_id,
-      schema::SchemaVersion schema_version, std::uint64_t total_length, std::uint64_t row_count,
-      std::uint32_t event_time_column_ordinal, std::uint32_t ordering_column_count,
-      std::int64_t minimum_event_time, std::int64_t maximum_event_time,
-      std::vector<CsegColumnDescriptor> columns, std::vector<CsegGranuleDescriptor> granules,
-      std::vector<CsegPageDescriptor> pages, common::ByteView encoded_metadata) noexcept;
+  struct HeaderFields {
+    std::uint16_t format_major;
+    std::uint16_t format_minor;
+    PartId part_id;
+    schema::TableId table_id;
+    schema::TabletId tablet_id;
+    schema::SchemaId schema_id;
+    schema::SchemaVersion schema_version;
+    std::uint64_t total_length;
+    std::uint64_t row_count;
+    std::uint32_t event_time_column_ordinal;
+    std::uint32_t ordering_column_count;
+    std::int64_t minimum_event_time;
+    std::int64_t maximum_event_time;
+  };
+
+  DecodedCsegMetadataView(HeaderFields header, std::vector<CsegColumnDescriptor> columns,
+                          std::vector<CsegGranuleDescriptor> granules,
+                          std::vector<CsegPageDescriptor> pages,
+                          common::ByteView encoded_metadata) noexcept;
 
   std::uint16_t format_major_;
   std::uint16_t format_minor_;

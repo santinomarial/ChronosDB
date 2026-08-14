@@ -1,3 +1,4 @@
+#include "chronos/common/crc32c.hpp"
 #include "chronos/cseg/format.hpp"
 #include "chronos/cseg/metadata_codec.hpp"
 #include "chronos/cseg/temporal_format.hpp"
@@ -55,6 +56,22 @@ template <typename Identifier> [[nodiscard]] Identifier id(const std::uint8_t se
                                .offsets_length = 0U,
                                .values_length = length,
                                .page_crc32c = crc};
+}
+
+void store_u16(std::vector<std::byte>& bytes, const std::size_t offset, const std::uint16_t value) {
+  bytes[offset] = std::byte{static_cast<std::uint8_t>(value)};
+  bytes[offset + 1U] = std::byte{static_cast<std::uint8_t>(value >> 8U)};
+}
+
+void store_u32(std::vector<std::byte>& bytes, const std::size_t offset, const std::uint32_t value) {
+  for (std::size_t index = 0U; index < sizeof(value); ++index) {
+    bytes[offset + index] = std::byte{static_cast<std::uint8_t>(value >> (index * 8U))};
+  }
+}
+
+void refresh_metadata_crc(std::vector<std::byte>& bytes) {
+  const std::size_t offset = bytes.size() - format::kMetadataCrc32cLength;
+  store_u32(bytes, offset, common::crc32c(common::ByteView{bytes}.first(offset)));
 }
 
 struct TemporalMetadataFixture {
@@ -141,7 +158,19 @@ TEST(TemporalMetadataCodecTest, RoundTripsV2AndKeepsV1Strict) {
   ASSERT_TRUE(decoded.has_value()) << decoded.error().status().to_string();
   EXPECT_EQ(decoded->format_major(), temporal_format::kFormatMajor);
   EXPECT_EQ(decoded->format_minor(), temporal_format::kFormatMinor);
+  EXPECT_EQ(decoded->part_id(), fixture.part_id);
+  EXPECT_EQ(decoded->table_id(), fixture.table_id);
+  EXPECT_EQ(decoded->tablet_id(), fixture.tablet_id);
+  EXPECT_EQ(decoded->schema_id(), fixture.schema_id);
+  EXPECT_EQ(decoded->schema_version(), schema::SchemaVersion::initial());
+  EXPECT_EQ(decoded->total_length(), encoded->total_length());
+  EXPECT_EQ(decoded->row_count(), 2U);
+  EXPECT_EQ(decoded->event_time_column_ordinal(), 0U);
+  EXPECT_EQ(decoded->ordering_column_count(), 1U);
+  EXPECT_EQ(decoded->minimum_event_time(), 10);
+  EXPECT_EQ(decoded->maximum_event_time(), 20);
   EXPECT_TRUE(std::ranges::equal(decoded->columns(), fixture.columns));
+  EXPECT_TRUE(std::ranges::equal(decoded->granules(), fixture.granules));
   EXPECT_EQ(decoded->pages().size(), 9U);
   EXPECT_TRUE(validate_cseg_v2_temporal_metadata_schema(*decoded, *fixture.schema_value(),
                                                         fixture.tablet_id)
@@ -155,14 +184,22 @@ TEST(TemporalMetadataCodecTest, RoundTripsV2AndKeepsV1Strict) {
 
 TEST(TemporalMetadataCodecTest, RejectsV1RegistryAndUnknownV2Registry) {
   TemporalMetadataFixture fixture;
-  fixture.columns.erase(fixture.columns.begin() +
-                            static_cast<std::ptrdiff_t>(1U + format::kSystemColumnCount),
-                        fixture.columns.end());
+  while (fixture.columns.size() > 1U + format::kSystemColumnCount) {
+    fixture.columns.pop_back();
+  }
   EXPECT_FALSE(encode_cseg_v2_temporal_metadata(fixture.input()).has_value());
 
   fixture = TemporalMetadataFixture{};
-  fixture.columns.back().storage_kind = static_cast<StorageKind>(10U);
-  EXPECT_FALSE(encode_cseg_v2_temporal_metadata(fixture.input()).has_value());
+  const auto encoded = encode_cseg_v2_temporal_metadata(fixture.input());
+  ASSERT_TRUE(encoded.has_value());
+  std::vector<std::byte> unknown_kind{encoded->bytes().begin(), encoded->bytes().end()};
+  const std::size_t final_column_offset =
+      format::kColumnsOffset + (fixture.columns.size() - 1U) * format::kColumnDescriptorLength;
+  store_u16(unknown_kind, final_column_offset + format::kStorageKindOffset, 10U);
+  refresh_metadata_crc(unknown_kind);
+  const auto decoded = decode_cseg_v2_temporal_metadata_exact(unknown_kind);
+  ASSERT_FALSE(decoded.has_value());
+  EXPECT_EQ(decoded.error().kind(), CsegMetadataDecodeErrorKind::kUnsupported);
 }
 
 } // namespace

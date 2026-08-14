@@ -140,30 +140,42 @@ template <typename Identifier>
   return 0U;
 }
 
+struct MetadataModelView {
+  std::uint16_t format_major;
+  std::uint64_t total_length;
+  std::uint64_t metadata_length;
+  std::uint64_t row_count;
+  std::uint32_t event_time_ordinal;
+  std::uint32_t ordering_column_count;
+  std::int64_t minimum_event_time;
+  std::int64_t maximum_event_time;
+  std::span<const CsegColumnDescriptor> columns;
+  std::span<const CsegGranuleDescriptor> granules;
+  std::span<const CsegPageDescriptor> pages;
+};
+
 [[nodiscard]] std::optional<CsegMetadataDecodeError>
-validate_columns(const std::span<const CsegColumnDescriptor> columns,
-                 const std::uint32_t event_time_ordinal, const std::uint32_t ordering_column_count,
-                 const std::uint16_t format_major) {
-  const bool temporal = format_major == temporal_format::kFormatMajor;
+validate_columns(const MetadataModelView model) {
+  const bool temporal = model.format_major == temporal_format::kFormatMajor;
   const std::size_t system_count =
       temporal ? temporal_format::kSystemColumnCount : format::kSystemColumnCount;
   const std::size_t maximum_stored =
       temporal ? temporal_format::kMaximumStoredColumnCount : format::kMaximumStoredColumnCount;
-  if (columns.size() <= system_count || columns.size() > maximum_stored) {
+  if (model.columns.size() <= system_count || model.columns.size() > maximum_stored) {
     return corruption("CSEG stored column count is outside format bounds");
   }
-  const std::size_t user_count = columns.size() - system_count;
-  if (event_time_ordinal >= user_count || ordering_column_count == 0U ||
-      ordering_column_count > user_count) {
+  const std::size_t user_count = model.columns.size() - system_count;
+  if (model.event_time_ordinal >= user_count || model.ordering_column_count == 0U ||
+      model.ordering_column_count > user_count) {
     return corruption("CSEG event-time or ordering column count is outside the user schema");
   }
 
-  std::vector<bool> ordering_seen(ordering_column_count, false);
+  std::vector<bool> ordering_seen(model.ordering_column_count, false);
   std::vector<schema::ColumnId> user_ids;
   user_ids.reserve(user_count);
   std::uint32_t event_count = 0U;
-  for (std::size_t ordinal = 0U; ordinal < columns.size(); ++ordinal) {
-    const CsegColumnDescriptor& column = columns[ordinal];
+  for (std::size_t ordinal = 0U; ordinal < model.columns.size(); ++ordinal) {
+    const CsegColumnDescriptor& column = model.columns[ordinal];
     if (ordinal < user_count) {
       if (column.storage_kind != StorageKind::kUser || !column.column_id.has_value() ||
           !column.schema_ordinal.has_value() || *column.schema_ordinal != ordinal) {
@@ -175,16 +187,16 @@ validate_columns(const std::span<const CsegColumnDescriptor> columns,
       user_ids.push_back(*column.column_id);
       if (column.event_time) {
         ++event_count;
-        if (ordinal != event_time_ordinal || column.nullable ||
+        if (ordinal != model.event_time_ordinal || column.nullable ||
             column.logical_type.kind() != schema::LogicalTypeKind::kTimestampNs) {
           return corruption("CSEG event-time column metadata is invalid");
         }
-      } else if (ordinal == event_time_ordinal) {
+      } else if (ordinal == model.event_time_ordinal) {
         return corruption("CSEG header event-time ordinal lacks its descriptor flag");
       }
       if (column.ordering_ordinal.has_value()) {
         const std::uint32_t ordering = *column.ordering_ordinal;
-        if (ordering >= ordering_column_count || ordering_seen[ordering]) {
+        if (ordering >= model.ordering_column_count || ordering_seen[ordering]) {
           return corruption("CSEG physical ordering ordinal is outside a unique dense sequence");
         }
         ordering_seen[ordering] = true;
@@ -219,7 +231,7 @@ validate_columns(const std::span<const CsegColumnDescriptor> columns,
       return corruption("CSEG system column registry entry is invalid");
     }
   }
-  if (event_count != 1U || !columns[event_time_ordinal].ordering_ordinal.has_value() ||
+  if (event_count != 1U || !model.columns[model.event_time_ordinal].ordering_ordinal.has_value() ||
       !std::ranges::all_of(ordering_seen, [](const bool seen) { return seen; })) {
     return corruption("CSEG event-time and physical ordering descriptors are incomplete");
   }
@@ -227,23 +239,18 @@ validate_columns(const std::span<const CsegColumnDescriptor> columns,
 }
 
 [[nodiscard]] std::optional<CsegMetadataDecodeError>
-// These adjacent counts and extrema mirror one granule-directory/header comparison.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-validate_granules(
-    const std::span<const CsegGranuleDescriptor> granules,
-    const std::uint32_t stored_column_count, // NOLINT(bugprone-easily-swappable-parameters)
-    const std::uint64_t row_count, const std::int64_t minimum_event_time,
-    const std::int64_t maximum_event_time) {
-  if (granules.empty() || granules.size() > format::kMaximumGranuleCount || row_count == 0U ||
-      row_count > format::kMaximumRowCount || minimum_event_time > maximum_event_time) {
+validate_granules(const MetadataModelView model) {
+  if (model.granules.empty() || model.granules.size() > format::kMaximumGranuleCount ||
+      model.row_count == 0U || model.row_count > format::kMaximumRowCount ||
+      model.minimum_event_time > model.maximum_event_time) {
     return corruption("CSEG row, granule, or event-time bounds are invalid");
   }
   std::uint64_t next_row = 0U;
   std::int64_t observed_minimum = std::numeric_limits<std::int64_t>::max();
   std::int64_t observed_maximum = std::numeric_limits<std::int64_t>::min();
-  for (std::size_t ordinal = 0U; ordinal < granules.size(); ++ordinal) {
-    const CsegGranuleDescriptor& granule = granules[ordinal];
-    const std::uint64_t expected_page = static_cast<std::uint64_t>(ordinal) * stored_column_count;
+  for (std::size_t ordinal = 0U; ordinal < model.granules.size(); ++ordinal) {
+    const CsegGranuleDescriptor& granule = model.granules[ordinal];
+    const std::uint64_t expected_page = static_cast<std::uint64_t>(ordinal) * model.columns.size();
     if (granule.first_row != next_row || granule.row_count == 0U ||
         granule.row_count > format::kMaximumGranuleRowCount ||
         granule.first_page_index != expected_page ||
@@ -252,42 +259,35 @@ validate_granules(
     }
     const std::optional<std::uint64_t> end =
         common::checked_add(next_row, static_cast<std::uint64_t>(granule.row_count));
-    if (!end.has_value() || *end > row_count) {
+    if (!end.has_value() || *end > model.row_count) {
       return corruption("CSEG granule row coverage exceeds the header row count");
     }
     next_row = *end;
     observed_minimum = std::min(observed_minimum, granule.minimum_event_time);
     observed_maximum = std::max(observed_maximum, granule.maximum_event_time);
   }
-  if (next_row != row_count || observed_minimum != minimum_event_time ||
-      observed_maximum != maximum_event_time) {
+  if (next_row != model.row_count || observed_minimum != model.minimum_event_time ||
+      observed_maximum != model.maximum_event_time) {
     return corruption("CSEG granules do not exactly cover header rows and event-time extrema");
   }
   return std::nullopt;
 }
 
-[[nodiscard]] std::optional<CsegMetadataDecodeError>
-// Metadata and file lengths are the conventional inner/outer bound pair.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-validate_pages(const std::span<const CsegPageDescriptor> pages,
-               const std::span<const CsegColumnDescriptor> columns,
-               const std::span<const CsegGranuleDescriptor> granules,
-               const std::uint64_t metadata_length, // NOLINT(bugprone-easily-swappable-parameters)
-               const std::uint64_t total_length) {
+[[nodiscard]] std::optional<CsegMetadataDecodeError> validate_pages(const MetadataModelView model) {
   const std::optional<std::size_t> expected_page_count =
-      common::checked_multiply(columns.size(), granules.size());
-  if (!expected_page_count.has_value() || pages.size() != *expected_page_count) {
+      common::checked_multiply(model.columns.size(), model.granules.size());
+  if (!expected_page_count.has_value() || model.pages.size() != *expected_page_count) {
     return corruption("CSEG page count does not match granules times stored columns");
   }
-  std::uint64_t cursor = metadata_length;
-  for (std::size_t index = 0U; index < pages.size(); ++index) {
-    const CsegPageDescriptor& page = pages[index];
-    const auto granule_ordinal = static_cast<std::uint32_t>(index / columns.size());
-    const auto column_ordinal = static_cast<std::uint32_t>(index % columns.size());
-    const CsegColumnDescriptor& column = columns[column_ordinal];
+  std::uint64_t cursor = model.metadata_length;
+  for (std::size_t index = 0U; index < model.pages.size(); ++index) {
+    const CsegPageDescriptor& page = model.pages[index];
+    const auto granule_ordinal = static_cast<std::uint32_t>(index / model.columns.size());
+    const auto column_ordinal = static_cast<std::uint32_t>(index % model.columns.size());
+    const CsegColumnDescriptor& column = model.columns[column_ordinal];
     if (page.granule_ordinal != granule_ordinal || page.stored_column_ordinal != column_ordinal ||
-        page.row_count != granules[granule_ordinal].row_count || page.null_count > page.row_count ||
-        (!column.nullable && page.null_count != 0U)) {
+        page.row_count != model.granules[granule_ordinal].row_count ||
+        page.null_count > page.row_count || (!column.nullable && page.null_count != 0U)) {
       return corruption("CSEG page ownership, row count, or null count is invalid");
     }
     if (page.stored_length == 0U || page.stored_length > format::kMaximumStoredPageLength ||
@@ -347,51 +347,40 @@ validate_pages(const std::span<const CsegPageDescriptor> pages,
     }
     cursor = layout->next_offset;
   }
-  if (cursor != total_length) {
+  if (cursor != model.total_length) {
     return corruption("CSEG total length does not equal the canonical aligned page end");
   }
   return std::nullopt;
 }
 
-[[nodiscard]] std::optional<CsegMetadataDecodeError>
-// This helper validates the named durable header fields as one frozen-format tuple.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-validate_model(
-    const std::uint16_t format_major, const std::uint64_t total_length,
-    const std::uint64_t metadata_length, // NOLINT(bugprone-easily-swappable-parameters)
-    const std::uint64_t row_count, const std::uint32_t event_time_ordinal,
-    const std::uint32_t ordering_column_count, // NOLINT(bugprone-easily-swappable-parameters)
-    const std::int64_t minimum_event_time, const std::int64_t maximum_event_time,
-    const std::span<const CsegColumnDescriptor> columns,
-    const std::span<const CsegGranuleDescriptor> granules,
-    const std::span<const CsegPageDescriptor> pages) {
-  if (const auto error =
-          validate_columns(columns, event_time_ordinal, ordering_column_count, format_major);
-      error.has_value()) {
+[[nodiscard]] std::optional<CsegMetadataDecodeError> validate_model(const MetadataModelView model) {
+  if (const auto error = validate_columns(model); error.has_value()) {
     return error;
   }
-  if (const auto error = validate_granules(granules, static_cast<std::uint32_t>(columns.size()),
-                                           row_count, minimum_event_time, maximum_event_time);
-      error.has_value()) {
+  if (const auto error = validate_granules(model); error.has_value()) {
     return error;
   }
-  return validate_pages(pages, columns, granules, metadata_length, total_length);
+  return validate_pages(model);
 }
 
-[[nodiscard]] common::Result<StorageKind> storage_kind_from_code(const std::uint16_t code,
-                                                                 const std::uint16_t format_major) {
-  if (code == 0U) {
+struct StorageKindCode {
+  std::uint16_t value;
+  std::uint16_t format_major;
+};
+
+[[nodiscard]] common::Result<StorageKind> storage_kind_from_code(const StorageKindCode code) {
+  if (code.value == 0U) {
     return common::make_unexpected(
         status(common::StatusCode::kCorruption, "CSEG storage-kind code zero is invalid"));
   }
-  const std::uint16_t maximum = format_major == temporal_format::kFormatMajor
+  const std::uint16_t maximum = code.format_major == temporal_format::kFormatMajor
                                     ? temporal_format::kSystemCommitTimeStorageKind
                                     : format::kOperationStorageKind;
-  if (code > maximum) {
+  if (code.value > maximum) {
     return common::make_unexpected(
         status(common::StatusCode::kNotSupported, "CSEG storage-kind code is unsupported"));
   }
-  return static_cast<StorageKind>(code);
+  return static_cast<StorageKind>(code.value);
 }
 
 [[nodiscard]] common::Result<PageCompression> compression_from_code(const std::uint16_t code) {
@@ -433,24 +422,19 @@ CsegMetadataDecodeError::CsegMetadataDecodeError(const CsegMetadataDecodeErrorKi
                                                  const std::uint64_t required_size) noexcept
     : kind_(kind), status_(std::move(status_value)), required_size_(required_size) {}
 
-// The private constructor preserves the frozen header field order; callers use named accessors.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-DecodedCsegMetadataView::DecodedCsegMetadataView(
-    const std::uint16_t format_major, const std::uint16_t format_minor, PartId part_id,
-    schema::TableId table_id, schema::TabletId tablet_id, schema::SchemaId schema_id,
-    const schema::SchemaVersion schema_version,
-    const std::uint64_t total_length, // NOLINT(bugprone-easily-swappable-parameters)
-    const std::uint64_t row_count, const std::uint32_t event_time_column_ordinal,
-    const std::uint32_t ordering_column_count, const std::int64_t minimum_event_time,
-    const std::int64_t maximum_event_time, std::vector<CsegColumnDescriptor> columns,
-    std::vector<CsegGranuleDescriptor> granules, std::vector<CsegPageDescriptor> pages,
-    const common::ByteView encoded_metadata) noexcept
-    : format_major_(format_major), format_minor_(format_minor), part_id_(part_id),
-      table_id_(table_id), tablet_id_(tablet_id), schema_id_(schema_id),
-      schema_version_(schema_version), total_length_(total_length), row_count_(row_count),
-      event_time_column_ordinal_(event_time_column_ordinal),
-      ordering_column_count_(ordering_column_count), minimum_event_time_(minimum_event_time),
-      maximum_event_time_(maximum_event_time), columns_(std::move(columns)),
+DecodedCsegMetadataView::DecodedCsegMetadataView(const HeaderFields header,
+                                                 std::vector<CsegColumnDescriptor> columns,
+                                                 std::vector<CsegGranuleDescriptor> granules,
+                                                 std::vector<CsegPageDescriptor> pages,
+                                                 const common::ByteView encoded_metadata) noexcept
+    : format_major_(header.format_major), format_minor_(header.format_minor),
+      part_id_(header.part_id), table_id_(header.table_id), tablet_id_(header.tablet_id),
+      schema_id_(header.schema_id), schema_version_(header.schema_version),
+      total_length_(header.total_length), row_count_(header.row_count),
+      event_time_column_ordinal_(header.event_time_column_ordinal),
+      ordering_column_count_(header.ordering_column_count),
+      minimum_event_time_(header.minimum_event_time),
+      maximum_event_time_(header.maximum_event_time), columns_(std::move(columns)),
       granules_(std::move(granules)), pages_(std::move(pages)),
       encoded_metadata_(encoded_metadata) {}
 
@@ -532,10 +516,17 @@ encode_cseg_metadata(const CsegMetadataEncodeInput& input, const std::uint16_t f
     });
     cursor = placement->next_offset;
   }
-  if (const auto error = validate_model(
-          format_major, cursor, metadata->metadata_length, input.row_count,
-          input.event_time_column_ordinal, input.ordering_column_count, input.minimum_event_time,
-          input.maximum_event_time, input.columns, input.granules, pages);
+  if (const auto error = validate_model({.format_major = format_major,
+                                         .total_length = cursor,
+                                         .metadata_length = metadata->metadata_length,
+                                         .row_count = input.row_count,
+                                         .event_time_ordinal = input.event_time_column_ordinal,
+                                         .ordering_column_count = input.ordering_column_count,
+                                         .minimum_event_time = input.minimum_event_time,
+                                         .maximum_event_time = input.maximum_event_time,
+                                         .columns = input.columns,
+                                         .granules = input.granules,
+                                         .pages = pages});
       error.has_value()) {
     return common::make_unexpected(
         status(common::StatusCode::kInvalidArgument, error->status().message()));
@@ -770,7 +761,8 @@ decode_cseg_metadata_prefix(const common::ByteView bytes, const CsegMetadataDeco
       return std::unexpected(corruption("CSEG column descriptor reserved bytes are nonzero"));
     }
     const common::Result<StorageKind> kind =
-        storage_kind_from_code(load_u16_le(descriptor, format::kStorageKindOffset), expected_major);
+        storage_kind_from_code({.value = load_u16_le(descriptor, format::kStorageKindOffset),
+                                .format_major = expected_major});
     if (!kind.has_value()) {
       return std::unexpected(kind.error().code() == common::StatusCode::kNotSupported
                                  ? unsupported(kind.error().message())
@@ -898,26 +890,34 @@ decode_cseg_metadata_prefix(const common::ByteView bytes, const CsegMetadataDeco
       load_u32_le(header, format::kOrderingColumnCountOffset);
   const std::int64_t minimum_event_time = load_i64_le(header, format::kMinimumEventTimeOffset);
   const std::int64_t maximum_event_time = load_i64_le(header, format::kMaximumEventTimeOffset);
-  if (const auto error = validate_model(
-          expected_major, total_length, metadata_length, row_count, event_time_ordinal,
-          ordering_column_count, minimum_event_time, maximum_event_time, columns, granules, pages);
+  if (const auto error = validate_model({.format_major = expected_major,
+                                         .total_length = total_length,
+                                         .metadata_length = metadata_length,
+                                         .row_count = row_count,
+                                         .event_time_ordinal = event_time_ordinal,
+                                         .ordering_column_count = ordering_column_count,
+                                         .minimum_event_time = minimum_event_time,
+                                         .maximum_event_time = maximum_event_time,
+                                         .columns = columns,
+                                         .granules = granules,
+                                         .pages = pages});
       error.has_value()) {
     return std::unexpected(*error);
   }
   return DecodedCsegMetadataView{
-      major,
-      minor,
-      *part_id,
-      *table_id,
-      *tablet_id,
-      *schema_id,
-      *schema_version,
-      total_length,
-      row_count,
-      event_time_ordinal,
-      ordering_column_count,
-      minimum_event_time,
-      maximum_event_time,
+      {.format_major = major,
+       .format_minor = minor,
+       .part_id = *part_id,
+       .table_id = *table_id,
+       .tablet_id = *tablet_id,
+       .schema_id = *schema_id,
+       .schema_version = *schema_version,
+       .total_length = total_length,
+       .row_count = row_count,
+       .event_time_column_ordinal = event_time_ordinal,
+       .ordering_column_count = ordering_column_count,
+       .minimum_event_time = minimum_event_time,
+       .maximum_event_time = maximum_event_time},
       std::move(columns),
       std::move(granules),
       std::move(pages),
