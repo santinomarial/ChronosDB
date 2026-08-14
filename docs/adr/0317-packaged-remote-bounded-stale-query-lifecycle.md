@@ -47,6 +47,13 @@ pair exactly once, binds a metadata-barrier-covered Manifest snapshot, transitio
 TCP query owner, exposes both phase metrics, and proves execution-phase cancellation is sticky. The
 test requires approved host execution where sandbox policy forbids loopback bind.
 
+A deterministic allocation sweep now covers both lifecycle construction and the complete
+mutual-TLS authority-to-scalar-execution transition. Every selected allocation failure is returned
+as sticky `RESOURCE_EXHAUSTED`, cancels all authority work, installs no execution or result, and
+releases the exact Manifest pin. The sweep removed incorrect `noexcept` specifications from the
+service owner and TCP scheduler constructors: their owned diagnostic statuses may allocate, so
+termination was not a valid failure boundary.
+
 The test does not complete a real distributed query response. Real three-process SQL/data-plane
 execution, process loss/failover, remote CSEG reads, broader fault matrices, and measurement evidence
 remain incomplete.

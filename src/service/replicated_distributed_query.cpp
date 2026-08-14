@@ -346,7 +346,7 @@ public:
   Impl(query::DistributedAggregatePlan owned_plan,
        manifest::TemporalDatabaseStorageSnapshot owned_snapshot,
        ReplicatedDistributedAggregateQueryConfig configured,
-       cluster::RaftObservationTcpBatchAcquisition acquisition) noexcept
+       cluster::RaftObservationTcpBatchAcquisition acquisition)
       : plan(std::move(owned_plan)), snapshot(std::move(owned_snapshot)), config(configured),
         authority(std::move(acquisition)) {}
 

@@ -515,6 +515,10 @@ client-local resource exhaustion incorrectly entering transport retry and anothe
 diagnostic status behind `noexcept` in the TLS owner. Both are closed: observed failures are sticky,
 close the attempt, publish nothing, and release the exact Manifest pin; the no-fault boundary decodes
 the expected count result.
+The older scalar bounded-stale owner now has the same construction and phase-transition allocation
+evidence. Its service and TCP scheduler implementations no longer claim `noexcept` around owned
+diagnostic strings; an injected failure returns sticky resource exhaustion, cancels authority work,
+and releases the pinned Manifest generation instead of terminating the process.
 Moved or multi-process real-CSEG responses, remote worker-interrupt delivery, pooled
 multiplexing, asynchronous worker completion, live DNS churn qualification, and broader multi-node
 fault handling remain work.

@@ -299,6 +299,19 @@ private:
                                      .input_index = 1U}}}};
 }
 
+[[nodiscard]] query::DistributedAggregatePlan
+make_scalar_plan(const schema::TabletId& tablet_id, const raft::LogIndex applied_position) {
+  return {.query_id = uuid(17U),
+          .read_policy = {.consistency = query::DistributedReadConsistency::kFollowerBoundedStale,
+                          .maximum_staleness_positions = 1U},
+          .fragments = {{.tablet_id = tablet_id,
+                         .minimum_event_time = 0,
+                         .maximum_event_time = 100,
+                         .leader_node = 11U,
+                         .local_applied_position = applied_position,
+                         .known_leader_commit_position = applied_position}}};
+}
+
 [[nodiscard]] query::DistributedVectorQueryPlan
 make_count_plan(const schema::TabletId& tablet_id, const raft::LogIndex applied_position) {
   query::DistributedVectorQueryPlan plan = make_plan(tablet_id, applied_position);
@@ -307,7 +320,7 @@ make_count_plan(const schema::TabletId& tablet_id, const raft::LogIndex applied_
 }
 
 TEST(ReplicatedDistributedQueryAllocationFailureTest,
-     ClassifiesEveryFollowerVectorOwnerConstructionAllocationAndReleasesSnapshotPin) {
+     ClassifiesEveryFollowerOwnerConstructionAllocationAndReleasesSnapshotPin) {
   TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   const schema::TableSchema schema_value = make_schema();
@@ -371,6 +384,19 @@ TEST(ReplicatedDistributedQueryAllocationFailureTest,
       .node_authorizer = &authorizer,
       .binding_limits = {.maximum_fragments = 1U,
                          .maximum_total_projection_ordinals = projection.size()}};
+  const ReplicatedDistributedAggregateQueryConfig scalar_query_config{
+      .source_node_id = 1U,
+      .read_barrier = std::addressof(*barrier),
+      .metadata_group_id = metadata_group,
+      .catalog = std::cref(catalog),
+      .table_id = schema_value.table_id(),
+      .destination_column_ordinals = projection,
+      .aggregate_input_index = 1U,
+      .tls_contexts = query_tls_contexts,
+      .authenticator = &authenticator,
+      .node_authorizer = &authorizer,
+      .binding_limits = {.maximum_fragments = 1U,
+                         .maximum_total_projection_ordinals = projection.size()}};
 
   std::shared_ptr<const manifest::LoadedTemporalManifestGeneration> selected_manifest;
   {
@@ -415,11 +441,44 @@ TEST(ReplicatedDistributedQueryAllocationFailureTest,
 
   EXPECT_TRUE(saw_failure);
   EXPECT_TRUE(saw_success);
+
+  saw_failure = false;
+  saw_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 512U; ++fail_after) {
+    SCOPED_TRACE(testing::Message{} << "scalar fail_after=" << fail_after);
+    {
+      auto snapshot = publisher->snapshot();
+      ASSERT_TRUE(snapshot.has_value()) << snapshot.error().to_string();
+      auto plan = make_scalar_plan(tablet_id, 1U);
+      auto result = run_failure(fail_after, [&] {
+        return ReplicatedFollowerDistributedAggregateQuery::create(
+            std::move(plan), std::move(*snapshot), authority_config, scalar_query_config);
+      });
+      if (!result.has_value()) {
+        saw_failure = true;
+        EXPECT_EQ(result.error().code(), common::StatusCode::kResourceExhausted)
+            << "fail_after=" << fail_after << ": " << result.error().to_string();
+      } else {
+        saw_success = true;
+        EXPECT_EQ(result->state(),
+                  ReplicatedFollowerDistributedAggregateQueryState::kAcquiringAuthority);
+        EXPECT_EQ(result->metrics().authority.active_pairs, 1U);
+        EXPECT_EQ(result->cancel().code(), common::StatusCode::kCancelled);
+        EXPECT_EQ(result->metrics().authority.active_pairs, 0U);
+      }
+    }
+    EXPECT_EQ(selected_manifest.use_count(), baseline_use_count) << "fail_after=" << fail_after;
+    if (saw_success)
+      break;
+  }
+
+  EXPECT_TRUE(saw_failure);
+  EXPECT_TRUE(saw_success);
   EXPECT_TRUE(barrier->shutdown().is_ok());
 }
 
 TEST(ReplicatedDistributedQueryAllocationFailureTest,
-     ClassifiesFollowerVectorLifecycleAllocationsAtomically) {
+     ClassifiesFollowerScalarAndVectorLifecycleAllocationsAtomically) {
   TemporaryDirectory directory;
   ASSERT_FALSE(directory.path().empty());
   ASSERT_TRUE(std::filesystem::create_directory(directory.path() / "raft"));
@@ -550,6 +609,20 @@ TEST(ReplicatedDistributedQueryAllocationFailureTest,
                          .maximum_total_projection_ordinals = projection.size()},
       .execution_limits = {.maximum_query_memory_bytes = 1U << 20U},
       .connect_timeout = std::chrono::milliseconds{1000}};
+  const ReplicatedDistributedAggregateQueryConfig scalar_query_config{
+      .source_node_id = 1U,
+      .read_barrier = std::addressof(*query_barrier),
+      .metadata_group_id = metadata_group,
+      .catalog = std::cref(catalog),
+      .table_id = schema_value.table_id(),
+      .destination_column_ordinals = projection,
+      .aggregate_input_index = 1U,
+      .tls_contexts = query_tls_contexts,
+      .authenticator = &authenticator,
+      .node_authorizer = &authorizer,
+      .binding_limits = {.maximum_fragments = 1U,
+                         .maximum_total_projection_ordinals = projection.size()},
+      .connect_timeout = std::chrono::milliseconds{1000}};
 
   std::atomic<bool> stop_server;
   std::atomic<bool> server_failed;
@@ -570,6 +643,74 @@ TEST(ReplicatedDistributedQueryAllocationFailureTest,
     selected_manifest = snapshot->selected_manifest();
   }
   const long baseline_use_count = selected_manifest.use_count();
+
+  bool saw_scalar_failure = false;
+  bool saw_scalar_success = false;
+  for (std::size_t fail_after = 0U; fail_after < 512U; ++fail_after) {
+    SCOPED_TRACE(testing::Message{} << "scalar transition fail_after=" << fail_after);
+    {
+      auto snapshot = publisher->snapshot();
+      ASSERT_TRUE(snapshot.has_value()) << snapshot.error().to_string();
+      auto lifecycle = ReplicatedFollowerDistributedAggregateQuery::create(
+          make_scalar_plan(tablet_id, applied_position), std::move(*snapshot), authority_config,
+          scalar_query_config);
+      ASSERT_TRUE(lifecycle.has_value()) << lifecycle.error().to_string();
+
+      common::Status progress;
+      bool terminal = false;
+      {
+        test::ScopedAllocationFailure failure{fail_after};
+        try {
+          for (std::size_t poll = 0U; poll < 8192U; ++poll) {
+            progress = lifecycle->poll_once(std::chrono::milliseconds{1});
+            if (!progress.is_ok() ||
+                lifecycle->state() !=
+                    ReplicatedFollowerDistributedAggregateQueryState::kAcquiringAuthority) {
+              terminal = true;
+              break;
+            }
+          }
+        } catch (...) {
+          failure.disable();
+          throw;
+        }
+        failure.disable();
+      }
+      ASSERT_TRUE(terminal);
+      if (!progress.is_ok()) {
+        saw_scalar_failure = true;
+        EXPECT_EQ(progress.code(), common::StatusCode::kResourceExhausted) << progress.to_string();
+        EXPECT_EQ(lifecycle->state(), ReplicatedFollowerDistributedAggregateQueryState::kFailed);
+        EXPECT_EQ(lifecycle->failure(), progress);
+        EXPECT_EQ(lifecycle->metrics().authority.active_pairs, 0U);
+        EXPECT_FALSE(lifecycle->metrics().execution.has_value());
+        EXPECT_EQ(lifecycle->result().error(), progress);
+        EXPECT_EQ(lifecycle->poll_once(std::chrono::milliseconds{0}), progress);
+      } else {
+        saw_scalar_success = true;
+        EXPECT_EQ(lifecycle->state(), ReplicatedFollowerDistributedAggregateQueryState::kExecuting);
+        EXPECT_EQ(lifecycle->metrics().authority.completed_pairs, 1U);
+        ASSERT_TRUE(lifecycle->metrics().execution.has_value());
+        // Guarded by the execution-metrics assertion above.
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+        EXPECT_EQ(lifecycle->metrics().execution->active_attempts, 0U);
+        EXPECT_EQ(lifecycle->result().error().code(), common::StatusCode::kInvalidArgument);
+        EXPECT_EQ(lifecycle->cancel().code(), common::StatusCode::kCancelled);
+        EXPECT_EQ(lifecycle->metrics().authority.active_pairs, 0U);
+        ASSERT_TRUE(lifecycle->metrics().execution.has_value());
+        // Guarded by the execution-metrics assertion above.
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+        EXPECT_EQ(lifecycle->metrics().execution->active_attempts, 0U);
+      }
+    }
+    EXPECT_EQ(selected_manifest.use_count(), baseline_use_count) << "fail_after=" << fail_after;
+    ASSERT_FALSE(server_failed.load());
+    if (saw_scalar_success)
+      break;
+  }
+  EXPECT_TRUE(saw_scalar_failure);
+  EXPECT_TRUE(saw_scalar_success);
+
   bool saw_failure = false;
   bool saw_success = false;
   for (std::size_t fail_after = 0U; fail_after < 512U; ++fail_after) {

@@ -77,6 +77,11 @@ accounting. Failure while installing a completed canonical response is likewise 
 failure, never a fabricated transport outcome. Allocation sweeps cover the TLS carrier owner,
 including its allocating sticky diagnostic state. No protocol bytes change.
 
+The packaged bounded-stale scalar lifecycle additionally sweeps scheduler construction after real
+mutual-TLS authority acquisition. Its scheduler owner may allocate the sticky diagnostic status;
+that constructor is therefore not `noexcept`, allowing the existing creation boundary to return
+`RESOURCE_EXHAUSTED` with no retained attempts or snapshot-pin leak.
+
 Invariants 5, 6, 10, 11, 14, 15, and 18 apply.
 
 ## Alternatives considered
