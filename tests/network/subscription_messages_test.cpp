@@ -12,6 +12,8 @@
 namespace chronos::network {
 namespace {
 
+static_assert(sizeof(SubscriptionEndReason) == sizeof(std::uint8_t));
+
 [[nodiscard]] common::Uuid uuid(const std::byte seed) {
   common::Uuid::Bytes bytes{};
   bytes.fill(seed);
@@ -64,10 +66,17 @@ TEST(SubscriptionMessageTest, RoundTripsRequestReadyAndCheckpointLifecycle) {
                                             .safe_delivery_sequence = 41U,
                                             .resume_token = token});
   ASSERT_TRUE(end.has_value());
+  ASSERT_GE(end->size(), 4U);
+  EXPECT_EQ((*end)[2U], std::byte{1U});
+  EXPECT_EQ((*end)[3U], std::byte{0U});
   const auto decoded_end = decode_subscription_end(*end);
   ASSERT_TRUE(decoded_end.has_value());
   EXPECT_EQ(decoded_end->reason, SubscriptionEndReason::kCancelled);
   EXPECT_EQ(decoded_end->safe_delivery_sequence, 41U);
+
+  std::vector<std::byte> out_of_range_reason = *end;
+  out_of_range_reason[3U] = std::byte{1U};
+  EXPECT_FALSE(decode_subscription_end(out_of_range_reason).has_value());
 }
 
 TEST(SubscriptionMessageTest, RoundTripsCanonicalUpsertAndDeleteChanges) {

@@ -476,7 +476,10 @@ decode_subscription_end(const common::ByteView payload, const SubscriptionMessag
       *token_size != reader.remaining()) {
     return common::make_unexpected(corrupt("SUBSCRIPTION_END envelope is invalid"));
   }
-  const SubscriptionEndReason reason = static_cast<SubscriptionEndReason>(*raw_reason);
+  if (*raw_reason > std::numeric_limits<std::uint8_t>::max())
+    return common::make_unexpected(corrupt("SUBSCRIPTION_END reason exceeds its value range"));
+  const SubscriptionEndReason reason =
+      static_cast<SubscriptionEndReason>(static_cast<std::uint8_t>(*raw_reason));
   const common::ByteView token = *reader.read_exact(*token_size);
   if (!valid_reason(reason) || !validate_token(token, limits).is_ok())
     return common::make_unexpected(corrupt("SUBSCRIPTION_END semantics are invalid"));

@@ -25,7 +25,7 @@ using SubscriptionLogId = std::array<std::byte, 16U>;
 
 enum class SubscriptionStartMode : std::uint8_t { kNewQuery = 1, kResume = 2 };
 enum class SubscriptionChangeOperation : std::uint8_t { kUpsert = 1, kDelete = 2 };
-enum class SubscriptionEndReason : std::uint16_t {
+enum class SubscriptionEndReason : std::uint8_t {
   kCancelled = 1,
   kSchemaChanged = 2,
   kStateExpired = 3,
